@@ -43,7 +43,7 @@ const App = {
   sizes: [],
   allItems: [],
   elementThatOpenedModal: null,
-  
+
   // DOM Elements Cache
   sidebarToggleBtn: null,
   darkModeToggle: null,
@@ -63,6 +63,32 @@ const App = {
   masterSizeList: null,
   addColorForm: null,
   addSizeForm: null,
+
+  // Add this method alongside your other methods like init(), renderVariantMatrix(), etc.
+handleThresholdUpdate(inputElement) {
+    const editor = inputElement.closest('.threshold-editor');
+    if (!editor) return;
+
+    const variantId = editor.dataset.variantId;
+    const newThreshold = inputElement.value;
+    const originalValue = inputElement.dataset.originalValue;
+    const textElement = editor.querySelector('.threshold-text');
+
+    // Hide the input and show the text again
+    textElement.classList.remove('hidden');
+    inputElement.classList.add('hidden');
+    
+    // Update the display text with the new value
+    textElement.textContent = `T: ${newThreshold}`;
+
+    // Only call the API if the value has actually changed
+    if (newThreshold !== originalValue) {
+        const parentItemRow = inputElement.closest('tr.item-row'); // Adjust selector if needed
+        this.updateThreshold(variantId, newThreshold, parentItemRow);
+        inputElement.dataset.originalValue = newThreshold; // Update the original value for the next edit
+    }
+},
+
 
   init() {
     const onReady = () => {
@@ -183,6 +209,7 @@ const App = {
       this.addVariantBtn.addEventListener('click', () => this.addVariantRow());
     }
 
+
     // Variant container delegation
     if (this.variantsContainer) {
       this.variantsContainer.addEventListener('click', (e) => {
@@ -225,6 +252,39 @@ const App = {
     if (this.masterSizeList) {
       this.masterSizeList.addEventListener('click', (e) => this.handleMasterActions(e, 'size'));
     }
+
+    // NEW: Listener for starting the threshold edit
+    if(this.container){
+    this.container.addEventListener('click', (e) => {
+        if (e.target.classList.contains('threshold-text')) {
+            const editor = e.target.closest('.threshold-editor');
+            const input = editor.querySelector('.threshold-input');
+
+            e.target.classList.add('hidden');
+            input.classList.remove('hidden');
+            input.focus();
+        }
+    });
+  }
+
+    // NEW: Listener for saving when the input loses focus
+    if(this.container){
+    this.container.addEventListener('focusout', (e) => {
+        if (e.target.classList.contains('threshold-input')) {
+            this.handleThresholdUpdate(e.target);
+        }
+    });
+  }
+
+    // NEW: Listener for saving when 'Enter' is pressed
+    if(this.container){
+    this.container.addEventListener('keydown', (e) => {
+        if (e.target.classList.contains('threshold-input') && e.key === 'Enter') {
+            e.preventDefault(); // Prevents form submission
+            this.handleThresholdUpdate(e.target);
+        }
+    });
+  }
 
     // Global keyboard shortcuts
     document.addEventListener('keydown', (e) => {
@@ -685,33 +745,23 @@ const App = {
           const statusClass = isLowStock ? 'low-stock' : 'in-stock';
           
           return `
-            <td class="variant-cell">
-              <div class="variant-controls">
-                <div class="stock-row">
-                  <label>Stock:</label>
-                  <input type="number" 
-                         class="stock-input compact" 
-                         value="${variantInfo.stock}" 
-                         data-variant-id="${variantInfo.variantId}"
-                         data-original-value="${variantInfo.stock}"
-                         min="0">
-                </div>
-                <div class="threshold-row">
-                  <label>Threshold:</label>
-                  <input type="number" 
-                         class="threshold-input compact" 
-                         value="${variantInfo.threshold}" 
-                         data-variant-id="${variantInfo.variantId}"
-                         data-original-value="${variantInfo.threshold}"
-                         min="0">
-                </div>
-                <div class="status-row">
-                  <span class="status-badge variant-status ${statusClass}">
-                    ${isLowStock ? 'Low' : 'OK'}
-                  </span>
-                </div>
-              </div>
-            </td>`;
+          <td class="variant-cell">
+          <div class="variant-cell-compact" data-threshold="Threshold: ${variantInfo.threshold}">
+          <input type="number" 
+             id="stock_${variantInfo.variantId}"   
+             name="stock"                         
+             class="stock-input compact" 
+             value="${variantInfo.stock}" 
+             data-variant-id="${variantInfo.variantId}"
+             data-original-value="${variantInfo.stock}"
+             min="0"
+             title="Stock">
+        <span class="status-badge variant-status ${statusClass}">
+        ${isLowStock ? 'LOW' : 'OK'}
+      </span>
+
+      </div>
+    </td>`;
         }
         return `<td class="empty-cell">—</td>`;
       }).join('');
