@@ -1,0 +1,56 @@
+{% extends "base.html" %}
+{% block title %}Edit Profile{% endblock %}
+
+{% block content %}
+<div class="form-card profile-card">
+    <div class="auth-header profile-header">
+        <div class="auth-logo profile-logo">
+             {% if current_user.is_authenticated and current_user.profile_picture %}
+                <img src="{{ url_for('static', filename=current_user.profile_picture) }}" alt="Profile" class="profile-image">
+            {% else %}
+                <svg xmlns="http://www.w3.org/2000/svg" width="36" height="36" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M20 21v-2a4 4 0 0 0-4-4H8a4 4 0 0 0-4 4v2"></path><circle cx="12" cy="7" r="4"></circle></svg>
+            {% endif %}
+        </div>
+        <h1>Edit Your Profile</h1>
+        <p class="auth-subtitle">Update your personal information below.</p>
+    </div>
+    
+    <form action="{{ url_for('profile') }}" method="POST" enctype="multipart/form-data" style="width:100%;">
+        <div class="form-row">
+            <div class="form-field">
+                <label for="name">Name</label>
+                <input type="text" id="name" name="name" value="{{ current_user.name }}" required />
+            </div>
+            <div class="form-field">
+                <label for="email">Email</label>
+                <input type="email" id="email" name="email" value="{{ current_user.email }}" readonly disabled title="Email cannot be changed." />
+            </div>
+        </div>
+        <div class="form-row">
+            <div class="form-field">
+                <label for="company">Company (Optional)</label>
+                <input type="text" id="company" name="company" value="{{ current_user.company or '' }}" placeholder="Your company name" />
+            </div>
+            <div class="form-field">
+                <label for="mobile">Mobile Number (Optional)</label>
+                <input type="tel" id="mobile" name="mobile" value="{{ current_user.mobile or '' }}" placeholder="+91 12345 67890" />
+            </div>
+        </div>
+        <div class="form-row">
+            <div class="form-field">
+                <label for="role">Your Role</label>
+                <input type="text" id="role" name="role" value="{{ current_user.role.replace('_', ' ') | title }}" readonly disabled title="Contact a super admin to change your role." />
+            </div>
+            <div class="form-field">
+                <label for="profile_picture">Update Profile Picture</label>
+                <input type="file" id="profile_picture" name="profile_picture" accept="image/*" />
+            </div>
+        </div>
+        <div class="button-row">
+            <a href="{{ url_for('inventory') }}" class="button cancel">Cancel</a>
+            <button class="create" type="submit">Save Changes</button>
+        </div>
+    </form>
+</div>
+{% endblock %}
+

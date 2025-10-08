@@ -1,0 +1,37 @@
+{% extends "base.html" %}
+{% block title %}User Management{% endblock %}
+
+
+{% block content %}
+<div class="container">
+    <div class="form-card" style="padding: 1.5rem;">
+        <div class="page-header">
+            <h2>User Management</h2>
+        </div>
+        
+        <div class="inventory-table-container">
+            <table class="inventory-table">
+                <thead>
+                    <tr>
+                        <th>Name</th>
+                        <th>Email</th>
+                        <th>Current Role</th>
+                        <th style="width: 300px;">Actions</th>
+                    </tr>
+                </thead>
+                <tbody id="user-management-table-body">
+                    <!-- User rows will be populated here by app.js -->
+                    <tr>
+                        <td colspan="4" style="text-align: center; padding: 2rem;">Loading users...</td>
+                    </tr>
+                </tbody>
+            </table>
+        </div>
+    </div>
+</div>
+{% endblock %}
+
+
+{% block scripts %}
+    <script src="{{ url_for('static', filename='app.js') }}"></script>
+{% endblock %}

@@ -1,0 +1,418 @@
+{% extends "base.html" %}
+{% block title %}Inventory Management{% endblock %}
+
+{% block content %}
+<div class="container">
+    <div class="form-card" style="padding: 1.5rem;">
+        <!-- Enhanced Page Header with Search -->
+        <div class="page-header">
+            <div class="header-left">
+                <h2>Inventory Management</h2>
+                <div class="search-container">
+                    <div class="search-input-wrapper">
+                        <svg class="search-icon" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                            <circle cx="11" cy="11" r="8"></circle>
+                            <path d="M21 21l-4.35-4.35"></path>
+                        </svg>
+                        <input type="text" 
+                               id="inventory-search" 
+                               class="search-input" 
+                               placeholder="Search items by name, model, or variation..."
+                               autocomplete="off">
+                        <button type="button" class="clear-search-btn" style="display: none;" title="Clear search">×</button>
+                    </div>
+                    <div id="search-result-count" class="search-result-count">
+                        Showing all items
+                    </div>
+                </div>
+            </div>
+            <div class="header-actions">
+                {% if current_user.is_authenticated and (current_user.role == 'super_admin' or current_user.role == 'admin') %}
+                <button id="manage-data-btn" class="button cancel">Manage Data</button>
+                {% endif %}
+                <button id="add-item-btn" class="button create">
+                    <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                        <circle cx="12" cy="12" r="10"></circle>
+                        <line x1="12" y1="8" x2="12" y2="16"></line>
+                        <line x1="8" y1="12" x2="16" y2="12"></line>
+                    </svg>
+                    Add New Item
+                </button>
+            </div>
+        </div>
+        
+        <!-- Enhanced Inventory Table -->
+        <div class="inventory-table-container">
+            <div class="table-wrapper">
+                <table class="inventory-table compact">
+                    <thead>
+                        <tr>
+                            <th class="expand-col" title="Expand/Collapse Details"></th>
+                            <th class="id-col">ID</th>
+                            <th class="name-col">Item Name</th>
+                            <th class="model-col">Model</th>
+                            <th class="variation-col">Variation</th>
+                            <th class="variants-col">Variants</th>
+                            <th class="stock-col">Total Stock</th>
+                            <th class="status-col">Status</th>
+                            <th class="actions-col">Actions</th>
+                        </tr>
+                    </thead>
+                    <tbody id="inventory-table-body">
+                        <!-- Item rows will be dynamically populated here by app.js -->
+                        <tr class="loading-row">
+                            <td colspan="9" style="text-align: center; padding: 2rem;">
+                                <div class="loading-spinner">
+                                    <div class="spinner"></div>
+                                    <span>Loading inventory...</span>
+                                </div>
+                            </td>
+                        </tr>
+                    </tbody>
+                </table>
+            </div>
+        </div>
+    </div>
+</div>
+
+<!-- Enhanced Add/Edit Item Modal with Threshold Support -->
+<div id="add-edit-item-modal" class="modal" aria-hidden="true" role="dialog" aria-labelledby="modal-title">
+    <div class="modal-content large">
+        <form id="item-form" novalidate>
+            <input type="hidden" id="item-id" value="">
+            
+            <!-- Modal Header -->
+            <div class="modal-header">
+                <h3 id="modal-title">Add New Item</h3>
+                <button type="button" class="button cancel close-modal-btn" aria-label="Close modal">&times;</button>
+            </div>
+            
+            <!-- Datalists for editable dropdowns -->
+            <datalist id="color-datalist"></datalist>
+            <datalist id="size-datalist"></datalist>
+
+            <!-- Item Details Section -->
+            <section class="modal-section">
+                <h4 class="section-title">
+                    <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                        <path d="M20 7l-8-4-8 4m16 0l-8 4m8-4v10l-8 4m0-10L4 7m8 4v10M4 7v10l8 4"></path>
+                    </svg>
+                    Item Details
+                </h4>
+                
+                <div class="form-row">
+                    <div class="form-field">
+                        <label for="item-name" class="required-field">
+                            Item Name
+                            <span class="required-asterisk">*</span>
+                        </label>
+                        <input type="text" 
+                               id="item-name" 
+                               list="item-name-list" 
+                               autocomplete="off" 
+                               required 
+                               placeholder="e.g., Men's Cotton T-Shirt"
+                               maxlength="255">
+                        <datalist id="item-name-list"></datalist>
+                        <small class="field-hint">Enter a unique, descriptive name for this item</small>
+                    </div>
+                    <div class="form-field">
+                        <label for="item-model">Model</label>
+                        <input type="text" 
+                               id="item-model" 
+                               placeholder="e.g., V-Neck Classic"
+                               maxlength="255">
+                        <small class="field-hint">Optional model identifier</small>
+                    </div>
+                </div>
+                
+                <div class="form-row">
+                    <div class="form-field">
+                        <label for="item-variation">Variation</label>
+                        <input type="text" 
+                               id="item-variation" 
+                               placeholder="e.g., Summer Collection 2025"
+                               maxlength="255">
+                        <small class="field-hint">Optional variation or collection name</small>
+                    </div>
+                </div>
+                
+                <div class="form-row">
+                    <div class="form-field full-width">
+                        <label for="item-description">Description</label>
+                        <textarea id="item-description" 
+                                  rows="3" 
+                                  placeholder="A detailed description of the item, including materials, features, or other relevant details..."
+                                  maxlength="1000"></textarea>
+                        <small class="field-hint">Optional detailed description (max 1000 characters)</small>
+                    </div>
+                </div>
+            </section>
+            
+            <!-- Enhanced Variants Section with Threshold Support -->
+            <section class="modal-section">
+                <h4 class="section-title">
+                    <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                        <path d="M4 7s0-2 3-2 3 2 3 2v1h4V7s0-2 3-2 3 2 3 2v8a3 3 0 01-3 3H7a3 3 0 01-3-3V7z"></path>
+                        <path d="M5 10h14M12 4v3"></path>
+                    </svg>
+                    Item Variants
+                    <span class="section-subtitle">Define color/size combinations with individual stock thresholds</span>
+                </h4>
+                
+                <div class="variants-section">
+                    <div id="variants-list-container" class="variants-table-wrapper">
+                        <!-- Enhanced variants table will be populated here by JS -->
+                        <div class="variants-placeholder">
+                            <svg width="48" height="48" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1">
+                                <circle cx="12" cy="12" r="3"></circle>
+                                <path d="M12 1v6m0 6v6m11-7h-6m-6 0H1"></path>
+                            </svg>
+                            <p>No variants added yet</p>
+                            <small>Click "Add Variant" to create color/size combinations</small>
+                        </div>
+                    </div>
+                    
+                    <div class="variants-actions">
+                        <button type="button" id="add-variant-btn" class="button create">
+                            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                                <circle cx="12" cy="12" r="10"></circle>
+                                <line x1="12" y1="8" x2="12" y2="16"></line>
+                                <line x1="8" y1="12" x2="16" y2="12"></line>
+                            </svg>
+                            Add Variant
+                        </button>
+                        <small class="variants-hint">
+                            Each variant represents a unique color/size combination with its own stock and threshold
+                        </small>
+                    </div>
+                </div>
+            </section>
+            
+            <!-- Modal Footer with Enhanced Actions -->
+            <div class="modal-footer">
+                <div class="footer-actions">
+                    <button type="button" class="button cancel close-modal-btn">
+                        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                            <line x1="18" y1="6" x2="6" y2="18"></line>
+                            <line x1="6" y1="6" x2="18" y2="18"></line>
+                        </svg>
+                        Cancel
+                    </button>
+                    <button type="submit" class="button create save-item-btn">
+                        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                            <path d="M19 21H5a2 2 0 01-2-2V5a2 2 0 012-2h11l5 5v11a2 2 0 01-2 2z"></path>
+                            <polyline points="17,21 17,13 7,13 7,21"></polyline>
+                            <polyline points="7,3 7,8 15,8"></polyline>
+                        </svg>
+                        Save Item
+                    </button>
+                </div>
+                <div class="footer-info">
+                    <small>All fields marked with <span class="required-asterisk">*</span> are required</small>
+                </div>
+            </div>
+        </form>
+    </div>
+</div>
+
+<!-- NEW: Master Data Management Modal -->
+<div id="master-data-modal" class="modal" aria-hidden="true" role="dialog" aria-labelledby="master-data-title">
+    <div class="modal-content large">
+        <div class="modal-header">
+            <h3 id="master-data-title">Manage Master Data</h3>
+            <button type="button" class="button cancel close-modal-btn" aria-label="Close modal">&times;</button>
+        </div>
+        <div class="master-data-grid">
+            <!-- Colors Card -->
+            <div class="master-data-card">
+                <h3>Colors</h3>
+                <div id="color-list" class="master-list">
+                    <div class="loading-spinner"><span>Loading colors...</span></div>
+                </div>
+                <form id="add-color-form" class="add-new-form">
+                    <input type="text" class="add-new-input" name="name" placeholder="Add new color" required autocomplete="off">
+                    <button class="button create" type="submit">Add</button>
+                </form>
+            </div>
+            <!-- Sizes Card -->
+            <div class="master-data-card">
+                <h3>Sizes</h3>
+                <div id="size-list" class="master-list">
+                    <div class="loading-spinner"><span>Loading sizes...</span></div>
+                </div>
+                <form id="add-size-form" class="add-new-form">
+                    <input type="text" class="add-new-input" name="name" placeholder="Add new size" required autocomplete="off">
+                    <button class="button create" type="submit">Add</button>
+                </form>
+            </div>
+        </div>
+    </div>
+</div>
+
+<!-- Enhanced Loading States and Progress Indicators -->
+<div id="global-loading" class="global-loading" style="display: none;">
+    <div class="loading-content">
+        <div class="loading-spinner large">
+            <div class="spinner"></div>
+        </div>
+        <p>Processing your request...</p>
+    </div>
+</div>
+{% endblock %}
+
+{% block scripts %}
+<script>
+// Enhanced search functionality with debouncing
+document.addEventListener('DOMContentLoaded', function() {
+    const searchInput = document.getElementById('inventory-search');
+    const clearSearchBtn = document.querySelector('.clear-search-btn');
+    
+    if (searchInput && clearSearchBtn) {
+        // Show/hide clear button based on input
+        searchInput.addEventListener('input', function() {
+            if (this.value.trim()) {
+                clearSearchBtn.style.display = 'block';
+            } else {
+                clearSearchBtn.style.display = 'none';
+            }
+        });
+        
+        // Clear search functionality
+        clearSearchBtn.addEventListener('click', function() {
+            searchInput.value = '';
+            searchInput.dispatchEvent(new Event('input'));
+            searchInput.focus();
+            this.style.display = 'none';
+        });
+        
+        // Enhanced keyboard navigation
+        searchInput.addEventListener('keydown', function(e) {
+            if (e.key === 'Escape') {
+                this.value = '';
+                this.dispatchEvent(new Event('input'));
+                this.blur();
+            }
+        });
+    }
+    
+    // Enhanced modal accessibility
+    const modal = document.getElementById('add-edit-item-modal');
+    if (modal) {
+        modal.addEventListener('keydown', function(e) {
+            if (e.key === 'Escape') {
+                const closeBtn = modal.querySelector('.close-modal-btn');
+                if (closeBtn) closeBtn.click();
+            }
+        });
+    }
+    
+    // Auto-expand textareas
+    const textareas = document.querySelectorAll('textarea');
+    textareas.forEach(textarea => {
+        textarea.addEventListener('input', function() {
+            this.style.height = 'auto';
+            this.style.height = this.scrollHeight + 'px';
+        });
+    });
+});
+</script>
+<script src="{{ url_for('static', filename='app.js') }}"></script>
+{% endblock %}
+
+{% block extra_head %}
+<style>
+/* Enhanced responsive styles for inventory page */
+@media (max-width: 768px) {
+    .page-header {
+        flex-direction: column;
+        gap: 1rem;
+        align-items: stretch;
+    }
+    
+    .header-left {
+        width: 100%;
+    }
+    
+    .search-container {
+        width: 100%;
+    }
+    
+    .search-input-wrapper {
+        width: 100%;
+    }
+    
+    .header-actions {
+        width: 100%;
+        justify-content: center;
+    }
+    
+    .inventory-table-container {
+        overflow-x: auto;
+        -webkit-overflow-scrolling: touch;
+    }
+    
+    .inventory-table {
+        min-width: 800px;
+    }
+    
+    .modal-content.large {
+        width: 95%;
+        margin: 1rem auto;
+        max-height: 90vh;
+    }
+    
+    .form-row {
+        flex-direction: column;
+    }
+    
+    .form-field {
+        min-width: auto !important;
+    }
+}
+
+/* Print styles */
+@media print {
+    .page-header,
+    .header-actions,
+    .actions-col,
+    .expand-col {
+        display: none !important;
+    }
+    
+    .inventory-table {
+        width: 100% !important;
+        font-size: 12px;
+    }
+    
+    .form-card {
+        box-shadow: none !important;
+        border: 1px solid #000;
+    }
+}
+
+/* High contrast mode support */
+@media (prefers-contrast: high) {
+    .status-badge {
+        border: 2px solid currentColor;
+    }
+    
+    .search-input {
+        border: 2px solid currentColor;
+    }
+}
+
+/* Reduced motion support */
+@media (prefers-reduced-motion: reduce) {
+    .loading-spinner .spinner {
+        animation: none;
+    }
+    
+    .modal,
+    .search-input-wrapper {
+        transition: none;
+    }
+}
+</style>
+{% endblock %}
+
