@@ -226,8 +226,24 @@ handleThresholdUpdate(inputElement) {
     // Table actions
     if (this.inventoryTableBody) {
       this.inventoryTableBody.addEventListener('click', (e) => this.handleTableActions(e));
-      this.inventoryTableBody.addEventListener('change', (e) => this.handleTableActions(e));
-      this.inventoryTableBody.addEventListener('input', (e) => this.handleTableInput(e));
+      //this.inventoryTableBody.addEventListener('change', (e) => this.handleTableActions(e));
+      //this.inventoryTableBody.addEventListener('input', (e) => this.handleTableInput(e));
+
+      // Add this new listener inside the if (this.inventoryTableBody) block
+this.inventoryTableBody.addEventListener('keydown', (e) => {
+  // Check if the Enter key was pressed AND the target is a stock input
+  if (e.key === 'Enter' && e.target.classList.contains('stock-input')) {
+    
+    // Prevent the default Enter key action (like submitting a form)
+    e.preventDefault();
+    
+    // Call your existing function to save the data
+    this.handleStockThresholdChange(e.target);
+    
+    // Optional but recommended: Unfocus the input field after saving
+    e.target.blur();
+  }
+});
     }
 
     // User management
@@ -583,8 +599,8 @@ handleThresholdUpdate(inputElement) {
           <td data-label="Variation" class="item-variation-cell">${this.escapeHtml(item.variation || 'N/A')}</td>
           <td data-label="Variants">${item.variant_count}</td>
           <td data-label="Total Stock" class="total-stock-cell">${item.total_stock}</td>
-          <td data-label="Status">
-            <span class="status-badge ${statusClass}">${statusText}</span>
+          <td data-label="Status" class="status-col">
+              <span class="status-badge ${statusClass}">${statusText}</span>
           </td>
           <td data-label="Actions" class="actions-cell">
             <button class="button create edit-item" title="Edit Item">Edit</button>
@@ -650,6 +666,11 @@ handleThresholdUpdate(inputElement) {
       return;
     }
     
+   if (input.classList.contains('stock-input')) {
+    // Pass the 'input' element as the last argument
+    await this.updateStock(variantId, newValue, parentItemRow, input); 
+    }
+
     // Skip if value hasn't changed
     if (newValue.toString() === originalValue) return;
     
@@ -763,7 +784,7 @@ handleThresholdUpdate(inputElement) {
       </div>
     </td>`;
         }
-        return `<td class="empty-cell">—</td>`;
+        return `<td class="empty-cell" style="text-align: Center;">    —</td>`;
       }).join('');
       
       return `
@@ -789,29 +810,41 @@ handleThresholdUpdate(inputElement) {
       </div>`;
   },
 
-  async updateStock(variantId, newStock, parentItemRow) {
-    const result = await this.fetchJson(`${this.apiBase}/variants/${variantId}/stock`, {
-      method: 'PUT',
-      body: JSON.stringify({ stock: newStock })
-    });
+  async updateStock(variantId, newStock, parentItemRow, inputElement) {
+  const result = await this.fetchJson(`${this.apiBase}/variants/${variantId}/stock`, {
+    method: 'PUT',
+    body: JSON.stringify({ stock: newStock })
+  });
+  
+  if (result) {
+    this.showNotification('Stock updated!', 'success');
     
-    if (result) {
-      this.showNotification('Stock updated!', 'success');
-      
-      if (parentItemRow) {
-        const totalStockCell = parentItemRow.querySelector('.total-stock-cell');
-        if (totalStockCell && result.new_total_stock !== undefined) {
-          totalStockCell.textContent = result.new_total_stock;
-        }
-        
-        // Update status badge if needed
-        this.updateItemStatusBadge(parentItemRow, result.has_low_stock_variants);
+    if (parentItemRow) {
+      // This part is correct: It updates the "Total Stock" cell for the parent item.
+      const totalStockCell = parentItemRow.querySelector('.total-stock-cell');
+      if (totalStockCell && result.new_total_stock !== undefined) {
+        totalStockCell.textContent = result.new_total_stock;
       }
       
-      // Refresh items list to ensure consistency
-      this.fetchItems();
+      // This part is also correct: It updates the parent item's overall status badge.
+      this.updateItemStatusBadge(parentItemRow, result.has_low_stock_variants);
     }
-  },
+
+    // --- NEW: Logic to update the specific variant cell's status badge ---
+    // This uses the detailed response from your Python backend.
+    if (inputElement && result.updated_variant) {
+      const variantCell = inputElement.closest('.variant-cell-compact');
+      const statusBadge = variantCell.querySelector('.status-badge');
+      
+      const isLow = result.updated_variant.is_low_stock;
+      statusBadge.textContent = isLow ? 'LOW' : 'OK';
+      statusBadge.className = `status-badge variant-status ${isLow ? 'low-stock' : 'in-stock'}`;
+    }
+    
+    // --- REMOVED: The full list refresh ---
+    // this.fetchItems(); 
+  }
+},
 
   async updateThreshold(variantId, newThreshold, parentItemRow) {
     const result = await this.fetchJson(`${this.apiBase}/variants/${variantId}/threshold`, {

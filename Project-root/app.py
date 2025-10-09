@@ -551,15 +551,32 @@ def update_variant_stock(variant_id):
     
     try:
         with get_conn() as (conn, cur):
+            # --- CHANGE 1: Get more data back from the initial update ---
+            # We ask the database to return the new stock and threshold along with the item_id.
             cur.execute(
-                "UPDATE item_variant SET opening_stock = %s WHERE variant_id = %s RETURNING item_id",
+                """
+                UPDATE item_variant 
+                SET opening_stock = %s 
+                WHERE variant_id = %s 
+                RETURNING item_id, opening_stock, threshold
+                """,
                 (int(new_stock), variant_id)
             )
-            item_id_row = cur.fetchone()
-            if not item_id_row:
+            
+            # --- CHANGE 2: Unpack the new values from the result ---
+            updated_row = cur.fetchone()
+            if not updated_row:
                 return jsonify({'error': 'Variant not found'}), 404
             
-            item_id = item_id_row[0]
+            item_id, updated_stock, threshold = updated_row
+
+            # --- CHANGE 3: Create the new dictionary for the frontend ---
+            updated_variant_data = {
+                "stock": updated_stock,
+                "is_low_stock": updated_stock <= threshold
+            }
+
+            # Your existing logic to calculate totals is still good
             cur.execute("SELECT SUM(opening_stock) FROM item_variant WHERE item_id = %s", (item_id,))
             total_stock = cur.fetchone()[0]
 
@@ -572,11 +589,15 @@ def update_variant_stock(variant_id):
             item_has_low_stock = cur.fetchone()[0]
 
             conn.commit()
-        return jsonify({
-            'message': 'Stock updated successfully', 
-            'new_total_stock': int(total_stock or 0),
-            'item_has_low_stock': item_has_low_stock
-        }), 200
+            
+            # --- CHANGE 4: Add the new dictionary to the final JSON response ---
+            return jsonify({
+                'message': 'Stock updated successfully', 
+                'new_total_stock': int(total_stock or 0),
+                'has_low_stock_variants': item_has_low_stock, # Renamed this key to match the frontend JS
+                'updated_variant': updated_variant_data      # This is the new part
+            }), 200
+            
     except Exception as e:
         app.logger.error(f"Error updating stock for variant {variant_id}: {e}")
         return jsonify({'error': 'Database error'}), 500
