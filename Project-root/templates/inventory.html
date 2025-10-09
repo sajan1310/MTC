@@ -91,14 +91,31 @@
             <datalist id="color-datalist"></datalist>
             <datalist id="size-datalist"></datalist>
 
-            <!-- Item Details Section -->
-            <section class="modal-section">
-                <h4 class="section-title">
-                    <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-                        <path d="M20 7l-8-4-8 4m16 0l-8 4m8-4v10l-8 4m0-10L4 7m8 4v10M4 7v10l8 4"></path>
-                    </svg>
-                    Item Details
-                </h4>
+            <div class="modal-body">
+                <!-- General Error Message -->
+                <div id="form-error-message" class="form-error-message" style="display: none;"></div>
+                
+                <!-- Basic Info Section -->
+                <section class="modal-section">
+                    <h4 class="section-title">
+                        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                            <path d="M3 7h18M3 12h18M3 17h18"></path>
+                        </svg>
+                        Basic Information
+                    </h4>
+                    <p class="section-subtitle">Provide the essential details about the item</p>
+                    
+                    <div class="form-row">
+                        <div class="form-field
+
+                     <!-- Item Details Section -->
+                <section class="modal-section">
+                    <h4 class="section-title">
+                        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                              <path d="M20 7l-8-4-8 4m16 0l-8 4m8-4v10l-8 4m0-10L4 7m8 4v10M4 7v10l8 4"></path>
+                        </svg>
+                        Item Details
+                    </h4>
                 
                 <div class="form-row">
                     <div class="form-field">
@@ -188,6 +205,8 @@
                     </div>
                 </div>
             </section>
+
+            
             
             <!-- Modal Footer with Enhanced Actions -->
             <div class="modal-footer">
@@ -211,6 +230,7 @@
                 <div class="footer-info">
                     <small>All fields marked with <span class="required-asterisk">*</span> are required</small>
                 </div>
+            </div>
             </div>
         </form>
     </div>

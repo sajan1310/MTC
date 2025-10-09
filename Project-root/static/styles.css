@@ -312,6 +312,25 @@ body.dark-mode .variants-table th { background-color: rgba(255, 255, 255, 0.02);
 .flash { padding: 1rem; border-radius: 8px; margin-bottom: 1rem; border: 1px solid transparent; transition: opacity 0.5s ease; box-shadow: 0 4px 15px rgba(0,0,0,0.08); }
 .flash.success { background-color: rgba(212, 237, 218, 0.9); color: #155724; border-color: rgba(195, 230, 203, 0.9); }
 .flash.error { background-color: rgba(248, 215, 218, 0.9); color: #721c24; border-color: rgba(245, 198, 203, 0.9); }
+/* Make the modal content a flex container that fills the available height */
+.modal-content {
+  display: flex;
+  flex-direction: column;
+  max-height: 90vh; /* Limit height to 90% of the viewport height */
+}
+
+/* This is the new scrollable container for your form sections */
+.modal-body {
+  flex-grow: 1; /* Allows this element to grow and take up available space */
+  overflow-y: auto; /* Adds a vertical scrollbar ONLY when needed */
+  padding: 0 1.5rem; /* Adds some horizontal padding */
+}
+
+/* Ensure header and footer don't shrink */
+.modal-header, .modal-footer {
+  flex-shrink: 0;
+}
+
 
 /* --- Master Data Modal Styles --- */
 .master-data-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(300px, 1fr)); gap: 2rem; }
@@ -388,4 +407,18 @@ body.dark-mode .icon-btn:hover { background: rgba(255,255,255,0.1); color: var(-
 .variant-cell-compact:hover::after {
   opacity: 1;
   visibility: visible;
+}
+
+@media (max-width: 768px) {
+  /* Change the form rows to stack vertically instead of side-by-side */
+  .form-row {
+    flex-direction: column;
+    gap: 0; /* Remove the gap between stacked items if you have one */
+  }
+
+  /* Ensure form fields take up the full width and have some space */
+  .form-field {
+    width: 100%;
+    margin-bottom: 1rem;
+  }
 }
