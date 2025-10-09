@@ -240,17 +240,21 @@ body:has(.auth-card) .content-wrapper { margin-left: 0; width: 100%; }
 .form-field { flex: 1; min-width: 250px; display: flex; flex-direction: column; }
 label { margin-bottom: 0.5rem; font-weight: 500; font-size: 0.9rem; }
 input, textarea, select { width: 100%; padding: 0.8rem 1rem; border: 1px solid var(--border-color); background-color: var(--input-bg); border-radius: 8px; font-size: 1rem; box-sizing: border-box; transition: all 0.2s ease; color: var(--text-color); }
+/* Targets elements that have BOTH 'stock-input' AND 'compact' classes */
+.stock-input.compact {
+  width: 120px;
+}
 input:focus, textarea:focus, select:focus { outline: none; border-color: var(--primary-color); background-color: var(--card-bg); box-shadow: 0 0 0 3px color-mix(in srgb, var(--primary-color) 30%, transparent); }
 body.dark-mode input:focus, body.dark-mode textarea:focus, body.dark-mode select:focus { background-color: #2D3748; }
 
 /* --- Table-Based Inventory & User Management Styles --- */
-.page-header { display: flex; justify-content: space-between; align-items: center; margin-bottom: 2rem; padding: 0; }
+.page-header { display: flex; justify-content: space-between; align-items: center; margin-bottom: 2rem; padding: 2px; }
 .page-header h2 { margin: 0; }
 .inventory-table-container { margin-top: 1.5rem; overflow-x: auto; }
-.inventory-table { width: 100%; border-collapse: separate; border-spacing: 0 8px; table-layout: auto; }
-.inventory-table th, .inventory-table td { text-align: left; vertical-align: middle; padding: 1rem 1.5rem; }
+.inventory-table { width: 100%; border-collapse: separate; border-spacing: 3px 8px; table-layout: auto; }
+.inventory-table th, .inventory-table td { text-align: left; vertical-align: middle; padding: 25px 20px; }
 .inventory-table th { font-weight: 600; font-size: 0.85rem; color: var(--subtle-text-color); text-transform: uppercase; letter-spacing: 0.5px; border-bottom: 1px solid var(--border-color); white-space: nowrap; }
-.inventory-table td { white-space: normal; }
+.inventory-table td { white-space: normal; padding: 20px 15px; }
 .item-row td { background: var(--table-row-bg); }
 .item-row td:first-child { border-top-left-radius: 12px; border-bottom-left-radius: 12px; }
 .item-row td:last-child { border-top-right-radius: 12px; border-bottom-right-radius: 12px; }
@@ -275,7 +279,7 @@ body.dark-mode .variants-sub-table.matrix .empty-cell { background-color: rgba(2
 .variants-sub-table th, .variants-sub-table td { padding: 0.85rem; border-bottom: 1px solid var(--border-color); }
 .variants-sub-table .stock-input { width: 80px; }
 .stock-cell-container { position: relative; padding-right: 2rem !important; }
-.status-badge { padding: 0.25rem 0.75rem; border-radius: 9999px; font-size: 0.8rem; font-weight: 600; text-transform: uppercase; letter-spacing: 0.5px; }
+.status-badge { padding: 15px 20px; border-radius: 9999px; font-size: 0.8rem; font-weight: 600; text-transform: uppercase; letter-spacing: 0.5px; }
 .status-badge.in-stock { background-color: rgba(74, 222, 128, 0.2); color: #166534; }
 body.dark-mode .status-badge.in-stock { background-color: rgba(74, 222, 128, 0.2); color: #A7F3D0; }
 .status-badge.low-stock { background-color: rgba(251, 146, 60, 0.2); color: #9A3412; }
@@ -284,6 +288,11 @@ body.dark-mode .status-badge.low-stock { background-color: rgba(251, 146, 60, 0.
 .variants-sub-table.matrix .status-badge { position: absolute; top: 50%; right: 0.5rem; transform: translateY(-50%); width: 12px; height: 12px; padding: 0; border: 2px solid white; }
 .variants-sub-table.matrix .status-badge.in-stock { background-color: #34D399; }
 .variants-sub-table.matrix .status-badge.low-stock { background-color: #FBBF24; }
+/* Target the 8th header (th) and 8th data (td) cell in each row */
+.inventory-table th:nth-child(8),
+.inventory-table td:nth-child(8) {
+  min-width: 120px; /* Adjust as needed */
+}
 
 /* --- Modal Styles --- */
 .modal { display: flex; align-items: center; justify-content: center; position: fixed; z-index: 1000; left: 0; top: 0; width: 100%; height: 100%; overflow: auto; background-color: rgba(0,0,0,0.3); backdrop-filter: blur(8px); -webkit-backdrop-filter: blur(8px); }
