@@ -76,165 +76,103 @@
 </div>
 
 <!-- Enhanced Add/Edit Item Modal with Threshold Support -->
-<div id="add-edit-item-modal" class="modal" aria-hidden="true" role="dialog" aria-labelledby="modal-title">
-    <div class="modal-content large">
-        <form id="item-form" novalidate>
-            <input type="hidden" id="item-id" value="">
-            
-            <!-- Modal Header -->
-            <div class="modal-header">
-                <h3 id="modal-title">Add New Item</h3>
-                <button type="button" class="button cancel close-modal-btn" aria-label="Close modal">&times;</button>
-            </div>
-            
-            <!-- Datalists for editable dropdowns -->
-            <datalist id="color-datalist"></datalist>
-            <datalist id="size-datalist"></datalist>
-
-            <div class="modal-body">
-                <!-- General Error Message -->
-                <div id="form-error-message" class="form-error-message" style="display: none;"></div>
-                
-                <!-- Basic Info Section -->
-                <section class="modal-section">
-                    <h4 class="section-title">
-                        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-                            <path d="M3 7h18M3 12h18M3 17h18"></path>
-                        </svg>
-                        Basic Information
-                    </h4>
-                    <p class="section-subtitle">Provide the essential details about the item</p>
-                    
-                    <div class="form-row">
-                        <div class="form-field
-
-                     <!-- Item Details Section -->
-                <section class="modal-section">
-                    <h4 class="section-title">
-                        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-                              <path d="M20 7l-8-4-8 4m16 0l-8 4m8-4v10l-8 4m0-10L4 7m8 4v10M4 7v10l8 4"></path>
-                        </svg>
-                        Item Details
-                    </h4>
-                
-                <div class="form-row">
-                    <div class="form-field">
-                        <label for="item-name" class="required-field">
-                            Item Name
-                            <span class="required-asterisk">*</span>
-                        </label>
-                        <input type="text" 
-                               id="item-name" 
-                               list="item-name-list" 
-                               autocomplete="off" 
-                               required 
-                               placeholder="e.g., Men's Cotton T-Shirt"
-                               maxlength="255">
-                        <datalist id="item-name-list"></datalist>
-                        <small class="field-hint">Enter a unique, descriptive name for this item</small>
-                    </div>
-                    <div class="form-field">
-                        <label for="item-model">Model</label>
-                        <input type="text" 
-                               id="item-model" 
-                               placeholder="e.g., V-Neck Classic"
-                               maxlength="255">
-                        <small class="field-hint">Optional model identifier</small>
-                    </div>
-                </div>
-                
-                <div class="form-row">
-                    <div class="form-field">
-                        <label for="item-variation">Variation</label>
-                        <input type="text" 
-                               id="item-variation" 
-                               placeholder="e.g., Summer Collection 2025"
-                               maxlength="255">
-                        <small class="field-hint">Optional variation or collection name</small>
-                    </div>
-                </div>
-                
-                <div class="form-row">
-                    <div class="form-field full-width">
-                        <label for="item-description">Description</label>
-                        <textarea id="item-description" 
-                                  rows="3" 
-                                  placeholder="A detailed description of the item, including materials, features, or other relevant details..."
-                                  maxlength="1000"></textarea>
-                        <small class="field-hint">Optional detailed description (max 1000 characters)</small>
-                    </div>
-                </div>
-            </section>
-            
-            <!-- Enhanced Variants Section with Threshold Support -->
-            <section class="modal-section">
-                <h4 class="section-title">
-                    <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-                        <path d="M4 7s0-2 3-2 3 2 3 2v1h4V7s0-2 3-2 3 2 3 2v8a3 3 0 01-3 3H7a3 3 0 01-3-3V7z"></path>
-                        <path d="M5 10h14M12 4v3"></path>
-                    </svg>
-                    Item Variants
-                    <span class="section-subtitle">Define color/size combinations with individual stock thresholds</span>
-                </h4>
-                
-                <div class="variants-section">
-                    <div id="variants-list-container" class="variants-table-wrapper">
-                        <!-- Enhanced variants table will be populated here by JS -->
-                        <div class="variants-placeholder">
-                            <svg width="48" height="48" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1">
-                                <circle cx="12" cy="12" r="3"></circle>
-                                <path d="M12 1v6m0 6v6m11-7h-6m-6 0H1"></path>
-                            </svg>
-                            <p>No variants added yet</p>
-                            <small>Click "Add Variant" to create color/size combinations</small>
-                        </div>
-                    </div>
-                    
-                    <div class="variants-actions">
-                        <button type="button" id="add-variant-btn" class="button create">
-                            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-                                <circle cx="12" cy="12" r="10"></circle>
-                                <line x1="12" y1="8" x2="12" y2="16"></line>
-                                <line x1="8" y1="12" x2="16" y2="12"></line>
-                            </svg>
-                            Add Variant
-                        </button>
-                        <small class="variants-hint">
-                            Each variant represents a unique color/size combination with its own stock and threshold
-                        </small>
-                    </div>
-                </div>
-            </section>
-
-            
-            
-            <!-- Modal Footer with Enhanced Actions -->
-            <div class="modal-footer">
-                <div class="footer-actions">
-                    <button type="button" class="button cancel close-modal-btn">
-                        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-                            <line x1="18" y1="6" x2="6" y2="18"></line>
-                            <line x1="6" y1="6" x2="18" y2="18"></line>
-                        </svg>
-                        Cancel
-                    </button>
-                    <button type="submit" class="button create save-item-btn">
-                        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-                            <path d="M19 21H5a2 2 0 01-2-2V5a2 2 0 012-2h11l5 5v11a2 2 0 01-2 2z"></path>
-                            <polyline points="17,21 17,13 7,13 7,21"></polyline>
-                            <polyline points="7,3 7,8 15,8"></polyline>
-                        </svg>
-                        Save Item
-                    </button>
-                </div>
-                <div class="footer-info">
-                    <small>All fields marked with <span class="required-asterisk">*</span> are required</small>
-                </div>
-            </div>
-            </div>
-        </form>
+<form id="item-form" novalidate>
+    <input type="hidden" id="item-id" value="">
+    
+    <div class="modal-header">
+        <h3 id="modal-title">Add New Item</h3>
+        <button type="button" class="button cancel close-modal-btn" aria-label="Close modal">&times;</button>
     </div>
-</div>
+    
+    <datalist id="color-datalist"></datalist>
+    <datalist id="size-datalist"></datalist>
+
+    <div class="modal-body">
+
+        <section class="modal-section">
+            <h4 class="section-title">
+                <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                    <path d="M20 7l-8-4-8 4m16 0l-8 4m8-4v10l-8 4m0-10L4 7m8 4v10M4 7v10l8 4"></path>
+                </svg>
+                Item Details
+            </h4>
+            
+            <div class="form-row">
+                <div class="form-field">
+                    <label for="item-name" class="required-field">Item Name<span class="required-asterisk">*</span></label>
+                    <input type="text" id="item-name" list="item-name-list" autocomplete="off" required placeholder="e.g., Men's Cotton T-Shirt" maxlength="255">
+                    <datalist id="item-name-list"></datalist>
+                    <small class="field-hint">Enter a unique, descriptive name for this item</small>
+                </div>
+                <div class="form-field">
+                    <label for="item-model">Model</label>
+                    <input type="text" id="item-model" placeholder="e.g., V-Neck Classic" maxlength="255">
+                    <small class="field-hint">Optional model identifier</small>
+                </div>
+            </div>
+            
+            <div class="form-row">
+                <div class="form-field">
+                    <label for="item-variation">Variation</label>
+                    <input type="text" id="item-variation" placeholder="e.g., Summer Collection 2025" maxlength="255">
+                    <small class="field-hint">Optional variation or collection name</small>
+                </div>
+            </div>
+            
+            <div class="form-row">
+                <div class="form-field full-width">
+                    <label for="item-description">Description</label>
+                    <textarea id="item-description" rows="3" placeholder="A detailed description..." maxlength="1000"></textarea>
+                    <small class="field-hint">Optional detailed description (max 1000 characters)</small>
+                </div>
+            </div>
+        </section>
+        
+        <section class="modal-section">
+            <h4 class="section-title">
+                <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                    <path d="M4 7s0-2 3-2 3 2 3 2v1h4V7s0-2 3-2 3 2 3 2v8a3 3 0 01-3 3H7a3 3 0 01-3-3V7z"></path>
+                    <path d="M5 10h14M12 4v3"></path>
+                </svg>
+                Item Variants
+                <span class="section-subtitle">Define color/size combinations</span>
+            </h4>
+            
+            <div class="variants-section">
+                <div id="variants-list-container" class="variants-table-wrapper">
+                    <div class="variants-placeholder">
+                        <svg width="48" height="48" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1">
+                            <circle cx="12" cy="12" r="3"></circle>
+                            <path d="M12 1v6m0 6v6m11-7h-6m-6 0H1"></path>
+                        </svg>
+                        <p>No variants added yet</p>
+                        <small>Click "Add Variant" to create combinations</small>
+                    </div>
+                </div>
+                <div class="variants-actions">
+                    <button type="button" id="add-variant-btn" class="button create">
+                        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                            <circle cx="12" cy="12" r="10"></circle>
+                            <line x1="12" y1="8" x2="12" y2="16"></line>
+                            <line x1="8" y1="12" x2="16" y2="12"></line>
+                        </svg>
+                        Add Variant
+                    </button>
+                </div>
+            </div>
+        </section>
+    </div>
+
+    <div class="modal-footer">
+        <div class="footer-actions">
+            <button type="button" class="button cancel close-modal-btn">Cancel</button>
+            <button type="submit" class="button create save-item-btn">Save Item</button>
+        </div>
+        <div class="footer-info">
+            <small>All fields marked with <span class="required-asterisk">*</span> are required</small>
+        </div>
+    </div>
+</form>
 
 <!-- NEW: Master Data Management Modal -->
 <div id="master-data-modal" class="modal" aria-hidden="true" role="dialog" aria-labelledby="master-data-title">
