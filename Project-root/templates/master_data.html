@@ -1,0 +1,46 @@
+{% extends "base.html" %}
+{% block title %}Manage Master Data{% endblock %}
+
+{% block content %}
+<div class="container">
+    <div class="form-card" style="padding: 1.5rem;">
+        <div class="modal-header">
+            <h3 id="master-data-title">Manage Master Data</h3>
+            <a href="{{ url_for('inventory') }}" class="button cancel close-modal-btn" aria-label="Close modal">&times;</a>
+        </div>
+        <div class="master-data-grid">
+            <!-- Colors Card -->
+            <div class="master-data-card">
+                <h3>Colors</h3>
+                <div id="color-list" class="master-list">
+                    <div class="loading-spinner"><span>Loading colors...</span></div>
+                </div>
+                <form id="add-color-form" class="add-new-form">
+                    <input type="text" class="add-new-input" name="name" placeholder="Add new color" required autocomplete="off">
+                    <button class="button create" type="submit">Add</button>
+                </form>
+            </div>
+            <!-- Sizes Card -->
+            <div class="master-data-card">
+                <h3>Sizes</h3>
+                <div id="size-list" class="master-list">
+                    <div class="loading-spinner"><span>Loading sizes...</span></div>
+                </div>
+                <form id="add-size-form" class="add-new-form">
+                    <input type="text" class="add-new-input" name="name" placeholder="Add new size" required autocomplete="off">
+                    <button class="button create" type="submit">Add</button>
+                </form>
+            </div>
+        </div>
+    </div>
+</div>
+{% endblock %}
+
+{% block scripts %}
+<script src="{{ url_for('static', filename='app.js') }}"></script>
+<script>
+document.addEventListener('DOMContentLoaded', function() {
+    App.fetchAndRenderAllMasterData();
+});
+</script>
+{% endblock %}
