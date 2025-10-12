@@ -1,0 +1,9 @@
+Flask
+psycopg2-binary
+python-dotenv
+Authlib
+Flask-Login
+Flask-WTF
+Werkzeug
+pandas
+openpyxl

@@ -14,14 +14,18 @@ from flask_cors import CORS
 from authlib.integrations.flask_client import OAuth
 from flask_login import (LoginManager, UserMixin, login_user, login_required,
                          logout_user, current_user)
+from flask_wtf.csrf import CSRFProtect
 import psycopg2
 import psycopg2.extras
 from psycopg2 import pool
 from werkzeug.security import generate_password_hash, check_password_hash
+from werkzeug.utils import secure_filename
 import logging
+import pandas as pd
 
 app = Flask(__name__)
 app.secret_key = os.environ.get('FLASK_SECRET_KEY', 'a-strong-default-secret-key-for-dev')
+csrf = CSRFProtect(app)
 
 logging.basicConfig(level=logging.INFO)
 CORS(app, supports_credentials=True, origins=["http://127.0.0.1:5000"])
@@ -192,7 +196,7 @@ def profile():
         if file and file.filename:
             uploads_dir = os.path.join(app.root_path, 'static', 'uploads')
             os.makedirs(uploads_dir, exist_ok=True)
-            safe_name = os.path.basename(file.filename)
+            safe_name = secure_filename(file.filename)
             filename = f"{current_user.id}_{uuid.uuid4().hex[:8]}_{safe_name}"
             file.save(os.path.join(uploads_dir, filename))
             profile_path = f"uploads/{filename}"
@@ -226,7 +230,7 @@ def login():
                 cur.execute("SELECT * FROM users WHERE email = %s", (email,))
                 user_row = cur.fetchone()
             
-            if user_row and check_password_hash(user_row.get('password_hash', ''), password):
+            if user_row and check_password_hash(user_row.get('password_hash') or '', password):
                 user = load_user(user_row['user_id'])
                 if user.role == 'pending_approval':
                     flash('Your account is pending approval by an administrator.', 'error')
@@ -427,16 +431,14 @@ def get_items():
             cur.execute("""
                 SELECT 
                     i.item_id, i.name, i.model, i.variation, i.description, i.image_path,
-                    COUNT(v.variant_id) as variant_count,
-                    COALESCE(SUM(v.opening_stock), 0) as total_stock,
-                    COALESCE(SUM(v.threshold), 0) as total_threshold,
+                    (SELECT COUNT(*) FROM item_variant v WHERE v.item_id = i.item_id) as variant_count,
+                    (SELECT COALESCE(SUM(v.opening_stock), 0) FROM item_variant v WHERE v.item_id = i.item_id) as total_stock,
+                    (SELECT COALESCE(SUM(v.threshold), 0) FROM item_variant v WHERE v.item_id = i.item_id) as total_threshold,
                     EXISTS (
                         SELECT 1 FROM item_variant v_check 
                         WHERE v_check.item_id = i.item_id AND v_check.opening_stock <= v_check.threshold
                     ) as has_low_stock_variants
                 FROM item_master i
-                LEFT JOIN item_variant v ON i.item_id = v.item_id
-                GROUP BY i.item_id, i.name, i.model, i.variation, i.description, i.image_path
                 ORDER BY i.name
             """)
             items = cur.fetchall()
@@ -466,7 +468,7 @@ def add_item():
         if file.filename:
             uploads_dir = os.path.join(app.root_path, 'static', 'uploads')
             os.makedirs(uploads_dir, exist_ok=True)
-            safe_name = os.path.basename(file.filename)
+            safe_name = secure_filename(file.filename)
             filename = f"{uuid.uuid4().hex[:8]}_{safe_name}"
             file.save(os.path.join(uploads_dir, filename))
             image_path = f"uploads/{filename}"
@@ -536,7 +538,7 @@ def update_item(item_id):
         if file.filename:
             uploads_dir = os.path.join(app.root_path, 'static', 'uploads')
             os.makedirs(uploads_dir, exist_ok=True)
-            safe_name = os.path.basename(file.filename)
+            safe_name = secure_filename(file.filename)
             filename = f"{uuid.uuid4().hex[:8]}_{safe_name}"
             file.save(os.path.join(uploads_dir, filename))
             image_path = f"uploads/{filename}"
@@ -733,6 +735,172 @@ def update_user_role(user_id):
     except Exception as e:
         app.logger.error(f"Error updating role for user {user_id}: {e}")
         return jsonify({'error': 'Failed to update user role.'}), 500
+
+@app.route('/api/import/preview', methods=['POST'])
+@login_required
+@role_required('admin')
+def import_preview():
+    if 'file' not in request.files:
+        return jsonify({'error': 'No file part'}), 400
+    file = request.files['file']
+    if file.filename == '':
+        return jsonify({'error': 'No selected file'}), 400
+    
+    try:
+        if file.filename.endswith('.csv'):
+            df = pd.read_csv(file)
+        elif file.filename.endswith(('.xls', '.xlsx')):
+            df = pd.read_excel(file)
+        else:
+            return jsonify({'error': 'Unsupported file format'}), 400
+        
+        df.fillna(value='', inplace=True)
+        headers = df.columns.tolist()
+        preview_data = df.head(20).to_dict(orient='records')
+
+        # --- Intelligent Format Detection ---
+        detected_format = 'long' # Default format
+        size_columns = []
+        with get_conn() as (conn, cur):
+            cur.execute("SELECT size_name FROM size_master")
+            db_sizes = {row[0].lower() for row in cur.fetchall()}
+
+        # Heuristic: If more than 2 columns match a size name, it's likely a wide format
+        for header in headers:
+            if str(header).lower() in db_sizes:
+                size_columns.append(header)
+        
+        if len(size_columns) > 2:
+            detected_format = 'wide'
+        
+        app.logger.info(f"Detected import format: {detected_format}. Matched size columns: {size_columns}")
+
+        return jsonify({
+            'headers': headers, 
+            'preview_data': preview_data,
+            'format': detected_format,
+            'size_columns': size_columns # Send matched columns to frontend for pre-mapping
+        })
+    except Exception as e:
+        app.logger.error(f"Error processing file preview: {e}", exc_info=True)
+        return jsonify({'error': 'Failed to process file'}), 500
+
+@app.route('/api/import/commit', methods=['POST'])
+@login_required
+@role_required('admin')
+def import_commit():
+    data = request.json
+    mappings = data.get('mappings')
+    import_data = data.get('data')
+    imported_count = 0
+    processed_count = 0
+
+    if not mappings or not import_data:
+        return jsonify({'error': 'Mappings and data are required'}), 400
+
+    try:
+        df = pd.DataFrame(import_data)
+        app.logger.info(f"Initial DataFrame created with {len(df)} rows.")
+
+        id_vars_original = []
+        stock_cols_original = []
+        id_vars_renamed = {}
+
+        for original_header, db_col in mappings.items():
+            if db_col == 'Stock':
+                stock_cols_original.append(original_header)
+            elif db_col:  # Not 'Stock' and not 'Ignore'
+                id_vars_original.append(original_header)
+                id_vars_renamed[original_header] = db_col
+        
+        # If we have columns mapped to 'Stock', we are in "wide" format and need to unpivot
+        if stock_cols_original:
+            app.logger.info("Wide format detected. Unpivoting data...")
+            df = df.melt(
+                id_vars=id_vars_original,
+                value_vars=stock_cols_original,
+                var_name='Size',
+                value_name='Stock'
+            )
+            df.rename(columns=id_vars_renamed, inplace=True)
+        else: # "Long" format, just rename columns
+            app.logger.info("Long format detected. Renaming columns...")
+            df.rename(columns=mappings, inplace=True)
+
+        required_cols = ['Item', 'Model', 'Variation', 'Description', 'Color', 'Size', 'Stock', 'Unit']
+        for col in required_cols:
+            if col not in df.columns:
+                df[col] = None
+        
+        df.dropna(subset=['Item', 'Color', 'Size', 'Stock'], inplace=True)
+        df['Stock'] = pd.to_numeric(df['Stock'], errors='coerce').fillna(0)
+        
+        processed_count = len(df)
+        app.logger.info(f"DataFrame cleaned. {processed_count} rows remaining for import.")
+        if df.empty:
+            return jsonify({'message': 'Import successful. No valid rows to import after cleaning.'}), 200
+
+        with get_conn() as (conn, cur):
+            grouping_cols = [col for col in ['Item', 'Model', 'Variation'] if col in df.columns and df[col].notna().any()]
+            
+            for group_key, item_group in df.groupby(grouping_cols):
+                keys = group_key if isinstance(group_key, tuple) else (group_key,)
+                group_dict = dict(zip(grouping_cols, keys))
+                
+                name = group_dict.get('Item')
+                model = group_dict.get('Model')
+                variation = group_dict.get('Variation')
+                description = item_group['Description'].dropna().iloc[0] if 'Description' in item_group.columns and not item_group['Description'].dropna().empty else None
+
+                # Check if the item master record already exists
+                cur.execute(
+                    "SELECT item_id FROM item_master WHERE name = %s AND COALESCE(model, '') = %s AND COALESCE(variation, '') = %s",
+                    (name, model or '', variation or '')
+                )
+                existing_item = cur.fetchone()
+
+                if existing_item:
+                    item_id = existing_item[0]
+                    # If a description is provided, update the existing record
+                    if description is not None:
+                        cur.execute(
+                            "UPDATE item_master SET description = %s WHERE item_id = %s",
+                            (description, item_id)
+                        )
+                else:
+                    # Insert a new item master record
+                    cur.execute(
+                        """
+                        INSERT INTO item_master (name, model, variation, description) 
+                        VALUES (%s, %s, %s, %s) 
+                        RETURNING item_id
+                        """,
+                        (name, model, variation, description)
+                    )
+                    item_id = cur.fetchone()[0]
+
+                for _, row in item_group.iterrows():
+                    color_id = get_or_create_master_id(cur, row['Color'], 'color_master', 'color_id', 'color_name')
+                    size_id = get_or_create_master_id(cur, row['Size'], 'size_master', 'size_id', 'size_name')
+                    
+                    cur.execute(
+                        """
+                        INSERT INTO item_variant (item_id, color_id, size_id, opening_stock, unit) 
+                        VALUES (%s, %s, %s, %s, %s) 
+                        ON CONFLICT (item_id, color_id, size_id) 
+                        DO UPDATE SET opening_stock = item_variant.opening_stock + EXCLUDED.opening_stock
+                        """, (item_id, color_id, size_id, row['Stock'], row.get('Unit', 'Pcs'))
+                    )
+                    imported_count += 1
+            conn.commit()
+            
+        success_message = f'Import successful. Processed {processed_count} rows and imported {imported_count} variants.'
+        app.logger.info(success_message)
+        return jsonify({'message': success_message}), 200
+
+    except Exception as e:
+        app.logger.error(f"Error committing import: {e}", exc_info=True)
+        return jsonify({'error': f'An unexpected error occurred: {e}'}), 500
         
 if __name__ == '__main__':
     if not db_pool:
