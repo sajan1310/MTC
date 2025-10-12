@@ -422,8 +422,8 @@ const App = {
           <td data-label="Item Name" class="item-name-cell">
             <span title="${this.escapeHtml(item.description || 'No description provided.')}">${this.escapeHtml(item.name)}</span>
           </td>
-          <td data-label="Model">${this.escapeHtml(item.model || 'N/A')}</td>
-          <td data-label="Variation">${this.escapeHtml(item.variation || 'N/A')}</td>
+          <td data-label="Model">${this.escapeHtml(item.model || '--')}</td>
+          <td data-label="Variation">${this.escapeHtml(item.variation || '--')}</td>
           <td data-label="Variants">${item.variant_count}</td>
           <td data-label="Total Stock" class="total-stock-cell">${item.total_stock}</td>
           <td data-label="Status" class="status-col"><span class="status-badge ${statusClass}">${statusText}</span></td>
