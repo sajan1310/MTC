@@ -3,6 +3,7 @@ import uuid
 from contextlib import contextmanager
 from dotenv import load_dotenv
 from functools import wraps
+import json
 
 # Load environment variables from a .env file
 load_dotenv()
@@ -166,11 +167,11 @@ def home():
 def inventory():
     return render_template('inventory.html')
 
-@app.route('/master-data')
+@app.route('/add_item')
 @login_required
-@role_required('admin', 'super_admin')
-def master_data():
-    return render_template('master_data.html')
+def add_item_page():
+    return render_template('add_item.html')
+
 
 @app.route('/user-management')
 @login_required
@@ -387,6 +388,37 @@ def get_item_names():
         app.logger.error(f"Error fetching item names: {e}")
         return jsonify({'error': 'Failed to fetch item names'}), 500
 
+@app.route('/api/models', methods=['GET'])
+@login_required
+def get_models():
+    item_name = request.args.get('item_name')
+    if not item_name:
+        return jsonify([])
+    try:
+        with get_conn() as (conn, cur):
+            cur.execute("SELECT DISTINCT model FROM item_master WHERE name = %s ORDER BY model", (item_name,))
+            models = [row[0] for row in cur.fetchall() if row[0]]
+        return jsonify(models)
+    except Exception as e:
+        app.logger.error(f"Error fetching models for item {item_name}: {e}")
+        return jsonify({'error': 'Failed to fetch models'}), 500
+
+@app.route('/api/variations', methods=['GET'])
+@login_required
+def get_variations():
+    item_name = request.args.get('item_name')
+    model = request.args.get('model')
+    if not item_name or not model:
+        return jsonify([])
+    try:
+        with get_conn() as (conn, cur):
+            cur.execute("SELECT DISTINCT variation FROM item_master WHERE name = %s AND model = %s ORDER BY variation", (item_name, model))
+            variations = [row[0] for row in cur.fetchall() if row[0]]
+        return jsonify(variations)
+    except Exception as e:
+        app.logger.error(f"Error fetching variations for item {item_name} and model {model}: {e}")
+        return jsonify({'error': 'Failed to fetch variations'}), 500
+
 @app.route('/api/items', methods=['GET'])
 @login_required
 def get_items():
@@ -394,7 +426,7 @@ def get_items():
         with get_conn(cursor_factory=psycopg2.extras.DictCursor) as (conn, cur):
             cur.execute("""
                 SELECT 
-                    i.item_id, i.name, i.model, i.variation, i.description,
+                    i.item_id, i.name, i.model, i.variation, i.description, i.image_path,
                     COUNT(v.variant_id) as variant_count,
                     COALESCE(SUM(v.opening_stock), 0) as total_stock,
                     COALESCE(SUM(v.threshold), 0) as total_threshold,
@@ -404,13 +436,14 @@ def get_items():
                     ) as has_low_stock_variants
                 FROM item_master i
                 LEFT JOIN item_variant v ON i.item_id = v.item_id
-                GROUP BY i.item_id, i.name, i.model, i.variation, i.description
+                GROUP BY i.item_id, i.name, i.model, i.variation, i.description, i.image_path
                 ORDER BY i.name
             """)
             items = cur.fetchall()
             return jsonify([{
                 'id': item['item_id'], 'name': item['name'], 'model': item['model'],
                 'variation': item['variation'], 'description': item['description'],
+                'image_path': item['image_path'],
                 'threshold': int(item['total_threshold'] or 0),
                 'variant_count': item['variant_count'], 
                 'total_stock': int(item['total_stock'] or 0),
@@ -423,22 +456,35 @@ def get_items():
 @app.route('/api/items', methods=['POST'])
 @login_required
 def add_item():
-    data = request.json
+    data = request.form.to_dict()
     if not data.get('name') or 'variants' not in data:
         return jsonify({'error': 'Name and variants are required'}), 400
+    
+    image_path = None
+    if 'image' in request.files:
+        file = request.files['image']
+        if file.filename:
+            uploads_dir = os.path.join(app.root_path, 'static', 'uploads')
+            os.makedirs(uploads_dir, exist_ok=True)
+            safe_name = os.path.basename(file.filename)
+            filename = f"{uuid.uuid4().hex[:8]}_{safe_name}"
+            file.save(os.path.join(uploads_dir, filename))
+            image_path = f"uploads/{filename}"
+
     try:
         with get_conn() as (conn, cur):
             cur.execute(
-                "INSERT INTO item_master (name, model, variation, description) VALUES (%s, %s, %s, %s) RETURNING item_id",
-                (data['name'], data.get('model'), data.get('variation'), data.get('description'))
+                "INSERT INTO item_master (name, model, variation, description, image_path) VALUES (%s, %s, %s, %s, %s) RETURNING item_id",
+                (data['name'], data.get('model'), data.get('variation'), data.get('description'), image_path)
             )
             item_id = cur.fetchone()[0]
-            for v in data.get('variants', []):
+            variants = json.loads(data['variants'])
+            for v in variants:
                 color_id = get_or_create_master_id(cur, v['color'], 'color_master', 'color_id', 'color_name')
                 size_id = get_or_create_master_id(cur, v['size'], 'size_master', 'size_id', 'size_name')
                 cur.execute(
-                    "INSERT INTO item_variant (item_id, color_id, size_id, opening_stock, threshold) VALUES (%s, %s, %s, %s, %s)",
-                    (item_id, color_id, size_id, v.get('opening_stock', 0), v.get('threshold', 5))
+                    "INSERT INTO item_variant (item_id, color_id, size_id, opening_stock, threshold, unit) VALUES (%s, %s, %s, %s, %s, %s)",
+                    (item_id, color_id, size_id, v.get('opening_stock', 0), v.get('threshold', 5), v.get('unit'))
                 )
             conn.commit()
         return jsonify({'message': 'Item saved successfully', 'item_id': item_id}), 201
@@ -461,19 +507,54 @@ def get_item(item_id):
     except Exception as e:
         app.logger.error(f"Error fetching item {item_id}: {e}")
         return jsonify({'error': 'Failed to fetch item'}), 500
+
+@app.route('/api/items/by-name', methods=['GET'])
+@login_required
+def get_item_by_name():
+    item_name = request.args.get('name')
+    if not item_name:
+        return jsonify({'error': 'Item name is required'}), 400
+    try:
+        with get_conn(cursor_factory=psycopg2.extras.DictCursor) as (conn, cur):
+            cur.execute("SELECT * FROM item_master WHERE name = %s", (item_name,))
+            item = cur.fetchone()
+            if not item:
+                return jsonify(None)
+            return jsonify(dict(item))
+    except Exception as e:
+        app.logger.error(f"Error fetching item by name '{item_name}': {e}")
+        return jsonify({'error': 'Failed to fetch item by name'}), 500
         
 @app.route('/api/items/<int:item_id>', methods=['PUT'])
 @login_required
 def update_item(item_id):
-    data = request.json
+    data = request.form.to_dict()
+    
+    image_path = None
+    if 'image' in request.files:
+        file = request.files['image']
+        if file.filename:
+            uploads_dir = os.path.join(app.root_path, 'static', 'uploads')
+            os.makedirs(uploads_dir, exist_ok=True)
+            safe_name = os.path.basename(file.filename)
+            filename = f"{uuid.uuid4().hex[:8]}_{safe_name}"
+            file.save(os.path.join(uploads_dir, filename))
+            image_path = f"uploads/{filename}"
+
     try:
         with get_conn() as (conn, cur):
-            cur.execute(
-                "UPDATE item_master SET name=%s, model=%s, variation=%s, description=%s WHERE item_id=%s",
-                (data['name'], data.get('model'), data.get('variation'), data.get('description'), item_id)
-            )
+            if image_path:
+                cur.execute(
+                    "UPDATE item_master SET name=%s, model=%s, variation=%s, description=%s, image_path=%s WHERE item_id=%s",
+                    (data['name'], data.get('model'), data.get('variation'), data.get('description'), image_path, item_id)
+                )
+            else:
+                cur.execute(
+                    "UPDATE item_master SET name=%s, model=%s, variation=%s, description=%s WHERE item_id=%s",
+                    (data['name'], data.get('model'), data.get('variation'), data.get('description'), item_id)
+                )
             
-            client_variants = data.get('variants', [])
+            client_variants = json.loads(data['variants'])
             client_variant_ids = {v['id'] for v in client_variants if 'id' in v and v['id']}
 
             if client_variant_ids:
@@ -486,13 +567,13 @@ def update_item(item_id):
                 size_id = get_or_create_master_id(cur, v['size'], 'size_master', 'size_id', 'size_name')
                 if 'id' in v and v['id']:
                     cur.execute(
-                        "UPDATE item_variant SET color_id=%s, size_id=%s, opening_stock=%s, threshold=%s WHERE variant_id=%s",
-                        (color_id, size_id, v.get('opening_stock', 0), v.get('threshold', 5), v['id'])
+                        "UPDATE item_variant SET color_id=%s, size_id=%s, opening_stock=%s, threshold=%s, unit=%s WHERE variant_id=%s",
+                        (color_id, size_id, v.get('opening_stock', 0), v.get('threshold', 5), v.get('unit'), v['id'])
                     )
                 else:
                     cur.execute(
-                        "INSERT INTO item_variant (item_id, color_id, size_id, opening_stock, threshold) VALUES (%s, %s, %s, %s, %s)",
-                        (item_id, color_id, size_id, v.get('opening_stock', 0), v.get('threshold', 5))
+                        "INSERT INTO item_variant (item_id, color_id, size_id, opening_stock, threshold, unit) VALUES (%s, %s, %s, %s, %s, %s)",
+                        (item_id, color_id, size_id, v.get('opening_stock', 0), v.get('threshold', 5), v.get('unit'))
                     )
             conn.commit()
         return jsonify({'message': 'Item updated successfully'}), 200
@@ -511,7 +592,7 @@ def get_item_variants(item_id):
             cur.execute("""
                 SELECT 
                     v.variant_id, v.opening_stock, v.threshold, c.color_name, s.size_name,
-                    c.color_id, s.size_id
+                    c.color_id, s.size_id, v.unit
                 FROM item_variant v
                 JOIN color_master c ON v.color_id = c.color_id
                 JOIN size_master s ON v.size_id = s.size_id
@@ -522,7 +603,7 @@ def get_item_variants(item_id):
             return jsonify([{
                 'id': v['variant_id'], 'color': {'id': v['color_id'], 'name': v['color_name']},
                 'size': {'id': v['size_id'], 'name': v['size_name']},
-                'opening_stock': v['opening_stock'], 'threshold': v['threshold']
+                'opening_stock': v['opening_stock'], 'threshold': v['threshold'], 'unit': v['unit']
             } for v in variants])
     except Exception as e:
         app.logger.error(f"Error fetching item variants: {e}")
@@ -658,4 +739,3 @@ if __name__ == '__main__':
         app.logger.error("Application cannot start without a database connection.")
     else:
         app.run(debug=True, port=5000)
-

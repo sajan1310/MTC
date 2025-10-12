@@ -1,0 +1,199 @@
+{% extends "base.html" %}
+{% block title %}Add New Item{% endblock %}
+
+{% block content %}
+<div class="container">
+    <div class="form-card" style="padding: 1.5rem;">
+        <form id="item-form" novalidate>
+            <input type="hidden" id="item-id" value="">
+            
+            <div class="modal-header">
+                <h3 id="modal-title">Add New Item</h3>
+                <button type="button" class="button cancel close-modal-btn" aria-label="Close modal">&times;</button>
+            </div>
+            
+            <datalist id="color-datalist"></datalist>
+            <datalist id="size-datalist"></datalist>
+            <datalist id="unit-datalist">
+                <option value="Units"></option>
+                <option value="Kgs"></option>
+                <option value="Gross"></option>
+                <option value="Pcs"></option>
+                <option value="Grams"></option>
+            </datalist>
+
+            <div class="modal-body">
+
+                <section class="modal-section">
+                    <h4 class="section-title">
+                        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                            <path d="M20 7l-8-4-8 4m16 0l-8 4m8-4v10l-8 4m0-10L4 7m8 4v10M4 7v10l8 4"></path>
+                        </svg>
+                        Item Details
+                    </h4>
+                    
+                    <div class="form-row">
+                        <div class="form-field">
+                            <label for="item-name" class="required-field">Item Name<span class="required-asterisk">*</span></label>
+                            <input type="text" id="item-name" list="item-name-list" autocomplete="off" required placeholder="e.g., Men's Cotton T-Shirt" maxlength="255">
+                            <datalist id="item-name-list"></datalist>
+                            <small class="field-hint">Enter a unique, descriptive name for this item</small>
+                        </div>
+                        <div class="form-field">
+                            <label for="item-model">Model</label>
+                            <select id="item-model" name="item-model" class="editable-select" placeholder="e.g., V-Neck Classic" maxlength="255">
+                                <option value="">Choose...</option>
+                            </select>
+                            <small class="field-hint">Optional model identifier</small>
+                        </div>
+                    </div>
+                    
+                    <div class="form-row">
+                        <div class="form-field">
+                            <label for="item-variation">Variation</label>
+                            <select id="item-variation" name="item-variation" class="editable-select" placeholder="e.g., Summer Collection 2025" maxlength="255">
+                                <option value="">Choose...</option>
+                            </select>
+                            <small class="field-hint">Optional variation or collection name</small>
+                        </div>
+                    </div>
+                    
+                    <div class="form-row">
+                        <div class="form-field full-width">
+                            <label for="item-description">Description</label>
+                            <textarea id="item-description" rows="3" placeholder="A detailed description..." maxlength="1000"></textarea>
+                            <small class="field-hint">Optional detailed description (max 1000 characters)</small>
+                        </div>
+                    </div>
+                    <div class="form-row">
+                        <div class="form-field">
+                            <label for="item-image">Product Image</label>
+                            <input type="file" id="item-image" accept="image/*">
+                            <small class="field-hint">Upload an image for the product</small>
+                        </div>
+                    </div>
+                </section>
+                
+                <section class="modal-section">
+                    <h4 class="section-title">
+                        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                            <path d="M4 7s0-2 3-2 3 2 3 2v1h4V7s0-2 3-2 3 2 3 2v8a3 3 0 01-3 3H7a3 3 0 01-3-3V7z"></path>
+                            <path d="M5 10h14M12 4v3"></path>
+                        </svg>
+                        Item Variants
+                        <span class="section-subtitle">Define color/size combinations</span>
+                    </h4>
+                    
+                    <div class="variants-section">
+                        <div id="variants-list-container" class="variants-table-wrapper">
+                            <div class="variants-placeholder">
+                                <svg width="48" height="48" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1">
+                                    <circle cx="12" cy="12" r="3"></circle>
+                                    <path d="M12 1v6m0 6v6m11-7h-6m-6 0H1"></path>
+                                </svg>
+                                <p>No variants added yet</p>
+                                <small>Click "Add Variant" to create combinations</small>
+                            </div>
+                        </div>
+                        <div class="variants-actions">
+                            <button type="button" id="add-variant-btn" class="button create">
+                                <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                                    <circle cx="12" cy="12" r="10"></circle>
+                                    <line x1="12" y1="8" x2="12" y2="16"></line>
+                                    <line x1="8" y1="12" x2="16" y2="12"></line>
+                                </svg>
+                                Add Variant
+                            </button>
+                        </div>
+                    </div>
+                </section>
+            </div>
+
+            <div class="modal-footer">
+                <div class="footer-actions">
+                    <button type="button" class="button cancel close-modal-btn">Cancel</button>
+                    <button type="submit" class="button create save-item-btn">Save Item</button>
+                </div>
+                <div class="footer-info">
+                    <small>All fields marked with <span class="required-asterisk">*</span> are required</small>
+                </div>
+            </div>
+        </form>
+    </div>
+</div>
+{% endblock %}
+
+{% block scripts %}
+{{ super() }}
+<script>
+document.addEventListener('DOMContentLoaded', function() {
+    const urlParams = new URLSearchParams(window.location.search);
+    const itemId = urlParams.get('edit');
+    const itemForm = document.getElementById('item-form');
+    const modalTitle = document.getElementById('modal-title');
+    const itemIdInput = document.getElementById('item-id');
+
+    // Fetch master data and populate datalists
+    Promise.all([
+        App.fetchMasterData('colors'),
+        App.fetchMasterData('sizes')
+    ]).then(() => {
+        App.populateDatalists();
+    });
+
+    if (itemId) {
+        itemIdInput.value = itemId;
+        modalTitle.textContent = 'Edit Item';
+        
+        // Fetch item data and populate the form
+        Promise.all([
+            App.fetchJson(`${App.apiBase}/items/${itemId}`),
+            App.fetchJson(`${App.apiBase}/items/${itemId}/variants`)
+        ]).then(async ([itemData, variantData]) => {
+            if (itemData && variantData) {
+                await App.fetchItemNames();
+                document.getElementById('item-name').value = itemData.name;
+
+                await App.fetchModels(itemData.name);
+                const modelSelect = $('#item-model');
+                if (itemData.model && modelSelect.find(`option[value="${itemData.model}"]`).length === 0) {
+                    const newOption = new Option(itemData.model, itemData.model, true, true);
+                    modelSelect.append(newOption);
+                }
+                modelSelect.val(itemData.model || '').trigger('change');
+                
+                await App.fetchVariations(itemData.name, itemData.model);
+                const variationSelect = $('#item-variation');
+                if (itemData.variation && variationSelect.find(`option[value="${itemData.variation}"]`).length === 0) {
+                    const newOption = new Option(itemData.variation, itemData.variation, true, true);
+                    variationSelect.append(newOption);
+                }
+                variationSelect.val(itemData.variation || '').trigger('change');
+
+                document.getElementById('item-description').value = itemData.description || '';
+                App.renderVariantsInModal(variantData);
+            }
+        });
+    } else {
+        modalTitle.textContent = 'Add New Item';
+        App.fetchItemNames();
+        App.renderVariantsInModal([]);
+        setTimeout(() => App.addVariantRow(), 100);
+    }
+
+    // Handle closing the page
+    const closeButtons = document.querySelectorAll('.close-modal-btn');
+    closeButtons.forEach(button => {
+        button.addEventListener('click', () => {
+            window.location.href = '/inventory';
+        });
+    });
+
+    // Initialize Select2 for editable dropdowns
+    $('.editable-select').select2({
+        tags: true,
+        width: '100%'
+    });
+});
+</script>
+{% endblock %}

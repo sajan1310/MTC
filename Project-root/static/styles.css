@@ -279,16 +279,18 @@ body:has(.auth-card) .content-wrapper { margin-left: 0; width: 100%; }
 .profile-image { width: 64px; height: 64px; border-radius: 50%; object-fit: cover; }
 
 /* --- Buttons, Forms, Inputs --- */
-.button, button { font-family: var(--font-family); display: inline-flex; align-items: center; justify-content: center; padding: 0.75rem 1.5rem; border: none; border-radius: 8px; font-size: 1rem; font-weight: 600; text-decoration: none; cursor: pointer; transition: all 0.2s ease; }
+.button, button { font-family: var(--font-family); display: inline-flex; align-items: center; justify-content: center; padding: 0.75rem 1.5rem; border: 1px solid transparent; border-radius: 8px; font-size: 1rem; font-weight: 600; text-decoration: none; cursor: pointer; transition: all 0.2s ease; }
 .button.create, button.create { background: var(--primary-color); color: white; box-shadow: 0 4px 15px rgba(0, 0, 0, 0.1); }
 .button.create:hover, button.create:hover { background: var(--primary-hover); transform: translateY(-2px); box-shadow: 0 6px 20px rgba(0, 0, 0, 0.15); }
-.button.cancel, button.cancel { background-color: var(--button-cancel-bg); color: var(--subtle-text-color); }
-.button.cancel:hover, button.cancel:hover { background-color: var(--button-cancel-hover-bg); }
+.button.cancel, button.cancel { background-color: var(--button-cancel-bg); color: var(--subtle-text-color); border-color: var(--border-color); }
+.button.cancel:hover, button.cancel:hover { background-color: var(--button-cancel-hover-bg); border-color: var(--subtle-text-color); }
+.button.danger, button.danger { background-color: var(--danger-color); color: white; }
+.button.danger:hover, button.danger:hover { background-color: #c53030; }
 .button-row { display: flex; justify-content: flex-end; gap: 1rem; margin-top: 1.5rem; width: 100%; }
 .form-row { display: flex; flex-wrap: wrap; gap: 1.5rem; width: 100%; margin-bottom: 1.5rem; }
 .form-field { flex: 1; min-width: 250px; display: flex; flex-direction: column; }
 label { margin-bottom: 0.5rem; font-weight: 500; font-size: 0.9rem; }
-input, textarea, select { width: 100%; padding: 0.8rem 1rem; border: 1px solid var(--border-color); background-color: var(--input-bg); border-radius: 8px; font-size: 1rem; box-sizing: border-box; transition: all 0.2s ease; color: var(--text-color); }
+input, textarea, select { width: 100%; padding: 0.8rem 1rem; border: 1px solid var(--border-color); background-color: var(--input-bg); border-radius: 8px; font-size: 1rem; box-sizing: border-box; transition: all 0.2s ease; color: var(--text-color); -webkit-appearance: none; -moz-appearance: none; appearance: none; }
 /* Targets elements that have BOTH 'stock-input' AND 'compact' classes */
 .stock-input.compact {
   width: 120px;
@@ -297,11 +299,11 @@ input:focus, textarea:focus, select:focus { outline: none; border-color: var(--p
 body.dark-mode input:focus, body.dark-mode textarea:focus, body.dark-mode select:focus { background-color: #2D3748; }
 
 /* --- Table-Based Inventory & User Management Styles --- */
-.page-header { display: flex; justify-content: space-between; align-items: center; margin-bottom: 2rem; padding: 2px; }
+.page-header { display: flex; justify-content: space-between; align-items: center; margin-bottom: 2rem; padding-bottom: 1.5rem; border-bottom: 1px solid var(--border-color); }
 .page-header h2 { margin: 0; }
 .inventory-table-container { margin-top: 1.5rem; overflow-x: auto; }
 .inventory-table { width: 100%; border-collapse: separate; border-spacing: 3px 8px; table-layout: auto; }
-.inventory-table th, .inventory-table td { text-align: left; vertical-align: middle; padding: 25px 20px; }
+.inventory-table th, .inventory-table td { text-align: left; vertical-align: middle; padding: 1.25rem 1rem; }
 .inventory-table th { font-weight: 600; font-size: 0.85rem; color: var(--subtle-text-color); text-transform: uppercase; letter-spacing: 0.5px; border-bottom: 1px solid var(--border-color); white-space: nowrap; }
 .inventory-table td { white-space: normal; padding: 20px 15px; }
 .item-row td { background: var(--table-row-bg); }
@@ -470,4 +472,12 @@ body.dark-mode .icon-btn:hover { background: rgba(255,255,255,0.1); color: var(-
     width: 100%;
     margin-bottom: 1rem;
   }
+}
+
+.item-image-thumbnail {
+  width: 40px;
+  height: 40px;
+  border-radius: 8px;
+  object-fit: cover;
+  margin-right: 1rem;
 }
