@@ -298,6 +298,37 @@ input, textarea, select { width: 100%; padding: 0.8rem 1rem; border: 1px solid v
 input:focus, textarea:focus, select:focus { outline: none; border-color: var(--primary-color); background-color: var(--card-bg); box-shadow: 0 0 0 3px color-mix(in srgb, var(--primary-color) 30%, transparent); }
 body.dark-mode input:focus, body.dark-mode textarea:focus, body.dark-mode select:focus { background-color: #2D3748; }
 
+/* --- Select2 Overrides --- */
+.select2-container--default .select2-selection--single {
+    background-color: var(--input-bg);
+    border: 1px solid var(--border-color);
+    border-radius: 8px;
+    height: auto;
+}
+.select2-container--default .select2-selection--single .select2-selection__rendered {
+    color: var(--text-color);
+    line-height: 2.4;
+    padding-left: 1rem;
+    padding-right: 2rem;
+}
+.select2-container--default .select2-selection--single .select2-selection__arrow {
+    height: 2.4rem;
+    right: 0.5rem;
+}
+.select2-dropdown {
+    background-color: var(--card-bg);
+    border: 1px solid var(--border-color);
+    border-radius: 8px;
+}
+.select2-container--default .select2-search--dropdown .select2-search__field {
+    background-color: var(--input-bg);
+    border: 1px solid var(--border-color);
+    color: var(--text-color);
+}
+.select2-container--default .select2-results__option--highlighted[aria-selected] {
+    background-color: var(--primary-color);
+}
+
 /* --- Table-Based Inventory & User Management Styles --- */
 .page-header { display: flex; justify-content: space-between; align-items: center; margin-bottom: 2rem; padding-bottom: 1.5rem; border-bottom: 1px solid var(--border-color); }
 .page-header h2 { margin: 0; }
