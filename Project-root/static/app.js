@@ -73,6 +73,7 @@ const App = {
     const onReady = () => {
       this.cacheDOMElements();
       this.bindEventListeners();
+      this.initImportModal();
       this.initializeTheme();
       this.fetchInitialData();
       this.setActiveNavItem();
@@ -102,6 +103,8 @@ const App = {
     this.addSizeForm = document.getElementById('add-size-form');
     this.masterColorList = document.getElementById('color-list');
     this.masterSizeList = document.getElementById('size-list');
+    this.importModal = document.getElementById('import-modal');
+    this.importDataBtn = document.getElementById('import-data-btn');
   },
 
   bindEventListeners() {
@@ -182,6 +185,7 @@ const App = {
     if (this.masterSizeList) {
       this.masterSizeList.addEventListener('click', (e) => this.handleMasterActions(e, 'size'));
     }
+
 
     const itemNameInput = document.getElementById('item-name');
     const itemModelSelect = document.getElementById('item-model');
@@ -280,8 +284,10 @@ const App = {
 
   // Fixed: Do not set Content-Type when sending FormData
   async fetchJson(url, options = {}) {
-    const defaultHeaders = { 
-      Accept: 'application/json' 
+    const csrfToken = document.querySelector('meta[name="csrf-token"]').getAttribute('content');
+    const defaultHeaders = {
+      'Accept': 'application/json',
+      'X-CSRFToken': csrfToken
     };
     if (options.body && !(options.body instanceof FormData)) {
       defaultHeaders['Content-Type'] = 'application/json';
@@ -477,6 +483,246 @@ const App = {
         container.innerHTML += `<p style="padding: 1rem; text-align: center;">No variants found.</p>`;
       }
     }
+  },
+
+  // Call this in your constructor or init() after the DOM is ready.
+  initImportModal() {
+    this.importModal = document.getElementById('import-modal');
+    this.importDataBtn = document.getElementById('import-data-btn');
+
+    // Step and button elements
+    this.step1 = document.getElementById('import-step-1');
+    this.step2 = document.getElementById('import-step-2');
+    this.nextBtn = document.getElementById('import-next-btn');
+    this.backBtn = document.getElementById('import-back-btn');
+    this.commitBtn = document.getElementById('import-commit-btn');
+    this.previewContainer = document.getElementById('import-preview-container');
+    this.fileInput = document.getElementById('import-file');
+
+    if (this.importDataBtn) {
+      this.importDataBtn.addEventListener('click', () => this.openImportModal());
+    }
+
+    if (this.importModal) {
+      // Prefer targeting a known button container to avoid false positives.
+      // const btnContainer = this.importModal.querySelector('.modal-actions') || this.importModal;
+      const btnContainer = this.importModal;
+      btnContainer.addEventListener('click', (e) => {
+        const target = e.target;
+        if (!target) return;
+
+        if (target.classList && target.classList.contains('close-modal-btn')) {
+          this.closeImportModal();
+          return;
+        }
+        const id = target.id;
+        if (id === 'import-next-btn') {
+          this.handleImportNext();
+        } else if (id === 'import-back-btn') {
+          this.handleImportBack();
+        } else if (id === 'import-commit-btn') {
+          this.handleImportCommit();
+        }
+      });
+    }
+  },
+
+ openImportModal() {
+  console.log('Opening import modal...');
+  if (!this.importModal) return;
+
+  // Clear any old inline style
+  this.importModal.style.removeProperty('display');
+
+  // Ensure it's visible
+  this.importModal.style.display = 'block';
+
+  // Add the 'is-open' class for transitions, opacity, etc.
+  this.importModal.classList.add('is-open');
+},
+
+
+
+  closeImportModal() {
+    if (this.importModal) {
+      this.importModal.classList.remove('is-open');
+    }
+  },
+
+  async handleImportNext() {
+    try {
+      if (!this.fileInput) {
+        this.showNotification?.('File input not found.', 'error');
+        return;
+      }
+      const file = this.fileInput.files?.[0];
+      if (!file) {
+        this.showNotification?.('Please select a file to import.', 'error');
+        return;
+      }
+
+      const formData = new FormData();
+      formData.append('file', file);
+
+      const response = await this.fetchJson('/api/import/preview', {
+        method: 'POST',
+        body: formData,
+      });
+
+      // Expecting { headers: string[], preview_data: Array<Record<string,string>> }
+      if (!response || !Array.isArray(response.headers) || !Array.isArray(response.preview_data)) {
+        this.showNotification?.('Invalid preview response from server.', 'error');
+        return;
+      }
+
+      this.renderImportPreview(response);
+
+      if (this.step1) this.step1.style.display = 'none';
+      if (this.step2) this.step2.style.display = 'block';
+      if (this.nextBtn) this.nextBtn.style.display = 'none';
+      if (this.backBtn) this.backBtn.style.display = 'block';
+      if (this.commitBtn) this.commitBtn.style.display = 'block';
+    } catch (err) {
+      console.error(err);
+      this.showNotification?.('Failed to load import preview.', 'error');
+    }
+  },
+
+  handleImportBack() {
+    if (this.step1) this.step1.style.display = 'block';
+    if (this.step2) this.step2.style.display = 'none';
+    if (this.nextBtn) this.nextBtn.style.display = 'block';
+    if (this.backBtn) this.backBtn.style.display = 'none';
+    if (this.commitBtn) this.commitBtn.style.display = 'none';
+  },
+
+  async handleImportCommit() {
+    try {
+      // Collect selected mappings from header selects
+      const mappingSelects = this.previewContainer
+        ? this.previewContainer.querySelectorAll('thead th select')
+        : [];
+
+      if (!mappingSelects || mappingSelects.length === 0) {
+        this.showNotification?.('No mappings found. Please re-run preview.', 'error');
+        return;
+      }
+
+      const mappings = {};
+      const headerMapping = Array.from(mappingSelects).map(select => {
+        const originalHeader = select.dataset.originalHeader || '';
+        const chosenDbColumn = select.value || '';
+        if (originalHeader) {
+          mappings[originalHeader] = chosenDbColumn;
+        }
+        return { original: originalHeader, chosen: chosenDbColumn };
+      });
+
+      // Extract table body data using the original header order
+      const data = [];
+      const rows = this.previewContainer
+        ? this.previewContainer.querySelectorAll('tbody tr')
+        : [];
+
+      rows.forEach((row) => {
+        const rowData = {};
+        const cells = row.querySelectorAll('td');
+        cells.forEach((cell, i) => {
+          const headerInfo = headerMapping[i];
+          if (headerInfo && headerInfo.original) {
+            // Use the original header as the key for the data payload
+            rowData[headerInfo.original] = cell.textContent ?? '';
+          }
+        });
+        data.push(rowData);
+      });
+
+      // Validate minimal data presence
+      if (data.length === 0) {
+        this.showNotification?.('No data to commit. Please re-run preview.', 'error');
+        return;
+      }
+
+      const response = await this.fetchJson('/api/import/commit', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' }, // important
+        body: JSON.stringify({ mappings, data }),
+      });
+
+      if (response?.message) {
+        this.showNotification?.(response.message, 'success');
+      } else {
+        this.showNotification?.('Import committed.', 'success');
+      }
+
+      this.closeImportModal();
+      this.fetchItems?.();
+    } catch (err) {
+      console.error(err);
+      this.showNotification?.('Failed to commit import.', 'error');
+    }
+  },
+
+  renderImportPreview({ headers, preview_data }) {
+    if (!this.previewContainer) return;
+
+    const dbColumns = [
+      'Item', 'Model', 'Variation', 'Description',
+      'Color', 'Size', 'Stock', 'Unit'
+    ];
+
+    // Clear any previous preview
+    this.previewContainer.innerHTML = '';
+
+    const table = document.createElement('table');
+    table.className = 'inventory-table';
+
+    const thead = document.createElement('thead');
+    const headerRow = document.createElement('tr');
+
+    headers.forEach((header) => {
+      const th = document.createElement('th');
+      const select = document.createElement('select');
+      select.dataset.originalHeader = header;
+
+      // Add an explicit "Ignore" option in case a column should be skipped
+      const ignoreOption = document.createElement('option');
+      ignoreOption.value = '';
+      ignoreOption.textContent = '— Ignore —';
+      select.appendChild(ignoreOption);
+
+      dbColumns.forEach((col) => {
+        const option = document.createElement('option');
+        option.value = col;
+        option.textContent = col;
+        if (col.toLowerCase() === String(header).toLowerCase()) {
+          option.selected = true;
+        }
+        select.appendChild(option);
+      });
+
+      th.appendChild(select);
+      headerRow.appendChild(th);
+    });
+
+    thead.appendChild(headerRow);
+    table.appendChild(thead);
+
+    const tbody = document.createElement('tbody');
+    preview_data.forEach((row) => {
+      const tr = document.createElement('tr');
+      headers.forEach((header) => {
+        const td = document.createElement('td');
+        // Guard for undefined keys
+        td.textContent = row?.[header] != null ? String(row[header]) : '';
+        td.contentEditable = true; // allow inline correction before commit
+        tr.appendChild(td);
+      });
+      tbody.appendChild(tr);
+    });
+    table.appendChild(tbody);
+
+    this.previewContainer.appendChild(table);
   },
 
   renderVariantMatrix(container, variants) {

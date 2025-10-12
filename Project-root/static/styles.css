@@ -5,23 +5,23 @@
 /* --- Global & Variables --- */
 :root {
     /* Light Mode Palette */
-    --primary-color: #5A67D8;
-    --primary-hover: #4C51BF;
+    --primary-color: #6C63FF;
+    --primary-hover: #574BDB;
     --danger-color: #E53E3E;
-    --text-color: #2D3748;
+    --text-color: #1A202C;
     --subtle-text-color: #718096;
-    --border-color: rgba(0, 0, 0, 0.1);
-    --bg-color: linear-gradient(120deg, #EBF4FF 0%, #E6FFFA 100%);
-    --card-bg: rgba(255, 255, 255, 0.7);
-    --input-bg: rgba(255, 255, 255, 0.7);
-    --table-row-bg: rgba(255, 255, 255, 0.7);
-    --shadow-color: rgba(31, 38, 135, 0.08);
-    --modal-bg: rgba(255, 255, 255, 0.95);
-    --sidebar-bg: rgba(255, 255, 255, 0.4);
-    --header-bg: rgba(255, 255, 255, 0.4);
-    --button-cancel-bg: rgba(255, 255, 255, 0.7);
-    --button-cancel-hover-bg: white;
-    --divider-text-bg: rgba(255, 255, 255, 0.7);
+    --border-color: #E2E8F0;
+    --bg-color: #F7FAFC;
+    --card-bg: #FFFFFF;
+    --input-bg: #FFFFFF;
+    --table-row-bg: #FFFFFF;
+    --shadow-color: rgba(0, 0, 0, 0.05);
+    --modal-bg: #FFFFFF;
+    --sidebar-bg: #FFFFFF;
+    --header-bg: rgba(255, 255, 255, 0.8);
+    --button-cancel-bg: #F7FAFC;
+    --button-cancel-hover-bg: #EDF2F7;
+    --divider-text-bg: #FFFFFF;
 
     /* Shared Variables */
     --font-family: 'Inter', sans-serif;
@@ -38,18 +38,18 @@ body.dark-mode {
     --danger-color: #FC8181;
     --text-color: #E2E8F0;
     --subtle-text-color: #A0AEC0;
-    --border-color: rgba(255, 255, 255, 0.1);
-    --bg-color: linear-gradient(120deg, #1A202C 0%, #2D3748 100%);
-    --card-bg: rgba(45, 55, 72, 0.7);
-    --input-bg: rgba(74, 85, 104, 0.5);
-    --table-row-bg: rgba(45, 55, 72, 0.7);
+    --border-color: #2D3748;
+    --bg-color: #1A202C;
+    --card-bg: #2D3748;
+    --input-bg: #1A202C;
+    --table-row-bg: #2D3748;
     --shadow-color: rgba(0, 0, 0, 0.2);
-    --modal-bg: rgba(26, 32, 44, 0.95);
-    --sidebar-bg: rgba(26, 32, 44, 0.4);
-    --header-bg: rgba(26, 32, 44, 0.4);
-    --button-cancel-bg: rgba(74, 85, 104, 0.5);
-    --button-cancel-hover-bg: rgba(74, 85, 104, 0.8);
-    --divider-text-bg: var(--card-bg);
+    --modal-bg: #2D3748;
+    --sidebar-bg: #2D3748;
+    --header-bg: rgba(45, 55, 72, 0.8);
+    --button-cancel-bg: #4A5568;
+    --button-cancel-hover-bg: #2D3748;
+    --divider-text-bg: #2D3748;
 }
 
 body {
@@ -71,8 +71,6 @@ body {
 .sidebar {
     width: var(--sidebar-width);
     background: var(--sidebar-bg);
-    backdrop-filter: blur(25px);
-    -webkit-backdrop-filter: blur(25px);
     border-right: 1px solid var(--border-color);
     height: 100vh;
     position: fixed;
@@ -95,8 +93,8 @@ body {
 }
 .main-header {
     background: var(--header-bg);
-    backdrop-filter: blur(25px);
-    -webkit-backdrop-filter: blur(25px);
+    backdrop-filter: blur(10px);
+    -webkit-backdrop-filter: blur(10px);
     border-bottom: 1px solid var(--border-color);
     padding: 0 2rem;
     height: var(--header-height);
@@ -179,58 +177,53 @@ body.dark-mode .theme-toggle-btn .moon-icon { display: block; }
 .user-menu > a { display: flex; align-items: center; gap: 0.5rem; text-decoration: none; color: var(--text-color); font-weight: 500; }
 .profile-pic-small { width: 36px; height: 36px; border-radius: 50%; object-fit: cover; }
 
-/* ---------------------------------- */
-/* MODAL STYLES              */
-/* ---------------------------------- */
-
-/* The main modal container (the dark, full-screen overlay) */
+/* --- Modal Styles --- */
 .modal {
-  /* Core Positioning */
-  position: fixed; /* Lifts the element out of the page flow */
+  position: fixed;
   top: 0;
   left: 0;
   width: 100%;
   height: 100%;
-  
-  /* Centering */
   display: flex;
   justify-content: center;
   align-items: center;
-  
-  /* Appearance */
-  background-color: rgba(0, 0, 0, 0.6); /* Semi-transparent black background */
-  
-  /* Animation and Visibility */
+  background-color: rgba(0, 0, 0, 0.5);
+  backdrop-filter: blur(8px);
+  -webkit-backdrop-filter: blur(8px);
   opacity: 0;
   visibility: hidden;
   transition: opacity 0.3s ease, visibility 0.3s ease;
-  z-index: 1000; /* Ensures it's on top of all other content */
+  z-index: 1000;
+  padding: 1rem; /* Add padding for small screens */
+  box-sizing: border-box;
 }
 
-/* This class will be added by JavaScript to show the modal */
+/* This class is used by JS to show the modal */
 .modal.is-open {
   opacity: 1;
   visibility: visible;
 }
 
-/* The content box of the modal (the white/dark card) */
 .modal-content {
-  background: var(--card-bg, #fff); /* Uses your theme variable or defaults to white */
-  padding: 1.5rem;
-  border-radius: 8px;
-  box-shadow: 0 5px 15px rgba(0, 0, 0, 0.3);
-  width: 90%; /* Responsive width */
-  max-width: 800px; /* A maximum width for larger screens */
-  
-  /* This is for the scrolling fix we implemented */
+  background: var(--modal-bg);
+  padding: 2rem;
+  border-radius: 16px;
+  box-shadow: 0 10px 40px rgba(0,0,0,0.1);
+  width: 100%; /* Let padding control the distance from edge */
+  max-width: 600px;
   display: flex;
   flex-direction: column;
-  max-height: 90vh; /* Limits height to 90% of the screen */
+  max-height: calc(100vh - 2rem); /* Consider parent padding */
+  overflow: hidden; /* Prevent content from spilling out */
+}
+
+.modal-content.large {
+  max-width: 800px;
 }
 
 /* === THIS IS THE REWRITTEN & OPTIMIZED SECTION === */
 /* --- Cards & Auth Pages --- */
-.form-card { background: var(--card-bg); backdrop-filter: blur(15px); -webkit-backdrop-filter: blur(15px); padding: 2.5rem; border-radius: 16px; border: 1px solid var(--border-color); box-shadow: 0 8px 32px 0 var(--shadow-color); }
+.form-card { background: var(--card-bg); padding: 2.5rem; border-radius: 16px; border: 1px solid var(--border-color); box-shadow: 0 4px 6px -1px var(--shadow-color), 0 2px 4px -1px var(--shadow-color); }
 .auth-card { margin: 3rem auto; max-width: 420px; }
 body:has(.auth-card) .sidebar, body:has(.auth-card) .main-header { display: none; }
 body:has(.auth-card) .content-wrapper { margin-left: 0; width: 100%; }
@@ -279,8 +272,8 @@ body:has(.auth-card) .content-wrapper { margin-left: 0; width: 100%; }
 .profile-image { width: 64px; height: 64px; border-radius: 50%; object-fit: cover; }
 
 /* --- Buttons, Forms, Inputs --- */
-.button, button { font-family: var(--font-family); display: inline-flex; align-items: center; justify-content: center; padding: 0.75rem 1.5rem; border: 1px solid transparent; border-radius: 8px; font-size: 1rem; font-weight: 600; text-decoration: none; cursor: pointer; transition: all 0.2s ease; }
-.button.create, button.create { background: var(--primary-color); color: white; box-shadow: 0 4px 15px rgba(0, 0, 0, 0.1); }
+.button, button { font-family: var(--font-family); display: inline-flex; align-items: center; justify-content: center; padding: 0.65rem 1.25rem; border: 1px solid transparent; border-radius: 8px; font-size: 0.95rem; font-weight: 600; text-decoration: none; cursor: pointer; transition: all 0.2s ease; }
+.button.create, button.create { background: var(--primary-color); color: white; box-shadow: 0 1px 3px 0 var(--shadow-color), 0 1px 2px 0 var(--shadow-color); }
 .button.create:hover, button.create:hover { background: var(--primary-hover); transform: translateY(-2px); box-shadow: 0 6px 20px rgba(0, 0, 0, 0.15); }
 .button.cancel, button.cancel { background-color: var(--button-cancel-bg); color: var(--subtle-text-color); border-color: var(--border-color); }
 .button.cancel:hover, button.cancel:hover { background-color: var(--button-cancel-hover-bg); border-color: var(--subtle-text-color); }
@@ -376,12 +369,15 @@ body.dark-mode .status-badge.low-stock { background-color: rgba(251, 146, 60, 0.
   min-width: 120px; /* Adjust as needed */
 }
 
-/* --- Modal Styles --- */
-.modal { display: flex; align-items: center; justify-content: center; position: fixed; z-index: 1000; left: 0; top: 0; width: 100%; height: 100%; overflow: auto; background-color: rgba(0,0,0,0.3); backdrop-filter: blur(8px); -webkit-backdrop-filter: blur(8px); }
-.modal[aria-hidden="true"] { display: none; }
-.modal-content { background: var(--modal-bg); padding: 2.5rem; border-radius: 16px; width: 90%; max-width: 600px; box-shadow: 0 10px 40px rgba(0,0,0,0.1); }
-.modal-content.large { max-width: 800px; }
-.modal-header { display: flex; justify-content: space-between; align-items: center; border-bottom: 1px solid var(--border-color); padding-bottom: 1.5rem; margin-bottom: 1.5rem; }
+.modal-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  border-bottom: 1px solid var(--border-color);
+  padding-bottom: 1.5rem;
+  margin-bottom: 1.5rem;
+  padding: 0 0 1.5rem 0; /* Adjusted padding */
+}
 .modal-header h3 { margin: 0; }
 #add-edit-item-modal section { margin-bottom: 2.5rem; }
 #add-edit-item-modal section h4 { margin-top: 0; margin-bottom: 1.5rem; color: var(--subtle-text-color); font-size: 1.1rem; font-weight: 500; }
@@ -394,23 +390,27 @@ body.dark-mode .variants-table th { background-color: rgba(255, 255, 255, 0.02);
 .flash { padding: 1rem; border-radius: 8px; margin-bottom: 1rem; border: 1px solid transparent; transition: opacity 0.5s ease; box-shadow: 0 4px 15px rgba(0,0,0,0.08); }
 .flash.success { background-color: rgba(212, 237, 218, 0.9); color: #155724; border-color: rgba(195, 230, 203, 0.9); }
 .flash.error { background-color: rgba(248, 215, 218, 0.9); color: #721c24; border-color: rgba(245, 198, 203, 0.9); }
-/* Make the modal content a flex container that fills the available height */
-.modal-content {
-  display: flex;
-  flex-direction: column;
-  max-height: 90vh; /* Limit height to 90% of the viewport height */
-}
 
 /* This is the new scrollable container for your form sections */
 .modal-body {
   flex-grow: 1; /* Allows this element to grow and take up available space */
   overflow-y: auto; /* Adds a vertical scrollbar ONLY when needed */
-  padding: 0 1.5rem; /* Adds some horizontal padding */
+  padding: 1.5rem 0.5rem; /* Adjusted padding */
 }
 
 /* Ensure header and footer don't shrink */
 .modal-header, .modal-footer {
   flex-shrink: 0;
+}
+
+.modal-footer {
+    display: flex;
+    justify-content: flex-end;
+    gap: 1rem;
+    padding-top: 1.5rem;
+    margin-top: auto; /* Pushes footer to the bottom */
+    border-top: 1px solid var(--border-color);
+    padding: 1.5rem 0 0 0; /* Adjusted padding */
 }
 
 
@@ -511,4 +511,52 @@ body.dark-mode .icon-btn:hover { background: rgba(255,255,255,0.1); color: var(-
   border-radius: 8px;
   object-fit: cover;
   margin-right: 1rem;
+}
+
+/* --- Import Modal Specific Styles --- */
+#import-step-1, #import-step-2 {
+  padding: 1rem 0.5rem; /* Add horizontal padding */
+}
+
+#import-step-1 .form-field {
+    margin-bottom: 1rem;
+}
+
+#import-step-1 h4, #import-step-2 h4 {
+  margin-top: 0;
+  margin-bottom: 1rem;
+  font-weight: 600;
+}
+
+#import-step-1 p, #import-step-2 p {
+  margin-top: 0;
+  margin-bottom: 1.5rem;
+  color: var(--subtle-text-color);
+  font-size: 0.95rem;
+}
+
+#import-preview-container {
+  max-height: 45vh;
+  overflow-y: auto;
+  border: 1px solid var(--border-color);
+  border-radius: 8px;
+  margin-top: 1rem;
+}
+
+#import-preview-container .inventory-table {
+  border-spacing: 0;
+}
+
+#import-preview-container .inventory-table th {
+  position: sticky;
+  top: 0;
+  background: var(--card-bg);
+  z-index: 1;
+}
+
+#import-preview-container .inventory-table th select {
+  width: 100%;
+  min-width: 150px;
+  padding: 0.5rem;
+  font-size: 0.9rem;
 }

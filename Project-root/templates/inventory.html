@@ -27,6 +27,14 @@
                 </div>
             </div>
             <div class="header-actions">
+                <button id="import-data-btn" class="button">
+                    <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                        <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"></path>
+                        <polyline points="17 8 12 3 7 8"></polyline>
+                        <line x1="12" y1="3" x2="12" y2="15"></line>
+                    </svg>
+                    Import Data
+                </button>
                 <button id="add-item-btn" class="button create">
                     <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
                         <circle cx="12" cy="12" r="10"></circle>
@@ -81,6 +89,42 @@
             <div class="spinner"></div>
         </div>
         <p>Processing your request...</p>
+    </div>
+</div>
+
+<!-- Import Modal -->
+<div id="import-modal" class="modal" align:center" >
+    <div class="modal-content large">
+        <div class="modal-header">
+            <h3>Import Data</h3>
+            <button type="button" class="button cancel close-modal-btn" aria-label="Close modal">&times;</button>
+        </div>
+        <div class="modal-body">
+            <!-- Step 1: File Upload & Instructions -->
+            <div id="import-step-1">
+                <h4>Step 1: Upload File</h4>
+                <p>Upload a CSV or Excel file with your inventory data. Please ensure the file includes the following columns: <strong>Item, Model, Variation, Description, Color, Size, Stock, Unit</strong>.</p>
+                <div class="form-field">
+                    <label for="import-file">File</label>
+                    <input type="file" id="import-file" accept=".csv, application/vnd.openxmlformats-officedocument.spreadsheetml.sheet, application/vnd.ms-excel">
+                </div>
+                <div class="form-field">
+                    <label for="import-delimiter">Delimiter</label>
+                    <input type="text" id="import-delimiter" value=",">
+                </div>
+            </div>
+            <!-- Step 2: Data Preview & Mapping -->
+            <div id="import-step-2" style="display: none;">
+                <h4>Step 2: Preview and Map Data</h4>
+                <p>Review the data and map the columns to the correct fields.</p>
+                <div id="import-preview-container"></div>
+            </div>
+        </div>
+        <div class="modal-footer">
+            <button type="button" class="button" id="import-back-btn" style="display: none;">Back</button>
+            <button type="button" class="button create" id="import-next-btn">Next</button>
+            <button type="button" class="button create" id="import-commit-btn" style="display: none;">Commit Import</button>
+        </div>
     </div>
 </div>
 {% endblock %}
