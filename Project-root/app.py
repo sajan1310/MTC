@@ -741,166 +741,139 @@ def update_user_role(user_id):
 @role_required('admin')
 def import_preview():
     if 'file' not in request.files:
-        return jsonify({'error': 'No file part'}), 400
+        return jsonify({'error':'No file part'}), 400
     file = request.files['file']
     if file.filename == '':
-        return jsonify({'error': 'No selected file'}), 400
-    
+        return jsonify({'error':'No selected file'}), 400
     try:
-        if file.filename.endswith('.csv'):
-            df = pd.read_csv(file)
-        elif file.filename.endswith(('.xls', '.xlsx')):
-            df = pd.read_excel(file)
-        else:
-            return jsonify({'error': 'Unsupported file format'}), 400
-        
-        df.fillna(value='', inplace=True)
+        df = (pd.read_csv(file) if file.filename.endswith('.csv')
+              else pd.read_excel(file) if file.filename.lower().endswith(('.xls','xlsx'))
+              else None)
+        if df is None:
+            return jsonify({'error':'Unsupported file format'}), 400
+
+        df.fillna('', inplace=True)
         headers = df.columns.tolist()
         preview_data = df.head(20).to_dict(orient='records')
 
-        # --- Intelligent Format Detection ---
-        detected_format = 'long' # Default format
-        size_columns = []
         with get_conn() as (conn, cur):
             cur.execute("SELECT size_name FROM size_master")
-            db_sizes = {row[0].lower() for row in cur.fetchall()}
+            db_sizes = {r[0].lower() for r in cur.fetchall()}
 
-        # Heuristic: If more than 2 columns match a size name, it's likely a wide format
-        for header in headers:
-            if str(header).lower() in db_sizes:
-                size_columns.append(header)
-        
-        if len(size_columns) > 2:
-            detected_format = 'wide'
-        
-        app.logger.info(f"Detected import format: {detected_format}. Matched size columns: {size_columns}")
+        size_cols = [h for h in headers if h.lower() in db_sizes]
+        detected_fmt = 'wide' if len(size_cols)>2 else 'long'
+        app.logger.info(f"Detected {detected_fmt} with sizes {size_cols}")
 
         return jsonify({
-            'headers': headers, 
+            'headers': headers,
             'preview_data': preview_data,
-            'format': detected_format,
-            'size_columns': size_columns # Send matched columns to frontend for pre-mapping
+            'format': detected_fmt,
+            'size_columns': size_cols
         })
     except Exception as e:
-        app.logger.error(f"Error processing file preview: {e}", exc_info=True)
-        return jsonify({'error': 'Failed to process file'}), 500
+        app.logger.error(f"Preview error: {e}", exc_info=True)
+        return jsonify({'error': str(e)}), 500
+
 
 @app.route('/api/import/commit', methods=['POST'])
 @login_required
 @role_required('admin')
 def import_commit():
-    data = request.json
-    mappings = data.get('mappings')
-    import_data = data.get('data')
-    imported_count = 0
-    processed_count = 0
-
+    data = request.get_json(force=True)
+    mappings = data.get('mappings', {})
+    import_data = data.get('data', [])
     if not mappings or not import_data:
-        return jsonify({'error': 'Mappings and data are required'}), 400
+        return jsonify({'error': 'Mappings and data required'}), 400
 
     try:
         df = pd.DataFrame(import_data)
-        app.logger.info(f"Initial DataFrame created with {len(df)} rows.")
 
-        id_vars_original = []
-        stock_cols_original = []
-        id_vars_renamed = {}
-
-        for original_header, db_col in mappings.items():
-            if db_col == 'Stock':
-                stock_cols_original.append(original_header)
-            elif db_col:  # Not 'Stock' and not 'Ignore'
-                id_vars_original.append(original_header)
-                id_vars_renamed[original_header] = db_col
+        # Detect wide format by checking if multiple source columns map to 'Stock'
+        stock_source_cols = [src for src, dst in mappings.items() if dst == 'Stock']
         
-        # If we have columns mapped to 'Stock', we are in "wide" format and need to unpivot
-        if stock_cols_original:
-            app.logger.info("Wide format detected. Unpivoting data...")
+        if len(stock_source_cols) > 1:  # Wide format detected
+            # Identify columns that are NOT stock or ignored, these are the identifiers
+            id_vars_source_cols = [src for src, dst in mappings.items() if dst and dst not in ('Stock', 'Ignore')]
+            
+            # Melt the DataFrame to turn size columns into rows
             df = df.melt(
-                id_vars=id_vars_original,
-                value_vars=stock_cols_original,
-                var_name='Size',
-                value_name='Stock'
+                id_vars=id_vars_source_cols,
+                value_vars=stock_source_cols,
+                var_name='Size',  # The new 'Size' column will get its values from the old column headers
+                value_name='Stock' # The new 'Stock' column will get its values from the old cell values
             )
-            df.rename(columns=id_vars_renamed, inplace=True)
-        else: # "Long" format, just rename columns
-            app.logger.info("Long format detected. Renaming columns...")
+            
+            # Create a map to rename the identifier columns to their final names
+            final_rename_map = {src: dst for src, dst in mappings.items() if src in id_vars_source_cols}
+            df.rename(columns=final_rename_map, inplace=True)
+
+        else:  # Long format
             df.rename(columns=mappings, inplace=True)
 
-        required_cols = ['Item', 'Model', 'Variation', 'Description', 'Color', 'Size', 'Stock', 'Unit']
-        for col in required_cols:
+        # Ensure all required columns exist, filling missing ones with blanks
+        for col in ['Item', 'Model', 'Variation', 'Description', 'Color', 'Size', 'Stock', 'Unit']:
             if col not in df.columns:
-                df[col] = None
-        
+                df[col] = ''
+
+        # Clean data: drop rows without essential info and convert stock to a number
         df.dropna(subset=['Item', 'Color', 'Size', 'Stock'], inplace=True)
-        df['Stock'] = pd.to_numeric(df['Stock'], errors='coerce').fillna(0)
-        
-        processed_count = len(df)
-        app.logger.info(f"DataFrame cleaned. {processed_count} rows remaining for import.")
-        if df.empty:
-            return jsonify({'message': 'Import successful. No valid rows to import after cleaning.'}), 200
+        df['Stock'] = pd.to_numeric(df['Stock'], errors='coerce').fillna(0).astype(int)
 
+        processed = len(df)
+        if processed == 0:
+            return jsonify({'message': 'No valid rows after cleaning'}), 200
+
+        imported = 0
         with get_conn() as (conn, cur):
-            grouping_cols = [col for col in ['Item', 'Model', 'Variation'] if col in df.columns and df[col].notna().any()]
-            
-            for group_key, item_group in df.groupby(grouping_cols):
-                keys = group_key if isinstance(group_key, tuple) else (group_key,)
-                group_dict = dict(zip(grouping_cols, keys))
-                
-                name = group_dict.get('Item')
-                model = group_dict.get('Model')
-                variation = group_dict.get('Variation')
-                description = item_group['Description'].dropna().iloc[0] if 'Description' in item_group.columns and not item_group['Description'].dropna().empty else None
+            # Group by the main item to handle variants efficiently
+            grouping = [c for c in ['Item', 'Model', 'Variation'] if c in df.columns]
+            for key, group in df.groupby(grouping):
+                keys = key if isinstance(key, tuple) else (key,)
+                vals = dict(zip(grouping, keys))
 
-                # Check if the item master record already exists
+                # Find existing item_master or create a new one
                 cur.execute(
-                    "SELECT item_id FROM item_master WHERE name = %s AND COALESCE(model, '') = %s AND COALESCE(variation, '') = %s",
-                    (name, model or '', variation or '')
+                    "SELECT item_id FROM item_master WHERE name=%s AND COALESCE(model,'')=%s AND COALESCE(variation,'')=%s",
+                    (vals['Item'], vals.get('Model', ''), vals.get('Variation', ''))
                 )
-                existing_item = cur.fetchone()
-
-                if existing_item:
-                    item_id = existing_item[0]
-                    # If a description is provided, update the existing record
-                    if description is not None:
-                        cur.execute(
-                            "UPDATE item_master SET description = %s WHERE item_id = %s",
-                            (description, item_id)
-                        )
+                row = cur.fetchone()
+                if row:
+                    item_id = row[0]
                 else:
-                    # Insert a new item master record
                     cur.execute(
-                        """
-                        INSERT INTO item_master (name, model, variation, description) 
-                        VALUES (%s, %s, %s, %s) 
-                        RETURNING item_id
-                        """,
-                        (name, model, variation, description)
+                        "INSERT INTO item_master(name,model,variation,description) VALUES(%s,%s,%s,%s) RETURNING item_id",
+                        (vals['Item'], vals.get('Model'), vals.get('Variation'), group['Description'].iloc[0])
                     )
                     item_id = cur.fetchone()[0]
 
-                for _, row in item_group.iterrows():
-                    color_id = get_or_create_master_id(cur, row['Color'], 'color_master', 'color_id', 'color_name')
-                    size_id = get_or_create_master_id(cur, row['Size'], 'size_master', 'size_id', 'size_name')
-                    
-                    cur.execute(
-                        """
-                        INSERT INTO item_variant (item_id, color_id, size_id, opening_stock, unit) 
-                        VALUES (%s, %s, %s, %s, %s) 
-                        ON CONFLICT (item_id, color_id, size_id) 
-                        DO UPDATE SET opening_stock = item_variant.opening_stock + EXCLUDED.opening_stock
-                        """, (item_id, color_id, size_id, row['Stock'], row.get('Unit', 'Pcs'))
-                    )
-                    imported_count += 1
+                # Loop through variants in the group to insert or update them
+                for _, r in group.iterrows():
+                    try:
+                        color_id = get_or_create_master_id(cur, r['Color'], 'color_master', 'color_id', 'color_name')
+                        size_id = get_or_create_master_id(cur, r['Size'], 'size_master', 'size_id', 'size_name')
+                        
+                        # This query adds stock if the variant exists, or creates it if it's new
+                        cur.execute(
+                            """
+                            INSERT INTO item_variant(item_id,color_id,size_id,opening_stock,unit)
+                            VALUES(%s,%s,%s,%s,%s)
+                            ON CONFLICT(item_id,color_id,size_id)
+                            DO UPDATE SET opening_stock = item_variant.opening_stock + EXCLUDED.opening_stock
+                            """,
+                            (item_id, color_id, size_id, r['Stock'], r.get('Unit', 'Pcs'))
+                        )
+                        imported += 1
+                    except Exception:
+                        app.logger.warning("Skipping invalid variant row", exc_info=True)
             conn.commit()
-            
-        success_message = f'Import successful. Processed {processed_count} rows and imported {imported_count} variants.'
-        app.logger.info(success_message)
-        return jsonify({'message': success_message}), 200
+
+        message = f"Import successful. Processed {processed} rows and imported {imported} variants."
+        return jsonify({'message': message}), 200
 
     except Exception as e:
-        app.logger.error(f"Error committing import: {e}", exc_info=True)
-        return jsonify({'error': f'An unexpected error occurred: {e}'}), 500
+        app.logger.error(f"Commit error: {e}", exc_info=True)
+        return jsonify({'error': str(e)}), 500
+
         
 if __name__ == '__main__':
     if not db_pool:
