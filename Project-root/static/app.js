@@ -534,9 +534,6 @@ const App = {
   // Clear any old inline style
   this.importModal.style.removeProperty('display');
 
-  // Ensure it's visible
-  this.importModal.style.display = 'block';
-
   // Add the 'is-open' class for transitions, opacity, etc.
   this.importModal.classList.add('is-open');
 },

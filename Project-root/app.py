@@ -9,7 +9,7 @@ import json
 load_dotenv()
 
 from flask import (Flask, request, jsonify, render_template, redirect, url_for,
-                   flash, session)
+                   flash, session, send_from_directory)
 from flask_cors import CORS
 from authlib.integrations.flask_client import OAuth
 from flask_login import (LoginManager, UserMixin, login_user, login_required,
@@ -314,6 +314,10 @@ def authorize():
 def logout():
     logout_user()
     return redirect(url_for('login'))
+
+@app.route('/uploads/<filename>')
+def uploaded_file(filename):
+    return send_from_directory(os.path.join(app.root_path, 'static', 'uploads'), filename)
 
 # --- API Routes ---
 def make_api_crud_routes(app, entity_name, table_name, id_col, name_col):
