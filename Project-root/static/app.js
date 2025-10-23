@@ -96,6 +96,7 @@ const App = {
     this.inventoryTableBody = document.getElementById('inventory-table-body');
     this.addItemBtn = document.getElementById('add-item-btn');
     this.searchInput = document.getElementById('inventory-search');
+    this.lowStockFilter = document.getElementById('low-stock-filter');
     this.clearSearchBtn = document.querySelector('.clear-search-btn');
     this.itemForm = document.getElementById('item-form');
     this.modalTitle = document.getElementById('modal-title');
@@ -108,6 +109,10 @@ const App = {
     this.masterSizeList = document.getElementById('size-list');
     this.importModal = document.getElementById('import-modal');
     this.importDataBtn = document.getElementById('import-data-btn');
+    this.lowStockReportBtn = document.getElementById('low-stock-report-btn');
+    this.lowStockReportModal = document.getElementById('low-stock-report-modal');
+    this.lowStockReportBody = document.getElementById('low-stock-report-body');
+    this.printLowStockReportBtn = document.getElementById('print-low-stock-report-btn');
   },
 
   bindEventListeners() {
@@ -143,6 +148,10 @@ const App = {
         this.handleSearch('');
         this.searchInput.focus();
       });
+    }
+
+    if (this.lowStockFilter) {
+      this.lowStockFilter.addEventListener('change', () => this.fetchItems());
     }
 
     if (this.itemForm) {
@@ -449,7 +458,13 @@ const App = {
   },
 
   async fetchItems() {
-    const items = await this.fetchJson(`${this.apiBase}/items`);
+    const lowStockOnly = this.lowStockFilter ? this.lowStockFilter.checked : false;
+    const url = new URL(`${this.apiBase}/items`);
+    if (lowStockOnly) {
+      url.searchParams.append('low_stock', 'true');
+    }
+
+    const items = await this.fetchJson(url.toString());
     if (items) {
       this.allItems = items;
       this.renderItemsList(items);
@@ -552,6 +567,22 @@ const App = {
       this.importDataBtn.addEventListener('click', () => this.openImportModal());
     }
 
+    if (this.lowStockReportBtn) {
+      this.lowStockReportBtn.addEventListener('click', () => this.showLowStockReport());
+    }
+
+    if (this.lowStockReportModal) {
+      this.lowStockReportModal.addEventListener('click', (e) => {
+        if (e.target.classList.contains('close-modal-btn') || e.target.classList.contains('modal')) {
+          this.closeLowStockReport();
+        }
+      });
+    }
+
+    if (this.printLowStockReportBtn) {
+      this.printLowStockReportBtn.addEventListener('click', () => this.printLowStockReport());
+    }
+
     if (this.importModal) {
       // Prefer targeting a known button container to avoid false positives.
       // const btnContainer = this.importModal.querySelector('.modal-actions') || this.importModal;
@@ -640,6 +671,63 @@ const App = {
     if (this.nextBtn) this.nextBtn.style.display = 'block';
     if (this.backBtn) this.backBtn.style.display = 'none';
     if (this.commitBtn) this.commitBtn.style.display = 'none';
+  },
+
+  async showLowStockReport() {
+    const reportData = await this.fetchJson(`${this.apiBase}/low-stock-report`);
+    if (reportData) {
+      this.renderLowStockReport(reportData);
+      this.lowStockReportModal.classList.add('is-open');
+    }
+  },
+
+  closeLowStockReport() {
+    if (this.lowStockReportModal) {
+      this.lowStockReportModal.classList.remove('is-open');
+    }
+  },
+
+  renderLowStockReport(data) {
+    if (!this.lowStockReportBody) return;
+    if (data.length === 0) {
+      this.lowStockReportBody.innerHTML = `<tr><td colspan="7" style="text-align: center; padding: 2rem;">No low stock items found.</td></tr>`;
+      return;
+    }
+    this.lowStockReportBody.innerHTML = data.map(item => `
+      <tr>
+        <td>${this.escapeHtml(item.item_name)}</td>
+        <td>${this.escapeHtml(item.model_name || '--')}</td>
+        <td>${this.escapeHtml(item.variation_name || '--')}</td>
+        <td>${this.escapeHtml(item.color_name)}</td>
+        <td>${this.escapeHtml(item.size_name)}</td>
+        <td>${item.opening_stock}</td>
+        <td>${item.threshold}</td>
+      </tr>
+    `).join('');
+  },
+
+  printLowStockReport() {
+    const reportTitle = "Low Stock Report";
+    const printContents = document.getElementById('low-stock-report-printable').innerHTML;
+    
+    const printWindow = window.open('', '', 'height=600,width=800');
+    printWindow.document.write('<html><head><title>' + reportTitle + '</title>');
+    printWindow.document.write(`
+        <style>
+            body { font-family: 'Inter', sans-serif; }
+            table { width: 100%; border-collapse: collapse; }
+            th, td { border: 1px solid #ddd; padding: 8px; text-align: left; }
+            th { background-color: #f2f2f2; }
+        </style>
+    `);
+    printWindow.document.write('</head><body>');
+    printWindow.document.write('<h1>' + reportTitle + '</h1>');
+    printWindow.document.write(printContents);
+    printWindow.document.write('</body></html>');
+    printWindow.document.close();
+    printWindow.focus();
+    printWindow.print();
+    printWindow.close();
   },
 
   showLoading(message = 'Processing...') {
