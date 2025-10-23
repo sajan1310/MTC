@@ -157,7 +157,8 @@ document.addEventListener('DOMContentLoaded', function() {
 
                 await App.fetchModels(itemData.name);
                 const modelSelect = $('#item-model');
-                if (itemData.model && modelSelect.find(`option[value="${itemData.model}"]`).length === 0) {
+                const modelExists = modelSelect.find('option').filter(function() { return this.value === itemData.model; }).length > 0;
+                if (itemData.model && !modelExists) {
                     const newOption = new Option(itemData.model, itemData.model, true, true);
                     modelSelect.append(newOption);
                 }
@@ -165,7 +166,8 @@ document.addEventListener('DOMContentLoaded', function() {
                 
                 await App.fetchVariations(itemData.name, itemData.model);
                 const variationSelect = $('#item-variation');
-                if (itemData.variation && variationSelect.find(`option[value="${itemData.variation}"]`).length === 0) {
+                const variationExists = variationSelect.find('option').filter(function() { return this.value === itemData.variation; }).length > 0;
+                if (itemData.variation && !variationExists) {
                     const newOption = new Option(itemData.variation, itemData.variation, true, true);
                     variationSelect.append(newOption);
                 }

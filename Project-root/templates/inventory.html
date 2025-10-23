@@ -88,7 +88,7 @@
         <div class="loading-spinner large">
             <div class="spinner"></div>
         </div>
-        <p>Processing your request...</p>
+        <p id="loading-message">Processing your request...</p>
     </div>
 </div>
 
@@ -116,7 +116,8 @@
             <!-- Step 2: Data Preview & Mapping -->
             <div id="import-step-2" style="display: none;">
                 <h4>Step 2: Preview and Map Data</h4>
-                <p>Review the data and map the columns to the correct fields.</p>
+                <p>Review the data, map the columns, and correct any errors before importing.</p>
+                <div id="import-controls-container" style="padding: 0.5rem 0;"></div>
                 <div id="import-preview-container"></div>
             </div>
         </div>
