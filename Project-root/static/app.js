@@ -203,7 +203,8 @@ const App = {
             // This is an existing item, let's populate the fields
             await this.fetchModels(selectedItem);
             const modelSelect = $('#item-model');
-            if (itemData.model && modelSelect.find(`option[value="${itemData.model}"]`).length === 0) {
+            const modelExists = modelSelect.find('option').filter(function() { return this.value === itemData.model; }).length > 0;
+            if (itemData.model && !modelExists) {
                 const newOption = new Option(itemData.model, itemData.model, true, true);
                 modelSelect.append(newOption);
             }
@@ -211,7 +212,8 @@ const App = {
 
             await this.fetchVariations(selectedItem, itemData.model);
             const variationSelect = $('#item-variation');
-            if (itemData.variation && variationSelect.find(`option[value="${itemData.variation}"]`).length === 0) {
+            const variationExists = variationSelect.find('option').filter(function() { return this.value === itemData.variation; }).length > 0;
+            if (itemData.variation && !variationExists) {
                 const newOption = new Option(itemData.variation, itemData.variation, true, true);
                 variationSelect.append(newOption);
             }
@@ -566,8 +568,8 @@ const App = {
         body: formData,
       });
 
-      // Expecting { headers: string[], preview_data: Array<Record<string,string>> }
-      if (!response || !Array.isArray(response.headers) || !Array.isArray(response.preview_data)) {
+      // Expecting { headers: string[], rows: Array<Record<string,any>> }
+      if (!response || !Array.isArray(response.headers) || !Array.isArray(response.rows)) {
         this.showNotification?.('Invalid preview response from server.', 'error');
         return;
       }
@@ -593,133 +595,182 @@ const App = {
     if (this.commitBtn) this.commitBtn.style.display = 'none';
   },
 
+  showLoading(message = 'Processing...') {
+    document.getElementById('loading-message').textContent = message;
+    document.getElementById('global-loading').style.display = 'flex';
+  },
+
+  hideLoading() {
+    document.getElementById('global-loading').style.display = 'none';
+  },
+
   async handleImportCommit() {
+    this.showLoading('Importing data...');
     try {
-      // Collect selected mappings from header selects
-      const mappingSelects = this.previewContainer
-        ? this.previewContainer.querySelectorAll('thead th select')
-        : [];
-
-      if (!mappingSelects || mappingSelects.length === 0) {
-        this.showNotification?.('No mappings found. Please re-run preview.', 'error');
-        return;
-      }
-
-      const mappings = {};
-      const headerMapping = Array.from(mappingSelects).map(select => {
-        const originalHeader = select.dataset.originalHeader || '';
-        const chosenDbColumn = select.value || '';
-        if (originalHeader) {
-          mappings[originalHeader] = chosenDbColumn;
-        }
-        return { original: originalHeader, chosen: chosenDbColumn };
-      });
-
-      // Extract table body data using the original header order
-      const data = [];
-      const rows = this.previewContainer
-        ? this.previewContainer.querySelectorAll('tbody tr')
-        : [];
-
-      rows.forEach((row) => {
-        const rowData = {};
-        const cells = row.querySelectorAll('td');
-        cells.forEach((cell, i) => {
-          const headerInfo = headerMapping[i];
-          if (headerInfo && headerInfo.original) {
-            // Use the original header as the key for the data payload
-            rowData[headerInfo.original] = cell.textContent ?? '';
-          }
+        const mappingSelects = this.previewContainer ? this.previewContainer.querySelectorAll('thead th select') : [];
+        const mappings = {};
+        const headerMapping = Array.from(mappingSelects).map(select => {
+            const originalHeader = select.dataset.originalHeader || '';
+            const chosenDbColumn = select.value || '';
+            if (originalHeader) {
+                mappings[originalHeader] = chosenDbColumn;
+            }
+            return { original: originalHeader, chosen: chosenDbColumn };
         });
-        data.push(rowData);
-      });
 
-      // Validate minimal data presence
-      if (data.length === 0) {
-        this.showNotification?.('No data to commit. Please re-run preview.', 'error');
-        return;
-      }
+        const data = [];
+        const rows = this.previewContainer ? this.previewContainer.querySelectorAll('tbody tr') : [];
+        rows.forEach(row => {
+            // Skip rows marked with an error
+            if (row.classList.contains('row-error')) return;
+            
+            const rowData = {};
+            const cells = row.querySelectorAll('td[data-header]');
+            cells.forEach(cell => {
+                const headerName = cell.dataset.header;
+                if (headerName) {
+                    rowData[headerName] = cell.textContent ?? '';
+                }
+            });
+            data.push(rowData);
+        });
 
-      const response = await this.fetchJson('/api/import/commit', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' }, // important
-        body: JSON.stringify({ mappings, data }),
-      });
+        if (data.length === 0) {
+            this.showNotification?.('No valid data to commit.', 'warning');
+            return;
+        }
 
-      if (response?.message) {
-        this.showNotification?.(response.message, 'success');
-      } else {
-        this.showNotification?.('Import committed.', 'success');
-      }
+        // We now send the corrected table data instead of the original file
+        const response = await this.fetchJson('/api/import/commit', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ mappings, data }),
+        });
 
-      this.closeImportModal();
-      this.fetchItems?.();
+        if (response?.message) {
+            this.showNotification?.(response.message, 'success');
+        } else {
+            this.showNotification?.('Import committed successfully.', 'success');
+        }
+
+        this.closeImportModal();
+        this.fetchItems?.(); // Refresh the inventory list
     } catch (err) {
-      console.error(err);
-      this.showNotification?.('Failed to commit import.', 'error');
+        console.error(err);
+        this.showNotification?.(err.message || 'Failed to commit import.', 'error');
+    } finally {
+        this.hideLoading();
     }
   },
 
-  renderImportPreview({ headers, preview_data }) {
+  renderImportPreview({ headers, rows }) {
     if (!this.previewContainer) return;
 
-    const dbColumns = [
-      'Item', 'Model', 'Variation', 'Description',
-      'Color', 'Size', 'Stock', 'Unit'
-    ];
-
-    // Clear any previous preview
+    const dbColumns = ['Item', 'Model', 'Variation', 'Description', 'Color', 'Size', 'Stock', 'Unit'];
     this.previewContainer.innerHTML = '';
+    
+    const controlsContainer = document.getElementById('import-controls-container');
+    if (controlsContainer) {
+        controlsContainer.innerHTML = `
+            <div class="form-field" style="margin-bottom: 1rem; max-width: 200px;">
+                <label for="import-status-filter">Filter by status</label>
+                <select id="import-status-filter">
+                    <option value="all">Show All</option>
+                    <option value="errors">Show Errors Only</option>
+                </select>
+            </div>
+        `;
+        document.getElementById('import-status-filter').addEventListener('change', (e) => {
+            const value = e.target.value;
+            const tableRows = this.previewContainer.querySelectorAll('tbody tr');
+            tableRows.forEach(row => {
+                const hasError = row.classList.contains('row-error');
+                if (value === 'all' || (value === 'errors' && hasError)) {
+                    row.style.display = '';
+                } else {
+                    row.style.display = 'none';
+                }
+            });
+        });
+    }
 
     const table = document.createElement('table');
     table.className = 'inventory-table';
 
     const thead = document.createElement('thead');
     const headerRow = document.createElement('tr');
+    
+    // Add a new header for the error status
+    const statusTh = document.createElement('th');
+    statusTh.textContent = 'Status';
+    headerRow.appendChild(statusTh);
 
-    headers.forEach((header) => {
-      const th = document.createElement('th');
-      const select = document.createElement('select');
-      select.dataset.originalHeader = header;
+    headers.forEach(header => {
+        const th = document.createElement('th');
+        const select = document.createElement('select');
+        select.dataset.originalHeader = header;
+        
+        const ignoreOption = document.createElement('option');
+        ignoreOption.value = 'Ignore';
+        ignoreOption.textContent = '— Ignore —';
+        select.appendChild(ignoreOption);
 
-      // Add an explicit "Ignore" option in case a column should be skipped
-      const ignoreOption = document.createElement('option');
-      ignoreOption.value = '';
-      ignoreOption.textContent = '— Ignore —';
-      select.appendChild(ignoreOption);
-
-      dbColumns.forEach((col) => {
-        const option = document.createElement('option');
-        option.value = col;
-        option.textContent = col;
-        if (col.toLowerCase() === String(header).toLowerCase()) {
-          option.selected = true;
-        }
-        select.appendChild(option);
-      });
-
-      th.appendChild(select);
-      headerRow.appendChild(th);
+        dbColumns.forEach(col => {
+            const option = document.createElement('option');
+            option.value = col;
+            option.textContent = col;
+            if (col.toLowerCase() === String(header).toLowerCase()) {
+                option.selected = true;
+            }
+            select.appendChild(option);
+        });
+        th.appendChild(select);
+        headerRow.appendChild(th);
     });
-
     thead.appendChild(headerRow);
     table.appendChild(thead);
 
     const tbody = document.createElement('tbody');
-    preview_data.forEach((row) => {
-      const tr = document.createElement('tr');
-      headers.forEach((header) => {
-        const td = document.createElement('td');
-        // Guard for undefined keys
-        td.textContent = row?.[header] != null ? String(row[header]) : '';
-        td.contentEditable = true; // allow inline correction before commit
-        tr.appendChild(td);
-      });
-      tbody.appendChild(tr);
+    let errorCount = 0;
+    rows.forEach(row => {
+        const tr = document.createElement('tr');
+        tr.dataset.rowId = row._id;
+
+        const statusTd = document.createElement('td');
+        if (row._errors.length > 0) {
+            tr.classList.add('row-error');
+            statusTd.innerHTML = `<span class="status-badge low-stock" title="${this.escapeHtml(row._errors.join('\n'))}">Error</span>`;
+            errorCount++;
+        } else {
+            statusTd.innerHTML = `<span class="status-badge in-stock">OK</span>`;
+        }
+        tr.appendChild(statusTd);
+
+        headers.forEach(header => {
+            const td = document.createElement('td');
+            td.textContent = row[header] != null ? String(row[header]) : '';
+            td.contentEditable = true;
+            td.dataset.header = header; // Store original header for commit
+            tr.appendChild(td);
+        });
+        tbody.appendChild(tr);
     });
     table.appendChild(tbody);
-
     this.previewContainer.appendChild(table);
+    
+    this.updateCommitButtonState(errorCount);
+  },
+
+  updateCommitButtonState(errorCount) {
+    const commitBtn = document.getElementById('import-commit-btn');
+    if (commitBtn) {
+        commitBtn.disabled = errorCount > 0;
+        if (errorCount > 0) {
+            commitBtn.title = `${errorCount} error(s) must be fixed before importing.`;
+        } else {
+            commitBtn.title = 'Commit the import';
+        }
+    }
   },
 
   renderVariantMatrix(container, variants) {
@@ -805,44 +856,64 @@ const App = {
 
   async handleItemFormSubmit(e) {
     e.preventDefault();
-    const itemId = document.getElementById('item-id')?.value;
-    const isEditing = !!itemId;
-    const formData = new FormData();
-    ['name', 'model', 'variation', 'description'].forEach(field => {
-      formData.append(field, document.getElementById(`item-${field}`)?.value?.trim() || '');
-    });
-    const imageInput = document.getElementById('item-image');
-    if (imageInput && imageInput.files && imageInput.files.length > 0) {
-      formData.append('image', imageInput.files[0]);
+    
+    // Manually trigger browser validation on all required fields
+    if (!e.target.checkValidity()) {
+        e.target.reportValidity();
+        return;
     }
-    const variantRows = this.variantsContainer?.querySelectorAll('tbody tr') || [];
-    const variants = Array.from(variantRows).map(row => {
-      const color = row.querySelector('.variant-color')?.value?.trim();
-      const size = row.querySelector('.variant-size')?.value?.trim();
-      if (!color || !size) throw new Error('All variants must have a color and size.');
-      return {
-        id: row.dataset.variantId,
-        color,
-        size,
-        opening_stock: parseInt(row.querySelector('.stock-input')?.value) || 0,
-        unit: row.querySelector('.variant-unit')?.value?.trim() || 'Pcs',
-        threshold: parseInt(row.querySelector('.threshold-input')?.value) || 5,
-      };
-    });
-    if (variants.length === 0) {
-      this.showNotification('At least one variant is required.', 'error');
-      return;
-    }
-    formData.append('variants', JSON.stringify(variants));
+
+    const saveBtn = e.target.querySelector('.save-item-btn');
+    saveBtn.disabled = true;
+    saveBtn.textContent = 'Saving...';
+
     try {
-      const url = isEditing ? `${this.apiBase}/items/${itemId}` : `${this.apiBase}/items`;
-      const method = isEditing ? 'PUT' : 'POST';
-      const result = await this.fetchJson(url, { method, body: formData });
-      if (result) {
-        window.location.href = '/inventory';
-      }
+        const itemId = document.getElementById('item-id')?.value;
+        const isEditing = !!itemId;
+        const formData = new FormData();
+        ['name', 'model', 'variation', 'description'].forEach(field => {
+            formData.append(field, document.getElementById(`item-${field}`)?.value?.trim() || '');
+        });
+        const imageInput = document.getElementById('item-image');
+        if (imageInput && imageInput.files && imageInput.files.length > 0) {
+            formData.append('image', imageInput.files[0]);
+        }
+        const variantRows = this.variantsContainer?.querySelectorAll('tbody tr') || [];
+        const variants = Array.from(variantRows).map(row => {
+            const color = row.querySelector('.variant-color')?.value?.trim();
+            const size = row.querySelector('.variant-size')?.value?.trim();
+            if (!color || !size) throw new Error('All variants must have a color and size.');
+            return {
+                id: row.dataset.variantId,
+                color,
+                size,
+                opening_stock: parseInt(row.querySelector('.stock-input')?.value) || 0,
+                unit: row.querySelector('.variant-unit')?.value?.trim() || 'Pcs',
+                threshold: parseInt(row.querySelector('.threshold-input')?.value) || 5,
+            };
+        });
+        if (variants.length === 0) {
+            this.showNotification('At least one variant is required.', 'error');
+            throw new Error('No variants provided.'); // Throw to be caught by the finally block
+        }
+        formData.append('variants', JSON.stringify(variants));
+
+        const url = isEditing ? `${this.apiBase}/items/${itemId}` : `${this.apiBase}/items`;
+        const method = isEditing ? 'PUT' : 'POST';
+        const result = await this.fetchJson(url, { method, body: formData });
+
+        if (result) {
+            window.location.href = '/inventory';
+        } else {
+            // If fetchJson returns null (on error), re-enable the button.
+            saveBtn.disabled = false;
+            saveBtn.textContent = 'Save Item';
+        }
     } catch (error) {
-      this.showNotification(error.message, 'error');
+        // This will catch errors from creating form data (e.g., no variants)
+        this.showNotification(error.message, 'error');
+        saveBtn.disabled = false;
+        saveBtn.textContent = 'Save Item';
     }
   },
 
