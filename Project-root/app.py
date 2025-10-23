@@ -153,7 +153,7 @@ def get_or_create_master_id(cur, value, table_name, id_col, name_col):
     # Ensure value is a stripped string, default to "N/A" if empty
     value = str(value).strip()
     if not value:
-        value = "N/A"
+        value = "--"
 
     # Check if a master item with this name already exists
     cur.execute(f"SELECT {id_col} FROM {table_name} WHERE {name_col} = %s", (value,))
@@ -388,6 +388,8 @@ def make_api_crud_routes(app, entity_name, table_name, id_col, name_col):
                 cur.execute(f"UPDATE {table_name} SET {name_col} = %s WHERE {id_col} = %s", (name, item_id))
                 conn.commit()
             return jsonify({'message': f'{entity_name.capitalize()} updated'}), 200
+        except psycopg2.IntegrityError:
+             return jsonify({'error': f'The name "{name}" already exists.'}), 409
         except Exception as e:
             app.logger.error(f"API Error updating {entity_name} {item_id}: {e}")
             return jsonify({'error': 'Database error'}), 500
@@ -466,7 +468,7 @@ def get_variations_for_item_model():
 
             if model_name:
                 query += """
-                    AND im.model_id = (SELECT model_id FROM model_master WHERE model_name = %s)
+                    AND im.model_id IN (SELECT model_id FROM model_master WHERE model_name = %s)
                 """
                 params.append(model_name)
             
@@ -665,16 +667,19 @@ def update_item(item_id):
             if cur.fetchone():
                 return jsonify({'error': 'Another item with the same name, model, variation, and description already exists.'}), 409
 
+            update_fields = {
+                "name": data['name'],
+                "model_id": model_id,
+                "variation_id": variation_id,
+                "description": data.get('description')
+            }
             if image_path:
-                cur.execute(
-                    "UPDATE item_master SET name=%s, model_id=%s, variation_id=%s, description=%s, image_path=%s WHERE item_id=%s",
-                    (data['name'], model_id, variation_id, data.get('description'), image_path, item_id)
-                )
-            else:
-                cur.execute(
-                    "UPDATE item_master SET name=%s, model_id=%s, variation_id=%s, description=%s WHERE item_id=%s",
-                    (data['name'], model_id, variation_id, data.get('description'), item_id)
-                )
+                update_fields["image_path"] = image_path
+
+            set_clause = ", ".join([f"{key}=%s" for key in update_fields])
+            values = list(update_fields.values()) + [item_id]
+            
+            cur.execute(f"UPDATE item_master SET {set_clause} WHERE item_id=%s", tuple(values))
             
             # Transactional variant update: delete all and re-insert.
             # This is wrapped in a savepoint to ensure atomicity. If any part fails,

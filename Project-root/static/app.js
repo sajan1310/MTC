@@ -54,6 +54,8 @@ const App = {
   apiBase: 'http://127.0.0.1:5000/api',
   colors: [],
   sizes: [],
+  models: [],
+  variations: [],
   allItems: [],
   elementThatOpenedModal: null,
 
@@ -200,13 +202,13 @@ const App = {
 
     document.body.addEventListener('click', (e) => {
         if (e.target.closest('.edit-model-btn')) {
-            this.handleDropdownActions('model', 'edit');
+            this.handleDropdownActions(e, 'model', 'edit');
         } else if (e.target.closest('.delete-model-btn')) {
-            this.handleDropdownActions('model', 'delete');
+            this.handleDropdownActions(e, 'model', 'delete');
         } else if (e.target.closest('.edit-variation-btn')) {
-            this.handleDropdownActions('variation', 'edit');
+            this.handleDropdownActions(e, 'variation', 'edit');
         } else if (e.target.closest('.delete-variation-btn')) {
-            this.handleDropdownActions('variation', 'delete');
+            this.handleDropdownActions(e, 'variation', 'delete');
         }
     });
 
@@ -251,38 +253,65 @@ const App = {
 
 
     $(document).on('dblclick', '.select2-results__option[role="option"]', (e) => {
-      e.stopPropagation();
-      const target = $(e.currentTarget);
-      const text = target.text();
-      
-      const resultsId = target.closest('ul').attr('id');
-      if (!resultsId) return;
+        e.stopPropagation();
+        const target = $(e.currentTarget);
+        const text = target.text();
+        
+        const resultsId = target.closest('ul').attr('id');
+        if (!resultsId) return;
 
-      const originalSelectId = resultsId.replace('select2-', '').replace('-results', '');
-      const selectElement = $('#' + originalSelectId);
-      
-      const optionElement = selectElement.find('option').filter(function() {
-          return $(this).text() === text;
-      });
-      
-      const id = optionElement.data('id');
-      const type = originalSelectId.includes('model') ? 'model' : 'variation';
+        const originalSelectId = resultsId.replace('select2-', '').replace('-results', '');
+        const selectElement = $('#' + originalSelectId);
+        const type = originalSelectId.includes('model') ? 'model' : 'variation';
 
-      if (!id) {
-        return;
-      }
-
-      const newText = prompt(`Edit ${type}:`, text);
-      if (newText && newText !== text) {
-        this.handleMasterUpdate(type, id, newText, () => {
-          if (type === 'model') {
-            this.fetchModels($('#item-name').val(), newText);
-          } else if (type === 'variation') {
-            this.fetchVariations($('#item-name').val(), $('#item-model').val(), newText);
-          }
-          selectElement.select2('close');
+        const optionElement = selectElement.find('option').filter(function() {
+            return $(this).text() === text;
         });
-      }
+        
+        let id = optionElement.data('id');
+        if (!id) {
+            const masterList = type === 'model' ? this.models : this.variations;
+            const foundItem = masterList ? masterList.find(item => item.name === text) : undefined;
+            if (foundItem) {
+                id = foundItem.id;
+            }
+        }
+
+        if (!id) {
+            this.showNotification(`Could not find ID for ${type} "${text}". It might be a new entry.`, 'info');
+            return;
+        }
+
+        const newText = prompt(`Edit ${type}:`, text);
+        if (newText && newText !== text) {
+            this.handleMasterUpdate(type, id, newText, (success) => {
+                const form = selectElement.closest('form');
+                const itemNameInput = form.find('input[id^="item-name"], input[id^="edit-item-name-"]');
+                const modelSelect = form.find('select[id^="item-model"], select[id^="edit-item-model-"]');
+
+                const refresh = async () => {
+                    const itemName = itemNameInput.val();
+                    const modelName = modelSelect.val();
+                    const valueToSelect = success ? newText : text;
+
+                    if (type === 'model') {
+                        const models = await this.fetchJson(`${this.apiBase}/models-by-item?item_name=${encodeURIComponent(itemName)}`);
+                        if (models) {
+                            this.models = models;
+                            this.populateSelect(selectElement[0], models, valueToSelect);
+                        }
+                    } else if (type === 'variation') {
+                        const variations = await this.fetchJson(`${this.apiBase}/variations-by-item-model?item_name=${encodeURIComponent(itemName)}&model=${encodeURIComponent(modelName)}`);
+                        if (variations) {
+                            this.variations = variations;
+                            this.populateSelect(selectElement[0], variations, valueToSelect);
+                        }
+                    }
+                };
+                refresh();
+                selectElement.select2('close');
+            });
+        }
     });
   },
 
@@ -959,6 +988,37 @@ const App = {
     const editRow = itemRow.nextElementSibling;
     const form = editRow.querySelector('.edit-item-form');
 
+    const modelSelect = editRow.querySelector(`#edit-item-model-${item.id}`);
+    const variationSelect = editRow.querySelector(`#edit-item-variation-${item.id}`);
+
+    // Fetch and populate models
+    const models = await this.fetchJson(`${this.apiBase}/models-by-item?item_name=${encodeURIComponent(item.name)}`);
+    if (models) {
+      this.models = models; // Store models
+      this.populateSelect(modelSelect, models, item.model);
+    }
+
+    // Fetch and populate variations
+    const variations = await this.fetchJson(`${this.apiBase}/variations-by-item-model?item_name=${encodeURIComponent(item.name)}&model=${encodeURIComponent(item.model)}`);
+    if (variations) {
+      this.variations = variations; // Store variations
+      this.populateSelect(variationSelect, variations, item.variation);
+    }
+
+    // Add event listener to update variations when model changes
+    $(modelSelect).on('change', async () => {
+        const newModel = $(modelSelect).val();
+        const newVariations = await this.fetchJson(`${this.apiBase}/variations-by-item-model?item_name=${encodeURIComponent(item.name)}&model=${encodeURIComponent(newModel)}`);
+        if (newVariations) {
+          this.variations = newVariations; // Update stored variations
+          this.populateSelect(variationSelect, newVariations);
+        }
+    });
+
+    // Initialize Select2 for the new dropdowns
+    $(modelSelect).select2({ tags: true, width: '100%' });
+    $(variationSelect).select2({ tags: true, width: '100%' });
+
     form.addEventListener('submit', (e) => {
         e.preventDefault();
         this.handleUpdateItem(itemId, form, itemRow);
@@ -994,11 +1054,43 @@ const App = {
                         </div>
                         <div class="form-field">
                             <label for="edit-item-model-${item.id}">Model</label>
-                            <input type="text" id="edit-item-model-${item.id}" value="${this.escapeHtml(item.model || '')}">
+                            <div class="input-with-buttons">
+                                <select id="edit-item-model-${item.id}" class="editable-select"></select>
+                                <button type="button" class="button-icon edit-model-btn" aria-label="Edit model">
+                                    <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                                        <path d="M11 4H4a2 2 0 00-2 2v14a2 2 0 002 2h14a2 2 0 002-2v-7"></path>
+                                        <path d="M18.5 2.5a2.121 2.121 0 013 3L12 15l-4 1 1-4 9.5-9.5z"></path>
+                                    </svg>
+                                </button>
+                                <button type="button" class="button-icon delete-model-btn" aria-label="Delete model">
+                                    <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                                        <polyline points="3 6 5 6 21 6"></polyline>
+                                        <path d="M19 6v14a2 2 0 01-2 2H7a2 2 0 01-2-2V6m3 0V4a2 2 0 012-2h4a2 2 0 012 2v2"></path>
+                                        <line x1="10" y1="11" x2="10" y2="17"></line>
+                                        <line x1="14" y1="11" x2="14" y2="17"></line>
+                                    </svg>
+                                </button>
+                            </div>
                         </div>
                         <div class="form-field">
                             <label for="edit-item-variation-${item.id}">Variation</label>
-                            <input type="text" id="edit-item-variation-${item.id}" value="${this.escapeHtml(item.variation || '')}">
+                            <div class="input-with-buttons">
+                                <select id="edit-item-variation-${item.id}" class="editable-select"></select>
+                                <button type="button" class="button-icon edit-variation-btn" aria-label="Edit variation">
+                                    <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                                        <path d="M11 4H4a2 2 0 00-2 2v14a2 2 0 002 2h14a2 2 0 002-2v-7"></path>
+                                        <path d="M18.5 2.5a2.121 2.121 0 013 3L12 15l-4 1 1-4 9.5-9.5z"></path>
+                                    </svg>
+                                </button>
+                                <button type="button" class="button-icon delete-variation-btn" aria-label="Delete variation">
+                                    <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                                        <polyline points="3 6 5 6 21 6"></polyline>
+                                        <path d="M19 6v14a2 2 0 01-2 2H7a2 2 0 01-2-2V6m3 0V4a2 2 0 012-2h4a2 2 0 012 2v2"></path>
+                                        <line x1="10" y1="11" x2="10" y2="17"></line>
+                                        <line x1="14" y1="11" x2="14" y2="17"></line>
+                                    </svg>
+                                </button>
+                            </div>
                         </div>
                     </div>
                     <div class="form-field">
@@ -1267,13 +1359,18 @@ const App = {
       input.readOnly = false;
       input.focus();
       input.select();
+      input.dataset.originalValue = input.value;
       editBtn.style.display = 'none';
       saveBtn.style.display = 'flex';
     } else if (button.classList.contains('save-master')) {
-      this.handleMasterUpdate(type, id, input.value.trim(), () => {
+      const originalValue = input.dataset.originalValue;
+      this.handleMasterUpdate(type, id, input.value.trim(), (success) => {
         input.readOnly = true;
         editBtn.style.display = 'flex';
         saveBtn.style.display = 'none';
+        if (!success) {
+          input.value = originalValue;
+        }
       });
     } else if (button.classList.contains('delete-master')) {
       this.handleMasterDelete(type, id, input.value);
@@ -1283,7 +1380,7 @@ const App = {
   async handleMasterUpdate(type, id, name, onFinish) {
     if (!name) {
       this.showNotification(`${type.charAt(0).toUpperCase() + type.slice(1)} name cannot be empty.`, 'error');
-      onFinish();
+      if (onFinish) onFinish(false);
       return;
     }
     const result = await this.fetchJson(`${this.apiBase}/${type}s/${id}`, {
@@ -1294,7 +1391,7 @@ const App = {
       this.showNotification(`${type.charAt(0).toUpperCase() + type.slice(1)} updated.`, 'success');
       this.fetchMasterData(type + 's');
     }
-    onFinish();
+    if (onFinish) onFinish(!!result);
   },
 
   async handleMasterDelete(type, id, name, onFinish) {
@@ -1395,9 +1492,10 @@ const App = {
     });
   },
 
-  handleDropdownActions(type, action) {
-    const selectId = `#item-${type}`;
-    const selectElement = $(selectId);
+  handleDropdownActions(e, type, action) {
+    const button = e.target.closest('button');
+    const container = button.closest('.input-with-buttons');
+    const selectElement = $(container).find('select');
     const selectedValue = selectElement.val();
 
     if (!selectedValue) {
@@ -1408,28 +1506,64 @@ const App = {
     const optionElement = selectElement.find('option').filter(function() {
         return $(this).val() === selectedValue;
     });
-    const id = optionElement.data('id');
+    let id = optionElement.data('id');
+
+    if (!id) {
+        const masterList = type === 'model' ? this.models : this.variations;
+        const foundItem = masterList ? masterList.find(item => item.name === selectedValue) : undefined;
+        if (foundItem) {
+            id = foundItem.id;
+        }
+    }
+    
+    if (!id) {
+        this.showNotification(`Could not find the ID for ${type} "${selectedValue}". It might be a new, unsaved entry.`, 'error');
+        return;
+    }
+
+    const form = button.closest('form');
+    const itemNameInput = $(form).find('input[id^="item-name"], input[id^="edit-item-name-"]');
+    const modelSelect = $(form).find('select[id^="item-model"], select[id^="edit-item-model-"]');
+
+    const refreshDropdown = async (isSuccess, newValue) => {
+        const itemName = itemNameInput.val();
+        const modelName = modelSelect.val();
+        const valueToSelect = isSuccess ? newValue : selectedValue;
+
+        if (type === 'model') {
+            const models = await this.fetchJson(`${this.apiBase}/models-by-item?item_name=${encodeURIComponent(itemName)}`);
+            if (models) {
+                this.models = models;
+                this.populateSelect(selectElement[0], models, valueToSelect);
+            }
+        } else if (type === 'variation') {
+            const variations = await this.fetchJson(`${this.apiBase}/variations-by-item-model?item_name=${encodeURIComponent(itemName)}&model=${encodeURIComponent(modelName)}`);
+            if (variations) {
+                this.variations = variations;
+                this.populateSelect(selectElement[0], variations, valueToSelect);
+            }
+        }
+    };
 
     if (action === 'edit') {
         const newText = prompt(`Edit ${type}:`, selectedValue);
         if (newText && newText !== selectedValue) {
-            this.handleMasterUpdate(type, id, newText, () => {
-                if (type === 'model') {
-                    this.fetchModels($('#item-name').val(), newText);
-                } else if (type === 'variation') {
-                    this.fetchVariations($('#item-name').val(), $('#item-model').val(), newText);
-                }
+            this.handleMasterUpdate(type, id, newText, (success) => {
+                refreshDropdown(success, newText);
             });
         }
     } else if (action === 'delete') {
-        if (confirm(`Are you sure you want to delete the ${type} "${selectedValue}"?`)) {
-            this.handleMasterDelete(type, id, selectedValue, () => {
-                if (type === 'model') {
-                    this.fetchModels($('#item-name').val());
-                } else if (type === 'variation') {
-                    this.fetchVariations($('#item-name').val(), $('#item-model').val());
-                }
-            });
+        // This logic is now explicit for both models and variations.
+        if (type === 'model') {
+            if (confirm(`Are you sure you want to remove the model "${selectedValue}" from this item?`)) {
+                // Just clear the value, don't delete from the master list.
+                selectElement.val(null).trigger('change');
+            }
+        } else if (type === 'variation') {
+            if (confirm(`Are you sure you want to remove the variation "${selectedValue}" from this item?`)) {
+                // Just clear the value, don't delete from the master list.
+                selectElement.val(null).trigger('change');
+            }
         }
     }
   }
