@@ -667,27 +667,34 @@ const App = {
         return;
       }
 
-      const formData = new FormData();
-      formData.append('file', file);
+      // Client-side parsing with SheetJS
+      const reader = new FileReader();
+      reader.onload = async (e) => {
+        const data = new Uint8Array(e.target.result);
+        const workbook = XLSX.read(data, { type: 'array' });
+        const firstSheetName = workbook.SheetNames[0];
+        const worksheet = workbook.Sheets[firstSheetName];
+        const json = XLSX.utils.sheet_to_json(worksheet);
 
-      const response = await this.fetchJson('/api/import/preview', {
-        method: 'POST',
-        body: formData,
-      });
+        const response = await this.fetchJson('/api/import/preview-json', {
+          method: 'POST',
+          body: JSON.stringify(json),
+        });
 
-      // Expecting { headers: string[], rows: Array<Record<string,any>> }
-      if (!response || !Array.isArray(response.headers) || !Array.isArray(response.rows)) {
-        this.showNotification?.('Invalid preview response from server.', 'error');
-        return;
-      }
+        if (!response || !Array.isArray(response.headers) || !Array.isArray(response.rows)) {
+          this.showNotification?.('Invalid preview response from server.', 'error');
+          return;
+        }
 
-      this.renderImportPreview(response);
+        this.renderImportPreview(response);
 
-      if (this.step1) this.step1.style.display = 'none';
-      if (this.step2) this.step2.style.display = 'block';
-      if (this.nextBtn) this.nextBtn.style.display = 'none';
-      if (this.backBtn) this.backBtn.style.display = 'block';
-      if (this.commitBtn) this.commitBtn.style.display = 'block';
+        if (this.step1) this.step1.style.display = 'none';
+        if (this.step2) this.step2.style.display = 'block';
+        if (this.nextBtn) this.nextBtn.style.display = 'none';
+        if (this.backBtn) this.backBtn.style.display = 'block';
+        if (this.commitBtn) this.commitBtn.style.display = 'block';
+      };
+      reader.readAsArrayBuffer(file);
     } catch (err) {
       console.error(err);
       this.showNotification?.('Failed to load import preview.', 'error');

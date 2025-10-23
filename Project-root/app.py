@@ -923,97 +923,36 @@ def _process_chunk(chunk, headers):
         })
     return validated_rows
 
-@app.route('/api/import/preview', methods=['POST'])
+@app.route('/api/import/preview-json', methods=['POST'])
 @login_required
 @role_required('admin')
-def import_preview():
-    if 'file' not in request.files:
-        return jsonify({'error': 'No file part'}), 400
-    file = request.files['file']
-    if file.filename == '':
-        return jsonify({'error': 'No selected file'}), 400
+def import_preview_json():
+    rows = request.get_json()
+    if not rows:
+        return jsonify({'error': 'No data received'}), 400
 
     try:
-        MAX_PREVIEW_ROWS = 200
         validated_rows = []
-        headers = []
-        
-        if file.filename.lower().endswith('.csv'):
-            file.seek(0)
-            # Use a stream to decode the file line-by-line to save memory
-            decoded_file = (line.decode('utf-8', errors='ignore') for line in file)
-            reader = csv.reader(decoded_file)
+        headers = list(rows[0].keys()) if rows else []
+
+        for i, row_dict in enumerate(rows):
+            errors = []
+            if not str(row_dict.get('Item', '')).strip():
+                errors.append("Item name is required.")
             
-            try:
-                headers = next(reader)
-            except StopIteration:
-                return jsonify({'error': 'CSV file is empty or invalid'}), 400
-
-            for i, row in enumerate(reader):
-                if len(row) != len(headers):
-                    # Skip malformed rows, or handle as an error
-                    continue
-                
-                row_dict = dict(zip(headers, row))
-                errors = []
-                if not str(row_dict.get('Item', '')).strip():
-                    errors.append("Item name is required.")
-                
-                stock_val = str(row_dict.get('Stock', '0')).strip()
-                if stock_val:
-                    try:
-                        float(stock_val)
-                    except ValueError:
-                        errors.append("Stock must be a valid number.")
-                
-                # Only append the full row data if it's within the preview limit
-                if i < MAX_PREVIEW_ROWS:
-                     validated_rows.append({'_id': i, '_errors': errors, **row_dict})
-                # If there are errors, we can still append a lightweight object
-                elif errors:
-                     validated_rows.append({'_id': i, '_errors': errors})
-
-
-        elif file.filename.lower().endswith(('.xls', '.xlsx')):
-            # For Excel, we can process the file in chunks
-            xls = pd.ExcelFile(file)
-            # We'll only process the first sheet for simplicity
-            sheet_name = xls.sheet_names[0]
+            stock_val = str(row_dict.get('Stock', '0')).strip()
+            if stock_val:
+                try:
+                    float(stock_val)
+                except ValueError:
+                    errors.append("Stock must be a valid number.")
             
-            # Read the header first
-            df_header = pd.read_excel(xls, sheet_name=sheet_name, nrows=0)
-            headers = df_header.columns.tolist()
-
-            chunk_size = 500
-            row_counter = 0
-            for chunk_df in pd.read_excel(xls, sheet_name=sheet_name, chunksize=chunk_size):
-                chunk_df.fillna('', inplace=True)
-                for _, row in chunk_df.iterrows():
-                    row_dict = row.to_dict()
-                    errors = []
-                    if not str(row_dict.get('Item', '')).strip():
-                        errors.append("Item name is required.")
-                    
-                    stock_val = str(row_dict.get('Stock', '0')).strip()
-                    if stock_val:
-                        try:
-                            float(stock_val)
-                        except ValueError:
-                            errors.append("Stock must be a valid number.")
-                    
-                    if row_counter < MAX_PREVIEW_ROWS:
-                        validated_rows.append({'_id': row_counter, '_errors': errors, **row_dict})
-                    elif errors:
-                        validated_rows.append({'_id': row_counter, '_errors': errors})
-                    
-                    row_counter += 1
-        else:
-            return jsonify({'error': 'Unsupported file format'}), 400
+            validated_rows.append({'_id': i, '_errors': errors, **row_dict})
 
         return jsonify({'headers': headers, 'rows': validated_rows})
 
     except Exception as e:
-        app.logger.error(f"Preview error: {e}", exc_info=True)
+        app.logger.error(f"JSON Preview error: {e}", exc_info=True)
         return jsonify({'error': str(e)}), 500
 
 

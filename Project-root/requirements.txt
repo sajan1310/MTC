@@ -5,5 +5,5 @@ Authlib
 Flask-Login
 Flask-WTF
 Werkzeug
-pandas
+pandas>=1.2.0
 openpyxl
