@@ -325,6 +325,83 @@ body.dark-mode input:focus, body.dark-mode textarea:focus, body.dark-mode select
 /* --- Table-Based Inventory & User Management Styles --- */
 .page-header { display: flex; justify-content: space-between; align-items: center; margin-bottom: 2rem; padding-bottom: 1.5rem; border-bottom: 1px solid var(--border-color); }
 .page-header h2 { margin: 0; }
+
+.search-controls {
+  display: flex;
+  align-items: center;
+  gap: 1rem;
+}
+
+.filter-container {
+  display: flex;
+  align-items: center;
+}
+
+.filter-label {
+  display: flex;
+  align-items: center;
+  cursor: pointer;
+  font-size: 0.9rem;
+  color: var(--subtle-text-color);
+  gap: 0.5rem;
+}
+
+.filter-checkbox {
+  width: auto;
+  margin-right: 0.5rem;
+  accent-color: var(--primary-color);
+}
+
+.toggle-switch {
+  position: relative;
+  display: inline-block;
+  width: 50px;
+  height: 28px;
+}
+
+.toggle-switch-checkbox {
+  opacity: 0;
+  width: 0;
+  height: 0;
+}
+
+.toggle-switch-slider {
+  position: absolute;
+  cursor: pointer;
+  top: 0;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  background-color: #ccc;
+  transition: .4s;
+  border-radius: 28px;
+}
+
+.toggle-switch-slider:before {
+  position: absolute;
+  content: "";
+  height: 20px;
+  width: 20px;
+  left: 4px;
+  bottom: 4px;
+  background-color: white;
+  transition: .4s;
+  border-radius: 50%;
+}
+
+.toggle-switch-checkbox:checked + .toggle-switch-slider {
+  background-color: var(--primary-color);
+}
+
+.toggle-switch-checkbox:checked + .toggle-switch-slider:before {
+  transform: translateX(22px);
+}
+
+.toggle-switch-label {
+  margin-left: 0.5rem;
+  font-size: 0.9rem;
+  color: var(--subtle-text-color);
+}
 .inventory-table-container { margin-top: 1.5rem; overflow-x: auto; }
 .inventory-table { width: 100%; border-collapse: separate; border-spacing: 3px 8px; table-layout: auto; }
 .inventory-table th, .inventory-table td { text-align: left; vertical-align: middle; padding: 1.25rem 1rem; }
@@ -651,3 +728,48 @@ body.dark-mode .edit-form-row td {
     width: 100%;
     margin-top: 1rem;
 }
+
+/* --- Low Stock Report Modal --- */
+#low-stock-report-modal .modal-content.large {
+  max-width: 1100px; /* Widen modal to fit all columns */
+}
+
+#low-stock-report-modal .modal-body {
+  max-height: 70vh; /* Ensure the body has a constrained height to allow scrolling */
+  padding: 0; /* Remove padding to allow table to fill the space */
+}
+
+#low-stock-report-modal .table-wrapper {
+    overflow-y: auto;
+    max-height: 70vh;
+}
+
+#low-stock-report-modal .inventory-table {
+    border-spacing: 0; /* Remove spacing for a cleaner look */
+}
+
+#low-stock-report-modal .inventory-table th {
+  position: sticky;
+  top: 0; /* Stick to the very top of the scrolling container */
+  background: var(--card-bg); /* Use card-bg for a slight contrast if different from modal-bg */
+  z-index: 10;
+  box-shadow: 0 2px 4px var(--shadow-color); /* Add subtle shadow for depth */
+}
+
+body.dark-mode #low-stock-report-modal .inventory-table th {
+    background: var(--modal-bg);
+}
+
+#low-stock-report-modal .inventory-table td {
+    border-bottom: 1px solid var(--border-color);
+    padding: 1rem 1.25rem;
+}
+
+#low-stock-report-modal .inventory-table tbody tr:nth-child(even) {
+    background-color: var(--bg-color);
+}
+
+#low-stock-report-modal .inventory-table tbody tr:hover {
+    background-color: color-mix(in srgb, var(--primary-color) 10%, transparent);
+}
+

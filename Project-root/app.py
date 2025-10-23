@@ -482,9 +482,11 @@ def get_variations_for_item_model():
 @app.route('/api/items', methods=['GET'])
 @login_required
 def get_items():
+    show_low_stock_only = request.args.get('low_stock', 'false').lower() == 'true'
+    
     try:
         with get_conn(cursor_factory=psycopg2.extras.DictCursor) as (conn, cur):
-            cur.execute("""
+            base_query = """
                 SELECT 
                     i.item_id, i.name, mm.model_name as model, vm.variation_name as variation, 
                     i.description, i.image_path,
@@ -498,9 +500,21 @@ def get_items():
                 FROM item_master i
                 LEFT JOIN model_master mm ON i.model_id = mm.model_id
                 LEFT JOIN variation_master vm ON i.variation_id = vm.variation_id
-                ORDER BY i.name
-            """)
+            """
+            
+            if show_low_stock_only:
+                base_query += """
+                WHERE EXISTS (
+                    SELECT 1 FROM item_variant v_check 
+                    WHERE v_check.item_id = i.item_id AND v_check.opening_stock <= v_check.threshold
+                )
+                """
+            
+            base_query += " ORDER BY i.name"
+            
+            cur.execute(base_query)
             items = cur.fetchall()
+            
             return jsonify([{
                 'id': item['item_id'], 'name': item['name'], 'model': item['model'],
                 'variation': item['variation'], 'description': item['description'],
@@ -847,6 +861,35 @@ def update_user_role(user_id):
     except Exception as e:
         app.logger.error(f"Error updating role for user {user_id}: {e}")
         return jsonify({'error': 'Failed to update user role.'}), 500
+
+@app.route('/api/low-stock-report', methods=['GET'])
+@login_required
+def get_low_stock_report():
+    try:
+        with get_conn(cursor_factory=psycopg2.extras.DictCursor) as (conn, cur):
+            cur.execute("""
+                SELECT 
+                    im.name as item_name,
+                    mm.model_name,
+                    vm.variation_name,
+                    cm.color_name,
+                    sm.size_name,
+                    iv.opening_stock,
+                    iv.threshold
+                FROM item_variant iv
+                JOIN item_master im ON iv.item_id = im.item_id
+                LEFT JOIN model_master mm ON im.model_id = mm.model_id
+                LEFT JOIN variation_master vm ON im.variation_id = vm.variation_id
+                JOIN color_master cm ON iv.color_id = cm.color_id
+                JOIN size_master sm ON iv.size_id = sm.size_id
+                WHERE iv.opening_stock <= iv.threshold
+                ORDER BY im.name, cm.color_name, sm.size_name
+            """)
+            report_data = [dict(row) for row in cur.fetchall()]
+        return jsonify(report_data)
+    except Exception as e:
+        app.logger.error(f"Error generating low stock report: {e}")
+        return jsonify({'error': 'Failed to generate low stock report'}), 500
 
 def _process_chunk(chunk, headers):
     """Helper to process a chunk of rows for validation."""

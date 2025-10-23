@@ -9,17 +9,26 @@
             <div class="header-left">
                 <h2>Inventory Management</h2>
                 <div class="search-container">
-                    <div class="search-input-wrapper">
-                        <svg class="search-icon" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-                            <circle cx="11" cy="11" r="8"></circle>
-                            <path d="M21 21l-4.35-4.35"></path>
-                        </svg>
-                        <input type="text" 
-                               id="inventory-search" 
-                               class="search-input" 
-                               placeholder="Search items by name, model, or variation..."
-                               autocomplete="off">
-                        <button type="button" class="clear-search-btn" style="display: none;" title="Clear search">×</button>
+                    <div class="search-controls">
+                        <div class="search-input-wrapper">
+                            <svg class="search-icon" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                                <circle cx="11" cy="11" r="8"></circle>
+                                <path d="M21 21l-4.35-4.35"></path>
+                            </svg>
+                            <input type="text" 
+                                   id="inventory-search" 
+                                   class="search-input" 
+                                   placeholder="Search items by name, model, or variation..."
+                                   autocomplete="off">
+                            <button type="button" class="clear-search-btn" style="display: none;" title="Clear search">×</button>
+                        </div>
+                        <div class="filter-container">
+                            <label for="low-stock-filter" class="toggle-switch" title="Only show items with low stock variants">
+                                <input type="checkbox" id="low-stock-filter" class="toggle-switch-checkbox">
+                                <span class="toggle-switch-slider"></span>
+                            </label>
+                            <span class="toggle-switch-label">Low Stock</span>
+                        </div>
                     </div>
                     <div id="search-result-count" class="search-result-count">
                         Showing all items
@@ -27,6 +36,13 @@
                 </div>
             </div>
             <div class="header-actions">
+                <button id="low-stock-report-btn" class="button">
+                    <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                        <path d="M12 22c5.523 0 10-4.477 10-10S17.523 2 12 2 2 6.477 2 12s4.477 10 10 10z"></path>
+                        <path d="M12 6v6l4 2"></path>
+                    </svg>
+                    Low Stock Report
+                </button>
                 <button id="import-data-btn" class="button">
                     <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
                         <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"></path>
@@ -75,9 +91,49 @@
                         </tr>
                     </tbody>
                 </table>
-            </div>
         </div>
     </div>
+</div>
+
+<!-- Low Stock Report Modal -->
+<div id="low-stock-report-modal" class="modal">
+    <div class="modal-content large">
+        <div class="modal-header">
+            <h3>Low Stock Report</h3>
+            <button type="button" class="button cancel close-modal-btn" aria-label="Close modal">&times;</button>
+        </div>
+        <div class="modal-body">
+            <div class="table-wrapper" id="low-stock-report-printable">
+                <table class="inventory-table">
+                    <thead>
+                        <tr>
+                            <th>Item Name</th>
+                            <th>Model</th>
+                            <th>Variation</th>
+                            <th>Color</th>
+                            <th>Size</th>
+                            <th>Stock</th>
+                            <th>Threshold</th>
+                        </tr>
+                    </thead>
+                    <tbody id="low-stock-report-body">
+                        <!-- Low stock variant rows will be populated here -->
+                    </tbody>
+                </table>
+            </div>
+        </div>
+        <div class="modal-footer">
+            <button type="button" class="button" id="print-low-stock-report-btn">
+                <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                    <polyline points="6 9 6 2 18 2 18 9"></polyline>
+                    <path d="M6 18H4a2 2 0 0 1-2-2v-5a2 2 0 0 1 2-2h16a2 2 0 0 1 2 2v5a2 2 0 0 1-2 2h-2"></path>
+                    <rect x="6" y="14" width="12" height="8"></rect>
+                </svg>
+                Print PDF
+            </button>
+        </div>
+    </div>
+</div>
 </div>
 
 
