@@ -2,13 +2,16 @@
 
 // Global client-side error capture
 window.addEventListener('unhandledrejection', function (ev) {
+  // This is a common error caused by browser extensions and can be safely ignored.
+  const message = ev?.reason?.message || '';
+  if (message.includes('message channel closed') || message.includes('A listener indicated an asynchronous response')) {
+    ev.preventDefault();
+    return;
+  }
+
   try {
     const reason = ev.reason || {};
     const reasonText = reason.message || (reason.toString && reason.toString()) || '';
-    if (reasonText.includes('message channel closed')) {
-      ev.preventDefault();
-      return;
-    }
     const payload = {
       type: 'unhandledrejection',
       reason: reasonText,
@@ -186,6 +189,17 @@ const App = {
       this.masterSizeList.addEventListener('click', (e) => this.handleMasterActions(e, 'size'));
     }
 
+    document.body.addEventListener('click', (e) => {
+        if (e.target.closest('.edit-model-btn')) {
+            this.handleDropdownActions('model', 'edit');
+        } else if (e.target.closest('.delete-model-btn')) {
+            this.handleDropdownActions('model', 'delete');
+        } else if (e.target.closest('.edit-variation-btn')) {
+            this.handleDropdownActions('variation', 'edit');
+        } else if (e.target.closest('.delete-variation-btn')) {
+            this.handleDropdownActions('variation', 'delete');
+        }
+    });
 
     const itemNameInput = document.getElementById('item-name');
     const itemModelSelect = document.getElementById('item-model');
@@ -203,19 +217,17 @@ const App = {
             // This is an existing item, let's populate the fields
             await this.fetchModels(selectedItem);
             const modelSelect = $('#item-model');
-            const modelExists = modelSelect.find('option').filter(function() { return this.value === itemData.model; }).length > 0;
-            if (itemData.model && !modelExists) {
+            if (itemData.model && modelSelect.find(`option[value="${itemData.model}"]`).length === 0) {
                 const newOption = new Option(itemData.model, itemData.model, true, true);
-                modelSelect.append(newOption);
+                modelSelect.append(newOption).trigger('change');
             }
             modelSelect.val(itemData.model || '').trigger('change');
 
             await this.fetchVariations(selectedItem, itemData.model);
             const variationSelect = $('#item-variation');
-            const variationExists = variationSelect.find('option').filter(function() { return this.value === itemData.variation; }).length > 0;
-            if (itemData.variation && !variationExists) {
+            if (itemData.variation && variationSelect.find(`option[value="${itemData.variation}"]`).length === 0) {
                 const newOption = new Option(itemData.variation, itemData.variation, true, true);
-                variationSelect.append(newOption);
+                variationSelect.append(newOption).trigger('change');
             }
             variationSelect.val(itemData.variation || '').trigger('change');
 
@@ -228,14 +240,41 @@ const App = {
       });
     }
 
-    if (itemModelSelect) {
-      // Select2 triggers a 'change' event on the original select element
-      $(itemModelSelect).on('change', (e) => {
-        const selectedItem = itemNameInput.value;
-        const selectedModel = e.target.value;
-        this.fetchVariations(selectedItem, selectedModel);
+
+    $(document).on('dblclick', '.select2-results__option[role="option"]', (e) => {
+      e.stopPropagation();
+      const target = $(e.currentTarget);
+      const text = target.text();
+      
+      const resultsId = target.closest('ul').attr('id');
+      if (!resultsId) return;
+
+      const originalSelectId = resultsId.replace('select2-', '').replace('-results', '');
+      const selectElement = $('#' + originalSelectId);
+      
+      const optionElement = selectElement.find('option').filter(function() {
+          return $(this).text() === text;
       });
-    }
+      
+      const id = optionElement.data('id');
+      const type = originalSelectId.includes('model') ? 'model' : 'variation';
+
+      if (!id) {
+        return;
+      }
+
+      const newText = prompt(`Edit ${type}:`, text);
+      if (newText && newText !== text) {
+        this.handleMasterUpdate(type, id, newText, () => {
+          if (type === 'model') {
+            this.fetchModels($('#item-name').val(), newText);
+          } else if (type === 'variation') {
+            this.fetchVariations($('#item-name').val(), $('#item-model').val(), newText);
+          }
+          selectElement.select2('close');
+        });
+      }
+    });
   },
 
   initializeTheme() {
@@ -284,17 +323,25 @@ const App = {
     }
   },
 
-  // Fixed: Do not set Content-Type when sending FormData
   async fetchJson(url, options = {}) {
     const csrfToken = document.querySelector('meta[name="csrf-token"]').getAttribute('content');
     const defaultHeaders = {
       'Accept': 'application/json',
       'X-CSRFToken': csrfToken
     };
-    if (options.body && !(options.body instanceof FormData)) {
-      defaultHeaders['Content-Type'] = 'application/json';
-    }
 
+    // Correctly handle Content-Type for JSON bodies, but not for FormData
+    if (options.body && typeof options.body === 'string' && !options.headers?.['Content-Type']) {
+        try {
+            JSON.parse(options.body); // Check if it's a valid JSON string
+            defaultHeaders['Content-Type'] = 'application/json';
+        } catch (e) {
+            // Not a JSON string, do nothing
+        }
+    } else if (options.body && !(options.body instanceof FormData) && !options.headers?.['Content-Type']) {
+        defaultHeaders['Content-Type'] = 'application/json';
+    }
+    
     const config = {
       ...options,
       headers: {
@@ -455,7 +502,7 @@ const App = {
     if (button.classList.contains('expand-btn')) {
       await this.toggleVariantDetails(row, button, itemId);
     } else if (button.classList.contains('edit-item')) {
-      this.openItemModal(itemId);
+      this.toggleEditForm(row, itemId);
     } else if (button.classList.contains('delete-item')) {
       this.deleteItem(itemId, itemName);
     }
@@ -802,8 +849,134 @@ const App = {
     </table></div>`;
   },
 
-  async openItemModal(itemId = null) {
-    window.location.href = itemId ? `/add_item?edit=${itemId}` : '/add_item';
+  async toggleEditForm(itemRow, itemId) {
+    const existingEditRow = itemRow.nextElementSibling;
+    if (existingEditRow && existingEditRow.classList.contains('edit-form-row')) {
+        existingEditRow.remove();
+        itemRow.style.display = '';
+        return;
+    }
+
+    const item = await this.fetchJson(`${this.apiBase}/items/${itemId}`);
+    const variants = await this.fetchJson(`${this.apiBase}/items/${itemId}/variants`);
+    if (!item || !variants) {
+        this.showNotification('Failed to fetch item details.', 'error');
+        return;
+    }
+
+    const editFormHTML = this.createEditFormHTML(item, variants);
+    itemRow.insertAdjacentHTML('afterend', editFormHTML);
+    itemRow.style.display = 'none';
+
+    const editRow = itemRow.nextElementSibling;
+    const form = editRow.querySelector('.edit-item-form');
+
+    form.addEventListener('submit', (e) => {
+        e.preventDefault();
+        this.handleUpdateItem(itemId, form, itemRow);
+    });
+
+    const cancelButton = editRow.querySelector('.cancel-edit-btn');
+    cancelButton.addEventListener('click', () => {
+        editRow.remove();
+        itemRow.style.display = '';
+    });
+  },
+
+  createEditFormHTML(item, variants) {
+    const variantRows = variants.map(v => `
+        <tr class="variant-edit-row" data-variant-id="${v.id || ''}">
+            <td><input type="text" class="variant-color" value="${this.escapeHtml(v.color.name)}" list="color-datalist" required></td>
+            <td><input type="text" class="variant-size" value="${this.escapeHtml(v.size.name)}" list="size-datalist" required></td>
+            <td><input type="number" class="stock-input" value="${v.opening_stock}" min="0" required></td>
+            <td><input type="text" class="variant-unit" value="${this.escapeHtml(v.unit || 'Pcs')}" list="unit-datalist"></td>
+            <td><input type="number" class="threshold-input" value="${v.threshold}" min="0" required></td>
+        </tr>
+    `).join('');
+
+    return `
+        <tr class="edit-form-row">
+            <td colspan="9">
+                <form class="edit-item-form">
+                    <h4>Edit ${this.escapeHtml(item.name)}</h4>
+                    <div class="form-row">
+                        <div class="form-field">
+                            <label for="edit-item-name-${item.id}">Item Name</label>
+                            <input type="text" id="edit-item-name-${item.id}" value="${this.escapeHtml(item.name)}" required>
+                        </div>
+                        <div class="form-field">
+                            <label for="edit-item-model-${item.id}">Model</label>
+                            <input type="text" id="edit-item-model-${item.id}" value="${this.escapeHtml(item.model || '')}">
+                        </div>
+                        <div class="form-field">
+                            <label for="edit-item-variation-${item.id}">Variation</label>
+                            <input type="text" id="edit-item-variation-${item.id}" value="${this.escapeHtml(item.variation || '')}">
+                        </div>
+                    </div>
+                    <div class="form-field">
+                        <label for="edit-item-description-${item.id}">Description</label>
+                        <textarea id="edit-item-description-${item.id}">${this.escapeHtml(item.description || '')}</textarea>
+                    </div>
+                    <h5>Variants</h5>
+                    <table class="variants-modal-table">
+                        <thead>
+                            <tr>
+                                <th>Color</th>
+                                <th>Size</th>
+                                <th>Stock</th>
+                                <th>Unit</th>
+                                <th>Threshold</th>
+                            </tr>
+                        </thead>
+                        <tbody>${variantRows}</tbody>
+                    </table>
+                    <div class="form-actions">
+                        <button type="submit" class="button create">Save Changes</button>
+                        <button type="button" class="button cancel-edit-btn">Cancel</button>
+                    </div>
+                </form>
+            </td>
+        </tr>
+    `;
+  },
+
+  async handleUpdateItem(itemId, form, itemRow) {
+    const saveBtn = form.querySelector('button[type="submit"]');
+    saveBtn.disabled = true;
+    saveBtn.textContent = 'Saving...';
+
+    const formData = new FormData();
+    formData.append('name', form.querySelector(`#edit-item-name-${itemId}`).value);
+    formData.append('model', form.querySelector(`#edit-item-model-${itemId}`).value);
+    formData.append('variation', form.querySelector(`#edit-item-variation-${itemId}`).value);
+    formData.append('description', form.querySelector(`#edit-item-description-${itemId}`).value);
+
+    const variantRows = form.querySelectorAll('.variant-edit-row');
+    const variants = Array.from(variantRows).map(row => ({
+        id: row.dataset.variantId,
+        color: row.querySelector('.variant-color').value,
+        size: row.querySelector('.variant-size').value,
+        opening_stock: parseInt(row.querySelector('.stock-input').value, 10),
+        unit: row.querySelector('.variant-unit').value,
+        threshold: parseInt(row.querySelector('.threshold-input').value, 10),
+    }));
+    formData.append('variants', JSON.stringify(variants));
+
+    const result = await this.fetchJson(`${this.apiBase}/items/${itemId}`, {
+        method: 'PUT',
+        body: formData,
+    });
+
+    if (result) {
+        this.showNotification('Item updated successfully.', 'success');
+        form.closest('.edit-form-row').remove();
+        itemRow.style.display = '';
+        this.fetchItems(); // Refresh the entire list to reflect changes
+    } else {
+        this.showNotification('Failed to update item.', 'error');
+        saveBtn.disabled = false;
+        saveBtn.textContent = 'Save Changes';
+    }
   },
 
   renderVariantsInModal(variants) {
@@ -1036,20 +1209,28 @@ const App = {
     onFinish();
   },
 
-  async handleMasterDelete(type, id, name) {
+  async handleMasterDelete(type, id, name, onFinish) {
     if (!confirm(`Are you sure you want to delete "${name}"?`)) return;
     const result = await this.fetchJson(`${this.apiBase}/${type}s/${id}`, { method: 'DELETE' });
     if (result) {
       this.showNotification(`"${name}" has been deleted.`, 'success');
-      this.fetchAndRenderMasterData(type);
+      if (onFinish) {
+        onFinish();
+      } else {
+        this.fetchAndRenderMasterData(type);
+      }
       this.fetchMasterData(type + 's');
     }
   },
 
-  // Fixed: proper entity mapping
   escapeHtml(text) {
-    const map = { '&': '&', '<': '<', '>': '>', '"': '"', "'": '&#039;' };
-    return text ? text.replace(/[&<>"']/g, m => map[m]) : '';
+    if (text === null || text === undefined) {
+        return '';
+    }
+    // Use a DOM element to safely encode text content
+    const div = document.createElement('div');
+    div.textContent = text;
+    return div.innerHTML;
   },
 
   // Placeholder to avoid breaking fetchInitialData Promise.all reference
@@ -1064,24 +1245,24 @@ const App = {
     return names;
   },
 
-  async fetchModels(itemName) {
+  async fetchModels(itemName, currentModel = null) {
     const itemModelSelect = document.getElementById('item-model');
     if (!itemModelSelect) return;
 
-    const models = await this.fetchJson(`${this.apiBase}/models?item_name=${encodeURIComponent(itemName)}`);
+    const models = await this.fetchJson(`${this.apiBase}/models-by-item?item_name=${encodeURIComponent(itemName)}`);
     if (models) {
-      this.populateSelect(itemModelSelect, models);
+      this.populateSelect(itemModelSelect, models, currentModel);
     }
     return models;
   },
 
-  async fetchVariations(itemName, model) {
+  async fetchVariations(itemName, model, currentVariation = null) {
     const itemVariationSelect = document.getElementById('item-variation');
     if (!itemVariationSelect) return;
 
-    const variations = await this.fetchJson(`${this.apiBase}/variations?item_name=${encodeURIComponent(itemName)}&model=${encodeURIComponent(model)}`);
+    const variations = await this.fetchJson(`${this.apiBase}/variations-by-item-model?item_name=${encodeURIComponent(itemName)}&model=${encodeURIComponent(model)}`);
     if (variations) {
-      this.populateSelect(itemVariationSelect, variations);
+      this.populateSelect(itemVariationSelect, variations, currentVariation);
     }
     return variations;
   },
@@ -1095,31 +1276,74 @@ const App = {
     });
   },
 
-  populateSelect(selectElement, options) {
-    const currentValue = selectElement.value;
-    
-    // Preserve the placeholder option if it exists
+  populateSelect(selectElement, options, currentValue = null) {
     const placeholder = selectElement.querySelector('option[value=""]');
     selectElement.innerHTML = '';
     if (placeholder) {
         selectElement.appendChild(placeholder);
     }
 
-    options.forEach(optionText => {
+    if (currentValue && !options.some(opt => opt.name === currentValue)) {
+        options.unshift({ id: null, name: currentValue });
+    }
+
+    options.forEach(option => {
         const optionElement = document.createElement('option');
-        optionElement.value = optionText;
-        optionElement.textContent = optionText;
+        optionElement.value = option.name;
+        optionElement.textContent = option.name;
+        if(option.id) {
+            optionElement.dataset.id = option.id;
+        }
         selectElement.appendChild(optionElement);
     });
 
-    // Restore the selected value if it's still in the list
-    const optionValues = Array.from(selectElement.options).map(opt => opt.value);
-    if (optionValues.includes(currentValue)) {
+    if (currentValue) {
         selectElement.value = currentValue;
     }
 
-    // Refresh the Select2 instance to show the new options
-    $(selectElement).trigger('change');
+    $(selectElement).select2({
+        tags: true,
+        width: '100%'
+    });
+  },
+
+  handleDropdownActions(type, action) {
+    const selectId = `#item-${type}`;
+    const selectElement = $(selectId);
+    const selectedValue = selectElement.val();
+
+    if (!selectedValue) {
+        this.showNotification(`Please select a ${type} to ${action}.`, 'error');
+        return;
+    }
+
+    const optionElement = selectElement.find('option').filter(function() {
+        return $(this).val() === selectedValue;
+    });
+    const id = optionElement.data('id');
+
+    if (action === 'edit') {
+        const newText = prompt(`Edit ${type}:`, selectedValue);
+        if (newText && newText !== selectedValue) {
+            this.handleMasterUpdate(type, id, newText, () => {
+                if (type === 'model') {
+                    this.fetchModels($('#item-name').val(), newText);
+                } else if (type === 'variation') {
+                    this.fetchVariations($('#item-name').val(), $('#item-model').val(), newText);
+                }
+            });
+        }
+    } else if (action === 'delete') {
+        if (confirm(`Are you sure you want to delete the ${type} "${selectedValue}"?`)) {
+            this.handleMasterDelete(type, id, selectedValue, () => {
+                if (type === 'model') {
+                    this.fetchModels($('#item-name').val());
+                } else if (type === 'variation') {
+                    this.fetchVariations($('#item-name').val(), $('#item-model').val());
+                }
+            });
+        }
+    }
   }
 };
 

@@ -22,6 +22,8 @@ from werkzeug.security import generate_password_hash, check_password_hash
 from werkzeug.utils import secure_filename
 import logging
 import pandas as pd
+import csv
+from io import StringIO
 
 app = Flask(__name__)
 app.secret_key = os.environ.get('FLASK_SECRET_KEY', 'a-strong-default-secret-key-for-dev')
@@ -163,6 +165,26 @@ def get_or_create_master_id(cur, value, table_name, id_col, name_col):
     cur.execute(f"INSERT INTO {table_name} ({name_col}) VALUES (%s) RETURNING {id_col}", (value,))
     new_id = cur.fetchone()[0]
     return new_id
+
+def get_or_create_item_master_id(cur, name, model, variation, description):
+    """Finds an existing item_master or creates a new one, returning its ID."""
+    model_id = get_or_create_master_id(cur, model, 'model_master', 'model_id', 'model_name')
+    variation_id = get_or_create_master_id(cur, variation, 'variation_master', 'variation_id', 'variation_name')
+    
+    cur.execute(
+        "SELECT item_id FROM item_master WHERE name=%s AND model_id=%s AND variation_id=%s AND COALESCE(description,'')=%s",
+        (name, model_id, variation_id, description or '')
+    )
+    item_row = cur.fetchone()
+    
+    if item_row:
+        return item_row[0]
+    else:
+        cur.execute(
+            "INSERT INTO item_master(name, model_id, variation_id, description) VALUES(%s,%s,%s,%s) RETURNING item_id",
+            (name, model_id, variation_id, description)
+        )
+        return cur.fetchone()[0]
 
 # --- Main Page Routes ---
 @app.route('/')
@@ -387,6 +409,8 @@ def make_api_crud_routes(app, entity_name, table_name, id_col, name_col):
 
 make_api_crud_routes(app, 'color', 'color_master', 'color_id', 'color_name')
 make_api_crud_routes(app, 'size', 'size_master', 'size_id', 'size_name')
+make_api_crud_routes(app, 'model', 'model_master', 'model_id', 'model_name')
+make_api_crud_routes(app, 'variation', 'variation_master', 'variation_id', 'variation_name')
 
 @app.route('/api/item-names', methods=['GET'])
 @login_required
@@ -400,35 +424,59 @@ def get_item_names():
         app.logger.error(f"Error fetching item names: {e}")
         return jsonify({'error': 'Failed to fetch item names'}), 500
 
-@app.route('/api/models', methods=['GET'])
+@app.route('/api/models-by-item', methods=['GET'])
 @login_required
-def get_models():
+def get_models_for_item():
     item_name = request.args.get('item_name')
     if not item_name:
         return jsonify([])
     try:
         with get_conn() as (conn, cur):
-            cur.execute("SELECT DISTINCT model FROM item_master WHERE name = %s ORDER BY model", (item_name,))
-            models = [row[0] for row in cur.fetchall() if row[0]]
+            cur.execute("""
+                SELECT DISTINCT mm.model_id, mm.model_name 
+                FROM model_master mm
+                JOIN item_master im ON mm.model_id = im.model_id
+                WHERE im.name = %s 
+                ORDER BY mm.model_name
+            """, (item_name,))
+            models = [{'id': row[0], 'name': row[1]} for row in cur.fetchall() if row[1]]
         return jsonify(models)
     except Exception as e:
         app.logger.error(f"Error fetching models for item {item_name}: {e}")
         return jsonify({'error': 'Failed to fetch models'}), 500
 
-@app.route('/api/variations', methods=['GET'])
+@app.route('/api/variations-by-item-model', methods=['GET'])
 @login_required
-def get_variations():
+def get_variations_for_item_model():
     item_name = request.args.get('item_name')
-    model = request.args.get('model')
-    if not item_name or not model:
+    model_name = request.args.get('model')
+
+    if not item_name:
         return jsonify([])
+
     try:
         with get_conn() as (conn, cur):
-            cur.execute("SELECT DISTINCT variation FROM item_master WHERE name = %s AND model = %s ORDER BY variation", (item_name, model))
-            variations = [row[0] for row in cur.fetchall() if row[0]]
+            query = """
+                SELECT DISTINCT vm.variation_id, vm.variation_name 
+                FROM variation_master vm
+                JOIN item_master im ON vm.variation_id = im.variation_id
+                WHERE im.name = %s
+            """
+            params = [item_name]
+
+            if model_name:
+                query += """
+                    AND im.model_id = (SELECT model_id FROM model_master WHERE model_name = %s)
+                """
+                params.append(model_name)
+            
+            query += " ORDER BY vm.variation_name"
+
+            cur.execute(query, tuple(params))
+            variations = [{'id': row[0], 'name': row[1]} for row in cur.fetchall() if row[1]]
         return jsonify(variations)
     except Exception as e:
-        app.logger.error(f"Error fetching variations for item {item_name} and model {model}: {e}")
+        app.logger.error(f"Error fetching variations for item '{item_name}' and model '{model_name}': {e}")
         return jsonify({'error': 'Failed to fetch variations'}), 500
 
 @app.route('/api/items', methods=['GET'])
@@ -438,7 +486,8 @@ def get_items():
         with get_conn(cursor_factory=psycopg2.extras.DictCursor) as (conn, cur):
             cur.execute("""
                 SELECT 
-                    i.item_id, i.name, i.model, i.variation, i.description, i.image_path,
+                    i.item_id, i.name, mm.model_name as model, vm.variation_name as variation, 
+                    i.description, i.image_path,
                     (SELECT COUNT(*) FROM item_variant v WHERE v.item_id = i.item_id) as variant_count,
                     (SELECT COALESCE(SUM(v.opening_stock), 0) FROM item_variant v WHERE v.item_id = i.item_id) as total_stock,
                     (SELECT COALESCE(SUM(v.threshold), 0) FROM item_variant v WHERE v.item_id = i.item_id) as total_threshold,
@@ -447,6 +496,8 @@ def get_items():
                         WHERE v_check.item_id = i.item_id AND v_check.opening_stock <= v_check.threshold
                     ) as has_low_stock_variants
                 FROM item_master i
+                LEFT JOIN model_master mm ON i.model_id = mm.model_id
+                LEFT JOIN variation_master vm ON i.variation_id = vm.variation_id
                 ORDER BY i.name
             """)
             items = cur.fetchall()
@@ -484,19 +535,22 @@ def add_item():
     try:
         with get_conn() as (conn, cur):
             # Check for existing item with the same composite key
+            model_id = get_or_create_master_id(cur, data.get('model'), 'model_master', 'model_id', 'model_name')
+            variation_id = get_or_create_master_id(cur, data.get('variation'), 'variation_master', 'variation_id', 'variation_name')
+
             cur.execute(
                 """
                 SELECT item_id FROM item_master 
-                WHERE name = %s AND COALESCE(model, '') = %s AND COALESCE(variation, '') = %s AND COALESCE(description, '') = %s
+                WHERE name = %s AND model_id = %s AND variation_id = %s AND COALESCE(description, '') = %s
                 """,
-                (data['name'], data.get('model', ''), data.get('variation', ''), data.get('description', ''))
+                (data['name'], model_id, variation_id, data.get('description', ''))
             )
             if cur.fetchone():
                 return jsonify({'error': 'An item with the same name, model, variation, and description already exists.'}), 409
 
             cur.execute(
-                "INSERT INTO item_master (name, model, variation, description, image_path) VALUES (%s, %s, %s, %s, %s) RETURNING item_id",
-                (data['name'], data.get('model'), data.get('variation'), data.get('description'), image_path)
+                "INSERT INTO item_master (name, model_id, variation_id, description, image_path) VALUES (%s, %s, %s, %s, %s) RETURNING item_id",
+                (data['name'], model_id, variation_id, data.get('description'), image_path)
             )
             item_id = cur.fetchone()[0]
             variants = json.loads(data['variants'])
@@ -521,10 +575,28 @@ def add_item():
 def get_item(item_id):
     try:
         with get_conn(cursor_factory=psycopg2.extras.DictCursor) as (conn, cur):
-            cur.execute("SELECT * FROM item_master WHERE item_id = %s", (item_id,))
+            cur.execute("""
+                SELECT 
+                    i.item_id, i.name, mm.model_name as model, vm.variation_name as variation, 
+                    i.description, i.image_path
+                FROM item_master i
+                LEFT JOIN model_master mm ON i.model_id = mm.model_id
+                LEFT JOIN variation_master vm ON i.variation_id = vm.variation_id
+                WHERE i.item_id = %s
+            """, (item_id,))
             item = cur.fetchone()
             if not item: return jsonify({'error': 'Item not found'}), 404
-            return jsonify(dict(item))
+            
+            # Convert row object to a dictionary to send as JSON
+            item_dict = {
+                'id': item['item_id'],
+                'name': item['name'],
+                'model': item['model'],
+                'variation': item['variation'],
+                'description': item['description'],
+                'image_path': item['image_path']
+            }
+            return jsonify(item_dict)
     except Exception as e:
         app.logger.error(f"Error fetching item {item_id}: {e}")
         return jsonify({'error': 'Failed to fetch item'}), 500
@@ -565,52 +637,58 @@ def update_item(item_id):
     try:
         with get_conn() as (conn, cur):
             # Check if the new combination of attributes already exists for a DIFFERENT item
+            model_id = get_or_create_master_id(cur, data.get('model'), 'model_master', 'model_id', 'model_name')
+            variation_id = get_or_create_master_id(cur, data.get('variation'), 'variation_master', 'variation_id', 'variation_name')
+
             cur.execute(
                 """
                 SELECT item_id FROM item_master 
-                WHERE name = %s AND COALESCE(model, '') = %s AND COALESCE(variation, '') = %s AND COALESCE(description, '') = %s
+                WHERE name = %s AND model_id = %s AND variation_id = %s AND COALESCE(description, '') = %s
                 AND item_id != %s
                 """,
-                (data['name'], data.get('model', ''), data.get('variation', ''), data.get('description', ''), item_id)
+                (data['name'], model_id, variation_id, data.get('description', ''), item_id)
             )
             if cur.fetchone():
                 return jsonify({'error': 'Another item with the same name, model, variation, and description already exists.'}), 409
 
             if image_path:
                 cur.execute(
-                    "UPDATE item_master SET name=%s, model=%s, variation=%s, description=%s, image_path=%s WHERE item_id=%s",
-                    (data['name'], data.get('model'), data.get('variation'), data.get('description'), image_path, item_id)
+                    "UPDATE item_master SET name=%s, model_id=%s, variation_id=%s, description=%s, image_path=%s WHERE item_id=%s",
+                    (data['name'], model_id, variation_id, data.get('description'), image_path, item_id)
                 )
             else:
                 cur.execute(
-                    "UPDATE item_master SET name=%s, model=%s, variation=%s, description=%s WHERE item_id=%s",
-                    (data['name'], data.get('model'), data.get('variation'), data.get('description'), item_id)
+                    "UPDATE item_master SET name=%s, model_id=%s, variation_id=%s, description=%s WHERE item_id=%s",
+                    (data['name'], model_id, variation_id, data.get('description'), item_id)
                 )
             
-            # The robust way to handle variant updates is to delete and re-insert them.
-            # This avoids unique constraint violations when changing a variant to match an existing one.
-            client_variants = json.loads(data['variants'])
-
-            # Delete all existing variants for this item
-            cur.execute("DELETE FROM item_variant WHERE item_id = %s", (item_id,))
-
-            # Re-insert all variants from the form
-            for v in client_variants:
-                color_id = get_or_create_master_id(cur, v['color'], 'color_master', 'color_id', 'color_name')
-                size_id = get_or_create_master_id(cur, v['size'], 'size_master', 'size_id', 'size_name')
+            # Transactional variant update: delete all and re-insert.
+            # This is wrapped in a savepoint to ensure atomicity. If any part fails,
+            # the variants for the item are rolled back to their original state.
+            try:
+                cur.execute("SAVEPOINT transaction_variant_update")
                 
-                # The INSERT is wrapped in a savepoint in case the user provides duplicate color/size pairs in the form.
-                try:
-                    cur.execute("SAVEPOINT variant_update_savepoint")
+                client_variants = json.loads(data['variants'])
+
+                # Delete all existing variants for this item
+                cur.execute("DELETE FROM item_variant WHERE item_id = %s", (item_id,))
+
+                # Re-insert all variants from the form
+                for v in client_variants:
+                    color_id = get_or_create_master_id(cur, v['color'], 'color_master', 'color_id', 'color_name')
+                    size_id = get_or_create_master_id(cur, v['size'], 'size_master', 'size_id', 'size_name')
+                    
                     cur.execute(
                         "INSERT INTO item_variant (item_id, color_id, size_id, opening_stock, threshold, unit) VALUES (%s, %s, %s, %s, %s, %s)",
                         (item_id, color_id, size_id, v.get('opening_stock', 0), v.get('threshold', 5), v.get('unit'))
                     )
-                    cur.execute("RELEASE SAVEPOINT variant_update_savepoint")
-                except Exception:
-                    cur.execute("ROLLBACK TO SAVEPOINT variant_update_savepoint")
-                    # Re-raise the exception to be caught by the outer block, which will return a 409 error.
-                    raise
+                
+                cur.execute("RELEASE SAVEPOINT transaction_variant_update")
+            except Exception:
+                cur.execute("ROLLBACK TO SAVEPOINT transaction_variant_update")
+                # Re-raise the exception to be caught by the outer block.
+                raise
+
             conn.commit()
         return jsonify({'message': 'Item updated successfully'}), 200
     except psycopg2.IntegrityError as e:
@@ -711,8 +789,8 @@ def update_variant_stock(variant_id):
             return jsonify({
                 'message': 'Stock updated successfully', 
                 'new_total_stock': int(total_stock or 0),
-                'has_low_stock_variants': item_has_low_stock, # Renamed this key to match the frontend JS
-                'updated_variant': updated_variant_data      # This is the new part
+                'item_has_low_stock': item_has_low_stock,
+                'updated_variant': updated_variant_data
             }), 200
             
     except Exception as e:
@@ -770,6 +848,33 @@ def update_user_role(user_id):
         app.logger.error(f"Error updating role for user {user_id}: {e}")
         return jsonify({'error': 'Failed to update user role.'}), 500
 
+def _process_chunk(chunk, headers):
+    """Helper to process a chunk of rows for validation."""
+    validated_rows = []
+    for i, row in enumerate(chunk):
+        # Create a dictionary for the row using the headers
+        row_dict = dict(zip(headers, row))
+        
+        errors = []
+        # Rule 1: 'Item' column must not be empty
+        if not str(row_dict.get('Item', '')).strip():
+            errors.append("Item name is required.")
+        
+        # Rule 2: 'Stock' must be a valid number if it exists
+        stock_val = str(row_dict.get('Stock', '0')).strip()
+        if stock_val:
+            try:
+                float(stock_val)
+            except ValueError:
+                errors.append("Stock must be a valid number.")
+
+        validated_rows.append({
+            '_id': i,  # This will be a local ID within the chunk, might need adjustment
+            '_errors': errors,
+            **row_dict
+        })
+    return validated_rows
+
 @app.route('/api/import/preview', methods=['POST'])
 @login_required
 @role_required('admin')
@@ -781,44 +886,84 @@ def import_preview():
         return jsonify({'error': 'No selected file'}), 400
 
     try:
-        df = (pd.read_csv(file) if file.filename.endswith('.csv')
-              else pd.read_excel(file) if file.filename.lower().endswith(('.xls', '.xlsx'))
-              else None)
-        if df is None:
+        MAX_PREVIEW_ROWS = 200
+        validated_rows = []
+        headers = []
+        
+        if file.filename.lower().endswith('.csv'):
+            file.seek(0)
+            # Use a stream to decode the file line-by-line to save memory
+            decoded_file = (line.decode('utf-8', errors='ignore') for line in file)
+            reader = csv.reader(decoded_file)
+            
+            try:
+                headers = next(reader)
+            except StopIteration:
+                return jsonify({'error': 'CSV file is empty or invalid'}), 400
+
+            for i, row in enumerate(reader):
+                if len(row) != len(headers):
+                    # Skip malformed rows, or handle as an error
+                    continue
+                
+                row_dict = dict(zip(headers, row))
+                errors = []
+                if not str(row_dict.get('Item', '')).strip():
+                    errors.append("Item name is required.")
+                
+                stock_val = str(row_dict.get('Stock', '0')).strip()
+                if stock_val:
+                    try:
+                        float(stock_val)
+                    except ValueError:
+                        errors.append("Stock must be a valid number.")
+                
+                # Only append the full row data if it's within the preview limit
+                if i < MAX_PREVIEW_ROWS:
+                     validated_rows.append({'_id': i, '_errors': errors, **row_dict})
+                # If there are errors, we can still append a lightweight object
+                elif errors:
+                     validated_rows.append({'_id': i, '_errors': errors})
+
+
+        elif file.filename.lower().endswith(('.xls', '.xlsx')):
+            # For Excel, we can process the file in chunks
+            xls = pd.ExcelFile(file)
+            # We'll only process the first sheet for simplicity
+            sheet_name = xls.sheet_names[0]
+            
+            # Read the header first
+            df_header = pd.read_excel(xls, sheet_name=sheet_name, nrows=0)
+            headers = df_header.columns.tolist()
+
+            chunk_size = 500
+            row_counter = 0
+            for chunk_df in pd.read_excel(xls, sheet_name=sheet_name, chunksize=chunk_size):
+                chunk_df.fillna('', inplace=True)
+                for _, row in chunk_df.iterrows():
+                    row_dict = row.to_dict()
+                    errors = []
+                    if not str(row_dict.get('Item', '')).strip():
+                        errors.append("Item name is required.")
+                    
+                    stock_val = str(row_dict.get('Stock', '0')).strip()
+                    if stock_val:
+                        try:
+                            float(stock_val)
+                        except ValueError:
+                            errors.append("Stock must be a valid number.")
+                    
+                    if row_counter < MAX_PREVIEW_ROWS:
+                        validated_rows.append({'_id': row_counter, '_errors': errors, **row_dict})
+                    elif errors:
+                        validated_rows.append({'_id': row_counter, '_errors': errors})
+                    
+                    row_counter += 1
+        else:
             return jsonify({'error': 'Unsupported file format'}), 400
 
-        df.fillna('', inplace=True)
-        headers = df.columns.tolist()
-        
-        # --- New Validation Logic ---
-        all_rows = df.to_dict(orient='records')
-        validated_rows = []
-        for i, row in enumerate(all_rows):
-            errors = []
-            # Rule 1: 'Item' column must not be empty
-            if not str(row.get('Item', '')).strip():
-                errors.append("Item name is required.")
-            
-            # Rule 2: 'Stock' must be a valid number if it exists
-            stock_val = str(row.get('Stock', '0')).strip()
-            if stock_val:
-                try:
-                    # Attempt to convert to a float to validate numeric input (including negatives)
-                    float(stock_val)
-                except ValueError:
-                    errors.append("Stock must be a valid number.")
+        return jsonify({'headers': headers, 'rows': validated_rows})
 
-            # Add a unique ID and error list to each row
-            validated_rows.append({
-                '_id': i,
-                '_errors': errors,
-                **row
-            })
-
-        return jsonify({
-            'headers': headers,
-            'rows': validated_rows,
-        })
     except Exception as e:
         app.logger.error(f"Preview error: {e}", exc_info=True)
         return jsonify({'error': str(e)}), 500
@@ -839,85 +984,55 @@ def import_commit():
         return jsonify({'error': 'Mappings and data are required'}), 400
 
     try:
-        # Create DataFrame from the corrected data sent by the frontend
-        df = pd.DataFrame(import_data)
-        df.fillna('', inplace=True)
-
-        # Detect wide format by checking if multiple source columns map to 'Stock'
-        stock_source_cols = [src for src, dst in mappings.items() if dst == 'Stock']
-        
-        if len(stock_source_cols) > 1:  # Wide format detected
-            id_vars_source_cols = [src for src, dst in mappings.items() if dst and dst not in ('Stock', 'Ignore')]
-            df = df.melt(
-                id_vars=id_vars_source_cols,
-                value_vars=stock_source_cols,
-                var_name='Size',
-                value_name='Stock'
-            )
-            final_rename_map = {src: dst for src, dst in mappings.items() if src in id_vars_source_cols}
-            df.rename(columns=final_rename_map, inplace=True)
-        else:  # Long format
-            df.rename(columns=mappings, inplace=True)
-
-        # Ensure all required columns exist
-        for col in ['Item', 'Model', 'Variation', 'Description', 'Color', 'Size', 'Stock', 'Unit']:
-            if col not in df.columns:
-                df[col] = ''
-
-        # Convert key columns to string to prevent type errors in SQL
-        for col in ['Item', 'Model', 'Variation']:
-            if col in df.columns:
-                df[col] = df[col].astype(str).str.strip()
-
-        # Clean data: only require an Item name to proceed
-        df.dropna(subset=['Item'], inplace=True)
-        df['Stock'] = pd.to_numeric(df['Stock'], errors='coerce').fillna(0).astype(int)
-
-        processed = len(df)
-        if processed == 0:
-            return jsonify({'message': 'No valid rows after cleaning'}), 200
-
+        # Instead of creating a large DataFrame, we process the data row by row.
+        processed = 0
         imported = 0
+        
         with get_conn() as (conn, cur):
-            grouping = [c for c in ['Item', 'Model', 'Variation', 'Description'] if c in df.columns]
-            for key, group in df.groupby(grouping):
-                keys = key if isinstance(key, tuple) else (key,)
-                vals = dict(zip(grouping, keys))
+            for row_data in import_data:
+                # Apply mappings to the current row
+                mapped_row = {mappings.get(k, k): v for k, v in row_data.items()}
 
-                cur.execute(
-                    "SELECT item_id FROM item_master WHERE name=%s AND COALESCE(model,'')=%s AND COALESCE(variation,'')=%s AND COALESCE(description,'')=%s",
-                    (str(vals['Item']), str(vals.get('Model', '')), str(vals.get('Variation', '')), str(vals.get('Description', '')))
-                )
-                row = cur.fetchone()
-                if row:
-                    item_id = row[0]
-                else:
+                # Basic cleaning and validation for each row
+                item_name = str(mapped_row.get('Item', '')).strip()
+                if not item_name:
+                    continue  # Skip rows without an item name
+
+                processed += 1
+                
+                model = str(mapped_row.get('Model', '')).strip()
+                variation = str(mapped_row.get('Variation', '')).strip()
+                description = str(mapped_row.get('Description', '')).strip()
+                color = str(mapped_row.get('Color', '')).strip()
+                size = str(mapped_row.get('Size', '')).strip()
+                stock = pd.to_numeric(mapped_row.get('Stock'), errors='coerce')
+                stock = int(stock) if pd.notna(stock) else 0
+                unit = str(mapped_row.get('Unit', 'Pcs')).strip()
+
+                # Find or create the item_master using the new helper function
+                item_id = get_or_create_item_master_id(cur, item_name, model, variation, description)
+
+                # Find or create color and size, then insert/update the variant
+                try:
+                    cur.execute("SAVEPOINT variant_savepoint")
+                    color_id = get_or_create_master_id(cur, color, 'color_master', 'color_id', 'color_name')
+                    size_id = get_or_create_master_id(cur, size, 'size_master', 'size_id', 'size_name')
+                    
                     cur.execute(
-                        "INSERT INTO item_master(name,model,variation,description) VALUES(%s,%s,%s,%s) RETURNING item_id",
-                        (str(vals['Item']), str(vals.get('Model', '')), str(vals.get('Variation', '')), str(vals.get('Description', '')))
+                        """
+                        INSERT INTO item_variant(item_id,color_id,size_id,opening_stock,unit)
+                        VALUES(%s,%s,%s,%s,%s)
+                        ON CONFLICT(item_id,color_id,size_id)
+                        DO UPDATE SET opening_stock = item_variant.opening_stock + EXCLUDED.opening_stock
+                        """,
+                        (item_id, color_id, size_id, stock, unit)
                     )
-                    item_id = cur.fetchone()[0]
-
-                for _, r in group.iterrows():
-                    try:
-                        cur.execute("SAVEPOINT variant_savepoint")
-                        color_id = get_or_create_master_id(cur, r['Color'], 'color_master', 'color_id', 'color_name')
-                        size_id = get_or_create_master_id(cur, r['Size'], 'size_master', 'size_id', 'size_name')
-                        
-                        cur.execute(
-                            """
-                            INSERT INTO item_variant(item_id,color_id,size_id,opening_stock,unit)
-                            VALUES(%s,%s,%s,%s,%s)
-                            ON CONFLICT(item_id,color_id,size_id)
-                            DO UPDATE SET opening_stock = item_variant.opening_stock + EXCLUDED.opening_stock
-                            """,
-                            (item_id, color_id, size_id, r['Stock'], r.get('Unit', 'Pcs'))
-                        )
-                        imported += 1
-                        cur.execute("RELEASE SAVEPOINT variant_savepoint")
-                    except Exception:
-                        cur.execute("ROLLBACK TO SAVEPOINT variant_savepoint")
-                        app.logger.warning("Skipping invalid variant row", exc_info=True)
+                    imported += 1
+                    cur.execute("RELEASE SAVEPOINT variant_savepoint")
+                except Exception:
+                    cur.execute("ROLLBACK TO SAVEPOINT variant_savepoint")
+                    app.logger.warning("Skipping invalid variant row during commit", exc_info=True)
+            
             conn.commit()
 
         message = f"Import successful. Processed {processed} rows and imported {imported} variants."

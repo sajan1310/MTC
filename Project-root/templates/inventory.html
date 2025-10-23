@@ -131,6 +131,7 @@
 {% endblock %}
 
 {% block scripts %}
+{{ super() }}
 <script>
 // Enhanced search functionality with debouncing
 document.addEventListener('DOMContentLoaded', function() {
@@ -186,7 +187,6 @@ document.addEventListener('DOMContentLoaded', function() {
     });
 });
 </script>
-<script src="{{ url_for('static', filename='app.js') }}"></script>
 {% endblock %}
 
 {% block extra_head %}
