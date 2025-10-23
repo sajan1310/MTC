@@ -560,3 +560,94 @@ body.dark-mode .icon-btn:hover { background: rgba(255,255,255,0.1); color: var(-
   padding: 0.5rem;
   font-size: 0.9rem;
 }
+
+.input-with-buttons {
+    display: flex;
+    align-items: center;
+    gap: 0.5rem;
+}
+
+.input-with-buttons .select2-container {
+    flex-grow: 1;
+}
+
+.button-icon {
+    padding: 0.5rem;
+    background: transparent;
+    border: 1px solid var(--border-color);
+    border-radius: 8px;
+    cursor: pointer;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    color: var(--subtle-text-color);
+}
+
+.button-icon:hover {
+    background-color: var(--button-cancel-hover-bg);
+    color: var(--text-color);
+}
+
+/* --- Pagination --- */
+.pagination-controls {
+    display: flex;
+    justify-content: center;
+    align-items: center;
+    gap: 0.5rem;
+    margin-top: 2rem;
+}
+.pagination-controls .button {
+    padding: 0.5rem 1rem;
+    min-width: 40px;
+    background-color: var(--button-cancel-bg);
+    color: var(--subtle-text-color);
+    border-color: var(--border-color);
+}
+.pagination-controls .button:hover {
+    background-color: var(--button-cancel-hover-bg);
+    border-color: var(--subtle-text-color);
+}
+.pagination-controls .button.active {
+    background-color: var(--primary-color);
+    color: white;
+    border-color: var(--primary-color);
+}
+.pagination-ellipsis {
+    color: var(--subtle-text-color);
+    padding: 0 0.5rem;
+}
+
+/* Styles for the inline edit form */
+.edit-form-row td {
+    padding: 0 !important;
+    background-color: var(--table-nested-bg, #f9fafb);
+}
+
+body.dark-mode .edit-form-row td {
+    background-color: var(--table-nested-bg, #2d3748);
+}
+
+.edit-item-form {
+    padding: 1.5rem;
+    border-radius: 12px;
+    background-color: var(--card-bg);
+}
+
+.edit-item-form h4 {
+    margin-top: 0;
+    margin-bottom: 1.5rem;
+}
+
+.edit-item-form .form-actions {
+    display: flex;
+    justify-content: flex-end;
+    gap: 1rem;
+    margin-top: 1.5rem;
+    padding-top: 1.5rem;
+    border-top: 1px solid var(--border-color);
+}
+
+.edit-item-form .variants-modal-table {
+    width: 100%;
+    margin-top: 1rem;
+}
