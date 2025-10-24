@@ -58,6 +58,23 @@
                     </svg>
                     Import Data
                 </button>
+                <button id="receive-stock-btn" class="button">
+                    <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                        <path d="M12 2L2 7l10 5 10-5-10-5z"></path>
+                        <path d="M2 17l10 5 10-5"></path>
+                        <path d="M2 12l10 5 10-5"></path>
+                    </svg>
+                    Receive Stock
+                </button>
+                <button id="generate-po-btn" class="button">
+                    <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                        <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"></path>
+                        <polyline points="14 2 14 8 20 8"></polyline>
+                        <line x1="16" y1="13" x2="8" y2="13"></line>
+                        <line x1="16" y1="17" x2="8" y2="17"></line>
+                    </svg>
+                    Generate PO
+                </button>
                 <button id="add-item-btn" class="button create">
                     <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
                         <circle cx="12" cy="12" r="10"></circle>
@@ -98,8 +115,42 @@
                         </tr>
                     </tbody>
                 </table>
+    </div>
+</div>
+
+<!-- Receive Stock Modal -->
+<div id="receive-stock-modal" class="modal">
+    <div class="modal-content">
+        <div class="modal-header">
+            <h3>Receive Stock</h3>
+            <button type="button" class="button cancel close-modal-btn">&times;</button>
+        </div>
+        <div class="modal-body">
+            <form id="receive-stock-form">
+                <div class="form-field">
+                    <label for="receive-supplier-select">Supplier</label>
+                    <select id="receive-supplier-select" style="width: 100%;"></select>
+                </div>
+                <div class="form-field">
+                    <label for="receive-item-select">Item/Variant</label>
+                    <select id="receive-item-select" style="width: 100%;" required></select>
+                </div>
+                <div class="form-field">
+                    <label for="receive-quantity">Quantity</label>
+                    <input type="number" id="receive-quantity" required>
+                </div>
+                <div class="form-field">
+                    <label for="receive-cost">Cost per Unit</label>
+                    <input type="number" id="receive-cost" step="0.01">
+                </div>
+            </form>
+        </div>
+        <div class="modal-footer">
+            <button type="button" class="button cancel close-modal-btn">Cancel</button>
+            <button type="submit" form="receive-stock-form" class="button create">Receive</button>
         </div>
     </div>
+</div>
 </div>
 
 <!-- Low Stock Report Modal -->
@@ -188,6 +239,69 @@
             <button type="button" class="button" id="import-back-btn" style="display: none;">Back</button>
             <button type="button" class="button create" id="import-next-btn">Next</button>
             <button type="button" class="button create" id="import-commit-btn" style="display: none;">Commit Import</button>
+        </div>
+    </div>
+</div>
+
+<!-- Add/Edit PO Modal -->
+<div id="po-modal" class="modal">
+    <div class="modal-content large">
+        <div class="modal-header">
+            <h3 id="po-modal-title">New Purchase Order</h3>
+            <button type="button" class="button cancel close-modal-btn">&times;</button>
+        </div>
+        <div class="modal-body">
+            <form id="po-form">
+                <input type="hidden" id="po-id">
+                <div class="form-field">
+                    <label for="supplier-select">Supplier</label>
+                    <select id="supplier-select" style="width: 100%;" required></select>
+                </div>
+                <hr>
+                <h4>Items</h4>
+                <div id="po-items-container">
+                    <!-- PO item rows will be dynamically added here -->
+                </div>
+                <button type="button" id="add-po-item-btn" class="button">Add Item from List</button>
+            </form>
+        </div>
+        <div class="modal-footer">
+            <button type="button" class="button cancel close-modal-btn">Cancel</button>
+            <button type="submit" form="po-form" class="button create">Save Purchase Order</button>
+        </div>
+    </div>
+</div>
+
+<!-- Variant Search Modal -->
+<div id="variant-search-modal" class="modal">
+    <div class="modal-content large">
+        <div class="modal-header">
+            <h3>Select Variants</h3>
+            <button type="button" class="button cancel close-modal-btn">&times;</button>
+        </div>
+        <div class="modal-body">
+            <input type="text" id="variant-search-input" placeholder="Search variants..." class="search-input">
+            <div class="table-wrapper" style="margin-top: 1rem;">
+                <table class="inventory-table">
+                    <thead>
+                        <tr>
+                            <th><input type="checkbox" id="select-all-variants"></th>
+                            <th>Item</th>
+                            <th>Model</th>
+                            <th>Variation</th>
+                            <th>Color</th>
+                            <th>Size</th>
+                        </tr>
+                    </thead>
+                    <tbody id="variant-search-results">
+                        <!-- Search results will be populated here -->
+                    </tbody>
+                </table>
+            </div>
+        </div>
+        <div class="modal-footer">
+            <button type="button" class="button cancel close-modal-btn">Cancel</button>
+            <button type="button" id="add-selected-variants-btn" class="button create">Add Selected</button>
         </div>
     </div>
 </div>
