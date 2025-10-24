@@ -177,7 +177,10 @@ const App = {
     }
 
     if (this.inventoryTableBody) {
-      this.inventoryTableBody.addEventListener('click', (e) => this.handleTableActions(e));
+      this.inventoryTableBody.addEventListener('click', (e) => {
+          this.handleTableActions(e);
+          this.handleVariantMatrixActions(e);
+      });
     }
 
     if (this.userManagementTableBody) {
@@ -420,7 +423,7 @@ const App = {
         notification.style.opacity = '0';
         setTimeout(() => notification.remove(), 500);
       }
-    }, 4000);
+    }, 2500);
   },
 
   toggleDarkMode() {
@@ -1036,6 +1039,29 @@ const App = {
         editRow.remove();
         itemRow.style.display = '';
     });
+
+    const variantsTable = editRow.querySelector('.variants-modal-table tbody');
+    variantsTable.addEventListener('click', (e) => {
+        const deleteBtn = e.target.closest('.remove-variant-btn');
+        if (deleteBtn) {
+            const row = deleteBtn.closest('tr');
+            row.remove();
+        }
+    });
+
+    const addVariantBtn = editRow.querySelector('.add-variant-edit-btn');
+    addVariantBtn.addEventListener('click', () => {
+        const newRow = variantsTable.insertRow();
+        newRow.className = 'variant-edit-row';
+        newRow.innerHTML = `
+            <td><input type="text" class="variant-color" list="color-datalist" required></td>
+            <td><input type="text" class="variant-size" list="size-datalist" required></td>
+            <td><input type="number" class="stock-input" value="0" min="0" required></td>
+            <td><input type="text" class="variant-unit" value="Pcs" list="unit-datalist"></td>
+            <td><input type="number" class="threshold-input" value="5" min="0" required></td>
+            <td><button type="button" class="button cancel remove-variant-btn" title="Remove variant">&times;</button></td>
+        `;
+    });
   },
 
   createEditFormHTML(item, variants) {
@@ -1046,13 +1072,14 @@ const App = {
             <td><input type="number" class="stock-input" value="${v.opening_stock}" min="0" required></td>
             <td><input type="text" class="variant-unit" value="${this.escapeHtml(v.unit || 'Pcs')}" list="unit-datalist"></td>
             <td><input type="number" class="threshold-input" value="${v.threshold}" min="0" required></td>
+            <td><button type="button" class="button cancel remove-variant-btn" title="Remove variant">&times;</button></td>
         </tr>
     `).join('');
 
     return `
         <tr class="edit-form-row">
             <td colspan="9">
-                <form class="edit-item-form">
+                <form class="edit-item-form" data-initial-variants='${JSON.stringify(variants)}'>
                     <h4>Edit ${this.escapeHtml(item.name)}</h4>
                     <div class="form-row">
                         <div class="form-field">
@@ -1113,10 +1140,15 @@ const App = {
                                 <th>Stock</th>
                                 <th>Unit</th>
                                 <th>Threshold</th>
+                                <th></th>
                             </tr>
                         </thead>
                         <tbody>${variantRows}</tbody>
                     </table>
+                    <button type="button" class="button create add-variant-edit-btn">
+                        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><line x1="12" y1="5" x2="12" y2="19"></line><line x1="5" y1="12" x2="19" y2="12"></line></svg>
+                        Add Variant
+                    </button>
                     <div class="form-actions">
                         <button type="submit" class="button create">Save Changes</button>
                         <button type="button" class="button cancel-edit-btn">Cancel</button>
@@ -1132,6 +1164,8 @@ const App = {
     saveBtn.disabled = true;
     saveBtn.textContent = 'Saving...';
 
+    const initialVariants = JSON.parse(form.dataset.initialVariants || '[]');
+    
     const formData = new FormData();
     formData.append('name', form.querySelector(`#edit-item-name-${itemId}`).value);
     formData.append('model', form.querySelector(`#edit-item-model-${itemId}`).value);
@@ -1139,31 +1173,85 @@ const App = {
     formData.append('description', form.querySelector(`#edit-item-description-${itemId}`).value);
 
     const variantRows = form.querySelectorAll('.variant-edit-row');
-    const variants = Array.from(variantRows).map(row => ({
-        id: row.dataset.variantId,
+    const currentVariants = Array.from(variantRows).map(row => ({
+        id: row.dataset.variantId || null,
         color: row.querySelector('.variant-color').value,
         size: row.querySelector('.variant-size').value,
         opening_stock: parseInt(row.querySelector('.stock-input').value, 10),
         unit: row.querySelector('.variant-unit').value,
         threshold: parseInt(row.querySelector('.threshold-input').value, 10),
     }));
-    formData.append('variants', JSON.stringify(variants));
+
+    const changedVariants = {
+        added: [],
+        updated: [],
+        deleted: []
+    };
+
+    const initialVariantMap = new Map(initialVariants.map(v => [v.id.toString(), v]));
+
+    for (const currentVariant of currentVariants) {
+        if (!currentVariant.id) {
+            changedVariants.added.push(currentVariant);
+        } else {
+            const initialVariant = initialVariantMap.get(currentVariant.id.toString());
+            if (initialVariant) {
+                if (
+                    initialVariant.color.name !== currentVariant.color ||
+                    initialVariant.size.name !== currentVariant.size ||
+                    initialVariant.opening_stock !== currentVariant.opening_stock ||
+                    initialVariant.unit !== currentVariant.unit ||
+                    initialVariant.threshold !== currentVariant.threshold
+                ) {
+                    changedVariants.updated.push(currentVariant);
+                }
+                initialVariantMap.delete(currentVariant.id.toString());
+            }
+        }
+    }
+
+    changedVariants.deleted = Array.from(initialVariantMap.keys()).map(id => parseInt(id, 10));
+
+    formData.append('variants', JSON.stringify(changedVariants));
 
     const result = await this.fetchJson(`${this.apiBase}/items/${itemId}`, {
         method: 'PUT',
         body: formData,
     });
 
-    if (result) {
+    if (result && result.item) {
         this.showNotification('Item updated successfully.', 'success');
         form.closest('.edit-form-row').remove();
+        this.updateItemRow(itemRow, result.item);
         itemRow.style.display = '';
-        this.fetchItems(); // Refresh the entire list to reflect changes
     } else {
-        this.showNotification('Failed to update item.', 'error');
+        this.showNotification(result.error || 'Failed to update item.', 'error');
         saveBtn.disabled = false;
         saveBtn.textContent = 'Save Changes';
     }
+  },
+
+  updateItemRow(row, item) {
+    row.dataset.itemName = item.name;
+    row.dataset.itemDescription = item.description || '';
+    
+    const statusClass = item.has_low_stock_variants ? 'low-stock' : 'in-stock';
+    const statusText = item.has_low_stock_variants ? 'Low Stock' : 'In Stock';
+
+    row.querySelector('.item-name-cell span').textContent = item.name;
+    row.querySelector('.item-name-cell span').title = item.description || 'No description provided.';
+    row.querySelector('[data-label="Model"]').textContent = item.model || '--';
+    row.querySelector('[data-label="Variation"]').textContent = item.variation || '--';
+    row.querySelector('[data-label="Variants"]').textContent = item.variant_count;
+    row.querySelector('.total-stock-cell').textContent = item.total_stock;
+    
+    const statusBadge = row.querySelector('.status-badge');
+    statusBadge.className = `status-badge ${statusClass}`;
+    statusBadge.textContent = statusText;
+
+    const image = row.querySelector('.item-image-thumbnail');
+    image.src = `/static/${item.image_path || 'uploads/placeholder.png'}`;
+    image.alt = item.name;
   },
 
   renderVariantsInModal(variants) {
@@ -1573,7 +1661,8 @@ const App = {
             }
         }
     }
-  }
+  },
+
 };
 
 App.init();
