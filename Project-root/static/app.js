@@ -179,7 +179,9 @@ const App = {
     if (this.inventoryTableBody) {
       this.inventoryTableBody.addEventListener('click', (e) => {
           this.handleTableActions(e);
-          this.handleVariantMatrixActions(e);
+      });
+      this.inventoryTableBody.addEventListener('change', (e) => {
+        this.handleVariantMatrixActions(e);
       });
     }
 
@@ -564,7 +566,7 @@ const App = {
       expandBtn.setAttribute('aria-expanded', 'false');
     } else {
       const container = detailsRow.querySelector('.variant-details-container');
-      container.innerHTML = `<div style="padding: 1rem; text-align: center;">Loading...</div>`;
+      container.innerHTML = `<div style="padding: auto; text-align: center;">Loading...</div>`;
       detailsRow.style.display = 'table-row';
       expandBtn.classList.add('expanded');
       expandBtn.setAttribute('aria-expanded', 'true');
@@ -974,6 +976,57 @@ const App = {
       <thead><tr><th class="color-header">Color</th>${sizeHeaders}</tr></thead>
       <tbody>${colorRows}</tbody>
     </table></div>`;
+  },
+
+  async handleVariantMatrixActions(e) {
+    const input = e.target.closest('.stock-input.compact');
+    if (!input) return;
+
+    const variantId = input.dataset.variantId;
+    let newStock = input.value.trim();
+
+    if (newStock === '') {
+        newStock = 0;
+        input.value = 0;
+    } else {
+        newStock = parseInt(newStock, 10);
+    }
+
+    if (isNaN(newStock) || !variantId) {
+        console.error('Invalid stock value or variant ID');
+        return;
+    }
+
+    const originalValue = input.defaultValue;
+    input.disabled = true;
+
+    try {
+        const result = await this.fetchJson(`${this.apiBase}/variants/${variantId}/stock`, {
+            method: 'PUT',
+            body: JSON.stringify({ stock: newStock }),
+        });
+
+        if (result && result.success) {
+            this.showNotification('Stock updated successfully.', 'success');
+            const itemRow = input.closest('.variant-details-row').previousElementSibling;
+            if (itemRow) {
+                const itemId = itemRow.dataset.itemId;
+                const updatedItem = await this.fetchJson(`${this.apiBase}/items/${itemId}`);
+                if (updatedItem) {
+                    this.updateItemRow(itemRow, updatedItem);
+                }
+            }
+            input.defaultValue = newStock;
+        } else {
+            this.showNotification(result.error || 'Failed to update stock.', 'error');
+            input.value = originalValue;
+        }
+    } catch (error) {
+        this.showNotification('An error occurred while updating stock.', 'error');
+        input.value = originalValue;
+    } finally {
+        input.disabled = false;
+    }
   },
 
   async toggleEditForm(itemRow, itemId) {
@@ -1666,3 +1719,4 @@ const App = {
 };
 
 App.init();
+
