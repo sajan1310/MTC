@@ -57,6 +57,7 @@ const App = {
   models: [],
   variations: [],
   allItems: [],
+  allVariantsForSearch: [],
   elementThatOpenedModal: null,
 
   // DOM Elements Cache
@@ -115,6 +116,37 @@ const App = {
     this.lowStockReportModal = document.getElementById('low-stock-report-modal');
     this.lowStockReportBody = document.getElementById('low-stock-report-body');
     this.printLowStockReportBtn = document.getElementById('print-low-stock-report-btn');
+
+    // Supplier elements
+    this.suppliersTableBody = document.getElementById('suppliers-table-body');
+    this.addSupplierBtn = document.getElementById('add-supplier-btn');
+    this.supplierModal = document.getElementById('supplier-modal');
+    this.supplierForm = document.getElementById('supplier-form');
+    this.contactsContainer = document.getElementById('contacts-container');
+    this.addContactBtn = document.getElementById('add-contact-btn');
+    this.ledgerModal = document.getElementById('ledger-modal');
+    this.ratesModal = document.getElementById('rates-modal');
+
+    // PO elements
+    this.poTableBody = document.getElementById('po-table-body');
+    this.addPoBtn = document.getElementById('add-po-btn');
+    this.poModal = document.getElementById('po-modal');
+    this.poForm = document.getElementById('po-form');
+    this.poItemsContainer = document.getElementById('po-items-container');
+    this.addPoItemBtn = document.getElementById('add-po-item-btn');
+
+    // Inventory page buttons
+    this.receiveStockBtn = document.getElementById('receive-stock-btn');
+    this.generatePoBtn = document.getElementById('generate-po-btn');
+    this.receiveStockModal = document.getElementById('receive-stock-modal');
+    this.receiveStockForm = document.getElementById('receive-stock-form');
+
+    // Variant search modal elements
+    this.variantSearchModal = document.getElementById('variant-search-modal');
+    this.variantSearchInput = document.getElementById('variant-search-input');
+    this.variantSearchResults = document.getElementById('variant-search-results');
+    this.addSelectedVariantsBtn = document.getElementById('add-selected-variants-btn');
+    this.selectAllVariantsCheckbox = document.getElementById('select-all-variants');
   },
 
   bindEventListeners() {
@@ -130,7 +162,7 @@ const App = {
     }
 
     if (this.addItemBtn) {
-      this.addItemBtn.addEventListener('click', () => this.openItemModal());
+      this.addItemBtn.addEventListener('click', () => window.location.href = '/add_item');
     }
 
     if (this.searchInput) {
@@ -205,7 +237,83 @@ const App = {
       this.masterSizeList.addEventListener('click', (e) => this.handleMasterActions(e, 'size'));
     }
 
+    if (this.addSupplierBtn) {
+      this.addSupplierBtn.addEventListener('click', () => this.openSupplierModal());
+    }
+
+    if (this.supplierForm) {
+      this.supplierForm.addEventListener('submit', (e) => this.handleSupplierFormSubmit(e));
+    }
+
+    if (this.addContactBtn) {
+      this.addContactBtn.addEventListener('click', () => this.addContactField());
+    }
+
+    if (this.suppliersTableBody) {
+      this.suppliersTableBody.addEventListener('click', (e) => this.handleSupplierActions(e));
+    }
+
+    if (this.addPoBtn) {
+      this.addPoBtn.addEventListener('click', () => this.openPurchaseOrderModal());
+    }
+
+    if (this.poForm) {
+      this.poForm.addEventListener('submit', (e) => this.handlePurchaseOrderFormSubmit(e));
+    }
+
+    // The "Add Item" button is being replaced by a searchable dropdown
+    // if (this.addPoItemBtn) {
+    //   this.addPoItemBtn.addEventListener('click', () => this.openVariantSearchModal());
+    // }
+
+    if (this.poTableBody) {
+      this.poTableBody.addEventListener('click', (e) => this.handlePurchaseOrderActions(e));
+    }
+
+    if (this.receiveStockBtn) {
+      this.receiveStockBtn.addEventListener('click', () => this.openReceiveStockModal());
+    }
+
+    if (this.generatePoBtn) {
+      this.generatePoBtn.addEventListener('click', () => this.openPurchaseOrderModal());
+    }
+
+    if (this.variantSearchInput) {
+        this.variantSearchInput.addEventListener('input', () => this.renderVariantSearchResults());
+    }
+
+    if (this.addSelectedVariantsBtn) {
+        this.addSelectedVariantsBtn.addEventListener('click', () => this.addSelectedVariantsToPO());
+    }
+
+    if (this.selectAllVariantsCheckbox) {
+        this.selectAllVariantsCheckbox.addEventListener('change', (e) => {
+            const checkboxes = this.variantSearchResults.querySelectorAll('input[type="checkbox"]');
+            checkboxes.forEach(checkbox => checkbox.checked = e.target.checked);
+            this.updateSelectAllCheckboxState();
+        });
+    }
+
+    if (this.variantSearchResults) {
+        this.variantSearchResults.addEventListener('change', (e) => {
+            if (e.target.matches('input[type="checkbox"]')) {
+                this.updateSelectAllCheckboxState();
+            }
+        });
+    }
+
+    if (this.receiveStockForm) {
+      this.receiveStockForm.addEventListener('submit', (e) => this.handleReceiveStockFormSubmit(e));
+    }
+
     document.body.addEventListener('click', (e) => {
+        // Generic modal close button handler
+        if (e.target.matches('.close-modal-btn')) {
+            const modal = e.target.closest('.modal');
+            if (modal) {
+                modal.classList.remove('is-open');
+            }
+        }
         if (e.target.closest('.edit-model-btn')) {
             this.handleDropdownActions(e, 'model', 'edit');
         } else if (e.target.closest('.delete-model-btn')) {
@@ -364,6 +472,12 @@ const App = {
     if (this.userManagementTableBody) {
       this.fetchUsers();
     }
+    if (this.suppliersTableBody) {
+      this.fetchSuppliers();
+    }
+    if (this.poTableBody) {
+      this.fetchPurchaseOrders();
+    }
   },
 
   async fetchJson(url, options = {}) {
@@ -397,7 +511,7 @@ const App = {
       const res = await fetch(url, config);
       if (!res.ok) {
         const errorData = await res.json().catch(() => ({ message: res.statusText }));
-        throw new Error(`HTTP ${res.status}: ${errorData.error || errorData.message}`);
+        throw new Error(errorData.error || errorData.message);
       }
       return res.status === 204 ? true : await res.json();
     } catch (err) {
@@ -1006,19 +1120,31 @@ const App = {
             body: JSON.stringify({ stock: newStock }),
         });
 
-        if (result && result.success) {
-            this.showNotification('Stock updated successfully.', 'success');
+        if (result && result.message) {
+            this.showNotification(result.message, 'success');
             const itemRow = input.closest('.variant-details-row').previousElementSibling;
             if (itemRow) {
-                const itemId = itemRow.dataset.itemId;
-                const updatedItem = await this.fetchJson(`${this.apiBase}/items/${itemId}`);
-                if (updatedItem) {
-                    this.updateItemRow(itemRow, updatedItem);
+                // Update total stock directly from the response
+                const totalStockCell = itemRow.querySelector('.total-stock-cell');
+                if (totalStockCell) totalStockCell.textContent = result.new_total_stock;
+
+                // Update status badge directly from the response
+                const statusBadge = itemRow.querySelector('.status-badge');
+                if (statusBadge) {
+                    statusBadge.textContent = result.item_has_low_stock ? 'Low Stock' : 'In Stock';
+                    statusBadge.className = `status-badge ${result.item_has_low_stock ? 'low-stock' : 'in-stock'}`;
                 }
+            }
+            // Also update the individual variant's status badge
+            const variantCell = input.closest('.variant-cell-compact');
+            if (variantCell && result.updated_variant) {
+                const variantStatusBadge = variantCell.querySelector('.variant-status');
+                variantStatusBadge.textContent = result.updated_variant.is_low_stock ? 'LOW' : 'OK';
+                variantStatusBadge.className = `status-badge variant-status ${result.updated_variant.is_low_stock ? 'low-stock' : 'in-stock'}`;
             }
             input.defaultValue = newStock;
         } else {
-            this.showNotification(result.error || 'Failed to update stock.', 'error');
+            this.showNotification(result?.error || 'Failed to update stock.', 'error');
             input.value = originalValue;
         }
     } catch (error) {
@@ -1716,7 +1842,474 @@ const App = {
     }
   },
 
+  // Supplier Functions
+  async fetchSuppliers() {
+    const suppliers = await this.fetchJson(`${this.apiBase}/suppliers`);
+    if (suppliers) this.renderSuppliersList(suppliers);
+  },
+
+  renderSuppliersList(suppliers) {
+    if (!this.suppliersTableBody) return;
+    this.suppliersTableBody.innerHTML = suppliers.map(s => `
+      <tr data-supplier-id="${s.supplier_id}">
+        <td>${this.escapeHtml(s.firm_name)}</td>
+        <td>${this.escapeHtml(s.address)}</td>
+        <td>${this.escapeHtml(s.gstin)}</td>
+        <td class="actions-cell">
+          <button class="button edit-supplier">Edit</button>
+          <button class="button delete-supplier">Delete</button>
+          <button class="button view-ledger">Ledger</button>
+          <button class="button view-rates">Rates</button>
+        </td>
+      </tr>
+    `).join('');
+  },
+
+  openSupplierModal(supplier = null) {
+    this.supplierForm.reset();
+    document.getElementById('supplier-id').value = supplier ? supplier.supplier_id : '';
+    document.getElementById('supplier-modal-title').textContent = supplier ? 'Edit Supplier' : 'Add Supplier';
+    document.getElementById('firm-name').value = supplier ? supplier.firm_name : '';
+    document.getElementById('address').value = supplier ? supplier.address : '';
+    document.getElementById('gstin').value = supplier ? supplier.gstin : '';
+    this.contactsContainer.innerHTML = '';
+    if (supplier) {
+      this.fetchJson(`${this.apiBase}/suppliers/${supplier.supplier_id}/contacts`).then(contacts => {
+        contacts.forEach(c => this.addContactField(c));
+      });
+    } else {
+      this.addContactField();
+    }
+    this.supplierModal.classList.add('is-open');
+  },
+
+  addContactField(contact = null) {
+    const div = document.createElement('div');
+    div.className = 'contact-field-group';
+    div.innerHTML = `
+      <input type="text" placeholder="Name" class="contact-name" value="${contact ? this.escapeHtml(contact.contact_name) : ''}" required>
+      <input type="text" placeholder="Phone" class="contact-phone" value="${contact ? this.escapeHtml(contact.contact_phone) : ''}">
+      <input type="email" placeholder="Email" class="contact-email" value="${contact ? this.escapeHtml(contact.contact_email) : ''}">
+      <button type="button" class="button cancel remove-contact-btn">&times;</button>
+    `;
+    this.contactsContainer.appendChild(div);
+    div.querySelector('.remove-contact-btn').addEventListener('click', () => div.remove());
+  },
+
+  async handleSupplierFormSubmit(e) {
+    e.preventDefault();
+    const id = document.getElementById('supplier-id').value;
+    const contacts = Array.from(this.contactsContainer.querySelectorAll('.contact-field-group')).map(row => ({
+      name: row.querySelector('.contact-name').value,
+      phone: row.querySelector('.contact-phone').value,
+      email: row.querySelector('.contact-email').value,
+    }));
+    const data = {
+      firm_name: document.getElementById('firm-name').value,
+      address: document.getElementById('address').value,
+      gstin: document.getElementById('gstin').value,
+      contacts: contacts,
+    };
+    const url = id ? `${this.apiBase}/suppliers/${id}` : `${this.apiBase}/suppliers`;
+    const method = id ? 'PUT' : 'POST';
+    const result = await this.fetchJson(url, { method, body: JSON.stringify(data) });
+    if (result) {
+      this.showNotification(`Supplier ${id ? 'updated' : 'added'}.`, 'success');
+      this.supplierModal.classList.remove('is-open');
+      this.fetchSuppliers();
+    }
+  },
+
+  async handleSupplierActions(e) {
+    const button = e.target.closest('button');
+    if (!button) return;
+    const row = button.closest('tr');
+    const id = row.dataset.supplierId;
+    if (button.classList.contains('edit-supplier')) {
+      const supplier = await this.fetchJson(`${this.apiBase}/suppliers/${id}`);
+      if (supplier) this.openSupplierModal(supplier);
+    } else if (button.classList.contains('delete-supplier')) {
+      this.deleteSupplier(id, row.cells[0].textContent);
+    } else if (button.classList.contains('view-ledger')) {
+      this.openLedgerModal(id);
+    } else if (button.classList.contains('view-rates')) {
+      this.openRatesModal(id);
+    }
+  },
+
+  async deleteSupplier(id, name) {
+    if (!confirm(`Delete supplier "${name}"?`)) return;
+    const result = await this.fetchJson(`${this.apiBase}/suppliers/${id}`, { method: 'DELETE' });
+    if (result) {
+      this.showNotification('Supplier deleted.', 'success');
+      this.fetchSuppliers();
+    }
+  },
+
+  async openLedgerModal(supplierId) {
+    const ledgerBody = document.getElementById('ledger-table-body');
+    ledgerBody.innerHTML = '<tr><td colspan="4">Loading...</td></tr>';
+    this.ledgerModal.classList.add('is-open');
+    const entries = await this.fetchJson(`${this.apiBase}/suppliers/${supplierId}/ledger`);
+    if (entries) {
+      ledgerBody.innerHTML = entries.map(e => `
+        <tr>
+          <td>${new Date(e.entry_date).toLocaleDateString()}</td>
+          <td>${this.escapeHtml(e.item_name)}</td>
+          <td>${e.quantity_added}</td>
+          <td>${e.cost_per_unit}</td>
+        </tr>
+      `).join('');
+    }
+  },
+
+  async openRatesModal(supplierId) {
+    const ratesBody = document.getElementById('rates-table-body');
+    ratesBody.innerHTML = '<tr><td colspan="3">Loading...</td></tr>';
+    this.ratesModal.classList.add('is-open');
+    const rates = await this.fetchJson(`${this.apiBase}/suppliers/${supplierId}/rates`);
+    if (rates) {
+      this.renderRatesList(rates);
+    }
+    // Setup form
+    const form = document.getElementById('add-rate-form');
+    form.onsubmit = async (e) => {
+      e.preventDefault();
+      const itemId = document.getElementById('item-select').value;
+      const rate = document.getElementById('rate-input').value;
+      const result = await this.fetchJson(`${this.apiBase}/suppliers/${supplierId}/rates`, {
+        method: 'POST',
+        body: JSON.stringify({ item_id: itemId, rate: rate })
+      });
+      if (result) {
+        this.showNotification('Rate added.', 'success');
+        this.openRatesModal(supplierId); // Refresh
+      }
+    };
+  },
+
+  renderRatesList(rates) {
+    const ratesBody = document.getElementById('rates-table-body');
+    ratesBody.innerHTML = rates.map(r => `
+      <tr data-rate-id="${r.rate_id}">
+        <td>${this.escapeHtml(r.item_name)}</td>
+        <td>${r.rate}</td>
+        <td><button class="button cancel delete-rate">&times;</button></td>
+      </tr>
+    `).join('');
+    ratesBody.querySelectorAll('.delete-rate').forEach(btn => {
+      btn.onclick = async (e) => {
+        const rateId = e.target.closest('tr').dataset.rateId;
+        if (confirm('Delete this rate?')) {
+          await this.fetchJson(`${this.apiBase}/suppliers/rates/${rateId}`, { method: 'DELETE' });
+          e.target.closest('tr').remove();
+        }
+      };
+    });
+  },
+
+  // Purchase Order Functions
+  async fetchPurchaseOrders() {
+    const pos = await this.fetchJson(`${this.apiBase}/purchase-orders`);
+    if (pos) this.renderPurchaseOrdersList(pos);
+  },
+
+  renderPurchaseOrdersList(pos) {
+    if (!this.poTableBody) return;
+    this.poTableBody.innerHTML = pos.map(po => `
+      <tr data-po-id="${po.po_id}">
+        <td>${this.escapeHtml(po.po_number)}</td>
+        <td>${this.escapeHtml(po.firm_name)}</td>
+        <td>${new Date(po.order_date).toLocaleDateString()}</td>
+        <td>${po.total_amount}</td>
+        <td>${this.escapeHtml(po.status)}</td>
+        <td class="actions-cell">
+          <button class="button edit-po">Edit</button>
+          <button class="button delete-po">Delete</button>
+        </td>
+      </tr>
+    `).join('');
+  },
+
+  openPurchaseOrderModal(po = null) {
+    this.poForm.reset();
+    document.getElementById('po-id').value = po ? po.po_id : '';
+    document.getElementById('po-modal-title').textContent = po ? 'Edit Purchase Order' : 'New Purchase Order';
+    this.poItemsContainer.innerHTML = `
+        <div class="po-items-header">
+            <div class="po-header-details">Item Details</div>
+            <div class="po-header-quantity">Quantity</div>
+            <div class="po-header-rate">Rate</div>
+            <div class="po-header-action">Action</div>
+        </div>
+    `;
+    
+    // Add the new searchable dropdown container
+    const searchContainer = document.createElement('div');
+    searchContainer.id = 'po-item-search-container';
+    searchContainer.innerHTML = `<select id="po-item-search" class="po-item-search" data-placeholder="Search and add an item..."></select>`;
+    this.poItemsContainer.appendChild(searchContainer);
+
+    // Add total amount display
+    const totalContainer = document.createElement('div');
+    totalContainer.id = 'po-total-container';
+    totalContainer.innerHTML = `<strong>Total Amount:</strong> <span id="po-total-amount">0.00</span>`;
+    this.poItemsContainer.appendChild(totalContainer);
+
+    // Populate suppliers dropdown
+    this.fetchJson(`${this.apiBase}/suppliers`).then(suppliers => {
+        const select = document.getElementById('supplier-select');
+        select.innerHTML = '<option value="">Select Supplier</option>' + suppliers.map(s => `<option value="${s.supplier_id}">${this.escapeHtml(s.firm_name)}</option>`).join('');
+        if (po) select.value = po.supplier_id;
+    });
+
+    if (po) {
+        po.items.forEach(item => this.addPoItemField(item));
+    }
+
+    this.initPurchaseOrderItemSearch();
+    this.updatePurchaseOrderTotal();
+    this.poModal.classList.add('is-open');
+},
+
+addPoItemField(item = null) {
+    const div = document.createElement('div');
+    div.className = 'po-item-row-detailed';
+    div.innerHTML = `
+        <div class="po-item-details">
+            <div class="po-item-detail-field"><strong>Item:</strong> ${item ? this.escapeHtml(item.item_name) : 'N/A'}</div>
+            <div class="po-item-detail-field"><strong>Model:</strong> ${item ? this.escapeHtml(item.model_name) : 'N/A'}</div>
+            <div class="po-item-detail-field"><strong>Variation:</strong> ${item ? this.escapeHtml(item.variation_name) : 'N/A'}</div>
+            <div class="po-item-detail-field"><strong>Color:</strong> ${item ? this.escapeHtml(item.color_name) : 'N/A'}</div>
+            <div class="po-item-detail-field"><strong>Size:</strong> ${item ? this.escapeHtml(item.size_name) : 'N/A'}</div>
+        </div>
+        <div class="po-item-inputs">
+            <input type="number" class="po-quantity" placeholder="Qty" value="${item ? item.quantity : 1}">
+            <input type="number" class="po-rate" placeholder="Rate" value="${item ? item.rate : 0}">
+        </div>
+        <button type="button" class="button cancel remove-po-item-btn">&times;</button>
+    `;
+    div.dataset.variantId = item ? item.variant_id : '';
+    
+    // Insert the new item row before the search container
+    const searchContainer = this.poItemsContainer.querySelector('#po-item-search-container');
+    this.poItemsContainer.insertBefore(div, searchContainer);
+
+    div.querySelector('.remove-po-item-btn').addEventListener('click', () => {
+        div.remove();
+        this.updatePurchaseOrderTotal();
+    });
+
+    // Add event listeners to update total on quantity/rate change
+    div.querySelector('.po-quantity').addEventListener('input', () => this.updatePurchaseOrderTotal());
+    div.querySelector('.po-rate').addEventListener('input', () => this.updatePurchaseOrderTotal());
+    this.updatePurchaseOrderTotal();
+},
+
+async initPurchaseOrderItemSearch() {
+    if (this.allVariantsForSearch.length === 0) {
+        this.allVariantsForSearch = await this.fetchJson(`${this.apiBase}/variants/search`);
+    }
+
+    const formatVariant = (variant) => {
+        if (!variant.id) {
+            return variant.text;
+        }
+        const parts = [
+            variant.item_name,
+            variant.model_name,
+            variant.variation_name,
+            `(${variant.color_name}, ${variant.size_name})`
+        ];
+        return $(`<span>${parts.filter(p => p).join(' - ')}</span>`);
+    };
+
+    $('#po-item-search').select2({
+        width: '100%',
+        dropdownParent: $('#po-modal'),
+        data: this.allVariantsForSearch.map(v => ({
+            id: v.variant_id,
+            text: `${v.item_name} - ${v.model_name} - ${v.variation_name} (${v.color_name}, ${v.size_name})`,
+            ...v
+        })),
+        templateResult: formatVariant,
+        templateSelection: (data) => "Search and add an item...",
+    }).on('select2:select', (e) => {
+        const variant = e.params.data;
+        this.addPoItemField({
+            variant_id: variant.variant_id,
+            item_name: variant.item_name,
+            model_name: variant.model_name,
+            variation_name: variant.variation_name,
+            color_name: variant.color_name,
+            size_name: variant.size_name,
+            quantity: 1,
+            rate: 0
+        });
+        // Reset the dropdown for the next selection
+        $('#po-item-search').val(null).trigger('change');
+    });
+},
+
+updatePurchaseOrderTotal() {
+    const total = Array.from(this.poItemsContainer.querySelectorAll('.po-item-row-detailed')).reduce((acc, row) => {
+        const quantity = parseFloat(row.querySelector('.po-quantity').value) || 0;
+        const rate = parseFloat(row.querySelector('.po-rate').value) || 0;
+        return acc + (quantity * rate);
+    }, 0);
+    document.getElementById('po-total-amount').textContent = total.toFixed(2);
+},
+
+  renderVariantSearchResults() {
+    const searchTerm = this.variantSearchInput.value.toLowerCase();
+    const filteredVariants = this.allVariantsForSearch.filter(v => {
+        return Object.values(v).some(val => 
+            String(val).toLowerCase().includes(searchTerm)
+        );
+    });
+
+    this.variantSearchResults.innerHTML = filteredVariants.map(v => `
+        <tr data-variant-id="${v.variant_id}">
+            <td><input type="checkbox" class="po-variant-checkbox" value="${v.variant_id}"></td>
+            <td>${this.escapeHtml(v.item_name)}</td>
+            <td>${this.escapeHtml(v.model_name)}</td>
+            <td>${this.escapeHtml(v.variation_name)}</td>
+            <td>${this.escapeHtml(v.color_name)}</td>
+            <td>${this.escapeHtml(v.size_name)}</td>
+        </tr>
+    `).join('');
+    this.updateSelectAllCheckboxState();
+  },
+
+  addSelectedVariantsToPO() {
+    const selectedCheckboxes = this.variantSearchResults.querySelectorAll('input[type="checkbox"]:checked');
+    selectedCheckboxes.forEach(checkbox => {
+        const variantId = checkbox.value;
+        const variant = this.allVariantsForSearch.find(v => v.variant_id == variantId);
+        if (variant) {
+            this.addPoItemField({
+                variant_id: variant.variant_id,
+                item_name: variant.item_name,
+                model_name: variant.model_name,
+                variation_name: variant.variation_name,
+                color_name: variant.color_name,
+                size_name: variant.size_name,
+                quantity: 1,
+                rate: 0
+            });
+        }
+    });
+    this.variantSearchModal.classList.remove('is-open');
+  },
+
+  updateSelectAllCheckboxState() {
+    if (!this.selectAllVariantsCheckbox) return;
+    const allCheckboxes = this.variantSearchResults.querySelectorAll('input[type="checkbox"]');
+    const checkedCheckboxes = this.variantSearchResults.querySelectorAll('input[type="checkbox"]:checked');
+    
+    if (allCheckboxes.length > 0 && allCheckboxes.length === checkedCheckboxes.length) {
+        this.selectAllVariantsCheckbox.checked = true;
+        this.selectAllVariantsCheckbox.indeterminate = false;
+    } else if (checkedCheckboxes.length > 0) {
+        this.selectAllVariantsCheckbox.indeterminate = true;
+        this.selectAllVariantsCheckbox.checked = false;
+    } else {
+        this.selectAllVariantsCheckbox.checked = false;
+        this.selectAllVariantsCheckbox.indeterminate = false;
+    }
+  },
+
+  async handlePurchaseOrderFormSubmit(e) {
+    e.preventDefault();
+    const id = document.getElementById('po-id').value;
+    const supplierId = document.getElementById('supplier-select').value;
+    const items = Array.from(this.poItemsContainer.querySelectorAll('.po-item-row-detailed')).map(row => ({
+      variant_id: row.dataset.variantId,
+      quantity: row.querySelector('.po-quantity').value,
+      rate: row.querySelector('.po-rate').value,
+    }));
+
+    if (!supplierId) {
+        this.showNotification('Please select a supplier.', 'error');
+        return;
+    }
+
+    if (items.length === 0) {
+        this.showNotification('Please add at least one item to the purchase order.', 'error');
+        return;
+    }
+
+    const data = {
+      supplier_id: supplierId,
+      items: items,
+      status: 'Draft', // Or get from a field
+    };
+    const url = id ? `${this.apiBase}/purchase-orders/${id}` : `${this.apiBase}/purchase-orders`;
+    const method = id ? 'PUT' : 'POST';
+    const result = await this.fetchJson(url, { method, body: JSON.stringify(data) });
+    if (result) {
+      this.showNotification(`Purchase Order ${id ? 'updated' : 'created'}.`, 'success');
+      this.poModal.classList.remove('is-open');
+      this.fetchPurchaseOrders();
+    }
+  },
+
+  async handlePurchaseOrderActions(e) {
+    const button = e.target.closest('button');
+    if (!button) return;
+    const row = button.closest('tr');
+    const id = row.dataset.poId;
+    if (button.classList.contains('edit-po')) {
+      const po = await this.fetchJson(`${this.apiBase}/purchase-orders/${id}`);
+      if (po) this.openPurchaseOrderModal(po);
+    } else if (button.classList.contains('delete-po')) {
+      this.deletePurchaseOrder(id, row.cells[0].textContent);
+    }
+  },
+
+  async deletePurchaseOrder(id, name) {
+    if (!confirm(`Delete PO "${name}"?`)) return;
+    const result = await this.fetchJson(`${this.apiBase}/purchase-orders/${id}`, { method: 'DELETE' });
+    if (result) {
+      this.showNotification('Purchase Order deleted.', 'success');
+      this.fetchPurchaseOrders();
+    }
+  },
+
+  // Stock Receiving Functions
+  openReceiveStockModal() {
+    this.receiveStockForm.reset();
+    // Populate suppliers
+    this.fetchJson(`${this.apiBase}/suppliers`).then(suppliers => {
+      const select = document.getElementById('receive-supplier-select');
+      select.innerHTML = '<option value="">Select Supplier</option>' + suppliers.map(s => `<option value="${s.supplier_id}">${this.escapeHtml(s.firm_name)}</option>`).join('');
+    });
+    // Populate items/variants
+    this.fetchJson(`${this.apiBase}/items`).then(items => {
+      const select = document.getElementById('receive-item-select');
+      select.innerHTML = '<option value="">Select Item/Variant</option>' + items.flatMap(i => i.variants.map(v => `<option value="${v.variant_id}">${this.escapeHtml(i.name)} - ${this.escapeHtml(v.color.name)}/${this.escapeHtml(v.size.name)}</option>`)).join('');
+    });
+    this.receiveStockModal.classList.add('is-open');
+  },
+
+  async handleReceiveStockFormSubmit(e) {
+    e.preventDefault();
+    const data = {
+      supplier_id: document.getElementById('receive-supplier-select').value,
+      variant_id: document.getElementById('receive-item-select').value,
+      quantity: document.getElementById('receive-quantity').value,
+      cost: document.getElementById('receive-cost').value,
+    };
+    const result = await this.fetchJson(`${this.apiBase}/stock-entries`, {
+      method: 'POST',
+      body: JSON.stringify(data)
+    });
+    if (result) {
+      this.showNotification('Stock received.', 'success');
+      this.receiveStockModal.classList.remove('is-open');
+      this.fetchItems();
+    }
+  }
 };
 
 App.init();
-

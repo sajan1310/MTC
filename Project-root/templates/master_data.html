@@ -37,7 +37,7 @@
 {% endblock %}
 
 {% block scripts %}
-<script src="{{ url_for('static', filename='app.js') }}"></script>
+{{ super() }}
 <script>
 document.addEventListener('DOMContentLoaded', function() {
     App.fetchAndRenderAllMasterData();

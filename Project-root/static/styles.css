@@ -322,6 +322,10 @@ body.dark-mode input:focus, body.dark-mode textarea:focus, body.dark-mode select
     background-color: var(--primary-color);
 }
 
+.select2-results__option {
+    color: #1A202C; /* Set text color to black for dropdown options */
+}
+
 /* --- Table-Based Inventory & User Management Styles --- */
 .page-header { display: flex; justify-content: space-between; align-items: center; margin-bottom: 2rem; padding-bottom: 1.5rem; border-bottom: 1px solid var(--border-color); }
 .page-header h2 { margin: 0; }
@@ -791,4 +795,117 @@ body.dark-mode #low-stock-report-modal .inventory-table th {
 
 #low-stock-report-modal .inventory-table tbody tr:hover {
     background-color: color-mix(in srgb, var(--primary-color) 10%, transparent);
+}
+
+/* --- PO Item Row Detailed Styles --- */
+.po-item-row-detailed {
+    display: flex;
+    align-items: center;
+    gap: 1rem;
+    padding: 1rem;
+    border: 1px solid var(--border-color);
+    border-radius: 8px;
+    margin-bottom: 1rem;
+    background-color: var(--bg-color);
+}
+
+.po-item-details {
+    flex-grow: 1;
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(150px, 1fr));
+    gap: 0.5rem;
+    font-size: 0.9rem;
+}
+
+.po-item-detail-field {
+    color: var(--subtle-text-color);
+}
+
+.po-item-detail-field strong {
+    color: var(--text-color);
+}
+
+.po-item-inputs {
+    display: flex;
+    gap: 0.5rem;
+    width: 200px;
+}
+
+/* --- PO Modal Responsive Layout --- */
+.po-items-header {
+    display: flex;
+    justify-content: space-between;
+    padding: 0 1rem 0.5rem 1rem;
+    border-bottom: 1px solid var(--border-color);
+    margin-bottom: 1rem;
+    font-weight: 600;
+    color: var(--subtle-text-color);
+    font-size: 0.9rem;
+}
+
+.po-header-details { flex: 1; }
+.po-header-quantity, .po-header-rate { width: 100px; text-align: center; }
+.po-header-action { width: 50px; text-align: center; }
+
+.po-item-row-detailed {
+    align-items: flex-start; /* Align items to the top */
+}
+
+.po-item-inputs {
+    flex-shrink: 0; /* Prevent inputs from shrinking */
+    width: auto; /* Let inputs define their own width */
+}
+
+.po-item-inputs input {
+    width: 80px; /* Set a fixed width for quantity and rate inputs */
+}
+
+.remove-po-item-btn {
+    height: 100%;
+}
+
+/* Responsive adjustments for smaller screens */
+@media (max-width: 768px) {
+    .po-items-header { display: none; } /* Hide header on mobile */
+
+    .po-item-row-detailed {
+        flex-direction: column;
+        align-items: stretch;
+    }
+
+    .po-item-details {
+        grid-template-columns: 1fr; /* Stack details vertically */
+        gap: 0.5rem;
+        margin-bottom: 1rem;
+    }
+
+    .po-item-inputs {
+        display: flex;
+        justify-content: space-between;
+        width: 100%;
+        gap: 1rem;
+    }
+
+    .po-item-inputs input {
+        width: 48%; /* Make inputs take up half the width */
+    }
+
+.remove-po-item-btn {
+        margin-top: 1rem;
+        align-self: flex-end;
+    }
+}
+
+/* --- PO Variant Checklist Fix --- */
+.po-variant-checkbox {
+    -webkit-appearance: checkbox;
+    -moz-appearance: checkbox;
+    appearance: checkbox;
+    width: auto; /* Override the 100% width from the global input style */
+}
+
+#po-item-search-container {
+    padding: 1rem;
+    margin-top: 1rem;
+    border-top: 1px solid var(--border-color);
 }

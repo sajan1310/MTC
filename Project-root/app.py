@@ -178,6 +178,16 @@ def add_item_page():
 def user_management():
     return render_template('user_management.html')
 
+@app.route('/suppliers')
+@login_required
+def suppliers():
+    return render_template('suppliers.html')
+
+@app.route('/purchase-orders')
+@login_required
+def purchase_orders():
+    return render_template('purchase_orders.html')
+
 @app.route('/profile', methods=['GET', 'POST'])
 @login_required
 def profile():
@@ -382,6 +392,346 @@ make_api_crud_routes(app, 'color', 'color_master', 'color_id', 'color_name')
 make_api_crud_routes(app, 'size', 'size_master', 'size_id', 'size_name')
 make_api_crud_routes(app, 'model', 'model_master', 'model_id', 'model_name')
 make_api_crud_routes(app, 'variation', 'variation_master', 'variation_id', 'variation_name')
+
+# --- Supplier API Routes ---
+@app.route('/api/suppliers', methods=['GET'])
+@login_required
+def get_suppliers():
+    try:
+        with database.get_conn(cursor_factory=psycopg2.extras.DictCursor) as (conn, cur):
+            cur.execute("SELECT * FROM suppliers ORDER BY firm_name")
+            suppliers = [dict(row) for row in cur.fetchall()]
+        return jsonify(suppliers)
+    except Exception as e:
+        app.logger.error(f"Error fetching suppliers: {e}")
+        return jsonify({'error': 'Failed to fetch suppliers'}), 500
+
+@app.route('/api/suppliers', methods=['POST'])
+@login_required
+@role_required('admin')
+def add_supplier():
+    data = request.json
+    firm_name = data.get('firm_name', '').strip()
+    if not firm_name:
+        return jsonify({'error': 'Firm name is required'}), 400
+    
+    try:
+        with database.get_conn() as (conn, cur):
+            cur.execute(
+                "INSERT INTO suppliers (firm_name, address, gstin) VALUES (%s, %s, %s) RETURNING supplier_id",
+                (firm_name, data.get('address'), data.get('gstin'))
+            )
+            supplier_id = cur.fetchone()[0]
+            
+            contacts = data.get('contacts', [])
+            for contact in contacts:
+                cur.execute(
+                    "INSERT INTO supplier_contacts (supplier_id, contact_name, contact_phone, contact_email) VALUES (%s, %s, %s, %s)",
+                    (supplier_id, contact.get('name'), contact.get('phone'), contact.get('email'))
+                )
+            
+            conn.commit()
+        return jsonify({'message': 'Supplier added successfully', 'supplier_id': supplier_id}), 201
+    except psycopg2.IntegrityError:
+        return jsonify({'error': f'Supplier with firm name "{firm_name}" already exists.'}), 409
+    except Exception as e:
+        app.logger.error(f"Error adding supplier: {e}")
+        return jsonify({'error': 'Database error'}), 500
+
+@app.route('/api/suppliers/<int:supplier_id>', methods=['PUT'])
+@login_required
+@role_required('admin')
+def update_supplier(supplier_id):
+    data = request.json
+    firm_name = data.get('firm_name', '').strip()
+    if not firm_name:
+        return jsonify({'error': 'Firm name is required'}), 400
+
+    try:
+        with database.get_conn() as (conn, cur):
+            cur.execute(
+                "UPDATE suppliers SET firm_name = %s, address = %s, gstin = %s WHERE supplier_id = %s",
+                (firm_name, data.get('address'), data.get('gstin'), supplier_id)
+            )
+            
+            # Update contacts
+            cur.execute("DELETE FROM supplier_contacts WHERE supplier_id = %s", (supplier_id,))
+            contacts = data.get('contacts', [])
+            for contact in contacts:
+                cur.execute(
+                    "INSERT INTO supplier_contacts (supplier_id, contact_name, contact_phone, contact_email) VALUES (%s, %s, %s, %s)",
+                    (supplier_id, contact.get('name'), contact.get('phone'), contact.get('email'))
+                )
+
+            conn.commit()
+        return jsonify({'message': 'Supplier updated successfully'}), 200
+    except psycopg2.IntegrityError:
+        return jsonify({'error': f'Supplier with firm name "{firm_name}" already exists.'}), 409
+    except Exception as e:
+        app.logger.error(f"Error updating supplier {supplier_id}: {e}")
+        return jsonify({'error': 'Database error'}), 500
+
+@app.route('/api/suppliers/<int:supplier_id>', methods=['DELETE'])
+@login_required
+@role_required('admin')
+def delete_supplier(supplier_id):
+    try:
+        with database.get_conn() as (conn, cur):
+            cur.execute("DELETE FROM suppliers WHERE supplier_id = %s", (supplier_id,))
+            conn.commit()
+        return '', 204
+    except psycopg2.IntegrityError:
+        return jsonify({'error': 'This supplier is in use and cannot be deleted.'}), 409
+    except Exception as e:
+        app.logger.error(f"Error deleting supplier {supplier_id}: {e}")
+        return jsonify({'error': 'Database error'}), 500
+
+@app.route('/api/suppliers/<int:supplier_id>/contacts', methods=['GET'])
+@login_required
+def get_supplier_contacts(supplier_id):
+    try:
+        with database.get_conn(cursor_factory=psycopg2.extras.DictCursor) as (conn, cur):
+            cur.execute("SELECT * FROM supplier_contacts WHERE supplier_id = %s", (supplier_id,))
+            contacts = [dict(row) for row in cur.fetchall()]
+        return jsonify(contacts)
+    except Exception as e:
+        app.logger.error(f"Error fetching contacts for supplier {supplier_id}: {e}")
+        return jsonify({'error': 'Failed to fetch contacts'}), 500
+
+@app.route('/api/suppliers/<int:supplier_id>/rates', methods=['GET'])
+@login_required
+def get_supplier_rates(supplier_id):
+    try:
+        with database.get_conn(cursor_factory=psycopg2.extras.DictCursor) as (conn, cur):
+            cur.execute("""
+                SELECT sir.rate_id, sir.rate, im.item_id, im.name as item_name
+                FROM supplier_item_rates sir
+                JOIN item_master im ON sir.item_id = im.item_id
+                WHERE sir.supplier_id = %s
+            """, (supplier_id,))
+            rates = [dict(row) for row in cur.fetchall()]
+        return jsonify(rates)
+    except Exception as e:
+        app.logger.error(f"Error fetching rates for supplier {supplier_id}: {e}")
+        return jsonify({'error': 'Failed to fetch rates'}), 500
+
+@app.route('/api/suppliers/<int:supplier_id>/rates', methods=['POST'])
+@login_required
+@role_required('admin')
+def add_supplier_rate(supplier_id):
+    data = request.json
+    item_id = data.get('item_id')
+    rate = data.get('rate')
+    if not item_id or not rate:
+        return jsonify({'error': 'Item and rate are required'}), 400
+    
+    try:
+        with database.get_conn() as (conn, cur):
+            cur.execute(
+                "INSERT INTO supplier_item_rates (supplier_id, item_id, rate) VALUES (%s, %s, %s) RETURNING rate_id",
+                (supplier_id, item_id, rate)
+            )
+            rate_id = cur.fetchone()[0]
+            conn.commit()
+        return jsonify({'message': 'Rate added successfully', 'rate_id': rate_id}), 201
+    except psycopg2.IntegrityError:
+        return jsonify({'error': 'This item already has a rate for this supplier.'}), 409
+    except Exception as e:
+        app.logger.error(f"Error adding rate for supplier {supplier_id}: {e}")
+        return jsonify({'error': 'Database error'}), 500
+
+@app.route('/api/suppliers/rates/<int:rate_id>', methods=['DELETE'])
+@login_required
+@role_required('admin')
+def delete_supplier_rate(rate_id):
+    try:
+        with database.get_conn() as (conn, cur):
+            cur.execute("DELETE FROM supplier_item_rates WHERE rate_id = %s", (rate_id,))
+            conn.commit()
+        return '', 204
+    except Exception as e:
+        app.logger.error(f"Error deleting rate {rate_id}: {e}")
+        return jsonify({'error': 'Database error'}), 500
+
+@app.route('/api/suppliers/<int:supplier_id>/ledger', methods=['GET'])
+@login_required
+def get_supplier_ledger(supplier_id):
+    try:
+        with database.get_conn(cursor_factory=psycopg2.extras.DictCursor) as (conn, cur):
+            cur.execute("""
+                SELECT se.entry_date, im.name as item_name, iv.variant_id, se.quantity_added, se.cost_per_unit
+                FROM stock_entries se
+                JOIN item_variant iv ON se.variant_id = iv.variant_id
+                JOIN item_master im ON iv.item_id = im.item_id
+                WHERE se.supplier_id = %s
+                ORDER BY se.entry_date DESC
+            """, (supplier_id,))
+            ledger_entries = [dict(row) for row in cur.fetchall()]
+        return jsonify(ledger_entries)
+    except Exception as e:
+        app.logger.error(f"Error fetching ledger for supplier {supplier_id}: {e}")
+        return jsonify({'error': 'Failed to fetch ledger'}), 500
+
+# --- Stock Entry API ---
+@app.route('/api/stock-entries', methods=['POST'])
+@login_required
+@role_required('admin')
+def add_stock_entry():
+    data = request.json
+    variant_id = data.get('variant_id')
+    quantity = data.get('quantity')
+    supplier_id = data.get('supplier_id')
+    cost = data.get('cost')
+
+    if not variant_id or not quantity:
+        return jsonify({'error': 'Variant and quantity are required'}), 400
+
+    try:
+        with database.get_conn() as (conn, cur):
+            # Add stock entry
+            cur.execute(
+                "INSERT INTO stock_entries (variant_id, quantity_added, supplier_id, cost_per_unit) VALUES (%s, %s, %s, %s)",
+                (variant_id, quantity, supplier_id, cost)
+            )
+            
+            # Update item variant stock
+            cur.execute(
+                "UPDATE item_variant SET opening_stock = opening_stock + %s WHERE variant_id = %s",
+                (quantity, variant_id)
+            )
+
+            # Update supplier item rate
+            if supplier_id and cost:
+                cur.execute(
+                    """
+                    INSERT INTO supplier_item_rates (supplier_id, item_id, rate)
+                    SELECT %s, item_id, %s FROM item_variant WHERE variant_id = %s
+                    ON CONFLICT (supplier_id, item_id) DO UPDATE SET rate = EXCLUDED.rate
+                    """,
+                    (supplier_id, cost, variant_id)
+                )
+
+            conn.commit()
+        return jsonify({'message': 'Stock received successfully'}), 201
+    except Exception as e:
+        app.logger.error(f"Error receiving stock: {e}")
+        return jsonify({'error': 'Database error'}), 500
+
+# --- Purchase Order API Routes ---
+@app.route('/api/purchase-orders', methods=['GET'])
+@login_required
+def get_purchase_orders():
+    try:
+        with database.get_conn(cursor_factory=psycopg2.extras.DictCursor) as (conn, cur):
+            cur.execute("""
+                SELECT po.*, s.firm_name 
+                FROM purchase_orders po
+                JOIN suppliers s ON po.supplier_id = s.supplier_id
+                ORDER BY po.order_date DESC
+            """)
+            pos = [dict(row) for row in cur.fetchall()]
+        return jsonify(pos)
+    except Exception as e:
+        app.logger.error(f"Error fetching purchase orders: {e}")
+        return jsonify({'error': 'Failed to fetch purchase orders'}), 500
+
+@app.route('/api/purchase-orders', methods=['POST'])
+@login_required
+@role_required('admin')
+def create_purchase_order():
+    data = request.json
+    supplier_id = data.get('supplier_id')
+    items = data.get('items', [])
+
+    if not supplier_id or not items:
+        return jsonify({'error': 'Supplier and items are required'}), 400
+
+    try:
+        with database.get_conn() as (conn, cur):
+            cur.execute(
+                "INSERT INTO purchase_orders (supplier_id, status) VALUES (%s, 'Draft') RETURNING po_id",
+                (supplier_id,)
+            )
+            po_id = cur.fetchone()[0]
+
+            total_amount = 0
+            for item in items:
+                cur.execute(
+                    "INSERT INTO purchase_order_items (po_id, variant_id, quantity, rate) VALUES (%s, %s, %s, %s)",
+                    (po_id, item['variant_id'], item['quantity'], item['rate'])
+                )
+                total_amount += float(item['quantity']) * float(item['rate'])
+            
+            cur.execute("UPDATE purchase_orders SET total_amount = %s WHERE po_id = %s", (total_amount, po_id))
+
+            conn.commit()
+        return jsonify({'message': 'Purchase order created', 'po_id': po_id}), 201
+    except Exception as e:
+        app.logger.error(f"Error creating purchase order: {e}")
+        return jsonify({'error': 'Database error'}), 500
+
+@app.route('/api/purchase-orders/<int:po_id>', methods=['GET'])
+@login_required
+def get_purchase_order(po_id):
+    try:
+        with database.get_conn(cursor_factory=psycopg2.extras.DictCursor) as (conn, cur):
+            cur.execute("SELECT * FROM purchase_orders WHERE po_id = %s", (po_id,))
+            po = dict(cur.fetchone())
+
+            cur.execute("""
+                SELECT poi.*, im.name as item_name, iv.variant_id
+                FROM purchase_order_items poi
+                JOIN item_variant iv ON poi.variant_id = iv.variant_id
+                JOIN item_master im ON iv.item_id = im.item_id
+                WHERE poi.po_id = %s
+            """, (po_id,))
+            items = [dict(row) for row in cur.fetchall()]
+            po['items'] = items
+        return jsonify(po)
+    except Exception as e:
+        app.logger.error(f"Error fetching purchase order {po_id}: {e}")
+        return jsonify({'error': 'Failed to fetch purchase order'}), 500
+
+@app.route('/api/purchase-orders/<int:po_id>', methods=['PUT'])
+@login_required
+@role_required('admin')
+def update_purchase_order(po_id):
+    data = request.json
+    items = data.get('items', [])
+    status = data.get('status')
+
+    try:
+        with database.get_conn() as (conn, cur):
+            cur.execute("DELETE FROM purchase_order_items WHERE po_id = %s", (po_id,))
+            
+            total_amount = 0
+            for item in items:
+                cur.execute(
+                    "INSERT INTO purchase_order_items (po_id, variant_id, quantity, rate) VALUES (%s, %s, %s, %s)",
+                    (po_id, item['variant_id'], item['quantity'], item['rate'])
+                )
+                total_amount += float(item['quantity']) * float(item['rate'])
+            
+            cur.execute("UPDATE purchase_orders SET total_amount = %s, status = %s WHERE po_id = %s", (total_amount, status, po_id))
+            
+            conn.commit()
+        return jsonify({'message': 'Purchase order updated'}), 200
+    except Exception as e:
+        app.logger.error(f"Error updating purchase order {po_id}: {e}")
+        return jsonify({'error': 'Database error'}), 500
+
+@app.route('/api/purchase-orders/<int:po_id>', methods=['DELETE'])
+@login_required
+@role_required('admin')
+def delete_purchase_order(po_id):
+    try:
+        with database.get_conn() as (conn, cur):
+            cur.execute("DELETE FROM purchase_orders WHERE po_id = %s", (po_id,))
+            conn.commit()
+        return '', 204
+    except Exception as e:
+        app.logger.error(f"Error deleting purchase order {po_id}: {e}")
+        return jsonify({'error': 'Database error'}), 500
 
 @app.route('/api/item-names', methods=['GET'])
 @login_required
@@ -600,7 +950,13 @@ def get_item_by_name():
         return jsonify({'error': 'Item name is required'}), 400
     try:
         with database.get_conn(cursor_factory=psycopg2.extras.DictCursor) as (conn, cur):
-            cur.execute("SELECT * FROM item_master WHERE name = %s", (item_name,))
+            cur.execute("""
+                SELECT i.item_id, i.name, mm.model_name as model, vm.variation_name as variation, i.description
+                FROM item_master i
+                LEFT JOIN model_master mm ON i.model_id = mm.model_id
+                LEFT JOIN variation_master vm ON i.variation_id = vm.variation_id
+                WHERE i.name = %s
+            """, (item_name,))
             item = cur.fetchone()
             if not item:
                 return jsonify(None)
@@ -608,6 +964,77 @@ def get_item_by_name():
     except Exception as e:
         app.logger.error(f"Error fetching item by name '{item_name}': {e}")
         return jsonify({'error': 'Failed to fetch item by name'}), 500
+
+@app.route('/api/all-variants', methods=['GET'])
+@login_required
+def get_all_variants():
+    """Provides a flat list of all variants for dropdowns."""
+    try:
+        with database.get_conn(cursor_factory=psycopg2.extras.DictCursor) as (conn, cur):
+            cur.execute("""
+                SELECT 
+                    iv.variant_id,
+                    im.name || ' - ' || cm.color_name || ' / ' || sm.size_name AS full_name
+                FROM item_variant iv
+                JOIN item_master im ON iv.item_id = im.item_id
+                JOIN color_master cm ON iv.color_id = cm.color_id
+                JOIN size_master sm ON iv.size_id = sm.size_id
+                ORDER BY full_name
+            """)
+            variants = [{'id': row['variant_id'], 'name': row['full_name']} for row in cur.fetchall()]
+        return jsonify(variants)
+    except Exception as e:
+        app.logger.error(f"Error fetching all variants: {e}")
+        return jsonify({'error': 'Failed to fetch variants'}), 500
+
+@app.route('/api/variants/search', methods=['GET'])
+@login_required
+def search_variants():
+    """Provides a searchable list of all variants for advanced selection."""
+    try:
+        with database.get_conn(cursor_factory=psycopg2.extras.DictCursor) as (conn, cur):
+            cur.execute("""
+                SELECT 
+                    iv.variant_id,
+                    im.name as item_name,
+                    mm.model_name,
+                    vm.variation_name,
+                    cm.color_name,
+                    sm.size_name,
+                    im.description
+                FROM item_variant iv
+                JOIN item_master im ON iv.item_id = im.item_id
+                LEFT JOIN model_master mm ON im.model_id = mm.model_id
+                LEFT JOIN variation_master vm ON im.variation_id = vm.variation_id
+                JOIN color_master cm ON iv.color_id = cm.color_id
+                JOIN size_master sm ON iv.size_id = sm.size_id
+                ORDER BY item_name, model_name, variation_name, color_name, size_name
+            """)
+            variants = [dict(row) for row in cur.fetchall()]
+        return jsonify(variants)
+    except Exception as e:
+        app.logger.error(f"Error searching variants: {e}")
+        return jsonify({'error': 'Failed to search variants'}), 500
+
+@app.route('/api/variant-rate', methods=['GET'])
+@login_required
+def get_variant_rate():
+    variant_id = request.args.get('variant_id')
+    supplier_id = request.args.get('supplier_id')
+    if not variant_id or not supplier_id:
+        return jsonify({'error': 'Variant ID and Supplier ID are required'}), 400
+    try:
+        with database.get_conn(cursor_factory=psycopg2.extras.DictCursor) as (conn, cur):
+            cur.execute("""
+                SELECT rate FROM supplier_item_rates
+                WHERE item_id = (SELECT item_id FROM item_variant WHERE variant_id = %s)
+                AND supplier_id = %s
+            """, (variant_id, supplier_id))
+            rate = cur.fetchone()
+            return jsonify({'rate': rate[0] if rate else 0})
+    except Exception as e:
+        app.logger.error(f"Error fetching variant rate: {e}")
+        return jsonify({'error': 'Failed to fetch rate'}), 500
         
 @app.route('/api/items/<int:item_id>', methods=['PUT'])
 @login_required

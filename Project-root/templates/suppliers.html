@@ -1,0 +1,144 @@
+{% extends "base.html" %}
+{% block title %}Supplier Management{% endblock %}
+
+{% block content %}
+<div class="container">
+    <div class="form-card" style="padding: 1.5rem;">
+        <div class="page-header">
+            <div class="header-left">
+                <h2>Supplier Management</h2>
+            </div>
+            <div class="header-actions">
+                <button id="add-supplier-btn" class="button create">
+                    <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                        <circle cx="12" cy="12" r="10"></circle>
+                        <line x1="12" y1="8" x2="12" y2="16"></line>
+                        <line x1="8" y1="12" x2="16" y2="12"></line>
+                    </svg>
+                    Add New Supplier
+                </button>
+            </div>
+        </div>
+        
+        <div class="inventory-table-container">
+            <div class="table-wrapper">
+                <table class="inventory-table compact">
+                    <thead>
+                        <tr>
+                            <th>Firm Name</th>
+                            <th>Address</th>
+                            <th>GSTIN</th>
+                            <th>Actions</th>
+                        </tr>
+                    </thead>
+                    <tbody id="suppliers-table-body">
+                        <!-- Supplier rows will be dynamically populated here -->
+                    </tbody>
+                </table>
+            </div>
+        </div>
+    </div>
+</div>
+
+<!-- Add/Edit Supplier Modal -->
+<div id="supplier-modal" class="modal">
+    <div class="modal-content large">
+        <div class="modal-header">
+            <h3 id="supplier-modal-title">Add Supplier</h3>
+            <button type="button" class="button cancel close-modal-btn">&times;</button>
+        </div>
+        <div class="modal-body">
+            <form id="supplier-form">
+                <input type="hidden" id="supplier-id">
+                <div class="form-field">
+                    <label for="firm-name">Firm Name</label>
+                    <input type="text" id="firm-name" required>
+                </div>
+                <div class="form-field">
+                    <label for="address">Address</label>
+                    <textarea id="address"></textarea>
+                </div>
+                <div class="form-field">
+                    <label for="gstin">GSTIN</label>
+                    <input type="text" id="gstin">
+                </div>
+                <hr>
+                <h4>Contacts</h4>
+                <div id="contacts-container">
+                    <!-- Contact fields will be dynamically added here -->
+                </div>
+                <button type="button" id="add-contact-btn" class="button">Add Contact</button>
+            </form>
+        </div>
+        <div class="modal-footer">
+            <button type="button" class="button cancel close-modal-btn">Cancel</button>
+            <button type="submit" form="supplier-form" class="button create">Save Supplier</button>
+        </div>
+    </div>
+</div>
+
+<!-- Supplier Ledger Modal -->
+<div id="ledger-modal" class="modal">
+    <div class="modal-content large">
+        <div class="modal-header">
+            <h3>Supplier Ledger</h3>
+            <button type="button" class="button cancel close-modal-btn">&times;</button>
+        </div>
+        <div class="modal-body">
+            <div class="table-wrapper">
+                <table class="inventory-table">
+                    <thead>
+                        <tr>
+                            <th>Date</th>
+                            <th>Item</th>
+                            <th>Quantity</th>
+                            <th>Cost per Unit</th>
+                        </tr>
+                    </thead>
+                    <tbody id="ledger-table-body">
+                        <!-- Ledger entries will be populated here -->
+                    </tbody>
+                </table>
+            </div>
+        </div>
+    </div>
+</div>
+
+<!-- Item Rates Modal -->
+<div id="rates-modal" class="modal">
+    <div class="modal-content large">
+        <div class="modal-header">
+            <h3>Item Rates</h3>
+            <button type="button" class="button cancel close-modal-btn">&times;</button>
+        </div>
+        <div class="modal-body">
+            <form id="add-rate-form">
+                <div class="form-field">
+                    <label for="item-select">Item</label>
+                    <select id="item-select" style="width: 100%;"></select>
+                </div>
+                <div class="form-field">
+                    <label for="rate-input">Rate</label>
+                    <input type="number" id="rate-input" step="0.01" required>
+                </div>
+                <button type="submit" class="button create">Add Rate</button>
+            </form>
+            <hr>
+            <div class="table-wrapper">
+                <table class="inventory-table">
+                    <thead>
+                        <tr>
+                            <th>Item</th>
+                            <th>Rate</th>
+                            <th>Actions</th>
+                        </tr>
+                    </thead>
+                    <tbody id="rates-table-body">
+                        <!-- Rates will be populated here -->
+                    </tbody>
+                </table>
+            </div>
+        </div>
+    </div>
+</div>
+{% endblock %}
