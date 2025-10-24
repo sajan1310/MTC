@@ -1,7 +1,7 @@
 import os
 import uuid
-from contextlib import contextmanager
 from dotenv import load_dotenv
+import database
 from functools import wraps
 import json
 
@@ -17,7 +17,6 @@ from flask_login import (LoginManager, UserMixin, login_user, login_required,
 from flask_wtf.csrf import CSRFProtect
 import psycopg2
 import psycopg2.extras
-from psycopg2 import pool
 from werkzeug.security import generate_password_hash, check_password_hash
 from werkzeug.utils import secure_filename
 import logging
@@ -28,38 +27,10 @@ from io import StringIO
 app = Flask(__name__)
 app.secret_key = os.environ.get('FLASK_SECRET_KEY', 'a-strong-default-secret-key-for-dev')
 csrf = CSRFProtect(app)
+database.init_app(app)
 
 logging.basicConfig(level=logging.INFO)
 CORS(app, supports_credentials=True, origins=["http://127.0.0.1:5000"])
-
-# --- Database Setup ---
-try:
-    db_pool = pool.SimpleConnectionPool(
-        1, 10,
-        host=os.environ.get('DB_HOST', '127.0.0.1'),
-        database=os.environ.get('DB_NAME', 'MTC'),
-        user=os.environ.get('DB_USER', 'postgres'),
-        password=os.environ.get('DB_PASS')
-    )
-except psycopg2.OperationalError as e:
-    app.logger.critical(f"FATAL: Could not connect to the database: {e}")
-    db_pool = None
-
-@contextmanager
-def get_conn(cursor_factory=None, autocommit=False):
-    if not db_pool: raise ConnectionError("Database pool is not available.")
-    conn = None
-    try:
-        conn = db_pool.getconn()
-        conn.autocommit = autocommit
-        cur = conn.cursor(cursor_factory=cursor_factory)
-        yield conn, cur
-    except Exception as e:
-        app.logger.error(f"Database transaction error: {e}")
-        if conn: conn.rollback()
-        raise
-    finally:
-        if conn: db_pool.putconn(conn)
 
 # --- User and Login Management ---
 login_manager = LoginManager()
@@ -79,7 +50,7 @@ class User(UserMixin):
 @login_manager.user_loader
 def load_user(user_id):
     try:
-        with get_conn(cursor_factory=psycopg2.extras.DictCursor) as (conn, cur):
+        with database.get_conn(cursor_factory=psycopg2.extras.DictCursor) as (conn, cur):
             cur.execute("SELECT * FROM users WHERE user_id = %s", (user_id,))
             row = cur.fetchone()
     except Exception as e:
@@ -116,7 +87,7 @@ def get_or_create_user(user_info):
     name = user_info.get("name")
     picture = user_info.get("picture")
     try:
-        with get_conn(cursor_factory=psycopg2.extras.DictCursor) as (conn, cur):
+        with database.get_conn(cursor_factory=psycopg2.extras.DictCursor) as (conn, cur):
             cur.execute("SELECT * FROM users WHERE email = %s", (email,))
             user_row = cur.fetchone()
             if user_row:
@@ -228,7 +199,7 @@ def profile():
             profile_path = f"uploads/{filename}"
 
         try:
-            with get_conn() as (conn, cur):
+            with database.get_conn() as (conn, cur):
                 cur.execute(
                     "UPDATE users SET name = %s, profile_picture = %s, company = %s, mobile = %s WHERE user_id = %s",
                     (name, profile_path, company, mobile, current_user.id)
@@ -252,7 +223,7 @@ def login():
         email = request.form.get('email')
         password = request.form.get('password')
         try:
-            with get_conn(cursor_factory=psycopg2.extras.DictCursor) as (conn, cur):
+            with database.get_conn(cursor_factory=psycopg2.extras.DictCursor) as (conn, cur):
                 cur.execute("SELECT * FROM users WHERE email = %s", (email,))
                 user_row = cur.fetchone()
             
@@ -285,7 +256,7 @@ def signup():
             flash("Name, email, and password are required.", 'error')
             return redirect(url_for('signup'))
         try:
-            with get_conn(cursor_factory=psycopg2.extras.DictCursor) as (conn, cur):
+            with database.get_conn(cursor_factory=psycopg2.extras.DictCursor) as (conn, cur):
                 cur.execute("SELECT user_id FROM users WHERE email = %s", (email,))
                 if cur.fetchone():
                     flash("Email address already registered.", 'error')
@@ -352,7 +323,7 @@ def make_api_crud_routes(app, entity_name, table_name, id_col, name_col):
     @app.route(f'/api/{plural_name}', methods=['GET'], endpoint=f'get_{plural_name}')
     @login_required
     def get_entities():
-        with get_conn() as (conn, cur):
+        with database.get_conn() as (conn, cur):
             cur.execute(f"SELECT {id_col}, {name_col} FROM {table_name} ORDER BY {name_col}")
             items = cur.fetchall()
         return jsonify([{'id': item[0], 'name': item[1]} for item in items])
@@ -365,7 +336,7 @@ def make_api_crud_routes(app, entity_name, table_name, id_col, name_col):
         name = data.get("name", "").strip()
         if not name: return jsonify({'error': 'Name is required'}), 400
         try:
-            with get_conn() as (conn, cur):
+            with database.get_conn() as (conn, cur):
                 cur.execute(f"INSERT INTO {table_name} ({name_col}) VALUES (%s) RETURNING {id_col}", (name,))
                 new_id = cur.fetchone()[0]
                 conn.commit()
@@ -384,7 +355,7 @@ def make_api_crud_routes(app, entity_name, table_name, id_col, name_col):
         name = data.get("name", "").strip()
         if not name: return jsonify({'error': 'Name is required'}), 400
         try:
-            with get_conn() as (conn, cur):
+            with database.get_conn() as (conn, cur):
                 cur.execute(f"UPDATE {table_name} SET {name_col} = %s WHERE {id_col} = %s", (name, item_id))
                 conn.commit()
             return jsonify({'message': f'{entity_name.capitalize()} updated'}), 200
@@ -399,7 +370,7 @@ def make_api_crud_routes(app, entity_name, table_name, id_col, name_col):
     @role_required('admin')
     def delete_entity(item_id):
         try:
-            with get_conn() as (conn, cur):
+            with database.get_conn() as (conn, cur):
                 cur.execute(f"DELETE FROM {table_name} WHERE {id_col} = %s", (item_id,))
                 conn.commit()
             return '', 204
@@ -418,7 +389,7 @@ make_api_crud_routes(app, 'variation', 'variation_master', 'variation_id', 'vari
 @login_required
 def get_item_names():
     try:
-        with get_conn() as (conn, cur):
+        with database.get_conn() as (conn, cur):
             cur.execute("SELECT DISTINCT name FROM item_master ORDER BY name")
             names = [row[0] for row in cur.fetchall()]
         return jsonify(names)
@@ -433,7 +404,7 @@ def get_models_for_item():
     if not item_name:
         return jsonify([])
     try:
-        with get_conn() as (conn, cur):
+        with database.get_conn() as (conn, cur):
             cur.execute("""
                 SELECT DISTINCT mm.model_id, mm.model_name 
                 FROM model_master mm
@@ -457,7 +428,7 @@ def get_variations_for_item_model():
         return jsonify([])
 
     try:
-        with get_conn() as (conn, cur):
+        with database.get_conn() as (conn, cur):
             query = """
                 SELECT DISTINCT vm.variation_id, vm.variation_name 
                 FROM variation_master vm
@@ -487,7 +458,7 @@ def get_items():
     show_low_stock_only = request.args.get('low_stock', 'false').lower() == 'true'
     
     try:
-        with get_conn(cursor_factory=psycopg2.extras.DictCursor) as (conn, cur):
+        with database.get_conn(cursor_factory=psycopg2.extras.DictCursor) as (conn, cur):
             base_query = """
                 SELECT 
                     i.item_id, i.name, mm.model_name as model, vm.variation_name as variation, 
@@ -549,7 +520,7 @@ def add_item():
             image_path = f"uploads/{filename}"
 
     try:
-        with get_conn() as (conn, cur):
+        with database.get_conn() as (conn, cur):
             # Check for existing item with the same composite key
             model_id = get_or_create_master_id(cur, data.get('model'), 'model_master', 'model_id', 'model_name')
             variation_id = get_or_create_master_id(cur, data.get('variation'), 'variation_master', 'variation_id', 'variation_name')
@@ -590,7 +561,7 @@ def add_item():
 @login_required
 def get_item(item_id):
     try:
-        with get_conn(cursor_factory=psycopg2.extras.DictCursor) as (conn, cur):
+        with database.get_conn(cursor_factory=psycopg2.extras.DictCursor) as (conn, cur):
             cur.execute("""
                 SELECT 
                     i.item_id, i.name, mm.model_name as model, vm.variation_name as variation, 
@@ -624,7 +595,7 @@ def get_item_by_name():
     if not item_name:
         return jsonify({'error': 'Item name is required'}), 400
     try:
-        with get_conn(cursor_factory=psycopg2.extras.DictCursor) as (conn, cur):
+        with database.get_conn(cursor_factory=psycopg2.extras.DictCursor) as (conn, cur):
             cur.execute("SELECT * FROM item_master WHERE name = %s", (item_name,))
             item = cur.fetchone()
             if not item:
@@ -651,26 +622,37 @@ def update_item(item_id):
             image_path = f"uploads/{filename}"
 
     try:
-        with get_conn() as (conn, cur):
-            # Check if the new combination of attributes already exists for a DIFFERENT item
+        with database.get_conn(cursor_factory=psycopg2.extras.DictCursor) as (conn, cur):
+            cur.execute("SELECT color_name, color_id FROM color_master")
+            color_cache = {name: id for name, id in cur.fetchall()}
+            
+            cur.execute("SELECT size_name, size_id FROM size_master")
+            size_cache = {name: id for name, id in cur.fetchall()}
+
+            def get_master_id_with_cache(cache, value, table_name, id_col, name_col):
+                value = str(value).strip()
+                if not value: value = "--"
+                
+                if value in cache:
+                    return cache[value]
+                
+                cur.execute(f"INSERT INTO {table_name} ({name_col}) VALUES (%s) RETURNING {id_col}", (value,))
+                new_id = cur.fetchone()[0]
+                cache[value] = new_id
+                return new_id
+
             model_id = get_or_create_master_id(cur, data.get('model'), 'model_master', 'model_id', 'model_name')
             variation_id = get_or_create_master_id(cur, data.get('variation'), 'variation_master', 'variation_id', 'variation_name')
 
             cur.execute(
-                """
-                SELECT item_id FROM item_master 
-                WHERE name = %s AND model_id = %s AND variation_id = %s AND COALESCE(description, '') = %s
-                AND item_id != %s
-                """,
+                "SELECT item_id FROM item_master WHERE name = %s AND model_id = %s AND variation_id = %s AND COALESCE(description, '') = %s AND item_id != %s",
                 (data['name'], model_id, variation_id, data.get('description', ''), item_id)
             )
             if cur.fetchone():
                 return jsonify({'error': 'Another item with the same name, model, variation, and description already exists.'}), 409
 
             update_fields = {
-                "name": data['name'],
-                "model_id": model_id,
-                "variation_id": variation_id,
+                "name": data['name'], "model_id": model_id, "variation_id": variation_id,
                 "description": data.get('description')
             }
             if image_path:
@@ -681,35 +663,62 @@ def update_item(item_id):
             
             cur.execute(f"UPDATE item_master SET {set_clause} WHERE item_id=%s", tuple(values))
             
-            # Transactional variant update: delete all and re-insert.
-            # This is wrapped in a savepoint to ensure atomicity. If any part fails,
-            # the variants for the item are rolled back to their original state.
-            try:
-                cur.execute("SAVEPOINT transaction_variant_update")
-                
-                client_variants = json.loads(data['variants'])
+            changed_variants = json.loads(data['variants'])
 
-                # Delete all existing variants for this item
-                cur.execute("DELETE FROM item_variant WHERE item_id = %s", (item_id,))
+            for v in changed_variants.get('added', []):
+                color_id = get_master_id_with_cache(color_cache, v['color'], 'color_master', 'color_id', 'color_name')
+                size_id = get_master_id_with_cache(size_cache, v['size'], 'size_master', 'size_id', 'size_name')
+                cur.execute(
+                    "INSERT INTO item_variant (item_id, color_id, size_id, opening_stock, threshold, unit) VALUES (%s, %s, %s, %s, %s, %s)",
+                    (item_id, color_id, size_id, v.get('opening_stock', 0), v.get('threshold', 5), v.get('unit'))
+                )
 
-                # Re-insert all variants from the form
-                for v in client_variants:
-                    color_id = get_or_create_master_id(cur, v['color'], 'color_master', 'color_id', 'color_name')
-                    size_id = get_or_create_master_id(cur, v['size'], 'size_master', 'size_id', 'size_name')
-                    
-                    cur.execute(
-                        "INSERT INTO item_variant (item_id, color_id, size_id, opening_stock, threshold, unit) VALUES (%s, %s, %s, %s, %s, %s)",
-                        (item_id, color_id, size_id, v.get('opening_stock', 0), v.get('threshold', 5), v.get('unit'))
-                    )
-                
-                cur.execute("RELEASE SAVEPOINT transaction_variant_update")
-            except Exception:
-                cur.execute("ROLLBACK TO SAVEPOINT transaction_variant_update")
-                # Re-raise the exception to be caught by the outer block.
-                raise
+            for v in changed_variants.get('updated', []):
+                color_id = get_master_id_with_cache(color_cache, v['color'], 'color_master', 'color_id', 'color_name')
+                size_id = get_master_id_with_cache(size_cache, v['size'], 'size_master', 'size_id', 'size_name')
+                cur.execute(
+                    "UPDATE item_variant SET color_id = %s, size_id = %s, opening_stock = %s, threshold = %s, unit = %s WHERE variant_id = %s",
+                    (color_id, size_id, v.get('opening_stock', 0), v.get('threshold', 5), v.get('unit'), v['id'])
+                )
+
+            if changed_variants.get('deleted'):
+                deleted_ids = [int(id) for id in changed_variants['deleted'] if str(id).isdigit()]
+                if deleted_ids:
+                    cur.execute("DELETE FROM item_variant WHERE variant_id = ANY(%s)", (deleted_ids,))
+
+            # --- New: Fetch the updated summary data for the item ---
+            cur.execute("""
+                SELECT 
+                    i.item_id, i.name, mm.model_name as model, vm.variation_name as variation, 
+                    i.description, i.image_path,
+                    (SELECT COUNT(*) FROM item_variant v WHERE v.item_id = i.item_id) as variant_count,
+                    (SELECT COALESCE(SUM(v.opening_stock), 0) FROM item_variant v WHERE v.item_id = i.item_id) as total_stock,
+                    EXISTS (
+                        SELECT 1 FROM item_variant v_check 
+                        WHERE v_check.item_id = i.item_id AND v_check.opening_stock <= v_check.threshold
+                    ) as has_low_stock_variants
+                FROM item_master i
+                LEFT JOIN model_master mm ON i.model_id = mm.model_id
+                LEFT JOIN variation_master vm ON i.variation_id = vm.variation_id
+                WHERE i.item_id = %s
+            """, (item_id,))
+            updated_item_data = cur.fetchone()
+            # --- End of New ---
 
             conn.commit()
-        return jsonify({'message': 'Item updated successfully'}), 200
+        
+        # Return the updated item data so the frontend can update the UI without a full refresh
+        return jsonify({
+            'message': 'Item updated successfully',
+            'item': {
+                'id': updated_item_data['item_id'], 'name': updated_item_data['name'], 'model': updated_item_data['model'],
+                'variation': updated_item_data['variation'], 'description': updated_item_data['description'],
+                'image_path': updated_item_data['image_path'],
+                'variant_count': updated_item_data['variant_count'], 
+                'total_stock': int(updated_item_data['total_stock'] or 0),
+                'has_low_stock_variants': updated_item_data['has_low_stock_variants']
+            }
+        }), 200
     except psycopg2.IntegrityError as e:
         app.logger.warning(f"Integrity error updating item variant: {e}")
         return jsonify({'error': 'A variant with the same color and size already exists for this item.'}), 409
@@ -721,7 +730,7 @@ def update_item(item_id):
 @login_required
 def get_item_variants(item_id):
     try:
-        with get_conn(cursor_factory=psycopg2.extras.DictCursor) as (conn, cur):
+        with database.get_conn(cursor_factory=psycopg2.extras.DictCursor) as (conn, cur):
             cur.execute("""
                 SELECT 
                     v.variant_id, v.opening_stock, v.threshold, c.color_name, s.size_name,
@@ -747,7 +756,7 @@ def get_item_variants(item_id):
 @role_required('admin')
 def delete_item(item_id):
     try:
-        with get_conn() as (conn, cur):
+        with database.get_conn() as (conn, cur):
             cur.execute("DELETE FROM item_master WHERE item_id = %s", (item_id,))
             conn.commit()
         return '', 204
@@ -764,7 +773,7 @@ def update_variant_stock(variant_id):
         return jsonify({'error': 'A valid, non-negative stock number is required.'}), 400
     
     try:
-        with get_conn() as (conn, cur):
+        with database.get_conn() as (conn, cur):
             # --- CHANGE 1: Get more data back from the initial update ---
             # We ask the database to return the new stock and threshold along with the item_id.
             cur.execute(
@@ -825,7 +834,7 @@ def update_variant_threshold(variant_id):
         return jsonify({'error': 'A valid, non-negative threshold is required.'}), 400
 
     try:
-        with get_conn() as (conn, cur):
+        with database.get_conn() as (conn, cur):
             cur.execute(
                 "UPDATE item_variant SET threshold = %s WHERE variant_id = %s",
                 (int(new_threshold), variant_id)
@@ -836,12 +845,70 @@ def update_variant_threshold(variant_id):
         app.logger.error(f"Error updating threshold for variant {variant_id}: {e}")
         return jsonify({'error': 'Database error'}), 500
 
+@app.route('/api/variants/<int:variant_id>', methods=['DELETE'])
+@login_required
+@role_required('admin')
+def delete_variant(variant_id):
+    try:
+        with database.get_conn() as (conn, cur):
+            cur.execute("DELETE FROM item_variant WHERE variant_id = %s", (variant_id,))
+            conn.commit()
+        return '', 204
+    except Exception as e:
+        app.logger.error(f"Error deleting variant {variant_id}: {e}")
+        return jsonify({'error': 'Database error'}), 500
+
+@app.route('/api/items/<int:item_id>/variants', methods=['POST'])
+@login_required
+@role_required('admin')
+def add_variant(item_id):
+    data = request.json
+    try:
+        with database.get_conn() as (conn, cur):
+            color_id = get_or_create_master_id(cur, data['color'], 'color_master', 'color_id', 'color_name')
+            size_id = get_or_create_master_id(cur, data['size'], 'size_master', 'size_id', 'size_name')
+            cur.execute(
+                "INSERT INTO item_variant (item_id, color_id, size_id, opening_stock, threshold, unit) VALUES (%s, %s, %s, %s, %s, %s) RETURNING variant_id",
+                (item_id, color_id, size_id, data.get('opening_stock', 0), data.get('threshold', 5), data.get('unit'))
+            )
+            variant_id = cur.fetchone()[0]
+            conn.commit()
+            return jsonify({'message': 'Variant added successfully', 'variant_id': variant_id}), 201
+    except psycopg2.IntegrityError as e:
+        app.logger.warning(f"Integrity error adding variant: {e}")
+        return jsonify({'error': 'A variant with the same color and size already exists for this item.'}), 409
+    except Exception as e:
+        app.logger.error(f"Error in add_variant API: {e}")
+        return jsonify({'error': 'Failed to save variant due to a server error.'}), 500
+
+@app.route('/api/variants/<int:variant_id>', methods=['PUT'])
+@login_required
+@role_required('admin')
+def update_variant(variant_id):
+    data = request.json
+    try:
+        with database.get_conn() as (conn, cur):
+            color_id = get_or_create_master_id(cur, data['color'], 'color_master', 'color_id', 'color_name')
+            size_id = get_or_create_master_id(cur, data['size'], 'size_master', 'size_id', 'size_name')
+            cur.execute(
+                "UPDATE item_variant SET color_id = %s, size_id = %s, opening_stock = %s, threshold = %s, unit = %s WHERE variant_id = %s",
+                (color_id, size_id, data.get('opening_stock', 0), data.get('threshold', 5), data.get('unit'), variant_id)
+            )
+            conn.commit()
+            return jsonify({'message': 'Variant updated successfully'}), 200
+    except psycopg2.IntegrityError as e:
+        app.logger.warning(f"Integrity error updating variant: {e}")
+        return jsonify({'error': 'A variant with the same color and size already exists for this item.'}), 409
+    except Exception as e:
+        app.logger.error(f"Error updating variant {variant_id}: {e}")
+        return jsonify({'error': 'Failed to update variant'}), 500
+
 @app.route('/api/users', methods=['GET'])
 @login_required
 @role_required('super_admin')
 def get_users():
     try:
-        with get_conn(cursor_factory=psycopg2.extras.DictCursor) as (conn, cur):
+        with database.get_conn(cursor_factory=psycopg2.extras.DictCursor) as (conn, cur):
             cur.execute("SELECT user_id, name, email, role FROM users WHERE role != 'super_admin' ORDER BY name")
             users = [dict(row) for row in cur.fetchall()]
         return jsonify(users)
@@ -859,7 +926,7 @@ def update_user_role(user_id):
         return jsonify({'error': 'Invalid role specified.'}), 400
     
     try:
-        with get_conn() as (conn, cur):
+        with database.get_conn() as (conn, cur):
             cur.execute("UPDATE users SET role = %s WHERE user_id = %s", (new_role, user_id))
             conn.commit()
         return jsonify({'message': 'User role updated successfully.'})
@@ -871,7 +938,7 @@ def update_user_role(user_id):
 @login_required
 def get_low_stock_report():
     try:
-        with get_conn(cursor_factory=psycopg2.extras.DictCursor) as (conn, cur):
+        with database.get_conn(cursor_factory=psycopg2.extras.DictCursor) as (conn, cur):
             cur.execute("""
                 SELECT 
                     im.name as item_name,
@@ -975,7 +1042,7 @@ def import_commit():
         processed = 0
         imported = 0
         
-        with get_conn() as (conn, cur):
+        with database.get_conn() as (conn, cur):
             for row_data in import_data:
                 # Apply mappings to the current row
                 mapped_row = {mappings.get(k, k): v for k, v in row_data.items()}
@@ -1031,7 +1098,8 @@ def import_commit():
 
         
 if __name__ == '__main__':
-    if not db_pool:
-        app.logger.error("Application cannot start without a database connection.")
-    else:
-        app.run(debug=True, port=5000)
+    with app.app_context():
+        if not database.db_pool:
+            app.logger.error("Application cannot start without a database connection.")
+        else:
+            app.run(debug=True, port=5000)
