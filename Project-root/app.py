@@ -20,8 +20,6 @@ import psycopg2.extras
 from werkzeug.security import generate_password_hash, check_password_hash
 from werkzeug.utils import secure_filename
 import logging
-import pandas as pd
-import csv
 from io import StringIO
 
 app = Flask(__name__)
@@ -459,41 +457,47 @@ def get_items():
     
     try:
         with database.get_conn(cursor_factory=psycopg2.extras.DictCursor) as (conn, cur):
-            base_query = """
-                SELECT 
-                    i.item_id, i.name, mm.model_name as model, vm.variation_name as variation, 
+            # This single, optimized query replaces the old one with multiple subqueries.
+            # It joins the item_master with an aggregated summary of its variants.
+            query = """
+                SELECT
+                    i.item_id, i.name, mm.model_name as model, vm.variation_name as variation,
                     i.description, i.image_path,
-                    (SELECT COUNT(*) FROM item_variant v WHERE v.item_id = i.item_id) as variant_count,
-                    (SELECT COALESCE(SUM(v.opening_stock), 0) FROM item_variant v WHERE v.item_id = i.item_id) as total_stock,
-                    (SELECT COALESCE(SUM(v.threshold), 0) FROM item_variant v WHERE v.item_id = i.item_id) as total_threshold,
-                    EXISTS (
-                        SELECT 1 FROM item_variant v_check 
-                        WHERE v_check.item_id = i.item_id AND v_check.opening_stock <= v_check.threshold
-                    ) as has_low_stock_variants
+                    COALESCE(variant_summary.variant_count, 0) as variant_count,
+                    COALESCE(variant_summary.total_stock, 0) as total_stock,
+                    COALESCE(variant_summary.total_threshold, 0) as total_threshold,
+                    COALESCE(variant_summary.has_low_stock_variants, FALSE) as has_low_stock_variants
                 FROM item_master i
                 LEFT JOIN model_master mm ON i.model_id = mm.model_id
                 LEFT JOIN variation_master vm ON i.variation_id = vm.variation_id
+                LEFT JOIN (
+                    SELECT
+                        item_id,
+                        COUNT(*) as variant_count,
+                        SUM(opening_stock) as total_stock,
+                        SUM(threshold) as total_threshold,
+                        BOOL_OR(opening_stock <= threshold) as has_low_stock_variants
+                    FROM item_variant
+                    GROUP BY item_id
+                ) as variant_summary ON i.item_id = variant_summary.item_id
             """
             
             if show_low_stock_only:
-                base_query += """
-                WHERE EXISTS (
-                    SELECT 1 FROM item_variant v_check 
-                    WHERE v_check.item_id = i.item_id AND v_check.opening_stock <= v_check.threshold
-                )
-                """
+                # The WHERE clause is now simpler and more efficient.
+                query += " WHERE COALESCE(variant_summary.has_low_stock_variants, FALSE) = TRUE"
             
-            base_query += " ORDER BY i.name"
+            query += " ORDER BY i.name"
             
-            cur.execute(base_query)
+            cur.execute(query)
             items = cur.fetchall()
             
+            # The JSON structure remains identical to ensure the frontend works without changes.
             return jsonify([{
                 'id': item['item_id'], 'name': item['name'], 'model': item['model'],
                 'variation': item['variation'], 'description': item['description'],
                 'image_path': item['image_path'],
                 'threshold': int(item['total_threshold'] or 0),
-                'variant_count': item['variant_count'], 
+                'variant_count': item['variant_count'],
                 'total_stock': int(item['total_stock'] or 0),
                 'has_low_stock_variants': item['has_low_stock_variants']
             } for item in items])
@@ -1059,8 +1063,10 @@ def import_commit():
                 description = str(mapped_row.get('Description', '')).strip()
                 color = str(mapped_row.get('Color', '')).strip()
                 size = str(mapped_row.get('Size', '')).strip()
-                stock = pd.to_numeric(mapped_row.get('Stock'), errors='coerce')
-                stock = int(stock) if pd.notna(stock) else 0
+                try:
+                    stock = int(float(mapped_row.get('Stock', 0)))
+                except (ValueError, TypeError):
+                    stock = 0
                 unit = str(mapped_row.get('Unit', 'Pcs')).strip()
 
                 # Find or create the item_master using the new helper function

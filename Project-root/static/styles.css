@@ -417,9 +417,29 @@ body.dark-mode input:focus, body.dark-mode textarea:focus, body.dark-mode select
 .actions-cell { display: flex; gap: 0.5rem; }
 .actions-cell .button { padding: 0.5rem 1rem; font-size: 0.9rem; }
 .variant-details-row td { padding: 0; }
-.variant-details-container { padding: 1.5rem; background-color: rgba(0, 0, 0, 0.03); }
+.variant-details-container {
+    padding: 1.5rem;
+    background-color: rgba(0, 0, 0, 0.03);
+    overflow: visible; /* Allow content to overflow if needed */
+}
 body.dark-mode .variant-details-container { background-color: rgba(255,255,255,0.03); }
-.item-description-detail { padding-bottom: 1.5rem; margin-bottom: 1.5rem; border-bottom: 1px solid var(--border-color); white-space: normal; }
+.item-description-detail {
+    width: auto;
+    padding-bottom: 1.5rem;
+    margin-bottom: 1.5rem;
+    border-bottom: 1px solid var(--border-color);
+    white-space: normal;
+    overflow: visible; /* Ensure content is not hidden */
+    height: auto; /* Ensure height is not constrained */
+    max-height: none; /* Remove any height restrictions */
+    word-break: break-word; /* Break long words to prevent overflow */
+}
+
+/* Add this new rule to ensure the strong tag's content also wraps */
+.item-description-detail strong {
+    white-space: normal;
+    word-break: break-all;
+}
 .variants-matrix-container { overflow-x: auto; padding-bottom: 0.5rem; }
 .variants-sub-table.matrix { border-spacing: 0; }
 .variants-sub-table.matrix th, .variants-sub-table.matrix td { text-align: center; min-width: 120px; }
@@ -772,4 +792,3 @@ body.dark-mode #low-stock-report-modal .inventory-table th {
 #low-stock-report-modal .inventory-table tbody tr:hover {
     background-color: color-mix(in srgb, var(--primary-color) 10%, transparent);
 }
-
