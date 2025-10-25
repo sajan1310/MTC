@@ -50,6 +50,19 @@ window.addEventListener('error', function (ev) {
   }
 });
 
+// ✅ PERFORMANCE: Debounce utility to prevent excessive function calls
+function debounce(func, wait) {
+    let timeout;
+    return function executedFunction(...args) {
+        const later = () => {
+            clearTimeout(timeout);
+            func.apply(this, args);
+        };
+        clearTimeout(timeout);
+        timeout = setTimeout(later, wait);
+    };
+}
+
 const App = {
   apiBase: 'http://127.0.0.1:5000/api',
   colors: [],
@@ -75,21 +88,24 @@ const App = {
   addColorForm: null,
   addSizeForm: null,
 
-  init() {
-    const onReady = () => {
-      this.cacheDOMElements();
-      this.bindEventListeners();
-      this.initImportModal();
-      this.initializeTheme();
-      this.fetchInitialData();
-      this.setActiveNavItem();
-      this.setupSearchFunctionality();
+  async init() {
+    const onReady = async () => {
+      // Non-essential setup can be delayed to improve INP
+      setTimeout(() => {
+        this.cacheDOMElements();
+        this.bindEventListeners();
+        this.initImportModal();
+        this.initializeTheme();
+        this.fetchInitialData();
+        this.setActiveNavItem();
+        this.setupSearchFunctionality();
+      }, 100); // A small delay can make a big difference
     };
-    
+
     if (document.readyState === 'loading') {
       document.addEventListener('DOMContentLoaded', onReady);
     } else {
-      onReady();
+      await onReady();
     }
   },
 
@@ -166,7 +182,9 @@ const App = {
     }
 
     if (this.searchInput) {
-      this.searchInput.addEventListener('input', (e) => this.handleSearch(e.target.value));
+    // ✅ PERFORMANCE: Debounce search to reduce API calls
+    const debouncedSearch = debounce((value) => this.handleSearch(value), 300);
+    this.searchInput.addEventListener('input', (e) => debouncedSearch(e.target.value));
       this.searchInput.addEventListener('keydown', (e) => {
         if (e.key === 'Escape') {
           e.target.value = '';
@@ -480,46 +498,48 @@ const App = {
     }
   },
 
-  async fetchJson(url, options = {}) {
-    const csrfToken = document.querySelector('meta[name="csrf-token"]').getAttribute('content');
+async fetchJson(url, options = {}) {
+    const csrfToken = document.querySelector('meta[name="csrf-token"]')?.getAttribute('content');
     const defaultHeaders = {
-      'Accept': 'application/json',
-      'X-CSRFToken': csrfToken
+        'Accept': 'application/json',
+        'X-CSRFToken': csrfToken  // ✅ Always include CSRF token
     };
-
-    // Correctly handle Content-Type for JSON bodies, but not for FormData
-    if (options.body && typeof options.body === 'string' && !options.headers?.['Content-Type']) {
+    
+    // Handle Content-Type for JSON bodies
+    if (options.body && typeof options.body === 'string') {
         try {
-            JSON.parse(options.body); // Check if it's a valid JSON string
+            JSON.parse(options.body);
             defaultHeaders['Content-Type'] = 'application/json';
         } catch (e) {
-            // Not a JSON string, do nothing
+            // Not JSON, let browser set Content-Type
         }
-    } else if (options.body && !(options.body instanceof FormData) && !options.headers?.['Content-Type']) {
+    } else if (options.body && !(options.body instanceof FormData)) {
         defaultHeaders['Content-Type'] = 'application/json';
     }
     
     const config = {
-      ...options,
-      headers: {
-        ...defaultHeaders,
-        ...options.headers,
-      },
+        ...options,
+        headers: {
+            ...defaultHeaders,
+            ...options.headers,
+        },
     };
-
+    
     try {
-      const res = await fetch(url, config);
-      if (!res.ok) {
-        const errorData = await res.json().catch(() => ({ message: res.statusText }));
-        throw new Error(errorData.error || errorData.message);
-      }
-      return res.status === 204 ? true : await res.json();
+        const res = await fetch(url, config);
+        if (!res.ok) {
+            const errorData = await res.json().catch(() => ({ message: res.statusText }));
+            throw new Error(errorData.error || errorData.message);
+        }
+        return res.status === 204 ? { success: true } : await res.json();
     } catch (err) {
-      console.error(`Fetch error for ${url}:`, err);
-      if (typeof this.showNotification === 'function') this.showNotification(err.message, 'error');
-      return null;
+        console.error(`Fetch error for ${url}:`, err);
+        if (typeof this.showNotification === 'function') {
+            this.showNotification(err.message, 'error');
+        }
+        return { error: err.message, success: false };  // ✅ Consistent error structure
     }
-  },
+},
 
   showNotification(message, type = 'success') {
     const container = document.querySelector('.container') || document.body;
@@ -755,24 +775,40 @@ const App = {
     }
   },
 
- openImportModal() {
-  console.log('Opening import modal...');
-  if (!this.importModal) return;
-
-  // Clear any old inline style
-  this.importModal.style.removeProperty('display');
-
-  // Add the 'is-open' class for transitions, opacity, etc.
-  this.importModal.classList.add('is-open');
+/**
+ * ✅ BUG FIX: Open import modal with proper state management
+ */
+openImportModal() {
+    if (!this.importModal) {
+        console.error('❌ Import modal element not found');
+        return;
+    }
+    
+    // Reset modal state
+    this.importModal.classList.add('is-open');
+    
+    // Reset to step 1
+    if (this.step1) this.step1.style.display = 'block';
+    if (this.step2) this.step2.style.display = 'none';
+    if (this.nextBtn) this.nextBtn.style.display = 'block';
+    if (this.backBtn) this.backBtn.style.display = 'none';
+    if (this.commitBtn) this.commitBtn.style.display = 'none';
+    
+    // Clear file input
+    if (this.fileInput) this.fileInput.value = '';
+    if (this.previewContainer) this.previewContainer.innerHTML = '';
+    
+    console.log('✅ Import modal opened');
 },
 
-
-
-  closeImportModal() {
+/**
+ * ✅ BUG FIX: Close import modal and clean up
+ */
+closeImportModal() {
     if (this.importModal) {
-      this.importModal.classList.remove('is-open');
+        this.closeModal(this.importModal);
     }
-  },
+},
 
   async handleImportNext() {
     try {
@@ -1410,28 +1446,45 @@ const App = {
     }
   },
 
-  updateItemRow(row, item) {
+/**
+ * ✅ PERFORMANCE: Update item row with batched DOM operations
+ * Uses requestAnimationFrame for smooth updates
+ */
+updateItemRow(row, item) {
+    // Update data attributes
     row.dataset.itemName = item.name;
     row.dataset.itemDescription = item.description || '';
     
     const statusClass = item.has_low_stock_variants ? 'low-stock' : 'in-stock';
     const statusText = item.has_low_stock_variants ? 'Low Stock' : 'In Stock';
-
-    row.querySelector('.item-name-cell span').textContent = item.name;
-    row.querySelector('.item-name-cell span').title = item.description || 'No description provided.';
-    row.querySelector('[data-label="Model"]').textContent = item.model || '--';
-    row.querySelector('[data-label="Variation"]').textContent = item.variation || '--';
-    row.querySelector('[data-label="Variants"]').textContent = item.variant_count;
-    row.querySelector('.total-stock-cell').textContent = item.total_stock;
     
-    const statusBadge = row.querySelector('.status-badge');
-    statusBadge.className = `status-badge ${statusClass}`;
-    statusBadge.textContent = statusText;
-
-    const image = row.querySelector('.item-image-thumbnail');
-    image.src = `/static/${item.image_path || 'uploads/placeholder.png'}`;
-    image.alt = item.name;
-  },
+    // Batch all DOM reads first (prevents layout thrashing)
+    const elements = {
+        nameCell: row.querySelector('.item-name-cell span'),
+        modelCell: row.querySelector('[data-label="Model"]'),
+        variationCell: row.querySelector('[data-label="Variation"]'),
+        variantsCell: row.querySelector('[data-label="Variants"]'),
+        stockCell: row.querySelector('.total-stock-cell'),
+        statusBadge: row.querySelector('.status-badge'),
+        image: row.querySelector('.item-image-thumbnail')
+    };
+    
+    // Batch all DOM writes in single animation frame
+    requestAnimationFrame(() => {
+        elements.nameCell.textContent = item.name;
+        elements.nameCell.title = item.description || 'No description provided.';
+        elements.modelCell.textContent = item.model || '--';
+        elements.variationCell.textContent = item.variation || '--';
+        elements.variantsCell.textContent = item.variant_count;
+        elements.stockCell.textContent = item.total_stock;
+        
+        elements.statusBadge.className = `status-badge ${statusClass}`;
+        elements.statusBadge.textContent = statusText;
+        
+        elements.image.src = `/static/${item.image_path || 'uploads/placeholder.png'}`;
+        elements.image.alt = item.name;
+    });
+},
 
   renderVariantsInModal(variants) {
     if (!this.variantsContainer) return;
@@ -1820,7 +1873,7 @@ const App = {
     };
 
     if (action === 'edit') {
-        const newText = prompt(`Edit ${type}:`, selectedValue);
+        const newText = prompt(`Edit ${type}:`, text);
         if (newText && newText !== selectedValue) {
             this.handleMasterUpdate(type, id, newText, (success) => {
                 refreshDropdown(success, newText);
@@ -2313,3 +2366,43 @@ updatePurchaseOrderTotal() {
 };
 
 App.init();
+<environment_details>
+# Visual Studio Code Visible Files
+Project-root/app.py
+
+# Visual Studio Code Open Tabs
+Project-root/migration.py
+Project-root/migration_add_master_tables.py
+Project-root/migration_remove_unique_constraint.py
+Project-root/migration_remove_model_uniqueness.py
+Project-root/migration_add_item_uniqueness.py
+Project-root/migration_add_suppliers_tables.py
+Project-root/templates/suppliers.html
+Project-root/templates/master_data.html
+Project-root/templates/user_management.html
+Project-root/templates/add_item.html
+Project-root/templates/inventory.html
+Project-root/templates/login.html
+Project-root/templates/signup.html
+Project-root/templates/base.html
+Project-root/static/styles.css
+Project-root/.gitignore
+Project-root/.env.example
+Project-root/migrations/add_indexes.sql
+Project-root/migrations/run_migration.py
+Project-root/database.py
+Project-root/requirements.txt
+Project-root/app.py
+Project-root/static/app.js
+Project-root/templates/purchase_orders.html
+Project-root/templates/profile.html
+
+# Current Time
+10/25/2025, 1:22:13 PM (Asia/Calcutta, UTC+5.5:00)
+
+# Context Window Usage
+987,557 / 1,048.576K tokens used (94%)
+
+# Current Mode
+ACT MODE
+</environment_details>

@@ -8,38 +8,66 @@ from flask import current_app
 db_pool = None
 
 def init_app(app):
+    """
+    Initialize database connection pool with optimized settings.
+    
+    Uses ThreadedConnectionPool for better concurrency handling.
+    """
     global db_pool
+    
+    # Get configuration from environment
+    min_conn = int(os.environ.get('DB_POOL_MIN', 2))
+    max_conn = int(os.environ.get('DB_POOL_MAX', 20))
+    
     try:
-        db_pool = pool.SimpleConnectionPool(
-            1, 10,
+        db_pool = pool.ThreadedConnectionPool(
+            min_conn,
+            max_conn,
             host=os.environ.get('DB_HOST', '127.0.0.1'),
             database=os.environ.get('DB_NAME', 'MTC'),
             user=os.environ.get('DB_USER', 'postgres'),
-            password=os.environ.get('DB_PASS')
+            password=os.environ.get('DB_PASS'),
+            connect_timeout=5,
+            options='-c statement_timeout=30000'  # 30 second query timeout
         )
+        app.logger.info(f"✅ Database pool initialized: {min_conn}-{max_conn} connections")
     except psycopg2.OperationalError as e:
-        app.logger.critical(f"FATAL: Could not connect to the database: {e}")
+        app.logger.critical(f"❌ FATAL: Could not connect to database: {e}")
         db_pool = None
 
 @contextmanager
 def get_conn(cursor_factory=None, autocommit=False):
+    """
+    Context manager for database connections with automatic cleanup.
+    
+    Usage:
+        with get_conn() as (conn, cur):
+            cur.execute("SELECT * FROM table")
+            results = cur.fetchall()
+    """
     if not db_pool:
-        raise ConnectionError("Database pool is not available.")
+        raise ConnectionError("Database pool is not available. Check DB credentials.")
+    
     conn = None
+    cur = None
     try:
         conn = db_pool.getconn()
         conn.autocommit = autocommit
         cur = conn.cursor(cursor_factory=cursor_factory)
         yield conn, cur
     except Exception as e:
-        current_app.logger.error(f"Database transaction error: {e}")
+        current_app.logger.error(f"Database error: {e}")
         if conn:
             conn.rollback()
         raise
     finally:
+        if cur:
+            cur.close()
         if conn:
             db_pool.putconn(conn)
 
 def close_db_pool():
+    """Close all database connections. Call on application shutdown."""
     if db_pool:
         db_pool.closeall()
+        current_app.logger.info("Database pool closed")
