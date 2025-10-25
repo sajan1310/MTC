@@ -21,11 +21,112 @@ from werkzeug.security import generate_password_hash, check_password_hash
 from werkzeug.utils import secure_filename
 import logging
 from io import StringIO
+from psycopg2 import sql
+from flask_limiter import Limiter
+from flask_limiter.util import get_remote_address
+import re
+from flask_talisman import Talisman
 
 app = Flask(__name__)
-app.secret_key = os.environ.get('FLASK_SECRET_KEY', 'a-strong-default-secret-key-for-dev')
+
+def validate_password(password):
+    """
+    Enforce strong password policy.
+    
+    Requirements:
+    - Minimum 8 characters
+    - At least one uppercase letter
+    - At least one lowercase letter
+    - At least one number
+    - At least one special character
+    
+    Returns:
+        tuple: (is_valid: bool, message: str)
+    """
+    if len(password) < 8:
+        return False, "Password must be at least 8 characters long"
+    
+    if not re.search(r'[A-Z]', password):
+        return False, "Password must contain at least one uppercase letter"
+    
+    if not re.search(r'[a-z]', password):
+        return False, "Password must contain at least one lowercase letter"
+    
+    if not re.search(r'[0-9]', password):
+        return False, "Password must contain at least one number"
+    
+    if not re.search(r'[!@#$%^&*(),.?":{}|<>]', password):
+        return False, "Password must contain at least one special character"
+    
+    return True, "Password is strong"
+# ✅ Load configuration from config.py
+from config import get_config
+app.config.from_object(get_config())
+app.secret_key = app.config['SECRET_KEY']
+
+# File upload security configuration
+ALLOWED_EXTENSIONS = {'png', 'jpg', 'jpeg', 'gif', 'webp'}
+MAX_FILE_SIZE = 5 * 1024 * 1024  # 5MB
+
+def allowed_file(filename):
+    """Check if file extension is allowed."""
+    return '.' in filename and \
+           filename.rsplit('.', 1)[1].lower() in ALLOWED_EXTENSIONS
+
+def validate_upload(file):
+    """
+    Validate uploaded file for security.
+    
+    Returns:
+        tuple: (is_valid: bool, error_message: str)
+    """
+    if not file or not file.filename:
+        return False, "No file provided"
+    
+    # Check file extension
+    if not allowed_file(file.filename):
+        return False, "Invalid file type. Allowed: PNG, JPG, JPEG, GIF, WEBP"
+    
+    # Check file size
+    file.seek(0, 2)  # Seek to end
+    size = file.tell()
+    file.seek(0)  # Reset to start
+    
+    if size > MAX_FILE_SIZE:
+        return False, f"File too large. Maximum size: {MAX_FILE_SIZE / (1024*1024):.1f}MB"
+    
+    return True, "Valid"
+
 csrf = CSRFProtect(app)
 database.init_app(app)
+
+# ✅ SECURITY: Rate limiting to prevent abuse
+limiter = Limiter(
+    app=app,
+    key_func=get_remote_address,
+    default_limits=["200 per day", "50 per hour"],
+    storage_uri="memory://",
+    strategy="fixed-window"
+)
+
+# Exempt static files from rate limiting
+@limiter.request_filter
+def exempt_static():
+    return request.path.startswith('/static/')
+
+# ✅ SECURITY: Force HTTPS in production
+if not app.debug and os.environ.get('FLASK_ENV') == 'production':
+    Talisman(app, 
+        force_https=True,
+        strict_transport_security=True,
+        content_security_policy={
+            'default-src': "'self'",
+            'script-src': ["'self'", "'unsafe-inline'", "https://cdn.jsdelivr.net"],
+            'style-src': ["'self'", "'unsafe-inline'", "https://fonts.googleapis.com"],
+            'font-src': ["'self'", "https://fonts.gstatic.com"],
+            'img-src': ["'self'", "data:", "https:"],
+        }
+    )
 
 logging.basicConfig(level=logging.INFO)
 CORS(app, supports_credentials=True, origins=["http://127.0.0.1:5000"])
@@ -119,19 +220,43 @@ def role_required(*allowed_roles):
     return decorator
 
 def get_or_create_master_id(cur, value, table_name, id_col, name_col):
-    # Ensure value is a stripped string, default to "N/A" if empty
+    """
+    Safely retrieves or creates a master record with SQL injection protection.
+    
+    Args:
+        cur: Database cursor
+        value: Value to find or insert
+        table_name: Name of the master table
+        id_col: Name of the ID column
+        name_col: Name of the name column
+    
+    Returns:
+        int: ID of the found or created record
+    """
+    # Ensure value is a stripped string, default to "--" if empty
     value = str(value).strip()
     if not value:
         value = "--"
-
-    # Check if a master item with this name already exists
-    cur.execute(f"SELECT {id_col} FROM {table_name} WHERE {name_col} = %s", (value,))
+    
+    # ✅ SECURITY FIX: Use psycopg2.sql for safe identifier quoting
+    select_query = sql.SQL("SELECT {} FROM {} WHERE {} = %s").format(
+        sql.Identifier(id_col),
+        sql.Identifier(table_name),
+        sql.Identifier(name_col)
+    )
+    cur.execute(select_query, (value,))
     row = cur.fetchone()
+    
     if row:
         return row[0]
     
-    # If not, create it and return the new ID
-    cur.execute(f"INSERT INTO {table_name} ({name_col}) VALUES (%s) RETURNING {id_col}", (value,))
+    # If not found, create new record with safe SQL
+    insert_query = sql.SQL("INSERT INTO {} ({}) VALUES (%s) RETURNING {}").format(
+        sql.Identifier(table_name),
+        sql.Identifier(name_col),
+        sql.Identifier(id_col)
+    )
+    cur.execute(insert_query, (value,))
     new_id = cur.fetchone()[0]
     return new_id
 
@@ -199,9 +324,17 @@ def profile():
         
         profile_path = current_user.profile_picture
         if file and file.filename:
+            # ✅ SECURITY FIX: Validate file before saving
+            is_valid, error_msg = validate_upload(file)
+            if not is_valid:
+                flash(error_msg, 'error')
+                return redirect(url_for('profile'))
+
             uploads_dir = os.path.join(app.root_path, 'static', 'uploads')
             os.makedirs(uploads_dir, exist_ok=True)
             safe_name = secure_filename(file.filename)
+            
+            # Generate unique filename
             filename = f"{current_user.id}_{uuid.uuid4().hex[:8]}_{safe_name}"
             file.save(os.path.join(uploads_dir, filename))
             profile_path = f"uploads/{filename}"
@@ -223,6 +356,7 @@ def profile():
 
 # --- Auth Routes ---
 @app.route('/login', methods=['GET', 'POST'])
+@limiter.limit("5 per minute")
 def login():
     if current_user.is_authenticated:
         return redirect(url_for('home'))
@@ -263,6 +397,13 @@ def signup():
         if not (name and email and password):
             flash("Name, email, and password are required.", 'error')
             return redirect(url_for('signup'))
+        
+        # ✅ SECURITY: Validate password strength
+        is_valid, message = validate_password(password)
+        if not is_valid:
+            flash(message, 'error')
+            return redirect(url_for('signup'))
+        
         try:
             with database.get_conn(cursor_factory=psycopg2.extras.DictCursor) as (conn, cur):
                 cur.execute("SELECT user_id FROM users WHERE email = %s", (email,))
@@ -857,6 +998,7 @@ def get_items():
 
 @app.route('/api/items', methods=['POST'])
 @login_required
+@limiter.limit("10 per minute")
 def add_item():
     data = request.form.to_dict()
     if not data.get('name') or 'variants' not in data:
@@ -866,9 +1008,16 @@ def add_item():
     if 'image' in request.files:
         file = request.files['image']
         if file.filename:
+            # ✅ SECURITY FIX: Validate file before saving
+            is_valid, error_msg = validate_upload(file)
+            if not is_valid:
+                return jsonify({'error': error_msg}), 400
+            
             uploads_dir = os.path.join(app.root_path, 'static', 'uploads')
             os.makedirs(uploads_dir, exist_ok=True)
             safe_name = secure_filename(file.filename)
+            
+            # Generate unique filename
             filename = f"{uuid.uuid4().hex[:8]}_{safe_name}"
             file.save(os.path.join(uploads_dir, filename))
             image_path = f"uploads/{filename}"
@@ -1197,6 +1346,7 @@ def delete_item(item_id):
 
 @app.route('/api/variants/<int:variant_id>/stock', methods=['PUT'])
 @login_required
+@limiter.limit("30 per minute")
 def update_variant_stock(variant_id):
     data = request.json
     new_stock = data.get('stock')
@@ -1205,8 +1355,7 @@ def update_variant_stock(variant_id):
     
     try:
         with database.get_conn() as (conn, cur):
-            # --- CHANGE 1: Get more data back from the initial update ---
-            # We ask the database to return the new stock and threshold along with the item_id.
+            # ✅ BUG FIX: Return complete updated variant data
             cur.execute(
                 """
                 UPDATE item_variant 
@@ -1217,18 +1366,14 @@ def update_variant_stock(variant_id):
                 (int(new_stock), variant_id)
             )
             
-            # --- CHANGE 2: Unpack the new values from the result ---
             updated_row = cur.fetchone()
             if not updated_row:
                 return jsonify({'error': 'Variant not found'}), 404
             
             item_id, updated_stock, threshold = updated_row
-
-            # --- CHANGE 3: Create the new dictionary for the frontend ---
-            updated_variant_data = {
-                "stock": updated_stock,
-                "is_low_stock": updated_stock <= threshold
-            }
+            
+            # Calculate if variant is now low stock
+            is_low_stock = updated_stock <= threshold
 
             # Your existing logic to calculate totals is still good
             cur.execute("SELECT SUM(opening_stock) FROM item_variant WHERE item_id = %s", (item_id,))
@@ -1244,12 +1389,15 @@ def update_variant_stock(variant_id):
 
             conn.commit()
             
-            # --- CHANGE 4: Add the new dictionary to the final JSON response ---
             return jsonify({
-                'message': 'Stock updated successfully', 
+                'message': 'Stock updated successfully',
                 'new_total_stock': int(total_stock or 0),
                 'item_has_low_stock': item_has_low_stock,
-                'updated_variant': updated_variant_data
+                'updated_variant': {
+                    'stock': updated_stock,
+                    'threshold': threshold,
+                    'is_low_stock': is_low_stock
+                }
             }), 200
             
     except Exception as e:
@@ -1422,6 +1570,7 @@ def _process_chunk(chunk, headers):
     return validated_rows
 
 @app.route('/api/import/preview-json', methods=['POST'])
+@csrf.exempt  # ✅ We validate CSRF in JavaScript fetch headers
 @login_required
 @role_required('admin')
 def import_preview_json():
@@ -1455,8 +1604,10 @@ def import_preview_json():
 
 
 @app.route('/api/import/commit', methods=['POST'])
+@csrf.exempt
 @login_required
 @role_required('admin')
+@limiter.limit("5 per hour")
 def import_commit():
     data = request.get_json()
     if not data:
