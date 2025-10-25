@@ -1,0 +1,22 @@
+{% extends "base.html" %}
+
+{% block title %}Too Many Requests{% endblock %}
+
+{% block content %}
+<div class="container mt-5">
+    <div class="row justify-content-center">
+        <div class="col-md-8 text-center">
+            <div class="card">
+                <div class="card-header bg-danger text-white">
+                    <h1 class="h3">Rate Limit Exceeded</h1>
+                </div>
+                <div class="card-body">
+                    <p class="lead">You have made too many requests in a short period of time.</p>
+                    <p>Please wait a while before trying again.</p>
+                    <a href="{{ url_for('home') }}" class="btn btn-primary mt-3">Go to Homepage</a>
+                </div>
+            </div>
+        </div>
+    </div>
+</div>
+{% endblock %}

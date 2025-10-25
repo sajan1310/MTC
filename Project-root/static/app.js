@@ -529,6 +529,9 @@ async fetchJson(url, options = {}) {
         const res = await fetch(url, config);
         if (!res.ok) {
             const errorData = await res.json().catch(() => ({ message: res.statusText }));
+            if (res.status === 409 && errorData.conflict) {
+                return errorData; // Return conflict data instead of throwing
+            }
             throw new Error(errorData.error || errorData.message);
         }
         return res.status === 204 ? { success: true } : await res.json();
@@ -1433,21 +1436,90 @@ closeImportModal() {
 
     formData.append('variants', JSON.stringify(changedVariants));
 
-    const result = await this.fetchJson(`${this.apiBase}/items/${itemId}`, {
-        method: 'PUT',
-        body: formData,
-    });
+    try {
+        const result = await this.fetchJson(`${this.apiBase}/items/${itemId}`, {
+            method: 'PUT',
+            body: formData,
+        });
 
-    if (result && result.item) {
-        this.showNotification('Item updated successfully.', 'success');
-        form.closest('.edit-form-row').remove();
-        this.updateItemRow(itemRow, result.item);
-        itemRow.style.display = '';
-    } else {
-        this.showNotification(result.error || 'Failed to update item.', 'error');
+        if (result && result.item) {
+            this.showNotification('Item updated successfully.', 'success');
+            form.closest('.edit-form-row').remove();
+            this.updateItemRow(itemRow, result.item);
+            itemRow.style.display = '';
+        } else if (result && result.conflict) {
+            this.handleConflict(result.original_item_id, result.conflicting_item_id);
+        } else {
+            this.showNotification(result.error || 'Failed to update item.', 'error');
+        }
+    } catch (error) {
+        this.showNotification('An unexpected error occurred.', 'error');
+    } finally {
         saveBtn.disabled = false;
         saveBtn.textContent = 'Save Changes';
     }
+  },
+
+  async handleConflict(originalItemId, conflictingItemId) {
+    const originalItem = await this.fetchJson(`${this.apiBase}/items/${originalItemId}`);
+    const conflictingItem = await this.fetchJson(`${this.apiBase}/items/${conflictingItemId}`);
+
+    if (!originalItem || !conflictingItem) {
+        this.showNotification('Could not fetch item details for conflict resolution.', 'error');
+        return;
+    }
+
+    const modal = this.createConflictModal(originalItem, conflictingItem);
+    document.body.appendChild(modal);
+    modal.classList.add('is-open');
+
+    modal.addEventListener('click', async (e) => {
+        if (e.target.classList.contains('keep-btn')) {
+            const keepId = e.target.dataset.keep;
+            const deleteId = keepId == originalItemId ? conflictingItemId : originalItemId;
+            
+            const result = await this.fetchJson(`${this.apiBase}/items/${deleteId}`, { method: 'DELETE' });
+
+            if (result) {
+                this.showNotification('Item updated and duplicate removed.', 'success');
+                this.fetchItems(); // Refresh the list
+            } else {
+                this.showNotification('Failed to resolve conflict.', 'error');
+            }
+            modal.remove();
+        } else if (e.target.classList.contains('close-modal-btn') || e.target.classList.contains('modal')) {
+            modal.remove();
+        }
+    });
+  },
+
+  createConflictModal(originalItem, conflictingItem) {
+    const modal = document.createElement('div');
+    modal.className = 'modal';
+    modal.innerHTML = `
+        <div class="modal-content">
+            <span class="close-modal-btn">&times;</span>
+            <h3>Resolve Duplicate Item</h3>
+            <p>An item with the same details already exists. Please choose which version to keep.</p>
+            <div class="conflict-options">
+                <div class="conflict-option">
+                    <h4>Original Item</h4>
+                    <p><strong>Name:</strong> ${this.escapeHtml(originalItem.name)}</p>
+                    <p><strong>Model:</strong> ${this.escapeHtml(originalItem.model)}</p>
+                    <p><strong>Variation:</strong> ${this.escapeHtml(originalItem.variation)}</p>
+                    <button class="button keep-btn" data-keep="${originalItem.id}">Keep This</button>
+                </div>
+                <div class="conflict-option">
+                    <h4>Existing Item</h4>
+                    <p><strong>Name:</strong> ${this.escapeHtml(conflictingItem.name)}</p>
+                    <p><strong>Model:</strong> ${this.escapeHtml(conflictingItem.model)}</p>
+                    <p><strong>Variation:</strong> ${this.escapeHtml(conflictingItem.variation)}</p>
+                    <button class="button keep-btn" data-keep="${conflictingItem.id}">Keep This</button>
+                </div>
+            </div>
+        </div>
+    `;
+    return modal;
   },
 
 /**
@@ -1793,34 +1865,46 @@ updateItemRow(row, item) {
   },
 
   populateSelect(selectElement, options, currentValue = null) {
-    const placeholder = selectElement.querySelector('option[value=""]');
-    selectElement.innerHTML = '';
-    if (placeholder) {
-        selectElement.appendChild(placeholder);
+    const $select = $(selectElement);
+    const isInitialized = $select.hasClass("select2-hidden-accessible");
+
+    // Preserve the current value if it's not in the new options list
+    const previousValue = $select.val();
+
+    $select.empty(); // Clear existing options
+
+    // Add a placeholder option if the original element had one.
+    if (selectElement.querySelector('option[value=""]')) {
+        $select.append(new Option('Choose...', ''));
     }
 
+    // If the current value isn't in the new options, add it.
+    // This is important for tags and for preserving state during updates.
     if (currentValue && !options.some(opt => opt.name === currentValue)) {
         options.unshift({ id: null, name: currentValue });
     }
 
     options.forEach(option => {
-        const optionElement = document.createElement('option');
-        optionElement.value = option.name;
-        optionElement.textContent = option.name;
-        if(option.id) {
+        const optionElement = new Option(option.name, option.name);
+        if (option.id) {
             optionElement.dataset.id = option.id;
         }
-        selectElement.appendChild(optionElement);
+        $select.append(optionElement);
     });
 
-    if (currentValue) {
-        selectElement.value = currentValue;
+    // Set the value after populating
+    $select.val(currentValue || previousValue);
+
+    // Initialize Select2 only if it hasn't been initialized yet.
+    if (!isInitialized) {
+        $select.select2({
+            tags: true,
+            width: '100%'
+        });
     }
-
-    $(selectElement).select2({
-        tags: true,
-        width: '100%'
-    });
+    
+    // Trigger a change event to make sure Select2 updates its display.
+    $select.trigger('change.select2');
   },
 
   handleDropdownActions(e, type, action) {
@@ -1877,7 +1961,7 @@ updateItemRow(row, item) {
     };
 
     if (action === 'edit') {
-        const newText = prompt(`Edit ${type}:`, text);
+        const newText = prompt(`Edit ${type}:`, selectedValue);
         if (newText && newText !== selectedValue) {
             this.handleMasterUpdate(type, id, newText, (success) => {
                 refreshDropdown(success, newText);

@@ -104,7 +104,7 @@ database.init_app(app)
 limiter = Limiter(
     app=app,
     key_func=get_remote_address,
-    default_limits=["200 per day", "50 per hour"],
+    default_limits=["500 per day", "150 per hour"],
     storage_uri="memory://",
     strategy="fixed-window"
 )
@@ -113,6 +113,12 @@ limiter = Limiter(
 @limiter.request_filter
 def exempt_static():
     return request.path.startswith('/static/')
+
+# ✅ Custom error handler for rate limit exceeded
+@app.errorhandler(429)
+def ratelimit_handler(e):
+    """Render a custom page when a rate limit is hit."""
+    return render_template('429.html'), 429
 
 # ✅ SECURITY: Force HTTPS in production
 if not app.debug and os.environ.get('FLASK_ENV') == 'production':
@@ -1228,8 +1234,14 @@ def update_item(item_id):
                 "SELECT item_id FROM item_master WHERE name = %s AND model_id = %s AND variation_id = %s AND COALESCE(description, '') = %s AND item_id != %s",
                 (data['name'], model_id, variation_id, data.get('description', ''), item_id)
             )
-            if cur.fetchone():
-                return jsonify({'error': 'Another item with the same name, model, variation, and description already exists.'}), 409
+            conflicting_item = cur.fetchone()
+            if conflicting_item:
+                return jsonify({
+                    'error': 'Another item with the same name, model, variation, and description already exists.',
+                    'conflict': True,
+                    'conflicting_item_id': conflicting_item['item_id'],
+                    'original_item_id': item_id
+                }), 409
 
             update_fields = {
                 "name": data['name'], "model_id": model_id, "variation_id": variation_id,
