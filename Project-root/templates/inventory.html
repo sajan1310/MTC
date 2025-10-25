@@ -120,38 +120,70 @@
 
 <!-- Receive Stock Modal -->
 <div id="receive-stock-modal" class="modal">
-    <div class="modal-content">
+    <div class="modal-content large">
         <div class="modal-header">
             <h3>Receive Stock</h3>
             <button type="button" class="button cancel close-modal-btn">&times;</button>
         </div>
         <div class="modal-body">
             <form id="receive-stock-form">
-                <div class="form-field">
-                    <label for="receive-po-select">Purchase Order (Optional)</label>
-                    <select id="receive-po-select" style="width: 100%;"></select>
+                <div class="form-row">
+                    <div class="form-field">
+                        <label for="receive-po-number">Purchase Order (Optional)</label>
+                        <div class="input-with-button">
+                            <input type="text" id="receive-po-number" placeholder="Enter PO Number">
+                            <button type="button" id="fetch-po-btn" class="button">Fetch</button>
+                        </div>
+                    </div>
+                    <div class="form-field">
+                        <label for="receive-supplier-select">Supplier</label>
+                        <select id="receive-supplier-select" style="width: 100%;" required></select>
+                    </div>
                 </div>
-                <div class="form-field">
-                    <label for="receive-supplier-select">Supplier</label>
-                    <select id="receive-supplier-select" style="width: 100%;" required></select>
+                <hr>
+                <h4>Items</h4>
+                <div class="table-wrapper">
+                    <table class="inventory-table">
+                        <thead>
+                            <tr>
+                                <th>Item/Variant</th>
+                                <th>Quantity</th>
+                                <th>Cost per Unit</th>
+                                <th>Total</th>
+                                <th></th>
+                            </tr>
+                        </thead>
+                        <tbody id="receive-items-body">
+                            <!-- Item rows will be added here -->
+                        </tbody>
+                    </table>
                 </div>
-                <div class="form-field">
-                    <label for="receive-item-select">Item/Variant</label>
-                    <select id="receive-item-select" style="width: 100%;" required></select>
-                </div>
-                <div class="form-field">
-                    <label for="receive-quantity">Quantity</label>
-                    <input type="number" id="receive-quantity" required>
-                </div>
-                <div class="form-field">
-                    <label for="receive-cost">Cost per Unit</label>
-                    <input type="number" id="receive-cost" step="0.01">
+                <button type="button" id="add-receive-item-btn" class="button">Add Item</button>
+                <hr>
+                <div class="form-row">
+                    <div class="form-field">
+                        <label for="receive-tax-percentage">Tax %</label>
+                        <input type="number" id="receive-tax-percentage" step="0.01" value="0">
+                    </div>
+                    <div class="form-field">
+                        <label for="receive-discount-percentage">Discount %</label>
+                        <input type="number" id="receive-discount-percentage" step="0.01" value="0">
+                    </div>
+                    <div class="form-field">
+                        <strong>Discount Amount:</strong> <span id="receive-discount-amount">0.00</span>
+                    </div>
+                    <div class="form-field">
+                        <strong>Total:</strong> <span id="receive-total-amount">0.00</span>
+                    </div>
+                    <div class="form-field">
+                        <strong>Grand Total:</strong> <span id="receive-grand-total">0.00</span>
+                    </div>
                 </div>
             </form>
         </div>
         <div class="modal-footer">
             <button type="button" class="button cancel close-modal-btn">Cancel</button>
-            <button type="submit" form="receive-stock-form" class="button create">Receive</button>
+            <button type="submit" form="receive-stock-form" class="button create">Receive Stock</button>
         </div>
     </div>
 </div>

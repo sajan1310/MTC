@@ -319,6 +319,11 @@ def suppliers():
 def purchase_orders():
     return render_template('purchase_orders.html')
 
+@app.route('/stock-ledger')
+@login_required
+def stock_ledger():
+    return render_template('stock_ledger.html')
+
 @app.route('/profile', methods=['GET', 'POST'])
 @login_required
 def profile():
@@ -719,49 +724,174 @@ def get_supplier_ledger(supplier_id):
         app.logger.error(f"Error fetching ledger for supplier {supplier_id}: {e}")
         return jsonify({'error': 'Failed to fetch ledger'}), 500
 
-# --- Stock Entry API ---
-@app.route('/api/stock-entries', methods=['POST'])
+# --- Stock Receipt API ---
+@app.route('/api/stock-receipts', methods=['POST'])
 @login_required
 @role_required('admin')
-def add_stock_entry():
+def add_stock_receipt():
     data = request.json
-    variant_id = data.get('variant_id')
-    quantity = data.get('quantity')
+    bill_number = data.get('bill_number')
     supplier_id = data.get('supplier_id')
-    cost = data.get('cost')
+    tax_percentage = data.get('tax_percentage')
+    discount_percentage = data.get('discount_percentage')
+    po_id = data.get('po_id')
+    items = data.get('items', [])
 
-    if not variant_id or not quantity:
-        return jsonify({'error': 'Variant and quantity are required'}), 400
+    if not supplier_id or not items:
+        return jsonify({'error': 'Supplier and at least one item are required'}), 400
 
     try:
         with database.get_conn() as (conn, cur):
-            # Add stock entry
-            cur.execute(
-                "INSERT INTO stock_entries (variant_id, quantity_added, supplier_id, cost_per_unit) VALUES (%s, %s, %s, %s)",
-                (variant_id, quantity, supplier_id, cost)
-            )
-            
-            # Update item variant stock
-            cur.execute(
-                "UPDATE item_variant SET opening_stock = opening_stock + %s WHERE variant_id = %s",
-                (quantity, variant_id)
-            )
+            # Generate receipt number
+            cur.execute("SELECT nextval('stock_receipt_number_seq')")
+            receipt_number = f"RCPT-{cur.fetchone()[0]}"
 
-            # Update supplier item rate
-            if supplier_id and cost:
+            # Calculate totals
+            total_amount = sum(float(item['quantity']) * float(item['cost']) for item in items)
+            tax_amount = total_amount * (float(tax_percentage or 0) / 100)
+            discount_amount = total_amount * (float(discount_percentage or 0) / 100)
+            grand_total = total_amount + tax_amount - discount_amount
+
+            # Create stock receipt
+            cur.execute(
+                """
+                INSERT INTO stock_receipts (receipt_number, bill_number, supplier_id, total_amount, tax_percentage, discount_percentage, discount_amount, grand_total, po_id)
+                VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s) RETURNING receipt_id
+                """,
+                (receipt_number, bill_number, supplier_id, total_amount, tax_percentage, discount_percentage, discount_amount, grand_total, po_id if po_id else None)
+            )
+            receipt_id = cur.fetchone()[0]
+
+            # Create stock entries for each item
+            for item in items:
+                variant_id = item.get('variant_id')
+                quantity = item.get('quantity')
+                cost = item.get('cost')
+
+                if not variant_id or not quantity:
+                    continue
+
+                # Add stock entry
                 cur.execute(
-                    """
-                    INSERT INTO supplier_item_rates (supplier_id, item_id, rate)
-                    SELECT %s, item_id, %s FROM item_variant WHERE variant_id = %s
-                    ON CONFLICT (supplier_id, item_id) DO UPDATE SET rate = EXCLUDED.rate
-                    """,
-                    (supplier_id, cost, variant_id)
+                    "INSERT INTO stock_entries (variant_id, quantity_added, supplier_id, cost_per_unit, receipt_id) VALUES (%s, %s, %s, %s, %s)",
+                    (variant_id, quantity, supplier_id, cost, receipt_id)
+                )
+                
+                # Update item variant stock
+                cur.execute(
+                    "UPDATE item_variant SET opening_stock = opening_stock + %s WHERE variant_id = %s",
+                    (quantity, variant_id)
                 )
 
+                # If a PO is linked, update the received quantity
+                if po_id:
+                    cur.execute(
+                        "UPDATE purchase_order_items SET received_quantity = received_quantity + %s WHERE po_id = %s AND variant_id = %s",
+                        (quantity, po_id, variant_id)
+                    )
+
+                # Update supplier item rate
+                if supplier_id and cost:
+                    cur.execute(
+                        """
+                        INSERT INTO supplier_item_rates (supplier_id, item_id, rate)
+                        SELECT %s, item_id, %s FROM item_variant WHERE variant_id = %s
+                        ON CONFLICT (supplier_id, item_id) DO UPDATE SET rate = EXCLUDED.rate
+                        """,
+                        (supplier_id, cost, variant_id)
+                    )
+
+            # Update PO status
+            if po_id:
+                cur.execute("""
+                    SELECT 
+                        SUM(quantity) as total_ordered, 
+                        SUM(received_quantity) as total_received 
+                    FROM purchase_order_items 
+                    WHERE po_id = %s
+                """, (po_id,))
+                po_status = cur.fetchone()
+                if po_status:
+                    total_ordered, total_received = po_status
+                    if total_received >= total_ordered:
+                        new_status = 'Completed'
+                    elif total_received > 0:
+                        new_status = 'Partially Received'
+                    else:
+                        new_status = 'Ordered'
+                    cur.execute("UPDATE purchase_orders SET status = %s WHERE po_id = %s", (new_status, po_id))
+
             conn.commit()
-        return jsonify({'message': 'Stock received successfully'}), 201
+        return jsonify({'message': 'Stock received successfully', 'receipt_id': receipt_id}), 201
     except Exception as e:
-        app.logger.error(f"Error receiving stock: {e}")
+        app.logger.error(f"Error receiving stock receipt: {e}")
+        conn.rollback()
+        return jsonify({'error': 'Database error'}), 500
+
+@app.route('/api/stock-receipts', methods=['GET'])
+@login_required
+def get_stock_receipts():
+    try:
+        with database.get_conn(cursor_factory=psycopg2.extras.DictCursor) as (conn, cur):
+            cur.execute("""
+                SELECT sr.*, s.firm_name
+                FROM stock_receipts sr
+                JOIN suppliers s ON sr.supplier_id = s.supplier_id
+                ORDER BY sr.receipt_date DESC
+            """)
+            receipts = [dict(row) for row in cur.fetchall()]
+        return jsonify(receipts)
+    except Exception as e:
+        app.logger.error(f"Error fetching stock receipts: {e}")
+        return jsonify({'error': 'Failed to fetch stock receipts'}), 500
+
+@app.route('/api/stock-receipts/<int:receipt_id>', methods=['GET'])
+@login_required
+def get_stock_receipt_details(receipt_id):
+    try:
+        with database.get_conn(cursor_factory=psycopg2.extras.DictCursor) as (conn, cur):
+            cur.execute("""
+                SELECT 
+                    se.entry_id,
+                    im.name as item_name,
+                    cm.color_name,
+                    sm.size_name,
+                    se.quantity_added,
+                    se.cost_per_unit
+                FROM stock_entries se
+                JOIN item_variant iv ON se.variant_id = iv.variant_id
+                JOIN item_master im ON iv.item_id = im.item_id
+                JOIN color_master cm ON iv.color_id = cm.color_id
+                JOIN size_master sm ON iv.size_id = sm.size_id
+                WHERE se.receipt_id = %s
+            """, (receipt_id,))
+            items = [dict(row) for row in cur.fetchall()]
+        return jsonify(items)
+    except Exception as e:
+        app.logger.error(f"Error fetching stock receipt details for {receipt_id}: {e}")
+        return jsonify({'error': 'Failed to fetch receipt details'}), 500
+
+@app.route('/api/stock-receipts/<int:receipt_id>', methods=['DELETE'])
+@login_required
+@role_required('admin')
+def delete_stock_receipt(receipt_id):
+    try:
+        with database.get_conn() as (conn, cur):
+            # Reverse the stock entries
+            cur.execute("SELECT variant_id, quantity_added FROM stock_entries WHERE receipt_id = %s", (receipt_id,))
+            entries = cur.fetchall()
+            for variant_id, quantity_added in entries:
+                cur.execute("UPDATE item_variant SET opening_stock = opening_stock - %s WHERE variant_id = %s", (quantity_added, variant_id))
+
+            # Delete the stock entries and receipt
+            cur.execute("DELETE FROM stock_entries WHERE receipt_id = %s", (receipt_id,))
+            cur.execute("DELETE FROM stock_receipts WHERE receipt_id = %s", (receipt_id,))
+            
+            conn.commit()
+        return '', 204
+    except Exception as e:
+        app.logger.error(f"Error deleting stock receipt {receipt_id}: {e}")
+        conn.rollback()
         return jsonify({'error': 'Database error'}), 500
 
 # --- Purchase Order API Routes ---
@@ -795,9 +925,11 @@ def create_purchase_order():
 
     try:
         with database.get_conn() as (conn, cur):
+            cur.execute("SELECT nextval('purchase_order_number_seq')")
+            po_number = f"PO-{cur.fetchone()[0]:04d}"
             cur.execute(
-                "INSERT INTO purchase_orders (supplier_id, status) VALUES (%s, 'Draft') RETURNING po_id",
-                (supplier_id,)
+                "INSERT INTO purchase_orders (supplier_id, status, po_number) VALUES (%s, 'Draft', %s) RETURNING po_id",
+                (supplier_id, po_number)
             )
             po_id = cur.fetchone()[0]
 
@@ -879,6 +1011,28 @@ def delete_purchase_order(po_id):
     except Exception as e:
         app.logger.error(f"Error deleting purchase order {po_id}: {e}")
         return jsonify({'error': 'Database error'}), 500
+
+@app.route('/api/purchase-orders/by-number/<po_number>', methods=['GET'])
+@login_required
+def get_purchase_order_by_number(po_number):
+    try:
+        with database.get_conn(cursor_factory=psycopg2.extras.DictCursor) as (conn, cur):
+            cur.execute("SELECT * FROM purchase_orders WHERE po_number = %s", (po_number,))
+            po = dict(cur.fetchone())
+
+            cur.execute("""
+                SELECT poi.*, im.name as item_name, iv.variant_id
+                FROM purchase_order_items poi
+                JOIN item_variant iv ON poi.variant_id = iv.variant_id
+                JOIN item_master im ON iv.item_id = im.item_id
+                WHERE poi.po_id = %s
+            """, (po['po_id'],))
+            items = [dict(row) for row in cur.fetchall()]
+            po['items'] = items
+        return jsonify(po)
+    except Exception as e:
+        app.logger.error(f"Error fetching purchase order by number {po_number}: {e}")
+        return jsonify({'error': 'Failed to fetch purchase order'}), 500
 
 @app.route('/api/item-names', methods=['GET'])
 @login_required

@@ -1,0 +1,137 @@
+{% extends "base.html" %}
+{% block title %}Stock Ledger{% endblock %}
+
+{% block content %}
+<div class="container">
+    <div class="form-card" style="padding: 1.5rem;">
+        <div class="page-header">
+            <h2>Received Stock Ledger</h2>
+        </div>
+        <div class="inventory-table-container">
+            <div class="table-wrapper">
+                <table class="inventory-table">
+                    <thead>
+                        <tr>
+                            <th>Receipt #</th>
+                            <th>Date</th>
+                            <th>Bill Number</th>
+                            <th>Supplier</th>
+                            <th>Total Amount</th>
+                            <th>Tax %</th>
+                            <th>Discount</th>
+                            <th>Grand Total</th>
+                            <th>Actions</th>
+                        </tr>
+                    </thead>
+                    <tbody id="stock-ledger-body">
+                        <!-- Ledger entries will be populated here -->
+                    </tbody>
+                </table>
+            </div>
+        </div>
+    </div>
+</div>
+
+<!-- Receipt Details Modal -->
+<div id="receipt-details-modal" class="modal">
+    <div class="modal-content large">
+        <div class="modal-header">
+            <h3>Receipt Details</h3>
+            <button type="button" class="button cancel close-modal-btn">&times;</button>
+        </div>
+        <div class="modal-body">
+            <div class="table-wrapper">
+                <table class="inventory-table">
+                    <thead>
+                        <tr>
+                            <th>Item Name</th>
+                            <th>Color</th>
+                            <th>Size</th>
+                            <th>Quantity</th>
+                            <th>Cost per Unit</th>
+                        </tr>
+                    </thead>
+                    <tbody id="receipt-details-body">
+                        <!-- Receipt items will be populated here -->
+                    </tbody>
+                </table>
+            </div>
+        </div>
+    </div>
+</div>
+{% endblock %}
+
+{% block scripts %}
+{{ super() }}
+<script>
+document.addEventListener('DOMContentLoaded', function() {
+    const ledgerBody = document.getElementById('stock-ledger-body');
+    const detailsModal = document.getElementById('receipt-details-modal');
+    const detailsBody = document.getElementById('receipt-details-body');
+
+    async function fetchStockLedger() {
+        const response = await fetch('/api/stock-receipts');
+        const receipts = await response.json();
+        renderStockLedger(receipts);
+    }
+
+    function renderStockLedger(receipts) {
+        ledgerBody.innerHTML = receipts.map(r => `
+            <tr data-receipt-id="${r.receipt_id}">
+                <td>${escapeHtml(r.receipt_number)}</td>
+                <td>${new Date(r.receipt_date).toLocaleDateString()}</td>
+                <td>${escapeHtml(r.bill_number)}</td>
+                <td>${escapeHtml(r.firm_name)}</td>
+                <td>${r.total_amount}</td>
+                <td>${r.tax_percentage}</td>
+                <td>${r.discount_amount}</td>
+                <td>${r.grand_total}</td>
+                <td class="actions-cell">
+                    <button class="button view-details-btn">View</button>
+                    <button class="button cancel delete-receipt-btn">Delete</button>
+                </td>
+            </tr>
+        `).join('');
+    }
+
+    ledgerBody.addEventListener('click', async (e) => {
+        if (e.target.classList.contains('view-details-btn')) {
+            const receiptId = e.target.closest('tr').dataset.receiptId;
+            const response = await fetch(`/api/stock-receipts/${receiptId}`);
+            const items = await response.json();
+            renderReceiptDetails(items);
+            detailsModal.classList.add('is-open');
+        } else if (e.target.classList.contains('delete-receipt-btn')) {
+            const receiptId = e.target.closest('tr').dataset.receiptId;
+            if (confirm('Are you sure you want to delete this receipt? This will reverse the stock entry.')) {
+                const response = await fetch(`/api/stock-receipts/${receiptId}`, { method: 'DELETE' });
+                if (response.ok) {
+                    fetchStockLedger();
+                }
+            }
+        }
+    });
+
+    function renderReceiptDetails(items) {
+        detailsBody.innerHTML = items.map(item => `
+            <tr>
+                <td>${escapeHtml(item.item_name)}</td>
+                <td>${escapeHtml(item.color_name)}</td>
+                <td>${escapeHtml(item.size_name)}</td>
+                <td>${item.quantity_added}</td>
+                <td>${item.cost_per_unit}</td>
+            </tr>
+        `).join('');
+    }
+
+    function escapeHtml(text) {
+        if (text === null || text === undefined) return '';
+        const div = document.createElement('div');
+        div.textContent = text;
+        return div.innerHTML;
+    }
+
+    fetchStockLedger();
+});
+</script>
+{% endblock %}
