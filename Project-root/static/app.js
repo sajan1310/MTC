@@ -2420,16 +2420,55 @@ updatePurchaseOrderTotal() {
   // Stock Receiving Functions
   openReceiveStockModal() {
     this.receiveStockForm.reset();
+    const poSelect = document.getElementById('receive-po-select');
+    const supplierSelect = document.getElementById('receive-supplier-select');
+    const itemSelect = document.getElementById('receive-item-select');
+
     // Populate suppliers
     this.fetchJson(`${this.apiBase}/suppliers`).then(suppliers => {
-      const select = document.getElementById('receive-supplier-select');
-      select.innerHTML = '<option value="">Select Supplier</option>' + suppliers.map(s => `<option value="${s.supplier_id}">${this.escapeHtml(s.firm_name)}</option>`).join('');
+      supplierSelect.innerHTML = '<option value="">Select Supplier</option>' + suppliers.map(s => `<option value="${s.supplier_id}">${this.escapeHtml(s.firm_name)}</option>`).join('');
     });
-    // Populate items/variants
-    this.fetchJson(`${this.apiBase}/items`).then(items => {
-      const select = document.getElementById('receive-item-select');
-      select.innerHTML = '<option value="">Select Item/Variant</option>' + items.flatMap(i => i.variants.map(v => `<option value="${v.variant_id}">${this.escapeHtml(i.name)} - ${this.escapeHtml(v.color.name)}/${this.escapeHtml(v.size.name)}</option>`)).join('');
+
+    // Populate POs
+    this.fetchJson(`${this.apiBase}/purchase-orders`).then(pos => {
+      poSelect.innerHTML = '<option value="">Select PO (Optional)</option>' + pos.map(po => `<option value="${po.po_id}">${this.escapeHtml(po.po_number)} - ${this.escapeHtml(po.firm_name)}</option>`).join('');
     });
+
+    // Handle PO selection change
+    poSelect.addEventListener('change', async () => {
+      const poId = poSelect.value;
+      if (poId) {
+        const po = await this.fetchJson(`${this.apiBase}/purchase-orders/${poId}`);
+        if (po) {
+          supplierSelect.value = po.supplier_id;
+          itemSelect.innerHTML = '<option value="">Select Item/Variant</option>' + po.items.map(item => `<option value="${item.variant_id}" data-quantity="${item.quantity}" data-rate="${item.rate}">${this.escapeHtml(item.item_name)}</option>`).join('');
+        }
+      } else {
+        // If no PO is selected, load all items
+        this.fetchJson(`${this.apiBase}/all-variants`).then(variants => {
+          itemSelect.innerHTML = '<option value="">Select Item/Variant</option>' + variants.map(v => `<option value="${v.id}">${this.escapeHtml(v.name)}</option>`).join('');
+        });
+      }
+    });
+
+    // Handle item selection change to pre-fill quantity and cost
+    itemSelect.addEventListener('change', () => {
+        const selectedOption = itemSelect.options[itemSelect.selectedIndex];
+        const quantity = selectedOption.dataset.quantity;
+        const rate = selectedOption.dataset.rate;
+        if (quantity) {
+            document.getElementById('receive-quantity').value = quantity;
+        }
+        if (rate) {
+            document.getElementById('receive-cost').value = rate;
+        }
+    });
+
+    // Initial population of items
+    this.fetchJson(`${this.apiBase}/all-variants`).then(variants => {
+        itemSelect.innerHTML = '<option value="">Select Item/Variant</option>' + variants.map(v => `<option value="${v.id}">${this.escapeHtml(v.name)}</option>`).join('');
+    });
+
     this.receiveStockModal.classList.add('is-open');
   },
 

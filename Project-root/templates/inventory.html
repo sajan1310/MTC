@@ -128,8 +128,12 @@
         <div class="modal-body">
             <form id="receive-stock-form">
                 <div class="form-field">
+                    <label for="receive-po-select">Purchase Order (Optional)</label>
+                    <select id="receive-po-select" style="width: 100%;"></select>
+                </div>
+                <div class="form-field">
                     <label for="receive-supplier-select">Supplier</label>
-                    <select id="receive-supplier-select" style="width: 100%;"></select>
+                    <select id="receive-supplier-select" style="width: 100%;" required></select>
                 </div>
                 <div class="form-field">
                     <label for="receive-item-select">Item/Variant</label>
