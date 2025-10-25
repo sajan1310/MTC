@@ -907,3 +907,21 @@ body.dark-mode #low-stock-report-modal .inventory-table th {
     margin-top: 1rem;
     border-top: 1px solid var(--border-color);
 }
+
+.conflict-options {
+  display: flex;
+  justify-content: space-around;
+  margin-top: 1rem;
+}
+
+.conflict-option {
+  border: 1px solid #ccc;
+  padding: 1rem;
+  border-radius: 8px;
+  width: 45%;
+  text-align: center;
+}
+
+.conflict-option h4 {
+  margin-top: 0;
+}
