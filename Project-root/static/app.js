@@ -1421,6 +1421,10 @@ closeImportModal() {
                     changedVariants.updated.push(currentVariant);
                 }
                 initialVariantMap.delete(currentVariant.id.toString());
+            } else {
+                // This case can happen if a variant was added and then modified
+                // without an intermediate save. Treat it as an added variant.
+                changedVariants.added.push(currentVariant);
             }
         }
     }
@@ -2366,43 +2370,3 @@ updatePurchaseOrderTotal() {
 };
 
 App.init();
-<environment_details>
-# Visual Studio Code Visible Files
-Project-root/app.py
-
-# Visual Studio Code Open Tabs
-Project-root/migration.py
-Project-root/migration_add_master_tables.py
-Project-root/migration_remove_unique_constraint.py
-Project-root/migration_remove_model_uniqueness.py
-Project-root/migration_add_item_uniqueness.py
-Project-root/migration_add_suppliers_tables.py
-Project-root/templates/suppliers.html
-Project-root/templates/master_data.html
-Project-root/templates/user_management.html
-Project-root/templates/add_item.html
-Project-root/templates/inventory.html
-Project-root/templates/login.html
-Project-root/templates/signup.html
-Project-root/templates/base.html
-Project-root/static/styles.css
-Project-root/.gitignore
-Project-root/.env.example
-Project-root/migrations/add_indexes.sql
-Project-root/migrations/run_migration.py
-Project-root/database.py
-Project-root/requirements.txt
-Project-root/app.py
-Project-root/static/app.js
-Project-root/templates/purchase_orders.html
-Project-root/templates/profile.html
-
-# Current Time
-10/25/2025, 1:22:13 PM (Asia/Calcutta, UTC+5.5:00)
-
-# Context Window Usage
-987,557 / 1,048.576K tokens used (94%)
-
-# Current Mode
-ACT MODE
-</environment_details>
