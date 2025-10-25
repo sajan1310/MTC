@@ -147,6 +147,7 @@ const App = {
     this.poTableBody = document.getElementById('po-table-body');
     this.addPoBtn = document.getElementById('add-po-btn');
     this.poModal = document.getElementById('po-modal');
+    this.poDetailsModal = document.getElementById('po-details-modal');
     this.poForm = document.getElementById('po-form');
     this.poItemsContainer = document.getElementById('po-items-container');
     this.addPoItemBtn = document.getElementById('add-po-item-btn');
@@ -2165,8 +2166,9 @@ updateItemRow(row, item) {
         <td>${po.total_amount}</td>
         <td>${this.escapeHtml(po.status)}</td>
         <td class="actions-cell">
+          <button class="button view-po-details">Details</button>
           <button class="button edit-po">Edit</button>
-          <button class="button delete-po">Delete</button>
+          <button class="button delete-po" ${po.status !== 'Draft' ? 'disabled' : ''}>Delete</button>
         </td>
       </tr>
     `).join('');
@@ -2405,6 +2407,8 @@ updatePurchaseOrderTotal() {
       if (po) this.openPurchaseOrderModal(po);
     } else if (button.classList.contains('delete-po')) {
       this.deletePurchaseOrder(id, row.cells[0].textContent);
+    } else if (button.classList.contains('view-po-details')) {
+      this.openPurchaseOrderDetailsModal(id);
     }
   },
 
@@ -2417,79 +2421,139 @@ updatePurchaseOrderTotal() {
     }
   },
 
+  async openPurchaseOrderDetailsModal(poId) {
+    const detailsBody = document.getElementById('po-details-body');
+    detailsBody.innerHTML = '<tr><td colspan="4">Loading...</td></tr>';
+    this.poDetailsModal.classList.add('is-open');
+    const po = await this.fetchJson(`${this.apiBase}/purchase-orders/${poId}`);
+    if (po && po.items) {
+      detailsBody.innerHTML = po.items.map(item => `
+        <tr>
+          <td>${this.escapeHtml(item.item_name)}</td>
+          <td>${item.quantity}</td>
+          <td>${item.received_quantity || 0}</td>
+          <td>${item.quantity - (item.received_quantity || 0)}</td>
+        </tr>
+      `).join('');
+    }
+  },
+
   // Stock Receiving Functions
   openReceiveStockModal() {
     this.receiveStockForm.reset();
-    const poSelect = document.getElementById('receive-po-select');
-    const supplierSelect = document.getElementById('receive-supplier-select');
-    const itemSelect = document.getElementById('receive-item-select');
+    document.getElementById('receive-items-body').innerHTML = '';
+    this.updateReceiveTotals();
 
-    // Populate suppliers
+    const supplierSelect = document.getElementById('receive-supplier-select');
     this.fetchJson(`${this.apiBase}/suppliers`).then(suppliers => {
       supplierSelect.innerHTML = '<option value="">Select Supplier</option>' + suppliers.map(s => `<option value="${s.supplier_id}">${this.escapeHtml(s.firm_name)}</option>`).join('');
     });
 
-    // Populate POs
-    this.fetchJson(`${this.apiBase}/purchase-orders`).then(pos => {
-      poSelect.innerHTML = '<option value="">Select PO (Optional)</option>' + pos.map(po => `<option value="${po.po_id}">${this.escapeHtml(po.po_number)} - ${this.escapeHtml(po.firm_name)}</option>`).join('');
-    });
-
-    // Handle PO selection change
-    poSelect.addEventListener('change', async () => {
-      const poId = poSelect.value;
-      if (poId) {
-        const po = await this.fetchJson(`${this.apiBase}/purchase-orders/${poId}`);
-        if (po) {
+    const fetchPoBtn = document.getElementById('fetch-po-btn');
+    fetchPoBtn.addEventListener('click', async () => {
+      const poNumber = document.getElementById('receive-po-number').value;
+      if (poNumber) {
+        const po = await this.fetchJson(`${this.apiBase}/purchase-orders/by-number/${poNumber}`);
+        if (po && po.po_id) {
           supplierSelect.value = po.supplier_id;
-          itemSelect.innerHTML = '<option value="">Select Item/Variant</option>' + po.items.map(item => `<option value="${item.variant_id}" data-quantity="${item.quantity}" data-rate="${item.rate}">${this.escapeHtml(item.item_name)}</option>`).join('');
+          const itemsBody = document.getElementById('receive-items-body');
+          itemsBody.innerHTML = '';
+          po.items.forEach(item => this.addReceiveItemRow(item));
+          this.updateReceiveTotals();
+          this.receiveStockForm.dataset.poId = po.po_id;
+        } else {
+          this.showNotification('Purchase Order not found.', 'error');
+          delete this.receiveStockForm.dataset.poId;
         }
-      } else {
-        // If no PO is selected, load all items
-        this.fetchJson(`${this.apiBase}/all-variants`).then(variants => {
-          itemSelect.innerHTML = '<option value="">Select Item/Variant</option>' + variants.map(v => `<option value="${v.id}">${this.escapeHtml(v.name)}</option>`).join('');
-        });
       }
     });
 
-    // Handle item selection change to pre-fill quantity and cost
-    itemSelect.addEventListener('change', () => {
-        const selectedOption = itemSelect.options[itemSelect.selectedIndex];
-        const quantity = selectedOption.dataset.quantity;
-        const rate = selectedOption.dataset.rate;
-        if (quantity) {
-            document.getElementById('receive-quantity').value = quantity;
-        }
-        if (rate) {
-            document.getElementById('receive-cost').value = rate;
-        }
-    });
-
-    // Initial population of items
-    this.fetchJson(`${this.apiBase}/all-variants`).then(variants => {
-        itemSelect.innerHTML = '<option value="">Select Item/Variant</option>' + variants.map(v => `<option value="${v.id}">${this.escapeHtml(v.name)}</option>`).join('');
-    });
-
+    this.addReceiveItemRow();
     this.receiveStockModal.classList.add('is-open');
+  },
+
+  addReceiveItemRow(item = null) {
+    const tbody = document.getElementById('receive-items-body');
+    const row = tbody.insertRow();
+    row.innerHTML = `
+      <td><select class="receive-item-select" style="width: 100%;"></select></td>
+      <td><input type="number" class="receive-quantity" value="${item ? item.quantity : 1}" min="1"></td>
+      <td><input type="number" class="receive-cost" step="0.01" value="${item ? item.rate : 0}"></td>
+      <td class="receive-item-total">0.00</td>
+      <td><button type="button" class="button cancel remove-receive-item-btn">&times;</button></td>
+    `;
+
+    const itemSelect = row.querySelector('.receive-item-select');
+    this.fetchJson(`${this.apiBase}/all-variants`).then(variants => {
+      itemSelect.innerHTML = '<option value="">Select Item/Variant</option>' + variants.map(v => `<option value="${v.id}" ${item && v.id == item.variant_id ? 'selected' : ''}>${this.escapeHtml(v.name)}</option>`).join('');
+    });
+
+    row.querySelector('.remove-receive-item-btn').addEventListener('click', () => {
+      row.remove();
+      this.updateReceiveTotals();
+    });
+
+    row.querySelectorAll('.receive-quantity, .receive-cost').forEach(input => {
+      input.addEventListener('input', () => this.updateReceiveTotals());
+    });
+    
+    document.getElementById('receive-tax-percentage').addEventListener('input', () => this.updateReceiveTotals());
+    document.getElementById('receive-discount-percentage').addEventListener('input', () => this.updateReceiveTotals());
+  },
+
+  updateReceiveTotals() {
+    let totalAmount = 0;
+    document.querySelectorAll('#receive-items-body tr').forEach(row => {
+      const quantity = parseFloat(row.querySelector('.receive-quantity').value) || 0;
+      const cost = parseFloat(row.querySelector('.receive-cost').value) || 0;
+      const itemTotal = quantity * cost;
+      row.querySelector('.receive-item-total').textContent = itemTotal.toFixed(2);
+      totalAmount += itemTotal;
+    });
+
+    const taxPercentage = parseFloat(document.getElementById('receive-tax-percentage').value) || 0;
+    const discountPercentage = parseFloat(document.getElementById('receive-discount-percentage').value) || 0;
+    const taxAmount = totalAmount * (taxPercentage / 100);
+    const discountAmount = totalAmount * (discountPercentage / 100);
+    const grandTotal = totalAmount + taxAmount - discountAmount;
+
+    document.getElementById('receive-total-amount').textContent = totalAmount.toFixed(2);
+    document.getElementById('receive-discount-amount').textContent = discountAmount.toFixed(2);
+    document.getElementById('receive-grand-total').textContent = grandTotal.toFixed(2);
   },
 
   async handleReceiveStockFormSubmit(e) {
     e.preventDefault();
+    const items = [];
+    document.querySelectorAll('#receive-items-body tr').forEach(row => {
+      items.push({
+        variant_id: row.querySelector('.receive-item-select').value,
+        quantity: row.querySelector('.receive-quantity').value,
+        cost: row.querySelector('.receive-cost').value,
+      });
+    });
+
     const data = {
+      bill_number: document.getElementById('receive-bill-number').value,
       supplier_id: document.getElementById('receive-supplier-select').value,
-      variant_id: document.getElementById('receive-item-select').value,
-      quantity: document.getElementById('receive-quantity').value,
-      cost: document.getElementById('receive-cost').value,
+      tax_percentage: document.getElementById('receive-tax-percentage').value,
+      discount_percentage: document.getElementById('receive-discount-percentage').value,
+      po_id: this.receiveStockForm.dataset.poId || null,
+      items: items,
     };
-    const result = await this.fetchJson(`${this.apiBase}/stock-entries`, {
+
+    const result = await this.fetchJson(`${this.apiBase}/stock-receipts`, {
       method: 'POST',
       body: JSON.stringify(data)
     });
-    if (result) {
-      this.showNotification('Stock received.', 'success');
+
+    if (result && result.receipt_id) {
+      this.showNotification('Stock received successfully.', 'success');
       this.receiveStockModal.classList.remove('is-open');
       this.fetchItems();
     }
-  }
+  },
 };
 
 App.init();
+

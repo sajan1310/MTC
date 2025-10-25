@@ -41,4 +41,31 @@
         </div>
     </div>
 </div>
+
+<!-- PO Details Modal -->
+<div id="po-details-modal" class="modal">
+    <div class="modal-content large">
+        <div class="modal-header">
+            <h3>Purchase Order Details</h3>
+            <button type="button" class="button cancel close-modal-btn">&times;</button>
+        </div>
+        <div class="modal-body">
+            <div class="table-wrapper">
+                <table class="inventory-table">
+                    <thead>
+                        <tr>
+                            <th>Item Name</th>
+                            <th>Ordered</th>
+                            <th>Received</th>
+                            <th>Pending</th>
+                        </tr>
+                    </thead>
+                    <tbody id="po-details-body">
+                        <!-- PO items will be populated here -->
+                    </tbody>
+                </table>
+            </div>
+        </div>
+    </div>
+</div>
 {% endblock %}
