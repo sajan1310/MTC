@@ -3,7 +3,7 @@ Flask==3.0.0
 Werkzeug==3.0.1
 
 # Database
-psycopg2-binary==2.9.9
+psycopg[binary]
 
 # Authentication & Security
 Flask-Login==0.6.3

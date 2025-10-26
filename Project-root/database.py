@@ -56,7 +56,7 @@ def get_conn(cursor_factory=None, autocommit=False):
         cur = conn.cursor(cursor_factory=cursor_factory)
         yield conn, cur
     except Exception as e:
-        current_app.logger.error(f"Database error: {e}")
+        print(f"Database error: {e}")
         if conn:
             conn.rollback()
         raise

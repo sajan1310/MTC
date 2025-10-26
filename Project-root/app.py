@@ -297,18 +297,38 @@ def home():
 @app.route('/dashboard')
 @login_required
 def dashboard():
-    return render_template('dashboard_new.html')
+    try:
+        with database.get_conn(cursor_factory=psycopg2.extras.DictCursor) as (conn, cur):
+            # Total Stock
+            cur.execute("SELECT SUM(opening_stock) FROM item_variant")
+            total_stock = cur.fetchone()[0] or 0
+
+            # Low Stock Items
+            cur.execute("SELECT COUNT(*) FROM item_variant WHERE opening_stock <= threshold")
+            low_stock_items = cur.fetchone()[0] or 0
+
+            # Total Suppliers
+            cur.execute("SELECT COUNT(*) FROM suppliers")
+            total_suppliers = cur.fetchone()[0] or 0
+
+        metrics = {
+            'total_stock': int(total_stock),
+            'low_stock_items': low_stock_items,
+            'total_suppliers': total_suppliers
+        }
+    except Exception as e:
+        app.logger.error(f"Error fetching dashboard metrics: {e}")
+        metrics = {
+            'total_stock': 'N/A',
+            'low_stock_items': 'N/A',
+            'total_suppliers': 'N/A'
+        }
+    return render_template('dashboard_new.html', metrics=metrics)
 
 @app.route('/inventory')
 @login_required
 def inventory():
     return render_template('inventory.html')
-
-@app.route('/add_item')
-@login_required
-def add_item_page():
-    return render_template('add_item.html')
-
 
 @app.route('/user-management')
 @login_required
@@ -527,6 +547,10 @@ def logout():
 @app.route('/uploads/<filename>')
 def uploaded_file(filename):
     return send_from_directory(os.path.join(app.root_path, 'static', 'uploads'), filename)
+
+@app.route('/static/img/<filename>')
+def img_file(filename):
+    return send_from_directory(os.path.join(app.root_path, 'static', 'img'), filename)
 
 # --- API Routes ---
 def make_api_crud_routes(app, entity_name, table_name, id_col, name_col):
@@ -925,7 +949,6 @@ def add_stock_receipt():
         return jsonify({'message': 'Stock received successfully', 'receipt_id': receipt_id}), 201
     except Exception as e:
         app.logger.error(f"Error receiving stock receipt: {e}")
-        conn.rollback()
         return jsonify({'error': 'Database error'}), 500
 
 @app.route('/api/stock-receipts', methods=['GET'])
@@ -991,7 +1014,6 @@ def delete_stock_receipt(receipt_id):
         return '', 204
     except Exception as e:
         app.logger.error(f"Error deleting stock receipt {receipt_id}: {e}")
-        conn.rollback()
         return jsonify({'error': 'Database error'}), 500
 
 # --- Purchase Order API Routes ---

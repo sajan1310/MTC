@@ -1026,3 +1026,32 @@ body.dark-mode #low-stock-report-modal .inventory-table th {
 .reports-list .report-item:hover {
     background-color: rgba(0, 0, 0, 0.05);
 }
+
+/* Custom Checkbox Styles */
+.inventory-table .item-checkbox, #select-all-items {
+    -webkit-appearance: none;
+    -moz-appearance: none;
+    appearance: none;
+    width: 20px;
+    height: 20px;
+    border: 2px solid var(--border-color);
+    border-radius: 4px;
+    cursor: pointer;
+    position: relative;
+    transition: background-color 0.2s, border-color 0.2s;
+}
+
+.inventory-table .item-checkbox:checked, #select-all-items:checked {
+    background-color: var(--primary-color);
+    border-color: var(--primary-color);
+}
+
+.inventory-table .item-checkbox:checked::before, #select-all-items:checked::before {
+    content: '✔';
+    color: white;
+    position: absolute;
+    top: 50%;
+    left: 50%;
+    transform: translate(-50%, -50%);
+    font-size: 14px;
+}

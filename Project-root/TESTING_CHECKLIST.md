@@ -28,6 +28,8 @@
 
 ## Database Tests
 - [ ] Run migrations → All indexes created successfully
+- [ ] Run new migration runner → All migrations should be applied correctly
+- [ ] Run deduplicate_items.py → Should find and remove duplicate items
 - [ ] Check connection pool → Should show 2-20 connections in logs
 - [ ] Query item_variant → Should use idx_item_variant_stock index
 
