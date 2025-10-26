@@ -42,3 +42,22 @@
 - [ ] Submit form with missing fields → Should show validation errors
 - [ ] Network error during API call → Should show notification
 - [ ] Upload file larger than 5MB → Should reject with message
+
+## Edge Case Tests
+- [ ] Add item with very long name/description → Should not break layout
+- [ ] Use special characters in search (e.g., `&`, `<`, `>`) → Should be handled safely
+- [ ] Delete a supplier with active purchase orders → Should be prevented
+- [ ] Receive stock for a PO that is already completed → Should be handled gracefully
+- [ ] Export CSV with no inventory items → Should generate an empty file with headers
+
+## Permissions Tests
+- [ ] Log in as 'user' → 'User Management' link should be hidden
+- [ ] Attempt to access `/user-management` as 'user' → Should be denied
+- [ ] Attempt to delete an item as 'user' → Should be denied
+- [ ] Log in as 'admin' → Should have full access to all features except super-admin functions
+
+## Accessibility Tests
+- [ ] Navigate all forms using only the keyboard → All fields should be focusable and usable
+- [ ] Use a screen reader (e.g., NVDA, VoiceOver) on the inventory and add item pages → All elements should be announced correctly
+- [ ] Check color contrast on all pages → Should meet WCAG AA standards
+- [ ] Verify all images have `alt` text → All images should have descriptive alt text

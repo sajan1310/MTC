@@ -19,3 +19,7 @@ flask-talisman==1.1.0
 
 # CORS Support
 Flask-CORS==4.0.0
+
+# Performance
+jsmin==3.0.1
+cssmin==0.2.0

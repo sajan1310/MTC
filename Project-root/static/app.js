@@ -132,6 +132,7 @@ const App = {
     this.lowStockReportModal = document.getElementById('low-stock-report-modal');
     this.lowStockReportBody = document.getElementById('low-stock-report-body');
     this.printLowStockReportBtn = document.getElementById('print-low-stock-report-btn');
+    this.exportCsvBtn = document.getElementById('export-csv-btn');
 
     // Supplier elements
     this.suppliersTableBody = document.getElementById('suppliers-table-body');
@@ -151,6 +152,9 @@ const App = {
     this.poForm = document.getElementById('po-form');
     this.poItemsContainer = document.getElementById('po-items-container');
     this.addPoItemBtn = document.getElementById('add-po-item-btn');
+    this.poStatusFilter = document.getElementById('po-status-filter');
+    this.poStartDateFilter = document.getElementById('po-start-date-filter');
+    this.poEndDateFilter = document.getElementById('po-end-date-filter');
 
     // Inventory page buttons
     this.receiveStockBtn = document.getElementById('receive-stock-btn');
@@ -233,7 +237,26 @@ const App = {
       });
       this.inventoryTableBody.addEventListener('change', (e) => {
         this.handleVariantMatrixActions(e);
+        if (e.target.classList.contains('item-checkbox')) {
+            this.updateBulkActionsVisibility();
+        }
       });
+    }
+
+    const selectAllCheckbox = document.getElementById('select-all-items');
+    if (selectAllCheckbox) {
+        selectAllCheckbox.addEventListener('change', (e) => {
+            const checkboxes = this.inventoryTableBody.querySelectorAll('.item-checkbox');
+            checkboxes.forEach(checkbox => {
+                checkbox.checked = e.target.checked;
+            });
+            this.updateBulkActionsVisibility();
+        });
+    }
+
+    const bulkDeleteBtn = document.getElementById('bulk-delete-btn');
+    if (bulkDeleteBtn) {
+        bulkDeleteBtn.addEventListener('click', () => this.handleBulkDelete());
     }
 
     if (this.userManagementTableBody) {
@@ -287,6 +310,18 @@ const App = {
 
     if (this.poTableBody) {
       this.poTableBody.addEventListener('click', (e) => this.handlePurchaseOrderActions(e));
+    }
+
+    if (this.poStatusFilter) {
+        this.poStatusFilter.addEventListener('change', () => this.fetchPurchaseOrders());
+    }
+
+    if (this.poStartDateFilter) {
+        this.poStartDateFilter.addEventListener('change', () => this.fetchPurchaseOrders());
+    }
+
+    if (this.poEndDateFilter) {
+        this.poEndDateFilter.addEventListener('change', () => this.fetchPurchaseOrders());
     }
 
     if (this.receiveStockBtn) {
@@ -651,7 +686,7 @@ async fetchJson(url, options = {}) {
     if (!this.inventoryTableBody) return;
     if (items.length === 0) {
       const message = this.allItems.length > 0 ? 'No items match your search.' : 'No items found. Click "Add New Item" to get started!';
-      this.inventoryTableBody.innerHTML = `<tr><td colspan="9" style="text-align: center; padding: 2rem;">${message}</td></tr>`;
+      this.inventoryTableBody.innerHTML = `<tr><td colspan="10" style="text-align: center; padding: 2rem;">${message}</td></tr>`;
       return;
     }
     this.inventoryTableBody.innerHTML = items.map(item => {
@@ -659,6 +694,7 @@ async fetchJson(url, options = {}) {
       const statusText = item.has_low_stock_variants ? 'Low Stock' : 'In Stock';
       return `
         <tr class="item-row" data-item-id="${item.id}" data-item-name="${this.escapeHtml(item.name)}" data-item-description="${this.escapeHtml(item.description || '')}">
+          <td><input type="checkbox" class="item-checkbox" data-item-id="${item.id}"></td>
           <td data-label=""><button class="expand-btn" title="View Variants" aria-expanded="false"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="9,18 15,12 9,6"></polyline></svg></button></td>
           <td data-label="Image"><img src="/static/${item.image_path || 'uploads/placeholder.png'}" alt="${this.escapeHtml(item.name)}" class="item-image-thumbnail"></td>
           <td data-label="Item Name" class="item-name-cell">
@@ -674,9 +710,43 @@ async fetchJson(url, options = {}) {
             <button class="button cancel delete-item" title="Delete Item">Delete</button>
           </td>
         </tr>
-        <tr class="variant-details-row" style="display: none;"><td colspan="9" class="variant-details-container"></td></tr>
+        <tr class="variant-details-row" style="display: none;"><td colspan="10" class="variant-details-container"></td></tr>
       `;
     }).join('');
+  },
+
+  updateBulkActionsVisibility() {
+    const bulkActionsContainer = document.getElementById('bulk-actions-container');
+    const selectedCheckboxes = this.inventoryTableBody.querySelectorAll('.item-checkbox:checked');
+    if (selectedCheckboxes.length > 0) {
+        bulkActionsContainer.style.display = 'block';
+    } else {
+        bulkActionsContainer.style.display = 'none';
+    }
+  },
+
+  async handleBulkDelete() {
+    const selectedCheckboxes = this.inventoryTableBody.querySelectorAll('.item-checkbox:checked');
+    const itemIds = Array.from(selectedCheckboxes).map(cb => cb.dataset.itemId);
+
+    if (itemIds.length === 0) {
+        this.showNotification('No items selected for deletion.', 'info');
+        return;
+    }
+
+    if (confirm(`Are you sure you want to delete ${itemIds.length} selected items? This action cannot be undone.`)) {
+        const result = await this.fetchJson(`${this.apiBase}/items/bulk-delete`, {
+            method: 'POST',
+            body: JSON.stringify({ item_ids: itemIds }),
+        });
+
+        if (result) {
+            this.showNotification(`${itemIds.length} items deleted successfully.`, 'success');
+            this.fetchItems();
+            document.getElementById('select-all-items').checked = false;
+            this.updateBulkActionsVisibility();
+        }
+    }
   },
 
   async handleTableActions(e) {
@@ -753,6 +823,12 @@ async fetchJson(url, options = {}) {
 
     if (this.printLowStockReportBtn) {
       this.printLowStockReportBtn.addEventListener('click', () => this.printLowStockReport());
+    }
+
+    if (this.exportCsvBtn) {
+        this.exportCsvBtn.addEventListener('click', () => {
+            window.location.href = '/api/inventory/export/csv';
+        });
     }
 
     if (this.importModal) {
@@ -1596,12 +1672,12 @@ updateItemRow(row, item) {
     const sizeName = v.size ? this.escapeHtml(v.size.name) : '';
     return `
       <tr class="variant-modal-row" data-variant-id="${v.id || ''}">
-        <td><input type="text" list="color-datalist" class="variant-color" value="${colorName}" placeholder="Color" required></td>
-        <td><input type="text" list="size-datalist" class="variant-size" value="${sizeName}" placeholder="Size" required></td>
-        <td><input type="number" class="stock-input" value="${v.opening_stock || 0}" min="0" required></td>
-        <td><input type="text" list="unit-datalist" class="variant-unit" value="${v.unit || 'Pcs'}" placeholder="Unit" required></td>
-        <td><input type="number" class="threshold-input" value="${v.threshold || 5}" min="0" required></td>
-        <td><button type="button" class="button cancel remove-variant-btn" title="Remove variant">&times;</button></td>
+        <td><input type="text" list="color-datalist" class="variant-color" value="${colorName}" placeholder="Color" required aria-label="Variant Color"></td>
+        <td><input type="text" list="size-datalist" class="variant-size" value="${sizeName}" placeholder="Size" required aria-label="Variant Size"></td>
+        <td><input type="number" class="stock-input" value="${v.opening_stock || 0}" min="0" required aria-label="Variant Stock"></td>
+        <td><input type="text" list="unit-datalist" class="variant-unit" value="${v.unit || 'Pcs'}" placeholder="Unit" required aria-label="Variant Unit"></td>
+        <td><input type="number" class="threshold-input" value="${v.threshold || 5}" min="0" required aria-label="Variant Threshold"></td>
+        <td><button type="button" class="button cancel remove-variant-btn" title="Remove variant" aria-label="Remove Variant">&times;</button></td>
       </tr>`;
   },
 
@@ -1799,7 +1875,16 @@ updateItemRow(row, item) {
   },
 
   async handleMasterDelete(type, id, name, onFinish) {
-    if (!confirm(`Are you sure you want to delete "${name}"?`)) return;
+    const dependencyResponse = await this.fetchJson(`${this.apiBase}/${type}s/${id}/dependencies`);
+    const dependencyCount = dependencyResponse ? dependencyResponse.count : 0;
+
+    let confirmMessage = `Are you sure you want to delete "${name}"?`;
+    if (dependencyCount > 0) {
+        confirmMessage += `\n\nWarning: This ${type} is used by ${dependencyCount} item(s). Deleting it may cause issues.`;
+    }
+
+    if (!confirm(confirmMessage)) return;
+
     const result = await this.fetchJson(`${this.apiBase}/${type}s/${id}`, { method: 'DELETE' });
     if (result) {
       this.showNotification(`"${name}" has been deleted.`, 'success');
@@ -2152,7 +2237,21 @@ updateItemRow(row, item) {
 
   // Purchase Order Functions
   async fetchPurchaseOrders() {
-    const pos = await this.fetchJson(`${this.apiBase}/purchase-orders`);
+    const status = this.poStatusFilter ? this.poStatusFilter.value : '';
+    const startDate = this.poStartDateFilter ? this.poStartDateFilter.value : '';
+    const endDate = this.poEndDateFilter ? this.poEndDateFilter.value : '';
+
+    const url = new URL(`${this.apiBase}/purchase-orders`);
+    if (status) {
+        url.searchParams.append('status', status);
+    }
+    if (startDate) {
+        url.searchParams.append('start_date', startDate);
+    }
+    if (endDate) {
+        url.searchParams.append('end_date', endDate);
+    }
+    const pos = await this.fetchJson(url.toString());
     if (pos) this.renderPurchaseOrdersList(pos);
   },
 
@@ -2178,6 +2277,18 @@ updateItemRow(row, item) {
     this.poForm.reset();
     document.getElementById('po-id').value = po ? po.po_id : '';
     document.getElementById('po-modal-title').textContent = po ? 'Edit Purchase Order' : 'New Purchase Order';
+
+    // Add a wrapper for the supplier dropdown with a label
+    const supplierContainer = document.getElementById('po-supplier-container');
+    supplierContainer.innerHTML = `
+        <div class="form-field">
+            <label for="supplier-select">Supplier</label>
+            <select id="supplier-select" required>
+                <option value="">Select Supplier</option>
+            </select>
+        </div>
+    `;
+
     this.poItemsContainer.innerHTML = `
         <div class="po-items-header">
             <div class="po-header-details">Item Details</div>
@@ -2187,26 +2298,41 @@ updateItemRow(row, item) {
         </div>
     `;
     
-    // Add the new searchable dropdown container
     const searchContainer = document.createElement('div');
     searchContainer.id = 'po-item-search-container';
     searchContainer.innerHTML = `<select id="po-item-search" class="po-item-search" data-placeholder="Search and add an item..."></select>`;
     this.poItemsContainer.appendChild(searchContainer);
 
-    // Add total amount display
     const totalContainer = document.createElement('div');
     totalContainer.id = 'po-total-container';
     totalContainer.innerHTML = `<strong>Total Amount:</strong> <span id="po-total-amount">0.00</span>`;
     this.poItemsContainer.appendChild(totalContainer);
 
-    // Populate suppliers dropdown
+    // Add Notes and Status fields
+    const notesAndStatusContainer = document.getElementById('po-notes-status-container');
+    notesAndStatusContainer.innerHTML = `
+        <div class="form-field">
+            <label for="po-notes">Notes</label>
+            <textarea id="po-notes" placeholder="Add any notes for this purchase order...">${po ? this.escapeHtml(po.notes || '') : ''}</textarea>
+        </div>
+        <div class="form-field">
+            <label for="po-status">Status</label>
+            <select id="po-status">
+                <option value="Draft" ${po && po.status === 'Draft' ? 'selected' : ''}>Draft</option>
+                <option value="Ordered" ${po && po.status === 'Ordered' ? 'selected' : ''}>Ordered</option>
+                <option value="Completed" ${po && po.status === 'Completed' ? 'selected' : ''}>Completed</option>
+                <option value="Cancelled" ${po && po.status === 'Cancelled' ? 'selected' : ''}>Cancelled</option>
+            </select>
+        </div>
+    `;
+
     this.fetchJson(`${this.apiBase}/suppliers`).then(suppliers => {
         const select = document.getElementById('supplier-select');
         select.innerHTML = '<option value="">Select Supplier</option>' + suppliers.map(s => `<option value="${s.supplier_id}">${this.escapeHtml(s.firm_name)}</option>`).join('');
         if (po) select.value = po.supplier_id;
     });
 
-    if (po) {
+    if (po && po.items) {
         po.items.forEach(item => this.addPoItemField(item));
     }
 
@@ -2227,10 +2353,10 @@ addPoItemField(item = null) {
             <div class="po-item-detail-field"><strong>Size:</strong> ${item ? this.escapeHtml(item.size_name) : 'N/A'}</div>
         </div>
         <div class="po-item-inputs">
-            <input type="number" class="po-quantity" placeholder="Qty" value="${item ? item.quantity : 1}">
-            <input type="number" class="po-rate" placeholder="Rate" value="${item ? item.rate : 0}">
+            <input type="number" class="po-quantity" placeholder="Qty" value="${item ? item.quantity : 1}" aria-label="Purchase Order Item Quantity">
+            <input type="number" class="po-rate" placeholder="Rate" value="${item ? item.rate : 0}" aria-label="Purchase Order Item Rate">
         </div>
-        <button type="button" class="button cancel remove-po-item-btn">&times;</button>
+        <button type="button" class="button cancel remove-po-item-btn" aria-label="Remove Purchase Order Item">&times;</button>
     `;
     div.dataset.variantId = item ? item.variant_id : '';
     
@@ -2385,7 +2511,8 @@ updatePurchaseOrderTotal() {
     const data = {
       supplier_id: supplierId,
       items: items,
-      status: 'Draft', // Or get from a field
+      status: document.getElementById('po-status').value,
+      notes: document.getElementById('po-notes').value,
     };
     const url = id ? `${this.apiBase}/purchase-orders/${id}` : `${this.apiBase}/purchase-orders`;
     const method = id ? 'PUT' : 'POST';
@@ -2476,11 +2603,11 @@ updatePurchaseOrderTotal() {
     const tbody = document.getElementById('receive-items-body');
     const row = tbody.insertRow();
     row.innerHTML = `
-      <td><select class="receive-item-select" style="width: 100%;"></select></td>
-      <td><input type="number" class="receive-quantity" value="${item ? item.quantity : 1}" min="1"></td>
-      <td><input type="number" class="receive-cost" step="0.01" value="${item ? item.rate : 0}"></td>
+      <td><select class="receive-item-select" style="width: 100%;" aria-label="Select Item to Receive"></select></td>
+      <td><input type="number" class="receive-quantity" value="${item ? item.quantity : 1}" min="1" aria-label="Received Quantity"></td>
+      <td><input type="number" class="receive-cost" step="0.01" value="${item ? item.rate : 0}" aria-label="Received Cost per Unit"></td>
       <td class="receive-item-total">0.00</td>
-      <td><button type="button" class="button cancel remove-receive-item-btn">&times;</button></td>
+      <td><button type="button" class="button cancel remove-receive-item-btn" aria-label="Remove Received Item">&times;</button></td>
     `;
 
     const itemSelect = row.querySelector('.receive-item-select');
@@ -2553,7 +2680,25 @@ updatePurchaseOrderTotal() {
       this.fetchItems();
     }
   },
+
+  // Dashboard Functions
+  openModal(modalId) {
+    const modal = document.getElementById(modalId);
+    if (modal) {
+      modal.classList.add('is-open');
+    }
+  },
+
+  closeModal(modalId) {
+    const modal = document.getElementById(modalId);
+    if (modal) {
+      modal.classList.remove('is-open');
+    }
+  },
+
+  showToast(message, type = 'success') {
+    this.showNotification(message, type);
+  }
 };
 
 App.init();
-

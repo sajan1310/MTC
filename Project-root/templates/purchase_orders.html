@@ -7,6 +7,22 @@
         <div class="page-header">
             <div class="header-left">
                 <h2>Purchase Orders</h2>
+                <div class="filter-container">
+                    <label for="po-status-filter">Filter by Status:</label>
+                    <select id="po-status-filter">
+                        <option value="">All</option>
+                        <option value="Draft">Draft</option>
+                        <option value="Ordered">Ordered</option>
+                        <option value="Completed">Completed</option>
+                        <option value="Cancelled">Cancelled</option>
+                    </select>
+                </div>
+                <div class="filter-container">
+                    <label for="po-date-range-filter">Filter by Date:</label>
+                    <input type="date" id="po-start-date-filter">
+                    <span>-</span>
+                    <input type="date" id="po-end-date-filter">
+                </div>
             </div>
             <div class="header-actions">
                 <button id="add-po-btn" class="button create">

@@ -1,0 +1,107 @@
+{% extends "base.html" %}
+
+{% block title %}Low Stock Report{% endblock %}
+
+{% block content %}
+<div class="container">
+    <div class="page-header">
+        <h2 class="page-title">Low Stock Report</h2>
+        <button id="print-low-stock-report-btn" class="btn btn-primary">Print to PDF</button>
+    </div>
+    <p class="page-subtitle">Items that are currently at or below their threshold.</p>
+
+    <div id="low-stock-report-printable">
+        <table class="table table-bordered mt-3">
+            <thead>
+                <tr>
+                    <th>Item Name</th>
+                    <th>Model</th>
+                    <th>Variation</th>
+                    <th>Color</th>
+                    <th>Size</th>
+                    <th>Current Stock</th>
+                    <th>Threshold</th>
+                </tr>
+            </thead>
+            <tbody id="low-stock-report-body">
+                <!-- Data will be loaded here by JavaScript -->
+            </tbody>
+        </table>
+    </div>
+</div>
+{% endblock %}
+
+{% block scripts %}
+{{ super() }}
+<script>
+document.addEventListener('DOMContentLoaded', function() {
+    const reportBody = document.getElementById('low-stock-report-body');
+    const printBtn = document.getElementById('print-low-stock-report-btn');
+
+    function renderReport(data) {
+        if (!reportBody) return;
+        if (data.length === 0) {
+            reportBody.innerHTML = `<tr><td colspan="7" style="text-align: center; padding: 2rem;">No low stock items found.</td></tr>`;
+            return;
+        }
+        reportBody.innerHTML = data.map(item => `
+            <tr>
+                <td>${escapeHtml(item.item_name)}</td>
+                <td>${escapeHtml(item.model_name || '--')}</td>
+                <td>${escapeHtml(item.variation_name || '--')}</td>
+                <td>${escapeHtml(item.color_name)}</td>
+                <td>${escapeHtml(item.size_name)}</td>
+                <td>${item.opening_stock}</td>
+                <td>${item.threshold}</td>
+            </tr>
+        `).join('');
+    }
+
+    function printReport() {
+        const reportTitle = "Low Stock Report";
+        const printContents = document.getElementById('low-stock-report-printable').innerHTML;
+        
+        const printWindow = window.open('', '', 'height=600,width=800');
+        printWindow.document.write('<html><head><title>' + reportTitle + '</title>');
+        printWindow.document.write(`
+            <style>
+                body { font-family: 'Inter', sans-serif; }
+                table { width: 100%; border-collapse: collapse; }
+                th, td { border: 1px solid #ddd; padding: 8px; text-align: left; }
+                th { background-color: #f2f2f2; }
+            </style>
+        `);
+        printWindow.document.write('</head><body>');
+        printWindow.document.write('<h1>' + reportTitle + '</h1>');
+        printWindow.document.write(printContents);
+        printWindow.document.write('</body></html>');
+        printWindow.document.close();
+        printWindow.focus();
+        printWindow.print();
+        printWindow.close();
+    }
+
+    function escapeHtml(text) {
+        if (text === null || text === undefined) {
+            return '';
+        }
+        const div = document.createElement('div');
+        div.textContent = text;
+        return div.innerHTML;
+    }
+
+    fetch('/api/low-stock-report')
+        .then(response => response.json())
+        .then(data => {
+            if (data.error) {
+                console.error('Error fetching low stock report:', data.error);
+                return;
+            }
+            renderReport(data);
+        })
+        .catch(error => console.error('Error fetching low stock report:', error));
+
+    printBtn.addEventListener('click', printReport);
+});
+</script>
+{% endblock %}
