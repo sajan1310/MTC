@@ -17,6 +17,9 @@
                     </svg>
                     Add New Supplier
                 </button>
+                <div id="bulk-actions-container-suppliers" style="display: none;">
+                    <button id="bulk-delete-btn-suppliers" class="button danger">Delete Selected</button>
+                </div>
             </div>
         </div>
         
@@ -25,6 +28,7 @@
                 <table class="inventory-table compact">
                     <thead>
                         <tr>
+                            <th class="checkbox-col"><input type="checkbox" id="select-all-suppliers"></th>
                             <th>Firm Name</th>
                             <th>Address</th>
                             <th>GSTIN</th>

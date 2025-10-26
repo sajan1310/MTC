@@ -1,0 +1,60 @@
+{% extends "base.html" %}
+
+{% block title %}Modern Dashboard{% endblock %}
+
+{% block content %}
+<div class="dashboard-container">
+    <div class="dashboard-grid">
+        <!-- Metric Cards -->
+        <div class="dashboard-card metric-card">
+            <div class="metric-icon total-stock"><i class="fas fa-box"></i></div>
+            <div class="metric-info">
+                <h3>1,234</h3>
+                <p>Total Stock</p>
+            </div>
+        </div>
+        <div class="dashboard-card metric-card">
+            <div class="metric-icon low-stock"><i class="fas fa-exclamation-triangle"></i></div>
+            <div class="metric-info">
+                <h3>56</h3>
+                <p>Low Stock Items</p>
+            </div>
+        </div>
+        <div class="dashboard-card metric-card">
+            <div class="metric-icon suppliers"><i class="fas fa-truck"></i></div>
+            <div class="metric-info">
+                <h3>89</h3>
+                <p>Suppliers</p>
+            </div>
+        </div>
+
+        <!-- Quick Actions -->
+        <div class="dashboard-card quick-actions">
+            <div class="card-header">
+                <h2 class="card-title">Quick Actions</h2>
+            </div>
+            <button class="button create" onclick="App.openModal('po-modal')">Generate PO</button>
+            <button class="button" onclick="App.openModal('receive-stock-modal')">Receive Stock</button>
+        </div>
+
+        <!-- Reports -->
+        <div class="dashboard-card reports-list">
+            <div class="card-header">
+                <h2 class="card-title">Reports</h2>
+            </div>
+            <div class="report-item" onclick="App.showToast('Generating Low Stock Report...')">
+                <span>Low Stock Report</span>
+                <i class="fas fa-chevron-right"></i>
+            </div>
+            <div class="report-item" onclick="App.showToast('Opening Stock Ledger...')">
+                <span>Stock Ledger</span>
+                <i class="fas fa-chevron-right"></i>
+            </div>
+            <div class="report-item" onclick="App.showToast('Opening Supplier Ledger...')">
+                <span>Supplier Ledger</span>
+                <i class="fas fa-chevron-right"></i>
+            </div>
+        </div>
+    </div>
+</div>
+{% endblock %}

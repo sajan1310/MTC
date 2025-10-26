@@ -52,5 +52,27 @@
         </div>
     </form>
 </div>
-{% endblock %}
 
+<div class="form-card profile-card">
+    <div class="auth-header">
+        <h2>Change Password</h2>
+    </div>
+    <form action="{{ url_for('change_password') }}" method="POST" style="width:100%;">
+        <div class="form-field">
+            <label for="current_password">Current Password</label>
+            <input type="password" id="current_password" name="current_password" required>
+        </div>
+        <div class="form-field">
+            <label for="new_password">New Password</label>
+            <input type="password" id="new_password" name="new_password" required>
+        </div>
+        <div class="form-field">
+            <label for="confirm_password">Confirm New Password</label>
+            <input type="password" id="confirm_password" name="confirm_password" required>
+        </div>
+        <div class="button-row">
+            <button class="create" type="submit">Update Password</button>
+        </div>
+    </form>
+</div>
+{% endblock %}

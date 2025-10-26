@@ -26,6 +26,8 @@ from flask_limiter import Limiter
 from flask_limiter.util import get_remote_address
 import re
 from flask_talisman import Talisman
+import csv
+from flask import Response
 
 app = Flask(__name__)
 
@@ -290,7 +292,12 @@ def get_or_create_item_master_id(cur, name, model, variation, description):
 @app.route('/')
 @login_required
 def home():
-    return redirect(url_for('inventory'))
+    return redirect(url_for('dashboard'))
+
+@app.route('/dashboard')
+@login_required
+def dashboard():
+    return render_template('dashboard_new.html')
 
 @app.route('/inventory')
 @login_required
@@ -323,6 +330,11 @@ def purchase_orders():
 @login_required
 def stock_ledger():
     return render_template('stock_ledger.html')
+
+@app.route('/low-stock-report')
+@login_required
+def low_stock_report():
+    return render_template('low_stock_report.html')
 
 @app.route('/profile', methods=['GET', 'POST'])
 @login_required
@@ -365,6 +377,46 @@ def profile():
 
     return render_template('profile.html', user=current_user)
 
+@app.route('/change_password', methods=['POST'])
+@login_required
+def change_password():
+    current_password = request.form.get('current_password')
+    new_password = request.form.get('new_password')
+    confirm_password = request.form.get('confirm_password')
+
+    if not all([current_password, new_password, confirm_password]):
+        flash('All password fields are required.', 'error')
+        return redirect(url_for('profile'))
+
+    if new_password != confirm_password:
+        flash('New passwords do not match.', 'error')
+        return redirect(url_for('profile'))
+
+    is_valid, message = validate_password(new_password)
+    if not is_valid:
+        flash(message, 'error')
+        return redirect(url_for('profile'))
+
+    try:
+        with database.get_conn(cursor_factory=psycopg2.extras.DictCursor) as (conn, cur):
+            cur.execute("SELECT password_hash FROM users WHERE user_id = %s", (current_user.id,))
+            user_row = cur.fetchone()
+
+            if not user_row or not check_password_hash(user_row['password_hash'], current_password):
+                flash('Incorrect current password.', 'error')
+                return redirect(url_for('profile'))
+
+            new_password_hash = generate_password_hash(new_password)
+            cur.execute("UPDATE users SET password_hash = %s WHERE user_id = %s", (new_password_hash, current_user.id))
+            conn.commit()
+
+        flash('Password updated successfully!', 'success')
+        return redirect(url_for('profile'))
+    except Exception as e:
+        app.logger.error(f"Error changing password for user {current_user.id}: {e}")
+        flash('An error occurred while changing your password.', 'error')
+        return redirect(url_for('profile'))
+
 # --- Auth Routes ---
 @app.route('/login', methods=['GET', 'POST'])
 @limiter.limit("5 per minute")
@@ -386,7 +438,7 @@ def login():
                     flash('Your account is pending approval by an administrator.', 'error')
                     return redirect(url_for('login'))
                 login_user(user)
-                return redirect(url_for('home'))
+                return redirect(url_for('dashboard'))
             else:
                 flash("Invalid email or password.", 'error')
                 return redirect(url_for('login'))
@@ -464,7 +516,7 @@ def authorize():
         flash('Welcome! Your account is now pending approval.', 'success')
         return redirect(url_for('login'))
     
-    return redirect(url_for('home'))
+    return redirect(url_for('dashboard'))
 
 @app.route('/logout')
 @login_required
@@ -544,6 +596,54 @@ make_api_crud_routes(app, 'color', 'color_master', 'color_id', 'color_name')
 make_api_crud_routes(app, 'size', 'size_master', 'size_id', 'size_name')
 make_api_crud_routes(app, 'model', 'model_master', 'model_id', 'model_name')
 make_api_crud_routes(app, 'variation', 'variation_master', 'variation_id', 'variation_name')
+
+@app.route('/api/colors/<int:color_id>/dependencies', methods=['GET'])
+@login_required
+def get_color_dependencies(color_id):
+    try:
+        with database.get_conn() as (conn, cur):
+            cur.execute("SELECT COUNT(*) FROM item_variant WHERE color_id = %s", (color_id,))
+            count = cur.fetchone()[0]
+        return jsonify({'count': count})
+    except Exception as e:
+        app.logger.error(f"Error fetching dependencies for color {color_id}: {e}")
+        return jsonify({'error': 'Failed to fetch dependency count'}), 500
+
+@app.route('/api/sizes/<int:size_id>/dependencies', methods=['GET'])
+@login_required
+def get_size_dependencies(size_id):
+    try:
+        with database.get_conn() as (conn, cur):
+            cur.execute("SELECT COUNT(*) FROM item_variant WHERE size_id = %s", (size_id,))
+            count = cur.fetchone()[0]
+        return jsonify({'count': count})
+    except Exception as e:
+        app.logger.error(f"Error fetching dependencies for size {size_id}: {e}")
+        return jsonify({'error': 'Failed to fetch dependency count'}), 500
+
+@app.route('/api/models/<int:model_id>/dependencies', methods=['GET'])
+@login_required
+def get_model_dependencies(model_id):
+    try:
+        with database.get_conn() as (conn, cur):
+            cur.execute("SELECT COUNT(*) FROM item_master WHERE model_id = %s", (model_id,))
+            count = cur.fetchone()[0]
+        return jsonify({'count': count})
+    except Exception as e:
+        app.logger.error(f"Error fetching dependencies for model {model_id}: {e}")
+        return jsonify({'error': 'Failed to fetch dependency count'}), 500
+
+@app.route('/api/variations/<int:variation_id>/dependencies', methods=['GET'])
+@login_required
+def get_variation_dependencies(variation_id):
+    try:
+        with database.get_conn() as (conn, cur):
+            cur.execute("SELECT COUNT(*) FROM item_master WHERE variation_id = %s", (variation_id,))
+            count = cur.fetchone()[0]
+        return jsonify({'count': count})
+    except Exception as e:
+        app.logger.error(f"Error fetching dependencies for variation {variation_id}: {e}")
+        return jsonify({'error': 'Failed to fetch dependency count'}), 500
 
 # --- Supplier API Routes ---
 @app.route('/api/suppliers', methods=['GET'])
@@ -898,14 +998,34 @@ def delete_stock_receipt(receipt_id):
 @app.route('/api/purchase-orders', methods=['GET'])
 @login_required
 def get_purchase_orders():
+    status_filter = request.args.get('status')
+    start_date = request.args.get('start_date')
+    end_date = request.args.get('end_date')
     try:
         with database.get_conn(cursor_factory=psycopg2.extras.DictCursor) as (conn, cur):
-            cur.execute("""
+            query = """
                 SELECT po.*, s.firm_name 
                 FROM purchase_orders po
                 JOIN suppliers s ON po.supplier_id = s.supplier_id
-                ORDER BY po.order_date DESC
-            """)
+            """
+            params = []
+            conditions = []
+            if status_filter:
+                conditions.append("po.status = %s")
+                params.append(status_filter)
+            if start_date:
+                conditions.append("po.order_date >= %s")
+                params.append(start_date)
+            if end_date:
+                conditions.append("po.order_date <= %s")
+                params.append(end_date)
+            
+            if conditions:
+                query += " WHERE " + " AND ".join(conditions)
+            
+            query += " ORDER BY po.order_date DESC"
+
+            cur.execute(query, tuple(params))
             pos = [dict(row) for row in cur.fetchall()]
         return jsonify(pos)
     except Exception as e:
@@ -919,6 +1039,8 @@ def create_purchase_order():
     data = request.json
     supplier_id = data.get('supplier_id')
     items = data.get('items', [])
+    notes = data.get('notes')
+    status = data.get('status', 'Draft')
 
     if not supplier_id or not items:
         return jsonify({'error': 'Supplier and items are required'}), 400
@@ -928,8 +1050,8 @@ def create_purchase_order():
             cur.execute("SELECT nextval('purchase_order_number_seq')")
             po_number = f"PO-{cur.fetchone()[0]:04d}"
             cur.execute(
-                "INSERT INTO purchase_orders (supplier_id, status, po_number) VALUES (%s, 'Draft', %s) RETURNING po_id",
-                (supplier_id, po_number)
+                "INSERT INTO purchase_orders (supplier_id, status, po_number, notes) VALUES (%s, %s, %s, %s) RETURNING po_id",
+                (supplier_id, status, po_number, notes)
             )
             po_id = cur.fetchone()[0]
 
@@ -978,6 +1100,7 @@ def update_purchase_order(po_id):
     data = request.json
     items = data.get('items', [])
     status = data.get('status')
+    notes = data.get('notes')
 
     try:
         with database.get_conn() as (conn, cur):
@@ -991,7 +1114,7 @@ def update_purchase_order(po_id):
                 )
                 total_amount += float(item['quantity']) * float(item['rate'])
             
-            cur.execute("UPDATE purchase_orders SET total_amount = %s, status = %s WHERE po_id = %s", (total_amount, status, po_id))
+            cur.execute("UPDATE purchase_orders SET total_amount = %s, status = %s, notes = %s WHERE po_id = %s", (total_amount, status, notes, po_id))
             
             conn.commit()
         return jsonify({'message': 'Purchase order updated'}), 200
@@ -1325,6 +1448,24 @@ def search_variants():
         app.logger.error(f"Error searching variants: {e}")
         return jsonify({'error': 'Failed to search variants'}), 500
 
+@app.route('/api/compare-rates/<int:variant_id>', methods=['GET'])
+@login_required
+def compare_rates(variant_id):
+    try:
+        with database.get_conn(cursor_factory=psycopg2.extras.DictCursor) as (conn, cur):
+            cur.execute("""
+                SELECT s.firm_name as supplier_name, sir.rate
+                FROM supplier_item_rates sir
+                JOIN suppliers s ON sir.supplier_id = s.supplier_id
+                WHERE sir.item_id = (SELECT item_id FROM item_variant WHERE variant_id = %s)
+                ORDER BY sir.rate ASC
+            """, (variant_id,))
+            rates = [dict(row) for row in cur.fetchall()]
+        return jsonify(rates)
+    except Exception as e:
+        app.logger.error(f"Error comparing rates for variant {variant_id}: {e}")
+        return jsonify({'error': 'Failed to compare rates'}), 500
+
 @app.route('/api/variant-rate', methods=['GET'])
 @login_required
 def get_variant_rate():
@@ -1496,6 +1637,25 @@ def get_item_variants(item_id):
     except Exception as e:
         app.logger.error(f"Error fetching item variants: {e}")
         return jsonify({'error': 'Failed to fetch variants'}), 500
+
+@app.route('/api/items/bulk-delete', methods=['POST'])
+@login_required
+@role_required('admin')
+def bulk_delete_items():
+    data = request.json
+    item_ids = data.get('item_ids', [])
+
+    if not item_ids:
+        return jsonify({'error': 'No item IDs provided'}), 400
+
+    try:
+        with database.get_conn() as (conn, cur):
+            cur.execute("DELETE FROM item_master WHERE item_id = ANY(%s)", (item_ids,))
+            conn.commit()
+        return jsonify({'message': f'{len(item_ids)} items deleted successfully.'}), 200
+    except Exception as e:
+        app.logger.error(f"Error bulk deleting items: {e}")
+        return jsonify({'error': 'Database error'}), 500
 
 @app.route('/api/items/<int:item_id>', methods=['DELETE'])
 @login_required
@@ -1846,6 +2006,64 @@ def import_commit():
         app.logger.error(f"Commit error: {e}", exc_info=True)
         return jsonify({'error': str(e)}), 500
 
+@app.route('/api/inventory/export/csv', methods=['GET'])
+@login_required
+def export_inventory_csv():
+    try:
+        with database.get_conn(cursor_factory=psycopg2.extras.DictCursor) as (conn, cur):
+            cur.execute("""
+                SELECT
+                    i.name as item_name,
+                    mm.model_name,
+                    vm.variation_name,
+                    cm.color_name,
+                    sm.size_name,
+                    iv.opening_stock,
+                    iv.threshold,
+                    iv.unit
+                FROM item_variant iv
+                JOIN item_master i ON iv.item_id = i.item_id
+                LEFT JOIN model_master mm ON i.model_id = mm.model_id
+                LEFT JOIN variation_master vm ON i.variation_id = vm.variation_id
+                JOIN color_master cm ON iv.color_id = cm.color_id
+                JOIN size_master sm ON iv.size_id = sm.size_id
+                ORDER BY item_name, model_name, variation_name, color_name, size_name
+            """)
+            inventory_data = cur.fetchall()
+
+            def generate():
+                data = StringIO()
+                writer = csv.writer(data)
+                
+                # Write the header
+                writer.writerow(['Item Name', 'Model', 'Variation', 'Color', 'Size', 'Stock', 'Threshold', 'Unit'])
+                yield data.getvalue()
+                data.seek(0)
+                data.truncate(0)
+
+                # Write the data rows
+                for row in inventory_data:
+                    writer.writerow([
+                        row['item_name'],
+                        row['model_name'],
+                        row['variation_name'],
+                        row['color_name'],
+                        row['size_name'],
+                        row['opening_stock'],
+                        row['threshold'],
+                        row['unit']
+                    ])
+                    yield data.getvalue()
+                    data.seek(0)
+                    data.truncate(0)
+
+            response = Response(generate(), mimetype='text/csv')
+            response.headers.set("Content-Disposition", "attachment", filename="inventory.csv")
+            return response
+
+    except Exception as e:
+        app.logger.error(f"Error exporting inventory to CSV: {e}")
+        return jsonify({'error': 'Failed to export inventory'}), 500
         
 if __name__ == '__main__':
     with app.app_context():

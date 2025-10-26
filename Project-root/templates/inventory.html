@@ -83,6 +83,11 @@
                     </svg>
                     Add New Item
                 </button>
+                <div id="bulk-actions-container" style="display: none;">
+                    <button id="bulk-delete-btn" class="button danger">Delete Selected</button>
+                </div>
+                <button id="export-csv-btn" class="button">Export CSV</button>
+                <button id="export-pdf-btn" class="button" disabled>Export PDF</button>
             </div>
         </div>
         
@@ -92,6 +97,7 @@
                 <table class="inventory-table compact">
                     <thead>
                         <tr>
+                            <th class="checkbox-col"><input type="checkbox" id="select-all-items"></th>
                             <th class="expand-col" title="Expand/Collapse Details"></th>
                             <th class="id-col">Photo</th>
                             <th class="name-col">Item Name</th>
@@ -138,6 +144,10 @@
                     <div class="form-field">
                         <label for="receive-supplier-select">Supplier</label>
                         <select id="receive-supplier-select" style="width: 100%;" required></select>
+                    </div>
+                    <div class="form-field">
+                        <label for="receive-bill-number">Bill Number</label>
+                        <input type="text" id="receive-bill-number" placeholder="Enter bill number">
                     </div>
                 </div>
                 <hr>
@@ -289,14 +299,16 @@
         <div class="modal-body">
             <form id="po-form">
                 <input type="hidden" id="po-id">
-                <div class="form-field">
-                    <label for="supplier-select">Supplier</label>
-                    <select id="supplier-select" style="width: 100%;" required></select>
+                <div id="po-supplier-container">
+                    <!-- Supplier dropdown will be rendered here by JS -->
                 </div>
                 <hr>
                 <h4>Items</h4>
                 <div id="po-items-container">
                     <!-- PO item rows will be dynamically added here -->
+                </div>
+                <div id="po-notes-status-container">
+                    <!-- Notes and status fields will be rendered here by JS -->
                 </div>
                 <button type="button" id="add-po-item-btn" class="button">Add Item from List</button>
             </form>
