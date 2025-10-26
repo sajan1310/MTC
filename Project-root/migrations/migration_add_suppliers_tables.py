@@ -1,23 +1,20 @@
+import sys
 import os
-import psycopg2
 from dotenv import load_dotenv
 
-# Load environment variables from .env file
+# Add project root to the Python path
+sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), '..')))
+
+from database import get_conn
+
 load_dotenv()
 
-def up():
-    """Create the new tables for suppliers, purchase orders, and stock entries."""
-    conn = None
-    try:
-        conn = psycopg2.connect(
-            host=os.environ.get('DB_HOST'),
-            database=os.environ.get('DB_NAME'),
-            user=os.environ.get('DB_USER'),
-            password=os.environ.get('DB_PASS')
-        )
-        cur = conn.cursor()
-        
-        # 1. Suppliers Table
+def upgrade():
+    """
+    Creates tables for suppliers, purchase orders, and stock entries.
+    """
+    with get_conn() as (conn, cur):
+        # Suppliers and related tables
         cur.execute("""
             CREATE TABLE IF NOT EXISTS suppliers (
                 supplier_id SERIAL PRIMARY KEY,
@@ -26,8 +23,6 @@ def up():
                 gstin VARCHAR(15)
             );
         """)
-        
-        # 2. Supplier Contacts Table
         cur.execute("""
             CREATE TABLE IF NOT EXISTS supplier_contacts (
                 contact_id SERIAL PRIMARY KEY,
@@ -37,8 +32,6 @@ def up():
                 contact_email VARCHAR(255)
             );
         """)
-        
-        # 3. Supplier Item Rates Table
         cur.execute("""
             CREATE TABLE IF NOT EXISTS supplier_item_rates (
                 rate_id SERIAL PRIMARY KEY,
@@ -49,19 +42,17 @@ def up():
             );
         """)
         
-        # 4. Purchase Orders Table
+        # Purchase orders and related tables
         cur.execute("""
             CREATE TABLE IF NOT EXISTS purchase_orders (
                 po_id SERIAL PRIMARY KEY,
                 po_number VARCHAR(50) UNIQUE,
                 supplier_id INTEGER NOT NULL REFERENCES suppliers(supplier_id) ON DELETE RESTRICT,
                 order_date DATE NOT NULL DEFAULT CURRENT_DATE,
-                status VARCHAR(20) NOT NULL DEFAULT 'Draft', -- e.g., Draft, Ordered, Partially Received, Completed
+                status VARCHAR(20) NOT NULL DEFAULT 'Draft',
                 total_amount NUMERIC(12, 2)
             );
         """)
-        
-        # 5. Purchase Order Items Table
         cur.execute("""
             CREATE TABLE IF NOT EXISTS purchase_order_items (
                 po_item_id SERIAL PRIMARY KEY,
@@ -72,7 +63,7 @@ def up():
             );
         """)
         
-        # 6. Stock Entries Table
+        # Stock entries
         cur.execute("""
             CREATE TABLE IF NOT EXISTS stock_entries (
                 entry_id SERIAL PRIMARY KEY,
@@ -87,29 +78,13 @@ def up():
         """)
         
         conn.commit()
-        print("Migration 'up' executed successfully: All tables created.")
-        
-    except Exception as e:
-        if conn:
-            conn.rollback()
-        print(f"Error during 'up' migration: {e}")
-    finally:
-        if conn:
-            conn.close()
+        print("Upgrade complete: Suppliers and PO tables created.")
 
-def down():
-    """Drop the tables created in the 'up' migration."""
-    conn = None
-    try:
-        conn = psycopg2.connect(
-            host=os.environ.get('DB_HOST'),
-            database=os.environ.get('DB_NAME'),
-            user=os.environ.get('DB_USER'),
-            password=os.environ.get('DB_PASS')
-        )
-        cur = conn.cursor()
-        
-        # Drop tables in reverse order of creation due to dependencies
+def downgrade():
+    """
+    Drops all tables created in the upgrade.
+    """
+    with get_conn() as (conn, cur):
         cur.execute("DROP TABLE IF EXISTS stock_entries;")
         cur.execute("DROP TABLE IF EXISTS purchase_order_items;")
         cur.execute("DROP TABLE IF EXISTS purchase_orders;")
@@ -118,19 +93,4 @@ def down():
         cur.execute("DROP TABLE IF EXISTS suppliers;")
         
         conn.commit()
-        print("Migration 'down' executed successfully: All tables dropped.")
-        
-    except Exception as e:
-        if conn:
-            conn.rollback()
-        print(f"Error during 'down' migration: {e}")
-    finally:
-        if conn:
-            conn.close()
-
-if __name__ == "__main__":
-    import sys
-    if len(sys.argv) > 1 and sys.argv[1] == 'down':
-        down()
-    else:
-        up()
+        print("Downgrade complete: Suppliers and PO tables dropped.")

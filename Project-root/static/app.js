@@ -99,6 +99,7 @@ const App = {
         this.fetchInitialData();
         this.setActiveNavItem();
         this.setupSearchFunctionality();
+        this.handleUrlActions();
       }, 100); // A small delay can make a big difference
     };
 
@@ -168,6 +169,21 @@ const App = {
     this.variantSearchResults = document.getElementById('variant-search-results');
     this.addSelectedVariantsBtn = document.getElementById('add-selected-variants-btn');
     this.selectAllVariantsCheckbox = document.getElementById('select-all-variants');
+  },
+
+  handleUrlActions() {
+    const urlParams = new URLSearchParams(window.location.search);
+    const action = urlParams.get('action');
+
+    if (action === 'generate-po') {
+        if (document.getElementById('po-modal')) {
+            this.openPurchaseOrderModal();
+        }
+    } else if (action === 'receive-stock') {
+        if (document.getElementById('receive-stock-modal')) {
+            this.openReceiveStockModal();
+        }
+    }
   },
 
   bindEventListeners() {
@@ -304,9 +320,9 @@ const App = {
     }
 
     // The "Add Item" button is being replaced by a searchable dropdown
-    // if (this.addPoItemBtn) {
-    //   this.addPoItemBtn.addEventListener('click', () => this.openVariantSearchModal());
-    // }
+    if (this.addPoItemBtn) {
+      this.addPoItemBtn.addEventListener('click', () => this.openVariantSearchModal());
+    }
 
     if (this.poTableBody) {
       this.poTableBody.addEventListener('click', (e) => this.handlePurchaseOrderActions(e));
@@ -358,6 +374,11 @@ const App = {
 
     if (this.receiveStockForm) {
       this.receiveStockForm.addEventListener('submit', (e) => this.handleReceiveStockFormSubmit(e));
+    }
+
+    const addReceiveItemBtn = document.getElementById('add-receive-item-btn');
+    if (addReceiveItemBtn) {
+        addReceiveItemBtn.addEventListener('click', () => this.addReceiveItemRow());
     }
 
     document.body.addEventListener('click', (e) => {
@@ -2682,20 +2703,6 @@ updatePurchaseOrderTotal() {
   },
 
   // Dashboard Functions
-  openModal(modalId) {
-    const modal = document.getElementById(modalId);
-    if (modal) {
-      modal.classList.add('is-open');
-    }
-  },
-
-  closeModal(modalId) {
-    const modal = document.getElementById(modalId);
-    if (modal) {
-      modal.classList.remove('is-open');
-    }
-  },
-
   showToast(message, type = 'success') {
     this.showNotification(message, type);
   }

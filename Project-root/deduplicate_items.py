@@ -1,35 +1,27 @@
 import os
-import psycopg2
-from psycopg2 import pool
+import sys
 from dotenv import load_dotenv
 
-# Load environment variables from a .env file
+# Add project root to the Python path
+sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), '..')))
+
+from database import get_conn, init_app
+
 load_dotenv()
 
-try:
-    db_pool = pool.SimpleConnectionPool(
-        1, 10,
-        host=os.environ.get('DB_HOST', '127.0.0.1'),
-        database=os.environ.get('DB_NAME', 'MTC'),
-        user=os.environ.get('DB_USER', 'postgres'),
-        password=os.environ.get('DB_PASS')
-    )
-    print("Database connection pool created successfully.")
-except psycopg2.OperationalError as e:
-    print(f"FATAL: Could not connect to the database: {e}")
-    db_pool = None
+# Mock Flask app for context
+class MockApp:
+    def __init__(self):
+        self.logger = lambda: None
+        self.logger.info = print
+        self.logger.critical = print
 
 def deduplicate():
-    if not db_pool:
-        print("Cannot proceed, database pool is not available.")
-        return
-
-    conn = None
-    try:
-        conn = db_pool.getconn()
-        cur = conn.cursor()
-        print("Connection retrieved from pool.")
-
+    """
+    Finds and removes duplicate items from the item_master table.
+    """
+    init_app(MockApp())
+    with get_conn() as (conn, cur):
         # Find duplicate items
         print("Finding duplicate items...")
         cur.execute("""
@@ -78,15 +70,6 @@ def deduplicate():
 
         conn.commit()
         print("\nDeduplication completed successfully!")
-
-    except Exception as e:
-        print(f"\nAn error occurred during deduplication: {e}")
-        if conn:
-            conn.rollback()
-    finally:
-        if conn:
-            db_pool.putconn(conn)
-            print("Connection returned to pool.")
 
 if __name__ == '__main__':
     deduplicate()
