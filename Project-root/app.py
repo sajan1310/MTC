@@ -1249,20 +1249,16 @@ def get_variations_for_item_model():
 @app.route('/api/items', methods=['GET'])
 @login_required
 def get_items():
+    page = request.args.get('page', 1, type=int)
+    per_page = request.args.get('per_page', 50, type=int)
+    search_term = request.args.get('search', '')
     show_low_stock_only = request.args.get('low_stock', 'false').lower() == 'true'
+    
+    offset = (page - 1) * per_page
     
     try:
         with database.get_conn(cursor_factory=psycopg2.extras.DictCursor) as (conn, cur):
-            # This single, optimized query replaces the old one with multiple subqueries.
-            # It joins the item_master with an aggregated summary of its variants.
-            query = """
-                SELECT
-                    i.item_id, i.name, mm.model_name as model, vm.variation_name as variation,
-                    i.description, i.image_path,
-                    COALESCE(variant_summary.variant_count, 0) as variant_count,
-                    COALESCE(variant_summary.total_stock, 0) as total_stock,
-                    COALESCE(variant_summary.total_threshold, 0) as total_threshold,
-                    COALESCE(variant_summary.has_low_stock_variants, FALSE) as has_low_stock_variants
+            base_query = """
                 FROM item_master i
                 LEFT JOIN model_master mm ON i.model_id = mm.model_id
                 LEFT JOIN variation_master vm ON i.variation_id = vm.variation_id
@@ -1278,17 +1274,45 @@ def get_items():
                 ) as variant_summary ON i.item_id = variant_summary.item_id
             """
             
+            conditions = []
+            params = []
+            
             if show_low_stock_only:
-                # The WHERE clause is now simpler and more efficient.
-                query += " WHERE COALESCE(variant_summary.has_low_stock_variants, FALSE) = TRUE"
+                conditions.append("COALESCE(variant_summary.has_low_stock_variants, FALSE) = TRUE")
+
+            if search_term:
+                conditions.append("(i.name ILIKE %s OR mm.model_name ILIKE %s OR vm.variation_name ILIKE %s)")
+                search_pattern = f"%{search_term}%"
+                params.extend([search_pattern, search_pattern, search_pattern])
+
+            where_clause = ""
+            if conditions:
+                where_clause = "WHERE " + " AND ".join(conditions)
+
+            # Query for total count
+            count_query = f"SELECT COUNT(i.item_id) {base_query} {where_clause}"
+            cur.execute(count_query, tuple(params))
+            total_items = cur.fetchone()[0]
+
+            # Query for paginated items
+            items_query = f"""
+                SELECT
+                    i.item_id, i.name, mm.model_name as model, vm.variation_name as variation,
+                    i.description, i.image_path,
+                    COALESCE(variant_summary.variant_count, 0) as variant_count,
+                    COALESCE(variant_summary.total_stock, 0) as total_stock,
+                    COALESCE(variant_summary.total_threshold, 0) as total_threshold,
+                    COALESCE(variant_summary.has_low_stock_variants, FALSE) as has_low_stock_variants
+                {base_query}
+                {where_clause}
+                ORDER BY i.name
+                LIMIT %s OFFSET %s
+            """
             
-            query += " ORDER BY i.name"
-            
-            cur.execute(query)
+            cur.execute(items_query, tuple(params + [per_page, offset]))
             items = cur.fetchall()
             
-            # The JSON structure remains identical to ensure the frontend works without changes.
-            return jsonify([{
+            items_data = [{
                 'id': item['item_id'], 'name': item['name'], 'model': item['model'],
                 'variation': item['variation'], 'description': item['description'],
                 'image_path': item['image_path'],
@@ -1296,7 +1320,15 @@ def get_items():
                 'variant_count': item['variant_count'],
                 'total_stock': int(item['total_stock'] or 0),
                 'has_low_stock_variants': item['has_low_stock_variants']
-            } for item in items])
+            } for item in items]
+
+            return jsonify({
+                'items': items_data,
+                'total_items': total_items,
+                'page': page,
+                'per_page': per_page,
+                'total_pages': (total_items + per_page - 1) // per_page
+            })
     except Exception as e:
         app.logger.error(f"Error fetching items: {e}")
         return jsonify({'error': 'Failed to fetch items'}), 500

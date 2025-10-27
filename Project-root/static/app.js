@@ -81,6 +81,11 @@ const App = {
   allItems: [],
   allVariantsForSearch: [],
   elementThatOpenedModal: null,
+  currentPage: 1,
+  totalPages: 1,
+  totalItems: 0,
+  isLoading: false,
+  selectedItems: new Set(),
 
   // DOM Elements Cache
   sidebarToggleBtn: null,
@@ -196,6 +201,8 @@ const App = {
   },
 
   bindEventListeners() {
+    window.addEventListener('scroll', () => this.handleScroll());
+
     if (this.sidebarToggleBtn) {
       this.sidebarToggleBtn.addEventListener('click', () => {
         requestAnimationFrame(() => {
@@ -639,16 +646,9 @@ async fetchJson(url, options = {}) {
   },
 
   handleSearch(searchTerm) {
-    if (!this.allItems) return;
-    const filteredItems = searchTerm.trim() === '' ? this.allItems : 
-      this.allItems.filter(item => 
-        [item.name, item.model, item.variation].join(' ').toLowerCase().includes(searchTerm.toLowerCase())
-      );
-    this.renderItemsList(filteredItems);
-    const resultCount = document.getElementById('search-result-count');
-    if (resultCount) {
-      resultCount.textContent = searchTerm.trim() === '' ? `Showing all ${this.allItems.length} items` : `Showing ${filteredItems.length} of ${this.allItems.length} items`;
-    }
+    this.currentPage = 1;
+    this.inventoryTableBody.innerHTML = ''; // Clear existing items
+    this.fetchItems();
   },
 
   async fetchUsers() {
@@ -698,35 +698,63 @@ async fetchJson(url, options = {}) {
 
   async fetchItems() {
     const lowStockOnly = this.lowStockFilter ? this.lowStockFilter.checked : false;
+    const searchTerm = this.searchInput ? this.searchInput.value : '';
     const url = new URL(`${this.apiBase}/items`);
+    url.searchParams.append('page', this.currentPage);
+    url.searchParams.append('per_page', 50);
     if (lowStockOnly) {
       url.searchParams.append('low_stock', 'true');
     }
+    if (searchTerm) {
+      url.searchParams.append('search', searchTerm);
+    }
 
-    const items = await this.fetchJson(url.toString());
-    if (items) {
-      this.allItems = items;
-      this.renderItemsList(items);
+    this.isLoading = true;
+    const data = await this.fetchJson(url.toString());
+    if (data && data.items) {
+      this.allItems = this.currentPage === 1 ? data.items : [...this.allItems, ...data.items];
+      this.totalPages = data.total_pages;
+      this.totalItems = data.total_items;
+      this.renderItemsList(data.items, this.currentPage > 1);
       const resultCount = document.getElementById('search-result-count');
       if (resultCount) {
-        resultCount.textContent = `Showing all ${items.length} items`;
+        resultCount.textContent = `Showing ${this.allItems.length} of ${this.totalItems} items`;
       }
+    }
+    this.isLoading = false;
+  },
+
+  handleScroll() {
+    if (this.isLoading || this.currentPage >= this.totalPages) return;
+
+    const { scrollTop, scrollHeight, clientHeight } = document.documentElement;
+    if (scrollTop + clientHeight >= scrollHeight - 5) {
+      this.currentPage++;
+      this.fetchItems();
     }
   },
 
-  renderItemsList(items) {
+  renderItemsList(items, append = false) {
     if (!this.inventoryTableBody) return;
-    if (items.length === 0) {
-      const message = this.allItems.length > 0 ? 'No items match your search.' : 'No items found. Click "Add New Item" to get started!';
+
+    const loadingRow = this.inventoryTableBody.querySelector('.loading-row');
+    if (loadingRow) {
+        loadingRow.remove();
+    }
+
+    if (!append && items.length === 0) {
+      const message = this.totalItems > 0 ? 'No items match your search.' : 'No items found. Click "Add New Item" to get started!';
       this.inventoryTableBody.innerHTML = `<tr><td colspan="10" style="text-align: center; padding: 2rem;">${message}</td></tr>`;
       return;
     }
-    this.inventoryTableBody.innerHTML = items.map(item => {
+
+    const itemsHtml = items.map(item => {
+      const isChecked = this.selectedItems.has(item.id.toString());
       const statusClass = item.has_low_stock_variants ? 'low-stock' : 'in-stock';
       const statusText = item.has_low_stock_variants ? 'Low Stock' : 'In Stock';
       return `
         <tr class="item-row" data-item-id="${item.id}" data-item-name="${this.escapeHtml(item.name)}" data-item-description="${this.escapeHtml(item.description || '')}">
-          <td><input type="checkbox" class="item-checkbox" data-item-id="${item.id}"></td>
+          <td><input type="checkbox" class="item-checkbox" data-item-id="${item.id}" ${isChecked ? 'checked' : ''}></td>
           <td data-label=""><button class="expand-btn" title="View Variants" aria-expanded="false"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="9,18 15,12 9,6"></polyline></svg></button></td>
           <td data-label="Image"><img src="/static/${item.image_path || 'uploads/placeholder.png'}" alt="${this.escapeHtml(item.name)}" class="item-image-thumbnail"></td>
           <td data-label="Item Name" class="item-name-cell">
@@ -745,12 +773,26 @@ async fetchJson(url, options = {}) {
         <tr class="variant-details-row" style="display: none;"><td colspan="10" class="variant-details-container"></td></tr>
       `;
     }).join('');
+
+    if (append) {
+        this.inventoryTableBody.insertAdjacentHTML('beforeend', itemsHtml);
+    } else {
+        this.inventoryTableBody.innerHTML = itemsHtml;
+    }
   },
 
   updateBulkActionsVisibility() {
     const bulkActionsContainer = document.getElementById('bulk-actions-container');
-    const selectedCheckboxes = this.inventoryTableBody.querySelectorAll('.item-checkbox:checked');
-    if (selectedCheckboxes.length > 0) {
+    
+    this.inventoryTableBody.querySelectorAll('.item-checkbox').forEach(checkbox => {
+        if (checkbox.checked) {
+            this.selectedItems.add(checkbox.dataset.itemId);
+        } else {
+            this.selectedItems.delete(checkbox.dataset.itemId);
+        }
+    });
+
+    if (this.selectedItems.size > 0) {
         bulkActionsContainer.style.display = 'block';
     } else {
         bulkActionsContainer.style.display = 'none';
@@ -758,8 +800,7 @@ async fetchJson(url, options = {}) {
   },
 
   async handleBulkDelete() {
-    const selectedCheckboxes = this.inventoryTableBody.querySelectorAll('.item-checkbox:checked');
-    const itemIds = Array.from(selectedCheckboxes).map(cb => cb.dataset.itemId);
+    const itemIds = Array.from(this.selectedItems);
 
     if (itemIds.length === 0) {
         this.showNotification('No items selected for deletion.', 'info');
@@ -774,6 +815,9 @@ async fetchJson(url, options = {}) {
 
         if (result) {
             this.showNotification(`${itemIds.length} items deleted successfully.`, 'success');
+            this.selectedItems.clear();
+            this.currentPage = 1;
+            this.inventoryTableBody.innerHTML = '';
             this.fetchItems();
             document.getElementById('select-all-items').checked = false;
             this.updateBulkActionsVisibility();
