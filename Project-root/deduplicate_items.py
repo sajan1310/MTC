@@ -58,15 +58,28 @@ def deduplicate():
             print(f"  Keeping item_id: {id_to_keep}")
             print(f"  Deleting item_ids: {ids_to_delete}")
 
+            # Re-associate related records before deleting
             for item_id in ids_to_delete:
-                # Before deleting, you might need to re-associate or delete related records
-                # in other tables (e.g., item_variant, purchase_order_items).
-                # For this script, we'll assume we can cascade delete or that it's safe to delete.
-                # A more robust solution would handle these related records gracefully.
+                print(f"  Re-associating records from {item_id} to {id_to_keep}...")
                 
-                cur.execute("DELETE FROM item_variant WHERE item_id = %s;", (item_id,))
+                # Update item_variant table
+                try:
+                    cur.execute("""
+                        UPDATE item_variant
+                        SET item_id = %s
+                        WHERE item_id = %s;
+                    """, (id_to_keep, item_id))
+                    print(f"    Re-associated variants from item_id {item_id}.")
+                except Exception as e:
+                    print(f"    Could not re-associate variants for item_id {item_id}: {e}")
+                    # If there's a unique constraint violation, you might need to handle it
+                    # by deleting the duplicate variant or merging its data.
+                    # For now, we'll skip the deletion of the master item if this fails.
+                    continue
+
+                # Now it's safe to delete the duplicate item_master record
                 cur.execute("DELETE FROM item_master WHERE item_id = %s;", (item_id,))
-                print(f"    Deleted item_id {item_id} and its variants.")
+                print(f"    Deleted duplicate item_master record for item_id {item_id}.")
 
         conn.commit()
         print("\nDeduplication completed successfully!")
