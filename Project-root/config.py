@@ -10,7 +10,11 @@ class Config:
     # Security
     SECRET_KEY = os.environ.get('FLASK_SECRET_KEY')
     if not SECRET_KEY:
-        raise ValueError("FLASK_SECRET_KEY must be set in environment")
+        raise ValueError(
+            "FLASK_SECRET_KEY must be set in the environment. "
+            "It is used for session signing and security. "
+            "You can generate a key with: python -c 'import secrets; print(secrets.token_hex(16))'"
+        )
     
     # Database
     DB_HOST = os.environ.get('DB_HOST', '127.0.0.1')

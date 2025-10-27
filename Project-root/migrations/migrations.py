@@ -41,6 +41,8 @@ def get_applied_migrations():
     rows = run_sql("SELECT version FROM schema_migrations;", fetch='all')
     return {row[0] for row in rows}
 
+import importlib.util
+
 def run_migrations():
     """Discover and apply all pending Python-based migrations."""
     init_app(MockApp())
@@ -55,7 +57,10 @@ def run_migrations():
         if version not in applied_migrations:
             print(f"Applying migration: {version}...")
             try:
-                migration_module = __import__(f"migrations.{version}", fromlist=['upgrade'])
+                spec = importlib.util.spec_from_file_location(version, os.path.join(migrations_dir, filename))
+                migration_module = importlib.util.module_from_spec(spec)
+                spec.loader.exec_module(migration_module)
+                
                 migration_module.upgrade()
                 
                 # Record migration

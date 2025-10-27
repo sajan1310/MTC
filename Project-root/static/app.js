@@ -104,17 +104,15 @@ const App = {
 
   async init() {
     const onReady = async () => {
-      // Non-essential setup can be delayed to improve INP
-      setTimeout(() => {
-        this.cacheDOMElements();
-        this.bindEventListeners();
-        this.initImportModal();
-        this.initializeTheme();
-        this.fetchInitialData();
-        this.setActiveNavItem();
-        this.setupSearchFunctionality();
-        this.handleUrlActions();
-      }, 100); // A small delay can make a big difference
+      this.cacheDOMElements();
+      this.bindEventListeners();
+      this.initImportModal();
+      this.initializeTheme();
+      this.fetchInitialData();
+      this.setActiveNavItem();
+      this.setupSearchFunctionality();
+      this.handleUrlActions();
+      this.initializeAddItemForm();
     };
 
     if (document.readyState === 'loading') {
@@ -521,6 +519,40 @@ const App = {
     });
   },
 
+  async initializeAddItemForm() {
+    if (document.getElementById('item-form')) {
+        // This is the add/edit item page
+        await Promise.all([
+            this.fetchMasterData('colors'),
+            this.fetchMasterData('sizes'),
+            this.fetchItemNames()
+        ]);
+        this.populateDatalists();
+
+        $('#item-model').select2({ tags: true, width: '100%' });
+        $('#item-variation').select2({ tags: true, width: '100%' });
+
+        $('#item-name').on('change', async (e) => {
+            const selectedItem = e.target.value;
+            const itemData = await this.fetchJson(`${this.apiBase}/items/by-name?name=${encodeURIComponent(selectedItem)}`);
+            if (itemData) {
+                await this.fetchModels(selectedItem, itemData.model);
+                await this.fetchVariations(selectedItem, itemData.model, itemData.variation);
+                document.getElementById('item-description').value = itemData.description || '';
+            } else {
+                this.fetchModels(selectedItem);
+                this.populateSelect(document.getElementById('item-variation'), []);
+            }
+        });
+
+        $('#item-model').on('change', async (e) => {
+            const selectedModel = e.target.value;
+            const itemName = document.getElementById('item-name').value;
+            this.fetchVariations(itemName, selectedModel);
+        });
+    }
+  },
+
   initializeTheme() {
     const savedTheme = localStorage.getItem('theme');
     if (savedTheme === 'dark') {
@@ -573,7 +605,28 @@ const App = {
     }
   },
 
-async fetchJson(url, options = {}) {
+  showNotification(message, type = 'success') {
+    const container = document.querySelector('.container') || document.body;
+    const notification = document.createElement('div');
+    notification.className = `flash ${type}`;
+    notification.textContent = message;
+    const closeBtn = document.createElement('button');
+    closeBtn.innerHTML = '×';
+    closeBtn.style.cssText = 'background:none;border:none;color:inherit;font-size:1.2em;cursor:pointer;margin-left:auto;padding:0 0.5rem;';
+    closeBtn.addEventListener('click', () => notification.remove());
+    notification.style.display = 'flex';
+    notification.style.alignItems = 'center';
+    notification.appendChild(closeBtn);
+    container.prepend(notification);
+    setTimeout(() => {
+      if (notification.parentNode) {
+        notification.style.opacity = '0';
+        setTimeout(() => notification.remove(), 500);
+      }
+    }, 2500);
+  },
+
+  async fetchJson(url, options = {}) {
     const csrfToken = document.querySelector('meta[name="csrf-token"]')?.getAttribute('content');
     const defaultHeaders = {
         'Accept': 'application/json',
