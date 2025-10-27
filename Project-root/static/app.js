@@ -3,7 +3,15 @@
 // Global client-side error capture
 window.addEventListener('unhandledrejection', function (ev) {
   // This is a common error caused by browser extensions and can be safely ignored.
-  const message = ev?.reason?.message || '';
+  let message = '';
+  if (ev.reason) {
+    if (typeof ev.reason === 'string') {
+      message = ev.reason;
+    } else if (ev.reason.message) {
+      message = ev.reason.message;
+    }
+  }
+
   if (message.includes('message channel closed') || message.includes('A listener indicated an asynchronous response')) {
     ev.preventDefault();
     return;
@@ -29,7 +37,8 @@ window.addEventListener('unhandledrejection', function (ev) {
 
 window.addEventListener('error', function (ev) {
   try {
-    if (ev.message && ev.message.includes('message channel closed')) {
+    const message = ev.message || '';
+    if (message.includes('message channel closed') || message.includes('A listener indicated an asynchronous response')) {
       ev.preventDefault();
       return;
     }
@@ -189,8 +198,10 @@ const App = {
   bindEventListeners() {
     if (this.sidebarToggleBtn) {
       this.sidebarToggleBtn.addEventListener('click', () => {
-        document.body.classList.toggle('sidebar-collapsed');
-        localStorage.setItem('sidebarCollapsed', document.body.classList.contains('sidebar-collapsed'));
+        requestAnimationFrame(() => {
+          document.body.classList.toggle('sidebar-collapsed');
+          localStorage.setItem('sidebarCollapsed', document.body.classList.contains('sidebar-collapsed'));
+        });
       });
     }
 
@@ -780,7 +791,7 @@ async fetchJson(url, options = {}) {
     if (button.classList.contains('expand-btn')) {
       await this.toggleVariantDetails(row, button, itemId);
     } else if (button.classList.contains('edit-item')) {
-      this.toggleEditForm(row, itemId);
+      await this.toggleEditForm(row, itemId);
     } else if (button.classList.contains('delete-item')) {
       this.deleteItem(itemId, itemName);
     }
@@ -793,23 +804,30 @@ async fetchJson(url, options = {}) {
       detailsRow.style.display = 'none';
       expandBtn.classList.remove('expanded');
       expandBtn.setAttribute('aria-expanded', 'false');
-    } else {
-      const container = detailsRow.querySelector('.variant-details-container');
-      container.innerHTML = `<div style="padding: auto; text-align: center;">Loading...</div>`;
-      detailsRow.style.display = 'table-row';
-      expandBtn.classList.add('expanded');
-      expandBtn.setAttribute('aria-expanded', 'true');
-      const variants = await this.fetchJson(`${this.apiBase}/items/${itemId}/variants`);
-      container.innerHTML = '';
-      if (itemRow.dataset.itemDescription) {
-        container.innerHTML += `<div class="item-description-detail"><strong>Description:</strong> ${this.escapeHtml(itemRow.dataset.itemDescription)}</div>`;
-      }
-      if (variants && variants.length > 0) {
-        this.renderVariantMatrix(container, variants);
-      } else {
-        container.innerHTML += `<p style="padding: 1rem; text-align: center;">No variants found.</p>`;
-      }
+      return;
     }
+
+    const container = detailsRow.querySelector('.variant-details-container');
+    container.innerHTML = `<div style="padding: auto; text-align: center;">Loading...</div>`;
+    detailsRow.style.display = 'table-row';
+    expandBtn.classList.add('expanded');
+    expandBtn.setAttribute('aria-expanded', 'true');
+
+    await new Promise(resolve => setTimeout(resolve, 0));
+
+    const variants = await this.fetchJson(`${this.apiBase}/items/${itemId}/variants`);
+    
+    requestAnimationFrame(() => {
+        container.innerHTML = '';
+        if (itemRow.dataset.itemDescription) {
+            container.innerHTML += `<div class="item-description-detail"><strong>Description:</strong> ${this.escapeHtml(itemRow.dataset.itemDescription)}</div>`;
+        }
+        if (variants && variants.length > 0) {
+            this.renderVariantMatrix(container, variants);
+        } else {
+            container.innerHTML += `<p style="padding: 1rem; text-align: center;">No variants found.</p>`;
+        }
+    });
   },
 
   // Call this in your constructor or init() after the DOM is ready.
@@ -1300,84 +1318,81 @@ closeImportModal() {
         return;
     }
 
-    const item = await this.fetchJson(`${this.apiBase}/items/${itemId}`);
-    const variants = await this.fetchJson(`${this.apiBase}/items/${itemId}/variants`);
-    if (!item || !variants) {
-        this.showNotification('Failed to fetch item details.', 'error');
-        return;
-    }
-
-    const editFormHTML = this.createEditFormHTML(item, variants);
-    itemRow.insertAdjacentHTML('afterend', editFormHTML);
+    const placeholderHTML = `<tr class="edit-form-row"><td colspan="10"><div style="padding: 2rem; text-align: center;">Loading editor...</div></td></tr>`;
+    itemRow.insertAdjacentHTML('afterend', placeholderHTML);
+    const loadingRow = itemRow.nextElementSibling;
     itemRow.style.display = 'none';
 
-    const editRow = itemRow.nextElementSibling;
-    const form = editRow.querySelector('.edit-item-form');
+    await new Promise(resolve => setTimeout(resolve, 0));
 
-    const modelSelect = editRow.querySelector(`#edit-item-model-${item.id}`);
-    const variationSelect = editRow.querySelector(`#edit-item-variation-${item.id}`);
+    try {
+        const [item, variantsData] = await Promise.all([
+            this.fetchJson(`${this.apiBase}/items/${itemId}`),
+            this.fetchJson(`${this.apiBase}/items/${itemId}/variants`)
+        ]);
 
-    // Fetch and populate models
-    const models = await this.fetchJson(`${this.apiBase}/models-by-item?item_name=${encodeURIComponent(item.name)}`);
-    if (models) {
-      this.models = models; // Store models
-      this.populateSelect(modelSelect, models, item.model);
-    }
-
-    // Fetch and populate variations
-    const variations = await this.fetchJson(`${this.apiBase}/variations-by-item-model?item_name=${encodeURIComponent(item.name)}&model=${encodeURIComponent(item.model)}`);
-    if (variations) {
-      this.variations = variations; // Store variations
-      this.populateSelect(variationSelect, variations, item.variation);
-    }
-
-    // Add event listener to update variations when model changes
-    $(modelSelect).on('change', async () => {
-        const newModel = $(modelSelect).val();
-        const newVariations = await this.fetchJson(`${this.apiBase}/variations-by-item-model?item_name=${encodeURIComponent(item.name)}&model=${encodeURIComponent(newModel)}`);
-        if (newVariations) {
-          this.variations = newVariations; // Update stored variations
-          this.populateSelect(variationSelect, newVariations);
+        if (!item || !variantsData) {
+            throw new Error('Failed to fetch item details.');
         }
-    });
 
-    // Initialize Select2 for the new dropdowns
-    $(modelSelect).select2({ tags: true, width: '100%' });
-    $(variationSelect).select2({ tags: true, width: '100%' });
+        const editFormHTML = this.createEditFormHTML(item, variantsData);
+        
+        requestAnimationFrame(async () => {
+            loadingRow.outerHTML = editFormHTML;
+            const editRow = itemRow.nextElementSibling;
+            const form = editRow.querySelector('.edit-item-form');
+            const modelSelect = editRow.querySelector(`#edit-item-model-${item.id}`);
+            const variationSelect = editRow.querySelector(`#edit-item-variation-${item.id}`);
 
-    form.addEventListener('submit', (e) => {
-        e.preventDefault();
-        this.handleUpdateItem(itemId, form, itemRow);
-    });
+            const [models, variations] = await Promise.all([
+                this.fetchJson(`${this.apiBase}/models-by-item?item_name=${encodeURIComponent(item.name)}`),
+                this.fetchJson(`${this.apiBase}/variations-by-item-model?item_name=${encodeURIComponent(item.name)}&model=${encodeURIComponent(item.model)}`)
+            ]);
 
-    const cancelButton = editRow.querySelector('.cancel-edit-btn');
-    cancelButton.addEventListener('click', () => {
-        editRow.remove();
+            if (models) {
+                this.models = models;
+                this.populateSelect(modelSelect, models, item.model);
+            }
+            if (variations) {
+                this.variations = variations;
+                this.populateSelect(variationSelect, variations, item.variation);
+            }
+
+            $(modelSelect).select2({ tags: true, width: '100%', dropdownParent: $(form) });
+            $(variationSelect).select2({ tags: true, width: '100%', dropdownParent: $(form) });
+
+            $(modelSelect).on('change', async () => {
+                const newModel = $(modelSelect).val();
+                const newVariations = await this.fetchJson(`${this.apiBase}/variations-by-item-model?item_name=${encodeURIComponent(item.name)}&model=${encodeURIComponent(newModel)}`);
+                if (newVariations) {
+                    this.variations = newVariations;
+                    this.populateSelect(variationSelect, newVariations);
+                }
+            });
+
+            form.addEventListener('submit', (e) => {
+                e.preventDefault();
+                this.handleUpdateItem(itemId, form, itemRow);
+            });
+            editRow.querySelector('.cancel-edit-btn').addEventListener('click', () => {
+                editRow.remove();
+                itemRow.style.display = '';
+            });
+            const variantsTable = editRow.querySelector('.variants-modal-table tbody');
+            variantsTable.addEventListener('click', (e) => {
+                if (e.target.closest('.remove-variant-btn')) e.target.closest('tr').remove();
+            });
+            editRow.querySelector('.add-variant-edit-btn').addEventListener('click', () => {
+                const newRow = variantsTable.insertRow();
+                newRow.className = 'variant-edit-row';
+                newRow.innerHTML = `<td><input type="text" class="variant-color" list="color-datalist" required></td><td><input type="text" class="variant-size" list="size-datalist" required></td><td><input type="number" class="stock-input" value="0" min="0" required></td><td><input type="text" class="variant-unit" value="Pcs" list="unit-datalist"></td><td><input type="number" class="threshold-input" value="5" min="0" required></td><td><button type="button" class="button cancel remove-variant-btn" title="Remove variant">&times;</button></td>`;
+            });
+        });
+    } catch (error) {
+        this.showNotification(error.message, 'error');
+        loadingRow.remove();
         itemRow.style.display = '';
-    });
-
-    const variantsTable = editRow.querySelector('.variants-modal-table tbody');
-    variantsTable.addEventListener('click', (e) => {
-        const deleteBtn = e.target.closest('.remove-variant-btn');
-        if (deleteBtn) {
-            const row = deleteBtn.closest('tr');
-            row.remove();
-        }
-    });
-
-    const addVariantBtn = editRow.querySelector('.add-variant-edit-btn');
-    addVariantBtn.addEventListener('click', () => {
-        const newRow = variantsTable.insertRow();
-        newRow.className = 'variant-edit-row';
-        newRow.innerHTML = `
-            <td><input type="text" class="variant-color" list="color-datalist" required></td>
-            <td><input type="text" class="variant-size" list="size-datalist" required></td>
-            <td><input type="number" class="stock-input" value="0" min="0" required></td>
-            <td><input type="text" class="variant-unit" value="Pcs" list="unit-datalist"></td>
-            <td><input type="number" class="threshold-input" value="5" min="0" required></td>
-            <td><button type="button" class="button cancel remove-variant-btn" title="Remove variant">&times;</button></td>
-        `;
-    });
+    }
   },
 
   createEditFormHTML(item, variants) {
