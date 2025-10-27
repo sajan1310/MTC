@@ -79,15 +79,16 @@ body {
     flex-direction: column;
     padding: 1rem;
     box-sizing: border-box;
-    transition: width var(--transition-speed), transform var(--transition-speed), background-color 0.3s ease;
+    transition: transform var(--transition-speed), background-color 0.3s ease;
 }
 .content-wrapper {
     flex: 1;
-    margin-left: var(--sidebar-width);
+    padding-left: var(--sidebar-width);
     display: flex;
     flex-direction: column;
-    transition: margin-left var(--transition-speed);
-    width: calc(100% - var(--sidebar-width));
+    transition: padding-left var(--transition-speed);
+    width: 100%;
+    box-sizing: border-box;
 }
 .main-header {
     background: var(--header-bg);
@@ -132,10 +133,20 @@ body.dark-mode .sidebar-nav .nav-item:hover { background-color: rgba(255, 255, 2
 body.dark-mode .sidebar-toggle-btn:hover { background-color: rgba(255, 255, 255, 0.1); }
 
 /* --- Collapsed & Responsive Sidebar --- */
-body.sidebar-collapsed .sidebar { width: var(--sidebar-width-collapsed); }
-body.sidebar-collapsed .content-wrapper { margin-left: var(--sidebar-width-collapsed); width: calc(100% - var(--sidebar-width-collapsed)); }
-body.sidebar-collapsed .sidebar .logo, body.sidebar-collapsed .sidebar .nav-item span { opacity: 0; visibility: hidden; width: 0; }
-body.sidebar-collapsed .sidebar .nav-item { justify-content: center; }
+body.sidebar-collapsed .sidebar {
+    transform: translateX(calc(-1 * var(--sidebar-width) + var(--sidebar-width-collapsed)));
+}
+body.sidebar-collapsed .content-wrapper {
+    padding-left: var(--sidebar-width-collapsed);
+}
+body.sidebar-collapsed .sidebar .logo, body.sidebar-collapsed .sidebar .nav-item span {
+    opacity: 0;
+    visibility: hidden;
+    transition: opacity 0.1s ease, visibility 0.1s ease;
+}
+body.sidebar-collapsed .sidebar .nav-item {
+    justify-content: center;
+}
 body.sidebar-collapsed .sidebar .sidebar-toggle-btn { transform: rotate(180deg); }
 body.sidebar-collapsed .sidebar-nav .nav-item:hover span,
 body.sidebar-collapsed .sidebar-footer .nav-item:hover span { 
@@ -489,6 +500,21 @@ body.dark-mode .variants-table th { background-color: rgba(255, 255, 255, 0.02);
 .flash { padding: 1rem; border-radius: 8px; margin-bottom: 1rem; border: 1px solid transparent; transition: opacity 0.5s ease; box-shadow: 0 4px 15px rgba(0,0,0,0.08); }
 .flash.success { background-color: rgba(212, 237, 218, 0.9); color: #155724; border-color: rgba(195, 230, 203, 0.9); }
 .flash.error { background-color: rgba(248, 215, 218, 0.9); color: #721c24; border-color: rgba(245, 198, 203, 0.9); }
+
+/* Styles for the flash messages container */
+.flash-messages-container {
+    position: absolute;
+    top: var(--header-height);
+    left: var(--sidebar-width);
+    right: 0;
+    z-index: 999;
+    padding: 1rem 2rem 0;
+    transition: left var(--transition-speed);
+}
+
+body.sidebar-collapsed .flash-messages-container {
+    left: var(--sidebar-width-collapsed);
+}
 
 /* This is the new scrollable container for your form sections */
 .modal-body {
