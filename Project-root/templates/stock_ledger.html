@@ -4,10 +4,16 @@
 {% block content %}
 <div class="container">
     <div class="form-card" style="padding: 1.5rem;">
-        <div class="page-header">
-            <h2>Received Stock Ledger</h2>
-        </div>
-        <div class="inventory-table-container">
+<div class="page-header">
+    <h2>Received Stock Ledger</h2>
+    <div class="filter-container">
+        <input type="text" id="ledger-search" class="search-input" placeholder="Search by supplier, bill #...">
+        <input type="date" id="ledger-start-date">
+        <span>-</span>
+        <input type="date" id="ledger-end-date">
+    </div>
+</div>
+<div class="inventory-table-container">
             <div class="table-wrapper">
                 <table class="inventory-table">
                     <thead>
@@ -86,10 +92,10 @@ document.addEventListener('DOMContentLoaded', function() {
                 <td>${r.tax_percentage}</td>
                 <td>${r.discount_amount}</td>
                 <td>${r.grand_total}</td>
-                <td class="actions-cell">
-                    <button class="button view-details-btn">View</button>
-                    <button class="button cancel delete-receipt-btn">Delete</button>
-                </td>
+<td class="actions-cell">
+    <button class="button icon-btn view-details-btn" title="View Details"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"></path><circle cx="12" cy="12" r="3"></circle></svg></button>
+    <button class="button icon-btn danger delete-receipt-btn" title="Delete Receipt"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="3 6 5 6 21 6"></polyline><path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"></path></svg></button>
+</td>
             </tr>
         `).join('');
     }

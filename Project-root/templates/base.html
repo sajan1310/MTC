@@ -30,7 +30,9 @@
 
     <div class="sidebar">
         <div class="sidebar-header">
-            <h1 class="logo">MTC App</h1>
+            <a href="{{ url_for('dashboard') }}" class="logo-link">
+                <img src="{{ url_for('static', filename='img/Final_Logo.png') }}" alt="MTC App Logo" class="logo-img">
+            </a>
             <button id="sidebar-toggle" class="sidebar-toggle-btn" title="Toggle Sidebar" aria-label="Toggle Sidebar">
                 <svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
                     <line x1="3" y1="12" x2="21" y2="12"></line>
@@ -140,6 +142,10 @@
         <main class="container">
             {% block content %}{% endblock %}
         </main>
+
+        <footer class="main-footer">
+            <p>&copy; 2024 MTC App. All Rights Reserved.</p>
+        </footer>
     </div>
 
     {% block scripts %}

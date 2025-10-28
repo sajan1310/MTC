@@ -17,30 +17,73 @@
                     </svg>
                     Add New Supplier
                 </button>
-                <div id="bulk-actions-container-suppliers" style="display: none;">
-                    <button id="bulk-delete-btn-suppliers" class="button danger">Delete Selected</button>
-                </div>
+<div id="bulk-actions-container-suppliers" style="display: none;">
+    <button id="bulk-delete-btn-suppliers" class="button danger">Delete Selected</button>
+</div>
+
+<div class="tabs">
+    <button class="tab-link active" onclick="openTab(event, 'Info')">Info</button>
+    <button class="tab-link" onclick="openTab(event, 'Ledger')">Ledger</button>
+    <button class="tab-link" onclick="openTab(event, 'Rates')">Rates</button>
+</div>
             </div>
         </div>
         
-        <div class="inventory-table-container">
-            <div class="table-wrapper">
-                <table class="inventory-table compact">
-                    <thead>
-                        <tr>
-                            <th class="checkbox-col"><input type="checkbox" id="select-all-suppliers"></th>
-                            <th>Firm Name</th>
-                            <th>Address</th>
-                            <th>GSTIN</th>
-                            <th>Actions</th>
-                        </tr>
-                    </thead>
-                    <tbody id="suppliers-table-body">
-                        <!-- Supplier rows will be dynamically populated here -->
-                    </tbody>
-                </table>
-            </div>
+<div id="Info" class="tab-content" style="display: block;">
+    <div class="inventory-table-container">
+        <div class="table-wrapper">
+            <table class="inventory-table compact">
+                <thead>
+                    <tr>
+                        <th class="checkbox-col"><input type="checkbox" id="select-all-suppliers"></th>
+                        <th>Firm Name</th>
+                        <th>Address</th>
+                        <th>GSTIN</th>
+                        <th>Actions</th>
+                    </tr>
+                </thead>
+                <tbody id="suppliers-table-body">
+                    <!-- Supplier rows will be dynamically populated here -->
+                </tbody>
+            </table>
         </div>
+    </div>
+</div>
+
+<div id="Ledger" class="tab-content">
+    <div class="table-wrapper">
+        <table class="inventory-table">
+            <thead>
+                <tr>
+                    <th>Date</th>
+                    <th>Item</th>
+                    <th>Quantity</th>
+                    <th>Cost per Unit</th>
+                </tr>
+            </thead>
+            <tbody id="ledger-table-body">
+                <!-- Ledger entries will be populated here -->
+            </tbody>
+        </table>
+    </div>
+</div>
+
+<div id="Rates" class="tab-content">
+    <div class="table-wrapper">
+        <table class="inventory-table">
+            <thead>
+                <tr>
+                    <th>Item</th>
+                    <th>Rate</th>
+                    <th>Actions</th>
+                </tr>
+            </thead>
+            <tbody id="rates-table-body">
+                <!-- Rates will be populated here -->
+            </tbody>
+        </table>
+    </div>
+</div>
     </div>
 </div>
 
