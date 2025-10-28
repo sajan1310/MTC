@@ -575,13 +575,33 @@ const App = {
   },
 
   setActiveNavItem() {
-    const currentPath = window.location.pathname.replace(/\/$/, '') || '/';
-    const navLinks = document.querySelectorAll('.sidebar-nav .nav-item');
+    const currentPath = window.location.pathname;
+    const navLinks = document.querySelectorAll('.sidebar-nav .nav-item, .sidebar-footer .nav-item');
+    
+    let bestMatch = null;
+    let maxMatchLength = -1;
+
     navLinks.forEach(link => {
-      const href = (link.getAttribute('href') || '').replace(/\/$/, '') || '/';
-      const isMatch = href === currentPath || (currentPath === '/' && href === '/inventory');
-      link.classList.toggle('active', isMatch);
+        const href = link.getAttribute('href');
+        if (href && currentPath.startsWith(href)) {
+            if (href.length > maxMatchLength) {
+                maxMatchLength = href.length;
+                bestMatch = link;
+            }
+        }
     });
+
+    navLinks.forEach(link => link.classList.remove('active'));
+
+    if (bestMatch) {
+        bestMatch.classList.add('active');
+    } else {
+        // Fallback for dashboard/root path
+        const dashboardLink = document.querySelector('.sidebar-nav .nav-item[href="/"]');
+        if (dashboardLink && (currentPath === '/' || currentPath === '/dashboard')) {
+            dashboardLink.classList.add('active');
+        }
+    }
   },
 
   async fetchInitialData() {
@@ -2819,5 +2839,55 @@ updatePurchaseOrderTotal() {
     this.showNotification(message, type);
   }
 };
+
+function previewImage(event) {
+    const reader = new FileReader();
+    reader.onload = function(){
+        const output = document.getElementById('image-preview');
+        output.src = reader.result;
+        output.style.display = 'block';
+    };
+    reader.readAsDataURL(event.target.files[0]);
+}
+
+function openTab(evt, tabName) {
+    var i, tabcontent, tablinks;
+    tabcontent = document.getElementsByClassName("tab-content");
+    for (i = 0; i < tabcontent.length; i++) {
+        tabcontent[i].style.display = "none";
+    }
+    tablinks = document.getElementsByClassName("tab-link");
+    for (i = 0; i < tablinks.length; i++) {
+        tablinks[i].className = tablinks[i].className.replace(" active", "");
+    }
+    document.getElementById(tabName).style.display = "block";
+    evt.currentTarget.className += " active";
+}
+
+document.addEventListener('DOMContentLoaded', function() {
+    const ledgerSearch = document.getElementById('ledger-search');
+    const ledgerStartDate = document.getElementById('ledger-start-date');
+    const ledgerEndDate = document.getElementById('ledger-end-date');
+
+    if (ledgerSearch) {
+        ledgerSearch.addEventListener('input', App.debounce(() => App.fetchStockLedger(), 300));
+    }
+    if (ledgerStartDate) {
+        ledgerStartDate.addEventListener('change', () => App.fetchStockLedger());
+    }
+    if (ledgerEndDate) {
+        ledgerEndDate.addEventListener('change', () => App.fetchStockLedger());
+    }
+
+    const userSearch = document.getElementById('user-search');
+    const roleFilter = document.getElementById('role-filter');
+
+    if (userSearch) {
+        userSearch.addEventListener('input', App.debounce(() => App.fetchUsers(), 300));
+    }
+    if (roleFilter) {
+        roleFilter.addEventListener('change', () => App.fetchUsers());
+    }
+});
 
 App.init();

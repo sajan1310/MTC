@@ -5,9 +5,18 @@
 {% block content %}
 <div class="container">
     <div class="form-card" style="padding: 1.5rem;">
-        <div class="page-header">
-            <h2>User Management</h2>
-        </div>
+<div class="page-header">
+    <h2>User Management</h2>
+    <div class="filter-container">
+        <input type="text" id="user-search" class="search-input" placeholder="Search by name, email...">
+        <select id="role-filter">
+            <option value="">All Roles</option>
+            <option value="admin">Admin</option>
+            <option value="user">User</option>
+            <option value="pending_approval">Pending Approval</option>
+        </select>
+    </div>
+</div>
         
         <div class="inventory-table-container">
             <table class="inventory-table">

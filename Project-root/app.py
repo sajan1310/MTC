@@ -333,6 +333,38 @@ def dashboard():
         }
     return render_template('dashboard_new.html', metrics=metrics)
 
+@app.route('/api/stock-trend')
+@login_required
+def stock_trend_data():
+    try:
+        with database.get_conn(cursor_factory=psycopg2.extras.DictCursor) as (conn, cur):
+            cur.execute("""
+                SELECT 
+                    date_series.day::date,
+                    COALESCE(SUM(se.quantity_added), 0) as total_stock
+                FROM 
+                    generate_series(
+                        CURRENT_DATE - INTERVAL '29 days', 
+                        CURRENT_DATE, 
+                        '1 day'
+                    ) as date_series(day)
+                LEFT JOIN 
+                    stock_entries se ON date_series.day = DATE(se.entry_date)
+                GROUP BY 
+                    date_series.day
+                ORDER BY 
+                    date_series.day;
+            """)
+            trend_data = cur.fetchall()
+            
+            labels = [row['day'].strftime('%Y-%m-%d') for row in trend_data]
+            values = [float(row['total_stock']) for row in trend_data]
+
+            return jsonify({'labels': labels, 'values': values})
+    except Exception as e:
+        app.logger.error(f"Error fetching stock trend data: {e}")
+        return jsonify({'error': 'Failed to fetch stock trend data'}), 500
+
 @app.route('/inventory')
 @login_required
 def inventory():
