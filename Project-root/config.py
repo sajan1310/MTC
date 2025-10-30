@@ -20,7 +20,7 @@ class Config:
     DB_HOST = os.environ.get('DB_HOST', '127.0.0.1')
     DB_NAME = os.environ.get('DB_NAME', 'MTC')
     DB_USER = os.environ.get('DB_USER', 'postgres')
-    DB_PASS = os.environ.get('DB_PASS')
+    DB_PASS = os.environ.get('DB_PASS','abcd')
     
     # Session
     SESSION_COOKIE_SECURE = False
@@ -64,7 +64,7 @@ class TestingConfig(Config):
     TESTING = True
     
     # Use test database
-    DB_NAME = 'MTC_test'
+    DB_NAME = 'MTC'
 
 
 # Configuration dictionary
