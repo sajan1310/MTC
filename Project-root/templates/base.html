@@ -152,12 +152,13 @@
     <script src="https://code.jquery.com/jquery-3.6.0.min.js" defer></script>
     <script src="https://cdn.jsdelivr.net/npm/select2@4.1.0-rc.0/dist/js/select2.min.js" defer></script>
     <script src="https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js" defer></script>
-<!-- ✅ Cache busting for JavaScript -->
-{% if config.ENV == 'production' %}
-<script src="{{ url_for('static', filename='app.min.js') }}?v={{ config.VERSION }}" defer></script>
-{% else %}
-<script src="{{ url_for('static', filename='app.js') }}?v={{ config.VERSION }}" defer></script>
-{% endif %}
+<!-- Modular Scripts -->
+<script src="{{ url_for('static', filename='main.js') }}?v={{ config.VERSION }}" defer></script>
+<script src="{{ url_for('static', filename='dashboard.js') }}?v={{ config.VERSION }}" defer></script>
+<script src="{{ url_for('static', filename='inventory.js') }}?v={{ config.VERSION }}" defer></script>
+<script src="{{ url_for('static', filename='suppliers.js') }}?v={{ config.VERSION }}" defer></script>
+<script src="{{ url_for('static', filename='purchaseOrders.js') }}?v={{ config.VERSION }}" defer></script>
+<script src="{{ url_for('static', filename='masterData.js') }}?v={{ config.VERSION }}" defer></script>
     {% endblock %}
 </body>
 </html>

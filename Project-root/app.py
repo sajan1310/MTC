@@ -66,6 +66,9 @@ from config import get_config
 app.config.from_object(get_config())
 app.secret_key = app.config['SECRET_KEY']
 
+# Explicitly set the server name to ensure correct URL generation for OAuth
+app.config['SERVER_NAME'] = 'localhost:5000'
+
 # File upload security configuration
 ALLOWED_EXTENSIONS = {'png', 'jpg', 'jpeg', 'gif', 'webp'}
 MAX_FILE_SIZE = 5 * 1024 * 1024  # 5MB
@@ -130,6 +133,11 @@ def not_found_error(error):
 def internal_error(error):
     return render_template('500.html'), 500
 
+# Route to handle Chrome DevTools requests and prevent 404s in logs
+@app.route('/.well-known/appspecific/com.chrome.devtools.json')
+def chrome_devtools_json():
+    return jsonify({})
+
 # ✅ SECURITY: Force HTTPS in production
 if not app.debug and os.environ.get('FLASK_ENV') == 'production':
     Talisman(app, 
@@ -189,10 +197,7 @@ if GOOGLE_CLIENT_ID and GOOGLE_CLIENT_SECRET:
         name='google',
         client_id=GOOGLE_CLIENT_ID,
         client_secret=GOOGLE_CLIENT_SECRET,
-        authorize_url='https://accounts.google.com/o/oauth2/v2/auth',
-        access_token_url='https://oauth2.googleapis.com/token',
-        userinfo_endpoint='https://openidconnect.googleapis.com/v1/userinfo',
-        jwks_uri='https://www.googleapis.com/oauth2/v3/certs',
+        server_metadata_url='https://accounts.google.com/.well-known/openid-configuration',
         client_kwargs={'scope': 'openid email profile'}
     )
 else:
@@ -583,20 +588,22 @@ def signup():
             flash('An error occurred. Please try again.', 'error')
     return render_template('signup.html', google_enabled=bool(google))
 
-@app.route('/login/start')
-def login_start():
+@app.route('/auth/google')
+def auth_google():
     if not google:
+        app.logger.error("Google OAuth is not configured.")
         flash('Google OAuth is not configured.', 'error')
         return redirect(url_for('login'))
-    redirect_uri = url_for('authorize', _external=True)
-    app.logger.info(f"Redirect URI: {redirect_uri}")
+    # This MUST match the URI in the Google Cloud Console
+    redirect_uri = url_for('auth_callback', _external=True)
+    app.logger.info(f"Redirecting to Google with redirect_uri: {redirect_uri}")
     return google.authorize_redirect(redirect_uri)
 
-@app.route('/auth/google/callback')
-def authorize():
+@app.route('/auth/callback')
+def auth_callback():
     try:
         token = google.authorize_access_token()
-        user_info = google.get('userinfo').json()
+        user_info = google.userinfo()
     except Exception as e:
         app.logger.error(f"Error in authorize: {e}")
         return redirect(url_for('login'))
