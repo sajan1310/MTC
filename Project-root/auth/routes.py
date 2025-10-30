@@ -71,7 +71,7 @@ def auth_google_callback():
         token_url, headers, body = client.prepare_token_request(
             token_endpoint,
             authorization_response=request.url,
-            redirect_url=url_for("auth.auth_google_callback", _external=True),
+            redirect_uri=url_for("auth.auth_google_callback", _external=True),
             code=code
         )
         token_response = requests.post(
