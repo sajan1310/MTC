@@ -1,65 +1,103 @@
-# MTC Application Testing Checklist
+# Testing Checklist
 
-## Security Tests
-- [ ] Try uploading .php file → Should be rejected
-- [ ] Try SQL injection in item name: `'; DROP TABLE users; --` → Should be safely escaped
-- [ ] Try logging in 6 times quickly → Should hit rate limit
-- [ ] Check .env file not in git: `git status`
-- [ ] Sign up with weak password "12345" → Should be rejected
-- [ ] Inspect HTTPS redirect (production only)
+This checklist outlines the manual and automated tests that should be performed to verify the application's functionality.
 
-## Functionality Tests
-- [ ] Add new item with image → Should save successfully
-- [ ] Edit existing item → Should update without errors
-- [ ] Delete item → Should remove from database
-- [ ] Add variant to item → Should appear in matrix
-- [ ] Update stock in variant matrix → Should update immediately
-- [ ] Search for items → Should filter correctly with 300ms debounce
-- [ ] Filter low stock items → Should show only low stock
-- [ ] Import CSV data → Modal should open and preview correctly
-- [ ] Create purchase order → Should save all items
-- [ ] Add supplier with contacts → Should save all contacts
+## Manual Testing
 
-## Performance Tests
-- [ ] Load inventory page with 100+ items → Should load in < 2 seconds
-- [ ] Search rapidly → Should not lag (debounced)
-- [ ] Open/close modals 10 times → No memory increase in DevTools
-- [ ] Update stock 20 times quickly → Should handle smoothly
+### 1. Authentication
 
-## Database Tests
-- [ ] Run migrations → All indexes created successfully
-- [ ] Run new migration runner → All migrations should be applied correctly
-- [ ] Run deduplicate_items.py → Should find and remove duplicate items
-- [ ] Check connection pool → Should show 2-20 connections in logs
-- [ ] Query item_variant → Should use idx_item_variant_stock index
+- [ ] **Login:**
+    - [ ] Verify that a user can log in with valid credentials.
+    - [ ] Verify that a user cannot log in with invalid credentials.
+    - [ ] Verify that a user is redirected to the dashboard after a successful login.
+- [ ] **Logout:**
+    - [ ] Verify that a user can log out.
+    - [ ] Verify that a user is redirected to the login page after logging out.
 
-## Browser Compatibility
-- [ ] Chrome/Edge → All features work
-- [ ] Firefox → All features work
-- [ ] Safari → All features work
-- [ ] Mobile responsive → Table scrolls horizontally on small screens
+### 2. Navigation
 
-## Error Handling
-- [ ] Disconnect database → Should show connection error (not crash)
-- [ ] Submit form with missing fields → Should show validation errors
-- [ ] Network error during API call → Should show notification
-- [ ] Upload file larger than 5MB → Should reject with message
+- [ ] **Sidebar:**
+    - [ ] Verify that all sidebar links are working correctly.
+    - [ ] Verify that the "Master Data" link is only visible to admin and super_admin users.
+    - [ ] Verify that the "User Management" link is only visible to super_admin users.
+- [ ] **Breadcrumbs:**
+    - [ ] Verify that the breadcrumbs are displayed correctly on all pages.
 
-## Edge Case Tests
-- [ ] Add item with very long name/description → Should not break layout
-- [ ] Use special characters in search (e.g., `&`, `<`, `>`) → Should be handled safely
-- [ ] Delete a supplier with active purchase orders → Should be prevented
-- [ ] Receive stock for a PO that is already completed → Should be handled gracefully
-- [ ] Export CSV with no inventory items → Should generate an empty file with headers
+### 3. Inventory
 
-## Permissions Tests
-- [ ] Log in as 'user' → 'User Management' link should be hidden
-- [ ] Attempt to access `/user-management` as 'user' → Should be denied
-- [ ] Attempt to delete an item as 'user' → Should be denied
-- [ ] Log in as 'admin' → Should have full access to all features except super-admin functions
+- [ ] **Add Item:**
+    - [ ] Verify that a new item can be added with all required fields.
+    - [ ] Verify that a new item with variants can be added.
+    - [ ] Verify that the item is displayed in the inventory list after being added.
+- [ ] **Edit Item:**
+    - [ ] Verify that an existing item can be edited.
+    - [ ] Verify that the changes are reflected in the inventory list.
+- [ ] **Delete Item:**
+    - [ ] Verify that an existing item can be deleted.
+    - [ ] Verify that the item is removed from the inventory list.
+- [ ] **Search and Filter:**
+    - [ ] Verify that the inventory can be searched by item name.
+    - [ ] Verify that the inventory can be filtered by low stock.
 
-## Accessibility Tests
-- [ ] Navigate all forms using only the keyboard → All fields should be focusable and usable
-- [ ] Use a screen reader (e.g., NVDA, VoiceOver) on the inventory and add item pages → All elements should be announced correctly
-- [ ] Check color contrast on all pages → Should meet WCAG AA standards
-- [ ] Verify all images have `alt` text → All images should have descriptive alt text
+### 4. Master Data
+
+- [ ] **Colors:**
+    - [ ] Verify that a new color can be added.
+    - [ ] Verify that an existing color can be edited.
+    - [ ] Verify that an existing color can be deleted.
+- [ ] **Sizes:**
+    - [ ] Verify that a new size can be added.
+    - [ ] Verify that an existing size can be edited.
+    - [ ] Verify that an existing size can be deleted.
+- [ ] **Models:**
+    - [ ] Verify that a new model can be added.
+    - [ ] Verify that an existing model can be edited.
+    - [ ] Verify that an existing model can be deleted.
+- [ ] **Variations:**
+    - [ ] Verify that a new variation can be added.
+    - [ ] Verify that an existing variation can be edited.
+    - [ ] Verify that an existing variation can be deleted.
+
+## Automated Testing (Pytest)
+
+The following is a basic set of `pytest` tests that can be used to verify the application's routes and database interactions.
+
+```python
+import pytest
+from app import app
+
+@pytest.fixture
+def client():
+    app.config['TESTING'] = True
+    with app.test_client() as client:
+        yield client
+
+def test_home_page(client):
+    """Test that the home page redirects to the dashboard."""
+    response = client.get('/')
+    assert response.status_code == 302
+    assert response.location == '/dashboard'
+
+def test_dashboard_page(client):
+    """Test that the dashboard page loads."""
+    response = client.get('/dashboard')
+    assert response.status_code == 200
+    assert b'Dashboard' in response.data
+
+def test_inventory_page(client):
+    """Test that the inventory page loads."""
+    response = client.get('/inventory')
+    assert response.status_code == 200
+    assert b'Inventory' in response.data
+
+def test_add_item_page(client):
+    """Test that the add item page loads."""
+    response = client.get('/add_item')
+    assert response.status_code == 200
+    assert b'Add New Item' in response.data
+
+def test_master_data_page(client):
+    """Test that the master data page loads."""
+    response = client.get('/master-data')
+    assert response.status_code == 200
+    assert b'Master Data Management' in response.data

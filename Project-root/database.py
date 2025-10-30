@@ -15,18 +15,18 @@ def init_app(app):
     """
     global db_pool
     
-    # Get configuration from environment
-    min_conn = int(os.environ.get('DB_POOL_MIN', 2))
-    max_conn = int(os.environ.get('DB_POOL_MAX', 20))
+    # Get configuration from Flask app config
+    min_conn = int(app.config.get('DB_POOL_MIN', 2))
+    max_conn = int(app.config.get('DB_POOL_MAX', 20))
     
     try:
         db_pool = pool.ThreadedConnectionPool(
             min_conn,
             max_conn,
-            host=os.environ.get('DB_HOST', '127.0.0.1'),
-            database=os.environ.get('DB_NAME', 'MTC'),
-            user=os.environ.get('DB_USER', 'postgres'),
-            password=os.environ.get('DB_PASS'),
+            host=app.config['DB_HOST'],
+            database=app.config['DB_NAME'],
+            user=app.config['DB_USER'],
+            password=app.config['DB_PASS'],
             connect_timeout=5,
             options='-c statement_timeout=30000'  # 30 second query timeout
         )
