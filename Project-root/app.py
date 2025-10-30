@@ -189,7 +189,10 @@ if GOOGLE_CLIENT_ID and GOOGLE_CLIENT_SECRET:
         name='google',
         client_id=GOOGLE_CLIENT_ID,
         client_secret=GOOGLE_CLIENT_SECRET,
-        server_metadata_url='https://accounts.google.com/.well-known/openid-configuration',
+        authorize_url='https://accounts.google.com/o/oauth2/v2/auth',
+        access_token_url='https://oauth2.googleapis.com/token',
+        userinfo_endpoint='https://openidconnect.googleapis.com/v1/userinfo',
+        jwks_uri='https://www.googleapis.com/oauth2/v3/certs',
         client_kwargs={'scope': 'openid email profile'}
     )
 else:
@@ -586,16 +589,16 @@ def login_start():
         flash('Google OAuth is not configured.', 'error')
         return redirect(url_for('login'))
     redirect_uri = url_for('authorize', _external=True)
+    app.logger.info(f"Redirect URI: {redirect_uri}")
     return google.authorize_redirect(redirect_uri)
 
 @app.route('/auth/google/callback')
 def authorize():
     try:
         token = google.authorize_access_token()
-        user_info = google.get('https://openidconnect.googleapis.com/v1/userinfo').json()
+        user_info = google.get('userinfo').json()
     except Exception as e:
-        app.logger.error(f"Google OAuth callback error: {e}")
-        flash('Google authorization failed.', 'error')
+        app.logger.error(f"Error in authorize: {e}")
         return redirect(url_for('login'))
     
     user, created = get_or_create_user(user_info)
