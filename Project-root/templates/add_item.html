@@ -1,90 +1,109 @@
 {% extends "base.html" %}
-{% block title %}Add New Item{% endblock %}
+
+{% block title %}Add New Item - MTC App{% endblock %}
 
 {% block content %}
 <div class="container">
-    <datalist id="color-datalist"></datalist>
-    <datalist id="size-datalist"></datalist>
-    <datalist id="unit-datalist">
-        <option value="Pcs"></option>
-        <option value="Box"></option>
-        <option value="Set"></option>
-    </datalist>
-    <div class="form-card" style="padding: 1.5rem;">
-        <form id="item-form">
-            <input type="hidden" id="item-id">
-            <h2>Add New Item</h2>
-            <div class="form-row">
-                <div class="form-field">
+    <h1 class="main-title">Add New Item</h1>
+    <form id="item-form" class="form-layout" method="POST" action="{{ url_for('add_item') }}" enctype="multipart/form-data">
+        <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+        
+        <div class="form-section">
+            <h2 class="section-title">Item Details</h2>
+            <div class="form-grid">
+                <div class="form-group">
                     <label for="item-name">Item Name</label>
-                    <input type="text" id="item-name" list="item-name-list" required>
+                    <input type="text" id="item-name" name="name" class="form-control" required>
                 </div>
-                <div class="form-field">
+                <div class="form-group">
                     <label for="item-model">Model</label>
-                    <div class="input-with-buttons">
-                        <select id="item-model" class="editable-select"></select>
-                        <button type="button" class="button-icon edit-model-btn" aria-label="Edit model">
-                            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-                                <path d="M11 4H4a2 2 0 00-2 2v14a2 2 0 002 2h14a2 2 0 002-2v-7"></path>
-                                <path d="M18.5 2.5a2.121 2.121 0 013 3L12 15l-4 1 1-4 9.5-9.5z"></path>
-                            </svg>
-                        </button>
-                        <button type="button" class="button-icon delete-model-btn" aria-label="Delete model">
-                            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-                                <polyline points="3 6 5 6 21 6"></polyline>
-                                <path d="M19 6v14a2 2 0 01-2 2H7a2 2 0 01-2-2V6m3 0V4a2 2 0 012-2h4a2 2 0 012 2v2"></path>
-                                <line x1="10" y1="11" x2="10" y2="17"></line>
-                                <line x1="14" y1="11" x2="14" y2="17"></line>
-                            </svg>
-                        </button>
-                    </div>
+                    <input type="text" id="item-model" name="model" class="form-control">
                 </div>
-                <div class="form-field">
+                <div class="form-group">
                     <label for="item-variation">Variation</label>
-                    <div class="input-with-buttons">
-                        <select id="item-variation" class="editable-select"></select>
-                        <button type="button" class="button-icon edit-variation-btn" aria-label="Edit variation">
-                            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-                                <path d="M11 4H4a2 2 0 00-2 2v14a2 2 0 002 2h14a2 2 0 002-2v-7"></path>
-                                <path d="M18.5 2.5a2.121 2.121 0 013 3L12 15l-4 1 1-4 9.5-9.5z"></path>
-                            </svg>
-                        </button>
-                        <button type="button" class="button-icon delete-variation-btn" aria-label="Delete variation">
-                            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-                                <polyline points="3 6 5 6 21 6"></polyline>
-                                <path d="M19 6v14a2 2 0 01-2 2H7a2 2 0 01-2-2V6m3 0V4a2 2 0 012-2h4a2 2 0 012 2v2"></path>
-                                <line x1="10" y1="11" x2="10" y2="17"></line>
-                                <line x1="14" y1="11" x2="14" y2="17"></line>
-                            </svg>
-                        </button>
-                    </div>
+                    <input type="text" id="item-variation" name="variation" class="form-control">
+                </div>
+                <div class="form-group full-width">
+                    <label for="item-description">Description</label>
+                    <textarea id="item-description" name="description" class="form-control" rows="3"></textarea>
+                </div>
+                <div class="form-group">
+                    <label for="item-image">Item Image</label>
+                    <input type="file" id="item-image" name="image" class="form-control">
                 </div>
             </div>
-            <div class="form-field">
-                <label for="item-description">Description</label>
-                <textarea id="item-description"></textarea>
+        </div>
+
+        <div class="form-section">
+            <h2 class="section-title">Item Variants</h2>
+            <div id="variants-container">
+                <table class="variants-table">
+                    <thead>
+                        <tr>
+                            <th>Color</th>
+                            <th>Size</th>
+                            <th>Opening Stock</th>
+                            <th>Threshold</th>
+                            <th>Unit</th>
+                            <th>Actions</th>
+                        </tr>
+                    </thead>
+                    <tbody id="variants-list-container">
+                        <tr id="variants-placeholder">
+                            <td colspan="6" class="text-center">No variants added yet.</td>
+                        </tr>
+                    </tbody>
+                </table>
             </div>
-            <div class="form-field">
-                <label for="item-image">Item Image</label>
-                <input type="file" id="item-image" accept="image/*" onchange="previewImage(event)">
-                <img id="image-preview" src="#" alt="Image Preview" style="display: none; max-width: 200px; margin-top: 10px;"/>
-            </div>
-            <h5>Variants</h5>
-            <div id="variants-list-container">
-                <div class="variants-placeholder">
-                    <p>No variants added yet</p>
-                    <small>Click "Add Variant" to create combinations</small>
-                </div>
-            </div>
-            <button type="button" id="add-variant-btn" class="button create">
-                <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><line x1="12" y1="5" x2="12" y2="19"></line><line x1="5" y1="12" x2="19" y2="12"></line></svg>
-                Add Variant
-            </button>
-            <div class="form-actions">
-                <button type="submit" class="button create save-item-btn">Save Item</button>
-                <a href="{{ url_for('inventory') }}" class="button cancel">Cancel</a>
-            </div>
-        </form>
-    </div>
+            <button type="button" id="add-variant-btn" class="button secondary mt-4">Add Variant</button>
+        </div>
+
+        <div class="form-actions">
+            <button type="submit" class="button primary">Save Item</button>
+            <a href="{{ url_for('inventory') }}" class="button">Cancel</a>
+        </div>
+    </form>
 </div>
+{% endblock %}
+
+{% block scripts %}
+{{ super() }}
+<script>
+    document.addEventListener('DOMContentLoaded', function() {
+        const addVariantBtn = document.getElementById('add-variant-btn');
+        const variantsList = document.getElementById('variants-list-container');
+        const placeholder = document.getElementById('variants-placeholder');
+
+        function updatePlaceholder() {
+            if (variantsList.children.length > 1) { // 1 because placeholder is a child
+                placeholder.style.display = 'none';
+            } else {
+                placeholder.style.display = 'table-row';
+            }
+        }
+
+        addVariantBtn.addEventListener('click', function() {
+            const newRow = document.createElement('tr');
+            newRow.innerHTML = `
+                <td><input type="text" name="color" class="form-control" required></td>
+                <td><input type="text" name="size" class="form-control" required></td>
+                <td><input type="number" name="opening_stock" class="form-control" value="0" min="0"></td>
+                <td><input type="number" name="threshold" class="form-control" value="5" min="0"></td>
+                <td><input type="text" name="unit" class="form-control" value="Pcs"></td>
+                <td><button type="button" class="button cancel small remove-variant-btn">Remove</button></td>
+            `;
+            variantsList.appendChild(newRow);
+            updatePlaceholder();
+        });
+
+        variantsList.addEventListener('click', function(e) {
+            if (e.target.classList.contains('remove-variant-btn')) {
+                e.target.closest('tr').remove();
+                updatePlaceholder();
+            }
+        });
+
+        updatePlaceholder();
+    });
+</script>
 {% endblock %}

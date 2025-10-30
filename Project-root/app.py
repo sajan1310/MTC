@@ -1,19 +1,15 @@
 import os
 import uuid
-from dotenv import load_dotenv
 import database
 from functools import wraps
 import json
 
-# Load environment variables from a .env file
-load_dotenv()
-
 from flask import (Flask, request, jsonify, render_template, redirect, url_for,
                    flash, session, send_from_directory)
 from flask_cors import CORS
-from authlib.integrations.flask_client import OAuth
 from flask_login import (LoginManager, UserMixin, login_user, login_required,
                          logout_user, current_user)
+from auth.routes import auth
 from flask_wtf.csrf import CSRFProtect
 import psycopg2
 import psycopg2.extras
@@ -64,19 +60,12 @@ def validate_password(password):
 # ✅ Load configuration from config.py
 from config import get_config
 app.config.from_object(get_config())
-app.secret_key = app.config['SECRET_KEY']
-
-# Explicitly set the server name to ensure correct URL generation for OAuth
-app.config['SERVER_NAME'] = 'localhost:5000'
 
 # File upload security configuration
-ALLOWED_EXTENSIONS = {'png', 'jpg', 'jpeg', 'gif', 'webp'}
-MAX_FILE_SIZE = 5 * 1024 * 1024  # 5MB
-
 def allowed_file(filename):
     """Check if file extension is allowed."""
     return '.' in filename and \
-           filename.rsplit('.', 1)[1].lower() in ALLOWED_EXTENSIONS
+           filename.rsplit('.', 1)[1].lower() in app.config['ALLOWED_EXTENSIONS']
 
 def validate_upload(file):
     """
@@ -97,8 +86,9 @@ def validate_upload(file):
     size = file.tell()
     file.seek(0)  # Reset to start
     
-    if size > MAX_FILE_SIZE:
-        return False, f"File too large. Maximum size: {MAX_FILE_SIZE / (1024*1024):.1f}MB"
+    if size > app.config['MAX_CONTENT_LENGTH']:
+        max_mb = app.config['MAX_CONTENT_LENGTH'] / (1024 * 1024)
+        return False, f"File too large. Maximum size: {max_mb:.1f}MB"
     
     return True, "Valid"
 
@@ -158,50 +148,33 @@ CORS(app, supports_credentials=True, origins=["http://127.0.0.1:5000"])
 # --- User and Login Management ---
 login_manager = LoginManager()
 login_manager.init_app(app)
-login_manager.login_view = 'login'
+login_manager.login_view = 'auth.login'
 
 class User(UserMixin):
-    def __init__(self, id_, name, email, role='user', profile_picture=None, company=None, mobile=None):
-        self.id = id_
-        self.name = name
-        self.email = email
-        self.role = role
-        self.profile_picture = profile_picture
-        self.company = company
-        self.mobile = mobile
+    """Custom User class to hold user data from the database."""
+    def __init__(self, user_data):
+        self.id = user_data['user_id']
+        self.name = user_data['name']
+        self.email = user_data['email']
+        self.role = user_data['role']
+        self.profile_picture = user_data.get('profile_picture')
+        self.company = user_data.get('company')
+        self.mobile = user_data.get('mobile')
 
 @login_manager.user_loader
 def load_user(user_id):
+    """Load user from the database."""
     try:
         with database.get_conn(cursor_factory=psycopg2.extras.DictCursor) as (conn, cur):
             cur.execute("SELECT * FROM users WHERE user_id = %s", (user_id,))
-            row = cur.fetchone()
+            user_row = cur.fetchone()
+            if user_row:
+                return User(user_row)
     except Exception as e:
-        app.logger.error(f"Error in load_user: {e}")
-        return None
-    if not row:
-        return None
-    return User(
-        id_=str(row['user_id']), name=row['name'], email=row['email'],
-        role=row.get('role', 'user'), profile_picture=row.get('profile_picture'),
-        company=row.get('company'), mobile=row.get('mobile')
-    )
-    
-# --- OAuth Setup ---
-oauth = OAuth(app)
-GOOGLE_CLIENT_ID = os.environ.get('GOOGLE_CLIENT_ID')
-GOOGLE_CLIENT_SECRET = os.environ.get('GOOGLE_CLIENT_SECRET')
-google = None
-if GOOGLE_CLIENT_ID and GOOGLE_CLIENT_SECRET:
-    google = oauth.register(
-        name='google',
-        client_id=GOOGLE_CLIENT_ID,
-        client_secret=GOOGLE_CLIENT_SECRET,
-        server_metadata_url='https://accounts.google.com/.well-known/openid-configuration',
-        client_kwargs={'scope': 'openid email profile'}
-    )
-else:
-    app.logger.warning('GOOGLE_CLIENT_ID and/or GOOGLE_CLIENT_SECRET not set. Google OAuth disabled.')
+        app.logger.error(f"Error loading user {user_id}: {e}")
+    return None
+
+app.register_blueprint(auth)
 
 
 # --- Helper Functions & Decorators ---
@@ -214,17 +187,15 @@ def get_or_create_user(user_info):
             cur.execute("SELECT * FROM users WHERE email = %s", (email,))
             user_row = cur.fetchone()
             if user_row:
-                user = load_user(user_row['user_id'])
-                return user, False
+                return User(user_row), False
             else:
                 cur.execute(
-                    "INSERT INTO users (name, email, role, profile_picture) VALUES (%s, %s, %s, %s) RETURNING user_id",
+                    "INSERT INTO users (name, email, role, profile_picture) VALUES (%s, %s, %s, %s) RETURNING *",
                     (name, email, "pending_approval", picture)
                 )
-                user_id = cur.fetchone()[0]
+                new_user_row = cur.fetchone()
                 conn.commit()
-                user = load_user(user_id)
-                return user, True
+                return User(new_user_row), True
     except Exception as e:
         app.logger.error(f"Error in get_or_create_user: {e}")
         return None, False
@@ -436,6 +407,12 @@ def stock_ledger():
 def low_stock_report():
     return render_template('low_stock_report.html')
 
+@app.route('/master-data')
+@login_required
+@role_required('admin')
+def master_data():
+    return render_template('master_data.html')
+
 @app.route('/profile', methods=['GET', 'POST'])
 @login_required
 def profile():
@@ -516,115 +493,6 @@ def change_password():
         app.logger.error(f"Error changing password for user {current_user.id}: {e}")
         flash('An error occurred while changing your password.', 'error')
         return redirect(url_for('profile'))
-
-# --- Auth Routes ---
-@app.route('/login', methods=['GET', 'POST'])
-@limiter.limit("5 per minute")
-def login():
-    if current_user.is_authenticated:
-        return redirect(url_for('home'))
-    
-    if request.method == 'POST':
-        email = request.form.get('email')
-        password = request.form.get('password')
-        try:
-            with database.get_conn(cursor_factory=psycopg2.extras.DictCursor) as (conn, cur):
-                cur.execute("SELECT * FROM users WHERE email = %s", (email,))
-                user_row = cur.fetchone()
-            
-            if user_row and check_password_hash(user_row.get('password_hash') or '', password):
-                user = load_user(user_row['user_id'])
-                if user.role == 'pending_approval':
-                    flash('Your account is pending approval by an administrator.', 'error')
-                    return redirect(url_for('login'))
-                login_user(user)
-                return redirect(url_for('dashboard'))
-            else:
-                flash("Invalid email or password.", 'error')
-                return redirect(url_for('login'))
-        except Exception as e:
-            app.logger.error(f"Manual login error: {e}")
-            flash("An error occurred during login.", 'error')
-            return redirect(url_for('login'))
-
-    return render_template('login.html', google_enabled=bool(google))
-
-@app.route('/signup', methods=['GET', 'POST'])
-def signup():
-    if current_user.is_authenticated:
-        return redirect(url_for('home'))
-    if request.method == 'POST':
-        name = request.form.get('name')
-        email = request.form.get('email')
-        password = request.form.get('password')
-        if not (name and email and password):
-            flash("Name, email, and password are required.", 'error')
-            return redirect(url_for('signup'))
-        
-        # ✅ SECURITY: Validate password strength
-        is_valid, message = validate_password(password)
-        if not is_valid:
-            flash(message, 'error')
-            return redirect(url_for('signup'))
-        
-        try:
-            with database.get_conn(cursor_factory=psycopg2.extras.DictCursor) as (conn, cur):
-                cur.execute("SELECT user_id FROM users WHERE email = %s", (email,))
-                if cur.fetchone():
-                    flash("Email address already registered.", 'error')
-                    return redirect(url_for('signup'))
-                
-                password_hash = generate_password_hash(password)
-                cur.execute(
-                    "INSERT INTO users (name, email, password_hash, role) VALUES (%s, %s, %s, %s)",
-                    (name, email, password_hash, 'pending_approval')
-                )
-                conn.commit()
-            
-            flash('Account created! It is now pending approval by an administrator.', 'success')
-            return redirect(url_for('login'))
-        except Exception as e:
-            app.logger.error(f"Signup error: {e}")
-            flash('An error occurred. Please try again.', 'error')
-    return render_template('signup.html', google_enabled=bool(google))
-
-@app.route('/auth/google')
-def auth_google():
-    if not google:
-        app.logger.error("Google OAuth is not configured.")
-        flash('Google OAuth is not configured.', 'error')
-        return redirect(url_for('login'))
-    # This MUST match the URI in the Google Cloud Console
-    redirect_uri = url_for('auth_callback', _external=True)
-    app.logger.info(f"Redirecting to Google with redirect_uri: {redirect_uri}")
-    return google.authorize_redirect(redirect_uri)
-
-@app.route('/auth/callback')
-def auth_callback():
-    try:
-        token = google.authorize_access_token()
-        user_info = google.userinfo()
-    except Exception as e:
-        app.logger.error(f"Error in authorize: {e}")
-        return redirect(url_for('login'))
-    
-    user, created = get_or_create_user(user_info)
-    if not user:
-        flash('Failed to log in with Google.', 'error')
-        return redirect(url_for('login'))
-    
-    login_user(user)
-    if created:
-        flash('Welcome! Your account is now pending approval.', 'success')
-        return redirect(url_for('login'))
-    
-    return redirect(url_for('dashboard'))
-
-@app.route('/logout')
-@login_required
-def logout():
-    logout_user()
-    return redirect(url_for('login'))
 
 @app.route('/uploads/<filename>')
 def uploaded_file(filename):
@@ -2141,6 +2009,10 @@ def import_commit():
     except Exception as e:
         app.logger.error(f"Commit error: {e}", exc_info=True)
         return jsonify({'error': str(e)}), 500
+
+@app.route('/ping')
+def ping():
+    return "pong"
 
 @app.route('/health')
 def health_check():

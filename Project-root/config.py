@@ -1,17 +1,21 @@
 """
 Application configuration classes for different environments.
 """
+from dotenv import load_dotenv
 import os
+
+# Load environment variables from .env file
+load_dotenv()
 from datetime import timedelta
 
 class Config:
     """Base configuration."""
     
     # Security
-    SECRET_KEY = os.environ.get('FLASK_SECRET_KEY')
+    SECRET_KEY = os.environ.get('SECRET_KEY')
     if not SECRET_KEY:
         raise ValueError(
-            "FLASK_SECRET_KEY must be set in the environment. "
+            "SECRET_KEY must be set in the environment. "
             "It is used for session signing and security. "
             "You can generate a key with: python -c 'import secrets; print(secrets.token_hex(16))'"
         )
@@ -21,6 +25,12 @@ class Config:
     DB_NAME = os.environ.get('DB_NAME', 'MTC')
     DB_USER = os.environ.get('DB_USER', 'postgres')
     DB_PASS = os.environ.get('DB_PASS','abcd')
+
+    # Google OAuth
+    GOOGLE_CLIENT_ID = os.environ.get("GOOGLE_CLIENT_ID", None)
+    GOOGLE_CLIENT_SECRET = os.environ.get("GOOGLE_CLIENT_SECRET", None)
+    GOOGLE_DISCOVERY_URL = os.environ.get("GOOGLE_DISCOVERY_URL", "https://accounts.google.com/.well-known/openid-configuration")
+    GOOGLE_REDIRECT_URI = os.environ.get("GOOGLE_REDIRECT_URI", None)
     
     # Session
     SESSION_COOKIE_SECURE = False

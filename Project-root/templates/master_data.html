@@ -1,36 +1,59 @@
 {% extends "base.html" %}
-{% block title %}Manage Master Data{% endblock %}
+
+{% block title %}Master Data Management - MTC App{% endblock %}
 
 {% block content %}
 <div class="container">
-    <div class="form-card" style="padding: 1.5rem;">
-        <div class="modal-header">
-            <h3 id="master-data-title">Manage Master Data</h3>
-            <a href="{{ url_for('inventory') }}" class="button cancel close-modal-btn" aria-label="Close modal">&times;</a>
+    <h1 class="main-title">Master Data Management</h1>
+    <p class="subtitle">Manage core data entities like colors, sizes, models, and variations.</p>
+
+    <div class="master-data-grid">
+        <!-- Colors Section -->
+        <div class="master-data-section card" id="colors-section">
+            <h2 class="section-title">Colors</h2>
+            <form id="add-color-form" class="add-form">
+                <input type="text" name="name" placeholder="New color name" required>
+                <button type="submit" class="button primary">Add</button>
+            </form>
+            <ul id="colors-list" class="master-data-list">
+                <!-- Colors will be loaded here -->
+            </ul>
         </div>
-        <div class="master-data-grid">
-            <!-- Colors Card -->
-            <div class="master-data-card">
-                <h3>Colors</h3>
-                <div id="color-list" class="master-list">
-                    <div class="loading-spinner"><span>Loading colors...</span></div>
-                </div>
-                <form id="add-color-form" class="add-new-form">
-                    <input type="text" class="add-new-input" name="name" placeholder="Add new color" required autocomplete="off">
-                    <button class="button create" type="submit">Add</button>
-                </form>
-            </div>
-            <!-- Sizes Card -->
-            <div class="master-data-card">
-                <h3>Sizes</h3>
-                <div id="size-list" class="master-list">
-                    <div class="loading-spinner"><span>Loading sizes...</span></div>
-                </div>
-                <form id="add-size-form" class="add-new-form">
-                    <input type="text" class="add-new-input" name="name" placeholder="Add new size" required autocomplete="off">
-                    <button class="button create" type="submit">Add</button>
-                </form>
-            </div>
+
+        <!-- Sizes Section -->
+        <div class="master-data-section card" id="sizes-section">
+            <h2 class="section-title">Sizes</h2>
+            <form id="add-size-form" class="add-form">
+                <input type="text" name="name" placeholder="New size name" required>
+                <button type="submit" class="button primary">Add</button>
+            </form>
+            <ul id="sizes-list" class="master-data-list">
+                <!-- Sizes will be loaded here -->
+            </ul>
+        </div>
+
+        <!-- Models Section -->
+        <div class="master-data-section card" id="models-section">
+            <h2 class="section-title">Models</h2>
+            <form id="add-model-form" class="add-form">
+                <input type="text" name="name" placeholder="New model name" required>
+                <button type="submit" class="button primary">Add</button>
+            </form>
+            <ul id="models-list" class="master-data-list">
+                <!-- Models will be loaded here -->
+            </ul>
+        </div>
+
+        <!-- Variations Section -->
+        <div class="master-data-section card" id="variations-section">
+            <h2 class="section-title">Variations</h2>
+            <form id="add-variation-form" class="add-form">
+                <input type="text" name="name" placeholder="New variation name" required>
+                <button type="submit" class="button primary">Add</button>
+            </form>
+            <ul id="variations-list" class="master-data-list">
+                <!-- Variations will be loaded here -->
+            </ul>
         </div>
     </div>
 </div>
@@ -38,9 +61,5 @@
 
 {% block scripts %}
 {{ super() }}
-<script>
-document.addEventListener('DOMContentLoaded', function() {
-    App.fetchAndRenderAllMasterData();
-});
-</script>
+<script src="{{ url_for('static', filename='masterData.js') }}?v={{ config.VERSION }}" defer></script>
 {% endblock %}
