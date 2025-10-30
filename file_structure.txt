@@ -3,16 +3,28 @@
     app.py
     file_structure.txt
     generate_structure.py
+    .pytest_cache/
+        .gitignore
+        CACHEDIR.TAG
+        README.md
+        v/
+            cache/
+                lastfailed
+                nodeids
+                stepwise
     Project-root/
         .env
         .env.example
         .gitignore
         app.py
+        CHANGELOG.md
         config.py
         database.py
         deduplicate_items.py
         file_structure.txt
+        MANUAL_REGRESSION_CHECKLIST.md
         minify_assets.py
+        models.py
         README.md
         requirements.txt
         run_migration.py
@@ -69,3 +81,8 @@
             stock_ledger.html
             suppliers.html
             user_management.html
+        tests/
+            conftest.py
+            test_app.py
+            test_auth.py
+            test_smoke.py

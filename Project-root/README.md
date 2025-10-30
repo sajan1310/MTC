@@ -1,195 +1,94 @@
-# MTC Inventory Management System
+# MTC App
 
-A secure, performant Flask-based inventory management system with PostgreSQL backend.
+This is a Flask-based web application for managing inventory, suppliers, and purchase orders.
 
-## ✨ Features
+## Features
 
-- 🔐 Secure authentication (Google OAuth + Manual)
-- 📦 Complete inventory management (items, variants, stock tracking)
-- 🏭 Supplier management with contact tracking
-- 📝 Purchase order creation and management
-- 📊 Low stock reporting
-- 📁 CSV/Excel data import
-- 👥 User role management (Super Admin, Admin, User)
-- 🎨 Dark mode support
-- 📱 Fully responsive design
+*   **Dashboard**: View key metrics such as total stock, low stock items, and total suppliers.
+*   **Inventory Management**: Add, edit, and delete items and their variants.
+*   **Supplier Management**: Manage supplier information and contacts.
+*   **Purchase Orders**: Create and manage purchase orders.
+*   **User Management**: Manage user roles and permissions.
+*   **Google OAuth**: Securely log in with your Google account.
 
-## 🔒 Security Features
-
-- ✅ SQL injection protection
-- ✅ CSRF protection on all forms
-- ✅ File upload validation
-- ✅ Rate limiting on sensitive endpoints
-- ✅ Strong password requirements
-- ✅ HTTPS enforcement (production)
-- ✅ Secure session management
-
-## 🚀 Installation
+## Getting Started
 
 ### Prerequisites
-- Python 3.9+
-- PostgreSQL 13+
-- pip
 
-### Setup
+*   Python 3.10+
+*   PostgreSQL
 
-1. **Clone repository**
-```bash
-git clone https://github.com/sajan1310/MTC.git
-cd MTC/Project-root
-```
+### Installation
 
-2. **Create virtual environment**
-```bash
-python -m venv venv
-source venv/bin/activate  # On Windows: venv\Scripts\activate
-```
+1.  **Clone the repository:**
 
-3. **Install dependencies**
-```bash
-pip install -r requirements.txt
-```
+    ```bash
+    git clone https://github.com/your-username/MTC-App.git
+    cd MTC-App
+    ```
 
-4. **Configure environment variables**
-```bash
-cp .env.example .env
-# Edit .env with your database credentials and secrets
-```
+2.  **Create and activate a virtual environment:**
 
-5. **Run database migrations**
-```bash
-cd migrations
-python run_migration.py
-cd ..
-```
+    ```bash
+    python -m venv venv
+    source venv/bin/activate  # On Windows, use `venv\Scripts\activate`
+    ```
 
-6. **Start application**
-```bash
-python app.py
-```
+3.  **Install the dependencies:**
 
-7. **Access application**
-Open browser to http://127.0.0.1:5000
+    ```bash
+    pip install -r requirements.txt
+    ```
 
-## 📋 Environment Variables
+4.  **Set up the database:**
 
-Required in `.env` file:
+    *   Create a PostgreSQL database named `MTC`.
+    *   Run the migrations to create the necessary tables:
 
-```env
-# Database Configuration
-DB_HOST=127.0.0.1
-DB_NAME=MTC
-DB_USER=postgres
-DB_PASS=Sajan@1995
+        ```bash
+        python run_migration.py
+        ```
 
-# Flask Configuration
-FLASK_SECRET_KEY=your_secret_key_here
-FLASK_ENV=development  # or production
+5.  **Configure environment variables:**
 
-# Google OAuth (Optional)
-GOOGLE_CLIENT_ID=your_client_id
-GOOGLE_CLIENT_SECRET=your_client_secret
+    *   Copy the `.env.example` file to `.env`:
 
-# Database Pool (Optional)
-DB_POOL_MIN=2
-DB_POOL_MAX=20
-```
+        ```bash
+        cp .env.example .env
+        ```
 
-## 🏗️ Project Structure
+    *   Open the `.env` file and fill in the required values, including your database credentials and Google OAuth client ID and secret.
 
-```
-Project-root/
-├── app.py                  # Main Flask application
-├── config.py               # Configuration management
-├── database.py             # Database connection pool
-├── requirements.txt        # Python dependencies
-├── .env                    # Environment variables (not in git)
-├── migrations/             # Database migrations
-│   ├── add_indexes.sql
-│   └── run_migration.py
-├── static/
-│   ├── app.js             # Frontend JavaScript
-│   ├── styles.css         # CSS styles
-│   └── uploads/           # User uploaded files
-└── templates/             # HTML templates
-    ├── base.html
-    ├── inventory.html
-    ├── add_item.html
-    └── ...
-```
-
-## 🧪 Testing
-
-Run complete test suite:
+### Running the Application
 
 ```bash
-# See TESTING_CHECKLIST.md for detailed testing procedures
-cat TESTING_CHECKLIST.md
+flask run
 ```
 
-## 🔧 Performance Optimizations
+The application will be available at `http://127.0.0.1:5000`.
 
-- Database connection pooling (2-20 connections)
-- Query optimization with strategic indexes
-- Debounced search (300ms delay)
-- Lazy loading for large datasets
-- DOM update batching with requestAnimationFrame
+## Google OAuth Configuration
 
-## 📊 Database Schema
+1.  **Go to the Google Cloud Console:** [https://console.cloud.google.com/](https://console.cloud.google.com/)
+2.  **Create a new project** or select an existing one.
+3.  **Go to "APIs & Services" > "Credentials".**
+4.  **Click "Create Credentials" > "OAuth client ID".**
+5.  **Select "Web application"** as the application type.
+6.  **Under "Authorized redirect URIs", add the following URL:**
 
-See `migrations/` directory for complete schema definition.
+    ```
+    http://127.0.0.1:5000/auth/google/callback
+    ```
 
-Key tables:
-- `users` - User accounts and roles
-- `item_master` - Product catalog
-- `item_variant` - Product variants (color, size)
-- `suppliers` - Supplier information
-- `purchase_orders` - PO management
-- `stock_entries` - Stock movement tracking
+7.  **Click "Create"** and copy the "Client ID" and "Client Secret".
+8.  **Add the credentials to your `.env` file:**
 
-## 🐛 Troubleshooting
+    ```
+    GOOGLE_CLIENT_ID="your_google_client_id"
+    GOOGLE_CLIENT_SECRET="your_google_client_secret"
+    ```
 
-**Database connection error:**
+## Running the Tests
+
 ```bash
-# Check PostgreSQL is running
-sudo systemctl status postgresql
-
-# Verify credentials in .env
-psql -h 127.0.0.1 -U postgres -d MTC
-```
-
-**Import modal not showing:**
-```bash
-# Check browser console for JavaScript errors
-# Verify app.js loaded correctly
-```
-
-**File upload rejected:**
-```bash
-# Ensure file is PNG, JPG, JPEG, GIF, or WEBP
-# Check file size < 5MB
-```
-
-## 📝 License
-
-Proprietary - All rights reserved
-
-## 👨‍💻 Author
-
-Sajan Sontakke (@sajan1310)
-
-## 🔄 Version History
-
-### v2.0.0 (2025-10-25) - Security & Performance Update
-- ✅ Fixed SQL injection vulnerabilities
-- ✅ Added file upload validation
-- ✅ Implemented rate limiting
-- ✅ Optimized database queries
-- ✅ Added password strength requirements
-- ✅ Improved error handling
-- ✅ Enhanced frontend performance
-
-### v1.0.0 (2025-10-01) - Initial Release
-- Basic inventory management
-- User authentication
-- Supplier management
+python -m pytest
