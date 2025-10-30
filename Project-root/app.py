@@ -146,20 +146,10 @@ logging.basicConfig(level=logging.INFO)
 CORS(app, supports_credentials=True, origins=["http://127.0.0.1:5000"])
 
 # --- User and Login Management ---
+from models import User
 login_manager = LoginManager()
 login_manager.init_app(app)
 login_manager.login_view = 'auth.login'
-
-class User(UserMixin):
-    """Custom User class to hold user data from the database."""
-    def __init__(self, user_data):
-        self.id = user_data['user_id']
-        self.name = user_data['name']
-        self.email = user_data['email']
-        self.role = user_data['role']
-        self.profile_picture = user_data.get('profile_picture')
-        self.company = user_data.get('company')
-        self.mobile = user_data.get('mobile')
 
 @login_manager.user_loader
 def load_user(user_id):

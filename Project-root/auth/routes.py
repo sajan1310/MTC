@@ -37,7 +37,7 @@ def api_login():
             user_row = cur.fetchone()
 
             if user_row and user_row['password_hash'] and check_password_hash(user_row['password_hash'], password):
-                from app import User  # Local import to avoid circular dependency
+                from models import User
                 user_obj = User(user_row)
                 login_user(user_obj)
                 return jsonify({"success": True, "redirect_url": url_for("home")})
@@ -55,7 +55,7 @@ def auth_google():
 
     request_uri = client.prepare_request_uri(
         authorization_endpoint,
-        redirect_uri=current_app.config["GOOGLE_REDIRECT_URI"],
+        redirect_uri=url_for("auth.auth_google_callback", _external=True),
         scope=["openid", "email", "profile"],
     )
     return redirect(request_uri)
@@ -67,36 +67,41 @@ def auth_google_callback():
     google_provider_cfg = get_google_provider_cfg()
     token_endpoint = google_provider_cfg["token_endpoint"]
 
-    token_url, headers, body = client.prepare_token_request(
-        token_endpoint,
-        authorization_response=request.url,
-        redirect_url=current_app.config["GOOGLE_REDIRECT_URI"],
-        code=code
-    )
-    token_response = requests.post(
-        token_url,
-        headers=headers,
-        data=body,
-        auth=(current_app.config['GOOGLE_CLIENT_ID'], current_app.config['GOOGLE_CLIENT_SECRET']),
-    )
+    try:
+        token_url, headers, body = client.prepare_token_request(
+            token_endpoint,
+            authorization_response=request.url,
+            redirect_url=url_for("auth.auth_google_callback", _external=True),
+            code=code
+        )
+        token_response = requests.post(
+            token_url,
+            headers=headers,
+            data=body,
+            auth=(current_app.config['GOOGLE_CLIENT_ID'], current_app.config['GOOGLE_CLIENT_SECRET']),
+        )
+        token_response.raise_for_status()
 
-    client.parse_request_body_response(json.dumps(token_response.json()))
+        client.parse_request_body_response(json.dumps(token_response.json()))
 
-    userinfo_endpoint = google_provider_cfg["userinfo_endpoint"]
-    uri, headers, body = client.add_token(userinfo_endpoint)
-    userinfo_response = requests.get(uri, headers=headers, data=body)
-    user_info = userinfo_response.json()
+        userinfo_endpoint = google_provider_cfg["userinfo_endpoint"]
+        uri, headers, body = client.add_token(userinfo_endpoint)
+        userinfo_response = requests.get(uri, headers=headers, data=body)
+        userinfo_response.raise_for_status()
+        user_info = userinfo_response.json()
 
-    if user_info.get("email_verified"):
-        # Use the helper from app.py to get or create the user
-        from app import get_or_create_user
-        user_obj, is_new = get_or_create_user(user_info)
-        
-        if user_obj:
-            login_user(user_obj)
-            return redirect(url_for("home"))
+        if user_info.get("email_verified"):
+            from app import get_or_create_user
+            user_obj, is_new = get_or_create_user(user_info)
+            
+            if user_obj:
+                login_user(user_obj)
+                return redirect(url_for("home"))
 
-    return "User email not available or not verified by Google.", 400
+        return "User email not available or not verified by Google.", 400
+    except Exception as e:
+        current_app.logger.error(f"Google OAuth callback error: {e}")
+        return "An error occurred during the authentication process.", 500
 
 
 @auth.route("/logout")
