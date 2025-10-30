@@ -55,9 +55,11 @@ def get_conn(cursor_factory=None, autocommit=False):
         conn.autocommit = autocommit
         cur = conn.cursor(cursor_factory=cursor_factory)
         yield conn, cur
+        if not autocommit:
+            conn.commit()
     except Exception as e:
         print(f"Database error: {e}")
-        if conn:
+        if conn and not autocommit:
             conn.rollback()
         raise
     finally:

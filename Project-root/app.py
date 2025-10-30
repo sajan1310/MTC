@@ -3,6 +3,7 @@ import uuid
 import database
 from functools import wraps
 import json
+from io import StringIO
 
 from flask import (Flask, request, jsonify, render_template, redirect, url_for,
                    flash, session, send_from_directory)
@@ -16,7 +17,6 @@ import psycopg2.extras
 from werkzeug.security import generate_password_hash, check_password_hash
 from werkzeug.utils import secure_filename
 import logging
-from io import StringIO
 from psycopg2 import sql
 from flask_limiter import Limiter
 from flask_limiter.util import get_remote_address
@@ -90,6 +90,23 @@ def validate_upload(file):
         max_mb = app.config['MAX_CONTENT_LENGTH'] / (1024 * 1024)
         return False, f"File too large. Maximum size: {max_mb:.1f}MB"
     
+    # ✅ SECURITY FIX: Validate MIME type
+    try:
+        import magic
+        file.seek(0)
+        file_type = magic.from_buffer(file.read(1024), mime=True)
+        file.seek(0)
+        
+        allowed_mimes = {'image/jpeg', 'image/png', 'image/gif', 'image/webp'}
+        if file_type not in allowed_mimes:
+            return False, f"Invalid file type. Got {file_type}, expected one of {', '.join(allowed_mimes)}"
+    except ImportError:
+        # Fallback if python-magic is not installed
+        app.logger.warning("python-magic is not installed. Skipping MIME type validation.")
+    except Exception as e:
+        app.logger.error(f"MIME type validation failed: {e}")
+        return False, "Could not validate file type."
+
     return True, "Valid"
 
 csrf = CSRFProtect(app)
@@ -143,7 +160,25 @@ if not app.debug and os.environ.get('FLASK_ENV') == 'production':
     )
 
 logging.basicConfig(level=logging.INFO)
-CORS(app, supports_credentials=True, origins=["http://127.0.0.1:5000"])
+
+# ✅ SECURITY FIX: Proper CORS configuration
+if app.debug:
+    # Development: Allow localhost
+    CORS(app, 
+        supports_credentials=True, 
+        origins=["http://127.0.0.1:5000"],
+        allow_headers=["Content-Type", "X-CSRFToken"],
+        methods=["GET", "POST", "PUT", "DELETE", "OPTIONS"]
+    )
+else:
+    # Production: Specify exact domain
+    # TODO: Replace with your actual production domain
+    CORS(app, 
+        supports_credentials=True, 
+        origins=["https://yourdomain.com"],
+        allow_headers=["Content-Type", "X-CSRFToken"],
+        methods=["GET", "POST", "PUT", "DELETE", "OPTIONS"]
+    )
 
 # --- User and Login Management ---
 from models import User
@@ -500,7 +535,13 @@ def make_api_crud_routes(app, entity_name, table_name, id_col, name_col):
     @login_required
     def get_entities():
         with database.get_conn() as (conn, cur):
-            cur.execute(f"SELECT {id_col}, {name_col} FROM {table_name} ORDER BY {name_col}")
+            query = sql.SQL("SELECT {}, {} FROM {} ORDER BY {}").format(
+                sql.Identifier(id_col),
+                sql.Identifier(name_col),
+                sql.Identifier(table_name),
+                sql.Identifier(name_col)
+            )
+            cur.execute(query)
             items = cur.fetchall()
         return jsonify([{'id': item[0], 'name': item[1]} for item in items])
 
@@ -513,9 +554,13 @@ def make_api_crud_routes(app, entity_name, table_name, id_col, name_col):
         if not name: return jsonify({'error': 'Name is required'}), 400
         try:
             with database.get_conn() as (conn, cur):
-                cur.execute(f"INSERT INTO {table_name} ({name_col}) VALUES (%s) RETURNING {id_col}", (name,))
+                query = sql.SQL("INSERT INTO {} ({}) VALUES (%s) RETURNING {}").format(
+                    sql.Identifier(table_name),
+                    sql.Identifier(name_col),
+                    sql.Identifier(id_col)
+                )
+                cur.execute(query, (name,))
                 new_id = cur.fetchone()[0]
-                conn.commit()
             return jsonify({'id': new_id, 'name': name}), 201
         except psycopg2.IntegrityError:
              return jsonify({'error': f'"{name}" already exists.'}), 409
@@ -532,7 +577,12 @@ def make_api_crud_routes(app, entity_name, table_name, id_col, name_col):
         if not name: return jsonify({'error': 'Name is required'}), 400
         try:
             with database.get_conn() as (conn, cur):
-                cur.execute(f"UPDATE {table_name} SET {name_col} = %s WHERE {id_col} = %s", (name, item_id))
+                query = sql.SQL("UPDATE {} SET {} = %s WHERE {} = %s").format(
+                    sql.Identifier(table_name),
+                    sql.Identifier(name_col),
+                    sql.Identifier(id_col)
+                )
+                cur.execute(query, (name, item_id))
                 conn.commit()
             return jsonify({'message': f'{entity_name.capitalize()} updated'}), 200
         except psycopg2.IntegrityError:
@@ -547,8 +597,11 @@ def make_api_crud_routes(app, entity_name, table_name, id_col, name_col):
     def delete_entity(item_id):
         try:
             with database.get_conn() as (conn, cur):
-                cur.execute(f"DELETE FROM {table_name} WHERE {id_col} = %s", (item_id,))
-                conn.commit()
+                query = sql.SQL("DELETE FROM {} WHERE {} = %s").format(
+                    sql.Identifier(table_name),
+                    sql.Identifier(id_col)
+                )
+                cur.execute(query, (item_id,))
             return '', 204
         except psycopg2.IntegrityError:
             return jsonify({'error': 'This item is in use and cannot be deleted.'}), 409
@@ -1039,7 +1092,10 @@ def get_purchase_order(po_id):
     try:
         with database.get_conn(cursor_factory=psycopg2.extras.DictCursor) as (conn, cur):
             cur.execute("SELECT * FROM purchase_orders WHERE po_id = %s", (po_id,))
-            po = dict(cur.fetchone())
+            po_row = cur.fetchone()
+            if not po_row:
+                return jsonify({'error': 'Purchase order not found'}), 404
+            po = dict(po_row)
 
             cur.execute("""
                 SELECT poi.*, im.name as item_name, iv.variant_id
@@ -1103,7 +1159,10 @@ def get_purchase_order_by_number(po_number):
     try:
         with database.get_conn(cursor_factory=psycopg2.extras.DictCursor) as (conn, cur):
             cur.execute("SELECT * FROM purchase_orders WHERE po_number = %s", (po_number,))
-            po = dict(cur.fetchone())
+            po_row = cur.fetchone()
+            if not po_row:
+                return jsonify({'error': 'Purchase order not found'}), 404
+            po = dict(po_row)
 
             cur.execute("""
                 SELECT poi.*, im.name as item_name, iv.variant_id
@@ -1890,7 +1949,6 @@ def _process_chunk(chunk, headers):
     return validated_rows
 
 @app.route('/api/import/preview-json', methods=['POST'])
-@csrf.exempt  # ✅ We validate CSRF in JavaScript fetch headers
 @login_required
 @role_required('admin')
 def import_preview_json():
@@ -1924,7 +1982,6 @@ def import_preview_json():
 
 
 @app.route('/api/import/commit', methods=['POST'])
-@csrf.exempt
 @login_required
 @role_required('admin')
 @limiter.limit("5 per hour")
@@ -1945,6 +2002,9 @@ def import_commit():
         imported = 0
         
         with database.get_conn() as (conn, cur):
+            # ✅ SECURITY FIX: Lock tables to prevent race conditions during import
+            cur.execute("LOCK TABLE item_master, color_master, size_master, item_variant IN EXCLUSIVE MODE")
+
             for row_data in import_data:
                 # Apply mappings to the current row
                 mapped_row = {mappings.get(k, k): v for k, v in row_data.items()}
