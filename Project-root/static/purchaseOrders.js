@@ -134,7 +134,7 @@ const PurchaseOrders = {
         <td>${App.escapeHtml(po.po_number || 'N/A')}</td>
         <td>${App.escapeHtml(po.firm_name || 'Unknown Supplier')}</td>
         <td>${po.order_date ? new Date(po.order_date).toLocaleDateString() : 'N/A'}</td>
-        <td>₹${(po.total_amount || 0).toFixed(2)}</td>
+        <td>₹${(parseFloat(po.total_amount) || 0).toFixed(2)}</td>
         <td><span class="status-badge status-${(po.status || 'draft').toLowerCase().replace(' ', '-')}">${App.escapeHtml(po.status || 'Draft')}</span></td>
         <td class="actions-cell">
           <button class="button-icon view-po" title="View Details"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="3"></circle><path d="M12 5c-7 0-10 7-10 7s3 7 10 7 10-7 10-7-3-7-10-7z"></path></svg></button>

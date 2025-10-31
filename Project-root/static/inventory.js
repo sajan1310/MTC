@@ -8,6 +8,7 @@ const Inventory = {
     isLoading: false,
     selectedItems: new Set(),
     allItems: [],
+    allVariants: [],
   },
   elements: {},
 
@@ -43,6 +44,19 @@ const Inventory = {
     this.elements.addItemBtn?.addEventListener("click", () => (window.location.href = "/add_item"));
     this.elements.exportCsvBtn?.addEventListener("click", () => this.exportInventoryToCSV());
     document.getElementById("low-stock-report-btn")?.addEventListener("click", () => this.showLowStockReport());
+    document.getElementById("import-data-btn")?.addEventListener("click", () => this.openImportModal());
+    document.getElementById("receive-stock-btn")?.addEventListener("click", () => this.openReceiveStockModal());
+    document.getElementById("generate-po-btn")?.addEventListener("click", () => this.openPOModal());
+    document.getElementById("print-low-stock-report-btn")?.addEventListener("click", () => this.printLowStockReport());
+    document.getElementById("fetch-po-btn")?.addEventListener("click", () => this.fetchPODetails());
+    document.getElementById("add-receive-item-btn")?.addEventListener("click", () => this.addReceiveItemRow());
+    document.getElementById("add-po-item-btn")?.addEventListener("click", () => this.openVariantSearchModal());
+    document.getElementById("add-selected-variants-btn")?.addEventListener("click", () => this.addSelectedVariantsToPO());
+    document.getElementById("select-all-variants")?.addEventListener("change", (e) => this.toggleSelectAllVariants(e.target.checked));
+    document.getElementById("receive-tax-percentage")?.addEventListener("input", () => this.updateReceiveTotals());
+    document.getElementById("receive-discount-percentage")?.addEventListener("input", () => this.updateReceiveTotals());
+    document.getElementById("receive-stock-form")?.addEventListener("submit", (e) => this.handleReceiveStockSubmit(e));
+    document.getElementById("po-form")?.addEventListener("submit", (e) => this.handlePOFormSubmit(e));
     
     if (this.elements.inventorySearch) {
       const debouncedSearch = debounce((value) => this.handleSearch(value), 300);
@@ -592,6 +606,512 @@ const Inventory = {
 
   exportInventoryToCSV() {
     window.location.href = `${App.config.apiBase}/inventory/export/csv`;
+  },
+
+  /**
+   * Opens the import data modal
+   */
+  openImportModal() {
+    const modal = document.getElementById("import-modal");
+    if (modal) {
+      modal.classList.add("is-open");
+      // Reset to step 1
+      document.getElementById("import-step-1").style.display = "block";
+      document.getElementById("import-step-2").style.display = "none";
+      document.getElementById("import-next-btn").style.display = "inline-block";
+      document.getElementById("import-commit-btn").style.display = "none";
+      document.getElementById("import-back-btn").style.display = "none";
+    }
+  },
+
+  /**
+   * Opens the receive stock modal
+   */
+  openReceiveStockModal() {
+    const modal = document.getElementById("receive-stock-modal");
+    if (modal) {
+      modal.classList.add("is-open");
+      this.loadSuppliersForReceive();
+      this.clearReceiveStockForm();
+    }
+  },
+
+  /**
+   * Opens the Purchase Order modal
+   */
+  openPOModal() {
+    const modal = document.getElementById("po-modal");
+    if (modal) {
+      modal.classList.add("is-open");
+      this.loadSuppliersForPO();
+      this.clearPOForm();
+    }
+  },
+
+  /**
+   * Prints the low stock report
+   */
+  printLowStockReport() {
+    const printContent = document.getElementById("low-stock-report-printable");
+    if (!printContent) return;
+
+    const printWindow = window.open('', '', 'height=600,width=800');
+    printWindow.document.write('<html><head><title>Low Stock Report</title>');
+    printWindow.document.write('<style>');
+    printWindow.document.write('body { font-family: Arial, sans-serif; padding: 20px; }');
+    printWindow.document.write('table { width: 100%; border-collapse: collapse; }');
+    printWindow.document.write('th, td { border: 1px solid #ddd; padding: 8px; text-align: left; }');
+    printWindow.document.write('th { background-color: #f2f2f2; }');
+    printWindow.document.write('h1 { text-align: center; }');
+    printWindow.document.write('</style></head><body>');
+    printWindow.document.write('<h1>Low Stock Report</h1>');
+    printWindow.document.write(printContent.innerHTML);
+    printWindow.document.write('</body></html>');
+    printWindow.document.close();
+    printWindow.print();
+  },
+
+  /**
+   * Fetches PO details based on PO number
+   */
+  async fetchPODetails() {
+    const poNumber = document.getElementById("receive-po-number")?.value.trim();
+    if (!poNumber) {
+      App.showNotification("Please enter a PO number", "error");
+      return;
+    }
+
+    try {
+      const data = await App.fetchJson(`${App.config.apiBase}/purchase-orders/by-number/${encodeURIComponent(poNumber)}`);
+      if (data) {
+        // Populate supplier
+        const supplierSelect = document.getElementById("receive-supplier-select");
+        if (supplierSelect && data.supplier_id) {
+          supplierSelect.value = data.supplier_id;
+        }
+
+        // Clear existing items
+        const itemsBody = document.getElementById("receive-items-body");
+        if (itemsBody) {
+          itemsBody.innerHTML = '';
+        }
+
+        // Add items from PO
+        if (data.items && Array.isArray(data.items)) {
+          data.items.forEach(item => {
+            this.addReceiveItemRow(item);
+          });
+        }
+
+        App.showNotification("PO details loaded successfully", "success");
+      } else {
+        App.showNotification("PO not found", "error");
+      }
+    } catch (error) {
+      console.error("Error fetching PO:", error);
+      App.showNotification("Failed to fetch PO details", "error");
+    }
+  },
+
+  /**
+   * Adds a row to the receive stock form
+   */
+  addReceiveItemRow(item = {}) {
+    const tbody = document.getElementById("receive-items-body");
+    if (!tbody) return;
+
+    const row = document.createElement("tr");
+    row.className = "receive-item-row";
+    row.innerHTML = `
+      <td>
+        <select name="variant_id" class="variant-select" required>
+          <option value="">Select Item/Variant...</option>
+          ${this.state.allItems.map(v => `
+            <option value="${v.id}" ${item.variant_id == v.id ? 'selected' : ''}>
+              ${App.escapeHtml(v.name || v.full_name || '')}
+            </option>
+          `).join('')}
+        </select>
+      </td>
+      <td><input type="number" name="quantity" placeholder="Qty" required min="1" value="${item.quantity || 1}"></td>
+      <td><input type="number" name="cost_per_unit" placeholder="Cost" required min="0" step="0.01" value="${item.rate || item.cost_per_unit || 0}"></td>
+      <td class="receive-item-total">₹${((item.quantity || 1) * (item.rate || item.cost_per_unit || 0)).toFixed(2)}</td>
+      <td>
+        <button type="button" class="button-icon remove-receive-item" title="Remove Item">&times;</button>
+      </td>
+    `;
+
+    // Add event listeners for automatic calculation
+    const qtyInput = row.querySelector('[name="quantity"]');
+    const costInput = row.querySelector('[name="cost_per_unit"]');
+    const totalCell = row.querySelector('.receive-item-total');
+
+    const updateTotal = () => {
+      const qty = parseFloat(qtyInput.value) || 0;
+      const cost = parseFloat(costInput.value) || 0;
+      const total = qty * cost;
+      totalCell.textContent = `₹${total.toFixed(2)}`;
+      this.updateReceiveTotals();
+    };
+
+    qtyInput.addEventListener('input', updateTotal);
+    costInput.addEventListener('input', updateTotal);
+
+    // Handle remove button
+    row.querySelector('.remove-receive-item').addEventListener('click', () => {
+      row.remove();
+      this.updateReceiveTotals();
+    });
+
+    tbody.appendChild(row);
+    this.updateReceiveTotals();
+  },
+
+  /**
+   * Updates the totals in the receive stock form
+   */
+  updateReceiveTotals() {
+    const rows = document.querySelectorAll('.receive-item-row');
+    let subtotal = 0;
+
+    rows.forEach(row => {
+      const qty = parseFloat(row.querySelector('[name="quantity"]').value) || 0;
+      const cost = parseFloat(row.querySelector('[name="cost_per_unit"]').value) || 0;
+      subtotal += qty * cost;
+    });
+
+    const taxPercent = parseFloat(document.getElementById('receive-tax-percentage')?.value) || 0;
+    const discountPercent = parseFloat(document.getElementById('receive-discount-percentage')?.value) || 0;
+
+    const discountAmount = (subtotal * discountPercent) / 100;
+    const taxableAmount = subtotal - discountAmount;
+    const taxAmount = (taxableAmount * taxPercent) / 100;
+    const grandTotal = taxableAmount + taxAmount;
+
+    // Update display elements
+    if (document.getElementById('receive-discount-amount')) {
+      document.getElementById('receive-discount-amount').textContent = `₹${discountAmount.toFixed(2)}`;
+    }
+    if (document.getElementById('receive-total-amount')) {
+      document.getElementById('receive-total-amount').textContent = `₹${subtotal.toFixed(2)}`;
+    }
+    if (document.getElementById('receive-grand-total')) {
+      document.getElementById('receive-grand-total').textContent = `₹${grandTotal.toFixed(2)}`;
+    }
+  },
+
+  /**
+   * Opens the variant search modal for PO
+   */
+  openVariantSearchModal() {
+    const modal = document.getElementById("variant-search-modal");
+    if (modal) {
+      modal.classList.add("is-open");
+      this.loadAllVariantsForSearch();
+    }
+  },
+
+  /**
+   * Loads all variants for the search modal
+   */
+  async loadAllVariantsForSearch() {
+    try {
+      const data = await App.fetchJson(`${App.config.apiBase}/all-variants`);
+      if (data && Array.isArray(data)) {
+        this.state.allVariants = data;
+        this.renderVariantSearchResults();
+      }
+    } catch (error) {
+      console.error("Error loading variants:", error);
+      App.showNotification("Failed to load variants", "error");
+    }
+  },
+
+  /**
+   * Renders the variant search results
+   */
+  renderVariantSearchResults() {
+    const searchInput = document.getElementById("variant-search-input");
+    const resultsBody = document.getElementById("variant-search-results");
+    if (!resultsBody) return;
+
+    const searchTerm = searchInput?.value.toLowerCase() || '';
+    const filtered = this.state.allVariants?.filter(v => 
+      (v.name || v.full_name || '').toLowerCase().includes(searchTerm)
+    ) || [];
+
+    resultsBody.innerHTML = filtered.map(v => `
+      <tr>
+        <td><input type="checkbox" class="variant-checkbox" data-variant-id="${v.id}" data-variant-name="${App.escapeHtml(v.name || v.full_name || '')}"></td>
+        <td>${App.escapeHtml(v.item_name || '')}</td>
+        <td>${App.escapeHtml(v.model || '--')}</td>
+        <td>${App.escapeHtml(v.variation || '--')}</td>
+        <td>${App.escapeHtml(v.color || '--')}</td>
+        <td>${App.escapeHtml(v.size || '--')}</td>
+      </tr>
+    `).join('');
+
+    // Add search input listener if not already added
+    if (searchInput && !searchInput.dataset.listenerAdded) {
+      searchInput.addEventListener('input', () => this.renderVariantSearchResults());
+      searchInput.dataset.listenerAdded = 'true';
+    }
+  },
+
+  /**
+   * Toggles select all variants checkbox
+   */
+  toggleSelectAllVariants(checked) {
+    const checkboxes = document.querySelectorAll('#variant-search-results .variant-checkbox');
+    checkboxes.forEach(cb => cb.checked = checked);
+  },
+
+  /**
+   * Adds selected variants to PO
+   */
+  addSelectedVariantsToPO() {
+    const selected = document.querySelectorAll('#variant-search-results .variant-checkbox:checked');
+    const poItemsContainer = document.getElementById("po-items-container");
+    
+    if (!poItemsContainer) return;
+
+    selected.forEach(cb => {
+      const row = document.createElement('div');
+      row.className = 'po-item-row';
+      row.dataset.variantId = cb.dataset.variantId;
+      row.innerHTML = `
+        <span>${App.escapeHtml(cb.dataset.variantName)}</span>
+        <input type="number" name="quantity" placeholder="Qty" required min="1" value="1">
+        <input type="number" name="rate" placeholder="Rate" required min="0" step="0.01" value="0">
+        <button type="button" class="button-icon remove-po-item">&times;</button>
+      `;
+      
+      // Add remove listener
+      row.querySelector('.remove-po-item').addEventListener('click', () => row.remove());
+      
+      poItemsContainer.appendChild(row);
+    });
+
+    // Close modal
+    const modal = document.getElementById("variant-search-modal");
+    if (modal) {
+      modal.classList.remove("is-open");
+    }
+
+    App.showNotification(`Added ${selected.length} variant(s) to PO`, "success");
+  },
+
+  /**
+   * Loads suppliers for the receive stock form
+   */
+  async loadSuppliersForReceive() {
+    try {
+      const data = await App.fetchJson(`${App.config.apiBase}/suppliers`);
+      const select = document.getElementById("receive-supplier-select");
+      if (select && data && Array.isArray(data)) {
+        select.innerHTML = '<option value="">Select Supplier...</option>' +
+          data.map(s => `<option value="${s.id}">${App.escapeHtml(s.firm_name)}</option>`).join('');
+      }
+    } catch (error) {
+      console.error("Error loading suppliers:", error);
+    }
+  },
+
+  /**
+   * Loads suppliers for the PO form
+   */
+  async loadSuppliersForPO() {
+    try {
+      const data = await App.fetchJson(`${App.config.apiBase}/suppliers`);
+      const container = document.getElementById("po-supplier-container");
+      if (container && data && Array.isArray(data)) {
+        container.innerHTML = `
+          <div class="form-field">
+            <label for="po-supplier-id">Supplier *</label>
+            <select id="po-supplier-id" name="supplier_id" required>
+              <option value="">Select Supplier...</option>
+              ${data.map(s => `<option value="${s.id}">${App.escapeHtml(s.firm_name)}</option>`).join('')}
+            </select>
+          </div>
+        `;
+      }
+    } catch (error) {
+      console.error("Error loading suppliers:", error);
+    }
+  },
+
+  /**
+   * Clears the receive stock form
+   */
+  clearReceiveStockForm() {
+    const form = document.getElementById("receive-stock-form");
+    if (form) {
+      form.reset();
+    }
+    const itemsBody = document.getElementById("receive-items-body");
+    if (itemsBody) {
+      itemsBody.innerHTML = '';
+    }
+    this.updateReceiveTotals();
+  },
+
+  /**
+   * Clears the PO form
+   */
+  clearPOForm() {
+    const form = document.getElementById("po-form");
+    if (form) {
+      form.reset();
+    }
+    const itemsContainer = document.getElementById("po-items-container");
+    if (itemsContainer) {
+      itemsContainer.innerHTML = '';
+    }
+  },
+
+  /**
+   * Handles receive stock form submission
+   */
+  async handleReceiveStockSubmit(e) {
+    e.preventDefault();
+    
+    const supplierId = document.getElementById("receive-supplier-select")?.value;
+    const billNumber = document.getElementById("receive-bill-number")?.value || '';
+    const poNumber = document.getElementById("receive-po-number")?.value || '';
+    
+    if (!supplierId) {
+      App.showNotification("Please select a supplier", "error");
+      return;
+    }
+
+    const items = [];
+    const itemRows = document.querySelectorAll('.receive-item-row');
+    
+    if (itemRows.length === 0) {
+      App.showNotification("Please add at least one item", "error");
+      return;
+    }
+
+    let hasError = false;
+    itemRows.forEach(row => {
+      const variantId = row.querySelector('[name="variant_id"]').value;
+      const quantity = parseInt(row.querySelector('[name="quantity"]').value, 10);
+      const costPerUnit = parseFloat(row.querySelector('[name="cost_per_unit"]').value);
+      
+      if (!variantId || isNaN(quantity) || quantity <= 0 || isNaN(costPerUnit) || costPerUnit < 0) {
+        hasError = true;
+        return;
+      }
+      
+      items.push({
+        variant_id: variantId,
+        quantity: quantity,
+        cost_per_unit: costPerUnit
+      });
+    });
+
+    if (hasError) {
+      App.showNotification("Please ensure all items have valid values", "error");
+      return;
+    }
+
+    const receiptData = {
+      supplier_id: parseInt(supplierId, 10),
+      bill_number: billNumber,
+      po_number: poNumber,
+      items: items,
+      tax_percentage: parseFloat(document.getElementById('receive-tax-percentage')?.value) || 0,
+      discount_percentage: parseFloat(document.getElementById('receive-discount-percentage')?.value) || 0
+    };
+
+    try {
+      const result = await App.fetchJson(`${App.config.apiBase}/stock-receipts`, {
+        method: 'POST',
+        body: JSON.stringify(receiptData)
+      });
+
+      if (result) {
+        const modal = document.getElementById("receive-stock-modal");
+        if (modal) {
+          modal.classList.remove("is-open");
+        }
+        App.showNotification("Stock received and inventory updated successfully", "success");
+        this.fetchItems(); // Refresh inventory list
+      }
+    } catch (error) {
+      console.error('Error submitting stock receipt:', error);
+      App.showNotification("Failed to submit stock receipt", "error");
+    }
+  },
+
+  /**
+   * Handles PO form submission
+   */
+  async handlePOFormSubmit(e) {
+    e.preventDefault();
+    
+    const supplierId = document.getElementById("po-supplier-id")?.value;
+    
+    if (!supplierId) {
+      App.showNotification("Please select a supplier", "error");
+      return;
+    }
+
+    const items = [];
+    const itemRows = document.querySelectorAll('.po-item-row');
+    
+    if (itemRows.length === 0) {
+      App.showNotification("Please add at least one item to the purchase order", "error");
+      return;
+    }
+
+    let hasError = false;
+    itemRows.forEach(row => {
+      const variantId = row.dataset.variantId;
+      const quantity = parseInt(row.querySelector('[name="quantity"]').value, 10);
+      const rate = parseFloat(row.querySelector('[name="rate"]').value);
+      
+      if (!variantId || isNaN(quantity) || quantity <= 0 || isNaN(rate) || rate < 0) {
+        hasError = true;
+        return;
+      }
+      
+      items.push({
+        variant_id: variantId,
+        quantity: quantity,
+        rate: rate
+      });
+    });
+
+    if (hasError) {
+      App.showNotification("Please ensure all items have valid quantity and rate values", "error");
+      return;
+    }
+
+    const poData = {
+      supplier_id: parseInt(supplierId, 10),
+      items: items,
+      notes: '',
+      status: 'Draft'
+    };
+
+    try {
+      const result = await App.fetchJson(`${App.config.apiBase}/purchase-orders`, {
+        method: 'POST',
+        body: JSON.stringify(poData)
+      });
+
+      if (result) {
+        const modal = document.getElementById("po-modal");
+        if (modal) {
+          modal.classList.remove("is-open");
+        }
+        App.showNotification("Purchase order created successfully", "success");
+      }
+    } catch (error) {
+      console.error('Error creating purchase order:', error);
+      App.showNotification("Failed to create purchase order", "error");
+    }
   },
 };
 
