@@ -52,31 +52,77 @@ const MasterData = {
     });
   },
 
+  /**
+   * Fetches all master data (colors, sizes, models, variations) in parallel
+   * Handles errors gracefully for each data type
+   */
   async fetchAllMasterData() {
     const types = ["colors", "sizes", "models", "variations"];
-    const promises = types.map(type => 
-        App.fetchJson(`${App.config.apiBase}/${type}`).then(data => ({ type, data }))
-    );
-    const results = await Promise.all(promises);
-    results.forEach(({ type, data }) => {
-      if (data) {
-        this.state[type] = data;
-        this.renderList(type.slice(0, -1)); // 'colors' -> 'color'
+    
+    try {
+      const promises = types.map(type => 
+        App.fetchJson(`${App.config.apiBase}/${type}`)
+          .then(data => ({ type, data, error: null }))
+          .catch(error => ({ type, data: null, error }))
+      );
+      
+      const results = await Promise.all(promises);
+      
+      results.forEach(({ type, data, error }) => {
+        if (data && Array.isArray(data)) {
+          this.state[type] = data;
+          this.renderList(type.slice(0, -1)); // 'colors' -> 'color'
+        } else {
+          // Initialize empty array on error
+          this.state[type] = [];
+          this.renderList(type.slice(0, -1));
+          
+          if (error) {
+            console.error(`Error fetching ${type}:`, error);
+          }
+        }
+      });
+      
+      // Check if all requests failed
+      const allFailed = results.every(r => !r.data);
+      if (allFailed) {
+        App.showNotification('Failed to load master data. Please refresh the page.', 'error');
       }
-    });
+    } catch (error) {
+      console.error('Critical error fetching master data:', error);
+      App.showNotification('Network error loading master data.', 'error');
+    }
   },
 
+  /**
+   * Renders a master data list (colors, sizes, models, or variations)
+   * Shows appropriate empty state when list has no items
+   * @param {string} type - The type of master data ('color', 'size', 'model', or 'variation')
+   */
   renderList(type) {
     const listEl = this.elements[`${type}List`];
     const data = this.state[`${type}s`];
-    if (!listEl) return;
+    
+    if (!listEl) {
+      console.warn(`List element for ${type} not found`);
+      return;
+    }
+
+    if (!data || data.length === 0) {
+      listEl.innerHTML = `
+        <li class="empty-state">
+          <span style="color: var(--subtle-text-color);">No ${type}s added yet. Add one using the form above.</span>
+        </li>
+      `;
+      return;
+    }
 
     listEl.innerHTML = data.map(item => `
       <li data-id="${item.id}" data-name="${App.escapeHtml(item.name)}">
         <span>${App.escapeHtml(item.name)}</span>
         <div class="actions">
-          <button class="button-icon edit-btn" title="Edit"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M11 4H4a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7"></path><path d="M18.5 2.5a2.121 2.121 0 0 1 3 3L12 15l-4 1 1-4 9.5-9.5z"></path></svg></button>
-          <button class="button-icon delete-btn" title="Delete"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="3 6 5 6 21 6"></polyline><path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"></path></svg></button>
+          <button class="button-icon edit-btn" title="Edit ${type}"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M11 4H4a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7"></path><path d="M18.5 2.5a2.121 2.121 0 0 1 3 3L12 15l-4 1 1-4 9.5-9.5z"></path></svg></button>
+          <button class="button-icon delete-btn" title="Delete ${type}"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="3 6 5 6 21 6"></polyline><path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"></path></svg></button>
         </div>
       </li>
     `).join("");
@@ -140,24 +186,53 @@ const MasterData = {
     }
   },
 
+  /**
+   * Handles deletion of a master data item
+   * Checks for dependencies before allowing deletion
+   * @param {string|number} id - The item ID
+   * @param {string} name - The item name (for confirmation)
+   * @param {string} type - The data type ('color', 'size', 'model', or 'variation')
+   */
   async handleMasterDelete(id, name, type) {
-    // Check for dependencies before deleting
-    const dependencyResult = await App.fetchJson(`${App.config.apiBase}/${type}s/${id}/dependencies`);
-    if (dependencyResult && dependencyResult.count > 0) {
-      alert(`Cannot delete "${name}" because it is currently in use by ${dependencyResult.count} item(s).`);
-      return;
-    }
+    try {
+      // Check for dependencies before deleting
+      const dependencyResult = await App.fetchJson(`${App.config.apiBase}/${type}s/${id}/dependencies`);
+      
+      if (dependencyResult && dependencyResult.count > 0) {
+        App.showNotification(
+          `Cannot delete "${name}" because it is currently used by ${dependencyResult.count} item(s).`,
+          'error'
+        );
+        return;
+      }
 
-    if (confirm(`Are you sure you want to delete "${name}"?`)) {
+      // Confirm deletion
+      if (!confirm(`Are you sure you want to delete "${name}"? This action cannot be undone.`)) {
+        return;
+      }
+
+      // Perform deletion
       const result = await App.fetchJson(`${App.config.apiBase}/${type}s/${id}`, {
         method: "DELETE",
       });
 
       if (result) {
+        // Remove from state and re-render
         this.state[`${type}s`] = this.state[`${type}s`].filter(item => item.id != id);
         this.renderList(type);
-        App.showNotification(`${type.charAt(0).toUpperCase() + type.slice(1)} deleted.`, "success");
+        App.showNotification(
+          `${type.charAt(0).toUpperCase() + type.slice(1)} deleted successfully.`, 
+          "success"
+        );
+      } else {
+        App.showNotification(
+          `Failed to delete ${type}. It may be in use or the server encountered an error.`,
+          'error'
+        );
       }
+    } catch (error) {
+      console.error(`Error deleting ${type}:`, error);
+      App.showNotification(`Network error deleting ${type}.`, 'error');
     }
   },
 };

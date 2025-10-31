@@ -3,6 +3,9 @@
     app.py
     file_structure.txt
     generate_structure.py
+    .github/
+        chatmodes/
+            Plan Mode.chatmode.md
     .pytest_cache/
         .gitignore
         CACHEDIR.TAG
@@ -18,17 +21,40 @@
         .gitignore
         app.py
         CHANGELOG.md
+        check_oauth_config.py
         config.py
         database.py
         deduplicate_items.py
+        DEPLOYMENT.md
         file_structure.txt
+        GOOGLE_CONSOLE_CHECKLIST.md
+        GOOGLE_OAUTH_404_FIX.md
+        logging_config.py
         MANUAL_REGRESSION_CHECKLIST.md
+        MANUAL_TEST_GUIDE.md
         minify_assets.py
         models.py
+        OAUTH_FIX_GUIDE.md
+        OAUTH_FIX_SUMMARY.md
+        Procfile
+        production.env.example
+        PRODUCTION_READINESS_CHECKLIST.md
+        PRODUCTION_UPGRADE_SUMMARY.md
         README.md
         requirements.txt
         run_migration.py
+        run_production.py
         TESTING_CHECKLIST.md
+        test_oauth.ps1
+        wsgi.py
+        .pytest_cache/
+            .gitignore
+            CACHEDIR.TAG
+            README.md
+            v/
+                cache/
+                    nodeids
+                    stepwise
         auth/
             routes.py
         migrations/
@@ -41,6 +67,7 @@
             migration_add_item_uniqueness.py
             migration_add_master_tables.py
             migration_add_notes_and_status_to_po.py
+            migration_add_password_reset.py
             migration_add_po_number.py
             migration_add_po_tracking.py
             migration_add_stock_receipts.py
@@ -58,6 +85,8 @@
             styles.css
             styles.min.css
             suppliers.js
+            css/
+                login.css
             img/
                 Final_Logo.png
             js/
@@ -72,12 +101,15 @@
             add_item.html
             base.html
             dashboard_new.html
+            forgot_password.html
             inventory.html
             login.html
             low_stock_report.html
             master_data.html
             profile.html
             purchase_orders.html
+            reset_password.html
+            signup.html
             stock_ledger.html
             suppliers.html
             user_management.html
@@ -85,4 +117,5 @@
             conftest.py
             test_app.py
             test_auth.py
+            test_oauth_redirect_uri.py
             test_smoke.py

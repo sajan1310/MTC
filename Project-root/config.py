@@ -31,12 +31,14 @@ class Config:
     GOOGLE_CLIENT_SECRET = os.environ.get("GOOGLE_CLIENT_SECRET", None)
     GOOGLE_DISCOVERY_URL = os.environ.get("GOOGLE_DISCOVERY_URL", "https://accounts.google.com/.well-known/openid-configuration")
     
-    # Session
-    SESSION_COOKIE_SECURE = False
-    SESSION_COOKIE_HTTPONLY = True
-    SESSION_COOKIE_SAMESITE = 'Lax'
-    PERMANENT_SESSION_LIFETIME = timedelta(days=7)
-    
+    # ✅ OAUTH FIX: Warn if credentials are missing (moved session config to app.py to avoid circular import)
+    if not GOOGLE_CLIENT_ID or not GOOGLE_CLIENT_SECRET:
+        import warnings
+        warnings.warn(
+            "GOOGLE_CLIENT_ID and GOOGLE_CLIENT_SECRET are not set. "
+            "Google OAuth login will not work. Set these in your .env file."
+        )
+       
     # File Upload
     MAX_CONTENT_LENGTH = 16 * 1024 * 1024  # 16MB max upload
     UPLOAD_FOLDER = 'static/uploads'

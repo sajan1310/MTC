@@ -3,10 +3,23 @@ from flask import url_for, request
 from models import User
 
 def test_login_page(client):
-    """Test that the login page loads correctly."""
+    """Test that the login page loads correctly with email/password form."""
     response = client.get('/login')
     assert response.status_code == 200
-    assert b"Sign in with Google" in response.data
+    # Check for core elements of the new login page
+    assert b"Welcome back" in response.data or b"Login" in response.data
+    assert b"name=\"email\"" in response.data
+    assert b"name=\"password\"" in response.data
+
+def test_signup_page(client):
+    response = client.get('/signup')
+    assert response.status_code == 200
+    assert b"Create your account" in response.data or b"Create account" in response.data
+
+def test_forgot_password_page(client):
+    response = client.get('/forgot-password')
+    assert response.status_code == 200
+    assert b"Reset your password" in response.data
 
 @patch('auth.routes.get_google_provider_cfg')
 @patch('auth.routes.requests')
@@ -44,3 +57,13 @@ def test_google_login(mock_get_or_create_user, mock_requests, mock_get_cfg, clie
     response = client.get('/auth/google/callback?code=test_code', follow_redirects=True)
     assert response.status_code == 200
     assert b"Dashboard" in response.data
+
+def test_api_login_demo_credentials(client, app):
+    # Uses demo credentials available under TESTING
+    payload = {"email": app.config.get('DEMO_USER_EMAIL', 'demo@example.com'),
+               "password": app.config.get('DEMO_USER_PASSWORD', 'Demo@1234')}
+    response = client.post('/api/login', json=payload)
+    assert response.status_code == 200
+    data = response.get_json()
+    assert data.get('success') is True
+    assert 'redirect_url' in data
