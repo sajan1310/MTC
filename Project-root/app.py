@@ -57,9 +57,28 @@ def validate_password(password):
         return False, "Password must contain at least one special character"
     
     return True, "Password is strong"
+
 # ✅ Load configuration from config.py
 from config import get_config
 app.config.from_object(get_config())
+
+# ✅ OAUTH FIX: Add ProxyFix middleware for apps behind reverse proxy
+from werkzeug.middleware.proxy_fix import ProxyFix
+app.wsgi_app = ProxyFix(app.wsgi_app, x_for=1, x_proto=1, x_host=1, x_port=1)
+
+# ✅ OAUTH FIX: Configure session security
+if not app.debug:
+    app.config.update(
+        SESSION_COOKIE_SECURE=True,
+        SESSION_COOKIE_HTTPONLY=True,
+        SESSION_COOKIE_SAMESITE='Lax',
+    )
+from datetime import timedelta, datetime
+app.config['PERMANENT_SESSION_LIFETIME'] = timedelta(days=7)
+
+# ✅ OAUTH FIX: Set PREFERRED_URL_SCHEME for correct redirect URI generation
+if app.config.get('BASE_URL', '').startswith('https://'):
+    app.config['PREFERRED_URL_SCHEME'] = 'https'
 
 # File upload security configuration
 def allowed_file(filename):
@@ -140,6 +159,32 @@ def not_found_error(error):
 def internal_error(error):
     return render_template('500.html'), 500
 
+# ✅ OAUTH FIX: Enhanced logging configuration
+import logging
+from logging.handlers import RotatingFileHandler
+import os as log_os
+
+if not app.debug:
+    # Production logging
+    if not log_os.path.exists('logs'):
+        log_os.makedirs('logs')
+    file_handler = RotatingFileHandler('logs/app.log', maxBytes=10240000, backupCount=10)
+    file_handler.setFormatter(logging.Formatter(
+        '%(asctime)s %(levelname)s: %(message)s [in %(pathname)s:%(lineno)d]'
+    ))
+    file_handler.setLevel(logging.INFO)
+    app.logger.addHandler(file_handler)
+    app.logger.setLevel(logging.INFO)
+    app.logger.info('Application startup')
+else:
+    # Development logging
+    app.logger.setLevel(logging.DEBUG)
+
+# ✅ OAUTH FIX: Log critical OAuth configuration at startup
+app.logger.info(f"BASE_URL configured as: {app.config.get('BASE_URL')}")
+app.logger.info(f"PREFERRED_URL_SCHEME: {app.config.get('PREFERRED_URL_SCHEME', 'not set')}")
+app.logger.info(f"Google OAuth enabled: {bool(app.config.get('GOOGLE_CLIENT_ID'))}")
+
 # Route to handle Chrome DevTools requests and prevent 404s in logs
 @app.route('/.well-known/appspecific/com.chrome.devtools.json')
 def chrome_devtools_json():
@@ -201,6 +246,77 @@ def load_user(user_id):
 
 app.register_blueprint(auth)
 
+# ✅ OAUTH FIX: Log all incoming requests to help debug 404s
+@app.before_request
+def log_request():
+    if '/static/' not in request.path:  # Skip static files
+        app.logger.info(f"[Request] {request.method} {request.path} from {request.remote_addr}")
+        if request.query_string:
+            app.logger.debug(f"  Query string: {request.query_string.decode()}")
+
+@app.after_request
+def log_response(response):
+    if '/static/' not in request.path:
+        app.logger.info(f"[Response] {request.path} -> {response.status_code}")
+    return response
+
+@app.after_request
+def add_security_headers(response):
+    """
+    Add production-grade security and performance headers.
+    
+    Headers added:
+    - Cache-Control: Control browser/CDN caching
+    - X-Content-Type-Options: Prevent MIME sniffing
+    - X-Frame-Options: Prevent clickjacking
+    - X-XSS-Protection: XSS protection for older browsers
+    - Strict-Transport-Security: Force HTTPS
+    - Referrer-Policy: Control referrer information
+    """
+    # Static file caching (1 year for fingerprinted assets)
+    if '/static/' in request.path:
+        # Aggressive caching for static assets
+        if any(ext in request.path for ext in ['.css', '.js', '.jpg', '.png', '.gif', '.ico', '.woff', '.woff2']):
+            response.headers['Cache-Control'] = 'public, max-age=31536000, immutable'
+        else:
+            # Moderate caching for other static files
+            response.headers['Cache-Control'] = 'public, max-age=86400'
+    else:
+        # No caching for dynamic content
+        response.headers['Cache-Control'] = 'no-cache, no-store, must-revalidate'
+        response.headers['Pragma'] = 'no-cache'
+        response.headers['Expires'] = '0'
+    
+    # Security headers
+    response.headers['X-Content-Type-Options'] = 'nosniff'
+    response.headers['X-Frame-Options'] = 'SAMEORIGIN'
+    response.headers['X-XSS-Protection'] = '1; mode=block'
+    response.headers['Referrer-Policy'] = 'strict-origin-when-cross-origin'
+    
+    # HSTS (HTTP Strict Transport Security) - only in production with HTTPS
+    if app.config.get('ENV') == 'production' and request.is_secure:
+        response.headers['Strict-Transport-Security'] = 'max-age=31536000; includeSubDomains; preload'
+    
+    return response
+
+# ✅ OAUTH FIX: Print registered routes at startup for debugging
+if __name__ == '__main__' or app.debug:
+    print("\n" + "=" * 60)
+    print("REGISTERED FLASK ROUTES:")
+    print("=" * 60)
+    for rule in app.url_map.iter_rules():
+        methods = ','.join(sorted(rule.methods - {'OPTIONS', 'HEAD'}))
+        if methods:  # Only show routes with methods
+            print(f"  {rule.endpoint:40} {methods:10} {rule.rule}")
+    print("=" * 60)
+    
+    # Print OAuth-specific routes
+    oauth_routes = [r for r in app.url_map.iter_rules() if 'auth' in r.rule.lower() or 'google' in r.rule.lower()]
+    if oauth_routes:
+        print("\nOAUTH-RELATED ROUTES:")
+        for route in oauth_routes:
+            print(f"  {route.rule} -> {route.endpoint}")
+        print("=" * 60 + "\n")
 
 # --- Helper Functions & Decorators ---
 def get_or_create_user(user_info):
@@ -2549,14 +2665,120 @@ def ping():
 
 @app.route('/health')
 def health_check():
+    """
+    Production-grade health check endpoint.
+    
+    Verifies:
+    - Application is running
+    - Database connectivity
+    - OAuth configuration
+    - Environment variables
+    
+    Returns:
+        200: All systems operational
+        503: Service unavailable (with details)
+    """
+    health_status = {
+        'status': 'healthy',
+        'timestamp': datetime.utcnow().isoformat() + 'Z',
+        'checks': {}
+    }
+    
+    status_code = 200
+    
+    # Check 1: Database Connectivity
     try:
         with database.get_conn() as (conn, cur):
             cur.execute("SELECT 1")
-            cur.fetchone()
-        return jsonify({'status': 'ok'}), 200
+            result = cur.fetchone()
+            if result and result[0] == 1:
+                health_status['checks']['database'] = {
+                    'status': 'healthy',
+                    'message': 'Database connection successful'
+                }
+            else:
+                raise Exception("Unexpected query result")
     except Exception as e:
-        app.logger.error(f"Health check failed: {e}")
-        return jsonify({'status': 'error', 'reason': str(e)}), 500
+        health_status['status'] = 'unhealthy'
+        health_status['checks']['database'] = {
+            'status': 'unhealthy',
+            'message': f'Database connection failed: {str(e)}'
+        }
+        status_code = 503
+    
+    # Check 2: OAuth Configuration
+    oauth_valid = True
+    oauth_issues = []
+    
+    if not app.config.get('GOOGLE_CLIENT_ID'):
+        oauth_valid = False
+        oauth_issues.append('GOOGLE_CLIENT_ID not set')
+    
+    if not app.config.get('GOOGLE_CLIENT_SECRET'):
+        oauth_valid = False
+        oauth_issues.append('GOOGLE_CLIENT_SECRET not set')
+    
+    if not app.config.get('BASE_URL'):
+        oauth_valid = False
+        oauth_issues.append('BASE_URL not set')
+    
+    if oauth_valid:
+        health_status['checks']['oauth'] = {
+            'status': 'healthy',
+            'message': 'OAuth configuration valid'
+        }
+    else:
+        health_status['status'] = 'degraded'
+        health_status['checks']['oauth'] = {
+            'status': 'unhealthy',
+            'message': f"OAuth misconfigured: {', '.join(oauth_issues)}"
+        }
+        if status_code == 200:
+            status_code = 503
+    
+    # Check 3: Required Environment Variables
+    required_vars = ['SECRET_KEY', 'DATABASE_URL']
+    missing_vars = [var for var in required_vars if not os.getenv(var)]
+    
+    if not missing_vars:
+        health_status['checks']['environment'] = {
+            'status': 'healthy',
+            'message': 'All required environment variables set'
+        }
+    else:
+        health_status['status'] = 'unhealthy'
+        health_status['checks']['environment'] = {
+            'status': 'unhealthy',
+            'message': f"Missing variables: {', '.join(missing_vars)}"
+        }
+        status_code = 503
+    
+    # Check 4: Disk Space (if applicable)
+    try:
+        import shutil
+        disk_usage = shutil.disk_usage(app.root_path)
+        free_gb = disk_usage.free / (1024**3)
+        
+        if free_gb > 1:  # At least 1GB free
+            health_status['checks']['disk_space'] = {
+                'status': 'healthy',
+                'message': f'{free_gb:.2f} GB available'
+            }
+        else:
+            health_status['status'] = 'degraded'
+            health_status['checks']['disk_space'] = {
+                'status': 'warning',
+                'message': f'Low disk space: {free_gb:.2f} GB available'
+            }
+    except Exception:
+        # Disk check optional - don't fail if unavailable
+        pass
+    
+    # Log health check result
+    if status_code != 200:
+        app.logger.warning(f"Health check failed: {health_status}")
+    
+    return jsonify(health_status), status_code
 
 @app.route('/api/inventory/export/csv', methods=['GET'])
 @login_required

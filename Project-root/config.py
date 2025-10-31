@@ -4,8 +4,6 @@ Application configuration classes for different environments.
 from dotenv import load_dotenv
 import os
 
-import app
-
 # Load environment variables from .env file
 load_dotenv()
 from datetime import timedelta
@@ -33,14 +31,13 @@ class Config:
     GOOGLE_CLIENT_SECRET = os.environ.get("GOOGLE_CLIENT_SECRET", None)
     GOOGLE_DISCOVERY_URL = os.environ.get("GOOGLE_DISCOVERY_URL", "https://accounts.google.com/.well-known/openid-configuration")
     
-    # ✅ ADD in Flask app configuration
-    if not app.debug:  # Production only
-        app.config.update(
-          SESSION_COOKIE_SECURE=True,      # HTTPS only
-          SESSION_COOKIE_HTTPONLY=True,    # No JS access
-          SESSION_COOKIE_SAMESITE='Lax',   # CSRF protection
-          PERMANENT_SESSION_LIFETIME=timedelta(days=7)
-    )
+    # ✅ OAUTH FIX: Warn if credentials are missing (moved session config to app.py to avoid circular import)
+    if not GOOGLE_CLIENT_ID or not GOOGLE_CLIENT_SECRET:
+        import warnings
+        warnings.warn(
+            "GOOGLE_CLIENT_ID and GOOGLE_CLIENT_SECRET are not set. "
+            "Google OAuth login will not work. Set these in your .env file."
+        )
        
     # File Upload
     MAX_CONTENT_LENGTH = 16 * 1024 * 1024  # 16MB max upload

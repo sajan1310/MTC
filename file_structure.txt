@@ -21,17 +21,41 @@
         .gitignore
         app.py
         CHANGELOG.md
+        check_oauth_config.py
         config.py
         database.py
         deduplicate_items.py
+        DEPLOYMENT.md
         file_structure.txt
+        GOOGLE_CONSOLE_CHECKLIST.md
+        GOOGLE_OAUTH_404_FIX.md
+        logging_config.py
         MANUAL_REGRESSION_CHECKLIST.md
+        MANUAL_TEST_GUIDE.md
         minify_assets.py
         models.py
+        OAUTH_FIX_COMPLETE.md
+        OAUTH_FIX_GUIDE.md
+        OAUTH_FIX_SUMMARY.md
+        Procfile
+        production.env.example
+        PRODUCTION_READINESS_CHECKLIST.md
+        PRODUCTION_UPGRADE_SUMMARY.md
         README.md
         requirements.txt
         run_migration.py
+        run_production.py
         TESTING_CHECKLIST.md
+        test_oauth.ps1
+        wsgi.py
+        .pytest_cache/
+            .gitignore
+            CACHEDIR.TAG
+            README.md
+            v/
+                cache/
+                    nodeids
+                    stepwise
         auth/
             routes.py
         migrations/
@@ -88,4 +112,5 @@
             conftest.py
             test_app.py
             test_auth.py
+            test_oauth_redirect_uri.py
             test_smoke.py
