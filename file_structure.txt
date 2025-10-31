@@ -34,7 +34,6 @@
         MANUAL_TEST_GUIDE.md
         minify_assets.py
         models.py
-        OAUTH_FIX_COMPLETE.md
         OAUTH_FIX_GUIDE.md
         OAUTH_FIX_SUMMARY.md
         Procfile

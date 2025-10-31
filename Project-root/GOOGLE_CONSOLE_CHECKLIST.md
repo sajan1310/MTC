@@ -34,7 +34,7 @@ You should see:
 ```
 OAuth 2.0 Client ID
 Name: [Your client name]
-Client ID: 135697839359-98a3pof9u58q9nb3pv212r49l6uisr52.apps.googleusercontent.com
+Client ID: your-client-id.apps.googleusercontent.com
 Client Secret: [Your secret]
 Creation date: [Date]
 ```
@@ -228,7 +228,7 @@ Click **"SAVE AND CONTINUE"**
 Go through this checklist **in order**:
 
 ### OAuth Client Settings:
-- [ ] Client ID matches: `135697839359-98a3pof9u58q9nb3pv212r49l6uisr52.apps.googleusercontent.com`
+- [ ] Client ID matches: `your-client-id.apps.googleusercontent.com`
 - [ ] Authorized redirect URI is **exactly**: `http://127.0.0.1:5000/auth/google/callback`
 - [ ] No trailing slash in redirect URI
 - [ ] Using `127.0.0.1` (not `localhost`)
@@ -259,7 +259,7 @@ Your Google Console settings **must match** your `.env` file:
 ```bash
 # Open Project-root/.env and verify:
 BASE_URL=http://127.0.0.1:5000
-GOOGLE_CLIENT_ID=135697839359-98a3pof9u58q9nb3pv212r49l6uisr52.apps.googleusercontent.com
+GOOGLE_CLIENT_ID=your-client-id.apps.googleusercontent.com
 GOOGLE_CLIENT_SECRET=[Your secret from Google Console]
 OAUTHLIB_INSECURE_TRANSPORT=1
 ```
@@ -340,7 +340,7 @@ Click on "Web client 1" to open ↑
 #### Client Configuration:
 ```
 Name: Web client 1
-Client ID: 135697839359-98a3pof9u58q9nb3pv212r49l6uisr52.apps.googleusercontent.com
+Client ID: your-client-id.apps.googleusercontent.com
 Client secret: [Your secret - keep this private!]
 
 Authorized JavaScript origins
@@ -383,7 +383,7 @@ Get-Content .env | Select-String "BASE_URL|GOOGLE_CLIENT_ID|OAUTHLIB"
 **Expected output:**
 ```
 BASE_URL=http://127.0.0.1:5000
-GOOGLE_CLIENT_ID=135697839359-98a3pof9u58q9nb3pv212r49l6uisr52.apps.googleusercontent.com
+GOOGLE_CLIENT_ID=your-client-id.apps.googleusercontent.com
 OAUTHLIB_INSECURE_TRANSPORT=1
 ```
 
@@ -444,7 +444,7 @@ After completing all configuration steps:
 
 ```
 Google Cloud Console:
-✅ Client ID: 135697839359-98a3pof9u58q9nb3pv212r49l6uisr52.apps.googleusercontent.com
+✅ Client ID: your-client-id.apps.googleusercontent.com
 ✅ Redirect URI: http://127.0.0.1:5000/auth/google/callback (exact match)
 ✅ OAuth consent screen: Configured
 ✅ Publishing status: Testing (with your email as test user)
@@ -453,7 +453,7 @@ Google Cloud Console:
 
 Your .env file:
 ✅ BASE_URL=http://127.0.0.1:5000
-✅ GOOGLE_CLIENT_ID=135697839359-98a3pof9u58q9nb3pv212r49l6uisr52.apps.googleusercontent.com
+✅ GOOGLE_CLIENT_ID=your-client-id.apps.googleusercontent.com
 ✅ GOOGLE_CLIENT_SECRET=[Your secret]
 ✅ OAUTHLIB_INSECURE_TRANSPORT=1
 
