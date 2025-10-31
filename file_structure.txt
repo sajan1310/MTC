@@ -3,6 +3,9 @@
     app.py
     file_structure.txt
     generate_structure.py
+    .github/
+        chatmodes/
+            Plan Mode.chatmode.md
     .pytest_cache/
         .gitignore
         CACHEDIR.TAG

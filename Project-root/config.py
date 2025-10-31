@@ -4,6 +4,8 @@ Application configuration classes for different environments.
 from dotenv import load_dotenv
 import os
 
+import app
+
 # Load environment variables from .env file
 load_dotenv()
 from datetime import timedelta
@@ -31,12 +33,15 @@ class Config:
     GOOGLE_CLIENT_SECRET = os.environ.get("GOOGLE_CLIENT_SECRET", None)
     GOOGLE_DISCOVERY_URL = os.environ.get("GOOGLE_DISCOVERY_URL", "https://accounts.google.com/.well-known/openid-configuration")
     
-    # Session
-    SESSION_COOKIE_SECURE = False
-    SESSION_COOKIE_HTTPONLY = True
-    SESSION_COOKIE_SAMESITE = 'Lax'
-    PERMANENT_SESSION_LIFETIME = timedelta(days=7)
-    
+    # ✅ ADD in Flask app configuration
+    if not app.debug:  # Production only
+        app.config.update(
+          SESSION_COOKIE_SECURE=True,      # HTTPS only
+          SESSION_COOKIE_HTTPONLY=True,    # No JS access
+          SESSION_COOKIE_SAMESITE='Lax',   # CSRF protection
+          PERMANENT_SESSION_LIFETIME=timedelta(days=7)
+    )
+       
     # File Upload
     MAX_CONTENT_LENGTH = 16 * 1024 * 1024  # 16MB max upload
     UPLOAD_FOLDER = 'static/uploads'
