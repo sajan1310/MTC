@@ -1,13 +1,12 @@
-# Google OAuth Test Script
-# Run this to verify OAuth configuration is correct
+<#
+DEPRECATED: This PowerShell script is no longer used.
 
-Write-Host "`n========================================" -ForegroundColor Cyan
-Write-Host "   Google OAuth Configuration Test" -ForegroundColor Cyan
-Write-Host "========================================`n" -ForegroundColor Cyan
+Reason: Google OAuth logic has been rewritten and simplified in the backend.
+Please remove this file if not required.
+#>
 
-$baseUrl = "http://127.0.0.1:5000"
-$passed = 0
-$failed = 0
+Write-Host "This script is deprecated and no longer in use." -ForegroundColor Yellow
+return
 
 # Test 1: Check .env file
 Write-Host "[Test 1] Checking .env configuration..." -ForegroundColor Yellow

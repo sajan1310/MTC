@@ -94,25 +94,45 @@ const Inventory = {
     }
   },
 
+  /**
+   * Fetches inventory items from the backend with pagination and filters
+   * Handles loading states and error recovery
+   */
   async fetchItems() {
     const lowStockOnly = this.elements.lowStockFilter?.checked || false;
     const searchTerm = this.elements.inventorySearch?.value || "";
-    const url = new URL(`${App.config.apiBase}/items`);
+    const url = new URL(`${App.config.apiBase}/items`, window.location.origin);
     url.searchParams.append("page", this.state.currentPage);
     url.searchParams.append("per_page", App.config.pagination.per_page);
     if (lowStockOnly) url.searchParams.append("low_stock", "true");
     if (searchTerm) url.searchParams.append("search", searchTerm);
 
     this.state.isLoading = true;
-    const data = await App.fetchJson(url.toString());
-    if (data?.items) {
-      this.state.allItems = this.state.currentPage === 1 ? data.items : [...this.state.allItems, ...data.items];
-      this.state.totalPages = data.total_pages;
-      this.state.totalItems = data.total_items;
-      this.renderItemsList(data.items, this.state.currentPage > 1);
-      this.updateResultCount();
+    
+    try {
+      const data = await App.fetchJson(url.toString());
+      if (data?.items) {
+        this.state.allItems = this.state.currentPage === 1 ? data.items : [...this.state.allItems, ...data.items];
+        this.state.totalPages = data.total_pages || 1;
+        this.state.totalItems = data.total_items || 0;
+        this.renderItemsList(data.items, this.state.currentPage > 1);
+        this.updateResultCount();
+      } else {
+        // Handle empty response or error
+        if (this.state.currentPage === 1) {
+          this.renderItemsList([], false);
+        }
+        App.showNotification('Failed to load inventory items. Please try again.', 'error');
+      }
+    } catch (error) {
+      console.error('Error fetching items:', error);
+      App.showNotification('Network error loading inventory. Please check your connection.', 'error');
+      if (this.state.currentPage === 1) {
+        this.renderItemsList([], false);
+      }
+    } finally {
+      this.state.isLoading = false;
     }
-    this.state.isLoading = false;
   },
 
   renderItemsList(items, append = false) {
@@ -186,16 +206,23 @@ const Inventory = {
     this.elements.inventorySearch.focus();
   },
 
+  /**
+   * Handles click actions on item table rows (expand, edit, delete)
+   * @param {Event} e - Click event
+   */
   async handleTableActions(e) {
     const button = e.target.closest("button");
     if (!button) return;
+    
     const row = button.closest(".item-row");
     if (!row) return;
-    const itemId = itemRow.dataset.itemId;
-    const itemName = itemRow.dataset.itemName;
+    
+    // Fixed: Use 'row' instead of undefined 'itemRow'
+    const itemId = row.dataset.itemId;
+    const itemName = row.dataset.itemName;
 
     if (button.classList.contains("expand-btn")) {
-      await this.toggleVariantDetails(itemRow, button, itemId);
+      await this.toggleVariantDetails(row, button, itemId);
     } else if (button.classList.contains("edit-item")) {
       window.location.href = `/edit_item/${itemId}`;
     } else if (button.classList.contains("delete-item")) {
@@ -221,30 +248,60 @@ const Inventory = {
     }
   },
 
+  /**
+   * Updates variant stock and threshold values
+   * Calls both endpoints in parallel for efficiency
+   * @param {string|number} variantId - The variant ID
+   * @param {string|number} stock - The new stock value
+   * @param {string|number} threshold - The new threshold value
+   */
   async handleVariantUpdate(variantId, stock, threshold) {
-    // We can call both endpoints and wait for them to complete
-    const stockUpdatePromise = App.fetchJson(`${App.config.apiBase}/variants/${variantId}/stock`, {
-      method: "PUT",
-      body: JSON.stringify({ stock: parseInt(stock, 10) }),
-    });
-    const thresholdUpdatePromise = App.fetchJson(`${App.config.apiBase}/variants/${variantId}/threshold`, {
-      method: "PUT",
-      body: JSON.stringify({ threshold: parseInt(threshold, 10) }),
-    });
+    // Validate inputs
+    const stockValue = parseInt(stock, 10);
+    const thresholdValue = parseInt(threshold, 10);
+    
+    if (isNaN(stockValue) || stockValue < 0) {
+      App.showNotification("Invalid stock value. Must be a positive number.", "error");
+      return;
+    }
+    
+    if (isNaN(thresholdValue) || thresholdValue < 0) {
+      App.showNotification("Invalid threshold value. Must be a positive number.", "error");
+      return;
+    }
 
-    const [stockResult, thresholdResult] = await Promise.all([stockUpdatePromise, thresholdUpdatePromise]);
+    try {
+      // Call both endpoints in parallel for better performance
+      const stockUpdatePromise = App.fetchJson(`${App.config.apiBase}/variants/${variantId}/stock`, {
+        method: "PUT",
+        body: JSON.stringify({ stock: stockValue }),
+      });
+      const thresholdUpdatePromise = App.fetchJson(`${App.config.apiBase}/variants/${variantId}/threshold`, {
+        method: "PUT",
+        body: JSON.stringify({ threshold: thresholdValue }),
+      });
 
-    if (stockResult && thresholdResult) {
-      App.showNotification("Variant updated successfully.", "success");
-      // Optionally, update the total stock in the main row without a full refresh
-      if (stockResult.new_total_stock !== undefined) {
+      const [stockResult, thresholdResult] = await Promise.all([stockUpdatePromise, thresholdUpdatePromise]);
+
+      if (stockResult && thresholdResult) {
+        App.showNotification("Variant updated successfully.", "success");
+        
+        // Update the total stock in the parent item row without full page refresh
+        if (stockResult.new_total_stock !== undefined) {
           const itemRow = document.querySelector(`.item-row[data-item-id="${stockResult.item_id}"]`);
-          if(itemRow) {
-              itemRow.querySelector('.total-stock-cell').textContent = stockResult.new_total_stock;
+          if (itemRow) {
+            const totalStockCell = itemRow.querySelector('.total-stock-cell');
+            if (totalStockCell) {
+              totalStockCell.textContent = stockResult.new_total_stock;
+            }
           }
+        }
+      } else {
+        App.showNotification("Failed to update variant. Please try again.", "error");
       }
-    } else {
-      App.showNotification("Failed to update variant.", "error");
+    } catch (error) {
+      console.error('Error updating variant:', error);
+      App.showNotification("Network error updating variant.", "error");
     }
   },
 
@@ -265,10 +322,18 @@ const Inventory = {
     }
   },
 
+  /**
+   * Toggles the visibility of variant details for an item
+   * Fetches and displays variant matrix on first expand
+   * @param {HTMLElement} itemRow - The item row element
+   * @param {HTMLElement} expandBtn - The expand button
+   * @param {string|number} itemId - The item ID
+   */
   async toggleVariantDetails(itemRow, expandBtn, itemId) {
     const detailsRow = itemRow.nextElementSibling;
     const isVisible = detailsRow.style.display !== "none";
 
+    // Collapse if already visible
     if (isVisible) {
       detailsRow.style.display = "none";
       expandBtn.classList.remove("expanded");
@@ -276,24 +341,42 @@ const Inventory = {
       return;
     }
 
+    // Show loading state
     const container = detailsRow.querySelector(".variant-details-container");
-    container.innerHTML = `<div class="p-4 text-center">Loading...</div>`;
+    container.innerHTML = `<div class="p-4 text-center loading-spinner">
+      <div class="spinner"></div>
+      <span>Loading variants...</span>
+    </div>`;
     detailsRow.style.display = "table-row";
     expandBtn.classList.add("expanded");
     expandBtn.setAttribute("aria-expanded", "true");
 
-    const variants = await App.fetchJson(`${App.config.apiBase}/items/${itemId}/variants`);
-    requestAnimationFrame(() => {
-      container.innerHTML = "";
-      if (itemRow.dataset.itemDescription) {
-        container.innerHTML += `<div class="item-description-detail"><strong>Description:</strong> ${App.escapeHtml(itemRow.dataset.itemDescription)}</div>`;
-      }
-      if (variants?.length > 0) {
-        this.renderVariantMatrix(container, variants);
-      } else {
-        container.innerHTML += `<p class="p-4 text-center">No variants found.</p>`;
-      }
-    });
+    // Fetch variants with error handling
+    try {
+      const variants = await App.fetchJson(`${App.config.apiBase}/items/${itemId}/variants`);
+      
+      requestAnimationFrame(() => {
+        container.innerHTML = "";
+        
+        // Display item description if available
+        if (itemRow.dataset.itemDescription) {
+          container.innerHTML += `<div class="item-description-detail"><strong>Description:</strong> ${App.escapeHtml(itemRow.dataset.itemDescription)}</div>`;
+        }
+        
+        // Render variants or show empty state
+        if (variants && variants.length > 0) {
+          this.renderVariantMatrix(container, variants);
+        } else if (variants) {
+          container.innerHTML += `<p class="p-4 text-center">No variants found for this item.</p>`;
+        } else {
+          // Error case
+          container.innerHTML += `<p class="p-4 text-center" style="color: var(--danger-color);">Failed to load variants. Please try again.</p>`;
+        }
+      });
+    } catch (error) {
+      console.error('Error loading variants:', error);
+      container.innerHTML = `<p class="p-4 text-center" style="color: var(--danger-color);">Network error loading variants.</p>`;
+    }
   },
 
   renderVariantMatrix(container, variants) {

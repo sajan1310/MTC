@@ -67,6 +67,7 @@
             migration_add_item_uniqueness.py
             migration_add_master_tables.py
             migration_add_notes_and_status_to_po.py
+            migration_add_password_reset.py
             migration_add_po_number.py
             migration_add_po_tracking.py
             migration_add_stock_receipts.py
@@ -84,6 +85,8 @@
             styles.css
             styles.min.css
             suppliers.js
+            css/
+                login.css
             img/
                 Final_Logo.png
             js/
@@ -98,12 +101,15 @@
             add_item.html
             base.html
             dashboard_new.html
+            forgot_password.html
             inventory.html
             login.html
             low_stock_report.html
             master_data.html
             profile.html
             purchase_orders.html
+            reset_password.html
+            signup.html
             stock_ledger.html
             suppliers.html
             user_management.html

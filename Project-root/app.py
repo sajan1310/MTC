@@ -11,7 +11,7 @@ from flask_cors import CORS
 from flask_login import (LoginManager, UserMixin, login_user, login_required,
                          logout_user, current_user)
 from auth.routes import auth
-from flask_wtf.csrf import CSRFProtect
+from flask_wtf.csrf import CSRFProtect, CSRFError
 import psycopg2
 import psycopg2.extras
 from werkzeug.security import generate_password_hash, check_password_hash
@@ -151,6 +151,14 @@ def ratelimit_handler(e):
     """Render a custom page when a rate limit is hit."""
     return render_template('429.html'), 429
 
+# Return JSON for CSRF errors on API routes
+@app.errorhandler(CSRFError)
+def handle_csrf_error(e):
+    if request.path.startswith('/api/'):
+        return jsonify({'error': e.description}), 400
+    # Fallback to default 400 page for non-API routes
+    return render_template('500.html'), 400
+
 @app.errorhandler(404)
 def not_found_error(error):
     return render_template('404.html'), 404
@@ -245,6 +253,15 @@ def load_user(user_id):
     return None
 
 app.register_blueprint(auth)
+
+# Exempt select JSON auth endpoints from CSRF to simplify login/signup flows
+try:
+    csrf.exempt(app.view_functions['auth.api_login'])
+    csrf.exempt(app.view_functions['auth.api_signup'])
+    csrf.exempt(app.view_functions['auth.api_forgot_password'])
+except KeyError:
+    # View functions may not be registered yet in some contexts; safe to ignore
+    pass
 
 # ✅ OAUTH FIX: Log all incoming requests to help debug 404s
 @app.before_request
@@ -421,6 +438,11 @@ def get_or_create_item_master_id(cur, name, model, variation, description):
 @login_required
 def home():
     return redirect(url_for('dashboard'))
+
+# Lightweight health check endpoint for uptime monitoring and local diagnostics
+@app.route('/health', methods=['GET'])
+def health():
+    return jsonify({'status': 'ok'}), 200
 
 @app.route('/dashboard')
 @login_required

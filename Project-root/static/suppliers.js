@@ -37,18 +37,53 @@ const Suppliers = {
     this.elements.suppliersTableBody?.addEventListener("click", (e) => this.handleSupplierActions(e));
   },
 
+  /**
+   * Fetches all suppliers from the backend
+   * Handles loading and error states
+   */
   async fetchSuppliers() {
-    const suppliers = await App.fetchJson(`${App.config.apiBase}/suppliers`);
-    if (suppliers) {
-      this.state.suppliers = suppliers;
+    try {
+      const suppliers = await App.fetchJson(`${App.config.apiBase}/suppliers`);
+      if (suppliers && Array.isArray(suppliers)) {
+        this.state.suppliers = suppliers;
+        this.renderSuppliersList();
+      } else {
+        // Handle empty or invalid response
+        this.state.suppliers = [];
+        this.renderSuppliersList();
+        if (!suppliers) {
+          App.showNotification("Failed to load suppliers. Please try again.", "error");
+        }
+      }
+    } catch (error) {
+      console.error('Error fetching suppliers:', error);
+      this.state.suppliers = [];
       this.renderSuppliersList();
+      App.showNotification("Network error loading suppliers.", "error");
     }
   },
 
+  /**
+   * Renders the suppliers list in the table
+   * Shows appropriate message when list is empty
+   */
   renderSuppliersList() {
     if (!this.elements.suppliersTableBody) return;
+    
+    if (this.state.suppliers.length === 0) {
+      this.elements.suppliersTableBody.innerHTML = `
+        <tr>
+          <td colspan="5" class="text-center p-8">
+            No suppliers found. Click "Add New Supplier" to get started!
+          </td>
+        </tr>
+      `;
+      return;
+    }
+    
     this.elements.suppliersTableBody.innerHTML = this.state.suppliers.map(s => `
       <tr data-supplier-id="${s.supplier_id}">
+        <td><input type="checkbox" class="supplier-checkbox" data-supplier-id="${s.supplier_id}"></td>
         <td>${App.escapeHtml(s.firm_name)}</td>
         <td>${App.escapeHtml(s.address || 'N/A')}</td>
         <td>${App.escapeHtml(s.gstin || 'N/A')}</td>
@@ -82,10 +117,27 @@ const Suppliers = {
     this.elements.supplierModal.classList.add("is-open");
   },
 
+  /**
+   * Fetches and populates contacts for a supplier in the modal form
+   * @param {string|number} supplierId - The supplier ID
+   */
   async fetchAndPopulateContacts(supplierId) {
-    const contacts = await App.fetchJson(`${App.config.apiBase}/suppliers/${supplierId}/contacts`);
-    if (contacts) {
-      contacts.forEach(contact => this.addContactField(contact));
+    try {
+      const contacts = await App.fetchJson(`${App.config.apiBase}/suppliers/${supplierId}/contacts`);
+      if (contacts && Array.isArray(contacts)) {
+        if (contacts.length > 0) {
+          contacts.forEach(contact => this.addContactField(contact));
+        } else {
+          // Add one empty contact field if no contacts exist
+          this.addContactField();
+        }
+      } else {
+        // Fallback: add empty field on error
+        this.addContactField();
+      }
+    } catch (error) {
+      console.error('Error fetching supplier contacts:', error);
+      this.addContactField(); // Add empty field as fallback
     }
   },
 

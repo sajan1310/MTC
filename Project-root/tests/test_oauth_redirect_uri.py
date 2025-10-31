@@ -89,7 +89,8 @@ def test_config_has_oauth_credentials(app):
         print(f"\n⚠️  OAuth credentials not set (expected for testing)")
 
 def test_login_route_exists(client):
-    """Test that the login route exists."""
+    """Test that the login route exists and shows email/password fields."""
     response = client.get('/login')
     assert response.status_code == 200, f"Login route should return 200, got: {response.status_code}"
-    assert b'google' in response.data.lower() or b'sign' in response.data.lower()
+    assert b"name=\"email\"" in response.data
+    assert b"name=\"password\"" in response.data
