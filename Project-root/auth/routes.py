@@ -2,6 +2,7 @@ import json
 from flask import Blueprint, request, jsonify, redirect, url_for, render_template, current_app
 from flask_login import login_user, logout_user, login_required
 import requests
+from requests.exceptions import HTTPError, RequestException
 from oauthlib.oauth2 import WebApplicationClient
 import database
 import psycopg2.extras
@@ -94,7 +95,8 @@ def auth_google_callback():
         token_url, headers, body = client.prepare_token_request(
             token_endpoint,
             authorization_response=request.url,
-            redirect_uri=redirect_uri,
+            # oauthlib expects redirect_url param name; it will emit 'redirect_uri' in the request body
+            redirect_url=redirect_uri,
             code=code
         )
         token_response = requests.post(
@@ -125,9 +127,12 @@ def auth_google_callback():
 
         current_app.logger.warning("[OAuth] User email not verified by Google")
         return "User email not available or not verified by Google.", 400
-    except requests.exceptions.HTTPError as e:
+    except HTTPError as e:
         current_app.logger.error(f"[OAuth] HTTP error during token exchange: {e.response.status_code} - {e.response.text}")
         return f"An error occurred during authentication: {e.response.status_code}", 500
+    except RequestException as e:
+        current_app.logger.error(f"[OAuth] Request error during token/userinfo exchange: {type(e).__name__}: {e}")
+        return "A network error occurred during authentication.", 502
     except Exception as e:
         current_app.logger.error(f"[OAuth] Unexpected error in callback: {type(e).__name__}: {e}")
         return "An error occurred during the authentication process.", 500
