@@ -28,7 +28,6 @@
         database.py
         deduplicate_items.py
         DEPLOYMENT.md
-        DOCUMENTATION_CONSOLIDATION_SUMMARY.md
         DOCUMENTATION_INDEX.md
         file_structure.txt
         logging_config.py
@@ -37,7 +36,6 @@
         Procfile
         production.env.example
         pytest.ini
-        QUICK_SETUP_GUIDE.md
         QUICK_START_GUIDE.md
         README.md
         requirements.txt
