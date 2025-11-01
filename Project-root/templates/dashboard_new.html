@@ -1,70 +1,153 @@
 {% extends "base.html" %}
 
-{% block title %}Modern Dashboard{% endblock %}
+{% block title %}Dashboard - MTC App{% endblock %}
+
+{% block breadcrumbs %}
+<nav class="breadcrumbs" aria-label="Breadcrumb">
+    <ol>
+        <li>
+            <svg width="16" height="16" fill="currentColor" viewBox="0 0 16 16">
+                <path d="M8.707 1.5a1 1 0 0 0-1.414 0L.646 8.146a.5.5 0 0 0 .708.708L2 8.207V13.5A1.5 1.5 0 0 0 3.5 15h9a1.5 1.5 0 0 0 1.5-1.5V8.207l.646.647a.5.5 0 0 0 .708-.708L13 5.793V2.5a.5.5 0 0 0-.5-.5h-1a.5.5 0 0 0-.5.5v1.293L8.707 1.5ZM13 7.207V13.5a.5.5 0 0 1-.5.5h-9a.5.5 0 0 1-.5-.5V7.207l5-5 5 5Z"/>
+            </svg>
+            Dashboard
+        </li>
+    </ol>
+</nav>
+{% endblock %}
+
+{% block current_page %}Dashboard{% endblock %}
 
 {% block content %}
-<div class="dashboard-container">
-    <div class="dashboard-grid">
-        <!-- Metric Cards -->
-        <div class="card metric-card">
-            <div class="metric-icon total-stock"><i class="fas fa-box"></i></div>
-            <div class="metric-info">
-                <h3>{{ metrics.total_stock }}</h3>
-                <p>Total Stock</p>
-            </div>
-        </div>
-        <div class="card metric-card">
-            <div class="metric-icon low-stock"><i class="fas fa-exclamation-triangle"></i></div>
-            <div class="metric-info">
-                <h3>{{ metrics.low_stock_items }}</h3>
-                <p>Low Stock Items</p>
-            </div>
-        </div>
-        <div class="card metric-card">
-            <div class="metric-icon suppliers"><i class="fas fa-truck"></i></div>
-            <div class="metric-info">
-                <h3>{{ metrics.total_suppliers }}</h3>
-                <p>Suppliers</p>
-            </div>
-        </div>
+<div class="dashboard-container" style="padding: 1.5rem;">
+    <!-- Welcome Section -->
+    <div style="margin-bottom: 2rem;">
+        <h1 class="main-title" style="margin-bottom: 0.5rem;">
+            <svg width="24" height="24" fill="currentColor" viewBox="0 0 16 16" style="margin-right: 0.75rem;">
+                <path d="M8 4.754a3.246 3.246 0 1 0 0 6.492 3.246 3.246 0 0 0 0-6.492zM5.754 8a2.246 2.246 0 1 1 4.492 0 2.246 2.246 0 0 1-4.492 0z"/>
+                <path d="M9.796 1.343c-.527-1.79-3.065-1.79-3.592 0l-.094.319a.873.873 0 0 1-1.255.52l-.292-.16c-1.64-.892-3.433.902-2.54 2.541l.159.292a.873.873 0 0 1-.52 1.255l-.319.094c-1.79.527-1.79 3.065 0 3.592l.319.094a.873.873 0 0 1 .52 1.255l-.16.292c-.892 1.64.901 3.434 2.541 2.54l.292-.159a.873.873 0 0 1 1.255.52l.094.319c.527 1.79 3.065 1.79 3.592 0l.094-.319a.873.873 0 0 1 1.255-.52l.292.16c1.64.893 3.434-.902 2.54-2.541l-.159-.292a.873.873 0 0 1 .52-1.255l.319-.094c1.79-.527 1.79-3.065 0-3.592l-.319-.094a.873.873 0 0 1-.52-1.255l.16-.292c.893-1.64-.902-3.433-2.541-2.54l-.292.159a.873.873 0 0 1-1.255-.52l-.094-.319zm-2.633.283c.246-.835 1.428-.835 1.674 0l.094.319a1.873 1.873 0 0 0 2.693 1.115l.291-.16c.764-.415 1.6.42 1.184 1.185l-.159.292a1.873 1.873 0 0 0 1.116 2.692l.318.094c.835.246.835 1.428 0 1.674l-.319.094a1.873 1.873 0 0 0-1.115 2.693l.16.291c.415.764-.42 1.6-1.185 1.184l-.291-.159a1.873 1.873 0 0 0-2.693 1.116l-.094.318c-.246.835-1.428.835-1.674 0l-.094-.319a1.873 1.873 0 0 0-2.692-1.115l-.292.16c-.764.415-1.6-.42-1.184-1.185l.159-.291A1.873 1.873 0 0 0 1.945 8.93l-.319-.094c-.835-.246-.835-1.428 0-1.674l.319-.094A1.873 1.873 0 0 0 3.06 4.377l-.16-.292c-.415-.764.42-1.6 1.185-1.184l.292.159a1.873 1.873 0 0 0 2.692-1.115l.094-.319z"/>
+            </svg>
+            Welcome to MTC Dashboard
+        </h1>
+        <p class="card-subtitle">Overview of your inventory and operations</p>
+    </div>
 
-        <!-- Quick Actions -->
-        <div class="card quick-actions">
-            <div class="card-header">
-                <h2 class="card-title">Quick Actions</h2>
+    <div class="dashboard-grid" style="display: grid; grid-template-columns: repeat(auto-fit, minmax(250px, 1fr)); gap: 1.5rem; margin-bottom: 2rem;">
+        <!-- Metric Cards -->
+        <div class="card metric-card" style="padding: 1.5rem; background: linear-gradient(135deg, #667eea 0%, #764ba2 100%); color: white; border: none;">
+            <div style="display: flex; align-items: center; gap: 1rem;">
+                <div style="width: 56px; height: 56px; background: rgba(255, 255, 255, 0.2); border-radius: var(--border-radius-lg); display: flex; align-items: center; justify-content: center;">
+                    <svg width="28" height="28" fill="currentColor" viewBox="0 0 16 16">
+                        <path d="M0 1.5A.5.5 0 0 1 .5 1H2a.5.5 0 0 1 .485.379L2.89 3H14.5a.5.5 0 0 1 .491.592l-1.5 8A.5.5 0 0 1 13 12H4a.5.5 0 0 1-.491-.408L2.01 3.607 1.61 2H.5a.5.5 0 0 1-.5-.5zM5 12a2 2 0 1 0 0 4 2 2 0 0 0 0-4zm7 0a2 2 0 1 0 0 4 2 2 0 0 0 0-4zm-7 1a1 1 0 1 1 0 2 1 1 0 0 1 0-2zm7 0a1 1 0 1 1 0 2 1 1 0 0 1 0-2z"/>
+                    </svg>
+                </div>
+                <div>
+                    <h3 style="font-size: 2rem; font-weight: 700; margin: 0;">{{ metrics.total_stock }}</h3>
+                    <p style="margin: 0; opacity: 0.9; font-size: 0.9375rem;">Total Stock</p>
+                </div>
             </div>
-            <a href="{{ url_for('main.inventory') }}?action=generate-po" class="button create">Generate PO</a>
-            <a href="{{ url_for('main.inventory') }}?action=receive-stock" class="button">Receive Stock</a>
+        </div>
+        
+        <div class="card metric-card" style="padding: 1.5rem; background: linear-gradient(135deg, #f093fb 0%, #f5576c 100%); color: white; border: none;">
+            <div style="display: flex; align-items: center; gap: 1rem;">
+                <div style="width: 56px; height: 56px; background: rgba(255, 255, 255, 0.2); border-radius: var(--border-radius-lg); display: flex; align-items: center; justify-content: center;">
+                    <svg width="28" height="28" fill="currentColor" viewBox="0 0 16 16">
+                        <path d="M7.938 2.016A.13.13 0 0 1 8.002 2a.13.13 0 0 1 .063.016.146.146 0 0 1 .054.057l6.857 11.667c.036.06.035.124.002.183a.163.163 0 0 1-.054.06.116.116 0 0 1-.066.017H1.146a.115.115 0 0 1-.066-.017.163.163 0 0 1-.054-.06.176.176 0 0 1 .002-.183L7.884 2.073a.147.147 0 0 1 .054-.057zm1.044-.45a1.13 1.13 0 0 0-1.96 0L.165 13.233c-.457.778.091 1.767.98 1.767h13.713c.889 0 1.438-.99.98-1.767L8.982 1.566z"/>
+                        <path d="M7.002 12a1 1 0 1 1 2 0 1 1 0 0 1-2 0zM7.1 5.995a.905.905 0 1 1 1.8 0l-.35 3.507a.552.552 0 0 1-1.1 0L7.1 5.995z"/>
+                    </svg>
+                </div>
+                <div>
+                    <h3 style="font-size: 2rem; font-weight: 700; margin: 0;">{{ metrics.low_stock_items }}</h3>
+                    <p style="margin: 0; opacity: 0.9; font-size: 0.9375rem;">Low Stock Items</p>
+                </div>
+            </div>
+        </div>
+        
+        <div class="card metric-card" style="padding: 1.5rem; background: linear-gradient(135deg, #4facfe 0%, #00f2fe 100%); color: white; border: none;">
+            <div style="display: flex; align-items: center; gap: 1rem;">
+                <div style="width: 56px; height: 56px; background: rgba(255, 255, 255, 0.2); border-radius: var(--border-radius-lg); display: flex; align-items: center; justify-content: center;">
+                    <svg width="28" height="28" fill="currentColor" viewBox="0 0 16 16">
+                        <path d="M0 3.5A1.5 1.5 0 0 1 1.5 2h9A1.5 1.5 0 0 1 12 3.5V5h1.02a1.5 1.5 0 0 1 1.17.563l1.481 1.85a1.5 1.5 0 0 1 .329.938V10.5a1.5 1.5 0 0 1-1.5 1.5H14a2 2 0 1 1-4 0H5a2 2 0 1 1-3.998-.085A1.5 1.5 0 0 1 0 10.5v-7zm1.294 7.456A1.999 1.999 0 0 1 4.732 11h5.536a2.01 2.01 0 0 1 .732-.732V3.5a.5.5 0 0 0-.5-.5h-9a.5.5 0 0 0-.5.5v7a.5.5 0 0 0 .294.456zM12 10a2 2 0 0 1 1.732 1h.768a.5.5 0 0 0 .5-.5V8.35a.5.5 0 0 0-.11-.312l-1.48-1.85A.5.5 0 0 0 13.02 6H12v4zm-9 1a1 1 0 1 0 0 2 1 1 0 0 0 0-2zm9 0a1 1 0 1 0 0 2 1 1 0 0 0 0-2z"/>
+                    </svg>
+                </div>
+                <div>
+                    <h3 style="font-size: 2rem; font-weight: 700; margin: 0;">{{ metrics.total_suppliers }}</h3>
+                    <p style="margin: 0; opacity: 0.9; font-size: 0.9375rem;">Suppliers</p>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <div style="display: grid; grid-template-columns: repeat(auto-fit, minmax(300px, 1fr)); gap: 1.5rem; margin-bottom: 2rem;">
+        <!-- Quick Actions -->
+        <div class="card" style="padding: 1.5rem;">
+            <div class="card-header" style="margin-bottom: 1.5rem;">
+                <h2 class="card-title">Quick Actions</h2>
+                <p class="card-subtitle">Frequently used operations</p>
+            </div>
+            <div style="display: flex; flex-direction: column; gap: 0.75rem;">
+                <a href="{{ url_for('main.inventory') }}?action=generate-po" class="button primary" style="width: 100%; justify-content: center;">
+                    <svg width="16" height="16" fill="currentColor" viewBox="0 0 16 16" style="margin-right: 0.5rem;">
+                        <path d="M5 1a2 2 0 0 0-2 2v1h10V3a2 2 0 0 0-2-2H5zm6 8H5a1 1 0 0 0-1 1v3a1 1 0 0 0 1 1h6a1 1 0 0 0 1-1v-3a1 1 0 0 0-1-1z"/>
+                        <path d="M0 7a2 2 0 0 1 2-2h12a2 2 0 0 1 2 2v3a2 2 0 0 1-2 2h-1v-2a2 2 0 0 0-2-2H5a2 2 0 0 0-2 2v2H2a2 2 0 0 1-2-2V7zm2.5 1a.5.5 0 1 0 0-1 .5.5 0 0 0 0 1z"/>
+                    </svg>
+                    Generate PO
+                </a>
+                <a href="{{ url_for('main.inventory') }}?action=receive-stock" class="button secondary" style="width: 100%; justify-content: center;">
+                    <svg width="16" height="16" fill="currentColor" viewBox="0 0 16 16" style="margin-right: 0.5rem;">
+                        <path fill-rule="evenodd" d="M8 15a.5.5 0 0 0 .5-.5V2.707l3.146 3.147a.5.5 0 0 0 .708-.708l-4-4a.5.5 0 0 0-.708 0l-4 4a.5.5 0 1 0 .708.708L7.5 2.707V14.5a.5.5 0 0 0 .5.5z"/>
+                    </svg>
+                    Receive Stock
+                </a>
+            </div>
         </div>
 
         <!-- Reports -->
-        <div class="card reports-list">
-            <div class="card-header">
+        <div class="card" style="padding: 1.5rem;">
+            <div class="card-header" style="margin-bottom: 1.5rem;">
                 <h2 class="card-title">Reports</h2>
+                <p class="card-subtitle">View important reports</p>
             </div>
-            <a href="{{ url_for('main.low_stock_report') }}" class="report-item">
-                <span>Low Stock Report</span>
-                <i class="fas fa-chevron-right"></i>
-            </a>
-            <a href="{{ url_for('main.stock_ledger') }}" class="report-item">
-                <span>Stock Ledger</span>
-                <i class="fas fa-chevron-right"></i>
-            </a>
-            <a href="{{ url_for('main.suppliers') }}" class="report-item">
-                <span>Supplier Ledger</span>
-                <i class="fas fa-chevron-right"></i>
-            </a>
+            <div style="display: flex; flex-direction: column; gap: 0.5rem;">
+                <a href="{{ url_for('main.low_stock_report') }}" class="report-item" style="display: flex; align-items: center; justify-content: space-between; padding: 0.75rem 1rem; border-radius: var(--border-radius-md); background: var(--bg-secondary); text-decoration: none; color: var(--text-color); transition: all var(--transition-fast);">
+                    <span style="font-weight: 500;">Low Stock Report</span>
+                    <svg width="16" height="16" fill="currentColor" viewBox="0 0 16 16">
+                        <path fill-rule="evenodd" d="M4.646 1.646a.5.5 0 0 1 .708 0l6 6a.5.5 0 0 1 0 .708l-6 6a.5.5 0 0 1-.708-.708L10.293 8 4.646 2.354a.5.5 0 0 1 0-.708z"/>
+                    </svg>
+                </a>
+                <a href="{{ url_for('main.stock_ledger') }}" class="report-item" style="display: flex; align-items: center; justify-content: space-between; padding: 0.75rem 1rem; border-radius: var(--border-radius-md); background: var(--bg-secondary); text-decoration: none; color: var(--text-color); transition: all var(--transition-fast);">
+                    <span style="font-weight: 500;">Stock Ledger</span>
+                    <svg width="16" height="16" fill="currentColor" viewBox="0 0 16 16">
+                        <path fill-rule="evenodd" d="M4.646 1.646a.5.5 0 0 1 .708 0l6 6a.5.5 0 0 1 0 .708l-6 6a.5.5 0 0 1-.708-.708L10.293 8 4.646 2.354a.5.5 0 0 1 0-.708z"/>
+                    </svg>
+                </a>
+                <a href="{{ url_for('main.suppliers') }}" class="report-item" style="display: flex; align-items: center; justify-content: space-between; padding: 0.75rem 1rem; border-radius: var(--border-radius-md); background: var(--bg-secondary); text-decoration: none; color: var(--text-color); transition: all var(--transition-fast);">
+                    <span style="font-weight: 500;">Supplier Ledger</span>
+                    <svg width="16" height="16" fill="currentColor" viewBox="0 0 16 16">
+                        <path fill-rule="evenodd" d="M4.646 1.646a.5.5 0 0 1 .708 0l6 6a.5.5 0 0 1 0 .708l-6 6a.5.5 0 0 1-.708-.708L10.293 8 4.646 2.354a.5.5 0 0 1 0-.708z"/>
+                    </svg>
+                </a>
+            </div>
         </div>
+    </div>
 
-        <!-- Stock Trend Chart -->
-        <div class="card chart-container">
-            <div class="card-header">
-                <h2 class="card-title">Stock Trend (Last 30 Days)</h2>
-            </div>
+    <!-- Stock Trend Chart -->
+    <div class="card" style="padding: 1.5rem;">
+        <div class="card-header" style="margin-bottom: 1.5rem;">
+            <h2 class="card-title">Stock Trend</h2>
+            <p class="card-subtitle">Last 30 days overview</p>
+        </div>
+        <div style="height: 350px; position: relative;">
             <canvas id="stockTrendChart"></canvas>
         </div>
     </div>
 </div>
+
+<style>
+.report-item:hover {
+    background: var(--border-color);
+    transform: translateX(4px);
+}
+</style>
 {% endblock %}
 
 {% block scripts %}

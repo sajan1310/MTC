@@ -3,42 +3,114 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Create your account</title>
+    <title>Create Account - MTC App</title>
     <meta name="csrf-token" content="{{ csrf_token() }}">
     <link rel="stylesheet" href="{{ url_for('static', filename='styles.css') }}">
+    <style>
+        .login-page {
+            min-height: 100vh;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            padding: 2rem;
+        }
+        .login-container {
+            width: 100%;
+            max-width: 440px;
+            background: #fff;
+            border-radius: var(--border-radius-lg);
+            box-shadow: var(--shadow-xl);
+            padding: 2.5rem;
+        }
+        .login-header {
+            text-align: center;
+            margin-bottom: 2rem;
+        }
+        .login-title {
+            font-size: 1.75rem;
+            font-weight: 700;
+            color: var(--text-color);
+            margin-bottom: 0.5rem;
+        }
+        .login-subtitle {
+            color: var(--text-muted);
+            font-size: 0.9375rem;
+        }
+        .error-text {
+            color: var(--danger-color);
+            font-size: 0.875rem;
+            margin-top: 0.5rem;
+            display: none;
+        }
+        .error-text:not(:empty) {
+            display: block;
+        }
+        .back-link {
+            display: inline-flex;
+            align-items: center;
+            gap: 0.5rem;
+            color: var(--primary-color);
+            text-decoration: none;
+            font-size: 0.9375rem;
+            font-weight: 500;
+            margin-bottom: 1rem;
+            transition: all var(--transition-fast);
+        }
+        .back-link:hover {
+            gap: 0.75rem;
+        }
+    </style>
 </head>
 <body class="login-page">
     <div class="login-container card">
         <div class="login-header">
-            <a href="{{ url_for('auth.login') }}" class="link" aria-label="Back to login">
-                ← Back to login
+            <a href="{{ url_for('auth.login') }}" class="back-link" aria-label="Back to login">
+                <svg width="16" height="16" fill="currentColor" viewBox="0 0 16 16">
+                    <path fill-rule="evenodd" d="M15 8a.5.5 0 0 0-.5-.5H2.707l3.147-3.146a.5.5 0 1 0-.708-.708l-4 4a.5.5 0 0 0 0 .708l4 4a.5.5 0 0 0 .708-.708L2.707 8.5H14.5A.5.5 0 0 0 15 8z"/>
+                </svg>
+                Back to login
             </a>
+            <img src="{{ url_for('static', filename='img/Final_Logo.png') }}" alt="MTC App Logo" width="64" height="64" style="margin: 1rem 0;">
             <h1 class="login-title">Create your account</h1>
             <p class="login-subtitle">Enter your details to get started</p>
         </div>
 
         <form id="signup-form" class="login-form" autocomplete="on">
             <div class="form-group">
-                <label for="name">Full name</label>
-                <input type="text" id="name" name="name" placeholder="Jane Doe" required>
+                <label for="name">Full name <span style="color: var(--danger-color);">*</span></label>
+                <input type="text" id="name" name="name" class="form-control" placeholder="Jane Doe" required>
             </div>
             <div class="form-group">
-                <label for="email">Email</label>
-                <input type="email" id="email" name="email" placeholder="you@company.com" required>
+                <label for="email">Email <span style="color: var(--danger-color);">*</span></label>
+                <input type="email" id="email" name="email" class="form-control" placeholder="you@company.com" required>
             </div>
             <div class="form-group">
-                <label for="password">Password</label>
-                <input type="password" id="password" name="password" placeholder="••••••••" required>
+                <label for="password">Password <span style="color: var(--danger-color);">*</span></label>
+                <input type="password" id="password" name="password" class="form-control" placeholder="••••••••" required>
+                <small class="form-text" style="display:block; margin-top:0.5rem;">Use at least 8 characters</small>
             </div>
             <div class="form-group">
-                <label for="confirm_password">Confirm password</label>
-                <input type="password" id="confirm_password" name="confirm_password" placeholder="••••••••" required>
+                <label for="confirm_password">Confirm password <span style="color: var(--danger-color);">*</span></label>
+                <input type="password" id="confirm_password" name="confirm_password" class="form-control" placeholder="••••••••" required>
             </div>
-            <button id="signup-btn" type="submit" class="btn primary full">Create account</button>
+            <button id="signup-btn" type="submit" class="button primary full-width" style="margin-top: 1rem;">
+                <svg width="16" height="16" fill="currentColor" viewBox="0 0 16 16" style="margin-right: 0.5rem;">
+                    <path d="M8 8a3 3 0 1 0 0-6 3 3 0 0 0 0 6zm2-3a2 2 0 1 1-4 0 2 2 0 0 1 4 0zm4 8c0 1-1 1-1 1H3s-1 0-1-1 1-4 6-4 6 3 6 4zm-1-.004c-.001-.246-.154-.986-.832-1.664C11.516 10.68 10.289 10 8 10c-2.29 0-3.516.68-4.168 1.332-.678.678-.83 1.418-.832 1.664h10z"/>
+                </svg>
+                Create account
+            </button>
         </form>
 
         <p id="signup-error" class="error-text" role="alert" aria-live="polite"></p>
-        <p class="muted" style="margin-top:12px;">By continuing, you agree to our terms and privacy policy.</p>
+        
+        <div style="margin-top: 1.5rem; padding-top: 1.5rem; border-top: 1px solid var(--border-color); text-align: center;">
+            <p style="color: var(--text-muted); font-size: 0.875rem; margin-bottom: 1rem;">By continuing, you agree to our terms and privacy policy</p>
+            <p style="color: var(--text-muted); font-size: 0.9375rem;">
+                Already have an account? 
+                <a href="{{ url_for('auth.login') }}" style="color: var(--primary-color); font-weight: 500; text-decoration: none;">Sign in</a>
+            </p>
+        </div>
     </div>
 
     <script>

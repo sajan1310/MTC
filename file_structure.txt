@@ -15,6 +15,8 @@
                 lastfailed
                 nodeids
                 stepwise
+    logs/
+        app.log
     Project-root/
         .env
         .env.example
@@ -145,6 +147,7 @@
             add_item.html
             base.html
             dashboard_new.html
+            edit_item.html
             forgot_password.html
             inventory.html
             login.html

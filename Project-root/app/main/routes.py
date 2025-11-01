@@ -73,6 +73,59 @@ def add_item():
     return render_template('add_item.html')
 
 
+@main_bp.route('/edit_item/<int:item_id>', methods=['GET'])
+@login_required
+def edit_item(item_id):
+    try:
+        with database.get_conn(cursor_factory=psycopg2.extras.DictCursor) as (conn, cur):
+            # Fetch item details
+            cur.execute('''
+                SELECT 
+                    im.item_id,
+                    im.name,
+                    im.description,
+                    im.image_path,
+                    m.model_id,
+                    m.model_name as model_name,
+                    v.variation_id,
+                    v.variation_name as variation_name
+                FROM item_master im
+                LEFT JOIN model_master m ON im.model_id = m.model_id
+                LEFT JOIN variation_master v ON im.variation_id = v.variation_id
+                WHERE im.item_id = %s
+            ''', (item_id,))
+            item = cur.fetchone()
+            
+            if not item:
+                flash('Item not found.', 'error')
+                return redirect(url_for('main.inventory'))
+            
+            # Fetch variants for this item
+            cur.execute('''
+                SELECT 
+                    iv.variant_id,
+                    c.color_id,
+                    c.color_name as color_name,
+                    s.size_id,
+                    s.size_name as size_name,
+                    iv.opening_stock,
+                    iv.threshold,
+                    iv.unit
+                FROM item_variant iv
+                JOIN color_master c ON iv.color_id = c.color_id
+                JOIN size_master s ON iv.size_id = s.size_id
+                WHERE iv.item_id = %s
+                ORDER BY c.color_name, s.size_name
+            ''', (item_id,))
+            variants = cur.fetchall()
+        
+        return render_template('edit_item.html', item=item, variants=variants)
+    except Exception as e:
+        current_app.logger.error(f"Error fetching item {item_id}: {e}")
+        flash('Failed to load item details.', 'error')
+        return redirect(url_for('main.inventory'))
+
+
 @main_bp.route('/user-management')
 @login_required
 @role_required('super_admin')

@@ -1,22 +1,22 @@
 {% extends "base.html" %}
 
-{% block title %}Add New Item - MTC App{% endblock %}
+{% block title %}Edit Item - MTC App{% endblock %}
+
+{% block current_page %}Edit Item{% endblock %}
 
 {% block breadcrumbs %}
 <nav class="breadcrumbs" aria-label="Breadcrumb">
     <ol>
         <li><a href="{{ url_for('main.dashboard') }}">
-            <svg width="16" height="16" fill="currentColor" viewBox="0 0 16 16">
-                <path d="M8.707 1.5a1 1 0 0 0-1.414 0L.646 8.146a.5.5 0 0 0 .708.708L2 8.207V13.5A1.5 1.5 0 0 0 3.5 15h9a1.5 1.5 0 0 0 1.5-1.5V8.207l.646.647a.5.5 0 0 0 .708-.708L13 5.793V2.5a.5.5 0 0 0-.5-.5h-1a.5.5 0 0 0-.5.5v1.293L8.707 1.5ZM13 7.207V13.5a.5.5 0 0 1-.5.5h-9a.5.5 0 0 1-.5-.5V7.207l5-5 5 5Z"/>
+            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                <path d="M3 9l9-7 9 7v11a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z"></path>
             </svg>
         </a></li>
         <li><a href="{{ url_for('main.inventory') }}">Inventory</a></li>
-        <li>Add Item</li>
+        <li>Edit Item</li>
     </ol>
 </nav>
 {% endblock %}
-
-{% block current_page %}Add Item{% endblock %}
 
 {% block content %}
 <div class="container">
@@ -33,55 +33,62 @@
     
     <div class="page-header">
         <h1 class="main-title">
-            <svg width="24" height="24" fill="currentColor" viewBox="0 0 16 16" style="margin-right: 0.75rem;">
-                <path d="M8 4a.5.5 0 0 1 .5.5v3h3a.5.5 0 0 1 0 1h-3v3a.5.5 0 0 1-1 0v-3h-3a.5.5 0 0 1 0-1h3v-3A.5.5 0 0 1 8 4z"/>
+            <svg width="28" height="28" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                <path d="M11 4H4a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7"></path>
+                <path d="M18.5 2.5a2.121 2.121 0 0 1 3 3L12 15l-4 1 1-4 9.5-9.5z"></path>
             </svg>
-            Add New Item
+            Edit Item
         </h1>
         <div class="button-group">
             <a href="{{ url_for('main.inventory') }}" class="button secondary">
-                <svg width="16" height="16" fill="currentColor" viewBox="0 0 16 16" style="margin-right: 0.5rem;">
-                    <path fill-rule="evenodd" d="M15 8a.5.5 0 0 0-.5-.5H2.707l3.147-3.146a.5.5 0 1 0-.708-.708l-4 4a.5.5 0 0 0 0 .708l4 4a.5.5 0 0 0 .708-.708L2.707 8.5H14.5A.5.5 0 0 0 15 8z"/>
+                <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                    <line x1="19" y1="12" x2="5" y2="12"></line>
+                    <polyline points="12 19 5 12 12 5"></polyline>
                 </svg>
                 Back to Inventory
             </a>
         </div>
     </div>
-    
-    <form id="item-form" class="form-layout" method="POST" action="{{ url_for('add_item') }}" enctype="multipart/form-data">
+    <form id="item-form" class="form-layout" data-item-id="{{ item.item_id }}" enctype="multipart/form-data">
         <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
         
         <div class="form-section">
             <h2 class="section-title">Item Details</h2>
-            <p class="card-subtitle">Enter the basic information about this item</p>
+            <p class="card-subtitle">Update the basic information about this item</p>
             <div class="form-grid">
                 <div class="form-group">
                     <label for="item-name">Item Name <span style="color: var(--danger-color);">*</span></label>
-                    <input type="text" id="item-name" name="name" class="form-control" list="item-name-datalist" required placeholder="Enter item name">
+                    <input type="text" id="item-name" name="name" class="form-control" list="item-name-datalist" value="{{ item.name }}" required placeholder="Enter item name">
                 </div>
                 <div class="form-group">
                     <label for="item-model">Model</label>
-                    <input type="text" id="item-model" name="model" class="form-control" list="model-datalist" placeholder="Enter model (optional)">
+                    <input type="text" id="item-model" name="model" class="form-control" list="model-datalist" value="{{ item.model_name or '' }}" placeholder="Enter model (optional)">
                 </div>
                 <div class="form-group">
                     <label for="item-variation">Variation</label>
-                    <input type="text" id="item-variation" name="variation" class="form-control" list="variation-datalist" placeholder="Enter variation (optional)">
+                    <input type="text" id="item-variation" name="variation" class="form-control" list="variation-datalist" value="{{ item.variation_name or '' }}" placeholder="Enter variation (optional)">
                 </div>
                 <div class="form-group full-width">
                     <label for="item-description">Description</label>
-                    <textarea id="item-description" name="description" class="form-control" rows="4" placeholder="Enter item description (optional)"></textarea>
+                    <textarea id="item-description" name="description" class="form-control" rows="4" placeholder="Enter item description (optional)">{{ item.description or '' }}</textarea>
                 </div>
                 <div class="form-group full-width">
                     <label for="item-image">Item Image</label>
+                    {% if item.image_path %}
+                    <div class="image-preview-container">
+                        <img src="/static/{{ item.image_path }}" alt="{{ item.name }}" class="image-preview">
+                        <span class="image-preview-label">Current Image</span>
+                    </div>
+                    {% endif %}
                     <input type="file" id="item-image" name="image" class="form-control" accept="image/*">
-                    <small class="form-text">Upload an image for this item (JPG, PNG, max 5MB)</small>
+                    <small class="form-text">Upload a new image to replace the current one (JPG, PNG, max 5MB)</small>
                 </div>
             </div>
         </div>
 
         <div class="form-section">
             <h2 class="section-title">Item Variants</h2>
-            <p class="card-subtitle">Add different color, size, and stock variations</p>
+            <p class="card-subtitle">Manage different color, size, and stock variations</p>
             <div id="variants-container" style="overflow-x: auto;">
                 <table class="variants-table" style="width: 100%; min-width: 800px;">
                     <thead>
@@ -95,15 +102,36 @@
                         </tr>
                     </thead>
                     <tbody id="variants-list-container">
-                        <tr id="variants-placeholder">
-                            <td colspan="6" style="text-align: center; padding: 2rem; color: var(--text-muted);">
-                                <svg width="32" height="32" fill="currentColor" viewBox="0 0 16 16" style="opacity: 0.3; margin-bottom: 0.5rem;">
-                                    <path d="M8 15A7 7 0 1 1 8 1a7 7 0 0 1 0 14zm0 1A8 8 0 1 0 8 0a8 8 0 0 0 0 16z"/>
-                                    <path d="M8 4a.5.5 0 0 1 .5.5v3h3a.5.5 0 0 1 0 1h-3v3a.5.5 0 0 1-1 0v-3h-3a.5.5 0 0 1 0-1h3v-3A.5.5 0 0 1 8 4z"/>
-                                </svg>
-                                <div>No variants added yet. Click "Add Variant" to create one.</div>
-                            </td>
-                        </tr>
+                        {% if variants %}
+                            {% for variant in variants %}
+                            <tr data-variant-id="{{ variant.variant_id }}">
+                                <td><input type="text" name="color" class="form-control" list="color-datalist" value="{{ variant.color_name }}" required placeholder="Color"></td>
+                                <td><input type="text" name="size" class="form-control" list="size-datalist" value="{{ variant.size_name }}" required placeholder="Size"></td>
+                                <td><input type="number" name="opening_stock" class="form-control" value="{{ variant.opening_stock }}" min="0" placeholder="0"></td>
+                                <td><input type="number" name="threshold" class="form-control" value="{{ variant.threshold }}" min="0" placeholder="10"></td>
+                                <td><input type="text" name="unit" class="form-control" list="unit-datalist" value="{{ variant.unit or 'Pcs' }}" placeholder="Pcs"></td>
+                                <td>
+                                    <button type="button" class="button danger small remove-variant-btn" title="Remove variant">
+                                        <svg width="14" height="14" fill="currentColor" viewBox="0 0 16 16">
+                                            <path d="M5.5 5.5A.5.5 0 0 1 6 6v6a.5.5 0 0 1-1 0V6a.5.5 0 0 1 .5-.5zm2.5 0a.5.5 0 0 1 .5.5v6a.5.5 0 0 1-1 0V6a.5.5 0 0 1 .5-.5zm3 .5a.5.5 0 0 0-1 0v6a.5.5 0 0 0 1 0V6z"/>
+                                            <path fill-rule="evenodd" d="M14.5 3a1 1 0 0 1-1 1H13v9a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V4h-.5a1 1 0 0 1-1-1V2a1 1 0 0 1 1-1H6a1 1 0 0 1 1-1h2a1 1 0 0 1 1 1h3.5a1 1 0 0 1 1 1v1zM4.118 4 4 4.059V13a1 1 0 0 0 1 1h6a1 1 0 0 0 1-1V4.059L11.882 4H4.118zM2.5 3V2h11v1h-11z"/>
+                                        </svg>
+                                        Remove
+                                    </button>
+                                </td>
+                            </tr>
+                            {% endfor %}
+                        {% else %}
+                            <tr id="variants-placeholder">
+                                <td colspan="6" style="text-align: center; padding: 2rem; color: var(--text-muted);">
+                                    <svg width="32" height="32" fill="currentColor" viewBox="0 0 16 16" style="opacity: 0.3; margin-bottom: 0.5rem;">
+                                        <path d="M8 15A7 7 0 1 1 8 1a7 7 0 0 1 0 14zm0 1A8 8 0 1 0 8 0a8 8 0 0 0 0 16z"/>
+                                        <path d="M8 4a.5.5 0 0 1 .5.5v3h3a.5.5 0 0 1 0 1h-3v3a.5.5 0 0 1-1 0v-3h-3a.5.5 0 0 1 0-1h3v-3A.5.5 0 0 1 8 4z"/>
+                                    </svg>
+                                    <div>No variants added yet. Click "Add Variant" to create one.</div>
+                                </td>
+                            </tr>
+                        {% endif %}
                     </tbody>
                 </table>
             </div>
@@ -124,9 +152,9 @@
             </a>
             <button type="submit" class="button primary">
                 <svg width="16" height="16" fill="currentColor" viewBox="0 0 16 16" style="margin-right: 0.5rem;">
-                    <path d="M2 0a2 2 0 0 0-2 2v12a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V2a2 2 0 0 0-2-2H2zm10.03 4.97a.75.75 0 0 1 .011 1.05l-3.992 4.99a.75.75 0 0 1-1.08.02L4.324 8.384a.75.75 0 1 1 1.06-1.06l2.094 2.093 3.473-4.425a.75.75 0 0 1 1.08-.022z"/>
+                    <path d="M12.736 3.97a.733.733 0 0 1 1.047 0c.286.289.29.756.01 1.05L7.88 12.01a.733.733 0 0 1-1.065.02L3.217 8.384a.757.757 0 0 1 0-1.06.733.733 0 0 1 1.047 0l3.052 3.093 5.4-6.425a.247.247 0 0 1 .02-.022Z"/>
                 </svg>
-                Save Item
+                Update Item
             </button>
         </div>
     </form>
@@ -140,6 +168,7 @@
         const addVariantBtn = document.getElementById('add-variant-btn');
         const variantsList = document.getElementById('variants-list-container');
         const placeholder = document.getElementById('variants-placeholder');
+        const itemForm = document.getElementById('item-form');
 
         // Populate datalists with master data
         async function loadMasterData() {
@@ -198,10 +227,9 @@
         await loadMasterData();
 
         function updatePlaceholder() {
-            if (variantsList.children.length > 1) { // 1 because placeholder is a child
-                placeholder.style.display = 'none';
-            } else {
-                placeholder.style.display = 'table-row';
+            const variantRows = Array.from(variantsList.children).filter(child => child.id !== 'variants-placeholder');
+            if (placeholder) {
+                placeholder.style.display = variantRows.length > 0 ? 'none' : 'table-row';
             }
         }
 
@@ -227,6 +255,61 @@
         });
 
         updatePlaceholder();
+
+        // Handle form submission via API
+        itemForm.addEventListener('submit', async function(e) {
+            e.preventDefault();
+            
+            const itemId = itemForm.dataset.itemId;
+            const formData = new FormData(itemForm);
+            
+            // Collect variants data
+            const variants = [];
+            variantsList.querySelectorAll("tr:not(#variants-placeholder)").forEach(row => {
+                const colorInput = row.querySelector('input[name="color"]');
+                const sizeInput = row.querySelector('input[name="size"]');
+                const stockInput = row.querySelector('input[name="opening_stock"]');
+                const thresholdInput = row.querySelector('input[name="threshold"]');
+                const unitInput = row.querySelector('input[name="unit"]');
+                
+                if (colorInput && sizeInput) {
+                    variants.push({
+                        id: row.dataset.variantId || null,
+                        color: colorInput.value,
+                        size: sizeInput.value,
+                        opening_stock: stockInput ? stockInput.value || 0 : 0,
+                        threshold: thresholdInput ? thresholdInput.value || 5 : 5,
+                        unit: unitInput ? unitInput.value || 'Pcs' : 'Pcs',
+                    });
+                }
+            });
+
+            formData.append("variants", JSON.stringify(variants));
+
+            try {
+                const response = await fetch(`${App.config.apiBase}/items/${itemId}`, {
+                    method: 'PUT',
+                    body: formData,
+                    headers: {
+                        'X-CSRFToken': document.querySelector('input[name="csrf_token"]').value
+                    }
+                });
+
+                const result = await response.json();
+                
+                if (response.ok) {
+                    App.showNotification('Item updated successfully!', 'success');
+                    setTimeout(() => {
+                        window.location.href = '/inventory';
+                    }, 500);
+                } else {
+                    App.showNotification(result.error || 'Failed to update item.', 'error');
+                }
+            } catch (error) {
+                console.error('Error updating item:', error);
+                App.showNotification('Network error. Please try again.', 'error');
+            }
+        });
     });
 </script>
 {% endblock %}

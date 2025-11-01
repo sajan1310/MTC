@@ -114,36 +114,69 @@
 
     <div class="content-wrapper">
         <header class="main-header">
-            <div class="header-placeholder"></div>
+            <div class="header-left">
+                {% block breadcrumbs %}
+                <nav class="breadcrumbs" aria-label="Breadcrumb">
+                    <ol>
+                        <li><a href="{{ url_for('main.dashboard') }}">
+                            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                                <path d="M3 9l9-7 9 7v11a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z"></path>
+                            </svg>
+                        </a></li>
+                        <li>{% block current_page %}Dashboard{% endblock %}</li>
+                    </ol>
+                </nav>
+                {% endblock %}
+            </div>
             <div class="header-actions">
                 <button id="dark-mode-toggle" class="theme-toggle-btn" title="Toggle Dark Mode" aria-label="Toggle Dark Mode">
-                    <svg class="sun-icon" xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="5"></circle><line x1="12" y1="1" x2="12" y2="3"></line><line x1="12" y1="21" x2="12" y2="23"></line><line x1="4.22" y1="4.22" x2="5.64" y2="5.64"></line><line x1="18.36" y1="18.36" x2="19.78" y2="19.78"></line><line x1="1" y1="12" x2="3" y2="12"></line><line x1="21" y1="12" x2="23" y2="12"></line><line x1="4.22" y1="19.78" x2="5.64" y2="18.36"></line><line x1="18.36" y1="5.64" x2="19.78" y2="4.22"></line></svg>
-                    <svg class="moon-icon" xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 12.79A9 9 0 1 1 11.21 3 7 7 0 0 0 21 12.79z"></path></svg>
+                    <svg class="sun-icon" xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="5"></circle><line x1="12" y1="1" x2="12" y2="3"></line><line x1="12" y1="21" x2="12" y2="23"></line><line x1="4.22" y1="4.22" x2="5.64" y2="5.64"></line><line x1="18.36" y1="18.36" x2="19.78" y2="19.78"></line><line x1="1" y1="12" x2="3" y2="12"></line><line x1="21" y1="12" x2="23" y2="12"></line><line x1="4.22" y1="19.78" x2="5.64" y2="18.36"></line><line x1="18.36" y1="5.64" x2="19.78" y2="4.22"></line></svg>
+                    <svg class="moon-icon" xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 12.79A9 9 0 1 1 11.21 3 7 7 0 0 0 21 12.79z"></path></svg>
                 </button>
                 {% if current_user.is_authenticated %}
                 <div class="user-menu">
-                    <a href="{{ url_for('main.profile') }}">
+                    <a href="{{ url_for('main.profile') }}" class="user-menu-link">
                         {% if current_user.profile_picture %}
-                        <img src="{{ url_for('static', filename=current_user.profile_picture) }}" alt="Profile" class="profile-pic-small" width="36" height="36">
+                        <img src="{{ url_for('static', filename=current_user.profile_picture) }}" alt="{{ current_user.name }}" class="profile-pic-small" width="36" height="36">
+                        {% else %}
+                        <div class="profile-pic-placeholder-small">{{ current_user.name[0] }}</div>
                         {% endif %}
-                        <span>Welcome, {{ current_user.name }}</span>
+                        <div class="user-menu-info">
+                            <span class="user-menu-name">{{ current_user.name }}</span>
+                            <span class="user-menu-role">{{ current_user.role.replace('_', ' ') | title }}</span>
+                        </div>
                     </a>
                 </div>
                 {% endif %}
             </div>
         </header>
 
-        <div class="flash-messages-container">
-            {% with messages = get_flashed_messages(with_categories=true) %}
-                {% if messages %}
-                <div class="flash-messages">
-                    {% for category, message in messages %}
-                    <div class="flash {{ category }}">{{ message }}</div>
-                    {% endfor %}
+        {% with messages = get_flashed_messages(with_categories=true) %}
+            {% if messages %}
+            <div class="flash-messages-container">
+                {% for category, message in messages %}
+                <div class="flash flash-{{ category }}">
+                    <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                        {% if category == 'success' %}
+                        <path d="M22 11.08V12a10 10 0 1 1-5.93-9.14"></path>
+                        <polyline points="22 4 12 14.01 9 11.01"></polyline>
+                        {% elif category == 'error' %}
+                        <circle cx="12" cy="12" r="10"></circle>
+                        <line x1="15" y1="9" x2="9" y2="15"></line>
+                        <line x1="9" y1="9" x2="15" y2="15"></line>
+                        {% else %}
+                        <circle cx="12" cy="12" r="10"></circle>
+                        <line x1="12" y1="8" x2="12" y2="12"></line>
+                        <line x1="12" y1="16" x2="12.01" y2="16"></line>
+                        {% endif %}
+                    </svg>
+                    <span>{{ message }}</span>
+                    <button type="button" class="flash-close" onclick="this.parentElement.remove()">×</button>
                 </div>
-                {% endif %}
-            {% endwith %}
-        </div>
+                {% endfor %}
+            </div>
+            {% endif %}
+        {% endwith %}
 
         <main class="container">
             {% block content %}{% endblock %}
