@@ -20,32 +20,22 @@
         .env.example
         .gitignore
         app.py
-        AUDIT_FIXES_SUMMARY.md
         CHANGELOG.md
         check_oauth_config.py
+        COMPLETE_CHANGE_LOG.md
         config.py
         config.py.backup
         database.py
         deduplicate_items.py
         DEPLOYMENT.md
+        DOCUMENTATION_CONSOLIDATION_SUMMARY.md
+        DOCUMENTATION_INDEX.md
         file_structure.txt
-        FILE_UPLOAD_SECURITY_SUMMARY.md
-        GOOGLE_CONSOLE_CHECKLIST.md
-        GOOGLE_OAUTH_404_FIX.md
-        IMPORT_IMPLEMENTATION_SUMMARY.md
-        IMPORT_MIGRATION_GUIDE.md
-        IMPORT_SYSTEM_GUIDE.md
         logging_config.py
-        MANUAL_REGRESSION_CHECKLIST.md
-        MANUAL_TEST_GUIDE.md
         minify_assets.py
         models.py
-        OAUTH_FIX_GUIDE.md
-        OAUTH_FIX_SUMMARY.md
         Procfile
         production.env.example
-        PRODUCTION_READINESS_CHECKLIST.md
-        PRODUCTION_UPGRADE_SUMMARY.md
         pytest.ini
         QUICK_SETUP_GUIDE.md
         QUICK_START_GUIDE.md
@@ -54,10 +44,8 @@
         run.py
         run_migration.py
         run_production.py
-        SECURE_FILE_UPLOAD_COMPLETE.md
         TESTING_CHECKLIST.md
         test_oauth.ps1
-        VIRUS_SCANNING_GUIDE.md
         wsgi.py
         .github/
             workflows/
