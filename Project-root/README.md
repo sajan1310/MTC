@@ -1,23 +1,5 @@
 # MTC App
 
-This is a Flask-based web application for managing inventory, suppliers, and purchase orders.
-
-## Features
-
-*   **Dashboard**: View key metrics such as total stock, low stock items, and total suppliers.
-*   **Inventory Management**: Add, edit, and delete items and their variants.
-*   **Supplier Management**: Manage supplier information and contacts.
-*   **Purchase Orders**: Create and manage purchase orders.
-*   **User Management**: Manage user roles and permissions.
-*   **Google OAuth**: Securely log in with your Google account.
-
-## Getting Started
-
-### Prerequisites
-
-*   Python 3.10+
-*   PostgreSQL
-
 ### Installation
 
 1.  **Clone the repository:**
@@ -31,22 +13,56 @@ This is a Flask-based web application for managing inventory, suppliers, and pur
 
     ```bash
     python -m venv venv
-    source venv/bin/activate  # On Windows, use `venv\Scripts\activate`
+    source venv/bin/activate  # On Windows, use `venv\\Scripts\\activate`
     ```
 
-3.  **Install the dependencies:**
+3.  **Install system-level dependencies for python-magic:**
+
+    - **Linux:**
+        ```bash
+        sudo apt-get install libmagic1
+        ```
+    - **macOS:**
+        ```bash
+        brew install libmagic
+        ```
+    - **Windows:**
+        - python-magic will use a bundled DLL, but if you encounter issues, see https://github.com/ahupp/python-magic#installation for troubleshooting.
+
+4.  **Install the dependencies:**
 
     ```bash
     pip install -r requirements.txt
     ```
 
-4.  **Set up the database:**
+    > **Note:** `python-magic` is a hard requirement for secure file uploads. The application will not run without it.
+
+5.  **Set up the database:**
 
     *   Create a PostgreSQL database named `MTC`.
     *   Run the migrations to create the necessary tables:
 
         ```bash
         python run_migration.py
+        ```
+
+6.  **Configure environment variables:**
+
+    *   Copy the `.env.example` file to `.env`:
+
+        ```bash
+        cp .env.example .env
+        ```
+
+    *   Open the `.env` file and fill in the required values, including your database credentials and Google OAuth client ID and secret.
+
+### Running the Application
+
+```bash
+flask run
+```
+
+The application will be available at `http://127.0.0.1:5000`.
         ```
 
 5.  **Configure environment variables:**

@@ -17,10 +17,12 @@ google-auth-oauthlib==1.2.0
 # Environment Management
 python-dotenv==1.0.1
 
+
 # Security Enhancements
 Flask-Limiter==3.5.0
 flask-talisman==1.1.0
-python-magic==0.4.27
+python-magic-bin==0.4.14  # Required for secure file upload validation (includes libmagic for Windows)
+redis==5.0.1
 
 # CORS Support
 Flask-CORS==4.0.0
@@ -36,3 +38,5 @@ waitress==3.0.0
 # Testing
 pytest==8.1.1
 pytest-flask==1.3.0
+pytest-cov>=4.0
+ruff>=0.1

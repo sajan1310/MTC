@@ -15,7 +15,7 @@
         <p class="auth-subtitle">Update your personal information below.</p>
     </div>
     
-    <form action="{{ url_for('profile') }}" method="POST" enctype="multipart/form-data" style="width:100%;">
+    <form action="{{ url_for('main.profile') }}" method="POST" enctype="multipart/form-data" style="width:100%;">
         <div class="form-row">
             <div class="form-field">
                 <label for="name">Name</label>
@@ -48,7 +48,7 @@
     </div>
 </div>
         <div class="button-row">
-            <a href="{{ url_for('inventory') }}" class="button cancel">Cancel</a>
+            <a href="{{ url_for('main.inventory') }}" class="button cancel">Cancel</a>
             <button class="create" type="submit">Save Changes</button>
         </div>
     </form>
@@ -58,7 +58,7 @@
     <div class="auth-header">
         <h2>Change Password</h2>
     </div>
-    <form action="{{ url_for('change_password') }}" method="POST" style="width:100%;">
+    <form action="{{ url_for('main.change_password') }}" method="POST" style="width:100%;">
         <div class="form-field">
             <label for="current_password">Current Password</label>
             <input type="password" id="current_password" name="current_password" required>

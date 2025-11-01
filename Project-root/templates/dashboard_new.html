@@ -33,8 +33,8 @@
             <div class="card-header">
                 <h2 class="card-title">Quick Actions</h2>
             </div>
-            <a href="{{ url_for('inventory') }}?action=generate-po" class="button create">Generate PO</a>
-            <a href="{{ url_for('inventory') }}?action=receive-stock" class="button">Receive Stock</a>
+            <a href="{{ url_for('main.inventory') }}?action=generate-po" class="button create">Generate PO</a>
+            <a href="{{ url_for('main.inventory') }}?action=receive-stock" class="button">Receive Stock</a>
         </div>
 
         <!-- Reports -->
@@ -42,15 +42,15 @@
             <div class="card-header">
                 <h2 class="card-title">Reports</h2>
             </div>
-            <a href="{{ url_for('low_stock_report') }}" class="report-item">
+            <a href="{{ url_for('main.low_stock_report') }}" class="report-item">
                 <span>Low Stock Report</span>
                 <i class="fas fa-chevron-right"></i>
             </a>
-            <a href="{{ url_for('stock_ledger') }}" class="report-item">
+            <a href="{{ url_for('main.stock_ledger') }}" class="report-item">
                 <span>Stock Ledger</span>
                 <i class="fas fa-chevron-right"></i>
             </a>
-            <a href="{{ url_for('suppliers') }}" class="report-item">
+            <a href="{{ url_for('main.suppliers') }}" class="report-item">
                 <span>Supplier Ledger</span>
                 <i class="fas fa-chevron-right"></i>
             </a>
@@ -72,7 +72,7 @@
 <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
 <script>
     document.addEventListener('DOMContentLoaded', function() {
-        fetch("{{ url_for('stock_trend_data') }}")
+        fetch("{{ url_for('api.stock_trend_data') }}")
             .then(response => response.json())
             .then(data => {
                 const ctx = document.getElementById('stockTrendChart').getContext('2d');

@@ -12,7 +12,8 @@ import sys
 # Add the project root to Python path
 sys.path.insert(0, os.path.dirname(__file__))
 
-from app import app
+from app import create_app
+app = create_app(os.getenv('FLASK_ENV', 'production'))
 
 # Configure for production
 if os.environ.get('FLASK_ENV') == 'production':

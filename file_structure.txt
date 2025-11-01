@@ -20,15 +20,21 @@
         .env.example
         .gitignore
         app.py
+        AUDIT_FIXES_SUMMARY.md
         CHANGELOG.md
         check_oauth_config.py
         config.py
+        config.py.backup
         database.py
         deduplicate_items.py
         DEPLOYMENT.md
         file_structure.txt
+        FILE_UPLOAD_SECURITY_SUMMARY.md
         GOOGLE_CONSOLE_CHECKLIST.md
         GOOGLE_OAUTH_404_FIX.md
+        IMPORT_IMPLEMENTATION_SUMMARY.md
+        IMPORT_MIGRATION_GUIDE.md
+        IMPORT_SYSTEM_GUIDE.md
         logging_config.py
         MANUAL_REGRESSION_CHECKLIST.md
         MANUAL_TEST_GUIDE.md
@@ -40,13 +46,22 @@
         production.env.example
         PRODUCTION_READINESS_CHECKLIST.md
         PRODUCTION_UPGRADE_SUMMARY.md
+        pytest.ini
+        QUICK_SETUP_GUIDE.md
+        QUICK_START_GUIDE.md
         README.md
         requirements.txt
+        run.py
         run_migration.py
         run_production.py
+        SECURE_FILE_UPLOAD_COMPLETE.md
         TESTING_CHECKLIST.md
         test_oauth.ps1
+        VIRUS_SCANNING_GUIDE.md
         wsgi.py
+        .github/
+            workflows/
+                test.yml
         .pytest_cache/
             .gitignore
             CACHEDIR.TAG
@@ -55,8 +70,47 @@
                 cache/
                     nodeids
                     stepwise
+        app/
+            models.py
+            utils.py
+            __init__.py
+            api/
+                file_routes.py
+                imports.py
+                items.py
+                purchase_orders.py
+                routes.py
+                suppliers.py
+                __init__.py
+            auth/
+                decorators.py
+                routes.py
+                __init__.py
+            main/
+                routes.py
+            models/
+                inventory.py
+                user.py
+                __init__.py
+            services/
+                background_worker.py
+                export_service.py
+                import_service.py
+                progress_tracker.py
+                __init__.py
+            utils/
+                file_validation.py
+                helpers.py
+                validators.py
+                virus_scan.py
+                __init__.py
+            validators/
+                import_validators.py
+                __init__.py
         auth/
             routes.py
+        logs/
+            app.log
         migrations/
             add_indexes.sql
             migration.py
@@ -64,18 +118,22 @@
             migration_add_cascade_delete.py
             migration_add_category_type_brand_tables.py
             migration_add_discount_and_receipt_number.py
+            migration_add_import_jobs.py
             migration_add_item_uniqueness.py
             migration_add_master_tables.py
             migration_add_notes_and_status_to_po.py
             migration_add_password_reset.py
+            migration_add_performance_indexes.py
             migration_add_po_number.py
             migration_add_po_tracking.py
             migration_add_stock_receipts.py
             migration_add_suppliers_tables.py
+            migration_add_unique_indexes_for_upsert.py
             migration_remove_model_uniqueness.py
             migration_remove_unique_constraint.py
             migration_update_discount_fields.py
             __init__.py
+        private_uploads/
         static/
             dashboard.js
             inventory.js
@@ -117,5 +175,14 @@
             conftest.py
             test_app.py
             test_auth.py
+            test_file_validation.py
             test_oauth_redirect_uri.py
             test_smoke.py
+            api/
+                test_items.py
+                test_purchase_orders.py
+                test_suppliers.py
+            auth/
+                test_routes.py
+            services/
+                test_import_service.py

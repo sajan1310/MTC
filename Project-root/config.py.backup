@@ -26,8 +26,9 @@ class Config:
     GOOGLE_DISCOVERY_URL = os.getenv('GOOGLE_DISCOVERY_URL', 'https://accounts.google.com/.well-known/openid-configuration')
 
     # Rate limiting storage (Redis by default)
-    RATELIMIT_STORAGE_URL = os.getenv('RATELIMIT_STORAGE_URL', 'redis://localhost:6379/0')
-    # Example: 'redis://:password@localhost:6379/0?max_connections=50&decode_responses=True'
+        REDIS_URL = os.getenv('REDIS_URL', 'redis://localhost:6379/0')
+        RATELIMIT_STORAGE_URL = os.getenv('RATELIMIT_STORAGE_URL', REDIS_URL)
+        # Example: 'redis://:password@localhost:6379/0?max_connections=50&decode_responses=True'
 
     # File Upload
     MAX_CONTENT_LENGTH = 16 * 1024 * 1024  # 16MB
