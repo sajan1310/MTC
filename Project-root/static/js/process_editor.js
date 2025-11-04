@@ -424,7 +424,8 @@ const processEditor = {
         }
 
         try {
-            const response = await fetch(`/api/upf/processes/${this.processId}/subprocesses/${subprocess.process_subprocess_id}/variants`, {
+            // Fixed: Use correct endpoint and payload format
+            const response = await fetch(`/api/upf/variant_usage`, {
                 method: 'POST',
                 headers: {
                     'Content-Type': 'application/json',
@@ -432,10 +433,10 @@ const processEditor = {
                 },
                 credentials: 'include',
                 body: JSON.stringify({
-                    variant_id: parseInt(variantId),
+                    subprocess_id: subprocess.subprocess_id,  // Note: subprocess_id, not process_subprocess_id
+                    item_id: parseInt(variantId),  // Note: item_id, not variant_id
                     quantity: quantity,
-                    unit: unit,
-                    or_group_id: null
+                    unit: unit
                 })
             });
 
@@ -446,7 +447,7 @@ const processEditor = {
 
             if (!response.ok) {
                 const error = await response.json();
-                throw new Error(error.message || 'Failed to add variant');
+                throw new Error(error.error || error.message || 'Failed to add variant');
             }
 
             this.showAlert('Variant added successfully', 'success');
@@ -469,7 +470,13 @@ const processEditor = {
         const variant = subprocess.variants[variantIndex];
 
         try {
-            const response = await fetch(`/api/upf/processes/${this.processId}/subprocesses/${subprocess.process_subprocess_id}/variants/${variant.process_variant_id}`, {
+            // Fixed: Use correct endpoint with usage_id (assuming backend returns 'id' as usage_id)
+            const usageId = variant.id || variant.usage_id;
+            if (!usageId) {
+                throw new Error('Variant usage ID not found');
+            }
+
+            const response = await fetch(`/api/upf/variant_usage/${usageId}`, {
                 method: 'DELETE',
                 headers: {
                     'X-CSRFToken': this.getCSRFToken()
@@ -503,7 +510,8 @@ const processEditor = {
         const subprocess = this.subprocesses[index];
 
         try {
-            const response = await fetch(`/api/upf/processes/${this.processId}/subprocesses/${subprocess.process_subprocess_id}`, {
+            // Fixed: Use correct endpoint path
+            const response = await fetch(`/api/upf/process_subprocess/${subprocess.process_subprocess_id}`, {
                 method: 'DELETE',
                 headers: {
                     'X-CSRFToken': this.getCSRFToken()
@@ -547,19 +555,21 @@ const processEditor = {
 
         // Save sequence changes if any
         try {
-            const updates = this.subprocesses.map(sp => ({
-                id: sp.process_subprocess_id,
-                sequence: sp.sequence
-            }));
+            // Build sequence_map: {process_subprocess_id: sequence_order}
+            const sequence_map = {};
+            this.subprocesses.forEach((sp, index) => {
+                sequence_map[sp.process_subprocess_id] = index + 1;
+            });
 
-            const response = await fetch(`/api/upf/processes/${this.processId}/subprocesses/reorder`, {
-                method: 'PUT',
+            // Fixed: Use correct endpoint and payload format
+            const response = await fetch(`/api/upf/process/${this.processId}/reorder_subprocesses`, {
+                method: 'POST',
                 headers: {
                     'Content-Type': 'application/json',
                     'X-CSRFToken': this.getCSRFToken()
                 },
                 credentials: 'include',
-                body: JSON.stringify({ subprocesses: updates })
+                body: JSON.stringify({ sequence_map })
             });
 
             if (response.status === 401) {

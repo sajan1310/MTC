@@ -79,6 +79,13 @@ def get_process(process_id):
         return jsonify({'error': str(e)}), 500
 
 
+@process_api_bp.route('/processes/<int:process_id>/structure', methods=['GET'])
+@login_required
+def get_process_structure(process_id):
+    """Get process structure (alias to get_process for frontend compatibility)."""
+    return get_process(process_id)
+
+
 @process_api_bp.route('/processes', methods=['GET'])
 @login_required
 def list_processes():

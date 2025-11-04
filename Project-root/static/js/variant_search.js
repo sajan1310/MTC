@@ -65,7 +65,7 @@ const variantSearch = {
      */
     async loadVariants() {
         try {
-            const response = await fetch('/api/variants', {
+            const response = await fetch('/api/all-variants', {
                 method: 'GET',
                 credentials: 'include'
             });
@@ -80,7 +80,8 @@ const variantSearch = {
             }
 
             const data = await response.json();
-            this.variants = data.variants || [];
+            // Handle response format: may be array or object with 'variants' key
+            this.variants = Array.isArray(data) ? data : (data.variants || []);
             this.filteredVariants = [...this.variants];
             this.renderVariants();
         } catch (error) {

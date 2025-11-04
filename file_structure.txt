@@ -54,7 +54,10 @@
         test_oauth.ps1
         UNIVERSAL_PROCESS_FRAMEWORK_PROGRESS.md
         UPF_API_IMPLEMENTATION_COMPLETE.md
+        UPF_CODE_REVIEW_REPORT.md
+        UPF_FIXES_IMPLEMENTED.md
         UPF_IMPLEMENTATION_COMPLETE.md
+        UPF_TESTING_GUIDE.md
         wsgi.py
         .github/
             workflows/
