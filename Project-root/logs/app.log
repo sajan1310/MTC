@@ -743,3 +743,93 @@ LINE 4:                 WHERE user_id = 3 AND is_deleted = FALSE
 LINE 4:                 WHERE user_id = 3 AND is_deleted = FALSE
                               ^
  [in C:\Users\erkar\OneDrive\Desktop\MTC\Project-root\app\api\process_management.py:101]
+2025-11-04 19:45:20,583 INFO: Universal Process Framework API blueprints exempted from CSRF protection [in C:\Users\erkar\OneDrive\Desktop\MTC\project-root\app\__init__.py:256]
+2025-11-04 19:45:31,871 INFO: [CREATE PROCESS] Received request from user 3 [in C:\Users\erkar\OneDrive\Desktop\MTC\project-root\app\api\process_management.py:54]
+2025-11-04 19:45:31,872 INFO: [CREATE PROCESS] Creating process 'Frame Assembly' with class 'Manufacturing' [in C:\Users\erkar\OneDrive\Desktop\MTC\project-root\app\api\process_management.py:101]
+2025-11-04 19:45:31,927 ERROR: [CREATE PROCESS] Unexpected error: '_GeneratorContextManager' object has no attribute 'rollback' [in C:\Users\erkar\OneDrive\Desktop\MTC\project-root\app\api\process_management.py:129]
+Traceback (most recent call last):
+  File "C:\Users\erkar\OneDrive\Desktop\MTC\project-root\app\services\audit_service.py", line 38, in log_action
+    cur = conn.cursor()
+          ^^^^^^^^^^^
+AttributeError: '_GeneratorContextManager' object has no attribute 'cursor'
+
+During handling of the above exception, another exception occurred:
+
+Traceback (most recent call last):
+  File "C:\Users\erkar\OneDrive\Desktop\MTC\project-root\app\api\process_management.py", line 111, in create_process
+    audit.log_create('process', process['id'], data['name'])
+    ~~~~~~~~~~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "C:\Users\erkar\OneDrive\Desktop\MTC\project-root\app\services\audit_service.py", line 99, in log_create
+    return AuditService.log_action(
+           ~~~~~~~~~~~~~~~~~~~~~~~^
+        action_type='CREATE',
+        ^^^^^^^^^^^^^^^^^^^^^
+    ...<3 lines>...
+        changes={'new': data}
+        ^^^^^^^^^^^^^^^^^^^^^
+    )
+    ^
+  File "C:\Users\erkar\OneDrive\Desktop\MTC\project-root\app\services\audit_service.py", line 84, in log_action
+    conn.rollback()
+    ^^^^^^^^^^^^^
+AttributeError: '_GeneratorContextManager' object has no attribute 'rollback'
+2025-11-04 19:49:25,810 INFO: Universal Process Framework API blueprints exempted from CSRF protection [in C:\Users\erkar\OneDrive\Desktop\MTC\Project-root\app\__init__.py:256]
+2025-11-04 19:52:57,054 INFO: [CREATE PROCESS] Received request from user 3 [in C:\Users\erkar\OneDrive\Desktop\MTC\project-root\app\api\process_management.py:54]
+2025-11-04 19:52:57,058 INFO: [CREATE PROCESS] Creating process 'Frame Assembly' with class 'Manufacturing' [in C:\Users\erkar\OneDrive\Desktop\MTC\project-root\app\api\process_management.py:101]
+2025-11-04 19:52:57,215 ERROR: [CREATE PROCESS] Unexpected error: duplicate key value violates unique constraint "unique_process_name"
+DETAIL:  Key (name)=(Frame Assembly) already exists.
+ [in C:\Users\erkar\OneDrive\Desktop\MTC\project-root\app\api\process_management.py:129]
+Traceback (most recent call last):
+  File "C:\Users\erkar\OneDrive\Desktop\MTC\project-root\app\api\process_management.py", line 103, in create_process
+    process = ProcessService.create_process(
+        name=data['name'].strip(),
+    ...<2 lines>...
+        process_class=process_class
+    )
+  File "C:\Users\erkar\OneDrive\Desktop\MTC\project-root\app\services\process_service.py", line 47, in create_process
+    cur.execute("""
+    ~~~~~~~~~~~^^^^
+        INSERT INTO processes (name, description, process_class, created_by, status)
+        ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+        VALUES (%s, %s, %s, %s, 'Active')
+        ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+        RETURNING *
+        ^^^^^^^^^^^
+    """, (name, description, process_class, user_id))
+    ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "C:\Users\erkar\OneDrive\Desktop\MTC\venv2\Lib\site-packages\psycopg2\extras.py", line 236, in execute
+    return super().execute(query, vars)
+           ~~~~~~~~~~~~~~~^^^^^^^^^^^^^
+psycopg2.errors.UniqueViolation: duplicate key value violates unique constraint "unique_process_name"
+DETAIL:  Key (name)=(Frame Assembly) already exists.
+
+2025-11-04 19:53:58,112 INFO: Universal Process Framework API blueprints exempted from CSRF protection [in C:\Users\erkar\OneDrive\Desktop\MTC\Project-root\app\__init__.py:256]
+2025-11-04 19:54:11,187 INFO: [CREATE PROCESS] Received request from user 3 [in C:\Users\erkar\OneDrive\Desktop\MTC\project-root\app\api\process_management.py:54]
+2025-11-04 19:54:11,189 INFO: [CREATE PROCESS] Creating process 'Frame Assembly' with class 'Manufacturing' [in C:\Users\erkar\OneDrive\Desktop\MTC\project-root\app\api\process_management.py:101]
+2025-11-04 19:54:11,213 ERROR: [CREATE PROCESS] Unexpected error: duplicate key value violates unique constraint "unique_process_name"
+DETAIL:  Key (name)=(Frame Assembly) already exists.
+ [in C:\Users\erkar\OneDrive\Desktop\MTC\project-root\app\api\process_management.py:129]
+Traceback (most recent call last):
+  File "C:\Users\erkar\OneDrive\Desktop\MTC\project-root\app\api\process_management.py", line 103, in create_process
+    process = ProcessService.create_process(
+        name=data['name'].strip(),
+    ...<2 lines>...
+        process_class=process_class
+    )
+  File "C:\Users\erkar\OneDrive\Desktop\MTC\project-root\app\services\process_service.py", line 47, in create_process
+    cur.execute("""
+    ~~~~~~~~~~~^^^^
+        INSERT INTO processes (name, description, process_class, created_by, status)
+        ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+        VALUES (%s, %s, %s, %s, 'Active')
+        ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+        RETURNING *
+        ^^^^^^^^^^^
+    """, (name, description, process_class, user_id))
+    ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "C:\Users\erkar\OneDrive\Desktop\MTC\venv2\Lib\site-packages\psycopg2\extras.py", line 236, in execute
+    return super().execute(query, vars)
+           ~~~~~~~~~~~~~~~^^^^^^^^^^^^^
+psycopg2.errors.UniqueViolation: duplicate key value violates unique constraint "unique_process_name"
+DETAIL:  Key (name)=(Frame Assembly) already exists.
+

@@ -81,7 +81,7 @@ const processFramework = {
                         </div>
                         <div class="meta-item">
                             <span>💰</span>
-                            <span>$${(process.worst_case_cost || 0).toFixed(2)}</span>
+                            <span>$${(parseFloat(process.worst_case_cost) || 0).toFixed(2)}</span>
                         </div>
                     </div>
                 </div>
@@ -334,7 +334,7 @@ const processFramework = {
                         </div>
                         <div class="meta-item">
                             <span>💰</span>
-                            <span>$${(subprocess.labor_cost || 0).toFixed(2)}</span>
+                            <span>$${(parseFloat(subprocess.labor_cost) || 0).toFixed(2)}</span>
                         </div>
                     </div>
                 </div>
@@ -564,7 +564,7 @@ const processFramework = {
                     <td>${this.escapeHtml(lot.process_name || 'N/A')}</td>
                     <td>${lot.quantity || 0}</td>
                     <td><span class="card-badge badge-${lot.status.toLowerCase().replace(' ', '-')}">${lot.status}</span></td>
-                    <td>$${(lot.total_cost || 0).toFixed(2)}</td>
+                    <td>$${(parseFloat(lot.total_cost) || 0).toFixed(2)}</td>
                     <td>${new Date(lot.created_at).toLocaleDateString()}</td>
                 </tr>
             `).join('');
@@ -614,9 +614,9 @@ const processFramework = {
                 document.getElementById('completed-lots').textContent = completedLots.length;
                 
                 const avgCost = lots.length > 0 
-                    ? lots.reduce((sum, l) => sum + (l.total_cost || 0), 0) / lots.length
+                    ? lots.reduce((sum, l) => sum + (parseFloat(l.total_cost) || 0), 0) / lots.length
                     : 0;
-                document.getElementById('avg-cost').textContent = '$' + avgCost.toFixed(2);
+                document.getElementById('avg-cost').textContent = '$' + (parseFloat(avgCost) || 0).toFixed(2);
             } catch (error) {
                 console.error('Error loading metrics:', error);
             }
@@ -645,7 +645,7 @@ const processFramework = {
                             <strong>${i + 1}. ${this.escapeHtml(p.name)}</strong>
                             <span style="color: #666; font-size: 12px; margin-left: 8px;">${p.class}</span>
                         </div>
-                        <strong style="color: #4CAF50;">$${p.worst_case_cost.toFixed(2)}</strong>
+                        <strong style="color: #4CAF50;">$${(parseFloat(p.worst_case_cost) || 0).toFixed(2)}</strong>
                     </div>
                 `).join('');
             } catch (error) {
@@ -672,7 +672,7 @@ const processFramework = {
                             <span class="card-badge badge-${lot.status.toLowerCase().replace(' ', '-')}">${lot.status}</span>
                         </div>
                         <div style="color: #666; font-size: 13px;">
-                            ${this.escapeHtml(lot.process_name || 'N/A')} • Qty: ${lot.quantity || 0} • $${(lot.total_cost || 0).toFixed(2)}
+                            ${this.escapeHtml(lot.process_name || 'N/A')} • Qty: ${lot.quantity || 0} • $${(parseFloat(lot.total_cost) || 0).toFixed(2)}
                         </div>
                     </div>
                 `).join('');

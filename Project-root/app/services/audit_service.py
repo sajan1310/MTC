@@ -32,11 +32,7 @@ class AuditService:
         Returns:
             int: audit_log.id or None if failed
         """
-        conn = None
         try:
-            conn = get_conn()
-            cur = conn.cursor()
-            
             # Determine user
             if user_id is None:
                 if current_user and hasattr(current_user, 'id'):
@@ -58,40 +54,33 @@ class AuditService:
             
             metadata['timestamp'] = datetime.utcnow().isoformat()
             
-            # Insert audit log
-            cur.execute("""
-                INSERT INTO audit_log 
-                (user_id, action_type, entity_type, entity_id, entity_name, changes, metadata)
-                VALUES (%s, %s, %s, %s, %s, %s, %s)
-                RETURNING id
-            """, (
-                user_id,
-                action_type,
-                entity_type,
-                entity_id,
-                entity_name,
-                json.dumps(changes) if changes else None,
-                json.dumps(metadata)
-            ))
-            
-            audit_id = cur.fetchone()[0]
-            conn.commit()
-            
-            return audit_id
+            # Use context manager for proper connection handling
+            with get_conn() as (conn, cur):
+                # Insert audit log
+                cur.execute("""
+                    INSERT INTO audit_log 
+                    (user_id, action_type, entity_type, entity_id, entity_name, changes, metadata)
+                    VALUES (%s, %s, %s, %s, %s, %s, %s)
+                    RETURNING id
+                """, (
+                    user_id,
+                    action_type,
+                    entity_type,
+                    entity_id,
+                    entity_name,
+                    json.dumps(changes) if changes else None,
+                    json.dumps(metadata)
+                ))
+                
+                audit_id = cur.fetchone()[0]
+                conn.commit()
+                
+                return audit_id
             
         except Exception as e:
-            if conn:
-                conn.rollback()
             print(f"Audit logging failed: {e}")
             # Don't raise - audit failure should not break business logic
             return None
-        finally:
-            if conn:
-                try:
-                    cur.close()
-                    conn.close()
-                except:
-                    pass
     
     @staticmethod
     def log_create(entity_type, entity_id, entity_name, data=None):
@@ -150,57 +139,47 @@ class AuditService:
         Returns:
             list: Audit log entries
         """
-        conn = None
         try:
-            conn = get_conn()
-            cur = conn.cursor()
-            
-            cur.execute("""
-                SELECT 
-                    al.id,
-                    al.action_type,
-                    al.entity_name,
-                    al.changes,
-                    al.metadata,
-                    al.timestamp,
-                    u.username,
-                    u.email
-                FROM audit_log al
-                LEFT JOIN users u ON al.user_id = u.id
-                WHERE al.entity_type = %s 
-                  AND al.entity_id = %s
-                  AND al.deleted_at IS NULL
-                ORDER BY al.timestamp DESC
-                LIMIT %s
-            """, (entity_type, entity_id, limit))
-            
-            rows = cur.fetchall()
-            
-            history = []
-            for row in rows:
-                history.append({
-                    'id': row[0],
-                    'action_type': row[1],
-                    'entity_name': row[2],
-                    'changes': row[3],
-                    'metadata': row[4],
-                    'timestamp': row[5].isoformat() if row[5] else None,
-                    'username': row[6],
-                    'email': row[7]
-                })
-            
-            return history
+            with get_conn() as (conn, cur):
+                cur.execute("""
+                    SELECT 
+                        al.id,
+                        al.action_type,
+                        al.entity_name,
+                        al.changes,
+                        al.metadata,
+                        al.timestamp,
+                        u.username,
+                        u.email
+                    FROM audit_log al
+                    LEFT JOIN users u ON al.user_id = u.id
+                    WHERE al.entity_type = %s 
+                      AND al.entity_id = %s
+                      AND al.deleted_at IS NULL
+                    ORDER BY al.timestamp DESC
+                    LIMIT %s
+                """, (entity_type, entity_id, limit))
+                
+                rows = cur.fetchall()
+                
+                history = []
+                for row in rows:
+                    history.append({
+                        'id': row[0],
+                        'action_type': row[1],
+                        'entity_name': row[2],
+                        'changes': row[3],
+                        'metadata': row[4],
+                        'timestamp': row[5].isoformat() if row[5] else None,
+                        'username': row[6],
+                        'email': row[7]
+                    })
+                
+                return history
             
         except Exception as e:
             print(f"Error retrieving audit history: {e}")
             return []
-        finally:
-            if conn:
-                try:
-                    cur.close()
-                    conn.close()
-                except:
-                    pass
     
     @staticmethod
     def get_user_activity(user_id, limit=100):
@@ -214,51 +193,41 @@ class AuditService:
         Returns:
             list: Audit log entries
         """
-        conn = None
         try:
-            conn = get_conn()
-            cur = conn.cursor()
-            
-            cur.execute("""
-                SELECT 
-                    id,
-                    action_type,
-                    entity_type,
-                    entity_id,
-                    entity_name,
-                    timestamp
-                FROM audit_log
-                WHERE user_id = %s
-                  AND deleted_at IS NULL
-                ORDER BY timestamp DESC
-                LIMIT %s
-            """, (user_id, limit))
-            
-            rows = cur.fetchall()
-            
-            activity = []
-            for row in rows:
-                activity.append({
-                    'id': row[0],
-                    'action_type': row[1],
-                    'entity_type': row[2],
-                    'entity_id': row[3],
-                    'entity_name': row[4],
-                    'timestamp': row[5].isoformat() if row[5] else None
-                })
-            
-            return activity
+            with get_conn() as (conn, cur):
+                cur.execute("""
+                    SELECT 
+                        id,
+                        action_type,
+                        entity_type,
+                        entity_id,
+                        entity_name,
+                        timestamp
+                    FROM audit_log
+                    WHERE user_id = %s
+                      AND deleted_at IS NULL
+                    ORDER BY timestamp DESC
+                    LIMIT %s
+                """, (user_id, limit))
+                
+                rows = cur.fetchall()
+                
+                activity = []
+                for row in rows:
+                    activity.append({
+                        'id': row[0],
+                        'action_type': row[1],
+                        'entity_type': row[2],
+                        'entity_id': row[3],
+                        'entity_name': row[4],
+                        'timestamp': row[5].isoformat() if row[5] else None
+                    })
+                
+                return activity
             
         except Exception as e:
             print(f"Error retrieving user activity: {e}")
             return []
-        finally:
-            if conn:
-                try:
-                    cur.close()
-                    conn.close()
-                except:
-                    pass
 
 
 # Convenience instance

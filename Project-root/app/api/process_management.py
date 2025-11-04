@@ -7,6 +7,7 @@ and process structure manipulation.
 from flask import Blueprint, request, jsonify, current_app
 from flask_login import login_required, current_user
 from functools import wraps
+import psycopg2.errors
 
 from app import limiter
 from app.services.process_service import ProcessService
@@ -113,6 +114,12 @@ def create_process():
         current_app.logger.info(f"[CREATE PROCESS] Process created successfully: {process['id']} by user {current_user.id}")
         return jsonify(process), 201
         
+    except psycopg2.errors.UniqueViolation as e:
+        current_app.logger.warning(f"[CREATE PROCESS] Duplicate process name: {data.get('name')}")
+        return jsonify({
+            'error': 'Duplicate process name',
+            'details': f"A process with the name '{data.get('name')}' already exists. Please choose a different name."
+        }), 409
     except KeyError as e:
         current_app.logger.error(f"[CREATE PROCESS] Missing key: {e}")
         return jsonify({

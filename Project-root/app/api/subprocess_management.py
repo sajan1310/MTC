@@ -5,6 +5,7 @@ Provides REST API endpoints for subprocess template CRUD operations.
 """
 from flask import Blueprint, request, jsonify, current_app
 from flask_login import login_required, current_user
+import psycopg2.errors
 
 from app import limiter
 from app.services.subprocess_service import SubprocessService
@@ -88,6 +89,12 @@ def create_subprocess():
         )
         return jsonify(subprocess), 201
         
+    except psycopg2.errors.UniqueViolation as e:
+        current_app.logger.warning(f"[CREATE SUBPROCESS] Duplicate subprocess name: {data.get('name')}")
+        return jsonify({
+            'error': 'Duplicate subprocess name',
+            'details': f"A subprocess with the name '{data.get('name')}' already exists. Please choose a different name."
+        }), 409
     except KeyError as e:
         current_app.logger.error(f"[CREATE SUBPROCESS] Missing key: {e}")
         return jsonify({
