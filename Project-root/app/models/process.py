@@ -33,8 +33,8 @@ class Process:
         self.id: int = data['id']
         self.name: str = data['name']
         self.description: Optional[str] = data.get('description')
-        self.process_class: str = data.get('class', 'assembly')  # 'class' is Python keyword
-        self.user_id: int = data['user_id']
+        self.process_class: str = data.get('class', data.get('process_class', 'assembly'))  # 'class' is Python keyword
+        self.user_id: int = data.get('user_id', data.get('created_by'))
         self.status: str = data.get('status', 'draft')
         self.version: int = data.get('version', 1)
         self.is_deleted: bool = data.get('is_deleted', False)

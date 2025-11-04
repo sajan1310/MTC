@@ -24,28 +24,30 @@ class SubprocessService:
     @staticmethod
     def create_subprocess(
         name: str,
-        user_id: int,
         description: Optional[str] = None,
-        reusable: bool = False
+        category: Optional[str] = None,
+        estimated_time_minutes: int = 0,
+        labor_cost: float = 0.00
     ) -> Dict[str, Any]:
         """
         Create a new subprocess template.
         
         Args:
             name: Subprocess name
-            user_id: User creating the subprocess
             description: Optional description
-            reusable: Whether this is a reusable template
+            category: Subprocess category
+            estimated_time_minutes: Estimated time in minutes
+            labor_cost: Labor cost
         
         Returns:
             Created subprocess
         """
         with database.get_conn(cursor_factory=psycopg2.extras.RealDictCursor) as (conn, cur):
             cur.execute("""
-                INSERT INTO subprocesses (name, description, user_id, reusable, version)
-                VALUES (%s, %s, %s, %s, 1)
+                INSERT INTO subprocesses (name, description, category, estimated_time_minutes, labor_cost)
+                VALUES (%s, %s, %s, %s, %s)
                 RETURNING *
-            """, (name, description, user_id, reusable))
+            """, (name, description, category, estimated_time_minutes, labor_cost))
             
             subprocess_data = cur.fetchone()
             conn.commit()
@@ -91,8 +93,7 @@ class SubprocessService:
     
     @staticmethod
     def list_subprocesses(
-        user_id: int,
-        reusable_only: bool = False,
+        subprocess_type: Optional[str] = None,
         page: int = 1,
         per_page: int = 50
     ) -> Dict[str, Any]:
@@ -100,8 +101,7 @@ class SubprocessService:
         List subprocesses with optional filtering.
         
         Args:
-            user_id: Filter by user
-            reusable_only: Only show reusable templates
+            subprocess_type: Filter by subprocess type/category
             page: Page number
             per_page: Items per page
         
@@ -110,13 +110,14 @@ class SubprocessService:
         """
         offset = (page - 1) * per_page
         
-        conditions = ["user_id = %s", "is_deleted = FALSE"]
-        params = [user_id]
+        conditions = []
+        params = []
         
-        if reusable_only:
-            conditions.append("reusable = TRUE")
+        if subprocess_type:
+            conditions.append("category = %s")
+            params.append(subprocess_type)
         
-        where_clause = " AND ".join(conditions)
+        where_clause = " AND ".join(conditions) if conditions else "1=1"
         
         with database.get_conn(cursor_factory=psycopg2.extras.RealDictCursor) as (conn, cur):
             # Get total count
@@ -157,7 +158,9 @@ class SubprocessService:
         subprocess_id: int,
         name: Optional[str] = None,
         description: Optional[str] = None,
-        reusable: Optional[bool] = None
+        category: Optional[str] = None,
+        estimated_time_minutes: Optional[int] = None,
+        labor_cost: Optional[float] = None
     ) -> Optional[Dict[str, Any]]:
         """
         Update subprocess details.
@@ -166,7 +169,9 @@ class SubprocessService:
             subprocess_id: The subprocess ID
             name: Optional new name
             description: Optional new description
-            reusable: Optional reusable flag
+            category: Optional category
+            estimated_time_minutes: Optional estimated time
+            labor_cost: Optional labor cost
         
         Returns:
             Updated subprocess or None
@@ -180,9 +185,15 @@ class SubprocessService:
         if description is not None:
             updates.append("description = %s")
             params.append(description)
-        if reusable is not None:
-            updates.append("reusable = %s")
-            params.append(reusable)
+        if category is not None:
+            updates.append("category = %s")
+            params.append(category)
+        if estimated_time_minutes is not None:
+            updates.append("estimated_time_minutes = %s")
+            params.append(estimated_time_minutes)
+        if labor_cost is not None:
+            updates.append("labor_cost = %s")
+            params.append(labor_cost)
         
         if not updates:
             return SubprocessService.get_subprocess(subprocess_id)
@@ -194,7 +205,7 @@ class SubprocessService:
             cur.execute(f"""
                 UPDATE subprocesses
                 SET {', '.join(updates)}
-                WHERE id = %s AND is_deleted = FALSE
+                WHERE id = %s
                 RETURNING *
             """, params)
             

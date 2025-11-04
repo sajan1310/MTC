@@ -17,6 +17,16 @@ from app.services.audit_service import audit
 process_api_bp = Blueprint('process_api', __name__)
 
 
+@process_api_bp.before_request
+def log_request_info():
+    """Log incoming request details for debugging."""
+    current_app.logger.debug(f"[PROCESS API] {request.method} {request.path}")
+    current_app.logger.debug(f"[PROCESS API] Headers: {dict(request.headers)}")
+    if request.method in ['POST', 'PUT', 'PATCH']:
+        current_app.logger.debug(f"[PROCESS API] Content-Type: {request.content_type}")
+        current_app.logger.debug(f"[PROCESS API] Content-Length: {request.content_length}")
+
+
 def role_required(*roles):
     """Decorator to require specific user role."""
     def decorator(f):
@@ -40,27 +50,87 @@ def role_required(*roles):
 def create_process():
     """Create a new process."""
     try:
-        data = request.json
+        # Log request details for debugging
+        current_app.logger.info(f"[CREATE PROCESS] Received request from user {current_user.id}")
+        current_app.logger.debug(f"[CREATE PROCESS] Content-Type: {request.content_type}")
+        current_app.logger.debug(f"[CREATE PROCESS] Request data: {request.data[:500] if request.data else 'None'}")
         
+        # Validate Content-Type
+        if not request.is_json:
+            current_app.logger.warning(f"[CREATE PROCESS] Invalid Content-Type: {request.content_type}")
+            return jsonify({
+                'error': 'Invalid Content-Type',
+                'details': f'Expected application/json but received {request.content_type}'
+            }), 400
+        
+        # Parse JSON with error handling
+        data = request.get_json(silent=True)
+        
+        if data is None:
+            current_app.logger.error("[CREATE PROCESS] Failed to parse JSON request body")
+            return jsonify({
+                'error': 'Invalid JSON',
+                'details': 'Request body must be valid JSON. Check for syntax errors, trailing commas, or improper quotes.'
+            }), 400
+        
+        current_app.logger.debug(f"[CREATE PROCESS] Parsed data: {data}")
+        
+        # Validate required fields
         if not data.get('name'):
-            return jsonify({'error': 'Process name is required'}), 400
+            current_app.logger.warning("[CREATE PROCESS] Missing required field: name")
+            return jsonify({
+                'error': 'Validation error',
+                'details': 'Process name is required'
+            }), 400
+        
+        # Validate name is not empty or just whitespace
+        if not data['name'].strip():
+            current_app.logger.warning("[CREATE PROCESS] Empty process name")
+            return jsonify({
+                'error': 'Validation error',
+                'details': 'Process name cannot be empty'
+            }), 400
+        
+        # Normalize process_class to match allowed DB values
+        allowed_classes = ['Manufacturing', 'Assembly', 'Packaging', 'Testing', 'Logistics']
+        raw_class = data.get('class', 'Assembly')
+        
+        # Try to match ignoring case
+        process_class = next((c for c in allowed_classes if c.lower() == str(raw_class).lower()), 'Assembly')
+        
+        current_app.logger.info(f"[CREATE PROCESS] Creating process '{data['name']}' with class '{process_class}'")
         
         process = ProcessService.create_process(
-            name=data['name'],
+            name=data['name'].strip(),
             user_id=current_user.id,
             description=data.get('description'),
-            process_class=data.get('class', 'assembly')
+            process_class=process_class
         )
         
         # Audit log
         audit.log_create('process', process['id'], data['name'])
         
-        current_app.logger.info(f"Process created: {process['id']} by user {current_user.id}")
+        current_app.logger.info(f"[CREATE PROCESS] Process created successfully: {process['id']} by user {current_user.id}")
         return jsonify(process), 201
         
+    except KeyError as e:
+        current_app.logger.error(f"[CREATE PROCESS] Missing key: {e}")
+        return jsonify({
+            'error': 'Validation error',
+            'details': f'Missing required field: {str(e)}'
+        }), 400
+    except ValueError as e:
+        current_app.logger.error(f"[CREATE PROCESS] Invalid value: {e}")
+        return jsonify({
+            'error': 'Validation error',
+            'details': str(e)
+        }), 400
     except Exception as e:
-        current_app.logger.error(f"Error creating process: {e}")
-        return jsonify({'error': str(e)}), 500
+        current_app.logger.error(f"[CREATE PROCESS] Unexpected error: {e}", exc_info=True)
+        return jsonify({
+            'error': 'Internal server error',
+            'details': str(e) if current_app.debug else 'An unexpected error occurred'
+        }), 500
 
 
 @process_api_bp.route('/process/<int:process_id>', methods=['GET'])
@@ -418,6 +488,29 @@ def recalculate_worst_case(process_id):
 
 
 # Error handlers
+@process_api_bp.errorhandler(400)
+def bad_request(error):
+    """Handle 400 Bad Request errors with detailed information."""
+    current_app.logger.warning(f"[PROCESS API] Bad Request: {error}")
+    
+    # Try to extract meaningful error details
+    error_message = 'Bad Request'
+    error_details = None
+    
+    if hasattr(error, 'description'):
+        error_message = error.description
+    
+    # Check if it's a CSRF error
+    if 'CSRF' in str(error):
+        error_details = 'CSRF token is missing or invalid. This endpoint may require CSRF protection.'
+    
+    return jsonify({
+        'error': error_message,
+        'details': error_details,
+        'request_id': request.headers.get('X-Request-ID', 'N/A')
+    }), 400
+
+
 @process_api_bp.errorhandler(404)
 def not_found(error):
     return jsonify({'error': 'Resource not found'}), 404

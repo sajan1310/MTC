@@ -247,6 +247,14 @@ def create_app(config_name: str | None = None) -> Flask:
     app.register_blueprint(production_api_bp, url_prefix='/api/upf')
     app.register_blueprint(subprocess_api_bp, url_prefix='/api/upf')
 
+    # Exempt Universal Process Framework API endpoints from CSRF
+    # These are JSON APIs accessed via fetch() without CSRF tokens
+    csrf.exempt(process_api_bp)
+    csrf.exempt(variant_api_bp)
+    csrf.exempt(production_api_bp)
+    csrf.exempt(subprocess_api_bp)
+    app.logger.info("Universal Process Framework API blueprints exempted from CSRF protection")
+
     # Exempt select auth JSON endpoints from CSRF
     try:
         csrf.exempt(app.view_functions['auth.api_login'])

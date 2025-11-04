@@ -123,25 +123,63 @@ const processFramework = {
             event.preventDefault();
             
             const id = document.getElementById('process-id').value;
+            // Ensure process_class is capitalized to match allowed DB values
+            let processClass = document.getElementById('process-class').value;
+            if (processClass) {
+                processClass = processClass.charAt(0).toUpperCase() + processClass.slice(1).toLowerCase();
+            }
+            
+            // Build form data with validation
             const formData = {
                 name: document.getElementById('process-name').value,
-                class: document.getElementById('process-class').value,
+                class: processClass,
                 description: document.getElementById('process-description').value || null,
                 status: 'Active'
             };
+            
+            // Validation: Ensure required fields are present
+            if (!formData.name || !formData.name.trim()) {
+                processFramework.showAlert('Process name is required', 'error');
+                return;
+            }
+            
+            if (!formData.class) {
+                processFramework.showAlert('Process class is required', 'error');
+                return;
+            }
             
             try {
                 const url = id ? `/api/upf/processes/${id}` : '/api/upf/processes';
                 const method = id ? 'PUT' : 'POST';
                 
+                // Log the request for debugging
+                console.log('[Process Submit] Request:', {
+                    url,
+                    method,
+                    payload: formData
+                });
+                
+                // Validate JSON serialization
+                let jsonBody;
+                try {
+                    jsonBody = JSON.stringify(formData);
+                } catch (jsonError) {
+                    console.error('[Process Submit] JSON serialization error:', jsonError);
+                    processFramework.showAlert('Invalid form data. Please check your inputs.', 'error');
+                    return;
+                }
+                
                 const response = await fetch(url, {
                     method: method,
                     credentials: 'include',
                     headers: {
-                        'Content-Type': 'application/json'
+                        'Content-Type': 'application/json',
+                        'Accept': 'application/json'
                     },
-                    body: JSON.stringify(formData)
+                    body: jsonBody
                 });
+                
+                console.log('[Process Submit] Response status:', response.status);
                 
                 if (response.status === 401) {
                     window.location.href = '/auth/login';
@@ -149,16 +187,35 @@ const processFramework = {
                 }
                 
                 if (response.ok) {
+                    const result = await response.json();
+                    console.log('[Process Submit] Success:', result);
                     processFramework.closeModal('process-modal');
                     processFramework.showAlert(`Process ${id ? 'updated' : 'created'} successfully`, 'success');
                     await this.load();
                 } else {
-                    const error = await response.json();
-                    processFramework.showAlert(error.error || 'Failed to save process', 'error');
+                    // Parse error response
+                    let errorMessage = 'Failed to save process';
+                    try {
+                        const error = await response.json();
+                        console.error('[Process Submit] Error response:', error);
+                        errorMessage = error.error || error.message || errorMessage;
+                        
+                        // Display detailed validation errors if available
+                        if (error.details) {
+                            errorMessage += ': ' + error.details;
+                        }
+                    } catch (parseError) {
+                        // If response is not JSON, try to get text
+                        const errorText = await response.text();
+                        console.error('[Process Submit] Non-JSON error response:', errorText);
+                        errorMessage = `Server error (${response.status}): ${errorText.substring(0, 100)}`;
+                    }
+                    
+                    processFramework.showAlert(errorMessage, 'error');
                 }
             } catch (error) {
-                console.error('Error saving process:', error);
-                processFramework.showAlert('Failed to save process', 'error');
+                console.error('[Process Submit] Network or unexpected error:', error);
+                processFramework.showAlert('Network error: Failed to save process. Please check your connection.', 'error');
             }
         },
         
@@ -329,18 +386,49 @@ const processFramework = {
                 labor_cost: parseFloat(document.getElementById('labor-cost').value) || 0
             };
             
+            // Validation: Ensure required fields are present
+            if (!formData.name || !formData.name.trim()) {
+                processFramework.showAlert('Subprocess name is required', 'error');
+                return;
+            }
+            
+            if (!formData.category) {
+                processFramework.showAlert('Subprocess category is required', 'error');
+                return;
+            }
+            
             try {
                 const url = id ? `/api/upf/subprocesses/${id}` : '/api/upf/subprocesses';
                 const method = id ? 'PUT' : 'POST';
+                
+                // Log the request for debugging
+                console.log('[Subprocess Submit] Request:', {
+                    url,
+                    method,
+                    payload: formData
+                });
+                
+                // Validate JSON serialization
+                let jsonBody;
+                try {
+                    jsonBody = JSON.stringify(formData);
+                } catch (jsonError) {
+                    console.error('[Subprocess Submit] JSON serialization error:', jsonError);
+                    processFramework.showAlert('Invalid form data. Please check your inputs.', 'error');
+                    return;
+                }
                 
                 const response = await fetch(url, {
                     method: method,
                     credentials: 'include',
                     headers: {
-                        'Content-Type': 'application/json'
+                        'Content-Type': 'application/json',
+                        'Accept': 'application/json'
                     },
-                    body: JSON.stringify(formData)
+                    body: jsonBody
                 });
+                
+                console.log('[Subprocess Submit] Response status:', response.status);
                 
                 if (response.status === 401) {
                     window.location.href = '/auth/login';
@@ -348,16 +436,35 @@ const processFramework = {
                 }
                 
                 if (response.ok) {
+                    const result = await response.json();
+                    console.log('[Subprocess Submit] Success:', result);
                     processFramework.closeModal('subprocess-modal');
                     processFramework.showAlert(`Subprocess ${id ? 'updated' : 'created'} successfully`, 'success');
                     await this.load();
                 } else {
-                    const error = await response.json();
-                    processFramework.showAlert(error.error || 'Failed to save subprocess', 'error');
+                    // Parse error response
+                    let errorMessage = 'Failed to save subprocess';
+                    try {
+                        const error = await response.json();
+                        console.error('[Subprocess Submit] Error response:', error);
+                        errorMessage = error.error || error.message || errorMessage;
+                        
+                        // Display detailed validation errors if available
+                        if (error.details) {
+                            errorMessage += ': ' + error.details;
+                        }
+                    } catch (parseError) {
+                        // If response is not JSON, try to get text
+                        const errorText = await response.text();
+                        console.error('[Subprocess Submit] Non-JSON error response:', errorText);
+                        errorMessage = `Server error (${response.status}): ${errorText.substring(0, 100)}`;
+                    }
+                    
+                    processFramework.showAlert(errorMessage, 'error');
                 }
             } catch (error) {
-                console.error('Error saving subprocess:', error);
-                processFramework.showAlert('Failed to save subprocess', 'error');
+                console.error('[Subprocess Submit] Network or unexpected error:', error);
+                processFramework.showAlert('Network error: Failed to save subprocess. Please check your connection.', 'error');
             }
         },
         
