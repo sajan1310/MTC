@@ -29,6 +29,7 @@
         COMPLETE_CHANGE_LOG.md
         config.py
         config.py.backup
+        CONSOLIDATION_SUMMARY.md
         database.py
         deduplicate_items.py
         DEPLOYMENT.md
@@ -53,6 +54,7 @@
         test_oauth.ps1
         UNIVERSAL_PROCESS_FRAMEWORK_PROGRESS.md
         UPF_API_IMPLEMENTATION_COMPLETE.md
+        UPF_IMPLEMENTATION_COMPLETE.md
         wsgi.py
         .github/
             workflows/
@@ -159,9 +161,11 @@
                 cost_calculator.js
                 login.js
                 process_editor.js
+                process_framework_unified.js
                 process_manager.js
                 production_lots.js
                 subprocess_library.js
+                upf_reports.js
                 variant_search.js
             uploads/
                 1_1a278be4_ChatGPT Image Aug 7, 2025, 11_10_55 AM.png
@@ -188,7 +192,9 @@
             upf_process_editor.html
             upf_process_management.html
             upf_production_lots.html
+            upf_reports.html
             upf_subprocess_library.html
+            upf_unified.html
             user_management.html
         tests/
             conftest.py

@@ -699,7 +699,7 @@
 <script>
     // Initialize on page load
     document.addEventListener('DOMContentLoaded', function() {
-        const processId = {{ process_id }};
+        const processId = parseInt('{{ process_id }}', 10);
         processEditor.init(processId);
         variantSearch.init();
         costCalculator.init(processId);

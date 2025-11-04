@@ -722,3 +722,24 @@ werkzeug.routing.exceptions.BuildError: Could not build url for endpoint 'change
 LINE 3:                 FROM processes
                              ^
  [in C:\Users\erkar\OneDrive\Desktop\MTC\Project-root\app\api\process_management.py:101]
+2025-11-04 18:12:33,785 ERROR: Error listing processes: column "user_id" does not exist
+LINE 4:                 WHERE user_id = 3 AND is_deleted = FALSE
+                              ^
+ [in C:\Users\erkar\OneDrive\Desktop\MTC\Project-root\app\api\process_management.py:101]
+2025-11-04 18:13:09,004 ERROR: Error listing subprocesses: SubprocessService.list_subprocesses() got an unexpected keyword argument 'subprocess_type' [in C:\Users\erkar\OneDrive\Desktop\MTC\Project-root\app\api\subprocess_management.py:81]
+2025-11-04 18:13:12,557 ERROR: Error listing processes: column "user_id" does not exist
+LINE 4:                 WHERE user_id = 3 AND is_deleted = FALSE
+                              ^
+ [in C:\Users\erkar\OneDrive\Desktop\MTC\Project-root\app\api\process_management.py:101]
+2025-11-04 18:13:12,579 ERROR: Error listing processes: column "user_id" does not exist
+LINE 4:                 WHERE user_id = 3 AND is_deleted = FALSE
+                              ^
+ [in C:\Users\erkar\OneDrive\Desktop\MTC\Project-root\app\api\process_management.py:101]
+2025-11-04 18:13:18,353 ERROR: Error listing processes: column "user_id" does not exist
+LINE 4:                 WHERE user_id = 3 AND is_deleted = FALSE
+                              ^
+ [in C:\Users\erkar\OneDrive\Desktop\MTC\Project-root\app\api\process_management.py:101]
+2025-11-04 18:13:30,719 ERROR: Error listing processes: column "user_id" does not exist
+LINE 4:                 WHERE user_id = 3 AND is_deleted = FALSE
+                              ^
+ [in C:\Users\erkar\OneDrive\Desktop\MTC\Project-root\app\api\process_management.py:101]

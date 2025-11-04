@@ -283,11 +283,12 @@ def compat_api_forgot_password():
 
 # ===== Universal Process Framework Routes =====
 
+@main_bp.route('/upf')
 @main_bp.route('/upf/processes')
 @login_required
-def upf_process_management():
-    """Process management page - list all processes."""
-    return render_template('upf_process_management.html')
+def upf_unified():
+    """Unified Process Framework page with all features in tabs."""
+    return render_template('upf_unified.html')
 
 
 @main_bp.route('/upf/process/<int:process_id>')
@@ -297,29 +298,8 @@ def upf_process_editor(process_id):
     return render_template('upf_process_editor.html', process_id=process_id)
 
 
-@main_bp.route('/upf/subprocesses')
-@login_required
-def upf_subprocess_library():
-    """Subprocess library page - browse and manage templates."""
-    return render_template('upf_subprocess_library.html')
-
-
-@main_bp.route('/upf/production-lots')
-@login_required
-def upf_production_lots():
-    """Production lots page - list all production lots."""
-    return render_template('upf_production_lot_list.html')
-
-
 @main_bp.route('/upf/production-lot/<int:lot_id>')
 @login_required
 def upf_production_lot_detail(lot_id):
     """Production lot detail page - view/execute lot."""
     return render_template('upf_production_lot_detail.html', lot_id=lot_id)
-
-
-@main_bp.route('/upf/reports')
-@login_required
-def upf_reports():
-    """Reports dashboard - variance analysis, statistics."""
-    return render_template('upf_reports.html')

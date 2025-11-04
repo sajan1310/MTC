@@ -45,8 +45,8 @@ class ProcessService:
         """
         with database.get_conn(cursor_factory=psycopg2.extras.RealDictCursor) as (conn, cur):
             cur.execute("""
-                INSERT INTO processes (name, description, class, user_id, status, version)
-                VALUES (%s, %s, %s, %s, 'draft', 1)
+                INSERT INTO processes (name, description, process_class, created_by, status)
+                VALUES (%s, %s, %s, %s, 'Active')
                 RETURNING *
             """, (name, description, process_class, user_id))
             
@@ -70,10 +70,9 @@ class ProcessService:
         """
         with database.get_conn(cursor_factory=psycopg2.extras.RealDictCursor) as (conn, cur):
             # Get process
-            deleted_clause = "" if include_deleted else "AND is_deleted = FALSE"
-            cur.execute(f"""
+            cur.execute("""
                 SELECT * FROM processes
-                WHERE id = %s {deleted_clause}
+                WHERE id = %s
             """, (process_id,))
             
             process_data = cur.fetchone()
@@ -214,15 +213,12 @@ class ProcessService:
         """
         offset = (page - 1) * per_page
         
-        conditions = ["user_id = %s"]
+        conditions = ["created_by = %s"]
         params = [user_id]
         
         if status:
             conditions.append("status = %s")
             params.append(status)
-        
-        if not include_deleted:
-            conditions.append("is_deleted = FALSE")
         
         where_clause = " AND ".join(conditions)
         
@@ -307,7 +303,7 @@ class ProcessService:
             cur.execute(f"""
                 UPDATE processes
                 SET {', '.join(updates)}
-                WHERE id = %s AND is_deleted = FALSE
+                WHERE id = %s
                 RETURNING *
             """, params)
             
@@ -339,11 +335,12 @@ class ProcessService:
                     WHERE id = %s
                 """, (process_id,))
             else:
+                # Soft delete not supported, use status instead
                 cur.execute("""
                     UPDATE processes
-                    SET is_deleted = TRUE,
-                        deleted_at = CURRENT_TIMESTAMP
-                    WHERE id = %s AND is_deleted = FALSE
+                    SET status = 'Inactive',
+                        updated_at = CURRENT_TIMESTAMP
+                    WHERE id = %s
                 """, (process_id,))
             
             affected = cur.rowcount
@@ -365,9 +362,9 @@ class ProcessService:
         with database.get_conn() as (conn, cur):
             cur.execute("""
                 UPDATE processes
-                SET is_deleted = FALSE,
-                    deleted_at = NULL
-                WHERE id = %s AND is_deleted = TRUE
+                SET status = 'Active',
+                    updated_at = CURRENT_TIMESTAMP
+                WHERE id = %s AND status = 'Inactive'
             """, (process_id,))
             
             affected = cur.rowcount
@@ -477,8 +474,7 @@ class ProcessService:
                     COUNT(ps.id) as subprocess_count
                 FROM processes p
                 LEFT JOIN process_subprocesses ps ON ps.process_id = p.id
-                WHERE p.user_id = %s
-                  AND p.is_deleted = FALSE
+                WHERE p.created_by = %s
                   AND (p.name ILIKE %s OR p.description ILIKE %s)
                 GROUP BY p.id
                 ORDER BY p.name
