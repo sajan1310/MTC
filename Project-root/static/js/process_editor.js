@@ -1,0 +1,629 @@
+/**
+ * Process Editor Component
+ * Main controller for the process editor page
+ */
+
+const processEditor = {
+    processId: null,
+    processData: null,
+    subprocesses: [],
+    availableSubprocesses: [],
+    sortableInstances: [],
+    isDirty: false,
+
+    /**
+     * Initialize the editor
+     */
+    async init(processId) {
+        this.processId = processId;
+        console.log('Initializing process editor for process:', processId);
+
+        // Warn on unsaved changes
+        window.addEventListener('beforeunload', (e) => {
+            if (this.isDirty) {
+                e.preventDefault();
+                e.returnValue = '';
+            }
+        });
+
+        await this.loadProcess();
+        await this.loadAvailableSubprocesses();
+        await this.loadProcessStructure();
+        this.initializeSortable();
+    },
+
+    /**
+     * Load process details
+     */
+    async loadProcess() {
+        try {
+            const response = await fetch(`/api/upf/processes/${this.processId}`, {
+                method: 'GET',
+                credentials: 'include'
+            });
+
+            if (response.status === 401) {
+                window.location.href = '/auth/login';
+                return;
+            }
+
+            if (!response.ok) {
+                throw new Error('Failed to load process');
+            }
+
+            const data = await response.json();
+            this.processData = data.process;
+            this.renderProcessHeader();
+        } catch (error) {
+            console.error('Error loading process:', error);
+            this.showAlert('Failed to load process details', 'error');
+        }
+    },
+
+    /**
+     * Load available subprocess templates
+     */
+    async loadAvailableSubprocesses() {
+        try {
+            const response = await fetch('/api/upf/subprocesses?per_page=1000', {
+                method: 'GET',
+                credentials: 'include'
+            });
+
+            if (response.status === 401) {
+                window.location.href = '/auth/login';
+                return;
+            }
+
+            if (!response.ok) {
+                throw new Error('Failed to load subprocesses');
+            }
+
+            const data = await response.json();
+            this.availableSubprocesses = data.subprocesses || [];
+            this.renderSubprocessDropdown();
+        } catch (error) {
+            console.error('Error loading subprocesses:', error);
+            this.showAlert('Failed to load subprocess templates', 'error');
+        }
+    },
+
+    /**
+     * Load process structure (subprocesses and variants)
+     */
+    async loadProcessStructure() {
+        try {
+            const response = await fetch(`/api/upf/processes/${this.processId}/structure`, {
+                method: 'GET',
+                credentials: 'include'
+            });
+
+            if (response.status === 401) {
+                window.location.href = '/auth/login';
+                return;
+            }
+
+            if (!response.ok) {
+                throw new Error('Failed to load process structure');
+            }
+
+            const data = await response.json();
+            this.subprocesses = data.subprocesses || [];
+            this.renderSubprocesses();
+            costCalculator.calculate();
+        } catch (error) {
+            console.error('Error loading process structure:', error);
+            this.showAlert('Failed to load process structure', 'error');
+        }
+    },
+
+    /**
+     * Render process header
+     */
+    renderProcessHeader() {
+        if (!this.processData) return;
+
+        const nameEl = document.getElementById('process-name');
+        if (nameEl) {
+            nameEl.textContent = this.processData.name;
+        }
+    },
+
+    /**
+     * Render subprocess dropdown in modal
+     */
+    renderSubprocessDropdown() {
+        const select = document.getElementById('subprocess-select');
+        if (!select) return;
+
+        let html = '<option value="">-- Select Subprocess --</option>';
+        this.availableSubprocesses.forEach(sp => {
+            html += `<option value="${sp.id}">${sp.name} (${sp.category})</option>`;
+        });
+        select.innerHTML = html;
+    },
+
+    /**
+     * Render subprocesses in the main list
+     */
+    renderSubprocesses() {
+        const container = document.getElementById('subprocess-list');
+        const countEl = document.getElementById('subprocess-count');
+
+        if (!container) return;
+
+        if (countEl) {
+            countEl.textContent = `${this.subprocesses.length} subprocess${this.subprocesses.length !== 1 ? 'es' : ''}`;
+        }
+
+        if (this.subprocesses.length === 0) {
+            container.innerHTML = `
+                <div class="empty-state">
+                    <i>📋</i>
+                    <p>No subprocesses yet. Click "Add Subprocess" to get started!</p>
+                </div>
+            `;
+            return;
+        }
+
+        let html = '';
+        this.subprocesses.forEach((sp, index) => {
+            html += this.renderSubprocessItem(sp, index);
+        });
+
+        container.innerHTML = html;
+        this.initializeDropZones();
+    },
+
+    /**
+     * Render a single subprocess item
+     */
+    renderSubprocessItem(subprocess, index) {
+        const variants = subprocess.variants || [];
+        const hasORGroups = variants.some(v => v.or_group_id);
+
+        return `
+            <div class="subprocess-item" data-subprocess-index="${index}" data-subprocess-id="${subprocess.process_subprocess_id}">
+                <div class="subprocess-item-header">
+                    <div class="subprocess-name">
+                        <span class="drag-handle">☰</span>
+                        <span>${subprocess.custom_name || subprocess.subprocess_name}</span>
+                        ${hasORGroups ? '<span class="or-group-badge">Has OR Groups</span>' : ''}
+                    </div>
+                    <div class="subprocess-actions">
+                        <button onclick="processEditor.configureORGroups(${index})">⚙️ OR Groups</button>
+                        <button onclick="processEditor.removeSubprocess(${index})">🗑️ Remove</button>
+                    </div>
+                </div>
+                <div class="subprocess-content">
+                    ${this.renderVariantsSection(subprocess, index)}
+                </div>
+            </div>
+        `;
+    },
+
+    /**
+     * Render variants section for a subprocess
+     */
+    renderVariantsSection(subprocess, spIndex) {
+        const variants = subprocess.variants || [];
+
+        let html = '<div class="variants-section">';
+        html += '<div class="section-title">🔧 Variants</div>';
+
+        if (variants.length === 0) {
+            html += `
+                <div class="drop-zone" 
+                     ondrop="processEditor.handleDrop(event, ${spIndex})"
+                     ondragover="processEditor.handleDragOver(event)"
+                     ondragleave="processEditor.handleDragLeave(event)">
+                    Drag variants here to add them to this subprocess
+                </div>
+            `;
+        } else {
+            variants.forEach((variant, vIndex) => {
+                const orGroupBadge = variant.or_group_id ? 
+                    `<span class="or-group-badge">OR Group ${variant.or_group_id}</span>` : '';
+
+                html += `
+                    <div class="variant-item">
+                        <div class="variant-info">
+                            <span class="variant-quantity">${variant.quantity} ${variant.unit}</span>
+                            <span>${variant.variant_name}</span>
+                            ${orGroupBadge}
+                        </div>
+                        <span class="variant-remove" onclick="processEditor.removeVariant(${spIndex}, ${vIndex})">
+                            ✖️
+                        </span>
+                    </div>
+                `;
+            });
+        }
+
+        html += '</div>';
+        return html;
+    },
+
+    /**
+     * Initialize SortableJS for subprocess reordering
+     */
+    initializeSortable() {
+        const container = document.getElementById('subprocess-list');
+        if (!container) return;
+
+        // Destroy existing sortable if any
+        this.sortableInstances.forEach(s => s.destroy());
+        this.sortableInstances = [];
+
+        const sortable = new Sortable(container, {
+            animation: 150,
+            handle: '.drag-handle',
+            ghostClass: 'sortable-ghost',
+            onEnd: (evt) => {
+                this.handleSubprocessReorder(evt.oldIndex, evt.newIndex);
+            }
+        });
+
+        this.sortableInstances.push(sortable);
+    },
+
+    /**
+     * Initialize drop zones for variants
+     */
+    initializeDropZones() {
+        const dropZones = document.querySelectorAll('.drop-zone');
+        dropZones.forEach(zone => {
+            // Events are already attached via inline handlers
+        });
+    },
+
+    /**
+     * Handle subprocess reordering
+     */
+    handleSubprocessReorder(oldIndex, newIndex) {
+        if (oldIndex === newIndex) return;
+
+        const [moved] = this.subprocesses.splice(oldIndex, 1);
+        this.subprocesses.splice(newIndex, 0, moved);
+
+        // Update sequence numbers
+        this.subprocesses.forEach((sp, index) => {
+            sp.sequence = index + 1;
+        });
+
+        this.isDirty = true;
+        this.renderSubprocesses();
+    },
+
+    /**
+     * Handle drag over event
+     */
+    handleDragOver(event) {
+        event.preventDefault();
+        event.dataTransfer.dropEffect = 'copy';
+        event.currentTarget.classList.add('drag-over');
+    },
+
+    /**
+     * Handle drag leave event
+     */
+    handleDragLeave(event) {
+        event.currentTarget.classList.remove('drag-over');
+    },
+
+    /**
+     * Handle drop event
+     */
+    async handleDrop(event, subprocessIndex) {
+        event.preventDefault();
+        event.currentTarget.classList.remove('drag-over');
+
+        try {
+            const variantData = JSON.parse(event.dataTransfer.getData('application/json'));
+            
+            // Show modal to get quantity
+            document.getElementById('selected-variant-id').value = variantData.id;
+            document.getElementById('selected-variant-name').textContent = variantData.name;
+            document.getElementById('target-subprocess-id').value = subprocessIndex;
+            document.getElementById('variant-quantity').value = '1';
+            document.getElementById('variant-unit').value = 'pcs';
+            
+            document.getElementById('variant-modal').style.display = 'block';
+        } catch (error) {
+            console.error('Error handling drop:', error);
+            this.showAlert('Failed to add variant', 'error');
+        }
+    },
+
+    /**
+     * Show add subprocess modal
+     */
+    addSubprocess() {
+        document.getElementById('subprocess-modal').style.display = 'block';
+        document.getElementById('subprocess-form').reset();
+    },
+
+    /**
+     * Close subprocess modal
+     */
+    closeSubprocessModal() {
+        document.getElementById('subprocess-modal').style.display = 'none';
+    },
+
+    /**
+     * Handle add subprocess form submission
+     */
+    async handleAddSubprocess(event) {
+        event.preventDefault();
+
+        const subprocessId = document.getElementById('subprocess-select').value;
+        const customName = document.getElementById('custom-name').value;
+
+        if (!subprocessId) {
+            this.showAlert('Please select a subprocess', 'error');
+            return;
+        }
+
+        try {
+            const response = await fetch(`/api/upf/processes/${this.processId}/subprocesses`, {
+                method: 'POST',
+                headers: {
+                    'Content-Type': 'application/json',
+                    'X-CSRFToken': this.getCSRFToken()
+                },
+                credentials: 'include',
+                body: JSON.stringify({
+                    subprocess_id: parseInt(subprocessId),
+                    custom_name: customName || null,
+                    sequence: this.subprocesses.length + 1
+                })
+            });
+
+            if (response.status === 401) {
+                window.location.href = '/auth/login';
+                return;
+            }
+
+            if (!response.ok) {
+                const error = await response.json();
+                throw new Error(error.message || 'Failed to add subprocess');
+            }
+
+            this.showAlert('Subprocess added successfully', 'success');
+            this.closeSubprocessModal();
+            await this.loadProcessStructure();
+            this.isDirty = false;
+        } catch (error) {
+            console.error('Error adding subprocess:', error);
+            this.showAlert(error.message, 'error');
+        }
+    },
+
+    /**
+     * Close variant modal
+     */
+    closeVariantModal() {
+        document.getElementById('variant-modal').style.display = 'none';
+    },
+
+    /**
+     * Handle add variant form submission
+     */
+    async handleAddVariant(event) {
+        event.preventDefault();
+
+        const variantId = document.getElementById('selected-variant-id').value;
+        const subprocessIndex = parseInt(document.getElementById('target-subprocess-id').value);
+        const quantity = parseFloat(document.getElementById('variant-quantity').value);
+        const unit = document.getElementById('variant-unit').value;
+
+        const subprocess = this.subprocesses[subprocessIndex];
+        if (!subprocess) {
+            this.showAlert('Invalid subprocess', 'error');
+            return;
+        }
+
+        try {
+            const response = await fetch(`/api/upf/processes/${this.processId}/subprocesses/${subprocess.process_subprocess_id}/variants`, {
+                method: 'POST',
+                headers: {
+                    'Content-Type': 'application/json',
+                    'X-CSRFToken': this.getCSRFToken()
+                },
+                credentials: 'include',
+                body: JSON.stringify({
+                    variant_id: parseInt(variantId),
+                    quantity: quantity,
+                    unit: unit,
+                    or_group_id: null
+                })
+            });
+
+            if (response.status === 401) {
+                window.location.href = '/auth/login';
+                return;
+            }
+
+            if (!response.ok) {
+                const error = await response.json();
+                throw new Error(error.message || 'Failed to add variant');
+            }
+
+            this.showAlert('Variant added successfully', 'success');
+            this.closeVariantModal();
+            await this.loadProcessStructure();
+            this.isDirty = false;
+        } catch (error) {
+            console.error('Error adding variant:', error);
+            this.showAlert(error.message, 'error');
+        }
+    },
+
+    /**
+     * Remove variant from subprocess
+     */
+    async removeVariant(subprocessIndex, variantIndex) {
+        if (!confirm('Remove this variant?')) return;
+
+        const subprocess = this.subprocesses[subprocessIndex];
+        const variant = subprocess.variants[variantIndex];
+
+        try {
+            const response = await fetch(`/api/upf/processes/${this.processId}/subprocesses/${subprocess.process_subprocess_id}/variants/${variant.process_variant_id}`, {
+                method: 'DELETE',
+                headers: {
+                    'X-CSRFToken': this.getCSRFToken()
+                },
+                credentials: 'include'
+            });
+
+            if (response.status === 401) {
+                window.location.href = '/auth/login';
+                return;
+            }
+
+            if (!response.ok) {
+                throw new Error('Failed to remove variant');
+            }
+
+            this.showAlert('Variant removed successfully', 'success');
+            await this.loadProcessStructure();
+        } catch (error) {
+            console.error('Error removing variant:', error);
+            this.showAlert('Failed to remove variant', 'error');
+        }
+    },
+
+    /**
+     * Remove subprocess
+     */
+    async removeSubprocess(index) {
+        if (!confirm('Remove this subprocess and all its variants?')) return;
+
+        const subprocess = this.subprocesses[index];
+
+        try {
+            const response = await fetch(`/api/upf/processes/${this.processId}/subprocesses/${subprocess.process_subprocess_id}`, {
+                method: 'DELETE',
+                headers: {
+                    'X-CSRFToken': this.getCSRFToken()
+                },
+                credentials: 'include'
+            });
+
+            if (response.status === 401) {
+                window.location.href = '/auth/login';
+                return;
+            }
+
+            if (!response.ok) {
+                throw new Error('Failed to remove subprocess');
+            }
+
+            this.showAlert('Subprocess removed successfully', 'success');
+            await this.loadProcessStructure();
+        } catch (error) {
+            console.error('Error removing subprocess:', error);
+            this.showAlert('Failed to remove subprocess', 'error');
+        }
+    },
+
+    /**
+     * Configure OR groups for subprocess
+     */
+    configureORGroups(index) {
+        // TODO: Implement OR groups configuration modal
+        this.showAlert('OR Groups configuration coming soon!', 'error');
+    },
+
+    /**
+     * Save process changes
+     */
+    async saveProcess() {
+        if (!this.isDirty) {
+            this.showAlert('No changes to save', 'success');
+            return;
+        }
+
+        // Save sequence changes if any
+        try {
+            const updates = this.subprocesses.map(sp => ({
+                id: sp.process_subprocess_id,
+                sequence: sp.sequence
+            }));
+
+            const response = await fetch(`/api/upf/processes/${this.processId}/subprocesses/reorder`, {
+                method: 'PUT',
+                headers: {
+                    'Content-Type': 'application/json',
+                    'X-CSRFToken': this.getCSRFToken()
+                },
+                credentials: 'include',
+                body: JSON.stringify({ subprocesses: updates })
+            });
+
+            if (response.status === 401) {
+                window.location.href = '/auth/login';
+                return;
+            }
+
+            if (!response.ok) {
+                throw new Error('Failed to save changes');
+            }
+
+            this.showAlert('Changes saved successfully', 'success');
+            this.isDirty = false;
+        } catch (error) {
+            console.error('Error saving changes:', error);
+            this.showAlert('Failed to save changes', 'error');
+        }
+    },
+
+    /**
+     * Go back to process list
+     */
+    goBack() {
+        if (this.isDirty && !confirm('You have unsaved changes. Are you sure you want to leave?')) {
+            return;
+        }
+        window.location.href = '/upf/processes';
+    },
+
+    /**
+     * Get CSRF token
+     */
+    getCSRFToken() {
+        return document.querySelector('meta[name="csrf-token"]')?.getAttribute('content') || '';
+    },
+
+    /**
+     * Show alert message
+     */
+    showAlert(message, type = 'success') {
+        const container = document.getElementById('alert-container');
+        if (!container) return;
+
+        const alert = document.createElement('div');
+        alert.className = `alert alert-${type}`;
+        alert.textContent = message;
+
+        container.appendChild(alert);
+
+        setTimeout(() => {
+            alert.remove();
+        }, 5000);
+    }
+};
+
+// Close modals on click outside
+window.addEventListener('click', function(event) {
+    const subprocessModal = document.getElementById('subprocess-modal');
+    const variantModal = document.getElementById('variant-modal');
+
+    if (event.target === subprocessModal) {
+        processEditor.closeSubprocessModal();
+    }
+    if (event.target === variantModal) {
+        processEditor.closeVariantModal();
+    }
+});

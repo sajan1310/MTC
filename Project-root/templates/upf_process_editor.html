@@ -1,0 +1,708 @@
+{% extends "base.html" %}
+
+{% block title %}Process Editor - {{ process.name if process else 'Loading...' }}{% endblock %}
+
+{% block extra_css %}
+<style>
+    * {
+        box-sizing: border-box;
+    }
+
+    .editor-container {
+        display: flex;
+        height: calc(100vh - 180px);
+        gap: 20px;
+        padding: 20px;
+        max-width: 100%;
+        overflow: hidden;
+    }
+
+    /* Left Panel - Variant Search (40%) */
+    .variant-search-panel {
+        width: 40%;
+        background: white;
+        border-radius: 8px;
+        box-shadow: 0 2px 8px rgba(0,0,0,0.1);
+        display: flex;
+        flex-direction: column;
+        overflow: hidden;
+    }
+
+    .panel-header {
+        padding: 20px;
+        border-bottom: 2px solid #e0e0e0;
+        background: #f9f9f9;
+    }
+
+    .panel-header h2 {
+        margin: 0 0 15px 0;
+        font-size: 18px;
+        color: #333;
+    }
+
+    .search-box {
+        position: relative;
+        margin-bottom: 15px;
+    }
+
+    .search-box input {
+        width: 100%;
+        padding: 10px 40px 10px 15px;
+        border: 2px solid #e0e0e0;
+        border-radius: 6px;
+        font-size: 14px;
+        transition: border-color 0.2s;
+    }
+
+    .search-box input:focus {
+        outline: none;
+        border-color: #4CAF50;
+    }
+
+    .search-box .search-icon {
+        position: absolute;
+        right: 12px;
+        top: 50%;
+        transform: translateY(-50%);
+        color: #999;
+    }
+
+    .filter-row {
+        display: flex;
+        gap: 10px;
+    }
+
+    .filter-row select {
+        flex: 1;
+        padding: 8px;
+        border: 1px solid #e0e0e0;
+        border-radius: 4px;
+        font-size: 13px;
+    }
+
+    .variant-list {
+        flex: 1;
+        overflow-y: auto;
+        padding: 15px;
+    }
+
+    .variant-card {
+        background: white;
+        border: 2px solid #e0e0e0;
+        border-radius: 6px;
+        padding: 12px;
+        margin-bottom: 10px;
+        cursor: grab;
+        transition: all 0.2s;
+        user-select: none;
+    }
+
+    .variant-card:hover {
+        border-color: #4CAF50;
+        box-shadow: 0 2px 8px rgba(76, 175, 80, 0.2);
+        transform: translateY(-2px);
+    }
+
+    .variant-card.dragging {
+        opacity: 0.5;
+        cursor: grabbing;
+    }
+
+    .variant-card-header {
+        display: flex;
+        justify-content: space-between;
+        align-items: start;
+        margin-bottom: 8px;
+    }
+
+    .variant-name {
+        font-weight: 600;
+        color: #333;
+        font-size: 14px;
+    }
+
+    .variant-price {
+        font-weight: 600;
+        color: #4CAF50;
+        font-size: 14px;
+    }
+
+    .variant-meta {
+        display: flex;
+        gap: 15px;
+        font-size: 12px;
+        color: #666;
+    }
+
+    .variant-meta span {
+        display: flex;
+        align-items: center;
+        gap: 4px;
+    }
+
+    .stock-indicator {
+        display: inline-block;
+        width: 8px;
+        height: 8px;
+        border-radius: 50%;
+        margin-right: 4px;
+    }
+
+    .stock-good { background: #4CAF50; }
+    .stock-low { background: #FF9800; }
+    .stock-out { background: #f44336; }
+
+    /* Right Panel - Process Builder (60%) */
+    .process-builder-panel {
+        width: 60%;
+        display: flex;
+        flex-direction: column;
+        gap: 20px;
+    }
+
+    .process-header-card {
+        background: white;
+        border-radius: 8px;
+        padding: 20px;
+        box-shadow: 0 2px 8px rgba(0,0,0,0.1);
+    }
+
+    .process-title-row {
+        display: flex;
+        justify-content: space-between;
+        align-items: center;
+        margin-bottom: 15px;
+    }
+
+    .process-title {
+        font-size: 24px;
+        font-weight: 600;
+        color: #333;
+        margin: 0;
+    }
+
+    .action-buttons {
+        display: flex;
+        gap: 10px;
+    }
+
+    .btn {
+        padding: 10px 20px;
+        border: none;
+        border-radius: 6px;
+        font-size: 14px;
+        font-weight: 500;
+        cursor: pointer;
+        transition: all 0.2s;
+    }
+
+    .btn-primary {
+        background: #4CAF50;
+        color: white;
+    }
+
+    .btn-primary:hover {
+        background: #45a049;
+    }
+
+    .btn-secondary {
+        background: #2196F3;
+        color: white;
+    }
+
+    .btn-secondary:hover {
+        background: #0b7dda;
+    }
+
+    .btn-danger {
+        background: #f44336;
+        color: white;
+    }
+
+    .btn-danger:hover {
+        background: #da190b;
+    }
+
+    .cost-summary {
+        display: flex;
+        gap: 20px;
+        padding: 15px;
+        background: #f5f5f5;
+        border-radius: 6px;
+    }
+
+    .cost-item {
+        flex: 1;
+        text-align: center;
+    }
+
+    .cost-label {
+        font-size: 12px;
+        color: #666;
+        margin-bottom: 5px;
+    }
+
+    .cost-value {
+        font-size: 20px;
+        font-weight: 600;
+        color: #4CAF50;
+    }
+
+    .subprocess-container {
+        background: white;
+        border-radius: 8px;
+        box-shadow: 0 2px 8px rgba(0,0,0,0.1);
+        flex: 1;
+        display: flex;
+        flex-direction: column;
+        overflow: hidden;
+    }
+
+    .subprocess-header {
+        padding: 15px 20px;
+        background: #f9f9f9;
+        border-bottom: 2px solid #e0e0e0;
+        display: flex;
+        justify-content: space-between;
+        align-items: center;
+    }
+
+    .subprocess-header h3 {
+        margin: 0;
+        font-size: 16px;
+        color: #333;
+    }
+
+    .subprocess-list {
+        flex: 1;
+        overflow-y: auto;
+        padding: 15px;
+    }
+
+    .subprocess-item {
+        background: #f9f9f9;
+        border: 2px solid #e0e0e0;
+        border-radius: 6px;
+        margin-bottom: 15px;
+        overflow: hidden;
+        transition: all 0.2s;
+    }
+
+    .subprocess-item.drag-over {
+        border-color: #4CAF50;
+        background: #e8f5e9;
+    }
+
+    .subprocess-item-header {
+        padding: 12px 15px;
+        background: white;
+        cursor: move;
+        display: flex;
+        justify-content: space-between;
+        align-items: center;
+    }
+
+    .subprocess-item-header:hover {
+        background: #f5f5f5;
+    }
+
+    .subprocess-name {
+        display: flex;
+        align-items: center;
+        gap: 10px;
+        font-weight: 600;
+        color: #333;
+    }
+
+    .drag-handle {
+        cursor: grab;
+        color: #999;
+        font-size: 18px;
+    }
+
+    .drag-handle:active {
+        cursor: grabbing;
+    }
+
+    .subprocess-actions {
+        display: flex;
+        gap: 8px;
+    }
+
+    .subprocess-actions button {
+        padding: 6px 12px;
+        border: 1px solid #e0e0e0;
+        background: white;
+        border-radius: 4px;
+        cursor: pointer;
+        font-size: 12px;
+        transition: all 0.2s;
+    }
+
+    .subprocess-actions button:hover {
+        background: #f5f5f5;
+        border-color: #999;
+    }
+
+    .subprocess-content {
+        padding: 15px;
+    }
+
+    .variants-section {
+        margin-bottom: 15px;
+    }
+
+    .section-title {
+        font-size: 13px;
+        font-weight: 600;
+        color: #666;
+        margin-bottom: 10px;
+        display: flex;
+        align-items: center;
+        gap: 5px;
+    }
+
+    .variant-item {
+        display: flex;
+        justify-content: space-between;
+        align-items: center;
+        padding: 10px;
+        background: white;
+        border: 1px solid #e0e0e0;
+        border-radius: 4px;
+        margin-bottom: 8px;
+    }
+
+    .variant-info {
+        display: flex;
+        align-items: center;
+        gap: 10px;
+    }
+
+    .variant-quantity {
+        background: #e3f2fd;
+        color: #1976d2;
+        padding: 4px 10px;
+        border-radius: 12px;
+        font-size: 12px;
+        font-weight: 600;
+    }
+
+    .variant-remove {
+        color: #f44336;
+        cursor: pointer;
+        padding: 4px 8px;
+        border-radius: 4px;
+        transition: background 0.2s;
+    }
+
+    .variant-remove:hover {
+        background: #ffebee;
+    }
+
+    .or-group-badge {
+        background: #fff3cd;
+        color: #856404;
+        padding: 4px 10px;
+        border-radius: 12px;
+        font-size: 11px;
+        font-weight: 600;
+        margin-left: 8px;
+    }
+
+    .drop-zone {
+        border: 2px dashed #ccc;
+        border-radius: 6px;
+        padding: 30px;
+        text-align: center;
+        color: #999;
+        transition: all 0.2s;
+    }
+
+    .drop-zone.drag-over {
+        border-color: #4CAF50;
+        background: #e8f5e9;
+        color: #4CAF50;
+    }
+
+    .empty-state {
+        text-align: center;
+        padding: 40px 20px;
+        color: #999;
+    }
+
+    .empty-state i {
+        font-size: 48px;
+        margin-bottom: 15px;
+        display: block;
+    }
+
+    .loading-spinner {
+        display: inline-block;
+        width: 20px;
+        height: 20px;
+        border: 3px solid #f3f3f3;
+        border-top: 3px solid #4CAF50;
+        border-radius: 50%;
+        animation: spin 1s linear infinite;
+    }
+
+    @keyframes spin {
+        0% { transform: rotate(0deg); }
+        100% { transform: rotate(360deg); }
+    }
+
+    .modal {
+        display: none;
+        position: fixed;
+        z-index: 1000;
+        left: 0;
+        top: 0;
+        width: 100%;
+        height: 100%;
+        background: rgba(0,0,0,0.5);
+    }
+
+    .modal-content {
+        background: white;
+        margin: 10% auto;
+        padding: 30px;
+        border-radius: 8px;
+        max-width: 500px;
+        box-shadow: 0 4px 6px rgba(0,0,0,0.1);
+    }
+
+    .modal-header {
+        display: flex;
+        justify-content: space-between;
+        align-items: center;
+        margin-bottom: 20px;
+        padding-bottom: 15px;
+        border-bottom: 1px solid #e0e0e0;
+    }
+
+    .modal-header h2 {
+        margin: 0;
+        font-size: 20px;
+    }
+
+    .modal-close {
+        font-size: 28px;
+        font-weight: bold;
+        color: #999;
+        cursor: pointer;
+        border: none;
+        background: none;
+    }
+
+    .modal-close:hover {
+        color: #333;
+    }
+
+    .form-group {
+        margin-bottom: 20px;
+    }
+
+    .form-group label {
+        display: block;
+        margin-bottom: 8px;
+        font-weight: 500;
+        color: #555;
+    }
+
+    .form-group input,
+    .form-group select {
+        width: 100%;
+        padding: 10px;
+        border: 1px solid #ddd;
+        border-radius: 4px;
+        font-size: 14px;
+    }
+
+    .modal-actions {
+        display: flex;
+        justify-content: flex-end;
+        gap: 10px;
+        margin-top: 25px;
+    }
+
+    .alert {
+        padding: 12px 20px;
+        border-radius: 4px;
+        margin-bottom: 20px;
+    }
+
+    .alert-success {
+        background: #e8f5e9;
+        color: #2e7d32;
+        border: 1px solid #a5d6a7;
+    }
+
+    .alert-error {
+        background: #ffebee;
+        color: #c62828;
+        border: 1px solid #ef9a9a;
+    }
+</style>
+{% endblock %}
+
+{% block content %}
+<div id="alert-container"></div>
+
+<div class="editor-container">
+    <!-- Left Panel: Variant Search -->
+    <div class="variant-search-panel">
+        <div class="panel-header">
+            <h2>🔍 Variant Search</h2>
+            <div class="search-box">
+                <input type="text" id="variant-search" placeholder="Search variants..." 
+                       onkeyup="variantSearch.handleSearch(event)">
+                <span class="search-icon">🔎</span>
+            </div>
+            <div class="filter-row">
+                <select id="category-filter" onchange="variantSearch.applyFilters()">
+                    <option value="">All Categories</option>
+                </select>
+                <select id="stock-filter" onchange="variantSearch.applyFilters()">
+                    <option value="">All Stock</option>
+                    <option value="in_stock">In Stock</option>
+                    <option value="low_stock">Low Stock</option>
+                </select>
+            </div>
+        </div>
+        <div class="variant-list" id="variant-list">
+            <div class="empty-state">
+                <i>🔍</i>
+                <p>Search for variants to add to subprocesses</p>
+            </div>
+        </div>
+    </div>
+
+    <!-- Right Panel: Process Builder -->
+    <div class="process-builder-panel">
+        <!-- Process Header -->
+        <div class="process-header-card">
+            <div class="process-title-row">
+                <h1 class="process-title" id="process-name">Loading...</h1>
+                <div class="action-buttons">
+                    <button class="btn btn-secondary" onclick="processEditor.addSubprocess()">
+                        ➕ Add Subprocess
+                    </button>
+                    <button class="btn btn-primary" onclick="processEditor.saveProcess()">
+                        💾 Save Changes
+                    </button>
+                    <button class="btn btn-danger" onclick="processEditor.goBack()">
+                        ← Back
+                    </button>
+                </div>
+            </div>
+
+            <!-- Cost Summary -->
+            <div class="cost-summary">
+                <div class="cost-item">
+                    <div class="cost-label">Worst-Case Cost</div>
+                    <div class="cost-value" id="worst-case-cost">$0.00</div>
+                </div>
+                <div class="cost-item">
+                    <div class="cost-label">Sales Price</div>
+                    <div class="cost-value" id="sales-price">Not Set</div>
+                </div>
+                <div class="cost-item">
+                    <div class="cost-label">Profit Margin</div>
+                    <div class="cost-value" id="profit-margin">-</div>
+                </div>
+            </div>
+        </div>
+
+        <!-- Subprocesses -->
+        <div class="subprocess-container">
+            <div class="subprocess-header">
+                <h3>📋 Subprocesses</h3>
+                <span id="subprocess-count">0 subprocesses</span>
+            </div>
+            <div class="subprocess-list" id="subprocess-list">
+                <div class="empty-state">
+                    <i>📋</i>
+                    <p>No subprocesses yet. Click "Add Subprocess" to get started!</p>
+                </div>
+            </div>
+        </div>
+    </div>
+</div>
+
+<!-- Add Subprocess Modal -->
+<div id="subprocess-modal" class="modal">
+    <div class="modal-content">
+        <div class="modal-header">
+            <h2>Add Subprocess</h2>
+            <button class="modal-close" onclick="processEditor.closeSubprocessModal()">&times;</button>
+        </div>
+        <form id="subprocess-form" onsubmit="processEditor.handleAddSubprocess(event)">
+            <div class="form-group">
+                <label for="subprocess-select">Select Subprocess Template</label>
+                <select id="subprocess-select" required>
+                    <option value="">Loading...</option>
+                </select>
+            </div>
+            <div class="form-group">
+                <label for="custom-name">Custom Name (Optional)</label>
+                <input type="text" id="custom-name" placeholder="Override default name...">
+            </div>
+            <div class="modal-actions">
+                <button type="button" class="btn btn-secondary" 
+                        onclick="processEditor.closeSubprocessModal()">Cancel</button>
+                <button type="submit" class="btn btn-primary">Add Subprocess</button>
+            </div>
+        </form>
+    </div>
+</div>
+
+<!-- Add Variant Modal (for quantity) -->
+<div id="variant-modal" class="modal">
+    <div class="modal-content">
+        <div class="modal-header">
+            <h2>Add Variant</h2>
+            <button class="modal-close" onclick="processEditor.closeVariantModal()">&times;</button>
+        </div>
+        <form id="variant-form" onsubmit="processEditor.handleAddVariant(event)">
+            <input type="hidden" id="selected-variant-id">
+            <input type="hidden" id="target-subprocess-id">
+            
+            <div class="form-group">
+                <label>Variant</label>
+                <div id="selected-variant-name" style="font-weight: 600; color: #333;"></div>
+            </div>
+            
+            <div class="form-group">
+                <label for="variant-quantity">Quantity *</label>
+                <input type="number" id="variant-quantity" step="0.01" min="0.01" required value="1">
+            </div>
+            
+            <div class="form-group">
+                <label for="variant-unit">Unit</label>
+                <input type="text" id="variant-unit" value="pcs" required>
+            </div>
+            
+            <div class="modal-actions">
+                <button type="button" class="btn btn-secondary" 
+                        onclick="processEditor.closeVariantModal()">Cancel</button>
+                <button type="submit" class="btn btn-primary">Add Variant</button>
+            </div>
+        </form>
+    </div>
+</div>
+
+<script src="https://cdn.jsdelivr.net/npm/sortablejs@1.15.0/Sortable.min.js"></script>
+<script src="{{ url_for('static', filename='js/variant_search.js') }}"></script>
+<script src="{{ url_for('static', filename='js/process_editor.js') }}"></script>
+<script src="{{ url_for('static', filename='js/cost_calculator.js') }}"></script>
+<script>
+    // Initialize on page load
+    document.addEventListener('DOMContentLoaded', function() {
+        const processId = {{ process_id }};
+        processEditor.init(processId);
+        variantSearch.init();
+        costCalculator.init(processId);
+    });
+</script>
+{% endblock %}

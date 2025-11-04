@@ -71,6 +71,25 @@
                 </a>
                 {% endif %}
             </div>
+            <div class="nav-section">
+                <h2 class="nav-section-title">Process Framework</h2>
+                <a href="{{ url_for('main.upf_process_management') }}" class="nav-item" data-tooltip="Process Management">
+                    <svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="3" width="7" height="7"></rect><rect x="14" y="3" width="7" height="7"></rect><rect x="14" y="14" width="7" height="7"></rect><rect x="3" y="14" width="7" height="7"></rect></svg>
+                    <span>Processes</span>
+                </a>
+                <a href="{{ url_for('main.upf_subprocess_library') }}" class="nav-item" data-tooltip="Subprocess Library">
+                    <svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M4 19.5A2.5 2.5 0 0 1 6.5 17H20"></path><path d="M6.5 2H20v20H6.5A2.5 2.5 0 0 1 4 19.5v-15A2.5 2.5 0 0 1 6.5 2z"></path></svg>
+                    <span>Subprocesses</span>
+                </a>
+                <a href="{{ url_for('main.upf_production_lots') }}" class="nav-item" data-tooltip="Production Lots">
+                    <svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"></circle><polyline points="12 6 12 12 16 14"></polyline></svg>
+                    <span>Production Lots</span>
+                </a>
+                <a href="{{ url_for('main.upf_reports') }}" class="nav-item" data-tooltip="Reports">
+                    <svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><line x1="18" y1="20" x2="18" y2="10"></line><line x1="12" y1="20" x2="12" y2="4"></line><line x1="6" y1="20" x2="6" y2="14"></line></svg>
+                    <span>Reports</span>
+                </a>
+            </div>
         </nav>
         <div class="sidebar-footer">
             <div class="nav-section">

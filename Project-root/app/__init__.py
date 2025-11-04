@@ -229,11 +229,23 @@ def create_app(config_name: str | None = None) -> Flask:
     from .api.routes import api_bp
     from .api.file_routes import files_bp
     from .main.routes import main_bp
+    
+    # Universal Process Framework API blueprints
+    from .api.process_management import process_api_bp
+    from .api.variant_management import variant_api_bp
+    from .api.production_lot import production_api_bp
+    from .api.subprocess_management import subprocess_api_bp
 
     app.register_blueprint(auth_bp, url_prefix='/auth')
     app.register_blueprint(api_bp, url_prefix='/api')
     app.register_blueprint(files_bp)  # No prefix, uses /api/files routes
     app.register_blueprint(main_bp)
+    
+    # Register Universal Process Framework APIs
+    app.register_blueprint(process_api_bp, url_prefix='/api/upf')
+    app.register_blueprint(variant_api_bp, url_prefix='/api/upf')
+    app.register_blueprint(production_api_bp, url_prefix='/api/upf')
+    app.register_blueprint(subprocess_api_bp, url_prefix='/api/upf')
 
     # Exempt select auth JSON endpoints from CSRF
     try:

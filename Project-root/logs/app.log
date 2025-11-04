@@ -718,3 +718,7 @@ Traceback (most recent call last):
   File "C:\Users\erkar\AppData\Local\Programs\Python\Python313\Lib\site-packages\werkzeug\routing\map.py", line 919, in build
     raise BuildError(endpoint, values, method, self)
 werkzeug.routing.exceptions.BuildError: Could not build url for endpoint 'change_password'. Did you mean 'main.change_password' instead?
+2025-11-04 17:34:52,067 ERROR: Error listing processes: relation "processes" does not exist
+LINE 3:                 FROM processes
+                             ^
+ [in C:\Users\erkar\OneDrive\Desktop\MTC\Project-root\app\api\process_management.py:101]

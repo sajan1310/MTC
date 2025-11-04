@@ -21,7 +21,9 @@
         .env
         .env.example
         .gitignore
+        API_REFERENCE_UNIVERSAL_PROCESS_FRAMEWORK.md
         app.py
+        BACKEND_IMPLEMENTATION_COMPLETE.md
         CHANGELOG.md
         check_oauth_config.py
         COMPLETE_CHANGE_LOG.md
@@ -32,6 +34,8 @@
         DEPLOYMENT.md
         DOCUMENTATION_INDEX.md
         file_structure.txt
+        FRONTEND_DEVELOPER_GUIDE.md
+        IMPLEMENTATION_ROADMAP.md
         logging_config.py
         minify_assets.py
         models.py
@@ -39,6 +43,7 @@
         production.env.example
         pytest.ini
         QUICK_START_GUIDE.md
+        QUICK_START_UNIVERSAL_PROCESS_FRAMEWORK.md
         README.md
         requirements.txt
         run.py
@@ -46,6 +51,8 @@
         run_production.py
         TESTING_CHECKLIST.md
         test_oauth.ps1
+        UNIVERSAL_PROCESS_FRAMEWORK_PROGRESS.md
+        UPF_API_IMPLEMENTATION_COMPLETE.md
         wsgi.py
         .github/
             workflows/
@@ -66,9 +73,13 @@
                 file_routes.py
                 imports.py
                 items.py
+                process_management.py
+                production_lot.py
                 purchase_orders.py
                 routes.py
+                subprocess_management.py
                 suppliers.py
+                variant_management.py
                 __init__.py
             auth/
                 decorators.py
@@ -78,13 +89,20 @@
                 routes.py
             models/
                 inventory.py
+                process.py
+                production_lot.py
                 user.py
                 __init__.py
             services/
                 background_worker.py
+                costing_service.py
                 export_service.py
                 import_service.py
+                process_service.py
+                production_service.py
                 progress_tracker.py
+                subprocess_service.py
+                variant_service.py
                 __init__.py
             utils/
                 file_validation.py
@@ -117,6 +135,8 @@
             migration_add_stock_receipts.py
             migration_add_suppliers_tables.py
             migration_add_unique_indexes_for_upsert.py
+            migration_add_universal_process_framework.py
+            migration_add_upf_tables.py
             migration_remove_model_uniqueness.py
             migration_remove_unique_constraint.py
             migration_update_discount_fields.py
@@ -136,7 +156,13 @@
             img/
                 Final_Logo.png
             js/
+                cost_calculator.js
                 login.js
+                process_editor.js
+                process_manager.js
+                production_lots.js
+                subprocess_library.js
+                variant_search.js
             uploads/
                 1_1a278be4_ChatGPT Image Aug 7, 2025, 11_10_55 AM.png
                 placeholder.png
@@ -159,6 +185,10 @@
             signup.html
             stock_ledger.html
             suppliers.html
+            upf_process_editor.html
+            upf_process_management.html
+            upf_production_lots.html
+            upf_subprocess_library.html
             user_management.html
         tests/
             conftest.py
