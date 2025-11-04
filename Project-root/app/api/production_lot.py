@@ -81,6 +81,117 @@ def get_production_lot(lot_id):
         return jsonify({'error': str(e)}), 500
 
 
+@production_api_bp.route('/production_lot/<int:lot_id>/variant_options', methods=['GET'])
+@login_required
+def get_variant_options(lot_id):
+    """Get variant selection options for production lot."""
+    try:
+        from database import get_conn
+        from psycopg2.extras import RealDictCursor
+        
+        # Check access
+        lot = ProductionService.get_production_lot(lot_id)
+        if not lot:
+            return jsonify({'error': 'Production lot not found'}), 404
+        
+        if lot['user_id'] != current_user.id and current_user.role != 'admin':
+            return jsonify({'error': 'Access denied'}), 403
+        
+        with get_conn() as (conn, cur):
+            cur = conn.cursor(cursor_factory=RealDictCursor)
+            
+            # Get process structure with subprocesses and variants
+            cur.execute("""
+                SELECT 
+                    ps.id as process_subprocess_id,
+                    ps.sequence_order,
+                    s.id as subprocess_id,
+                    s.name as subprocess_name,
+                    ps.custom_name
+                FROM process_subprocesses ps
+                JOIN subprocesses s ON s.id = ps.subprocess_id
+                WHERE ps.process_id = %s 
+                  AND ps.deleted_at IS NULL
+                  AND s.deleted_at IS NULL
+                ORDER BY ps.sequence_order
+            """, (lot['process_id'],))
+            
+            subprocesses = cur.fetchall()
+            
+            result = []
+            for sp in subprocesses:
+                # Get all variants for this subprocess
+                cur.execute("""
+                    SELECT 
+                        vu.id as usage_id,
+                        vu.item_id,
+                        vu.quantity,
+                        vu.unit,
+                        vu.substitute_group_id,
+                        vu.is_alternative,
+                        vu.alternative_order,
+                        iv.item_number,
+                        iv.description,
+                        iv.opening_stock,
+                        iv.unit_price
+                    FROM variant_usage vu
+                    JOIN item_variant iv ON iv.item_id = vu.item_id
+                    WHERE vu.process_subprocess_id = %s
+                      AND vu.deleted_at IS NULL
+                    ORDER BY vu.substitute_group_id NULLS FIRST, vu.alternative_order NULLS LAST
+                """, (sp['process_subprocess_id'],))
+                
+                variants = cur.fetchall()
+                
+                # Get OR groups for this subprocess
+                cur.execute("""
+                    SELECT DISTINCT
+                        og.id as group_id,
+                        og.name as group_name,
+                        og.description
+                    FROM or_groups og
+                    WHERE og.process_subprocess_id = %s
+                    ORDER BY og.id
+                """, (sp['process_subprocess_id'],))
+                
+                or_groups = cur.fetchall()
+                
+                # Organize variants by OR group
+                grouped_variants = {}
+                standalone_variants = []
+                
+                for v in variants:
+                    variant_data = dict(v)
+                    if v['substitute_group_id']:
+                        if v['substitute_group_id'] not in grouped_variants:
+                            grouped_variants[v['substitute_group_id']] = []
+                        grouped_variants[v['substitute_group_id']].append(variant_data)
+                    else:
+                        standalone_variants.append(variant_data)
+                
+                result.append({
+                    'process_subprocess_id': sp['process_subprocess_id'],
+                    'subprocess_id': sp['subprocess_id'],
+                    'subprocess_name': sp['custom_name'] or sp['subprocess_name'],
+                    'sequence_order': sp['sequence_order'],
+                    'or_groups': [dict(g) for g in or_groups],
+                    'grouped_variants': grouped_variants,
+                    'standalone_variants': standalone_variants
+                })
+            
+            return jsonify({
+                'lot_id': lot_id,
+                'lot_number': lot['lot_number'],
+                'process_name': lot['process_name'],
+                'quantity': lot['quantity'],
+                'subprocesses': result
+            }), 200
+            
+    except Exception as e:
+        current_app.logger.error(f"Error getting variant options: {e}")
+        return jsonify({'error': str(e)}), 500
+
+
 @production_api_bp.route('/production_lots', methods=['GET'])
 @login_required
 def list_production_lots():
@@ -165,6 +276,73 @@ def get_lot_selections(lot_id):
         
     except Exception as e:
         current_app.logger.error(f"Error getting selections: {e}")
+        return jsonify({'error': str(e)}), 500
+
+
+@production_api_bp.route('/production_lot/<int:lot_id>/batch_select_variants', methods=['POST'])
+@login_required
+def batch_select_variants(lot_id):
+    """Save multiple variant selections at once."""
+    try:
+        from database import get_conn
+        from app.services.audit_service import audit
+        
+        # Check access
+        lot = ProductionService.get_production_lot(lot_id)
+        if not lot:
+            return jsonify({'error': 'Production lot not found'}), 404
+        
+        if lot['user_id'] != current_user.id and current_user.role != 'admin':
+            return jsonify({'error': 'Access denied'}), 403
+        
+        if lot['status'] not in ['planning', 'ready']:
+            return jsonify({'error': 'Lot must be in planning or ready status'}), 400
+        
+        data = request.json
+        selections = data.get('selections', [])
+        
+        if not selections:
+            return jsonify({'error': 'No selections provided'}), 400
+        
+        with get_conn() as (conn, cur):
+            # Delete existing selections for this lot
+            cur.execute(
+                "DELETE FROM production_lot_variant_selections WHERE lot_id = %s",
+                (lot_id,)
+            )
+            
+            # Insert new selections
+            for sel in selections:
+                cur.execute("""
+                    INSERT INTO production_lot_variant_selections 
+                    (lot_id, or_group_id, variant_usage_id, quantity_override, reason, created_by)
+                    VALUES (%s, %s, %s, %s, %s, %s)
+                """, (
+                    lot_id,
+                    sel.get('or_group_id'),
+                    sel['variant_usage_id'],
+                    sel.get('quantity_override'),
+                    sel.get('reason'),
+                    current_user.id
+                ))
+            
+            conn.commit()
+        
+        # Audit log
+        audit.log_action(
+            'UPDATE', 
+            'production_lot', 
+            lot_id, 
+            lot['lot_number'],
+            changes={'selections': selections},
+            metadata={'selection_count': len(selections)}
+        )
+        
+        current_app.logger.info(f"Saved {len(selections)} variant selections for lot {lot_id}")
+        return jsonify({'success': True, 'selections_saved': len(selections)}), 200
+        
+    except Exception as e:
+        current_app.logger.error(f"Error saving variant selections: {e}")
         return jsonify({'error': str(e)}), 500
 
 

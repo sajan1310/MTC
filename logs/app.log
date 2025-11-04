@@ -1,0 +1,121 @@
+2025-11-04 17:54:34,569 ERROR: Error listing processes: column "user_id" does not exist
+LINE 4:                 WHERE user_id = 3 AND is_deleted = FALSE
+                              ^
+ [in C:\Users\erkar\OneDrive\Desktop\MTC\project-root\app\api\process_management.py:101]
+2025-11-04 17:55:07,080 ERROR: Error listing processes: column "user_id" does not exist
+LINE 4:                 WHERE user_id = 3 AND is_deleted = FALSE
+                              ^
+ [in C:\Users\erkar\OneDrive\Desktop\MTC\project-root\app\api\process_management.py:101]
+2025-11-04 17:55:17,991 ERROR: Exception on /upf/subprocesses [GET] [in C:\Users\erkar\OneDrive\Desktop\MTC\venv2\Lib\site-packages\flask\app.py:825]
+Traceback (most recent call last):
+  File "C:\Users\erkar\OneDrive\Desktop\MTC\venv2\Lib\site-packages\flask\app.py", line 1455, in wsgi_app
+    response = self.full_dispatch_request()
+  File "C:\Users\erkar\OneDrive\Desktop\MTC\venv2\Lib\site-packages\flask\app.py", line 869, in full_dispatch_request
+    rv = self.handle_user_exception(e)
+  File "C:\Users\erkar\OneDrive\Desktop\MTC\venv2\Lib\site-packages\flask_cors\extension.py", line 176, in wrapped_function
+    return cors_after_request(app.make_response(f(*args, **kwargs)))
+                                                ~^^^^^^^^^^^^^^^^^
+  File "C:\Users\erkar\OneDrive\Desktop\MTC\venv2\Lib\site-packages\flask\app.py", line 867, in full_dispatch_request
+    rv = self.dispatch_request()
+  File "C:\Users\erkar\OneDrive\Desktop\MTC\venv2\Lib\site-packages\flask\app.py", line 852, in dispatch_request
+    return self.ensure_sync(self.view_functions[rule.endpoint])(**view_args)
+           ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~^^^^^^^^^^^^^
+  File "C:\Users\erkar\OneDrive\Desktop\MTC\venv2\Lib\site-packages\flask_login\utils.py", line 290, in decorated_view
+    return current_app.ensure_sync(func)(*args, **kwargs)
+           ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~^^^^^^^^^^^^^^^^^
+  File "C:\Users\erkar\OneDrive\Desktop\MTC\project-root\app\main\routes.py", line 304, in upf_subprocess_library
+    return render_template('upf_subprocess_library.html')
+  File "C:\Users\erkar\OneDrive\Desktop\MTC\venv2\Lib\site-packages\flask\templating.py", line 151, in render_template
+    template = app.jinja_env.get_or_select_template(template_name_or_list)
+  File "C:\Users\erkar\OneDrive\Desktop\MTC\venv2\Lib\site-packages\jinja2\environment.py", line 1087, in get_or_select_template
+    return self.get_template(template_name_or_list, parent, globals)
+           ~~~~~~~~~~~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "C:\Users\erkar\OneDrive\Desktop\MTC\venv2\Lib\site-packages\jinja2\environment.py", line 1016, in get_template
+    return self._load_template(name, globals)
+           ~~~~~~~~~~~~~~~~~~~^^^^^^^^^^^^^^^
+  File "C:\Users\erkar\OneDrive\Desktop\MTC\venv2\Lib\site-packages\jinja2\environment.py", line 975, in _load_template
+    template = self.loader.load(self, name, self.make_globals(globals))
+  File "C:\Users\erkar\OneDrive\Desktop\MTC\venv2\Lib\site-packages\jinja2\loaders.py", line 126, in load
+    source, filename, uptodate = self.get_source(environment, name)
+                                 ~~~~~~~~~~~~~~~^^^^^^^^^^^^^^^^^^^
+  File "C:\Users\erkar\OneDrive\Desktop\MTC\venv2\Lib\site-packages\flask\templating.py", line 65, in get_source
+    return self._get_source_fast(environment, template)
+           ~~~~~~~~~~~~~~~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^
+  File "C:\Users\erkar\OneDrive\Desktop\MTC\venv2\Lib\site-packages\flask\templating.py", line 99, in _get_source_fast
+    raise TemplateNotFound(template)
+jinja2.exceptions.TemplateNotFound: upf_subprocess_library.html
+2025-11-04 17:55:20,229 ERROR: Exception on /upf/production-lots [GET] [in C:\Users\erkar\OneDrive\Desktop\MTC\venv2\Lib\site-packages\flask\app.py:825]
+Traceback (most recent call last):
+  File "C:\Users\erkar\OneDrive\Desktop\MTC\venv2\Lib\site-packages\flask\app.py", line 1455, in wsgi_app
+    response = self.full_dispatch_request()
+  File "C:\Users\erkar\OneDrive\Desktop\MTC\venv2\Lib\site-packages\flask\app.py", line 869, in full_dispatch_request
+    rv = self.handle_user_exception(e)
+  File "C:\Users\erkar\OneDrive\Desktop\MTC\venv2\Lib\site-packages\flask_cors\extension.py", line 176, in wrapped_function
+    return cors_after_request(app.make_response(f(*args, **kwargs)))
+                                                ~^^^^^^^^^^^^^^^^^
+  File "C:\Users\erkar\OneDrive\Desktop\MTC\venv2\Lib\site-packages\flask\app.py", line 867, in full_dispatch_request
+    rv = self.dispatch_request()
+  File "C:\Users\erkar\OneDrive\Desktop\MTC\venv2\Lib\site-packages\flask\app.py", line 852, in dispatch_request
+    return self.ensure_sync(self.view_functions[rule.endpoint])(**view_args)
+           ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~^^^^^^^^^^^^^
+  File "C:\Users\erkar\OneDrive\Desktop\MTC\venv2\Lib\site-packages\flask_login\utils.py", line 290, in decorated_view
+    return current_app.ensure_sync(func)(*args, **kwargs)
+           ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~^^^^^^^^^^^^^^^^^
+  File "C:\Users\erkar\OneDrive\Desktop\MTC\project-root\app\main\routes.py", line 311, in upf_production_lots
+    return render_template('upf_production_lot_list.html')
+  File "C:\Users\erkar\OneDrive\Desktop\MTC\venv2\Lib\site-packages\flask\templating.py", line 151, in render_template
+    template = app.jinja_env.get_or_select_template(template_name_or_list)
+  File "C:\Users\erkar\OneDrive\Desktop\MTC\venv2\Lib\site-packages\jinja2\environment.py", line 1087, in get_or_select_template
+    return self.get_template(template_name_or_list, parent, globals)
+           ~~~~~~~~~~~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "C:\Users\erkar\OneDrive\Desktop\MTC\venv2\Lib\site-packages\jinja2\environment.py", line 1016, in get_template
+    return self._load_template(name, globals)
+           ~~~~~~~~~~~~~~~~~~~^^^^^^^^^^^^^^^
+  File "C:\Users\erkar\OneDrive\Desktop\MTC\venv2\Lib\site-packages\jinja2\environment.py", line 975, in _load_template
+    template = self.loader.load(self, name, self.make_globals(globals))
+  File "C:\Users\erkar\OneDrive\Desktop\MTC\venv2\Lib\site-packages\jinja2\loaders.py", line 126, in load
+    source, filename, uptodate = self.get_source(environment, name)
+                                 ~~~~~~~~~~~~~~~^^^^^^^^^^^^^^^^^^^
+  File "C:\Users\erkar\OneDrive\Desktop\MTC\venv2\Lib\site-packages\flask\templating.py", line 65, in get_source
+    return self._get_source_fast(environment, template)
+           ~~~~~~~~~~~~~~~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^
+  File "C:\Users\erkar\OneDrive\Desktop\MTC\venv2\Lib\site-packages\flask\templating.py", line 99, in _get_source_fast
+    raise TemplateNotFound(template)
+jinja2.exceptions.TemplateNotFound: upf_production_lot_list.html
+2025-11-04 18:09:35,344 ERROR: Exception on /upf/production-lots [GET] [in C:\Users\erkar\OneDrive\Desktop\MTC\venv2\Lib\site-packages\flask\app.py:825]
+Traceback (most recent call last):
+  File "C:\Users\erkar\OneDrive\Desktop\MTC\venv2\Lib\site-packages\flask\app.py", line 1455, in wsgi_app
+    response = self.full_dispatch_request()
+  File "C:\Users\erkar\OneDrive\Desktop\MTC\venv2\Lib\site-packages\flask\app.py", line 869, in full_dispatch_request
+    rv = self.handle_user_exception(e)
+  File "C:\Users\erkar\OneDrive\Desktop\MTC\venv2\Lib\site-packages\flask_cors\extension.py", line 176, in wrapped_function
+    return cors_after_request(app.make_response(f(*args, **kwargs)))
+                                                ~^^^^^^^^^^^^^^^^^
+  File "C:\Users\erkar\OneDrive\Desktop\MTC\venv2\Lib\site-packages\flask\app.py", line 867, in full_dispatch_request
+    rv = self.dispatch_request()
+  File "C:\Users\erkar\OneDrive\Desktop\MTC\venv2\Lib\site-packages\flask\app.py", line 852, in dispatch_request
+    return self.ensure_sync(self.view_functions[rule.endpoint])(**view_args)
+           ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~^^^^^^^^^^^^^
+  File "C:\Users\erkar\OneDrive\Desktop\MTC\venv2\Lib\site-packages\flask_login\utils.py", line 290, in decorated_view
+    return current_app.ensure_sync(func)(*args, **kwargs)
+           ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~^^^^^^^^^^^^^^^^^
+  File "C:\Users\erkar\OneDrive\Desktop\MTC\project-root\app\main\routes.py", line 311, in upf_production_lots
+  File "C:\Users\erkar\OneDrive\Desktop\MTC\venv2\Lib\site-packages\flask\templating.py", line 151, in render_template
+    template = app.jinja_env.get_or_select_template(template_name_or_list)
+  File "C:\Users\erkar\OneDrive\Desktop\MTC\venv2\Lib\site-packages\jinja2\environment.py", line 1087, in get_or_select_template
+    return self.get_template(template_name_or_list, parent, globals)
+           ~~~~~~~~~~~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "C:\Users\erkar\OneDrive\Desktop\MTC\venv2\Lib\site-packages\jinja2\environment.py", line 1016, in get_template
+    return self._load_template(name, globals)
+           ~~~~~~~~~~~~~~~~~~~^^^^^^^^^^^^^^^
+  File "C:\Users\erkar\OneDrive\Desktop\MTC\venv2\Lib\site-packages\jinja2\environment.py", line 975, in _load_template
+    template = self.loader.load(self, name, self.make_globals(globals))
+  File "C:\Users\erkar\OneDrive\Desktop\MTC\venv2\Lib\site-packages\jinja2\loaders.py", line 126, in load
+    source, filename, uptodate = self.get_source(environment, name)
+                                 ~~~~~~~~~~~~~~~^^^^^^^^^^^^^^^^^^^
+  File "C:\Users\erkar\OneDrive\Desktop\MTC\venv2\Lib\site-packages\flask\templating.py", line 65, in get_source
+    return self._get_source_fast(environment, template)
+           ~~~~~~~~~~~~~~~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^
+  File "C:\Users\erkar\OneDrive\Desktop\MTC\venv2\Lib\site-packages\flask\templating.py", line 99, in _get_source_fast
+    raise TemplateNotFound(template)
+jinja2.exceptions.TemplateNotFound: upf_production_lot_list.html

@@ -303,3 +303,10 @@ def upf_process_editor(process_id):
 def upf_production_lot_detail(lot_id):
     """Production lot detail page - view/execute lot."""
     return render_template('upf_production_lot_detail.html', lot_id=lot_id)
+
+
+@main_bp.route('/upf/production-lot/<int:lot_id>/select-variants')
+@login_required
+def upf_variant_selection(lot_id):
+    """Variant selection page for production lot."""
+    return render_template('upf_variant_selection.html', lot_id=lot_id)

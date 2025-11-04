@@ -692,6 +692,122 @@
     </div>
 </div>
 
+<!-- OR Group Configuration Modal -->
+<div id="or-group-modal" class="modal">
+    <div class="modal-content" style="max-width: 700px;">
+        <div class="modal-header">
+            <h2>Configure OR Groups</h2>
+            <button class="modal-close" onclick="processEditor.closeORGroupModal()">&times;</button>
+        </div>
+        
+        <div style="margin-bottom: 20px;">
+            <p style="color: #666; font-size: 14px;">
+                OR Groups allow you to define alternative variants. During production, 
+                only ONE variant from each group will be selected.
+            </p>
+        </div>
+
+        <!-- Existing OR Groups -->
+        <div id="or-groups-list" style="margin-bottom: 20px;">
+            <h3 style="font-size: 16px; margin-bottom: 10px;">Existing OR Groups</h3>
+            <div id="or-groups-container">
+                <!-- OR groups populated by JavaScript -->
+            </div>
+        </div>
+
+        <!-- Create New OR Group -->
+        <div style="border-top: 2px solid #e0e0e0; padding-top: 20px;">
+            <h3 style="font-size: 16px; margin-bottom: 15px;">Create New OR Group</h3>
+            
+            <form id="create-or-group-form" onsubmit="processEditor.handleCreateORGroup(event)">
+                <input type="hidden" id="or-group-subprocess-id">
+                
+                <div class="form-group">
+                    <label for="or-group-name">Group Name *</label>
+                    <input type="text" id="or-group-name" 
+                           placeholder="e.g., Wheel Type - Choose One" required>
+                </div>
+
+                <div class="form-group">
+                    <label for="or-group-description">Description</label>
+                    <input type="text" id="or-group-description" 
+                           placeholder="Optional description">
+                </div>
+
+                <div class="form-group">
+                    <label>Select Variants for OR Group (minimum 2) *</label>
+                    <div id="or-group-variant-selection" style="max-height: 200px; overflow-y: auto; border: 1px solid #ddd; border-radius: 4px; padding: 10px;">
+                        <!-- Variant checkboxes populated by JavaScript -->
+                    </div>
+                    <small style="color: #999;">Check at least 2 variants to create an OR group</small>
+                </div>
+
+                <div class="modal-actions">
+                    <button type="button" class="btn btn-secondary" 
+                            onclick="processEditor.closeORGroupModal()">Cancel</button>
+                    <button type="submit" class="btn btn-primary">Create OR Group</button>
+                </div>
+            </form>
+        </div>
+    </div>
+</div>
+
+<!-- Cost Item Modal -->
+<div id="cost-item-modal" class="modal">
+    <div class="modal-content">
+        <div class="modal-header">
+            <h2>Add Cost Item</h2>
+            <button class="modal-close" onclick="processEditor.closeCostItemModal()">&times;</button>
+        </div>
+        
+        <form id="cost-item-form" onsubmit="processEditor.handleAddCostItem(event)">
+            <input type="hidden" id="cost-subprocess-id">
+            
+            <div class="form-group">
+                <label for="cost-type">Cost Type *</label>
+                <select id="cost-type" required>
+                    <option value="">Select type...</option>
+                    <option value="labor">Labor</option>
+                    <option value="electricity">Electricity</option>
+                    <option value="maintenance">Maintenance</option>
+                    <option value="tooling">Tooling</option>
+                    <option value="overhead">Overhead</option>
+                    <option value="other">Other</option>
+                </select>
+            </div>
+
+            <div class="form-group">
+                <label for="cost-description">Description</label>
+                <input type="text" id="cost-description" 
+                       placeholder="e.g., Assembly labor - 2 workers">
+            </div>
+
+            <div class="form-group">
+                <label for="cost-quantity">Quantity *</label>
+                <input type="number" id="cost-quantity" step="0.01" min="0.01" required value="1">
+            </div>
+
+            <div class="form-group">
+                <label for="cost-rate">Rate per Unit *</label>
+                <input type="number" id="cost-rate" step="0.01" min="0" required placeholder="0.00">
+            </div>
+
+            <div class="form-group">
+                <label>Total Cost</label>
+                <div id="cost-total-display" style="font-weight: 600; font-size: 18px; color: #4CAF50;">
+                    $0.00
+                </div>
+            </div>
+
+            <div class="modal-actions">
+                <button type="button" class="btn btn-secondary" 
+                        onclick="processEditor.closeCostItemModal()">Cancel</button>
+                <button type="submit" class="btn btn-primary">Add Cost Item</button>
+            </div>
+        </form>
+    </div>
+</div>
+
 <script src="https://cdn.jsdelivr.net/npm/sortablejs@1.15.0/Sortable.min.js"></script>
 <script src="{{ url_for('static', filename='js/variant_search.js') }}"></script>
 <script src="{{ url_for('static', filename='js/process_editor.js') }}"></script>

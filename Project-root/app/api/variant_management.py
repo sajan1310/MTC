@@ -11,6 +11,7 @@ from functools import wraps
 from app import limiter
 from app.services.subprocess_service import SubprocessService
 from app.services.variant_service import VariantService
+from app.services.audit_service import audit
 
 variant_api_bp = Blueprint('variant_api', __name__)
 
@@ -53,6 +54,9 @@ def add_variant_usage():
             notes=data.get('notes')
         )
         
+        # Audit log
+        audit.log_create('variant_usage', variant_usage.get('id'), f"Item {data['item_id']}", data=data)
+        
         current_app.logger.info(
             f"Variant usage added: item {data['item_id']} to subprocess {data['subprocess_id']}"
         )
@@ -80,6 +84,9 @@ def update_variant_usage(usage_id):
         if not updated:
             return jsonify({'error': 'Variant usage not found'}), 404
         
+        # Audit log
+        audit.log_update('variant_usage', usage_id, f"Usage {usage_id}", new_data=data)
+        
         current_app.logger.info(f"Variant usage updated: {usage_id}")
         return jsonify(updated), 200
         
@@ -97,6 +104,9 @@ def remove_variant_usage(usage_id):
         
         if not success:
             return jsonify({'error': 'Variant usage not found'}), 404
+        
+        # Audit log
+        audit.log_delete('variant_usage', usage_id, f"Usage {usage_id}")
         
         current_app.logger.info(f"Variant usage removed: {usage_id}")
         return '', 204
@@ -127,6 +137,9 @@ def create_substitute_group():
             selection_logic=data.get('selection_logic', 'manual')
         )
         
+        # Audit log
+        audit.log_create('substitute_group', group.get('id'), data.get('group_name', 'OR Group'), data=data)
+        
         current_app.logger.info(
             f"Substitute group created for subprocess {data['subprocess_id']}"
         )
@@ -134,6 +147,156 @@ def create_substitute_group():
         
     except Exception as e:
         current_app.logger.error(f"Error creating substitute group: {e}")
+        return jsonify({'error': str(e)}), 500
+
+
+@variant_api_bp.route('/substitute_group/<int:group_id>', methods=['GET'])
+@login_required
+def get_substitute_group(group_id):
+    """Get substitute group with all variants."""
+    try:
+        from database import get_conn
+        from psycopg2.extras import RealDictCursor
+        
+        conn = get_conn()
+        cur = conn.cursor(cursor_factory=RealDictCursor)
+        
+        # Get group info
+        cur.execute(
+            "SELECT * FROM substitute_groups WHERE id = %s AND deleted_at IS NULL",
+            (group_id,)
+        )
+        group = cur.fetchone()
+        
+        if not group:
+            return jsonify({'error': 'Substitute group not found'}), 404
+        
+        # Get all variants in this group
+        cur.execute("""
+            SELECT 
+                vu.*,
+                iv.name as variant_name,
+                iv.opening_stock,
+                iv.unit_price
+            FROM variant_usage vu
+            JOIN item_variant iv ON iv.variant_id = vu.variant_id
+            WHERE vu.substitute_group_id = %s
+              AND vu.is_alternative = TRUE
+            ORDER BY vu.alternative_order
+        """, (group_id,))
+        
+        variants = cur.fetchall()
+        cur.close()
+        
+        result = dict(group)
+        result['variants'] = [dict(v) for v in variants]
+        
+        return jsonify(result), 200
+        
+    except Exception as e:
+        current_app.logger.error(f"Error getting substitute group: {e}")
+        return jsonify({'error': str(e)}), 500
+
+
+@variant_api_bp.route('/process_subprocess/<int:ps_id>/substitute_groups', methods=['GET'])
+@login_required
+def get_subprocess_substitute_groups(ps_id):
+    """Get all substitute groups for a process_subprocess."""
+    try:
+        from database import get_conn
+        from psycopg2.extras import RealDictCursor
+        
+        conn = get_conn()
+        cur = conn.cursor(cursor_factory=RealDictCursor)
+        
+        # Get all groups for this subprocess
+        cur.execute("""
+            SELECT * FROM substitute_groups 
+            WHERE process_subprocess_id = %s AND deleted_at IS NULL
+            ORDER BY created_at
+        """, (ps_id,))
+        
+        groups = cur.fetchall()
+        result = []
+        
+        for group in groups:
+            # Get variants for each group
+            cur.execute("""
+                SELECT 
+                    vu.*,
+                    iv.name as variant_name,
+                    iv.opening_stock,
+                    iv.unit_price
+                FROM variant_usage vu
+                JOIN item_variant iv ON iv.variant_id = vu.variant_id
+                WHERE vu.substitute_group_id = %s
+                  AND vu.is_alternative = TRUE
+                ORDER BY vu.alternative_order
+            """, (group['id'],))
+            
+            variants = cur.fetchall()
+            group_dict = dict(group)
+            group_dict['variants'] = [dict(v) for v in variants]
+            result.append(group_dict)
+        
+        cur.close()
+        return jsonify(result), 200
+        
+    except Exception as e:
+        current_app.logger.error(f"Error getting substitute groups: {e}")
+        return jsonify({'error': str(e)}), 500
+
+
+@variant_api_bp.route('/substitute_group/<int:group_id>', methods=['PUT'])
+@login_required
+def update_substitute_group(group_id):
+    """Update substitute group name or selection method."""
+    try:
+        data = request.json
+        from database import get_conn
+        from psycopg2.extras import RealDictCursor
+        
+        conn = get_conn()
+        cur = conn.cursor(cursor_factory=RealDictCursor)
+        
+        updates = []
+        params = []
+        
+        if 'group_name' in data:
+            updates.append("group_name = %s")
+            params.append(data['group_name'])
+        
+        if 'group_description' in data:
+            updates.append("group_description = %s")
+            params.append(data['group_description'])
+        
+        if 'selection_method' in data:
+            updates.append("selection_method = %s")
+            params.append(data['selection_method'])
+        
+        if not updates:
+            return jsonify({'error': 'No fields to update'}), 400
+        
+        updates.append("updated_at = NOW()")
+        params.append(group_id)
+        
+        cur.execute(
+            f"UPDATE substitute_groups SET {', '.join(updates)} WHERE id = %s AND deleted_at IS NULL RETURNING *",
+            params
+        )
+        
+        updated = cur.fetchone()
+        conn.commit()
+        cur.close()
+        
+        if not updated:
+            return jsonify({'error': 'Substitute group not found'}), 404
+        
+        current_app.logger.info(f"Substitute group updated: {group_id}")
+        return jsonify(dict(updated)), 200
+        
+    except Exception as e:
+        current_app.logger.error(f"Error updating substitute group: {e}")
         return jsonify({'error': str(e)}), 500
 
 
@@ -148,19 +311,123 @@ def delete_substitute_group(group_id):
         conn = get_conn()
         cur = conn.cursor(cursor_factory=RealDictCursor)
         
+        # Soft delete the group
         cur.execute(
             "UPDATE substitute_groups SET deleted_at = NOW() WHERE id = %s AND deleted_at IS NULL",
             (group_id,)
         )
         
+        # Reset variants that were in this group
+        cur.execute("""
+            UPDATE variant_usage 
+            SET substitute_group_id = NULL, 
+                is_alternative = FALSE, 
+                alternative_order = NULL
+            WHERE substitute_group_id = %s
+        """, (group_id,))
+        
         conn.commit()
         cur.close()
+        
+        # Audit log
+        audit.log_delete('substitute_group', group_id, f"OR Group {group_id}")
         
         current_app.logger.info(f"Substitute group deleted: {group_id}")
         return '', 204
         
     except Exception as e:
         current_app.logger.error(f"Error deleting substitute group: {e}")
+        return jsonify({'error': str(e)}), 500
+
+
+@variant_api_bp.route('/substitute_group/<int:group_id>/add_variant', methods=['POST'])
+@login_required
+def add_variant_to_group(group_id):
+    """Add a variant to an existing substitute group."""
+    try:
+        data = request.json
+        
+        if not data.get('usage_id'):
+            return jsonify({'error': 'usage_id is required'}), 400
+        
+        from database import get_conn
+        from psycopg2.extras import RealDictCursor
+        
+        conn = get_conn()
+        cur = conn.cursor(cursor_factory=RealDictCursor)
+        
+        # Verify group exists
+        cur.execute("SELECT * FROM substitute_groups WHERE id = %s AND deleted_at IS NULL", (group_id,))
+        if not cur.fetchone():
+            return jsonify({'error': 'Substitute group not found'}), 404
+        
+        # Get max alternative_order for this group
+        cur.execute("""
+            SELECT COALESCE(MAX(alternative_order), 0) as max_order
+            FROM variant_usage
+            WHERE substitute_group_id = %s
+        """, (group_id,))
+        max_order = cur.fetchone()['max_order']
+        
+        # Update variant usage
+        cur.execute("""
+            UPDATE variant_usage
+            SET substitute_group_id = %s,
+                is_alternative = TRUE,
+                alternative_order = %s,
+                updated_at = NOW()
+            WHERE id = %s
+            RETURNING *
+        """, (group_id, max_order + 1, data['usage_id']))
+        
+        updated = cur.fetchone()
+        conn.commit()
+        cur.close()
+        
+        if not updated:
+            return jsonify({'error': 'Variant usage not found'}), 404
+        
+        current_app.logger.info(f"Variant added to substitute group {group_id}")
+        return jsonify(dict(updated)), 200
+        
+    except Exception as e:
+        current_app.logger.error(f"Error adding variant to group: {e}")
+        return jsonify({'error': str(e)}), 500
+
+
+@variant_api_bp.route('/variant_usage/<int:usage_id>/remove_from_group', methods=['POST'])
+@login_required
+def remove_variant_from_group(usage_id):
+    """Remove a variant from its substitute group without deleting it."""
+    try:
+        from database import get_conn
+        from psycopg2.extras import RealDictCursor
+        
+        conn = get_conn()
+        cur = conn.cursor(cursor_factory=RealDictCursor)
+        
+        cur.execute("""
+            UPDATE variant_usage
+            SET substitute_group_id = NULL,
+                is_alternative = FALSE,
+                alternative_order = NULL,
+                updated_at = NOW()
+            WHERE id = %s
+            RETURNING *
+        """, (usage_id,))
+        
+        updated = cur.fetchone()
+        conn.commit()
+        cur.close()
+        
+        if not updated:
+            return jsonify({'error': 'Variant usage not found'}), 404
+        
+        current_app.logger.info(f"Variant removed from substitute group: {usage_id}")
+        return jsonify(dict(updated)), 200
+        
+    except Exception as e:
+        current_app.logger.error(f"Error removing variant from group: {e}")
         return jsonify({'error': str(e)}), 500
 
 

@@ -12,6 +12,7 @@ from app import limiter
 from app.services.process_service import ProcessService
 from app.services.subprocess_service import SubprocessService
 from app.services.costing_service import CostingService
+from app.services.audit_service import audit
 
 process_api_bp = Blueprint('process_api', __name__)
 
@@ -33,6 +34,7 @@ def role_required(*roles):
 # ===== PROCESS CRUD OPERATIONS =====
 
 @process_api_bp.route('/process', methods=['POST'])
+@process_api_bp.route('/processes', methods=['POST'])
 @login_required
 @limiter.limit("20 per hour")
 def create_process():
@@ -49,6 +51,9 @@ def create_process():
             description=data.get('description'),
             process_class=data.get('class', 'assembly')
         )
+        
+        # Audit log
+        audit.log_create('process', process['id'], data['name'])
         
         current_app.logger.info(f"Process created: {process['id']} by user {current_user.id}")
         return jsonify(process), 201
@@ -134,6 +139,9 @@ def update_process(process_id):
         if not updated:
             return jsonify({'error': 'Update failed'}), 400
         
+        # Audit log
+        audit.log_update('process', process_id, process['name'], old_data=process, new_data=data)
+        
         current_app.logger.info(f"Process updated: {process_id} by user {current_user.id}")
         return jsonify(updated), 200
         
@@ -159,6 +167,9 @@ def delete_process(process_id):
         
         if not success:
             return jsonify({'error': 'Delete failed'}), 400
+        
+        # Audit log
+        audit.log_delete('process', process_id, process['name'], data=process)
         
         current_app.logger.info(f"Process deleted: {process_id} by user {current_user.id}")
         return '', 204

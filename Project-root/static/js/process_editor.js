@@ -191,8 +191,9 @@ const processEditor = {
                         ${hasORGroups ? '<span class="or-group-badge">Has OR Groups</span>' : ''}
                     </div>
                     <div class="subprocess-actions">
-                        <button onclick="processEditor.configureORGroups(${index})">⚙️ OR Groups</button>
-                        <button onclick="processEditor.removeSubprocess(${index})">🗑️ Remove</button>
+                        <button onclick="processEditor.configureORGroups(${index})" title="Configure OR Groups">⚙️ OR Groups</button>
+                        <button onclick="processEditor.openCostItemModal(${index})" title="Add Cost Item">💰 Cost</button>
+                        <button onclick="processEditor.removeSubprocess(${index})" title="Remove Subprocess">🗑️ Remove</button>
                     </div>
                 </div>
                 <div class="subprocess-content">
@@ -540,8 +541,7 @@ const processEditor = {
      * Configure OR groups for subprocess
      */
     configureORGroups(index) {
-        // TODO: Implement OR groups configuration modal
-        this.showAlert('OR Groups configuration coming soon!', 'error');
+        this.openORGroupModal(index);
     },
 
     /**
@@ -622,6 +622,265 @@ const processEditor = {
         setTimeout(() => {
             alert.remove();
         }, 5000);
+    },
+
+    // ==================== OR GROUP MANAGEMENT ====================
+
+    /**
+     * Open OR Group configuration modal for a subprocess
+     */
+    async openORGroupModal(subprocessIndex) {
+        const subprocess = this.subprocesses[subprocessIndex];
+        if (!subprocess) return;
+
+        // Store subprocess ID
+        document.getElementById('or-group-subprocess-id').value = subprocess.process_subprocess_id;
+
+        // Load existing OR groups
+        await this.loadORGroups(subprocess.process_subprocess_id);
+
+        // Populate variant selection checkboxes
+        this.populateVariantSelection(subprocess);
+
+        // Show modal
+        document.getElementById('or-group-modal').style.display = 'block';
+    },
+
+    /**
+     * Load existing OR groups for subprocess
+     */
+    async loadORGroups(processSubprocessId) {
+        try {
+            const response = await fetch(`/api/upf/process_subprocess/${processSubprocessId}/substitute_groups`, {
+                method: 'GET',
+                credentials: 'include'
+            });
+
+            if (!response.ok) throw new Error('Failed to load OR groups');
+
+            const groups = await response.json();
+            this.renderORGroups(groups);
+        } catch (error) {
+            console.error('Error loading OR groups:', error);
+            this.showAlert('Failed to load OR groups', 'error');
+        }
+    },
+
+    /**
+     * Render OR groups in modal
+     */
+    renderORGroups(groups) {
+        const container = document.getElementById('or-groups-container');
+        
+        if (!groups || groups.length === 0) {
+            container.innerHTML = '<p style="color: #999; font-style: italic;">No OR groups configured yet.</p>';
+            return;
+        }
+
+        container.innerHTML = groups.map(group => `
+            <div class="or-group-item" style="border: 1px solid #ddd; border-radius: 4px; padding: 12px; margin-bottom: 10px; background: #f9f9f9;">
+                <div style="display: flex; justify-content: space-between; align-items: start;">
+                    <div style="flex: 1;">
+                        <strong style="font-size: 15px;">${group.group_name || 'Unnamed Group'}</strong>
+                        ${group.description ? `<p style="font-size: 13px; color: #666; margin: 4px 0 8px 0;">${group.description}</p>` : ''}
+                        <div style="font-size: 13px; color: #666;">
+                            Variants: ${group.variants ? group.variants.map(v => v.item_number).join(', ') : 'None'}
+                        </div>
+                    </div>
+                    <button type="button" class="btn btn-danger" style="padding: 4px 10px; font-size: 12px;"
+                            onclick="processEditor.deleteORGroup(${group.id})">Delete</button>
+                </div>
+            </div>
+        `).join('');
+    },
+
+    /**
+     * Populate variant selection checkboxes
+     */
+    populateVariantSelection(subprocess) {
+        const container = document.getElementById('or-group-variant-selection');
+        const variants = subprocess.variants || [];
+
+        if (variants.length === 0) {
+            container.innerHTML = '<p style="color: #999; font-style: italic;">No variants available. Add variants first.</p>';
+            return;
+        }
+
+        container.innerHTML = variants.map((variant, idx) => `
+            <label style="display: block; padding: 6px; cursor: pointer; border-bottom: 1px solid #eee;">
+                <input type="checkbox" name="or-variant" value="${variant.id}" 
+                       data-item-id="${variant.item_id}" style="margin-right: 8px;">
+                <strong>${variant.item_number}</strong> - ${variant.description || 'No description'}
+                <span style="color: #666; font-size: 12px;">(Qty: ${variant.quantity} ${variant.unit || ''})</span>
+            </label>
+        `).join('');
+    },
+
+    /**
+     * Handle OR Group creation
+     */
+    async handleCreateORGroup(event) {
+        event.preventDefault();
+
+        const subprocessId = document.getElementById('or-group-subprocess-id').value;
+        const groupName = document.getElementById('or-group-name').value.trim();
+        const description = document.getElementById('or-group-description').value.trim();
+
+        // Get selected variants
+        const selectedCheckboxes = document.querySelectorAll('input[name="or-variant"]:checked');
+        const selectedVariants = Array.from(selectedCheckboxes).map(cb => parseInt(cb.value, 10));
+
+        // Validate
+        if (selectedVariants.length < 2) {
+            this.showAlert('Please select at least 2 variants for the OR group', 'error');
+            return;
+        }
+
+        try {
+            // Create OR group
+            const response = await fetch('/api/upf/substitute_group', {
+                method: 'POST',
+                headers: {
+                    'Content-Type': 'application/json',
+                    'X-CSRFToken': this.getCSRFToken()
+                },
+                credentials: 'include',
+                body: JSON.stringify({
+                    process_subprocess_id: parseInt(subprocessId, 10),
+                    group_name: groupName,
+                    description: description || null,
+                    variant_usage_ids: selectedVariants
+                })
+            });
+
+            if (!response.ok) throw new Error('Failed to create OR group');
+
+            const result = await response.json();
+            this.showAlert('OR group created successfully', 'success');
+
+            // Reload OR groups
+            await this.loadORGroups(subprocessId);
+
+            // Clear form
+            document.getElementById('create-or-group-form').reset();
+            selectedCheckboxes.forEach(cb => cb.checked = false);
+
+        } catch (error) {
+            console.error('Error creating OR group:', error);
+            this.showAlert('Failed to create OR group', 'error');
+        }
+    },
+
+    /**
+     * Delete OR Group
+     */
+    async deleteORGroup(groupId) {
+        if (!confirm('Delete this OR group? Variants will remain but will no longer be grouped.')) {
+            return;
+        }
+
+        try {
+            const response = await fetch(`/api/upf/substitute_group/${groupId}`, {
+                method: 'DELETE',
+                headers: {
+                    'X-CSRFToken': this.getCSRFToken()
+                },
+                credentials: 'include'
+            });
+
+            if (!response.ok) throw new Error('Failed to delete OR group');
+
+            this.showAlert('OR group deleted successfully', 'success');
+
+            // Reload OR groups
+            const subprocessId = document.getElementById('or-group-subprocess-id').value;
+            await this.loadORGroups(subprocessId);
+
+        } catch (error) {
+            console.error('Error deleting OR group:', error);
+            this.showAlert('Failed to delete OR group', 'error');
+        }
+    },
+
+    /**
+     * Close OR Group modal
+     */
+    closeORGroupModal() {
+        document.getElementById('or-group-modal').style.display = 'none';
+        document.getElementById('create-or-group-form').reset();
+    },
+
+    // ==================== COST ITEM MANAGEMENT ====================
+
+    /**
+     * Open cost item modal
+     */
+    openCostItemModal(subprocessIndex) {
+        const subprocess = this.subprocesses[subprocessIndex];
+        if (!subprocess) return;
+
+        document.getElementById('cost-subprocess-id').value = subprocess.process_subprocess_id;
+        document.getElementById('cost-item-modal').style.display = 'block';
+
+        // Add listeners for real-time total calculation
+        const quantity = document.getElementById('cost-quantity');
+        const rate = document.getElementById('cost-rate');
+        const calculateTotal = () => {
+            const total = (parseFloat(quantity.value) || 0) * (parseFloat(rate.value) || 0);
+            document.getElementById('cost-total-display').textContent = `$${total.toFixed(2)}`;
+        };
+        quantity.addEventListener('input', calculateTotal);
+        rate.addEventListener('input', calculateTotal);
+    },
+
+    /**
+     * Handle cost item addition
+     */
+    async handleAddCostItem(event) {
+        event.preventDefault();
+
+        const subprocessId = document.getElementById('cost-subprocess-id').value;
+        const costType = document.getElementById('cost-type').value;
+        const description = document.getElementById('cost-description').value.trim();
+        const quantity = parseFloat(document.getElementById('cost-quantity').value);
+        const rate = parseFloat(document.getElementById('cost-rate').value);
+
+        try {
+            const response = await fetch('/api/upf/cost_item', {
+                method: 'POST',
+                headers: {
+                    'Content-Type': 'application/json',
+                    'X-CSRFToken': this.getCSRFToken()
+                },
+                credentials: 'include',
+                body: JSON.stringify({
+                    process_subprocess_id: parseInt(subprocessId, 10),
+                    cost_type: costType,
+                    description: description || null,
+                    quantity: quantity,
+                    rate_per_unit: rate
+                })
+            });
+
+            if (!response.ok) throw new Error('Failed to add cost item');
+
+            this.showAlert('Cost item added successfully', 'success');
+            this.closeCostItemModal();
+            await this.loadProcessStructure(); // Reload to show new cost
+
+        } catch (error) {
+            console.error('Error adding cost item:', error);
+            this.showAlert('Failed to add cost item', 'error');
+        }
+    },
+
+    /**
+     * Close cost item modal
+     */
+    closeCostItemModal() {
+        document.getElementById('cost-item-modal').style.display = 'none';
+        document.getElementById('cost-item-form').reset();
+        document.getElementById('cost-total-display').textContent = '$0.00';
     }
 };
 
@@ -629,11 +888,19 @@ const processEditor = {
 window.addEventListener('click', function(event) {
     const subprocessModal = document.getElementById('subprocess-modal');
     const variantModal = document.getElementById('variant-modal');
+    const orGroupModal = document.getElementById('or-group-modal');
+    const costItemModal = document.getElementById('cost-item-modal');
 
     if (event.target === subprocessModal) {
         processEditor.closeSubprocessModal();
     }
     if (event.target === variantModal) {
         processEditor.closeVariantModal();
+    }
+    if (event.target === orGroupModal) {
+        processEditor.closeORGroupModal();
+    }
+    if (event.target === costItemModal) {
+        processEditor.closeCostItemModal();
     }
 });
