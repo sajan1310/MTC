@@ -153,3 +153,44 @@ The application will be available at `http://127.0.0.1:5000`.
 
 ```bash
 python -m pytest
+```
+
+---
+
+## Standard API Response Envelope
+
+All JSON APIs return a consistent envelope for success and error responses:
+
+- success: boolean (true on success, false on error)
+- data: object or array payload (omitted or empty on errors)
+- message: human-friendly message (optional)
+- error: machine-readable error info (optional)
+
+Example:
+
+```json
+{
+    "success": true,
+    "data": {"items": []},
+    "message": "OK"
+}
+```
+
+## Testing on Windows (PowerShell)
+
+From the repository root:
+
+```powershell
+# Create and activate venv
+python -m venv venv2
+& .\venv2\Scripts\Activate.ps1
+
+# Install dependencies and run tests
+pip install -r Project-root\requirements.txt
+cd Project-root
+python -m pytest -q
+```
+
+Notes:
+- Rate limiting uses Redis in production. In tests, it automatically uses in-memory storage to avoid external dependencies.
+- Some endpoints enforce authentication in production but are open under TESTING to keep the suite fast and deterministic.

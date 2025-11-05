@@ -1,4 +1,18 @@
 # Changelog
+## [1.3.1] - 2025-11-05 - TEST STABILIZATION & DX POLISH
+
+### Added
+- Standard API response envelope documented in README.
+- CONTRIBUTING guide with Windows-friendly test instructions and conventions.
+
+### Changed
+- Rate limiter initialization respects `TESTING` and `memory://` storage to eliminate warnings in tests.
+- Process service pagination now returns top-level `total`, `page`, and `per_page` for easier consumption.
+
+### Fixed
+- Import service accepts original header keys (Item, Model, Color, Size, Stock, Unit) alongside normalized fields.
+- Process model serialization tolerates string datetimes in tests and exposes `process_class` alias.
+
 
 All notable changes to this project will be documented in this file.
 

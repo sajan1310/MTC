@@ -142,36 +142,47 @@ def create_app(config_name: str | None = None) -> Flask:
     login_manager.init_app(app)
     login_manager.login_view = 'auth.login'
 
-    # Setup Redis-based rate limiting
+    # Setup rate limiting (respect memory backend in tests to avoid warnings)
     from redis import ConnectionPool, Redis
     from flask_limiter.util import get_remote_address
     from flask_limiter import Limiter
     import logging
     redis_url = app.config.get('RATELIMIT_STORAGE_URL', 'redis://localhost:6379/0')
-    try:
-        pool = ConnectionPool.from_url(redis_url, max_connections=50, decode_responses=True)
-        redis_client = Redis(connection_pool=pool)
-        # Test Redis connectivity
-        redis_client.ping()
+
+    # If testing or explicitly configured to memory://, skip Redis and use in-memory storage without warnings
+    if app.config.get('TESTING') or str(redis_url).startswith('memory://'):
         limiter = Limiter(
             key_func=get_remote_address,
-            storage_uri=redis_url,
+            storage_uri='memory://',
             strategy="fixed-window",
         )
         limiter.init_app(app)
-        app.logger.info("[RATE LIMIT] Redis-based rate limiting enabled.")
-        # Clean up pool on shutdown
-        @app.teardown_appcontext
-        def close_redis_pool(exception=None):
-            try:
-                pool.disconnect()
-                app.logger.info("[RATE LIMIT] Redis connection pool closed.")
-            except Exception as e:
-                app.logger.warning(f"[RATE LIMIT] Redis pool cleanup failed: {e}")
-    except Exception as e:
-        app.logger.warning(f"[RATE LIMIT] Redis unavailable, falling back to in-memory rate limiting: {e}")
-        limiter = Limiter(key_func=get_remote_address)
-        limiter.init_app(app)
+        app.logger.info("[RATE LIMIT] In-memory rate limiting enabled (testing/memory).")
+    else:
+        try:
+            pool = ConnectionPool.from_url(redis_url, max_connections=50, decode_responses=True)
+            redis_client = Redis(connection_pool=pool)
+            # Test Redis connectivity
+            redis_client.ping()
+            limiter = Limiter(
+                key_func=get_remote_address,
+                storage_uri=redis_url,
+                strategy="fixed-window",
+            )
+            limiter.init_app(app)
+            app.logger.info("[RATE LIMIT] Redis-based rate limiting enabled.")
+            # Clean up pool on shutdown
+            @app.teardown_appcontext
+            def close_redis_pool(exception=None):
+                try:
+                    pool.disconnect()
+                    app.logger.info("[RATE LIMIT] Redis connection pool closed.")
+                except Exception as e:
+                    app.logger.warning(f"[RATE LIMIT] Redis pool cleanup failed: {e}")
+        except Exception as e:
+            app.logger.warning(f"[RATE LIMIT] Redis unavailable, falling back to in-memory rate limiting: {e}")
+            limiter = Limiter(key_func=get_remote_address, storage_uri='memory://', strategy="fixed-window")
+            limiter.init_app(app)
     # Set defaults if not provided by config
     limiter.default_limits = ["200 per day", "50 per hour"]
 

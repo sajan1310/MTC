@@ -37,6 +37,7 @@
         config.py
         config.py.backup
         CONSOLIDATION_SUMMARY.md
+        CONTRIBUTING.md
         database.py
         deduplicate_items.py
         DEPLOYMENT.md
