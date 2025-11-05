@@ -392,13 +392,13 @@ class CostingService:
                 SELECT
                     ps.id,
                     ps.subprocess_id,
-                    ps.sequence_order,
+                    ps.id as sequence_order,
                     ps.custom_name,
                     s.name as subprocess_name
                 FROM process_subprocesses ps
                 JOIN subprocesses s ON s.id = ps.subprocess_id
                 WHERE ps.process_id = %s
-                ORDER BY ps.sequence_order
+                ORDER BY ps.id
             """,
                 (process_id,),
             )

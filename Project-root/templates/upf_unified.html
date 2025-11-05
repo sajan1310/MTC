@@ -360,11 +360,33 @@
         border-top: 1px solid #e0e0e0;
     }
 
+    #alert-container {
+        position: fixed;
+        top: 80px;
+        right: 20px;
+        z-index: 10000;
+        min-width: 300px;
+        max-width: 500px;
+    }
+
     .alert {
         padding: 12px 20px;
         border-radius: 6px;
-        margin-bottom: 20px;
+        margin-bottom: 10px;
         font-size: 14px;
+        box-shadow: 0 4px 12px rgba(0,0,0,0.15);
+        animation: slideIn 0.3s ease-out;
+    }
+
+    @keyframes slideIn {
+        from {
+            transform: translateX(400px);
+            opacity: 0;
+        }
+        to {
+            transform: translateX(0);
+            opacity: 1;
+        }
     }
 
     .alert-success {

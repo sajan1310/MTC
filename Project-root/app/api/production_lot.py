@@ -121,7 +121,7 @@ def get_variant_options(lot_id):
                 """
                 SELECT
                     ps.id as process_subprocess_id,
-                    ps.sequence_order,
+                    ps.id as sequence_order,
                     s.id as subprocess_id,
                     s.name as subprocess_name,
                     ps.custom_name
@@ -130,7 +130,7 @@ def get_variant_options(lot_id):
                 WHERE ps.process_id = %s
                   AND ps.deleted_at IS NULL
                   AND s.deleted_at IS NULL
-                ORDER BY ps.sequence_order
+                ORDER BY ps.id
             """,
                 (lot["process_id"],),
             )

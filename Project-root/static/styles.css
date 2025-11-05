@@ -793,6 +793,10 @@ body.dark-mode .bulk-actions-bar {
     border-top: none;
 }
 
+.tab-content.active {
+    display: block !important;
+}
+
 /* --- Floating Action Button --- */
 .floating-action-btn {
     position: fixed;

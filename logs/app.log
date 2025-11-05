@@ -119,3 +119,59 @@ Traceback (most recent call last):
   File "C:\Users\erkar\OneDrive\Desktop\MTC\venv2\Lib\site-packages\flask\templating.py", line 99, in _get_source_fast
     raise TemplateNotFound(template)
 jinja2.exceptions.TemplateNotFound: upf_production_lot_list.html
+2025-11-05 12:43:50,188 INFO: Request ID middleware enabled [in C:\Users\erkar\OneDrive\Desktop\MTC\project-root\app\middleware\request_id.py:44]
+2025-11-05 12:43:50,770 INFO: Universal Process Framework API blueprints exempted from CSRF protection [in C:\Users\erkar\OneDrive\Desktop\MTC\project-root\app\__init__.py:324]
+2025-11-05 12:50:46,434 INFO: [CREATE PROCESS] Received request from user 3 [in C:\Users\erkar\OneDrive\Desktop\MTC\project-root\app\api\process_management.py:66]
+2025-11-05 12:50:46,443 INFO: [CREATE PROCESS] Creating process 'Frame Assembly' with class 'Manufacturing' [in C:\Users\erkar\OneDrive\Desktop\MTC\project-root\app\api\process_management.py:132]
+2025-11-05 12:50:46,499 WARNING: Database integrity error: duplicate key value violates unique constraint "unique_process_name"
+DETAIL:  Key (name)=(Frame Assembly) already exists.
+ [in C:\Users\erkar\OneDrive\Desktop\MTC\project-root\database.py:130]
+2025-11-05 12:50:46,501 WARNING: [CREATE PROCESS] Duplicate process name: Frame Assembly [in C:\Users\erkar\OneDrive\Desktop\MTC\project-root\app\api\process_management.py:152]
+2025-11-05 12:55:51,439 ERROR: Exception on /add_item [GET] [in C:\Users\erkar\OneDrive\Desktop\MTC\venv2\Lib\site-packages\flask\app.py:825]
+Traceback (most recent call last):
+  File "C:\Users\erkar\OneDrive\Desktop\MTC\venv2\Lib\site-packages\flask\app.py", line 1455, in wsgi_app
+    response = self.full_dispatch_request()
+  File "C:\Users\erkar\OneDrive\Desktop\MTC\venv2\Lib\site-packages\flask\app.py", line 869, in full_dispatch_request
+    rv = self.handle_user_exception(e)
+  File "C:\Users\erkar\OneDrive\Desktop\MTC\venv2\Lib\site-packages\flask_cors\extension.py", line 176, in wrapped_function
+    return cors_after_request(app.make_response(f(*args, **kwargs)))
+                                                ~^^^^^^^^^^^^^^^^^
+  File "C:\Users\erkar\OneDrive\Desktop\MTC\venv2\Lib\site-packages\flask\app.py", line 867, in full_dispatch_request
+    rv = self.dispatch_request()
+  File "C:\Users\erkar\OneDrive\Desktop\MTC\venv2\Lib\site-packages\flask\app.py", line 852, in dispatch_request
+    return self.ensure_sync(self.view_functions[rule.endpoint])(**view_args)
+           ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~^^^^^^^^^^^^^
+  File "C:\Users\erkar\OneDrive\Desktop\MTC\venv2\Lib\site-packages\flask_login\utils.py", line 290, in decorated_view
+    return current_app.ensure_sync(func)(*args, **kwargs)
+           ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~^^^^^^^^^^^^^^^^^
+  File "C:\Users\erkar\OneDrive\Desktop\MTC\project-root\app\main\routes.py", line 96, in add_item
+    return render_template("add_item.html")
+  File "C:\Users\erkar\OneDrive\Desktop\MTC\venv2\Lib\site-packages\flask\templating.py", line 152, in render_template
+    return _render(app, template, context)
+  File "C:\Users\erkar\OneDrive\Desktop\MTC\venv2\Lib\site-packages\flask\templating.py", line 133, in _render
+    rv = template.render(context)
+  File "C:\Users\erkar\OneDrive\Desktop\MTC\venv2\Lib\site-packages\jinja2\environment.py", line 1295, in render
+    self.environment.handle_exception()
+    ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~^^
+  File "C:\Users\erkar\OneDrive\Desktop\MTC\venv2\Lib\site-packages\jinja2\environment.py", line 942, in handle_exception
+    raise rewrite_traceback_stack(source=source)
+  File "C:\Users\erkar\OneDrive\Desktop\MTC\project-root\templates\add_item.html", line 1, in top-level template code
+    {% extends "base.html" %}
+  File "C:\Users\erkar\OneDrive\Desktop\MTC\project-root\templates\base.html", line 188, in top-level template code
+    {% block content %}{% endblock %}
+    ^^^^^^^^^^^^^
+  File "C:\Users\erkar\OneDrive\Desktop\MTC\project-root\templates\add_item.html", line 51, in block 'content'
+    <form id="item-form" class="form-layout" method="POST" action="{{ url_for('add_item') }}" enctype="multipart/form-data">
+    ^^^^^^^^^^^^^^^^^^^^^
+  File "C:\Users\erkar\OneDrive\Desktop\MTC\venv2\Lib\site-packages\flask\app.py", line 1071, in url_for
+    return self.handle_url_build_error(error, endpoint, values)
+           ~~~~~~~~~~~~~~~~~~~~~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "C:\Users\erkar\OneDrive\Desktop\MTC\venv2\Lib\site-packages\flask\app.py", line 1060, in url_for
+    rv = url_adapter.build(  # type: ignore[union-attr]
+        endpoint,
+    ...<3 lines>...
+        force_external=_external,
+    )
+  File "C:\Users\erkar\OneDrive\Desktop\MTC\venv2\Lib\site-packages\werkzeug\routing\map.py", line 919, in build
+    raise BuildError(endpoint, values, method, self)
+werkzeug.routing.exceptions.BuildError: Could not build url for endpoint 'add_item'. Did you mean 'main.add_item' instead?

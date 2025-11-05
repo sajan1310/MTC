@@ -49,7 +49,15 @@ const processFramework = {
         },
 
         render() {
+            console.log('[Processes Render] Starting render. Filtered count:', this.filtered.length);
             const grid = document.getElementById('processes-grid');
+            console.log('[Processes Render] Grid element:', grid);
+            
+            if (!grid) {
+                console.error('[Processes Render] processes-grid element not found!');
+                return;
+            }
+            
             if (this.filtered.length === 0) {
                 const isFiltered = document.getElementById('process-search')?.value || 
                                  document.getElementById('process-status-filter')?.value ||
@@ -82,7 +90,7 @@ const processFramework = {
                 return;
             }
 
-            grid.innerHTML = this.filtered.map(process => `
+            const html = this.filtered.map(process => `
                 <div class="card" onclick="processFramework.processes.viewDetail(${process.id})">
                     <div class="card-header">
                         <div>
@@ -108,6 +116,10 @@ const processFramework = {
                     </div>
                 </div>
             `).join('');
+            
+            console.log('[Processes Render] Generated HTML length:', html.length);
+            grid.innerHTML = html;
+            console.log('[Processes Render] Render complete');
         },
 
         showCreateModal() {
@@ -219,8 +231,10 @@ const processFramework = {
                     let errorMessage = 'Failed to save process';
                     try {
                         const error = await response.json();
-                        console.error('[Process Submit] Error response:', error);
-                        errorMessage = error.error || error.message || errorMessage;
+                        console.log('[Process Submit] Error response:', error);
+                        
+                        // Extract the message from the API response
+                        errorMessage = error.message || error.error || errorMessage;
 
                         // Display detailed validation errors if available
                         if (error.details) {
@@ -233,6 +247,7 @@ const processFramework = {
                         errorMessage = `Server error (${response.status}): ${errorText.substring(0, 100)}`;
                     }
 
+                    console.log('[Process Submit] Showing alert with message:', errorMessage);
                     processFramework.showAlert(errorMessage, 'error');
                 }
             } catch (error) {
@@ -793,17 +808,37 @@ const processFramework = {
     },
 
     async switchTab(tabName) {
+        console.log('[Tab Switch] Switching to tab:', tabName);
+        
         // Update active tab button
         document.querySelectorAll('.tab-btn').forEach(btn => {
             btn.classList.remove('active');
         });
-        document.querySelector(`[data-tab="${tabName}"]`).classList.add('active');
+        const tabButton = document.querySelector(`[data-tab="${tabName}"]`);
+        console.log('[Tab Switch] Tab button found:', tabButton);
+        if (tabButton) tabButton.classList.add('active');
 
         // Update active tab content
-        document.querySelectorAll('.tab-content').forEach(content => {
+        const allTabs = document.querySelectorAll('.tab-content');
+        console.log('[Tab Switch] Removing active from', allTabs.length, 'tabs');
+        allTabs.forEach(content => {
+            console.log('[Tab Switch] Removing active from:', content.id);
             content.classList.remove('active');
         });
-        document.getElementById(`tab-${tabName}`).classList.add('active');
+        
+        const tabContent = document.getElementById(`tab-${tabName}`);
+        console.log('[Tab Switch] Tab content element:', tabContent);
+        if (tabContent) {
+            tabContent.classList.add('active');
+            console.log('[Tab Switch] Tab content classes after add:', tabContent.className);
+            
+            // Verify other tabs don't have active
+            allTabs.forEach(content => {
+                if (content.id !== `tab-${tabName}`) {
+                    console.log('[Tab Switch] Other tab', content.id, 'classes:', content.className);
+                }
+            });
+        }
 
         this.currentTab = tabName;
         this.updateHeaderActions();
@@ -854,13 +889,22 @@ const processFramework = {
 
     showAlert(message, type) {
         const container = document.getElementById('alert-container');
-        const alert = document.createElement('div');
-        alert.className = `alert alert-${type}`;
-        alert.textContent = message;
-        container.appendChild(alert);
+        if (!container) {
+            console.error('[Alert] alert-container element not found!');
+            alert(message); // Fallback to browser alert
+            return;
+        }
+        
+        console.log('[Alert] Creating alert:', message, type);
+        const alertDiv = document.createElement('div');
+        alertDiv.className = `alert alert-${type}`;
+        alertDiv.textContent = message;
+        container.appendChild(alertDiv);
+
+        console.log('[Alert] Alert appended to container');
 
         setTimeout(() => {
-            alert.remove();
+            alertDiv.remove();
         }, 5000);
     }
 };

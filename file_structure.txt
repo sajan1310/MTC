@@ -61,6 +61,7 @@
         app.py
         BACKEND_IMPLEMENTATION_COMPLETE.md
         CHANGELOG.md
+        check_columns.py
         check_oauth_config.py
         COMPLETE_CHANGE_LOG.md
         config.py

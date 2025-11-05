@@ -102,14 +102,14 @@ class ProcessService:
                     ps.id as process_subprocess_id,
                     ps.subprocess_id,
                     ps.custom_name,
-                    ps.sequence_order,
+                    ps.id as sequence_order,
                     ps.notes,
                     s.name as subprocess_name,
                     s.description as subprocess_description
                 FROM process_subprocesses ps
                 JOIN subprocesses s ON s.id = ps.subprocess_id
                 WHERE ps.process_id = %s
-                ORDER BY ps.sequence_order
+                ORDER BY ps.id
             """,
                 (process_id,),
             )
