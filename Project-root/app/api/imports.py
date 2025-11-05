@@ -235,7 +235,18 @@ def get_import_progress(import_id: str):
             return jsonify({"error": "Import not found or expired"}), 404
 
         # Verify user has access to this import
-        # TODO: Add user_id to progress data for authorization
+        # Check if user owns this import job
+        with get_conn() as (conn, cur):
+            cur.execute(
+                """
+                SELECT user_id FROM import_jobs 
+                WHERE id = %s AND deleted_at IS NULL
+                """,
+                (import_id,)
+            )
+            job = cur.fetchone()
+            if job and job[0] != current_user.id and current_user.role != 'admin':
+                return jsonify({"error": "Access denied"}), 403
 
         return jsonify(progress), 200
 

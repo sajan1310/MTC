@@ -6,10 +6,13 @@
     file_structure.txt
     generate_structure.py
     How_To_Use_Repairs.md
+    IMPLEMENTATION_VERIFICATION_REPORT.md
     Issue-Impact-FixTime-Severity.csv
     MTC_Action_Plan.md
     MTC_Code_Fixes_Guide.md
     MTC_Deep_Integration_Audit.md
+    MTC_FIXES_APPLIED.md
+    MTC_VERIFICATION_QUICK_SUMMARY.md
     Project_Summary.md
     .github/
         chatmodes/
@@ -209,6 +212,7 @@
             img/
                 Final_Logo.png
             js/
+                api_client.js
                 cost_calculator.js
                 login.js
                 process_editor.js
