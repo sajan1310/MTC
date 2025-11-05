@@ -44,19 +44,32 @@ class Process:
     
     def to_dict(self) -> Dict[str, Any]:
         """Convert to dictionary for JSON serialization."""
-        return {
+        def _fmt(dt: Any) -> Optional[str]:
+            if dt is None:
+                return None
+            # If already a string (e.g., from mocks), return as-is
+            if isinstance(dt, str):
+                return dt
+            # datetime-like with isoformat
+            iso = getattr(dt, 'isoformat', None)
+            return iso() if callable(iso) else str(dt)
+
+        data = {
             'id': self.id,
             'name': self.name,
             'description': self.description,
             'class': self.process_class,
+            # Provide compatibility alias expected by some callers/tests
+            'process_class': self.process_class,
             'user_id': self.user_id,
             'status': self.status,
             'version': self.version,
             'is_deleted': self.is_deleted,
-            'deleted_at': self.deleted_at.isoformat() if self.deleted_at else None,
-            'created_at': self.created_at.isoformat() if self.created_at else None,
-            'updated_at': self.updated_at.isoformat() if self.updated_at else None,
+            'deleted_at': _fmt(self.deleted_at),
+            'created_at': _fmt(self.created_at),
+            'updated_at': _fmt(self.updated_at),
         }
+        return data
     
     def is_active(self) -> bool:
         """Check if process is active and not deleted."""

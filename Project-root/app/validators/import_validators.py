@@ -373,6 +373,15 @@ class DataValidator:
                 
                 # Combine validated data
                 validated_row = {**validated_item, **validated_variant}
+                # Backward-compatibility aliases for consumers/tests that expect original headers
+                # Stock alias (some callers look for 'Stock' instead of normalized 'opening_stock')
+                if 'opening_stock' in validated_variant and 'Stock' not in validated_row:
+                    validated_row['Stock'] = validated_variant['opening_stock']
+                # Preserve original casing if present in input for convenience
+                if 'Color' in row and 'Color' not in validated_row:
+                    validated_row['Color'] = validated_variant.get('color', '').title()
+                if 'Size' in row and 'Size' not in validated_row:
+                    validated_row['Size'] = validated_variant.get('size', '').upper()
                 validated_row['row_number'] = idx
                 valid_rows.append(validated_row)
                 

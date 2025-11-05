@@ -17,6 +17,7 @@ def app():
         "WTF_CSRF_ENABLED": False,
         "SECRET_KEY": "test-secret-key",
         "SERVER_NAME": "localhost.localdomain",  # Required for url_for with _external=True
+    "RATELIMIT_STORAGE_URI": "memory://",  # Explicit memory storage for rate limiter
     })
     yield flask_app
 

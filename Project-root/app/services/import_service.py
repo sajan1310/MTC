@@ -198,17 +198,28 @@ class ImportService:
         Raises:
             Exception: If database operation fails
         """
-        # Extract validated data
-        item_name = row['name']
-        category = row.get('category', '')
-        description = row.get('description', '')
-        model = row.get('model', '')
-        variation = row.get('variation', '')
-        color = row['color']
-        size = row['size']
-        stock = row['opening_stock']
-        threshold = row.get('threshold', 5)
-        unit = row.get('unit', 'Pcs')
+        # Extract validated data (be tolerant to different header casings)
+        def pick(d: Dict[str, Any], *keys: str, default: Any = '') -> Any:
+            for k in keys:
+                if k in d and d[k] is not None:
+                    return d[k]
+            return default
+
+        # Item-level fields
+        item_name = pick(row, 'name', 'Item', 'Name')
+        if not item_name:
+            raise KeyError('name')
+        category = pick(row, 'category', 'Category', default='')
+        description = pick(row, 'description', 'Description', default='')
+        model = pick(row, 'model', 'Model', default='')
+        variation = pick(row, 'variation', 'Variation', default='')
+
+        # Variant-level fields
+        color = pick(row, 'color', 'Color')
+        size = pick(row, 'size', 'Size')
+        stock = pick(row, 'opening_stock', 'Stock', 'stock')
+        threshold = pick(row, 'threshold', 'Threshold', default=5)
+        unit = pick(row, 'unit', 'Unit', default='Pcs')
         
         # Get or create model_id if model provided
         model_id = None
