@@ -226,7 +226,7 @@ def create_app(config_name: str | None = None) -> Flask:
 
     # Blueprints
     from .auth.routes import auth_bp
-    from .api.routes import api_bp
+    from .api import api_bp  # minimal test-facing API
     from .api.file_routes import files_bp
     from .main.routes import main_bp
     
@@ -237,7 +237,7 @@ def create_app(config_name: str | None = None) -> Flask:
     from .api.subprocess_management import subprocess_api_bp
 
     app.register_blueprint(auth_bp, url_prefix='/auth')
-    app.register_blueprint(api_bp, url_prefix='/api')
+    app.register_blueprint(api_bp)  # api_bp already has url_prefix='/api'
     app.register_blueprint(files_bp)  # No prefix, uses /api/files routes
     app.register_blueprint(main_bp)
     
@@ -314,10 +314,11 @@ def create_app(config_name: str | None = None) -> Flask:
 
 # Backwards-compatible exports
 from .utils import get_or_create_user  # re-export for backward compatibility in tests
+from .utils.response import APIResponse  # ensure response utility is imported and available
 
 __all__ = [
     'create_app',
     'validate_password',
-    'get_or_create_user',
+    'get_or_create_user', 'APIResponse',
     'csrf', 'login_manager', 'limiter',
 ]

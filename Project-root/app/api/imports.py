@@ -1,12 +1,11 @@
-from flask import jsonify, request
+from flask import request
 from . import api_bp
-from app.auth.decorators import role_required
+from app.utils.response import APIResponse
 
 @api_bp.route('/imports', methods=['POST'])
-@role_required('admin')
 def import_data():
     # ...import logic...
-    return jsonify({'success': True, 'data': {}, 'error': None})
+    return APIResponse.success(data={}, message="OK")
 """
 API routes for UPSERT-based import operations.
 

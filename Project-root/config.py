@@ -93,6 +93,8 @@ class TestingConfig(Config):
     TESTING = True
     # Relax requirements for tests; external DB may be mocked/available in CI
     SESSION_COOKIE_SECURE = False
+    # Use memory storage for rate limiter in tests to avoid Redis warning
+    RATELIMIT_STORAGE_URL = 'memory://'
 
 
 class ProductionConfig(Config):

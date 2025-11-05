@@ -9,6 +9,7 @@ import psycopg2.errors
 
 from app import limiter
 from app.services.subprocess_service import SubprocessService
+from app.utils.response import APIResponse
 
 subprocess_api_bp = Blueprint('subprocess_api', __name__)
 
@@ -38,38 +39,26 @@ def create_subprocess():
         # Validate Content-Type
         if not request.is_json:
             current_app.logger.warning(f"[CREATE SUBPROCESS] Invalid Content-Type: {request.content_type}")
-            return jsonify({
-                'error': 'Invalid Content-Type',
-                'details': f'Expected application/json but received {request.content_type}'
-            }), 400
+            return APIResponse.error('invalid_content_type', f'Expected application/json but received {request.content_type}', 400)
         
         # Parse JSON with error handling
         data = request.get_json(silent=True)
         
         if data is None:
             current_app.logger.error("[CREATE SUBPROCESS] Failed to parse JSON request body")
-            return jsonify({
-                'error': 'Invalid JSON',
-                'details': 'Request body must be valid JSON. Check for syntax errors, trailing commas, or improper quotes.'
-            }), 400
+            return APIResponse.error('invalid_json', 'Request body must be valid JSON. Check for syntax errors, trailing commas, or improper quotes.', 400)
         
         current_app.logger.debug(f"[CREATE SUBPROCESS] Parsed data: {data}")
         
         # Validate required fields
         if not data.get('name'):
             current_app.logger.warning("[CREATE SUBPROCESS] Missing required field: name")
-            return jsonify({
-                'error': 'Validation error',
-                'details': 'Subprocess name is required'
-            }), 400
+            return APIResponse.error('validation_error', 'Subprocess name is required', 400)
         
         # Validate name is not empty or just whitespace
         if not data['name'].strip():
             current_app.logger.warning("[CREATE SUBPROCESS] Empty subprocess name")
-            return jsonify({
-                'error': 'Validation error',
-                'details': 'Subprocess name cannot be empty'
-            }), 400
+            return APIResponse.error('validation_error', 'Subprocess name cannot be empty', 400)
         
         # Validate category if provided
         category = data.get('category')
@@ -87,32 +76,20 @@ def create_subprocess():
         current_app.logger.info(
             f"[CREATE SUBPROCESS] Subprocess created successfully: {subprocess['id']} by user {current_user.id}"
         )
-        return jsonify(subprocess), 201
+        return APIResponse.created(subprocess, 'Subprocess created')
         
     except psycopg2.errors.UniqueViolation as e:
         current_app.logger.warning(f"[CREATE SUBPROCESS] Duplicate subprocess name: {data.get('name')}")
-        return jsonify({
-            'error': 'Duplicate subprocess name',
-            'details': f"A subprocess with the name '{data.get('name')}' already exists. Please choose a different name."
-        }), 409
+        return APIResponse.error('duplicate_name', f"A subprocess with the name '{data.get('name')}' already exists. Please choose a different name.", 409)
     except KeyError as e:
         current_app.logger.error(f"[CREATE SUBPROCESS] Missing key: {e}")
-        return jsonify({
-            'error': 'Validation error',
-            'details': f'Missing required field: {str(e)}'
-        }), 400
+        return APIResponse.error('validation_error', f'Missing required field: {str(e)}', 400)
     except ValueError as e:
         current_app.logger.error(f"[CREATE SUBPROCESS] Invalid value: {e}")
-        return jsonify({
-            'error': 'Validation error',
-            'details': str(e)
-        }), 400
+        return APIResponse.error('validation_error', str(e), 400)
     except Exception as e:
         current_app.logger.error(f"[CREATE SUBPROCESS] Unexpected error: {e}", exc_info=True)
-        return jsonify({
-            'error': 'Internal server error',
-            'details': str(e) if current_app.debug else 'An unexpected error occurred'
-        }), 500
+        return APIResponse.error('internal_error', str(e) if current_app.debug else 'An unexpected error occurred', 500)
 
 
 @subprocess_api_bp.route('/subprocess/<int:subprocess_id>', methods=['GET'])
@@ -124,13 +101,13 @@ def get_subprocess(subprocess_id):
         subprocess = SubprocessService.get_subprocess(subprocess_id)
         
         if not subprocess:
-            return jsonify({'error': 'Subprocess not found'}), 404
+            return APIResponse.not_found('Subprocess', subprocess_id)
         
-        return jsonify(subprocess), 200
+        return APIResponse.success(subprocess)
         
     except Exception as e:
         current_app.logger.error(f"Error retrieving subprocess: {e}")
-        return jsonify({'error': str(e)}), 500
+        return APIResponse.error('internal_error', str(e), 500)
 
 
 @subprocess_api_bp.route('/subprocesses', methods=['GET'])
@@ -148,11 +125,11 @@ def list_subprocesses():
             per_page=per_page
         )
         
-        return jsonify(result), 200
+        return APIResponse.success(result)
         
     except Exception as e:
         current_app.logger.error(f"Error listing subprocesses: {e}")
-        return jsonify({'error': str(e)}), 500
+        return APIResponse.error('internal_error', str(e), 500)
 
 
 @subprocess_api_bp.route('/subprocess/<int:subprocess_id>', methods=['PUT'])
@@ -163,18 +140,12 @@ def update_subprocess(subprocess_id):
     try:
         # Validate Content-Type
         if not request.is_json:
-            return jsonify({
-                'error': 'Invalid Content-Type',
-                'details': f'Expected application/json but received {request.content_type}'
-            }), 400
+            return APIResponse.error('invalid_content_type', f'Expected application/json but received {request.content_type}', 400)
         
         data = request.get_json(silent=True)
         
         if data is None:
-            return jsonify({
-                'error': 'Invalid JSON',
-                'details': 'Request body must be valid JSON'
-            }), 400
+            return APIResponse.error('invalid_json', 'Request body must be valid JSON', 400)
         
         updated = SubprocessService.update_subprocess(
             subprocess_id,
@@ -186,14 +157,14 @@ def update_subprocess(subprocess_id):
         )
         
         if not updated:
-            return jsonify({'error': 'Subprocess not found'}), 404
+            return APIResponse.not_found('Subprocess', subprocess_id)
         
         current_app.logger.info(f"Subprocess updated: {subprocess_id}")
-        return jsonify(updated), 200
+        return APIResponse.success(updated, 'Subprocess updated')
         
     except Exception as e:
         current_app.logger.error(f"Error updating subprocess: {e}")
-        return jsonify({'error': str(e)}), 500
+        return APIResponse.error('internal_error', str(e), 500)
 
 
 @subprocess_api_bp.route('/subprocess/<int:subprocess_id>', methods=['DELETE'])
@@ -205,14 +176,14 @@ def delete_subprocess(subprocess_id):
         success = SubprocessService.delete_subprocess(subprocess_id)
         
         if not success:
-            return jsonify({'error': 'Subprocess not found'}), 404
+            return APIResponse.not_found('Subprocess', subprocess_id)
         
         current_app.logger.info(f"Subprocess deleted: {subprocess_id}")
-        return '', 204
+        return APIResponse.success(None, 'Subprocess deleted')
         
     except Exception as e:
         current_app.logger.error(f"Error deleting subprocess: {e}")
-        return jsonify({'error': str(e)}), 500
+        return APIResponse.error('internal_error', str(e), 500)
 
 
 @subprocess_api_bp.route('/subprocess/<int:subprocess_id>/duplicate', methods=['POST'])
@@ -224,21 +195,21 @@ def duplicate_subprocess(subprocess_id):
         new_name = data.get('new_name')
         
         if not new_name:
-            return jsonify({'error': 'new_name is required'}), 400
+            return APIResponse.error('validation_error', 'new_name is required', 400)
         
         duplicated = SubprocessService.duplicate_subprocess(subprocess_id, new_name)
         
         if not duplicated:
-            return jsonify({'error': 'Subprocess not found'}), 404
+            return APIResponse.not_found('Subprocess', subprocess_id)
         
         current_app.logger.info(
             f"Subprocess duplicated: {subprocess_id} -> {duplicated['id']}"
         )
-        return jsonify(duplicated), 201
+        return APIResponse.created(duplicated, 'Subprocess duplicated')
         
     except Exception as e:
         current_app.logger.error(f"Error duplicating subprocess: {e}")
-        return jsonify({'error': str(e)}), 500
+        return APIResponse.error('internal_error', str(e), 500)
 
 
 # ===== SUBPROCESS SEARCH =====
@@ -253,7 +224,7 @@ def search_subprocesses():
         limit = min(int(request.args.get('limit', 50)), 100)
         
         if len(query) < 2:
-            return jsonify({'error': 'Search query must be at least 2 characters'}), 400
+            return APIResponse.error('validation_error', 'Search query must be at least 2 characters', 400)
         
         from database import get_conn
         from psycopg2.extras import RealDictCursor
@@ -285,20 +256,20 @@ def search_subprocesses():
         results = cur.fetchall()
         cur.close()
         
-        return jsonify([dict(row) for row in results]), 200
+        return APIResponse.success([dict(row) for row in results])
         
     except Exception as e:
         current_app.logger.error(f"Error searching subprocesses: {e}")
-        return jsonify({'error': str(e)}), 500
+        return APIResponse.error('internal_error', str(e), 500)
 
 
 # Error handlers
 @subprocess_api_bp.errorhandler(404)
 def not_found(error):
-    return jsonify({'error': 'Resource not found'}), 404
+    return APIResponse.error('not_found', 'Resource not found', 404)
 
 
 @subprocess_api_bp.errorhandler(500)
 def internal_error(error):
     current_app.logger.error(f"Internal server error: {error}")
-    return jsonify({'error': 'Internal server error'}), 500
+    return APIResponse.error('internal_error', 'Internal server error', 500)

@@ -44,22 +44,22 @@ def init_app(app):
             options=f'-c statement_timeout={statement_timeout}'
         )
         app.logger.info(
-            f"✅ Database pool initialized: {min_conn}-{max_conn} connections "
+            f"Database pool initialized: {min_conn}-{max_conn} connections "
             f"(timeout: {connect_timeout}s, query timeout: {statement_timeout}ms)"
         )
         
         # Test initial connection
         with get_conn() as (conn, cur):
             cur.execute('SELECT 1')
-            app.logger.info("✅ Database connectivity verified")
+            app.logger.info("Database connectivity verified")
             
     except psycopg2.OperationalError as e:
-        app.logger.critical(f"❌ FATAL: Could not connect to database: {e}")
+        app.logger.critical(f"FATAL: Could not connect to database: {e}")
         app.logger.critical("   Please verify DATABASE_URL and database availability")
         db_pool = None
         raise  # Re-raise to prevent app startup with broken DB
     except Exception as e:
-        app.logger.critical(f"❌ FATAL: Database initialization error: {e}")
+        app.logger.critical(f"FATAL: Database initialization error: {e}")
         db_pool = None
         raise
 
@@ -97,7 +97,7 @@ def get_conn(cursor_factory=None, autocommit=False):
         
         # Verify connection is still alive (handles stale connections)
         if conn.closed:
-            current_app.logger.warning("⚠️  Stale connection detected, reconnecting...")
+            current_app.logger.warning("Stale connection detected, reconnecting...")
             db_pool.putconn(conn, close=True)
             conn = db_pool.getconn()
         
@@ -109,10 +109,10 @@ def get_conn(cursor_factory=None, autocommit=False):
         # Commit transaction if not in autocommit mode
         if not autocommit:
             conn.commit()
-            
+        
     except psycopg2.OperationalError as e:
         # Connection-level error (network, server crash, etc.)
-        current_app.logger.error(f"🔴 Database connection error: {e}")
+        current_app.logger.error(f"Database connection error: {e}")
         if conn and not autocommit:
             conn.rollback()
         # Close bad connection instead of returning to pool
@@ -123,14 +123,14 @@ def get_conn(cursor_factory=None, autocommit=False):
         
     except psycopg2.IntegrityError as e:
         # Constraint violation (unique, foreign key, etc.)
-        current_app.logger.warning(f"⚠️  Database integrity error: {e}")
+        current_app.logger.warning(f"Database integrity error: {e}")
         if conn and not autocommit:
             conn.rollback()
         raise
         
     except Exception as e:
         # General error (syntax, logic, etc.)
-        current_app.logger.error(f"🔴 Database error: {e}")
+        current_app.logger.error(f"Database error: {e}")
         if conn and not autocommit:
             conn.rollback()
         raise
@@ -142,6 +142,7 @@ def get_conn(cursor_factory=None, autocommit=False):
         if conn:
             # Return connection to pool (or was closed above)
             db_pool.putconn(conn)
+
 
 def close_db_pool():
     """Close all database connections. Call on application shutdown."""

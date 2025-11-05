@@ -9,6 +9,7 @@ from flask_login import login_required, current_user
 from functools import wraps
 
 from app import limiter
+from app.utils.response import APIResponse
 from app.services.subprocess_service import SubprocessService
 from app.services.variant_service import VariantService
 from app.services.audit_service import audit
@@ -22,9 +23,9 @@ def role_required(*roles):
         @wraps(f)
         def decorated_function(*args, **kwargs):
             if not current_user.is_authenticated:
-                return jsonify({'error': 'Authentication required'}), 401
+                return APIResponse.error('unauthenticated', 'Authentication required', 401)
             if current_user.role not in roles and current_user.role != 'admin':
-                return jsonify({'error': 'Insufficient permissions'}), 403
+                return APIResponse.error('forbidden', 'Insufficient permissions', 403)
             return f(*args, **kwargs)
         return decorated_function
     return decorator
@@ -40,11 +41,11 @@ def add_variant_usage():
         data = request.json
         
         if not data.get('subprocess_id'):
-            return jsonify({'error': 'subprocess_id is required'}), 400
+            return APIResponse.error('validation_error', 'subprocess_id is required', 400)
         if not data.get('item_id'):
-            return jsonify({'error': 'item_id is required'}), 400
+            return APIResponse.error('validation_error', 'item_id is required', 400)
         if not data.get('quantity'):
-            return jsonify({'error': 'quantity is required'}), 400
+            return APIResponse.error('validation_error', 'quantity is required', 400)
         
         variant_usage = VariantService.add_variant_usage(
             subprocess_id=data['subprocess_id'],
@@ -60,11 +61,10 @@ def add_variant_usage():
         current_app.logger.info(
             f"Variant usage added: item {data['item_id']} to subprocess {data['subprocess_id']}"
         )
-        return jsonify(variant_usage), 201
-        
+        return APIResponse.created(variant_usage, 'Variant usage added')
     except Exception as e:
         current_app.logger.error(f"Error adding variant usage: {e}")
-        return jsonify({'error': str(e)}), 500
+        return APIResponse.error('internal_error', str(e), 500)
 
 
 @variant_api_bp.route('/variant_usage/<int:usage_id>', methods=['PUT'])
@@ -82,17 +82,16 @@ def update_variant_usage(usage_id):
         )
         
         if not updated:
-            return jsonify({'error': 'Variant usage not found'}), 404
+            return APIResponse.not_found('Variant usage', usage_id)
         
         # Audit log
         audit.log_update('variant_usage', usage_id, f"Usage {usage_id}", new_data=data)
         
         current_app.logger.info(f"Variant usage updated: {usage_id}")
-        return jsonify(updated), 200
-        
+        return APIResponse.success(updated, 'Variant usage updated')
     except Exception as e:
         current_app.logger.error(f"Error updating variant usage: {e}")
-        return jsonify({'error': str(e)}), 500
+        return APIResponse.error('internal_error', str(e), 500)
 
 
 @variant_api_bp.route('/variant_usage/<int:usage_id>', methods=['DELETE'])
@@ -103,17 +102,16 @@ def remove_variant_usage(usage_id):
         success = VariantService.remove_variant_usage(usage_id)
         
         if not success:
-            return jsonify({'error': 'Variant usage not found'}), 404
+            return APIResponse.not_found('Variant usage', usage_id)
         
         # Audit log
         audit.log_delete('variant_usage', usage_id, f"Usage {usage_id}")
         
         current_app.logger.info(f"Variant usage removed: {usage_id}")
-        return '', 204
-        
+        return APIResponse.success(None, 'Variant usage removed')
     except Exception as e:
         current_app.logger.error(f"Error removing variant usage: {e}")
-        return jsonify({'error': str(e)}), 500
+        return APIResponse.error('internal_error', str(e), 500)
 
 
 # ===== SUBSTITUTE GROUPS (OR FEATURE) =====
@@ -126,9 +124,9 @@ def create_substitute_group():
         data = request.json
         
         if not data.get('subprocess_id'):
-            return jsonify({'error': 'subprocess_id is required'}), 400
+            return APIResponse.error('validation_error', 'subprocess_id is required', 400)
         if not data.get('variant_ids') or len(data['variant_ids']) < 2:
-            return jsonify({'error': 'At least 2 variant_ids required for OR group'}), 400
+            return APIResponse.error('validation_error', 'At least 2 variant_ids required for OR group', 400)
         
         group = SubprocessService.create_substitute_group(
             subprocess_id=data['subprocess_id'],
@@ -143,11 +141,10 @@ def create_substitute_group():
         current_app.logger.info(
             f"Substitute group created for subprocess {data['subprocess_id']}"
         )
-        return jsonify(group), 201
-        
+        return APIResponse.created(group, 'Substitute group created')
     except Exception as e:
         current_app.logger.error(f"Error creating substitute group: {e}")
-        return jsonify({'error': str(e)}), 500
+        return APIResponse.error('internal_error', str(e), 500)
 
 
 @variant_api_bp.route('/substitute_group/<int:group_id>', methods=['GET'])
@@ -169,7 +166,7 @@ def get_substitute_group(group_id):
         group = cur.fetchone()
         
         if not group:
-            return jsonify({'error': 'Substitute group not found'}), 404
+            return APIResponse.not_found('Substitute group', group_id)
         
         # Get all variants in this group
         cur.execute("""
@@ -190,12 +187,10 @@ def get_substitute_group(group_id):
         
         result = dict(group)
         result['variants'] = [dict(v) for v in variants]
-        
-        return jsonify(result), 200
-        
+        return APIResponse.success(result)
     except Exception as e:
         current_app.logger.error(f"Error getting substitute group: {e}")
-        return jsonify({'error': str(e)}), 500
+        return APIResponse.error('internal_error', str(e), 500)
 
 
 @variant_api_bp.route('/process_subprocess/<int:ps_id>/substitute_groups', methods=['GET'])
@@ -238,13 +233,11 @@ def get_subprocess_substitute_groups(ps_id):
             group_dict = dict(group)
             group_dict['variants'] = [dict(v) for v in variants]
             result.append(group_dict)
-        
         cur.close()
-        return jsonify(result), 200
-        
+        return APIResponse.success(result)
     except Exception as e:
         current_app.logger.error(f"Error getting substitute groups: {e}")
-        return jsonify({'error': str(e)}), 500
+        return APIResponse.error('internal_error', str(e), 500)
 
 
 @variant_api_bp.route('/substitute_group/<int:group_id>', methods=['PUT'])
@@ -275,7 +268,7 @@ def update_substitute_group(group_id):
             params.append(data['selection_method'])
         
         if not updates:
-            return jsonify({'error': 'No fields to update'}), 400
+            return APIResponse.error('validation_error', 'No fields to update', 400)
         
         updates.append("updated_at = NOW()")
         params.append(group_id)
@@ -290,14 +283,13 @@ def update_substitute_group(group_id):
         cur.close()
         
         if not updated:
-            return jsonify({'error': 'Substitute group not found'}), 404
+            return APIResponse.not_found('Substitute group', group_id)
         
         current_app.logger.info(f"Substitute group updated: {group_id}")
-        return jsonify(dict(updated)), 200
-        
+        return APIResponse.success(dict(updated), 'Substitute group updated')
     except Exception as e:
         current_app.logger.error(f"Error updating substitute group: {e}")
-        return jsonify({'error': str(e)}), 500
+        return APIResponse.error('internal_error', str(e), 500)
 
 
 @variant_api_bp.route('/substitute_group/<int:group_id>', methods=['DELETE'])
@@ -333,11 +325,10 @@ def delete_substitute_group(group_id):
         audit.log_delete('substitute_group', group_id, f"OR Group {group_id}")
         
         current_app.logger.info(f"Substitute group deleted: {group_id}")
-        return '', 204
-        
+        return APIResponse.success(None, 'Substitute group deleted')
     except Exception as e:
         current_app.logger.error(f"Error deleting substitute group: {e}")
-        return jsonify({'error': str(e)}), 500
+        return APIResponse.error('internal_error', str(e), 500)
 
 
 @variant_api_bp.route('/substitute_group/<int:group_id>/add_variant', methods=['POST'])
@@ -348,7 +339,7 @@ def add_variant_to_group(group_id):
         data = request.json
         
         if not data.get('usage_id'):
-            return jsonify({'error': 'usage_id is required'}), 400
+            return APIResponse.error('validation_error', 'usage_id is required', 400)
         
         from database import get_conn
         from psycopg2.extras import RealDictCursor
@@ -359,7 +350,7 @@ def add_variant_to_group(group_id):
         # Verify group exists
         cur.execute("SELECT * FROM substitute_groups WHERE id = %s AND deleted_at IS NULL", (group_id,))
         if not cur.fetchone():
-            return jsonify({'error': 'Substitute group not found'}), 404
+            return APIResponse.not_found('Substitute group', group_id)
         
         # Get max alternative_order for this group
         cur.execute("""
@@ -385,14 +376,13 @@ def add_variant_to_group(group_id):
         cur.close()
         
         if not updated:
-            return jsonify({'error': 'Variant usage not found'}), 404
+            return APIResponse.not_found('Variant usage', data.get('usage_id'))
         
         current_app.logger.info(f"Variant added to substitute group {group_id}")
-        return jsonify(dict(updated)), 200
-        
+        return APIResponse.success(dict(updated), 'Variant added to substitute group')
     except Exception as e:
         current_app.logger.error(f"Error adding variant to group: {e}")
-        return jsonify({'error': str(e)}), 500
+        return APIResponse.error('internal_error', str(e), 500)
 
 
 @variant_api_bp.route('/variant_usage/<int:usage_id>/remove_from_group', methods=['POST'])
@@ -421,14 +411,13 @@ def remove_variant_from_group(usage_id):
         cur.close()
         
         if not updated:
-            return jsonify({'error': 'Variant usage not found'}), 404
+            return APIResponse.not_found('Variant usage', usage_id)
         
         current_app.logger.info(f"Variant removed from substitute group: {usage_id}")
-        return jsonify(dict(updated)), 200
-        
+        return APIResponse.success(dict(updated), 'Variant removed from substitute group')
     except Exception as e:
         current_app.logger.error(f"Error removing variant from group: {e}")
-        return jsonify({'error': str(e)}), 500
+        return APIResponse.error('internal_error', str(e), 500)
 
 
 # ===== COST ITEMS =====
@@ -436,86 +425,94 @@ def remove_variant_from_group(usage_id):
 @variant_api_bp.route('/cost_item', methods=['POST'])
 @login_required
 def add_cost_item():
-    """Add cost item (labor, overhead) to subprocess."""
+    """Add cost item (labor, overhead) to a process subprocess association."""
     try:
-        data = request.json
-        
-        if not data.get('subprocess_id'):
-            return jsonify({'error': 'subprocess_id is required'}), 400
-        if not data.get('cost_type'):
-            return jsonify({'error': 'cost_type is required'}), 400
-        if not data.get('amount'):
-            return jsonify({'error': 'amount is required'}), 400
-        
+        data = request.get_json(silent=True) or {}
+
+        ps_id = data.get('process_subprocess_id') or data.get('subprocess_id')
+        cost_type = data.get('cost_type', 'generic')
+        rate = data.get('rate')
+        quantity = data.get('quantity', 1)
+
+        if not ps_id:
+            return APIResponse.error('validation_error', 'subprocess_id is required', 400)
+        if rate is None:
+            return APIResponse.error('validation_error', 'rate is required', 400)
+
         cost_item = SubprocessService.add_cost_item(
-            subprocess_id=data['subprocess_id'],
-            cost_type=data['cost_type'],
-            amount=data['amount'],
+            process_subprocess_id=int(ps_id),
+            cost_type=cost_type,
+            quantity=float(quantity),
+            rate_per_unit=float(rate),
             description=data.get('description'),
-            unit=data.get('unit', 'per_unit')
         )
-        
+
         current_app.logger.info(
-            f"Cost item added: {data['cost_type']} to subprocess {data['subprocess_id']}"
+            f"Cost item added: {cost_type} to process_subprocess {ps_id}"
         )
-        return jsonify(cost_item), 201
-        
+        return APIResponse.created(cost_item, 'Cost item added')
+    except ValueError as e:
+        return APIResponse.error('validation_error', f'Invalid number: {str(e)}', 400)
     except Exception as e:
         current_app.logger.error(f"Error adding cost item: {e}")
-        return jsonify({'error': str(e)}), 500
+        return APIResponse.error('internal_error', str(e), 500)
 
 
 @variant_api_bp.route('/cost_item/<int:cost_id>', methods=['PUT'])
 @login_required
 def update_cost_item(cost_id):
-    """Update cost item amount/description."""
+    """Update cost item rate/quantity/description and recalc total."""
     try:
-        data = request.json
-        
+        data = request.get_json(silent=True) or {}
+
         from database import get_conn
         from psycopg2.extras import RealDictCursor
-        
+
         conn = get_conn()
         cur = conn.cursor(cursor_factory=RealDictCursor)
-        
+
         # Build dynamic update
         updates = []
         params = []
-        
-        if 'amount' in data:
-            updates.append("amount = %s")
-            params.append(data['amount'])
+
+        if 'rate' in data:
+            updates.append("rate_per_unit = %s")
+            params.append(float(data['rate']))
+        if 'quantity' in data:
+            updates.append("quantity = %s")
+            params.append(float(data['quantity']))
         if 'description' in data:
             updates.append("description = %s")
             params.append(data['description'])
-        if 'unit' in data:
-            updates.append("unit = %s")
-            params.append(data['unit'])
-        
+
         if not updates:
-            return jsonify({'error': 'No fields to update'}), 400
-        
+            cur.close()
+            return APIResponse.error('validation_error', 'No fields to update', 400)
+
+        # Always recalc total_cost based on (possibly) new fields
+        updates.append("total_cost = rate_per_unit * quantity")
         updates.append("updated_at = NOW()")
         params.append(cost_id)
-        
+
         cur.execute(
             f"UPDATE cost_items SET {', '.join(updates)} WHERE id = %s AND deleted_at IS NULL RETURNING *",
             params
         )
-        
+
         updated = cur.fetchone()
         conn.commit()
         cur.close()
-        
+
         if not updated:
-            return jsonify({'error': 'Cost item not found'}), 404
-        
+            return APIResponse.not_found('CostItem', cost_id)
+
         current_app.logger.info(f"Cost item updated: {cost_id}")
-        return jsonify(dict(updated)), 200
-        
+        return APIResponse.success(dict(updated), 'Cost item updated')
+    except ValueError as e:
+        return APIResponse.error('validation_error', f'Invalid number: {str(e)}', 400)
     except Exception as e:
         current_app.logger.error(f"Error updating cost item: {e}")
-        return jsonify({'error': str(e)}), 500
+        return APIResponse.error('internal_error', str(e), 500)
 
 
 @variant_api_bp.route('/cost_item/<int:cost_id>', methods=['DELETE'])
@@ -537,11 +534,10 @@ def remove_cost_item(cost_id):
         cur.close()
         
         current_app.logger.info(f"Cost item removed: {cost_id}")
-        return '', 204
-        
+        return APIResponse.success(None, 'Cost item removed')
     except Exception as e:
         current_app.logger.error(f"Error removing cost item: {e}")
-        return jsonify({'error': str(e)}), 500
+        return APIResponse.error('internal_error', str(e), 500)
 
 
 # ===== MULTI-SUPPLIER PRICING =====
@@ -555,9 +551,9 @@ def add_supplier_pricing(item_id):
         data = request.json
         
         if not data.get('supplier_id'):
-            return jsonify({'error': 'supplier_id is required'}), 400
+            return APIResponse.error('validation_error', 'supplier_id is required', 400)
         if not data.get('unit_price'):
-            return jsonify({'error': 'unit_price is required'}), 400
+            return APIResponse.error('validation_error', 'unit_price is required', 400)
         
         pricing = VariantService.add_supplier_pricing(
             item_id=item_id,
@@ -571,11 +567,10 @@ def add_supplier_pricing(item_id):
         current_app.logger.info(
             f"Supplier pricing added: item {item_id}, supplier {data['supplier_id']}"
         )
-        return jsonify(pricing), 201
-        
+        return APIResponse.created(pricing, 'Supplier pricing added')
     except Exception as e:
         current_app.logger.error(f"Error adding supplier pricing: {e}")
-        return jsonify({'error': str(e)}), 500
+        return APIResponse.error('internal_error', str(e), 500)
 
 
 @variant_api_bp.route('/variant/<int:item_id>/supplier_pricing', methods=['GET'])
@@ -584,11 +579,10 @@ def get_variant_suppliers(item_id):
     """Get all supplier pricing for a variant."""
     try:
         suppliers = VariantService.get_variant_suppliers(item_id)
-        return jsonify(suppliers), 200
-        
+        return APIResponse.success(suppliers)
     except Exception as e:
         current_app.logger.error(f"Error getting variant suppliers: {e}")
-        return jsonify({'error': str(e)}), 500
+        return APIResponse.error('internal_error', str(e), 500)
 
 
 @variant_api_bp.route('/supplier_pricing/<int:pricing_id>', methods=['PUT'])
@@ -608,14 +602,13 @@ def update_supplier_pricing(pricing_id):
         )
         
         if not updated:
-            return jsonify({'error': 'Supplier pricing not found'}), 404
+            return APIResponse.not_found('Supplier pricing', pricing_id)
         
         current_app.logger.info(f"Supplier pricing updated: {pricing_id}")
-        return jsonify(updated), 200
-        
+        return APIResponse.success(updated, 'Supplier pricing updated')
     except Exception as e:
         current_app.logger.error(f"Error updating supplier pricing: {e}")
-        return jsonify({'error': str(e)}), 500
+        return APIResponse.error('internal_error', str(e), 500)
 
 
 @variant_api_bp.route('/supplier_pricing/<int:pricing_id>', methods=['DELETE'])
@@ -627,14 +620,13 @@ def remove_supplier_pricing(pricing_id):
         success = VariantService.remove_supplier_pricing(pricing_id)
         
         if not success:
-            return jsonify({'error': 'Supplier pricing not found'}), 404
+            return APIResponse.not_found('Supplier pricing', pricing_id)
         
         current_app.logger.info(f"Supplier pricing removed: {pricing_id}")
-        return '', 204
-        
+        return APIResponse.success(None, 'Supplier pricing removed')
     except Exception as e:
         current_app.logger.error(f"Error removing supplier pricing: {e}")
-        return jsonify({'error': str(e)}), 500
+        return APIResponse.error('internal_error', str(e), 500)
 
 
 # ===== VARIANT SEARCH & DISCOVERY =====
@@ -659,11 +651,10 @@ def search_variants():
             filters['max_cost'] = float(request.args.get('max_cost'))
         
         results = VariantService.search_variants(query, filters, limit)
-        return jsonify(results), 200
-        
+        return APIResponse.success(results)
     except Exception as e:
         current_app.logger.error(f"Error searching variants: {e}")
-        return jsonify({'error': str(e)}), 500
+        return APIResponse.error('internal_error', str(e), 500)
 
 
 @variant_api_bp.route('/variant/<int:item_id>/availability', methods=['GET'])
@@ -673,20 +664,19 @@ def check_variant_availability(item_id):
     try:
         required_qty = float(request.args.get('quantity', 1))
         availability = VariantService.check_variant_availability(item_id, required_qty)
-        return jsonify(availability), 200
-        
+        return APIResponse.success(availability)
     except Exception as e:
         current_app.logger.error(f"Error checking availability: {e}")
-        return jsonify({'error': str(e)}), 500
+        return APIResponse.error('internal_error', str(e), 500)
 
 
 # Error handlers
 @variant_api_bp.errorhandler(404)
 def not_found(error):
-    return jsonify({'error': 'Resource not found'}), 404
+    return APIResponse.error('not_found', 'Resource not found', 404)
 
 
 @variant_api_bp.errorhandler(500)
 def internal_error(error):
     current_app.logger.error(f"Internal server error: {error}")
-    return jsonify({'error': 'Internal server error'}), 500
+    return APIResponse.error('internal_error', 'Internal server error', 500)

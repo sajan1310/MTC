@@ -10,6 +10,7 @@ from functools import wraps
 import psycopg2.errors
 
 from app import limiter
+from app.utils.response import APIResponse
 from app.services.process_service import ProcessService
 from app.services.subprocess_service import SubprocessService
 from app.services.costing_service import CostingService
@@ -34,9 +35,9 @@ def role_required(*roles):
         @wraps(f)
         def decorated_function(*args, **kwargs):
             if not current_user.is_authenticated:
-                return jsonify({'error': 'Authentication required'}), 401
+                return APIResponse.error('unauthenticated', 'Authentication required', 401)
             if current_user.role not in roles and current_user.role != 'admin':
-                return jsonify({'error': 'Insufficient permissions'}), 403
+                return APIResponse.error('forbidden', 'Insufficient permissions', 403)
             return f(*args, **kwargs)
         return decorated_function
     return decorator
@@ -59,38 +60,26 @@ def create_process():
         # Validate Content-Type
         if not request.is_json:
             current_app.logger.warning(f"[CREATE PROCESS] Invalid Content-Type: {request.content_type}")
-            return jsonify({
-                'error': 'Invalid Content-Type',
-                'details': f'Expected application/json but received {request.content_type}'
-            }), 400
+            return APIResponse.error('invalid_content_type', f'Expected application/json but received {request.content_type}', 400)
         
         # Parse JSON with error handling
         data = request.get_json(silent=True)
         
         if data is None:
             current_app.logger.error("[CREATE PROCESS] Failed to parse JSON request body")
-            return jsonify({
-                'error': 'Invalid JSON',
-                'details': 'Request body must be valid JSON. Check for syntax errors, trailing commas, or improper quotes.'
-            }), 400
+            return APIResponse.error('invalid_json', 'Request body must be valid JSON. Check for syntax errors, trailing commas, or improper quotes.', 400)
         
         current_app.logger.debug(f"[CREATE PROCESS] Parsed data: {data}")
         
         # Validate required fields
         if not data.get('name'):
             current_app.logger.warning("[CREATE PROCESS] Missing required field: name")
-            return jsonify({
-                'error': 'Validation error',
-                'details': 'Process name is required'
-            }), 400
+            return APIResponse.error('validation_error', 'Process name is required', 400)
         
         # Validate name is not empty or just whitespace
         if not data['name'].strip():
             current_app.logger.warning("[CREATE PROCESS] Empty process name")
-            return jsonify({
-                'error': 'Validation error',
-                'details': 'Process name cannot be empty'
-            }), 400
+            return APIResponse.error('validation_error', 'Process name cannot be empty', 400)
         
         # Normalize process_class to match allowed DB values
         allowed_classes = ['Manufacturing', 'Assembly', 'Packaging', 'Testing', 'Logistics']
@@ -112,32 +101,20 @@ def create_process():
         audit.log_create('process', process['id'], data['name'])
         
         current_app.logger.info(f"[CREATE PROCESS] Process created successfully: {process['id']} by user {current_user.id}")
-        return jsonify(process), 201
+        return APIResponse.created(process, 'Process created successfully')
         
     except psycopg2.errors.UniqueViolation as e:
         current_app.logger.warning(f"[CREATE PROCESS] Duplicate process name: {data.get('name')}")
-        return jsonify({
-            'error': 'Duplicate process name',
-            'details': f"A process with the name '{data.get('name')}' already exists. Please choose a different name."
-        }), 409
+        return APIResponse.error('duplicate_name', f"A process with the name '{data.get('name')}' already exists. Please choose a different name.", 409)
     except KeyError as e:
         current_app.logger.error(f"[CREATE PROCESS] Missing key: {e}")
-        return jsonify({
-            'error': 'Validation error',
-            'details': f'Missing required field: {str(e)}'
-        }), 400
+        return APIResponse.error('validation_error', f'Missing required field: {str(e)}', 400)
     except ValueError as e:
         current_app.logger.error(f"[CREATE PROCESS] Invalid value: {e}")
-        return jsonify({
-            'error': 'Validation error',
-            'details': str(e)
-        }), 400
+        return APIResponse.error('validation_error', str(e), 400)
     except Exception as e:
         current_app.logger.error(f"[CREATE PROCESS] Unexpected error: {e}", exc_info=True)
-        return jsonify({
-            'error': 'Internal server error',
-            'details': str(e) if current_app.debug else 'An unexpected error occurred'
-        }), 500
+        return APIResponse.error('internal_error', str(e) if current_app.debug else 'An unexpected error occurred', 500)
 
 
 @process_api_bp.route('/process/<int:process_id>', methods=['GET'])
@@ -148,24 +125,36 @@ def get_process(process_id):
         process = ProcessService.get_process_full_structure(process_id)
         
         if not process:
-            return jsonify({'error': 'Process not found'}), 404
+            return APIResponse.not_found('Process', process_id)
         
         # Check user access
         if process['user_id'] != current_user.id and current_user.role != 'admin':
-            return jsonify({'error': 'Access denied'}), 403
+            return APIResponse.error('forbidden', 'Access denied', 403)
         
-        return jsonify(process), 200
+        return APIResponse.success(process)
         
     except Exception as e:
         current_app.logger.error(f"Error retrieving process {process_id}: {e}")
-        return jsonify({'error': str(e)}), 500
+        return APIResponse.error('internal_error', str(e), 500)
 
 
 @process_api_bp.route('/processes/<int:process_id>/structure', methods=['GET'])
 @login_required
 def get_process_structure(process_id):
-    """Get process structure (alias to get_process for frontend compatibility)."""
-    return get_process(process_id)
+    """Get complete process structure for editor (subprocesses, variants, groups, costs)."""
+    try:
+        process = ProcessService.get_process_full_structure(process_id)
+        if not process:
+            return APIResponse.not_found('Process', process_id)
+
+        # Check user access
+        if process.get('created_by') not in (None, current_user.id) and current_user.role != 'admin':
+            return APIResponse.error('forbidden', 'Access denied', 403)
+
+        return APIResponse.success(process)
+    except Exception as e:
+        current_app.logger.error(f"Error retrieving process structure {process_id}: {e}")
+        return APIResponse.error('internal_error', str(e), 500)
 
 
 @process_api_bp.route('/processes', methods=['GET'])
@@ -183,12 +172,11 @@ def list_processes():
             page=page,
             per_page=per_page
         )
-        
-        return jsonify(result), 200
+        return APIResponse.success(result)
         
     except Exception as e:
         current_app.logger.error(f"Error listing processes: {e}")
-        return jsonify({'error': str(e)}), 500
+        return APIResponse.error('internal_error', str(e), 500)
 
 
 @process_api_bp.route('/process/<int:process_id>', methods=['PUT'])
@@ -199,10 +187,10 @@ def update_process(process_id):
         # Check ownership
         process = ProcessService.get_process(process_id)
         if not process:
-            return jsonify({'error': 'Process not found'}), 404
+            return APIResponse.not_found('Process', process_id)
         
         if process['user_id'] != current_user.id and current_user.role != 'admin':
-            return jsonify({'error': 'Access denied'}), 403
+            return APIResponse.error('forbidden', 'Access denied', 403)
         
         data = request.json
         updated = ProcessService.update_process(
@@ -214,17 +202,17 @@ def update_process(process_id):
         )
         
         if not updated:
-            return jsonify({'error': 'Update failed'}), 400
+            return APIResponse.error('update_failed', 'Update failed', 400)
         
         # Audit log
         audit.log_update('process', process_id, process['name'], old_data=process, new_data=data)
         
         current_app.logger.info(f"Process updated: {process_id} by user {current_user.id}")
-        return jsonify(updated), 200
+        return APIResponse.success(updated, 'Process updated')
         
     except Exception as e:
         current_app.logger.error(f"Error updating process {process_id}: {e}")
-        return jsonify({'error': str(e)}), 500
+        return APIResponse.error('internal_error', str(e), 500)
 
 
 @process_api_bp.route('/process/<int:process_id>', methods=['DELETE'])
@@ -235,25 +223,25 @@ def delete_process(process_id):
         # Check ownership
         process = ProcessService.get_process(process_id)
         if not process:
-            return jsonify({'error': 'Process not found'}), 404
+            return APIResponse.not_found('Process', process_id)
         
         if process['user_id'] != current_user.id and current_user.role != 'admin':
-            return jsonify({'error': 'Access denied'}), 403
+            return APIResponse.error('forbidden', 'Access denied', 403)
         
         success = ProcessService.delete_process(process_id, hard_delete=False)
         
         if not success:
-            return jsonify({'error': 'Delete failed'}), 400
+            return APIResponse.error('delete_failed', 'Delete failed', 400)
         
         # Audit log
         audit.log_delete('process', process_id, process['name'], data=process)
         
         current_app.logger.info(f"Process deleted: {process_id} by user {current_user.id}")
-        return '', 204
+        return APIResponse.success(None, 'Process deleted successfully')
         
     except Exception as e:
         current_app.logger.error(f"Error deleting process {process_id}: {e}")
-        return jsonify({'error': str(e)}), 500
+        return APIResponse.error('internal_error', str(e), 500)
 
 
 @process_api_bp.route('/process/<int:process_id>/restore', methods=['POST'])
@@ -264,14 +252,14 @@ def restore_process(process_id):
         success = ProcessService.restore_process(process_id)
         
         if not success:
-            return jsonify({'error': 'Process not found or already active'}), 404
+            return APIResponse.error('not_found_or_active', 'Process not found or already active', 404)
         
         current_app.logger.info(f"Process restored: {process_id} by user {current_user.id}")
-        return jsonify({'message': 'Process restored successfully'}), 200
+        return APIResponse.success({'id': process_id}, 'Process restored successfully')
         
     except Exception as e:
         current_app.logger.error(f"Error restoring process {process_id}: {e}")
-        return jsonify({'error': str(e)}), 500
+        return APIResponse.error('internal_error', str(e), 500)
 
 
 @process_api_bp.route('/process/search', methods=['GET'])
@@ -282,73 +270,113 @@ def search_processes():
         query = request.args.get('q', '')
         
         if len(query) < 2:
-            return jsonify({'error': 'Search query must be at least 2 characters'}), 400
+            return APIResponse.error('validation_error', 'Search query must be at least 2 characters', 400)
         
         results = ProcessService.search_processes(query, current_user.id)
-        return jsonify(results), 200
+        return APIResponse.success(results)
         
     except Exception as e:
         current_app.logger.error(f"Error searching processes: {e}")
-        return jsonify({'error': str(e)}), 500
+        return APIResponse.error('internal_error', str(e), 500)
 
 
 # ===== SUBPROCESS MANAGEMENT =====
 
-@process_api_bp.route('/process/<int:process_id>/add_subprocess', methods=['POST'])
+@process_api_bp.route('/processes/<int:process_id>/subprocesses', methods=['POST'])
 @login_required
 def add_subprocess_to_process(process_id):
-    """Add a subprocess to a process."""
+    """Add a subprocess to a process (creates template if needed)."""
     try:
         # Check ownership
         process = ProcessService.get_process(process_id)
         if not process:
-            return jsonify({'error': 'Process not found'}), 404
-        
-        if process['user_id'] != current_user.id and current_user.role != 'admin':
-            return jsonify({'error': 'Access denied'}), 403
-        
-        data = request.json
-        
-        if not data.get('subprocess_id'):
-            return jsonify({'error': 'subprocess_id is required'}), 400
-        
-        if not data.get('sequence_order'):
-            return jsonify({'error': 'sequence_order is required'}), 400
+            return APIResponse.not_found('Process', process_id)
+
+        if process.get('user_id') not in (None, current_user.id) and current_user.role != 'admin':
+            return APIResponse.error('forbidden', 'Access denied', 403)
+
+        data = request.get_json(silent=True) or {}
+
+        # Accept either an existing subprocess_id or name/description to create
+        subprocess_id = data.get('subprocess_id')
+        order = data.get('order') or data.get('sequence_order') or 0
+
+        if not subprocess_id:
+            name = (data.get('name') or '').strip()
+            description = (data.get('description') or '').strip() or None
+            if not name:
+                return APIResponse.error('validation_error', 'Subprocess name required', 400)
+            created = SubprocessService.create_subprocess(name=name, description=description)
+            subprocess_id = created['id']
         
         association = ProcessService.add_subprocess_to_process(
             process_id=process_id,
-            subprocess_id=data['subprocess_id'],
-            sequence_order=data['sequence_order'],
+            subprocess_id=subprocess_id,
+            sequence_order=int(order) if isinstance(order, (int, float, str)) and str(order).isdigit() else 0,
             custom_name=data.get('custom_name'),
             notes=data.get('notes')
         )
-        
+
         current_app.logger.info(
-            f"Subprocess {data['subprocess_id']} added to process {process_id}"
+            f"Subprocess {subprocess_id} added to process {process_id}"
         )
-        return jsonify(association), 201
-        
+        return APIResponse.created(association, 'Subprocess added to process')
     except Exception as e:
         current_app.logger.error(f"Error adding subprocess to process: {e}")
-        return jsonify({'error': str(e)}), 500
+        return APIResponse.error('internal_error', str(e), 500)
 
 
-@process_api_bp.route('/process_subprocess/<int:ps_id>', methods=['DELETE'])
+@process_api_bp.route('/processes/<int:process_id>/subprocesses/<int:ps_id>', methods=['PUT'])
 @login_required
-def remove_subprocess_from_process(ps_id):
+def update_process_subprocess(process_id, ps_id):
+    """Update a process-subprocess association (order, custom_name, notes)."""
+    try:
+        data = request.get_json(silent=True) or {}
+        from database import get_conn
+        with get_conn() as (conn, cur):
+            updates = []
+            params = []
+            if 'order' in data or 'sequence_order' in data:
+                updates.append('sequence_order = %s')
+                params.append(int(data.get('order') or data.get('sequence_order') or 0))
+            if 'custom_name' in data:
+                updates.append('custom_name = %s')
+                params.append(data.get('custom_name'))
+            if 'notes' in data:
+                updates.append('notes = %s')
+                params.append(data.get('notes'))
+            if not updates:
+                return APIResponse.error('validation_error', 'No fields to update', 400)
+            params.extend([ps_id, process_id])
+            cur.execute(f"""
+                UPDATE process_subprocesses
+                SET {', '.join(updates)}, updated_at = CURRENT_TIMESTAMP
+                WHERE id = %s AND process_id = %s
+                RETURNING id
+            """, params)
+            updated = cur.fetchone()
+            conn.commit()
+        if not updated:
+            return APIResponse.not_found('ProcessSubprocess', ps_id)
+        return APIResponse.success({'id': ps_id}, 'Association updated')
+    except Exception as e:
+        current_app.logger.error(f"Error updating process_subprocess {ps_id}: {e}")
+        return APIResponse.error('internal_error', str(e), 500)
+
+
+@process_api_bp.route('/processes/<int:process_id>/subprocesses/<int:ps_id>', methods=['DELETE'])
+@login_required
+def remove_subprocess_from_process(process_id, ps_id):
     """Remove a subprocess from a process."""
     try:
         success = ProcessService.remove_subprocess_from_process(ps_id)
-        
         if not success:
-            return jsonify({'error': 'Association not found'}), 404
-        
+            return APIResponse.not_found('Association', ps_id)
         current_app.logger.info(f"Subprocess removed from process: {ps_id}")
-        return '', 204
-        
+        return APIResponse.success(None, 'Subprocess removed')
     except Exception as e:
         current_app.logger.error(f"Error removing subprocess: {e}")
-        return jsonify({'error': str(e)}), 500
+        return APIResponse.error('internal_error', str(e), 500)
 
 
 @process_api_bp.route('/process/<int:process_id>/reorder_subprocesses', methods=['POST'])
@@ -359,16 +387,16 @@ def reorder_subprocesses(process_id):
         # Check ownership
         process = ProcessService.get_process(process_id)
         if not process:
-            return jsonify({'error': 'Process not found'}), 404
+            return APIResponse.not_found('Process', process_id)
         
         if process['user_id'] != current_user.id and current_user.role != 'admin':
-            return jsonify({'error': 'Access denied'}), 403
+            return APIResponse.error('forbidden', 'Access denied', 403)
         
-        data = request.json
+        data = request.get_json(silent=True) or {}
         sequence_map = data.get('sequence_map', {})
         
         if not sequence_map:
-            return jsonify({'error': 'sequence_map is required'}), 400
+            return APIResponse.error('validation_error', 'sequence_map is required', 400)
         
         # Convert string keys to int
         sequence_map = {int(k): v for k, v in sequence_map.items()}
@@ -376,13 +404,13 @@ def reorder_subprocesses(process_id):
         success = ProcessService.reorder_subprocesses(process_id, sequence_map)
         
         if not success:
-            return jsonify({'error': 'Reorder failed'}), 400
+            return APIResponse.error('reorder_failed', 'Reorder failed', 400)
         
-        return jsonify({'message': 'Subprocesses reordered successfully'}), 200
+        return APIResponse.success(None, 'Subprocesses reordered successfully')
         
     except Exception as e:
         current_app.logger.error(f"Error reordering subprocesses: {e}")
-        return jsonify({'error': str(e)}), 500
+        return APIResponse.error('internal_error', str(e), 500)
 
 
 # ===== COSTING OPERATIONS =====
@@ -395,17 +423,17 @@ def get_worst_case_costing(process_id):
         # Check access
         process = ProcessService.get_process(process_id)
         if not process:
-            return jsonify({'error': 'Process not found'}), 404
+            return APIResponse.not_found('Process', process_id)
         
         if process['user_id'] != current_user.id and current_user.role != 'admin':
-            return jsonify({'error': 'Access denied'}), 403
+            return APIResponse.error('forbidden', 'Access denied', 403)
         
         cost_breakdown = CostingService.calculate_process_total_cost(process_id)
-        return jsonify(cost_breakdown), 200
+        return APIResponse.success(cost_breakdown)
         
     except Exception as e:
         current_app.logger.error(f"Error calculating worst-case costing: {e}")
-        return jsonify({'error': str(e)}), 500
+        return APIResponse.error('internal_error', str(e), 500)
 
 
 @process_api_bp.route('/process/<int:process_id>/profitability', methods=['GET'])
@@ -416,17 +444,17 @@ def get_profitability(process_id):
         # Check access
         process = ProcessService.get_process(process_id)
         if not process:
-            return jsonify({'error': 'Process not found'}), 404
+            return APIResponse.not_found('Process', process_id)
         
         if process['user_id'] != current_user.id and current_user.role != 'admin':
-            return jsonify({'error': 'Access denied'}), 403
+            return APIResponse.error('forbidden', 'Access denied', 403)
         
         profitability = CostingService.update_profitability(process_id)
-        return jsonify(profitability), 200
+        return APIResponse.success(profitability)
         
     except Exception as e:
         current_app.logger.error(f"Error getting profitability: {e}")
-        return jsonify({'error': str(e)}), 500
+        return APIResponse.error('internal_error', str(e), 500)
 
 
 @process_api_bp.route('/process/<int:process_id>/set_sales_price', methods=['POST'])
@@ -437,32 +465,32 @@ def set_sales_price(process_id):
         # Check ownership
         process = ProcessService.get_process(process_id)
         if not process:
-            return jsonify({'error': 'Process not found'}), 404
+            return APIResponse.not_found('Process', process_id)
         
         if process['user_id'] != current_user.id and current_user.role != 'admin':
-            return jsonify({'error': 'Access denied'}), 403
+            return APIResponse.error('forbidden', 'Access denied', 403)
         
         data = request.json
         sales_price = data.get('sales_price')
         
         if sales_price is None:
-            return jsonify({'error': 'sales_price is required'}), 400
+            return APIResponse.error('validation_error', 'sales_price is required', 400)
         
         try:
             sales_price = float(sales_price)
         except ValueError:
-            return jsonify({'error': 'sales_price must be a number'}), 400
+            return APIResponse.error('validation_error', 'sales_price must be a number', 400)
         
         profitability = CostingService.update_profitability(process_id, sales_price)
         
         current_app.logger.info(
             f"Sales price set for process {process_id}: {sales_price}"
         )
-        return jsonify(profitability), 200
+        return APIResponse.success(profitability, 'Sales price updated')
         
     except Exception as e:
         current_app.logger.error(f"Error setting sales price: {e}")
-        return jsonify({'error': str(e)}), 500
+        return APIResponse.error('internal_error', str(e), 500)
 
 
 @process_api_bp.route('/process/<int:process_id>/recalculate_worst_case', methods=['POST'])
@@ -473,10 +501,10 @@ def recalculate_worst_case(process_id):
         # Check access
         process = ProcessService.get_process(process_id)
         if not process:
-            return jsonify({'error': 'Process not found'}), 404
+            return APIResponse.not_found('Process', process_id)
         
         if process['user_id'] != current_user.id and current_user.role != 'admin':
-            return jsonify({'error': 'Access denied'}), 403
+            return APIResponse.error('forbidden', 'Access denied', 403)
         
         # Recalculate costs
         cost_breakdown = CostingService.calculate_process_total_cost(process_id)
@@ -484,14 +512,14 @@ def recalculate_worst_case(process_id):
         # Update profitability
         profitability = CostingService.update_profitability(process_id)
         
-        return jsonify({
+        return APIResponse.success({
             'cost_breakdown': cost_breakdown,
             'profitability': profitability
-        }), 200
+        })
         
     except Exception as e:
         current_app.logger.error(f"Error recalculating costs: {e}")
-        return jsonify({'error': str(e)}), 500
+        return APIResponse.error('internal_error', str(e), 500)
 
 
 # Error handlers
@@ -510,20 +538,15 @@ def bad_request(error):
     # Check if it's a CSRF error
     if 'CSRF' in str(error):
         error_details = 'CSRF token is missing or invalid. This endpoint may require CSRF protection.'
-    
-    return jsonify({
-        'error': error_message,
-        'details': error_details,
-        'request_id': request.headers.get('X-Request-ID', 'N/A')
-    }), 400
+    return APIResponse.error('bad_request', error_message, 400, data={'details': error_details, 'request_id': request.headers.get('X-Request-ID', 'N/A')})
 
 
 @process_api_bp.errorhandler(404)
 def not_found(error):
-    return jsonify({'error': 'Resource not found'}), 404
+    return APIResponse.error('not_found', 'Resource not found', 404)
 
 
 @process_api_bp.errorhandler(500)
 def internal_error(error):
     current_app.logger.error(f"Internal server error: {error}")
-    return jsonify({'error': 'Internal server error'}), 500
+    return APIResponse.error('internal_error', 'Internal server error', 500)

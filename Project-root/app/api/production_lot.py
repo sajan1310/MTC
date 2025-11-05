@@ -10,6 +10,7 @@ from functools import wraps
 
 from app import limiter
 from app.services.production_service import ProductionService
+from app.utils.response import APIResponse
 
 production_api_bp = Blueprint('production_api', __name__)
 
@@ -20,9 +21,9 @@ def role_required(*roles):
         @wraps(f)
         def decorated_function(*args, **kwargs):
             if not current_user.is_authenticated:
-                return jsonify({'error': 'Authentication required'}), 401
+                return APIResponse.error('unauthenticated', 'Authentication required', 401)
             if current_user.role not in roles and current_user.role != 'admin':
-                return jsonify({'error': 'Insufficient permissions'}), 403
+                return APIResponse.error('forbidden', 'Insufficient permissions', 403)
             return f(*args, **kwargs)
         return decorated_function
     return decorator
@@ -39,9 +40,9 @@ def create_production_lot():
         data = request.json
         
         if not data.get('process_id'):
-            return jsonify({'error': 'process_id is required'}), 400
+            return APIResponse.error('validation_error', 'process_id is required', 400)
         if not data.get('quantity'):
-            return jsonify({'error': 'quantity is required'}), 400
+            return APIResponse.error('validation_error', 'quantity is required', 400)
         
         lot = ProductionService.create_production_lot(
             process_id=data['process_id'],
@@ -53,11 +54,10 @@ def create_production_lot():
         current_app.logger.info(
             f"Production lot created: {lot['lot_number']} by user {current_user.id}"
         )
-        return jsonify(lot), 201
-        
+        return APIResponse.created(lot, 'Production lot created')
     except Exception as e:
         current_app.logger.error(f"Error creating production lot: {e}")
-        return jsonify({'error': str(e)}), 500
+        return APIResponse.error('internal_error', str(e), 500)
 
 
 @production_api_bp.route('/production_lot/<int:lot_id>', methods=['GET'])
@@ -68,17 +68,17 @@ def get_production_lot(lot_id):
         lot = ProductionService.get_production_lot(lot_id)
         
         if not lot:
-            return jsonify({'error': 'Production lot not found'}), 404
+            return APIResponse.not_found('Production lot', lot_id)
         
         # Check access
         if lot['user_id'] != current_user.id and current_user.role != 'admin':
-            return jsonify({'error': 'Access denied'}), 403
+            return APIResponse.error('forbidden', 'Access denied', 403)
         
-        return jsonify(lot), 200
+        return APIResponse.success(lot)
         
     except Exception as e:
         current_app.logger.error(f"Error retrieving production lot: {e}")
-        return jsonify({'error': str(e)}), 500
+        return APIResponse.error('internal_error', str(e), 500)
 
 
 @production_api_bp.route('/production_lot/<int:lot_id>/variant_options', methods=['GET'])
@@ -92,10 +92,10 @@ def get_variant_options(lot_id):
         # Check access
         lot = ProductionService.get_production_lot(lot_id)
         if not lot:
-            return jsonify({'error': 'Production lot not found'}), 404
+            return APIResponse.not_found('Production lot', lot_id)
         
         if lot['user_id'] != current_user.id and current_user.role != 'admin':
-            return jsonify({'error': 'Access denied'}), 403
+            return APIResponse.error('forbidden', 'Access denied', 403)
         
         with get_conn() as (conn, cur):
             cur = conn.cursor(cursor_factory=RealDictCursor)
@@ -179,17 +179,17 @@ def get_variant_options(lot_id):
                     'standalone_variants': standalone_variants
                 })
             
-            return jsonify({
+            return APIResponse.success({
                 'lot_id': lot_id,
                 'lot_number': lot['lot_number'],
                 'process_name': lot['process_name'],
                 'quantity': lot['quantity'],
                 'subprocesses': result
-            }), 200
+            })
             
     except Exception as e:
         current_app.logger.error(f"Error getting variant options: {e}")
-        return jsonify({'error': str(e)}), 500
+        return APIResponse.error('internal_error', str(e), 500)
 
 
 @production_api_bp.route('/production_lots', methods=['GET'])
@@ -210,11 +210,10 @@ def list_production_lots():
             per_page=per_page
         )
         
-        return jsonify(result), 200
-        
+        return APIResponse.success(result)
     except Exception as e:
         current_app.logger.error(f"Error listing production lots: {e}")
-        return jsonify({'error': str(e)}), 500
+        return APIResponse.error('internal_error', str(e), 500)
 
 
 # ===== VARIANT SELECTION (OR FEATURE) =====
@@ -227,20 +226,20 @@ def select_variant_for_group(lot_id):
         # Check access
         lot = ProductionService.get_production_lot(lot_id)
         if not lot:
-            return jsonify({'error': 'Production lot not found'}), 404
+            return APIResponse.not_found('Production lot', lot_id)
         
         if lot['user_id'] != current_user.id and current_user.role != 'admin':
-            return jsonify({'error': 'Access denied'}), 403
+            return APIResponse.error('forbidden', 'Access denied', 403)
         
         if lot['status'] != 'planning':
-            return jsonify({'error': 'Lot must be in planning status'}), 400
+            return APIResponse.error('validation_error', 'Lot must be in planning status', 400)
         
         data = request.json
         
         if not data.get('substitute_group_id'):
-            return jsonify({'error': 'substitute_group_id is required'}), 400
+            return APIResponse.error('validation_error', 'substitute_group_id is required', 400)
         if not data.get('selected_variant_id'):
-            return jsonify({'error': 'selected_variant_id is required'}), 400
+            return APIResponse.error('validation_error', 'selected_variant_id is required', 400)
         
         selection = ProductionService.select_variant_for_group(
             lot_id=lot_id,
@@ -252,11 +251,10 @@ def select_variant_for_group(lot_id):
         current_app.logger.info(
             f"Variant selected for lot {lot_id}, group {data['substitute_group_id']}"
         )
-        return jsonify(selection), 201
-        
+        return APIResponse.created(selection, 'Variant selected')
     except Exception as e:
         current_app.logger.error(f"Error selecting variant: {e}")
-        return jsonify({'error': str(e)}), 500
+        return APIResponse.error('internal_error', str(e), 500)
 
 
 @production_api_bp.route('/production_lot/<int:lot_id>/selections', methods=['GET'])
@@ -267,16 +265,16 @@ def get_lot_selections(lot_id):
         # Check access
         lot = ProductionService.get_production_lot(lot_id)
         if not lot:
-            return jsonify({'error': 'Production lot not found'}), 404
+            return APIResponse.not_found('Production lot', lot_id)
         
         if lot['user_id'] != current_user.id and current_user.role != 'admin':
-            return jsonify({'error': 'Access denied'}), 403
+            return APIResponse.error('forbidden', 'Access denied', 403)
         
-        return jsonify(lot.get('selections', [])), 200
+        return APIResponse.success(lot.get('selections', []))
         
     except Exception as e:
         current_app.logger.error(f"Error getting selections: {e}")
-        return jsonify({'error': str(e)}), 500
+        return APIResponse.error('internal_error', str(e), 500)
 
 
 @production_api_bp.route('/production_lot/<int:lot_id>/batch_select_variants', methods=['POST'])
@@ -290,19 +288,19 @@ def batch_select_variants(lot_id):
         # Check access
         lot = ProductionService.get_production_lot(lot_id)
         if not lot:
-            return jsonify({'error': 'Production lot not found'}), 404
+            return APIResponse.not_found('Production lot', lot_id)
         
         if lot['user_id'] != current_user.id and current_user.role != 'admin':
-            return jsonify({'error': 'Access denied'}), 403
+            return APIResponse.error('forbidden', 'Access denied', 403)
         
         if lot['status'] not in ['planning', 'ready']:
-            return jsonify({'error': 'Lot must be in planning or ready status'}), 400
+            return APIResponse.error('validation_error', 'Lot must be in planning or ready status', 400)
         
         data = request.json
         selections = data.get('selections', [])
         
         if not selections:
-            return jsonify({'error': 'No selections provided'}), 400
+            return APIResponse.error('validation_error', 'No selections provided', 400)
         
         with get_conn() as (conn, cur):
             # Delete existing selections for this lot
@@ -339,11 +337,10 @@ def batch_select_variants(lot_id):
         )
         
         current_app.logger.info(f"Saved {len(selections)} variant selections for lot {lot_id}")
-        return jsonify({'success': True, 'selections_saved': len(selections)}), 200
-        
+        return APIResponse.success({'success': True, 'selections_saved': len(selections)}, 'Selections saved')
     except Exception as e:
         current_app.logger.error(f"Error saving variant selections: {e}")
-        return jsonify({'error': str(e)}), 500
+        return APIResponse.error('internal_error', str(e), 500)
 
 
 # ===== LOT VALIDATION & EXECUTION =====
@@ -356,18 +353,17 @@ def validate_lot_readiness(lot_id):
         # Check access
         lot = ProductionService.get_production_lot(lot_id)
         if not lot:
-            return jsonify({'error': 'Production lot not found'}), 404
+            return APIResponse.not_found('Production lot', lot_id)
         
         if lot['user_id'] != current_user.id and current_user.role != 'admin':
-            return jsonify({'error': 'Access denied'}), 403
+            return APIResponse.error('forbidden', 'Access denied', 403)
         
         validation_result = ProductionService.validate_lot_readiness(lot_id)
         
-        return jsonify(validation_result), 200
-        
+        return APIResponse.success(validation_result)
     except Exception as e:
         current_app.logger.error(f"Error validating lot: {e}")
-        return jsonify({'error': str(e)}), 500
+        return APIResponse.error('internal_error', str(e), 500)
 
 
 @production_api_bp.route('/production_lot/<int:lot_id>/execute', methods=['POST'])
@@ -379,21 +375,18 @@ def execute_production_lot(lot_id):
         # Check access
         lot = ProductionService.get_production_lot(lot_id)
         if not lot:
-            return jsonify({'error': 'Production lot not found'}), 404
+            return APIResponse.not_found('Production lot', lot_id)
         
         if lot['user_id'] != current_user.id and current_user.role != 'admin':
-            return jsonify({'error': 'Access denied'}), 403
+            return APIResponse.error('forbidden', 'Access denied', 403)
         
         if lot['status'] != 'planning':
-            return jsonify({'error': 'Lot must be in planning status'}), 400
+            return APIResponse.error('validation_error', 'Lot must be in planning status', 400)
         
         # Validate before execution
         validation = ProductionService.validate_lot_readiness(lot_id)
         if not validation['is_ready']:
-            return jsonify({
-                'error': 'Lot is not ready for execution',
-                'validation': validation
-            }), 400
+            return APIResponse.error('validation_error', 'Lot is not ready for execution', 400)
         
         # Execute
         executed_lot = ProductionService.execute_production_lot(lot_id)
@@ -401,11 +394,10 @@ def execute_production_lot(lot_id):
         current_app.logger.info(
             f"Production lot executed: {executed_lot['lot_number']} by user {current_user.id}"
         )
-        return jsonify(executed_lot), 200
-        
+        return APIResponse.success(executed_lot, 'Production lot executed')
     except Exception as e:
         current_app.logger.error(f"Error executing production lot: {e}")
-        return jsonify({'error': str(e)}), 500
+        return APIResponse.error('internal_error', str(e), 500)
 
 
 @production_api_bp.route('/production_lot/<int:lot_id>/cancel', methods=['POST'])
@@ -416,10 +408,10 @@ def cancel_production_lot(lot_id):
         # Check access
         lot = ProductionService.get_production_lot(lot_id)
         if not lot:
-            return jsonify({'error': 'Production lot not found'}), 404
+            return APIResponse.not_found('Production lot', lot_id)
         
         if lot['user_id'] != current_user.id and current_user.role != 'admin':
-            return jsonify({'error': 'Access denied'}), 403
+            return APIResponse.error('forbidden', 'Access denied', 403)
         
         data = request.json
         reason = data.get('reason', 'User cancelled')
@@ -429,11 +421,10 @@ def cancel_production_lot(lot_id):
         current_app.logger.info(
             f"Production lot cancelled: {cancelled_lot['lot_number']} by user {current_user.id}"
         )
-        return jsonify(cancelled_lot), 200
-        
+        return APIResponse.success(cancelled_lot, 'Production lot cancelled')
     except Exception as e:
         current_app.logger.error(f"Error cancelling production lot: {e}")
-        return jsonify({'error': str(e)}), 500
+        return APIResponse.error('internal_error', str(e), 500)
 
 
 # ===== ACTUAL COSTING & VARIANCE ANALYSIS =====
@@ -446,18 +437,17 @@ def get_lot_actual_costing(lot_id):
         # Check access
         lot = ProductionService.get_production_lot(lot_id)
         if not lot:
-            return jsonify({'error': 'Production lot not found'}), 404
+            return APIResponse.not_found('Production lot', lot_id)
         
         if lot['user_id'] != current_user.id and current_user.role != 'admin':
-            return jsonify({'error': 'Access denied'}), 403
+            return APIResponse.error('forbidden', 'Access denied', 403)
         
         actual_costs = ProductionService.calculate_lot_actual_cost(lot_id)
         
-        return jsonify(actual_costs), 200
-        
+        return APIResponse.success(actual_costs)
     except Exception as e:
         current_app.logger.error(f"Error getting actual costing: {e}")
-        return jsonify({'error': str(e)}), 500
+        return APIResponse.error('internal_error', str(e), 500)
 
 
 @production_api_bp.route('/production_lot/<int:lot_id>/variance_analysis', methods=['GET'])
@@ -468,21 +458,20 @@ def get_variance_analysis(lot_id):
         # Check access
         lot = ProductionService.get_production_lot(lot_id)
         if not lot:
-            return jsonify({'error': 'Production lot not found'}), 404
+            return APIResponse.not_found('Production lot', lot_id)
         
         if lot['user_id'] != current_user.id and current_user.role != 'admin':
-            return jsonify({'error': 'Access denied'}), 403
+            return APIResponse.error('forbidden', 'Access denied', 403)
         
         if lot['status'] != 'completed':
-            return jsonify({'error': 'Lot must be completed for variance analysis'}), 400
+            return APIResponse.error('validation_error', 'Lot must be completed for variance analysis', 400)
         
         variance = ProductionService.get_variance_analysis(lot_id)
         
-        return jsonify(variance), 200
-        
+        return APIResponse.success(variance)
     except Exception as e:
         current_app.logger.error(f"Error getting variance analysis: {e}")
-        return jsonify({'error': str(e)}), 500
+        return APIResponse.error('internal_error', str(e), 500)
 
 
 # ===== REPORTING =====
@@ -515,11 +504,10 @@ def get_production_summary():
         summary = cur.fetchall()
         cur.close()
         
-        return jsonify([dict(row) for row in summary]), 200
-        
+        return APIResponse.success([dict(row) for row in summary])
     except Exception as e:
         current_app.logger.error(f"Error getting production summary: {e}")
-        return jsonify({'error': str(e)}), 500
+        return APIResponse.error('internal_error', str(e), 500)
 
 
 @production_api_bp.route('/production_lots/recent', methods=['GET'])
@@ -553,20 +541,19 @@ def get_recent_lots():
         lots = cur.fetchall()
         cur.close()
         
-        return jsonify([dict(row) for row in lots]), 200
-        
+        return APIResponse.success([dict(row) for row in lots])
     except Exception as e:
         current_app.logger.error(f"Error getting recent lots: {e}")
-        return jsonify({'error': str(e)}), 500
+        return APIResponse.error('internal_error', str(e), 500)
 
 
 # Error handlers
 @production_api_bp.errorhandler(404)
 def not_found(error):
-    return jsonify({'error': 'Resource not found'}), 404
+    return APIResponse.error('not_found', 'Resource not found', 404)
 
 
 @production_api_bp.errorhandler(500)
 def internal_error(error):
     current_app.logger.error(f"Internal server error: {error}")
-    return jsonify({'error': 'Internal server error'}), 500
+    return APIResponse.error('internal_error', 'Internal server error', 500)

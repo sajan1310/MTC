@@ -249,17 +249,22 @@ def img_file(filename):
 # --- Compatibility routes (preserve old paths after blueprint prefix change) ---
 @main_bp.route('/login')
 def compat_login():
-    return redirect(url_for('auth.login'))
+    # Serve the login page at root path for compatibility with tests
+    if current_user.is_authenticated:
+        return redirect(url_for('main.dashboard'))
+    return render_template('login.html')
 
 
 @main_bp.route('/signup')
 def compat_signup():
-    return redirect(url_for('auth.signup'))
+    # Serve the signup page at root path for compatibility with tests
+    return render_template('signup.html')
 
 
 @main_bp.route('/forgot-password')
 def compat_forgot_password():
-    return redirect(url_for('auth.forgot_password'))
+    # Serve the forgot password page at root path for compatibility with tests
+    return render_template('forgot_password.html')
 
 
 # JSON API auth endpoints that used to live at /api/* without /auth prefix

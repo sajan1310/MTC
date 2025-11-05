@@ -3,6 +3,12 @@
     app.py
     file_structure.txt
     generate_structure.py
+    How_To_Use_Repairs.md
+    Issue-Impact-FixTime-Severity.csv
+    MTC_Action_Plan.md
+    MTC_Code_Fixes_Guide.md
+    MTC_Deep_Integration_Audit.md
+    Project_Summary.md
     .github/
         chatmodes/
             Plan Mode.chatmode.md
@@ -18,6 +24,7 @@
     logs/
         app.log
     Project-root/
+        .coverage
         .env
         .env.example
         .gitignore
@@ -71,6 +78,7 @@
             README.md
             v/
                 cache/
+                    lastfailed
                     nodeids
                     stepwise
         .vscode/
@@ -87,6 +95,7 @@
                 production_lot.py
                 purchase_orders.py
                 routes.py
+                stubs.py
                 subprocess_management.py
                 suppliers.py
                 variant_management.py
@@ -118,6 +127,7 @@
             utils/
                 file_validation.py
                 helpers.py
+                response.py
                 validators.py
                 virus_scan.py
                 __init__.py
