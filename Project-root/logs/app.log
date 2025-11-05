@@ -833,3 +833,33 @@ Traceback (most recent call last):
 psycopg2.errors.UniqueViolation: duplicate key value violates unique constraint "unique_process_name"
 DETAIL:  Key (name)=(Frame Assembly) already exists.
 
+2025-11-04 19:58:32,346 INFO: Universal Process Framework API blueprints exempted from CSRF protection [in C:\Users\erkar\OneDrive\Desktop\MTC\Project-root\app\__init__.py:256]
+2025-11-04 19:58:52,462 INFO: [CREATE PROCESS] Received request from user 3 [in C:\Users\erkar\OneDrive\Desktop\MTC\project-root\app\api\process_management.py:54]
+2025-11-04 19:58:52,464 INFO: [CREATE PROCESS] Creating process 'Frame Assembly' with class 'Manufacturing' [in C:\Users\erkar\OneDrive\Desktop\MTC\project-root\app\api\process_management.py:101]
+2025-11-04 19:58:52,488 ERROR: [CREATE PROCESS] Unexpected error: duplicate key value violates unique constraint "unique_process_name"
+DETAIL:  Key (name)=(Frame Assembly) already exists.
+ [in C:\Users\erkar\OneDrive\Desktop\MTC\project-root\app\api\process_management.py:129]
+Traceback (most recent call last):
+  File "C:\Users\erkar\OneDrive\Desktop\MTC\project-root\app\api\process_management.py", line 103, in create_process
+    
+    
+    ...<4 lines>...
+        process_class=process_class
+        ^^^^^
+  File "C:\Users\erkar\OneDrive\Desktop\MTC\project-root\app\services\process_service.py", line 47, in create_process
+    cur.execute("""
+    ~~~~~~~~~~~^^^^
+        INSERT INTO processes (name, description, process_class, created_by, status)
+        ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+        VALUES (%s, %s, %s, %s, 'Active')
+        ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+        RETURNING *
+        ^^^^^^^^^^^
+    """, (name, description, process_class, user_id))
+    ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "C:\Users\erkar\OneDrive\Desktop\MTC\venv2\Lib\site-packages\psycopg2\extras.py", line 236, in execute
+    return super().execute(query, vars)
+           ~~~~~~~~~~~~~~~^^^^^^^^^^^^^
+psycopg2.errors.UniqueViolation: duplicate key value violates unique constraint "unique_process_name"
+DETAIL:  Key (name)=(Frame Assembly) already exists.
+
