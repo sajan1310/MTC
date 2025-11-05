@@ -21,11 +21,11 @@ def upgrade():
     """
     with get_conn() as (conn, cur):
         print("Creating unique indexes for UPSERT operations...")
-        
+
         # ============================================
         # ITEM_MASTER TABLE INDEXES
         # ============================================
-        
+
         # Primary unique index for item names (required for UPSERT)
         # Partial index excludes soft-deleted records
         cur.execute("""
@@ -34,7 +34,7 @@ def upgrade():
             WHERE deleted_at IS NULL;
         """)
         print("✅ Created unique index on item_master(name)")
-        
+
         # Performance index for category filtering
         cur.execute("""
             CREATE INDEX IF NOT EXISTS idx_item_master_category
@@ -42,7 +42,7 @@ def upgrade():
             WHERE deleted_at IS NULL;
         """)
         print("✅ Created index on item_master(category)")
-        
+
         # Performance index for updated_at (useful for tracking recent changes)
         cur.execute("""
             CREATE INDEX IF NOT EXISTS idx_item_master_updated_at
@@ -50,13 +50,13 @@ def upgrade():
             WHERE deleted_at IS NULL;
         """)
         print("✅ Created index on item_master(updated_at)")
-        
+
         # Composite index for model/variation lookups (if these columns exist)
         cur.execute("""
             DO $$
             BEGIN
                 IF EXISTS (
-                    SELECT 1 FROM information_schema.columns 
+                    SELECT 1 FROM information_schema.columns
                     WHERE table_name='item_master' AND column_name='model_id'
                 ) THEN
                     CREATE INDEX IF NOT EXISTS idx_item_master_model_variation
@@ -66,11 +66,11 @@ def upgrade():
             END$$;
         """)
         print("✅ Created composite index on item_master(model_id, variation_id)")
-        
+
         # ============================================
         # COLOR_MASTER TABLE INDEXES
         # ============================================
-        
+
         # Primary unique index for color names (required for UPSERT)
         cur.execute("""
             CREATE UNIQUE INDEX IF NOT EXISTS idx_color_master_name_unique
@@ -78,13 +78,13 @@ def upgrade():
             WHERE deleted_at IS NULL;
         """)
         print("✅ Created unique index on color_master(color_name)")
-        
+
         # Optional: Index on color_code if it exists
         cur.execute("""
             DO $$
             BEGIN
                 IF EXISTS (
-                    SELECT 1 FROM information_schema.columns 
+                    SELECT 1 FROM information_schema.columns
                     WHERE table_name='color_master' AND column_name='color_code'
                 ) THEN
                     CREATE INDEX IF NOT EXISTS idx_color_master_code
@@ -94,11 +94,11 @@ def upgrade():
             END$$;
         """)
         print("✅ Created index on color_master(color_code) if column exists")
-        
+
         # ============================================
         # SIZE_MASTER TABLE INDEXES
         # ============================================
-        
+
         # Primary unique index for size names (required for UPSERT)
         cur.execute("""
             CREATE UNIQUE INDEX IF NOT EXISTS idx_size_master_name_unique
@@ -106,13 +106,13 @@ def upgrade():
             WHERE deleted_at IS NULL;
         """)
         print("✅ Created unique index on size_master(size_name)")
-        
+
         # Performance index for size_code if it exists
         cur.execute("""
             DO $$
             BEGIN
                 IF EXISTS (
-                    SELECT 1 FROM information_schema.columns 
+                    SELECT 1 FROM information_schema.columns
                     WHERE table_name='size_master' AND column_name='size_code'
                 ) THEN
                     CREATE UNIQUE INDEX IF NOT EXISTS idx_size_master_code_unique
@@ -122,17 +122,17 @@ def upgrade():
             END$$;
         """)
         print("✅ Created unique index on size_master(size_code) if column exists")
-        
+
         # ============================================
         # MODEL_MASTER & VARIATION_MASTER INDEXES
         # ============================================
-        
+
         # Model master unique index
         cur.execute("""
             DO $$
             BEGIN
                 IF EXISTS (
-                    SELECT 1 FROM information_schema.tables 
+                    SELECT 1 FROM information_schema.tables
                     WHERE table_name='model_master'
                 ) THEN
                     CREATE UNIQUE INDEX IF NOT EXISTS idx_model_master_name_unique
@@ -142,13 +142,13 @@ def upgrade():
             END$$;
         """)
         print("✅ Created unique index on model_master(model_name)")
-        
+
         # Variation master unique index
         cur.execute("""
             DO $$
             BEGIN
                 IF EXISTS (
-                    SELECT 1 FROM information_schema.tables 
+                    SELECT 1 FROM information_schema.tables
                     WHERE table_name='variation_master'
                 ) THEN
                     CREATE UNIQUE INDEX IF NOT EXISTS idx_variation_master_name_unique
@@ -158,11 +158,11 @@ def upgrade():
             END$$;
         """)
         print("✅ Created unique index on variation_master(variation_name)")
-        
+
         # ============================================
         # ITEM_VARIANT TABLE INDEXES
         # ============================================
-        
+
         # Composite unique index for item+color+size combinations
         # This prevents duplicate variants and enables UPSERT on variants
         cur.execute("""
@@ -171,7 +171,7 @@ def upgrade():
             WHERE deleted_at IS NULL;
         """)
         print("✅ Created unique index on item_variant(item_id, color_id, size_id)")
-        
+
         # Performance index for stock lookups
         cur.execute("""
             CREATE INDEX IF NOT EXISTS idx_item_variant_stock
@@ -179,7 +179,7 @@ def upgrade():
             WHERE deleted_at IS NULL AND opening_stock < threshold;
         """)
         print("✅ Created index on item_variant for low stock queries")
-        
+
         conn.commit()
         print("\n✅ Migration completed successfully!")
         print("   All unique indexes created for UPSERT operations")
@@ -193,34 +193,35 @@ def downgrade():
     """
     with get_conn() as (conn, cur):
         print("Removing UPSERT-related indexes...")
-        
+
         # Drop all indexes created in upgrade()
         indexes = [
-            'idx_item_master_name_unique',
-            'idx_item_master_category',
-            'idx_item_master_updated_at',
-            'idx_item_master_model_variation',
-            'idx_color_master_name_unique',
-            'idx_color_master_code',
-            'idx_size_master_name_unique',
-            'idx_size_master_code_unique',
-            'idx_model_master_name_unique',
-            'idx_variation_master_name_unique',
-            'idx_item_variant_unique_combo',
-            'idx_item_variant_stock',
+            "idx_item_master_name_unique",
+            "idx_item_master_category",
+            "idx_item_master_updated_at",
+            "idx_item_master_model_variation",
+            "idx_color_master_name_unique",
+            "idx_color_master_code",
+            "idx_size_master_name_unique",
+            "idx_size_master_code_unique",
+            "idx_model_master_name_unique",
+            "idx_variation_master_name_unique",
+            "idx_item_variant_unique_combo",
+            "idx_item_variant_stock",
         ]
-        
+
         for index in indexes:
             cur.execute(f"DROP INDEX IF EXISTS {index};")
             print(f"✅ Dropped index {index}")
-        
+
         conn.commit()
         print("\n✅ Downgrade completed: All UPSERT indexes removed")
 
 
-if __name__ == '__main__':
+if __name__ == "__main__":
     import sys
-    if len(sys.argv) > 1 and sys.argv[1] == 'downgrade':
+
+    if len(sys.argv) > 1 and sys.argv[1] == "downgrade":
         downgrade()
     else:
         upgrade()

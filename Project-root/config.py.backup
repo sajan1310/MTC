@@ -61,10 +61,10 @@ class Config:
     IMPORT_MAX_ROWS = int(os.getenv('IMPORT_MAX_ROWS', 50000))
     IMPORT_TIMEOUT_SECONDS = int(os.getenv('IMPORT_TIMEOUT_SECONDS', 600))
     IMPORT_BACKGROUND_THRESHOLD = int(os.getenv('IMPORT_BACKGROUND_THRESHOLD', 1000))
-    
+
     # Redis configuration for progress tracking
     REDIS_PROGRESS_EXPIRY = int(os.getenv('REDIS_PROGRESS_EXPIRY', 86400))  # 24 hours
-    
+
     # Cache busting version
     import time as _time
     VERSION = str(int(_time.time()))

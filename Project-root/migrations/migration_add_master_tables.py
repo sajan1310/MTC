@@ -1,13 +1,15 @@
-import sys
 import os
+import sys
+
 from dotenv import load_dotenv
 
 # Add project root to the Python path
-sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), '..')))
+sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), "..")))
 
 from database import get_conn
 
 load_dotenv()
+
 
 def upgrade():
     """
@@ -52,8 +54,12 @@ def upgrade():
         """)
 
         # Add foreign key columns
-        cur.execute("ALTER TABLE item_master ADD COLUMN IF NOT EXISTS model_id INTEGER REFERENCES model_master(model_id);")
-        cur.execute("ALTER TABLE item_master ADD COLUMN IF NOT EXISTS variation_id INTEGER REFERENCES variation_master(variation_id);")
+        cur.execute(
+            "ALTER TABLE item_master ADD COLUMN IF NOT EXISTS model_id INTEGER REFERENCES model_master(model_id);"
+        )
+        cur.execute(
+            "ALTER TABLE item_master ADD COLUMN IF NOT EXISTS variation_id INTEGER REFERENCES variation_master(variation_id);"
+        )
 
         # Update foreign key references
         cur.execute("""
@@ -78,9 +84,10 @@ def upgrade():
                 END IF;
             END$$;
         """)
-        
+
         conn.commit()
         print("Upgrade complete: Master tables created and data migrated.")
+
 
 def downgrade():
     """
@@ -95,6 +102,6 @@ def downgrade():
         # Drop master tables
         cur.execute("DROP TABLE IF EXISTS model_master;")
         cur.execute("DROP TABLE IF EXISTS variation_master;")
-        
+
         conn.commit()
         print("Downgrade complete: Master tables and foreign keys removed.")

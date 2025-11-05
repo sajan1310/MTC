@@ -64,7 +64,7 @@ const subprocessLibrary = {
         const category = document.getElementById('category-filter')?.value || '';
 
         this.filteredSubprocesses = this.subprocesses.filter(sp => {
-            const matchesSearch = !searchTerm || 
+            const matchesSearch = !searchTerm ||
                 sp.name.toLowerCase().includes(searchTerm) ||
                 (sp.description && sp.description.toLowerCase().includes(searchTerm));
 

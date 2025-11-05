@@ -58,7 +58,7 @@ python migrations/migration_add_universal_process_framework.py
 ---
 
 ### 2. Data Models (Complete)
-**Files:** 
+**Files:**
 - `app/models/process.py` (13 model classes)
 - `app/models/production_lot.py` (3 model classes + helpers)
 
@@ -277,7 +277,7 @@ margin = (profit / sales_price) × 100
 ## 🚧 REMAINING WORK
 
 ### Phase 5-6: Frontend UI (Not Started)
-**Files:** 
+**Files:**
 - `app/api/process_management.py` (15-20 endpoints)
 - `app/api/subprocess_management.py` (10-15 endpoints)
 - `app/api/production_lot.py` (10-15 endpoints)

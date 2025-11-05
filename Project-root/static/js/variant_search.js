@@ -110,7 +110,7 @@ const variantSearch = {
 
         this.filteredVariants = this.variants.filter(variant => {
             // Search filter
-            const matchesSearch = !searchTerm || 
+            const matchesSearch = !searchTerm ||
                 variant.name.toLowerCase().includes(searchTerm) ||
                 variant.model.toLowerCase().includes(searchTerm) ||
                 variant.brand.toLowerCase().includes(searchTerm);
@@ -152,12 +152,12 @@ const variantSearch = {
         let html = '';
         this.filteredVariants.forEach(variant => {
             const stockStatus = this.getStockStatus(variant);
-            const stockClass = stockStatus.level === 'good' ? 'stock-good' : 
+            const stockClass = stockStatus.level === 'good' ? 'stock-good' :
                              stockStatus.level === 'low' ? 'stock-low' : 'stock-out';
 
             html += `
-                <div class="variant-card" 
-                     draggable="true" 
+                <div class="variant-card"
+                     draggable="true"
                      data-variant-id="${variant.id}"
                      ondragstart="variantSearch.handleDragStart(event, ${variant.id})"
                      ondragend="variantSearch.handleDragEnd(event)">

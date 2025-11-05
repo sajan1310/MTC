@@ -400,6 +400,21 @@ Expected response:
 }
 ```
 
+The `/health` endpoint can be used for:
+- **Load balancer health checks**: Configure AWS ALB, Azure LB, or GCP Load Balancer to use `/health` as the health check path.
+- **Uptime monitoring**: Services like UptimeRobot, Pingdom, or StatusCake can monitor `/health` and alert on failures.
+- **Container orchestration**: Kubernetes liveness and readiness probes can use `/health` to determine pod health.
+
+Example Kubernetes probe config:
+```yaml
+livenessProbe:
+  httpGet:
+    path: /health
+    port: 5000
+  initialDelaySeconds: 30
+  periodSeconds: 10
+```
+
 ### 2. Test OAuth Login
 
 1. Go to `https://yourdomain.com/login`
@@ -569,5 +584,5 @@ For issues or questions:
 
 ---
 
-**Last Updated**: January 2025  
+**Last Updated**: January 2025
 **Version**: 1.0.0

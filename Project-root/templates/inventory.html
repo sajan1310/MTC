@@ -22,9 +22,9 @@
                                 <circle cx="11" cy="11" r="8"></circle>
                                 <path d="M21 21l-4.35-4.35"></path>
                             </svg>
-                            <input type="text" 
-                                   id="inventory-search" 
-                                   class="search-input" 
+                            <input type="text"
+                                   id="inventory-search"
+                                   class="search-input"
                                    placeholder="Search items by name, model, or variation..."
                                    autocomplete="off">
                             <button type="button" class="clear-search-btn" style="display: none;" title="Clear search">×</button>
@@ -90,7 +90,7 @@
                 <button id="export-pdf-btn" class="button" disabled>Export PDF</button>
             </div>
         </div>
-        
+
         <!-- Enhanced Inventory Table -->
         <div class="inventory-table-container">
             <div class="table-wrapper">
@@ -363,7 +363,7 @@
 document.addEventListener('DOMContentLoaded', function() {
     const searchInput = document.getElementById('inventory-search');
     const clearSearchBtn = document.querySelector('.clear-search-btn');
-    
+
     if (searchInput && clearSearchBtn) {
         // Show/hide clear button based on input
         searchInput.addEventListener('input', function() {
@@ -373,7 +373,7 @@ document.addEventListener('DOMContentLoaded', function() {
                 clearSearchBtn.style.display = 'none';
             }
         });
-        
+
         // Clear search functionality
         clearSearchBtn.addEventListener('click', function() {
             searchInput.value = '';
@@ -381,7 +381,7 @@ document.addEventListener('DOMContentLoaded', function() {
             searchInput.focus();
             this.style.display = 'none';
         });
-        
+
         // Enhanced keyboard navigation
         searchInput.addEventListener('keydown', function(e) {
             if (e.key === 'Escape') {
@@ -391,7 +391,7 @@ document.addEventListener('DOMContentLoaded', function() {
             }
         });
     }
-    
+
     // Enhanced modal accessibility
     const modal = document.getElementById('add-edit-item-modal');
     if (modal) {
@@ -402,7 +402,7 @@ document.addEventListener('DOMContentLoaded', function() {
             }
         });
     }
-    
+
     // Auto-expand textareas
     const textareas = document.querySelectorAll('textarea');
     textareas.forEach(textarea => {
@@ -424,43 +424,43 @@ document.addEventListener('DOMContentLoaded', function() {
         gap: 1rem;
         align-items: stretch;
     }
-    
+
     .header-left {
         width: 100%;
     }
-    
+
     .search-container {
         width: 100%;
     }
-    
+
     .search-input-wrapper {
         width: 100%;
     }
-    
+
     .header-actions {
         width: 100%;
         justify-content: center;
     }
-    
+
     .inventory-table-container {
         overflow-x: auto;
         -webkit-overflow-scrolling: touch;
     }
-    
+
     .inventory-table {
         min-width: 800px;
     }
-    
+
     .modal-content.large {
         width: 95%;
         margin: 1rem auto;
         max-height: 90vh;
     }
-    
+
     .form-row {
         flex-direction: column;
     }
-    
+
     .form-field {
         min-width: auto !important;
     }
@@ -474,12 +474,12 @@ document.addEventListener('DOMContentLoaded', function() {
     .expand-col {
         display: none !important;
     }
-    
+
     .inventory-table {
         width: 100% !important;
         font-size: 12px;
     }
-    
+
     .form-card {
         box-shadow: none !important;
         border: 1px solid #000;
@@ -491,7 +491,7 @@ document.addEventListener('DOMContentLoaded', function() {
     .status-badge {
         border: 2px solid currentColor;
     }
-    
+
     .search-input {
         border: 2px solid currentColor;
     }
@@ -502,7 +502,7 @@ document.addEventListener('DOMContentLoaded', function() {
     .loading-spinner .spinner {
         animation: none;
     }
-    
+
     .modal,
     .search-input-wrapper {
         transition: none;

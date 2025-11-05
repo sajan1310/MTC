@@ -30,7 +30,7 @@
         <option value="Box"></option>
         <option value="Set"></option>
     </datalist>
-    
+
     <div class="page-header">
         <h1 class="main-title">
             <svg width="28" height="28" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
@@ -51,7 +51,7 @@
     </div>
     <form id="item-form" class="form-layout" data-item-id="{{ item.item_id }}" enctype="multipart/form-data">
         <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
-        
+
         <div class="form-section">
             <h2 class="section-title">Item Details</h2>
             <p class="card-subtitle">Update the basic information about this item</p>
@@ -190,31 +190,31 @@
                 if (items && items.items && Array.isArray(items.items)) {
                     // Extract unique item names
                     const uniqueNames = [...new Set(items.items.map(i => i.name))];
-                    itemNameDatalist.innerHTML = uniqueNames.map(name => 
+                    itemNameDatalist.innerHTML = uniqueNames.map(name =>
                         `<option value="${App.escapeHtml(name)}"></option>`
                     ).join('');
                 }
 
                 if (models && Array.isArray(models)) {
-                    modelDatalist.innerHTML = models.map(m => 
+                    modelDatalist.innerHTML = models.map(m =>
                         `<option value="${App.escapeHtml(m.name)}"></option>`
                     ).join('');
                 }
 
                 if (variations && Array.isArray(variations)) {
-                    variationDatalist.innerHTML = variations.map(v => 
+                    variationDatalist.innerHTML = variations.map(v =>
                         `<option value="${App.escapeHtml(v.name)}"></option>`
                     ).join('');
                 }
 
                 if (colors && Array.isArray(colors)) {
-                    colorDatalist.innerHTML = colors.map(c => 
+                    colorDatalist.innerHTML = colors.map(c =>
                         `<option value="${App.escapeHtml(c.name)}"></option>`
                     ).join('');
                 }
 
                 if (sizes && Array.isArray(sizes)) {
-                    sizeDatalist.innerHTML = sizes.map(s => 
+                    sizeDatalist.innerHTML = sizes.map(s =>
                         `<option value="${App.escapeHtml(s.name)}"></option>`
                     ).join('');
                 }
@@ -259,10 +259,10 @@
         // Handle form submission via API
         itemForm.addEventListener('submit', async function(e) {
             e.preventDefault();
-            
+
             const itemId = itemForm.dataset.itemId;
             const formData = new FormData(itemForm);
-            
+
             // Collect variants data
             const variants = [];
             variantsList.querySelectorAll("tr:not(#variants-placeholder)").forEach(row => {
@@ -271,7 +271,7 @@
                 const stockInput = row.querySelector('input[name="opening_stock"]');
                 const thresholdInput = row.querySelector('input[name="threshold"]');
                 const unitInput = row.querySelector('input[name="unit"]');
-                
+
                 if (colorInput && sizeInput) {
                     variants.push({
                         id: row.dataset.variantId || null,
@@ -296,7 +296,7 @@
                 });
 
                 const result = await response.json();
-                
+
                 if (response.ok) {
                     App.showNotification('Item updated successfully!', 'success');
                     setTimeout(() => {

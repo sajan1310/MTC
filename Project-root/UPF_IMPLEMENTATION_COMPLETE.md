@@ -103,7 +103,7 @@ The Universal Process Framework (UPF) is a comprehensive manufacturing process m
 ## 🎨 Frontend Pages (5 complete)
 
 ### 1. Process Management (`/upf/processes`)
-**Template**: `templates/upf_process_management.html`  
+**Template**: `templates/upf_process_management.html`
 **JavaScript**: `static/js/process_manager.js`
 
 **Features**:
@@ -114,8 +114,8 @@ The Universal Process Framework (UPF) is a comprehensive manufacturing process m
 - Quick navigation to process editor
 
 ### 2. Process Editor (`/upf/process/<id>`)
-**Template**: `templates/upf_process_editor.html`  
-**JavaScript**: 
+**Template**: `templates/upf_process_editor.html`
+**JavaScript**:
 - `static/js/process_editor.js` (main editor)
 - `static/js/variant_search.js` (variant search panel)
 - `static/js/cost_calculator.js` (real-time costing)
@@ -130,7 +130,7 @@ The Universal Process Framework (UPF) is a comprehensive manufacturing process m
 - Modal-based forms
 
 ### 3. Subprocess Library (`/upf/subprocesses`)
-**Template**: `templates/upf_subprocess_library.html`  
+**Template**: `templates/upf_subprocess_library.html`
 **JavaScript**: `static/js/subprocess_library.js`
 
 **Features**:
@@ -142,7 +142,7 @@ The Universal Process Framework (UPF) is a comprehensive manufacturing process m
 - Card-based UI design
 
 ### 4. Production Lots (`/upf/production-lots`)
-**Template**: `templates/upf_production_lots.html`  
+**Template**: `templates/upf_production_lots.html`
 **JavaScript**: `static/js/production_lots.js`
 
 **Features**:
@@ -154,7 +154,7 @@ The Universal Process Framework (UPF) is a comprehensive manufacturing process m
 - Cost and quantity display
 
 ### 5. Reports Dashboard (`/upf/reports`)
-**Template**: `templates/upf_reports.html`  
+**Template**: `templates/upf_reports.html`
 **JavaScript**: `static/js/upf_reports.js`
 
 **Features**:
@@ -408,7 +408,7 @@ The Universal Process Framework is **complete and ready for deployment**. All co
 
 ---
 
-**Document Version**: 1.0  
-**Last Updated**: November 4, 2025  
-**Author**: GitHub Copilot Agent  
+**Document Version**: 1.0
+**Last Updated**: November 4, 2025
+**Author**: GitHub Copilot Agent
 **Project**: MTC Inventory Management System - Universal Process Framework Module

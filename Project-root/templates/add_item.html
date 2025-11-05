@@ -30,7 +30,7 @@
         <option value="Box"></option>
         <option value="Set"></option>
     </datalist>
-    
+
     <div class="page-header">
         <h1 class="main-title">
             <svg width="24" height="24" fill="currentColor" viewBox="0 0 16 16" style="margin-right: 0.75rem;">
@@ -47,10 +47,10 @@
             </a>
         </div>
     </div>
-    
+
     <form id="item-form" class="form-layout" method="POST" action="{{ url_for('add_item') }}" enctype="multipart/form-data">
         <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
-        
+
         <div class="form-section">
             <h2 class="section-title">Item Details</h2>
             <p class="card-subtitle">Enter the basic information about this item</p>
@@ -161,31 +161,31 @@
                 if (items && items.items && Array.isArray(items.items)) {
                     // Extract unique item names
                     const uniqueNames = [...new Set(items.items.map(i => i.name))];
-                    itemNameDatalist.innerHTML = uniqueNames.map(name => 
+                    itemNameDatalist.innerHTML = uniqueNames.map(name =>
                         `<option value="${App.escapeHtml(name)}"></option>`
                     ).join('');
                 }
 
                 if (models && Array.isArray(models)) {
-                    modelDatalist.innerHTML = models.map(m => 
+                    modelDatalist.innerHTML = models.map(m =>
                         `<option value="${App.escapeHtml(m.name)}"></option>`
                     ).join('');
                 }
 
                 if (variations && Array.isArray(variations)) {
-                    variationDatalist.innerHTML = variations.map(v => 
+                    variationDatalist.innerHTML = variations.map(v =>
                         `<option value="${App.escapeHtml(v.name)}"></option>`
                     ).join('');
                 }
 
                 if (colors && Array.isArray(colors)) {
-                    colorDatalist.innerHTML = colors.map(c => 
+                    colorDatalist.innerHTML = colors.map(c =>
                         `<option value="${App.escapeHtml(c.name)}"></option>`
                     ).join('');
                 }
 
                 if (sizes && Array.isArray(sizes)) {
-                    sizeDatalist.innerHTML = sizes.map(s => 
+                    sizeDatalist.innerHTML = sizes.map(s =>
                         `<option value="${App.escapeHtml(s.name)}"></option>`
                     ).join('');
                 }

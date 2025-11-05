@@ -1,13 +1,15 @@
-import sys
 import os
+import sys
+
 from dotenv import load_dotenv
 
 # Add project root to the Python path
-sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), '..')))
+sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), "..")))
 
 from database import get_conn
 
 load_dotenv()
+
 
 def upgrade():
     """
@@ -23,9 +25,10 @@ def upgrade():
 
         # Add a sequence for the receipt number
         cur.execute("CREATE SEQUENCE IF NOT EXISTS stock_receipt_number_seq;")
-        
+
         conn.commit()
         print("Upgrade complete: Added discount and receipt number to stock_receipts.")
+
 
 def downgrade():
     """
@@ -41,6 +44,8 @@ def downgrade():
 
         # Drop the sequence
         cur.execute("DROP SEQUENCE IF EXISTS stock_receipt_number_seq;")
-        
+
         conn.commit()
-        print("Downgrade complete: Removed discount and receipt number from stock_receipts.")
+        print(
+            "Downgrade complete: Removed discount and receipt number from stock_receipts."
+        )

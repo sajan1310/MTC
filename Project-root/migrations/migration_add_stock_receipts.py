@@ -1,13 +1,15 @@
-import sys
 import os
+import sys
+
 from dotenv import load_dotenv
 
 # Add project root to the Python path
-sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), '..')))
+sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), "..")))
 
 from database import get_conn
 
 load_dotenv()
+
 
 def upgrade():
     """
@@ -32,9 +34,10 @@ def upgrade():
             ALTER TABLE stock_entries
             ADD COLUMN IF NOT EXISTS receipt_id INTEGER REFERENCES stock_receipts(receipt_id);
         """)
-        
+
         conn.commit()
         print("Upgrade complete: stock_receipts created and stock_entries updated.")
+
 
 def downgrade():
     """
@@ -49,6 +52,6 @@ def downgrade():
 
         # Drop the stock_receipts table
         cur.execute("DROP TABLE IF EXISTS stock_receipts;")
-        
+
         conn.commit()
         print("Downgrade complete: stock_receipts dropped and stock_entries reverted.")

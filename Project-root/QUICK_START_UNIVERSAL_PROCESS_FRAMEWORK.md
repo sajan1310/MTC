@@ -35,10 +35,10 @@ Creating update timestamp triggers...
 ### Verify Tables Created:
 ```sql
 -- Connect to your PostgreSQL database and run:
-SELECT tablename 
-FROM pg_tables 
-WHERE schemaname = 'public' 
-  AND tablename LIKE '%process%' 
+SELECT tablename
+FROM pg_tables
+WHERE schemaname = 'public'
+  AND tablename LIKE '%process%'
   OR tablename LIKE '%production%';
 
 -- Should show:
@@ -88,7 +88,7 @@ def test_process_creation():
     print("\n" + "="*60)
     print("TEST 1: Process Creation")
     print("="*60)
-    
+
     app = create_app('development')
     with app.app_context():
         # Create a test process
@@ -98,13 +98,13 @@ def test_process_creation():
             description="Test process for assembling widgets",
             process_class="assembly"
         )
-        
+
         print(f"✅ Created process:")
         print(f"   ID: {process['id']}")
         print(f"   Name: {process['name']}")
         print(f"   Status: {process['status']}")
         print(f"   Class: {process['class']}")
-        
+
         return process['id']
 
 def test_process_retrieval(process_id):
@@ -112,11 +112,11 @@ def test_process_retrieval(process_id):
     print("\n" + "="*60)
     print("TEST 2: Process Retrieval")
     print("="*60)
-    
+
     app = create_app('development')
     with app.app_context():
         process = ProcessService.get_process(process_id)
-        
+
         if process:
             print(f"✅ Retrieved process:")
             print(f"   ID: {process['id']}")
@@ -130,7 +130,7 @@ def test_process_list():
     print("\n" + "="*60)
     print("TEST 3: Process Listing")
     print("="*60)
-    
+
     app = create_app('development')
     with app.app_context():
         result = ProcessService.list_processes(
@@ -138,12 +138,12 @@ def test_process_list():
             page=1,
             per_page=10
         )
-        
+
         print(f"✅ Found {result['pagination']['total']} processes")
         print(f"   Page: {result['pagination']['page']}")
         print(f"   Per page: {result['pagination']['per_page']}")
         print(f"   Total pages: {result['pagination']['pages']}")
-        
+
         for process in result['processes']:
             print(f"\n   - {process['name']} (ID: {process['id']})")
             print(f"     Status: {process['status']}")
@@ -154,9 +154,9 @@ def test_lot_number_generation():
     print("\n" + "="*60)
     print("TEST 4: Lot Number Generation")
     print("="*60)
-    
+
     lot_numbers = [generate_lot_number() for _ in range(3)]
-    
+
     print("✅ Generated lot numbers:")
     for lot_num in lot_numbers:
         print(f"   - {lot_num}")
@@ -166,14 +166,14 @@ def test_search():
     print("\n" + "="*60)
     print("TEST 5: Process Search")
     print("="*60)
-    
+
     app = create_app('development')
     with app.app_context():
         results = ProcessService.search_processes(
             query="widget",
             user_id=1  # Replace with your actual user ID
         )
-        
+
         print(f"✅ Found {len(results)} matching processes")
         for process in results:
             print(f"   - {process['name']} (ID: {process['id']})")
@@ -183,27 +183,27 @@ def main():
     print("\n" + "#"*60)
     print("# Universal Process Framework - Service Tests")
     print("#"*60)
-    
+
     try:
         # Test 1: Create a process
         process_id = test_process_creation()
-        
+
         # Test 2: Retrieve the process
         test_process_retrieval(process_id)
-        
+
         # Test 3: List all processes
         test_process_list()
-        
+
         # Test 4: Generate lot numbers
         test_lot_number_generation()
-        
+
         # Test 5: Search processes
         test_search()
-        
+
         print("\n" + "="*60)
         print("✅ ALL TESTS PASSED")
         print("="*60)
-        
+
     except Exception as e:
         print("\n" + "="*60)
         print(f"❌ TEST FAILED: {e}")
@@ -237,19 +237,19 @@ from app.services.costing_service import CostingService
 from app.models import generate_lot_number, validate_lot_selections
 
 class ProductionService:
-    
+
     @staticmethod
     def create_production_lot(process_id, user_id, quantity=1):
         """Create a new production lot from a process."""
         # TODO: Implement
         pass
-    
+
     @staticmethod
     def select_variant_for_group(lot_id, group_id, variant_id, supplier_id=None):
         """Select a variant from an OR group for a lot."""
         # TODO: Implement
         pass
-    
+
     @staticmethod
     def execute_production_lot(lot_id):
         """Execute the lot and deduct inventory."""
@@ -275,7 +275,7 @@ process_api = Blueprint('process_api', __name__)
 def create_process():
     """Create a new process."""
     data = request.json
-    
+
     try:
         process = ProcessService.create_process(
             name=data['name'],
@@ -306,7 +306,7 @@ def list_processes():
     page = int(request.args.get('page', 1))
     per_page = int(request.args.get('per_page', 25))
     status = request.args.get('status')
-    
+
     try:
         result = ProcessService.list_processes(
             user_id=current_user.id,
@@ -356,13 +356,13 @@ Create `templates/process/management.html`:
             </button>
         </div>
     </div>
-    
+
     <!-- Filters -->
     <div class="row mb-3">
         <div class="col-md-4">
-            <input type="text" 
-                   id="searchInput" 
-                   class="form-control" 
+            <input type="text"
+                   id="searchInput"
+                   class="form-control"
                    placeholder="Search processes...">
         </div>
         <div class="col-md-3">
@@ -374,7 +374,7 @@ Create `templates/process/management.html`:
             </select>
         </div>
     </div>
-    
+
     <!-- Process List -->
     <div class="card">
         <div class="card-body">
@@ -412,12 +412,12 @@ Create `static/js/process_manager.js`:
 // Load processes on page load
 document.addEventListener('DOMContentLoaded', function() {
     loadProcesses();
-    
+
     // Set up search
     document.getElementById('searchInput').addEventListener('input', function() {
         searchProcesses(this.value);
     });
-    
+
     // Set up status filter
     document.getElementById('statusFilter').addEventListener('change', function() {
         loadProcesses(this.value);
@@ -427,7 +427,7 @@ document.addEventListener('DOMContentLoaded', function() {
 function loadProcesses(status = '') {
     const params = new URLSearchParams();
     if (status) params.append('status', status);
-    
+
     fetch(`/api/processes?${params.toString()}`)
         .then(response => response.json())
         .then(data => {
@@ -442,12 +442,12 @@ function loadProcesses(status = '') {
 function displayProcesses(processes) {
     const tbody = document.getElementById('processTableBody');
     tbody.innerHTML = '';
-    
+
     if (processes.length === 0) {
         tbody.innerHTML = '<tr><td colspan="6" class="text-center">No processes found</td></tr>';
         return;
     }
-    
+
     processes.forEach(process => {
         const row = document.createElement('tr');
         row.innerHTML = `
@@ -492,7 +492,7 @@ function deleteProcess(processId) {
     if (!confirm('Are you sure you want to delete this process?')) {
         return;
     }
-    
+
     fetch(`/api/process/${processId}`, {
         method: 'DELETE',
         headers: {
@@ -518,7 +518,7 @@ function searchProcesses(query) {
         loadProcesses();
         return;
     }
-    
+
     fetch(`/api/process/search?q=${encodeURIComponent(query)}`)
         .then(response => response.json())
         .then(processes => {

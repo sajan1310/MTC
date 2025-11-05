@@ -1,5 +1,7 @@
 ./
     .env.example
+    .pre-commit-config.yaml
+    .secrets.baseline
     app.py
     file_structure.txt
     generate_structure.py
@@ -12,6 +14,8 @@
     .github/
         chatmodes/
             Plan Mode.chatmode.md
+        workflows/
+            ci.yml
     .pytest_cache/
         .gitignore
         CACHEDIR.TAG
@@ -21,6 +25,23 @@
                 lastfailed
                 nodeids
                 stepwise
+    .ruff_cache/
+        .gitignore
+        CACHEDIR.TAG
+        0.6.9/
+            10565966613617290186
+            13936718876001170934
+            14374746059124110807
+            1534826817158787244
+            15718440835300711996
+            16367590890825063890
+            17160750361034502558
+            18143121033529814131
+            4209152219026298096
+            5271521395713331939
+            6355051253544369875
+            7237278980500447409
+            973905827700233134
     logs/
         app.log
     Project-root/
@@ -51,6 +72,7 @@
         models.py
         Procfile
         production.env.example
+        pyproject.toml
         pytest.ini
         QUICK_START_GUIDE.md
         QUICK_START_UNIVERSAL_PROCESS_FRAMEWORK.md
@@ -107,6 +129,9 @@
                 __init__.py
             main/
                 routes.py
+            middleware/
+                request_id.py
+                __init__.py
             models/
                 inventory.py
                 process.py
@@ -137,6 +162,10 @@
                 __init__.py
         auth/
             routes.py
+        docs/
+            LOGGING.md
+            PERFORMANCE.md
+            SECURITY.md
         logs/
             app.log
         migrations/
@@ -236,3 +265,6 @@
                 test_import_service.py
                 test_import_service_coverage.py
                 test_process_service_coverage.py
+                test_production_service.py
+                test_subprocess_service.py
+                test_variant_service.py

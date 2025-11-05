@@ -58,16 +58,16 @@ const MasterData = {
    */
   async fetchAllMasterData() {
     const types = ["colors", "sizes", "models", "variations"];
-    
+
     try {
-      const promises = types.map(type => 
+      const promises = types.map(type =>
         App.fetchJson(`${App.config.apiBase}/${type}`)
           .then(data => ({ type, data, error: null }))
           .catch(error => ({ type, data: null, error }))
       );
-      
+
       const results = await Promise.all(promises);
-      
+
       results.forEach(({ type, data, error }) => {
         if (data && Array.isArray(data)) {
           this.state[type] = data;
@@ -76,13 +76,13 @@ const MasterData = {
           // Initialize empty array on error
           this.state[type] = [];
           this.renderList(type.slice(0, -1));
-          
+
           if (error) {
             console.error(`Error fetching ${type}:`, error);
           }
         }
       });
-      
+
       // Check if all requests failed
       const allFailed = results.every(r => !r.data);
       if (allFailed) {
@@ -102,7 +102,7 @@ const MasterData = {
   renderList(type) {
     const listEl = this.elements[`${type}List`];
     const data = this.state[`${type}s`];
-    
+
     if (!listEl) {
       console.warn(`List element for ${type} not found`);
       return;
@@ -197,7 +197,7 @@ const MasterData = {
     try {
       // Check for dependencies before deleting
       const dependencyResult = await App.fetchJson(`${App.config.apiBase}/${type}s/${id}/dependencies`);
-      
+
       if (dependencyResult && dependencyResult.count > 0) {
         App.showNotification(
           `Cannot delete "${name}" because it is currently used by ${dependencyResult.count} item(s).`,
@@ -221,7 +221,7 @@ const MasterData = {
         this.state[`${type}s`] = this.state[`${type}s`].filter(item => item.id != id);
         this.renderList(type);
         App.showNotification(
-          `${type.charAt(0).toUpperCase() + type.slice(1)} deleted successfully.`, 
+          `${type.charAt(0).toUpperCase() + type.slice(1)} deleted successfully.`,
           "success"
         );
       } else {

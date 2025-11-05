@@ -1,13 +1,15 @@
-import sys
 import os
+import sys
+
 from dotenv import load_dotenv
 
 # Add project root to the Python path
-sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), '..')))
+sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), "..")))
 
 from database import get_conn
 
 load_dotenv()
+
 
 def upgrade():
     """
@@ -15,8 +17,12 @@ def upgrade():
     """
     with get_conn() as (conn, cur):
         # Drop existing foreign key constraints
-        cur.execute("ALTER TABLE item_master DROP CONSTRAINT IF EXISTS item_master_model_id_fkey;")
-        cur.execute("ALTER TABLE item_master DROP CONSTRAINT IF EXISTS item_master_variation_id_fkey;")
+        cur.execute(
+            "ALTER TABLE item_master DROP CONSTRAINT IF EXISTS item_master_model_id_fkey;"
+        )
+        cur.execute(
+            "ALTER TABLE item_master DROP CONSTRAINT IF EXISTS item_master_variation_id_fkey;"
+        )
 
         # Add new foreign key constraints with ON DELETE CASCADE
         cur.execute("""
@@ -33,9 +39,10 @@ def upgrade():
             REFERENCES variation_master(variation_id)
             ON DELETE CASCADE;
         """)
-        
+
         conn.commit()
         print("Upgrade complete: Added ON DELETE CASCADE to foreign keys.")
+
 
 def downgrade():
     """
@@ -43,8 +50,12 @@ def downgrade():
     """
     with get_conn() as (conn, cur):
         # Drop existing foreign key constraints
-        cur.execute("ALTER TABLE item_master DROP CONSTRAINT IF EXISTS item_master_model_id_fkey;")
-        cur.execute("ALTER TABLE item_master DROP CONSTRAINT IF EXISTS item_master_variation_id_fkey;")
+        cur.execute(
+            "ALTER TABLE item_master DROP CONSTRAINT IF EXISTS item_master_model_id_fkey;"
+        )
+        cur.execute(
+            "ALTER TABLE item_master DROP CONSTRAINT IF EXISTS item_master_variation_id_fkey;"
+        )
 
         # Re-add foreign key constraints without ON DELETE CASCADE
         cur.execute("""
@@ -59,6 +70,6 @@ def downgrade():
             FOREIGN KEY (variation_id)
             REFERENCES variation_master(variation_id);
         """)
-        
+
         conn.commit()
         print("Downgrade complete: Removed ON DELETE CASCADE from foreign keys.")

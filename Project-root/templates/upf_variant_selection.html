@@ -434,7 +434,7 @@ const variantSelector = {
 
     renderSubprocesses() {
         const container = document.getElementById('subprocesses-container');
-        
+
         if (!this.lotData.subprocesses || this.lotData.subprocesses.length === 0) {
             container.innerHTML = `
                 <div class="empty-state">
@@ -511,16 +511,16 @@ const variantSelector = {
     renderVariantOption(variant, groupId, isRadio) {
         const inputType = isRadio ? 'radio' : 'checkbox';
         const inputName = groupId ? `or-group-${groupId}` : `standalone-${variant.usage_id}`;
-        const stockClass = variant.opening_stock > 100 ? 'stock-high' : 
+        const stockClass = variant.opening_stock > 100 ? 'stock-high' :
                           variant.opening_stock > 20 ? 'stock-medium' : 'stock-low';
         const requiredQty = variant.quantity * this.lotData.quantity;
         const hasStock = variant.opening_stock >= requiredQty;
 
         return `
             <div class="variant-option" onclick="variantSelector.selectVariant(${variant.usage_id}, ${groupId}, '${inputType}')">
-                <input 
-                    type="${inputType}" 
-                    name="${inputName}" 
+                <input
+                    type="${inputType}"
+                    name="${inputName}"
                     value="${variant.usage_id}"
                     data-variant-id="${variant.usage_id}"
                     data-group-id="${groupId || ''}"
@@ -536,7 +536,7 @@ const variantSelector = {
                         </span>
                     </div>
                     <div style="font-size: 12px; color: var(--text-secondary);">
-                        Required: ${requiredQty} ${variant.unit} | 
+                        Required: ${requiredQty} ${variant.unit} |
                         Cost: $${((variant.unit_price || 0) * requiredQty).toFixed(2)}
                     </div>
                 </div>
@@ -610,9 +610,9 @@ const variantSelector = {
 
             // Convert selections object to array
             Object.entries(this.selections).forEach(([key, usageId]) => {
-                const groupId = key.startsWith('group-') ? 
+                const groupId = key.startsWith('group-') ?
                     parseInt(key.replace('group-', '')) : null;
-                
+
                 selections.push({
                     or_group_id: groupId,
                     variant_usage_id: usageId,

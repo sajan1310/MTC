@@ -1102,7 +1102,7 @@ curl -X GET https://yourdomain.com/api/upf/process/1 \
 
 ---
 
-**Document Version:** 1.0  
-**Last Updated:** 2024-01-15  
-**API Base URL:** `/api/upf`  
+**Document Version:** 1.0
+**Last Updated:** 2024-01-15
+**API Base URL:** `/api/upf`
 **Total Endpoints:** 47

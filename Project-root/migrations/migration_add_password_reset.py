@@ -1,10 +1,11 @@
-import sys
 import os
+import sys
 
 # Add project root to the Python path
-sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), '..')))
+sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), "..")))
 
 from database import get_conn
+
 
 def upgrade():
     with get_conn() as (conn, cur):
@@ -25,6 +26,7 @@ def upgrade():
         )
         conn.commit()
         print("Upgrade complete: password_reset_tokens table created.")
+
 
 def downgrade():
     with get_conn() as (conn, cur):

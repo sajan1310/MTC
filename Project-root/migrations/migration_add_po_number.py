@@ -1,13 +1,15 @@
-import sys
 import os
+import sys
+
 from dotenv import load_dotenv
 
 # Add project root to the Python path
-sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), '..')))
+sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), "..")))
 
 from database import get_conn
 
 load_dotenv()
+
 
 def upgrade():
     """
@@ -16,20 +18,27 @@ def upgrade():
     """
     with get_conn() as (conn, cur):
         # Add po_number column
-        cur.execute("ALTER TABLE purchase_orders ADD COLUMN IF NOT EXISTS po_number VARCHAR(255);")
+        cur.execute(
+            "ALTER TABLE purchase_orders ADD COLUMN IF NOT EXISTS po_number VARCHAR(255);"
+        )
 
         # Create a sequence for PO numbers
         cur.execute("CREATE SEQUENCE IF NOT EXISTS purchase_order_number_seq START 1;")
 
         # Update existing POs
-        cur.execute("SELECT po_id FROM purchase_orders WHERE po_number IS NULL ORDER BY po_id;")
+        cur.execute(
+            "SELECT po_id FROM purchase_orders WHERE po_number IS NULL ORDER BY po_id;"
+        )
         pos = cur.fetchall()
         for po in pos:
             po_id = po[0]
             cur.execute("SELECT nextval('purchase_order_number_seq')")
             seq_val = cur.fetchone()[0]
             po_number = f"PO-{seq_val:04d}"
-            cur.execute("UPDATE purchase_orders SET po_number = %s WHERE po_id = %s", (po_number, po_id))
+            cur.execute(
+                "UPDATE purchase_orders SET po_number = %s WHERE po_id = %s",
+                (po_number, po_id),
+            )
 
         # Add a unique constraint
         cur.execute("""
@@ -40,9 +49,10 @@ def upgrade():
                 END IF;
             END$$;
         """)
-        
+
         conn.commit()
         print("Upgrade complete: Added and populated po_number in purchase_orders.")
+
 
 def downgrade():
     """
@@ -54,6 +64,6 @@ def downgrade():
 
         # Drop the sequence
         cur.execute("DROP SEQUENCE IF EXISTS purchase_order_number_seq;")
-        
+
         conn.commit()
         print("Downgrade complete: Removed po_number from purchase_orders.")

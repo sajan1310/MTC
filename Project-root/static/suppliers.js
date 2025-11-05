@@ -69,7 +69,7 @@ const Suppliers = {
    */
   renderSuppliersList() {
     if (!this.elements.suppliersTableBody) return;
-    
+
     if (this.state.suppliers.length === 0) {
       this.elements.suppliersTableBody.innerHTML = `
         <tr>
@@ -80,7 +80,7 @@ const Suppliers = {
       `;
       return;
     }
-    
+
     this.elements.suppliersTableBody.innerHTML = this.state.suppliers.map(s => `
       <tr data-supplier-id="${s.supplier_id}">
         <td><input type="checkbox" class="supplier-checkbox" data-supplier-id="${s.supplier_id}"></td>
@@ -100,7 +100,7 @@ const Suppliers = {
     this.state.currentSupplierId = supplier ? supplier.supplier_id : null;
     const modalTitle = this.elements.supplierModal.querySelector(".modal-title");
     modalTitle.textContent = supplier ? "Edit Supplier" : "Add New Supplier";
-    
+
     this.elements.supplierForm.reset();
     this.elements.contactsContainer.innerHTML = "";
 

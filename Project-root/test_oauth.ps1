@@ -13,9 +13,9 @@ Write-Host "[Test 1] Checking .env configuration..." -ForegroundColor Yellow
 if (Test-Path ".env") {
     Write-Host "  ✅ .env file exists" -ForegroundColor Green
     $passed++
-    
+
     $envContent = Get-Content .env -Raw
-    
+
     if ($envContent -match "OAUTHLIB_INSECURE_TRANSPORT\s*=\s*1") {
         Write-Host "  ✅ OAUTHLIB_INSECURE_TRANSPORT is set to 1" -ForegroundColor Green
         $passed++
@@ -24,7 +24,7 @@ if (Test-Path ".env") {
         Write-Host "     Required: OAUTHLIB_INSECURE_TRANSPORT=1" -ForegroundColor Red
         $failed++
     }
-    
+
     if ($envContent -match "BASE_URL\s*=\s*http://127\.0\.0\.1:5000") {
         Write-Host "  ✅ BASE_URL is set to http://127.0.0.1:5000" -ForegroundColor Green
         $passed++
@@ -32,7 +32,7 @@ if (Test-Path ".env") {
         Write-Host "  ⚠️  BASE_URL might not match Google Console" -ForegroundColor Yellow
         Write-Host "     Expected: BASE_URL=http://127.0.0.1:5000" -ForegroundColor Yellow
     }
-    
+
     if ($envContent -match "GOOGLE_CLIENT_ID\s*=\s*135697839359") {
         Write-Host "  ✅ GOOGLE_CLIENT_ID matches screenshot" -ForegroundColor Green
         $passed++
@@ -72,7 +72,7 @@ Write-Host ""
 Write-Host "[Test 3] Testing OAuth callback route..." -ForegroundColor Yellow
 try {
     $response = Invoke-WebRequest -Uri "$baseUrl/auth/google/callback" -TimeoutSec 3 -UseBasicParsing -ErrorAction SilentlyContinue
-    
+
     if ($response.StatusCode -eq 400) {
         Write-Host "  ✅ Callback route exists (returned 400 BAD REQUEST)" -ForegroundColor Green
         Write-Host "     This is expected - route requires OAuth code parameter" -ForegroundColor Gray
@@ -85,7 +85,7 @@ try {
     }
 } catch {
     $statusCode = $_.Exception.Response.StatusCode.value__
-    
+
     if ($statusCode -eq 400) {
         Write-Host "  ✅ Callback route exists (returned 400 BAD REQUEST)" -ForegroundColor Green
         Write-Host "     This is expected - route requires OAuth code parameter" -ForegroundColor Gray
@@ -107,11 +107,11 @@ Write-Host ""
 Write-Host "[Test 4] Testing login page..." -ForegroundColor Yellow
 try {
     $response = Invoke-WebRequest -Uri "$baseUrl/login" -TimeoutSec 3 -UseBasicParsing -ErrorAction Stop
-    
+
     if ($response.StatusCode -eq 200) {
         Write-Host "  ✅ Login page loads successfully" -ForegroundColor Green
         $passed++
-        
+
         # Check if it contains Google OAuth button
         if ($response.Content -match "Sign in with Google|google") {
             Write-Host "  ✅ Login page contains Google sign-in option" -ForegroundColor Green
@@ -134,19 +134,19 @@ Write-Host ""
 Write-Host "[Test 5] Testing OAuth initiation redirect..." -ForegroundColor Yellow
 try {
     $response = Invoke-WebRequest -Uri "$baseUrl/auth/google" -MaximumRedirection 0 -TimeoutSec 3 -UseBasicParsing -ErrorAction SilentlyContinue
-    
+
     if ($response.StatusCode -eq 302) {
         $location = $response.Headers.Location
         if ($location -match "accounts\.google\.com") {
             Write-Host "  ✅ OAuth initiation redirects to Google" -ForegroundColor Green
             Write-Host "     Redirect URL: $($location.Substring(0, [Math]::Min(80, $location.Length)))..." -ForegroundColor Gray
             $passed++
-            
+
             # Check if redirect_uri parameter is present
             if ($location -match "redirect_uri=([^&]+)") {
                 $redirectUri = [System.Web.HttpUtility]::UrlDecode($matches[1])
                 Write-Host "     Redirect URI in request: $redirectUri" -ForegroundColor Gray
-                
+
                 if ($redirectUri -eq "http://127.0.0.1:5000/auth/google/callback") {
                     Write-Host "  ✅ Redirect URI matches Google Console exactly!" -ForegroundColor Green
                     $passed++

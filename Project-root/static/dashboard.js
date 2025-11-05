@@ -22,16 +22,16 @@ const Dashboard = {
       console.warn('Stock trend chart canvas element not found');
       return;
     }
-    
+
     try {
       const data = await App.fetchJson(`${App.config.apiBase}/stock-trend`);
-      
+
       if (!data || !data.labels || !data.values) {
         console.error('Invalid chart data received:', data);
         this.showChartError('No data available for stock trend.');
         return;
       }
-      
+
       // Ensure Chart.js is loaded
       if (typeof Chart === 'undefined') {
         console.error('Chart.js library not loaded');
@@ -81,20 +81,20 @@ const Dashboard = {
       this.showChartError('Failed to load stock trend data.');
     }
   },
-  
+
   /**
    * Shows an error message in place of the chart
    * @param {string} message - Error message to display
    */
   showChartError(message) {
     if (!this.elements.stockTrendChart) return;
-    
+
     const canvas = this.elements.stockTrendChart;
     const ctx = canvas.getContext('2d');
-    
+
     // Clear canvas
     ctx.clearRect(0, 0, canvas.width, canvas.height);
-    
+
     // Draw error message
     ctx.font = '16px Inter, sans-serif';
     ctx.fillStyle = '#718096';

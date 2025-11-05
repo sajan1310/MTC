@@ -1,13 +1,15 @@
-import sys
 import os
+import sys
+
 from dotenv import load_dotenv
 
 # Add project root to the Python path
-sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), '..')))
+sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), "..")))
 
 from database import get_conn
 
 load_dotenv()
+
 
 def upgrade():
     """
@@ -41,7 +43,7 @@ def upgrade():
                 UNIQUE(supplier_id, item_id)
             );
         """)
-        
+
         # Purchase orders and related tables
         cur.execute("""
             CREATE TABLE IF NOT EXISTS purchase_orders (
@@ -62,7 +64,7 @@ def upgrade():
                 rate NUMERIC(10, 2) NOT NULL
             );
         """)
-        
+
         # Stock entries
         cur.execute("""
             CREATE TABLE IF NOT EXISTS stock_entries (
@@ -76,9 +78,10 @@ def upgrade():
                 notes TEXT
             );
         """)
-        
+
         conn.commit()
         print("Upgrade complete: Suppliers and PO tables created.")
+
 
 def downgrade():
     """
@@ -91,6 +94,6 @@ def downgrade():
         cur.execute("DROP TABLE IF EXISTS supplier_item_rates;")
         cur.execute("DROP TABLE IF EXISTS supplier_contacts;")
         cur.execute("DROP TABLE IF EXISTS suppliers;")
-        
+
         conn.commit()
         print("Downgrade complete: Suppliers and PO tables dropped.")

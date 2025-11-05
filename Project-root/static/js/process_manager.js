@@ -84,8 +84,8 @@ const processManager = {
         // Search filter
         if (this.currentFilters.search) {
             const query = this.currentFilters.search.toLowerCase();
-            filtered = filtered.filter(p => 
-                p.name.toLowerCase().includes(query) || 
+            filtered = filtered.filter(p =>
+                p.name.toLowerCase().includes(query) ||
                 (p.description && p.description.toLowerCase().includes(query))
             );
         }
@@ -162,7 +162,7 @@ const processManager = {
 
         // Previous button
         buttons.push(`
-            <button ${this.currentPage === 1 ? 'disabled' : ''} 
+            <button ${this.currentPage === 1 ? 'disabled' : ''}
                     onclick="processManager.loadProcesses(${this.currentPage - 1})">
                 ← Previous
             </button>
@@ -181,7 +181,7 @@ const processManager = {
 
         for (let i = startPage; i <= endPage; i++) {
             buttons.push(`
-                <button class="${i === this.currentPage ? 'page-current' : ''}" 
+                <button class="${i === this.currentPage ? 'page-current' : ''}"
                         onclick="processManager.loadProcesses(${i})">
                     ${i}
                 </button>
@@ -197,7 +197,7 @@ const processManager = {
 
         // Next button
         buttons.push(`
-            <button ${this.currentPage === this.totalPages ? 'disabled' : ''} 
+            <button ${this.currentPage === this.totalPages ? 'disabled' : ''}
                     onclick="processManager.loadProcesses(${this.currentPage + 1})">
                 Next →
             </button>
@@ -276,7 +276,7 @@ const processManager = {
     async confirmDelete() {
         try {
             const csrf_token = document.querySelector('[name=csrf-token]')?.content;
-            
+
             const response = await fetch(`/api/upf/process/${this.deletingProcessId}`, {
                 method: 'DELETE',
                 headers: {
@@ -440,10 +440,10 @@ const processManager = {
     formatDate(dateString) {
         if (!dateString) return 'N/A';
         const date = new Date(dateString);
-        return date.toLocaleDateString('en-US', { 
-            year: 'numeric', 
-            month: 'short', 
-            day: 'numeric' 
+        return date.toLocaleDateString('en-US', {
+            year: 'numeric',
+            month: 'short',
+            day: 'numeric'
         });
     },
 
@@ -487,7 +487,7 @@ const processManager = {
 window.onclick = function(event) {
     const processModal = document.getElementById('process-modal');
     const deleteModal = document.getElementById('delete-modal');
-    
+
     if (event.target === processModal) {
         processManager.closeModal();
     }

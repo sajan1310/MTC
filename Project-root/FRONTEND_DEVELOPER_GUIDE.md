@@ -1,7 +1,7 @@
 # Frontend Developer Quick Start - Universal Process Framework
 
-**Target Audience:** Frontend developers building the UI for the Universal Process Framework  
-**Prerequisites:** Backend API complete, database migration run  
+**Target Audience:** Frontend developers building the UI for the Universal Process Framework
+**Prerequisites:** Backend API complete, database migration run
 **Estimated Development Time:** 2 weeks
 
 ---
@@ -35,8 +35,8 @@ Frontend (You Build)          Backend (Already Built)
 ## 5 Pages to Build
 
 ### 1. Process Management Page
-**Route:** `/upf/processes`  
-**Template:** `templates/upf_process_management.html`  
+**Route:** `/upf/processes`
+**Template:** `templates/upf_process_management.html`
 **JavaScript:** `static/js/process_manager.js`
 
 **Features:**
@@ -57,8 +57,8 @@ Frontend (You Build)          Backend (Already Built)
 ---
 
 ### 2. Process Editor Page
-**Route:** `/upf/process/<id>/edit`  
-**Template:** `templates/upf_process_editor.html`  
+**Route:** `/upf/process/<id>/edit`
+**Template:** `templates/upf_process_editor.html`
 **JavaScript:** `static/js/process_editor.js`, `static/js/drag_drop_handler.js`
 
 **Layout (3-panel):**
@@ -108,8 +108,8 @@ Frontend (You Build)          Backend (Already Built)
 ---
 
 ### 3. Subprocess Library Page
-**Route:** `/upf/subprocesses`  
-**Template:** `templates/upf_subprocess_library.html`  
+**Route:** `/upf/subprocesses`
+**Template:** `templates/upf_subprocess_library.html`
 **JavaScript:** `static/js/subprocess_manager.js`
 
 **Features:**
@@ -131,8 +131,8 @@ Frontend (You Build)          Backend (Already Built)
 ---
 
 ### 4. Production Lot Interface
-**Route:** `/upf/production_lots` (list), `/upf/production_lot/<id>` (detail)  
-**Templates:** `templates/upf_production_lot_list.html`, `templates/upf_production_lot_detail.html`  
+**Route:** `/upf/production_lots` (list), `/upf/production_lot/<id>` (detail)
+**Templates:** `templates/upf_production_lot_list.html`, `templates/upf_production_lot_detail.html`
 **JavaScript:** `static/js/production_lot.js`, `static/js/or_group_selector.js`
 
 **Production Lot Creation Wizard:**
@@ -185,8 +185,8 @@ Step 3: Validation & Execution
 ---
 
 ### 5. Reports Dashboard
-**Route:** `/upf/reports`  
-**Template:** `templates/upf_reports.html`  
+**Route:** `/upf/reports`
+**Template:** `templates/upf_reports.html`
 **JavaScript:** `static/js/upf_reports.js`
 
 **Features:**
@@ -378,7 +378,7 @@ class DragDropHandler {
     event.preventDefault();
     const itemId = event.dataTransfer.getData('itemId');
     const subprocessId = event.target.closest('.subprocess-container').dataset.subprocessId;
-    
+
     // Add variant to subprocess
     const csrf_token = document.querySelector('[name=csrf-token]').content;
     await fetch('/api/upf/variant_usage', {
@@ -395,7 +395,7 @@ class DragDropHandler {
         unit: 'pcs'
       })
     });
-    
+
     this.editor.load();  // Reload process
   }
 }
@@ -702,23 +702,23 @@ async function apiRequest(url, options = {}) {
       ...options,
       credentials: 'include'
     });
-    
+
     if (response.status === 401) {
       window.location.href = '/auth/login';
       return;
     }
-    
+
     if (response.status === 429) {
       alert('Rate limit exceeded. Please wait and try again.');
       return;
     }
-    
+
     if (!response.ok) {
       const error = await response.json();
       alert(`Error: ${error.error}`);
       return;
     }
-    
+
     return await response.json();
   } catch (error) {
     console.error('API request failed:', error);
@@ -814,16 +814,16 @@ fetch('/api/upf/process', {
 
 ### Common Questions
 
-**Q: What's the difference between a process and a subprocess?**  
+**Q: What's the difference between a process and a subprocess?**
 A: A **process** is a complete workflow (e.g., "Product Assembly"). A **subprocess** is a reusable step within processes (e.g., "Component Installation"). One subprocess can be used in many processes.
 
-**Q: What is an OR group?**  
+**Q: What is an OR group?**
 A: An **OR group** (substitute group) contains 2+ variants that can substitute for each other. During production lot creation, you choose ONE variant from each OR group.
 
-**Q: What is worst-case costing?**  
+**Q: What is worst-case costing?**
 A: **Worst-case costing** uses the MAX supplier price for each variant/OR group to ensure profitability even in the worst scenario.
 
-**Q: When does inventory get deducted?**  
+**Q: When does inventory get deducted?**
 A: Inventory is deducted when you **execute** a production lot (not during planning).
 
 ---
@@ -864,6 +864,6 @@ If you have questions, refer to the API documentation or check the backend servi
 
 ---
 
-**Document Version:** 1.0  
-**Target Completion:** 2-3 weeks  
+**Document Version:** 1.0
+**Target Completion:** 2-3 weeks
 **Backend Status:** ✅ Complete (47 endpoints ready)

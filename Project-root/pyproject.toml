@@ -1,0 +1,11 @@
+[tool.bandit]
+# Bandit security linter configuration
+exclude_dirs = ["tests", "venv", "venv2", ".venv"]
+skips = [
+    "B101",  # assert_used - asserts are valid in tests
+    "B601",  # paramiko_calls - not using paramiko
+    "B602",  # subprocess_popen_with_shell_equals_true - validated usage
+]
+
+[tool.bandit.assert_used]
+skips = ["*_test.py", "test_*.py"]

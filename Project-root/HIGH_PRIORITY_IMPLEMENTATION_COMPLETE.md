@@ -28,7 +28,7 @@ File: `templates/upf_process_editor.html`
   - Create new OR group form
   - Variant selection checkboxes (minimum 2 required)
   - Group name and description fields
-  
+
 - Added **Cost Item Modal** with:
   - Cost type dropdown (labor, electricity, maintenance, tooling, overhead, other)
   - Quantity and rate inputs
@@ -188,11 +188,11 @@ Audit logging should be added to remaining APIs:
 ### Database Verification
 ```sql
 -- Check audit log structure
-SELECT * FROM information_schema.columns 
+SELECT * FROM information_schema.columns
 WHERE table_name = 'audit_log';
 
 -- View recent audit events
-SELECT 
+SELECT
     u.username,
     al.action_type,
     al.entity_type,
@@ -340,6 +340,6 @@ For questions about this implementation:
 
 ---
 
-**Implementation Date:** 2024  
-**Status:** ✅ 2/4 High-Priority Tasks Complete  
-**Next Action:** Run audit log migration, then test OR Groups  
+**Implementation Date:** 2024
+**Status:** ✅ 2/4 High-Priority Tasks Complete
+**Next Action:** Run audit log migration, then test OR Groups

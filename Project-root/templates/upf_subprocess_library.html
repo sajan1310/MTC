@@ -318,12 +318,12 @@
     </div>
 
     <div class="search-filter-bar">
-        <input type="text" 
-               class="search-input" 
-               id="search-input" 
+        <input type="text"
+               class="search-input"
+               id="search-input"
                placeholder="Search subprocesses by name or description..."
                onkeyup="subprocessLibrary.handleSearch()">
-        
+
         <select class="filter-select" id="category-filter" onchange="subprocessLibrary.applyFilters()">
             <option value="">All Categories</option>
             <option value="Preparation">Preparation</option>
@@ -357,10 +357,10 @@
         </div>
         <form id="subprocess-form" onsubmit="subprocessLibrary.handleSubmit(event)">
             <input type="hidden" id="subprocess-id">
-            
+
             <div class="form-group">
                 <label for="subprocess-name">Name *</label>
-                <input type="text" id="subprocess-name" required 
+                <input type="text" id="subprocess-name" required
                        placeholder="e.g., Cut Fabric, Sew Seams, Quality Inspection">
             </div>
 
@@ -379,7 +379,7 @@
 
             <div class="form-group">
                 <label for="subprocess-description">Description</label>
-                <textarea id="subprocess-description" 
+                <textarea id="subprocess-description"
                           placeholder="Describe what this subprocess involves..."></textarea>
             </div>
 
@@ -426,7 +426,7 @@
             <button type="button" class="btn btn-secondary" onclick="subprocessLibrary.closeDeleteModal()">
                 Cancel
             </button>
-            <button type="button" class="btn btn-primary" style="background: #f44336;" 
+            <button type="button" class="btn btn-primary" style="background: #f44336;"
                     onclick="subprocessLibrary.confirmDelete()">
                 Delete
             </button>

@@ -321,7 +321,7 @@ body.sidebar-collapsed .sidebar {
 body.sidebar-collapsed .content-wrapper {
     padding-left: var(--sidebar-width-collapsed);
 }
-body.sidebar-collapsed .sidebar .logo, 
+body.sidebar-collapsed .sidebar .logo,
 body.sidebar-collapsed .sidebar .nav-section-title,
 body.sidebar-collapsed .sidebar .user-info {
     display: none;
@@ -379,14 +379,14 @@ body.sidebar-collapsed .sidebar .nav-item:hover::after {
     visibility: visible;
 }
 body.sidebar-collapsed .sidebar-nav .nav-item:hover > span::before,
-body.sidebar-collapsed .sidebar-footer .nav-item:hover > span::before { 
-    content: ''; 
-    position: absolute; 
-    right: 100%; 
-    top: 50%; 
-    transform: translateY(-50%); 
-    border: 6px solid transparent; 
-    border-right-color: var(--border-color); 
+body.sidebar-collapsed .sidebar-footer .nav-item:hover > span::before {
+    content: '';
+    position: absolute;
+    right: 100%;
+    top: 50%;
+    transform: translateY(-50%);
+    border: 6px solid transparent;
+    border-right-color: var(--border-color);
 }
 body.sidebar-collapsed .sidebar-footer .logout-btn svg { transform: scale(1.2); }
 

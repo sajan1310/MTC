@@ -48,6 +48,13 @@ python -m pytest tests\services\test_process_service_coverage.py -q
 python -m pytest tests\api\test_items.py::test_get_items -q
 ```
 
+## Running with coverage locally
+```powershell
+# From Project-root
+python -m pytest --cov-report=xml --cov-report=html -q
+# See coverage.xml and open htmlcov\index.html in a browser
+```
+
 ## Submitting Changes
 1. Create a feature branch.
 2. Add/adjust tests for user-facing changes.
@@ -58,3 +65,32 @@ python -m pytest tests\api\test_items.py::test_get_items -q
 ## Troubleshooting
 - Unicode errors on Windows consoles: ensure logs avoid non-ASCII; this repo already avoids emojis in logs.
 - If libmagic issues arise on Windows, see python-magic docs. The suite skips the CSV MIME test on Windows.
+
+## Logging Best Practices
+- Use appropriate log levels: DEBUG for dev, INFO for production, ERROR for failures.
+- Include request IDs for distributed tracing: `from app.middleware import get_request_id`.
+- Avoid logging secrets or PII.
+- See `docs/LOGGING.md` for detailed configuration and structured logging examples.
+
+## Performance Optimization
+- Always use indexes for frequently queried columns (WHERE, JOIN, ORDER BY).
+- Test slow queries with `EXPLAIN ANALYZE` before deploying.
+- Avoid N+1 queries: use bulk fetches or eager loading.
+- See `docs/PERFORMANCE.md` for index audit, EXPLAIN examples, and query patterns.
+
+## Security Best Practices
+- **Never commit secrets:** All credentials go in `.env` files (excluded from git).
+- **Pre-commit hooks:** detect-secrets, Bandit, and Ruff security rules run automatically.
+- **Parameterized queries:** Always use `%s` placeholders (never f-strings with user input).
+- **Report vulnerabilities privately:** Email maintainers—do not open public issues for security bugs.
+- See `docs/SECURITY.md` for CSRF/CORS policies, password requirements, OAuth flow, and incident response.
+
+## Optional: pre-commit hooks
+To apply basic hygiene checks and Ruff auto-fixes on commit:
+
+```powershell
+pip install pre-commit
+pre-commit install
+# Run on all files once
+pre-commit run --all-files
+```

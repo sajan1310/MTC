@@ -10,6 +10,6 @@ from app.auth.routes import *  # noqa: F401,F403
 
 # Provide a name that may be expected in legacy code
 try:
-    from app.auth.routes import auth_bp as auth  # type: ignore
+    pass  # type: ignore
 except Exception:  # pragma: no cover - defensive fallback
     pass

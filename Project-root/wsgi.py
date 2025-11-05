@@ -6,6 +6,7 @@ Usage:
     gunicorn wsgi:app
     waitress-serve --port=5000 wsgi:app
 """
+
 import os
 import sys
 
@@ -13,11 +14,12 @@ import sys
 sys.path.insert(0, os.path.dirname(__file__))
 
 from app import create_app
-app = create_app(os.getenv('FLASK_ENV', 'production'))
+
+app = create_app(os.getenv("FLASK_ENV", "production"))
 
 # Configure for production
-if os.environ.get('FLASK_ENV') == 'production':
-    app.config['DEBUG'] = False
+if os.environ.get("FLASK_ENV") == "production":
+    app.config["DEBUG"] = False
     app.logger.info("Application started in PRODUCTION mode")
 else:
     app.logger.info("Application started in DEVELOPMENT mode")
@@ -25,4 +27,4 @@ else:
 if __name__ == "__main__":
     # For development testing only
     # Production should use: gunicorn wsgi:app
-    app.run(host='0.0.0.0', port=int(os.environ.get('PORT', 5000)))
+    app.run(host="0.0.0.0", port=int(os.environ.get("PORT", 5000)))

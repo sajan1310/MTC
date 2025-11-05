@@ -555,7 +555,7 @@
         <div class="panel-header">
             <h2>🔍 Variant Search</h2>
             <div class="search-box">
-                <input type="text" id="variant-search" placeholder="Search variants..." 
+                <input type="text" id="variant-search" placeholder="Search variants..."
                        onkeyup="variantSearch.handleSearch(event)">
                 <span class="search-icon">🔎</span>
             </div>
@@ -649,7 +649,7 @@
                 <input type="text" id="custom-name" placeholder="Override default name...">
             </div>
             <div class="modal-actions">
-                <button type="button" class="btn btn-secondary" 
+                <button type="button" class="btn btn-secondary"
                         onclick="processEditor.closeSubprocessModal()">Cancel</button>
                 <button type="submit" class="btn btn-primary">Add Subprocess</button>
             </div>
@@ -667,24 +667,24 @@
         <form id="variant-form" onsubmit="processEditor.handleAddVariant(event)">
             <input type="hidden" id="selected-variant-id">
             <input type="hidden" id="target-subprocess-id">
-            
+
             <div class="form-group">
                 <label>Variant</label>
                 <div id="selected-variant-name" style="font-weight: 600; color: #333;"></div>
             </div>
-            
+
             <div class="form-group">
                 <label for="variant-quantity">Quantity *</label>
                 <input type="number" id="variant-quantity" step="0.01" min="0.01" required value="1">
             </div>
-            
+
             <div class="form-group">
                 <label for="variant-unit">Unit</label>
                 <input type="text" id="variant-unit" value="pcs" required>
             </div>
-            
+
             <div class="modal-actions">
-                <button type="button" class="btn btn-secondary" 
+                <button type="button" class="btn btn-secondary"
                         onclick="processEditor.closeVariantModal()">Cancel</button>
                 <button type="submit" class="btn btn-primary">Add Variant</button>
             </div>
@@ -699,10 +699,10 @@
             <h2>Configure OR Groups</h2>
             <button class="modal-close" onclick="processEditor.closeORGroupModal()">&times;</button>
         </div>
-        
+
         <div style="margin-bottom: 20px;">
             <p style="color: #666; font-size: 14px;">
-                OR Groups allow you to define alternative variants. During production, 
+                OR Groups allow you to define alternative variants. During production,
                 only ONE variant from each group will be selected.
             </p>
         </div>
@@ -718,19 +718,19 @@
         <!-- Create New OR Group -->
         <div style="border-top: 2px solid #e0e0e0; padding-top: 20px;">
             <h3 style="font-size: 16px; margin-bottom: 15px;">Create New OR Group</h3>
-            
+
             <form id="create-or-group-form" onsubmit="processEditor.handleCreateORGroup(event)">
                 <input type="hidden" id="or-group-subprocess-id">
-                
+
                 <div class="form-group">
                     <label for="or-group-name">Group Name *</label>
-                    <input type="text" id="or-group-name" 
+                    <input type="text" id="or-group-name"
                            placeholder="e.g., Wheel Type - Choose One" required>
                 </div>
 
                 <div class="form-group">
                     <label for="or-group-description">Description</label>
-                    <input type="text" id="or-group-description" 
+                    <input type="text" id="or-group-description"
                            placeholder="Optional description">
                 </div>
 
@@ -743,7 +743,7 @@
                 </div>
 
                 <div class="modal-actions">
-                    <button type="button" class="btn btn-secondary" 
+                    <button type="button" class="btn btn-secondary"
                             onclick="processEditor.closeORGroupModal()">Cancel</button>
                     <button type="submit" class="btn btn-primary">Create OR Group</button>
                 </div>
@@ -759,10 +759,10 @@
             <h2>Add Cost Item</h2>
             <button class="modal-close" onclick="processEditor.closeCostItemModal()">&times;</button>
         </div>
-        
+
         <form id="cost-item-form" onsubmit="processEditor.handleAddCostItem(event)">
             <input type="hidden" id="cost-subprocess-id">
-            
+
             <div class="form-group">
                 <label for="cost-type">Cost Type *</label>
                 <select id="cost-type" required>
@@ -778,7 +778,7 @@
 
             <div class="form-group">
                 <label for="cost-description">Description</label>
-                <input type="text" id="cost-description" 
+                <input type="text" id="cost-description"
                        placeholder="e.g., Assembly labor - 2 workers">
             </div>
 
@@ -800,7 +800,7 @@
             </div>
 
             <div class="modal-actions">
-                <button type="button" class="btn btn-secondary" 
+                <button type="button" class="btn btn-secondary"
                         onclick="processEditor.closeCostItemModal()">Cancel</button>
                 <button type="submit" class="btn btn-primary">Add Cost Item</button>
             </div>

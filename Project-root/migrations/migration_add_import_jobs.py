@@ -18,7 +18,7 @@ def upgrade():
     """
     with get_conn() as (conn, cur):
         print("Creating import_jobs table...")
-        
+
         # Create import_jobs table
         cur.execute("""
             CREATE TABLE IF NOT EXISTS import_jobs (
@@ -40,33 +40,33 @@ def upgrade():
             );
         """)
         print("✅ Created import_jobs table")
-        
+
         # Create indexes for efficient queries
         cur.execute("""
             CREATE INDEX IF NOT EXISTS idx_import_jobs_import_id
             ON import_jobs(import_id);
         """)
         print("✅ Created index on import_jobs(import_id)")
-        
+
         cur.execute("""
             CREATE INDEX IF NOT EXISTS idx_import_jobs_user_id
             ON import_jobs(user_id);
         """)
         print("✅ Created index on import_jobs(user_id)")
-        
+
         cur.execute("""
             CREATE INDEX IF NOT EXISTS idx_import_jobs_status
             ON import_jobs(status)
             WHERE status IN ('pending', 'processing');
         """)
         print("✅ Created index on import_jobs(status)")
-        
+
         cur.execute("""
             CREATE INDEX IF NOT EXISTS idx_import_jobs_created_at
             ON import_jobs(created_at DESC);
         """)
         print("✅ Created index on import_jobs(created_at)")
-        
+
         # Create import_results table to store detailed results
         cur.execute("""
             CREATE TABLE IF NOT EXISTS import_results (
@@ -83,14 +83,14 @@ def upgrade():
             );
         """)
         print("✅ Created import_results table")
-        
+
         # Create index on import_results
         cur.execute("""
             CREATE INDEX IF NOT EXISTS idx_import_results_import_id
             ON import_results(import_id);
         """)
         print("✅ Created index on import_results(import_id)")
-        
+
         # Create trigger to update updated_at timestamp
         cur.execute("""
             CREATE OR REPLACE FUNCTION update_import_jobs_updated_at()
@@ -101,11 +101,11 @@ def upgrade():
             END;
             $$ LANGUAGE plpgsql;
         """)
-        
+
         cur.execute("""
             DROP TRIGGER IF EXISTS trigger_update_import_jobs_updated_at ON import_jobs;
         """)
-        
+
         cur.execute("""
             CREATE TRIGGER trigger_update_import_jobs_updated_at
             BEFORE UPDATE ON import_jobs
@@ -113,7 +113,7 @@ def upgrade():
             EXECUTE FUNCTION update_import_jobs_updated_at();
         """)
         print("✅ Created trigger for updated_at timestamp")
-        
+
         conn.commit()
         print("\n✅ Migration completed successfully!")
         print("   import_jobs table created for background import processing")
@@ -125,26 +125,29 @@ def downgrade():
     """
     with get_conn() as (conn, cur):
         print("Removing import_jobs infrastructure...")
-        
+
         # Drop trigger
-        cur.execute("DROP TRIGGER IF EXISTS trigger_update_import_jobs_updated_at ON import_jobs;")
+        cur.execute(
+            "DROP TRIGGER IF EXISTS trigger_update_import_jobs_updated_at ON import_jobs;"
+        )
         cur.execute("DROP FUNCTION IF EXISTS update_import_jobs_updated_at();")
         print("✅ Dropped trigger and function")
-        
+
         # Drop tables (import_results first due to foreign key)
         cur.execute("DROP TABLE IF EXISTS import_results CASCADE;")
         print("✅ Dropped import_results table")
-        
+
         cur.execute("DROP TABLE IF EXISTS import_jobs CASCADE;")
         print("✅ Dropped import_jobs table")
-        
+
         conn.commit()
         print("\n✅ Downgrade completed: import_jobs infrastructure removed")
 
 
-if __name__ == '__main__':
+if __name__ == "__main__":
     import sys
-    if len(sys.argv) > 1 and sys.argv[1] == 'downgrade':
+
+    if len(sys.argv) > 1 and sys.argv[1] == "downgrade":
         downgrade()
     else:
         upgrade()

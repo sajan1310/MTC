@@ -325,9 +325,9 @@
 
     <!-- Filters -->
     <div class="upf-filters">
-        <input type="text" id="search-input" placeholder="🔍 Search processes..." 
+        <input type="text" id="search-input" placeholder="🔍 Search processes..."
                onkeyup="processManager.handleSearchKeyup(event)">
-        
+
         <select id="status-filter" onchange="processManager.applyFilters()">
             <option value="">All Statuses</option>
             <option value="active">Active</option>
@@ -394,7 +394,7 @@
 
             <div class="form-group">
                 <label for="process-name">Process Name *</label>
-                <input type="text" id="process-name" required 
+                <input type="text" id="process-name" required
                        placeholder="e.g., Product Assembly Process">
             </div>
 
@@ -411,12 +411,12 @@
 
             <div class="form-group">
                 <label for="process-description">Description</label>
-                <textarea id="process-description" 
+                <textarea id="process-description"
                           placeholder="Describe the purpose of this process..."></textarea>
             </div>
 
             <div class="modal-actions">
-                <button type="button" class="btn-upf-secondary" 
+                <button type="button" class="btn-upf-secondary"
                         onclick="processManager.closeModal()">Cancel</button>
                 <button type="submit" class="btn-upf-primary">Save Process</button>
             </div>
@@ -439,9 +439,9 @@
         </p>
 
         <div class="modal-actions">
-            <button type="button" class="btn-upf-secondary" 
+            <button type="button" class="btn-upf-secondary"
                     onclick="processManager.closeDeleteModal()">Cancel</button>
-            <button type="button" class="btn-upf-danger" 
+            <button type="button" class="btn-upf-danger"
                     onclick="processManager.confirmDelete()">Delete Process</button>
         </div>
     </div>

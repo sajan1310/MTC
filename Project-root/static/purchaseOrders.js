@@ -36,7 +36,7 @@ const PurchaseOrders = {
     this.elements.addPoBtn?.addEventListener("click", () => this.openPurchaseOrderModal());
     this.elements.poForm?.addEventListener("submit", (e) => this.handlePOFormSubmit(e));
     this.elements.addPoItemBtn?.addEventListener("click", () => this.openVariantSearchModal());
-    
+
     const poFilters = ["poStatusFilter", "poStartDateFilter", "poEndDateFilter"];
     poFilters.forEach(el => {
       this.elements[el]?.addEventListener("change", () => this.fetchPurchaseOrders());
@@ -66,12 +66,12 @@ const PurchaseOrders = {
         start_date: this.elements.poStartDateFilter?.value,
         end_date: this.elements.poEndDateFilter?.value,
       };
-      
+
       // Only append non-empty parameters
       Object.entries(params).forEach(([key, value]) => {
         if (value) url.searchParams.append(key, value);
       });
-      
+
       const data = await App.fetchJson(url.toString());
       if (data && Array.isArray(data)) {
         this.state.purchaseOrders = data;
@@ -117,7 +117,7 @@ const PurchaseOrders = {
   renderPurchaseOrdersList() {
     const tbody = this.elements.poTableBody;
     if (!tbody) return;
-    
+
     if (this.state.purchaseOrders.length === 0) {
       tbody.innerHTML = `
         <tr>
@@ -128,7 +128,7 @@ const PurchaseOrders = {
       `;
       return;
     }
-    
+
     tbody.innerHTML = this.state.purchaseOrders.map(po => `
       <tr data-po-id="${po.po_id}">
         <td>${App.escapeHtml(po.po_number || 'N/A')}</td>
@@ -203,51 +203,51 @@ const PurchaseOrders = {
    */
   async handlePOFormSubmit(e) {
     e.preventDefault();
-    
+
     const form = e.target;
     const supplierId = form.querySelector('[name="supplier_id"]')?.value;
     const notes = form.querySelector('[name="notes"]')?.value || '';
     const status = form.querySelector('[name="status"]')?.value || 'Draft';
-    
+
     // Validate supplier selection
     if (!supplierId) {
       App.showNotification("Please select a supplier.", "error");
       return;
     }
-    
+
     // Gather PO items
     const items = [];
     const itemRows = this.elements.poItemsContainer.querySelectorAll('.po-item-row');
-    
+
     if (itemRows.length === 0) {
       App.showNotification("Please add at least one item to the purchase order.", "error");
       return;
     }
-    
+
     // Validate and collect items
     let hasError = false;
     itemRows.forEach(row => {
       const variantId = row.dataset.variantId;
       const quantity = parseInt(row.querySelector('[name="quantity"]').value, 10);
       const rate = parseFloat(row.querySelector('[name="rate"]').value);
-      
+
       if (!variantId || isNaN(quantity) || quantity <= 0 || isNaN(rate) || rate < 0) {
         hasError = true;
         return;
       }
-      
+
       items.push({
         variant_id: variantId,
         quantity: quantity,
         rate: rate
       });
     });
-    
+
     if (hasError) {
       App.showNotification("Please ensure all items have valid quantity and rate values.", "error");
       return;
     }
-    
+
     // Prepare PO data
     const poData = {
       supplier_id: parseInt(supplierId, 10),
@@ -255,23 +255,23 @@ const PurchaseOrders = {
       notes: notes,
       status: status
     };
-    
+
     try {
-      const url = this.state.currentPOId 
+      const url = this.state.currentPOId
         ? `${App.config.apiBase}/purchase-orders/${this.state.currentPOId}`
         : `${App.config.apiBase}/purchase-orders`;
       const method = this.state.currentPOId ? 'PUT' : 'POST';
-      
+
       const result = await App.fetchJson(url, {
         method: method,
         body: JSON.stringify(poData)
       });
-      
+
       if (result) {
         this.elements.poModal.classList.remove('is-open');
         this.fetchPurchaseOrders(); // Refresh list
         App.showNotification(
-          `Purchase order ${this.state.currentPOId ? 'updated' : 'created'} successfully.`, 
+          `Purchase order ${this.state.currentPOId ? 'updated' : 'created'} successfully.`,
           'success'
         );
       } else {
@@ -295,7 +295,7 @@ const PurchaseOrders = {
   addReceiveItemRow() {
     const tbody = document.getElementById('receive-items-body');
     if (!tbody) return;
-    
+
     const row = document.createElement('tr');
     row.className = 'receive-item-row';
     row.innerHTML = `
@@ -314,12 +314,12 @@ const PurchaseOrders = {
         <button type="button" class="button-icon remove-receive-item" title="Remove Item">&times;</button>
       </td>
     `;
-    
+
     // Add event listeners for automatic calculation
     const qtyInput = row.querySelector('[name="quantity"]');
     const costInput = row.querySelector('[name="cost_per_unit"]');
     const totalCell = row.querySelector('.receive-item-total');
-    
+
     const updateTotal = () => {
       const qty = parseFloat(qtyInput.value) || 0;
       const cost = parseFloat(costInput.value) || 0;
@@ -327,19 +327,19 @@ const PurchaseOrders = {
       totalCell.textContent = `₹${total.toFixed(2)}`;
       this.updateReceiveTotals();
     };
-    
+
     qtyInput.addEventListener('input', updateTotal);
     costInput.addEventListener('input', updateTotal);
-    
+
     // Handle remove button
     row.querySelector('.remove-receive-item').addEventListener('click', () => {
       row.remove();
       this.updateReceiveTotals();
     });
-    
+
     tbody.appendChild(row);
   },
-  
+
   /**
    * Updates the totals in the receive stock form
    * Calculates subtotal, tax, discount, and grand total
@@ -347,21 +347,21 @@ const PurchaseOrders = {
   updateReceiveTotals() {
     const rows = document.querySelectorAll('.receive-item-row');
     let subtotal = 0;
-    
+
     rows.forEach(row => {
       const qty = parseFloat(row.querySelector('[name="quantity"]').value) || 0;
       const cost = parseFloat(row.querySelector('[name="cost_per_unit"]').value) || 0;
       subtotal += qty * cost;
     });
-    
+
     const taxPercent = parseFloat(document.getElementById('receive-tax-percentage')?.value) || 0;
     const discountPercent = parseFloat(document.getElementById('receive-discount-percentage')?.value) || 0;
-    
+
     const discountAmount = (subtotal * discountPercent) / 100;
     const taxableAmount = subtotal - discountAmount;
     const taxAmount = (taxableAmount * taxPercent) / 100;
     const grandTotal = taxableAmount + taxAmount;
-    
+
     // Update display elements
     document.getElementById('receive-discount-amount').textContent = `₹${discountAmount.toFixed(2)}`;
     document.getElementById('receive-total-amount').textContent = `₹${subtotal.toFixed(2)}`;
@@ -375,50 +375,50 @@ const PurchaseOrders = {
    */
   async handleReceiveStockFormSubmit(e) {
     e.preventDefault();
-    
+
     const form = e.target;
     const supplierId = document.getElementById('receive-supplier-select')?.value;
     const billNumber = document.getElementById('receive-bill-number')?.value || '';
     const poNumber = document.getElementById('receive-po-number')?.value || '';
-    
+
     // Validate supplier
     if (!supplierId) {
       App.showNotification("Please select a supplier.", "error");
       return;
     }
-    
+
     // Gather receive items
     const items = [];
     const itemRows = document.querySelectorAll('.receive-item-row');
-    
+
     if (itemRows.length === 0) {
       App.showNotification("Please add at least one item to receive.", "error");
       return;
     }
-    
+
     let hasError = false;
     itemRows.forEach(row => {
       const variantId = row.querySelector('[name="variant_id"]').value;
       const quantity = parseInt(row.querySelector('[name="quantity"]').value, 10);
       const costPerUnit = parseFloat(row.querySelector('[name="cost_per_unit"]').value);
-      
+
       if (!variantId || isNaN(quantity) || quantity <= 0 || isNaN(costPerUnit) || costPerUnit < 0) {
         hasError = true;
         return;
       }
-      
+
       items.push({
         variant_id: variantId,
         quantity: quantity,
         cost_per_unit: costPerUnit
       });
     });
-    
+
     if (hasError) {
       App.showNotification("Please ensure all items have valid values.", "error");
       return;
     }
-    
+
     // Prepare receipt data
     const receiptData = {
       supplier_id: parseInt(supplierId, 10),
@@ -428,13 +428,13 @@ const PurchaseOrders = {
       tax_percentage: parseFloat(document.getElementById('receive-tax-percentage')?.value) || 0,
       discount_percentage: parseFloat(document.getElementById('receive-discount-percentage')?.value) || 0
     };
-    
+
     try {
       const result = await App.fetchJson(`${App.config.apiBase}/stock-receipts`, {
         method: 'POST',
         body: JSON.stringify(receiptData)
       });
-      
+
       if (result) {
         this.elements.receiveStockModal.classList.remove('is-open');
         App.showNotification("Stock received and inventory updated successfully.", "success");

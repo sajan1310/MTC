@@ -1,5 +1,5 @@
 from flask import Blueprint
 
-api_bp = Blueprint('api', __name__, url_prefix='/api')
+api_bp = Blueprint("api", __name__, url_prefix="/api")
 
-from . import items, suppliers, purchase_orders, imports, stubs
+from . import imports, items, purchase_orders, stubs, suppliers

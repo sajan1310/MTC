@@ -79,7 +79,7 @@ const productionLots = {
             this.currentPage = data.page || 1;
             this.totalPages = data.pages || 1;
             this.filteredLots = [...this.lots];
-            
+
             this.renderTable();
             this.renderPagination();
         } catch (error) {
@@ -107,7 +107,7 @@ const productionLots = {
         const processId = document.getElementById('process-filter')?.value || '';
 
         this.filteredLots = this.lots.filter(lot => {
-            const matchesSearch = !searchTerm || 
+            const matchesSearch = !searchTerm ||
                 lot.lot_number.toLowerCase().includes(searchTerm) ||
                 lot.process_name.toLowerCase().includes(searchTerm);
 
@@ -173,7 +173,7 @@ const productionLots = {
         }
 
         let html = `
-            <button class="page-btn" 
+            <button class="page-btn"
                     onclick="productionLots.loadLots(${this.currentPage - 1})"
                     ${this.currentPage === 1 ? 'disabled' : ''}>
                 ← Previous
@@ -183,8 +183,8 @@ const productionLots = {
         // Show page numbers
         for (let i = 1; i <= this.totalPages; i++) {
             if (
-                i === 1 || 
-                i === this.totalPages || 
+                i === 1 ||
+                i === this.totalPages ||
                 (i >= this.currentPage - 2 && i <= this.currentPage + 2)
             ) {
                 html += `
@@ -199,7 +199,7 @@ const productionLots = {
         }
 
         html += `
-            <button class="page-btn" 
+            <button class="page-btn"
                     onclick="productionLots.loadLots(${this.currentPage + 1})"
                     ${this.currentPage === this.totalPages ? 'disabled' : ''}>
                 Next →

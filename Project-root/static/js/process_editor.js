@@ -214,7 +214,7 @@ const processEditor = {
 
         if (variants.length === 0) {
             html += `
-                <div class="drop-zone" 
+                <div class="drop-zone"
                      ondrop="processEditor.handleDrop(event, ${spIndex})"
                      ondragover="processEditor.handleDragOver(event)"
                      ondragleave="processEditor.handleDragLeave(event)">
@@ -223,7 +223,7 @@ const processEditor = {
             `;
         } else {
             variants.forEach((variant, vIndex) => {
-                const orGroupBadge = variant.or_group_id ? 
+                const orGroupBadge = variant.or_group_id ?
                     `<span class="or-group-badge">OR Group ${variant.or_group_id}</span>` : '';
 
                 html += `
@@ -321,14 +321,14 @@ const processEditor = {
 
         try {
             const variantData = JSON.parse(event.dataTransfer.getData('application/json'));
-            
+
             // Show modal to get quantity
             document.getElementById('selected-variant-id').value = variantData.id;
             document.getElementById('selected-variant-name').textContent = variantData.name;
             document.getElementById('target-subprocess-id').value = subprocessIndex;
             document.getElementById('variant-quantity').value = '1';
             document.getElementById('variant-unit').value = 'pcs';
-            
+
             document.getElementById('variant-modal').style.display = 'block';
         } catch (error) {
             console.error('Error handling drop:', error);
@@ -671,7 +671,7 @@ const processEditor = {
      */
     renderORGroups(groups) {
         const container = document.getElementById('or-groups-container');
-        
+
         if (!groups || groups.length === 0) {
             container.innerHTML = '<p style="color: #999; font-style: italic;">No OR groups configured yet.</p>';
             return;
@@ -708,7 +708,7 @@ const processEditor = {
 
         container.innerHTML = variants.map((variant, idx) => `
             <label style="display: block; padding: 6px; cursor: pointer; border-bottom: 1px solid #eee;">
-                <input type="checkbox" name="or-variant" value="${variant.id}" 
+                <input type="checkbox" name="or-variant" value="${variant.id}"
                        data-item-id="${variant.item_id}" style="margin-right: 8px;">
                 <strong>${variant.item_number}</strong> - ${variant.description || 'No description'}
                 <span style="color: #666; font-size: 12px;">(Qty: ${variant.quantity} ${variant.unit || ''})</span>

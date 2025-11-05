@@ -18,7 +18,7 @@
 6. **Check:** No console errors
 7. **API Call:** `GET /api/upf/processes/<id>/structure` should return 200
 
-**Status:** PASS / FAIL  
+**Status:** PASS / FAIL
 **Notes:**
 
 ---
@@ -34,7 +34,7 @@
 6. **Expected:** Variants filter in real-time
 7. **API Call:** `GET /api/all-variants` should return 200
 
-**Status:** PASS / FAIL  
+**Status:** PASS / FAIL
 **Notes:**
 
 ---
@@ -50,7 +50,7 @@
 6. **Check:** Subprocess has drag handle (☰)
 7. **API Call:** `POST /api/upf/process/<id>/add_subprocess` should return 201
 
-**Status:** PASS / FAIL  
+**Status:** PASS / FAIL
 **Notes:**
 
 ---
@@ -64,7 +64,7 @@
 4. **API Call:** `DELETE /api/upf/process_subprocess/<id>` should return 204
 5. Refresh page - subprocess should still be gone
 
-**Status:** PASS / FAIL  
+**Status:** PASS / FAIL
 **Notes:**
 
 ---
@@ -81,7 +81,7 @@
 7. **Expected:** Variant appears in subprocess with quantity badge
 8. **API Call:** `POST /api/upf/variant_usage` should return 201
 
-**Status:** PASS / FAIL  
+**Status:** PASS / FAIL
 **Notes:**
 
 ---
@@ -93,7 +93,7 @@
 2. **Expected:** Variant disappears from subprocess
 3. **API Call:** `DELETE /api/upf/variant_usage/<id>` should return 204
 
-**Status:** PASS / FAIL  
+**Status:** PASS / FAIL
 **Notes:**
 
 ---
@@ -111,7 +111,7 @@
 8. Refresh page
 9. **Expected:** New order persists
 
-**Status:** PASS / FAIL  
+**Status:** PASS / FAIL
 **Notes:**
 
 ---
@@ -126,7 +126,7 @@
 5. **Expected:** Cost increases
 6. **API Call:** `GET /api/upf/process/<id>/worst_case_costing` may be called
 
-**Status:** PASS / FAIL / UNKNOWN  
+**Status:** PASS / FAIL / UNKNOWN
 **Notes:**
 
 ---
@@ -141,7 +141,7 @@
 5. Test status filter
 6. **API Call:** `GET /api/upf/processes` should return 200
 
-**Status:** PASS / FAIL  
+**Status:** PASS / FAIL
 **Notes:**
 
 ---
@@ -158,7 +158,7 @@
 7. Confirm deletion
 8. **Expected:** Process disappears (soft deleted)
 
-**Status:** PASS / FAIL  
+**Status:** PASS / FAIL
 **Notes:**
 
 ---
@@ -253,10 +253,10 @@ Minimal testing to verify nothing is completely broken:
 7. Drag variant to subprocess ✅
 8. Save ✅
 
-If all above pass → **System functional** ✅  
+If all above pass → **System functional** ✅
 If any fail → **Critical issue** ❌
 
 ---
 
-*Testing Guide Version: 1.0*  
+*Testing Guide Version: 1.0*
 *Last Updated: November 4, 2025*

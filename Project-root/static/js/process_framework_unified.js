@@ -1,11 +1,11 @@
 const processFramework = {
     currentTab: 'processes',
-    
+
     processes: {
         all: [],
         filtered: [],
         searchTimeout: null,
-        
+
         async load() {
             try {
                 const response = await fetch('/api/upf/processes?per_page=1000', {
@@ -25,29 +25,29 @@ const processFramework = {
                 processFramework.showAlert('Failed to load processes', 'error');
             }
         },
-        
+
         handleSearch() {
             clearTimeout(this.searchTimeout);
             this.searchTimeout = setTimeout(() => this.applyFilters(), 500);
         },
-        
+
         applyFilters() {
             const searchTerm = document.getElementById('process-search').value.toLowerCase();
             const statusFilter = document.getElementById('process-status-filter').value;
             const classFilter = document.getElementById('process-class-filter').value;
-            
+
             this.filtered = this.all.filter(process => {
-                const matchesSearch = !searchTerm || 
+                const matchesSearch = !searchTerm ||
                     process.name.toLowerCase().includes(searchTerm) ||
                     (process.description && process.description.toLowerCase().includes(searchTerm));
                 const matchesStatus = !statusFilter || process.status === statusFilter;
                 const matchesClass = !classFilter || process.class === classFilter;
                 return matchesSearch && matchesStatus && matchesClass;
             });
-            
+
             this.render();
         },
-        
+
         render() {
             const grid = document.getElementById('processes-grid');
             if (this.filtered.length === 0) {
@@ -59,7 +59,7 @@ const processFramework = {
                 `;
                 return;
             }
-            
+
             grid.innerHTML = this.filtered.map(process => `
                 <div class="card" onclick="processFramework.processes.viewDetail(${process.id})">
                     <div class="card-header">
@@ -87,14 +87,14 @@ const processFramework = {
                 </div>
             `).join('');
         },
-        
+
         showCreateModal() {
             document.getElementById('process-modal-title').textContent = 'Create Process';
             document.getElementById('process-form').reset();
             document.getElementById('process-id').value = '';
             processFramework.openModal('process-modal');
         },
-        
+
         async edit(id) {
             try {
                 const response = await fetch(`/api/upf/processes/${id}`, {
@@ -106,7 +106,7 @@ const processFramework = {
                     return;
                 }
                 const data = await response.json();
-                
+
                 document.getElementById('process-modal-title').textContent = 'Edit Process';
                 document.getElementById('process-id').value = data.id;
                 document.getElementById('process-name').value = data.name;
@@ -118,17 +118,17 @@ const processFramework = {
                 processFramework.showAlert('Failed to load process', 'error');
             }
         },
-        
+
         async handleSubmit(event) {
             event.preventDefault();
-            
+
             const id = document.getElementById('process-id').value;
             // Ensure process_class is capitalized to match allowed DB values
             let processClass = document.getElementById('process-class').value;
             if (processClass) {
                 processClass = processClass.charAt(0).toUpperCase() + processClass.slice(1).toLowerCase();
             }
-            
+
             // Build form data with validation
             const formData = {
                 name: document.getElementById('process-name').value,
@@ -136,29 +136,29 @@ const processFramework = {
                 description: document.getElementById('process-description').value || null,
                 status: 'Active'
             };
-            
+
             // Validation: Ensure required fields are present
             if (!formData.name || !formData.name.trim()) {
                 processFramework.showAlert('Process name is required', 'error');
                 return;
             }
-            
+
             if (!formData.class) {
                 processFramework.showAlert('Process class is required', 'error');
                 return;
             }
-            
+
             try {
                 const url = id ? `/api/upf/processes/${id}` : '/api/upf/processes';
                 const method = id ? 'PUT' : 'POST';
-                
+
                 // Log the request for debugging
                 console.log('[Process Submit] Request:', {
                     url,
                     method,
                     payload: formData
                 });
-                
+
                 // Validate JSON serialization
                 let jsonBody;
                 try {
@@ -168,7 +168,7 @@ const processFramework = {
                     processFramework.showAlert('Invalid form data. Please check your inputs.', 'error');
                     return;
                 }
-                
+
                 const response = await fetch(url, {
                     method: method,
                     credentials: 'include',
@@ -178,14 +178,14 @@ const processFramework = {
                     },
                     body: jsonBody
                 });
-                
+
                 console.log('[Process Submit] Response status:', response.status);
-                
+
                 if (response.status === 401) {
                     window.location.href = '/auth/login';
                     return;
                 }
-                
+
                 if (response.ok) {
                     const result = await response.json();
                     console.log('[Process Submit] Success:', result);
@@ -199,7 +199,7 @@ const processFramework = {
                         const error = await response.json();
                         console.error('[Process Submit] Error response:', error);
                         errorMessage = error.error || error.message || errorMessage;
-                        
+
                         // Display detailed validation errors if available
                         if (error.details) {
                             errorMessage += ': ' + error.details;
@@ -210,7 +210,7 @@ const processFramework = {
                         console.error('[Process Submit] Non-JSON error response:', errorText);
                         errorMessage = `Server error (${response.status}): ${errorText.substring(0, 100)}`;
                     }
-                    
+
                     processFramework.showAlert(errorMessage, 'error');
                 }
             } catch (error) {
@@ -218,21 +218,21 @@ const processFramework = {
                 processFramework.showAlert('Network error: Failed to save process. Please check your connection.', 'error');
             }
         },
-        
+
         async confirmDelete(id) {
             if (!confirm('Are you sure you want to delete this process?')) return;
-            
+
             try {
                 const response = await fetch(`/api/upf/processes/${id}`, {
                     method: 'DELETE',
                     credentials: 'include'
                 });
-                
+
                 if (response.status === 401) {
                     window.location.href = '/auth/login';
                     return;
                 }
-                
+
                 if (response.ok) {
                     processFramework.showAlert('Process deleted successfully', 'success');
                     await this.load();
@@ -245,23 +245,23 @@ const processFramework = {
                 processFramework.showAlert('Failed to delete process', 'error');
             }
         },
-        
+
         viewDetail(id) {
             window.location.href = `/upf/process/${id}`;
         },
-        
+
         escapeHtml(text) {
             const div = document.createElement('div');
             div.textContent = text;
             return div.innerHTML;
         }
     },
-    
+
     subprocesses: {
         all: [],
         filtered: [],
         searchTimeout: null,
-        
+
         async load() {
             try {
                 const response = await fetch('/api/upf/subprocesses?per_page=1000', {
@@ -281,27 +281,27 @@ const processFramework = {
                 processFramework.showAlert('Failed to load subprocesses', 'error');
             }
         },
-        
+
         handleSearch() {
             clearTimeout(this.searchTimeout);
             this.searchTimeout = setTimeout(() => this.applyFilters(), 500);
         },
-        
+
         applyFilters() {
             const searchTerm = document.getElementById('subprocess-search').value.toLowerCase();
             const categoryFilter = document.getElementById('subprocess-category-filter').value;
-            
+
             this.filtered = this.all.filter(subprocess => {
-                const matchesSearch = !searchTerm || 
+                const matchesSearch = !searchTerm ||
                     subprocess.name.toLowerCase().includes(searchTerm) ||
                     (subprocess.description && subprocess.description.toLowerCase().includes(searchTerm));
                 const matchesCategory = !categoryFilter || subprocess.category === categoryFilter;
                 return matchesSearch && matchesCategory;
             });
-            
+
             this.render();
         },
-        
+
         render() {
             const grid = document.getElementById('subprocesses-grid');
             if (this.filtered.length === 0) {
@@ -313,7 +313,7 @@ const processFramework = {
                 `;
                 return;
             }
-            
+
             grid.innerHTML = this.filtered.map(subprocess => `
                 <div class="card">
                     <div class="card-header">
@@ -340,14 +340,14 @@ const processFramework = {
                 </div>
             `).join('');
         },
-        
+
         showCreateModal() {
             document.getElementById('subprocess-modal-title').textContent = 'Create Subprocess';
             document.getElementById('subprocess-form').reset();
             document.getElementById('subprocess-id').value = '';
             processFramework.openModal('subprocess-modal');
         },
-        
+
         async edit(id) {
             try {
                 const response = await fetch(`/api/upf/subprocesses/${id}`, {
@@ -359,7 +359,7 @@ const processFramework = {
                     return;
                 }
                 const data = await response.json();
-                
+
                 document.getElementById('subprocess-modal-title').textContent = 'Edit Subprocess';
                 document.getElementById('subprocess-id').value = data.id;
                 document.getElementById('subprocess-name').value = data.name;
@@ -373,10 +373,10 @@ const processFramework = {
                 processFramework.showAlert('Failed to load subprocess', 'error');
             }
         },
-        
+
         async handleSubmit(event) {
             event.preventDefault();
-            
+
             const id = document.getElementById('subprocess-id').value;
             const formData = {
                 name: document.getElementById('subprocess-name').value,
@@ -385,29 +385,29 @@ const processFramework = {
                 estimated_time_minutes: parseInt(document.getElementById('estimated-time').value) || 0,
                 labor_cost: parseFloat(document.getElementById('labor-cost').value) || 0
             };
-            
+
             // Validation: Ensure required fields are present
             if (!formData.name || !formData.name.trim()) {
                 processFramework.showAlert('Subprocess name is required', 'error');
                 return;
             }
-            
+
             if (!formData.category) {
                 processFramework.showAlert('Subprocess category is required', 'error');
                 return;
             }
-            
+
             try {
                 const url = id ? `/api/upf/subprocesses/${id}` : '/api/upf/subprocesses';
                 const method = id ? 'PUT' : 'POST';
-                
+
                 // Log the request for debugging
                 console.log('[Subprocess Submit] Request:', {
                     url,
                     method,
                     payload: formData
                 });
-                
+
                 // Validate JSON serialization
                 let jsonBody;
                 try {
@@ -417,7 +417,7 @@ const processFramework = {
                     processFramework.showAlert('Invalid form data. Please check your inputs.', 'error');
                     return;
                 }
-                
+
                 const response = await fetch(url, {
                     method: method,
                     credentials: 'include',
@@ -427,14 +427,14 @@ const processFramework = {
                     },
                     body: jsonBody
                 });
-                
+
                 console.log('[Subprocess Submit] Response status:', response.status);
-                
+
                 if (response.status === 401) {
                     window.location.href = '/auth/login';
                     return;
                 }
-                
+
                 if (response.ok) {
                     const result = await response.json();
                     console.log('[Subprocess Submit] Success:', result);
@@ -448,7 +448,7 @@ const processFramework = {
                         const error = await response.json();
                         console.error('[Subprocess Submit] Error response:', error);
                         errorMessage = error.error || error.message || errorMessage;
-                        
+
                         // Display detailed validation errors if available
                         if (error.details) {
                             errorMessage += ': ' + error.details;
@@ -459,7 +459,7 @@ const processFramework = {
                         console.error('[Subprocess Submit] Non-JSON error response:', errorText);
                         errorMessage = `Server error (${response.status}): ${errorText.substring(0, 100)}`;
                     }
-                    
+
                     processFramework.showAlert(errorMessage, 'error');
                 }
             } catch (error) {
@@ -467,21 +467,21 @@ const processFramework = {
                 processFramework.showAlert('Network error: Failed to save subprocess. Please check your connection.', 'error');
             }
         },
-        
+
         async confirmDelete(id) {
             if (!confirm('Are you sure you want to delete this subprocess?')) return;
-            
+
             try {
                 const response = await fetch(`/api/upf/subprocesses/${id}`, {
                     method: 'DELETE',
                     credentials: 'include'
                 });
-                
+
                 if (response.status === 401) {
                     window.location.href = '/auth/login';
                     return;
                 }
-                
+
                 if (response.ok) {
                     processFramework.showAlert('Subprocess deleted successfully', 'success');
                     await this.load();
@@ -494,19 +494,19 @@ const processFramework = {
                 processFramework.showAlert('Failed to delete subprocess', 'error');
             }
         },
-        
+
         escapeHtml(text) {
             const div = document.createElement('div');
             div.textContent = text;
             return div.innerHTML;
         }
     },
-    
+
     production: {
         all: [],
         filtered: [],
         searchTimeout: null,
-        
+
         async load() {
             try {
                 const response = await fetch('/api/upf/production-lots?per_page=1000', {
@@ -526,27 +526,27 @@ const processFramework = {
                 processFramework.showAlert('Failed to load production lots', 'error');
             }
         },
-        
+
         handleSearch() {
             clearTimeout(this.searchTimeout);
             this.searchTimeout = setTimeout(() => this.applyFilters(), 500);
         },
-        
+
         applyFilters() {
             const searchTerm = document.getElementById('lot-search').value.toLowerCase();
             const statusFilter = document.getElementById('lot-status-filter').value;
-            
+
             this.filtered = this.all.filter(lot => {
-                const matchesSearch = !searchTerm || 
+                const matchesSearch = !searchTerm ||
                     lot.lot_number.toLowerCase().includes(searchTerm) ||
                     (lot.process_name && lot.process_name.toLowerCase().includes(searchTerm));
                 const matchesStatus = !statusFilter || lot.status === statusFilter;
                 return matchesSearch && matchesStatus;
             });
-            
+
             this.render();
         },
-        
+
         render() {
             const tbody = document.getElementById('lots-table-body');
             if (this.filtered.length === 0) {
@@ -557,7 +557,7 @@ const processFramework = {
                 `;
                 return;
             }
-            
+
             tbody.innerHTML = this.filtered.map(lot => `
                 <tr onclick="processFramework.production.viewDetail(${lot.id})" style="cursor: pointer;">
                     <td><strong>${lot.lot_number}</strong></td>
@@ -569,22 +569,22 @@ const processFramework = {
                 </tr>
             `).join('');
         },
-        
+
         createNew() {
             window.location.href = '/upf/production-lot/new';
         },
-        
+
         viewDetail(id) {
             window.location.href = `/upf/production-lot/${id}`;
         },
-        
+
         escapeHtml(text) {
             const div = document.createElement('div');
             div.textContent = text;
             return div.innerHTML;
         }
     },
-    
+
     reports: {
         async load() {
             await Promise.all([
@@ -593,27 +593,27 @@ const processFramework = {
                 this.loadRecentLots()
             ]);
         },
-        
+
         async loadMetrics() {
             try {
                 const [processesRes, lotsRes] = await Promise.all([
                     fetch('/api/upf/processes?per_page=1000', { credentials: 'include' }),
                     fetch('/api/upf/production-lots?per_page=1000', { credentials: 'include' })
                 ]);
-                
+
                 const processesData = await processesRes.json();
                 const lotsData = await lotsRes.json();
-                
+
                 const processes = processesData.processes || [];
                 const lots = lotsData.production_lots || [];
-                
+
                 document.getElementById('total-processes').textContent = processes.length;
                 document.getElementById('total-lots').textContent = lots.length;
-                
+
                 const completedLots = lots.filter(l => l.status === 'Completed');
                 document.getElementById('completed-lots').textContent = completedLots.length;
-                
-                const avgCost = lots.length > 0 
+
+                const avgCost = lots.length > 0
                     ? lots.reduce((sum, l) => sum + (parseFloat(l.total_cost) || 0), 0) / lots.length
                     : 0;
                 document.getElementById('avg-cost').textContent = '$' + (parseFloat(avgCost) || 0).toFixed(2);
@@ -621,24 +621,24 @@ const processFramework = {
                 console.error('Error loading metrics:', error);
             }
         },
-        
+
         async loadTopProcesses() {
             try {
                 const response = await fetch('/api/upf/processes?per_page=1000', { credentials: 'include' });
                 const data = await response.json();
                 const processes = data.processes || [];
-                
+
                 const sorted = processes
                     .filter(p => p.worst_case_cost > 0)
                     .sort((a, b) => b.worst_case_cost - a.worst_case_cost)
                     .slice(0, 5);
-                
+
                 const container = document.getElementById('top-processes-list');
                 if (sorted.length === 0) {
                     container.innerHTML = '<p style="color: #999; text-align: center; padding: 40px;">No process cost data available</p>';
                     return;
                 }
-                
+
                 container.innerHTML = sorted.map((p, i) => `
                     <div style="padding: 12px; border-bottom: 1px solid #f0f0f0; display: flex; justify-content: space-between; align-items: center;">
                         <div>
@@ -652,19 +652,19 @@ const processFramework = {
                 console.error('Error loading top processes:', error);
             }
         },
-        
+
         async loadRecentLots() {
             try {
                 const response = await fetch('/api/upf/production-lots?per_page=5', { credentials: 'include' });
                 const data = await response.json();
                 const lots = data.production_lots || [];
-                
+
                 const container = document.getElementById('recent-lots-list');
                 if (lots.length === 0) {
                     container.innerHTML = '<p style="color: #999; text-align: center; padding: 40px;">No production lots yet</p>';
                     return;
                 }
-                
+
                 container.innerHTML = lots.map(lot => `
                     <div style="padding: 12px; border-bottom: 1px solid #f0f0f0;">
                         <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 5px;">
@@ -680,35 +680,35 @@ const processFramework = {
                 console.error('Error loading recent lots:', error);
             }
         },
-        
+
         escapeHtml(text) {
             const div = document.createElement('div');
             div.textContent = text;
             return div.innerHTML;
         }
     },
-    
+
     async init() {
         await this.switchTab('processes');
         this.updateHeaderActions();
     },
-    
+
     async switchTab(tabName) {
         // Update active tab button
         document.querySelectorAll('.tab-btn').forEach(btn => {
             btn.classList.remove('active');
         });
         document.querySelector(`[data-tab="${tabName}"]`).classList.add('active');
-        
+
         // Update active tab content
         document.querySelectorAll('.tab-content').forEach(content => {
             content.classList.remove('active');
         });
         document.getElementById(`tab-${tabName}`).classList.add('active');
-        
+
         this.currentTab = tabName;
         this.updateHeaderActions();
-        
+
         // Load data for the active tab
         switch(tabName) {
             case 'processes':
@@ -725,10 +725,10 @@ const processFramework = {
                 break;
         }
     },
-    
+
     updateHeaderActions() {
         const container = document.getElementById('header-actions');
-        
+
         switch(this.currentTab) {
             case 'processes':
                 container.innerHTML = '<button class="btn btn-primary" onclick="processFramework.processes.showCreateModal()">+ Create Process</button>';
@@ -744,22 +744,22 @@ const processFramework = {
                 break;
         }
     },
-    
+
     openModal(modalId) {
         document.getElementById(modalId).style.display = 'block';
     },
-    
+
     closeModal(modalId) {
         document.getElementById(modalId).style.display = 'none';
     },
-    
+
     showAlert(message, type) {
         const container = document.getElementById('alert-container');
         const alert = document.createElement('div');
         alert.className = `alert alert-${type}`;
         alert.textContent = message;
         container.appendChild(alert);
-        
+
         setTimeout(() => {
             alert.remove();
         }, 5000);

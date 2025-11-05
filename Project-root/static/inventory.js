@@ -57,7 +57,7 @@ const Inventory = {
     document.getElementById("receive-discount-percentage")?.addEventListener("input", () => this.updateReceiveTotals());
     document.getElementById("receive-stock-form")?.addEventListener("submit", (e) => this.handleReceiveStockSubmit(e));
     document.getElementById("po-form")?.addEventListener("submit", (e) => this.handlePOFormSubmit(e));
-    
+
     if (this.elements.inventorySearch) {
       const debouncedSearch = debounce((value) => this.handleSearch(value), 300);
       this.elements.inventorySearch.addEventListener("input", (e) => debouncedSearch(e.target.value));
@@ -122,7 +122,7 @@ const Inventory = {
     if (searchTerm) url.searchParams.append("search", searchTerm);
 
     this.state.isLoading = true;
-    
+
     try {
       const data = await App.fetchJson(url.toString());
       if (data?.items) {
@@ -227,10 +227,10 @@ const Inventory = {
   async handleTableActions(e) {
     const button = e.target.closest("button");
     if (!button) return;
-    
+
     const row = button.closest(".item-row");
     if (!row) return;
-    
+
     // Fixed: Use 'row' instead of undefined 'itemRow'
     const itemId = row.dataset.itemId;
     const itemName = row.dataset.itemName;
@@ -273,12 +273,12 @@ const Inventory = {
     // Validate inputs
     const stockValue = parseInt(stock, 10);
     const thresholdValue = parseInt(threshold, 10);
-    
+
     if (isNaN(stockValue) || stockValue < 0) {
       App.showNotification("Invalid stock value. Must be a positive number.", "error");
       return;
     }
-    
+
     if (isNaN(thresholdValue) || thresholdValue < 0) {
       App.showNotification("Invalid threshold value. Must be a positive number.", "error");
       return;
@@ -299,7 +299,7 @@ const Inventory = {
 
       if (stockResult && thresholdResult) {
         App.showNotification("Variant updated successfully.", "success");
-        
+
         // Update the total stock in the parent item row without full page refresh
         if (stockResult.new_total_stock !== undefined) {
           const itemRow = document.querySelector(`.item-row[data-item-id="${stockResult.item_id}"]`);
@@ -368,15 +368,15 @@ const Inventory = {
     // Fetch variants with error handling
     try {
       const variants = await App.fetchJson(`${App.config.apiBase}/items/${itemId}/variants`);
-      
+
       requestAnimationFrame(() => {
         container.innerHTML = "";
-        
+
         // Display item description if available
         if (itemRow.dataset.itemDescription) {
           container.innerHTML += `<div class="item-description-detail"><strong>Description:</strong> ${App.escapeHtml(itemRow.dataset.itemDescription)}</div>`;
         }
-        
+
         // Render variants or show empty state
         if (variants && variants.length > 0) {
           this.renderVariantMatrix(container, variants);
@@ -513,7 +513,7 @@ const Inventory = {
     });
 
     formData.append("variants", JSON.stringify(variants));
-    
+
     // For PUT requests, FormData doesn't work as expected with Flask/Werkzeug for file uploads + other data.
     // A common workaround is to use POST and add a method override field, but the backend is already set up for PUT.
     // The backend handles multipart form data correctly on PUT, so we can proceed.
@@ -836,7 +836,7 @@ const Inventory = {
     if (!resultsBody) return;
 
     const searchTerm = searchInput?.value.toLowerCase() || '';
-    const filtered = this.state.allVariants?.filter(v => 
+    const filtered = this.state.allVariants?.filter(v =>
       (v.name || v.full_name || '').toLowerCase().includes(searchTerm)
     ) || [];
 
@@ -872,7 +872,7 @@ const Inventory = {
   addSelectedVariantsToPO() {
     const selected = document.querySelectorAll('#variant-search-results .variant-checkbox:checked');
     const poItemsContainer = document.getElementById("po-items-container");
-    
+
     if (!poItemsContainer) return;
 
     selected.forEach(cb => {
@@ -885,10 +885,10 @@ const Inventory = {
         <input type="number" name="rate" placeholder="Rate" required min="0" step="0.01" value="0">
         <button type="button" class="button-icon remove-po-item">&times;</button>
       `;
-      
+
       // Add remove listener
       row.querySelector('.remove-po-item').addEventListener('click', () => row.remove());
-      
+
       poItemsContainer.appendChild(row);
     });
 
@@ -974,11 +974,11 @@ const Inventory = {
    */
   async handleReceiveStockSubmit(e) {
     e.preventDefault();
-    
+
     const supplierId = document.getElementById("receive-supplier-select")?.value;
     const billNumber = document.getElementById("receive-bill-number")?.value || '';
     const poNumber = document.getElementById("receive-po-number")?.value || '';
-    
+
     if (!supplierId) {
       App.showNotification("Please select a supplier", "error");
       return;
@@ -986,7 +986,7 @@ const Inventory = {
 
     const items = [];
     const itemRows = document.querySelectorAll('.receive-item-row');
-    
+
     if (itemRows.length === 0) {
       App.showNotification("Please add at least one item", "error");
       return;
@@ -997,12 +997,12 @@ const Inventory = {
       const variantId = row.querySelector('[name="variant_id"]').value;
       const quantity = parseInt(row.querySelector('[name="quantity"]').value, 10);
       const costPerUnit = parseFloat(row.querySelector('[name="cost_per_unit"]').value);
-      
+
       if (!variantId || isNaN(quantity) || quantity <= 0 || isNaN(costPerUnit) || costPerUnit < 0) {
         hasError = true;
         return;
       }
-      
+
       items.push({
         variant_id: variantId,
         quantity: quantity,
@@ -1049,9 +1049,9 @@ const Inventory = {
    */
   async handlePOFormSubmit(e) {
     e.preventDefault();
-    
+
     const supplierId = document.getElementById("po-supplier-id")?.value;
-    
+
     if (!supplierId) {
       App.showNotification("Please select a supplier", "error");
       return;
@@ -1059,7 +1059,7 @@ const Inventory = {
 
     const items = [];
     const itemRows = document.querySelectorAll('.po-item-row');
-    
+
     if (itemRows.length === 0) {
       App.showNotification("Please add at least one item to the purchase order", "error");
       return;
@@ -1070,12 +1070,12 @@ const Inventory = {
       const variantId = row.dataset.variantId;
       const quantity = parseInt(row.querySelector('[name="quantity"]').value, 10);
       const rate = parseFloat(row.querySelector('[name="rate"]').value);
-      
+
       if (!variantId || isNaN(quantity) || quantity <= 0 || isNaN(rate) || rate < 0) {
         hasError = true;
         return;
       }
-      
+
       items.push({
         variant_id: variantId,
         quantity: quantity,

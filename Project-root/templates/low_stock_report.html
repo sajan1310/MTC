@@ -60,7 +60,7 @@ document.addEventListener('DOMContentLoaded', function() {
     function printReport() {
         const reportTitle = "Low Stock Report";
         const printContents = document.getElementById('low-stock-report-printable').innerHTML;
-        
+
         const printWindow = window.open('', '', 'height=600,width=800');
         printWindow.document.write('<html><head><title>' + reportTitle + '</title>');
         printWindow.document.write(`
