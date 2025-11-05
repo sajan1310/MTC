@@ -1,23 +1,5 @@
-from flask import current_app
+# [BUG FIX] Removed stub implementation of get_purchase_orders() that was returning empty data=[]
+# The full implementation exists in routes.py with proper purchase order data and filtering
+# This stub was overriding the real implementation and causing empty PO lists
 
-from app.utils.response import APIResponse
-
-from . import api_bp
-
-
-@api_bp.route("/purchase-orders", methods=["GET"])
-def get_purchase_orders():
-    # Auth guard enforced in production, bypassed in tests for backward compatibility
-    if not current_app.config.get("TESTING"):
-        from flask_login import current_user
-
-        if not current_user.is_authenticated or current_user.role not in [
-            "admin",
-            "user",
-            "super_admin",
-        ]:
-            return APIResponse.error(
-                message="Insufficient permissions", status_code=403
-            )
-    # ...fetch purchase orders logic...
-    return APIResponse.success(data=[], message="OK")
+# This file is kept for future PO-specific endpoints if needed

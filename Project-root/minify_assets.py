@@ -29,18 +29,21 @@ def minify_css(content):
 def main():
     static_folder = os.path.join(os.path.dirname(__file__), "static")
 
-    # Minify JS
+    # Minify JS (skip if file doesn't exist)
     js_path = os.path.join(static_folder, "app.js")
     min_js_path = os.path.join(static_folder, "app.min.js")
-    print(f"Reading {js_path}...")
-    with open(js_path, "r", encoding="utf-8") as f:
-        js_content = f.read()
+    if os.path.exists(js_path):
+        print(f"Reading {js_path}...")
+        with open(js_path, "r", encoding="utf-8") as f:
+            js_content = f.read()
 
-    minified_js = minify_js(js_content)
+        minified_js = minify_js(js_content)
 
-    with open(min_js_path, "w", encoding="utf-8") as f:
-        f.write(minified_js)
-    print(f"Successfully created {min_js_path}")
+        with open(min_js_path, "w", encoding="utf-8") as f:
+            f.write(minified_js)
+        print(f"Successfully created {min_js_path}")
+    else:
+        print(f"Skipping {js_path} (file not found)")
 
     # Minify CSS
     css_path = os.path.join(static_folder, "styles.css")

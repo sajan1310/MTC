@@ -368,6 +368,13 @@ def upf_production_lot_detail(lot_id):
     return render_template("upf_production_lot_detail.html", lot_id=lot_id)
 
 
+@main_bp.route("/upf/production-lot/new")
+@login_required
+def upf_production_lot_new():
+    """Create new production lot page."""
+    return render_template("upf_production_lot_new.html")
+
+
 @main_bp.route("/upf/production-lot/<int:lot_id>/select-variants")
 @login_required
 def upf_variant_selection(lot_id):

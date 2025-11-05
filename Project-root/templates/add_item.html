@@ -48,7 +48,8 @@
         </div>
     </div>
 
-    <form id="item-form" class="form-layout" method="POST" action="{{ url_for('add_item') }}" enctype="multipart/form-data">
+    <!-- [BUG FIX] Changed url_for('add_item') to url_for('main.add_item') to match blueprint structure -->
+    <form id="item-form" class="form-layout" method="POST" action="{{ url_for('main.add_item') }}" enctype="multipart/form-data">
         <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
 
         <div class="form-section">

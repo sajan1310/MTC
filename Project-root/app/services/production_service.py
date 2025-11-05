@@ -61,9 +61,9 @@ class ProductionService:
             cur.execute(
                 """
                 INSERT INTO production_lots (
-                    process_id, lot_number, user_id, quantity,
-                    worst_case_estimated_cost, status
-                ) VALUES (%s, %s, %s, %s, %s, 'draft')
+                    process_id, lot_number, created_by, quantity,
+                    total_cost, status
+                ) VALUES (%s, %s, %s, %s, %s, 'Planning')
                 RETURNING *
             """,
                 (process_id, lot_number, user_id, quantity, worst_case_cost),
@@ -99,10 +99,10 @@ class ProductionService:
                     pl.*,
                     p.name as process_name,
                     p.description as process_description,
-                    u.name as created_by
+                    u.name as created_by_name
                 FROM production_lots pl
                 JOIN processes p ON p.id = pl.process_id
-                JOIN users u ON u.user_id = pl.user_id
+                LEFT JOIN users u ON u.user_id = pl.created_by
                 WHERE pl.id = %s
             """,
                 (lot_id,),
@@ -124,11 +124,11 @@ class ProductionService:
                         sg.group_name,
                         iv.name as variant_name,
                         s.firm_name as supplier_name
-                    FROM production_lot_selections pls
+                    FROM production_lot_variant_selections pls
                     JOIN substitute_groups sg ON sg.id = pls.substitute_group_id
                     JOIN item_variant iv ON iv.variant_id = pls.selected_variant_id
                     LEFT JOIN suppliers s ON s.supplier_id = pls.selected_supplier_id
-                    WHERE pls.production_lot_id = %s
+                    WHERE pls.lot_id = %s
                 """,
                     (lot_id,),
                 )
@@ -185,7 +185,7 @@ class ProductionService:
             params.append(process_id)
 
         if user_id:
-            conditions.append("pl.user_id = %s")
+            conditions.append("pl.created_by = %s")
             params.append(user_id)
 
         if status:
@@ -215,12 +215,12 @@ class ProductionService:
                 SELECT
                     pl.*,
                     p.name as process_name,
-                    u.name as created_by,
-                    COUNT(pls.id) as selections_count
+                    u.name as created_by_name,
+                    COUNT(plvs.id) as selections_count
                 FROM production_lots pl
                 JOIN processes p ON p.id = pl.process_id
-                JOIN users u ON u.user_id = pl.user_id
-                LEFT JOIN production_lot_selections pls ON pls.production_lot_id = pl.id
+                LEFT JOIN users u ON u.user_id = pl.created_by
+                LEFT JOIN production_lot_variant_selections plvs ON plvs.lot_id = pl.id
                 {where_clause}
                 GROUP BY pl.id, p.name, u.name
                 ORDER BY pl.created_at DESC
@@ -231,8 +231,11 @@ class ProductionService:
 
             lots = cur.fetchall()
 
+        # [BUG FIX] Return both "production_lots" (for frontend) and "lots" (for legacy)
+        # Frontend JavaScript expects response.data.production_lots
         return {
-            "lots": [dict(lot) for lot in lots],
+            "production_lots": [dict(lot) for lot in lots],
+            "lots": [dict(lot) for lot in lots],  # Legacy compatibility
             "pagination": {
                 "page": page,
                 "per_page": per_page,
@@ -304,7 +307,7 @@ class ProductionService:
             # Insert or update selection
             cur.execute(
                 """
-                INSERT INTO production_lot_selections (
+                INSERT INTO production_lot_variant_selections (
                     production_lot_id, substitute_group_id, selected_variant_id,
                     selected_supplier_id, selected_cost, selected_quantity
                 ) VALUES (%s, %s, %s, %s, %s, %s)
@@ -375,8 +378,8 @@ class ProductionService:
             cur.execute(
                 """
                 SELECT substitute_group_id
-                FROM production_lot_selections
-                WHERE production_lot_id = %s
+                FROM production_lot_variant_selections
+                WHERE lot_id = %s
             """,
                 (lot_id,),
             )
@@ -451,8 +454,8 @@ class ProductionService:
             cur.execute(
                 """
                 SELECT selected_cost, selected_quantity
-                FROM production_lot_selections
-                WHERE production_lot_id = %s
+                FROM production_lot_variant_selections
+                WHERE lot_id = %s
             """,
                 (lot_id,),
             )
@@ -590,9 +593,9 @@ class ProductionService:
                     pls.selected_quantity as quantity,
                     iv.name as variant_name,
                     iv.opening_stock as current_stock
-                FROM production_lot_selections pls
+                FROM production_lot_variant_selections pls
                 JOIN item_variant iv ON iv.variant_id = pls.selected_variant_id
-                WHERE pls.production_lot_id = %s
+                WHERE pls.lot_id = %s
             """,
                 (lot_id,),
             )

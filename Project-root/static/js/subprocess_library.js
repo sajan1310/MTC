@@ -37,7 +37,7 @@ const subprocessLibrary = {
             }
 
             const data = await response.json();
-            this.subprocesses = data.subprocesses || [];
+            this.subprocesses = data.data?.subprocesses || data.subprocesses || [];
             this.filteredSubprocesses = [...this.subprocesses];
             this.renderGrid();
         } catch (error) {

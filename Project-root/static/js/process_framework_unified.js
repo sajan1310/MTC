@@ -17,7 +17,7 @@ const processFramework = {
                     return;
                 }
                 const data = await response.json();
-                this.all = data.processes || [];
+                this.all = data.data?.processes || data.processes || [];
                 this.filtered = [...this.all];
                 this.render();
             } catch (error) {
@@ -51,12 +51,34 @@ const processFramework = {
         render() {
             const grid = document.getElementById('processes-grid');
             if (this.filtered.length === 0) {
-                grid.innerHTML = `
-                    <div class="empty-state">
-                        <div class="empty-state-icon">📋</div>
-                        <p>No processes found</p>
-                    </div>
-                `;
+                const isFiltered = document.getElementById('process-search')?.value || 
+                                 document.getElementById('process-status-filter')?.value ||
+                                 document.getElementById('process-class-filter')?.value;
+                
+                if (isFiltered) {
+                    // Filtered results are empty
+                    grid.innerHTML = `
+                        <div class="empty-state">
+                            <div class="empty-state-icon">🔍</div>
+                            <p>No processes match your filters</p>
+                            <p style="color: #999; font-size: 14px;">Try adjusting your search or filters</p>
+                        </div>
+                    `;
+                } else {
+                    // No processes at all
+                    grid.innerHTML = `
+                        <div class="empty-state">
+                            <div class="empty-state-icon">📋</div>
+                            <p>No processes created yet</p>
+                            <p style="color: #999; font-size: 14px; margin-bottom: 15px;">
+                                Create your first process to define manufacturing workflows
+                            </p>
+                            <button class="btn btn-primary" onclick="processFramework.processes.showCreateModal()">
+                                ➕ Create Your First Process
+                            </button>
+                        </div>
+                    `;
+                }
                 return;
             }
 
@@ -68,9 +90,9 @@ const processFramework = {
                             <span class="card-badge badge-${process.status.toLowerCase()}">${process.status}</span>
                             <span class="card-badge badge-category">${process.class}</span>
                         </div>
-                        <div class="card-actions" onclick="event.stopPropagation()">
-                            <button class="icon-btn" onclick="processFramework.processes.edit(${process.id})" title="Edit">✏️</button>
-                            <button class="icon-btn" onclick="processFramework.processes.confirmDelete(${process.id})" title="Delete">🗑️</button>
+                        <div class="card-actions">
+                            <button class="icon-btn" onclick="event.stopPropagation(); processFramework.processes.edit(${process.id})" title="Edit">✏️</button>
+                            <button class="icon-btn" onclick="event.stopPropagation(); processFramework.processes.confirmDelete(${process.id})" title="Delete">🗑️</button>
                         </div>
                     </div>
                     <p class="card-description">${this.escapeHtml(process.description || 'No description')}</p>
@@ -273,7 +295,7 @@ const processFramework = {
                     return;
                 }
                 const data = await response.json();
-                this.all = data.subprocesses || [];
+                this.all = data.data?.subprocesses || data.subprocesses || [];
                 this.filtered = [...this.all];
                 this.render();
             } catch (error) {
@@ -305,12 +327,33 @@ const processFramework = {
         render() {
             const grid = document.getElementById('subprocesses-grid');
             if (this.filtered.length === 0) {
-                grid.innerHTML = `
-                    <div class="empty-state">
-                        <div class="empty-state-icon">⚙️</div>
-                        <p>No subprocesses found</p>
-                    </div>
-                `;
+                const isFiltered = document.getElementById('subprocess-search')?.value || 
+                                 document.getElementById('subprocess-category-filter')?.value;
+                
+                if (isFiltered) {
+                    // Filtered results are empty
+                    grid.innerHTML = `
+                        <div class="empty-state">
+                            <div class="empty-state-icon">🔍</div>
+                            <p>No subprocesses match your filters</p>
+                            <p style="color: #999; font-size: 14px;">Try adjusting your search or category filter</p>
+                        </div>
+                    `;
+                } else {
+                    // No subprocesses at all
+                    grid.innerHTML = `
+                        <div class="empty-state">
+                            <div class="empty-state-icon">⚙️</div>
+                            <p>No subprocesses in library</p>
+                            <p style="color: #999; font-size: 14px; margin-bottom: 15px;">
+                                Build a library of reusable subprocesses (steps) for your workflows
+                            </p>
+                            <button class="btn btn-primary" onclick="processFramework.subprocesses.showCreateModal()">
+                                ➕ Create Your First Subprocess
+                            </button>
+                        </div>
+                    `;
+                }
                 return;
             }
 
@@ -518,7 +561,7 @@ const processFramework = {
                     return;
                 }
                 const data = await response.json();
-                this.all = data.production_lots || [];
+                this.all = data.data?.production_lots || data.production_lots || [];
                 this.filtered = [...this.all];
                 this.render();
             } catch (error) {
@@ -550,11 +593,43 @@ const processFramework = {
         render() {
             const tbody = document.getElementById('lots-table-body');
             if (this.filtered.length === 0) {
-                tbody.innerHTML = `
-                    <tr>
-                        <td colspan="6" class="empty-state">No production lots found</td>
-                    </tr>
-                `;
+                const isFiltered = document.getElementById('lot-search')?.value || 
+                                 document.getElementById('lot-status-filter')?.value;
+                
+                if (isFiltered) {
+                    // Filtered results are empty
+                    tbody.innerHTML = `
+                        <tr>
+                            <td colspan="6" class="empty-state">
+                                <div style="padding: 20px;">
+                                    <div style="font-size: 36px; margin-bottom: 10px;">🔍</div>
+                                    <div>No production lots match your filters</div>
+                                    <div style="color: #999; font-size: 14px; margin-top: 5px;">
+                                        Try adjusting your search or status filter
+                                    </div>
+                                </div>
+                            </td>
+                        </tr>
+                    `;
+                } else {
+                    // No production lots at all
+                    tbody.innerHTML = `
+                        <tr>
+                            <td colspan="6" class="empty-state">
+                                <div style="padding: 30px;">
+                                    <div style="font-size: 48px; margin-bottom: 10px;">🏭</div>
+                                    <div style="font-size: 18px; margin-bottom: 10px;">No production lots yet</div>
+                                    <div style="color: #999; font-size: 14px; margin-bottom: 20px;">
+                                        Create production lots from your processes to start manufacturing
+                                    </div>
+                                    <button class="btn btn-primary" onclick="processFramework.production.createNew()">
+                                        ➕ Create Your First Production Lot
+                                    </button>
+                                </div>
+                            </td>
+                        </tr>
+                    `;
+                }
                 return;
             }
 
@@ -604,8 +679,8 @@ const processFramework = {
                 const processesData = await processesRes.json();
                 const lotsData = await lotsRes.json();
 
-                const processes = processesData.processes || [];
-                const lots = lotsData.production_lots || [];
+                const processes = processesData.data?.processes || processesData.processes || [];
+                const lots = lotsData.data?.production_lots || lotsData.production_lots || [];
 
                 document.getElementById('total-processes').textContent = processes.length;
                 document.getElementById('total-lots').textContent = lots.length;
@@ -626,7 +701,7 @@ const processFramework = {
             try {
                 const response = await fetch('/api/upf/processes?per_page=1000', { credentials: 'include' });
                 const data = await response.json();
-                const processes = data.processes || [];
+                const processes = data.data?.processes || data.processes || [];
 
                 const sorted = processes
                     .filter(p => p.worst_case_cost > 0)
@@ -635,7 +710,15 @@ const processFramework = {
 
                 const container = document.getElementById('top-processes-list');
                 if (sorted.length === 0) {
-                    container.innerHTML = '<p style="color: #999; text-align: center; padding: 40px;">No process cost data available</p>';
+                    container.innerHTML = `
+                        <div style="text-align: center; padding: 40px; color: #999;">
+                            <div style="font-size: 36px; margin-bottom: 10px;">📊</div>
+                            <div style="font-size: 14px;">No process cost data available</div>
+                            <div style="font-size: 12px; margin-top: 8px;">
+                                Create processes with subprocesses to see cost analysis
+                            </div>
+                        </div>
+                    `;
                     return;
                 }
 
@@ -657,11 +740,19 @@ const processFramework = {
             try {
                 const response = await fetch('/api/upf/production-lots?per_page=5', { credentials: 'include' });
                 const data = await response.json();
-                const lots = data.production_lots || [];
+                const lots = data.data?.production_lots || data.production_lots || [];
 
                 const container = document.getElementById('recent-lots-list');
                 if (lots.length === 0) {
-                    container.innerHTML = '<p style="color: #999; text-align: center; padding: 40px;">No production lots yet</p>';
+                    container.innerHTML = `
+                        <div style="text-align: center; padding: 40px; color: #999;">
+                            <div style="font-size: 36px; margin-bottom: 10px;">🏭</div>
+                            <div style="font-size: 14px;">No production lots yet</div>
+                            <div style="font-size: 12px; margin-top: 8px;">
+                                Create production lots to track manufacturing activity
+                            </div>
+                        </div>
+                    `;
                     return;
                 }
 
@@ -689,7 +780,15 @@ const processFramework = {
     },
 
     async init() {
-        await this.switchTab('processes');
+        // Check if there's a tab parameter in the URL
+        const urlParams = new URLSearchParams(window.location.search);
+        const initialTab = urlParams.get('tab') || 'processes';
+        
+        // Validate tab name
+        const validTabs = ['processes', 'subprocesses', 'production', 'reports'];
+        const tabToLoad = validTabs.includes(initialTab) ? initialTab : 'processes';
+        
+        await this.switchTab(tabToLoad);
         this.updateHeaderActions();
     },
 

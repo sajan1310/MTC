@@ -33,7 +33,7 @@ const productionLots = {
 
             if (response.ok) {
                 const data = await response.json();
-                this.processes = data.processes || [];
+                this.processes = data.data?.processes || data.processes || [];
                 this.renderProcessFilter();
             }
         } catch (error) {
@@ -75,9 +75,9 @@ const productionLots = {
             }
 
             const data = await response.json();
-            this.lots = data.production_lots || [];
-            this.currentPage = data.page || 1;
-            this.totalPages = data.pages || 1;
+            this.lots = data.data?.production_lots || data.production_lots || [];
+            this.currentPage = data.data?.page || data.page || 1;
+            this.totalPages = data.data?.pages || data.pages || 1;
             this.filteredLots = [...this.lots];
 
             this.renderTable();
@@ -128,15 +128,36 @@ const productionLots = {
         if (!tbody) return;
 
         if (this.filteredLots.length === 0) {
-            tbody.innerHTML = `
-                <tr>
-                    <td colspan="7" class="empty-state">
-                        <div style="font-size: 48px; margin-bottom: 15px;">📦</div>
-                        <div style="font-size: 18px; margin-bottom: 10px;">No production lots found</div>
-                        <p style="color: #999;">Create your first production lot to start manufacturing</p>
-                    </td>
-                </tr>
-            `;
+            const isFiltered = document.getElementById('search-input')?.value || 
+                             document.getElementById('status-filter')?.value ||
+                             document.getElementById('process-filter')?.value;
+            
+            if (isFiltered) {
+                // Filtered results are empty
+                tbody.innerHTML = `
+                    <tr>
+                        <td colspan="7" class="empty-state">
+                            <div style="font-size: 48px; margin-bottom: 15px;">�</div>
+                            <div style="font-size: 18px; margin-bottom: 10px;">No production lots match your filters</div>
+                            <p style="color: #999;">Try adjusting your search term, status, or process filter</p>
+                        </td>
+                    </tr>
+                `;
+            } else {
+                // No production lots at all
+                tbody.innerHTML = `
+                    <tr>
+                        <td colspan="7" class="empty-state">
+                            <div style="font-size: 48px; margin-bottom: 15px;">📦</div>
+                            <div style="font-size: 18px; margin-bottom: 10px;">No production lots yet</div>
+                            <p style="color: #999; margin-bottom: 20px;">Create your first production lot to start manufacturing</p>
+                            <button class="btn btn-primary" onclick="productionLots.createNew()">
+                                ➕ Create Your First Production Lot
+                            </button>
+                        </td>
+                    </tr>
+                `;
+            }
             return;
         }
 

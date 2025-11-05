@@ -60,9 +60,9 @@ const processManager = {
             }
 
             const data = await response.json();
-            this.processes = data.processes || [];
-            this.totalProcesses = data.total || 0;
-            this.totalPages = data.pages || 0;
+            this.processes = data.data?.processes || data.processes || [];
+            this.totalProcesses = data.data?.total || data.total || 0;
+            this.totalPages = data.data?.pages || data.pages || 0;
 
             this.applyClientSideFilters();
             this.renderTable();

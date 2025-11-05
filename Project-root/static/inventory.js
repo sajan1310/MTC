@@ -300,15 +300,42 @@ const Inventory = {
       if (stockResult && thresholdResult) {
         App.showNotification("Variant updated successfully.", "success");
 
-        // Update the total stock in the parent item row without full page refresh
+        // [BUG FIX] Update the total stock in the parent item row without full page refresh
+        // The backend now returns new_total_stock and we need to find the correct item row
         if (stockResult.new_total_stock !== undefined) {
-          const itemRow = document.querySelector(`.item-row[data-item-id="${stockResult.item_id}"]`);
-          if (itemRow) {
-            const totalStockCell = itemRow.querySelector('.total-stock-cell');
-            if (totalStockCell) {
-              totalStockCell.textContent = stockResult.new_total_stock;
+          // Find the item row by locating the parent of the variant details container
+          const variantRow = document.querySelector(`tr[data-variant-id="${variantId}"]`);
+          if (variantRow) {
+            // Navigate up to find the item row (variant details are in a nested table)
+            const detailsContainer = variantRow.closest('.variant-details-container');
+            if (detailsContainer) {
+              const detailsRow = detailsContainer.closest('tr.variant-details-row');
+              const itemRow = detailsRow ? detailsRow.previousElementSibling : null;
+              if (itemRow && itemRow.classList.contains('item-row')) {
+                const totalStockCell = itemRow.querySelector('.total-stock-cell');
+                if (totalStockCell) {
+                  totalStockCell.textContent = stockResult.new_total_stock;
+                }
+                // [BUG FIX] Also update low stock status badge if returned
+                if (stockResult.item_has_low_stock !== undefined) {
+                  const statusBadge = itemRow.querySelector('.status-badge');
+                  if (statusBadge) {
+                    statusBadge.className = stockResult.item_has_low_stock ? 'status-badge low-stock' : 'status-badge in-stock';
+                    statusBadge.textContent = stockResult.item_has_low_stock ? 'Low Stock' : 'In Stock';
+                  }
+                }
+              }
             }
           }
+        }
+        
+        // [BUG FIX] Update the variant row's stock/threshold display immediately
+        const variantRowToUpdate = document.querySelector(`tr[data-variant-id="${variantId}"]`);
+        if (variantRowToUpdate && stockResult.updated_variant) {
+          const stockInputEl = variantRowToUpdate.querySelector('.stock-input');
+          const thresholdInputEl = variantRowToUpdate.querySelector('.threshold-input');
+          if (stockInputEl) stockInputEl.value = stockResult.updated_variant.stock;
+          if (thresholdInputEl) thresholdInputEl.value = stockResult.updated_variant.threshold;
         }
       } else {
         App.showNotification("Failed to update variant. Please try again.", "error");
@@ -581,26 +608,28 @@ const Inventory = {
     const reportBody = document.getElementById("low-stock-report-body");
     if (!reportModal || !reportBody) return;
 
-    reportBody.innerHTML = '<tr><td colspan="5" class="text-center">Loading report...</td></tr>';
+    reportBody.innerHTML = '<tr><td colspan="7" class="text-center">Loading report...</td></tr>';
     reportModal.classList.add("is-open");
 
     const data = await App.fetchJson(`${App.config.apiBase}/low-stock-report`);
     if (data) {
       if (data.length === 0) {
-        reportBody.innerHTML = '<tr><td colspan="5" class="text-center">No items are low on stock.</td></tr>';
+        reportBody.innerHTML = '<tr><td colspan="7" class="text-center">No items are low on stock.</td></tr>';
         return;
       }
       reportBody.innerHTML = data.map(item => `
         <tr>
           <td>${App.escapeHtml(item.item_name)}</td>
-          <td>${App.escapeHtml(item.model_name || '--')} / ${App.escapeHtml(item.variation_name || '--')}</td>
-          <td>${App.escapeHtml(item.color_name)} / ${App.escapeHtml(item.size_name)}</td>
+          <td>${App.escapeHtml(item.model_name || '--')}</td>
+          <td>${App.escapeHtml(item.variation_name || '--')}</td>
+          <td>${App.escapeHtml(item.color_name)}</td>
+          <td>${App.escapeHtml(item.size_name)}</td>
           <td>${item.opening_stock}</td>
           <td>${item.threshold}</td>
         </tr>
       `).join('');
     } else {
-      reportBody.innerHTML = '<tr><td colspan="5" class="text-center">Failed to load report.</td></tr>';
+      reportBody.innerHTML = '<tr><td colspan="7" class="text-center">Failed to load report.</td></tr>';
     }
   },
 
@@ -813,6 +842,7 @@ const Inventory = {
 
   /**
    * Loads all variants for the search modal
+   * [BUG FIX] Added proper error handling and null checks
    */
   async loadAllVariantsForSearch() {
     try {
@@ -820,15 +850,24 @@ const Inventory = {
       if (data && Array.isArray(data)) {
         this.state.allVariants = data;
         this.renderVariantSearchResults();
+      } else {
+        // [BUG FIX] Handle invalid response format
+        this.state.allVariants = [];
+        this.renderVariantSearchResults();
+        console.warn('Invalid variant data format received from backend');
       }
     } catch (error) {
       console.error("Error loading variants:", error);
+      this.state.allVariants = [];
+      this.renderVariantSearchResults(); // Show empty results rather than breaking UI
       App.showNotification("Failed to load variants", "error");
     }
   },
 
   /**
    * Renders the variant search results
+   * [BUG FIX] Updated field name mapping to match backend response format
+   * Backend returns: {id, name} where name is the full concatenated string
    */
   renderVariantSearchResults() {
     const searchInput = document.getElementById("variant-search-input");
@@ -836,20 +875,24 @@ const Inventory = {
     if (!resultsBody) return;
 
     const searchTerm = searchInput?.value.toLowerCase() || '';
+    
+    // [BUG FIX] Backend returns simple {id, name} format, parse it for display
     const filtered = this.state.allVariants?.filter(v =>
-      (v.name || v.full_name || '').toLowerCase().includes(searchTerm)
+      (v.name || '').toLowerCase().includes(searchTerm)
     ) || [];
 
-    resultsBody.innerHTML = filtered.map(v => `
-      <tr>
-        <td><input type="checkbox" class="variant-checkbox" data-variant-id="${v.id}" data-variant-name="${App.escapeHtml(v.name || v.full_name || '')}"></td>
-        <td>${App.escapeHtml(v.item_name || '')}</td>
-        <td>${App.escapeHtml(v.model || '--')}</td>
-        <td>${App.escapeHtml(v.variation || '--')}</td>
-        <td>${App.escapeHtml(v.color || '--')}</td>
-        <td>${App.escapeHtml(v.size || '--')}</td>
-      </tr>
-    `).join('');
+    resultsBody.innerHTML = filtered.map(v => {
+      // [BUG FIX] Parse the full variant name to extract components
+      // Format is typically: "ItemName - Color / Size"
+      const displayName = v.name || 'Unknown Variant';
+      
+      return `
+        <tr>
+          <td><input type="checkbox" class="variant-checkbox" data-variant-id="${v.id}" data-variant-name="${App.escapeHtml(displayName)}"></td>
+          <td colspan="5">${App.escapeHtml(displayName)}</td>
+        </tr>
+      `;
+    }).join('');
 
     // Add search input listener if not already added
     if (searchInput && !searchInput.dataset.listenerAdded) {
@@ -1015,11 +1058,17 @@ const Inventory = {
       return;
     }
 
+    // [BUG FIX] Align field names with backend expectations
+    // Backend expects 'cost' not 'cost_per_unit' for items array
     const receiptData = {
       supplier_id: parseInt(supplierId, 10),
       bill_number: billNumber,
       po_number: poNumber,
-      items: items,
+      items: items.map(item => ({
+        variant_id: item.variant_id,
+        quantity: item.quantity,
+        cost: item.cost_per_unit  // Backend expects 'cost' field name
+      })),
       tax_percentage: parseFloat(document.getElementById('receive-tax-percentage')?.value) || 0,
       discount_percentage: parseFloat(document.getElementById('receive-discount-percentage')?.value) || 0
     };
@@ -1115,4 +1164,20 @@ const Inventory = {
   },
 };
 
-document.addEventListener("DOMContentLoaded", () => Inventory.init());
+// Ensure App is loaded before initializing Inventory
+if (document.readyState === "loading") {
+  document.addEventListener("DOMContentLoaded", () => {
+    if (typeof App !== 'undefined') {
+      Inventory.init();
+    } else {
+      console.error('App object not found. Make sure main.js is loaded first.');
+    }
+  });
+} else {
+  // DOM already loaded
+  if (typeof App !== 'undefined') {
+    Inventory.init();
+  } else {
+    console.error('App object not found. Make sure main.js is loaded first.');
+  }
+}

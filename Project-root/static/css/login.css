@@ -148,19 +148,36 @@ body.login-page.dark-mode .login-form input:focus {
 .password-row {
   position: relative;
 }
+
 .password-row .toggle-password {
   position: absolute;
-  right: 10px;
+  right: 12px;
   top: 50%;
   transform: translateY(-50%);
   background: none;
   border: none;
   color: #6b7280;
   cursor: pointer;
-  padding: 4px 6px;
+  padding: 0.5rem;
+  border-radius: 8px;
+  transition: all 0.2s ease;
+  display: flex;
+  align-items: center;
+  justify-content: center;
 }
+
 .password-row .toggle-password:hover {
   color: #111827;
+  background: #f3f4f6;
+}
+
+body.login-page.dark-mode .password-row .toggle-password {
+  color: #9ca3af;
+}
+
+body.login-page.dark-mode .password-row .toggle-password:hover {
+  color: #f9fafb;
+  background: #374151;
 }
 
 /* Buttons */
@@ -300,9 +317,36 @@ body.login-page.dark-mode .error-text {
 }
 
 /* Divider */
-.divider { display: flex; align-items: center; text-align: center; margin: 16px 0; }
-.divider span { padding: 0 8px; color: #6b7280; font-size: 0.9rem; }
-.divider::before, .divider::after { content: ""; flex: 1; border-bottom: 1px solid #e5e7eb; }
+.divider { 
+  display: flex;
+  align-items: center;
+  text-align: center;
+  margin: 1.5rem 0;
+}
+
+.divider span { 
+  padding: 0 1rem;
+  color: #6b7280;
+  font-size: 0.875rem;
+  font-weight: 500;
+  background: #ffffff;
+}
+
+body.login-page.dark-mode .divider span {
+  color: #9ca3af;
+  background: #1f2937;
+}
+
+.divider::before, .divider::after { 
+  content: "";
+  flex: 1;
+  border-bottom: 1.5px solid #e5e7eb;
+}
+
+body.login-page.dark-mode .divider::before,
+body.login-page.dark-mode .divider::after {
+  border-bottom-color: #374151;
+}
 
 /* Auth links row */
 .auth-links .btn.secondary { padding: 8px 10px; }

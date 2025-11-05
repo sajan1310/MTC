@@ -9,7 +9,7 @@ from io import StringIO
 import database
 import psycopg2
 import psycopg2.extras
-from flask import Blueprint, Response, current_app, jsonify, request
+from flask import Response, current_app, jsonify, request
 from flask_login import current_user, login_required
 from psycopg2 import sql
 
@@ -17,7 +17,10 @@ from .. import limiter
 from ..utils import get_or_create_item_master_id, get_or_create_master_id, role_required
 from ..utils.file_validation import validate_upload
 
-api_bp = Blueprint("api", __name__)
+# [BUG FIX] Import the shared api_bp from __init__.py instead of creating a new Blueprint instance
+# Creating a new Blueprint here caused all routes to register on an orphaned blueprint that 
+# was never registered with the Flask app, resulting in 404 errors for all these endpoints
+from . import api_bp
 
 
 # --- Utility: Generic CRUD for masters ---
@@ -855,7 +858,7 @@ def get_variations_for_item_model():
         return jsonify({"error": "Failed to fetch variations"}), 500
 
 
-@api_bp.route("/items")
+@api_bp.route("/items", methods=["GET"])
 @login_required
 def get_items():
     page = request.args.get("page", 1, type=int)
@@ -1761,6 +1764,44 @@ def import_preview_json():
     except Exception as e:
         current_app.logger.error(f"JSON Preview error: {e}", exc_info=True)
         return jsonify({"error": str(e)}), 500
+
+
+# --- User Management ---
+# [BUG FIX] Added missing /api/users endpoints that frontend calls
+@api_bp.route("/users", methods=["GET"])
+@login_required
+@role_required("super_admin")
+def get_users():
+    """Get all users excluding super_admin role"""
+    try:
+        with database.get_conn(cursor_factory=psycopg2.extras.DictCursor) as (conn, cur):
+            cur.execute(
+                "SELECT user_id, name, email, role FROM users WHERE role != 'super_admin' ORDER BY name"
+            )
+            users = [dict(row) for row in cur.fetchall()]
+        return jsonify(users)
+    except Exception as e:
+        current_app.logger.error(f"Error fetching users: {e}")
+        return jsonify({"error": "Failed to fetch users"}), 500
+
+
+@api_bp.route("/users/<int:user_id>/role", methods=["PUT"])
+@login_required
+@role_required("super_admin")
+def update_user_role(user_id):
+    """Update a user's role"""
+    new_role = request.json.get("role")
+    allowed_roles = ["admin", "user", "pending_approval"]
+    if not new_role or new_role not in allowed_roles:
+        return jsonify({"error": "Invalid role specified."}), 400
+    try:
+        with database.get_conn() as (conn, cur):
+            cur.execute("UPDATE users SET role = %s WHERE user_id = %s", (new_role, user_id))
+            conn.commit()
+        return jsonify({"message": "User role updated successfully."})
+    except Exception as e:
+        current_app.logger.error(f"Error updating role for user {user_id}: {e}")
+        return jsonify({"error": "Failed to update user role."}), 500
 
 
 @api_bp.route("/import/commit", methods=["POST"])

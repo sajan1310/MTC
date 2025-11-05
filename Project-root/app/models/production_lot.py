@@ -29,16 +29,13 @@ class ProductionLot:
         self.id: int = data["id"]
         self.process_id: int = data["process_id"]
         self.lot_number: str = data["lot_number"]
-        self.user_id: int = data["user_id"]
-        self.status: str = data.get("status", "draft")
+        self.created_by: Optional[int] = data.get("created_by")
+        self.status: str = data.get("status", "Planning")
         self.quantity: int = data.get("quantity", 1)
-        self.worst_case_estimated_cost: Optional[float] = (
-            float(data["worst_case_estimated_cost"])
-            if data.get("worst_case_estimated_cost")
+        self.total_cost: Optional[float] = (
+            float(data["total_cost"])
+            if data.get("total_cost")
             else None
-        )
-        self.actual_cost: Optional[float] = (
-            float(data["actual_cost"]) if data.get("actual_cost") else None
         )
         self.created_at: datetime = data.get("created_at", datetime.now())
         self.started_at: Optional[datetime] = data.get("started_at")
@@ -50,11 +47,10 @@ class ProductionLot:
             "id": self.id,
             "process_id": self.process_id,
             "lot_number": self.lot_number,
-            "user_id": self.user_id,
+            "created_by": self.created_by,
             "status": self.status,
             "quantity": self.quantity,
-            "worst_case_estimated_cost": self.worst_case_estimated_cost,
-            "actual_cost": self.actual_cost,
+            "total_cost": self.total_cost,
             "created_at": self.created_at.isoformat() if self.created_at else None,
             "started_at": self.started_at.isoformat() if self.started_at else None,
             "completed_at": self.completed_at.isoformat()
@@ -63,40 +59,16 @@ class ProductionLot:
         }
 
     def is_editable(self) -> bool:
-        """Check if lot can still be edited (only draft lots)."""
-        return self.status == "draft"
+        """Check if lot can still be edited (only Planning lots)."""
+        return self.status == "Planning"
 
     def is_executable(self) -> bool:
         """Check if lot is ready to execute."""
-        return self.status == "ready"
+        return self.status == "Ready"
 
     def is_completed(self) -> bool:
         """Check if lot has been completed."""
-        return self.status == "completed"
-
-    def calculate_variance(self) -> Optional[Dict[str, float]]:
-        """
-        Calculate cost variance between estimate and actual.
-
-        Returns dict with:
-        - variance_amount: actual - estimated
-        - variance_percentage: (variance / estimated) * 100
-        """
-        if self.worst_case_estimated_cost is None or self.actual_cost is None:
-            return None
-
-        variance = self.actual_cost - self.worst_case_estimated_cost
-        variance_pct = (
-            (variance / self.worst_case_estimated_cost * 100)
-            if self.worst_case_estimated_cost > 0
-            else 0
-        )
-
-        return {
-            "variance_amount": variance,
-            "variance_percentage": variance_pct,
-            "is_under_budget": variance < 0,
-        }
+        return self.status == "Completed"
 
 
 class ProductionLotSelection:

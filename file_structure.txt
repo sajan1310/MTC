@@ -4,16 +4,21 @@
     .secrets.baseline
     app.py
     file_structure.txt
+    FRONTEND_BACKEND_SYNC_FIXES.md
     generate_structure.py
     How_To_Use_Repairs.md
     IMPLEMENTATION_VERIFICATION_REPORT.md
     Issue-Impact-FixTime-Severity.csv
+    ISSUES_RESOLVED.md
     MTC_Action_Plan.md
     MTC_Code_Fixes_Guide.md
     MTC_Deep_Integration_Audit.md
     MTC_FIXES_APPLIED.md
     MTC_VERIFICATION_QUICK_SUMMARY.md
     Project_Summary.md
+    UI_UX_IMPROVEMENTS_SUMMARY.md
+    UI_UX_TESTING_GUIDE.md
+    UI_UX_VISUAL_COMPARISON.md
     .github/
         chatmodes/
             Plan Mode.chatmode.md
@@ -247,6 +252,7 @@
             upf_process_editor.html
             upf_process_management.html
             upf_production_lots.html
+            upf_production_lot_new.html
             upf_reports.html
             upf_subprocess_library.html
             upf_unified.html

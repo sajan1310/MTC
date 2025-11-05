@@ -3,6 +3,10 @@ Production Lot API for Universal Process Framework.
 
 Provides REST API endpoints for production lot lifecycle: creation, variant selection,
 validation, execution, and variance analysis.
+
+[BUG FIX] Updated all routes to use hyphenated URLs (/production-lots) as primary endpoints
+with underscored versions (/production_lot, /production_lots) as legacy compatibility.
+Frontend JavaScript expects hyphenated URLs (e.g., /api/upf/production-lots).
 """
 
 from functools import wraps
@@ -39,7 +43,8 @@ def role_required(*roles):
 # ===== PRODUCTION LOT CRUD =====
 
 
-@production_api_bp.route("/production_lot", methods=["POST"])
+@production_api_bp.route("/production-lots", methods=["POST"])
+@production_api_bp.route("/production_lot", methods=["POST"])  # Legacy compatibility
 @login_required
 @limiter.limit("50 per hour")
 def create_production_lot():
@@ -68,7 +73,8 @@ def create_production_lot():
         return APIResponse.error("internal_error", str(e), 500)
 
 
-@production_api_bp.route("/production_lot/<int:lot_id>", methods=["GET"])
+@production_api_bp.route("/production-lots/<int:lot_id>", methods=["GET"])
+@production_api_bp.route("/production_lot/<int:lot_id>", methods=["GET"])  # Legacy compatibility
 @login_required
 def get_production_lot(lot_id):
     """Get production lot with full details."""
@@ -79,7 +85,7 @@ def get_production_lot(lot_id):
             return APIResponse.not_found("Production lot", lot_id)
 
         # Check access
-        if lot["user_id"] != current_user.id and current_user.role != "admin":
+        if lot["created_by"] != current_user.id and current_user.role != "admin":
             return APIResponse.error("forbidden", "Access denied", 403)
 
         return APIResponse.success(lot)
@@ -104,7 +110,7 @@ def get_variant_options(lot_id):
         if not lot:
             return APIResponse.not_found("Production lot", lot_id)
 
-        if lot["user_id"] != current_user.id and current_user.role != "admin":
+        if lot["created_by"] != current_user.id and current_user.role != "admin":
             return APIResponse.error("forbidden", "Access denied", 403)
 
         with get_conn() as (conn, cur):
@@ -215,7 +221,8 @@ def get_variant_options(lot_id):
         return APIResponse.error("internal_error", str(e), 500)
 
 
-@production_api_bp.route("/production_lots", methods=["GET"])
+@production_api_bp.route("/production-lots", methods=["GET"])
+@production_api_bp.route("/production_lots", methods=["GET"])  # Legacy compatibility
 @login_required
 def list_production_lots():
     """List production lots with pagination."""
@@ -243,8 +250,11 @@ def list_production_lots():
 
 
 @production_api_bp.route(
-    "/production_lot/<int:lot_id>/select_variant", methods=["POST"]
+    "/production-lots/<int:lot_id>/select-variant", methods=["POST"]
 )
+@production_api_bp.route(
+    "/production_lot/<int:lot_id>/select_variant", methods=["POST"]
+)  # Legacy compatibility
 @login_required
 def select_variant_for_group(lot_id):
     """Select variant from substitute group (OR feature)."""
@@ -254,7 +264,7 @@ def select_variant_for_group(lot_id):
         if not lot:
             return APIResponse.not_found("Production lot", lot_id)
 
-        if lot["user_id"] != current_user.id and current_user.role != "admin":
+        if lot["created_by"] != current_user.id and current_user.role != "admin":
             return APIResponse.error("forbidden", "Access denied", 403)
 
         if lot["status"] != "planning":
@@ -289,7 +299,8 @@ def select_variant_for_group(lot_id):
         return APIResponse.error("internal_error", str(e), 500)
 
 
-@production_api_bp.route("/production_lot/<int:lot_id>/selections", methods=["GET"])
+@production_api_bp.route("/production-lots/<int:lot_id>/selections", methods=["GET"])
+@production_api_bp.route("/production_lot/<int:lot_id>/selections", methods=["GET"])  # Legacy compatibility
 @login_required
 def get_lot_selections(lot_id):
     """Get all variant selections for a lot."""
@@ -299,7 +310,7 @@ def get_lot_selections(lot_id):
         if not lot:
             return APIResponse.not_found("Production lot", lot_id)
 
-        if lot["user_id"] != current_user.id and current_user.role != "admin":
+        if lot["created_by"] != current_user.id and current_user.role != "admin":
             return APIResponse.error("forbidden", "Access denied", 403)
 
         return APIResponse.success(lot.get("selections", []))
@@ -325,7 +336,7 @@ def batch_select_variants(lot_id):
         if not lot:
             return APIResponse.not_found("Production lot", lot_id)
 
-        if lot["user_id"] != current_user.id and current_user.role != "admin":
+        if lot["created_by"] != current_user.id and current_user.role != "admin":
             return APIResponse.error("forbidden", "Access denied", 403)
 
         if lot["status"] not in ["planning", "ready"]:
@@ -390,7 +401,8 @@ def batch_select_variants(lot_id):
 # ===== LOT VALIDATION & EXECUTION =====
 
 
-@production_api_bp.route("/production_lot/<int:lot_id>/validate", methods=["POST"])
+@production_api_bp.route("/production-lots/<int:lot_id>/validate", methods=["POST"])
+@production_api_bp.route("/production_lot/<int:lot_id>/validate", methods=["POST"])  # Legacy compatibility
 @login_required
 def validate_lot_readiness(lot_id):
     """Validate lot readiness (all OR groups selected, stock available)."""
@@ -400,7 +412,7 @@ def validate_lot_readiness(lot_id):
         if not lot:
             return APIResponse.not_found("Production lot", lot_id)
 
-        if lot["user_id"] != current_user.id and current_user.role != "admin":
+        if lot["created_by"] != current_user.id and current_user.role != "admin":
             return APIResponse.error("forbidden", "Access denied", 403)
 
         validation_result = ProductionService.validate_lot_readiness(lot_id)
@@ -411,7 +423,8 @@ def validate_lot_readiness(lot_id):
         return APIResponse.error("internal_error", str(e), 500)
 
 
-@production_api_bp.route("/production_lot/<int:lot_id>/execute", methods=["POST"])
+@production_api_bp.route("/production-lots/<int:lot_id>/execute", methods=["POST"])
+@production_api_bp.route("/production_lot/<int:lot_id>/execute", methods=["POST"])  # Legacy compatibility
 @login_required
 @role_required("admin", "inventory_manager", "production_manager")
 def execute_production_lot(lot_id):
@@ -422,7 +435,7 @@ def execute_production_lot(lot_id):
         if not lot:
             return APIResponse.not_found("Production lot", lot_id)
 
-        if lot["user_id"] != current_user.id and current_user.role != "admin":
+        if lot["created_by"] != current_user.id and current_user.role != "admin":
             return APIResponse.error("forbidden", "Access denied", 403)
 
         if lot["status"] != "planning":
@@ -449,7 +462,8 @@ def execute_production_lot(lot_id):
         return APIResponse.error("internal_error", str(e), 500)
 
 
-@production_api_bp.route("/production_lot/<int:lot_id>/cancel", methods=["POST"])
+@production_api_bp.route("/production-lots/<int:lot_id>/cancel", methods=["POST"])
+@production_api_bp.route("/production_lot/<int:lot_id>/cancel", methods=["POST"])  # Legacy compatibility
 @login_required
 def cancel_production_lot(lot_id):
     """Cancel production lot."""
@@ -459,7 +473,7 @@ def cancel_production_lot(lot_id):
         if not lot:
             return APIResponse.not_found("Production lot", lot_id)
 
-        if lot["user_id"] != current_user.id and current_user.role != "admin":
+        if lot["created_by"] != current_user.id and current_user.role != "admin":
             return APIResponse.error("forbidden", "Access denied", 403)
 
         data = request.json
@@ -479,7 +493,8 @@ def cancel_production_lot(lot_id):
 # ===== ACTUAL COSTING & VARIANCE ANALYSIS =====
 
 
-@production_api_bp.route("/production_lot/<int:lot_id>/actual_costing", methods=["GET"])
+@production_api_bp.route("/production-lots/<int:lot_id>/actual-costing", methods=["GET"])
+@production_api_bp.route("/production_lot/<int:lot_id>/actual_costing", methods=["GET"])  # Legacy compatibility
 @login_required
 def get_lot_actual_costing(lot_id):
     """Get actual costing breakdown for lot."""
@@ -489,7 +504,7 @@ def get_lot_actual_costing(lot_id):
         if not lot:
             return APIResponse.not_found("Production lot", lot_id)
 
-        if lot["user_id"] != current_user.id and current_user.role != "admin":
+        if lot["created_by"] != current_user.id and current_user.role != "admin":
             return APIResponse.error("forbidden", "Access denied", 403)
 
         actual_costs = ProductionService.calculate_lot_actual_cost(lot_id)
@@ -501,8 +516,11 @@ def get_lot_actual_costing(lot_id):
 
 
 @production_api_bp.route(
-    "/production_lot/<int:lot_id>/variance_analysis", methods=["GET"]
+    "/production-lots/<int:lot_id>/variance-analysis", methods=["GET"]
 )
+@production_api_bp.route(
+    "/production_lot/<int:lot_id>/variance_analysis", methods=["GET"]
+)  # Legacy compatibility
 @login_required
 def get_variance_analysis(lot_id):
     """Get variance analysis (worst-case vs actual)."""
@@ -512,7 +530,7 @@ def get_variance_analysis(lot_id):
         if not lot:
             return APIResponse.not_found("Production lot", lot_id)
 
-        if lot["user_id"] != current_user.id and current_user.role != "admin":
+        if lot["created_by"] != current_user.id and current_user.role != "admin":
             return APIResponse.error("forbidden", "Access denied", 403)
 
         if lot["status"] != "completed":
@@ -531,7 +549,8 @@ def get_variance_analysis(lot_id):
 # ===== REPORTING =====
 
 
-@production_api_bp.route("/production_lots/summary", methods=["GET"])
+@production_api_bp.route("/production-lots/summary", methods=["GET"])
+@production_api_bp.route("/production_lots/summary", methods=["GET"])  # Legacy compatibility
 @login_required
 def get_production_summary():
     """Get production summary statistics."""
@@ -544,7 +563,7 @@ def get_production_summary():
 
         # Get summary by status
         user_filter = (
-            "" if current_user.role == "admin" else f"AND user_id = {current_user.id}"
+            "" if current_user.role == "admin" else f"AND created_by = {current_user.id}"
         )
 
         cur.execute(f"""
@@ -552,9 +571,9 @@ def get_production_summary():
                 status,
                 COUNT(*) as count,
                 SUM(quantity) as total_quantity,
-                AVG(estimated_total_cost) as avg_estimated_cost
+                AVG(total_cost) as avg_estimated_cost
             FROM production_lots
-            WHERE deleted_at IS NULL {user_filter}
+            WHERE 1=1 {user_filter}
             GROUP BY status
         """)
 
@@ -567,7 +586,8 @@ def get_production_summary():
         return APIResponse.error("internal_error", str(e), 500)
 
 
-@production_api_bp.route("/production_lots/recent", methods=["GET"])
+@production_api_bp.route("/production-lots/recent", methods=["GET"])
+@production_api_bp.route("/production_lots/recent", methods=["GET"])  # Legacy compatibility
 @login_required
 def get_recent_lots():
     """Get recently executed production lots."""
@@ -583,7 +603,7 @@ def get_recent_lots():
         user_filter = (
             ""
             if current_user.role == "admin"
-            else f"AND pl.user_id = {current_user.id}"
+            else f"AND pl.created_by = {current_user.id}"
         )
 
         cur.execute(
@@ -593,10 +613,9 @@ def get_recent_lots():
                 p.name as process_name
             FROM production_lots pl
             JOIN processes p ON pl.process_id = p.id
-            WHERE pl.deleted_at IS NULL
-                AND pl.status = 'completed'
+            WHERE pl.status = 'Completed'
                 {user_filter}
-            ORDER BY pl.executed_at DESC
+            ORDER BY pl.created_at DESC
             LIMIT %s
         """,
             (limit,),

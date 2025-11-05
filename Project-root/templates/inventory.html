@@ -83,12 +83,15 @@
                     </svg>
                     Add New Item
                 </button>
-                <div id="bulk-actions-container" style="display: none;">
-                    <button id="bulk-delete-btn" class="button danger">Delete Selected</button>
-                </div>
                 <button id="export-csv-btn" class="button">Export CSV</button>
                 <button id="export-pdf-btn" class="button" disabled>Export PDF</button>
             </div>
+        </div>
+
+        <!-- Bulk Actions Bar -->
+        <div id="bulk-actions-bar" class="bulk-actions-bar">
+            <span id="selected-item-count">0 items selected</span>
+            <button id="bulk-delete-btn" class="button danger">Delete Selected</button>
         </div>
 
         <!-- Enhanced Inventory Table -->
@@ -112,7 +115,7 @@
                     <tbody id="inventory-table-body">
                         <!-- Item rows will be dynamically populated here by app.js -->
                         <tr class="loading-row">
-                            <td colspan="9" style="text-align: center; padding: 2rem;">
+                            <td colspan="10" style="text-align: center; padding: 2rem;">
                                 <div class="loading-spinner">
                                     <div class="spinner"></div>
                                     <span>Loading inventory...</span>
