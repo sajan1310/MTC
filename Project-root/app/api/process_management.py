@@ -243,6 +243,20 @@ def list_processes():
         return APIResponse.error("internal_error", str(e), 500)
 
 
+@process_api_bp.route("/processes/<int:process_id>", methods=["GET"])
+@login_required
+def get_process(process_id):
+    """Get a single process by ID."""
+    try:
+        process = ProcessService.get_process(process_id)
+        if not process:
+            return APIResponse.not_found("Process", process_id)
+        return APIResponse.success({"process": process})
+    except Exception as e:
+        current_app.logger.error(f"Error getting process {process_id}: {e}")
+        return APIResponse.error("internal_error", str(e), 500)
+
+
 @process_api_bp.route("/process/<int:process_id>", methods=["PUT"])
 @login_required
 def update_process(process_id):
