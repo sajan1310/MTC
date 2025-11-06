@@ -268,7 +268,7 @@ def create_app(config_name: str | None = None) -> Flask:
     # User loader
     import psycopg2.extras  # noqa
 
-    from .models import User  # noqa: WPS433 local import
+    from .models import User  # noqa
 
     @login_manager.user_loader
     def load_user(user_id: str):
