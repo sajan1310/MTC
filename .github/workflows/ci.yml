@@ -282,11 +282,11 @@ jobs:
           MIN_COVERAGE: 25
         run: |
           echo "::group::Coverage threshold validation"
-          python - <<'EOF'
+          python - <<EOF
           import sys
           import xml.etree.ElementTree as ET
           
-          threshold = float("$MIN_COVERAGE" or "25")
+          threshold = float("${MIN_COVERAGE}" or "25")
           
           try:
               tree = ET.parse('coverage.xml')
