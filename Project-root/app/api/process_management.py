@@ -56,7 +56,7 @@ def role_required(*roles):
 
 
 @process_api_bp.route("/process", methods=["POST"])
-@process_api_bp.route("/processes", methods=["POST"])
+@process_api_bp.route("/processes", methods=["POST"], endpoint="create_process_plural")
 @login_required
 @limiter.limit("20 per hour")
 def create_process():
@@ -243,9 +243,9 @@ def list_processes():
         return APIResponse.error("internal_error", str(e), 500)
 
 
-@process_api_bp.route("/processes/<int:process_id>", methods=["GET"])
+@process_api_bp.route("/processes/<int:process_id>", methods=["GET"], endpoint="get_process_basic")
 @login_required
-def get_process(process_id):
+def get_process_basic(process_id):
     """Get a single process by ID."""
     try:
         process = ProcessService.get_process(process_id)
