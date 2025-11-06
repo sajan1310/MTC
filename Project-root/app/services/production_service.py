@@ -73,7 +73,15 @@ class ProductionService:
             conn.commit()
 
         lot = ProductionLot(lot_data)
-        return lot.to_dict()
+        # Merge raw DB fields back into result to preserve any extra keys
+        result = lot.to_dict()
+        for k, v in dict(lot_data).items():
+            if k not in result:
+                result[k] = v
+        # Ensure alias exists if callers expect it
+        if "worst_case_estimated_cost" not in result:
+            result["worst_case_estimated_cost"] = result.get("total_cost")
+        return result
 
     @staticmethod
     def get_production_lot(

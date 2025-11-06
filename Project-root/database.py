@@ -51,12 +51,20 @@ def init_app(app):
             f"(timeout: {connect_timeout}s, query timeout: {statement_timeout}ms)"
         )
 
-        # Test initial connection
-        with get_conn() as (conn, cur):
-            cur.execute("SELECT 1")
-            app.logger.info("Database connectivity verified")
+        # Test initial connection (skip in testing to avoid local DB requirement)
+        if not app.config.get("TESTING"):
+            with get_conn() as (conn, cur):
+                cur.execute("SELECT 1")
+                app.logger.info("Database connectivity verified")
 
     except psycopg2.OperationalError as e:
+        if app.config.get("TESTING"):
+            # In tests, allow app to start without an available DB; tests may mock DB
+            app.logger.warning(
+                f"[TESTING] Database not reachable; proceeding without DB pool: {e}"
+            )
+            db_pool = None
+            return
         app.logger.critical(f"FATAL: Could not connect to database: {e}")
         app.logger.critical("   Please verify DATABASE_URL and database availability")
         db_pool = None

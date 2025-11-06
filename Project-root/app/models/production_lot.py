@@ -32,11 +32,11 @@ class ProductionLot:
         self.created_by: Optional[int] = data.get("created_by")
         self.status: str = data.get("status", "Planning")
         self.quantity: int = data.get("quantity", 1)
-        self.total_cost: Optional[float] = (
-            float(data["total_cost"])
-            if data.get("total_cost")
-            else None
-        )
+        # Accept either total_cost (DB column) or worst_case_estimated_cost (API/tests)
+        _total = data.get("total_cost")
+        if _total is None:
+            _total = data.get("worst_case_estimated_cost")
+        self.total_cost: Optional[float] = float(_total) if _total is not None else None
         self.created_at: datetime = data.get("created_at", datetime.now())
         self.started_at: Optional[datetime] = data.get("started_at")
         self.completed_at: Optional[datetime] = data.get("completed_at")
