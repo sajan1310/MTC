@@ -10,7 +10,7 @@ from io import StringIO
 import database
 import psycopg2
 import psycopg2.extras
-from flask import Response, current_app, jsonify, request, Blueprint
+from flask import Response, current_app, jsonify, request
 from flask_login import current_user, login_required
 from psycopg2 import sql
 

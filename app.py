@@ -81,7 +81,7 @@ def login():
 def auth_callback():
     """Handles the callback from Google."""
     try:
-        token = google.authorize_access_token()
+        google.authorize_access_token()
         user_info = google.userinfo()
 
         # In a real app, you would find or create the user in your database

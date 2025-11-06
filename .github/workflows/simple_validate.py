@@ -14,9 +14,9 @@ def validate_workflow(filepath):
         
         # Check for 'on' trigger (note: 'on' is a reserved word in YAML)
         if workflow.get('on') or workflow.get(True):
-            print(f"   Triggers: Configured")
+            print("   Triggers: Configured")
         else:
-            print(f"   ⚠️  No triggers found")
+            print("   ⚠️  No triggers found")
         
         return True
     except yaml.YAMLError as e:
