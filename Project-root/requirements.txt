@@ -4,6 +4,8 @@ Werkzeug==3.0.1
 
 # Database
 psycopg[binary]==3.2.2
+# Add psycopg2 for legacy imports used in the codebase and tests
+psycopg2-binary==2.9.9
 
 # Authentication & Security
 Flask-Login==0.6.3
