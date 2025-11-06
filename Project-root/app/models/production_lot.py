@@ -51,6 +51,9 @@ class ProductionLot:
             "status": self.status,
             "quantity": self.quantity,
             "total_cost": self.total_cost,
+            # Compatibility: many tests and API clients expect this key
+            # Map worst_case_estimated_cost to total_cost stored in DB
+            "worst_case_estimated_cost": self.total_cost,
             "created_at": self.created_at.isoformat() if self.created_at else None,
             "started_at": self.started_at.isoformat() if self.started_at else None,
             "completed_at": self.completed_at.isoformat()

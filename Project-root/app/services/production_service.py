@@ -114,6 +114,9 @@ class ProductionService:
                 return None
 
             result = dict(lot_data)
+            # Compatibility alias: ensure expected key exists
+            if "worst_case_estimated_cost" not in result:
+                result["worst_case_estimated_cost"] = result.get("total_cost")
 
             if include_selections:
                 # Get all variant selections
@@ -659,8 +662,14 @@ class ProductionService:
             "lot_number": lot["lot_number"],
             "status": "completed",
             "actual_cost": actual_cost,
-            "worst_case_estimated_cost": float(lot["worst_case_estimated_cost"] or 0),
-            "variance": actual_cost - float(lot["worst_case_estimated_cost"] or 0),
+            # Use alias to support schemas where only total_cost exists
+            "worst_case_estimated_cost": float(
+                (lot.get("worst_case_estimated_cost")
+                 or lot.get("total_cost")
+                 or 0)
+            ),
+            "variance": actual_cost
+            - float((lot.get("worst_case_estimated_cost") or lot.get("total_cost") or 0)),
             "deductions": deductions,
             "executed_at": datetime.now().isoformat(),
         }

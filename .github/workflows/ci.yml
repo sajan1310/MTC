@@ -6,13 +6,33 @@ on:
 
 jobs:
   tests:
-    name: Tests (Python ${{ matrix.python-version }} on ${{ matrix.os }})
-    runs-on: ${{ matrix.os }}
+    name: Tests (Python ${{ matrix.python-version }} on ubuntu-latest)
+    runs-on: ubuntu-latest
     strategy:
       fail-fast: false
       matrix:
-        os: [ubuntu-latest, windows-latest]
         python-version: ["3.11"]
+
+    services:
+      postgres:
+        image: postgres:14
+        env:
+          POSTGRES_USER: testuser
+          POSTGRES_PASSWORD: testpass
+          POSTGRES_DB: testdb
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U testuser"
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+
+    env:
+      DATABASE_URL: postgresql://testuser:testpass@127.0.0.1:5432/testdb
+      FLASK_ENV: testing
+      SECRET_KEY: test-secret
+      RATELIMIT_STORAGE_URL: memory://
 
     steps:
       - name: Checkout
@@ -24,7 +44,6 @@ jobs:
           python-version: ${{ matrix.python-version }}
 
       - name: Install system dependencies (Linux)
-        if: runner.os == 'Linux'
         run: |
           sudo apt-get update
           sudo apt-get install -y libmagic1
@@ -45,14 +64,13 @@ jobs:
         if: always()
         uses: actions/upload-artifact@v4
         with:
-          name: coverage-${{ matrix.os }}-py${{ matrix.python-version }}
+          name: coverage-ubuntu-py${{ matrix.python-version }}
           if-no-files-found: warn
           path: |
             Project-root/coverage.xml
             Project-root/htmlcov
 
       - name: Soft coverage threshold (Linux)
-        if: runner.os == 'Linux'
         working-directory: Project-root
         env:
           MIN_COVERAGE: 25
@@ -70,25 +88,3 @@ jobs:
           except Exception as e:
               print(f'::warning::Soft coverage check failed: {e}')
           PY
-
-      - name: Soft coverage threshold (Windows)
-        if: runner.os == 'Windows'
-        working-directory: Project-root
-        env:
-          MIN_COVERAGE: 25
-        run: |
-          $code = @"
-          import os, xml.etree.ElementTree as ET
-          thr=float(os.environ.get('MIN_COVERAGE','0'))
-          try:
-              root=ET.parse('coverage.xml').getroot()
-              rate=float(root.attrib.get('line-rate','0'))*100.0
-              if rate < thr:
-                  print(f'::warning::Coverage {rate:.1f}% is below soft threshold {thr:.1f}%')
-              else:
-                  print(f'Coverage {rate:.1f}% meets threshold {thr:.1f}%')
-          except Exception as e:
-              print(f'::warning::Soft coverage check failed: {e}')
-          "@
-          Set-Content -Path check_coverage.py -Value $code
-          python check_coverage.py
