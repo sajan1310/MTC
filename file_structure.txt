@@ -9,6 +9,7 @@
     FINAL_VERIFICATION_REPORT.md
     FRONTEND_BACKEND_SYNC_FIXES.md
     generate_structure.py
+    GITHUB_ACTIONS_FIXES.md
     How_To_Use_Repairs.md
     IMPLEMENTATION_VERIFICATION_REPORT.md
     Issue-Impact-FixTime-Severity.csv

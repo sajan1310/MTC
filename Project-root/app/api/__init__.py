@@ -1,6 +1,9 @@
 from flask import Blueprint
-from . import imports, items, purchase_orders, stubs, suppliers, routes
 
+# Create the blueprint first
 api_bp = Blueprint("api", __name__, url_prefix="/api")
 
-__all__ = ["imports", "items", "purchase_orders", "stubs", "suppliers", "routes"]
+# Import routes AFTER blueprint creation to avoid circular imports
+from . import imports, items, purchase_orders, stubs, suppliers, routes
+
+__all__ = ["api_bp", "imports", "items", "purchase_orders", "stubs", "suppliers", "routes"]
