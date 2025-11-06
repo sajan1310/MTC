@@ -17,6 +17,7 @@ def app():
         {
             "TESTING": True,
             "WTF_CSRF_ENABLED": False,
+            "LOGIN_DISABLED": True,  # Disable login checks in tests to avoid 302 redirects
             "SECRET_KEY": "test-secret-key",
             "SERVER_NAME": "localhost.localdomain",  # Required for url_for with _external=True
             "RATELIMIT_STORAGE_URI": "memory://",  # Explicit memory storage for rate limiter

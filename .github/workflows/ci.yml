@@ -1,18 +1,176 @@
-name: CI
+#==============================================================================
+# CI Workflow - Continuous Integration Pipeline
+#==============================================================================
+# Purpose: Automates build validation, code quality checks, security scanning,
+#          and comprehensive testing for the Flask-based MTC application.
+#
+# Triggers: Runs on push to main/develop branches and on pull requests
+#
+# Jobs:
+#   1. lint       - Code quality and style validation (Ruff)
+#   2. security   - Dependency vulnerability scanning (pip-audit)
+#   3. build      - Validates dependencies and project structure
+#   4. test       - Runs test suite with coverage reporting
+#
+# Features:
+#   - Dependency caching for faster builds
+#   - Parallel job execution where possible
+#   - Coverage reporting and artifact uploads
+#   - Fail-fast disabled for comprehensive feedback
+#==============================================================================
+
+name: CI Pipeline
 
 on:
   push:
+    branches: [main, develop]
   pull_request:
+    branches: [main, develop]
+
+# Cancel in-progress runs for the same PR/branch
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
 
 jobs:
-  tests:
-    name: Tests (Python ${{ matrix.python-version }} on ubuntu-latest)
+  #============================================================================
+  # JOB 1: Code Linting and Style Checks
+  #============================================================================
+  lint:
+    name: Code Quality (Ruff Linter)
     runs-on: ubuntu-latest
+    
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Set up Python 3.11
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+          cache: 'pip'
+          cache-dependency-path: 'Project-root/requirements.txt'
+
+      - name: Install linting dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install ruff
+
+      - name: Run Ruff linter
+        run: |
+          echo "::group::Running Ruff linter"
+          ruff check Project-root/ --output-format=github
+          echo "::endgroup::"
+        continue-on-error: false
+
+      - name: Run Ruff formatter check
+        run: |
+          echo "::group::Checking code formatting"
+          ruff format --check Project-root/
+          echo "::endgroup::"
+        continue-on-error: true
+
+  #============================================================================
+  # JOB 2: Security Vulnerability Scanning
+  #============================================================================
+  security:
+    name: Security Scan (pip-audit)
+    runs-on: ubuntu-latest
+    
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Set up Python 3.11
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+          cache: 'pip'
+          cache-dependency-path: 'Project-root/requirements.txt'
+
+      - name: Install pip-audit
+        run: |
+          python -m pip install --upgrade pip
+          pip install pip-audit
+
+      - name: Run pip-audit security scan
+        run: |
+          echo "::group::Scanning dependencies for vulnerabilities"
+          pip-audit -r Project-root/requirements.txt --desc --format json > security-report.json || true
+          pip-audit -r Project-root/requirements.txt --desc
+          echo "::endgroup::"
+        continue-on-error: true
+
+      - name: Upload security report
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: security-report
+          path: security-report.json
+          if-no-files-found: warn
+
+  #============================================================================
+  # JOB 3: Build Validation
+  #============================================================================
+  build:
+    name: Build Validation
+    runs-on: ubuntu-latest
+    needs: [lint]  # Run after lint passes
+    
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Set up Python 3.11
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+          cache: 'pip'
+          cache-dependency-path: 'Project-root/requirements.txt'
+
+      - name: Install system dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y libmagic1
+
+      - name: Install Python dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r Project-root/requirements.txt
+
+      - name: Verify installation
+        working-directory: Project-root
+        run: |
+          echo "::group::Installed packages"
+          pip list
+          echo "::endgroup::"
+          
+          echo "::group::Flask version check"
+          python -c "import flask; print(f'Flask version: {flask.__version__}')"
+          echo "::endgroup::"
+
+      - name: Check for syntax errors
+        working-directory: Project-root
+        run: |
+          echo "::group::Python syntax validation"
+          python -m py_compile app.py
+          python -m compileall -q app/
+          echo "::endgroup::"
+
+  #============================================================================
+  # JOB 4: Test Suite with Coverage
+  #============================================================================
+  test:
+    name: Tests (Python ${{ matrix.python-version }})
+    runs-on: ubuntu-latest
+    needs: [build]  # Run after build validation passes
+    
     strategy:
       fail-fast: false
       matrix:
-        python-version: ["3.11"]
+        python-version: ['3.10', '3.11', '3.12']
 
+    # PostgreSQL service container for database testing
     services:
       postgres:
         image: postgres:14
@@ -29,78 +187,118 @@ jobs:
           --health-retries 5
 
     env:
+      # Database configuration
       DATABASE_URL: postgresql://testuser:testpass@127.0.0.1:5432/testdb
+      # Flask testing environment
       FLASK_ENV: testing
-      SECRET_KEY: test-secret
+      SECRET_KEY: ${{ secrets.TEST_SECRET_KEY || 'test-secret-key-for-ci' }}
+      # Rate limiting (use in-memory for tests)
       RATELIMIT_STORAGE_URL: memory://
+      # Python encoding
+      PYTHONIOENCODING: utf-8
 
     steps:
-      - name: Checkout
+      - name: Checkout repository
         uses: actions/checkout@v4
 
-      - name: Set up Python
+      - name: Set up Python ${{ matrix.python-version }}
         uses: actions/setup-python@v5
         with:
           python-version: ${{ matrix.python-version }}
+          cache: 'pip'
+          cache-dependency-path: 'Project-root/requirements.txt'
 
-      - name: Install system dependencies (Linux)
+      - name: Install system dependencies
         run: |
           sudo apt-get update
-          sudo apt-get install -y libmagic1
+          sudo apt-get install -y libmagic1 postgresql-client
 
       - name: Install Python dependencies
         run: |
           python -m pip install --upgrade pip
           pip install -r Project-root/requirements.txt
 
-      - name: Wait for Postgres to be ready
+      - name: Wait for PostgreSQL to be ready
         run: |
-          sudo apt-get update
-          sudo apt-get install -y postgresql-client
           for i in {1..30}; do
-            psql "postgresql://testuser:testpass@127.0.0.1:5432/testdb" -c '\q' && break
-            echo "Waiting for Postgres..."
-            sleep 1
+            if psql "postgresql://testuser:testpass@127.0.0.1:5432/testdb" -c '\q' 2>/dev/null; then
+              echo "PostgreSQL is ready!"
+              break
+            fi
+            echo "Waiting for PostgreSQL... ($i/30)"
+            sleep 2
           done
 
-      - name: Create 'testuser' database (compat)
+      - name: Create compatibility database
         run: |
-          # Ensure a database named 'testuser' exists for tests that default dbname to user
-          psql "postgresql://testuser:testpass@127.0.0.1:5432/postgres" -tAc "SELECT 1 FROM pg_database WHERE datname='testuser'" | grep -q 1 || \
-          psql "postgresql://testuser:testpass@127.0.0.1:5432/postgres" -c "CREATE DATABASE testuser;"
+          # Create 'testuser' database for legacy test compatibility
+          psql "postgresql://testuser:testpass@127.0.0.1:5432/postgres" \
+            -tAc "SELECT 1 FROM pg_database WHERE datname='testuser'" | grep -q 1 || \
+          psql "postgresql://testuser:testpass@127.0.0.1:5432/postgres" \
+            -c "CREATE DATABASE testuser;"
 
       - name: Run tests with coverage
         working-directory: Project-root
-        env:
-          PYTHONIOENCODING: "utf-8"
         run: |
-          python -m pytest --cov-report=xml --cov-report=html -q
+          echo "::group::Running pytest with coverage"
+          python -m pytest \
+            --cov=app \
+            --cov-report=xml \
+            --cov-report=html \
+            --cov-report=term-missing \
+            -v \
+            --tb=short
+          echo "::endgroup::"
 
-      - name: Upload coverage artifacts
+      - name: Upload coverage reports
         if: always()
         uses: actions/upload-artifact@v4
         with:
-          name: coverage-ubuntu-py${{ matrix.python-version }}
+          name: coverage-py${{ matrix.python-version }}
           if-no-files-found: warn
+          retention-days: 30
           path: |
             Project-root/coverage.xml
             Project-root/htmlcov
 
-      - name: Soft coverage threshold (Linux)
+      - name: Coverage threshold check
+        if: matrix.python-version == '3.11'
         working-directory: Project-root
         env:
           MIN_COVERAGE: 25
         run: |
-          python - <<'PY'
-          import os, xml.etree.ElementTree as ET
-          thr=float(os.environ.get('MIN_COVERAGE','0'))
+          echo "::group::Coverage threshold validation"
+          python - <<'EOF'
+          import sys
+          import xml.etree.ElementTree as ET
+          
+          threshold = float("$MIN_COVERAGE" or "25")
+          
           try:
-              root=ET.parse('coverage.xml').getroot()
-              rate=float(root.attrib.get('line-rate','0'))*100.0
-              if rate < thr:
-                  print(f'::warning::Coverage {rate:.1f}% is below soft threshold {thr:.1f}%')
+              tree = ET.parse('coverage.xml')
+              root = tree.getroot()
+              coverage_rate = float(root.attrib.get('line-rate', '0')) * 100.0
+              
+              print(f"📊 Current coverage: {coverage_rate:.2f}%")
+              print(f"🎯 Minimum threshold: {threshold:.2f}%")
+              
+              if coverage_rate < threshold:
+                  print(f"::warning::Coverage {coverage_rate:.2f}% is below threshold {threshold:.2f}%")
+                  sys.exit(0)  # Soft threshold - warn but don't fail
               else:
-                  print(f'Coverage {rate:.1f}% meets threshold {thr:.1f}%')
+                  print(f"✅ Coverage meets threshold!")
           except Exception as e:
-              print(f'::warning::Soft coverage check failed: {e}')
-          PY
+              print(f"::warning::Coverage check failed: {e}")
+              sys.exit(0)
+          EOF
+          echo "::endgroup::"
+
+      - name: Upload to Codecov
+        if: matrix.python-version == '3.11'
+        uses: codecov/codecov-action@v4
+        with:
+          files: Project-root/coverage.xml
+          flags: unittests
+          name: codecov-py${{ matrix.python-version }}
+          fail_ci_if_error: false
+        continue-on-error: true

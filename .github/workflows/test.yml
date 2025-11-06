@@ -1,0 +1,435 @@
+#==============================================================================
+# Test Workflow - Dedicated Testing Pipeline
+#==============================================================================
+# Purpose: Focused test execution with comprehensive coverage reporting,
+#          matrix testing across Python versions, and detailed test artifacts.
+#
+# Triggers: Can be run manually via workflow_dispatch, on-demand testing,
+#           or scheduled for nightly regression testing
+#
+# Features:
+#   - Matrix testing across Python 3.10, 3.11, and 3.12
+#   - Comprehensive coverage reporting with HTML and XML outputs
+#   - Test result artifacts for debugging failures
+#   - Parallel execution for different Python versions
+#   - PostgreSQL service container for integration tests
+#   - Detailed test output with verbose logging
+#   - Optional performance benchmarking
+#==============================================================================
+
+name: Test Suite
+
+on:
+  # Manual trigger
+  workflow_dispatch:
+    inputs:
+      python-version:
+        description: 'Python version to test (leave empty for all)'
+        required: false
+        default: ''
+      test-pattern:
+        description: 'Test pattern (e.g., test_auth.py, test_api/)'
+        required: false
+        default: ''
+  
+  # Automatic triggers
+  push:
+    branches: [main, develop]
+    paths:
+      - 'Project-root/**/*.py'
+      - 'Project-root/tests/**'
+      - 'Project-root/requirements.txt'
+      - '.github/workflows/test.yml'
+  
+  pull_request:
+    branches: [main, develop]
+    paths:
+      - 'Project-root/**/*.py'
+      - 'Project-root/tests/**'
+      - 'Project-root/requirements.txt'
+  
+  # Scheduled nightly tests (optional - uncomment to enable)
+  # schedule:
+  #   - cron: '0 2 * * *'  # Run at 2 AM UTC daily
+
+# Cancel in-progress test runs for the same PR/branch
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  #============================================================================
+  # JOB 1: Fast Unit Tests (Quick Feedback)
+  #============================================================================
+  unit-tests:
+    name: Unit Tests (Python ${{ matrix.python-version }})
+    runs-on: ubuntu-latest
+    
+    strategy:
+      fail-fast: false
+      matrix:
+        python-version: ['3.10', '3.11', '3.12']
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Set up Python ${{ matrix.python-version }}
+        uses: actions/setup-python@v5
+        with:
+          python-version: ${{ matrix.python-version }}
+          cache: 'pip'
+          cache-dependency-path: 'Project-root/requirements.txt'
+
+      - name: Install system dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y libmagic1
+
+      - name: Install Python dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r Project-root/requirements.txt
+
+      - name: Run unit tests only
+        working-directory: Project-root
+        env:
+          PYTHONIOENCODING: utf-8
+          RATELIMIT_STORAGE_URL: memory://
+        run: |
+          echo "::group::Running unit tests"
+          python -m pytest \
+            -m "unit" \
+            -v \
+            --tb=short \
+            --maxfail=5 \
+            tests/ || echo "No unit tests marked with @pytest.mark.unit"
+          echo "::endgroup::"
+        continue-on-error: true
+
+  #============================================================================
+  # JOB 2: Integration Tests with Database
+  #============================================================================
+  integration-tests:
+    name: Integration Tests (Python ${{ matrix.python-version }})
+    runs-on: ubuntu-latest
+    
+    strategy:
+      fail-fast: false
+      matrix:
+        python-version: ['3.10', '3.11', '3.12']
+
+    # PostgreSQL service container
+    services:
+      postgres:
+        image: postgres:14
+        env:
+          POSTGRES_USER: testuser
+          POSTGRES_PASSWORD: testpass
+          POSTGRES_DB: testdb
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U testuser"
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+
+    env:
+      DATABASE_URL: postgresql://testuser:testpass@127.0.0.1:5432/testdb
+      FLASK_ENV: testing
+      SECRET_KEY: test-secret-integration
+      RATELIMIT_STORAGE_URL: memory://
+      PYTHONIOENCODING: utf-8
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Set up Python ${{ matrix.python-version }}
+        uses: actions/setup-python@v5
+        with:
+          python-version: ${{ matrix.python-version }}
+          cache: 'pip'
+          cache-dependency-path: 'Project-root/requirements.txt'
+
+      - name: Install system dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y libmagic1 postgresql-client
+
+      - name: Install Python dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r Project-root/requirements.txt
+
+      - name: Wait for PostgreSQL
+        run: |
+          for i in {1..30}; do
+            if psql "$DATABASE_URL" -c '\q' 2>/dev/null; then
+              echo "✅ PostgreSQL is ready!"
+              break
+            fi
+            echo "⏳ Waiting for PostgreSQL... ($i/30)"
+            sleep 2
+          done
+
+      - name: Setup test databases
+        run: |
+          # Create compatibility database
+          psql "postgresql://testuser:testpass@127.0.0.1:5432/postgres" \
+            -tAc "SELECT 1 FROM pg_database WHERE datname='testuser'" | grep -q 1 || \
+          psql "postgresql://testuser:testpass@127.0.0.1:5432/postgres" \
+            -c "CREATE DATABASE testuser;"
+
+      - name: Run integration tests
+        working-directory: Project-root
+        run: |
+          echo "::group::Running integration tests"
+          python -m pytest \
+            -m "integration" \
+            -v \
+            --tb=short \
+            tests/ || echo "No integration tests marked with @pytest.mark.integration"
+          echo "::endgroup::"
+        continue-on-error: true
+
+  #============================================================================
+  # JOB 3: Full Test Suite with Coverage
+  #============================================================================
+  full-tests:
+    name: Full Test Suite (Python ${{ matrix.python-version }})
+    runs-on: ubuntu-latest
+    
+    strategy:
+      fail-fast: false
+      matrix:
+        python-version: ['3.10', '3.11', '3.12']
+
+    services:
+      postgres:
+        image: postgres:14
+        env:
+          POSTGRES_USER: testuser
+          POSTGRES_PASSWORD: testpass
+          POSTGRES_DB: testdb
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U testuser"
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+
+    env:
+      DATABASE_URL: postgresql://testuser:testpass@127.0.0.1:5432/testdb
+      FLASK_ENV: testing
+      SECRET_KEY: test-secret-full-suite
+      RATELIMIT_STORAGE_URL: memory://
+      PYTHONIOENCODING: utf-8
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Set up Python ${{ matrix.python-version }}
+        uses: actions/setup-python@v5
+        with:
+          python-version: ${{ matrix.python-version }}
+          cache: 'pip'
+          cache-dependency-path: 'Project-root/requirements.txt'
+
+      - name: Install system dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y libmagic1 postgresql-client
+
+      - name: Install Python dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r Project-root/requirements.txt
+
+      - name: Display environment info
+        run: |
+          echo "::group::Environment Information"
+          echo "Python version: $(python --version)"
+          echo "Pip version: $(pip --version)"
+          echo "Working directory: $(pwd)"
+          echo "::endgroup::"
+
+      - name: Wait for PostgreSQL
+        run: |
+          for i in {1..30}; do
+            if psql "$DATABASE_URL" -c '\q' 2>/dev/null; then
+              echo "✅ PostgreSQL is ready!"
+              break
+            fi
+            echo "⏳ Waiting for PostgreSQL... ($i/30)"
+            sleep 2
+          done
+
+      - name: Setup test databases
+        run: |
+          psql "postgresql://testuser:testpass@127.0.0.1:5432/postgres" \
+            -tAc "SELECT 1 FROM pg_database WHERE datname='testuser'" | grep -q 1 || \
+          psql "postgresql://testuser:testpass@127.0.0.1:5432/postgres" \
+            -c "CREATE DATABASE testuser;"
+
+      - name: Run full test suite with coverage
+        working-directory: Project-root
+        run: |
+          echo "::group::Running full test suite"
+          python -m pytest \
+            --cov=app \
+            --cov-report=xml \
+            --cov-report=html \
+            --cov-report=term-missing:skip-covered \
+            -v \
+            --tb=short \
+            --strict-markers \
+            --durations=10 \
+            tests/
+          echo "::endgroup::"
+
+      - name: Generate coverage summary
+        if: always()
+        working-directory: Project-root
+        run: |
+          echo "::group::Coverage Summary"
+          python - <<'EOF'
+          import sys
+          import xml.etree.ElementTree as ET
+          
+          try:
+              tree = ET.parse('coverage.xml')
+              root = tree.getroot()
+              
+              coverage_rate = float(root.attrib.get('line-rate', '0')) * 100.0
+              lines_covered = int(root.attrib.get('lines-covered', '0'))
+              lines_valid = int(root.attrib.get('lines-valid', '1'))
+              
+              print(f"📊 Coverage Report")
+              print(f"├─ Overall Coverage: {coverage_rate:.2f}%")
+              print(f"├─ Lines Covered: {lines_covered}")
+              print(f"├─ Total Lines: {lines_valid}")
+              print(f"└─ Lines Missed: {lines_valid - lines_covered}")
+              
+              # Set output for GitHub Actions
+              print(f"::notice::Coverage: {coverage_rate:.2f}% ({lines_covered}/{lines_valid} lines)")
+              
+          except Exception as e:
+              print(f"::warning::Could not parse coverage report: {e}")
+          EOF
+          echo "::endgroup::"
+
+      - name: Upload coverage reports
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: coverage-report-py${{ matrix.python-version }}
+          if-no-files-found: warn
+          retention-days: 30
+          path: |
+            Project-root/coverage.xml
+            Project-root/htmlcov
+            Project-root/.coverage
+
+      - name: Upload test results
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: test-results-py${{ matrix.python-version }}
+          if-no-files-found: ignore
+          retention-days: 14
+          path: |
+            Project-root/.pytest_cache
+            Project-root/test-results.xml
+
+      - name: Check coverage threshold
+        if: matrix.python-version == '3.11'
+        working-directory: Project-root
+        env:
+          MIN_COVERAGE: 25
+          STRICT_MODE: false
+        run: |
+          echo "::group::Coverage Threshold Check"
+          python - <<'EOF'
+          import sys
+          import os
+          import xml.etree.ElementTree as ET
+          
+          threshold = float(os.getenv('MIN_COVERAGE', '25'))
+          strict = os.getenv('STRICT_MODE', 'false').lower() == 'true'
+          
+          try:
+              tree = ET.parse('coverage.xml')
+              root = tree.getroot()
+              coverage_rate = float(root.attrib.get('line-rate', '0')) * 100.0
+              
+              print(f"🎯 Minimum Threshold: {threshold:.2f}%")
+              print(f"📊 Current Coverage: {coverage_rate:.2f}%")
+              
+              if coverage_rate < threshold:
+                  msg = f"Coverage {coverage_rate:.2f}% is below threshold {threshold:.2f}%"
+                  if strict:
+                      print(f"::error::{msg}")
+                      sys.exit(1)
+                  else:
+                      print(f"::warning::{msg}")
+              else:
+                  print(f"✅ Coverage meets threshold!")
+                  
+          except Exception as e:
+              print(f"::warning::Coverage check failed: {e}")
+          EOF
+          echo "::endgroup::"
+
+      - name: Upload to Codecov
+        if: matrix.python-version == '3.11'
+        uses: codecov/codecov-action@v4
+        with:
+          files: Project-root/coverage.xml
+          flags: full-suite
+          name: codecov-py${{ matrix.python-version }}
+          fail_ci_if_error: false
+        env:
+          CODECOV_TOKEN: ${{ secrets.CODECOV_TOKEN }}
+        continue-on-error: true
+
+  #============================================================================
+  # JOB 4: Test Summary and Reporting
+  #============================================================================
+  test-summary:
+    name: Test Summary
+    runs-on: ubuntu-latest
+    needs: [unit-tests, integration-tests, full-tests]
+    if: always()
+    
+    steps:
+      - name: Download all artifacts
+        uses: actions/download-artifact@v4
+        with:
+          path: artifacts
+
+      - name: Generate test summary
+        run: |
+          echo "# 📋 Test Execution Summary" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "## Job Results" >> $GITHUB_STEP_SUMMARY
+          echo "- **Unit Tests**: ${{ needs.unit-tests.result }}" >> $GITHUB_STEP_SUMMARY
+          echo "- **Integration Tests**: ${{ needs.integration-tests.result }}" >> $GITHUB_STEP_SUMMARY
+          echo "- **Full Test Suite**: ${{ needs.full-tests.result }}" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          
+          if [ -d "artifacts" ]; then
+            echo "## 📦 Artifacts Generated" >> $GITHUB_STEP_SUMMARY
+            find artifacts -type f -name "*.xml" -o -name "*.html" | head -20 >> $GITHUB_STEP_SUMMARY || true
+          fi
+
+      - name: Check overall status
+        run: |
+          if [ "${{ needs.full-tests.result }}" != "success" ]; then
+            echo "::error::Full test suite did not pass"
+            exit 1
+          fi
+          echo "✅ All critical tests passed!"

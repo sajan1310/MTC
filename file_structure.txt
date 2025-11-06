@@ -25,6 +25,14 @@
             Plan Mode.chatmode.md
         workflows/
             ci.yml
+            IMPLEMENTATION_SUMMARY.md
+            INDEX.md
+            QUICK_REFERENCE.md
+            README.md
+            simple_validate.py
+            test.yml
+            TESTING_CHECKLIST.md
+            validate_workflows.py
     .pytest_cache/
         .gitignore
         CACHEDIR.TAG

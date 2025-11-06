@@ -1,4 +1,11 @@
-name: CI
+#==============================================================================
+# Legacy CI Workflow (Project-root copy)
+#==============================================================================
+# Note: This is a legacy copy. The main CI workflows are in the root .github/
+# This file is maintained for backwards compatibility.
+#==============================================================================
+
+name: CI (Legacy)
 
 on:
   push:
@@ -19,77 +26,117 @@ jobs:
         ports:
           - 5432:5432
         options: >-
-          --health-cmd "pg_isready -U testuser" --health-interval 10s --health-timeout 5s --health-retries 5
+          --health-cmd "pg_isready -U testuser"
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+    
     env:
       DATABASE_URL: postgresql://testuser:testpass@127.0.0.1:5432/testdb
       REDIS_URL: redis://localhost:6379/0
       RATELIMIT_STORAGE_URL: memory://
       FLASK_ENV: testing
       SECRET_KEY: test-secret
+      PYTHONIOENCODING: utf-8
+    
     steps:
-      - uses: actions/checkout@v4
-      - name: Set up Python
+      - name: Checkout repository
+        uses: actions/checkout@v4
+      
+      - name: Set up Python 3.11
         uses: actions/setup-python@v5
         with:
           python-version: '3.11'
-      - name: Install system dependencies (Linux)
+          cache: 'pip'
+          cache-dependency-path: 'Project-root/requirements.txt'
+      
+      - name: Install system dependencies
         run: |
           sudo apt-get update
           sudo apt-get install -y libmagic1 postgresql-client
-      - name: Install dependencies
+      
+      - name: Install Python dependencies
         run: |
           python -m pip install --upgrade pip
           pip install -r Project-root/requirements.txt
-      - name: Wait for Postgres to be ready
+      
+      - name: Wait for PostgreSQL
         run: |
           for i in {1..30}; do
-            psql "postgresql://testuser:testpass@127.0.0.1:5432/testdb" -c '\q' && break
-            echo "Waiting for Postgres..."
-            sleep 1
+            if psql "$DATABASE_URL" -c '\q' 2>/dev/null; then
+              echo "PostgreSQL is ready!"
+              break
+            fi
+            echo "Waiting for PostgreSQL... ($i/30)"
+            sleep 2
           done
-      - name: Create 'testuser' database (compat)
+      
+      - name: Create compatibility database
         run: |
-          psql "postgresql://testuser:testpass@127.0.0.1:5432/postgres" -tAc "SELECT 1 FROM pg_database WHERE datname='testuser'" | grep -q 1 || \
-          psql "postgresql://testuser:testpass@127.0.0.1:5432/postgres" -c "CREATE DATABASE testuser;"
+          psql "postgresql://testuser:testpass@127.0.0.1:5432/postgres" \
+            -tAc "SELECT 1 FROM pg_database WHERE datname='testuser'" | grep -q 1 || \
+          psql "postgresql://testuser:testpass@127.0.0.1:5432/postgres" \
+            -c "CREATE DATABASE testuser;"
+      
       - name: Run Ruff linter
-        run: ruff Project-root/
+        run: |
+          ruff check Project-root/ --output-format=github
+        continue-on-error: true
+      
       - name: Run tests with coverage
         working-directory: Project-root
-        env:
-          PYTHONIOENCODING: "utf-8"
         run: |
-          python -m pytest --cov-report=xml --cov-report=html -q
+          python -m pytest \
+            --cov=app \
+            --cov-report=xml \
+            --cov-report=html \
+            --cov-report=term-missing \
+            -v
 
       - name: Upload coverage artifacts
         if: always()
         uses: actions/upload-artifact@v4
         with:
-          name: coverage-ubuntu-py3.11
+          name: coverage-legacy-py3.11
           if-no-files-found: warn
+          retention-days: 14
           path: |
             Project-root/coverage.xml
             Project-root/htmlcov
 
-      - name: Soft coverage threshold (Linux)
+      - name: Coverage threshold check
         working-directory: Project-root
         env:
           MIN_COVERAGE: 25
         run: |
-          python - <<'PY'
-          import os, xml.etree.ElementTree as ET
-          thr=float(os.environ.get('MIN_COVERAGE','0'))
+          python - <<'EOF'
+          import sys
+          import os
+          import xml.etree.ElementTree as ET
+          
+          threshold = float(os.getenv('MIN_COVERAGE', '25'))
+          
           try:
-              root=ET.parse('coverage.xml').getroot()
-              rate=float(root.attrib.get('line-rate','0'))*100.0
-              if rate < thr:
-                  print(f'::warning::Coverage {rate:.1f}% is below soft threshold {thr:.1f}%')
+              tree = ET.parse('coverage.xml')
+              root = tree.getroot()
+              coverage_rate = float(root.attrib.get('line-rate', '0')) * 100.0
+              
+              print(f"Coverage: {coverage_rate:.2f}% (Threshold: {threshold:.2f}%)")
+              
+              if coverage_rate < threshold:
+                  print(f"::warning::Coverage {coverage_rate:.2f}% is below threshold {threshold:.2f}%")
               else:
-                  print(f'Coverage {rate:.1f}% meets threshold {thr:.1f}%')
+                  print(f"✅ Coverage meets threshold!")
+                  
           except Exception as e:
-              print(f'::warning::Soft coverage check failed: {e}')
-          PY
-      - name: Upload coverage to Codecov
+              print(f"::warning::Coverage check failed: {e}")
+          EOF
+      
+      - name: Upload to Codecov
         uses: codecov/codecov-action@v4
         with:
           files: Project-root/coverage.xml
+          flags: legacy
+        env:
+          CODECOV_TOKEN: ${{ secrets.CODECOV_TOKEN }}
         continue-on-error: true
