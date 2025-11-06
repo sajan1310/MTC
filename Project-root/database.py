@@ -1,4 +1,5 @@
 from contextlib import contextmanager
+from urllib.parse import urlparse
 
 import psycopg2
 import psycopg2.extras
@@ -32,19 +33,36 @@ def init_app(app):
     statement_timeout = int(app.config.get("DB_STATEMENT_TIMEOUT", 60000))  # 60 seconds
 
     try:
+        # Prefer DATABASE_URL if provided; fallback to discrete DB_* settings
+        db_kwargs = {
+            "host": app.config.get("DB_HOST"),
+            "database": app.config.get("DB_NAME"),
+            "user": app.config.get("DB_USER"),
+            "password": app.config.get("DB_PASS"),
+        }
+        if app.config.get("DATABASE_URL"):
+            parsed = urlparse(app.config["DATABASE_URL"])  # e.g., postgres://user:pass@host:port/db
+            if parsed.scheme.startswith("postgres"):
+                db_kwargs["host"] = parsed.hostname or db_kwargs.get("host")
+                db_kwargs["user"] = parsed.username or db_kwargs.get("user")
+                db_kwargs["password"] = parsed.password or db_kwargs.get("password")
+                # Remove leading '/' from path to get database name
+                dbname = (parsed.path or "").lstrip("/")
+                if dbname:
+                    db_kwargs["database"] = dbname
+                if parsed.port:
+                    db_kwargs["port"] = parsed.port
+
         db_pool = pool.ThreadedConnectionPool(
             min_conn,
             max_conn,
-            host=app.config["DB_HOST"],
-            database=app.config["DB_NAME"],
-            user=app.config["DB_USER"],
-            password=app.config["DB_PASS"],
             connect_timeout=connect_timeout,
             keepalives=1,  # Enable TCP keepalives
             keepalives_idle=30,  # Start keepalives after 30s idle
             keepalives_interval=10,  # Send keepalive every 10s
             keepalives_count=5,  # Drop connection after 5 failed keepalives
             options=f"-c statement_timeout={statement_timeout}",
+            **db_kwargs,
         )
         app.logger.info(
             f"Database pool initialized: {min_conn}-{max_conn} connections "

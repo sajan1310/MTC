@@ -23,7 +23,8 @@ python-dotenv==1.0.1
 # Security Enhancements
 Flask-Limiter==3.5.0
 flask-talisman==1.1.0
-python-magic-bin==0.4.14  # Required for secure file upload validation (includes libmagic for Windows)
+# Use portable python-magic; CI installs libmagic on Linux, Windows uses this pure package
+python-magic==0.4.27
 redis==5.0.1
 
 # CORS Support
