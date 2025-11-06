@@ -4,6 +4,7 @@ from flask import Blueprint
 api_bp = Blueprint("api", __name__, url_prefix="/api")
 
 # Import routes AFTER blueprint creation to avoid circular imports
-from . import imports, items, purchase_orders, stubs, suppliers, routes  # noqa: E402
+# This registers all API endpoints (items, suppliers, purchase_orders, etc.)
+from . import routes  # noqa: E402
 
-__all__ = ["api_bp", "imports", "items", "purchase_orders", "stubs", "suppliers", "routes"]
+__all__ = ["api_bp", "routes"]
