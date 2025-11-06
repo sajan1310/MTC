@@ -1,3 +1,4 @@
+
 from __future__ import annotations
 
 import csv
@@ -9,7 +10,7 @@ from io import StringIO
 import database
 import psycopg2
 import psycopg2.extras
-from flask import Response, current_app, jsonify, request
+from flask import Response, current_app, jsonify, request, Blueprint
 from flask_login import current_user, login_required
 from psycopg2 import sql
 
@@ -17,10 +18,10 @@ from .. import limiter
 from ..utils import get_or_create_item_master_id, get_or_create_master_id, role_required
 from ..utils.file_validation import validate_upload
 
-# [BUG FIX] Import the shared api_bp from __init__.py instead of creating a new Blueprint instance
-# Creating a new Blueprint here caused all routes to register on an orphaned blueprint that 
-# was never registered with the Flask app, resulting in 404 errors for all these endpoints
+# Import api_bp from __init__ after it's been defined
 from . import api_bp
+
+
 
 
 # --- Utility: Generic CRUD for masters ---
@@ -1735,6 +1736,54 @@ def export_inventory_csv():
     except Exception as e:
         current_app.logger.error(f"Error exporting inventory to CSV: {e}")
         return jsonify({"error": "Failed to export inventory"}), 500
+
+
+@api_bp.route("/imports", methods=["POST"])
+@login_required
+@role_required("admin")
+def import_data():
+    """
+    Handle bulk import operations for items and variants.
+    
+    Expects JSON data with a list of items to import.
+    Uses ImportService for chunked batch processing.
+    """
+    try:
+        from app.services.import_service import ImportService
+        
+        data = request.get_json()
+        if not data:
+            return jsonify({"error": "No data provided"}), 400
+            
+        # Extract rows from data (handle different formats)
+        rows = data.get("rows") or data.get("data") or (data if isinstance(data, list) else [])
+        
+        if not rows or not isinstance(rows, list):
+            return jsonify({"error": "Invalid data format. Expected list of items"}), 400
+        
+        if len(rows) == 0:
+            return jsonify({"error": "No rows to import"}), 400
+        
+        # Use ImportService for processing
+        import_service = ImportService()
+        result = import_service.import_items_chunked(rows)
+        
+        return jsonify({
+            "success": True,
+            "processed": result["processed"],
+            "failed": len(result["failed"]),
+            "total": result["total_rows"],
+            "success_rate": result["success_rate"],
+            "duration": result["import_duration"],
+            "errors": result["failed"][:10]  # Return first 10 errors only
+        }), 200
+        
+    except ValueError as e:
+        current_app.logger.error(f"Validation error in import: {e}")
+        return jsonify({"error": str(e)}), 400
+    except Exception as e:
+        current_app.logger.error(f"Error in import endpoint: {e}")
+        return jsonify({"error": "Import failed", "details": str(e)}), 500
 
 
 @api_bp.route("/import/preview-json", methods=["POST"])

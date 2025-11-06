@@ -1,10 +1,12 @@
 ./
+    .coverage
     .env.example
     .pre-commit-config.yaml
     .secrets.baseline
     app.py
     CLEANUP_REPORT.md
     file_structure.txt
+    FINAL_VERIFICATION_REPORT.md
     FRONTEND_BACKEND_SYNC_FIXES.md
     generate_structure.py
     How_To_Use_Repairs.md
