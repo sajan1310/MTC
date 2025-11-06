@@ -7,7 +7,6 @@ Tests production lot operations: create, get, list, update status.
 from datetime import datetime
 from unittest.mock import MagicMock, patch
 
-import pytest
 
 from app.services.production_service import ProductionService
 

@@ -80,7 +80,6 @@ def inventory():
 def add_item():
     if request.method == "POST":
         item_name = request.form.get("item_name")
-        description = request.form.get("description")
         quantity = request.form.get("quantity")
         if not item_name or not quantity:
             flash("Item name and quantity are required.", "error")

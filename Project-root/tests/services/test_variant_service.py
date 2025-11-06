@@ -6,7 +6,6 @@ Tests variant usage operations: add, update, get, list, delete.
 
 from unittest.mock import MagicMock, patch
 
-import pytest
 
 from app.services.variant_service import VariantService
 

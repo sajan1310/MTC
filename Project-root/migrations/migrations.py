@@ -1,6 +1,7 @@
+# ...existing code...
 import os
 import sys
-
+import importlib.util
 from dotenv import load_dotenv
 
 # Add project root to the Python path
@@ -45,9 +46,6 @@ def get_applied_migrations():
     """Fetch the set of already applied migration versions."""
     rows = run_sql("SELECT version FROM schema_migrations;", fetch="all")
     return {row[0] for row in rows}
-
-
-import importlib.util
 
 
 def run_migrations():

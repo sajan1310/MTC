@@ -1,3 +1,9 @@
+import pytest
+from unittest.mock import MagicMock, patch
+
+from app.services.import_service import ImportService
+from app.validators.import_validators import DataValidator
+
 """
 Targeted tests for ImportService to increase coverage of key workflows.
 
@@ -8,13 +14,6 @@ Focus:
 - error handling and partial success scenarios
 """
 
-from unittest.mock import MagicMock, patch
-
-import pytest
-
-from app.services.import_service import ImportService
-from app.validators.import_validators import DataValidator
-
 
 class TestImportServiceValidation:
     """Test import service validation workflows."""
@@ -23,7 +22,6 @@ class TestImportServiceValidation:
         """Empty data should return zero processed."""
         service = ImportService(batch_size=100)
         result = service.import_items_chunked([])
-
         assert result["processed"] == 0
         assert result["total_rows"] == 0
         assert result["success_rate"] == 0.0
@@ -46,9 +44,7 @@ class TestImportServiceValidation:
             {"Item": "", "Stock": "invalid"},  # Missing name, invalid stock
             {"Item": None, "Stock": -10},  # Null name, negative stock
         ]
-
         result = service.import_items_chunked(invalid_data)
-
         assert result["processed"] == 0
         assert result["skipped"] == 2
         assert len(result["failed"]) == 2
@@ -69,7 +65,6 @@ class TestImportServiceValidation:
             mock_conn.return_value.__enter__.return_value = (MagicMock(), mock_cursor)
 
             result = service.import_items_chunked(mixed_data)
-
             assert result["total_rows"] == 3
             assert result["skipped"] == 1
             # Valid rows would be processed (mocked DB)
@@ -98,7 +93,7 @@ class TestImportServiceBatching:
 
             # Mock validation to pass all rows
             with patch.object(DataValidator, "validate_batch", return_value=(data, [])):
-                result = service.import_items_chunked(data)
+                service.import_items_chunked(data)
 
                 # Should commit once for the single batch
                 assert mock_connection.commit.call_count >= 1
@@ -125,6 +120,7 @@ class TestImportServiceBatching:
 
                 # Should commit once per batch (3 batches)
                 assert mock_connection.commit.call_count >= 3
+                assert result["processed"] > 0
 
     def test_progress_callback_invocation(self):
         """Progress callback should be called after each batch."""

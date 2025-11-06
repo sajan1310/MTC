@@ -6,7 +6,6 @@ Tests subprocess CRUD operations: create, get, list, update, delete.
 
 from unittest.mock import MagicMock, patch
 
-import pytest
 
 from app.services.subprocess_service import SubprocessService
 

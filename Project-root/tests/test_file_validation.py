@@ -19,7 +19,7 @@ class TestFileValidation:
             filename="test.jpg",
             content_type="image/jpeg",
         )
-        assert validate_upload(file) == True
+        assert validate_upload(file)
 
     def test_valid_png_upload(self):
         """Test valid PNG file with correct magic number and IHDR chunk"""
@@ -43,7 +43,7 @@ class TestFileValidation:
         file = FileStorage(
             stream=io.BytesIO(png_header), filename="test.png", content_type="image/png"
         )
-        assert validate_upload(file) == True
+        assert validate_upload(file)
 
     def test_valid_gif87a_upload(self):
         """Test valid GIF87a file with correct magic number"""
@@ -51,7 +51,7 @@ class TestFileValidation:
         file = FileStorage(
             stream=io.BytesIO(gif_header), filename="test.gif", content_type="image/gif"
         )
-        assert validate_upload(file) == True
+        assert validate_upload(file)
 
     def test_valid_gif89a_upload(self):
         """Test valid GIF89a file with correct magic number"""
@@ -59,7 +59,7 @@ class TestFileValidation:
         file = FileStorage(
             stream=io.BytesIO(gif_header), filename="test.gif", content_type="image/gif"
         )
-        assert validate_upload(file) == True
+        assert validate_upload(file)
 
     def test_valid_pdf_upload(self):
         """Test valid PDF file with correct magic number"""
@@ -69,7 +69,7 @@ class TestFileValidation:
             filename="test.pdf",
             content_type="application/pdf",
         )
-        assert validate_upload(file) == True
+        assert validate_upload(file)
 
     @pytest.mark.skipif(
         sys.platform.startswith("win"),
@@ -86,7 +86,7 @@ class TestFileValidation:
         file = FileStorage(
             stream=io.BytesIO(csv_content), filename="test.csv", content_type="text/csv"
         )
-        assert validate_upload(file) == True
+        assert validate_upload(file)
 
     def test_invalid_mime_type_exe(self):
         """Test rejection of .exe file"""
@@ -153,7 +153,7 @@ class TestFileValidation:
             filename="exactly10mb.jpg",
             content_type="image/jpeg",
         )
-        assert validate_upload(file) == True
+        assert validate_upload(file)
 
     def test_magic_number_mismatch_jpeg(self):
         """Test rejection of file with wrong magic number for declared MIME"""
@@ -166,7 +166,7 @@ class TestFileValidation:
             stream=io.BytesIO(fake_jpeg), filename="fake.jpg", content_type="image/jpeg"
         )
         # This will be detected as PNG and pass since PNG is allowed
-        assert validate_upload(file) == True
+        assert validate_upload(file)
 
     def test_magic_number_mismatch_pdf_with_wrong_signature(self):
         """Test rejection of PDF with incorrect signature"""
@@ -190,7 +190,7 @@ class TestFileValidation:
             content_type="image/jpeg",
         )
         # Will be detected as JPEG by magic, should pass
-        assert validate_upload(file) == True
+        assert validate_upload(file)
 
     def test_empty_file(self):
         """Test rejection of empty file"""
@@ -244,7 +244,7 @@ class TestFileValidation:
                 filename=f"test{i}.jpg",
                 content_type="image/jpeg",
             )
-            assert validate_upload(file) == True
+            assert validate_upload(file)
 
     def test_file_stream_position_reset(self):
         """Test that file stream position is reset after validation"""

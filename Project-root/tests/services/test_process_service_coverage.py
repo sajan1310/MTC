@@ -1,3 +1,9 @@
+import pytest
+from datetime import datetime
+from unittest.mock import MagicMock, patch
+
+from app.services.process_service import ProcessService
+
 """
 Targeted tests for ProcessService to increase coverage of key workflows.
 
@@ -7,13 +13,6 @@ Focus:
 - validate_process_hierarchy circular dependencies
 - handle_subprocess_dependencies integrity checks
 """
-
-from datetime import datetime
-from unittest.mock import MagicMock, patch
-
-import pytest
-
-from app.services.process_service import ProcessService
 
 
 class TestProcessServiceCreation:
@@ -45,7 +44,6 @@ class TestProcessServiceCreation:
             }
 
             result = ProcessService.create_process(name="Test Process", user_id=1)
-
             assert result["id"] == 1
             assert result["name"] == "Test Process"
             assert result["status"] == "Active"
@@ -81,7 +79,6 @@ class TestProcessServiceCreation:
                 description="Complete description",
                 process_class="manufacturing",
             )
-
             assert result["description"] == "Complete description"
             assert result["process_class"] == "manufacturing"
 
@@ -138,7 +135,6 @@ class TestProcessServiceRetrieval:
             ]
 
             result = ProcessService.get_process(1)
-
             assert result is not None
             assert result["id"] == 1
             assert result["name"] == "Existing Process"
@@ -157,7 +153,6 @@ class TestProcessServiceRetrieval:
             mock_cursor.fetchone.return_value = None
 
             result = ProcessService.get_process(999)
-
             assert result is None
 
     def test_get_process_with_subprocesses(self):
@@ -206,7 +201,6 @@ class TestProcessServiceRetrieval:
             ]
 
             result = ProcessService.get_process(1)
-
             assert len(result["subprocesses"]) == 2
             assert result["subprocesses"][0]["sequence_order"] == 1
             assert result["subprocesses"][1]["notes"] == "Important"
@@ -322,7 +316,7 @@ class TestProcessServiceStatusManagement:
                 {"id": 2, "name": "Process 2", "status": "Active"},
             ]
 
-            result = ProcessService.list_processes(user_id=1, status="Active")
+            ProcessService.list_processes(user_id=1, status="Active")
 
             # Verify status filter was applied in query
             assert mock_cursor.execute.called
@@ -389,7 +383,6 @@ class TestProcessServiceEdgeCases:
             }
 
             result = ProcessService.create_process(name=special_name, user_id=1)
-
             assert result["name"] == special_name
 
     def test_concurrent_process_creation(self):

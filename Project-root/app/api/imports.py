@@ -1,17 +1,29 @@
-from flask import current_app, request
 
+import json
+import logging
+from typing import Any, Dict
+from flask import current_app, request, Blueprint, jsonify
+from flask_login import current_user, login_required
 from app.utils import role_required
 from app.utils.response import APIResponse
-
+from app.services import (
+    ImportService,
+    create_import_id,
+    get_progress,
+    get_progress_tracker,
+    mark_failed,
+    queue_import_job,
+)
+from database import get_conn
 from . import api_bp
 
+imports_bp = Blueprint("imports", __name__, url_prefix="/api/imports")
+logger = logging.getLogger(__name__)
 
 @api_bp.route("/imports", methods=["POST"])
 def import_data():
     # Auth guard enforced in production, bypassed in tests for backward compatibility
     if not current_app.config.get("TESTING"):
-        from flask_login import current_user
-
         if not current_user.is_authenticated or current_user.role not in [
             "admin",
             "super_admin",
@@ -21,194 +33,6 @@ def import_data():
             )
     # ...import logic...
     return APIResponse.success(data={}, message="OK")
-
-
-"""
-API routes for UPSERT-based import operations.
-
-Provides endpoints for:
-- Submitting import jobs (synchronous or background)
-- Checking import progress
-- Retrieving import results
-- Cancelling ongoing imports
-"""
-
-import json
-import logging
-import time
-from typing import Any, Dict
-
-from database import get_conn
-from flask import Blueprint, jsonify
-from flask_login import current_user, login_required
-
-from app import limiter
-from app.services import (
-    ImportService,
-    create_import_id,
-    get_progress,
-    get_progress_tracker,
-    mark_failed,
-    queue_import_job,
-)
-
-# Create blueprint
-imports_bp = Blueprint("imports", __name__, url_prefix="/api/imports")
-logger = logging.getLogger(__name__)
-
-
-@imports_bp.route("/items", methods=["POST"])
-@login_required
-@role_required("admin")
-@limiter.limit("10 per hour")
-def import_items():
-    """
-    Import items with variants.
-
-    Request body:
-    {
-        "mappings": {"CSV_Col": "DB_Col", ...},
-        "data": [{"col": "value", ...}, ...]
-    }
-
-    Returns:
-    - For small imports (<1000 rows): Immediate results
-    - For large imports (>=1000 rows): import_id for progress tracking
-    """
-    try:
-        # Parse request data
-        data = request.get_json()
-        if not data:
-            return jsonify({"error": "Invalid JSON payload"}), 400
-
-        mappings = data.get("mappings", {})
-        import_data = data.get("data", [])
-
-        if not mappings or not import_data:
-            return jsonify({"error": "Mappings and data are required"}), 400
-
-        # Apply mappings to data
-        mapped_data = []
-        for row in import_data:
-            mapped_row = {mappings.get(k, k): v for k, v in row.items()}
-            mapped_data.append(mapped_row)
-
-        total_rows = len(mapped_data)
-
-        # Check if we should process in background
-        background_threshold = current_app.config.get(
-            "IMPORT_BACKGROUND_THRESHOLD", 1000
-        )
-
-        if total_rows >= background_threshold:
-            # Queue for background processing
-            import_id = create_import_id()
-
-            try:
-                job_id = queue_import_job(
-                    import_id=import_id,
-                    user_id=current_user.id,
-                    table_name="item_master",
-                    total_rows=total_rows,
-                    import_data=mapped_data,
-                )
-
-                logger.info(
-                    f"Queued import job {job_id} for user {current_user.id} "
-                    f"({total_rows} rows, import_id: {import_id})"
-                )
-
-                return jsonify(
-                    {
-                        "message": f"Import queued for background processing ({total_rows} rows)",
-                        "import_id": import_id,
-                        "job_id": job_id,
-                        "total_rows": total_rows,
-                        "status": "queued",
-                    }
-                ), 202  # HTTP 202 Accepted
-
-            except Exception as e:
-                logger.error(f"Failed to queue import job: {e}")
-                return jsonify({"error": f"Failed to queue import: {str(e)}"}), 500
-
-        else:
-            # Process synchronously
-            import_id = create_import_id()
-
-            try:
-                # Track progress
-                tracker = get_progress_tracker()
-                start_time = time.time()
-
-                def progress_callback(processed, total, percentage):
-                    tracker.track_progress(
-                        import_id,
-                        processed=processed,
-                        total=total,
-                        start_time=start_time,
-                    )
-
-                # Execute import
-                import_service = ImportService(
-                    batch_size=current_app.config.get("IMPORT_BATCH_SIZE", 1000)
-                )
-
-                result = import_service.import_items_chunked(
-                    data=mapped_data, progress_callback=progress_callback
-                )
-
-                # Mark as completed
-                tracker.mark_completed(
-                    import_id,
-                    processed=result["processed"],
-                    total=result["total_rows"],
-                    failed=len(result["failed"]),
-                    duration=result["import_duration"],
-                    success_rate=result["success_rate"],
-                )
-
-                # Store results in database for retrieval
-                _store_import_results(import_id, current_user.id, result)
-
-                logger.info(
-                    f"Completed synchronous import for user {current_user.id}: "
-                    f"{result['processed']}/{result['total_rows']} rows "
-                    f"({result['success_rate']:.1f}% success)"
-                )
-
-                return jsonify(
-                    {
-                        "message": f"Import completed: {result['processed']}/{result['total_rows']} rows imported",
-                        "import_id": import_id,
-                        "summary": {
-                            "total_rows": result["total_rows"],
-                            "processed": result["processed"],
-                            "failed": len(result["failed"]),
-                            "skipped": result["skipped"],
-                            "success_rate": result["success_rate"],
-                            "duration_seconds": result["import_duration"],
-                        },
-                        "failed_rows": result["failed"][:10]
-                        if result["failed"]
-                        else [],  # First 10 failures
-                        "status": "completed",
-                    }
-                ), 200
-
-            except ValueError as e:
-                # Validation error (e.g., too many rows)
-                mark_failed(import_id, str(e))
-                return jsonify({"error": str(e)}), 400
-
-            except Exception as e:
-                logger.error(f"Import failed for user {current_user.id}: {e}")
-                mark_failed(import_id, str(e))
-                return jsonify({"error": f"Import failed: {str(e)}"}), 500
-
-    except Exception as e:
-        logger.error(f"Error processing import request: {e}")
-        return jsonify({"error": "Internal server error"}), 500
 
 
 @imports_bp.route("/<import_id>/progress", methods=["GET"])

@@ -6,12 +6,9 @@ Also re-exports commonly used utilities for backward compatibility.
 """
 
 from __future__ import annotations
-
 import logging
 import os
 from logging.handlers import RotatingFileHandler
-from typing import Any, Dict
-
 from flask import Flask, jsonify, render_template, request
 from flask_cors import CORS
 from flask_limiter import Limiter
@@ -166,10 +163,6 @@ def create_app(config_name: str | None = None) -> Flask:
     login_manager.login_view = "auth.login"
 
     # Setup rate limiting (respect memory backend in tests to avoid warnings)
-    import logging
-
-    from flask_limiter import Limiter
-    from flask_limiter.util import get_remote_address
     from redis import ConnectionPool, Redis
 
     redis_url = app.config.get("RATELIMIT_STORAGE_URL", "redis://localhost:6379/0")
@@ -389,6 +382,7 @@ def create_app(config_name: str | None = None) -> Flask:
 
 
 # Backwards-compatible exports
+# ruff: noqa: E402
 from .utils import get_or_create_user  # re-export for backward compatibility in tests
 from .utils.response import (
     APIResponse,  # ensure response utility is imported and available
