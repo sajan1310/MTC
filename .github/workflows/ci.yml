@@ -239,6 +239,18 @@ jobs:
           
           echo "✅ Test databases created successfully"
 
+      - name: Initialize database schema
+        run: |
+          echo "Initializing database schema for testdb..."
+          psql "postgresql://testuser:testpass@127.0.0.1:5432/testdb" \
+            -f Project-root/migrations/init_schema.sql
+          
+          echo "Initializing database schema for testuser..."
+          psql "postgresql://testuser:testpass@127.0.0.1:5432/testuser" \
+            -f Project-root/migrations/init_schema.sql
+          
+          echo "✅ Database schemas initialized successfully"
+
       - name: Run tests with coverage
         working-directory: Project-root
         run: |

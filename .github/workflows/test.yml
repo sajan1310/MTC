@@ -184,6 +184,18 @@ jobs:
           
           echo "✅ Test databases created successfully"
 
+      - name: Initialize database schema
+        run: |
+          echo "Initializing database schema for testdb..."
+          psql "postgresql://testuser:testpass@127.0.0.1:5432/testdb" \
+            -f Project-root/migrations/init_schema.sql
+          
+          echo "Initializing database schema for testuser..."
+          psql "postgresql://testuser:testpass@127.0.0.1:5432/testuser" \
+            -f Project-root/migrations/init_schema.sql
+          
+          echo "✅ Database schemas initialized successfully"
+
       - name: Run integration tests
         working-directory: Project-root
         run: |
@@ -276,6 +288,20 @@ jobs:
             -tAc "SELECT 1 FROM pg_database WHERE datname='testuser'" | grep -q 1 || \
           psql "postgresql://testuser:testpass@127.0.0.1:5432/postgres" \
             -c "CREATE DATABASE testuser;"
+          
+          echo "✅ Test databases created successfully"
+
+      - name: Initialize database schema
+        run: |
+          echo "Initializing database schema for testdb..."
+          psql "postgresql://testuser:testpass@127.0.0.1:5432/testdb" \
+            -f Project-root/migrations/init_schema.sql
+          
+          echo "Initializing database schema for testuser..."
+          psql "postgresql://testuser:testpass@127.0.0.1:5432/testuser" \
+            -f Project-root/migrations/init_schema.sql
+          
+          echo "✅ Database schemas initialized successfully"
 
       - name: Run full test suite with coverage
         working-directory: Project-root
