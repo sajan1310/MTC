@@ -45,11 +45,11 @@ class EnhancedFlaskAuditor:
         }
         
         # Enhanced pattern for Blueprint routes
+        # Note: Don't use re.DOTALL to prevent matching across multiple decorators
         self.route_pattern = re.compile(
             r'@(?:app|api_bp|auth_bp|main_bp|files_bp|process_api_bp|production_api_bp|'
             r'subprocess_api_bp|variant_api_bp|bp|blueprint)\.route\('
-            r'[\'"]([^\'"]+)[\'"](?:.*?methods=\[([^\]]+)\])?',
-            re.DOTALL
+            r'[\'"]([^\'"]+)[\'"](?:[^\n]*?methods=\[([^\]]+)\])?'
         )
         
         # Blueprint registration pattern

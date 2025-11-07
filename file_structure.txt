@@ -94,7 +94,9 @@
         .gitignore
         API_REFERENCE_UNIVERSAL_PROCESS_FRAMEWORK.md
         app.py
+        app.py.old_duplicates
         app.py.phase2_backup
+        APP_PY_CLEANUP_REPORT.md
         BACKEND_IMPLEMENTATION_COMPLETE.md
         CHANGELOG.md
         check_columns.py
@@ -108,6 +110,7 @@
         deduplicate_items.py
         DEPLOYMENT.md
         DOCUMENTATION_INDEX.md
+        DUPLICATE_ROUTES_REPORT.md
         enhanced_audit_report.json
         file_structure.txt
         FRONTEND_DEVELOPER_GUIDE.md

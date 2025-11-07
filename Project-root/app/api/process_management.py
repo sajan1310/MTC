@@ -55,12 +55,17 @@ def role_required(*roles):
 # ===== PROCESS CRUD OPERATIONS =====
 
 
-@process_api_bp.route("/process", methods=["POST"])
-@process_api_bp.route("/processes", methods=["POST"], endpoint="create_process_plural")
+@process_api_bp.route("/processes", methods=["POST"])  # New plural (frontend uses this)
+@process_api_bp.route("/process", methods=["POST"], endpoint="create_process_singular_deprecated")  # Keep old singular
 @login_required
 @limiter.limit("20 per hour")
 def create_process():
-    """Create a new process."""
+    """Create a new process.
+    
+    Note: Dual routing for backward compatibility.
+    - /processes is the preferred endpoint (plural)
+    - /process is deprecated but maintained for compatibility
+    """
     try:
         # Log request details for debugging
         current_app.logger.info(
@@ -176,10 +181,16 @@ def create_process():
         )
 
 
-@process_api_bp.route("/process/<int:process_id>", methods=["GET"])
+@process_api_bp.route("/processes/<int:process_id>", methods=["GET"])  # New plural (frontend uses this)
+@process_api_bp.route("/process/<int:process_id>", methods=["GET"], endpoint="get_process_singular_deprecated")  # Keep old singular for backward compatibility
 @login_required
 def get_process(process_id):
-    """Get process with full structure."""
+    """Get process with full structure.
+    
+    Note: Dual routing for backward compatibility.
+    - /processes/<id> is the preferred endpoint (plural)
+    - /process/<id> is deprecated but maintained for compatibility
+    """
     try:
         process = ProcessService.get_process_full_structure(process_id)
 
@@ -243,24 +254,16 @@ def list_processes():
         return APIResponse.error("internal_error", str(e), 500)
 
 
-@process_api_bp.route("/processes/<int:process_id>", methods=["GET"], endpoint="get_process_basic")
-@login_required
-def get_process_basic(process_id):
-    """Get a single process by ID."""
-    try:
-        process = ProcessService.get_process(process_id)
-        if not process:
-            return APIResponse.not_found("Process", process_id)
-        return APIResponse.success({"process": process})
-    except Exception as e:
-        current_app.logger.error(f"Error getting process {process_id}: {e}")
-        return APIResponse.error("internal_error", str(e), 500)
-
-
-@process_api_bp.route("/process/<int:process_id>", methods=["PUT"])
+@process_api_bp.route("/processes/<int:process_id>", methods=["PUT"])  # New plural (frontend uses this)
+@process_api_bp.route("/process/<int:process_id>", methods=["PUT"], endpoint="update_process_singular_deprecated")  # Keep old singular
 @login_required
 def update_process(process_id):
-    """Update process details."""
+    """Update process details.
+    
+    Note: Dual routing for backward compatibility.
+    - /processes/<id> is the preferred endpoint (plural)
+    - /process/<id> is deprecated but maintained for compatibility
+    """
     try:
         # Check ownership
         process = ProcessService.get_process(process_id)
@@ -297,10 +300,16 @@ def update_process(process_id):
         return APIResponse.error("internal_error", str(e), 500)
 
 
-@process_api_bp.route("/process/<int:process_id>", methods=["DELETE"])
+@process_api_bp.route("/processes/<int:process_id>", methods=["DELETE"])  # New plural (frontend uses this)
+@process_api_bp.route("/process/<int:process_id>", methods=["DELETE"], endpoint="delete_process_singular_deprecated")  # Keep old singular
 @login_required
 def delete_process(process_id):
-    """Soft delete a process."""
+    """Soft delete a process.
+    
+    Note: Dual routing for backward compatibility.
+    - /processes/<id> is the preferred endpoint (plural)
+    - /process/<id> is deprecated but maintained for compatibility
+    """
     try:
         # Check ownership
         process = ProcessService.get_process(process_id)
@@ -328,10 +337,16 @@ def delete_process(process_id):
         return APIResponse.error("internal_error", str(e), 500)
 
 
-@process_api_bp.route("/process/<int:process_id>/restore", methods=["POST"])
+@process_api_bp.route("/processes/<int:process_id>/restore", methods=["POST"])  # New plural (frontend uses this)
+@process_api_bp.route("/process/<int:process_id>/restore", methods=["POST"], endpoint="restore_process_singular_deprecated")  # Keep old singular
 @login_required
 def restore_process(process_id):
-    """Restore a soft-deleted process."""
+    """Restore a soft-deleted process.
+    
+    Note: Dual routing for backward compatibility.
+    - /processes/<id>/restore is the preferred endpoint (plural)
+    - /process/<id>/restore is deprecated but maintained for compatibility
+    """
     try:
         success = ProcessService.restore_process(process_id)
 
@@ -350,10 +365,16 @@ def restore_process(process_id):
         return APIResponse.error("internal_error", str(e), 500)
 
 
-@process_api_bp.route("/process/search", methods=["GET"])
+@process_api_bp.route("/processes/search", methods=["GET"])  # New plural (frontend uses this)
+@process_api_bp.route("/process/search", methods=["GET"], endpoint="search_processes_singular_deprecated")  # Keep old singular
 @login_required
 def search_processes():
-    """Search processes by name or description."""
+    """Search processes by name or description.
+    
+    Note: Dual routing for backward compatibility.
+    - /processes/search is the preferred endpoint (plural)
+    - /process/search is deprecated but maintained for compatibility
+    """
     try:
         query = request.args.get("q", "")
 
@@ -487,12 +508,16 @@ def remove_subprocess_from_process(process_id, ps_id):
         return APIResponse.error("internal_error", str(e), 500)
 
 
-@process_api_bp.route(
-    "/process/<int:process_id>/reorder_subprocesses", methods=["POST"]
-)
+@process_api_bp.route("/processes/<int:process_id>/reorder_subprocesses", methods=["POST"])  # New plural (frontend uses this)
+@process_api_bp.route("/process/<int:process_id>/reorder_subprocesses", methods=["POST"], endpoint="reorder_subprocesses_singular_deprecated")  # Keep old singular
 @login_required
 def reorder_subprocesses(process_id):
-    """Reorder subprocesses (drag-and-drop support)."""
+    """Reorder subprocesses (drag-and-drop support).
+    
+    Note: Dual routing for backward compatibility.
+    - /processes/<id>/reorder_subprocesses is the preferred endpoint (plural)
+    - /process/<id>/reorder_subprocesses is deprecated but maintained for compatibility
+    """
     try:
         # Check ownership
         process = ProcessService.get_process(process_id)
@@ -528,10 +553,16 @@ def reorder_subprocesses(process_id):
 # ===== COSTING OPERATIONS =====
 
 
-@process_api_bp.route("/process/<int:process_id>/worst_case_costing", methods=["GET"])
+@process_api_bp.route("/processes/<int:process_id>/costing", methods=["GET"])  # New plural (frontend uses this path)
+@process_api_bp.route("/process/<int:process_id>/worst_case_costing", methods=["GET"], endpoint="get_worst_case_costing_singular_deprecated")  # Keep old singular
 @login_required
 def get_worst_case_costing(process_id):
-    """Get complete worst-case cost breakdown for a process."""
+    """Get complete worst-case cost breakdown for a process.
+    
+    Note: Dual routing for backward compatibility.
+    - /processes/<id>/costing is the preferred endpoint (plural, shorter path)
+    - /process/<id>/worst_case_costing is deprecated but maintained for compatibility
+    """
     try:
         # Check access
         process = ProcessService.get_process(process_id)
@@ -549,10 +580,16 @@ def get_worst_case_costing(process_id):
         return APIResponse.error("internal_error", str(e), 500)
 
 
-@process_api_bp.route("/process/<int:process_id>/profitability", methods=["GET"])
+@process_api_bp.route("/processes/<int:process_id>/profitability", methods=["GET"])  # New plural (frontend uses this)
+@process_api_bp.route("/process/<int:process_id>/profitability", methods=["GET"], endpoint="get_profitability_singular_deprecated")  # Keep old singular
 @login_required
 def get_profitability(process_id):
-    """Get profitability metrics for a process."""
+    """Get profitability metrics for a process.
+    
+    Note: Dual routing for backward compatibility.
+    - /processes/<id>/profitability is the preferred endpoint (plural)
+    - /process/<id>/profitability is deprecated but maintained for compatibility
+    """
     try:
         # Check access
         process = ProcessService.get_process(process_id)
@@ -570,10 +607,16 @@ def get_profitability(process_id):
         return APIResponse.error("internal_error", str(e), 500)
 
 
-@process_api_bp.route("/process/<int:process_id>/set_sales_price", methods=["POST"])
+@process_api_bp.route("/processes/<int:process_id>/set_sales_price", methods=["POST"])  # New plural (frontend uses this)
+@process_api_bp.route("/process/<int:process_id>/set_sales_price", methods=["POST"], endpoint="set_sales_price_singular_deprecated")  # Keep old singular
 @login_required
 def set_sales_price(process_id):
-    """Set estimated sales price and recalculate profitability."""
+    """Set estimated sales price and recalculate profitability.
+    
+    Note: Dual routing for backward compatibility.
+    - /processes/<id>/set_sales_price is the preferred endpoint (plural)
+    - /process/<id>/set_sales_price is deprecated but maintained for compatibility
+    """
     try:
         # Check ownership
         process = ProcessService.get_process(process_id)
