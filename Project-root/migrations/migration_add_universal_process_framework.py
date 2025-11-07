@@ -489,14 +489,36 @@ def downgrade():
 
 if __name__ == "__main__":
     import sys
+    from database import init_app
+    
+    class MockApp:
+        def __init__(self):
+            self.config = {
+                "DB_HOST": os.getenv("DB_HOST", "127.0.0.1"),
+                "DB_NAME": os.getenv("DB_NAME", "testuser"),
+                "DB_USER": os.getenv("DB_USER", "postgres"),
+                "DB_PASS": os.getenv("DB_PASS", "abcd"),
+                "TESTING": True
+            }
+            self.logger = type('obj', (object,), {
+                'info': print,
+                'warning': print,
+                'error': print,
+                'critical': print
+            })()
+        
+        def get(self, key, default=None):
+            return self.config.get(key, default)
 
     if len(sys.argv) > 1 and sys.argv[1] == "downgrade":
         response = input(
             "⚠️  WARNING: This will DELETE all process framework data. Type 'YES' to confirm: "
         )
         if response == "YES":
+            init_app(MockApp())
             downgrade()
         else:
             print("Downgrade cancelled.")
     else:
+        init_app(MockApp())
         upgrade()

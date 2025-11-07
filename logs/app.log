@@ -11347,3 +11347,111 @@ werkzeug.routing.exceptions.BuildError: Could not build url for endpoint 'add_it
 2025-11-06 19:04:25,464 INFO: Universal Process Framework API blueprints exempted from CSRF protection [in C:\Users\erkar\OneDrive\Desktop\MTC\Project-root\app\__init__.py:318]
 2025-11-06 19:04:25,464 INFO: Universal Process Framework API blueprints exempted from CSRF protection [in C:\Users\erkar\OneDrive\Desktop\MTC\Project-root\app\__init__.py:318]
 2025-11-06 19:04:25,464 INFO: Universal Process Framework API blueprints exempted from CSRF protection [in C:\Users\erkar\OneDrive\Desktop\MTC\Project-root\app\__init__.py:318]
+2025-11-07 15:27:57,043 INFO: Request ID middleware enabled [in C:\Users\erkar\OneDrive\Desktop\MTC\Project-root\app\middleware\request_id.py:44]
+2025-11-07 15:27:57,685 INFO: Universal Process Framework API blueprints exempted from CSRF protection [in C:\Users\erkar\OneDrive\Desktop\MTC\Project-root\app\__init__.py:318]
+2025-11-07 15:53:06,293 INFO: Request ID middleware enabled [in C:\Users\erkar\OneDrive\Desktop\MTC\Project-root\app\middleware\request_id.py:44]
+2025-11-07 15:53:06,972 INFO: Universal Process Framework API blueprints exempted from CSRF protection [in C:\Users\erkar\OneDrive\Desktop\MTC\Project-root\app\__init__.py:318]
+2025-11-07 15:53:07,045 ERROR: Database error: column ps.notes does not exist
+LINE 7:                     ps.notes,
+                            ^
+ [in C:\Users\erkar\OneDrive\Desktop\MTC\Project-root\database.py:163]
+2025-11-07 15:53:07,046 ERROR: Error retrieving process 1: column ps.notes does not exist
+LINE 7:                     ps.notes,
+                            ^
+ [in C:\Users\erkar\OneDrive\Desktop\MTC\Project-root\app\api\process_management.py:207]
+2025-11-07 15:53:07,054 ERROR: Database error: column ps.notes does not exist
+LINE 7:                     ps.notes,
+                            ^
+ [in C:\Users\erkar\OneDrive\Desktop\MTC\Project-root\database.py:163]
+2025-11-07 15:53:07,055 ERROR: Error retrieving process structure 1: column ps.notes does not exist
+LINE 7:                     ps.notes,
+                            ^
+ [in C:\Users\erkar\OneDrive\Desktop\MTC\Project-root\app\api\process_management.py:229]
+2025-11-07 15:56:12,183 INFO: Request ID middleware enabled [in C:\Users\erkar\OneDrive\Desktop\MTC\Project-root\app\middleware\request_id.py:44]
+2025-11-07 15:56:12,821 INFO: Universal Process Framework API blueprints exempted from CSRF protection [in C:\Users\erkar\OneDrive\Desktop\MTC\Project-root\app\__init__.py:318]
+2025-11-07 15:56:12,904 ERROR: Database error: column ps.notes does not exist
+LINE 7:                     ps.notes,
+                            ^
+ [in C:\Users\erkar\OneDrive\Desktop\MTC\Project-root\database.py:163]
+2025-11-07 15:56:12,906 ERROR: Error retrieving process 1: column ps.notes does not exist
+LINE 7:                     ps.notes,
+                            ^
+ [in C:\Users\erkar\OneDrive\Desktop\MTC\Project-root\app\api\process_management.py:207]
+2025-11-07 15:56:12,912 ERROR: Database error: column ps.notes does not exist
+LINE 7:                     ps.notes,
+                            ^
+ [in C:\Users\erkar\OneDrive\Desktop\MTC\Project-root\database.py:163]
+2025-11-07 15:56:12,914 ERROR: Error retrieving process structure 1: column ps.notes does not exist
+LINE 7:                     ps.notes,
+                            ^
+ [in C:\Users\erkar\OneDrive\Desktop\MTC\Project-root\app\api\process_management.py:229]
+2025-11-07 16:03:24,016 INFO: Request ID middleware enabled [in C:\Users\erkar\OneDrive\Desktop\MTC\Project-root\app\middleware\request_id.py:44]
+2025-11-07 16:03:24,550 INFO: Universal Process Framework API blueprints exempted from CSRF protection [in C:\Users\erkar\OneDrive\Desktop\MTC\Project-root\app\__init__.py:318]
+2025-11-07 16:03:24,637 ERROR: Database error: column ps.notes does not exist
+LINE 7:                     ps.notes,
+                            ^
+ [in C:\Users\erkar\OneDrive\Desktop\MTC\Project-root\database.py:163]
+2025-11-07 16:03:24,638 ERROR: Error retrieving process 1: column ps.notes does not exist
+LINE 7:                     ps.notes,
+                            ^
+ [in C:\Users\erkar\OneDrive\Desktop\MTC\Project-root\app\api\process_management.py:207]
+2025-11-07 16:03:24,646 ERROR: Database error: column ps.notes does not exist
+LINE 7:                     ps.notes,
+                            ^
+ [in C:\Users\erkar\OneDrive\Desktop\MTC\Project-root\database.py:163]
+2025-11-07 16:03:24,647 ERROR: Error retrieving process structure 1: column ps.notes does not exist
+LINE 7:                     ps.notes,
+                            ^
+ [in C:\Users\erkar\OneDrive\Desktop\MTC\Project-root\app\api\process_management.py:229]
+2025-11-07 16:03:49,297 INFO: Request ID middleware enabled [in C:\Users\erkar\OneDrive\Desktop\MTC\Project-root\app\middleware\request_id.py:44]
+2025-11-07 16:03:49,800 INFO: Universal Process Framework API blueprints exempted from CSRF protection [in C:\Users\erkar\OneDrive\Desktop\MTC\Project-root\app\__init__.py:318]
+2025-11-07 16:03:49,828 ERROR: Database error: column ps.notes does not exist
+LINE 7:                     ps.notes,
+                            ^
+ [in C:\Users\erkar\OneDrive\Desktop\MTC\Project-root\database.py:163]
+2025-11-07 16:03:49,829 ERROR: Error retrieving process 1: column ps.notes does not exist
+LINE 7:                     ps.notes,
+                            ^
+ [in C:\Users\erkar\OneDrive\Desktop\MTC\Project-root\app\api\process_management.py:207]
+2025-11-07 16:03:49,835 ERROR: Database error: column ps.notes does not exist
+LINE 7:                     ps.notes,
+                            ^
+ [in C:\Users\erkar\OneDrive\Desktop\MTC\Project-root\database.py:163]
+2025-11-07 16:03:49,836 ERROR: Error retrieving process structure 1: column ps.notes does not exist
+LINE 7:                     ps.notes,
+                            ^
+ [in C:\Users\erkar\OneDrive\Desktop\MTC\Project-root\app\api\process_management.py:229]
+2025-11-07 16:05:31,417 INFO: Request ID middleware enabled [in C:\Users\erkar\OneDrive\Desktop\MTC\Project-root\app\middleware\request_id.py:44]
+2025-11-07 16:05:31,912 INFO: Universal Process Framework API blueprints exempted from CSRF protection [in C:\Users\erkar\OneDrive\Desktop\MTC\Project-root\app\__init__.py:318]
+2025-11-07 16:05:31,989 ERROR: Database error: relation "additional_costs" does not exist
+LINE 2:                 SELECT * FROM additional_costs
+                                      ^
+ [in C:\Users\erkar\OneDrive\Desktop\MTC\Project-root\database.py:163]
+2025-11-07 16:05:31,990 ERROR: Error retrieving process 1: relation "additional_costs" does not exist
+LINE 2:                 SELECT * FROM additional_costs
+                                      ^
+ [in C:\Users\erkar\OneDrive\Desktop\MTC\Project-root\app\api\process_management.py:207]
+2025-11-07 16:05:31,997 ERROR: Database error: relation "additional_costs" does not exist
+LINE 2:                 SELECT * FROM additional_costs
+                                      ^
+ [in C:\Users\erkar\OneDrive\Desktop\MTC\Project-root\database.py:163]
+2025-11-07 16:05:31,998 ERROR: Error retrieving process structure 1: relation "additional_costs" does not exist
+LINE 2:                 SELECT * FROM additional_costs
+                                      ^
+ [in C:\Users\erkar\OneDrive\Desktop\MTC\Project-root\app\api\process_management.py:229]
+2025-11-07 16:07:08,418 INFO: Request ID middleware enabled [in C:\Users\erkar\OneDrive\Desktop\MTC\Project-root\app\middleware\request_id.py:44]
+2025-11-07 16:07:08,808 INFO: Universal Process Framework API blueprints exempted from CSRF protection [in C:\Users\erkar\OneDrive\Desktop\MTC\Project-root\app\__init__.py:318]
+2025-11-07 16:07:08,866 ERROR: Error retrieving process 1: 'AnonymousUserMixin' object has no attribute 'id' [in C:\Users\erkar\OneDrive\Desktop\MTC\Project-root\app\api\process_management.py:207]
+2025-11-07 16:07:08,871 ERROR: Error retrieving process structure 1: 'AnonymousUserMixin' object has no attribute 'id' [in C:\Users\erkar\OneDrive\Desktop\MTC\Project-root\app\api\process_management.py:229]
+2025-11-07 16:07:47,077 INFO: Request ID middleware enabled [in C:\Users\erkar\OneDrive\Desktop\MTC\Project-root\app\middleware\request_id.py:44]
+2025-11-07 16:07:47,589 INFO: Universal Process Framework API blueprints exempted from CSRF protection [in C:\Users\erkar\OneDrive\Desktop\MTC\Project-root\app\__init__.py:318]
+2025-11-07 16:08:19,612 INFO: Request ID middleware enabled [in C:\Users\erkar\OneDrive\Desktop\MTC\Project-root\app\middleware\request_id.py:44]
+2025-11-07 16:08:20,118 INFO: Universal Process Framework API blueprints exempted from CSRF protection [in C:\Users\erkar\OneDrive\Desktop\MTC\Project-root\app\__init__.py:318]
+2025-11-07 16:08:20,166 ERROR: Error retrieving process 1: 'AnonymousUserMixin' object has no attribute 'id' [in C:\Users\erkar\OneDrive\Desktop\MTC\Project-root\app\api\process_management.py:207]
+2025-11-07 16:08:20,174 ERROR: Error retrieving process structure 1: 'AnonymousUserMixin' object has no attribute 'id' [in C:\Users\erkar\OneDrive\Desktop\MTC\Project-root\app\api\process_management.py:229]
+2025-11-07 16:10:53,445 INFO: Request ID middleware enabled [in C:\Users\erkar\OneDrive\Desktop\MTC\Project-root\app\middleware\request_id.py:44]
+2025-11-07 16:10:53,974 INFO: Universal Process Framework API blueprints exempted from CSRF protection [in C:\Users\erkar\OneDrive\Desktop\MTC\Project-root\app\__init__.py:318]
+2025-11-07 16:15:40,375 INFO: Request ID middleware enabled [in C:\Users\erkar\OneDrive\Desktop\MTC\Project-root\app\middleware\request_id.py:44]
+2025-11-07 16:15:40,786 INFO: Universal Process Framework API blueprints exempted from CSRF protection [in C:\Users\erkar\OneDrive\Desktop\MTC\Project-root\app\__init__.py:318]
+2025-11-07 16:15:40,835 ERROR: Error retrieving process 1: 'AnonymousUserMixin' object has no attribute 'id' [in C:\Users\erkar\OneDrive\Desktop\MTC\Project-root\app\api\process_management.py:207]
+2025-11-07 16:15:40,840 ERROR: Error retrieving process structure 1: 'AnonymousUserMixin' object has no attribute 'id' [in C:\Users\erkar\OneDrive\Desktop\MTC\Project-root\app\api\process_management.py:229]

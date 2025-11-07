@@ -7,6 +7,9 @@
     app.py.backup
     AUDITOR_IMPROVEMENTS_REPORT.md
     AUDITOR_VERIFICATION_COMPLETE.md
+    BACKEND_FRONTEND_DB_SYNC_COMPLETE.md
+    BACKEND_FRONTEND_DB_SYNC_REPORT.md
+    check_columns.sql
     CI_DATABASE_FIX_SUMMARY.md
     CLEANUP_REPORT.md
     COMPLETE_FIX_SUMMARY.md
@@ -27,10 +30,12 @@
     MTC_Deep_Integration_Audit.md
     MTC_FIXES_APPLIED.md
     MTC_VERIFICATION_QUICK_SUMMARY.md
+    PRODUCTION_READINESS_REPORT.md
     project_auditor.py
     Project_Summary.md
     QUICK_FIX_GUIDE.md
     QUICK_FIX_REFERENCE.md
+    QUICK_REFERENCE.md
     UI_UX_IMPROVEMENTS_SUMMARY.md
     UI_UX_TESTING_GUIDE.md
     UI_UX_VISUAL_COMPARISON.md
@@ -240,6 +245,7 @@
             app.log
         migrations/
             add_indexes.sql
+            add_missing_upf_tables.sql
             init_schema.sql
             migration.py
             migrations.py
@@ -252,6 +258,7 @@
             migration_add_lot_variant_selections.py
             migration_add_master_tables.py
             migration_add_notes_and_status_to_po.py
+            migration_add_notes_to_process_subprocesses.py
             migration_add_password_reset.py
             migration_add_performance_indexes.py
             migration_add_po_number.py
@@ -267,6 +274,8 @@
             README.md
             __init__.py
         private_uploads/
+        scripts/
+            verify_upf_endpoints.py
         static/
             dashboard.js
             inventory.js

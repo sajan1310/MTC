@@ -71,12 +71,14 @@ def create_upf_tables():
         # ===== TABLE 3: PROCESS_SUBPROCESSES =====
         print("\n[3/15] Creating 'process_subprocesses' table...")
         cur.execute("""
+
             CREATE TABLE IF NOT EXISTS process_subprocesses (
                 id SERIAL PRIMARY KEY,
                 process_id INTEGER NOT NULL REFERENCES processes(id) ON DELETE CASCADE,
                 subprocess_id INTEGER NOT NULL REFERENCES subprocesses(id) ON DELETE RESTRICT,
                 sequence INTEGER NOT NULL,
                 custom_name VARCHAR(200),
+                notes TEXT,
                 created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
                 CONSTRAINT unique_process_subprocess UNIQUE(process_id, subprocess_id, sequence)
             );

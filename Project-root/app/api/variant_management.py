@@ -18,6 +18,19 @@ from app.utils.response import APIResponse
 variant_api_bp = Blueprint("variant_api", __name__)
 
 
+# Helper function to safely check user role
+def get_user_role():
+    """Get current user's role, returning None if not authenticated or role doesn't exist."""
+    if current_user.is_authenticated and hasattr(current_user, 'role'):
+        return current_user.role
+    return None
+
+
+def is_admin():
+    """Check if current user is an admin."""
+    return get_user_role() == "admin"
+
+
 def role_required(*roles):
     """Decorator to require specific user role."""
 
@@ -28,7 +41,8 @@ def role_required(*roles):
                 return APIResponse.error(
                     "unauthenticated", "Authentication required", 401
                 )
-            if current_user.role not in roles and current_user.role != "admin":
+            user_role = get_user_role()
+            if user_role not in roles and user_role != "admin":
                 return APIResponse.error("forbidden", "Insufficient permissions", 403)
             return f(*args, **kwargs)
 
@@ -333,31 +347,25 @@ def delete_substitute_group(group_id):
     """Delete substitute group."""
     try:
         from database import get_conn
-        from psycopg2.extras import RealDictCursor
 
-        conn = get_conn()
-        cur = conn.cursor(cursor_factory=RealDictCursor)
+        with get_conn() as (conn, cur):
+            # Soft delete the group
+            cur.execute(
+                "UPDATE substitute_groups SET deleted_at = NOW() WHERE id = %s AND deleted_at IS NULL",
+                (group_id,),
+            )
 
-        # Soft delete the group
-        cur.execute(
-            "UPDATE substitute_groups SET deleted_at = NOW() WHERE id = %s AND deleted_at IS NULL",
-            (group_id,),
-        )
-
-        # Reset variants that were in this group
-        cur.execute(
-            """
-            UPDATE variant_usage
-            SET substitute_group_id = NULL,
-                is_alternative = FALSE,
-                alternative_order = NULL
-            WHERE substitute_group_id = %s
-        """,
-            (group_id,),
-        )
-
-        conn.commit()
-        cur.close()
+            # Reset variants that were in this group
+            cur.execute(
+                """
+                UPDATE variant_usage
+                SET substitute_group_id = NULL,
+                    is_alternative = FALSE,
+                    alternative_order = NULL
+                WHERE substitute_group_id = %s
+            """,
+                (group_id,),
+            )
 
         # Audit log
         audit.log_delete("substitute_group", group_id, f"OR Group {group_id}")

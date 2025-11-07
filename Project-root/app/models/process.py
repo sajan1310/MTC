@@ -95,7 +95,7 @@ class Subprocess:
         self.description: Optional[str] = data.get("description")
         self.reusable: bool = data.get("reusable", False)
         self.version: int = data.get("version", 1)
-        self.user_id: int = data["user_id"]
+        self.user_id: Optional[int] = data.get("user_id")  # Optional - subprocesses are shared
         self.is_deleted: bool = data.get("is_deleted", False)
         self.deleted_at: Optional[datetime] = data.get("deleted_at")
         self.created_at: datetime = data.get("created_at", datetime.now())

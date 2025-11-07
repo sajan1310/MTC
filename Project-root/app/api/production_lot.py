@@ -21,6 +21,19 @@ from app.utils.response import APIResponse
 production_api_bp = Blueprint("production_api", __name__)
 
 
+# Helper function to safely check user role
+def get_user_role():
+    """Get current user's role, returning None if not authenticated or role doesn't exist."""
+    if current_user.is_authenticated and hasattr(current_user, 'role'):
+        return current_user.role
+    return None
+
+
+def is_admin():
+    """Check if current user is an admin."""
+    return get_user_role() == "admin"
+
+
 def role_required(*roles):
     """Decorator to require specific user role."""
 
@@ -31,7 +44,8 @@ def role_required(*roles):
                 return APIResponse.error(
                     "unauthenticated", "Authentication required", 401
                 )
-            if current_user.role not in roles and current_user.role != "admin":
+            user_role = get_user_role()
+            if user_role not in roles and user_role != "admin":
                 return APIResponse.error("forbidden", "Insufficient permissions", 403)
             return f(*args, **kwargs)
 
@@ -85,7 +99,7 @@ def get_production_lot(lot_id):
             return APIResponse.not_found("Production lot", lot_id)
 
         # Check access
-        if lot["created_by"] != current_user.id and current_user.role != "admin":
+        if lot["created_by"] != current_user.id and not is_admin():
             return APIResponse.error("forbidden", "Access denied", 403)
 
         return APIResponse.success(lot)
@@ -110,7 +124,7 @@ def get_variant_options(lot_id):
         if not lot:
             return APIResponse.not_found("Production lot", lot_id)
 
-        if lot["created_by"] != current_user.id and current_user.role != "admin":
+        if lot["created_by"] != current_user.id and not is_admin():
             return APIResponse.error("forbidden", "Access denied", 403)
 
         with get_conn() as (conn, cur):
@@ -232,8 +246,13 @@ def list_production_lots():
         status = request.args.get("status")
         process_id = request.args.get("process_id")
 
+        # Determine user_id filter based on authentication and admin status
+        user_id = None
+        if current_user.is_authenticated and not is_admin():
+            user_id = current_user.id
+
         result = ProductionService.list_production_lots(
-            user_id=current_user.id if current_user.role != "admin" else None,
+            user_id=user_id,
             status=status,
             process_id=int(process_id) if process_id else None,
             page=page,
@@ -264,7 +283,7 @@ def select_variant_for_group(lot_id):
         if not lot:
             return APIResponse.not_found("Production lot", lot_id)
 
-        if lot["created_by"] != current_user.id and current_user.role != "admin":
+        if lot["created_by"] != current_user.id and not is_admin():
             return APIResponse.error("forbidden", "Access denied", 403)
 
         if lot["status"] != "planning":
@@ -310,7 +329,7 @@ def get_lot_selections(lot_id):
         if not lot:
             return APIResponse.not_found("Production lot", lot_id)
 
-        if lot["created_by"] != current_user.id and current_user.role != "admin":
+        if lot["created_by"] != current_user.id and not is_admin():
             return APIResponse.error("forbidden", "Access denied", 403)
 
         return APIResponse.success(lot.get("selections", []))
@@ -336,7 +355,7 @@ def batch_select_variants(lot_id):
         if not lot:
             return APIResponse.not_found("Production lot", lot_id)
 
-        if lot["created_by"] != current_user.id and current_user.role != "admin":
+        if lot["created_by"] != current_user.id and not is_admin():
             return APIResponse.error("forbidden", "Access denied", 403)
 
         if lot["status"] not in ["planning", "ready"]:
@@ -412,7 +431,7 @@ def validate_lot_readiness(lot_id):
         if not lot:
             return APIResponse.not_found("Production lot", lot_id)
 
-        if lot["created_by"] != current_user.id and current_user.role != "admin":
+        if lot["created_by"] != current_user.id and not is_admin():
             return APIResponse.error("forbidden", "Access denied", 403)
 
         validation_result = ProductionService.validate_lot_readiness(lot_id)
@@ -435,7 +454,7 @@ def execute_production_lot(lot_id):
         if not lot:
             return APIResponse.not_found("Production lot", lot_id)
 
-        if lot["created_by"] != current_user.id and current_user.role != "admin":
+        if lot["created_by"] != current_user.id and not is_admin():
             return APIResponse.error("forbidden", "Access denied", 403)
 
         if lot["status"] != "planning":
@@ -473,7 +492,7 @@ def cancel_production_lot(lot_id):
         if not lot:
             return APIResponse.not_found("Production lot", lot_id)
 
-        if lot["created_by"] != current_user.id and current_user.role != "admin":
+        if lot["created_by"] != current_user.id and not is_admin():
             return APIResponse.error("forbidden", "Access denied", 403)
 
         data = request.json
@@ -504,7 +523,7 @@ def get_lot_actual_costing(lot_id):
         if not lot:
             return APIResponse.not_found("Production lot", lot_id)
 
-        if lot["created_by"] != current_user.id and current_user.role != "admin":
+        if lot["created_by"] != current_user.id and not is_admin():
             return APIResponse.error("forbidden", "Access denied", 403)
 
         actual_costs = ProductionService.calculate_lot_actual_cost(lot_id)
@@ -530,7 +549,7 @@ def get_variance_analysis(lot_id):
         if not lot:
             return APIResponse.not_found("Production lot", lot_id)
 
-        if lot["created_by"] != current_user.id and current_user.role != "admin":
+        if lot["created_by"] != current_user.id and not is_admin():
             return APIResponse.error("forbidden", "Access denied", 403)
 
         if lot["status"] != "completed":
@@ -563,7 +582,7 @@ def get_production_summary():
 
         # Get summary by status
         user_filter = (
-            "" if current_user.role == "admin" else f"AND created_by = {current_user.id}"
+            "" if is_admin() else f"AND created_by = {current_user.id}"
         )
 
         cur.execute(f"""
@@ -602,7 +621,7 @@ def get_recent_lots():
 
         user_filter = (
             ""
-            if current_user.role == "admin"
+            if is_admin()
             else f"AND pl.created_by = {current_user.id}"
         )
 
