@@ -49,6 +49,7 @@
     UI_UX_IMPROVEMENTS_SUMMARY.md
     UI_UX_TESTING_GUIDE.md
     UI_UX_VISUAL_COMPARISON.md
+    VARIANT_SEARCH_MERGE_COMPLETE.md
     .github/
         chatmodes/
             Plan Mode.chatmode.md
@@ -156,6 +157,8 @@
         TESTING_CHECKLIST.md
         TESTING_FIXES_SUMMARY.md
         test_oauth.ps1
+        test_select2_endpoint.py
+        test_variants.py
         TODO_LIST_COMPLETION_SUMMARY.md
         UNIVERSAL_PROCESS_FRAMEWORK_PROGRESS.md
         UPF_API_IMPLEMENTATION_COMPLETE.md

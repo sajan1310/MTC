@@ -103,6 +103,14 @@ const processEditor = {
             }
         });
 
+        // Listen for variant selection from Select2
+        document.addEventListener('variantSelected', (e) => {
+            console.log('Variant selected event received:', e.detail);
+            // Store selected variant for user to add to subprocess
+            this.selectedVariant = e.detail;
+            this.showAlert('Variant selected! Now click on a subprocess to add it.', 'success');
+        });
+
         await this.loadProcess();
         await this.loadAvailableSubprocesses();
         await this.loadProcessStructure();

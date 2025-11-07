@@ -1,63 +1,178 @@
-// Null-safe variant card renderer
-function renderVariantCard(variant) {
-    // Null safety
-    if (!variant) {
-        console.warn('Attempted to render null variant');
-        return '';
-    }
-    const variantName = variant.variant_name || 'Unnamed Variant';
-    const itemName = variant.item_name || 'Unknown Item';
-    const color = variant.color || 'N/A';
-    const size = variant.size || 'N/A';
-    const sku = variant.sku || 'N/A';
-    const rate = variant.rate !== undefined ? `₹${parseFloat(variant.rate).toFixed(2)}` : 'N/A';
-    return `
-        <div class="variant-card" data-variant-id="${variant.id || ''}">
-            <h4>${escapeHtml(variantName)}</h4>
-            <p><strong>Item:</strong> ${escapeHtml(itemName)}</p>
-            <p><strong>Color:</strong> ${escapeHtml(color)}</p>
-            <p><strong>Size:</strong> ${escapeHtml(size)}</p>
-            <p><strong>SKU:</strong> ${escapeHtml(sku)}</p>
-            <p><strong>Rate:</strong> ${rate}</p>
-        </div>
-    `;
-}
+﻿/**
+ * Variant Search Component - Select2 Enhanced Version
+ * @version 2.0.0
+ * @requires jQuery, Select2
+ */
 
-// HTML escaping for security
 function escapeHtml(text) {
     if (!text) return '';
     const div = document.createElement('div');
     div.textContent = text;
     return div.innerHTML;
 }
-/**
- * Variant Search Component
- * Handles variant searching, filtering, and drag-and-drop initialization
- */
 
 const variantSearch = {
-    variants: [],
-    filteredVariants: [],
+    select2Instance: null,
     categories: [],
-    searchTimeout: null,
-
-    /**
-     * Initialize the variant search component
-     */
+    
     async init() {
-        console.log('Initializing variant search...');
+        console.log('Initializing Variant Search with Select2...');
+        if (!this.checkDependencies()) return;
         await this.loadCategories();
-        await this.loadVariants();
+        this.initSelect2();
+        this.attachEventListeners();
+        console.log('Variant Search initialized successfully');
     },
 
-    /**
-     * Load all categories for filter dropdown
-     */
+    checkDependencies() {
+        if (typeof jQuery === 'undefined') {
+            console.error('jQuery is not loaded! Select2 requires jQuery.');
+            return false;
+        }
+        if (typeof jQuery.fn.select2 === 'undefined') {
+            console.error('Select2 is not loaded!');
+            return false;
+        }
+        return true;
+    },
+
+    initSelect2() {
+        const selectElement = $('#variant-search-select');
+        if (selectElement.length === 0) {
+            console.warn('Variant search select element not found');
+            return;
+        }
+
+        try {
+            this.select2Instance = selectElement.select2({
+                ajax: {
+                    url: '/api/variants/select2',
+                    dataType: 'json',
+                    delay: 250,
+                    data: function (params) {
+                        return {
+                            q: params.term,
+                            page: params.page || 1,
+                            page_size: 30
+                        };
+                    },
+                    processResults: function (data, params) {
+                        params.page = params.page || 1;
+                        if (data.error) {
+                            console.error('API Error:', data.error);
+                            return { results: [], pagination: { more: false } };
+                        }
+                        return {
+                            results: data.results || [],
+                            pagination: { more: data.pagination ? data.pagination.more : false }
+                        };
+                    },
+                    cache: true
+                },
+                placeholder: 'Search for variants...',
+                minimumInputLength: 0,
+                allowClear: true,
+                width: '100%',
+                templateResult: this.formatVariant.bind(this),
+                templateSelection: this.formatVariantSelection.bind(this)
+            });
+
+            selectElement.on('select2:select', (e) => {
+                this.onVariantSelected(e.params.data);
+            });
+            
+            console.log('Select2 initialized successfully');
+        } catch (error) {
+            console.error('Failed to initialize Select2:', error);
+        }
+    },
+
+    formatVariant(variant) {
+        if (variant.loading) return variant.text;
+        if (!variant.id) return variant.text;
+
+        try {
+            const stockStatus = this.getStockStatusHTML(variant);
+            const html = `
+                <div class="select2-variant-result">
+                    <div class="variant-name">
+                        <strong>${escapeHtml(variant.text || variant.item_name || 'Unknown')}</strong>
+                    </div>
+                    <div class="variant-details">
+                        <span class="variant-brand"> ${escapeHtml(variant.brand || 'N/A')}</span>
+                        <span class="variant-model"> ${escapeHtml(variant.model || 'N/A')}</span>
+                        ${stockStatus}
+                    </div>
+                </div>
+            `;
+            return $(html);
+        } catch (error) {
+            console.error('Error formatting variant:', error);
+            return variant.text || 'Error';
+        }
+    },
+
+    formatVariantSelection(variant) {
+        return variant.text || variant.item_name || 'Select a variant';
+    },
+
+    getStockStatusHTML(variant) {
+        const qty = parseInt(variant.quantity) || 0;
+        const reorder = parseInt(variant.reorder_level) || 0;
+        let statusClass = 'stock-good';
+        let statusText = `In Stock (${qty})`;
+        let statusIcon = '';
+
+        if (qty === 0) {
+            statusClass = 'stock-out';
+            statusText = 'Out of Stock';
+            statusIcon = '';
+        } else if (qty <= reorder) {
+            statusClass = 'stock-low';
+            statusText = `Low Stock (${qty})`;
+            statusIcon = '';
+        }
+
+        return `<span class="variant-stock ${statusClass}">${statusIcon} ${statusText}</span>`;
+    },
+
+    onVariantSelected(variant) {
+        console.log('Variant selected:', variant);
+        try {
+            const event = new CustomEvent('variantSelected', {
+                detail: variant,
+                bubbles: true,
+                cancelable: true
+            });
+            document.dispatchEvent(event);
+
+            setTimeout(() => {
+                if (this.select2Instance) {
+                    $('#variant-search-select').val(null).trigger('change');
+                }
+            }, 100);
+        } catch (error) {
+            console.error('Error handling selection:', error);
+        }
+    },
+
+    attachEventListeners() {
+        const categoryFilter = document.getElementById('category-filter');
+        if (categoryFilter) {
+            categoryFilter.addEventListener('change', () => {
+                if (this.select2Instance) {
+                    $('#variant-search-select').val(null).trigger('change');
+                }
+            });
+        }
+    },
+
     async loadCategories() {
         try {
             const response = await fetch('/api/categories', {
                 method: 'GET',
-                credentials: 'include'
+                credentials: 'include',
+                headers: { 'Accept': 'application/json' }
             });
 
             if (response.status === 401) {
@@ -65,216 +180,54 @@ const variantSearch = {
                 return;
             }
 
-            if (!response.ok) {
-                const errorText = await response.text();
-                console.error(`Failed to load categories: ${response.status} ${response.statusText}`, errorText);
-                throw new Error(`HTTP ${response.status}: ${response.statusText}`);
-            }
+            if (!response.ok) throw new Error(`HTTP ${response.status}`);
 
             const data = await response.json();
-            // Handle both array and object responses
             this.categories = Array.isArray(data) ? data : (data.categories || []);
             this.renderCategoryFilter();
+            console.log(`Loaded ${this.categories.length} categories`);
         } catch (error) {
             console.error('Error loading categories:', error);
-            this.showAlert(`Failed to load categories: ${error.message}`, 'error');
+            this.categories = [];
+            this.renderCategoryFilter();
         }
     },
 
-    /**
-     * Render category filter dropdown
-     */
     renderCategoryFilter() {
         const select = document.getElementById('category-filter');
         if (!select) return;
 
-        let html = '<option value="">All Categories</option>';
-        this.categories.forEach(cat => {
-            html += `<option value="${cat.id}">${cat.name}</option>`;
-        });
-        select.innerHTML = html;
-    },
-
-    /**
-     * Load all variants
-     */
-    async loadVariants() {
         try {
-            const response = await fetch('/api/all-variants', {
-                method: 'GET',
-                credentials: 'include'
+            let html = '<option value="">All Categories</option>';
+            this.categories.forEach(cat => {
+                const name = escapeHtml(cat.name || 'Unnamed');
+                const id = cat.id || cat.item_category_id || '';
+                html += `<option value="${id}">${name}</option>`;
             });
-
-            if (response.status === 401) {
-                window.location.href = '/auth/login';
-                return;
-            }
-
-            if (!response.ok) {
-                throw new Error('Failed to load variants');
-            }
-
-            const data = await response.json();
-            // Handle response format: may be array or object with 'variants' key
-            this.variants = Array.isArray(data) ? data : (data.variants || []);
-            this.filteredVariants = [...this.variants];
-            this.renderVariants();
+            select.innerHTML = html;
         } catch (error) {
-            console.error('Error loading variants:', error);
-            this.showAlert('Failed to load variants', 'error');
+            console.error('Error rendering category filter:', error);
         }
     },
 
-    /**
-     * Handle search input with debouncing
-     */
-    handleSearch(event) {
-        clearTimeout(this.searchTimeout);
-        this.searchTimeout = setTimeout(() => {
-            this.applyFilters();
-        }, 500);
-    },
-
-    /**
-     * Apply search and filters
-     */
-    applyFilters() {
-        const searchTerm = document.getElementById('variant-search')?.value.toLowerCase() || '';
-        const categoryId = document.getElementById('category-filter')?.value || '';
-        const stockFilter = document.getElementById('stock-filter')?.value || '';
-
-        this.filteredVariants = this.variants.filter(variant => {
-            // Search filter
-            const matchesSearch = !searchTerm ||
-                variant.name.toLowerCase().includes(searchTerm) ||
-                variant.model.toLowerCase().includes(searchTerm) ||
-                variant.brand.toLowerCase().includes(searchTerm);
-
-            // Category filter
-            const matchesCategory = !categoryId || variant.category_id == categoryId;
-
-            // Stock filter
-            let matchesStock = true;
-            if (stockFilter === 'in_stock') {
-                matchesStock = variant.quantity > variant.reorder_level;
-            } else if (stockFilter === 'low_stock') {
-                matchesStock = variant.quantity <= variant.reorder_level && variant.quantity > 0;
+    destroy() {
+        if (this.select2Instance) {
+            try {
+                $('#variant-search-select').select2('destroy');
+                this.select2Instance = null;
+            } catch (error) {
+                console.error('Error destroying Select2:', error);
             }
-
-            return matchesSearch && matchesCategory && matchesStock;
-        });
-
-        this.renderVariants();
-    },
-
-    /**
-     * Render variant cards
-     */
-    renderVariants() {
-        const container = document.getElementById('variant-list');
-        if (!container) return;
-
-        if (this.filteredVariants.length === 0) {
-            container.innerHTML = `
-                <div class="empty-state">
-                    <i>🔍</i>
-                    <p>No variants found. Try adjusting your search or filters.</p>
-                </div>
-            `;
-            return;
-        }
-
-        let html = '';
-        this.filteredVariants.forEach(variant => {
-            const stockStatus = this.getStockStatus(variant);
-            const stockClass = stockStatus.level === 'good' ? 'stock-good' :
-                             stockStatus.level === 'low' ? 'stock-low' : 'stock-out';
-
-            html += `
-                <div class="variant-card"
-                     draggable="true"
-                     data-variant-id="${variant.id}"
-                     ondragstart="variantSearch.handleDragStart(event, ${variant.id})"
-                     ondragend="variantSearch.handleDragEnd(event)">
-                    <div class="variant-card-header">
-                        <div class="variant-name">${variant.name}</div>
-                        <div class="variant-price">$${parseFloat(variant.unit_price || 0).toFixed(2)}</div>
-                    </div>
-                    <div class="variant-meta">
-                        <span>
-                            <span class="stock-indicator ${stockClass}"></span>
-                            ${stockStatus.text}
-                        </span>
-                        <span>📦 ${variant.brand || 'N/A'}</span>
-                        <span>🏷️ ${variant.model || 'N/A'}</span>
-                    </div>
-                </div>
-            `;
-        });
-
-        container.innerHTML = html;
-    },
-
-    /**
-     * Get stock status for variant
-     */
-    getStockStatus(variant) {
-        const qty = variant.quantity || 0;
-        const reorder = variant.reorder_level || 0;
-
-        if (qty === 0) {
-            return { level: 'out', text: 'Out of Stock' };
-        } else if (qty <= reorder) {
-            return { level: 'low', text: `Low Stock (${qty})` };
-        } else {
-            return { level: 'good', text: `In Stock (${qty})` };
         }
     },
 
-    /**
-     * Handle drag start event
-     */
-    handleDragStart(event, variantId) {
-        const variant = this.variants.find(v => v.id === variantId);
-        if (!variant) return;
-
-        event.dataTransfer.effectAllowed = 'copy';
-        event.dataTransfer.setData('application/json', JSON.stringify(variant));
-        event.dataTransfer.setData('text/plain', variant.name);
-
-        const card = event.target;
-        card.classList.add('dragging');
-
-        // Optional: Create custom drag image
-        const dragImage = card.cloneNode(true);
-        dragImage.style.opacity = '0.8';
-        document.body.appendChild(dragImage);
-        event.dataTransfer.setDragImage(dragImage, 0, 0);
-        setTimeout(() => document.body.removeChild(dragImage), 0);
-    },
-
-    /**
-     * Handle drag end event
-     */
-    handleDragEnd(event) {
-        event.target.classList.remove('dragging');
-    },
-
-    /**
-     * Show alert message
-     */
-    showAlert(message, type = 'success') {
-        const container = document.getElementById('alert-container');
-        if (!container) return;
-
-        const alert = document.createElement('div');
-        alert.className = `alert alert-${type}`;
-        alert.textContent = message;
-
-        container.appendChild(alert);
-
-        setTimeout(() => {
-            alert.remove();
-        }, 5000);
+    refresh() {
+        if (this.select2Instance) {
+            try {
+                $('#variant-search-select').val(null).trigger('change');
+            } catch (error) {
+                console.error('Error refreshing Select2:', error);
+            }
+        }
     }
 };

@@ -562,3 +562,6 @@ LINE 87:                             'setup_time', pt.setup_time,
 2025-11-07 18:48:53,278 INFO: Request ID middleware enabled [in C:\Users\erkar\OneDrive\Desktop\MTC\project-root\app\middleware\request_id.py:44]
 2025-11-07 18:48:53,667 INFO: Universal Process Framework API blueprints exempted from CSRF protection [in C:\Users\erkar\OneDrive\Desktop\MTC\project-root\app\__init__.py:318]
 2025-11-07 18:48:54,992 INFO: Loaded 1 subprocesses into cache [in C:\Users\erkar\OneDrive\Desktop\MTC\project-root\app\services\subprocess_service.py:72]
+2025-11-07 19:02:24,056 INFO: Request ID middleware enabled [in C:\Users\erkar\OneDrive\Desktop\MTC\project-root\app\middleware\request_id.py:44]
+2025-11-07 19:02:24,425 INFO: Universal Process Framework API blueprints exempted from CSRF protection [in C:\Users\erkar\OneDrive\Desktop\MTC\project-root\app\__init__.py:318]
+2025-11-07 19:02:28,964 INFO: Loaded 1 subprocesses into cache [in C:\Users\erkar\OneDrive\Desktop\MTC\project-root\app\services\subprocess_service.py:72]

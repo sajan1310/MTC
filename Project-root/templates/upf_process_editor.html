@@ -452,6 +452,65 @@
         100% { transform: rotate(360deg); }
     }
 
+    /* Select2 Custom Styling */
+    .select2-container--default .select2-selection--single {
+        height: 45px;
+        border: 2px solid #e0e0e0;
+        border-radius: 6px;
+        padding: 8px 15px;
+    }
+
+    .select2-container--default .select2-selection--single .select2-selection__rendered {
+        line-height: 45px;
+        color: #333;
+    }
+
+    .select2-container--default .select2-selection--single .select2-selection__arrow {
+        height: 43px;
+    }
+
+    .select2-container--default .select2-results__option {
+        padding: 10px;
+    }
+
+    .select2-variant-result {
+        padding: 5px;
+    }
+
+    .select2-variant-result .variant-name {
+        font-size: 14px;
+        color: #333;
+        margin-bottom: 5px;
+    }
+
+    .select2-variant-result .variant-details {
+        display: flex;
+        gap: 10px;
+        font-size: 12px;
+        color: #666;
+    }
+
+    .select2-variant-result .variant-stock {
+        padding: 2px 8px;
+        border-radius: 12px;
+        font-weight: 600;
+    }
+
+    .select2-variant-result .variant-stock.stock-good {
+        background: #e8f5e9;
+        color: #4CAF50;
+    }
+
+    .select2-variant-result .variant-stock.stock-low {
+        background: #fff3e0;
+        color: #ff9800;
+    }
+
+    .select2-variant-result .variant-stock.stock-out {
+        background: #ffebee;
+        color: #f44336;
+    }
+
     .modal {
         display: none;
         position: fixed;
@@ -553,28 +612,34 @@
     <!-- Left Panel: Variant Search -->
     <div class="variant-search-panel">
         <div class="panel-header">
-            <h2>🔍 Variant Search</h2>
+            <h2>🔍 Variant Search (Select2)</h2>
             <div class="search-box">
-                <input type="text" id="variant-search" placeholder="Search variants..."
-                       onkeyup="variantSearch.handleSearch(event)">
-                <span class="search-icon">🔎</span>
+                <select id="variant-search-select" style="width: 100%;">
+                    <option></option>
+                </select>
+                <small style="color: #666; margin-top: 5px; display: block;">
+                    💡 Type to search from 7000+ variants. Results load as you type.
+                </small>
             </div>
-            <div class="filter-row">
-                <select id="category-filter" onchange="variantSearch.applyFilters()">
+            <div class="filter-row" style="display: none;">
+                <!-- Keeping for future use if needed -->
+                <select id="category-filter">
                     <option value="">All Categories</option>
                 </select>
-                <select id="stock-filter" onchange="variantSearch.applyFilters()">
+                <select id="stock-filter">
                     <option value="">All Stock</option>
                     <option value="in_stock">In Stock</option>
                     <option value="low_stock">Low Stock</option>
                 </select>
             </div>
         </div>
-        <div class="variant-list" id="variant-list">
-            <div class="empty-state">
-                <i>🔍</i>
-                <p>Search for variants to add to subprocesses</p>
-            </div>
+        <div class="variant-info" style="padding: 20px; background: #f9f9f9;">
+            <p style="margin: 0; font-size: 14px; color: #666;">
+                <strong>How to use:</strong><br>
+                1. Start typing in the search box above<br>
+                2. Select a variant from the dropdown<br>
+                3. Drag the selected variant to a subprocess
+            </p>
         </div>
     </div>
 
@@ -817,7 +882,14 @@
     document.addEventListener('DOMContentLoaded', function() {
         const processId = parseInt('{{ process_id }}', 10);
         processEditor.init(processId);
-        variantSearch.init();
+        
+        // Wait for jQuery and Select2 to be loaded before initializing
+        if (typeof jQuery !== 'undefined' && typeof jQuery.fn.select2 !== 'undefined') {
+            variantSearch.init();
+        } else {
+            console.error('jQuery or Select2 not loaded');
+        }
+        
         costCalculator.init(processId);
     });
 </script>

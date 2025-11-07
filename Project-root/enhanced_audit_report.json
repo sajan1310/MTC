@@ -1,5 +1,5 @@
 {
-  "audit_timestamp": "2025-11-07T18:30:41.419443",
+  "audit_timestamp": "2025-11-07T19:20:59.925062",
   "project_root": "C:\\Users\\erkar\\OneDrive\\Desktop\\MTC\\Project-root",
   "blueprints": [
     {
@@ -824,6 +824,16 @@
         "GET"
       ],
       "handler": "get_all_variants"
+    },
+    {
+      "file": "app\\api\\routes.py",
+      "blueprint": "api_bp",
+      "route": "/variants/select2",
+      "full_path": "/api/variants/select2",
+      "methods": [
+        "GET"
+      ],
+      "handler": "get_variants_select2"
     },
     {
       "file": "app\\api\\routes.py",
@@ -1770,9 +1780,9 @@
     }
   ],
   "route_summary": {
-    "total_routes": 172,
+    "total_routes": 173,
     "by_method": {
-      "GET": 97,
+      "GET": 98,
       "POST": 47,
       "PUT": 15,
       "DELETE": 16
@@ -1782,7 +1792,7 @@
       "files_bp": 2,
       "process_api_bp": 23,
       "production_api_bp": 20,
-      "api_bp": 61,
+      "api_bp": 62,
       "subprocess_api_bp": 11,
       "variant_api_bp": 17,
       "auth_bp": 9,
@@ -2003,12 +2013,6 @@
     {
       "file": "static\\js\\variant_search.js",
       "url": "/api/categories",
-      "method": "GET",
-      "type": "fetch"
-    },
-    {
-      "file": "static\\js\\variant_search.js",
-      "url": "/api/all-variants",
       "method": "GET",
       "type": "fetch"
     },
@@ -2289,12 +2293,6 @@
         "url": "/api/categories",
         "method": "GET",
         "route": "/api/categories",
-        "file": "static\\js\\variant_search.js"
-      },
-      {
-        "url": "/api/all-variants",
-        "method": "GET",
-        "route": "/api/all-variants",
         "file": "static\\js\\variant_search.js"
       },
       {
@@ -2904,6 +2902,24 @@
         "message": "Route defined but not called from frontend"
       },
       {
+        "route": "/api/all-variants",
+        "methods": [
+          "GET"
+        ],
+        "handler": "get_all_variants",
+        "file": "app\\api\\routes.py",
+        "message": "Route defined but not called from frontend"
+      },
+      {
+        "route": "/api/variants/select2",
+        "methods": [
+          "GET"
+        ],
+        "handler": "get_variants_select2",
+        "file": "app\\api\\routes.py",
+        "message": "Route defined but not called from frontend"
+      },
+      {
         "route": "/api/variants/search",
         "methods": [
           "GET"
@@ -3406,12 +3422,12 @@
   "incomplete_functions": [],
   "duplicate_functions": [],
   "statistics": {
-    "total_routes": 172,
-    "total_api_calls": 47,
-    "matched_routes": 46,
+    "total_routes": 173,
+    "total_api_calls": 46,
+    "matched_routes": 45,
     "missing_backend": 0,
     "method_mismatches": 0,
-    "unused_backend": 116,
+    "unused_backend": 118,
     "errors": 0
   },
   "errors": []

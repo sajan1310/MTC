@@ -1102,64 +1102,188 @@ def get_item_by_name():
 @api_bp.route("/all-variants")
 @login_required
 def get_all_variants():
+    """Get all item variants with their details for search and selection."""
     try:
         with database.get_conn(cursor_factory=psycopg2.extras.DictCursor) as (
             conn,
             cur,
         ):
-            # Check if variants and items tables exist and are not views
-            cur.execute("""
-                SELECT table_name, table_type FROM information_schema.tables
-                WHERE table_name IN ('variants', 'items') AND table_schema = 'public'
-            """)
-            tables = {row[0]: row[1] for row in cur.fetchall()}
-            if tables.get('variants') != 'BASE TABLE' or tables.get('items') != 'BASE TABLE':
-                # If either is missing or is a view, return empty list for test stub
-                return jsonify([]), 200
-            # Try the real query
-            try:
-                cur.execute(
-                    """
-                    SELECT 
-                        v.variant_id as id,
-                        v.item_id,
-                        v.variant_name,
-                        v.color_id,
-                        v.size_id,
-                        v.sku,
-                        v.rate,
-                        v.supplier_id,
-                        i.name as item_name,
-                        i.category,
-                        i.subcategory
-                    FROM variants v
-                    JOIN items i ON v.item_id = i.id
-                    WHERE v.is_active = true
-                    ORDER BY i.name, v.variant_name
-                    """
-                )
-                variants = []
-                for row in cur.fetchall():
-                    variants.append({
-                        'id': row.get('id'),
-                        'item_id': row.get('item_id'),
-                        'variant_name': row.get('variant_name'),
-                        'color': row.get('color_id'),
-                        'size': row.get('size_id'),
-                        'sku': row.get('sku'),
-                        'rate': row.get('rate', 0),
-                        'supplier_id': row.get('supplier_id'),
-                        'item_name': row.get('item_name'),
-                        'category': row.get('category'),
-                        'subcategory': row.get('subcategory')
-                    })
-                return jsonify(variants), 200
-            except Exception:
-                # If query fails, return empty list for stub/test
-                return jsonify([]), 200
+            cur.execute(
+                """
+                SELECT 
+                    iv.variant_id as id,
+                    iv.item_id,
+                    im.name || ' - ' || cm.color_name || ' - ' || sm.size_name as name,
+                    im.name as item_name,
+                    cm.color_name as color,
+                    sm.size_name as size,
+                    iv.opening_stock as quantity,
+                    iv.unit,
+                    COALESCE(mm.model_name, 'N/A') as model,
+                    COALESCE(ibm.item_brand_name, 'N/A') as brand,
+                    0.00 as unit_price,
+                    iv.threshold as reorder_level,
+                    COALESCE(icm.item_category_name, 'N/A') as category,
+                    im.item_category_id as category_id,
+                    im.description
+                FROM item_variant iv
+                JOIN item_master im ON iv.item_id = im.item_id
+                JOIN color_master cm ON iv.color_id = cm.color_id
+                JOIN size_master sm ON iv.size_id = sm.size_id
+                LEFT JOIN model_master mm ON im.model_id = mm.model_id
+                LEFT JOIN item_brand_master ibm ON im.item_brand_id = ibm.item_brand_id
+                LEFT JOIN item_category_master icm ON im.item_category_id = icm.item_category_id
+                WHERE iv.deleted_at IS NULL
+                  AND im.deleted_at IS NULL
+                ORDER BY im.name, cm.color_name, sm.size_name
+                """
+            )
+            variants = []
+            for row in cur.fetchall():
+                variants.append({
+                    'id': row['id'],
+                    'item_id': row['item_id'],
+                    'name': row['name'],
+                    'item_name': row['item_name'],
+                    'color': row['color'],
+                    'size': row['size'],
+                    'quantity': row['quantity'] or 0,
+                    'unit': row['unit'] or 'pcs',
+                    'model': row['model'],
+                    'brand': row['brand'],
+                    'unit_price': float(row['unit_price'] or 0),
+                    'reorder_level': row['reorder_level'] or 5,
+                    'category': row['category'],
+                    'category_id': row['category_id'],
+                    'description': row['description']
+                })
+            return jsonify(variants), 200
     except Exception as e:
         current_app.logger.error(f"Error fetching all variants: {e}")
-        return jsonify([]), 200
+        import traceback
+        traceback.print_exc()
+        return jsonify({"error": str(e)}), 500
+
+
+@api_bp.route("/variants/select2")
+@login_required
+def get_variants_select2():
+    """
+    Get variants in Select2 format with pagination and search.
+    Query params:
+        - q: search term (optional)
+        - page: page number (default 1)
+        - page_size: items per page (default 30)
+    """
+    try:
+        search_term = request.args.get('q', '').strip()
+        page = int(request.args.get('page', 1))
+        page_size = int(request.args.get('page_size', 30))
+        offset = (page - 1) * page_size
+        
+        with database.get_conn(cursor_factory=psycopg2.extras.DictCursor) as (
+            conn,
+            cur,
+        ):
+            # Build search condition
+            search_condition = ""
+            params = []
+            if search_term:
+                search_condition = """
+                    AND (
+                        LOWER(im.name) LIKE LOWER(%s) OR
+                        LOWER(cm.color_name) LIKE LOWER(%s) OR
+                        LOWER(sm.size_name) LIKE LOWER(%s) OR
+                        LOWER(mm.model_name) LIKE LOWER(%s) OR
+                        LOWER(ibm.item_brand_name) LIKE LOWER(%s)
+                    )
+                """
+                search_pattern = f"%{search_term}%"
+                params = [search_pattern] * 5
+            
+            # Get total count
+            count_query = f"""
+                SELECT COUNT(*) as total
+                FROM item_variant iv
+                JOIN item_master im ON iv.item_id = im.item_id
+                JOIN color_master cm ON iv.color_id = cm.color_id
+                JOIN size_master sm ON iv.size_id = sm.size_id
+                LEFT JOIN model_master mm ON im.model_id = mm.model_id
+                LEFT JOIN item_brand_master ibm ON im.item_brand_id = ibm.item_brand_id
+                WHERE iv.deleted_at IS NULL
+                  AND im.deleted_at IS NULL
+                  {search_condition}
+            """
+            cur.execute(count_query, params)
+            total = cur.fetchone()['total']
+            
+            # Get paginated results
+            data_query = f"""
+                SELECT 
+                    iv.variant_id as id,
+                    im.name || ' - ' || cm.color_name || ' - ' || sm.size_name as text,
+                    im.name as item_name,
+                    cm.color_name as color,
+                    sm.size_name as size,
+                    iv.opening_stock as quantity,
+                    iv.unit,
+                    COALESCE(mm.model_name, 'N/A') as model,
+                    COALESCE(ibm.item_brand_name, 'N/A') as brand,
+                    iv.threshold as reorder_level
+                FROM item_variant iv
+                JOIN item_master im ON iv.item_id = im.item_id
+                JOIN color_master cm ON iv.color_id = cm.color_id
+                JOIN size_master sm ON iv.size_id = sm.size_id
+                LEFT JOIN model_master mm ON im.model_id = mm.model_id
+                LEFT JOIN item_brand_master ibm ON im.item_brand_id = ibm.item_brand_id
+                WHERE iv.deleted_at IS NULL
+                  AND im.deleted_at IS NULL
+                  {search_condition}
+                ORDER BY im.name, cm.color_name, sm.size_name
+                LIMIT %s OFFSET %s
+            """
+            cur.execute(data_query, params + [page_size, offset])
+            
+            results = []
+            for row in cur.fetchall():
+                # Add stock indicator to the text
+                stock_info = ""
+                qty = row['quantity'] or 0
+                reorder = row['reorder_level'] or 0
+                if qty == 0:
+                    stock_info = " 🔴"
+                elif qty <= reorder:
+                    stock_info = " 🟡"
+                else:
+                    stock_info = " 🟢"
+                
+                results.append({
+                    'id': row['id'],
+                    'text': row['text'] + stock_info,
+                    'item_name': row['item_name'],
+                    'color': row['color'],
+                    'size': row['size'],
+                    'quantity': qty,
+                    'unit': row['unit'] or 'pcs',
+                    'model': row['model'],
+                    'brand': row['brand'],
+                    'reorder_level': reorder
+                })
+            
+            more = (offset + page_size) < total
+            
+            return jsonify({
+                'results': results,
+                'pagination': {
+                    'more': more
+                }
+            }), 200
+            
+    except Exception as e:
+        current_app.logger.error(f"Error fetching variants for select2: {e}")
+        import traceback
+        traceback.print_exc()
+        return jsonify({"error": str(e)}), 500
 
 
 @api_bp.route("/variants/search")

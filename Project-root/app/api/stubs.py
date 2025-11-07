@@ -135,21 +135,18 @@ def get_substitute_groups_stub(process_subprocess_id):
 @login_required
 def get_categories():
     """
-    Returns all categories from the categories table.
+    Returns all item categories from the item_category_master table.
     """
     from database import get_conn
     try:
         with get_conn(cursor_factory=None) as (conn, cur):
+            # Use the actual item_category_master table from the schema
             cur.execute("""
-                CREATE TABLE IF NOT EXISTS categories (
-                    id SERIAL PRIMARY KEY,
-                    name VARCHAR(100) NOT NULL,
-                    description TEXT,
-                    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
-                )
+                SELECT item_category_id as id, item_category_name as name, 
+                       NULL as description 
+                FROM item_category_master 
+                ORDER BY item_category_name
             """)
-            conn.commit()
-            cur.execute("SELECT id, name, description FROM categories ORDER BY name")
             rows = cur.fetchall()
             categories = [
                 {"id": row[0], "name": row[1], "description": row[2]} for row in rows
@@ -157,7 +154,8 @@ def get_categories():
         return jsonify(categories), 200
     except Exception as e:
         logger.error(f"Error fetching categories: {e}")
-        return jsonify({"error": "Failed to fetch categories"}), 500
+        # Return empty array instead of error to prevent frontend crash
+        return jsonify([]), 200
 
 
 # ============================================================================
