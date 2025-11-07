@@ -1,0 +1,3422 @@
+{
+  "audit_timestamp": "2025-11-07T11:50:48.599698",
+  "project_root": "c:\\Users\\erkar\\OneDrive\\Desktop\\MTC\\Project-root",
+  "directory_structure": {
+    "total_files": 202,
+    "python_files": 99,
+    "javascript_files": 16,
+    "html_files": 27,
+    "css_files": 3,
+    "directories": [
+      {
+        "path": ".",
+        "files": [
+          ".coverage",
+          ".env",
+          ".env.example",
+          ".gitignore",
+          "API_REFERENCE_UNIVERSAL_PROCESS_FRAMEWORK.md",
+          "app.py",
+          "BACKEND_IMPLEMENTATION_COMPLETE.md",
+          "CHANGELOG.md",
+          "check_columns.py",
+          "check_oauth_config.py",
+          "COMPLETE_CHANGE_LOG.md",
+          "config.py",
+          "config.py.backup",
+          "CONSOLIDATION_SUMMARY.md",
+          "CONTRIBUTING.md",
+          "database.py",
+          "deduplicate_items.py",
+          "DEPLOYMENT.md",
+          "DOCUMENTATION_INDEX.md",
+          "file_structure.txt",
+          "FRONTEND_DEVELOPER_GUIDE.md",
+          "HIGH_PRIORITY_IMPLEMENTATION_COMPLETE.md",
+          "IMPLEMENTATION_ROADMAP.md",
+          "logging_config.py",
+          "minify_assets.py",
+          "models.py",
+          "Procfile",
+          "production.env.example",
+          "pyproject.toml",
+          "pytest.ini",
+          "QUICK_START_GUIDE.md",
+          "QUICK_START_UNIVERSAL_PROCESS_FRAMEWORK.md",
+          "README.md",
+          "requirements.txt",
+          "run.py",
+          "run_migration.py",
+          "run_production.py",
+          "TASK_4_PRODUCTION_LOT_VARIANT_SELECTION_COMPLETE.md",
+          "TESTING_CHECKLIST.md",
+          "test_oauth.ps1",
+          "TODO_LIST_COMPLETION_SUMMARY.md",
+          "UNIVERSAL_PROCESS_FRAMEWORK_PROGRESS.md",
+          "UPF_API_IMPLEMENTATION_COMPLETE.md",
+          "UPF_CODE_REVIEW_REPORT.md",
+          "UPF_FIXES_IMPLEMENTED.md",
+          "UPF_IMPLEMENTATION_COMPLETE.md",
+          "UPF_TESTING_GUIDE.md",
+          "wsgi.py"
+        ],
+        "file_count": 48
+      },
+      {
+        "path": ".github\\workflows",
+        "files": [
+          "test.yml"
+        ],
+        "file_count": 1
+      },
+      {
+        "path": ".ruff_cache",
+        "files": [
+          ".gitignore",
+          "CACHEDIR.TAG"
+        ],
+        "file_count": 2
+      },
+      {
+        "path": ".ruff_cache\\0.14.3",
+        "files": [
+          "10144634690075818160",
+          "13211992639582236678",
+          "13616493732774918919",
+          "16638523898162472821",
+          "3086970208881744565",
+          "4338602252615452610",
+          "6262011805177608698",
+          "9644310379215571484",
+          "983038721472191113"
+        ],
+        "file_count": 9
+      },
+      {
+        "path": "app",
+        "files": [
+          "models.py",
+          "utils.py",
+          "__init__.py"
+        ],
+        "file_count": 3
+      },
+      {
+        "path": "app\\api",
+        "files": [
+          "file_routes.py",
+          "imports.py",
+          "items.py",
+          "process_management.py",
+          "production_lot.py",
+          "purchase_orders.py",
+          "routes.py",
+          "stubs.py",
+          "subprocess_management.py",
+          "suppliers.py",
+          "variant_management.py",
+          "__init__.py"
+        ],
+        "file_count": 12
+      },
+      {
+        "path": "app\\auth",
+        "files": [
+          "decorators.py",
+          "routes.py",
+          "__init__.py"
+        ],
+        "file_count": 3
+      },
+      {
+        "path": "app\\main",
+        "files": [
+          "routes.py"
+        ],
+        "file_count": 1
+      },
+      {
+        "path": "app\\middleware",
+        "files": [
+          "request_id.py",
+          "__init__.py"
+        ],
+        "file_count": 2
+      },
+      {
+        "path": "app\\models",
+        "files": [
+          "inventory.py",
+          "process.py",
+          "production_lot.py",
+          "user.py",
+          "__init__.py"
+        ],
+        "file_count": 5
+      },
+      {
+        "path": "app\\services",
+        "files": [
+          "audit_service.py",
+          "background_worker.py",
+          "costing_service.py",
+          "export_service.py",
+          "import_service.py",
+          "process_service.py",
+          "production_service.py",
+          "progress_tracker.py",
+          "subprocess_service.py",
+          "variant_service.py",
+          "__init__.py"
+        ],
+        "file_count": 11
+      },
+      {
+        "path": "app\\utils",
+        "files": [
+          "file_validation.py",
+          "helpers.py",
+          "response.py",
+          "validators.py",
+          "virus_scan.py",
+          "__init__.py"
+        ],
+        "file_count": 6
+      },
+      {
+        "path": "app\\validators",
+        "files": [
+          "import_validators.py",
+          "__init__.py"
+        ],
+        "file_count": 2
+      },
+      {
+        "path": "auth",
+        "files": [
+          "routes.py"
+        ],
+        "file_count": 1
+      },
+      {
+        "path": "docs",
+        "files": [
+          "LOGGING.md",
+          "PERFORMANCE.md",
+          "SECURITY.md"
+        ],
+        "file_count": 3
+      },
+      {
+        "path": "logs",
+        "files": [
+          "app.log"
+        ],
+        "file_count": 1
+      },
+      {
+        "path": "migrations",
+        "files": [
+          "add_indexes.sql",
+          "init_schema.sql",
+          "migration.py",
+          "migrations.py",
+          "migration_add_audit_log.py",
+          "migration_add_cascade_delete.py",
+          "migration_add_category_type_brand_tables.py",
+          "migration_add_discount_and_receipt_number.py",
+          "migration_add_import_jobs.py",
+          "migration_add_item_uniqueness.py",
+          "migration_add_lot_variant_selections.py",
+          "migration_add_master_tables.py",
+          "migration_add_notes_and_status_to_po.py",
+          "migration_add_password_reset.py",
+          "migration_add_performance_indexes.py",
+          "migration_add_po_number.py",
+          "migration_add_po_tracking.py",
+          "migration_add_stock_receipts.py",
+          "migration_add_suppliers_tables.py",
+          "migration_add_unique_indexes_for_upsert.py",
+          "migration_add_universal_process_framework.py",
+          "migration_add_upf_tables.py",
+          "migration_remove_model_uniqueness.py",
+          "migration_remove_unique_constraint.py",
+          "migration_update_discount_fields.py",
+          "README.md",
+          "__init__.py"
+        ],
+        "file_count": 27
+      },
+      {
+        "path": "static",
+        "files": [
+          "dashboard.js",
+          "inventory.js",
+          "main.js",
+          "masterData.js",
+          "purchaseOrders.js",
+          "styles.css",
+          "styles.min.css",
+          "suppliers.js"
+        ],
+        "file_count": 8
+      },
+      {
+        "path": "static\\css",
+        "files": [
+          "login.css"
+        ],
+        "file_count": 1
+      },
+      {
+        "path": "static\\img",
+        "files": [
+          "Final_Logo.png"
+        ],
+        "file_count": 1
+      },
+      {
+        "path": "static\\js",
+        "files": [
+          "api_client.js",
+          "cost_calculator.js",
+          "login.js",
+          "process_editor.js",
+          "process_framework_unified.js",
+          "process_manager.js",
+          "production_lots.js",
+          "subprocess_library.js",
+          "upf_reports.js",
+          "variant_search.js"
+        ],
+        "file_count": 10
+      },
+      {
+        "path": "static\\uploads",
+        "files": [
+          "1_1a278be4_ChatGPT Image Aug 7, 2025, 11_10_55 AM.png",
+          "placeholder.png"
+        ],
+        "file_count": 2
+      },
+      {
+        "path": "templates",
+        "files": [
+          "404.html",
+          "429.html",
+          "500.html",
+          "add_item.html",
+          "base.html",
+          "dashboard_new.html",
+          "edit_item.html",
+          "forgot_password.html",
+          "inventory.html",
+          "login.html",
+          "low_stock_report.html",
+          "master_data.html",
+          "profile.html",
+          "purchase_orders.html",
+          "reset_password.html",
+          "signup.html",
+          "stock_ledger.html",
+          "suppliers.html",
+          "upf_process_editor.html",
+          "upf_process_management.html",
+          "upf_production_lots.html",
+          "upf_production_lot_new.html",
+          "upf_reports.html",
+          "upf_subprocess_library.html",
+          "upf_unified.html",
+          "upf_variant_selection.html",
+          "user_management.html"
+        ],
+        "file_count": 27
+      },
+      {
+        "path": "tests",
+        "files": [
+          "conftest.py",
+          "test_app.py",
+          "test_auth.py",
+          "test_file_validation.py",
+          "test_oauth_redirect_uri.py",
+          "test_smoke.py"
+        ],
+        "file_count": 6
+      },
+      {
+        "path": "tests\\api",
+        "files": [
+          "test_items.py",
+          "test_purchase_orders.py",
+          "test_suppliers.py"
+        ],
+        "file_count": 3
+      },
+      {
+        "path": "tests\\auth",
+        "files": [
+          "test_routes.py"
+        ],
+        "file_count": 1
+      },
+      {
+        "path": "tests\\services",
+        "files": [
+          "test_import_service.py",
+          "test_import_service_coverage.py",
+          "test_process_service_coverage.py",
+          "test_production_service.py",
+          "test_subprocess_service.py",
+          "test_variant_service.py"
+        ],
+        "file_count": 6
+      }
+    ]
+  },
+  "incomplete_functions": [
+    {
+      "file": "app.py",
+      "function": "info",
+      "line": 50,
+      "type": "sync",
+      "args": [
+        "self"
+      ]
+    },
+    {
+      "file": "app.py",
+      "function": "warning",
+      "line": 53,
+      "type": "sync",
+      "args": [
+        "self"
+      ]
+    },
+    {
+      "file": "app.py",
+      "function": "error",
+      "line": 56,
+      "type": "sync",
+      "args": [
+        "self"
+      ]
+    },
+    {
+      "file": "app.py",
+      "function": "__init__",
+      "line": 200,
+      "type": "sync",
+      "args": [
+        "self"
+      ]
+    },
+    {
+      "file": "app.py",
+      "function": "seek",
+      "line": 206,
+      "type": "sync",
+      "args": [
+        "self"
+      ]
+    },
+    {
+      "file": "app.py",
+      "function": "truncate",
+      "line": 209,
+      "type": "sync",
+      "args": [
+        "self"
+      ]
+    },
+    {
+      "file": "app.py",
+      "function": "writerow",
+      "line": 185,
+      "type": "sync",
+      "args": [
+        "self"
+      ]
+    }
+  ],
+  "flask_routes": [
+    {
+      "file": "app.py",
+      "route": "/api/variants/<int:variant_id>/threshold",
+      "methods": [
+        "PUT"
+      ],
+      "handler": "update_variant_threshold"
+    },
+    {
+      "file": "app.py",
+      "route": "/api/variants/<int:variant_id>",
+      "methods": [
+        "DELETE"
+      ],
+      "handler": "delete_variant"
+    },
+    {
+      "file": "app.py",
+      "route": "/api/items/<int:item_id>/variants",
+      "methods": [
+        "POST"
+      ],
+      "handler": "add_variant"
+    },
+    {
+      "file": "app.py",
+      "route": "/api/variants/<int:variant_id>",
+      "methods": [
+        "PUT"
+      ],
+      "handler": "update_variant"
+    },
+    {
+      "file": "app.py",
+      "route": "/api/users",
+      "methods": [
+        "GET"
+      ],
+      "handler": "get_users"
+    },
+    {
+      "file": "app.py",
+      "route": "/api/users/<int:user_id>/role",
+      "methods": [
+        "PUT"
+      ],
+      "handler": "update_user_role"
+    },
+    {
+      "file": "app.py",
+      "route": "/api/low-stock-report",
+      "methods": [
+        "GET"
+      ],
+      "handler": "get_low_stock_report"
+    },
+    {
+      "file": "app.py",
+      "route": "/api/import/preview-json",
+      "methods": [
+        "POST"
+      ],
+      "handler": "import_preview_json"
+    },
+    {
+      "file": "app.py",
+      "route": "/api/import/commit",
+      "methods": [
+        "POST"
+      ],
+      "handler": "import_commit"
+    },
+    {
+      "file": "app.py",
+      "route": "/ping",
+      "methods": [
+        "GET"
+      ],
+      "handler": "export_inventory_csv"
+    },
+    {
+      "file": "app.py",
+      "route": "/api/import/preview-csv",
+      "methods": [
+        "POST"
+      ],
+      "handler": "import_preview_csv"
+    },
+    {
+      "file": "logging_config.py",
+      "route": "/test",
+      "methods": [
+        "GET"
+      ],
+      "handler": "test"
+    }
+  ],
+  "javascript_api_calls": [
+    {
+      "file": "static\\js\\cost_calculator.js",
+      "url": "/api/upf/processes/${this.processId}/costing",
+      "method": "GET",
+      "type": "fetch"
+    },
+    {
+      "file": "static\\js\\login.js",
+      "url": "/api/login",
+      "method": "POST",
+      "type": "fetch"
+    },
+    {
+      "file": "static\\js\\process_editor.js",
+      "url": "/api/upf/processes/${this.processId}",
+      "method": "GET",
+      "type": "fetch"
+    },
+    {
+      "file": "static\\js\\process_editor.js",
+      "url": "/api/upf/subprocesses?per_page=1000",
+      "method": "GET",
+      "type": "fetch"
+    },
+    {
+      "file": "static\\js\\process_editor.js",
+      "url": "/api/upf/processes/${this.processId}/structure",
+      "method": "GET",
+      "type": "fetch"
+    },
+    {
+      "file": "static\\js\\process_editor.js",
+      "url": "/api/upf/processes/${this.processId}/subprocesses",
+      "method": "POST",
+      "type": "fetch"
+    },
+    {
+      "file": "static\\js\\process_editor.js",
+      "url": "/api/upf/variant_usage",
+      "method": "POST",
+      "type": "fetch"
+    },
+    {
+      "file": "static\\js\\process_editor.js",
+      "url": "/api/upf/variant_usage/${usageId}",
+      "method": "DELETE",
+      "type": "fetch"
+    },
+    {
+      "file": "static\\js\\process_editor.js",
+      "url": "/api/upf/process_subprocess/${subprocess.process_subprocess_id}",
+      "method": "DELETE",
+      "type": "fetch"
+    },
+    {
+      "file": "static\\js\\process_editor.js",
+      "url": "/api/upf/process/${this.processId}/reorder_subprocesses",
+      "method": "POST",
+      "type": "fetch"
+    },
+    {
+      "file": "static\\js\\process_editor.js",
+      "url": "/api/upf/process_subprocess/${processSubprocessId}/substitute_groups",
+      "method": "GET",
+      "type": "fetch"
+    },
+    {
+      "file": "static\\js\\process_editor.js",
+      "url": "/api/upf/substitute_group",
+      "method": "POST",
+      "type": "fetch"
+    },
+    {
+      "file": "static\\js\\process_editor.js",
+      "url": "/api/upf/substitute_group/${groupId}",
+      "method": "DELETE",
+      "type": "fetch"
+    },
+    {
+      "file": "static\\js\\process_editor.js",
+      "url": "/api/upf/cost_item",
+      "method": "POST",
+      "type": "fetch"
+    },
+    {
+      "file": "static\\js\\process_framework_unified.js",
+      "url": "/api/upf/processes?per_page=1000",
+      "method": "GET",
+      "type": "fetch"
+    },
+    {
+      "file": "static\\js\\process_framework_unified.js",
+      "url": "/api/upf/processes/${id}",
+      "method": "GET",
+      "type": "fetch"
+    },
+    {
+      "file": "static\\js\\process_framework_unified.js",
+      "url": "/api/upf/processes/${id}",
+      "method": "DELETE",
+      "type": "fetch"
+    },
+    {
+      "file": "static\\js\\process_framework_unified.js",
+      "url": "/api/upf/subprocesses?per_page=1000",
+      "method": "GET",
+      "type": "fetch"
+    },
+    {
+      "file": "static\\js\\process_framework_unified.js",
+      "url": "/api/upf/subprocesses/${id}",
+      "method": "GET",
+      "type": "fetch"
+    },
+    {
+      "file": "static\\js\\process_framework_unified.js",
+      "url": "/api/upf/subprocesses/${id}",
+      "method": "DELETE",
+      "type": "fetch"
+    },
+    {
+      "file": "static\\js\\process_framework_unified.js",
+      "url": "/api/upf/production-lots?per_page=1000",
+      "method": "GET",
+      "type": "fetch"
+    },
+    {
+      "file": "static\\js\\process_framework_unified.js",
+      "url": "/api/upf/processes?per_page=1000",
+      "method": "GET",
+      "type": "fetch"
+    },
+    {
+      "file": "static\\js\\process_framework_unified.js",
+      "url": "/api/upf/production-lots?per_page=1000",
+      "method": "GET",
+      "type": "fetch"
+    },
+    {
+      "file": "static\\js\\process_framework_unified.js",
+      "url": "/api/upf/processes?per_page=1000",
+      "method": "GET",
+      "type": "fetch"
+    },
+    {
+      "file": "static\\js\\process_framework_unified.js",
+      "url": "/api/upf/production-lots?per_page=5",
+      "method": "GET",
+      "type": "fetch"
+    },
+    {
+      "file": "static\\js\\process_manager.js",
+      "url": "/api/upf/process/${processId}",
+      "method": "DELETE",
+      "type": "fetch"
+    },
+    {
+      "file": "static\\js\\production_lots.js",
+      "url": "/api/upf/processes?per_page=1000",
+      "method": "GET",
+      "type": "fetch"
+    },
+    {
+      "file": "static\\js\\production_lots.js",
+      "url": "/api/upf/production-lots?page=${page}&per_page=${this.perPage}",
+      "method": "GET",
+      "type": "fetch"
+    },
+    {
+      "file": "static\\js\\subprocess_library.js",
+      "url": "/api/upf/subprocesses?per_page=1000",
+      "method": "GET",
+      "type": "fetch"
+    },
+    {
+      "file": "static\\js\\subprocess_library.js",
+      "url": "/api/upf/subprocesses/${this.deleteTargetId}",
+      "method": "DELETE",
+      "type": "fetch"
+    },
+    {
+      "file": "static\\js\\upf_reports.js",
+      "url": "/api/upf/reports/metrics",
+      "method": "GET",
+      "type": "fetch"
+    },
+    {
+      "file": "static\\js\\upf_reports.js",
+      "url": "/api/upf/reports/top-processes",
+      "method": "GET",
+      "type": "fetch"
+    },
+    {
+      "file": "static\\js\\upf_reports.js",
+      "url": "/api/upf/reports/process-status",
+      "method": "GET",
+      "type": "fetch"
+    },
+    {
+      "file": "static\\js\\upf_reports.js",
+      "url": "/api/upf/production-lots?per_page=5",
+      "method": "GET",
+      "type": "fetch"
+    },
+    {
+      "file": "static\\js\\upf_reports.js",
+      "url": "/api/upf/reports/subprocess-usage",
+      "method": "GET",
+      "type": "fetch"
+    },
+    {
+      "file": "static\\js\\variant_search.js",
+      "url": "/api/categories",
+      "method": "GET",
+      "type": "fetch"
+    },
+    {
+      "file": "static\\js\\variant_search.js",
+      "url": "/api/all-variants",
+      "method": "GET",
+      "type": "fetch"
+    },
+    {
+      "file": "templates\\dashboard_new.html",
+      "url": "{{ url_for(",
+      "method": "GET",
+      "type": "fetch"
+    },
+    {
+      "file": "templates\\edit_item.html",
+      "url": "${App.config.apiBase}/items/${itemId}",
+      "method": "PUT",
+      "type": "fetch"
+    },
+    {
+      "file": "templates\\forgot_password.html",
+      "url": "/api/forgot-password",
+      "method": "POST",
+      "type": "fetch"
+    },
+    {
+      "file": "templates\\low_stock_report.html",
+      "url": "/api/low-stock-report",
+      "method": "GET",
+      "type": "fetch"
+    },
+    {
+      "file": "templates\\reset_password.html",
+      "url": "/api/reset-password",
+      "method": "POST",
+      "type": "fetch"
+    },
+    {
+      "file": "templates\\signup.html",
+      "url": "/api/signup",
+      "method": "POST",
+      "type": "fetch"
+    },
+    {
+      "file": "templates\\stock_ledger.html",
+      "url": "/api/stock-receipts",
+      "method": "DELETE",
+      "type": "fetch"
+    },
+    {
+      "file": "templates\\upf_production_lot_new.html",
+      "url": "/api/upf/processes?per_page=1000&status=active",
+      "method": "GET",
+      "type": "fetch"
+    },
+    {
+      "file": "templates\\upf_production_lot_new.html",
+      "url": "/api/upf/production-lots",
+      "method": "POST",
+      "type": "fetch"
+    },
+    {
+      "file": "templates\\upf_variant_selection.html",
+      "url": "/api/upf/production_lot/${this.lotId}/variant_options",
+      "method": "POST",
+      "type": "fetch"
+    }
+  ],
+  "route_api_mismatches": [
+    {
+      "type": "missing_route",
+      "api_call_file": "static\\js\\cost_calculator.js",
+      "url": "/api/upf/processes/${this.processId}/costing",
+      "method": "GET",
+      "message": "API call to '/api/upf/processes/${this.processId}/costing' but no matching Flask route found"
+    },
+    {
+      "type": "missing_route",
+      "api_call_file": "static\\js\\login.js",
+      "url": "/api/login",
+      "method": "POST",
+      "message": "API call to '/api/login' but no matching Flask route found"
+    },
+    {
+      "type": "missing_route",
+      "api_call_file": "static\\js\\process_editor.js",
+      "url": "/api/upf/processes/${this.processId}",
+      "method": "GET",
+      "message": "API call to '/api/upf/processes/${this.processId}' but no matching Flask route found"
+    },
+    {
+      "type": "missing_route",
+      "api_call_file": "static\\js\\process_editor.js",
+      "url": "/api/upf/subprocesses?per_page=1000",
+      "method": "GET",
+      "message": "API call to '/api/upf/subprocesses?per_page=1000' but no matching Flask route found"
+    },
+    {
+      "type": "missing_route",
+      "api_call_file": "static\\js\\process_editor.js",
+      "url": "/api/upf/processes/${this.processId}/structure",
+      "method": "GET",
+      "message": "API call to '/api/upf/processes/${this.processId}/structure' but no matching Flask route found"
+    },
+    {
+      "type": "missing_route",
+      "api_call_file": "static\\js\\process_editor.js",
+      "url": "/api/upf/processes/${this.processId}/subprocesses",
+      "method": "POST",
+      "message": "API call to '/api/upf/processes/${this.processId}/subprocesses' but no matching Flask route found"
+    },
+    {
+      "type": "missing_route",
+      "api_call_file": "static\\js\\process_editor.js",
+      "url": "/api/upf/variant_usage",
+      "method": "POST",
+      "message": "API call to '/api/upf/variant_usage' but no matching Flask route found"
+    },
+    {
+      "type": "missing_route",
+      "api_call_file": "static\\js\\process_editor.js",
+      "url": "/api/upf/variant_usage/${usageId}",
+      "method": "DELETE",
+      "message": "API call to '/api/upf/variant_usage/${usageId}' but no matching Flask route found"
+    },
+    {
+      "type": "missing_route",
+      "api_call_file": "static\\js\\process_editor.js",
+      "url": "/api/upf/process_subprocess/${subprocess.process_subprocess_id}",
+      "method": "DELETE",
+      "message": "API call to '/api/upf/process_subprocess/${subprocess.process_subprocess_id}' but no matching Flask route found"
+    },
+    {
+      "type": "missing_route",
+      "api_call_file": "static\\js\\process_editor.js",
+      "url": "/api/upf/process/${this.processId}/reorder_subprocesses",
+      "method": "POST",
+      "message": "API call to '/api/upf/process/${this.processId}/reorder_subprocesses' but no matching Flask route found"
+    },
+    {
+      "type": "missing_route",
+      "api_call_file": "static\\js\\process_editor.js",
+      "url": "/api/upf/process_subprocess/${processSubprocessId}/substitute_groups",
+      "method": "GET",
+      "message": "API call to '/api/upf/process_subprocess/${processSubprocessId}/substitute_groups' but no matching Flask route found"
+    },
+    {
+      "type": "missing_route",
+      "api_call_file": "static\\js\\process_editor.js",
+      "url": "/api/upf/substitute_group",
+      "method": "POST",
+      "message": "API call to '/api/upf/substitute_group' but no matching Flask route found"
+    },
+    {
+      "type": "missing_route",
+      "api_call_file": "static\\js\\process_editor.js",
+      "url": "/api/upf/substitute_group/${groupId}",
+      "method": "DELETE",
+      "message": "API call to '/api/upf/substitute_group/${groupId}' but no matching Flask route found"
+    },
+    {
+      "type": "missing_route",
+      "api_call_file": "static\\js\\process_editor.js",
+      "url": "/api/upf/cost_item",
+      "method": "POST",
+      "message": "API call to '/api/upf/cost_item' but no matching Flask route found"
+    },
+    {
+      "type": "missing_route",
+      "api_call_file": "static\\js\\process_framework_unified.js",
+      "url": "/api/upf/processes?per_page=1000",
+      "method": "GET",
+      "message": "API call to '/api/upf/processes?per_page=1000' but no matching Flask route found"
+    },
+    {
+      "type": "missing_route",
+      "api_call_file": "static\\js\\process_framework_unified.js",
+      "url": "/api/upf/processes/${id}",
+      "method": "GET",
+      "message": "API call to '/api/upf/processes/${id}' but no matching Flask route found"
+    },
+    {
+      "type": "missing_route",
+      "api_call_file": "static\\js\\process_framework_unified.js",
+      "url": "/api/upf/processes/${id}",
+      "method": "DELETE",
+      "message": "API call to '/api/upf/processes/${id}' but no matching Flask route found"
+    },
+    {
+      "type": "missing_route",
+      "api_call_file": "static\\js\\process_framework_unified.js",
+      "url": "/api/upf/subprocesses?per_page=1000",
+      "method": "GET",
+      "message": "API call to '/api/upf/subprocesses?per_page=1000' but no matching Flask route found"
+    },
+    {
+      "type": "missing_route",
+      "api_call_file": "static\\js\\process_framework_unified.js",
+      "url": "/api/upf/subprocesses/${id}",
+      "method": "GET",
+      "message": "API call to '/api/upf/subprocesses/${id}' but no matching Flask route found"
+    },
+    {
+      "type": "missing_route",
+      "api_call_file": "static\\js\\process_framework_unified.js",
+      "url": "/api/upf/subprocesses/${id}",
+      "method": "DELETE",
+      "message": "API call to '/api/upf/subprocesses/${id}' but no matching Flask route found"
+    },
+    {
+      "type": "missing_route",
+      "api_call_file": "static\\js\\process_framework_unified.js",
+      "url": "/api/upf/production-lots?per_page=1000",
+      "method": "GET",
+      "message": "API call to '/api/upf/production-lots?per_page=1000' but no matching Flask route found"
+    },
+    {
+      "type": "missing_route",
+      "api_call_file": "static\\js\\process_framework_unified.js",
+      "url": "/api/upf/processes?per_page=1000",
+      "method": "GET",
+      "message": "API call to '/api/upf/processes?per_page=1000' but no matching Flask route found"
+    },
+    {
+      "type": "missing_route",
+      "api_call_file": "static\\js\\process_framework_unified.js",
+      "url": "/api/upf/production-lots?per_page=1000",
+      "method": "GET",
+      "message": "API call to '/api/upf/production-lots?per_page=1000' but no matching Flask route found"
+    },
+    {
+      "type": "missing_route",
+      "api_call_file": "static\\js\\process_framework_unified.js",
+      "url": "/api/upf/processes?per_page=1000",
+      "method": "GET",
+      "message": "API call to '/api/upf/processes?per_page=1000' but no matching Flask route found"
+    },
+    {
+      "type": "missing_route",
+      "api_call_file": "static\\js\\process_framework_unified.js",
+      "url": "/api/upf/production-lots?per_page=5",
+      "method": "GET",
+      "message": "API call to '/api/upf/production-lots?per_page=5' but no matching Flask route found"
+    },
+    {
+      "type": "missing_route",
+      "api_call_file": "static\\js\\process_manager.js",
+      "url": "/api/upf/process/${processId}",
+      "method": "DELETE",
+      "message": "API call to '/api/upf/process/${processId}' but no matching Flask route found"
+    },
+    {
+      "type": "missing_route",
+      "api_call_file": "static\\js\\production_lots.js",
+      "url": "/api/upf/processes?per_page=1000",
+      "method": "GET",
+      "message": "API call to '/api/upf/processes?per_page=1000' but no matching Flask route found"
+    },
+    {
+      "type": "missing_route",
+      "api_call_file": "static\\js\\production_lots.js",
+      "url": "/api/upf/production-lots?page=${page}&per_page=${this.perPage}",
+      "method": "GET",
+      "message": "API call to '/api/upf/production-lots?page=${page}&per_page=${this.perPage}' but no matching Flask route found"
+    },
+    {
+      "type": "missing_route",
+      "api_call_file": "static\\js\\subprocess_library.js",
+      "url": "/api/upf/subprocesses?per_page=1000",
+      "method": "GET",
+      "message": "API call to '/api/upf/subprocesses?per_page=1000' but no matching Flask route found"
+    },
+    {
+      "type": "missing_route",
+      "api_call_file": "static\\js\\subprocess_library.js",
+      "url": "/api/upf/subprocesses/${this.deleteTargetId}",
+      "method": "DELETE",
+      "message": "API call to '/api/upf/subprocesses/${this.deleteTargetId}' but no matching Flask route found"
+    },
+    {
+      "type": "missing_route",
+      "api_call_file": "static\\js\\upf_reports.js",
+      "url": "/api/upf/reports/metrics",
+      "method": "GET",
+      "message": "API call to '/api/upf/reports/metrics' but no matching Flask route found"
+    },
+    {
+      "type": "missing_route",
+      "api_call_file": "static\\js\\upf_reports.js",
+      "url": "/api/upf/reports/top-processes",
+      "method": "GET",
+      "message": "API call to '/api/upf/reports/top-processes' but no matching Flask route found"
+    },
+    {
+      "type": "missing_route",
+      "api_call_file": "static\\js\\upf_reports.js",
+      "url": "/api/upf/reports/process-status",
+      "method": "GET",
+      "message": "API call to '/api/upf/reports/process-status' but no matching Flask route found"
+    },
+    {
+      "type": "missing_route",
+      "api_call_file": "static\\js\\upf_reports.js",
+      "url": "/api/upf/production-lots?per_page=5",
+      "method": "GET",
+      "message": "API call to '/api/upf/production-lots?per_page=5' but no matching Flask route found"
+    },
+    {
+      "type": "missing_route",
+      "api_call_file": "static\\js\\upf_reports.js",
+      "url": "/api/upf/reports/subprocess-usage",
+      "method": "GET",
+      "message": "API call to '/api/upf/reports/subprocess-usage' but no matching Flask route found"
+    },
+    {
+      "type": "missing_route",
+      "api_call_file": "static\\js\\variant_search.js",
+      "url": "/api/categories",
+      "method": "GET",
+      "message": "API call to '/api/categories' but no matching Flask route found"
+    },
+    {
+      "type": "missing_route",
+      "api_call_file": "static\\js\\variant_search.js",
+      "url": "/api/all-variants",
+      "method": "GET",
+      "message": "API call to '/api/all-variants' but no matching Flask route found"
+    },
+    {
+      "type": "missing_route",
+      "api_call_file": "templates\\dashboard_new.html",
+      "url": "{{ url_for(",
+      "method": "GET",
+      "message": "API call to '{{ url_for(' but no matching Flask route found"
+    },
+    {
+      "type": "missing_route",
+      "api_call_file": "templates\\edit_item.html",
+      "url": "${App.config.apiBase}/items/${itemId}",
+      "method": "PUT",
+      "message": "API call to '${App.config.apiBase}/items/${itemId}' but no matching Flask route found"
+    },
+    {
+      "type": "missing_route",
+      "api_call_file": "templates\\forgot_password.html",
+      "url": "/api/forgot-password",
+      "method": "POST",
+      "message": "API call to '/api/forgot-password' but no matching Flask route found"
+    },
+    {
+      "type": "missing_route",
+      "api_call_file": "templates\\reset_password.html",
+      "url": "/api/reset-password",
+      "method": "POST",
+      "message": "API call to '/api/reset-password' but no matching Flask route found"
+    },
+    {
+      "type": "missing_route",
+      "api_call_file": "templates\\signup.html",
+      "url": "/api/signup",
+      "method": "POST",
+      "message": "API call to '/api/signup' but no matching Flask route found"
+    },
+    {
+      "type": "missing_route",
+      "api_call_file": "templates\\stock_ledger.html",
+      "url": "/api/stock-receipts",
+      "method": "DELETE",
+      "message": "API call to '/api/stock-receipts' but no matching Flask route found"
+    },
+    {
+      "type": "missing_route",
+      "api_call_file": "templates\\upf_production_lot_new.html",
+      "url": "/api/upf/processes?per_page=1000&status=active",
+      "method": "GET",
+      "message": "API call to '/api/upf/processes?per_page=1000&status=active' but no matching Flask route found"
+    },
+    {
+      "type": "missing_route",
+      "api_call_file": "templates\\upf_production_lot_new.html",
+      "url": "/api/upf/production-lots",
+      "method": "POST",
+      "message": "API call to '/api/upf/production-lots' but no matching Flask route found"
+    },
+    {
+      "type": "missing_route",
+      "api_call_file": "templates\\upf_variant_selection.html",
+      "url": "/api/upf/production_lot/${this.lotId}/variant_options",
+      "method": "POST",
+      "message": "API call to '/api/upf/production_lot/${this.lotId}/variant_options' but no matching Flask route found"
+    },
+    {
+      "type": "unused_route",
+      "route_file": "app.py",
+      "route": "/api/variants/<int:variant_id>/threshold",
+      "methods": [
+        "PUT"
+      ],
+      "handler": "update_variant_threshold",
+      "message": "Route '/api/variants/<int:variant_id>/threshold' defined but no JavaScript calls found"
+    },
+    {
+      "type": "unused_route",
+      "route_file": "app.py",
+      "route": "/api/variants/<int:variant_id>",
+      "methods": [
+        "DELETE"
+      ],
+      "handler": "delete_variant",
+      "message": "Route '/api/variants/<int:variant_id>' defined but no JavaScript calls found"
+    },
+    {
+      "type": "unused_route",
+      "route_file": "app.py",
+      "route": "/api/items/<int:item_id>/variants",
+      "methods": [
+        "POST"
+      ],
+      "handler": "add_variant",
+      "message": "Route '/api/items/<int:item_id>/variants' defined but no JavaScript calls found"
+    },
+    {
+      "type": "unused_route",
+      "route_file": "app.py",
+      "route": "/api/variants/<int:variant_id>",
+      "methods": [
+        "PUT"
+      ],
+      "handler": "update_variant",
+      "message": "Route '/api/variants/<int:variant_id>' defined but no JavaScript calls found"
+    },
+    {
+      "type": "unused_route",
+      "route_file": "app.py",
+      "route": "/api/users",
+      "methods": [
+        "GET"
+      ],
+      "handler": "get_users",
+      "message": "Route '/api/users' defined but no JavaScript calls found"
+    },
+    {
+      "type": "unused_route",
+      "route_file": "app.py",
+      "route": "/api/users/<int:user_id>/role",
+      "methods": [
+        "PUT"
+      ],
+      "handler": "update_user_role",
+      "message": "Route '/api/users/<int:user_id>/role' defined but no JavaScript calls found"
+    },
+    {
+      "type": "unused_route",
+      "route_file": "app.py",
+      "route": "/api/import/preview-json",
+      "methods": [
+        "POST"
+      ],
+      "handler": "import_preview_json",
+      "message": "Route '/api/import/preview-json' defined but no JavaScript calls found"
+    },
+    {
+      "type": "unused_route",
+      "route_file": "app.py",
+      "route": "/api/import/commit",
+      "methods": [
+        "POST"
+      ],
+      "handler": "import_commit",
+      "message": "Route '/api/import/commit' defined but no JavaScript calls found"
+    },
+    {
+      "type": "unused_route",
+      "route_file": "app.py",
+      "route": "/ping",
+      "methods": [
+        "GET"
+      ],
+      "handler": "export_inventory_csv",
+      "message": "Route '/ping' defined but no JavaScript calls found"
+    },
+    {
+      "type": "unused_route",
+      "route_file": "app.py",
+      "route": "/api/import/preview-csv",
+      "methods": [
+        "POST"
+      ],
+      "handler": "import_preview_csv",
+      "message": "Route '/api/import/preview-csv' defined but no JavaScript calls found"
+    },
+    {
+      "type": "unused_route",
+      "route_file": "logging_config.py",
+      "route": "/test",
+      "methods": [
+        "GET"
+      ],
+      "handler": "test",
+      "message": "Route '/test' defined but no JavaScript calls found"
+    }
+  ],
+  "duplicate_functions": [
+    {
+      "function_name": "role_required",
+      "count": 6,
+      "locations": [
+        {
+          "file": "app.py",
+          "line": 89,
+          "args": []
+        },
+        {
+          "file": "app\\utils.py",
+          "line": 12,
+          "args": []
+        },
+        {
+          "file": "app\\api\\process_management.py",
+          "line": 36,
+          "args": []
+        },
+        {
+          "file": "app\\api\\production_lot.py",
+          "line": 24,
+          "args": []
+        },
+        {
+          "file": "app\\api\\variant_management.py",
+          "line": 21,
+          "args": []
+        },
+        {
+          "file": "app\\auth\\decorators.py",
+          "line": 9,
+          "args": [
+            "role"
+          ]
+        }
+      ]
+    },
+    {
+      "function_name": "update_variant_stock",
+      "count": 2,
+      "locations": [
+        {
+          "file": "app.py",
+          "line": 263,
+          "args": [
+            "variant_id"
+          ]
+        },
+        {
+          "file": "app\\api\\routes.py",
+          "line": 1486,
+          "args": [
+            "variant_id"
+          ]
+        }
+      ]
+    },
+    {
+      "function_name": "update_variant_threshold",
+      "count": 2,
+      "locations": [
+        {
+          "file": "app.py",
+          "line": 333,
+          "args": [
+            "variant_id"
+          ]
+        },
+        {
+          "file": "app\\api\\routes.py",
+          "line": 1533,
+          "args": [
+            "variant_id"
+          ]
+        }
+      ]
+    },
+    {
+      "function_name": "delete_variant",
+      "count": 2,
+      "locations": [
+        {
+          "file": "app.py",
+          "line": 355,
+          "args": [
+            "variant_id"
+          ]
+        },
+        {
+          "file": "app\\api\\routes.py",
+          "line": 1556,
+          "args": [
+            "variant_id"
+          ]
+        }
+      ]
+    },
+    {
+      "function_name": "add_variant",
+      "count": 2,
+      "locations": [
+        {
+          "file": "app.py",
+          "line": 369,
+          "args": [
+            "item_id"
+          ]
+        },
+        {
+          "file": "app\\api\\routes.py",
+          "line": 1570,
+          "args": [
+            "item_id"
+          ]
+        }
+      ]
+    },
+    {
+      "function_name": "update_variant",
+      "count": 2,
+      "locations": [
+        {
+          "file": "app.py",
+          "line": 410,
+          "args": [
+            "variant_id"
+          ]
+        },
+        {
+          "file": "app\\api\\routes.py",
+          "line": 1611,
+          "args": [
+            "variant_id"
+          ]
+        }
+      ]
+    },
+    {
+      "function_name": "get_users",
+      "count": 2,
+      "locations": [
+        {
+          "file": "app.py",
+          "line": 448,
+          "args": []
+        },
+        {
+          "file": "app\\api\\routes.py",
+          "line": 1823,
+          "args": []
+        }
+      ]
+    },
+    {
+      "function_name": "update_user_role",
+      "count": 2,
+      "locations": [
+        {
+          "file": "app.py",
+          "line": 467,
+          "args": [
+            "user_id"
+          ]
+        },
+        {
+          "file": "app\\api\\routes.py",
+          "line": 1840,
+          "args": [
+            "user_id"
+          ]
+        }
+      ]
+    },
+    {
+      "function_name": "get_low_stock_report",
+      "count": 2,
+      "locations": [
+        {
+          "file": "app.py",
+          "line": 487,
+          "args": []
+        },
+        {
+          "file": "app\\api\\routes.py",
+          "line": 1648,
+          "args": []
+        }
+      ]
+    },
+    {
+      "function_name": "import_preview_json",
+      "count": 2,
+      "locations": [
+        {
+          "file": "app.py",
+          "line": 551,
+          "args": []
+        },
+        {
+          "file": "app\\api\\routes.py",
+          "line": 1792,
+          "args": []
+        }
+      ]
+    },
+    {
+      "function_name": "import_commit",
+      "count": 2,
+      "locations": [
+        {
+          "file": "app.py",
+          "line": 588,
+          "args": []
+        },
+        {
+          "file": "app\\api\\routes.py",
+          "line": 1860,
+          "args": []
+        }
+      ]
+    },
+    {
+      "function_name": "get_or_create_master_id",
+      "count": 2,
+      "locations": [
+        {
+          "file": "app.py",
+          "line": 799,
+          "args": [
+            "cur",
+            "value",
+            "table_name",
+            "id_col",
+            "name_col"
+          ]
+        },
+        {
+          "file": "app\\utils.py",
+          "line": 75,
+          "args": [
+            "cur",
+            "value",
+            "table_name",
+            "id_col",
+            "name_col"
+          ]
+        }
+      ]
+    },
+    {
+      "function_name": "get_or_create_item_master_id",
+      "count": 2,
+      "locations": [
+        {
+          "file": "app.py",
+          "line": 836,
+          "args": [
+            "cur",
+            "name",
+            "model",
+            "variation",
+            "description"
+          ]
+        },
+        {
+          "file": "app\\utils.py",
+          "line": 93,
+          "args": [
+            "cur",
+            "name",
+            "model",
+            "variation",
+            "description"
+          ]
+        }
+      ]
+    },
+    {
+      "function_name": "export_inventory_csv",
+      "count": 2,
+      "locations": [
+        {
+          "file": "app.py",
+          "line": 1140,
+          "args": []
+        },
+        {
+          "file": "app\\api\\routes.py",
+          "line": 1676,
+          "args": []
+        }
+      ]
+    },
+    {
+      "function_name": "error",
+      "count": 2,
+      "locations": [
+        {
+          "file": "app.py",
+          "line": 56,
+          "args": [
+            "self"
+          ]
+        },
+        {
+          "file": "app\\utils\\response.py",
+          "line": 19,
+          "args": [
+            "error_code",
+            "message",
+            "status_code",
+            "data"
+          ]
+        }
+      ]
+    },
+    {
+      "function_name": "before_request",
+      "count": 2,
+      "locations": [
+        {
+          "file": "app.py",
+          "line": 75,
+          "args": [
+            "self",
+            "f"
+          ]
+        },
+        {
+          "file": "logging_config.py",
+          "line": 154,
+          "args": []
+        }
+      ]
+    },
+    {
+      "function_name": "after_request",
+      "count": 2,
+      "locations": [
+        {
+          "file": "app.py",
+          "line": 78,
+          "args": [
+            "self",
+            "f"
+          ]
+        },
+        {
+          "file": "logging_config.py",
+          "line": 168,
+          "args": [
+            "response"
+          ]
+        }
+      ]
+    },
+    {
+      "function_name": "_deco",
+      "count": 4,
+      "locations": [
+        {
+          "file": "app.py",
+          "line": 90,
+          "args": [
+            "f"
+          ]
+        },
+        {
+          "file": "app.py",
+          "line": 64,
+          "args": [
+            "f"
+          ]
+        },
+        {
+          "file": "app.py",
+          "line": 70,
+          "args": [
+            "f"
+          ]
+        },
+        {
+          "file": "app.py",
+          "line": 98,
+          "args": [
+            "f"
+          ]
+        }
+      ]
+    },
+    {
+      "function_name": "get_conn",
+      "count": 2,
+      "locations": [
+        {
+          "file": "app.py",
+          "line": 119,
+          "args": [
+            "self"
+          ]
+        },
+        {
+          "file": "database.py",
+          "line": 97,
+          "args": [
+            "cursor_factory",
+            "autocommit"
+          ]
+        }
+      ]
+    },
+    {
+      "function_name": "format",
+      "count": 2,
+      "locations": [
+        {
+          "file": "app.py",
+          "line": 150,
+          "args": [
+            "self"
+          ]
+        },
+        {
+          "file": "logging_config.py",
+          "line": 25,
+          "args": [
+            "self",
+            "record"
+          ]
+        }
+      ]
+    },
+    {
+      "function_name": "__init__",
+      "count": 27,
+      "locations": [
+        {
+          "file": "app.py",
+          "line": 200,
+          "args": [
+            "self"
+          ]
+        },
+        {
+          "file": "app.py",
+          "line": 218,
+          "args": [
+            "self"
+          ]
+        },
+        {
+          "file": "deduplicate_items.py",
+          "line": 16,
+          "args": [
+            "self"
+          ]
+        },
+        {
+          "file": "models.py",
+          "line": 7,
+          "args": [
+            "self",
+            "user_data"
+          ]
+        },
+        {
+          "file": "run_migration.py",
+          "line": 19,
+          "args": [
+            "self"
+          ]
+        },
+        {
+          "file": "app\\models.py",
+          "line": 9,
+          "args": [
+            "self",
+            "user_data"
+          ]
+        },
+        {
+          "file": "migrations\\migrations.py",
+          "line": 17,
+          "args": [
+            "self"
+          ]
+        },
+        {
+          "file": "app\\models\\process.py",
+          "line": 34,
+          "args": [
+            "self",
+            "data"
+          ]
+        },
+        {
+          "file": "app\\models\\process.py",
+          "line": 92,
+          "args": [
+            "self",
+            "data"
+          ]
+        },
+        {
+          "file": "app\\models\\process.py",
+          "line": 127,
+          "args": [
+            "self",
+            "data"
+          ]
+        },
+        {
+          "file": "app\\models\\process.py",
+          "line": 156,
+          "args": [
+            "self",
+            "data"
+          ]
+        },
+        {
+          "file": "app\\models\\process.py",
+          "line": 197,
+          "args": [
+            "self",
+            "data"
+          ]
+        },
+        {
+          "file": "app\\models\\process.py",
+          "line": 232,
+          "args": [
+            "self",
+            "data"
+          ]
+        },
+        {
+          "file": "app\\models\\process.py",
+          "line": 259,
+          "args": [
+            "self",
+            "data"
+          ]
+        },
+        {
+          "file": "app\\models\\process.py",
+          "line": 294,
+          "args": [
+            "self",
+            "data"
+          ]
+        },
+        {
+          "file": "app\\models\\process.py",
+          "line": 325,
+          "args": [
+            "self",
+            "data"
+          ]
+        },
+        {
+          "file": "app\\models\\process.py",
+          "line": 354,
+          "args": [
+            "self",
+            "data"
+          ]
+        },
+        {
+          "file": "app\\models\\process.py",
+          "line": 402,
+          "args": [
+            "self",
+            "data"
+          ]
+        },
+        {
+          "file": "app\\models\\process.py",
+          "line": 454,
+          "args": [
+            "self",
+            "data"
+          ]
+        },
+        {
+          "file": "app\\models\\production_lot.py",
+          "line": 28,
+          "args": [
+            "self",
+            "data"
+          ]
+        },
+        {
+          "file": "app\\models\\production_lot.py",
+          "line": 85,
+          "args": [
+            "self",
+            "data"
+          ]
+        },
+        {
+          "file": "app\\models\\production_lot.py",
+          "line": 129,
+          "args": [
+            "self",
+            "data"
+          ]
+        },
+        {
+          "file": "app\\models\\user.py",
+          "line": 11,
+          "args": [
+            "self",
+            "user_data"
+          ]
+        },
+        {
+          "file": "app\\services\\background_worker.py",
+          "line": 37,
+          "args": [
+            "self",
+            "poll_interval",
+            "max_retries"
+          ]
+        },
+        {
+          "file": "app\\services\\import_service.py",
+          "line": 44,
+          "args": [
+            "self",
+            "batch_size"
+          ]
+        },
+        {
+          "file": "app\\services\\progress_tracker.py",
+          "line": 48,
+          "args": [
+            "self",
+            "redis_url",
+            "expiry_seconds"
+          ]
+        },
+        {
+          "file": "app\\validators\\import_validators.py",
+          "line": 27,
+          "args": [
+            "self",
+            "field",
+            "message",
+            "value"
+          ]
+        }
+      ]
+    },
+    {
+      "function_name": "generate",
+      "count": 2,
+      "locations": [
+        {
+          "file": "app.py",
+          "line": 1166,
+          "args": []
+        },
+        {
+          "file": "app\\api\\routes.py",
+          "line": 1696,
+          "args": []
+        }
+      ]
+    },
+    {
+      "function_name": "log_request_info",
+      "count": 3,
+      "locations": [
+        {
+          "file": "logging_config.py",
+          "line": 138,
+          "args": [
+            "app"
+          ]
+        },
+        {
+          "file": "app\\api\\process_management.py",
+          "line": 25,
+          "args": []
+        },
+        {
+          "file": "app\\api\\subprocess_management.py",
+          "line": 19,
+          "args": []
+        }
+      ]
+    },
+    {
+      "function_name": "main",
+      "count": 2,
+      "locations": [
+        {
+          "file": "minify_assets.py",
+          "line": 29,
+          "args": []
+        },
+        {
+          "file": "run_production.py",
+          "line": 137,
+          "args": []
+        }
+      ]
+    },
+    {
+      "function_name": "decorator",
+      "count": 5,
+      "locations": [
+        {
+          "file": "app\\utils.py",
+          "line": 13,
+          "args": [
+            "f"
+          ]
+        },
+        {
+          "file": "app\\api\\process_management.py",
+          "line": 39,
+          "args": [
+            "f"
+          ]
+        },
+        {
+          "file": "app\\api\\production_lot.py",
+          "line": 27,
+          "args": [
+            "f"
+          ]
+        },
+        {
+          "file": "app\\api\\variant_management.py",
+          "line": 24,
+          "args": [
+            "f"
+          ]
+        },
+        {
+          "file": "app\\auth\\decorators.py",
+          "line": 21,
+          "args": [
+            "f"
+          ]
+        }
+      ]
+    },
+    {
+      "function_name": "decorated_function",
+      "count": 5,
+      "locations": [
+        {
+          "file": "app\\utils.py",
+          "line": 15,
+          "args": []
+        },
+        {
+          "file": "app\\api\\process_management.py",
+          "line": 41,
+          "args": []
+        },
+        {
+          "file": "app\\api\\production_lot.py",
+          "line": 29,
+          "args": []
+        },
+        {
+          "file": "app\\api\\variant_management.py",
+          "line": 26,
+          "args": []
+        },
+        {
+          "file": "app\\auth\\decorators.py",
+          "line": 23,
+          "args": []
+        }
+      ]
+    },
+    {
+      "function_name": "not_found",
+      "count": 6,
+      "locations": [
+        {
+          "file": "app\\__init__.py",
+          "line": 124,
+          "args": [
+            "_e"
+          ]
+        },
+        {
+          "file": "app\\api\\process_management.py",
+          "line": 669,
+          "args": [
+            "error"
+          ]
+        },
+        {
+          "file": "app\\api\\production_lot.py",
+          "line": 635,
+          "args": [
+            "error"
+          ]
+        },
+        {
+          "file": "app\\api\\subprocess_management.py",
+          "line": 322,
+          "args": [
+            "error"
+          ]
+        },
+        {
+          "file": "app\\api\\variant_management.py",
+          "line": 733,
+          "args": [
+            "error"
+          ]
+        },
+        {
+          "file": "app\\utils\\response.py",
+          "line": 34,
+          "args": [
+            "resource_type",
+            "resource_id"
+          ]
+        }
+      ]
+    },
+    {
+      "function_name": "upgrade",
+      "count": 19,
+      "locations": [
+        {
+          "file": "migrations\\migration.py",
+          "line": 14,
+          "args": []
+        },
+        {
+          "file": "migrations\\migration_add_cascade_delete.py",
+          "line": 14,
+          "args": []
+        },
+        {
+          "file": "migrations\\migration_add_category_type_brand_tables.py",
+          "line": 14,
+          "args": []
+        },
+        {
+          "file": "migrations\\migration_add_discount_and_receipt_number.py",
+          "line": 14,
+          "args": []
+        },
+        {
+          "file": "migrations\\migration_add_import_jobs.py",
+          "line": 15,
+          "args": []
+        },
+        {
+          "file": "migrations\\migration_add_item_uniqueness.py",
+          "line": 14,
+          "args": []
+        },
+        {
+          "file": "migrations\\migration_add_master_tables.py",
+          "line": 14,
+          "args": []
+        },
+        {
+          "file": "migrations\\migration_add_notes_and_status_to_po.py",
+          "line": 14,
+          "args": []
+        },
+        {
+          "file": "migrations\\migration_add_password_reset.py",
+          "line": 10,
+          "args": []
+        },
+        {
+          "file": "migrations\\migration_add_performance_indexes.py",
+          "line": 11,
+          "args": []
+        },
+        {
+          "file": "migrations\\migration_add_po_number.py",
+          "line": 14,
+          "args": []
+        },
+        {
+          "file": "migrations\\migration_add_po_tracking.py",
+          "line": 14,
+          "args": []
+        },
+        {
+          "file": "migrations\\migration_add_stock_receipts.py",
+          "line": 14,
+          "args": []
+        },
+        {
+          "file": "migrations\\migration_add_suppliers_tables.py",
+          "line": 14,
+          "args": []
+        },
+        {
+          "file": "migrations\\migration_add_unique_indexes_for_upsert.py",
+          "line": 17,
+          "args": []
+        },
+        {
+          "file": "migrations\\migration_add_universal_process_framework.py",
+          "line": 35,
+          "args": []
+        },
+        {
+          "file": "migrations\\migration_remove_model_uniqueness.py",
+          "line": 34,
+          "args": []
+        },
+        {
+          "file": "migrations\\migration_remove_unique_constraint.py",
+          "line": 14,
+          "args": []
+        },
+        {
+          "file": "migrations\\migration_update_discount_fields.py",
+          "line": 14,
+          "args": []
+        }
+      ]
+    },
+    {
+      "function_name": "downgrade",
+      "count": 19,
+      "locations": [
+        {
+          "file": "migrations\\migration.py",
+          "line": 35,
+          "args": []
+        },
+        {
+          "file": "migrations\\migration_add_cascade_delete.py",
+          "line": 47,
+          "args": []
+        },
+        {
+          "file": "migrations\\migration_add_category_type_brand_tables.py",
+          "line": 54,
+          "args": []
+        },
+        {
+          "file": "migrations\\migration_add_discount_and_receipt_number.py",
+          "line": 33,
+          "args": []
+        },
+        {
+          "file": "migrations\\migration_add_import_jobs.py",
+          "line": 122,
+          "args": []
+        },
+        {
+          "file": "migrations\\migration_add_item_uniqueness.py",
+          "line": 37,
+          "args": []
+        },
+        {
+          "file": "migrations\\migration_add_master_tables.py",
+          "line": 92,
+          "args": []
+        },
+        {
+          "file": "migrations\\migration_add_notes_and_status_to_po.py",
+          "line": 28,
+          "args": []
+        },
+        {
+          "file": "migrations\\migration_add_password_reset.py",
+          "line": 31,
+          "args": []
+        },
+        {
+          "file": "migrations\\migration_add_performance_indexes.py",
+          "line": 49,
+          "args": []
+        },
+        {
+          "file": "migrations\\migration_add_po_number.py",
+          "line": 57,
+          "args": []
+        },
+        {
+          "file": "migrations\\migration_add_po_tracking.py",
+          "line": 35,
+          "args": []
+        },
+        {
+          "file": "migrations\\migration_add_stock_receipts.py",
+          "line": 42,
+          "args": []
+        },
+        {
+          "file": "migrations\\migration_add_suppliers_tables.py",
+          "line": 86,
+          "args": []
+        },
+        {
+          "file": "migrations\\migration_add_unique_indexes_for_upsert.py",
+          "line": 189,
+          "args": []
+        },
+        {
+          "file": "migrations\\migration_add_universal_process_framework.py",
+          "line": 452,
+          "args": []
+        },
+        {
+          "file": "migrations\\migration_remove_model_uniqueness.py",
+          "line": 52,
+          "args": []
+        },
+        {
+          "file": "migrations\\migration_remove_unique_constraint.py",
+          "line": 26,
+          "args": []
+        },
+        {
+          "file": "migrations\\migration_update_discount_fields.py",
+          "line": 40,
+          "args": []
+        }
+      ]
+    },
+    {
+      "function_name": "up",
+      "count": 2,
+      "locations": [
+        {
+          "file": "migrations\\migration_add_audit_log.py",
+          "line": 18,
+          "args": []
+        },
+        {
+          "file": "migrations\\migration_add_lot_variant_selections.py",
+          "line": 16,
+          "args": []
+        }
+      ]
+    },
+    {
+      "function_name": "down",
+      "count": 2,
+      "locations": [
+        {
+          "file": "migrations\\migration_add_audit_log.py",
+          "line": 78,
+          "args": []
+        },
+        {
+          "file": "migrations\\migration_add_lot_variant_selections.py",
+          "line": 65,
+          "args": []
+        }
+      ]
+    },
+    {
+      "function_name": "track_progress",
+      "count": 3,
+      "locations": [
+        {
+          "file": "tests\\services\\test_import_service_coverage.py",
+          "line": 136,
+          "args": [
+            "processed",
+            "total",
+            "percentage"
+          ]
+        },
+        {
+          "file": "app\\services\\progress_tracker.py",
+          "line": 364,
+          "args": [
+            "import_id",
+            "processed",
+            "total",
+            "failed",
+            "current_batch",
+            "total_batches",
+            "start_time"
+          ]
+        },
+        {
+          "file": "app\\services\\progress_tracker.py",
+          "line": 92,
+          "args": [
+            "self",
+            "import_id",
+            "processed",
+            "total",
+            "failed",
+            "current_batch",
+            "total_batches",
+            "start_time"
+          ]
+        }
+      ]
+    },
+    {
+      "function_name": "create_process",
+      "count": 2,
+      "locations": [
+        {
+          "file": "app\\api\\process_management.py",
+          "line": 62,
+          "args": []
+        },
+        {
+          "file": "app\\services\\process_service.py",
+          "line": 29,
+          "args": [
+            "name",
+            "user_id",
+            "description",
+            "process_class"
+          ]
+        }
+      ]
+    },
+    {
+      "function_name": "get_process",
+      "count": 2,
+      "locations": [
+        {
+          "file": "app\\api\\process_management.py",
+          "line": 181,
+          "args": [
+            "process_id"
+          ]
+        },
+        {
+          "file": "app\\services\\process_service.py",
+          "line": 67,
+          "args": [
+            "process_id",
+            "include_deleted"
+          ]
+        }
+      ]
+    },
+    {
+      "function_name": "list_processes",
+      "count": 2,
+      "locations": [
+        {
+          "file": "app\\api\\process_management.py",
+          "line": 226,
+          "args": []
+        },
+        {
+          "file": "app\\services\\process_service.py",
+          "line": 236,
+          "args": [
+            "user_id",
+            "status",
+            "include_deleted",
+            "page",
+            "per_page"
+          ]
+        }
+      ]
+    },
+    {
+      "function_name": "update_process",
+      "count": 2,
+      "locations": [
+        {
+          "file": "app\\api\\process_management.py",
+          "line": 262,
+          "args": [
+            "process_id"
+          ]
+        },
+        {
+          "file": "app\\services\\process_service.py",
+          "line": 317,
+          "args": [
+            "process_id",
+            "name",
+            "description",
+            "process_class",
+            "status"
+          ]
+        }
+      ]
+    },
+    {
+      "function_name": "delete_process",
+      "count": 2,
+      "locations": [
+        {
+          "file": "app\\api\\process_management.py",
+          "line": 302,
+          "args": [
+            "process_id"
+          ]
+        },
+        {
+          "file": "app\\services\\process_service.py",
+          "line": 383,
+          "args": [
+            "process_id",
+            "hard_delete"
+          ]
+        }
+      ]
+    },
+    {
+      "function_name": "restore_process",
+      "count": 2,
+      "locations": [
+        {
+          "file": "app\\api\\process_management.py",
+          "line": 333,
+          "args": [
+            "process_id"
+          ]
+        },
+        {
+          "file": "app\\services\\process_service.py",
+          "line": 421,
+          "args": [
+            "process_id"
+          ]
+        }
+      ]
+    },
+    {
+      "function_name": "search_processes",
+      "count": 2,
+      "locations": [
+        {
+          "file": "app\\api\\process_management.py",
+          "line": 355,
+          "args": []
+        },
+        {
+          "file": "app\\services\\process_service.py",
+          "line": 541,
+          "args": [
+            "query",
+            "user_id"
+          ]
+        }
+      ]
+    },
+    {
+      "function_name": "add_subprocess_to_process",
+      "count": 2,
+      "locations": [
+        {
+          "file": "app\\api\\process_management.py",
+          "line": 378,
+          "args": [
+            "process_id"
+          ]
+        },
+        {
+          "file": "app\\services\\process_service.py",
+          "line": 448,
+          "args": [
+            "process_id",
+            "subprocess_id",
+            "sequence_order",
+            "custom_name",
+            "notes"
+          ]
+        }
+      ]
+    },
+    {
+      "function_name": "remove_subprocess_from_process",
+      "count": 2,
+      "locations": [
+        {
+          "file": "app\\api\\process_management.py",
+          "line": 477,
+          "args": [
+            "process_id",
+            "ps_id"
+          ]
+        },
+        {
+          "file": "app\\services\\process_service.py",
+          "line": 489,
+          "args": [
+            "process_subprocess_id"
+          ]
+        }
+      ]
+    },
+    {
+      "function_name": "reorder_subprocesses",
+      "count": 2,
+      "locations": [
+        {
+          "file": "app\\api\\process_management.py",
+          "line": 494,
+          "args": [
+            "process_id"
+          ]
+        },
+        {
+          "file": "app\\services\\process_service.py",
+          "line": 514,
+          "args": [
+            "process_id",
+            "sequence_map"
+          ]
+        }
+      ]
+    },
+    {
+      "function_name": "internal_error",
+      "count": 4,
+      "locations": [
+        {
+          "file": "app\\api\\process_management.py",
+          "line": 674,
+          "args": [
+            "error"
+          ]
+        },
+        {
+          "file": "app\\api\\production_lot.py",
+          "line": 640,
+          "args": [
+            "error"
+          ]
+        },
+        {
+          "file": "app\\api\\subprocess_management.py",
+          "line": 327,
+          "args": [
+            "error"
+          ]
+        },
+        {
+          "file": "app\\api\\variant_management.py",
+          "line": 738,
+          "args": [
+            "error"
+          ]
+        }
+      ]
+    },
+    {
+      "function_name": "create_production_lot",
+      "count": 2,
+      "locations": [
+        {
+          "file": "app\\api\\production_lot.py",
+          "line": 50,
+          "args": []
+        },
+        {
+          "file": "app\\services\\production_service.py",
+          "line": 32,
+          "args": [
+            "process_id",
+            "user_id",
+            "quantity",
+            "lot_number"
+          ]
+        }
+      ]
+    },
+    {
+      "function_name": "get_production_lot",
+      "count": 2,
+      "locations": [
+        {
+          "file": "app\\api\\production_lot.py",
+          "line": 79,
+          "args": [
+            "lot_id"
+          ]
+        },
+        {
+          "file": "app\\services\\production_service.py",
+          "line": 87,
+          "args": [
+            "lot_id",
+            "include_selections"
+          ]
+        }
+      ]
+    },
+    {
+      "function_name": "list_production_lots",
+      "count": 2,
+      "locations": [
+        {
+          "file": "app\\api\\production_lot.py",
+          "line": 227,
+          "args": []
+        },
+        {
+          "file": "app\\services\\production_service.py",
+          "line": 169,
+          "args": [
+            "process_id",
+            "user_id",
+            "status",
+            "page",
+            "per_page"
+          ]
+        }
+      ]
+    },
+    {
+      "function_name": "select_variant_for_group",
+      "count": 2,
+      "locations": [
+        {
+          "file": "app\\api\\production_lot.py",
+          "line": 259,
+          "args": [
+            "lot_id"
+          ]
+        },
+        {
+          "file": "app\\services\\production_service.py",
+          "line": 259,
+          "args": [
+            "lot_id",
+            "substitute_group_id",
+            "variant_id",
+            "supplier_id",
+            "quantity"
+          ]
+        }
+      ]
+    },
+    {
+      "function_name": "validate_lot_readiness",
+      "count": 2,
+      "locations": [
+        {
+          "file": "app\\api\\production_lot.py",
+          "line": 407,
+          "args": [
+            "lot_id"
+          ]
+        },
+        {
+          "file": "app\\services\\production_service.py",
+          "line": 344,
+          "args": [
+            "lot_id"
+          ]
+        }
+      ]
+    },
+    {
+      "function_name": "execute_production_lot",
+      "count": 2,
+      "locations": [
+        {
+          "file": "app\\api\\production_lot.py",
+          "line": 430,
+          "args": [
+            "lot_id"
+          ]
+        },
+        {
+          "file": "app\\services\\production_service.py",
+          "line": 516,
+          "args": [
+            "lot_id"
+          ]
+        }
+      ]
+    },
+    {
+      "function_name": "cancel_production_lot",
+      "count": 2,
+      "locations": [
+        {
+          "file": "app\\api\\production_lot.py",
+          "line": 468,
+          "args": [
+            "lot_id"
+          ]
+        },
+        {
+          "file": "app\\services\\production_service.py",
+          "line": 686,
+          "args": [
+            "lot_id",
+            "reason"
+          ]
+        }
+      ]
+    },
+    {
+      "function_name": "get_variance_analysis",
+      "count": 2,
+      "locations": [
+        {
+          "file": "app\\api\\production_lot.py",
+          "line": 525,
+          "args": [
+            "lot_id"
+          ]
+        },
+        {
+          "file": "app\\services\\production_service.py",
+          "line": 717,
+          "args": [
+            "lot_id"
+          ]
+        }
+      ]
+    },
+    {
+      "function_name": "search_variants",
+      "count": 3,
+      "locations": [
+        {
+          "file": "app\\api\\routes.py",
+          "line": 1132,
+          "args": []
+        },
+        {
+          "file": "app\\api\\variant_management.py",
+          "line": 694,
+          "args": []
+        },
+        {
+          "file": "app\\services\\variant_service.py",
+          "line": 341,
+          "args": [
+            "query",
+            "filters",
+            "limit"
+          ]
+        }
+      ]
+    },
+    {
+      "function_name": "create_subprocess",
+      "count": 2,
+      "locations": [
+        {
+          "file": "app\\api\\subprocess_management.py",
+          "line": 39,
+          "args": []
+        },
+        {
+          "file": "app\\services\\subprocess_service.py",
+          "line": 27,
+          "args": [
+            "name",
+            "description",
+            "category",
+            "estimated_time_minutes",
+            "labor_cost"
+          ]
+        }
+      ]
+    },
+    {
+      "function_name": "get_subprocess",
+      "count": 2,
+      "locations": [
+        {
+          "file": "app\\api\\subprocess_management.py",
+          "line": 138,
+          "args": [
+            "subprocess_id"
+          ]
+        },
+        {
+          "file": "app\\services\\subprocess_service.py",
+          "line": 67,
+          "args": [
+            "subprocess_id"
+          ]
+        }
+      ]
+    },
+    {
+      "function_name": "list_subprocesses",
+      "count": 2,
+      "locations": [
+        {
+          "file": "app\\api\\subprocess_management.py",
+          "line": 155,
+          "args": []
+        },
+        {
+          "file": "app\\services\\subprocess_service.py",
+          "line": 112,
+          "args": [
+            "subprocess_type",
+            "page",
+            "per_page"
+          ]
+        }
+      ]
+    },
+    {
+      "function_name": "update_subprocess",
+      "count": 2,
+      "locations": [
+        {
+          "file": "app\\api\\subprocess_management.py",
+          "line": 176,
+          "args": [
+            "subprocess_id"
+          ]
+        },
+        {
+          "file": "app\\services\\subprocess_service.py",
+          "line": 181,
+          "args": [
+            "subprocess_id",
+            "name",
+            "description",
+            "category",
+            "estimated_time_minutes",
+            "labor_cost"
+          ]
+        }
+      ]
+    },
+    {
+      "function_name": "delete_subprocess",
+      "count": 2,
+      "locations": [
+        {
+          "file": "app\\api\\subprocess_management.py",
+          "line": 221,
+          "args": [
+            "subprocess_id"
+          ]
+        },
+        {
+          "file": "app\\services\\subprocess_service.py",
+          "line": 252,
+          "args": [
+            "subprocess_id",
+            "hard_delete"
+          ]
+        }
+      ]
+    },
+    {
+      "function_name": "duplicate_subprocess",
+      "count": 2,
+      "locations": [
+        {
+          "file": "app\\api\\subprocess_management.py",
+          "line": 239,
+          "args": [
+            "subprocess_id"
+          ]
+        },
+        {
+          "file": "app\\services\\subprocess_service.py",
+          "line": 289,
+          "args": [
+            "subprocess_id",
+            "new_name",
+            "user_id"
+          ]
+        }
+      ]
+    },
+    {
+      "function_name": "add_variant_usage",
+      "count": 2,
+      "locations": [
+        {
+          "file": "app\\api\\variant_management.py",
+          "line": 45,
+          "args": []
+        },
+        {
+          "file": "app\\services\\variant_service.py",
+          "line": 23,
+          "args": [
+            "process_subprocess_id",
+            "variant_id",
+            "quantity",
+            "cost_per_unit"
+          ]
+        }
+      ]
+    },
+    {
+      "function_name": "update_variant_usage",
+      "count": 2,
+      "locations": [
+        {
+          "file": "app\\api\\variant_management.py",
+          "line": 86,
+          "args": [
+            "usage_id"
+          ]
+        },
+        {
+          "file": "app\\services\\variant_service.py",
+          "line": 71,
+          "args": [
+            "usage_id",
+            "quantity",
+            "cost_per_unit"
+          ]
+        }
+      ]
+    },
+    {
+      "function_name": "remove_variant_usage",
+      "count": 2,
+      "locations": [
+        {
+          "file": "app\\api\\variant_management.py",
+          "line": 113,
+          "args": [
+            "usage_id"
+          ]
+        },
+        {
+          "file": "app\\services\\variant_service.py",
+          "line": 138,
+          "args": [
+            "usage_id"
+          ]
+        }
+      ]
+    },
+    {
+      "function_name": "create_substitute_group",
+      "count": 2,
+      "locations": [
+        {
+          "file": "app\\api\\variant_management.py",
+          "line": 136,
+          "args": []
+        },
+        {
+          "file": "app\\services\\subprocess_service.py",
+          "line": 437,
+          "args": [
+            "process_subprocess_id",
+            "group_name",
+            "variant_ids",
+            "group_description",
+            "selection_method"
+          ]
+        }
+      ]
+    },
+    {
+      "function_name": "add_cost_item",
+      "count": 2,
+      "locations": [
+        {
+          "file": "app\\api\\variant_management.py",
+          "line": 482,
+          "args": []
+        },
+        {
+          "file": "app\\services\\subprocess_service.py",
+          "line": 386,
+          "args": [
+            "process_subprocess_id",
+            "cost_type",
+            "quantity",
+            "rate_per_unit",
+            "description"
+          ]
+        }
+      ]
+    },
+    {
+      "function_name": "add_supplier_pricing",
+      "count": 2,
+      "locations": [
+        {
+          "file": "app\\api\\variant_management.py",
+          "line": 605,
+          "args": [
+            "item_id"
+          ]
+        },
+        {
+          "file": "app\\services\\variant_service.py",
+          "line": 163,
+          "args": [
+            "variant_id",
+            "supplier_id",
+            "cost_per_unit",
+            "minimum_order_qty",
+            "currency",
+            "effective_from",
+            "effective_to"
+          ]
+        }
+      ]
+    },
+    {
+      "function_name": "get_variant_suppliers",
+      "count": 2,
+      "locations": [
+        {
+          "file": "app\\api\\variant_management.py",
+          "line": 635,
+          "args": [
+            "item_id"
+          ]
+        },
+        {
+          "file": "app\\services\\variant_service.py",
+          "line": 219,
+          "args": [
+            "variant_id"
+          ]
+        }
+      ]
+    },
+    {
+      "function_name": "update_supplier_pricing",
+      "count": 2,
+      "locations": [
+        {
+          "file": "app\\api\\variant_management.py",
+          "line": 648,
+          "args": [
+            "pricing_id"
+          ]
+        },
+        {
+          "file": "app\\services\\variant_service.py",
+          "line": 253,
+          "args": [
+            "pricing_id",
+            "cost_per_unit",
+            "minimum_order_qty",
+            "is_active"
+          ]
+        }
+      ]
+    },
+    {
+      "function_name": "remove_supplier_pricing",
+      "count": 2,
+      "locations": [
+        {
+          "file": "app\\api\\variant_management.py",
+          "line": 674,
+          "args": [
+            "pricing_id"
+          ]
+        },
+        {
+          "file": "app\\services\\variant_service.py",
+          "line": 314,
+          "args": [
+            "pricing_id"
+          ]
+        }
+      ]
+    },
+    {
+      "function_name": "check_variant_availability",
+      "count": 2,
+      "locations": [
+        {
+          "file": "app\\api\\variant_management.py",
+          "line": 720,
+          "args": [
+            "item_id"
+          ]
+        },
+        {
+          "file": "app\\services\\variant_service.py",
+          "line": 458,
+          "args": [
+            "variant_id",
+            "required_quantity"
+          ]
+        }
+      ]
+    },
+    {
+      "function_name": "to_dict",
+      "count": 15,
+      "locations": [
+        {
+          "file": "app\\models\\process.py",
+          "line": 49,
+          "args": [
+            "self"
+          ]
+        },
+        {
+          "file": "app\\models\\process.py",
+          "line": 104,
+          "args": [
+            "self"
+          ]
+        },
+        {
+          "file": "app\\models\\process.py",
+          "line": 136,
+          "args": [
+            "self"
+          ]
+        },
+        {
+          "file": "app\\models\\process.py",
+          "line": 173,
+          "args": [
+            "self"
+          ]
+        },
+        {
+          "file": "app\\models\\process.py",
+          "line": 210,
+          "args": [
+            "self"
+          ]
+        },
+        {
+          "file": "app\\models\\process.py",
+          "line": 241,
+          "args": [
+            "self"
+          ]
+        },
+        {
+          "file": "app\\models\\process.py",
+          "line": 274,
+          "args": [
+            "self"
+          ]
+        },
+        {
+          "file": "app\\models\\process.py",
+          "line": 304,
+          "args": [
+            "self"
+          ]
+        },
+        {
+          "file": "app\\models\\process.py",
+          "line": 334,
+          "args": [
+            "self"
+          ]
+        },
+        {
+          "file": "app\\models\\process.py",
+          "line": 377,
+          "args": [
+            "self"
+          ]
+        },
+        {
+          "file": "app\\models\\process.py",
+          "line": 415,
+          "args": [
+            "self"
+          ]
+        },
+        {
+          "file": "app\\models\\process.py",
+          "line": 477,
+          "args": [
+            "self"
+          ]
+        },
+        {
+          "file": "app\\models\\production_lot.py",
+          "line": 44,
+          "args": [
+            "self"
+          ]
+        },
+        {
+          "file": "app\\models\\production_lot.py",
+          "line": 100,
+          "args": [
+            "self"
+          ]
+        },
+        {
+          "file": "app\\models\\production_lot.py",
+          "line": 153,
+          "args": [
+            "self"
+          ]
+        }
+      ]
+    },
+    {
+      "function_name": "create_import_id",
+      "count": 2,
+      "locations": [
+        {
+          "file": "app\\services\\progress_tracker.py",
+          "line": 359,
+          "args": []
+        },
+        {
+          "file": "app\\services\\progress_tracker.py",
+          "line": 83,
+          "args": [
+            "self"
+          ]
+        }
+      ]
+    },
+    {
+      "function_name": "get_progress",
+      "count": 2,
+      "locations": [
+        {
+          "file": "app\\services\\progress_tracker.py",
+          "line": 379,
+          "args": [
+            "import_id"
+          ]
+        },
+        {
+          "file": "app\\services\\progress_tracker.py",
+          "line": 155,
+          "args": [
+            "self",
+            "import_id"
+          ]
+        }
+      ]
+    },
+    {
+      "function_name": "mark_completed",
+      "count": 2,
+      "locations": [
+        {
+          "file": "app\\services\\progress_tracker.py",
+          "line": 384,
+          "args": [
+            "import_id",
+            "processed",
+            "total",
+            "failed",
+            "duration",
+            "success_rate"
+          ]
+        },
+        {
+          "file": "app\\services\\progress_tracker.py",
+          "line": 178,
+          "args": [
+            "self",
+            "import_id",
+            "processed",
+            "total",
+            "failed",
+            "duration",
+            "success_rate"
+          ]
+        }
+      ]
+    },
+    {
+      "function_name": "mark_failed",
+      "count": 2,
+      "locations": [
+        {
+          "file": "app\\services\\progress_tracker.py",
+          "line": 398,
+          "args": [
+            "import_id",
+            "error_message",
+            "processed",
+            "total"
+          ]
+        },
+        {
+          "file": "app\\services\\progress_tracker.py",
+          "line": 225,
+          "args": [
+            "self",
+            "import_id",
+            "error_message",
+            "processed",
+            "total"
+          ]
+        }
+      ]
+    },
+    {
+      "function_name": "delete_progress",
+      "count": 2,
+      "locations": [
+        {
+          "file": "app\\services\\progress_tracker.py",
+          "line": 405,
+          "args": [
+            "import_id"
+          ]
+        },
+        {
+          "file": "app\\services\\progress_tracker.py",
+          "line": 262,
+          "args": [
+            "self",
+            "import_id"
+          ]
+        }
+      ]
+    },
+    {
+      "function_name": "validate_batch",
+      "count": 2,
+      "locations": [
+        {
+          "file": "app\\validators\\import_validators.py",
+          "line": 496,
+          "args": [
+            "rows"
+          ]
+        },
+        {
+          "file": "app\\validators\\import_validators.py",
+          "line": 402,
+          "args": [
+            "rows"
+          ]
+        }
+      ]
+    }
+  ],
+  "statistics": {
+    "total_python_files": 99,
+    "total_javascript_files": 16,
+    "total_routes": 12,
+    "total_api_calls": 47,
+    "incomplete_functions": 7,
+    "duplicate_functions": 75,
+    "route_mismatches": 46,
+    "unused_routes": 11,
+    "errors_encountered": 1
+  },
+  "errors": [
+    {
+      "message": "Syntax error in c:\\Users\\erkar\\OneDrive\\Desktop\\MTC\\Project-root\\app\\api\\imports.py: invalid non-printable character U+FEFF (<unknown>, line 1)",
+      "timestamp": "2025-11-07T11:50:48.958557",
+      "file": "c:\\Users\\erkar\\OneDrive\\Desktop\\MTC\\Project-root\\app\\api\\imports.py"
+    }
+  ]
+}
