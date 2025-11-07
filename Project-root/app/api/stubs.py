@@ -133,17 +133,31 @@ def get_substitute_groups_stub(process_subprocess_id):
 
 @api_bp.route('/categories', methods=['GET'])
 @login_required
-def get_categories_stub():
+def get_categories():
     """
-    TODO: Implement categories retrieval logic
-    Stub endpoint to prevent 404 errors during development
+    Returns all categories from the categories table.
     """
-    logger.warning("Stub endpoint called: GET /api/categories")
-    return jsonify({
-        'status': 'stub',
-        'message': 'Categories retrieval feature in development',
-        'data': []
-    }), 200
+    from database import get_conn
+    try:
+        with get_conn(cursor_factory=None) as (conn, cur):
+            cur.execute("""
+                CREATE TABLE IF NOT EXISTS categories (
+                    id SERIAL PRIMARY KEY,
+                    name VARCHAR(100) NOT NULL,
+                    description TEXT,
+                    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+                )
+            """)
+            conn.commit()
+            cur.execute("SELECT id, name, description FROM categories ORDER BY name")
+            rows = cur.fetchall()
+            categories = [
+                {"id": row[0], "name": row[1], "description": row[2]} for row in rows
+            ]
+        return jsonify(categories), 200
+    except Exception as e:
+        logger.error(f"Error fetching categories: {e}")
+        return jsonify({"error": "Failed to fetch categories"}), 500
 
 
 # ============================================================================

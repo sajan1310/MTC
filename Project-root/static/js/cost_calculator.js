@@ -1,3 +1,48 @@
+// Defensive cost calculation with error handling for structure API
+async function calculateProcessCost(processId) {
+    try {
+        const response = await fetch(`/api/upf/processes/${processId}/structure`);
+        if (!response.ok) {
+            throw new Error(`API returned ${response.status}: ${response.statusText}`);
+        }
+        const structure = await response.json();
+        if (!structure || !structure.subprocesses) {
+            throw new Error('Invalid structure data received');
+        }
+        let totalCost = 0;
+        (structure.subprocesses || []).forEach(subprocess => {
+            if (subprocess.variants && Array.isArray(subprocess.variants)) {
+                subprocess.variants.forEach(variant => {
+                    const cost = parseFloat(variant.cost) || 0;
+                    const quantity = parseFloat(variant.quantity) || 0;
+                    totalCost += cost * quantity;
+                });
+            }
+        });
+        updateCostDisplay(totalCost);
+        return totalCost;
+    } catch (error) {
+        console.error('Cost calculation failed:', error);
+        const costDisplay = document.getElementById('process-cost-display');
+        if (costDisplay) {
+            costDisplay.innerHTML = `
+                <span class="cost-error">
+                    ⚠️ Unable to calculate cost: ${error.message}
+                </span>
+            `;
+        }
+        return null;
+    }
+}
+
+function updateCostDisplay(cost) {
+    const costDisplay = document.getElementById('process-cost-display');
+    if (costDisplay && cost !== null) {
+        costDisplay.innerHTML = `
+            <span class="cost-value">₹${cost.toFixed(2)}</span>
+        `;
+    }
+}
 /**
  * Cost Calculator Component
  * Handles real-time cost calculation and profitability analysis

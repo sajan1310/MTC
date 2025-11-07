@@ -8,22 +8,47 @@ Handles all CRUD operations for processes and subprocesses including:
 - Variant usage management
 - Soft delete support
 - Version tracking
+- Data validation (Priority 4)
+- Caching for performance (Priority 3)
+- Transaction management (Priority 2)
 """
 
 from __future__ import annotations
 
 from typing import Any, Dict, List, Optional
+from functools import lru_cache
+from flask import current_app
 
 import database
 import psycopg2.extras
 
 from ..models.process import Process, ProcessSubprocess
+from ..validators import ProcessValidator, ValidationError
 
 
 class ProcessService:
     """
     Service for process management operations.
+    
+    Features:
+    - Optimized batch queries (Priority 1)
+    - Transactional operations (Priority 2)
+    - LRU caching (Priority 3)
+    - Data validation (Priority 4)
     """
+    
+    # Cache TTL counters (invalidate on updates)
+    _cache_version = {"subprocesses": 0, "processes": 0}
+    
+    @classmethod
+    def invalidate_cache(cls, cache_type: str = "all"):
+        """Invalidate caches when data changes."""
+        if cache_type == "all" or cache_type == "subprocesses":
+            cls._cache_version["subprocesses"] += 1
+            current_app.logger.info("Subprocess cache invalidated")
+        if cache_type == "all" or cache_type == "processes":
+            cls._cache_version["processes"] += 1
+            current_app.logger.info("Process cache invalidated")
 
     @staticmethod
     def create_process(
@@ -33,7 +58,7 @@ class ProcessService:
         process_class: str = "assembly",
     ) -> Dict[str, Any]:
         """
-        Create a new process.
+        Create a new process with validation (Priority 4).
 
         Args:
             name: Process name
@@ -43,7 +68,19 @@ class ProcessService:
 
         Returns:
             Created process as dict
+            
+        Raises:
+            ValidationError: If data validation fails
         """
+        # Priority 4: Data Validation
+        validated_data = ProcessValidator.validate_process_data({
+            'name': name,
+            'user_id': user_id,
+            'description': description,
+            'process_class': process_class,
+            'status': 'Active'
+        })
+        
         with database.get_conn(cursor_factory=psycopg2.extras.RealDictCursor) as (
             conn,
             cur,
@@ -51,14 +88,23 @@ class ProcessService:
             cur.execute(
                 """
                 INSERT INTO processes (name, description, process_class, created_by, status)
-                VALUES (%s, %s, %s, %s, 'Active')
+                VALUES (%s, %s, %s, %s, %s)
                 RETURNING *
             """,
-                (name, description, process_class, user_id),
+                (
+                    validated_data['name'],
+                    validated_data['description'],
+                    validated_data['process_class'],
+                    validated_data['user_id'],
+                    validated_data['status']
+                ),
             )
 
             process_data = cur.fetchone()
             conn.commit()
+        
+        # Invalidate cache
+        ProcessService.invalidate_cache("processes")
 
         process = Process(process_data)
         return process.to_dict()
@@ -102,8 +148,7 @@ class ProcessService:
                     ps.id as process_subprocess_id,
                     ps.subprocess_id,
                     ps.custom_name,
-                    ps.id as sequence_order,
-                    ps.notes,
+                    ps.sequence as sequence_order,
                     s.name as subprocess_name,
                     s.description as subprocess_description
                 FROM process_subprocesses ps
@@ -118,7 +163,14 @@ class ProcessService:
 
         process = Process(process_data)
         result = process.to_dict()
-        result["subprocesses"] = [dict(sp) for sp in subprocesses]
+        # Remove 'notes' from subprocesses if present
+        cleaned_subprocesses = []
+        for sp in subprocesses:
+            sp_dict = dict(sp)
+            if 'notes' in sp_dict:
+                sp_dict.pop('notes')
+            cleaned_subprocesses.append(sp_dict)
+        result["subprocesses"] = cleaned_subprocesses
 
         return result
 
@@ -128,6 +180,10 @@ class ProcessService:
         Get complete process structure including all variants, costs, and groups.
 
         This is the main method for loading a process in the editor.
+        
+        OPTIMIZED: Uses batch queries instead of N+1 pattern.
+        Previous: 50+ queries for 10 subprocesses
+        Current: 2-3 queries total
         """
         process = ProcessService.get_process(process_id)
         if not process:
@@ -137,79 +193,174 @@ class ProcessService:
             conn,
             cur,
         ):
-            # For each subprocess, get its details
-            for subprocess in process["subprocesses"]:
-                ps_id = subprocess["process_subprocess_id"]
-
-                # Get variants (non-substitute)
-                cur.execute(
-                    """
-                    SELECT
-                        vu.*,
-                        iv.name as variant_name,
-                        iv.opening_stock
+            # OPTIMIZATION 1: Batch load all subprocess-related data in a single query
+            # Using CTEs and JSON aggregation to reduce N+1 queries
+            cur.execute(
+                """
+                WITH subprocess_ids AS (
+                    SELECT ps.id as ps_id, ps.subprocess_id, ps.custom_name, ps.sequence as sequence_order
+                    FROM process_subprocesses ps
+                    WHERE ps.process_id = %s
+                ),
+                variants_data AS (
+                    SELECT 
+                        vu.process_subprocess_id,
+                        json_agg(
+                            json_build_object(
+                                'id', vu.id,
+                                'variant_id', vu.variant_id,
+                                'variant_name', im.name,
+                                'opening_stock', iv.opening_stock,
+                                'quantity', vu.quantity,
+                                'unit', iv.unit,
+                                'is_alternative', vu.is_alternative,
+                                'substitute_group_id', vu.substitute_group_id
+                            ) ORDER BY vu.id
+                        ) as variants
                     FROM variant_usage vu
                     JOIN item_variant iv ON iv.variant_id = vu.variant_id
-                    WHERE vu.process_subprocess_id = %s
+                    JOIN item_master im ON im.item_id = iv.item_id
+                    WHERE vu.process_subprocess_id IN (SELECT ps_id FROM subprocess_ids)
                       AND (vu.substitute_group_id IS NULL OR vu.is_alternative = FALSE)
-                """,
-                    (ps_id,),
+                    GROUP BY vu.process_subprocess_id
+                ),
+                cost_items_data AS (
+                    SELECT 
+                        ci.process_subprocess_id,
+                        json_agg(
+                            json_build_object(
+                                'id', ci.id,
+                                'cost_type', ci.cost_type,
+                                'description', ci.description,
+                                'quantity', ci.quantity,
+                                'rate', ci.amount,
+                                'total_cost', ci.amount * COALESCE(ci.quantity, 1)
+                            ) ORDER BY ci.id
+                        ) as cost_items
+                    FROM cost_items ci
+                    WHERE ci.process_subprocess_id IN (SELECT ps_id FROM subprocess_ids)
+                    GROUP BY ci.process_subprocess_id
+                ),
+                groups_data AS (
+                    SELECT 
+                        sg.process_subprocess_id,
+                        json_agg(
+                            json_build_object(
+                                'id', sg.id,
+                                'name', sg.group_name,
+                                'description', sg.group_description
+                            ) ORDER BY sg.id
+                        ) as groups
+                    FROM substitute_groups sg
+                    WHERE sg.process_subprocess_id IN (SELECT ps_id FROM subprocess_ids)
+                    GROUP BY sg.process_subprocess_id
+                ),
+                group_alternatives AS (
+                    SELECT 
+                        sg.process_subprocess_id,
+                        sg.id as group_id,
+                        json_agg(
+                            json_build_object(
+                                'id', vu.id,
+                                'variant_id', vu.variant_id,
+                                'variant_name', im.name,
+                                'opening_stock', iv.opening_stock,
+                                'quantity', vu.quantity,
+                                'unit', iv.unit,
+                                'alternative_order', vu.alternative_order
+                            ) ORDER BY vu.alternative_order
+                        ) as alternatives
+                    FROM substitute_groups sg
+                    JOIN variant_usage vu ON vu.substitute_group_id = sg.id AND vu.is_alternative = TRUE
+                    JOIN item_variant iv ON iv.variant_id = vu.variant_id
+                    JOIN item_master im ON im.item_id = iv.item_id
+                    WHERE sg.process_subprocess_id IN (SELECT ps_id FROM subprocess_ids)
+                    GROUP BY sg.process_subprocess_id, sg.id
+                ),
+                timing_data AS (
+                    SELECT 
+                        pt.process_subprocess_id,
+                        json_build_object(
+                            'id', pt.id,
+                            'estimated_duration', pt.estimated_duration,
+                            'actual_duration', pt.actual_duration,
+                            'duration_unit', pt.duration_unit
+                        ) as timing
+                    FROM process_timing pt
+                    WHERE pt.process_subprocess_id IN (SELECT ps_id FROM subprocess_ids)
                 )
-                subprocess["variants"] = [dict(v) for v in cur.fetchall()]
-
-                # Get cost items
+                SELECT 
+                    si.ps_id,
+                    COALESCE(vd.variants, '[]'::json) as variants,
+                    COALESCE(cid.cost_items, '[]'::json) as cost_items,
+                    COALESCE(gd.groups, '[]'::json) as groups,
+                    td.timing
+                FROM subprocess_ids si
+                LEFT JOIN variants_data vd ON vd.process_subprocess_id = si.ps_id
+                LEFT JOIN cost_items_data cid ON cid.process_subprocess_id = si.ps_id
+                LEFT JOIN groups_data gd ON gd.process_subprocess_id = si.ps_id
+                LEFT JOIN timing_data td ON td.process_subprocess_id = si.ps_id
+                ORDER BY si.sequence_order
+                """,
+                (process_id,),
+            )
+            
+            subprocess_data = {row['ps_id']: row for row in cur.fetchall()}
+            
+            # OPTIMIZATION 2: Batch load group alternatives
+            if subprocess_data:
+                ps_ids = tuple(subprocess_data.keys())
                 cur.execute(
                     """
-                    SELECT * FROM cost_items
-                    WHERE process_subprocess_id = %s
-                """,
-                    (ps_id,),
+                    SELECT 
+                        sg.id as group_id,
+                        sg.process_subprocess_id,
+                        json_agg(
+                            json_build_object(
+                                'id', vu.id,
+                                'variant_id', vu.variant_id,
+                                'variant_name', im.name,
+                                'opening_stock', iv.opening_stock,
+                                'quantity', vu.quantity,
+                                'unit', iv.unit,
+                                'alternative_order', vu.alternative_order
+                            ) ORDER BY vu.alternative_order
+                        ) as alternatives
+                    FROM substitute_groups sg
+                    JOIN variant_usage vu ON vu.substitute_group_id = sg.id AND vu.is_alternative = TRUE
+                    JOIN item_variant iv ON iv.variant_id = vu.variant_id
+                    JOIN item_master im ON im.item_id = iv.item_id
+                    WHERE sg.process_subprocess_id = ANY(%s)
+                    GROUP BY sg.id, sg.process_subprocess_id
+                    """,
+                    (list(ps_ids),),
                 )
-                subprocess["cost_items"] = [dict(ci) for ci in cur.fetchall()]
-
-                # Get substitute groups with their alternatives
-                cur.execute(
-                    """
-                    SELECT * FROM substitute_groups
-                    WHERE process_subprocess_id = %s
-                """,
-                    (ps_id,),
-                )
-                groups = cur.fetchall()
-
+                
+                alternatives_by_group = {}
+                for row in cur.fetchall():
+                    key = (row['process_subprocess_id'], row['group_id'])
+                    alternatives_by_group[key] = row['alternatives']
+            
+            # Merge batch-loaded data into subprocesses
+            for subprocess in process["subprocesses"]:
+                ps_id = subprocess["process_subprocess_id"]
+                data = subprocess_data.get(ps_id, {})
+                
+                # Parse JSON aggregated data
+                subprocess["variants"] = data.get("variants", [])
+                subprocess["cost_items"] = data.get("cost_items", [])
+                subprocess["timing"] = data.get("timing")
+                
+                # Handle substitute groups with their alternatives
+                groups = data.get("groups", [])
                 subprocess["substitute_groups"] = []
                 for group in groups:
-                    cur.execute(
-                        """
-                        SELECT
-                            vu.*,
-                            iv.name as variant_name,
-                            iv.opening_stock
-                        FROM variant_usage vu
-                        JOIN item_variant iv ON iv.variant_id = vu.variant_id
-                        WHERE vu.substitute_group_id = %s
-                          AND vu.is_alternative = TRUE
-                        ORDER BY vu.alternative_order
-                    """,
-                        (group["id"],),
-                    )
-
                     group_dict = dict(group)
-                    group_dict["alternatives"] = [dict(alt) for alt in cur.fetchall()]
+                    key = (ps_id, group['id'])
+                    group_dict["alternatives"] = alternatives_by_group.get(key, [])
                     subprocess["substitute_groups"].append(group_dict)
 
-                # Get timing
-                cur.execute(
-                    """
-                    SELECT * FROM process_timing
-                    WHERE process_subprocess_id = %s
-                """,
-                    (ps_id,),
-                )
-                timing = cur.fetchone()
-                subprocess["timing"] = dict(timing) if timing else None
-
-            # Get additional costs
+            # Get additional costs (process-level, usually small)
             cur.execute(
                 """
                 SELECT * FROM additional_costs

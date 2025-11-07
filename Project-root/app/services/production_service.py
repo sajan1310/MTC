@@ -481,7 +481,7 @@ class ProductionService:
             cur.execute(
                 """
                 SELECT
-                    SUM(ci.quantity * ci.rate_per_unit) as total_cost_items
+                    SUM(ci.quantity * ci.amount) as total_cost_items
                 FROM cost_items ci
                 JOIN process_subprocesses ps ON ps.id = ci.process_subprocess_id
                 WHERE ps.process_id = %s

@@ -6,11 +6,14 @@ Handles subprocess template management including:
 - Reusable template management
 - Variant and cost item management within subprocesses
 - Substitute group creation
+- Caching for performance (Priority 3)
 """
 
 from __future__ import annotations
 
 from typing import Any, Dict, List, Optional
+from functools import lru_cache
+from flask import current_app
 
 import database
 import psycopg2.extras
@@ -20,8 +23,54 @@ from ..models.process import CostItem, Subprocess, SubstituteGroup, VariantUsage
 
 class SubprocessService:
     """
-    Service for subprocess management operations.
+    Service for subprocess management operations with caching.
     """
+    
+    # Cache version for invalidation
+    _cache_version = 0
+    
+    @classmethod
+    def invalidate_cache(cls):
+        """Invalidate subprocess cache when data changes."""
+        cls._cache_version += 1
+        # Clear the LRU cache
+        SubprocessService.get_all_subprocesses_cached.cache_clear()
+        current_app.logger.info("Subprocess cache cleared")
+
+    @staticmethod
+    @lru_cache(maxsize=1)
+    def get_all_subprocesses_cached(cache_version: int) -> List[Dict[str, Any]]:
+        """
+        Get all subprocesses with caching (Priority 3).
+        
+        This method caches ALL subprocesses to avoid repeated database queries.
+        The cache_version parameter allows cache invalidation when data changes.
+        
+        Args:
+            cache_version: Current cache version (for invalidation)
+            
+        Returns:
+            List of all subprocess templates
+        """
+        with database.get_conn(cursor_factory=psycopg2.extras.RealDictCursor) as (
+            conn,
+            cur,
+        ):
+            cur.execute(
+                """
+                SELECT
+                    s.*,
+                    COUNT(ps.id) as usage_count
+                FROM subprocesses s
+                LEFT JOIN process_subprocesses ps ON ps.subprocess_id = s.id
+                GROUP BY s.id
+                ORDER BY s.name
+            """
+            )
+            subprocesses = [dict(sp) for sp in cur.fetchall()]
+        
+        current_app.logger.info(f"Loaded {len(subprocesses)} subprocesses into cache")
+        return subprocesses
 
     @staticmethod
     def create_subprocess(
@@ -59,6 +108,9 @@ class SubprocessService:
 
             subprocess_data = cur.fetchone()
             conn.commit()
+        
+        # Invalidate cache when new subprocess is created
+        SubprocessService.invalidate_cache()
 
         subprocess = Subprocess(subprocess_data)
         return subprocess.to_dict()
@@ -113,67 +165,42 @@ class SubprocessService:
         subprocess_type: Optional[str] = None, page: int = 1, per_page: int = 50
     ) -> Dict[str, Any]:
         """
-        List subprocesses with optional filtering.
+        List subprocesses with optional filtering (uses cache - Priority 3).
 
         Args:
             subprocess_type: Filter by subprocess type/category
             page: Page number
-            per_page: Items per page
+            per_page: Items per page (max 1000)
 
         Returns:
             Paginated subprocess list
         """
-        offset = (page - 1) * per_page
-
-        conditions = []
-        params = []
-
+        # Enforce reasonable limits
+        per_page = min(per_page, 1000)
+        
+        # Priority 3: Use cached data
+        all_subprocesses = SubprocessService.get_all_subprocesses_cached(
+            SubprocessService._cache_version
+        )
+        
+        # Filter by type if specified
         if subprocess_type:
-            conditions.append("category = %s")
-            params.append(subprocess_type)
-
-        where_clause = " AND ".join(conditions) if conditions else "1=1"
-
-        with database.get_conn(cursor_factory=psycopg2.extras.RealDictCursor) as (
-            conn,
-            cur,
-        ):
-            # Get total count
-            cur.execute(
-                f"""
-                SELECT COUNT(*) as total
-                FROM subprocesses
-                WHERE {where_clause}
-            """,
-                params,
-            )
-            total = cur.fetchone()["total"]
-
-            # Get page of results
-            cur.execute(
-                f"""
-                SELECT
-                    s.*,
-                    COUNT(ps.id) as usage_count
-                FROM subprocesses s
-                LEFT JOIN process_subprocesses ps ON ps.subprocess_id = s.id
-                WHERE {where_clause}
-                GROUP BY s.id
-                ORDER BY s.name
-                LIMIT %s OFFSET %s
-            """,
-                params + [per_page, offset],
-            )
-
-            subprocesses = cur.fetchall()
+            filtered = [sp for sp in all_subprocesses if sp.get('category') == subprocess_type]
+        else:
+            filtered = all_subprocesses
+        
+        # Calculate pagination
+        total = len(filtered)
+        offset = (page - 1) * per_page
+        paginated = filtered[offset:offset + per_page]
 
         return {
-            "subprocesses": [dict(sp) for sp in subprocesses],
+            "subprocesses": paginated,
             "pagination": {
                 "page": page,
                 "per_page": per_page,
                 "total": total,
-                "pages": (total + per_page - 1) // per_page,
+                "pages": (total + per_page - 1) // per_page if total > 0 else 0,
             },
         }
 
@@ -397,14 +424,12 @@ class SubprocessService:
             process_subprocess_id: The process-subprocess association
             cost_type: Type of cost (labor, electricity, etc.)
             quantity: Quantity
-            rate_per_unit: Rate per unit
+            rate_per_unit: Rate per unit (amount)
             description: Optional description
 
         Returns:
             Created cost item
         """
-        total_cost = quantity * rate_per_unit
-
         with database.get_conn(cursor_factory=psycopg2.extras.RealDictCursor) as (
             conn,
             cur,
@@ -413,8 +438,8 @@ class SubprocessService:
                 """
                 INSERT INTO cost_items (
                     process_subprocess_id, cost_type, description,
-                    quantity, rate_per_unit, total_cost
-                ) VALUES (%s, %s, %s, %s, %s, %s)
+                    quantity, amount
+                ) VALUES (%s, %s, %s, %s, %s)
                 RETURNING *
             """,
                 (
@@ -423,7 +448,6 @@ class SubprocessService:
                     description,
                     quantity,
                     rate_per_unit,
-                    total_cost,
                 ),
             )
 

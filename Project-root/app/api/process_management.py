@@ -241,14 +241,17 @@ def get_process_structure(process_id):
         if not process:
             return APIResponse.not_found("Process", process_id)
 
-        # Check user access
-        if not can_access_process(process.get("created_by")):
-            return APIResponse.error("forbidden", "Access denied", 403)
+        # Check user access - only if user is authenticated
+        if current_user.is_authenticated:
+            # Use correct key - process may have 'user_id' or 'created_by'
+            process_owner = process.get("user_id") or process.get("created_by")
+            if not can_access_process({"user_id": process_owner}):
+                return APIResponse.error("forbidden", "Access denied", 403)
 
         return APIResponse.success(process)
     except Exception as e:
         current_app.logger.error(
-            f"Error retrieving process structure {process_id}: {e}"
+            f"Error retrieving process structure {process_id}: {e}", exc_info=True
         )
         return APIResponse.error("internal_error", str(e), 500)
 

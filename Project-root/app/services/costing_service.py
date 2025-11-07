@@ -257,7 +257,7 @@ class CostingService:
                     ci.cost_type,
                     ci.description,
                     ci.quantity,
-                    ci.rate_per_unit
+                    ci.amount as rate_per_unit
                 FROM cost_items ci
                 WHERE ci.process_subprocess_id = %s
             """,

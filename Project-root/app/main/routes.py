@@ -38,6 +38,16 @@ def health():
     return jsonify({"status": "ok"}), 200
 
 
+@main_bp.route("/favicon.ico")
+def favicon():
+    """Serve favicon using the logo image"""
+    return send_from_directory(
+        os.path.join(current_app.root_path, "..", "static", "img"),
+        "Final_Logo.png",
+        mimetype="image/png"
+    )
+
+
 @main_bp.route("/dashboard")
 @login_required
 def dashboard():
@@ -294,8 +304,10 @@ def change_password():
 
 @main_bp.route("/static/img/<filename>")
 def img_file(filename):
+    """Serve image files from static/img directory"""
     return send_from_directory(
-        os.path.join(current_app.root_path, "static", "img"), filename
+        os.path.join(current_app.root_path, "..", "static", "img"), 
+        filename
     )
 
 

@@ -10,19 +10,25 @@
     BACKEND_FRONTEND_DB_SYNC_COMPLETE.md
     BACKEND_FRONTEND_DB_SYNC_REPORT.md
     check_columns.sql
+    check_process.py
     CI_DATABASE_FIX_SUMMARY.md
     CLEANUP_REPORT.md
     COMPLETE_FIX_SUMMARY.md
     COMPREHENSIVE_AUDIT_REPORT.md
+    debug_process_structure.py
     enhanced_project_auditor.py
+    ERROR_FIX_SUMMARY.md
     file_structure.txt
     FINAL_AUDIT_SUMMARY.md
+    FINAL_FIX_SUMMARY.md
     FINAL_VERIFICATION_REPORT.md
     FRONTEND_BACKEND_SYNC_FIXES.md
+    FRONTEND_CRASH_AUDIT_REPORT.md
     generate_structure.py
     GITHUB_ACTIONS_FIXES.md
     How_To_Use_Repairs.md
     IMPLEMENTATION_VERIFICATION_REPORT.md
+    IMPORT_FIX.md
     Issue-Impact-FixTime-Severity.csv
     ISSUES_RESOLVED.md
     MTC_Action_Plan.md
@@ -30,12 +36,16 @@
     MTC_Deep_Integration_Audit.md
     MTC_FIXES_APPLIED.md
     MTC_VERIFICATION_QUICK_SUMMARY.md
+    OPTIMIZATION_QUICK_REFERENCE.md
+    PROCESS_EDITOR_OPTIMIZATION_SUMMARY.md
     PRODUCTION_READINESS_REPORT.md
     project_auditor.py
     Project_Summary.md
+    QUICK_FIX_APPLIED.md
     QUICK_FIX_GUIDE.md
     QUICK_FIX_REFERENCE.md
     QUICK_REFERENCE.md
+    QUICK_REFERENCE_CARD.md
     UI_UX_IMPROVEMENTS_SUMMARY.md
     UI_UX_TESTING_GUIDE.md
     UI_UX_VISUAL_COMPARISON.md
@@ -69,6 +79,7 @@
             13039884026421219477
             14618820188488294353
             15767727954531337712
+            3574304971547025042
             4111050184384059389
             4650478382468658153
             5677812442673862182
@@ -233,6 +244,7 @@
                 __init__.py
             validators/
                 import_validators.py
+                process_validator.py
                 __init__.py
         auth/
             routes.py
@@ -243,6 +255,7 @@
             TECHNICAL_DEBT.md
         logs/
             app.log
+            app.log.1
         migrations/
             add_indexes.sql
             add_missing_upf_tables.sql

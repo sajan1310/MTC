@@ -1,3 +1,80 @@
+// Helper: Show error notification modal
+function showErrorNotification(title, message, options = {}) {
+    // Use existing notification system or fallback to modal
+    let errorDiv = document.getElementById('error-notification');
+    if (!errorDiv) {
+        errorDiv = document.createElement('div');
+        errorDiv.id = 'error-notification';
+        errorDiv.className = 'error-notification';
+        document.body.appendChild(errorDiv);
+    }
+    errorDiv.innerHTML = `
+        <div class="error-content">
+            <h3>${title}</h3>
+            <p>${message}</p>
+            <div class="error-actions">
+                ${options.actions ? options.actions.map(action =>
+                    `<button onclick="(${action.onClick.toString()})()">${action.label}</button>`
+                ).join('') : ''}
+            </div>
+        </div>
+    `;
+    errorDiv.style.display = 'block';
+}
+
+// Helper: Disable all editing controls
+function disableEditingControls() {
+    document.querySelectorAll('button, input, select, textarea').forEach(el => {
+        el.disabled = true;
+    });
+}
+// Helper: Show/hide loading spinner
+function showLoadingSpinner() {
+    let spinner = document.getElementById('loading-spinner');
+    if (!spinner) {
+        spinner = document.createElement('div');
+        spinner.id = 'loading-spinner';
+        spinner.className = 'loading-spinner';
+        spinner.innerHTML = '<div class="spinner"></div>';
+        document.body.appendChild(spinner);
+    }
+    spinner.style.display = 'block';
+}
+
+function hideLoadingSpinner() {
+    const spinner = document.getElementById('loading-spinner');
+    if (spinner) spinner.style.display = 'none';
+}
+// Main process data loader with error handling
+async function loadProcessData(processId) {
+    try {
+        showLoadingSpinner();
+        const response = await fetch(`/api/upf/processes/${processId}`);
+        if (!response.ok) {
+            throw new Error(`Failed to load process: ${response.status} ${response.statusText}`);
+        }
+        const data = await response.json();
+        if (!data || !data.id) {
+            throw new Error('Invalid process data received');
+        }
+        // ...rest of the function (populate UI, etc.)
+    } catch (error) {
+        console.error('Error loading process:', error);
+        showErrorNotification(
+            'Failed to Load Process',
+            `Unable to load process data. ${error.message}. Please refresh the page or contact support.`,
+            {
+                actions: [
+                    { label: 'Retry', onClick: () => loadProcessData(processId) },
+                    { label: 'Go Back', onClick: () => window.location.href = '/upf/processes' }
+                ]
+            }
+        );
+        disableEditingControls();
+    } finally {
+        hideLoadingSpinner();
+    }
+}
 /**
  * Process Editor Component
  * Main controller for the process editor page
@@ -104,7 +181,10 @@ const processEditor = {
             }
 
             if (!response.ok) {
-                throw new Error('Failed to load process structure');
+                const errorData = await response.json().catch(() => ({ error: response.statusText }));
+                const errorMessage = errorData.error || errorData.message || `HTTP ${response.status}`;
+                console.error(`Failed to load process structure: ${response.status}`, errorData);
+                throw new Error(errorMessage);
             }
 
             const data = await response.json();
@@ -113,7 +193,15 @@ const processEditor = {
             costCalculator.calculate();
         } catch (error) {
             console.error('Error loading process structure:', error);
-            this.showAlert('Failed to load process structure', 'error');
+            this.showAlert(`Failed to load process structure: ${error.message}. Please check the console for details.`, 'error');
+            
+            // Show more helpful error in development
+            if (window.location.hostname === 'localhost' || window.location.hostname === '127.0.0.1') {
+                console.group('Debug Information');
+                console.log('Process ID:', this.processId);
+                console.log('Error:', error);
+                console.groupEnd();
+            }
         }
     },
 

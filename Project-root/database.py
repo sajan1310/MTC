@@ -178,4 +178,54 @@ def close_db_pool():
     """Close all database connections. Call on application shutdown."""
     if db_pool:
         db_pool.closeall()
-        current_app.logger.info("Database pool closed")
+
+
+def transactional(func):
+    """
+    Decorator for automatic transaction management.
+    
+    Wraps a function to automatically:
+    - Start a database transaction
+    - Commit on success
+    - Rollback on any exception
+    - Properly clean up resources
+    
+    The decorated function must accept 'conn' and 'cur' as first two arguments
+    (or as keyword arguments).
+    
+    Usage:
+        @transactional
+        def update_process(conn, cur, process_id, **kwargs):
+            cur.execute("UPDATE processes SET ...")
+            # Transaction auto-commits on success
+            return result
+    
+    Example:
+        @transactional
+        def create_process_with_subprocesses(conn, cur, name, subprocess_ids):
+            cur.execute("INSERT INTO processes ...")
+            process_id = cur.fetchone()['id']
+            for sp_id in subprocess_ids:
+                cur.execute("INSERT INTO process_subprocesses ...")
+            # All-or-nothing: commits if all succeed, rolls back on any error
+            return process_id
+    """
+    from functools import wraps
+    
+    @wraps(func)
+    def wrapper(*args, **kwargs):
+        with get_conn(cursor_factory=psycopg2.extras.RealDictCursor) as (conn, cur):
+            try:
+                # Call the wrapped function with conn and cur
+                result = func(conn, cur, *args, **kwargs)
+                # Transaction is committed by get_conn context manager
+                return result
+            except Exception as e:
+                # get_conn context manager handles rollback
+                current_app.logger.error(
+                    f"Transaction failed in {func.__name__}: {e}", 
+                    exc_info=True
+                )
+                raise
+    
+    return wrapper

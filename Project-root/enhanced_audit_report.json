@@ -1,5 +1,5 @@
 {
-  "audit_timestamp": "2025-11-07T14:23:16.800382",
+  "audit_timestamp": "2025-11-07T18:30:41.419443",
   "project_root": "C:\\Users\\erkar\\OneDrive\\Desktop\\MTC\\Project-root",
   "blueprints": [
     {
@@ -1083,7 +1083,7 @@
       "methods": [
         "GET"
       ],
-      "handler": "get_categories_stub"
+      "handler": "get_categories"
     },
     {
       "file": "app\\api\\stubs.py",
@@ -1118,16 +1118,6 @@
     {
       "file": "app\\api\\subprocess_management.py",
       "blueprint": "subprocess_api_bp",
-      "route": "/subprocesses",
-      "full_path": "/api/upf/subprocesses",
-      "methods": [
-        "POST"
-      ],
-      "handler": "create_subprocess"
-    },
-    {
-      "file": "app\\api\\subprocess_management.py",
-      "blueprint": "subprocess_api_bp",
       "route": "/subprocess",
       "full_path": "/api/upf/subprocess",
       "methods": [
@@ -1138,8 +1128,18 @@
     {
       "file": "app\\api\\subprocess_management.py",
       "blueprint": "subprocess_api_bp",
-      "route": "/subprocesses/<int:subprocess_id>",
-      "full_path": "/api/upf/subprocesses/<int:subprocess_id>",
+      "route": "/subprocesses",
+      "full_path": "/api/upf/subprocesses",
+      "methods": [
+        "POST"
+      ],
+      "handler": "create_subprocess"
+    },
+    {
+      "file": "app\\api\\subprocess_management.py",
+      "blueprint": "subprocess_api_bp",
+      "route": "/subprocess/<int:subprocess_id>",
+      "full_path": "/api/upf/subprocess/<int:subprocess_id>",
       "methods": [
         "GET"
       ],
@@ -1148,8 +1148,8 @@
     {
       "file": "app\\api\\subprocess_management.py",
       "blueprint": "subprocess_api_bp",
-      "route": "/subprocess/<int:subprocess_id>",
-      "full_path": "/api/upf/subprocess/<int:subprocess_id>",
+      "route": "/subprocesses/<int:subprocess_id>",
+      "full_path": "/api/upf/subprocesses/<int:subprocess_id>",
       "methods": [
         "GET"
       ],
@@ -1168,16 +1168,6 @@
     {
       "file": "app\\api\\subprocess_management.py",
       "blueprint": "subprocess_api_bp",
-      "route": "/subprocesses/<int:subprocess_id>",
-      "full_path": "/api/upf/subprocesses/<int:subprocess_id>",
-      "methods": [
-        "PUT"
-      ],
-      "handler": "update_subprocess"
-    },
-    {
-      "file": "app\\api\\subprocess_management.py",
-      "blueprint": "subprocess_api_bp",
       "route": "/subprocess/<int:subprocess_id>",
       "full_path": "/api/upf/subprocess/<int:subprocess_id>",
       "methods": [
@@ -1191,9 +1181,9 @@
       "route": "/subprocesses/<int:subprocess_id>",
       "full_path": "/api/upf/subprocesses/<int:subprocess_id>",
       "methods": [
-        "DELETE"
+        "PUT"
       ],
-      "handler": "delete_subprocess"
+      "handler": "update_subprocess"
     },
     {
       "file": "app\\api\\subprocess_management.py",
@@ -1208,12 +1198,12 @@
     {
       "file": "app\\api\\subprocess_management.py",
       "blueprint": "subprocess_api_bp",
-      "route": "/subprocesses/<int:subprocess_id>/duplicate",
-      "full_path": "/api/upf/subprocesses/<int:subprocess_id>/duplicate",
+      "route": "/subprocesses/<int:subprocess_id>",
+      "full_path": "/api/upf/subprocesses/<int:subprocess_id>",
       "methods": [
-        "POST"
+        "DELETE"
       ],
-      "handler": "duplicate_subprocess"
+      "handler": "delete_subprocess"
     },
     {
       "file": "app\\api\\subprocess_management.py",
@@ -1224,16 +1214,6 @@
         "POST"
       ],
       "handler": "duplicate_subprocess"
-    },
-    {
-      "file": "app\\api\\subprocess_management.py",
-      "blueprint": "subprocess_api_bp",
-      "route": "/subprocesses/search",
-      "full_path": "/api/upf/subprocesses/search",
-      "methods": [
-        "GET"
-      ],
-      "handler": "search_subprocesses"
     },
     {
       "file": "app\\api\\subprocess_management.py",
@@ -1529,6 +1509,16 @@
     {
       "file": "app\\main\\routes.py",
       "blueprint": "main_bp",
+      "route": "/favicon.ico",
+      "full_path": "/favicon.ico",
+      "methods": [
+        "GET"
+      ],
+      "handler": "favicon"
+    },
+    {
+      "file": "app\\main\\routes.py",
+      "blueprint": "main_bp",
       "route": "/dashboard",
       "full_path": "/dashboard",
       "methods": [
@@ -1780,10 +1770,10 @@
     }
   ],
   "route_summary": {
-    "total_routes": 173,
+    "total_routes": 172,
     "by_method": {
       "GET": 97,
-      "POST": 48,
+      "POST": 47,
       "PUT": 15,
       "DELETE": 16
     },
@@ -1793,16 +1783,16 @@
       "process_api_bp": 23,
       "production_api_bp": 20,
       "api_bp": 61,
-      "subprocess_api_bp": 13,
+      "subprocess_api_bp": 11,
       "variant_api_bp": 17,
       "auth_bp": 9,
-      "main_bp": 27
+      "main_bp": 28
     }
   },
   "javascript_api_calls": [
     {
       "file": "static\\js\\cost_calculator.js",
-      "url": "/api/upf/processes/${this.processId}/costing",
+      "url": "/api/upf/processes/${processId}/structure",
       "method": "GET",
       "type": "fetch"
     },
@@ -1814,7 +1804,7 @@
     },
     {
       "file": "static\\js\\process_editor.js",
-      "url": "/api/upf/processes/${this.processId}",
+      "url": "/api/upf/processes/${processId}",
       "method": "GET",
       "type": "fetch"
     },
@@ -2086,9 +2076,9 @@
   "route_api_sync": {
     "matched": [
       {
-        "url": "/api/upf/processes/${this.processId}/costing",
+        "url": "/api/upf/processes/${processId}/structure",
         "method": "GET",
-        "route": "/api/upf/processes/\\d+/costing",
+        "route": "/api/upf/processes/\\d+/structure",
         "file": "static\\js\\cost_calculator.js"
       },
       {
@@ -2098,7 +2088,7 @@
         "file": "static\\js\\login.js"
       },
       {
-        "url": "/api/upf/processes/${this.processId}",
+        "url": "/api/upf/processes/${processId}",
         "method": "GET",
         "route": "/api/upf/processes/\\d+",
         "file": "static\\js\\process_editor.js"
@@ -2442,6 +2432,15 @@
           "POST"
         ],
         "handler": "reorder_subprocesses",
+        "file": "app\\api\\process_management.py",
+        "message": "Route defined but not called from frontend"
+      },
+      {
+        "route": "/api/upf/processes/<int:process_id>/costing",
+        "methods": [
+          "GET"
+        ],
+        "handler": "get_worst_case_costing",
         "file": "app\\api\\process_management.py",
         "message": "Route defined but not called from frontend"
       },
@@ -3085,29 +3084,11 @@
         "message": "Route defined but not called from frontend"
       },
       {
-        "route": "/api/upf/subprocesses/<int:subprocess_id>/duplicate",
-        "methods": [
-          "POST"
-        ],
-        "handler": "duplicate_subprocess",
-        "file": "app\\api\\subprocess_management.py",
-        "message": "Route defined but not called from frontend"
-      },
-      {
         "route": "/api/upf/subprocess/<int:subprocess_id>/duplicate",
         "methods": [
           "POST"
         ],
         "handler": "duplicate_subprocess",
-        "file": "app\\api\\subprocess_management.py",
-        "message": "Route defined but not called from frontend"
-      },
-      {
-        "route": "/api/upf/subprocesses/search",
-        "methods": [
-          "GET"
-        ],
-        "handler": "search_subprocesses",
         "file": "app\\api\\subprocess_management.py",
         "message": "Route defined but not called from frontend"
       },
@@ -3216,6 +3197,15 @@
           "GET"
         ],
         "handler": "health",
+        "file": "app\\main\\routes.py",
+        "message": "Route defined but not called from frontend"
+      },
+      {
+        "route": "/favicon.ico",
+        "methods": [
+          "GET"
+        ],
+        "handler": "favicon",
         "file": "app\\main\\routes.py",
         "message": "Route defined but not called from frontend"
       },
@@ -3416,7 +3406,7 @@
   "incomplete_functions": [],
   "duplicate_functions": [],
   "statistics": {
-    "total_routes": 173,
+    "total_routes": 172,
     "total_api_calls": 47,
     "matched_routes": 46,
     "missing_backend": 0,

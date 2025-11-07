@@ -160,7 +160,7 @@ def get_variant_options(lot_id):
                         vu.id as usage_id,
                         vu.item_id,
                         vu.quantity,
-                        vu.unit,
+                        iv.unit,
                         vu.substitute_group_id,
                         vu.is_alternative,
                         vu.alternative_order,

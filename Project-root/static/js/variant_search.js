@@ -1,3 +1,35 @@
+// Null-safe variant card renderer
+function renderVariantCard(variant) {
+    // Null safety
+    if (!variant) {
+        console.warn('Attempted to render null variant');
+        return '';
+    }
+    const variantName = variant.variant_name || 'Unnamed Variant';
+    const itemName = variant.item_name || 'Unknown Item';
+    const color = variant.color || 'N/A';
+    const size = variant.size || 'N/A';
+    const sku = variant.sku || 'N/A';
+    const rate = variant.rate !== undefined ? `₹${parseFloat(variant.rate).toFixed(2)}` : 'N/A';
+    return `
+        <div class="variant-card" data-variant-id="${variant.id || ''}">
+            <h4>${escapeHtml(variantName)}</h4>
+            <p><strong>Item:</strong> ${escapeHtml(itemName)}</p>
+            <p><strong>Color:</strong> ${escapeHtml(color)}</p>
+            <p><strong>Size:</strong> ${escapeHtml(size)}</p>
+            <p><strong>SKU:</strong> ${escapeHtml(sku)}</p>
+            <p><strong>Rate:</strong> ${rate}</p>
+        </div>
+    `;
+}
+
+// HTML escaping for security
+function escapeHtml(text) {
+    if (!text) return '';
+    const div = document.createElement('div');
+    div.textContent = text;
+    return div.innerHTML;
+}
 /**
  * Variant Search Component
  * Handles variant searching, filtering, and drag-and-drop initialization
@@ -34,15 +66,18 @@ const variantSearch = {
             }
 
             if (!response.ok) {
-                throw new Error('Failed to load categories');
+                const errorText = await response.text();
+                console.error(`Failed to load categories: ${response.status} ${response.statusText}`, errorText);
+                throw new Error(`HTTP ${response.status}: ${response.statusText}`);
             }
 
             const data = await response.json();
-            this.categories = data.categories || [];
+            // Handle both array and object responses
+            this.categories = Array.isArray(data) ? data : (data.categories || []);
             this.renderCategoryFilter();
         } catch (error) {
             console.error('Error loading categories:', error);
-            this.showAlert('Failed to load categories', 'error');
+            this.showAlert(`Failed to load categories: ${error.message}`, 'error');
         }
     },
 

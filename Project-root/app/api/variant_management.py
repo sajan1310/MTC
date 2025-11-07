@@ -541,7 +541,7 @@ def update_cost_item(cost_id):
         params = []
 
         if "rate" in data:
-            updates.append("rate_per_unit = %s")
+            updates.append("amount = %s")
             params.append(float(data["rate"]))
         if "quantity" in data:
             updates.append("quantity = %s")
@@ -554,8 +554,7 @@ def update_cost_item(cost_id):
             cur.close()
             return APIResponse.error("validation_error", "No fields to update", 400)
 
-        # Always recalc total_cost based on (possibly) new fields
-        updates.append("total_cost = rate_per_unit * quantity")
+        # Always update timestamp
         updates.append("updated_at = NOW()")
         params.append(cost_id)
 

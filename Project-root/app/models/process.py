@@ -199,13 +199,18 @@ class CostItem:
         self.process_subprocess_id: int = data["process_subprocess_id"]
         self.cost_type: str = data["cost_type"]
         self.description: Optional[str] = data.get("description")
-        self.quantity: float = float(data["quantity"])
-        self.rate_per_unit: float = float(data["rate_per_unit"])
-        self.total_cost: Optional[float] = (
-            float(data["total_cost"]) if data.get("total_cost") else None
-        )
+        self.amount: float = float(data.get("amount", 0))
+        self.unit: Optional[str] = data.get("unit")
+        self.quantity: Optional[float] = float(data["quantity"]) if data.get("quantity") else None
         self.created_at: datetime = data.get("created_at", datetime.now())
         self.updated_at: datetime = data.get("updated_at", datetime.now())
+
+    @property
+    def total_cost(self) -> float:
+        """Calculate total cost as amount * quantity (or just amount if no quantity)."""
+        if self.quantity:
+            return self.amount * self.quantity
+        return self.amount
 
     def to_dict(self) -> Dict[str, Any]:
         """Convert to dictionary for JSON serialization."""
@@ -214,8 +219,9 @@ class CostItem:
             "process_subprocess_id": self.process_subprocess_id,
             "cost_type": self.cost_type,
             "description": self.description,
+            "amount": self.amount,
+            "unit": self.unit,
             "quantity": self.quantity,
-            "rate_per_unit": self.rate_per_unit,
             "total_cost": self.total_cost,
             "created_at": self.created_at.isoformat() if self.created_at else None,
             "updated_at": self.updated_at.isoformat() if self.updated_at else None,

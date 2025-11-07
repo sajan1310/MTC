@@ -12,6 +12,11 @@ from .import_validators import (
     validate_variant,
 )
 
+from .process_validator import (
+    ProcessValidator,
+    SubprocessValidator,
+)
+
 __all__ = [
     "DataValidator",
     "ValidationError",
@@ -20,4 +25,6 @@ __all__ = [
     "validate_size",
     "validate_variant",
     "validate_batch",
+    "ProcessValidator",
+    "SubprocessValidator",
 ]
