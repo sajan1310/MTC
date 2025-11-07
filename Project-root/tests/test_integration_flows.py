@@ -2,7 +2,6 @@
 Integration Tests for Flask Application
 Tests complete user workflows end-to-end
 """
-import pytest
 
 
 # Remove duplicate fixtures - use the ones from conftest.py instead
