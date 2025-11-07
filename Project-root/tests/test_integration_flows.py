@@ -3,7 +3,6 @@ Integration Tests for Flask Application
 Tests complete user workflows end-to-end
 """
 import pytest
-from flask import url_for
 
 
 @pytest.fixture

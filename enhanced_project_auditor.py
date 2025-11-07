@@ -10,13 +10,11 @@ ENHANCEMENTS:
 - Better handling of dynamic routes with <parameters>
 """
 
-import os
 import re
 import json
-import ast
 from pathlib import Path
 from collections import defaultdict
-from typing import Dict, List, Set, Tuple, Any
+from typing import Dict, List, Any
 from datetime import datetime
 
 
@@ -436,7 +434,7 @@ class EnhancedFlaskAuditor:
                         "methods": route["methods"],
                         "handler": route["handler"],
                         "file": route["file"],
-                        "message": f"Route defined but not called from frontend"
+                        "message": "Route defined but not called from frontend"
                     })
         
         print(f"   ✓ Matched: {len(self.results['route_api_sync']['matched'])}")
@@ -532,7 +530,7 @@ class EnhancedFlaskAuditor:
             
             return False
             
-        except Exception as e:
+        except Exception:
             # Fallback to simple comparison
             return route_pattern == actual_path
     

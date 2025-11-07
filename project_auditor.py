@@ -21,7 +21,7 @@ import json
 import ast
 from pathlib import Path
 from collections import defaultdict
-from typing import Dict, List, Set, Tuple, Any
+from typing import Dict, List, Any
 from datetime import datetime
 
 
@@ -465,7 +465,7 @@ class FlaskProjectAuditor:
                 except SyntaxError:
                     pass  # Already logged in previous step
                     
-            except Exception as e:
+            except Exception:
                 pass  # Already logged in previous step
         
         # Find duplicates
