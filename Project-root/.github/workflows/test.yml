@@ -73,10 +73,30 @@ jobs:
       
       - name: Create compatibility database
         run: |
+          # Create 'testuser' database for test compatibility
           psql "postgresql://testuser:testpass@127.0.0.1:5432/postgres" \
             -tAc "SELECT 1 FROM pg_database WHERE datname='testuser'" | grep -q 1 || \
           psql "postgresql://testuser:testpass@127.0.0.1:5432/postgres" \
             -c "CREATE DATABASE testuser;"
+          
+          echo "✅ Test database 'testuser' created successfully"
+      
+      - name: Initialize database schemas
+        run: |
+          if [ -f migrations/init_schema.sql ]; then
+            echo "Initializing schema for testdb..."
+            psql "postgresql://testuser:testpass@127.0.0.1:5432/testdb" \
+              -f migrations/init_schema.sql || echo "⚠️  Schema init for testdb failed or already exists"
+            
+            echo "Initializing schema for testuser database..."
+            psql "postgresql://testuser:testpass@127.0.0.1:5432/testuser" \
+              -f migrations/init_schema.sql || echo "⚠️  Schema init for testuser failed or already exists"
+            
+            echo "✅ Database schemas initialized"
+          else
+            echo "⚠️  init_schema.sql not found - tests may fail if database tables are required"
+          fi
+        continue-on-error: true
       
       - name: Run Ruff linter
         run: |

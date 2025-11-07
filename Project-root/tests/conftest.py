@@ -21,6 +21,11 @@ def app():
             "SECRET_KEY": "test-secret-key",
             "SERVER_NAME": "localhost.localdomain",  # Required for url_for with _external=True
             "RATELIMIT_STORAGE_URI": "memory://",  # Explicit memory storage for rate limiter
+            # Test database configuration
+            "DB_NAME": "testuser",  # Use testuser database for tests
+            "DB_HOST": os.getenv("DB_HOST", "127.0.0.1"),
+            "DB_USER": os.getenv("DB_USER", "postgres"),
+            "DB_PASS": os.getenv("DB_PASS", "abcd"),
         }
     )
     yield flask_app
@@ -30,6 +35,22 @@ def app():
 def client(app):
     """A test client for the app."""
     return app.test_client()
+
+
+@pytest.fixture
+def authenticated_client(app):
+    """
+    Create an authenticated test client.
+    
+    Since LOGIN_DISABLED=True in test config, this client will bypass
+    authentication checks automatically. This fixture is used for testing
+    endpoints that would normally require authentication.
+    """
+    with app.test_client() as client:
+        with app.app_context():
+            # With LOGIN_DISABLED=True, no actual login is needed
+            # The @login_required decorator will be bypassed
+            yield client
 
 
 @pytest.fixture

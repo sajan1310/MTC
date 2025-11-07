@@ -5,41 +5,11 @@ Tests complete user workflows end-to-end
 import pytest
 
 
-@pytest.fixture
-def client():
-    """Create test client with testing configuration"""
-    from app import create_app
-    
-    app = create_app('testing')
-    app.config['TESTING'] = True
-    app.config['WTF_CSRF_ENABLED'] = False  # Disable CSRF for testing
-    
-    with app.test_client() as client:
-        with app.app_context():
-            yield client
-
-
-@pytest.fixture
-def authenticated_client(client):
-    """
-    Create authenticated test client
-    Note: This requires proper test user setup in test database
-    """
-    # TODO: Implement proper test user creation and authentication
-    # For now, this is a placeholder that returns the client
-    # In production tests, you would:
-    # 1. Create a test user in the database
-    # 2. Login via POST to /auth/api/login or similar
-    # 3. Verify the session cookie is set
-    
-    # Example implementation (commented out - needs test DB setup):
-    # response = client.post('/auth/api/login', json={
-    #     'email': 'test@example.com',
-    #     'password': 'TestPassword123!'
-    # })
-    # assert response.status_code == 200
-    
-    return client
+# Remove duplicate fixtures - use the ones from conftest.py instead
+# The conftest.py provides:
+# - app: Flask app configured for testing
+# - client: Test client
+# - authenticated_client: Test client with authentication bypassed via LOGIN_DISABLED=True
 
 
 class TestAuthenticationFlows:

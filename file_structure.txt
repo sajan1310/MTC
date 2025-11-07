@@ -129,6 +129,7 @@
         pytest.ini
         QUICK_START_GUIDE.md
         QUICK_START_UNIVERSAL_PROCESS_FRAMEWORK.md
+        QUICK_TEST_GUIDE.md
         README.md
         requirements.txt
         run.py
@@ -137,6 +138,7 @@
         SYNC_ANALYSIS_REPORT.md
         TASK_4_PRODUCTION_LOT_VARIANT_SELECTION_COMPLETE.md
         TESTING_CHECKLIST.md
+        TESTING_FIXES_SUMMARY.md
         test_oauth.ps1
         TODO_LIST_COMPLETION_SUMMARY.md
         UNIVERSAL_PROCESS_FRAMEWORK_PROGRESS.md

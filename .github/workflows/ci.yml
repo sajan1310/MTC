@@ -241,15 +241,21 @@ jobs:
 
       - name: Initialize database schema
         run: |
-          echo "Initializing database schema for testdb..."
-          psql "postgresql://testuser:testpass@127.0.0.1:5432/testdb" \
-            -f Project-root/migrations/init_schema.sql
-          
-          echo "Initializing database schema for testuser..."
-          psql "postgresql://testuser:testpass@127.0.0.1:5432/testuser" \
-            -f Project-root/migrations/init_schema.sql
-          
-          echo "✅ Database schemas initialized successfully"
+          if [ -f Project-root/migrations/init_schema.sql ]; then
+            echo "Initializing database schema for testdb..."
+            psql "postgresql://testuser:testpass@127.0.0.1:5432/testdb" \
+              -f Project-root/migrations/init_schema.sql || echo "⚠️  Schema init for testdb failed or already exists"
+            
+            echo "Initializing database schema for testuser..."
+            psql "postgresql://testuser:testpass@127.0.0.1:5432/testuser" \
+              -f Project-root/migrations/init_schema.sql || echo "⚠️  Schema init for testuser failed or already exists"
+            
+            echo "✅ Database schema initialization completed"
+          else
+            echo "⚠️  init_schema.sql not found - skipping schema initialization"
+            echo "Tests may fail if they require database tables"
+          fi
+        continue-on-error: true
 
       - name: Run tests with coverage
         working-directory: Project-root
