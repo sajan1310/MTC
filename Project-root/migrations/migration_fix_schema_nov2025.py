@@ -100,30 +100,9 @@ def up():
             """
         )
 
-        # 1b. Fix incorrect foreign key on import_jobs (users.id vs users.user_id)
-        cur.execute(
-            """
-            DO $$
-            BEGIN
-                IF EXISTS (
-                    SELECT 1 FROM information_schema.tables WHERE table_name='import_jobs'
-                ) THEN
-                    IF EXISTS (
-                        SELECT 1 FROM information_schema.table_constraints tc
-                        WHERE tc.table_name='import_jobs' AND tc.constraint_name='fk_user'
-                    ) THEN
-                        EXECUTE 'ALTER TABLE import_jobs DROP CONSTRAINT fk_user';
-                    END IF;
-                    IF NOT EXISTS (
-                        SELECT 1 FROM information_schema.table_constraints tc
-                        WHERE tc.table_name='import_jobs' AND tc.constraint_type='FOREIGN KEY' AND tc.constraint_name='fk_user'
-                    ) THEN
-                        EXECUTE 'ALTER TABLE import_jobs ADD CONSTRAINT fk_user FOREIGN KEY (user_id) REFERENCES users(user_id) ON DELETE CASCADE';
-                    END IF;
-                END IF;
-            END$$;
-            """
-        )
+        # 1b. Note: import_jobs FK handling removed
+        # The import_jobs table creation already includes the FK constraint on user_id.
+        # No additional FK manipulation needed here to avoid duplicate constraints.
 
         # 2. Normalize status constraint on production_lots -----------------
         # Drop and recreate status constraint only if production_lots exists

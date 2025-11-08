@@ -5,7 +5,6 @@
 --   * Align production_lots schema (created_by, worst_case_estimated_cost, status constraint)
 --   * Add item_master.category
 --   * Add substitute_groups.deleted_at (soft delete support)
---   * Correct import_jobs foreign key (users.id -> users.user_id)
 --   * Add helpful indexes (idempotent)
 -- Safety:
 --   * Fully idempotent (uses IF EXISTS / IF NOT EXISTS / conditional DO blocks)
@@ -36,28 +35,10 @@ BEGIN
     END IF;
 END$$;
 
--- 1b. Fix incorrect foreign key on import_jobs (should reference users.user_id)
-DO $$
-BEGIN
-    IF EXISTS (
-        SELECT 1 FROM information_schema.tables WHERE table_name='import_jobs'
-    ) THEN
-        IF EXISTS (
-            SELECT 1 FROM information_schema.table_constraints
-            WHERE table_name='import_jobs' AND constraint_name='fk_user'
-        ) THEN
-            -- Drop existing fk_user (regardless of column reference) and recreate
-            EXECUTE 'ALTER TABLE import_jobs DROP CONSTRAINT fk_user';
-        END IF;
-        -- Ensure users.user_id exists (prevent error if base table name differs)
-        IF EXISTS (
-            SELECT 1 FROM information_schema.columns
-            WHERE table_name='users' AND column_name='user_id'
-        ) THEN
-            EXECUTE 'ALTER TABLE import_jobs ADD CONSTRAINT fk_user FOREIGN KEY (user_id) REFERENCES users(user_id) ON DELETE CASCADE';
-        END IF;
-    END IF;
-END$$;
+-- 1b. Note: import_jobs FK handling removed
+-- The import_jobs table creation (via migration_add_import_jobs.py or manual SQL)
+-- already includes the FK constraint on user_id -> users(user_id).
+-- No additional FK manipulation needed here to avoid duplicate constraints.
 
 -- 2. Normalize production_lots status constraint ------------------------------
 -- Drop old constraint if present
@@ -126,5 +107,4 @@ COMMIT;
 -- SELECT column_name FROM information_schema.columns WHERE table_name='item_master' AND column_name='category';
 -- SELECT column_name FROM information_schema.columns WHERE table_name='substitute_groups' AND column_name='deleted_at';
 -- SELECT conname, pg_get_constraintdef(oid) FROM pg_constraint WHERE conname='production_lots_status_check';
--- SELECT * FROM information_schema.table_constraints WHERE table_name='import_jobs' AND constraint_name='fk_user';
 -- ============================================================================
