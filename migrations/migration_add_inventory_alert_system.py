@@ -8,6 +8,8 @@ import psycopg2
 from psycopg2 import sql
 import os
 
+# Database configuration - reads from environment variables (CI-compatible)
+# CI sets: DB_USER=postgres, DB_PASS=testpass, DB_NAME=testdb, DB_HOST=127.0.0.1
 DB_NAME = os.getenv('DB_NAME', 'MTC')
 DB_USER = os.getenv('DB_USER', 'postgres')
 DB_HOST = os.getenv('DB_HOST', '127.0.0.1')

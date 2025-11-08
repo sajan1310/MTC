@@ -106,12 +106,12 @@ class TestingConfig(Config):
     # Use memory storage for rate limiter in tests to avoid Redis warning
     RATELIMIT_STORAGE_URL = "memory://"
 
-    # Test database configuration - use testuser database
-    # Can be overridden by environment variables or conftest.py
-    DB_NAME = os.getenv("TEST_DB_NAME", "testuser")
+    # Test database configuration - defaults match CI environment
+    # CI workflow sets: POSTGRES_USER=postgres, POSTGRES_PASSWORD=testpass, POSTGRES_DB=testdb
+    DB_NAME = os.getenv("TEST_DB_NAME", os.getenv("DB_NAME", "testdb"))
     DB_HOST = os.getenv("TEST_DB_HOST", os.getenv("DB_HOST", "127.0.0.1"))
     DB_USER = os.getenv("TEST_DB_USER", os.getenv("DB_USER", "postgres"))
-    DB_PASS = os.getenv("TEST_DB_PASS", os.getenv("DB_PASS", "abcd"))
+    DB_PASS = os.getenv("TEST_DB_PASS", os.getenv("DB_PASS", "testpass"))
 
 
 class ProductionConfig(Config):
