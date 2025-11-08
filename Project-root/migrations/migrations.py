@@ -19,28 +19,30 @@ class MockApp:
         class MockLogger:
             def info(self, msg):
                 print(f"INFO: {msg}")
+
             def critical(self, msg):
                 print(f"CRITICAL: {msg}")
+
             def warning(self, msg):
                 print(f"WARNING: {msg}")
-        
+
         self.logger = MockLogger()
-        
+
         # Load configuration from environment variables (CI-compatible)
         self.config = {
-            'DATABASE_URL': os.getenv('DATABASE_URL'),
-            'DB_HOST': os.getenv('DB_HOST', '127.0.0.1'),
-            'DB_NAME': os.getenv('DB_NAME', 'MTC'),
-            'DB_USER': os.getenv('DB_USER', 'postgres'),
-            'DB_PASS': os.getenv('DB_PASS', 'abcd'),
-            'DB_POOL_MIN': int(os.getenv('DB_POOL_MIN', 2)),
-            'DB_POOL_MAX': int(os.getenv('DB_POOL_MAX', 20)),
-            'DB_CONNECT_TIMEOUT': int(os.getenv('DB_CONNECT_TIMEOUT', 10)),
-            'DB_STATEMENT_TIMEOUT': int(os.getenv('DB_STATEMENT_TIMEOUT', 60000)),
-            'TESTING': False,
-            'ENV': 'production'
+            "DATABASE_URL": os.getenv("DATABASE_URL"),
+            "DB_HOST": os.getenv("DB_HOST", "127.0.0.1"),
+            "DB_NAME": os.getenv("DB_NAME", "MTC"),
+            "DB_USER": os.getenv("DB_USER", "postgres"),
+            "DB_PASS": os.getenv("DB_PASS", "abcd"),
+            "DB_POOL_MIN": int(os.getenv("DB_POOL_MIN", 2)),
+            "DB_POOL_MAX": int(os.getenv("DB_POOL_MAX", 20)),
+            "DB_CONNECT_TIMEOUT": int(os.getenv("DB_CONNECT_TIMEOUT", 10)),
+            "DB_STATEMENT_TIMEOUT": int(os.getenv("DB_STATEMENT_TIMEOUT", 60000)),
+            "TESTING": False,
+            "ENV": "production",
         }
-    
+
     def get(self, key, default=None):
         return self.config.get(key, default)
 
