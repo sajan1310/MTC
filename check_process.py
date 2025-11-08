@@ -16,7 +16,16 @@ sys.path.insert(0, project_root)
 # Import Flask app and database
 # ruff: noqa: E402
 from app import create_app
-import database  # Dynamic import after path manipulation
+
+# Dynamically load the database module from the project root to avoid static-import resolution errors
+import importlib.util
+db_path = os.path.join(project_root, "database.py")
+spec = importlib.util.spec_from_file_location("database", db_path)
+database = importlib.util.module_from_spec(spec)
+if spec.loader is None:
+    raise ImportError(f"Cannot load database module from {db_path}")
+spec.loader.exec_module(database)
+
 import psycopg2.extras
 
 # Create app context
