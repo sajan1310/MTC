@@ -261,6 +261,15 @@ jobs:
           fi
         continue-on-error: true
 
+      - name: Run database migrations
+        working-directory: Project-root
+        run: |
+          echo "::group::Applying database migrations"
+          echo "Running Python migration scripts to create processes, production_lots, etc..."
+          python migrations/migrations.py
+          echo "::endgroup::"
+        continue-on-error: false
+
       - name: Run tests with coverage
         working-directory: Project-root
         run: |

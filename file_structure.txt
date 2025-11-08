@@ -308,6 +308,8 @@
             migration_add_discount_and_receipt_number.py
             migration_add_fix_update_lot_inventory_status_function.py
             migration_add_import_jobs.py
+            migration_add_inventory_alert_system.py
+            migration_add_inventory_alert_system_temp.py
             migration_add_item_uniqueness.py
             migration_add_lot_variant_selections.py
             migration_add_master_tables.py
