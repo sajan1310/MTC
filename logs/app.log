@@ -22203,3 +22203,94 @@ PL/pgSQL function inline_code_block line 7 at SQL statement
 2025-11-07 17:25:13,991 WARNING: Stub endpoint called: GET /api/upf/reports/metrics [in C:\Users\erkar\OneDrive\Desktop\MTC\Project-root\app\api\stubs.py:33]
 2025-11-07 17:25:13,991 WARNING: Stub endpoint called: GET /api/upf/reports/metrics [in C:\Users\erkar\OneDrive\Desktop\MTC\Project-root\app\api\stubs.py:33]
 2025-11-07 17:25:13,991 WARNING: Stub endpoint called: GET /api/upf/reports/metrics [in C:\Users\erkar\OneDrive\Desktop\MTC\Project-root\app\api\stubs.py:33]
+2025-11-08 11:23:01,082 INFO: Request ID middleware enabled [in C:\Users\erkar\OneDrive\Desktop\MTC\project-root\app\middleware\request_id.py:44]
+2025-11-08 11:23:01,863 INFO: Universal Process Framework API blueprints exempted from CSRF protection [in C:\Users\erkar\OneDrive\Desktop\MTC\project-root\app\__init__.py:318]
+2025-11-08 11:23:55,539 INFO: Loaded 1 subprocesses into cache [in C:\Users\erkar\OneDrive\Desktop\MTC\project-root\app\services\subprocess_service.py:72]
+2025-11-08 11:24:11,810 INFO: [CREATE SUBPROCESS] Received request from user 3 [in C:\Users\erkar\OneDrive\Desktop\MTC\project-root\app\api\subprocess_management.py:43]
+2025-11-08 11:24:11,840 INFO: Subprocess cache cleared [in C:\Users\erkar\OneDrive\Desktop\MTC\project-root\app\services\subprocess_service.py:38]
+2025-11-08 11:24:11,841 INFO: [CREATE SUBPROCESS] Subprocess created successfully: 2 by user 3 [in C:\Users\erkar\OneDrive\Desktop\MTC\project-root\app\api\subprocess_management.py:102]
+2025-11-08 11:24:11,878 INFO: Loaded 2 subprocesses into cache [in C:\Users\erkar\OneDrive\Desktop\MTC\project-root\app\services\subprocess_service.py:72]
+2025-11-08 15:53:07,802 INFO: Request ID middleware enabled [in c:\Users\erkar\OneDrive\Desktop\MTC\Project-root\app\middleware\request_id.py:44]
+2025-11-08 15:53:07,840 INFO: Subprocess cache cleared [in c:\Users\erkar\OneDrive\Desktop\MTC\Project-root\app\services\subprocess_service.py:39]
+2025-11-08 15:53:08,519 INFO: Universal Process Framework API blueprints exempted from CSRF protection [in c:\Users\erkar\OneDrive\Desktop\MTC\Project-root\app\__init__.py:321]
+2025-11-08 15:56:42,889 INFO: Request ID middleware enabled [in c:\Users\erkar\OneDrive\Desktop\MTC\Project-root\app\middleware\request_id.py:44]
+2025-11-08 15:56:42,951 INFO: Subprocess cache cleared [in c:\Users\erkar\OneDrive\Desktop\MTC\Project-root\app\services\subprocess_service.py:39]
+2025-11-08 15:56:43,673 INFO: Universal Process Framework API blueprints exempted from CSRF protection [in c:\Users\erkar\OneDrive\Desktop\MTC\Project-root\app\__init__.py:321]
+2025-11-08 15:56:43,843 ERROR: Database error: 0 [in c:\Users\erkar\OneDrive\Desktop\MTC\Project-root\database.py:163]
+2025-11-08 15:56:43,844 ERROR: Error fetching alerts health metrics: 0 [in c:\Users\erkar\OneDrive\Desktop\MTC\Project-root\app\api\inventory_alerts.py:326]
+2025-11-08 15:56:44,005 INFO: [RATE LIMIT] In-memory rate limiting enabled (testing/memory). [in c:\Users\erkar\OneDrive\Desktop\MTC\Project-root\app\__init__.py:178]
+2025-11-08 15:56:44,103 INFO: Database pool initialized: 2-20 connections (timeout: 10s, query timeout: 60000ms) [in c:\Users\erkar\OneDrive\Desktop\MTC\Project-root\database.py:67]
+2025-11-08 15:56:44,104 INFO: Request ID middleware enabled [in c:\Users\erkar\OneDrive\Desktop\MTC\Project-root\app\middleware\request_id.py:44]
+2025-11-08 15:56:44,104 INFO: Request ID middleware enabled [in c:\Users\erkar\OneDrive\Desktop\MTC\Project-root\app\middleware\request_id.py:44]
+2025-11-08 15:56:44,307 INFO: Universal Process Framework API blueprints exempted from CSRF protection [in c:\Users\erkar\OneDrive\Desktop\MTC\Project-root\app\__init__.py:321]
+2025-11-08 15:56:44,307 INFO: Universal Process Framework API blueprints exempted from CSRF protection [in c:\Users\erkar\OneDrive\Desktop\MTC\Project-root\app\__init__.py:321]
+2025-11-08 15:56:44,325 ERROR: Database error: 0 [in c:\Users\erkar\OneDrive\Desktop\MTC\Project-root\database.py:163]
+2025-11-08 15:56:44,325 ERROR: Database error: 0 [in c:\Users\erkar\OneDrive\Desktop\MTC\Project-root\database.py:163]
+2025-11-08 15:56:44,326 ERROR: Error fetching alerts health metrics: 0 [in c:\Users\erkar\OneDrive\Desktop\MTC\Project-root\app\api\inventory_alerts.py:326]
+2025-11-08 15:56:44,326 ERROR: Error fetching alerts health metrics: 0 [in c:\Users\erkar\OneDrive\Desktop\MTC\Project-root\app\api\inventory_alerts.py:326]
+2025-11-08 15:56:44,339 INFO: [RATE LIMIT] In-memory rate limiting enabled (testing/memory). [in c:\Users\erkar\OneDrive\Desktop\MTC\Project-root\app\__init__.py:178]
+2025-11-08 15:56:44,339 INFO: [RATE LIMIT] In-memory rate limiting enabled (testing/memory). [in c:\Users\erkar\OneDrive\Desktop\MTC\Project-root\app\__init__.py:178]
+2025-11-08 15:56:44,537 INFO: Database pool initialized: 2-20 connections (timeout: 10s, query timeout: 60000ms) [in c:\Users\erkar\OneDrive\Desktop\MTC\Project-root\database.py:67]
+2025-11-08 15:56:44,537 INFO: Database pool initialized: 2-20 connections (timeout: 10s, query timeout: 60000ms) [in c:\Users\erkar\OneDrive\Desktop\MTC\Project-root\database.py:67]
+2025-11-08 15:56:44,538 INFO: Request ID middleware enabled [in c:\Users\erkar\OneDrive\Desktop\MTC\Project-root\app\middleware\request_id.py:44]
+2025-11-08 15:56:44,538 INFO: Request ID middleware enabled [in c:\Users\erkar\OneDrive\Desktop\MTC\Project-root\app\middleware\request_id.py:44]
+2025-11-08 15:56:44,538 INFO: Request ID middleware enabled [in c:\Users\erkar\OneDrive\Desktop\MTC\Project-root\app\middleware\request_id.py:44]
+2025-11-08 15:56:44,703 INFO: Universal Process Framework API blueprints exempted from CSRF protection [in c:\Users\erkar\OneDrive\Desktop\MTC\Project-root\app\__init__.py:321]
+2025-11-08 15:56:44,703 INFO: Universal Process Framework API blueprints exempted from CSRF protection [in c:\Users\erkar\OneDrive\Desktop\MTC\Project-root\app\__init__.py:321]
+2025-11-08 15:56:44,703 INFO: Universal Process Framework API blueprints exempted from CSRF protection [in c:\Users\erkar\OneDrive\Desktop\MTC\Project-root\app\__init__.py:321]
+2025-11-08 15:58:15,263 INFO: Request ID middleware enabled [in c:\Users\erkar\OneDrive\Desktop\MTC\Project-root\app\middleware\request_id.py:44]
+2025-11-08 15:58:15,310 INFO: Subprocess cache cleared [in c:\Users\erkar\OneDrive\Desktop\MTC\Project-root\app\services\subprocess_service.py:39]
+2025-11-08 15:58:15,988 INFO: Universal Process Framework API blueprints exempted from CSRF protection [in c:\Users\erkar\OneDrive\Desktop\MTC\Project-root\app\__init__.py:321]
+2025-11-08 15:58:16,124 INFO: [RATE LIMIT] In-memory rate limiting enabled (testing/memory). [in c:\Users\erkar\OneDrive\Desktop\MTC\Project-root\app\__init__.py:178]
+2025-11-08 15:58:16,325 INFO: Database pool initialized: 2-20 connections (timeout: 10s, query timeout: 60000ms) [in c:\Users\erkar\OneDrive\Desktop\MTC\Project-root\database.py:67]
+2025-11-08 15:58:16,327 INFO: Request ID middleware enabled [in c:\Users\erkar\OneDrive\Desktop\MTC\Project-root\app\middleware\request_id.py:44]
+2025-11-08 15:58:16,327 INFO: Request ID middleware enabled [in c:\Users\erkar\OneDrive\Desktop\MTC\Project-root\app\middleware\request_id.py:44]
+2025-11-08 15:58:16,511 INFO: Universal Process Framework API blueprints exempted from CSRF protection [in c:\Users\erkar\OneDrive\Desktop\MTC\Project-root\app\__init__.py:321]
+2025-11-08 15:58:16,511 INFO: Universal Process Framework API blueprints exempted from CSRF protection [in c:\Users\erkar\OneDrive\Desktop\MTC\Project-root\app\__init__.py:321]
+2025-11-08 15:58:16,545 INFO: [RATE LIMIT] In-memory rate limiting enabled (testing/memory). [in c:\Users\erkar\OneDrive\Desktop\MTC\Project-root\app\__init__.py:178]
+2025-11-08 15:58:16,545 INFO: [RATE LIMIT] In-memory rate limiting enabled (testing/memory). [in c:\Users\erkar\OneDrive\Desktop\MTC\Project-root\app\__init__.py:178]
+2025-11-08 15:58:16,760 INFO: Database pool initialized: 2-20 connections (timeout: 10s, query timeout: 60000ms) [in c:\Users\erkar\OneDrive\Desktop\MTC\Project-root\database.py:67]
+2025-11-08 15:58:16,760 INFO: Database pool initialized: 2-20 connections (timeout: 10s, query timeout: 60000ms) [in c:\Users\erkar\OneDrive\Desktop\MTC\Project-root\database.py:67]
+2025-11-08 15:58:16,761 INFO: Request ID middleware enabled [in c:\Users\erkar\OneDrive\Desktop\MTC\Project-root\app\middleware\request_id.py:44]
+2025-11-08 15:58:16,761 INFO: Request ID middleware enabled [in c:\Users\erkar\OneDrive\Desktop\MTC\Project-root\app\middleware\request_id.py:44]
+2025-11-08 15:58:16,761 INFO: Request ID middleware enabled [in c:\Users\erkar\OneDrive\Desktop\MTC\Project-root\app\middleware\request_id.py:44]
+2025-11-08 15:58:16,943 INFO: Universal Process Framework API blueprints exempted from CSRF protection [in c:\Users\erkar\OneDrive\Desktop\MTC\Project-root\app\__init__.py:321]
+2025-11-08 15:58:16,943 INFO: Universal Process Framework API blueprints exempted from CSRF protection [in c:\Users\erkar\OneDrive\Desktop\MTC\Project-root\app\__init__.py:321]
+2025-11-08 15:58:16,943 INFO: Universal Process Framework API blueprints exempted from CSRF protection [in c:\Users\erkar\OneDrive\Desktop\MTC\Project-root\app\__init__.py:321]
+2025-11-08 16:09:20,278 INFO: Request ID middleware enabled [in C:\Users\erkar\OneDrive\Desktop\MTC\project-root\app\middleware\request_id.py:44]
+2025-11-08 16:09:20,354 INFO: Subprocess cache cleared [in C:\Users\erkar\OneDrive\Desktop\MTC\project-root\app\services\subprocess_service.py:39]
+2025-11-08 16:09:20,909 INFO: Universal Process Framework API blueprints exempted from CSRF protection [in C:\Users\erkar\OneDrive\Desktop\MTC\project-root\app\__init__.py:321]
+2025-11-08 16:10:04,878 INFO: Loaded 2 subprocesses into cache [in C:\Users\erkar\OneDrive\Desktop\MTC\project-root\app\services\subprocess_service.py:73]
+2025-11-08 16:10:49,942 INFO: [CREATE PROCESS] Received request from user 3 [in C:\Users\erkar\OneDrive\Desktop\MTC\project-root\app\api\process_management.py:96]
+2025-11-08 16:10:49,943 INFO: [CREATE PROCESS] Creating process 'Frame Assembly' with class 'Manufacturing' [in C:\Users\erkar\OneDrive\Desktop\MTC\project-root\app\api\process_management.py:162]
+2025-11-08 16:10:49,973 WARNING: Database integrity error: new row for relation "processes" violates check constraint "processes_process_class_check"
+DETAIL:  Failing row contains (240, Frame Assembly, null, manufacturing, Active, 0.00, null, 3, 2025-11-08 16:10:49.944854, 2025-11-08 16:10:49.944854).
+ [in C:\Users\erkar\OneDrive\Desktop\MTC\project-root\database.py:156]
+2025-11-08 16:10:49,974 ERROR: [CREATE PROCESS] Unexpected error: new row for relation "processes" violates check constraint "processes_process_class_check"
+DETAIL:  Failing row contains (240, Frame Assembly, null, manufacturing, Active, 0.00, null, 3, 2025-11-08 16:10:49.944854, 2025-11-08 16:10:49.944854).
+ [in C:\Users\erkar\OneDrive\Desktop\MTC\project-root\app\api\process_management.py:202]
+Traceback (most recent call last):
+  File "C:\Users\erkar\OneDrive\Desktop\MTC\project-root\app\api\process_management.py", line 166, in create_process
+    process = ProcessService.create_process(
+        name=data["name"].strip(),
+    ...<2 lines>...
+        process_class=process_class,
+    )
+  File "C:\Users\erkar\OneDrive\Desktop\MTC\project-root\app\services\process_service.py", line 93, in create_process
+    cur.execute(
+    ~~~~~~~~~~~^
+        """
+        ^^^
+    ...<10 lines>...
+        ),
+        ^^
+    )
+    ^
+  File "C:\Users\erkar\OneDrive\Desktop\MTC\venv2\Lib\site-packages\psycopg2\extras.py", line 236, in execute
+    return super().execute(query, vars)
+           ~~~~~~~~~~~~~~~^^^^^^^^^^^^^
+psycopg2.errors.CheckViolation: new row for relation "processes" violates check constraint "processes_process_class_check"
+DETAIL:  Failing row contains (240, Frame Assembly, null, manufacturing, Active, 0.00, null, 3, 2025-11-08 16:10:49.944854, 2025-11-08 16:10:49.944854).
+
+2025-11-08 16:10:58,838 INFO: Process deleted: 1 by user 3 [in C:\Users\erkar\OneDrive\Desktop\MTC\project-root\app\api\process_management.py:363]
+2025-11-08 16:11:05,337 INFO: Process deleted: 1 by user 3 [in C:\Users\erkar\OneDrive\Desktop\MTC\project-root\app\api\process_management.py:363]

@@ -16,7 +16,7 @@ def verify_endpoints(process_id: int = 1) -> int:
     # Set environment to use MTC database (matches .env DATABASE_URL)
     os.environ["DB_NAME"] = "MTC"
     os.environ["FLASK_ENV"] = "testing"
-    
+
     app = create_app("testing")
     app.config.update(
         {
@@ -35,11 +35,14 @@ def verify_endpoints(process_id: int = 1) -> int:
 
     failures = 0
     client = app.test_client()
-    
+
     for path in paths:
         resp = client.get(path)
         status = resp.status_code
-        ok = status in (200, 404)  # 200 if exists, 404 if not found; 500 indicates server error
+        ok = status in (
+            200,
+            404,
+        )  # 200 if exists, 404 if not found; 500 indicates server error
         print(f"GET {path} -> {status}")
         ct = resp.headers.get("Content-Type", "")
         print(f"  Content-Type: {ct}")
@@ -50,7 +53,7 @@ def verify_endpoints(process_id: int = 1) -> int:
             data = None
         if data is not None:
             print(f"  JSON keys: {list(data)[:8]}")
-            if not ok and 'message' in data:
+            if not ok and "message" in data:
                 print(f"  Error message: {data['message']}")
         else:
             # Print a short snippet of text/HTML

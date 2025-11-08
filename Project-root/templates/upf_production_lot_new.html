@@ -237,12 +237,45 @@
                 </button>
             </div>
         </form>
+        <!-- Alert Panel (hidden until alerts returned) -->
+        <div id="alert-panel" class="alert-panel hidden">
+            <div class="alert-header">
+                <h3>Inventory Alerts</h3>
+                <button id="dismiss-alerts" class="btn-secondary" type="button" onclick="document.getElementById('alert-panel').classList.add('hidden')">Dismiss</button>
+            </div>
+            <div class="alerts-summary">
+                <div class="summary-stat critical"><span class="count" id="count-critical">0</span> Critical</div>
+                <div class="summary-stat high"><span class="count" id="count-high">0</span> High</div>
+                <div class="summary-stat medium"><span class="count" id="count-medium">0</span> Medium</div>
+                <div class="summary-stat low"><span class="count" id="count-low">0</span> Low</div>
+            </div>
+            <div id="alerts-list" class="alerts-list"></div>
+            <div class="alert-actions">
+                <button id="ack-proceed" type="button" class="btn-primary" disabled>Acknowledge & Proceed</button>
+                <button id="ack-delay" type="button" class="btn-secondary" disabled>Delay Production</button>
+            </div>
+        </div>
+        <div id="procurement-panel" class="procurement-panel hidden">
+            <div class="panel-header">
+                <h3>Procurement Recommendations</h3>
+                <button id="export-recommendations" class="btn-secondary" type="button">Export to CSV</button>
+            </div>
+            <table class="recommendations-table">
+                <thead>
+                    <tr>
+                        <th>Variant</th><th>Supplier</th><th>Recommended Qty</th><th>Delivery Date</th><th>Est. Cost</th><th>Status</th><th>Actions</th>
+                    </tr>
+                </thead>
+                <tbody id="recommendations-tbody"></tbody>
+            </table>
+        </div>
     </div>
 </div>
 
 <script>
 const productionLotForm = {
     processes: [],
+    lotId: null,
 
     async init() {
         await this.loadProcesses();
@@ -357,18 +390,96 @@ const productionLotForm = {
                 throw new Error(data.message || 'Failed to create production lot');
             }
 
-            this.showAlert('Production lot created successfully!', 'success');
-            
-            // Redirect to the lot detail page after a short delay
-            setTimeout(() => {
-                window.location.href = `/upf/production-lot/${data.data.id}`;
-            }, 1000);
+            // Save lot id for subsequent actions
+            this.lotId = data.data?.lot_id || data.data?.id || null;
+
+            // Show alerts if present (preview or full from API)
+            if (data.data && data.data.alerts_present) {
+                this.showAlert('Lot created with inventory alerts – review required.', 'warning');
+                try {
+                    // Prefer full alert details with IDs for bulk ack
+                    if (this.lotId) {
+                        const resp2 = await fetch(`/api/upf/inventory-alerts/lot/${this.lotId}`, { credentials: 'include' });
+                        if (resp2.ok) {
+                            const payload = await resp2.json();
+                            const details = payload.data?.alert_details || payload.alert_details || [];
+                            ProductionLotAlertHandler.displayAlerts(details);
+                            const bySev = payload.data?.alerts_summary || payload.alerts_summary || {};
+                            ['CRITICAL','HIGH','MEDIUM','LOW'].forEach(sev => {
+                                const el = document.getElementById(`count-${sev.toLowerCase()}`);
+                                const count = bySev.by_severity ? bySev.by_severity[sev] : bySev[sev];
+                                if (el) el.textContent = count || 0;
+                            });
+                        }
+                    } else {
+                        // Fallback to preview-only data
+                        ProductionLotAlertHandler.displayAlerts(data.data.alerts_details || []);
+                        const counts = (data.data.alerts_summary && data.data.alerts_summary.by_severity) || {};
+                        ['CRITICAL','HIGH','MEDIUM','LOW'].forEach(sev => {
+                            const el = document.getElementById(`count-${sev.toLowerCase()}`);
+                            if (el) el.textContent = counts[sev] || 0;
+                        });
+                    }
+                } catch (e) {
+                    console.error('Error fetching full alerts:', e);
+                    ProductionLotAlertHandler.displayAlerts(data.data.alerts_details || []);
+                }
+                // Show recommendations panel placeholder if any rec IDs
+                if ((data.data.procurement_recommendations || []).length) {
+                    document.getElementById('procurement-panel').classList.remove('hidden');
+                }
+                // Enable action buttons with bulk acknowledgment
+                const proceedBtn = document.getElementById('ack-proceed');
+                const delayBtn = document.getElementById('ack-delay');
+                proceedBtn.disabled = false;
+                delayBtn.disabled = false;
+                proceedBtn.onclick = () => productionLotForm.bulkAcknowledge('PROCEED');
+                delayBtn.onclick = () => productionLotForm.bulkAcknowledge('DELAY');
+            } else {
+                this.showAlert('Production lot created successfully! Redirecting...', 'success');
+                setTimeout(() => {
+                    window.location.href = `/upf?tab=production`;
+                }, 1200);
+            }
 
         } catch (error) {
             console.error('Error creating production lot:', error);
             this.showAlert(error.message || 'Failed to create production lot', 'error');
             submitBtn.disabled = false;
             submitBtn.textContent = 'Create Production Lot';
+        }
+    },
+
+    async bulkAcknowledge(action) {
+        if (!this.lotId) {
+            this.showAlert('Missing lot id for acknowledgment', 'error');
+            return;
+        }
+        try {
+            const resp = await fetch(`/api/upf/inventory-alerts/lot/${this.lotId}`, { credentials: 'include' });
+            const payload = await resp.json();
+            const details = payload.data?.alert_details || payload.alert_details || [];
+            const acks = details.filter(a => !a.user_acknowledged).map(a => ({ alert_id: a.alert_id, user_action: action, action_notes: null }));
+            if (acks.length === 0) {
+                this.showAlert('No pending alerts to acknowledge', 'success');
+                return;
+            }
+            const post = await fetch(`/api/upf/inventory-alerts/lot/${this.lotId}/acknowledge-bulk`, {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                credentials: 'include',
+                body: JSON.stringify({ acknowledgments: acks })
+            });
+            const res = await post.json();
+            if (!post.ok) {
+                throw new Error(res.message || 'Bulk acknowledgment failed');
+            }
+            this.showAlert('Alerts acknowledged. You can proceed.', 'success');
+            const panel = document.getElementById('alert-panel');
+            if (panel) panel.classList.add('hidden');
+        } catch (e) {
+            console.error('Bulk acknowledge error:', e);
+            this.showAlert(e.message || 'Bulk acknowledgment failed', 'error');
         }
     },
 
@@ -394,6 +505,7 @@ const productionLotForm = {
 
 document.addEventListener('DOMContentLoaded', function() {
     productionLotForm.init();
+    if (window.ProductionLotAlertHandler) { window.ProductionLotAlertHandler.init(); }
 });
 </script>
 {% endblock %}

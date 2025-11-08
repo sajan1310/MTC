@@ -105,7 +105,7 @@ class TestingConfig(Config):
     SESSION_COOKIE_SECURE = False
     # Use memory storage for rate limiter in tests to avoid Redis warning
     RATELIMIT_STORAGE_URL = "memory://"
-    
+
     # Test database configuration - use testuser database
     # Can be overridden by environment variables or conftest.py
     DB_NAME = os.getenv("TEST_DB_NAME", "testuser")

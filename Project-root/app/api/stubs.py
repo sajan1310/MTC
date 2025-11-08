@@ -23,7 +23,8 @@ logger = logging.getLogger(__name__)
 # REPORTS MODULE STUBS
 # ============================================================================
 
-@api_bp.route('/upf/reports/metrics', methods=['GET'])
+
+@api_bp.route("/upf/reports/metrics", methods=["GET"])
 @login_required
 def get_report_metrics_stub():
     """
@@ -31,19 +32,21 @@ def get_report_metrics_stub():
     Stub endpoint to prevent 404 errors during development
     """
     logger.warning("Stub endpoint called: GET /api/upf/reports/metrics")
-    return jsonify({
-        'status': 'stub',
-        'message': 'Metrics report generation feature in development',
-        'data': {
-            'total_processes': 0,
-            'total_subprocesses': 0,
-            'total_production_lots': 0,
-            'active_lots': 0
+    return jsonify(
+        {
+            "status": "stub",
+            "message": "Metrics report generation feature in development",
+            "data": {
+                "total_processes": 0,
+                "total_subprocesses": 0,
+                "total_production_lots": 0,
+                "active_lots": 0,
+            },
         }
-    }), 200
+    ), 200
 
 
-@api_bp.route('/upf/reports/top-processes', methods=['GET'])
+@api_bp.route("/upf/reports/top-processes", methods=["GET"])
 @login_required
 def get_report_top_processes_stub():
     """
@@ -51,14 +54,16 @@ def get_report_top_processes_stub():
     Stub endpoint to prevent 404 errors during development
     """
     logger.warning("Stub endpoint called: GET /api/upf/reports/top-processes")
-    return jsonify({
-        'status': 'stub',
-        'message': 'Top processes report feature in development',
-        'data': []
-    }), 200
+    return jsonify(
+        {
+            "status": "stub",
+            "message": "Top processes report feature in development",
+            "data": [],
+        }
+    ), 200
 
 
-@api_bp.route('/upf/reports/process-status', methods=['GET'])
+@api_bp.route("/upf/reports/process-status", methods=["GET"])
 @login_required
 def get_report_process_status_stub():
     """
@@ -66,18 +71,16 @@ def get_report_process_status_stub():
     Stub endpoint to prevent 404 errors during development
     """
     logger.warning("Stub endpoint called: GET /api/upf/reports/process-status")
-    return jsonify({
-        'status': 'stub',
-        'message': 'Process status report feature in development',
-        'data': {
-            'active': 0,
-            'inactive': 0,
-            'archived': 0
+    return jsonify(
+        {
+            "status": "stub",
+            "message": "Process status report feature in development",
+            "data": {"active": 0, "inactive": 0, "archived": 0},
         }
-    }), 200
+    ), 200
 
 
-@api_bp.route('/upf/reports/subprocess-usage', methods=['GET'])
+@api_bp.route("/upf/reports/subprocess-usage", methods=["GET"])
 @login_required
 def get_report_subprocess_usage_stub():
     """
@@ -85,59 +88,75 @@ def get_report_subprocess_usage_stub():
     Stub endpoint to prevent 404 errors during development
     """
     logger.warning("Stub endpoint called: GET /api/upf/reports/subprocess-usage")
-    return jsonify({
-        'status': 'stub',
-        'message': 'Subprocess usage report feature in development',
-        'data': []
-    }), 200
+    return jsonify(
+        {
+            "status": "stub",
+            "message": "Subprocess usage report feature in development",
+            "data": [],
+        }
+    ), 200
 
 
 # ============================================================================
 # PROCESS MANAGEMENT STUBS
 # ============================================================================
 
-@api_bp.route('/upf/process_subprocess/<int:subprocess_id>', methods=['DELETE'])
+
+@api_bp.route("/upf/process_subprocess/<int:subprocess_id>", methods=["DELETE"])
 @login_required
 def delete_process_subprocess_stub(subprocess_id):
     """
     TODO: Implement process-subprocess relationship deletion logic
     Stub endpoint to prevent 404 errors during development
     """
-    logger.warning(f"Stub endpoint called: DELETE /api/upf/process_subprocess/{subprocess_id}")
-    return jsonify({
-        'status': 'stub',
-        'message': 'Process-subprocess deletion feature in development',
-        'subprocess_id': subprocess_id
-    }), 200
+    logger.warning(
+        f"Stub endpoint called: DELETE /api/upf/process_subprocess/{subprocess_id}"
+    )
+    return jsonify(
+        {
+            "status": "stub",
+            "message": "Process-subprocess deletion feature in development",
+            "subprocess_id": subprocess_id,
+        }
+    ), 200
 
 
-@api_bp.route('/upf/process_subprocess/<int:process_subprocess_id>/substitute_groups', methods=['GET'])
+@api_bp.route(
+    "/upf/process_subprocess/<int:process_subprocess_id>/substitute_groups",
+    methods=["GET"],
+)
 @login_required
 def get_substitute_groups_stub(process_subprocess_id):
     """
     TODO: Implement substitute groups retrieval logic
     Stub endpoint to prevent 404 errors during development
     """
-    logger.warning(f"Stub endpoint called: GET /api/upf/process_subprocess/{process_subprocess_id}/substitute_groups")
-    return jsonify({
-        'status': 'stub',
-        'message': 'Substitute groups retrieval feature in development',
-        'process_subprocess_id': process_subprocess_id,
-        'data': []
-    }), 200
+    logger.warning(
+        f"Stub endpoint called: GET /api/upf/process_subprocess/{process_subprocess_id}/substitute_groups"
+    )
+    return jsonify(
+        {
+            "status": "stub",
+            "message": "Substitute groups retrieval feature in development",
+            "process_subprocess_id": process_subprocess_id,
+            "data": [],
+        }
+    ), 200
 
 
 # ============================================================================
 # VARIANT & INVENTORY STUBS
 # ============================================================================
 
-@api_bp.route('/categories', methods=['GET'])
+
+@api_bp.route("/categories", methods=["GET"])
 @login_required
 def get_categories():
     """
     Returns all item categories from the item_category_master table.
     """
     from database import get_conn
+
     try:
         with get_conn(cursor_factory=None) as (conn, cur):
             # Use the actual item_category_master table from the schema
@@ -162,45 +181,54 @@ def get_categories():
 # PRODUCTION LOT STUBS
 # ============================================================================
 
-@api_bp.route('/upf/production_lot/<int:lot_id>/variant_options', methods=['POST'])
+
+@api_bp.route("/upf/production_lot/<int:lot_id>/variant_options", methods=["POST"])
 @login_required
 def post_variant_options_stub(lot_id):
     """
     TODO: Implement variant options selection logic
     Stub endpoint to prevent 404 errors during development
     """
-    logger.warning(f"Stub endpoint called: POST /api/upf/production_lot/{lot_id}/variant_options")
-    return jsonify({
-        'status': 'stub',
-        'message': 'Variant options selection feature in development',
-        'lot_id': lot_id,
-        'data': {}
-    }), 200
+    logger.warning(
+        f"Stub endpoint called: POST /api/upf/production_lot/{lot_id}/variant_options"
+    )
+    return jsonify(
+        {
+            "status": "stub",
+            "message": "Variant options selection feature in development",
+            "lot_id": lot_id,
+            "data": {},
+        }
+    ), 200
 
 
 # ============================================================================
 # AUTHENTICATION & USER STUBS
 # ============================================================================
 
-@api_bp.route('/reset-password', methods=['POST'])
+
+@api_bp.route("/reset-password", methods=["POST"])
 def reset_password_stub():
     """
     TODO: Implement password reset logic
     Stub endpoint to prevent 404 errors during development
     """
     logger.warning("Stub endpoint called: POST /api/reset-password")
-    return jsonify({
-        'status': 'stub',
-        'message': 'Password reset feature in development',
-        'data': {}
-    }), 200
+    return jsonify(
+        {
+            "status": "stub",
+            "message": "Password reset feature in development",
+            "data": {},
+        }
+    ), 200
 
 
 # ============================================================================
 # STOCK & INVENTORY STUBS
 # ============================================================================
 
-@api_bp.route('/stock-receipts', methods=['DELETE'])
+
+@api_bp.route("/stock-receipts", methods=["DELETE"])
 @login_required
 def delete_stock_receipt_stub():
     """
@@ -208,12 +236,16 @@ def delete_stock_receipt_stub():
     Stub endpoint to prevent 404 errors during development
     """
     logger.warning("Stub endpoint called: DELETE /api/stock-receipts")
-    receipt_id = request.args.get('id') or request.json.get('id') if request.json else None
-    return jsonify({
-        'status': 'stub',
-        'message': 'Stock receipt deletion feature in development',
-        'receipt_id': receipt_id
-    }), 200
+    receipt_id = (
+        request.args.get("id") or request.json.get("id") if request.json else None
+    )
+    return jsonify(
+        {
+            "status": "stub",
+            "message": "Stock receipt deletion feature in development",
+            "receipt_id": receipt_id,
+        }
+    ), 200
 
 
 # ============================================================================
@@ -249,7 +281,7 @@ def delete_stock_receipt_stub():
 # SUMMARY
 # ============================================================================
 # Total Stub Endpoints Created: 13 (down from 26 - removed 9 duplicates + 4 other)
-# 
+#
 # Note: Removed 9 duplicate stubs that had real implementations elsewhere:
 # - get_process_costing_stub (implemented in process_management.py)
 # - reorder_subprocesses_stub (implemented in process_management.py)
@@ -263,7 +295,7 @@ def delete_stock_receipt_stub():
 #
 # Reports: 4 endpoints
 # - /api/upf/reports/metrics
-# - /api/upf/reports/top-processes  
+# - /api/upf/reports/top-processes
 # - /api/upf/reports/process-status
 # - /api/upf/reports/subprocess-usage
 #

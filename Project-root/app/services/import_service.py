@@ -352,8 +352,8 @@ class ImportService:
         )
 
         query = f"""
-            INSERT INTO item_master ({', '.join(columns)})
-            VALUES ({', '.join(placeholders)})
+            INSERT INTO item_master ({", ".join(columns)})
+            VALUES ({", ".join(placeholders)})
             ON CONFLICT (name) {conflict_where}
             DO UPDATE SET {update_clause}
             RETURNING item_id

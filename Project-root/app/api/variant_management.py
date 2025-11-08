@@ -21,7 +21,7 @@ variant_api_bp = Blueprint("variant_api", __name__)
 # Helper function to safely check user role
 def get_user_role():
     """Get current user's role, returning None if not authenticated or role doesn't exist."""
-    if current_user.is_authenticated and hasattr(current_user, 'role'):
+    if current_user.is_authenticated and hasattr(current_user, "role"):
         return current_user.role
     return None
 

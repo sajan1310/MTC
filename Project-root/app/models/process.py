@@ -95,7 +95,9 @@ class Subprocess:
         self.description: Optional[str] = data.get("description")
         self.reusable: bool = data.get("reusable", False)
         self.version: int = data.get("version", 1)
-        self.user_id: Optional[int] = data.get("user_id")  # Optional - subprocesses are shared
+        self.user_id: Optional[int] = data.get(
+            "user_id"
+        )  # Optional - subprocesses are shared
         self.is_deleted: bool = data.get("is_deleted", False)
         self.deleted_at: Optional[datetime] = data.get("deleted_at")
         self.created_at: datetime = data.get("created_at", datetime.now())
@@ -201,7 +203,9 @@ class CostItem:
         self.description: Optional[str] = data.get("description")
         self.amount: float = float(data.get("amount", 0))
         self.unit: Optional[str] = data.get("unit")
-        self.quantity: Optional[float] = float(data["quantity"]) if data.get("quantity") else None
+        self.quantity: Optional[float] = (
+            float(data["quantity"]) if data.get("quantity") else None
+        )
         self.created_at: datetime = data.get("created_at", datetime.now())
         self.updated_at: datetime = data.get("updated_at", datetime.now())
 

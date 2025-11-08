@@ -1,0 +1,72 @@
+/* Inventory Alerts and Procurement Panels */
+.alert-panel { border: 2px solid #ffa500; border-radius: 8px; padding: 20px; margin: 20px 0; background-color: #fff8f0; box-shadow: 0 4px 6px rgba(255, 165, 0, 0.1); }
+.alert-panel.hidden { display: none; }
+.alert-header { display: flex; justify-content: space-between; align-items: center; margin-bottom: 20px; }
+.alerts-summary { display: grid; grid-template-columns: repeat(auto-fit, minmax(120px, 1fr)); gap: 10px; margin-bottom: 20px; }
+.summary-stat { padding: 10px; border-radius: 4px; text-align: center; font-weight: bold; }
+.summary-stat.critical { background-color: #ffcccc; color: #cc0000; }
+.summary-stat.high { background-color: #ffe6cc; color: #ff6600; }
+.summary-stat.medium { background-color: #fffacc; color: #ffaa00; }
+.summary-stat.low { background-color: #e6f3ff; color: #0066cc; }
+.alerts-list { max-height: 400px; overflow-y: auto; margin-bottom: 20px; }
+.alert-item { border: 1px solid #ddd; border-radius: 4px; padding: 12px; margin-bottom: 12px; position: relative; }
+.alert-item.alert-severity-CRITICAL { border-left: 4px solid #cc0000; background-color: #ffe6e6; }
+.alert-item.alert-severity-HIGH { border-left: 4px solid #ff6600; background-color: #fff0e6; }
+.alert-item.alert-severity-MEDIUM { border-left: 4px solid #ffaa00; background-color: #fffae6; }
+.alert-item.alert-severity-LOW { border-left: 4px solid #0066cc; background-color: #e6f3ff; }
+.alert-item.alert-severity-OK { border-left: 4px solid #28a745; background-color: #e8f5e9; }
+
+/* Alert checkboxes for bulk selection */
+.alert-checkbox { margin-right: 12px; width: 18px; height: 18px; cursor: pointer; }
+.alert-checkbox:disabled { cursor: not-allowed; opacity: 0.5; }
+
+.severity-badge { display: inline-block; padding: 4px 8px; border-radius: 3px; font-size: 12px; font-weight: bold; margin-right: 10px; }
+.severity-badge.CRITICAL { background-color: #cc0000; color: white; }
+.severity-badge.HIGH { background-color: #ff6600; color: white; }
+.severity-badge.MEDIUM { background-color: #ffaa00; color: white; }
+.severity-badge.LOW { background-color: #0066cc; color: white; }
+.severity-badge.OK { background-color: #28a745; color: white; }
+
+.info-row { display: flex; justify-content: space-between; padding: 6px 0; }
+.info-row.alert-shortfall { color: #cc0000; font-weight: bold; }
+.info-row .label { font-weight: 600; color: #555; }
+.info-row .value { color: #333; }
+
+/* Inline alert actions */
+.alert-actions-inline { margin-top: 12px; display: flex; flex-direction: column; gap: 8px; }
+.action-select, .alert-notes { width: 100%; padding: 8px; margin: 0; border: 1px solid #ccc; border-radius: 4px; font-size: 14px; }
+.alert-notes { resize: vertical; font-family: inherit; }
+
+/* Bulk action buttons */
+.alert-actions { display: flex; gap: 10px; margin-top: 20px; justify-content: flex-end; }
+.btn-primary, .btn-secondary, .btn-warning, .btn-success { padding: 10px 20px; border: none; border-radius: 4px; cursor: pointer; font-weight: bold; transition: all 0.2s; }
+.btn-primary { background-color: #0066cc; color: white; }
+.btn-primary:hover { background-color: #0052a3; }
+.btn-secondary { background-color: #6c757d; color: white; }
+.btn-secondary:hover { background-color: #5a6268; }
+.btn-warning { background-color: #ffc107; color: #333; }
+.btn-warning:hover { background-color: #e0a800; }
+.btn-success { background-color: #28a745; color: white; }
+.btn-success:hover { background-color: #218838; }
+
+/* Procurement panel */
+.procurement-panel { border: 1px solid #0066cc; border-radius: 8px; padding: 20px; margin: 20px 0; background-color: #f0f5ff; }
+.procurement-panel.hidden { display: none; }
+.recommendations-table { width: 100%; border-collapse: collapse; margin-top: 10px; }
+.recommendations-table th { background-color: #0066cc; color: white; padding: 10px; text-align: left; font-weight: 600; }
+.recommendations-table td { padding: 10px; border-bottom: 1px solid #ddd; }
+.recommendations-table tr:hover { background-color: #f9f9f9; }
+.recommendations-table tbody tr:last-child td { border-bottom: none; }
+
+.status-badge { padding: 4px 8px; border-radius: 3px; font-weight: bold; font-size: 12px; }
+.status-badge.RECOMMENDED { background-color: #fff3cd; color: #856404; }
+.status-badge.ORDERED { background-color: #d1ecf1; color: #0c5460; }
+.status-badge.RECEIVED { background-color: #d4edda; color: #155724; }
+.status-badge.CANCELLED { background-color: #f8d7da; color: #721c24; }
+
+/* Responsive adjustments */
+@media (max-width: 768px) {
+  .alerts-summary { grid-template-columns: repeat(auto-fit, minmax(100px, 1fr)); }
+  .alert-actions { flex-direction: column; }
+  .btn-primary, .btn-secondary, .btn-warning, .btn-success { width: 100%; }
+}

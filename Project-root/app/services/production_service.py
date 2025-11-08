@@ -84,6 +84,142 @@ class ProductionService:
         return result
 
     @staticmethod
+    def create_production_lot_with_alerts(
+        process_id: int,
+        user_id: int,
+        quantity: int = 1,
+        lot_number: Optional[str] = None,
+        description: Optional[str] = None,
+    ) -> Dict[str, Any]:
+        """Create a production lot and immediately run inventory checks to produce alerts
+        and procurement recommendations per UPF plan.
+        """
+        lot = ProductionService.create_production_lot(
+            process_id=process_id,
+            user_id=user_id,
+            quantity=quantity,
+            lot_number=lot_number,
+        )
+        lot_id = int(lot.get("id") or lot.get("lot_id") or 0)
+        # If DB returned id with a different key, normalize
+        if not lot_id:
+            with database.get_conn(cursor_factory=psycopg2.extras.RealDictCursor) as (
+                conn,
+                cur,
+            ):
+                cur.execute(
+                    "SELECT id FROM production_lots WHERE lot_number = %s",
+                    (lot.get("lot_number"),),
+                )
+                row = cur.fetchone()
+                lot_id = int(row["id"]) if row else 0
+
+        # Run inventory checks and create alerts
+        from .inventory_alert_service import InventoryAlertService
+
+        alerts_list = InventoryAlertService.check_inventory_levels_for_production_lot(
+            lot_id
+        )
+        created_ids = InventoryAlertService.create_production_lot_alerts(
+            lot_id, alerts_list
+        )
+        # Generate recommendations for high/critical
+        rec_ids = InventoryAlertService.generate_procurement_recommendations(
+            lot_id, alerts_list
+        )
+        summary = InventoryAlertService.get_production_lot_alert_summary(lot_id)
+
+        # Compose enriched response (additive)
+        lot.update(
+            {
+                "lot_id": lot_id or lot.get("lot_id"),
+                "alerts_present": len(created_ids) > 0,
+                "alerts_summary": {
+                    "total": summary.get("total_alerts", 0),
+                    "by_severity": summary.get("alerts_by_severity", {}),
+                    "action_required": any(
+                        s in ("CRITICAL", "HIGH") and c > 0
+                        for s, c in summary.get("alerts_by_severity", {}).items()
+                    ),
+                },
+                "alerts_details": alerts_list[:5],  # preview first 5
+                "procurement_recommendations": rec_ids,
+            }
+        )
+        # Derive lot_status from summary for convenience
+        lot["lot_status"] = summary.get("lot_status") or lot.get("status")
+        return lot
+
+    @staticmethod
+    def acknowledge_and_validate_production_lot_alerts(
+        production_lot_id: int,
+        user_id: int,
+        acknowledgments: List[Dict[str, Any]],
+    ) -> Dict[str, Any]:
+        """Bulk acknowledge alerts, then recompute lot status."""
+        from app.validators.production_lot_validator import (
+            validate_alert_acknowledgment,
+        )
+        from .inventory_alert_service import InventoryAlertService
+
+        # Validate first
+        all_errors: List[str] = []
+        for ack in acknowledgments:
+            errs = validate_alert_acknowledgment(
+                int(ack.get("alert_id")),
+                str(ack.get("user_action")),
+                ack.get("action_notes"),
+            )
+            all_errors.extend(errs)
+        if all_errors:
+            return {"error": "validation_error", "details": all_errors}
+
+        with database.get_conn() as (conn, cur):
+            try:
+                for ack in acknowledgments:
+                    cur.execute(
+                        """
+                        UPDATE production_lot_inventory_alerts
+                        SET user_acknowledged = TRUE,
+                            acknowledged_at = CURRENT_TIMESTAMP,
+                            user_action = %s,
+                            action_notes = %s
+                        WHERE alert_id = %s AND production_lot_id = %s
+                        """,
+                        (
+                            ack.get("user_action"),
+                            ack.get("action_notes"),
+                            int(ack.get("alert_id")),
+                            production_lot_id,
+                        ),
+                    )
+                conn.commit()
+            except Exception:
+                conn.rollback()
+                raise
+
+        summary = InventoryAlertService.get_production_lot_alert_summary(
+            production_lot_id
+        )
+        # Apply simple transitions based on acknowledgments
+        if summary.get("alerts_by_severity", {}).get("CRITICAL", 0) > 0:
+            status = "PENDING_PROCUREMENT"
+        elif summary.get("alerts_by_severity", {}).get("HIGH", 0) > 0:
+            status = "PARTIAL_FULFILLMENT_REQUIRED"
+        else:
+            status = "READY"
+
+        with database.get_conn() as (conn, cur):
+            cur.execute(
+                "UPDATE production_lots SET lot_status_inventory = %s WHERE id = %s",
+                (status, production_lot_id),
+            )
+            conn.commit()
+
+        summary["lot_status"] = status
+        return summary
+
+    @staticmethod
     def get_production_lot(
         lot_id: int, include_selections: bool = True
     ) -> Optional[Dict[str, Any]]:
@@ -127,41 +263,81 @@ class ProductionService:
                 result["worst_case_estimated_cost"] = result.get("total_cost")
 
             if include_selections:
-                # Get all variant selections
-                cur.execute(
-                    """
-                    SELECT
-                        pls.*,
-                        sg.group_name,
-                        iv.name as variant_name,
-                        s.firm_name as supplier_name
-                    FROM production_lot_variant_selections pls
-                    JOIN substitute_groups sg ON sg.id = pls.substitute_group_id
-                    JOIN item_variant iv ON iv.variant_id = pls.selected_variant_id
-                    LEFT JOIN suppliers s ON s.supplier_id = pls.selected_supplier_id
-                    WHERE pls.lot_id = %s
-                """,
-                    (lot_id,),
-                )
-
-                result["selections"] = [dict(sel) for sel in cur.fetchall()]
+                # Get all variant selections (schema differences tolerated)
+                result["selections"] = []
+                try:
+                    cur.execute(
+                        """
+                        SELECT
+                            pls.*,
+                            sg.group_name,
+                            iv.name as variant_name,
+                            s.firm_name as supplier_name
+                        FROM production_lot_variant_selections pls
+                        JOIN substitute_groups sg ON sg.id = pls.substitute_group_id
+                        JOIN item_variant iv ON iv.variant_id = pls.selected_variant_id
+                        LEFT JOIN suppliers s ON s.supplier_id = pls.selected_supplier_id
+                        WHERE pls.lot_id = %s
+                        """,
+                        (lot_id,),
+                    )
+                    result["selections"] = [dict(sel) for sel in cur.fetchall()]
+                except Exception:
+                    # Fallback: schema may use production_lot_selections or lack substitute_group_id
+                    try:
+                        cur.execute(
+                            """
+                            SELECT * FROM production_lot_selections WHERE production_lot_id = %s
+                            """,
+                            (lot_id,),
+                        )
+                        result["selections"] = [dict(sel) for sel in cur.fetchall()]
+                    except Exception:
+                        result["selections"] = []
 
                 # Get actual costing if available
-                cur.execute(
-                    """
-                    SELECT
-                        plac.*,
-                        iv.name as variant_name,
-                        s.firm_name as supplier_name
-                    FROM production_lot_actual_costing plac
-                    JOIN item_variant iv ON iv.variant_id = plac.variant_id
-                    LEFT JOIN suppliers s ON s.supplier_id = plac.supplier_id
-                    WHERE plac.production_lot_id = %s
-                """,
-                    (lot_id,),
+                try:
+                    cur.execute(
+                        """
+                        SELECT
+                            plac.*,
+                            iv.name as variant_name,
+                            s.firm_name as supplier_name
+                        FROM production_lot_actual_costing plac
+                        JOIN item_variant iv ON iv.variant_id = plac.variant_id
+                        LEFT JOIN suppliers s ON s.supplier_id = plac.supplier_id
+                        WHERE plac.production_lot_id = %s
+                        """,
+                        (lot_id,),
+                    )
+                    result["actual_costing"] = [dict(ac) for ac in cur.fetchall()]
+                except Exception:
+                    result["actual_costing"] = []
+
+            # Enrich with alert summary + procurement recommendations (plan Phase 3.2)
+            try:
+                from .inventory_alert_service import (
+                    InventoryAlertService,
+                    ProcurementRecommendationService,
                 )
 
-                result["actual_costing"] = [dict(ac) for ac in cur.fetchall()]
+                summary = InventoryAlertService.get_production_lot_alert_summary(lot_id)
+                recs = ProcurementRecommendationService.list_recommendations(
+                    production_lot_id=lot_id
+                )
+                result["alerts_summary"] = {
+                    "total_alerts": summary.get("total_alerts", 0),
+                    "by_severity": summary.get("alerts_by_severity", {}),
+                    "acknowledged_count": summary.get("acknowledged_count", 0),
+                }
+                result["procurement_recommendations"] = recs
+            except Exception:
+                # Non-fatal if alert tables not present in some environments
+                result.setdefault(
+                    "alerts_summary",
+                    {"total_alerts": 0, "by_severity": {}, "acknowledged_count": 0},
+                )
+                result.setdefault("procurement_recommendations", [])
 
         return result
 
@@ -672,14 +848,60 @@ class ProductionService:
             "actual_cost": actual_cost,
             # Use alias to support schemas where only total_cost exists
             "worst_case_estimated_cost": float(
-                (lot.get("worst_case_estimated_cost")
-                 or lot.get("total_cost")
-                 or 0)
+                (lot.get("worst_case_estimated_cost") or lot.get("total_cost") or 0)
             ),
             "variance": actual_cost
-            - float((lot.get("worst_case_estimated_cost") or lot.get("total_cost") or 0)),
+            - float(
+                (lot.get("worst_case_estimated_cost") or lot.get("total_cost") or 0)
+            ),
             "deductions": deductions,
             "executed_at": datetime.now().isoformat(),
+        }
+
+    @staticmethod
+    def finalize_production_lot(lot_id: int, user_id: int) -> Dict[str, Any]:
+        """Finalize a production lot (lock it) if no CRITICAL alerts pending.
+
+        Raises ValueError if blocking alerts exist.
+        """
+        from .inventory_alert_service import InventoryAlertService
+
+        with database.get_conn(cursor_factory=psycopg2.extras.RealDictCursor) as (
+            conn,
+            cur,
+        ):
+            cur.execute(
+                "SELECT id, lot_number, status FROM production_lots WHERE id = %s",
+                (lot_id,),
+            )
+            lot = cur.fetchone()
+            if not lot:
+                raise ValueError("Lot not found")
+
+        summary = InventoryAlertService.get_production_lot_alert_summary(lot_id)
+        crit_pending = summary.get("alerts_by_severity", {}).get("CRITICAL", 0)
+        if crit_pending:
+            raise ValueError(
+                "Critical inventory alerts pending. Please acknowledge before finalizing."
+            )
+
+        with database.get_conn() as (conn, cur):
+            cur.execute(
+                """
+                UPDATE production_lots
+                SET status = 'finalized', finalized_at = CURRENT_TIMESTAMP
+                WHERE id = %s
+                """,
+                (lot_id,),
+            )
+            conn.commit()
+
+        return {
+            "lot_id": lot_id,
+            "lot_number": lot["lot_number"],
+            "status": "finalized",
+            "alerts_summary": summary.get("alerts_by_severity"),
+            "finalized_at": datetime.utcnow().isoformat(),
         }
 
     @staticmethod

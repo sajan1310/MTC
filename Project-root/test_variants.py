@@ -1,47 +1,59 @@
 """Quick test script to check variant and category data"""
+
 import sys
-sys.path.insert(0, '.')
+
+sys.path.insert(0, ".")
 
 from flask import Flask
 import database
 import psycopg2.extras
 from config import Config
 
+
 def test_data():
     # Initialize Flask app and database
     app = Flask(__name__)
     app.config.from_object(Config)
     database.init_app(app)
-    
+
     with app.app_context():
-        with database.get_conn(cursor_factory=psycopg2.extras.DictCursor) as (conn, cur):
+        with database.get_conn(cursor_factory=psycopg2.extras.DictCursor) as (
+            conn,
+            cur,
+        ):
             # First, check the actual columns in item_category_master
             cur.execute("""
                 SELECT column_name FROM information_schema.columns 
                 WHERE table_name='item_category_master' 
                 ORDER BY ordinal_position
             """)
-            cat_columns = [r['column_name'] for r in cur.fetchall()]
+            cat_columns = [r["column_name"] for r in cur.fetchall()]
             print(f"✓ item_category_master columns: {cat_columns}")
-            
+
             # Check variants
-            cur.execute("SELECT COUNT(*) as count FROM item_variant WHERE deleted_at IS NULL")
-            variant_count = cur.fetchone()['count']
+            cur.execute(
+                "SELECT COUNT(*) as count FROM item_variant WHERE deleted_at IS NULL"
+            )
+            variant_count = cur.fetchone()["count"]
             print(f"✓ Active variants: {variant_count}")
-            
+
             # Check categories - use correct column name
-            if 'deleted_at' in cat_columns:
-                cur.execute("SELECT COUNT(*) as count FROM item_category_master WHERE deleted_at IS NULL")
+            if "deleted_at" in cat_columns:
+                cur.execute(
+                    "SELECT COUNT(*) as count FROM item_category_master WHERE deleted_at IS NULL"
+                )
             else:
                 cur.execute("SELECT COUNT(*) as count FROM item_category_master")
-            category_count = cur.fetchone()['count']
+            category_count = cur.fetchone()["count"]
             print(f"✓ Categories: {category_count}")
-            
+
             # Check item master
-            cur.execute("SELECT COUNT(*) as count FROM item_master WHERE deleted_at IS NULL")
-            item_count = cur.fetchone()['count']
+            cur.execute(
+                "SELECT COUNT(*) as count FROM item_master WHERE deleted_at IS NULL"
+            )
+            item_count = cur.fetchone()["count"]
             print(f"✓ Active items: {item_count}")
-            
+
             # Sample variant query (same as the API)
             if variant_count > 0:
                 cur.execute("""
@@ -62,11 +74,15 @@ def test_data():
                 print("\n✓ Sample variants:")
                 for row in cur.fetchall():
                     print(f"  - {row['name']} (ID: {row['id']})")
-            
+
             if category_count > 0:
                 # Determine correct column names
-                name_col = 'item_category_name' if 'item_category_name' in cat_columns else 'category_name'
-                if 'deleted_at' in cat_columns:
+                name_col = (
+                    "item_category_name"
+                    if "item_category_name" in cat_columns
+                    else "category_name"
+                )
+                if "deleted_at" in cat_columns:
                     cur.execute(f"""
                         SELECT item_category_id as id, {name_col} as name
                         FROM item_category_master 
@@ -83,11 +99,13 @@ def test_data():
                 for row in cur.fetchall():
                     print(f"  - {row['name']} (ID: {row['id']})")
 
-if __name__ == '__main__':
+
+if __name__ == "__main__":
     try:
         test_data()
         print("\n✅ All checks passed!")
     except Exception as e:
         print(f"\n❌ Error: {e}")
         import traceback
+
         traceback.print_exc()

@@ -17,6 +17,7 @@ Complete guide for deploying the Inventory Management System to production.
 5. [Post-Deployment](#post-deployment)
 6. [Monitoring & Maintenance](#monitoring--maintenance)
 7. [Troubleshooting](#troubleshooting)
+8. [Additional Deployment Guides](#additional-deployment-guides)
 
 ---
 
@@ -64,6 +65,8 @@ RATELIMIT_STORAGE_URL=redis://localhost:6379
 # === Optional: Logging ===
 LOG_LEVEL=INFO
 ```
+
+**Note:** The Universal Process Framework (UPF) inventory alert system requires no additional environment variables. All alert and monitoring features use the existing database connection.
 
 ### Generating SECRET_KEY
 
@@ -565,12 +568,54 @@ sudo systemctl restart nginx
 
 ---
 
+## Additional Deployment Guides
+
+For more comprehensive deployment scenarios, see:
+
+### 📦 [Docker & Container Orchestration](docs/DEPLOYMENT_DOCKER.md)
+Complete guide for containerized deployments including:
+- **Docker Compose**: Local development with PostgreSQL + Redis
+- **Docker Swarm**: Simple production clustering
+- **Kubernetes**: Full orchestration with auto-scaling
+- **AWS ECS**: Managed container service on AWS
+- Best practices for image optimization and security
+
+### 🛡️ [Production Readiness Checklist](docs/PRODUCTION_READINESS.md)
+Comprehensive pre-launch and post-launch checklist covering:
+- **Security Hardening**: HTTPS, headers, secrets management, vulnerability scanning
+- **Performance Optimization**: Database indexing, connection pooling, caching
+- **Monitoring & Alerting**: Sentry, Prometheus, CloudWatch, uptime monitoring
+- **Backup & Recovery**: Automated backups, disaster recovery procedures
+- **Incident Response**: Rollback procedures, status pages, post-mortems
+- **Scalability**: Horizontal/vertical scaling, load balancing strategies
+
+### 📊 [UPF Inventory Alerts Usage](docs/UPF_INVENTORY_ALERTS_USAGE.md)
+Complete guide for the Universal Process Framework inventory alert system:
+- API endpoints for alert management and monitoring
+- Health metrics dashboard at `/monitoring`
+- Bulk acknowledgment workflows
+- Finalize blocking on CRITICAL alerts
+- Integration examples and troubleshooting
+
+### 🎨 [Alert UI Integration Guide](docs/ALERT_UI_INTEGRATION.md)
+Developer guide for integrating alert UI components:
+- HTML structure examples with Jinja2 syntax
+- JavaScript API usage (ProductionLotAlertHandler)
+- CSS class reference for severity badges and status indicators
+- User action options (PROCEED, USE_SUBSTITUTE, DELAY, PROCURE)
+- Troubleshooting common integration issues
+
+---
+
 ## Additional Resources
 
 - [Flask Production Deployment](https://flask.palletsprojects.com/en/2.3.x/deploying/)
 - [PostgreSQL Performance Tuning](https://wiki.postgresql.org/wiki/Performance_Optimization)
 - [Google OAuth Setup](https://developers.google.com/identity/protocols/oauth2)
 - [Gunicorn Configuration](https://docs.gunicorn.org/en/stable/configure.html)
+- [Docker Best Practices](https://docs.docker.com/develop/dev-best-practices/)
+- [Kubernetes Documentation](https://kubernetes.io/docs/home/)
+- [OWASP Security Guide](https://owasp.org/www-project-top-ten/)
 
 ---
 
@@ -584,5 +629,5 @@ For issues or questions:
 
 ---
 
-**Last Updated**: January 2025
-**Version**: 1.0.0
+**Last Updated**: November 2025
+**Version**: 1.1.0

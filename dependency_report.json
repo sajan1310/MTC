@@ -1,0 +1,548 @@
+{
+  "references": [
+    {
+      "file": "C:\\Users\\erkar\\OneDrive\\Desktop\\MTC\\Project-root\\app\\api\\production_lot.py",
+      "line": 8,
+      "context": "underscored versions (/production_lot, /production_lots) as legacy compatibility.\nFrontend Java"
+    },
+    {
+      "file": "C:\\Users\\erkar\\OneDrive\\Desktop\\MTC\\Project-root\\app\\api\\production_lot.py",
+      "line": 239,
+      "context": "ods=[\"GET\"])\n@production_api_bp.route(\"/production_lots\", methods=[\"GET\"])  # Legacy compatibil"
+    },
+    {
+      "file": "C:\\Users\\erkar\\OneDrive\\Desktop\\MTC\\Project-root\\app\\api\\production_lot.py",
+      "line": 241,
+      "context": " compatibility\n@login_required\ndef list_production_lots():\n    \"\"\"List production lots with pag"
+    },
+    {
+      "file": "C:\\Users\\erkar\\OneDrive\\Desktop\\MTC\\Project-root\\app\\api\\production_lot.py",
+      "line": 254,
+      "context": "        result = ProductionService.list_production_lots(\n            user_id=user_id,\n         "
+    },
+    {
+      "file": "C:\\Users\\erkar\\OneDrive\\Desktop\\MTC\\Project-root\\app\\api\\production_lot.py",
+      "line": 572,
+      "context": "ods=[\"GET\"])\n@production_api_bp.route(\"/production_lots/summary\", methods=[\"GET\"])  # Legacy co"
+    },
+    {
+      "file": "C:\\Users\\erkar\\OneDrive\\Desktop\\MTC\\Project-root\\app\\api\\production_lot.py",
+      "line": 594,
+      "context": " as avg_estimated_cost\n            FROM production_lots\n            WHERE 1=1 {user_filter}\n   "
+    },
+    {
+      "file": "C:\\Users\\erkar\\OneDrive\\Desktop\\MTC\\Project-root\\app\\api\\production_lot.py",
+      "line": 609,
+      "context": "ods=[\"GET\"])\n@production_api_bp.route(\"/production_lots/recent\", methods=[\"GET\"])  # Legacy com"
+    },
+    {
+      "file": "C:\\Users\\erkar\\OneDrive\\Desktop\\MTC\\Project-root\\app\\api\\production_lot.py",
+      "line": 633,
+      "context": "p.name as process_name\n            FROM production_lots pl\n            JOIN processes p ON pl.p"
+    },
+    {
+      "file": "C:\\Users\\erkar\\OneDrive\\Desktop\\MTC\\Project-root\\app\\api\\stubs.py",
+      "line": 40,
+      "context": "al_subprocesses': 0,\n            'total_production_lots': 0,\n            'active_lots': 0\n     "
+    },
+    {
+      "file": "C:\\Users\\erkar\\OneDrive\\Desktop\\MTC\\Project-root\\app\\services\\production_service.py",
+      "line": 63,
+      "context": "        \"\"\"\n                INSERT INTO production_lots (\n                    process_id, lot_n"
+    },
+    {
+      "file": "C:\\Users\\erkar\\OneDrive\\Desktop\\MTC\\Project-root\\app\\services\\production_service.py",
+      "line": 111,
+      "context": "as created_by_name\n                FROM production_lots pl\n                JOIN processes p ON "
+    },
+    {
+      "file": "C:\\Users\\erkar\\OneDrive\\Desktop\\MTC\\Project-root\\app\\services\\production_service.py",
+      "line": 169,
+      "context": " result\n\n    @staticmethod\n    def list_production_lots(\n        process_id: Optional[int] = No"
+    },
+    {
+      "file": "C:\\Users\\erkar\\OneDrive\\Desktop\\MTC\\Project-root\\app\\services\\production_service.py",
+      "line": 216,
+      "context": " COUNT(*) as total\n                FROM production_lots pl\n                {where_clause}\n     "
+    },
+    {
+      "file": "C:\\Users\\erkar\\OneDrive\\Desktop\\MTC\\Project-root\\app\\services\\production_service.py",
+      "line": 231,
+      "context": "s selections_count\n                FROM production_lots pl\n                JOIN processes p ON "
+    },
+    {
+      "file": "C:\\Users\\erkar\\OneDrive\\Desktop\\MTC\\Project-root\\app\\services\\production_service.py",
+      "line": 245,
+      "context": "all()\n\n        # [BUG FIX] Return both \"production_lots\" (for frontend) and \"lots\" (for legacy)"
+    },
+    {
+      "file": "C:\\Users\\erkar\\OneDrive\\Desktop\\MTC\\Project-root\\app\\services\\production_service.py",
+      "line": 246,
+      "context": "ontend JavaScript expects response.data.production_lots\n        return {\n            \"productio"
+    },
+    {
+      "file": "C:\\Users\\erkar\\OneDrive\\Desktop\\MTC\\Project-root\\app\\services\\production_service.py",
+      "line": 248,
+      "context": "tion_lots\n        return {\n            \"production_lots\": [dict(lot) for lot in lots],\n        "
+    },
+    {
+      "file": "C:\\Users\\erkar\\OneDrive\\Desktop\\MTC\\Project-root\\app\\services\\production_service.py",
+      "line": 361,
+      "context": "\n                SELECT process_id FROM production_lots WHERE id = %s\n            \"\"\",\n        "
+    },
+    {
+      "file": "C:\\Users\\erkar\\OneDrive\\Desktop\\MTC\\Project-root\\app\\services\\production_service.py",
+      "line": 427,
+      "context": "p.id as process_id\n                FROM production_lots pl\n                JOIN processes p ON "
+    },
+    {
+      "file": "C:\\Users\\erkar\\OneDrive\\Desktop\\MTC\\Project-root\\app\\services\\production_service.py",
+      "line": 543,
+      "context": "p.id as process_id\n                FROM production_lots pl\n                JOIN processes p ON "
+    },
+    {
+      "file": "C:\\Users\\erkar\\OneDrive\\Desktop\\MTC\\Project-root\\app\\services\\production_service.py",
+      "line": 651,
+      "context": "             \"\"\"\n                UPDATE production_lots\n                SET status = 'completed"
+    },
+    {
+      "file": "C:\\Users\\erkar\\OneDrive\\Desktop\\MTC\\Project-root\\app\\services\\production_service.py",
+      "line": 700,
+      "context": "             \"\"\"\n                UPDATE production_lots\n                SET status = 'cancelled"
+    },
+    {
+      "file": "C:\\Users\\erkar\\OneDrive\\Desktop\\MTC\\Project-root\\migrations\\migration_add_lot_variant_selections.py",
+      "line": 27,
+      "context": "     lot_id INTEGER NOT NULL REFERENCES production_lots(id) ON DELETE CASCADE,\n                "
+    },
+    {
+      "file": "C:\\Users\\erkar\\OneDrive\\Desktop\\MTC\\Project-root\\migrations\\migration_add_universal_process_framework.py",
+      "line": 259,
+      "context": "TION LOTS =====\n        print(\"Creating production_lots table...\")\n        cur.execute(\"\"\"\n    "
+    },
+    {
+      "file": "C:\\Users\\erkar\\OneDrive\\Desktop\\MTC\\Project-root\\migrations\\migration_add_universal_process_framework.py",
+      "line": 261,
+      "context": "\n            CREATE TABLE IF NOT EXISTS production_lots (\n                id SERIAL PRIMARY KEY"
+    },
+    {
+      "file": "C:\\Users\\erkar\\OneDrive\\Desktop\\MTC\\Project-root\\migrations\\migration_add_universal_process_framework.py",
+      "line": 284,
+      "context": "tion_lot_id INTEGER NOT NULL REFERENCES production_lots(id) ON DELETE CASCADE,\n                "
+    },
+    {
+      "file": "C:\\Users\\erkar\\OneDrive\\Desktop\\MTC\\Project-root\\migrations\\migration_add_universal_process_framework.py",
+      "line": 301,
+      "context": "tion_lot_id INTEGER NOT NULL REFERENCES production_lots(id) ON DELETE CASCADE,\n                "
+    },
+    {
+      "file": "C:\\Users\\erkar\\OneDrive\\Desktop\\MTC\\Project-root\\migrations\\migration_add_universal_process_framework.py",
+      "line": 385,
+      "context": "        \"CREATE INDEX IF NOT EXISTS idx_production_lots_process_id ON production_lots(process_i"
+    },
+    {
+      "file": "C:\\Users\\erkar\\OneDrive\\Desktop\\MTC\\Project-root\\migrations\\migration_add_universal_process_framework.py",
+      "line": 385,
+      "context": "XISTS idx_production_lots_process_id ON production_lots(process_id);\"\n        )\n        cur.exe"
+    },
+    {
+      "file": "C:\\Users\\erkar\\OneDrive\\Desktop\\MTC\\Project-root\\migrations\\migration_add_universal_process_framework.py",
+      "line": 388,
+      "context": "        \"CREATE INDEX IF NOT EXISTS idx_production_lots_status ON production_lots(status);\"\n   "
+    },
+    {
+      "file": "C:\\Users\\erkar\\OneDrive\\Desktop\\MTC\\Project-root\\migrations\\migration_add_universal_process_framework.py",
+      "line": 388,
+      "context": "OT EXISTS idx_production_lots_status ON production_lots(status);\"\n        )\n        cur.execute"
+    },
+    {
+      "file": "C:\\Users\\erkar\\OneDrive\\Desktop\\MTC\\Project-root\\migrations\\migration_add_universal_process_framework.py",
+      "line": 391,
+      "context": "        \"CREATE INDEX IF NOT EXISTS idx_production_lots_user_id ON production_lots(user_id);\"\n "
+    },
+    {
+      "file": "C:\\Users\\erkar\\OneDrive\\Desktop\\MTC\\Project-root\\migrations\\migration_add_universal_process_framework.py",
+      "line": 391,
+      "context": "T EXISTS idx_production_lots_user_id ON production_lots(user_id);\"\n        )\n        cur.execut"
+    },
+    {
+      "file": "C:\\Users\\erkar\\OneDrive\\Desktop\\MTC\\Project-root\\migrations\\migration_add_universal_process_framework.py",
+      "line": 394,
+      "context": "        \"CREATE INDEX IF NOT EXISTS idx_production_lots_lot_number ON production_lots(lot_numbe"
+    },
+    {
+      "file": "C:\\Users\\erkar\\OneDrive\\Desktop\\MTC\\Project-root\\migrations\\migration_add_universal_process_framework.py",
+      "line": 394,
+      "context": "XISTS idx_production_lots_lot_number ON production_lots(lot_number);\"\n        )\n\n        cur.ex"
+    },
+    {
+      "file": "C:\\Users\\erkar\\OneDrive\\Desktop\\MTC\\Project-root\\migrations\\migration_add_universal_process_framework.py",
+      "line": 467,
+      "context": "      cur.execute(\"DROP TABLE IF EXISTS production_lots CASCADE;\")\n        cur.execute(\"DROP TA"
+    },
+    {
+      "file": "C:\\Users\\erkar\\OneDrive\\Desktop\\MTC\\Project-root\\migrations\\migration_add_upf_tables.py",
+      "line": 177,
+      "context": "=====\n        print(\"\\n[8/15] Creating 'production_lots' table...\")\n        cur.execute(\"\"\"\n   "
+    },
+    {
+      "file": "C:\\Users\\erkar\\OneDrive\\Desktop\\MTC\\Project-root\\migrations\\migration_add_upf_tables.py",
+      "line": 179,
+      "context": "\n            CREATE TABLE IF NOT EXISTS production_lots (\n                id SERIAL PRIMARY KEY"
+    },
+    {
+      "file": "C:\\Users\\erkar\\OneDrive\\Desktop\\MTC\\Project-root\\migrations\\migration_add_upf_tables.py",
+      "line": 194,
+      "context": "         CREATE INDEX IF NOT EXISTS idx_production_lots_process ON production_lots(process_id);"
+    },
+    {
+      "file": "C:\\Users\\erkar\\OneDrive\\Desktop\\MTC\\Project-root\\migrations\\migration_add_upf_tables.py",
+      "line": 194,
+      "context": "T EXISTS idx_production_lots_process ON production_lots(process_id);\n            CREATE INDEX I"
+    },
+    {
+      "file": "C:\\Users\\erkar\\OneDrive\\Desktop\\MTC\\Project-root\\migrations\\migration_add_upf_tables.py",
+      "line": 195,
+      "context": "         CREATE INDEX IF NOT EXISTS idx_production_lots_status ON production_lots(status);\n    "
+    },
+    {
+      "file": "C:\\Users\\erkar\\OneDrive\\Desktop\\MTC\\Project-root\\migrations\\migration_add_upf_tables.py",
+      "line": 195,
+      "context": "OT EXISTS idx_production_lots_status ON production_lots(status);\n            CREATE INDEX IF NO"
+    },
+    {
+      "file": "C:\\Users\\erkar\\OneDrive\\Desktop\\MTC\\Project-root\\migrations\\migration_add_upf_tables.py",
+      "line": 196,
+      "context": "         CREATE INDEX IF NOT EXISTS idx_production_lots_created_by ON production_lots(created_b"
+    },
+    {
+      "file": "C:\\Users\\erkar\\OneDrive\\Desktop\\MTC\\Project-root\\migrations\\migration_add_upf_tables.py",
+      "line": 196,
+      "context": "XISTS idx_production_lots_created_by ON production_lots(created_by);\n        \"\"\")\n        print"
+    },
+    {
+      "file": "C:\\Users\\erkar\\OneDrive\\Desktop\\MTC\\Project-root\\migrations\\migration_add_upf_tables.py",
+      "line": 198,
+      "context": "_by);\n        \"\"\")\n        print(\"   \u2705 'production_lots' table created\")\n\n        # ===== TABLE"
+    },
+    {
+      "file": "C:\\Users\\erkar\\OneDrive\\Desktop\\MTC\\Project-root\\migrations\\migration_add_upf_tables.py",
+      "line": 205,
+      "context": "tion_lot_id INTEGER NOT NULL REFERENCES production_lots(id) ON DELETE CASCADE,\n                "
+    },
+    {
+      "file": "C:\\Users\\erkar\\OneDrive\\Desktop\\MTC\\Project-root\\migrations\\migration_add_upf_tables.py",
+      "line": 226,
+      "context": "tion_lot_id INTEGER NOT NULL REFERENCES production_lots(id) ON DELETE CASCADE,\n                "
+    },
+    {
+      "file": "C:\\Users\\erkar\\OneDrive\\Desktop\\MTC\\Project-root\\migrations\\migration_add_upf_tables.py",
+      "line": 246,
+      "context": "   production_lot_id INTEGER REFERENCES production_lots(id) ON DELETE SET NULL,\n               "
+    },
+    {
+      "file": "C:\\Users\\erkar\\OneDrive\\Desktop\\MTC\\Project-root\\migrations\\migration_add_upf_tables.py",
+      "line": 335,
+      "context": "                          LPAD(NEXTVAL('production_lots_id_seq')::TEXT, 6, '0');\n              "
+    },
+    {
+      "file": "C:\\Users\\erkar\\OneDrive\\Desktop\\MTC\\Project-root\\migrations\\migration_add_upf_tables.py",
+      "line": 341,
+      "context": "F EXISTS generate_lot_number_trigger ON production_lots;\n            CREATE TRIGGER generate_lo"
+    },
+    {
+      "file": "C:\\Users\\erkar\\OneDrive\\Desktop\\MTC\\Project-root\\migrations\\migration_add_upf_tables.py",
+      "line": 343,
+      "context": "rigger\n                BEFORE INSERT ON production_lots\n                FOR EACH ROW\n          "
+    },
+    {
+      "file": "C:\\Users\\erkar\\OneDrive\\Desktop\\MTC\\Project-root\\migrations\\migration_add_upf_tables.py",
+      "line": 363,
+      "context": ", 'or_group_variants',\n                'production_lots', 'production_lot_variants', 'productio"
+    },
+    {
+      "file": "C:\\Users\\erkar\\OneDrive\\Desktop\\MTC\\Project-root\\static\\js\\process_framework_unified.js",
+      "line": 579,
+      "context": ";\n                this.all = data.data?.production_lots || data.production_lots || [];\n        "
+    },
+    {
+      "file": "C:\\Users\\erkar\\OneDrive\\Desktop\\MTC\\Project-root\\static\\js\\process_framework_unified.js",
+      "line": 579,
+      "context": "ll = data.data?.production_lots || data.production_lots || [];\n                this.filtered = "
+    },
+    {
+      "file": "C:\\Users\\erkar\\OneDrive\\Desktop\\MTC\\Project-root\\static\\js\\process_framework_unified.js",
+      "line": 698,
+      "context": "            const lots = lotsData.data?.production_lots || lotsData.production_lots || [];\n\n   "
+    },
+    {
+      "file": "C:\\Users\\erkar\\OneDrive\\Desktop\\MTC\\Project-root\\static\\js\\process_framework_unified.js",
+      "line": 698,
+      "context": "sData.data?.production_lots || lotsData.production_lots || [];\n\n                document.getEle"
+    },
+    {
+      "file": "C:\\Users\\erkar\\OneDrive\\Desktop\\MTC\\Project-root\\static\\js\\process_framework_unified.js",
+      "line": 758,
+      "context": "                const lots = data.data?.production_lots || data.production_lots || [];\n\n       "
+    },
+    {
+      "file": "C:\\Users\\erkar\\OneDrive\\Desktop\\MTC\\Project-root\\static\\js\\process_framework_unified.js",
+      "line": 758,
+      "context": "ts = data.data?.production_lots || data.production_lots || [];\n\n                const container"
+    },
+    {
+      "file": "C:\\Users\\erkar\\OneDrive\\Desktop\\MTC\\Project-root\\static\\js\\production_lots.js",
+      "line": 78,
+      "context": "n();\n            this.lots = data.data?.production_lots || data.production_lots || [];\n        "
+    },
+    {
+      "file": "C:\\Users\\erkar\\OneDrive\\Desktop\\MTC\\Project-root\\static\\js\\production_lots.js",
+      "line": 78,
+      "context": "ts = data.data?.production_lots || data.production_lots || [];\n            this.currentPage = d"
+    },
+    {
+      "file": "C:\\Users\\erkar\\OneDrive\\Desktop\\MTC\\Project-root\\static\\js\\upf_reports.js",
+      "line": 140,
+      "context": "-lots-list');\n\n                if (data.production_lots && data.production_lots.length > 0) {\n "
+    },
+    {
+      "file": "C:\\Users\\erkar\\OneDrive\\Desktop\\MTC\\Project-root\\static\\js\\upf_reports.js",
+      "line": 140,
+      "context": "       if (data.production_lots && data.production_lots.length > 0) {\n                    let h"
+    },
+    {
+      "file": "C:\\Users\\erkar\\OneDrive\\Desktop\\MTC\\Project-root\\static\\js\\upf_reports.js",
+      "line": 142,
+      "context": "let html = '';\n                    data.production_lots.forEach(lot => {\n                      "
+    },
+    {
+      "file": "C:\\Users\\erkar\\OneDrive\\Desktop\\MTC\\Project-root\\templates\\upf_production_lots.html",
+      "line": 252,
+      "context": " src=\"{{ url_for('static', filename='js/production_lots.js') }}\"></script>\n<script>\n    documen"
+    },
+    {
+      "file": "C:\\Users\\erkar\\OneDrive\\Desktop\\MTC\\Project-root\\tests\\test_integration_flows.py",
+      "line": 86,
+      "context": "ion lot management\"\"\"\n    \n    def test_production_lots_list(self, authenticated_client):\n     "
+    },
+    {
+      "file": "C:\\Users\\erkar\\OneDrive\\Desktop\\MTC\\scripts\\analyze_dependencies.py",
+      "line": 16,
+      "context": "cy_report.json')\n\nSEARCH_TERMS = [\n    'production_lots', 'ProductionLot', '/api/upf/production"
+    },
+    {
+      "file": "C:\\Users\\erkar\\OneDrive\\Desktop\\MTC\\scripts\\analyze_dependencies.py",
+      "line": 49,
+      "context": "     for line in f:\n                if 'production_lots' in line or 'ProductionLot' in line:\n  "
+    },
+    {
+      "file": "C:\\Users\\erkar\\OneDrive\\Desktop\\MTC\\scripts\\pre_integration_backup.py",
+      "line": 26,
+      "context": "integration'\n\nTABLES_TO_BACKUP = [\n    'production_lots', 'item_variant', 'users', 'suppliers',"
+    },
+    {
+      "file": "C:\\Users\\erkar\\OneDrive\\Desktop\\MTC\\Project-root\\app\\models\\production_lot.py",
+      "line": 5,
+      "context": "dle the execution phase of processes:\n- ProductionLot: Represents a production run of a proce"
+    },
+    {
+      "file": "C:\\Users\\erkar\\OneDrive\\Desktop\\MTC\\Project-root\\app\\models\\production_lot.py",
+      "line": 6,
+      "context": "resents a production run of a process\n- ProductionLotSelection: Tracks which variant was sele"
+    },
+    {
+      "file": "C:\\Users\\erkar\\OneDrive\\Desktop\\MTC\\Project-root\\app\\models\\production_lot.py",
+      "line": 7,
+      "context": "riant was selected from each OR group\n- ProductionLotActualCosting: Records actual costs vs. "
+    },
+    {
+      "file": "C:\\Users\\erkar\\OneDrive\\Desktop\\MTC\\Project-root\\app\\models\\production_lot.py",
+      "line": 20,
+      "context": "mport Any, Dict, List, Optional\n\n\nclass ProductionLot:\n    \"\"\"\n    Represents a production lo"
+    },
+    {
+      "file": "C:\\Users\\erkar\\OneDrive\\Desktop\\MTC\\Project-root\\app\\models\\production_lot.py",
+      "line": 77,
+      "context": "turn self.status == \"Completed\"\n\n\nclass ProductionLotSelection:\n    \"\"\"\n    Records which var"
+    },
+    {
+      "file": "C:\\Users\\erkar\\OneDrive\\Desktop\\MTC\\Project-root\\app\\models\\production_lot.py",
+      "line": 121,
+      "context": "ed_quantity\n        return None\n\n\nclass ProductionLotActualCosting:\n    \"\"\"\n    Tracks actual"
+    },
+    {
+      "file": "C:\\Users\\erkar\\OneDrive\\Desktop\\MTC\\Project-root\\app\\models\\__init__.py",
+      "line": 18,
+      "context": "ge,\n)\nfrom .production_lot import (\n    ProductionLot,\n    ProductionLotActualCosting,\n    Pr"
+    },
+    {
+      "file": "C:\\Users\\erkar\\OneDrive\\Desktop\\MTC\\Project-root\\app\\models\\__init__.py",
+      "line": 19,
+      "context": "ion_lot import (\n    ProductionLot,\n    ProductionLotActualCosting,\n    ProductionLotSelectio"
+    },
+    {
+      "file": "C:\\Users\\erkar\\OneDrive\\Desktop\\MTC\\Project-root\\app\\models\\__init__.py",
+      "line": 20,
+      "context": "ot,\n    ProductionLotActualCosting,\n    ProductionLotSelection,\n    calculate_lot_total_cost,"
+    },
+    {
+      "file": "C:\\Users\\erkar\\OneDrive\\Desktop\\MTC\\Project-root\\app\\models\\__init__.py",
+      "line": 43,
+      "context": "ting\",\n    # Production lot models\n    \"ProductionLot\",\n    \"ProductionLotSelection\",\n    \"Pr"
+    },
+    {
+      "file": "C:\\Users\\erkar\\OneDrive\\Desktop\\MTC\\Project-root\\app\\models\\__init__.py",
+      "line": 44,
+      "context": "on lot models\n    \"ProductionLot\",\n    \"ProductionLotSelection\",\n    \"ProductionLotActualCost"
+    },
+    {
+      "file": "C:\\Users\\erkar\\OneDrive\\Desktop\\MTC\\Project-root\\app\\models\\__init__.py",
+      "line": 45,
+      "context": "ot\",\n    \"ProductionLotSelection\",\n    \"ProductionLotActualCosting\",\n    \"generate_lot_number"
+    },
+    {
+      "file": "C:\\Users\\erkar\\OneDrive\\Desktop\\MTC\\Project-root\\app\\services\\production_service.py",
+      "line": 19,
+      "context": "om ..models.production_lot import (\n    ProductionLot,\n    ProductionLotSelection,\n    genera"
+    },
+    {
+      "file": "C:\\Users\\erkar\\OneDrive\\Desktop\\MTC\\Project-root\\app\\services\\production_service.py",
+      "line": 20,
+      "context": "ion_lot import (\n    ProductionLot,\n    ProductionLotSelection,\n    generate_lot_number,\n)\nfr"
+    },
+    {
+      "file": "C:\\Users\\erkar\\OneDrive\\Desktop\\MTC\\Project-root\\app\\services\\production_service.py",
+      "line": 75,
+      "context": "           conn.commit()\n\n        lot = ProductionLot(lot_data)\n        # Merge raw DB fields"
+    },
+    {
+      "file": "C:\\Users\\erkar\\OneDrive\\Desktop\\MTC\\Project-root\\app\\services\\production_service.py",
+      "line": 340,
+      "context": "     conn.commit()\n\n        selection = ProductionLotSelection(selection_data)\n        return"
+    },
+    {
+      "file": "C:\\Users\\erkar\\OneDrive\\Desktop\\MTC\\Project-root\\tests\\test_integration_flows.py",
+      "line": 83,
+      "context": "tus_code in [200, 404, 401]\n\n\nclass TestProductionLots:\n    \"\"\"Test production lot management"
+    },
+    {
+      "file": "C:\\Users\\erkar\\OneDrive\\Desktop\\MTC\\scripts\\analyze_dependencies.py",
+      "line": 16,
+      "context": "EARCH_TERMS = [\n    'production_lots', 'ProductionLot', '/api/upf/production'\n]\n\nFRONTEND_EXT"
+    },
+    {
+      "file": "C:\\Users\\erkar\\OneDrive\\Desktop\\MTC\\scripts\\analyze_dependencies.py",
+      "line": 49,
+      "context": "       if 'production_lots' in line or 'ProductionLot' in line:\n                    fields.up"
+    },
+    {
+      "file": "C:\\Users\\erkar\\OneDrive\\Desktop\\MTC\\Project-root\\app\\api\\production_lot.py",
+      "line": 9,
+      "context": "vaScript expects hyphenated URLs (e.g., /api/upf/production-lots).\n\"\"\"\n\nfrom functools import wraps"
+    },
+    {
+      "file": "C:\\Users\\erkar\\OneDrive\\Desktop\\MTC\\Project-root\\app\\api\\stubs.py",
+      "line": 172,
+      "context": "er.warning(f\"Stub endpoint called: POST /api/upf/production_lot/{lot_id}/variant_options\")\n    retu"
+    },
+    {
+      "file": "C:\\Users\\erkar\\OneDrive\\Desktop\\MTC\\Project-root\\app\\api\\stubs.py",
+      "line": 278,
+      "context": "ries\n#\n# Production Lot: 1 endpoint\n# - /api/upf/production_lot/<id>/variant_options\n#\n# Auth & Use"
+    },
+    {
+      "file": "C:\\Users\\erkar\\OneDrive\\Desktop\\MTC\\Project-root\\static\\js\\process_framework_unified.js",
+      "line": 570,
+      "context": "          const response = await fetch('/api/upf/production-lots?per_page=1000', {\n                "
+    },
+    {
+      "file": "C:\\Users\\erkar\\OneDrive\\Desktop\\MTC\\Project-root\\static\\js\\process_framework_unified.js",
+      "line": 691,
+      "context": "include' }),\n                    fetch('/api/upf/production-lots?per_page=1000', { credentials: 'in"
+    },
+    {
+      "file": "C:\\Users\\erkar\\OneDrive\\Desktop\\MTC\\Project-root\\static\\js\\process_framework_unified.js",
+      "line": 756,
+      "context": "          const response = await fetch('/api/upf/production-lots?per_page=5', { credentials: 'inclu"
+    },
+    {
+      "file": "C:\\Users\\erkar\\OneDrive\\Desktop\\MTC\\Project-root\\static\\js\\production_lots.js",
+      "line": 63,
+      "context": "          const response = await fetch(`/api/upf/production-lots?page=${page}&per_page=${this.perPa"
+    },
+    {
+      "file": "C:\\Users\\erkar\\OneDrive\\Desktop\\MTC\\Project-root\\static\\js\\upf_reports.js",
+      "line": 131,
+      "context": "          const response = await fetch('/api/upf/production-lots?per_page=5', {\n                met"
+    },
+    {
+      "file": "C:\\Users\\erkar\\OneDrive\\Desktop\\MTC\\Project-root\\templates\\upf_production_lot_new.html",
+      "line": 341,
+      "context": "          const response = await fetch('/api/upf/production-lots', {\n                method: 'POST'"
+    },
+    {
+      "file": "C:\\Users\\erkar\\OneDrive\\Desktop\\MTC\\Project-root\\templates\\upf_variant_selection.html",
+      "line": 397,
+      "context": "          const response = await fetch(`/api/upf/production_lot/${this.lotId}/variant_options`, {\n "
+    },
+    {
+      "file": "C:\\Users\\erkar\\OneDrive\\Desktop\\MTC\\Project-root\\templates\\upf_variant_selection.html",
+      "line": 624,
+      "context": "          const response = await fetch(`/api/upf/production_lot/${this.lotId}/batch_select_variants"
+    },
+    {
+      "file": "C:\\Users\\erkar\\OneDrive\\Desktop\\MTC\\Project-root\\tests\\test_integration_flows.py",
+      "line": 88,
+      "context": "   response = authenticated_client.get('/api/upf/production-lots?per_page=10')\n        assert respo"
+    },
+    {
+      "file": "C:\\Users\\erkar\\OneDrive\\Desktop\\MTC\\Project-root\\tests\\test_integration_flows.py",
+      "line": 93,
+      "context": "   response = authenticated_client.get('/api/upf/production-lots/1')\n        assert response.status"
+    },
+    {
+      "file": "C:\\Users\\erkar\\OneDrive\\Desktop\\MTC\\Project-root\\tests\\test_integration_flows.py",
+      "line": 149,
+      "context": "  response = authenticated_client.post('/api/upf/production_lot/1/variant_options', json={})\n      "
+    },
+    {
+      "file": "C:\\Users\\erkar\\OneDrive\\Desktop\\MTC\\scripts\\analyze_dependencies.py",
+      "line": 16,
+      "context": "   'production_lots', 'ProductionLot', '/api/upf/production'\n]\n\nFRONTEND_EXTENSIONS = ['.html', '.j"
+    }
+  ],
+  "production_lot_fields": [],
+  "frontend_templates": [
+    "C:\\Users\\erkar\\OneDrive\\Desktop\\MTC\\Project-root\\templates\\upf_production_lots.html",
+    "C:\\Users\\erkar\\OneDrive\\Desktop\\MTC\\Project-root\\templates\\upf_production_lot_new.html"
+  ],
+  "frontend_js_files": [
+    "C:\\Users\\erkar\\OneDrive\\Desktop\\MTC\\Project-root\\static\\js\\production_lots.js"
+  ],
+  "dependency_map": {
+    "js": [
+      "C:\\Users\\erkar\\OneDrive\\Desktop\\MTC\\Project-root\\static\\js\\process_framework_unified.js",
+      "C:\\Users\\erkar\\OneDrive\\Desktop\\MTC\\Project-root\\static\\js\\process_framework_unified.js",
+      "C:\\Users\\erkar\\OneDrive\\Desktop\\MTC\\Project-root\\static\\js\\process_framework_unified.js",
+      "C:\\Users\\erkar\\OneDrive\\Desktop\\MTC\\Project-root\\static\\js\\process_framework_unified.js",
+      "C:\\Users\\erkar\\OneDrive\\Desktop\\MTC\\Project-root\\static\\js\\process_framework_unified.js",
+      "C:\\Users\\erkar\\OneDrive\\Desktop\\MTC\\Project-root\\static\\js\\process_framework_unified.js",
+      "C:\\Users\\erkar\\OneDrive\\Desktop\\MTC\\Project-root\\static\\js\\production_lots.js",
+      "C:\\Users\\erkar\\OneDrive\\Desktop\\MTC\\Project-root\\static\\js\\production_lots.js",
+      "C:\\Users\\erkar\\OneDrive\\Desktop\\MTC\\Project-root\\static\\js\\upf_reports.js",
+      "C:\\Users\\erkar\\OneDrive\\Desktop\\MTC\\Project-root\\static\\js\\upf_reports.js",
+      "C:\\Users\\erkar\\OneDrive\\Desktop\\MTC\\Project-root\\static\\js\\upf_reports.js",
+      "C:\\Users\\erkar\\OneDrive\\Desktop\\MTC\\Project-root\\static\\js\\process_framework_unified.js",
+      "C:\\Users\\erkar\\OneDrive\\Desktop\\MTC\\Project-root\\static\\js\\process_framework_unified.js",
+      "C:\\Users\\erkar\\OneDrive\\Desktop\\MTC\\Project-root\\static\\js\\process_framework_unified.js",
+      "C:\\Users\\erkar\\OneDrive\\Desktop\\MTC\\Project-root\\static\\js\\production_lots.js",
+      "C:\\Users\\erkar\\OneDrive\\Desktop\\MTC\\Project-root\\static\\js\\upf_reports.js"
+    ],
+    "templates": [
+      "C:\\Users\\erkar\\OneDrive\\Desktop\\MTC\\Project-root\\templates\\upf_production_lots.html",
+      "C:\\Users\\erkar\\OneDrive\\Desktop\\MTC\\Project-root\\templates\\upf_production_lot_new.html",
+      "C:\\Users\\erkar\\OneDrive\\Desktop\\MTC\\Project-root\\templates\\upf_variant_selection.html",
+      "C:\\Users\\erkar\\OneDrive\\Desktop\\MTC\\Project-root\\templates\\upf_variant_selection.html"
+    ]
+  }
+}

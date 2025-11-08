@@ -44,7 +44,7 @@ def favicon():
     return send_from_directory(
         os.path.join(current_app.root_path, "..", "static", "img"),
         "Final_Logo.png",
-        mimetype="image/png"
+        mimetype="image/png",
     )
 
 
@@ -198,6 +198,13 @@ def low_stock_report():
     return render_template("low_stock_report.html")
 
 
+@main_bp.route("/inventory-alerts")
+@login_required
+def inventory_alerts_page():
+    """Minimal UI to view/manage inventory alert rules, alerts, and recommendations."""
+    return render_template("inventory_alerts.html")
+
+
 @main_bp.route("/master-data")
 @login_required
 @role_required("admin")
@@ -306,8 +313,7 @@ def change_password():
 def img_file(filename):
     """Serve image files from static/img directory"""
     return send_from_directory(
-        os.path.join(current_app.root_path, "..", "static", "img"), 
-        filename
+        os.path.join(current_app.root_path, "..", "static", "img"), filename
     )
 
 
@@ -391,3 +397,17 @@ def upf_production_lot_new():
 def upf_variant_selection(lot_id):
     """Variant selection page for production lot."""
     return render_template("upf_variant_selection.html", lot_id=lot_id)
+
+
+@main_bp.route("/upf/production-lots")
+@login_required
+def upf_production_lots():
+    """Production lots list page."""
+    return render_template("upf_production_lots.html")
+
+
+@main_bp.route("/monitoring")
+@login_required
+def monitoring():
+    """Monitoring dashboard for inventory alerts health metrics."""
+    return render_template("monitoring.html")

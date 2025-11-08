@@ -15,11 +15,13 @@ from .import_validators import (
 from .process_validator import (
     ProcessValidator,
     SubprocessValidator,
+    ValidationError as ProcessValidationError,
 )
 
 __all__ = [
     "DataValidator",
     "ValidationError",
+    "ProcessValidationError",
     "validate_item",
     "validate_color",
     "validate_size",

@@ -204,6 +204,8 @@
 <script src="{{ url_for('static', filename='suppliers.js') }}?v={{ config.VERSION }}" defer></script>
 <script src="{{ url_for('static', filename='purchaseOrders.js') }}?v={{ config.VERSION }}" defer></script>
 <script src="{{ url_for('static', filename='masterData.js') }}?v={{ config.VERSION }}" defer></script>
+<link rel="stylesheet" href="{{ url_for('static', filename='css/inventory_alerts.css') }}?v={{ config.VERSION }}">
+<script src="{{ url_for('static', filename='js/production_lot_alerts.js') }}?v={{ config.VERSION }}" defer></script>
     {% endblock %}
 </body>
 </html>

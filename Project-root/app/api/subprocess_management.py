@@ -33,7 +33,9 @@ def log_request_info():
 
 
 @subprocess_api_bp.route("/subprocess", methods=["POST"])
-@subprocess_api_bp.route("/subprocesses", methods=["POST"], endpoint="create_subprocess_plural")
+@subprocess_api_bp.route(
+    "/subprocesses", methods=["POST"], endpoint="create_subprocess_plural"
+)
 @login_required
 @limiter.limit("30 per hour")
 def create_subprocess():
@@ -133,7 +135,11 @@ def create_subprocess():
 
 
 @subprocess_api_bp.route("/subprocess/<int:subprocess_id>", methods=["GET"])
-@subprocess_api_bp.route("/subprocesses/<int:subprocess_id>", methods=["GET"], endpoint="get_subprocess_plural")
+@subprocess_api_bp.route(
+    "/subprocesses/<int:subprocess_id>",
+    methods=["GET"],
+    endpoint="get_subprocess_plural",
+)
 @login_required
 def get_subprocess(subprocess_id):
     """Get subprocess with full details."""
@@ -171,7 +177,11 @@ def list_subprocesses():
 
 
 @subprocess_api_bp.route("/subprocess/<int:subprocess_id>", methods=["PUT"])
-@subprocess_api_bp.route("/subprocesses/<int:subprocess_id>", methods=["PUT"], endpoint="update_subprocess_plural")
+@subprocess_api_bp.route(
+    "/subprocesses/<int:subprocess_id>",
+    methods=["PUT"],
+    endpoint="update_subprocess_plural",
+)
 @login_required
 def update_subprocess(subprocess_id):
     """Update subprocess details."""
@@ -216,7 +226,11 @@ def update_subprocess(subprocess_id):
 
 
 @subprocess_api_bp.route("/subprocess/<int:subprocess_id>", methods=["DELETE"])
-@subprocess_api_bp.route("/subprocesses/<int:subprocess_id>", methods=["DELETE"], endpoint="delete_subprocess_plural")
+@subprocess_api_bp.route(
+    "/subprocesses/<int:subprocess_id>",
+    methods=["DELETE"],
+    endpoint="delete_subprocess_plural",
+)
 @login_required
 def delete_subprocess(subprocess_id):
     """Soft delete subprocess."""

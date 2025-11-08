@@ -1,0 +1,91 @@
+{
+  "info": {
+    "name": "MTC - Inventory Alerts & Procurement",
+    "schema": "https://schema.getpostman.com/json/collection/v2.1.0/collection.json",
+    "_postman_id": "3b7f7b66-0f5d-4c3f-8c37-3b73a5a8d1c1"
+  },
+  "item": [
+    {
+      "name": "Alert Rules - Upsert",
+      "request": {
+        "method": "POST",
+        "header": [
+          {"key":"Content-Type","value":"application/json"}
+        ],
+        "url": {"raw": "{{baseUrl}}/api/inventory-alert-rules", "host":["{{baseUrl}}"], "path":["api","inventory-alert-rules"]},
+        "body": {"mode":"raw","raw":"{\n  \"variant_id\": 1,\n  \"safety_stock_quantity\": 10,\n  \"reorder_point_quantity\": 20,\n  \"alert_threshold_percentage\": 75.0\n}"}
+      }
+    },
+    {
+      "name": "Alert Rules - List",
+      "request": {
+        "method": "GET",
+        "url": {"raw": "{{baseUrl}}/api/inventory-alert-rules?active_only=true", "host":["{{baseUrl}}"], "path":["api","inventory-alert-rules"], "query":[{"key":"active_only","value":"true"}]}
+      }
+    },
+    {
+      "name": "Alert Rules - Deactivate",
+      "request": {
+        "method": "PATCH",
+        "url": {"raw": "{{baseUrl}}/api/inventory-alert-rules/{{rule_id}}/deactivate", "host":["{{baseUrl}}"], "path":["api","inventory-alert-rules","{{rule_id}}","deactivate"]}
+      }
+    },
+    {
+      "name": "Inventory Alerts - Create",
+      "request": {
+        "method": "POST",
+        "header": [{"key":"Content-Type","value":"application/json"}],
+        "url": {"raw": "{{baseUrl}}/api/inventory-alerts", "host":["{{baseUrl}}"], "path":["api","inventory-alerts"]},
+        "body": {"mode":"raw","raw":"{\n  \"production_lot_id\": 1,\n  \"variant_id\": 1,\n  \"required_quantity\": 5\n}"}
+      }
+    },
+    {
+      "name": "Inventory Alerts - List",
+      "request": {
+        "method": "GET",
+        "url": {"raw": "{{baseUrl}}/api/inventory-alerts?production_lot_id={{lot_id}}", "host":["{{baseUrl}}"], "path":["api","inventory-alerts"], "query":[{"key":"production_lot_id","value":"{{lot_id}}"}]}
+      }
+    },
+    {
+      "name": "Inventory Alerts - Acknowledge",
+      "request": {
+        "method": "POST",
+        "header": [{"key":"Content-Type","value":"application/json"}],
+        "url": {"raw": "{{baseUrl}}/api/inventory-alerts/{{alert_id}}/acknowledge", "host":["{{baseUrl}}"], "path":["api","inventory-alerts","{{alert_id}}","acknowledge"]},
+        "body": {"mode":"raw","raw":"{\n  \"user_action\": \"PROCEED\",\n  \"action_notes\": \"Proceed with partial fulfill\"\n}"}
+      }
+    },
+    {
+      "name": "Procurement - Create Recommendation",
+      "request": {
+        "method": "POST",
+        "header": [{"key":"Content-Type","value":"application/json"}],
+        "url": {"raw": "{{baseUrl}}/api/procurement-recommendations", "host":["{{baseUrl}}"], "path":["api","procurement-recommendations"]},
+        "body": {"mode":"raw","raw":"{\n  \"production_lot_id\": 1,\n  \"variant_id\": 1,\n  \"supplier_id\": 1,\n  \"recommended_quantity\": 10,\n  \"required_delivery_date\": \"2025-11-30\",\n  \"estimated_cost\": 100.50\n}"}
+      }
+    },
+    {
+      "name": "Procurement - List Recommendations",
+      "request": {
+        "method": "GET",
+        "url": {"raw": "{{baseUrl}}/api/procurement-recommendations?production_lot_id={{lot_id}}", "host":["{{baseUrl}}"], "path":["api","procurement-recommendations"], "query":[{"key":"production_lot_id","value":"{{lot_id}}"}]}
+      }
+    },
+    {
+      "name": "Procurement - Update Status",
+      "request": {
+        "method": "PATCH",
+        "header": [{"key":"Content-Type","value":"application/json"}],
+        "url": {"raw": "{{baseUrl}}/api/procurement-recommendations/{{recommendation_id}}/status", "host":["{{baseUrl}}"], "path":["api","procurement-recommendations","{{recommendation_id}}","status"]},
+        "body": {"mode":"raw","raw":"{\n  \"procurement_status\": \"ORDERED\",\n  \"purchase_order_id\": 1\n}"}
+      }
+    }
+  ],
+  "variable": [
+    {"key":"baseUrl","value":"http://localhost:5000"},
+    {"key":"rule_id","value":"1"},
+    {"key":"lot_id","value":"1"},
+    {"key":"alert_id","value":"1"},
+    {"key":"recommendation_id","value":"1"}
+  ]
+}

@@ -12,7 +12,7 @@ with app.app_context():
         ORDER BY ordinal_position
     """)
     cols = cur.fetchall()
-    print('Columns in process_subprocesses:')
+    print("Columns in process_subprocesses:")
     for col in cols:
-        print(f'  - {col[0]}')
+        print(f"  - {col[0]}")
     conn.close()

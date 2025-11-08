@@ -3,10 +3,12 @@
     .env.example
     .pre-commit-config.yaml
     .secrets.baseline
+    API_REFERENCE_INVENTORY_ALERTS.md
     app.py
     app.py.backup
     AUDITOR_IMPROVEMENTS_REPORT.md
     AUDITOR_VERIFICATION_COMPLETE.md
+    AUDIT_COMPLETE.md
     BACKEND_FRONTEND_DB_SYNC_COMPLETE.md
     BACKEND_FRONTEND_DB_SYNC_REPORT.md
     check_columns.sql
@@ -16,6 +18,7 @@
     COMPLETE_FIX_SUMMARY.md
     COMPREHENSIVE_AUDIT_REPORT.md
     debug_process_structure.py
+    dependency_report.json
     enhanced_project_auditor.py
     ERROR_FIX_SUMMARY.md
     file_structure.txt
@@ -46,10 +49,15 @@
     QUICK_FIX_REFERENCE.md
     QUICK_REFERENCE.md
     QUICK_REFERENCE_CARD.md
+    read_issues.py
+    schema_validation_report.txt
     UI_UX_IMPROVEMENTS_SUMMARY.md
     UI_UX_TESTING_GUIDE.md
     UI_UX_VISUAL_COMPARISON.md
+    upf_integration_action_plan.md
     VARIANT_SEARCH_MERGE_COMPLETE.md
+    view_audit_issues.py
+    view_unused_routes.py
     .github/
         chatmodes/
             Plan Mode.chatmode.md
@@ -76,10 +84,12 @@
         .gitignore
         CACHEDIR.TAG
         0.14.3/
+            10230717104880425089
             1061159154810266400
             13039884026421219477
             14618820188488294353
             15767727954531337712
+            2321728001451997110
             3574304971547025042
             4111050184384059389
             4650478382468658153
@@ -88,6 +98,7 @@
             7691986376738696068
             81179227623736408
             9055794550433016867
+            9818199555659342584
         0.6.9/
             10565966613617290186
             13936718876001170934
@@ -102,8 +113,17 @@
             6355051253544369875
             7237278980500447409
             973905827700233134
+    .vscode/
+        settings.json
+    backups/
+        code_snapshot_20251108_132304.zip
+        db_backup_20251108_132106.sql
+        db_backup_20251108_132303.sql
     logs/
         app.log
+    migrations/
+        fix_update_lot_inventory_status_function.sql
+        migration_add_inventory_alert_system.py
     Project-root/
         .coverage
         .env
@@ -114,11 +134,13 @@
         app.py.old_duplicates
         app.py.phase2_backup
         APP_PY_CLEANUP_REPORT.md
+        audit_quick_fix.py
         BACKEND_IMPLEMENTATION_COMPLETE.md
         CHANGELOG.md
         check_columns.py
         check_oauth_config.py
         COMPLETE_CHANGE_LOG.md
+        COMPREHENSIVE_AUDIT_REPORT.md
         config.py
         config.py.backup
         CONSOLIDATION_SUMMARY.md
@@ -134,6 +156,8 @@
         HIGH_PRIORITY_IMPLEMENTATION_COMPLETE.md
         IMPLEMENTATION_COMPLETE.md
         IMPLEMENTATION_ROADMAP.md
+        INDEX.md
+        ISSUES_TO_FIX.md
         logging_config.py
         minify_assets.py
         models.py
@@ -184,6 +208,8 @@
             CACHEDIR.TAG
             0.14.3/
                 10144634690075818160
+                11178895765437835426
+                12792328541295669378
                 13211992639582236678
                 13616493732774918919
                 16638523898162472821
@@ -201,6 +227,7 @@
             api/
                 file_routes.py
                 imports.py
+                inventory_alerts.py
                 items.py
                 process_management.py
                 production_lot.py
@@ -232,6 +259,7 @@
                 costing_service.py
                 export_service.py
                 import_service.py
+                inventory_alert_service.py
                 process_service.py
                 production_service.py
                 progress_tracker.py
@@ -248,18 +276,27 @@
             validators/
                 import_validators.py
                 process_validator.py
+                production_lot_validator.py
                 __init__.py
         auth/
             routes.py
         docs/
+            ALERT_UI_INTEGRATION.md
+            DEPLOYMENT_DOCKER.md
+            InventoryAlerts.postman_collection.json
+            INVENTORY_ALERTS_API.md
             LOGGING.md
             PERFORMANCE.md
+            PRODUCTION_READINESS.md
             SECURITY.md
             TECHNICAL_DEBT.md
+            UPF_INVENTORY_ALERTS_USAGE.md
         logs/
             app.log
             app.log.1
+            app.log.10
         migrations/
+            006_add_performance_indexes.sql
             add_indexes.sql
             add_missing_upf_tables.sql
             init_schema.sql
@@ -269,6 +306,7 @@
             migration_add_cascade_delete.py
             migration_add_category_type_brand_tables.py
             migration_add_discount_and_receipt_number.py
+            migration_add_fix_update_lot_inventory_status_function.py
             migration_add_import_jobs.py
             migration_add_item_uniqueness.py
             migration_add_lot_variant_selections.py
@@ -302,17 +340,20 @@
             styles.min.css
             suppliers.js
             css/
+                inventory_alerts.css
                 login.css
             img/
                 Final_Logo.png
             js/
                 api_client.js
                 cost_calculator.js
+                inventory_alerts.js
                 login.js
                 process_editor.js
                 process_framework_unified.js
                 process_manager.js
                 production_lots.js
+                production_lot_alerts.js
                 subprocess_library.js
                 upf_reports.js
                 variant_search.js
@@ -329,9 +370,11 @@
             edit_item.html
             forgot_password.html
             inventory.html
+            inventory_alerts.html
             login.html
             low_stock_report.html
             master_data.html
+            monitoring.html
             profile.html
             purchase_orders.html
             reset_password.html
@@ -341,6 +384,8 @@
             upf_process_editor.html
             upf_process_management.html
             upf_production_lots.html
+            upf_production_lot_detail.html
+            upf_production_lot_detail.html.audit_backup
             upf_production_lot_new.html
             upf_reports.html
             upf_subprocess_library.html
@@ -354,9 +399,12 @@
             test_file_validation.py
             test_integration_flows.py
             test_oauth_redirect_uri.py
+            test_process_flow.py
             test_smoke.py
             api/
+                test_inventory_alerts.py
                 test_items.py
+                test_monitoring.py
                 test_purchase_orders.py
                 test_suppliers.py
             auth/
@@ -368,3 +416,13 @@
                 test_production_service.py
                 test_subprocess_service.py
                 test_variant_service.py
+            ui/
+                test_upf_pages.py
+    scripts/
+        analyze_dependencies.py
+        apply_fix_update_lot_inventory_status.py
+        insert_test_data.py
+        pre_integration_backup.py
+        test_data.sql
+        test_data_corrected.sql
+        validate_alert_schema.py

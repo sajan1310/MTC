@@ -1,0 +1,23 @@
+Schema Validation Report - 2025-11-08 13:47:06.997213
+
+Table inventory_alert_rules: PASSED
+Table production_lot_inventory_alerts: PASSED
+Table production_lot_procurement_recommendations: PASSED
+Table production_lots: PASSED
+Index idx_variant_active: PASSED
+Index idx_lot_severity: PASSED
+Index idx_variant_created: PASSED
+Index idx_lot_status: PASSED
+Index idx_supplier_delivery: PASSED
+Index idx_lot_status_inventory: PASSED
+Index idx_variant_usage: PASSED
+Trigger trg_update_lot_inventory_status: PASSED
+Function update_lot_inventory_status: PASSED
+Column production_lots.lot_status_inventory: PASSED
+Column production_lots.alert_summary_json: PASSED
+Column production_lots.inventory_validated_at: PASSED
+Column production_lots.inventory_validated_by: PASSED
+Sample inserts: PASSED - Sample inserts succeeded.
+Cascade delete: PASSED - Cascade delete on production_lots works.
+JSONB column: PASSED - JSONB column accepts valid JSON.
+Performance test: PASSED - Performance test query executed.

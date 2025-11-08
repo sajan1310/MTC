@@ -14,7 +14,9 @@ from app.services.production_service import ProductionService
 class TestProductionService:
     """Test suite for production service operations."""
 
-    @patch("app.services.production_service.CostingService.calculate_process_total_cost")
+    @patch(
+        "app.services.production_service.CostingService.calculate_process_total_cost"
+    )
     def test_create_production_lot_basic(self, mock_costing):
         """Test creating a production lot with auto-generated lot number."""
         mock_costing.return_value = {"totals": {"grand_total": 1000.00}}
@@ -52,7 +54,9 @@ class TestProductionService:
             assert result["worst_case_estimated_cost"] == 100000.00
             assert "LOT-" in result["lot_number"]
 
-    @patch("app.services.production_service.CostingService.calculate_process_total_cost")
+    @patch(
+        "app.services.production_service.CostingService.calculate_process_total_cost"
+    )
     def test_create_production_lot_custom_lot_number(self, mock_costing):
         """Test creating production lot with custom lot number."""
         mock_costing.return_value = {"totals": {"grand_total": 500.00}}
@@ -86,7 +90,9 @@ class TestProductionService:
             assert result["lot_number"] == "CUSTOM-LOT-123"
             assert result["quantity"] == 50
 
-    @patch("app.services.production_service.CostingService.calculate_process_total_cost")
+    @patch(
+        "app.services.production_service.CostingService.calculate_process_total_cost"
+    )
     def test_create_production_lot_single_quantity(self, mock_costing):
         """Test creating production lot with quantity=1 (default)."""
         mock_costing.return_value = {"totals": {"grand_total": 1000.00}}
@@ -201,7 +207,9 @@ class TestProductionService:
             assert result["id"] == 2
             assert result["status"] == "in_progress"
 
-    @patch("app.services.production_service.CostingService.calculate_process_total_cost")
+    @patch(
+        "app.services.production_service.CostingService.calculate_process_total_cost"
+    )
     def test_create_production_lot_cost_calculation(self, mock_costing):
         """Test that cost calculation is performed correctly."""
         mock_costing.return_value = {"totals": {"grand_total": 250.00}}

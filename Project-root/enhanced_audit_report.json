@@ -1,6 +1,6 @@
 {
-  "audit_timestamp": "2025-11-07T19:20:59.925062",
-  "project_root": "C:\\Users\\erkar\\OneDrive\\Desktop\\MTC\\Project-root",
+  "audit_timestamp": "2025-11-08T16:48:40.298609",
+  "project_root": "Project-root",
   "blueprints": [
     {
       "variable": "auth_bp",
@@ -42,9 +42,24 @@
       "variable": "subprocess_api_bp",
       "url_prefix": "/api/upf",
       "file": "app/__init__.py"
+    },
+    {
+      "variable": "inventory_alerts_bp",
+      "url_prefix": "/api/upf",
+      "file": "app/__init__.py"
     }
   ],
   "flask_routes": [
+    {
+      "file": "audit_quick_fix.py",
+      "blueprint": "api_bp",
+      "route": "/api/upf/monitoring/alerts-health",
+      "full_path": "/api/api/upf/monitoring/alerts-health",
+      "methods": [
+        "GET"
+      ],
+      "handler": "get_alerts_health"
+    },
     {
       "file": "logging_config.py",
       "blueprint": "app",
@@ -74,6 +89,196 @@
         "GET"
       ],
       "handler": "serve_profile_picture"
+    },
+    {
+      "file": "app\\api\\inventory_alerts.py",
+      "blueprint": "api_bp",
+      "route": "/inventory-alert-rules",
+      "full_path": "/api/inventory-alert-rules",
+      "methods": [
+        "POST"
+      ],
+      "handler": "upsert_alert_rule"
+    },
+    {
+      "file": "app\\api\\inventory_alerts.py",
+      "blueprint": "api_bp",
+      "route": "/inventory_alert_rules",
+      "full_path": "/api/inventory_alert_rules",
+      "methods": [
+        "POST"
+      ],
+      "handler": "upsert_alert_rule"
+    },
+    {
+      "file": "app\\api\\inventory_alerts.py",
+      "blueprint": "api_bp",
+      "route": "/inventory-alert-rules",
+      "full_path": "/api/inventory-alert-rules",
+      "methods": [
+        "GET"
+      ],
+      "handler": "list_alert_rules"
+    },
+    {
+      "file": "app\\api\\inventory_alerts.py",
+      "blueprint": "api_bp",
+      "route": "/inventory_alert_rules",
+      "full_path": "/api/inventory_alert_rules",
+      "methods": [
+        "GET"
+      ],
+      "handler": "list_alert_rules"
+    },
+    {
+      "file": "app\\api\\inventory_alerts.py",
+      "blueprint": "api_bp",
+      "route": "/inventory-alert-rules/<int:rule_id>/deactivate",
+      "full_path": "/api/inventory-alert-rules/<int:rule_id>/deactivate",
+      "methods": [
+        "PATCH"
+      ],
+      "handler": "deactivate_alert_rule"
+    },
+    {
+      "file": "app\\api\\inventory_alerts.py",
+      "blueprint": "api_bp",
+      "route": "/inventory_alert_rules/<int:rule_id>/deactivate",
+      "full_path": "/api/inventory_alert_rules/<int:rule_id>/deactivate",
+      "methods": [
+        "PATCH"
+      ],
+      "handler": "deactivate_alert_rule"
+    },
+    {
+      "file": "app\\api\\inventory_alerts.py",
+      "blueprint": "api_bp",
+      "route": "/inventory-alerts",
+      "full_path": "/api/inventory-alerts",
+      "methods": [
+        "POST"
+      ],
+      "handler": "create_inventory_alert"
+    },
+    {
+      "file": "app\\api\\inventory_alerts.py",
+      "blueprint": "api_bp",
+      "route": "/inventory_alerts",
+      "full_path": "/api/inventory_alerts",
+      "methods": [
+        "POST"
+      ],
+      "handler": "create_inventory_alert"
+    },
+    {
+      "file": "app\\api\\inventory_alerts.py",
+      "blueprint": "api_bp",
+      "route": "/inventory-alerts",
+      "full_path": "/api/inventory-alerts",
+      "methods": [
+        "GET"
+      ],
+      "handler": "list_inventory_alerts"
+    },
+    {
+      "file": "app\\api\\inventory_alerts.py",
+      "blueprint": "api_bp",
+      "route": "/inventory_alerts",
+      "full_path": "/api/inventory_alerts",
+      "methods": [
+        "GET"
+      ],
+      "handler": "list_inventory_alerts"
+    },
+    {
+      "file": "app\\api\\inventory_alerts.py",
+      "blueprint": "api_bp",
+      "route": "/inventory-alerts/<int:alert_id>/acknowledge",
+      "full_path": "/api/inventory-alerts/<int:alert_id>/acknowledge",
+      "methods": [
+        "POST"
+      ],
+      "handler": "acknowledge_inventory_alert"
+    },
+    {
+      "file": "app\\api\\inventory_alerts.py",
+      "blueprint": "api_bp",
+      "route": "/inventory_alerts/<int:alert_id>/acknowledge",
+      "full_path": "/api/inventory_alerts/<int:alert_id>/acknowledge",
+      "methods": [
+        "POST"
+      ],
+      "handler": "acknowledge_inventory_alert"
+    },
+    {
+      "file": "app\\api\\inventory_alerts.py",
+      "blueprint": "api_bp",
+      "route": "/procurement-recommendations",
+      "full_path": "/api/procurement-recommendations",
+      "methods": [
+        "POST"
+      ],
+      "handler": "create_procurement_recommendation"
+    },
+    {
+      "file": "app\\api\\inventory_alerts.py",
+      "blueprint": "api_bp",
+      "route": "/procurement_recommendations",
+      "full_path": "/api/procurement_recommendations",
+      "methods": [
+        "POST"
+      ],
+      "handler": "create_procurement_recommendation"
+    },
+    {
+      "file": "app\\api\\inventory_alerts.py",
+      "blueprint": "api_bp",
+      "route": "/procurement-recommendations",
+      "full_path": "/api/procurement-recommendations",
+      "methods": [
+        "GET"
+      ],
+      "handler": "list_procurement_recommendations"
+    },
+    {
+      "file": "app\\api\\inventory_alerts.py",
+      "blueprint": "api_bp",
+      "route": "/procurement_recommendations",
+      "full_path": "/api/procurement_recommendations",
+      "methods": [
+        "GET"
+      ],
+      "handler": "list_procurement_recommendations"
+    },
+    {
+      "file": "app\\api\\inventory_alerts.py",
+      "blueprint": "api_bp",
+      "route": "/procurement-recommendations/<int:recommendation_id>/status",
+      "full_path": "/api/procurement-recommendations/<int:recommendation_id>/status",
+      "methods": [
+        "PATCH"
+      ],
+      "handler": "update_procurement_status"
+    },
+    {
+      "file": "app\\api\\inventory_alerts.py",
+      "blueprint": "api_bp",
+      "route": "/procurement_recommendations/<int:recommendation_id>/status",
+      "full_path": "/api/procurement_recommendations/<int:recommendation_id>/status",
+      "methods": [
+        "PATCH"
+      ],
+      "handler": "update_procurement_status"
+    },
+    {
+      "file": "app\\api\\inventory_alerts.py",
+      "blueprint": "api_bp",
+      "route": "/inventory-alerts/health",
+      "full_path": "/api/inventory-alerts/health",
+      "methods": [
+        "GET"
+      ],
+      "handler": "health"
     },
     {
       "file": "app\\api\\process_management.py",
@@ -328,6 +533,26 @@
     {
       "file": "app\\api\\production_lot.py",
       "blueprint": "production_api_bp",
+      "route": "/production-lots/<int:lot_id>/validate-inventory",
+      "full_path": "/api/upf/production-lots/<int:lot_id>/validate-inventory",
+      "methods": [
+        "POST"
+      ],
+      "handler": "validate_inventory"
+    },
+    {
+      "file": "app\\api\\production_lot.py",
+      "blueprint": "production_api_bp",
+      "route": "/production-lots/<int:lot_id>/acknowledge-all-alerts",
+      "full_path": "/api/upf/production-lots/<int:lot_id>/acknowledge-all-alerts",
+      "methods": [
+        "POST"
+      ],
+      "handler": "acknowledge_all_alerts"
+    },
+    {
+      "file": "app\\api\\production_lot.py",
+      "blueprint": "production_api_bp",
       "route": "/production-lots/<int:lot_id>",
       "full_path": "/api/upf/production-lots/<int:lot_id>",
       "methods": [
@@ -424,6 +649,16 @@
         "POST"
       ],
       "handler": "execute_production_lot"
+    },
+    {
+      "file": "app\\api\\production_lot.py",
+      "blueprint": "production_api_bp",
+      "route": "/production-lots/<int:lot_id>/finalize",
+      "full_path": "/api/upf/production-lots/<int:lot_id>/finalize",
+      "methods": [
+        "PUT"
+      ],
+      "handler": "finalize_production_lot"
     },
     {
       "file": "app\\api\\production_lot.py",
@@ -1620,6 +1855,16 @@
     {
       "file": "app\\main\\routes.py",
       "blueprint": "main_bp",
+      "route": "/inventory-alerts",
+      "full_path": "/inventory-alerts",
+      "methods": [
+        "GET"
+      ],
+      "handler": "inventory_alerts_page"
+    },
+    {
+      "file": "app\\main\\routes.py",
+      "blueprint": "main_bp",
       "route": "/master-data",
       "full_path": "/master-data",
       "methods": [
@@ -1777,26 +2022,47 @@
         "GET"
       ],
       "handler": "upf_variant_selection"
+    },
+    {
+      "file": "app\\main\\routes.py",
+      "blueprint": "main_bp",
+      "route": "/upf/production-lots",
+      "full_path": "/upf/production-lots",
+      "methods": [
+        "GET"
+      ],
+      "handler": "upf_production_lots"
+    },
+    {
+      "file": "app\\main\\routes.py",
+      "blueprint": "main_bp",
+      "route": "/monitoring",
+      "full_path": "/monitoring",
+      "methods": [
+        "GET"
+      ],
+      "handler": "monitoring"
     }
   ],
   "route_summary": {
-    "total_routes": 173,
+    "total_routes": 199,
     "by_method": {
-      "GET": 98,
-      "POST": 47,
-      "PUT": 15,
+      "GET": 109,
+      "POST": 57,
+      "PATCH": 4,
+      "PUT": 16,
       "DELETE": 16
     },
     "by_blueprint": {
+      "api_bp": 82,
       "app": 1,
       "files_bp": 2,
       "process_api_bp": 23,
-      "production_api_bp": 20,
-      "api_bp": 62,
+      "production_api_bp": 23,
       "subprocess_api_bp": 11,
       "variant_api_bp": 17,
       "auth_bp": 9,
-      "main_bp": 28
+      "main_bp": 31
     }
   },
   "javascript_api_calls": [
@@ -1804,6 +2070,12 @@
       "file": "static\\js\\cost_calculator.js",
       "url": "/api/upf/processes/${processId}/structure",
       "method": "GET",
+      "type": "fetch"
+    },
+    {
+      "file": "static\\js\\inventory_alerts.js",
+      "url": "/api${path}",
+      "method": "POST",
       "type": "fetch"
     },
     {
@@ -2041,6 +2313,12 @@
       "type": "fetch"
     },
     {
+      "file": "templates\\monitoring.html",
+      "url": "/api/upf/monitoring/alerts-health",
+      "method": "GET",
+      "type": "fetch"
+    },
+    {
       "file": "templates\\reset_password.html",
       "url": "/api/reset-password",
       "method": "POST",
@@ -2059,6 +2337,24 @@
       "type": "fetch"
     },
     {
+      "file": "templates\\upf_production_lot_detail.html",
+      "url": "/api/upf/production-lots/${this.lotId}",
+      "method": "GET",
+      "type": "fetch"
+    },
+    {
+      "file": "templates\\upf_production_lot_detail.html",
+      "url": "/api/upf/inventory-alerts/lot/${this.lotId}",
+      "method": "POST",
+      "type": "fetch"
+    },
+    {
+      "file": "templates\\upf_production_lot_detail.html",
+      "url": "/api/upf/production-lots/${this.lotId}/finalize",
+      "method": "PUT",
+      "type": "fetch"
+    },
+    {
       "file": "templates\\upf_production_lot_new.html",
       "url": "/api/upf/processes?per_page=1000&status=active",
       "method": "GET",
@@ -2067,6 +2363,12 @@
     {
       "file": "templates\\upf_production_lot_new.html",
       "url": "/api/upf/production-lots",
+      "method": "POST",
+      "type": "fetch"
+    },
+    {
+      "file": "templates\\upf_production_lot_new.html",
+      "url": "/api/upf/inventory-alerts/lot/${this.lotId}",
       "method": "POST",
       "type": "fetch"
     },
@@ -2332,6 +2634,18 @@
         "file": "templates\\stock_ledger.html"
       },
       {
+        "url": "/api/upf/production-lots/${this.lotId}",
+        "method": "GET",
+        "route": "/api/upf/production-lots/\\d+",
+        "file": "templates\\upf_production_lot_detail.html"
+      },
+      {
+        "url": "/api/upf/production-lots/${this.lotId}/finalize",
+        "method": "PUT",
+        "route": "/api/upf/production-lots/\\d+/finalize",
+        "file": "templates\\upf_production_lot_detail.html"
+      },
+      {
         "url": "/api/upf/processes?per_page=1000&status=active",
         "method": "GET",
         "route": "/api/upf/processes",
@@ -2350,8 +2664,42 @@
         "file": "templates\\upf_variant_selection.html"
       }
     ],
-    "missing_backend": [],
+    "missing_backend": [
+      {
+        "url": "/api${path}",
+        "method": "POST",
+        "file": "static\\js\\inventory_alerts.js",
+        "message": "No backend route found for POST /api${path}"
+      },
+      {
+        "url": "/api/upf/monitoring/alerts-health",
+        "method": "GET",
+        "file": "templates\\monitoring.html",
+        "message": "No backend route found for GET /api/upf/monitoring/alerts-health"
+      },
+      {
+        "url": "/api/upf/inventory-alerts/lot/${this.lotId}",
+        "method": "POST",
+        "file": "templates\\upf_production_lot_detail.html",
+        "message": "No backend route found for POST /api/upf/inventory-alerts/lot/${this.lotId}"
+      },
+      {
+        "url": "/api/upf/inventory-alerts/lot/${this.lotId}",
+        "method": "POST",
+        "file": "templates\\upf_production_lot_new.html",
+        "message": "No backend route found for POST /api/upf/inventory-alerts/lot/${this.lotId}"
+      }
+    ],
     "unused_backend": [
+      {
+        "route": "/api/api/upf/monitoring/alerts-health",
+        "methods": [
+          "GET"
+        ],
+        "handler": "get_alerts_health",
+        "file": "audit_quick_fix.py",
+        "message": "Route defined but not called from frontend"
+      },
       {
         "route": "/test",
         "methods": [
@@ -2377,6 +2725,177 @@
         ],
         "handler": "serve_profile_picture",
         "file": "app\\api\\file_routes.py",
+        "message": "Route defined but not called from frontend"
+      },
+      {
+        "route": "/api/inventory-alert-rules",
+        "methods": [
+          "POST"
+        ],
+        "handler": "upsert_alert_rule",
+        "file": "app\\api\\inventory_alerts.py",
+        "message": "Route defined but not called from frontend"
+      },
+      {
+        "route": "/api/inventory_alert_rules",
+        "methods": [
+          "POST"
+        ],
+        "handler": "upsert_alert_rule",
+        "file": "app\\api\\inventory_alerts.py",
+        "message": "Route defined but not called from frontend"
+      },
+      {
+        "route": "/api/inventory-alert-rules",
+        "methods": [
+          "GET"
+        ],
+        "handler": "list_alert_rules",
+        "file": "app\\api\\inventory_alerts.py",
+        "message": "Route defined but not called from frontend"
+      },
+      {
+        "route": "/api/inventory_alert_rules",
+        "methods": [
+          "GET"
+        ],
+        "handler": "list_alert_rules",
+        "file": "app\\api\\inventory_alerts.py",
+        "message": "Route defined but not called from frontend"
+      },
+      {
+        "route": "/api/inventory-alert-rules/<int:rule_id>/deactivate",
+        "methods": [
+          "PATCH"
+        ],
+        "handler": "deactivate_alert_rule",
+        "file": "app\\api\\inventory_alerts.py",
+        "message": "Route defined but not called from frontend"
+      },
+      {
+        "route": "/api/inventory_alert_rules/<int:rule_id>/deactivate",
+        "methods": [
+          "PATCH"
+        ],
+        "handler": "deactivate_alert_rule",
+        "file": "app\\api\\inventory_alerts.py",
+        "message": "Route defined but not called from frontend"
+      },
+      {
+        "route": "/api/inventory-alerts",
+        "methods": [
+          "POST"
+        ],
+        "handler": "create_inventory_alert",
+        "file": "app\\api\\inventory_alerts.py",
+        "message": "Route defined but not called from frontend"
+      },
+      {
+        "route": "/api/inventory_alerts",
+        "methods": [
+          "POST"
+        ],
+        "handler": "create_inventory_alert",
+        "file": "app\\api\\inventory_alerts.py",
+        "message": "Route defined but not called from frontend"
+      },
+      {
+        "route": "/api/inventory-alerts",
+        "methods": [
+          "GET"
+        ],
+        "handler": "list_inventory_alerts",
+        "file": "app\\api\\inventory_alerts.py",
+        "message": "Route defined but not called from frontend"
+      },
+      {
+        "route": "/api/inventory_alerts",
+        "methods": [
+          "GET"
+        ],
+        "handler": "list_inventory_alerts",
+        "file": "app\\api\\inventory_alerts.py",
+        "message": "Route defined but not called from frontend"
+      },
+      {
+        "route": "/api/inventory-alerts/<int:alert_id>/acknowledge",
+        "methods": [
+          "POST"
+        ],
+        "handler": "acknowledge_inventory_alert",
+        "file": "app\\api\\inventory_alerts.py",
+        "message": "Route defined but not called from frontend"
+      },
+      {
+        "route": "/api/inventory_alerts/<int:alert_id>/acknowledge",
+        "methods": [
+          "POST"
+        ],
+        "handler": "acknowledge_inventory_alert",
+        "file": "app\\api\\inventory_alerts.py",
+        "message": "Route defined but not called from frontend"
+      },
+      {
+        "route": "/api/procurement-recommendations",
+        "methods": [
+          "POST"
+        ],
+        "handler": "create_procurement_recommendation",
+        "file": "app\\api\\inventory_alerts.py",
+        "message": "Route defined but not called from frontend"
+      },
+      {
+        "route": "/api/procurement_recommendations",
+        "methods": [
+          "POST"
+        ],
+        "handler": "create_procurement_recommendation",
+        "file": "app\\api\\inventory_alerts.py",
+        "message": "Route defined but not called from frontend"
+      },
+      {
+        "route": "/api/procurement-recommendations",
+        "methods": [
+          "GET"
+        ],
+        "handler": "list_procurement_recommendations",
+        "file": "app\\api\\inventory_alerts.py",
+        "message": "Route defined but not called from frontend"
+      },
+      {
+        "route": "/api/procurement_recommendations",
+        "methods": [
+          "GET"
+        ],
+        "handler": "list_procurement_recommendations",
+        "file": "app\\api\\inventory_alerts.py",
+        "message": "Route defined but not called from frontend"
+      },
+      {
+        "route": "/api/procurement-recommendations/<int:recommendation_id>/status",
+        "methods": [
+          "PATCH"
+        ],
+        "handler": "update_procurement_status",
+        "file": "app\\api\\inventory_alerts.py",
+        "message": "Route defined but not called from frontend"
+      },
+      {
+        "route": "/api/procurement_recommendations/<int:recommendation_id>/status",
+        "methods": [
+          "PATCH"
+        ],
+        "handler": "update_procurement_status",
+        "file": "app\\api\\inventory_alerts.py",
+        "message": "Route defined but not called from frontend"
+      },
+      {
+        "route": "/api/inventory-alerts/health",
+        "methods": [
+          "GET"
+        ],
+        "handler": "health",
+        "file": "app\\api\\inventory_alerts.py",
         "message": "Route defined but not called from frontend"
       },
       {
@@ -2497,11 +3016,20 @@
         "message": "Route defined but not called from frontend"
       },
       {
-        "route": "/api/upf/production-lots/<int:lot_id>",
+        "route": "/api/upf/production-lots/<int:lot_id>/validate-inventory",
         "methods": [
-          "GET"
+          "POST"
         ],
-        "handler": "get_production_lot",
+        "handler": "validate_inventory",
+        "file": "app\\api\\production_lot.py",
+        "message": "Route defined but not called from frontend"
+      },
+      {
+        "route": "/api/upf/production-lots/<int:lot_id>/acknowledge-all-alerts",
+        "methods": [
+          "POST"
+        ],
+        "handler": "acknowledge_all_alerts",
         "file": "app\\api\\production_lot.py",
         "message": "Route defined but not called from frontend"
       },
@@ -3308,6 +3836,15 @@
         "message": "Route defined but not called from frontend"
       },
       {
+        "route": "/inventory-alerts",
+        "methods": [
+          "GET"
+        ],
+        "handler": "inventory_alerts_page",
+        "file": "app\\main\\routes.py",
+        "message": "Route defined but not called from frontend"
+      },
+      {
         "route": "/master-data",
         "methods": [
           "GET"
@@ -3415,19 +3952,490 @@
         "handler": "upf_variant_selection",
         "file": "app\\main\\routes.py",
         "message": "Route defined but not called from frontend"
+      },
+      {
+        "route": "/upf/production-lots",
+        "methods": [
+          "GET"
+        ],
+        "handler": "upf_production_lots",
+        "file": "app\\main\\routes.py",
+        "message": "Route defined but not called from frontend"
+      },
+      {
+        "route": "/monitoring",
+        "methods": [
+          "GET"
+        ],
+        "handler": "monitoring",
+        "file": "app\\main\\routes.py",
+        "message": "Route defined but not called from frontend"
       }
     ],
     "method_mismatches": []
   },
+  "upf_alert_system": {
+    "endpoints": [
+      {
+        "file": "audit_quick_fix.py",
+        "blueprint": "api_bp",
+        "route": "/api/upf/monitoring/alerts-health",
+        "full_path": "/api/api/upf/monitoring/alerts-health",
+        "methods": [
+          "GET"
+        ],
+        "handler": "get_alerts_health"
+      },
+      {
+        "file": "app\\api\\production_lot.py",
+        "blueprint": "production_api_bp",
+        "route": "/production-lots",
+        "full_path": "/api/upf/production-lots",
+        "methods": [
+          "POST"
+        ],
+        "handler": "create_production_lot"
+      },
+      {
+        "file": "app\\api\\production_lot.py",
+        "blueprint": "production_api_bp",
+        "route": "/production-lots/<int:lot_id>/validate-inventory",
+        "full_path": "/api/upf/production-lots/<int:lot_id>/validate-inventory",
+        "methods": [
+          "POST"
+        ],
+        "handler": "validate_inventory"
+      },
+      {
+        "file": "app\\api\\production_lot.py",
+        "blueprint": "production_api_bp",
+        "route": "/production-lots/<int:lot_id>/acknowledge-all-alerts",
+        "full_path": "/api/upf/production-lots/<int:lot_id>/acknowledge-all-alerts",
+        "methods": [
+          "POST"
+        ],
+        "handler": "acknowledge_all_alerts"
+      },
+      {
+        "file": "app\\api\\production_lot.py",
+        "blueprint": "production_api_bp",
+        "route": "/production-lots/<int:lot_id>",
+        "full_path": "/api/upf/production-lots/<int:lot_id>",
+        "methods": [
+          "GET"
+        ],
+        "handler": "get_production_lot"
+      },
+      {
+        "file": "app\\api\\production_lot.py",
+        "blueprint": "production_api_bp",
+        "route": "/production-lots",
+        "full_path": "/api/upf/production-lots",
+        "methods": [
+          "GET"
+        ],
+        "handler": "list_production_lots"
+      },
+      {
+        "file": "app\\api\\production_lot.py",
+        "blueprint": "production_api_bp",
+        "route": "/production-lots/<int:lot_id>/selections",
+        "full_path": "/api/upf/production-lots/<int:lot_id>/selections",
+        "methods": [
+          "GET"
+        ],
+        "handler": "get_lot_selections"
+      },
+      {
+        "file": "app\\api\\production_lot.py",
+        "blueprint": "production_api_bp",
+        "route": "/production-lots/<int:lot_id>/validate",
+        "full_path": "/api/upf/production-lots/<int:lot_id>/validate",
+        "methods": [
+          "POST"
+        ],
+        "handler": "validate_lot_readiness"
+      },
+      {
+        "file": "app\\api\\production_lot.py",
+        "blueprint": "production_api_bp",
+        "route": "/production-lots/<int:lot_id>/execute",
+        "full_path": "/api/upf/production-lots/<int:lot_id>/execute",
+        "methods": [
+          "POST"
+        ],
+        "handler": "execute_production_lot"
+      },
+      {
+        "file": "app\\api\\production_lot.py",
+        "blueprint": "production_api_bp",
+        "route": "/production-lots/<int:lot_id>/finalize",
+        "full_path": "/api/upf/production-lots/<int:lot_id>/finalize",
+        "methods": [
+          "PUT"
+        ],
+        "handler": "finalize_production_lot"
+      },
+      {
+        "file": "app\\api\\production_lot.py",
+        "blueprint": "production_api_bp",
+        "route": "/production-lots/<int:lot_id>/cancel",
+        "full_path": "/api/upf/production-lots/<int:lot_id>/cancel",
+        "methods": [
+          "POST"
+        ],
+        "handler": "cancel_production_lot"
+      },
+      {
+        "file": "app\\api\\production_lot.py",
+        "blueprint": "production_api_bp",
+        "route": "/production-lots/<int:lot_id>/actual-costing",
+        "full_path": "/api/upf/production-lots/<int:lot_id>/actual-costing",
+        "methods": [
+          "GET"
+        ],
+        "handler": "get_lot_actual_costing"
+      },
+      {
+        "file": "app\\api\\production_lot.py",
+        "blueprint": "production_api_bp",
+        "route": "/production-lots/summary",
+        "full_path": "/api/upf/production-lots/summary",
+        "methods": [
+          "GET"
+        ],
+        "handler": "get_production_summary"
+      },
+      {
+        "file": "app\\api\\production_lot.py",
+        "blueprint": "production_api_bp",
+        "route": "/production-lots/recent",
+        "full_path": "/api/upf/production-lots/recent",
+        "methods": [
+          "GET"
+        ],
+        "handler": "get_recent_lots"
+      },
+      {
+        "file": "app\\main\\routes.py",
+        "blueprint": "main_bp",
+        "route": "/upf/production-lots",
+        "full_path": "/upf/production-lots",
+        "methods": [
+          "GET"
+        ],
+        "handler": "upf_production_lots"
+      },
+      {
+        "file": "app\\main\\routes.py",
+        "blueprint": "main_bp",
+        "route": "/monitoring",
+        "full_path": "/monitoring",
+        "methods": [
+          "GET"
+        ],
+        "handler": "monitoring"
+      }
+    ],
+    "services": [
+      "app\\services\\inventory_alert_service.py"
+    ],
+    "templates": [
+      "templates/upf_production_lots.html",
+      "templates/upf_production_lot_detail.html",
+      "templates/monitoring.html"
+    ],
+    "static_assets": [
+      "static/js/production_lot_alerts.js",
+      "static/css/inventory_alerts.css"
+    ],
+    "tests": [
+      "tests/api/test_inventory_alerts.py",
+      "tests/api/test_monitoring.py",
+      "tests/ui/test_upf_pages.py"
+    ],
+    "documentation": [
+      "docs/UPF_INVENTORY_ALERTS_USAGE.md",
+      "docs/ALERT_UI_INTEGRATION.md"
+    ],
+    "completeness": {
+      "endpoints": "16/6 (267%)",
+      "services": "1/1 (100%)",
+      "templates": "3/3 (100%)",
+      "static_assets": "2/2 (100%)",
+      "tests": "3/3 (100%)",
+      "documentation": "2/2 (100%)"
+    }
+  },
+  "database": {
+    "models": [
+      "app/models.py",
+      "app\\models\\inventory.py",
+      "app\\models\\process.py",
+      "app\\models\\production_lot.py",
+      "app\\models\\user.py"
+    ],
+    "migrations": [
+      "migrations\\006_add_performance_indexes.sql",
+      "migrations\\add_indexes.sql",
+      "migrations\\add_missing_upf_tables.sql",
+      "migrations\\init_schema.sql"
+    ],
+    "tables_found": [
+      "production_lot_inventory_alerts"
+    ],
+    "indexes": [
+      "idx_inventory_alerts_lot_id",
+      "idx_inventory_alerts_severity",
+      "idx_production_lots_status"
+    ],
+    "missing_indexes": []
+  },
+  "tests": {
+    "test_files": [
+      "tests\\test_app.py",
+      "tests\\test_auth.py",
+      "tests\\test_file_validation.py",
+      "tests\\test_integration_flows.py",
+      "tests\\test_oauth_redirect_uri.py",
+      "tests\\test_process_flow.py",
+      "tests\\test_smoke.py",
+      "tests\\api\\test_inventory_alerts.py",
+      "tests\\api\\test_items.py",
+      "tests\\api\\test_monitoring.py",
+      "tests\\api\\test_purchase_orders.py",
+      "tests\\api\\test_suppliers.py",
+      "tests\\auth\\test_routes.py",
+      "tests\\services\\test_import_service.py",
+      "tests\\services\\test_import_service_coverage.py",
+      "tests\\services\\test_process_service_coverage.py",
+      "tests\\services\\test_production_service.py",
+      "tests\\services\\test_subprocess_service.py",
+      "tests\\services\\test_variant_service.py",
+      "tests\\ui\\test_upf_pages.py"
+    ],
+    "total_tests": 139,
+    "coverage_summary": {
+      "pytest_configured": true,
+      "upf_alerts_tested": true
+    },
+    "missing_tests": []
+  },
+  "documentation": {
+    "markdown_files": [
+      "API_REFERENCE_UNIVERSAL_PROCESS_FRAMEWORK.md",
+      "APP_PY_CLEANUP_REPORT.md",
+      "BACKEND_IMPLEMENTATION_COMPLETE.md",
+      "CHANGELOG.md",
+      "COMPLETE_CHANGE_LOG.md",
+      "COMPREHENSIVE_AUDIT_REPORT.md",
+      "CONSOLIDATION_SUMMARY.md",
+      "CONTRIBUTING.md",
+      "DEPLOYMENT.md",
+      "DOCUMENTATION_INDEX.md",
+      "DUPLICATE_ROUTES_REPORT.md",
+      "FRONTEND_DEVELOPER_GUIDE.md",
+      "HIGH_PRIORITY_IMPLEMENTATION_COMPLETE.md",
+      "IMPLEMENTATION_COMPLETE.md",
+      "IMPLEMENTATION_ROADMAP.md",
+      "INDEX.md",
+      "ISSUES_TO_FIX.md",
+      "PHASES_1-6_COMPLETION_SUMMARY.md",
+      "PHASE_1_ROUTE_STANDARDIZATION_COMPLETE.md",
+      "QUICK_START_GUIDE.md",
+      "QUICK_START_UNIVERSAL_PROCESS_FRAMEWORK.md",
+      "QUICK_TEST_GUIDE.md",
+      "README.md",
+      "SYNC_ANALYSIS_REPORT.md",
+      "TASK_4_PRODUCTION_LOT_VARIANT_SELECTION_COMPLETE.md",
+      "TESTING_CHECKLIST.md",
+      "TESTING_FIXES_SUMMARY.md",
+      "TODO_LIST_COMPLETION_SUMMARY.md",
+      "UNIVERSAL_PROCESS_FRAMEWORK_PROGRESS.md",
+      "UPF_API_IMPLEMENTATION_COMPLETE.md",
+      "UPF_CODE_REVIEW_REPORT.md",
+      "UPF_FIXES_IMPLEMENTED.md",
+      "UPF_IMPLEMENTATION_COMPLETE.md",
+      "UPF_TESTING_GUIDE.md",
+      ".pytest_cache\\README.md",
+      "docs\\ALERT_UI_INTEGRATION.md",
+      "docs\\DEPLOYMENT_DOCKER.md",
+      "docs\\INVENTORY_ALERTS_API.md",
+      "docs\\LOGGING.md",
+      "docs\\PERFORMANCE.md",
+      "docs\\PRODUCTION_READINESS.md",
+      "docs\\SECURITY.md",
+      "docs\\TECHNICAL_DEBT.md",
+      "docs\\UPF_INVENTORY_ALERTS_USAGE.md",
+      "migrations\\README.md"
+    ],
+    "api_docs": [
+      "docs/UPF_INVENTORY_ALERTS_USAGE.md",
+      "docs/ALERT_UI_INTEGRATION.md"
+    ],
+    "deployment_guides": [
+      "DEPLOYMENT.md",
+      "docs/DEPLOYMENT_DOCKER.md",
+      "docs/PRODUCTION_READINESS.md"
+    ],
+    "completeness_score": 100.0
+  },
+  "security": {
+    "env_vars_documented": [
+      "SECRET_KEY",
+      "FLASK_ENV",
+      "DB_HOST",
+      "DB_NAME",
+      "DB_USER",
+      "DB_PASS",
+      "GOOGLE_CLIENT_ID",
+      "GOOGLE_CLIENT_SECRET",
+      "BASE_URL"
+    ],
+    "secrets_exposed": [],
+    "csrf_protected": true,
+    "https_enforced": false,
+    "recommendations": []
+  },
+  "performance": {
+    "large_files": [],
+    "unoptimized_queries": [],
+    "missing_caching": [],
+    "recommendations": []
+  },
+  "static_assets": {
+    "css_files": [
+      {
+        "path": "static\\styles.css",
+        "size": 52811,
+        "minified": false
+      },
+      {
+        "path": "static\\styles.min.css",
+        "size": 39273,
+        "minified": true
+      },
+      {
+        "path": "static\\css\\inventory_alerts.css",
+        "size": 4771,
+        "minified": false
+      },
+      {
+        "path": "static\\css\\login.css",
+        "size": 7576,
+        "minified": false
+      }
+    ],
+    "js_files": [
+      {
+        "path": "static\\dashboard.js",
+        "size": 2968,
+        "minified": false
+      },
+      {
+        "path": "static\\inventory.js",
+        "size": 46370,
+        "minified": false
+      },
+      {
+        "path": "static\\main.js",
+        "size": 7507,
+        "minified": false
+      },
+      {
+        "path": "static\\masterData.js",
+        "size": 8544,
+        "minified": false
+      },
+      {
+        "path": "static\\purchaseOrders.js",
+        "size": 17458,
+        "minified": false
+      },
+      {
+        "path": "static\\suppliers.js",
+        "size": 9335,
+        "minified": false
+      },
+      {
+        "path": "static\\js\\api_client.js",
+        "size": 11247,
+        "minified": false
+      },
+      {
+        "path": "static\\js\\cost_calculator.js",
+        "size": 5760,
+        "minified": false
+      },
+      {
+        "path": "static\\js\\inventory_alerts.js",
+        "size": 5728,
+        "minified": false
+      },
+      {
+        "path": "static\\js\\login.js",
+        "size": 2343,
+        "minified": false
+      },
+      {
+        "path": "static\\js\\process_editor.js",
+        "size": 35743,
+        "minified": false
+      },
+      {
+        "path": "static\\js\\process_framework_unified.js",
+        "size": 41296,
+        "minified": false
+      },
+      {
+        "path": "static\\js\\process_manager.js",
+        "size": 16192,
+        "minified": false
+      },
+      {
+        "path": "static\\js\\production_lots.js",
+        "size": 9576,
+        "minified": false
+      },
+      {
+        "path": "static\\js\\production_lot_alerts.js",
+        "size": 6879,
+        "minified": false
+      },
+      {
+        "path": "static\\js\\subprocess_library.js",
+        "size": 10684,
+        "minified": false
+      },
+      {
+        "path": "static\\js\\upf_reports.js",
+        "size": 7766,
+        "minified": false
+      },
+      {
+        "path": "static\\js\\variant_search.js",
+        "size": 7813,
+        "minified": false
+      }
+    ],
+    "total_size": 357640,
+    "minified_count": 1
+  },
   "incomplete_functions": [],
   "duplicate_functions": [],
   "statistics": {
-    "total_routes": 173,
-    "total_api_calls": 46,
-    "matched_routes": 45,
-    "missing_backend": 0,
+    "total_routes": 199,
+    "total_api_calls": 52,
+    "matched_routes": 47,
+    "missing_backend": 4,
     "method_mismatches": 0,
-    "unused_backend": 118,
+    "unused_backend": 142,
+    "upf_completeness": 83.33333333333334,
+    "test_files": 20,
+    "total_tests": 139,
+    "documentation_score": 100.0,
+    "security_issues": 0,
+    "static_assets": 22,
     "errors": 0
   },
   "errors": []

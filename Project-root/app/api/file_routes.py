@@ -80,8 +80,7 @@ def serve_file(filename):
 
         # Log successful file access
         current_app.logger.info(
-            f"[FILE_ACCESS_GRANTED] | "
-            f"user_id={current_user.id} | filename={filename}"
+            f"[FILE_ACCESS_GRANTED] | user_id={current_user.id} | filename={filename}"
         )
 
         # Serve file with proper content type detection
@@ -108,7 +107,11 @@ def serve_profile_picture(user_id, filename):
     Users can only access their own profile pictures unless they are admin.
     """
     # Check permission: user can view their own profile, or admin can view any
-    user_role = current_user.role if (current_user.is_authenticated and hasattr(current_user, 'role')) else None
+    user_role = (
+        current_user.role
+        if (current_user.is_authenticated and hasattr(current_user, "role"))
+        else None
+    )
     if current_user.id != user_id and user_role not in ["admin", "super_admin"]:
         current_app.logger.warning(
             f"[FILE_ACCESS_DENIED] Unauthorized profile access | "

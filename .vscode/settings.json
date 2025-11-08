@@ -1,0 +1,10 @@
+{
+    "python.testing.pytestArgs": [
+        "Project-root"
+    ],
+    "python.testing.unittestEnabled": false,
+    "python.testing.pytestEnabled": true,
+    // Disable JavaScript validation in HTML files to prevent false errors from Jinja2 template syntax
+    "javascript.validate.enable": false,
+    "html.validate.scripts": false
+}

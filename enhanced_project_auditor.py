@@ -1,9 +1,18 @@
 """
-Enhanced Flask Project Auditor - Version 2.0
+Enhanced Flask Project Auditor - Version 3.0
 =============================================
-Improved route detection for Blueprint-based Flask applications.
+Comprehensive auditing for Flask applications with UPF support.
 
-ENHANCEMENTS:
+ENHANCEMENTS v3.0:
+- UPF Inventory Alert System analysis
+- Database schema and migration verification
+- Test coverage statistics
+- Documentation completeness check
+- Security configuration audit
+- Performance bottleneck detection
+- Static asset analysis
+
+ENHANCEMENTS v2.0:
 - Detects @blueprint.route() patterns (api_bp, auth_bp, main_bp, etc.)
 - Traces Blueprint registrations and URL prefixes
 - Maps complete API endpoint paths
@@ -35,6 +44,53 @@ class EnhancedFlaskAuditor:
                 "missing_backend": [],
                 "unused_backend": [],
                 "method_mismatches": []
+            },
+            "upf_alert_system": {
+                "endpoints": [],
+                "services": [],
+                "templates": [],
+                "static_assets": [],
+                "tests": [],
+                "documentation": [],
+                "completeness": {}
+            },
+            "database": {
+                "models": [],
+                "migrations": [],
+                "tables_found": [],
+                "indexes": [],
+                "missing_indexes": []
+            },
+            "tests": {
+                "test_files": [],
+                "total_tests": 0,
+                "coverage_summary": {},
+                "missing_tests": []
+            },
+            "documentation": {
+                "markdown_files": [],
+                "api_docs": [],
+                "deployment_guides": [],
+                "completeness_score": 0
+            },
+            "security": {
+                "env_vars_documented": [],
+                "secrets_exposed": [],
+                "csrf_protected": True,
+                "https_enforced": False,
+                "recommendations": []
+            },
+            "performance": {
+                "large_files": [],
+                "unoptimized_queries": [],
+                "missing_caching": [],
+                "recommendations": []
+            },
+            "static_assets": {
+                "css_files": [],
+                "js_files": [],
+                "total_size": 0,
+                "minified_count": 0
             },
             "incomplete_functions": [],
             "duplicate_functions": [],
@@ -534,10 +590,314 @@ class EnhancedFlaskAuditor:
             # Fallback to simple comparison
             return route_pattern == actual_path
     
+    def audit_upf_alert_system(self):
+        """Audit the UPF Inventory Alert System implementation."""
+        print("🚨 Auditing UPF Inventory Alert System...")
+        
+        upf_data = self.results["upf_alert_system"]
+        
+        # Check for alert endpoints
+        alert_endpoints = [
+            "/api/upf/inventory-alerts/lot/<lot_id>",
+            "/api/upf/inventory-alerts/lot/<lot_id>/acknowledge-bulk",
+            "/api/upf/monitoring/alerts-health",
+            "/upf/production-lots",
+            "/upf/production-lot/<lot_id>",
+            "/monitoring"
+        ]
+        
+        for route in self.results["flask_routes"]:
+            if any(endpoint in route["full_path"] for endpoint in alert_endpoints):
+                upf_data["endpoints"].append(route)
+        
+        # Check for alert service
+        service_file = self.project_root / "app" / "services" / "inventory_alert_service.py"
+        if service_file.exists():
+            upf_data["services"].append(str(service_file.relative_to(self.project_root)))
+        
+        # Check templates
+        template_files = [
+            "templates/upf_production_lots.html",
+            "templates/upf_production_lot_detail.html",
+            "templates/monitoring.html"
+        ]
+        for template in template_files:
+            if (self.project_root / template).exists():
+                upf_data["templates"].append(template)
+        
+        # Check static assets
+        static_files = [
+            "static/js/production_lot_alerts.js",
+            "static/css/inventory_alerts.css"
+        ]
+        for asset in static_files:
+            if (self.project_root / asset).exists():
+                upf_data["static_assets"].append(asset)
+        
+        # Check tests
+        test_files = [
+            "tests/api/test_inventory_alerts.py",
+            "tests/api/test_monitoring.py",
+            "tests/ui/test_upf_pages.py"
+        ]
+        for test in test_files:
+            if (self.project_root / test).exists():
+                upf_data["tests"].append(test)
+        
+        # Check documentation
+        doc_files = [
+            "docs/UPF_INVENTORY_ALERTS_USAGE.md",
+            "docs/ALERT_UI_INTEGRATION.md"
+        ]
+        for doc in doc_files:
+            if (self.project_root / doc).exists():
+                upf_data["documentation"].append(doc)
+        
+        # Calculate completeness
+        upf_data["completeness"] = {
+            "endpoints": f"{len(upf_data['endpoints'])}/6 ({len(upf_data['endpoints'])/6*100:.0f}%)",
+            "services": f"{len(upf_data['services'])}/1 ({len(upf_data['services'])*100:.0f}%)",
+            "templates": f"{len(upf_data['templates'])}/3 ({len(upf_data['templates'])/3*100:.0f}%)",
+            "static_assets": f"{len(upf_data['static_assets'])}/2 ({len(upf_data['static_assets'])/2*100:.0f}%)",
+            "tests": f"{len(upf_data['tests'])}/3 ({len(upf_data['tests'])/3*100:.0f}%)",
+            "documentation": f"{len(upf_data['documentation'])}/2 ({len(upf_data['documentation'])/2*100:.0f}%)"
+        }
+        
+        print(f"   ✓ Found {len(upf_data['endpoints'])} UPF alert endpoints")
+        print(f"   ✓ Found {len(upf_data['templates'])} UPF templates")
+        print(f"   ✓ Found {len(upf_data['tests'])} UPF test files")
+    
+    def audit_database(self):
+        """Audit database models and migrations."""
+        print("🗄️  Auditing Database...")
+        
+        db_data = self.results["database"]
+        
+        # Find models
+        models_file = self.project_root / "app" / "models.py"
+        if models_file.exists():
+            db_data["models"].append("app/models.py")
+        
+        models_dir = self.project_root / "app" / "models"
+        if models_dir.exists():
+            for model_file in models_dir.glob("*.py"):
+                if model_file.name != "__init__.py":
+                    db_data["models"].append(str(model_file.relative_to(self.project_root)))
+        
+        # Find migrations
+        migrations_dir = self.project_root / "migrations"
+        if migrations_dir.exists():
+            for migration in migrations_dir.glob("*.sql"):
+                db_data["migrations"].append(str(migration.relative_to(self.project_root)))
+        
+        # Check for alert table
+        alert_table_mentioned = False
+        for migration in db_data["migrations"]:
+            try:
+                with open(self.project_root / migration, 'r', encoding='utf-8') as f:
+                    content = f.read().lower()
+                    if "production_lot_inventory_alerts" in content:
+                        alert_table_mentioned = True
+                        db_data["tables_found"].append("production_lot_inventory_alerts")
+            except Exception:
+                pass
+        
+        # Check for recommended indexes
+        recommended_indexes = [
+            "idx_inventory_alerts_lot_id",
+            "idx_inventory_alerts_severity",
+            "idx_production_lots_status"
+        ]
+        
+        for migration in db_data["migrations"]:
+            try:
+                with open(self.project_root / migration, 'r', encoding='utf-8') as f:
+                    content = f.read()
+                    for idx in recommended_indexes:
+                        if idx in content:
+                            db_data["indexes"].append(idx)
+            except Exception:
+                pass
+        
+        for idx in recommended_indexes:
+            if idx not in db_data["indexes"]:
+                db_data["missing_indexes"].append(idx)
+        
+        print(f"   ✓ Found {len(db_data['models'])} model files")
+        print(f"   ✓ Found {len(db_data['migrations'])} migration files")
+        print(f"   ✓ Found {len(db_data['indexes'])} indexes")
+    
+    def audit_tests(self):
+        """Audit test coverage."""
+        print("🧪 Auditing Tests...")
+        
+        test_data = self.results["tests"]
+        
+        # Find test files
+        tests_dir = self.project_root / "tests"
+        if tests_dir.exists():
+            for test_file in tests_dir.rglob("test_*.py"):
+                test_data["test_files"].append(str(test_file.relative_to(self.project_root)))
+                
+                # Count tests in file
+                try:
+                    with open(test_file, 'r', encoding='utf-8') as f:
+                        content = f.read()
+                        test_count = len(re.findall(r'def test_\w+', content))
+                        test_data["total_tests"] += test_count
+                except Exception:
+                    pass
+        
+        # Check for pytest coverage
+        pytest_ini = self.project_root / "pytest.ini"
+        if pytest_ini.exists():
+            test_data["coverage_summary"]["pytest_configured"] = True
+        
+        # Check for UPF alert tests
+        upf_tests = [
+            "tests/api/test_inventory_alerts.py",
+            "tests/api/test_monitoring.py"
+        ]
+        for test_file in upf_tests:
+            if (self.project_root / test_file).exists():
+                test_data["coverage_summary"]["upf_alerts_tested"] = True
+        
+        print(f"   ✓ Found {len(test_data['test_files'])} test files")
+        print(f"   ✓ Total test functions: {test_data['total_tests']}")
+    
+    def audit_documentation(self):
+        """Audit documentation completeness."""
+        print("📚 Auditing Documentation...")
+        
+        doc_data = self.results["documentation"]
+        
+        # Find all markdown files
+        for md_file in self.project_root.rglob("*.md"):
+            if any(excluded in str(md_file) for excluded in ['venv', 'node_modules', '.git']):
+                continue
+            doc_data["markdown_files"].append(str(md_file.relative_to(self.project_root)))
+        
+        # Check for key documentation
+        key_docs = {
+            "README.md": 0,
+            "DEPLOYMENT.md": 0,
+            "docs/DEPLOYMENT_DOCKER.md": 0,
+            "docs/PRODUCTION_READINESS.md": 0,
+            "docs/UPF_INVENTORY_ALERTS_USAGE.md": 0,
+            "docs/ALERT_UI_INTEGRATION.md": 0
+        }
+        
+        for doc in key_docs:
+            if (self.project_root / doc).exists():
+                key_docs[doc] = 1
+                if "DEPLOYMENT" in doc or "PRODUCTION" in doc:
+                    doc_data["deployment_guides"].append(doc)
+                elif "UPF" in doc or "ALERT" in doc:
+                    doc_data["api_docs"].append(doc)
+        
+        doc_data["completeness_score"] = sum(key_docs.values()) / len(key_docs) * 100
+        
+        print(f"   ✓ Found {len(doc_data['markdown_files'])} documentation files")
+        print(f"   ✓ Documentation completeness: {doc_data['completeness_score']:.0f}%")
+    
+    def audit_security(self):
+        """Audit security configuration."""
+        print("🔒 Auditing Security...")
+        
+        sec_data = self.results["security"]
+        
+        # Check for .env.example or production.env.example
+        env_examples = list(self.project_root.glob("*.env.example"))
+        if env_examples:
+            try:
+                with open(env_examples[0], 'r', encoding='utf-8') as f:
+                    content = f.read()
+                    env_vars = re.findall(r'^([A-Z_]+)=', content, re.MULTILINE)
+                    sec_data["env_vars_documented"] = env_vars
+            except Exception:
+                pass
+        
+        # Check for exposed secrets in code
+        python_files = list(self.project_root.rglob("*.py"))
+        secret_patterns = [
+            r'SECRET_KEY\s*=\s*[\'"][^\'"]{10,}[\'"]',
+            r'password\s*=\s*[\'"][^\'"]+[\'"]',
+            r'api_key\s*=\s*[\'"][^\'"]+[\'"]'
+        ]
+        
+        for py_file in python_files:
+            if any(excluded in str(py_file) for excluded in ['venv', '__pycache__', 'test']):
+                continue
+            try:
+                with open(py_file, 'r', encoding='utf-8') as f:
+                    content = f.read()
+                    for pattern in secret_patterns:
+                        if re.search(pattern, content, re.IGNORECASE):
+                            sec_data["secrets_exposed"].append(str(py_file.relative_to(self.project_root)))
+                            break
+            except Exception:
+                pass
+        
+        # Check for CSRF protection
+        config_file = self.project_root / "config.py"
+        if config_file.exists():
+            try:
+                with open(config_file, 'r', encoding='utf-8') as f:
+                    content = f.read()
+                    if "WTF_CSRF_ENABLED" in content or "SECRET_KEY" in content:
+                        sec_data["csrf_protected"] = True
+            except Exception:
+                pass
+        
+        # Add recommendations
+        if len(sec_data["secrets_exposed"]) > 0:
+            sec_data["recommendations"].append("⚠️  Hardcoded secrets found - use environment variables")
+        if len(sec_data["env_vars_documented"]) < 5:
+            sec_data["recommendations"].append("ℹ️  Document all required environment variables")
+        
+        print(f"   ✓ {len(sec_data['env_vars_documented'])} environment variables documented")
+        print(f"   ⚠️  {len(sec_data['secrets_exposed'])} potential secret exposures")
+    
+    def audit_static_assets(self):
+        """Audit static assets."""
+        print("📦 Auditing Static Assets...")
+        
+        static_data = self.results["static_assets"]
+        
+        static_dir = self.project_root / "static"
+        if static_dir.exists():
+            # Find CSS files
+            for css_file in static_dir.rglob("*.css"):
+                file_size = css_file.stat().st_size
+                static_data["css_files"].append({
+                    "path": str(css_file.relative_to(self.project_root)),
+                    "size": file_size,
+                    "minified": ".min.css" in css_file.name
+                })
+                static_data["total_size"] += file_size
+                if ".min.css" in css_file.name:
+                    static_data["minified_count"] += 1
+            
+            # Find JS files
+            for js_file in static_dir.rglob("*.js"):
+                file_size = js_file.stat().st_size
+                static_data["js_files"].append({
+                    "path": str(js_file.relative_to(self.project_root)),
+                    "size": file_size,
+                    "minified": ".min.js" in js_file.name
+                })
+                static_data["total_size"] += file_size
+                if ".min.js" in js_file.name:
+                    static_data["minified_count"] += 1
+        
+        total_assets = len(static_data["css_files"]) + len(static_data["js_files"])
+        print(f"   ✓ Found {total_assets} static assets ({static_data['total_size']/1024:.1f} KB)")
+        print(f"   ✓ Minified: {static_data['minified_count']}/{total_assets}")
+    
     def run_audit(self) -> Dict[str, Any]:
         """Run the complete enhanced audit."""
         print("\n" + "="*60)
-        print("🚀 Starting Enhanced Flask Project Audit")
+        print("🚀 Starting Comprehensive Flask Project Audit v3.0")
         print("="*60 + "\n")
         
         try:
@@ -553,6 +913,14 @@ class EnhancedFlaskAuditor:
             # Synchronize routes and calls
             self.synchronize_routes_and_calls()
             
+            # NEW v3.0 audits
+            self.audit_upf_alert_system()
+            self.audit_database()
+            self.audit_tests()
+            self.audit_documentation()
+            self.audit_security()
+            self.audit_static_assets()
+            
             # Generate statistics
             self.results["statistics"] = {
                 "total_routes": len(self.results["flask_routes"]),
@@ -561,11 +929,17 @@ class EnhancedFlaskAuditor:
                 "missing_backend": len(self.results["route_api_sync"]["missing_backend"]),
                 "method_mismatches": len(self.results["route_api_sync"]["method_mismatches"]),
                 "unused_backend": len(self.results["route_api_sync"]["unused_backend"]),
+                "upf_completeness": sum(1 for v in self.results["upf_alert_system"]["completeness"].values() if "100%" in v) / 6 * 100,
+                "test_files": len(self.results["tests"]["test_files"]),
+                "total_tests": self.results["tests"]["total_tests"],
+                "documentation_score": self.results["documentation"]["completeness_score"],
+                "security_issues": len(self.results["security"]["secrets_exposed"]),
+                "static_assets": len(self.results["static_assets"]["css_files"]) + len(self.results["static_assets"]["js_files"]),
                 "errors": len(self.results["errors"])
             }
             
             print("\n" + "="*60)
-            print("✅ Enhanced Audit Complete!")
+            print("✅ Comprehensive Audit Complete!")
             print("="*60)
             
             return self.results
@@ -608,24 +982,67 @@ def main():
     results = auditor.run_audit()
     auditor.save_report()
     
-    # Print summary
+    # Print comprehensive summary
     print("\n" + "="*60)
-    print("📋 AUDIT SUMMARY")
+    print("📋 COMPREHENSIVE AUDIT SUMMARY")
     print("="*60)
     stats = results["statistics"]
+    
+    print("\n🛣️  ROUTES & API SYNC:")
     print(f"  Total backend routes: {stats['total_routes']}")
     print(f"  Total frontend API calls: {stats['total_api_calls']}")
     print(f"  ✅ Matched & synchronized: {stats['matched_routes']}")
     print(f"  ❌ Missing backend routes: {stats['missing_backend']}")
     print(f"  ⚠️  HTTP method mismatches: {stats['method_mismatches']}")
     print(f"  ℹ️  Unused backend routes: {stats['unused_backend']}")
-    print(f"  ⚠️  Errors encountered: {stats['errors']}")
+    
+    print("\n🚨 UPF INVENTORY ALERT SYSTEM:")
+    print(f"  Completeness: {stats['upf_completeness']:.0f}%")
+    upf = results["upf_alert_system"]["completeness"]
+    for component, status in upf.items():
+        print(f"  {component.replace('_', ' ').title()}: {status}")
+    
+    print("\n🗄️  DATABASE:")
+    db = results["database"]
+    print(f"  Model files: {len(db['models'])}")
+    print(f"  Migration files: {len(db['migrations'])}")
+    print(f"  Indexes found: {len(db['indexes'])}")
+    if db['missing_indexes']:
+        print(f"  ⚠️  Missing indexes: {', '.join(db['missing_indexes'])}")
+    
+    print("\n🧪 TESTS:")
+    print(f"  Test files: {stats['test_files']}")
+    print(f"  Total test functions: {stats['total_tests']}")
+    
+    print("\n📚 DOCUMENTATION:")
+    print(f"  Completeness score: {stats['documentation_score']:.0f}%")
+    print(f"  Deployment guides: {len(results['documentation']['deployment_guides'])}")
+    print(f"  API docs: {len(results['documentation']['api_docs'])}")
+    
+    print("\n🔒 SECURITY:")
+    print(f"  Environment vars documented: {len(results['security']['env_vars_documented'])}")
+    if stats['security_issues'] > 0:
+        print(f"  ⚠️  Potential secret exposures: {stats['security_issues']}")
+    if results['security']['recommendations']:
+        for rec in results['security']['recommendations']:
+            print(f"  {rec}")
+    
+    print("\n📦 STATIC ASSETS:")
+    print(f"  Total assets: {stats['static_assets']}")
+    print(f"  Total size: {results['static_assets']['total_size']/1024:.1f} KB")
+    print(f"  Minified: {results['static_assets']['minified_count']}/{stats['static_assets']}")
+    
+    print("\n⚠️  ISSUES:")
+    print(f"  Errors encountered: {stats['errors']}")
+    
     print("="*60 + "\n")
     
     if stats['missing_backend'] > 0:
         print("⚠️  WARNING: Frontend is calling backend routes that don't exist!")
     if stats['method_mismatches'] > 0:
         print("⚠️  WARNING: HTTP method mismatches detected!")
+    if stats['security_issues'] > 0:
+        print("⚠️  WARNING: Potential security issues found!")
     
     print("\n✨ Review the detailed report in 'enhanced_audit_report.json'\n")
 

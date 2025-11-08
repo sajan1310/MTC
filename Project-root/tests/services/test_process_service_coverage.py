@@ -90,6 +90,7 @@ class TestProcessServiceCreation:
             with pytest.raises(Exception, match="Database connection failed"):
                 ProcessService.create_process(name="Test", user_id=1)
 
+
 class TestProcessServiceRetrieval:
     """Test process retrieval workflows."""
 

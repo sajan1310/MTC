@@ -9,7 +9,8 @@ def test_home_redirect(client):
     assert (
         b"Sign in with Google" in response.data
         or b"login" in response.data.lower()
-        or b"dashboard" in response.data.lower()  # May go to dashboard if LOGIN_DISABLED
+        or b"dashboard"
+        in response.data.lower()  # May go to dashboard if LOGIN_DISABLED
     )
 
 

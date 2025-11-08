@@ -1,4 +1,4 @@
-﻿import logging
+import logging
 
 # All import endpoints should be registered via api_bp in routes.py
 logger = logging.getLogger(__name__)

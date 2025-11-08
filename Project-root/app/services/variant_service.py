@@ -294,7 +294,7 @@ class VariantService:
             cur.execute(
                 f"""
                 UPDATE variant_supplier_pricing
-                SET {', '.join(updates)}
+                SET {", ".join(updates)}
                 WHERE id = %s
                 RETURNING *
             """,

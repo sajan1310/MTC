@@ -4,6 +4,7 @@ Ensures the process_subprocesses table has a notes TEXT column used by the API.
 This migration is intentionally independent of the application's DB pool so
 it can run in test environments that call upgrade() directly.
 """
+
 import os
 import psycopg2
 from contextlib import contextmanager

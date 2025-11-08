@@ -41,7 +41,9 @@ def init_app(app):
             "password": app.config.get("DB_PASS"),
         }
         if app.config.get("DATABASE_URL"):
-            parsed = urlparse(app.config["DATABASE_URL"])  # e.g., postgres://user:pass@host:port/db
+            parsed = urlparse(
+                app.config["DATABASE_URL"]
+            )  # e.g., postgres://user:pass@host:port/db
             if parsed.scheme.startswith("postgres"):
                 db_kwargs["host"] = parsed.hostname or db_kwargs.get("host")
                 db_kwargs["user"] = parsed.username or db_kwargs.get("user")
@@ -183,23 +185,23 @@ def close_db_pool():
 def transactional(func):
     """
     Decorator for automatic transaction management.
-    
+
     Wraps a function to automatically:
     - Start a database transaction
     - Commit on success
     - Rollback on any exception
     - Properly clean up resources
-    
+
     The decorated function must accept 'conn' and 'cur' as first two arguments
     (or as keyword arguments).
-    
+
     Usage:
         @transactional
         def update_process(conn, cur, process_id, **kwargs):
             cur.execute("UPDATE processes SET ...")
             # Transaction auto-commits on success
             return result
-    
+
     Example:
         @transactional
         def create_process_with_subprocesses(conn, cur, name, subprocess_ids):
@@ -211,7 +213,7 @@ def transactional(func):
             return process_id
     """
     from functools import wraps
-    
+
     @wraps(func)
     def wrapper(*args, **kwargs):
         with get_conn(cursor_factory=psycopg2.extras.RealDictCursor) as (conn, cur):
@@ -223,9 +225,8 @@ def transactional(func):
             except Exception as e:
                 # get_conn context manager handles rollback
                 current_app.logger.error(
-                    f"Transaction failed in {func.__name__}: {e}", 
-                    exc_info=True
+                    f"Transaction failed in {func.__name__}: {e}", exc_info=True
                 )
                 raise
-    
+
     return wrapper

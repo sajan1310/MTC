@@ -1,4 +1,3 @@
-
 from __future__ import annotations
 
 import csv
@@ -20,8 +19,6 @@ from ..utils.file_validation import validate_upload
 
 # Import api_bp from __init__ after it's been defined
 from . import api_bp
-
-
 
 
 # --- Utility: Generic CRUD for masters ---
@@ -1140,27 +1137,30 @@ def get_all_variants():
             )
             variants = []
             for row in cur.fetchall():
-                variants.append({
-                    'id': row['id'],
-                    'item_id': row['item_id'],
-                    'name': row['name'],
-                    'item_name': row['item_name'],
-                    'color': row['color'],
-                    'size': row['size'],
-                    'quantity': row['quantity'] or 0,
-                    'unit': row['unit'] or 'pcs',
-                    'model': row['model'],
-                    'brand': row['brand'],
-                    'unit_price': float(row['unit_price'] or 0),
-                    'reorder_level': row['reorder_level'] or 5,
-                    'category': row['category'],
-                    'category_id': row['category_id'],
-                    'description': row['description']
-                })
+                variants.append(
+                    {
+                        "id": row["id"],
+                        "item_id": row["item_id"],
+                        "name": row["name"],
+                        "item_name": row["item_name"],
+                        "color": row["color"],
+                        "size": row["size"],
+                        "quantity": row["quantity"] or 0,
+                        "unit": row["unit"] or "pcs",
+                        "model": row["model"],
+                        "brand": row["brand"],
+                        "unit_price": float(row["unit_price"] or 0),
+                        "reorder_level": row["reorder_level"] or 5,
+                        "category": row["category"],
+                        "category_id": row["category_id"],
+                        "description": row["description"],
+                    }
+                )
             return jsonify(variants), 200
     except Exception as e:
         current_app.logger.error(f"Error fetching all variants: {e}")
         import traceback
+
         traceback.print_exc()
         return jsonify({"error": str(e)}), 500
 
@@ -1176,11 +1176,11 @@ def get_variants_select2():
         - page_size: items per page (default 30)
     """
     try:
-        search_term = request.args.get('q', '').strip()
-        page = int(request.args.get('page', 1))
-        page_size = int(request.args.get('page_size', 30))
+        search_term = request.args.get("q", "").strip()
+        page = int(request.args.get("page", 1))
+        page_size = int(request.args.get("page_size", 30))
         offset = (page - 1) * page_size
-        
+
         with database.get_conn(cursor_factory=psycopg2.extras.DictCursor) as (
             conn,
             cur,
@@ -1200,7 +1200,7 @@ def get_variants_select2():
                 """
                 search_pattern = f"%{search_term}%"
                 params = [search_pattern] * 5
-            
+
             # Get total count
             count_query = f"""
                 SELECT COUNT(*) as total
@@ -1215,8 +1215,8 @@ def get_variants_select2():
                   {search_condition}
             """
             cur.execute(count_query, params)
-            total = cur.fetchone()['total']
-            
+            total = cur.fetchone()["total"]
+
             # Get paginated results
             data_query = f"""
                 SELECT 
@@ -1243,45 +1243,43 @@ def get_variants_select2():
                 LIMIT %s OFFSET %s
             """
             cur.execute(data_query, params + [page_size, offset])
-            
+
             results = []
             for row in cur.fetchall():
                 # Add stock indicator to the text
                 stock_info = ""
-                qty = row['quantity'] or 0
-                reorder = row['reorder_level'] or 0
+                qty = row["quantity"] or 0
+                reorder = row["reorder_level"] or 0
                 if qty == 0:
                     stock_info = " 🔴"
                 elif qty <= reorder:
                     stock_info = " 🟡"
                 else:
                     stock_info = " 🟢"
-                
-                results.append({
-                    'id': row['id'],
-                    'text': row['text'] + stock_info,
-                    'item_name': row['item_name'],
-                    'color': row['color'],
-                    'size': row['size'],
-                    'quantity': qty,
-                    'unit': row['unit'] or 'pcs',
-                    'model': row['model'],
-                    'brand': row['brand'],
-                    'reorder_level': reorder
-                })
-            
+
+                results.append(
+                    {
+                        "id": row["id"],
+                        "text": row["text"] + stock_info,
+                        "item_name": row["item_name"],
+                        "color": row["color"],
+                        "size": row["size"],
+                        "quantity": qty,
+                        "unit": row["unit"] or "pcs",
+                        "model": row["model"],
+                        "brand": row["brand"],
+                        "reorder_level": reorder,
+                    }
+                )
+
             more = (offset + page_size) < total
-            
-            return jsonify({
-                'results': results,
-                'pagination': {
-                    'more': more
-                }
-            }), 200
-            
+
+            return jsonify({"results": results, "pagination": {"more": more}}), 200
+
     except Exception as e:
         current_app.logger.error(f"Error fetching variants for select2: {e}")
         import traceback
+
         traceback.print_exc()
         return jsonify({"error": str(e)}), 500
 
@@ -1903,40 +1901,48 @@ def export_inventory_csv():
 def import_data():
     """
     Handle bulk import operations for items and variants.
-    
+
     Expects JSON data with a list of items to import.
     Uses ImportService for chunked batch processing.
     """
     try:
         from app.services.import_service import ImportService
-        
+
         data = request.get_json()
         if not data:
             return jsonify({"error": "No data provided"}), 400
-            
+
         # Extract rows from data (handle different formats)
-        rows = data.get("rows") or data.get("data") or (data if isinstance(data, list) else [])
-        
+        rows = (
+            data.get("rows")
+            or data.get("data")
+            or (data if isinstance(data, list) else [])
+        )
+
         if not rows or not isinstance(rows, list):
-            return jsonify({"error": "Invalid data format. Expected list of items"}), 400
-        
+            return jsonify(
+                {"error": "Invalid data format. Expected list of items"}
+            ), 400
+
         if len(rows) == 0:
             return jsonify({"error": "No rows to import"}), 400
-        
+
         # Use ImportService for processing
         import_service = ImportService()
         result = import_service.import_items_chunked(rows)
-        
-        return jsonify({
-            "success": True,
-            "processed": result["processed"],
-            "failed": len(result["failed"]),
-            "total": result["total_rows"],
-            "success_rate": result["success_rate"],
-            "duration": result["import_duration"],
-            "errors": result["failed"][:10]  # Return first 10 errors only
-        }), 200
-        
+
+        return jsonify(
+            {
+                "success": True,
+                "processed": result["processed"],
+                "failed": len(result["failed"]),
+                "total": result["total_rows"],
+                "success_rate": result["success_rate"],
+                "duration": result["import_duration"],
+                "errors": result["failed"][:10],  # Return first 10 errors only
+            }
+        ), 200
+
     except ValueError as e:
         current_app.logger.error(f"Validation error in import: {e}")
         return jsonify({"error": str(e)}), 400
@@ -1982,7 +1988,10 @@ def import_preview_json():
 def get_users():
     """Get all users excluding super_admin role"""
     try:
-        with database.get_conn(cursor_factory=psycopg2.extras.DictCursor) as (conn, cur):
+        with database.get_conn(cursor_factory=psycopg2.extras.DictCursor) as (
+            conn,
+            cur,
+        ):
             cur.execute(
                 "SELECT user_id, name, email, role FROM users WHERE role != 'super_admin' ORDER BY name"
             )
@@ -2004,7 +2013,9 @@ def update_user_role(user_id):
         return jsonify({"error": "Invalid role specified."}), 400
     try:
         with database.get_conn() as (conn, cur):
-            cur.execute("UPDATE users SET role = %s WHERE user_id = %s", (new_role, user_id))
+            cur.execute(
+                "UPDATE users SET role = %s WHERE user_id = %s", (new_role, user_id)
+            )
             conn.commit()
         return jsonify({"message": "User role updated successfully."})
     except Exception as e:

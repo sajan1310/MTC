@@ -1,0 +1,237 @@
+{% extends "base.html" %}
+
+{% block title %}Monitoring Dashboard{% endblock %}
+
+{% block extra_css %}
+<style>
+    .monitoring-container {
+        padding: 30px;
+        max-width: 1400px;
+        margin: 0 auto;
+    }
+
+    .page-header {
+        margin-bottom: 30px;
+    }
+
+    .page-title {
+        font-size: 28px;
+        font-weight: 600;
+        color: #333;
+        margin: 0;
+    }
+
+    .metrics-grid {
+        display: grid;
+        grid-template-columns: repeat(auto-fit, minmax(280px, 1fr));
+        gap: 20px;
+        margin-bottom: 30px;
+    }
+
+    .metric-card {
+        background: white;
+        padding: 25px;
+        border-radius: 8px;
+        box-shadow: 0 2px 4px rgba(0,0,0,0.1);
+        transition: transform 0.2s;
+    }
+
+    .metric-card:hover {
+        transform: translateY(-2px);
+        box-shadow: 0 4px 8px rgba(0,0,0,0.15);
+    }
+
+    .metric-label {
+        font-size: 14px;
+        color: #666;
+        text-transform: uppercase;
+        letter-spacing: 0.5px;
+        margin-bottom: 10px;
+    }
+
+    .metric-value {
+        font-size: 36px;
+        font-weight: 700;
+        color: #333;
+        margin-bottom: 5px;
+    }
+
+    .metric-subtitle {
+        font-size: 12px;
+        color: #999;
+    }
+
+    .metric-critical { border-left: 4px solid #dc3545; }
+    .metric-high { border-left: 4px solid #fd7e14; }
+    .metric-medium { border-left: 4px solid #ffc107; }
+    .metric-low { border-left: 4px solid #17a2b8; }
+    .metric-ok { border-left: 4px solid #28a745; }
+
+    .metric-value.critical-color { color: #dc3545; }
+    .metric-value.high-color { color: #fd7e14; }
+    .metric-value.medium-color { color: #ffc107; }
+    .metric-value.low-color { color: #17a2b8; }
+    .metric-value.ok-color { color: #28a745; }
+
+    .alert-banner {
+        background: #fff3cd;
+        border: 1px solid #ffc107;
+        border-radius: 6px;
+        padding: 15px 20px;
+        margin-bottom: 20px;
+        display: none;
+    }
+
+    .alert-banner.show {
+        display: block;
+    }
+
+    .alert-banner.critical {
+        background: #f8d7da;
+        border-color: #dc3545;
+        color: #721c24;
+    }
+
+    .refresh-info {
+        text-align: center;
+        color: #999;
+        font-size: 13px;
+        margin-top: 20px;
+    }
+
+    .loading {
+        text-align: center;
+        padding: 40px;
+        color: #999;
+    }
+</style>
+{% endblock %}
+
+{% block content %}
+<div class="monitoring-container">
+    <div class="page-header">
+        <h1 class="page-title">📊 Inventory Alerts Monitoring</h1>
+    </div>
+
+    <div id="alert-banner" class="alert-banner">
+        <strong>⚠️ Attention Required:</strong> <span id="banner-message"></span>
+    </div>
+
+    <div id="loading" class="loading">
+        <div>Loading metrics...</div>
+    </div>
+
+    <div id="metrics-container" style="display: none;">
+        <div class="metrics-grid">
+            <div class="metric-card">
+                <div class="metric-label">Total Active Alerts</div>
+                <div class="metric-value" id="total-alerts">-</div>
+                <div class="metric-subtitle">Across all production lots</div>
+            </div>
+
+            <div class="metric-card metric-critical">
+                <div class="metric-label">Critical Alerts</div>
+                <div class="metric-value critical-color" id="critical-count">-</div>
+                <div class="metric-subtitle" id="critical-age">-</div>
+            </div>
+
+            <div class="metric-card metric-high">
+                <div class="metric-label">High Priority</div>
+                <div class="metric-value high-color" id="high-count">-</div>
+                <div class="metric-subtitle">Requires attention</div>
+            </div>
+
+            <div class="metric-card metric-medium">
+                <div class="metric-label">Medium Priority</div>
+                <div class="metric-value medium-color" id="medium-count">-</div>
+                <div class="metric-subtitle">Monitor closely</div>
+            </div>
+
+            <div class="metric-card metric-low">
+                <div class="metric-label">Low Priority</div>
+                <div class="metric-value low-color" id="low-count">-</div>
+                <div class="metric-subtitle">For awareness</div>
+            </div>
+
+            <div class="metric-card metric-ok">
+                <div class="metric-label">Acknowledged</div>
+                <div class="metric-value ok-color" id="acknowledged-count">-</div>
+                <div class="metric-subtitle">User reviewed</div>
+            </div>
+        </div>
+
+        <div class="refresh-info">
+            Auto-refreshing every 30 seconds • Last updated: <span id="last-updated">-</span>
+        </div>
+    </div>
+</div>
+
+<script>
+(function() {
+    let refreshInterval;
+
+    async function fetchMetrics() {
+        try {
+            const resp = await fetch('/api/upf/monitoring/alerts-health');
+            const json = await resp.json();
+            
+            if (!json.success || !json.data) {
+                throw new Error(json.message || 'Failed to fetch metrics');
+            }
+
+            const data = json.data;
+            
+            // Update values
+            document.getElementById('total-alerts').textContent = data.total_active_alerts || 0;
+            document.getElementById('critical-count').textContent = data.critical_count || 0;
+            document.getElementById('high-count').textContent = data.high_count || 0;
+            document.getElementById('medium-count').textContent = data.medium_count || 0;
+            document.getElementById('low-count').textContent = data.low_count || 0;
+            document.getElementById('acknowledged-count').textContent = data.acknowledged_count || 0;
+
+            // Critical age subtitle
+            const ageEl = document.getElementById('critical-age');
+            if (data.oldest_critical_age_hours !== null && data.oldest_critical_age_hours !== undefined) {
+                const hours = Math.floor(data.oldest_critical_age_hours);
+                ageEl.textContent = `Oldest: ${hours}h ago`;
+            } else {
+                ageEl.textContent = 'No unacknowledged critical alerts';
+            }
+
+            // Show banner if critical alerts exist
+            const banner = document.getElementById('alert-banner');
+            const bannerMsg = document.getElementById('banner-message');
+            if (data.critical_count > 0) {
+                banner.classList.add('show', 'critical');
+                bannerMsg.textContent = `${data.critical_count} critical alert(s) require immediate action.`;
+            } else {
+                banner.classList.remove('show', 'critical');
+            }
+
+            // Update last refresh time
+            document.getElementById('last-updated').textContent = new Date().toLocaleTimeString();
+
+            // Hide loading, show metrics
+            document.getElementById('loading').style.display = 'none';
+            document.getElementById('metrics-container').style.display = 'block';
+
+        } catch (err) {
+            console.error('Failed to fetch metrics:', err);
+            document.getElementById('loading').innerHTML = '<div style="color: #dc3545;">⚠️ Failed to load metrics. Please refresh the page.</div>';
+        }
+    }
+
+    function startAutoRefresh() {
+        fetchMetrics(); // Initial load
+        refreshInterval = setInterval(fetchMetrics, 30000); // Refresh every 30s
+    }
+
+    document.addEventListener('DOMContentLoaded', startAutoRefresh);
+
+    // Clean up interval on page unload
+    window.addEventListener('beforeunload', () => {
+        if (refreshInterval) clearInterval(refreshInterval);
+    });
+})();
+</script>
+{% endblock %}

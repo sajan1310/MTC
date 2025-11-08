@@ -13,7 +13,8 @@ from __future__ import annotations
 
 from typing import Any, Dict, List, Optional
 from functools import lru_cache
-from flask import current_app
+from flask import current_app, has_app_context
+import logging
 
 import database
 import psycopg2.extras
@@ -25,30 +26,33 @@ class SubprocessService:
     """
     Service for subprocess management operations with caching.
     """
-    
+
     # Cache version for invalidation
     _cache_version = 0
-    
+
     @classmethod
     def invalidate_cache(cls):
         """Invalidate subprocess cache when data changes."""
         cls._cache_version += 1
         # Clear the LRU cache
         SubprocessService.get_all_subprocesses_cached.cache_clear()
-        current_app.logger.info("Subprocess cache cleared")
+
+    (current_app.logger if has_app_context() else logging.getLogger(__name__)).info(
+        "Subprocess cache cleared"
+    )
 
     @staticmethod
     @lru_cache(maxsize=1)
     def get_all_subprocesses_cached(cache_version: int) -> List[Dict[str, Any]]:
         """
         Get all subprocesses with caching (Priority 3).
-        
+
         This method caches ALL subprocesses to avoid repeated database queries.
         The cache_version parameter allows cache invalidation when data changes.
-        
+
         Args:
             cache_version: Current cache version (for invalidation)
-            
+
         Returns:
             List of all subprocess templates
         """
@@ -68,8 +72,10 @@ class SubprocessService:
             """
             )
             subprocesses = [dict(sp) for sp in cur.fetchall()]
-        
-        current_app.logger.info(f"Loaded {len(subprocesses)} subprocesses into cache")
+
+        (current_app.logger if has_app_context() else logging.getLogger(__name__)).info(
+            f"Loaded {len(subprocesses)} subprocesses into cache"
+        )
         return subprocesses
 
     @staticmethod
@@ -108,7 +114,7 @@ class SubprocessService:
 
             subprocess_data = cur.fetchone()
             conn.commit()
-        
+
         # Invalidate cache when new subprocess is created
         SubprocessService.invalidate_cache()
 
@@ -177,22 +183,24 @@ class SubprocessService:
         """
         # Enforce reasonable limits
         per_page = min(per_page, 1000)
-        
+
         # Priority 3: Use cached data
         all_subprocesses = SubprocessService.get_all_subprocesses_cached(
             SubprocessService._cache_version
         )
-        
+
         # Filter by type if specified
         if subprocess_type:
-            filtered = [sp for sp in all_subprocesses if sp.get('category') == subprocess_type]
+            filtered = [
+                sp for sp in all_subprocesses if sp.get("category") == subprocess_type
+            ]
         else:
             filtered = all_subprocesses
-        
+
         # Calculate pagination
         total = len(filtered)
         offset = (page - 1) * per_page
-        paginated = filtered[offset:offset + per_page]
+        paginated = filtered[offset : offset + per_page]
 
         return {
             "subprocesses": paginated,
@@ -259,7 +267,7 @@ class SubprocessService:
             cur.execute(
                 f"""
                 UPDATE subprocesses
-                SET {', '.join(updates)}
+                SET {", ".join(updates)}
                 WHERE id = %s
                 RETURNING *
             """,

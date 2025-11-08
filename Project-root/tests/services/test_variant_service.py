@@ -117,9 +117,7 @@ class TestVariantService:
                 "total_cost": 600.00,
             }
 
-            result = VariantService.update_variant_usage(
-                usage_id=1, cost_per_unit=6.00
-            )
+            result = VariantService.update_variant_usage(usage_id=1, cost_per_unit=6.00)
 
             assert result is not None
             assert result["cost_per_unit"] == 6.00
@@ -136,9 +134,7 @@ class TestVariantService:
 
             mock_cursor.fetchone.return_value = None
 
-            result = VariantService.update_variant_usage(
-                usage_id=999, quantity=100.0
-            )
+            result = VariantService.update_variant_usage(usage_id=999, quantity=100.0)
 
             assert result is None
 

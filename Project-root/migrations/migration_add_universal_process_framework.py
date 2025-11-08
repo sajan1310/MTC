@@ -490,7 +490,7 @@ def downgrade():
 if __name__ == "__main__":
     import sys
     from database import init_app
-    
+
     class MockApp:
         def __init__(self):
             self.config = {
@@ -498,15 +498,14 @@ if __name__ == "__main__":
                 "DB_NAME": os.getenv("DB_NAME", "testuser"),
                 "DB_USER": os.getenv("DB_USER", "postgres"),
                 "DB_PASS": os.getenv("DB_PASS", "abcd"),
-                "TESTING": True
+                "TESTING": True,
             }
-            self.logger = type('obj', (object,), {
-                'info': print,
-                'warning': print,
-                'error': print,
-                'critical': print
-            })()
-        
+            self.logger = type(
+                "obj",
+                (object,),
+                {"info": print, "warning": print, "error": print, "critical": print},
+            )()
+
         def get(self, key, default=None):
             return self.config.get(key, default)
 

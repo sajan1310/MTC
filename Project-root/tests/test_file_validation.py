@@ -25,21 +25,18 @@ class TestFileValidation:
         """Test valid PNG file with correct magic number and IHDR chunk"""
         # Minimal valid PNG header with IHDR (1x1 pixel, truecolor)
         png_header = (
-            (
-                b"\x89PNG\r\n\x1a\n"  # Signature
-                b"\x00\x00\x00\r"  # Length (13)
-                b"IHDR"
-                b"\x00\x00\x00\x01"  # Width: 1
-                b"\x00\x00\x00\x01"  # Height: 1
-                b"\x08"  # Bit depth: 8
-                b"\x02"  # Color type: Truecolor
-                b"\x00"  # Compression
-                b"\x00"  # Filter
-                b"\x00"  # Interlace
-                b"\x90wS\xde"  # CRC (placeholder, magic doesn't validate)
-            )
-            + b"\x00" * 2000
-        )
+            b"\x89PNG\r\n\x1a\n"  # Signature
+            b"\x00\x00\x00\r"  # Length (13)
+            b"IHDR"
+            b"\x00\x00\x00\x01"  # Width: 1
+            b"\x00\x00\x00\x01"  # Height: 1
+            b"\x08"  # Bit depth: 8
+            b"\x02"  # Color type: Truecolor
+            b"\x00"  # Compression
+            b"\x00"  # Filter
+            b"\x00"  # Interlace
+            b"\x90wS\xde"  # CRC (placeholder, magic doesn't validate)
+        ) + b"\x00" * 2000
         file = FileStorage(
             stream=io.BytesIO(png_header), filename="test.png", content_type="image/png"
         )
@@ -268,9 +265,9 @@ class TestSecurityRegression:
         )
         with open(file_path, "r") as f:
             content = f.read()
-            assert (
-                "except ImportError" not in content
-            ), "Fallback import logic found - python-magic must be hard dependency"
+            assert "except ImportError" not in content, (
+                "Fallback import logic found - python-magic must be hard dependency"
+            )
             assert "import magic" in content, "python-magic import missing"
 
     def test_validate_upload_raises_on_failure(self):

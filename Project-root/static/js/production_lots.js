@@ -173,6 +173,7 @@ const productionLots = {
                     <td>${lot.process_name}</td>
                     <td>${lot.quantity}</td>
                     <td><span class="status-badge ${statusClass}">${lot.status}</span></td>
+                    <td>${renderAlertsCell(lot)}</td>
                     <td>${cost}</td>
                     <td>${lot.created_by_name || 'System'}</td>
                     <td>${createdAt}</td>
@@ -262,3 +263,14 @@ const productionLots = {
         }, 5000);
     }
 };
+
+function renderAlertsCell(lot) {
+    // Expect enriched lots may have alerts_summary from service
+    const summary = lot.alerts_summary || lot.alert_summary || {}; // fallback
+    const bySeverity = summary.by_severity || summary.alerts_by_severity || {};
+    const total = summary.total_alerts || summary.total || lot.total_alerts || 0;
+    if (!total) return '<span style="color:#888">None</span>';
+    const sevOrder = ['CRITICAL','HIGH','MEDIUM','LOW'];
+    const parts = sevOrder.filter(s => bySeverity[s] > 0).map(s => `<span class="severity-badge ${s}" style="margin-right:4px;">${s[0]}:${bySeverity[s]}</span>`);
+    return parts.join('') || total;
+}

@@ -1,0 +1,734 @@
+{% extends "base.html" %}
+
+{% block title %}Production Lot Detail{% endblock %}
+
+{% block extra_css %}
+<link rel="stylesheet" href="{{ url_for('static', filename='css/inventory_alerts.css') }}">
+<style>
+    .lot-detail-container {
+        padding: 30px;
+        max-width: 1600px;
+        margin: 0 auto;
+    }
+
+    .page-header {
+        display: flex;
+        justify-content: space-between;
+        align-items: center;
+        margin-bottom: 30px;
+    }
+
+    .page-title {
+        font-size: 28px;
+        font-weight: 600;
+        color: #333;
+        margin: 0;
+    }
+
+    .back-link {
+        color: #2196F3;
+        text-decoration: none;
+        display: flex;
+        align-items: center;
+        gap: 5px;
+        font-size: 14px;
+    }
+
+    .back-link:hover {
+        text-decoration: underline;
+    }
+
+    .detail-grid {
+        display: grid;
+        grid-template-columns: 2fr 1fr;
+        gap: 25px;
+        margin-bottom: 30px;
+    }
+
+    .detail-card {
+        background: white;
+        border-radius: 8px;
+        box-shadow: 0 2px 8px rgba(0,0,0,0.1);
+        padding: 25px;
+    }
+
+    .card-header {
+        display: flex;
+        justify-content: space-between;
+        align-items: center;
+        margin-bottom: 20px;
+        padding-bottom: 15px;
+        border-bottom: 2px solid #f0f0f0;
+    }
+
+    .card-title {
+        font-size: 20px;
+        font-weight: 600;
+        color: #333;
+        margin: 0;
+    }
+
+    .detail-row {
+        display: flex;
+        justify-content: space-between;
+        padding: 12px 0;
+        border-bottom: 1px solid #f5f5f5;
+    }
+
+    .detail-label {
+        font-weight: 600;
+        color: #666;
+        font-size: 14px;
+    }
+
+    .detail-value {
+        color: #333;
+        font-size: 14px;
+    }
+
+    .status-badge {
+        padding: 6px 14px;
+        border-radius: 12px;
+        font-size: 12px;
+        font-weight: 600;
+        display: inline-block;
+    }
+
+    .status-planning { background: #fff3cd; color: #856404; }
+    .status-ready { background: #cfe2ff; color: #084298; }
+    .status-in-progress { background: #e7f1ff; color: #004085; }
+    .status-completed { background: #d1e7dd; color: #0f5132; }
+    .status-pending-procurement { background: #fff3cd; color: #856404; }
+    .status-failed { background: #f8d7da; color: #842029; }
+
+    .btn {
+        padding: 12px 24px;
+        border: none;
+        border-radius: 6px;
+        font-size: 14px;
+        font-weight: 500;
+        cursor: pointer;
+        transition: all 0.2s;
+    }
+
+    .btn-primary {
+        background: #4CAF50;
+        color: white;
+    }
+
+    .btn-primary:hover:not(:disabled) {
+        background: #45a049;
+    }
+
+    .btn-danger {
+        background: #dc3545;
+        color: white;
+    }
+
+    .btn-danger:hover:not(:disabled) {
+        background: #c82333;
+    }
+
+    .btn:disabled {
+        opacity: 0.6;
+        cursor: not-allowed;
+    }
+
+    .alert-banner {
+        background: #fff3cd;
+        border: 2px solid #ffc107;
+        border-radius: 8px;
+        padding: 20px;
+        margin-bottom: 25px;
+        display: flex;
+        align-items: center;
+        gap: 15px;
+    }
+
+    .alert-banner.critical {
+        background: #f8d7da;
+        border-color: #dc3545;
+    }
+
+    .alert-banner-icon {
+        font-size: 32px;
+    }
+
+    .alert-banner-content {
+        flex: 1;
+    }
+
+    .alert-banner-title {
+        font-weight: 600;
+        font-size: 16px;
+        margin-bottom: 5px;
+        color: #333;
+    }
+
+    .alert-banner-text {
+        font-size: 14px;
+        color: #666;
+    }
+
+    .alerts-section {
+        background: white;
+        border-radius: 8px;
+        box-shadow: 0 2px 8px rgba(0,0,0,0.1);
+        padding: 25px;
+        margin-bottom: 30px;
+    }
+
+    .alerts-table {
+        width: 100%;
+        border-collapse: collapse;
+        margin-top: 20px;
+    }
+
+    .alerts-table thead {
+        background: #f9f9f9;
+        border-bottom: 2px solid #e0e0e0;
+    }
+
+    .alerts-table th {
+        padding: 12px;
+        text-align: left;
+        font-weight: 600;
+        color: #555;
+        font-size: 13px;
+        text-transform: uppercase;
+    }
+
+    .alerts-table td {
+        padding: 12px;
+        border-bottom: 1px solid #f0f0f0;
+        font-size: 14px;
+    }
+
+    .bulk-actions {
+        display: flex;
+        gap: 10px;
+        margin-top: 20px;
+        padding-top: 20px;
+        border-top: 2px solid #f0f0f0;
+    }
+
+    .loading-state {
+        text-align: center;
+        padding: 40px;
+        color: #999;
+        font-size: 14px;
+    }
+
+    .empty-state {
+        text-align: center;
+        padding: 40px;
+        color: #999;
+        font-size: 14px;
+    }
+
+    .procurement-panel {
+        background: white;
+        border-radius: 8px;
+        box-shadow: 0 2px 8px rgba(0,0,0,0.1);
+        padding: 25px;
+        margin-bottom: 30px;
+    }
+
+    .recommendations-table {
+        width: 100%;
+        border-collapse: collapse;
+        margin-top: 20px;
+    }
+
+    .recommendations-table thead {
+        background: #f9f9f9;
+        border-bottom: 2px solid #e0e0e0;
+    }
+
+    .recommendations-table th {
+        padding: 12px;
+        text-align: left;
+        font-weight: 600;
+        color: #555;
+        font-size: 13px;
+        text-transform: uppercase;
+    }
+
+    .recommendations-table td {
+        padding: 12px;
+        border-bottom: 1px solid #f0f0f0;
+        font-size: 14px;
+    }
+
+    .action-buttons {
+        display: flex;
+        gap: 10px;
+        justify-content: flex-end;
+        margin-top: 30px;
+    }
+</style>
+{% endblock %}
+
+{% block content %}
+<div class="lot-detail-container">
+    <!-- Critical Alert Banner (shown when unacknowledged CRITICAL alerts exist) -->
+    <div id="critical-alert-banner" class="alert-banner critical" style="display: none;">
+        <div class="alert-banner-icon">⚠️</div>
+        <div class="alert-banner-content">
+            <div class="alert-banner-title">Critical Inventory Alerts Detected</div>
+            <div class="alert-banner-text">
+                This production lot has unacknowledged CRITICAL inventory alerts. 
+                You must review and acknowledge all critical alerts before finalizing this lot.
+            </div>
+        </div>
+    </div>
+
+    <div class="page-header">
+        <h1 class="page-title" id="page-title">🏭 Production Lot Details</h1>
+        <a href="/upf/production-lots" class="back-link">
+            ← Back to Production Lots
+        </a>
+    </div>
+
+    <div class="detail-grid">
+        <!-- Main Details Card -->
+        <div class="detail-card">
+            <div class="card-header">
+                <h2 class="card-title">Lot Information</h2>
+                <div id="lot-status-badge"></div>
+            </div>
+            <div id="lot-details-content" class="loading-state">
+                Loading lot details...
+            </div>
+        </div>
+
+        <!-- Summary Card -->
+        <div class="detail-card">
+            <div class="card-header">
+                <h2 class="card-title">Summary</h2>
+            </div>
+            <div id="summary-content" class="loading-state">
+                Loading summary...
+            </div>
+        </div>
+    </div>
+
+    <!-- Inventory Alerts Section -->
+    <div class="alerts-section">
+        <div class="card-header">
+            <h2 class="card-title">Inventory Alerts</h2>
+            <span id="alerts-count-badge"></span>
+        </div>
+        <div id="alerts-content" class="loading-state">
+            Loading alerts...
+        </div>
+        <div id="alerts-table-container" style="display: none;">
+            <table class="alerts-table" id="alerts-table">
+                <thead>
+                    <tr>
+                        <th><input type="checkbox" id="select-all-alerts"></th>
+                        <th>Severity</th>
+                        <th>Variant</th>
+                        <th>Current Stock</th>
+                        <th>Required</th>
+                        <th>Shortfall</th>
+                        <th>Suggested Procurement</th>
+                        <th>Status</th>
+                        <th>Action</th>
+                    </tr>
+                </thead>
+                <tbody id="alerts-table-body"></tbody>
+            </table>
+            <div class="bulk-actions">
+                <button class="btn btn-primary" id="bulk-acknowledge-btn" disabled>
+                    Acknowledge Selected Alerts
+                </button>
+            </div>
+        </div>
+    </div>
+
+    <!-- Procurement Recommendations Panel -->
+    <div class="procurement-panel" id="procurement-panel" style="display: none;">
+        <div class="card-header">
+            <h2 class="card-title">Procurement Recommendations</h2>
+        </div>
+        <div id="recommendations-content"></div>
+    </div>
+
+    <!-- Action Buttons -->
+    <div class="action-buttons">
+        <button class="btn btn-danger" id="finalize-btn" disabled>
+            🏁 Finalize Production Lot
+        </button>
+    </div>
+</div>
+
+<script src="{{ url_for('static', filename='js/production_lot_alerts.js') }}"></script>
+<script>
+/**
+ * @fileoverview Production Lot Detail Page JavaScript
+ * Note: This file contains Jinja2 template variables which may cause editor warnings.
+ * These are processed server-side and are not JavaScript syntax errors.
+ * @suppress {all}
+ */
+// @ts-nocheck
+/* eslint-disable */
+
+const lotDetailPage = {
+    lotId: {{ lot_id }},
+    lotData: null,
+    alertsData: null,
+
+    async init() {
+        await this.loadLotDetails();
+        await this.loadAlerts();
+        this.setupEventListeners();
+        
+        // Initialize alert handler
+        if (window.ProductionLotAlertHandler) {
+            window.ProductionLotAlertHandler.init(this.lotId);
+        }
+    },
+
+    async loadLotDetails() {
+        try {
+            const response = await fetch(`/api/upf/production-lots/${this.lotId}`, {
+                method: 'GET',
+                credentials: 'include'
+            });
+
+            if (response.status === 401) {
+                window.location.href = '/auth/login';
+                return;
+            }
+
+            if (!response.ok) {
+                throw new Error('Failed to load lot details');
+            }
+
+            const data = await response.json();
+            this.lotData = data.data || data;
+            this.renderLotDetails();
+            this.renderSummary();
+        } catch (error) {
+            console.error('Error loading lot details:', error);
+            document.getElementById('lot-details-content').innerHTML = 
+                '<div class="empty-state">❌ Failed to load lot details</div>';
+        }
+    },
+
+    async loadAlerts() {
+        try {
+            const response = await fetch(`/api/upf/inventory-alerts/lot/${this.lotId}`, {
+                credentials: 'include'
+            });
+
+            if (!response.ok) {
+                throw new Error('Failed to load alerts');
+            }
+
+            const data = await response.json();
+            this.alertsData = data.data || data;
+            this.renderAlerts();
+            this.updateCriticalBanner();
+            this.updateFinalizeButton();
+        } catch (error) {
+            console.error('Error loading alerts:', error);
+            document.getElementById('alerts-content').innerHTML = 
+                '<div class="empty-state">No alerts available</div>';
+        }
+    },
+
+    renderLotDetails() {
+        const lot = this.lotData;
+        
+        // Update page title
+        document.getElementById('page-title').textContent = 
+            `🏭 Production Lot: ${lot.lot_number || 'N/A'}`;
+
+        // Update status badge
+        const statusClass = (lot.status || 'planning').toLowerCase().replace(/\s+/g, '-');
+        document.getElementById('lot-status-badge').innerHTML = 
+            `<span class="status-badge status-${statusClass}">${lot.status || 'Planning'}</span>`;
+
+        // Render details
+        const detailsHtml = `
+            <div class="detail-row">
+                <span class="detail-label">Lot Number</span>
+                <span class="detail-value">${lot.lot_number || 'N/A'}</span>
+            </div>
+            <div class="detail-row">
+                <span class="detail-label">Process</span>
+                <span class="detail-value">${lot.process_name || 'N/A'}</span>
+            </div>
+            <div class="detail-row">
+                <span class="detail-label">Quantity</span>
+                <span class="detail-value">${lot.quantity || 0}</span>
+            </div>
+            <div class="detail-row">
+                <span class="detail-label">Created By</span>
+                <span class="detail-value">${lot.created_by_username || 'Unknown'}</span>
+            </div>
+            <div class="detail-row">
+                <span class="detail-label">Created At</span>
+                <span class="detail-value">${lot.created_at ? new Date(lot.created_at).toLocaleString() : 'N/A'}</span>
+            </div>
+            ${lot.notes ? `
+            <div class="detail-row">
+                <span class="detail-label">Notes</span>
+                <span class="detail-value">${this.escapeHtml(lot.notes)}</span>
+            </div>
+            ` : ''}
+        `;
+
+        document.getElementById('lot-details-content').innerHTML = detailsHtml;
+    },
+
+    renderSummary() {
+        const lot = this.lotData;
+        
+        const summaryHtml = `
+            <div class="detail-row">
+                <span class="detail-label">Total Cost</span>
+                <span class="detail-value">$${(lot.total_cost || lot.worst_case_estimated_cost || 0).toFixed(2)}</span>
+            </div>
+            <div class="detail-row">
+                <span class="detail-label">Total Alerts</span>
+                <span class="detail-value" id="total-alerts-count">-</span>
+            </div>
+            <div class="detail-row">
+                <span class="detail-label">Acknowledged</span>
+                <span class="detail-value" id="acknowledged-count">-</span>
+            </div>
+            <div class="detail-row">
+                <span class="detail-label">Pending</span>
+                <span class="detail-value" id="pending-count">-</span>
+            </div>
+        `;
+
+        document.getElementById('summary-content').innerHTML = summaryHtml;
+    },
+
+    renderAlerts() {
+        const alerts = this.alertsData?.alert_details || [];
+        const summary = this.alertsData?.alerts_summary || {};
+
+        // Update counts badge
+        const totalAlerts = alerts.length;
+        document.getElementById('alerts-count-badge').innerHTML = 
+            totalAlerts > 0 ? `<span class="status-badge">${totalAlerts} Total</span>` : '';
+
+        // Update summary counts
+        const acknowledgedCount = alerts.filter(a => a.user_acknowledged).length;
+        const pendingCount = totalAlerts - acknowledgedCount;
+        
+        document.getElementById('total-alerts-count').textContent = totalAlerts;
+        document.getElementById('acknowledged-count').textContent = acknowledgedCount;
+        document.getElementById('pending-count').textContent = pendingCount;
+
+        if (alerts.length === 0) {
+            document.getElementById('alerts-content').innerHTML = 
+                '<div class="empty-state">✅ No inventory alerts for this lot</div>';
+            return;
+        }
+
+        // Hide loading, show table
+        document.getElementById('alerts-content').style.display = 'none';
+        document.getElementById('alerts-table-container').style.display = 'block';
+
+        // Render alert rows
+        const tbody = document.getElementById('alerts-table-body');
+        tbody.innerHTML = alerts.map(alert => {
+            const severityClass = alert.alert_severity.toLowerCase();
+            const statusText = alert.user_acknowledged ? 'Acknowledged' : 'Pending';
+            const statusClass = alert.user_acknowledged ? 'acknowledged' : 'pending';
+            
+            return `
+                <tr data-alert-id="${alert.alert_id}">
+                    <td>
+                        <input type="checkbox" 
+                               class="alert-checkbox" 
+                               ${alert.user_acknowledged ? 'disabled' : ''}
+                               data-alert-id="${alert.alert_id}">
+                    </td>
+                    <td>
+                        <span class="alert-severity alert-severity-${severityClass}">${alert.alert_severity}</span>
+                    </td>
+                    <td>${this.escapeHtml(alert.variant_name || 'N/A')}</td>
+                    <td>${alert.current_stock_quantity || 0}</td>
+                    <td>${alert.required_quantity || 0}</td>
+                    <td class="shortfall-qty">${alert.shortfall_quantity || 0}</td>
+                    <td>${alert.suggested_procurement_quantity || 0}</td>
+                    <td>
+                        <span class="status-badge status-${statusClass}">${statusText}</span>
+                    </td>
+                    <td class="alert-actions-inline">
+                        ${!alert.user_acknowledged ? `
+                            <select class="alert-user-action" data-alert-id="${alert.alert_id}">
+                                <option value="">Select action...</option>
+                                <option value="PROCEED">Proceed</option>
+                                <option value="USE_SUBSTITUTE">Use Substitute</option>
+                                <option value="DELAY">Delay Production</option>
+                                <option value="PROCURE">Procure Now</option>
+                            </select>
+                            <textarea class="alert-action-notes" 
+                                      data-alert-id="${alert.alert_id}" 
+                                      placeholder="Action notes..."></textarea>
+                        ` : `
+                            <div class="acknowledged-info">
+                                Action: ${alert.user_action || 'N/A'}<br>
+                                ${alert.action_notes ? `Notes: ${this.escapeHtml(alert.action_notes)}` : ''}
+                            </div>
+                        `}
+                    </td>
+                </tr>
+            `;
+        }).join('');
+    },
+
+    updateCriticalBanner() {
+        const alerts = this.alertsData?.alert_details || [];
+        const hasCriticalUnacknowledged = alerts.some(
+            a => a.alert_severity === 'CRITICAL' && !a.user_acknowledged
+        );
+
+        const banner = document.getElementById('critical-alert-banner');
+        banner.style.display = hasCriticalUnacknowledged ? 'flex' : 'none';
+    },
+
+    updateFinalizeButton() {
+        const alerts = this.alertsData?.alert_details || [];
+        const hasCriticalUnacknowledged = alerts.some(
+            a => a.alert_severity === 'CRITICAL' && !a.user_acknowledged
+        );
+
+        const finalizeBtn = document.getElementById('finalize-btn');
+        finalizeBtn.disabled = hasCriticalUnacknowledged;
+        finalizeBtn.title = hasCriticalUnacknowledged 
+            ? 'Cannot finalize: Unacknowledged CRITICAL alerts present' 
+            : 'Finalize this production lot';
+    },
+
+    setupEventListeners() {
+        // Select all checkbox
+        const selectAllCheckbox = document.getElementById('select-all-alerts');
+        if (selectAllCheckbox) {
+            selectAllCheckbox.addEventListener('change', (e) => {
+                const checkboxes = document.querySelectorAll('.alert-checkbox:not(:disabled)');
+                checkboxes.forEach(cb => cb.checked = e.target.checked);
+                this.updateBulkActionButton();
+            });
+        }
+
+        // Individual checkboxes
+        document.addEventListener('change', (e) => {
+            if (e.target.classList.contains('alert-checkbox')) {
+                this.updateBulkActionButton();
+            }
+        });
+
+        // Bulk acknowledge button
+        const bulkBtn = document.getElementById('bulk-acknowledge-btn');
+        if (bulkBtn) {
+            bulkBtn.addEventListener('click', () => this.handleBulkAcknowledge());
+        }
+
+        // Finalize button
+        const finalizeBtn = document.getElementById('finalize-btn');
+        if (finalizeBtn) {
+            finalizeBtn.addEventListener('click', () => this.handleFinalize());
+        }
+    },
+
+    updateBulkActionButton() {
+        const selectedCheckboxes = document.querySelectorAll('.alert-checkbox:checked:not(:disabled)');
+        const bulkBtn = document.getElementById('bulk-acknowledge-btn');
+        if (bulkBtn) {
+            bulkBtn.disabled = selectedCheckboxes.length === 0;
+            bulkBtn.textContent = selectedCheckboxes.length > 0 
+                ? `Acknowledge ${selectedCheckboxes.length} Selected Alert${selectedCheckboxes.length > 1 ? 's' : ''}`
+                : 'Acknowledge Selected Alerts';
+        }
+    },
+
+    async handleBulkAcknowledge() {
+        const selectedCheckboxes = document.querySelectorAll('.alert-checkbox:checked:not(:disabled)');
+        
+        if (selectedCheckboxes.length === 0) {
+            alert('Please select at least one alert to acknowledge');
+            return;
+        }
+
+        // Build acknowledgments array
+        const acknowledgments = Array.from(selectedCheckboxes).map(cb => {
+            const alertId = parseInt(cb.dataset.alertId);
+            const actionSelect = document.querySelector(`.alert-user-action[data-alert-id="${alertId}"]`);
+            const notesTextarea = document.querySelector(`.alert-action-notes[data-alert-id="${alertId}"]`);
+            
+            const userAction = actionSelect?.value || 'PROCEED';
+            const actionNotes = notesTextarea?.value || null;
+
+            return { alert_id: alertId, user_action: userAction, action_notes: actionNotes };
+        });
+
+        try {
+            const response = await fetch(`/api/upf/inventory-alerts/lot/${this.lotId}/acknowledge-bulk`, {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                credentials: 'include',
+                body: JSON.stringify({ acknowledgments })
+            });
+
+            if (!response.ok) {
+                const error = await response.json();
+                throw new Error(error.message || 'Failed to acknowledge alerts');
+            }
+
+            const result = await response.json();
+            alert(`Successfully acknowledged ${result.data?.acknowledged_count || acknowledgments.length} alert(s)`);
+            
+            // Reload alerts and update UI
+            await this.loadAlerts();
+        } catch (error) {
+            console.error('Error acknowledging alerts:', error);
+            alert('Failed to acknowledge alerts: ' + error.message);
+        }
+    },
+
+    async handleFinalize() {
+        if (!confirm('Are you sure you want to finalize this production lot? This action cannot be undone.')) {
+            return;
+        }
+
+        try {
+            const response = await fetch(`/api/upf/production-lots/${this.lotId}/finalize`, {
+                method: 'PUT',
+                credentials: 'include'
+            });
+
+            if (!response.ok) {
+                const error = await response.json();
+                throw new Error(error.error?.message || error.message || 'Failed to finalize lot');
+            }
+
+            alert('Production lot finalized successfully!');
+            await this.loadLotDetails();
+            await this.loadAlerts();
+        } catch (error) {
+            console.error('Error finalizing lot:', error);
+            alert('Failed to finalize lot: ' + error.message);
+        }
+    },
+
+    escapeHtml(text) {
+        const div = document.createElement('div');
+        div.textContent = text;
+        return div.innerHTML;
+    }
+};
+
+document.addEventListener('DOMContentLoaded', function() {
+    lotDetailPage.init();
+});
+</script>
+{% endblock %}
