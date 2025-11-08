@@ -207,7 +207,7 @@ def _seed_lot_with_alerts(severities: List[str]) -> int:
             f"Failed to insert process; tried classes: {proc_class_candidates}"
         )
 
-        # Insert production lot (status value may differ across schemas; use 'Planning')
+        # Insert production lot (use 'Planning' status - valid per migration_add_upf_tables.py schema)
         cur.execute(
             f"""
             INSERT INTO production_lots (process_id, lot_number, quantity, status, {lot_cost_col}, {lot_user_col})

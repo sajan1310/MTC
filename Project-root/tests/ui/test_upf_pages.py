@@ -30,7 +30,7 @@ def test_upf_production_lot_detail_page(authenticated_client):
 
         process_id = existing["id"] if isinstance(existing, dict) else existing[0]
 
-        # Insert production lot with unique lot number
+        # Insert production lot with unique lot number (use migration_add_upf_tables.py schema)
         unique_lot_number = f"TEST-LOT-DETAIL-{uuid.uuid4().hex[:8]}"
         cur.execute(
             "INSERT INTO production_lots (process_id, lot_number, quantity, status, created_by) VALUES (%s,%s,%s,%s,%s) RETURNING id",

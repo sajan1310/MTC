@@ -156,7 +156,10 @@ const processFramework = {
         async handleSubmit(event) {
             event.preventDefault();
 
-            const id = document.getElementById('process-id').value;
+            // Get ID and ensure it's a valid value or null
+            const idValue = document.getElementById('process-id').value;
+            const id = idValue && idValue !== 'undefined' && idValue.trim() !== '' ? idValue : null;
+            
             // Ensure process_class is capitalized to match allowed DB values
             let processClass = document.getElementById('process-class').value;
             if (processClass) {
@@ -435,7 +438,10 @@ const processFramework = {
         async handleSubmit(event) {
             event.preventDefault();
 
-            const id = document.getElementById('subprocess-id').value;
+            // Get ID and ensure it's a valid value or null
+            const idValue = document.getElementById('subprocess-id').value;
+            const id = idValue && idValue !== 'undefined' && idValue.trim() !== '' ? idValue : null;
+            
             const formData = {
                 name: document.getElementById('subprocess-name').value,
                 category: document.getElementById('subprocess-category').value,

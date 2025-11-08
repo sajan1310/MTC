@@ -192,7 +192,10 @@ const subprocessLibrary = {
     async handleSubmit(event) {
         event.preventDefault();
 
-        const id = document.getElementById('subprocess-id').value;
+        // Get ID and ensure it's a valid value or null
+        const idValue = document.getElementById('subprocess-id').value;
+        const id = idValue && idValue !== 'undefined' && idValue.trim() !== '' ? idValue : null;
+        
         const data = {
             name: document.getElementById('subprocess-name').value,
             category: document.getElementById('subprocess-category').value,
