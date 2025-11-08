@@ -25,6 +25,7 @@ Status values permitted (case-insensitive):
   completed, failed, cancelled, archived
 
 Down migration attempts to revert added columns & constraint only (non-destructive to pre-existing different schema definitions).
+\n+Resilience Addendum (2025-11-08):\n+Previously this migration failed when `production_lots` did not yet exist in CI/dev environments, aborting the transaction and preventing later fixes. All ALTER / INDEX / CONSTRAINT operations are now wrapped in DO blocks that first verify the table exists. This makes the migration safe to run before the base UPF tables are applied; it will simply skip missing tables and can be re-run after they are created to apply deferred changes. The companion SQL file `migration_fix_schema_nov2025.sql` was updated similarly.\n+
 """
 
 import os
@@ -63,28 +64,39 @@ def up():
     cur = conn.cursor()
     try:
         # 1. Add missing columns (idempotent) -------------------------------
+        # Make production_lots changes only if the table exists to avoid aborting the migration.
         cur.execute(
             """
-            ALTER TABLE production_lots
-                ADD COLUMN IF NOT EXISTS created_by INTEGER REFERENCES users(user_id) ON DELETE SET NULL;
+            DO $$
+            BEGIN
+                IF EXISTS (
+                    SELECT 1 FROM information_schema.tables
+                    WHERE table_name = 'production_lots'
+                ) THEN
+                    EXECUTE 'ALTER TABLE production_lots ADD COLUMN IF NOT EXISTS created_by INTEGER REFERENCES users(user_id) ON DELETE SET NULL';
+                    EXECUTE 'ALTER TABLE production_lots ADD COLUMN IF NOT EXISTS worst_case_estimated_cost NUMERIC(12,2)';
+                END IF;
+            END$$;
             """
         )
+        # Guard item_master and substitute_groups as well for resilience in CI
         cur.execute(
             """
-            ALTER TABLE production_lots
-                ADD COLUMN IF NOT EXISTS worst_case_estimated_cost NUMERIC(12,2);
-            """
-        )
-        cur.execute(
-            """
-            ALTER TABLE item_master
-                ADD COLUMN IF NOT EXISTS category TEXT;
-            """
-        )
-        cur.execute(
-            """
-            ALTER TABLE substitute_groups
-                ADD COLUMN IF NOT EXISTS deleted_at TIMESTAMP;
+            DO $$
+            BEGIN
+                IF EXISTS (
+                    SELECT 1 FROM information_schema.tables
+                    WHERE table_name = 'item_master'
+                ) THEN
+                    EXECUTE 'ALTER TABLE item_master ADD COLUMN IF NOT EXISTS category TEXT';
+                END IF;
+                IF EXISTS (
+                    SELECT 1 FROM information_schema.tables
+                    WHERE table_name = 'substitute_groups'
+                ) THEN
+                    EXECUTE 'ALTER TABLE substitute_groups ADD COLUMN IF NOT EXISTS deleted_at TIMESTAMP';
+                END IF;
+            END$$;
             """
         )
 
@@ -94,58 +106,83 @@ def up():
             DO $$
             BEGIN
                 IF EXISTS (
-                    SELECT 1 FROM information_schema.table_constraints tc
-                    WHERE tc.table_name='import_jobs' AND tc.constraint_name='fk_user'
+                    SELECT 1 FROM information_schema.tables WHERE table_name='import_jobs'
                 ) THEN
-                    EXECUTE 'ALTER TABLE import_jobs DROP CONSTRAINT fk_user';
+                    IF EXISTS (
+                        SELECT 1 FROM information_schema.table_constraints tc
+                        WHERE tc.table_name='import_jobs' AND tc.constraint_name='fk_user'
+                    ) THEN
+                        EXECUTE 'ALTER TABLE import_jobs DROP CONSTRAINT fk_user';
+                    END IF;
+                    IF NOT EXISTS (
+                        SELECT 1 FROM information_schema.table_constraints tc
+                        WHERE tc.table_name='import_jobs' AND tc.constraint_type='FOREIGN KEY' AND tc.constraint_name='fk_user'
+                    ) THEN
+                        EXECUTE 'ALTER TABLE import_jobs ADD CONSTRAINT fk_user FOREIGN KEY (user_id) REFERENCES users(user_id) ON DELETE CASCADE';
+                    END IF;
                 END IF;
             END$$;
             """
         )
-        cur.execute(
-            """
-            ALTER TABLE import_jobs
-            ADD CONSTRAINT fk_user FOREIGN KEY (user_id) REFERENCES users(user_id) ON DELETE CASCADE;
-            """
-        )
 
         # 2. Normalize status constraint on production_lots -----------------
-        # Drop existing constraint(s) if named production_lots_status_check
+        # Drop and recreate status constraint only if production_lots exists
         cur.execute(
             """
             DO $$
             BEGIN
                 IF EXISTS (
-                    SELECT 1 FROM pg_constraint c
-                    JOIN pg_class t ON c.conrelid = t.oid
-                    WHERE t.relname = 'production_lots' AND c.conname = 'production_lots_status_check'
+                    SELECT 1 FROM information_schema.tables
+                    WHERE table_name = 'production_lots'
                 ) THEN
-                    EXECUTE 'ALTER TABLE production_lots DROP CONSTRAINT production_lots_status_check';
+                    IF EXISTS (
+                        SELECT 1 FROM pg_constraint c
+                        JOIN pg_class t ON c.conrelid = t.oid
+                        WHERE t.relname = 'production_lots' AND c.conname = 'production_lots_status_check'
+                    ) THEN
+                        EXECUTE 'ALTER TABLE production_lots DROP CONSTRAINT production_lots_status_check';
+                    END IF;
+                    -- Create new robust constraint (case-insensitive)
+                    IF NOT EXISTS (
+                        SELECT 1 FROM pg_constraint c
+                        JOIN pg_class t ON c.conrelid = t.oid
+                        WHERE t.relname = 'production_lots' AND c.conname = 'production_lots_status_check'
+                    ) THEN
+                        EXECUTE $DDL$
+                        ALTER TABLE production_lots
+                        ADD CONSTRAINT production_lots_status_check
+                        CHECK (lower(status) IN (
+                            'planning','ready','in progress','in_progress','active','inactive','draft','completed','failed','cancelled','archived'
+                        ));
+                        $DDL$;
+                    END IF;
                 END IF;
             END$$;
-            """
-        )
-        # Create new robust constraint (case-insensitive)
-        cur.execute(
-            """
-            ALTER TABLE production_lots
-            ADD CONSTRAINT production_lots_status_check
-            CHECK (lower(status) IN (
-                'planning','ready','in progress','in_progress','active','inactive','draft','completed','failed','cancelled','archived'
-            ));
             """
         )
 
         # 3. Helpful indexes (only if not exists) --------------------------
         cur.execute(
-            "CREATE INDEX IF NOT EXISTS idx_substitute_groups_deleted_at ON substitute_groups(deleted_at) WHERE deleted_at IS NULL;"
-        )
-        cur.execute(
-            "CREATE INDEX IF NOT EXISTS idx_item_master_category ON item_master(category);"
-        )
-        # Ensure status index exists (may already be there)
-        cur.execute(
-            "CREATE INDEX IF NOT EXISTS idx_production_lots_status ON production_lots(status);"
+            """
+            DO $$
+            BEGIN
+                IF EXISTS (
+                    SELECT 1 FROM information_schema.tables WHERE table_name='substitute_groups'
+                ) THEN
+                    EXECUTE 'CREATE INDEX IF NOT EXISTS idx_substitute_groups_deleted_at ON substitute_groups(deleted_at) WHERE deleted_at IS NULL';
+                END IF;
+                IF EXISTS (
+                    SELECT 1 FROM information_schema.tables WHERE table_name='item_master'
+                ) THEN
+                    EXECUTE 'CREATE INDEX IF NOT EXISTS idx_item_master_category ON item_master(category)';
+                END IF;
+                IF EXISTS (
+                    SELECT 1 FROM information_schema.tables WHERE table_name='production_lots'
+                ) THEN
+                    EXECUTE 'CREATE INDEX IF NOT EXISTS idx_production_lots_status ON production_lots(status)';
+                END IF;
+            END$$;
+            """
         )
 
         conn.commit()
@@ -178,16 +215,16 @@ def down():
             """
         )
         cur.execute(
-            "ALTER TABLE production_lots DROP COLUMN IF EXISTS worst_case_estimated_cost;"
+            "ALTER TABLE IF EXISTS production_lots DROP COLUMN IF EXISTS worst_case_estimated_cost;"
         )
         cur.execute(
-            "ALTER TABLE production_lots DROP COLUMN IF EXISTS created_by;"
+            "ALTER TABLE IF EXISTS production_lots DROP COLUMN IF EXISTS created_by;"
         )
         cur.execute(
-            "ALTER TABLE item_master DROP COLUMN IF EXISTS category;"
+            "ALTER TABLE IF EXISTS item_master DROP COLUMN IF EXISTS category;"
         )
         cur.execute(
-            "ALTER TABLE substitute_groups DROP COLUMN IF EXISTS deleted_at;"
+            "ALTER TABLE IF EXISTS substitute_groups DROP COLUMN IF EXISTS deleted_at;"
         )
 
         conn.commit()

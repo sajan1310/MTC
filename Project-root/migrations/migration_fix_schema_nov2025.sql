@@ -16,31 +16,46 @@
 BEGIN;
 
 -- 1. Columns -----------------------------------------------------------------
-ALTER TABLE production_lots
-    ADD COLUMN IF NOT EXISTS created_by INTEGER REFERENCES users(user_id) ON DELETE SET NULL;
-ALTER TABLE production_lots
-    ADD COLUMN IF NOT EXISTS worst_case_estimated_cost NUMERIC(12,2);
-ALTER TABLE item_master
-    ADD COLUMN IF NOT EXISTS category TEXT;
-ALTER TABLE substitute_groups
-    ADD COLUMN IF NOT EXISTS deleted_at TIMESTAMP;
+DO $$
+BEGIN
+    IF EXISTS (
+        SELECT 1 FROM information_schema.tables WHERE table_name = 'production_lots'
+    ) THEN
+        EXECUTE 'ALTER TABLE production_lots ADD COLUMN IF NOT EXISTS created_by INTEGER REFERENCES users(user_id) ON DELETE SET NULL';
+        EXECUTE 'ALTER TABLE production_lots ADD COLUMN IF NOT EXISTS worst_case_estimated_cost NUMERIC(12,2)';
+    END IF;
+    IF EXISTS (
+        SELECT 1 FROM information_schema.tables WHERE table_name = 'item_master'
+    ) THEN
+        EXECUTE 'ALTER TABLE item_master ADD COLUMN IF NOT EXISTS category TEXT';
+    END IF;
+    IF EXISTS (
+        SELECT 1 FROM information_schema.tables WHERE table_name = 'substitute_groups'
+    ) THEN
+        EXECUTE 'ALTER TABLE substitute_groups ADD COLUMN IF NOT EXISTS deleted_at TIMESTAMP';
+    END IF;
+END$$;
 
 -- 1b. Fix incorrect foreign key on import_jobs (should reference users.user_id)
 DO $$
 BEGIN
     IF EXISTS (
-        SELECT 1 FROM information_schema.table_constraints
-        WHERE table_name='import_jobs' AND constraint_name='fk_user'
+        SELECT 1 FROM information_schema.tables WHERE table_name='import_jobs'
     ) THEN
-        -- Drop existing fk_user (regardless of column reference) and recreate
-        EXECUTE 'ALTER TABLE import_jobs DROP CONSTRAINT fk_user';
-    END IF;
-    -- Ensure users.user_id exists (prevent error if base table name differs)
-    IF EXISTS (
-        SELECT 1 FROM information_schema.columns
-        WHERE table_name='users' AND column_name='user_id'
-    ) THEN
-        EXECUTE 'ALTER TABLE import_jobs ADD CONSTRAINT fk_user FOREIGN KEY (user_id) REFERENCES users(user_id) ON DELETE CASCADE';
+        IF EXISTS (
+            SELECT 1 FROM information_schema.table_constraints
+            WHERE table_name='import_jobs' AND constraint_name='fk_user'
+        ) THEN
+            -- Drop existing fk_user (regardless of column reference) and recreate
+            EXECUTE 'ALTER TABLE import_jobs DROP CONSTRAINT fk_user';
+        END IF;
+        -- Ensure users.user_id exists (prevent error if base table name differs)
+        IF EXISTS (
+            SELECT 1 FROM information_schema.columns
+            WHERE table_name='users' AND column_name='user_id'
+        ) THEN
+            EXECUTE 'ALTER TABLE import_jobs ADD CONSTRAINT fk_user FOREIGN KEY (user_id) REFERENCES users(user_id) ON DELETE CASCADE';
+        END IF;
     END IF;
 END$$;
 
@@ -49,25 +64,60 @@ END$$;
 DO $$
 BEGIN
     IF EXISTS (
-        SELECT 1 FROM pg_constraint c
-        JOIN pg_class t ON c.conrelid = t.oid
-        WHERE t.relname='production_lots' AND c.conname='production_lots_status_check'
+        SELECT 1 FROM information_schema.tables WHERE table_name = 'production_lots'
     ) THEN
-        EXECUTE 'ALTER TABLE production_lots DROP CONSTRAINT production_lots_status_check';
+        IF EXISTS (
+            SELECT 1 FROM pg_constraint c
+            JOIN pg_class t ON c.conrelid = t.oid
+            WHERE t.relname='production_lots' AND c.conname='production_lots_status_check'
+        ) THEN
+            EXECUTE 'ALTER TABLE production_lots DROP CONSTRAINT production_lots_status_check';
+        END IF;
     END IF;
 END$$;
 
 -- Create unified case-insensitive CHECK
-ALTER TABLE production_lots
-ADD CONSTRAINT production_lots_status_check
-CHECK (lower(status) IN (
-    'planning','ready','in progress','in_progress','active','inactive','draft','completed','failed','cancelled','archived'
-));
+DO $$
+BEGIN
+    IF EXISTS (
+        SELECT 1 FROM information_schema.tables WHERE table_name = 'production_lots'
+    ) THEN
+        -- Create unified case-insensitive CHECK
+        IF NOT EXISTS (
+            SELECT 1 FROM pg_constraint c
+            JOIN pg_class t ON c.conrelid = t.oid
+            WHERE t.relname='production_lots' AND c.conname='production_lots_status_check'
+        ) THEN
+            EXECUTE $DDL$
+            ALTER TABLE production_lots
+            ADD CONSTRAINT production_lots_status_check
+            CHECK (lower(status) IN (
+                'planning','ready','in progress','in_progress','active','inactive','draft','completed','failed','cancelled','archived'
+            ));
+            $DDL$;
+        END IF;
+    END IF;
+END$$;
 
 -- 3. Helpful Indexes ----------------------------------------------------------
-CREATE INDEX IF NOT EXISTS idx_substitute_groups_deleted_at ON substitute_groups(deleted_at) WHERE deleted_at IS NULL;
-CREATE INDEX IF NOT EXISTS idx_item_master_category ON item_master(category);
-CREATE INDEX IF NOT EXISTS idx_production_lots_status ON production_lots(status);
+DO $$
+BEGIN
+    IF EXISTS (
+        SELECT 1 FROM information_schema.tables WHERE table_name='substitute_groups'
+    ) THEN
+        EXECUTE 'CREATE INDEX IF NOT EXISTS idx_substitute_groups_deleted_at ON substitute_groups(deleted_at) WHERE deleted_at IS NULL';
+    END IF;
+    IF EXISTS (
+        SELECT 1 FROM information_schema.tables WHERE table_name='item_master'
+    ) THEN
+        EXECUTE 'CREATE INDEX IF NOT EXISTS idx_item_master_category ON item_master(category)';
+    END IF;
+    IF EXISTS (
+        SELECT 1 FROM information_schema.tables WHERE table_name='production_lots'
+    ) THEN
+        EXECUTE 'CREATE INDEX IF NOT EXISTS idx_production_lots_status ON production_lots(status)';
+    END IF;
+END$$;
 
 COMMIT;
 
