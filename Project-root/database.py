@@ -3,7 +3,6 @@ from urllib.parse import urlparse
 
 import psycopg2
 import psycopg2.extras
-from flask import current_app
 from psycopg2 import pool
 
 db_pool = None
