@@ -313,6 +313,7 @@
             migration_add_item_uniqueness.py
             migration_add_lot_variant_selections.py
             migration_add_master_tables.py
+            migration_add_missing_schema_nov2025.sql
             migration_add_notes_and_status_to_po.py
             migration_add_notes_to_process_subprocesses.py
             migration_add_password_reset.py
@@ -324,6 +325,8 @@
             migration_add_unique_indexes_for_upsert.py
             migration_add_universal_process_framework.py
             migration_add_upf_tables.py
+            migration_fix_schema_nov2025.py
+            migration_fix_schema_nov2025.sql
             migration_remove_model_uniqueness.py
             migration_remove_unique_constraint.py
             migration_update_discount_fields.py
@@ -428,3 +431,4 @@
         test_data.sql
         test_data_corrected.sql
         validate_alert_schema.py
+        verify_schema_post_migration.py

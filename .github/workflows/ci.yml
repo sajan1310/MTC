@@ -270,6 +270,21 @@ jobs:
           echo "::endgroup::"
         continue-on-error: false
 
+      - name: Apply schema fix (SQL)
+        run: |
+          echo "::group::Applying unified schema fix SQL"
+          psql "postgresql://postgres:testpass@127.0.0.1:5432/testdb" -f Project-root/migrations/migration_fix_schema_nov2025.sql
+          psql "postgresql://postgres:testpass@127.0.0.1:5432/testuser" -f Project-root/migrations/migration_fix_schema_nov2025.sql
+          echo "::endgroup::"
+        continue-on-error: false
+
+      - name: Verify schema
+        run: |
+          echo "::group::Verifying schema after migration"
+          python scripts/verify_schema_post_migration.py
+          echo "::endgroup::"
+        continue-on-error: false
+
       - name: Run tests with coverage
         working-directory: Project-root
         run: |
