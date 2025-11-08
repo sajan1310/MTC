@@ -129,7 +129,12 @@ def get_conn(cursor_factory=None, autocommit=False):
 
         # Verify connection is still alive (handles stale connections)
         if conn.closed:
-            current_app.logger.warning("Stale connection detected, reconnecting...")
+            # Try to log warning if Flask app context is available
+            try:
+                from flask import current_app
+                current_app.logger.warning("Stale connection detected, reconnecting...")
+            except (ImportError, RuntimeError):
+                print("WARNING: Stale connection detected, reconnecting...")
             db_pool.putconn(conn, close=True)
             conn = db_pool.getconn()
 
@@ -144,7 +149,11 @@ def get_conn(cursor_factory=None, autocommit=False):
 
     except psycopg2.OperationalError as e:
         # Connection-level error (network, server crash, etc.)
-        current_app.logger.error(f"Database connection error: {e}")
+        try:
+            from flask import current_app
+            current_app.logger.error(f"Database connection error: {e}")
+        except (ImportError, RuntimeError):
+            print(f"ERROR: Database connection error: {e}")
         if conn and not autocommit:
             conn.rollback()
         # Close bad connection instead of returning to pool
@@ -155,14 +164,22 @@ def get_conn(cursor_factory=None, autocommit=False):
 
     except psycopg2.IntegrityError as e:
         # Constraint violation (unique, foreign key, etc.)
-        current_app.logger.warning(f"Database integrity error: {e}")
+        try:
+            from flask import current_app
+            current_app.logger.warning(f"Database integrity error: {e}")
+        except (ImportError, RuntimeError):
+            print(f"WARNING: Database integrity error: {e}")
         if conn and not autocommit:
             conn.rollback()
         raise
 
     except Exception as e:
         # General error (syntax, logic, etc.)
-        current_app.logger.error(f"Database error: {e}")
+        try:
+            from flask import current_app
+            current_app.logger.error(f"Database error: {e}")
+        except (ImportError, RuntimeError):
+            print(f"ERROR: Database error: {e}")
         if conn and not autocommit:
             conn.rollback()
         raise
@@ -224,9 +241,13 @@ def transactional(func):
                 return result
             except Exception as e:
                 # get_conn context manager handles rollback
-                current_app.logger.error(
-                    f"Transaction failed in {func.__name__}: {e}", exc_info=True
-                )
+                try:
+                    from flask import current_app
+                    current_app.logger.error(
+                        f"Transaction failed in {func.__name__}: {e}", exc_info=True
+                    )
+                except (ImportError, RuntimeError):
+                    print(f"ERROR: Transaction failed in {func.__name__}: {e}")
                 raise
 
     return wrapper
