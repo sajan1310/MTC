@@ -7,8 +7,10 @@
     app.py
     app.py.backup
     AUDITOR_IMPROVEMENTS_REPORT.md
+    AUDITOR_USAGE_GUIDE.md
     AUDITOR_VERIFICATION_COMPLETE.md
     AUDIT_COMPLETE.md
+    audit_output.txt
     BACKEND_FRONTEND_DB_SYNC_COMPLETE.md
     BACKEND_FRONTEND_DB_SYNC_REPORT.md
     check_columns.sql
@@ -17,6 +19,7 @@
     CLEANUP_REPORT.md
     COMPLETE_FIX_SUMMARY.md
     COMPREHENSIVE_AUDIT_REPORT.md
+    COPILOT_PROMPTS.md
     debug_process_structure.py
     dependency_report.json
     enhanced_project_auditor.py
@@ -25,6 +28,7 @@
     FINAL_AUDIT_SUMMARY.md
     FINAL_FIX_SUMMARY.md
     FINAL_VERIFICATION_REPORT.md
+    FRONTEND_BACKEND_SYNC_ANALYSIS.md
     FRONTEND_BACKEND_SYNC_FIXES.md
     FRONTEND_CRASH_AUDIT_REPORT.md
     generate_structure.py
@@ -50,12 +54,15 @@
     QUICK_FIX_REFERENCE.md
     QUICK_REFERENCE.md
     QUICK_REFERENCE_CARD.md
+    QUICK_START (2).md
     read_issues.py
     schema_validation_report.txt
     UI_UX_IMPROVEMENTS_SUMMARY.md
     UI_UX_TESTING_GUIDE.md
     UI_UX_VISUAL_COMPARISON.md
+    UPF_AUDIT_SUMMARY.md
     upf_integration_action_plan.md
+    UPF_SYNC_AUDIT.md
     VARIANT_SEARCH_MERGE_COMPLETE.md
     view_audit_issues.py
     view_unused_routes.py
@@ -151,6 +158,7 @@
         DEPLOYMENT.md
         DOCUMENTATION_INDEX.md
         DUPLICATE_ROUTES_REPORT.md
+        ENDPOINT_INVENTORY.md
         enhanced_audit_report.json
         file_structure.txt
         FRONTEND_DEVELOPER_GUIDE.md
@@ -177,6 +185,7 @@
         run.py
         run_migration.py
         run_production.py
+        STACK_SYNC_AUDIT_REPORT.md
         SYNC_ANALYSIS_REPORT.md
         TASK_4_PRODUCTION_LOT_VARIANT_SELECTION_COMPLETE.md
         TESTING_CHECKLIST.md
@@ -233,6 +242,7 @@
                 process_management.py
                 production_lot.py
                 purchase_orders.py
+                reports.py
                 routes.py
                 stubs.py
                 subprocess_management.py
@@ -433,3 +443,6 @@
         test_data_corrected.sql
         validate_alert_schema.py
         verify_schema_post_migration.py
+    tests/
+        test_upf_alerts_contracts.py
+        test_upf_reports_contracts.py

@@ -46,12 +46,11 @@ class EnhancedFlaskAuditor:
                 "method_mismatches": [],
             },
             "upf_alert_system": {
-                "endpoints": [],
-                "services": [],
-                "templates": [],
-                "static_assets": [],
-                "tests": [],
-                "documentation": [],
+                "process_bom_architecture": {},
+                "production_lot_alerts": {},
+                "alert_technical": {},
+                "data_flow_integration": {},
+                "alert_endpoints": {},
                 "completeness": {},
             },
             "database": {
@@ -102,8 +101,9 @@ class EnhancedFlaskAuditor:
         # Note: Don't use re.DOTALL to prevent matching across multiple decorators
         self.route_pattern = re.compile(
             r"@(?:app|api_bp|auth_bp|main_bp|files_bp|process_api_bp|production_api_bp|"
-            r"subprocess_api_bp|variant_api_bp|bp|blueprint)\.route\("
-            r'[\'"]([^\'"]+)[\'"](?:[^\n]*?methods=\[([^\]]+)\])?'
+            r"subprocess_api_bp|variant_api_bp|reports_api_bp|inventory_alerts_bp|bp|blueprint)\.route\(\s*"
+            r'[\'"]([^\'"]+)[\'"](?:.*?methods\s*=\s*\[([^\]]+)\])?',
+            re.DOTALL
         )
 
         # Blueprint registration pattern
@@ -306,6 +306,39 @@ class EnhancedFlaskAuditor:
                         }
                     )
 
+                # Fallback: simple pattern for missed single-line routes
+                # e.g. @main_bp.route("/api/login", methods=["POST"])
+                simple_pattern = re.compile(
+                    r"@(\w+)\.route\(\s*[\'\"]([^\'\"]+)[\'\"]\s*,\s*methods=\[([^\]]+)\]\s*\)",
+                    re.DOTALL,
+                )
+                for sm in simple_pattern.finditer(content):
+                    bp_var = sm.group(1)
+                    route_path = sm.group(2)
+                    methods_str = sm.group(3)
+                    url_prefix = blueprint_map.get(bp_var, "")
+                    full_path = f"{url_prefix}{route_path}" if url_prefix else route_path
+                    methods = [m.strip().strip("'\"") for m in methods_str.split(",")]
+                    # Skip if already captured
+                    if any(
+                        r["file"] == str(py_file.relative_to(self.project_root))
+                        and r["route"] == route_path
+                        and r["blueprint"] == bp_var
+                        for r in routes
+                    ):
+                        continue
+                    routes.append(
+                        {
+                            "file": str(py_file.relative_to(self.project_root)),
+                            "blueprint": bp_var,
+                            "route": route_path,
+                            "full_path": full_path,
+                            "methods": methods,
+                            "handler": "unknown",
+                            "extraction": "fallback_simple_pattern",
+                        }
+                    )
+
             except Exception as e:
                 self.log_error(
                     f"Error extracting routes from {py_file}: {str(e)}", str(py_file)
@@ -416,6 +449,12 @@ class EnhancedFlaskAuditor:
         url = re.sub(r"\$\{config\.apiBase\}", "/api", url)
         url = re.sub(r"\$\{apiBase\}", "/api", url)
 
+        # Handle helper function patterns like `/api${path}` where path is a variable
+        # These are template concatenations, not actual URLs - skip them
+        if re.match(r"^/api\$\{[^}]+\}$", url):
+            # This is a helper function pattern, mark as invalid
+            return "__HELPER_FUNCTION_PATTERN__"
+
         # Remove leading/trailing whitespace
         url = url.strip()
 
@@ -439,6 +478,10 @@ class EnhancedFlaskAuditor:
         for call in api_calls:
             url = call["url"]
             method = call["method"]
+
+            # Skip helper function patterns
+            if url == "__HELPER_FUNCTION_PATTERN__":
+                continue
 
             # Skip external URLs
             if url.startswith("http://") or url.startswith("https://"):
@@ -639,33 +682,445 @@ class EnhancedFlaskAuditor:
             return route_pattern == actual_path
 
     def audit_upf_alert_system(self):
-        """Audit the UPF Inventory Alert System implementation."""
-        print("🚨 Auditing UPF Inventory Alert System...")
+        """Audit the complete UPF framework implementation against executive summary."""
+        print("🚨 Auditing Universal Process Framework (UPF) Implementation...")
 
         upf_data = self.results["upf_alert_system"]
 
+        # === 1. Advanced BOM-Centric Process Architecture ===
+        print("   📋 Auditing Process/BOM Architecture...")
+        upf_data["process_bom_architecture"] = self._audit_process_bom_architecture()
+
+        # === 2. Production Lot Architecture with Alert System ===
+        print("   🏭 Auditing Production Lot Alert System...")
+        upf_data["production_lot_alerts"] = self._audit_production_lot_alerts()
+
+        # === 3. Alert System Technical Architecture ===
+        print("   ⚙️  Auditing Alert Technical Architecture...")
+        upf_data["alert_technical"] = self._audit_alert_technical_architecture()
+
+        # === 4. Data Flow and Integration ===
+        print("   🔄 Auditing Data Flow Integration...")
+        upf_data["data_flow_integration"] = self._audit_data_flow_integration()
+
+        # === 5. Legacy Alert System Checks (from original) ===
+        print("   🔔 Auditing Alert System Endpoints...")
+        upf_data["alert_endpoints"] = self._audit_alert_endpoints()
+
+        # Calculate overall completeness
+        upf_data["completeness"] = self._calculate_upf_completeness(upf_data)
+
+        print(f"   ✅ UPF Framework Completeness: {upf_data['completeness']['overall_score']:.1f}%")
+
+    def _audit_process_bom_architecture(self) -> Dict[str, Any]:
+        """Audit Section 1: Advanced BOM-Centric Process Architecture."""
+        results = {
+            "process_as_bom": {"present": False, "files": []},
+            "subprocess_templates": {"present": False, "files": []},
+            "variant_cost_supplier": {"present": False, "files": []},
+            "user_experience": {"present": False, "files": []},
+            "audit_trail": {"present": False, "files": []},
+            "completeness": 0,
+        }
+
+        # Check for process models and services
+        process_files = [
+            "app/models/process.py",
+            "app/services/process_service.py",
+            "app/api/process_management.py",
+        ]
+        for file in process_files:
+            if (self.project_root / file).exists():
+                results["process_as_bom"]["files"].append(file)
+                results["process_as_bom"]["present"] = True
+
+        # Check for subprocess template system
+        subprocess_files = [
+            "app/models/process.py",  # Subprocess class
+            "app/services/subprocess_service.py",
+            "app/api/subprocess_management.py",
+        ]
+        for file in subprocess_files:
+            if (self.project_root / file).exists():
+                results["subprocess_templates"]["files"].append(file)
+                results["subprocess_templates"]["present"] = True
+
+        # Check for variant/cost/supplier integration
+        variant_files = [
+            "app/services/variant_service.py",
+            "app/services/costing_service.py",
+            "app/models/process.py",  # VariantSupplierPricing
+        ]
+        for file in variant_files:
+            if (self.project_root / file).exists():
+                results["variant_cost_supplier"]["files"].append(file)
+                # Check for supplier pricing logic
+                try:
+                    with open(self.project_root / file, "r", encoding="utf-8") as f:
+                        content = f.read()
+                        if "supplier" in content.lower() and "cost" in content.lower():
+                            results["variant_cost_supplier"]["present"] = True
+                except Exception:
+                    pass
+
+        # Check for user experience features (drag-drop, search, validation)
+        ux_files = [
+            "templates/upf_process_editor.html",
+            "static/js/process_editor.js",
+            "app/validators/process_validator.py",
+        ]
+        for file in ux_files:
+            if (self.project_root / file).exists():
+                results["user_experience"]["files"].append(file)
+                results["user_experience"]["present"] = True
+
+        # Check for audit trail and state management
+        audit_files = [
+            "app/models/process.py",  # Check for created_at, updated_at fields
+            "app/services/process_service.py",
+        ]
+        for file in audit_files:
+            if (self.project_root / file).exists():
+                results["audit_trail"]["files"].append(file)
+                try:
+                    with open(self.project_root / file, "r", encoding="utf-8") as f:
+                        content = f.read()
+                        if "created_at" in content and "updated_at" in content:
+                            results["audit_trail"]["present"] = True
+                except Exception:
+                    pass
+
+        # Calculate completeness
+        checks = [
+            results["process_as_bom"]["present"],
+            results["subprocess_templates"]["present"],
+            results["variant_cost_supplier"]["present"],
+            results["user_experience"]["present"],
+            results["audit_trail"]["present"],
+        ]
+        results["completeness"] = sum(checks) / len(checks) * 100
+
+        return results
+
+    def _audit_production_lot_alerts(self) -> Dict[str, Any]:
+        """Audit Section 2: Production Lot Architecture with Integrated Alert System."""
+        results = {
+            "lot_creation": {"present": False, "files": []},
+            "realtime_stock_analysis": {"present": False, "files": []},
+            "alert_severity_levels": {"present": False, "details": []},
+            "alert_display_interaction": {"present": False, "files": []},
+            "automatic_procurement": {"present": False, "files": []},
+            "item_requirement_sheet": {"present": False, "files": []},
+            "lot_audit_trail": {"present": False, "files": []},
+            "completeness": 0,
+        }
+
+        # Check lot creation workflow
+        lot_files = [
+            "app/services/production_service.py",
+            "app/api/production_lot.py",
+            "templates/upf_production_lots.html",
+        ]
+        for file in lot_files:
+            if (self.project_root / file).exists():
+                results["lot_creation"]["files"].append(file)
+                results["lot_creation"]["present"] = True
+
+        # Check for real-time stock analysis
+        alert_service = self.project_root / "app/services/inventory_alert_service.py"
+        if alert_service.exists():
+            results["realtime_stock_analysis"]["files"].append(
+                str(alert_service.relative_to(self.project_root))
+            )
+            try:
+                with open(alert_service, "r", encoding="utf-8") as f:
+                    content = f.read()
+                    if "check_inventory_levels" in content or "evaluate_variant_stock" in content:
+                        results["realtime_stock_analysis"]["present"] = True
+            except Exception:
+                pass
+
+        # Check for alert severity levels (CRITICAL, HIGH, MEDIUM, LOW, OK)
+        severity_patterns = ["CRITICAL", "HIGH", "MEDIUM", "LOW", "OK"]
+        db_files = [
+            "migrations/migration_add_inventory_alert_system.py",
+            "app/services/inventory_alert_service.py",
+        ]
+        for file in db_files:
+            if (self.project_root / file).exists():
+                try:
+                    with open(self.project_root / file, "r", encoding="utf-8") as f:
+                        content = f.read()
+                        found_severities = [s for s in severity_patterns if s in content]
+                        if len(found_severities) >= 4:  # At least 4 severity levels
+                            results["alert_severity_levels"]["present"] = True
+                            results["alert_severity_levels"]["details"] = found_severities
+                except Exception:
+                    pass
+
+        # Check for alert display and user interaction
+        ui_files = [
+            "templates/upf_production_lot_detail.html",
+            "static/js/production_lot_alerts.js",
+        ]
+        for file in ui_files:
+            if (self.project_root / file).exists():
+                results["alert_display_interaction"]["files"].append(file)
+                results["alert_display_interaction"]["present"] = True
+
+        # Check for automatic procurement alerts
+        procurement_files = [
+            "app/services/inventory_alert_service.py",
+            "migrations/migration_add_inventory_alert_system.py",
+        ]
+        for file in procurement_files:
+            if (self.project_root / file).exists():
+                try:
+                    with open(self.project_root / file, "r", encoding="utf-8") as f:
+                        content = f.read()
+                        if "procurement_recommendation" in content.lower():
+                            results["automatic_procurement"]["files"].append(file)
+                            results["automatic_procurement"]["present"] = True
+                except Exception:
+                    pass
+
+        # Check for Item Requirement Sheet generation
+        irs_patterns = ["requirement", "sheet", "IRS"]
+        service_files = [
+            "app/services/production_service.py",
+            "templates/upf_production_lot_detail.html",
+        ]
+        for file in service_files:
+            if (self.project_root / file).exists():
+                try:
+                    with open(self.project_root / file, "r", encoding="utf-8") as f:
+                        content = f.read()
+                        if any(p.lower() in content.lower() for p in irs_patterns):
+                            results["item_requirement_sheet"]["files"].append(file)
+                            results["item_requirement_sheet"]["present"] = True
+                except Exception:
+                    pass
+
+        # Check for lot audit trail
+        audit_columns = ["inventory_validated_at", "inventory_validated_by", "alert_summary_json"]
+        migration_files = [
+            self.project_root / "migrations/migration_add_inventory_alert_system.py",
+            self.project_root / "Project-root/migrations/migration_add_inventory_alert_system.py",
+            self.project_root / "migrations/migration_add_inventory_alert_system_temp.py",
+        ]
+        for migration_file in migration_files:
+            if migration_file.exists():
+                try:
+                    with open(migration_file, "r", encoding="utf-8") as f:
+                        content = f.read()
+                        if all(col in content for col in audit_columns):
+                            results["lot_audit_trail"]["files"].append(
+                                str(migration_file.relative_to(self.project_root))
+                            )
+                            results["lot_audit_trail"]["present"] = True
+                            break
+                except Exception:
+                    pass
+
+        # Calculate completeness
+        checks = [
+            results["lot_creation"]["present"],
+            results["realtime_stock_analysis"]["present"],
+            results["alert_severity_levels"]["present"],
+            results["alert_display_interaction"]["present"],
+            results["automatic_procurement"]["present"],
+            results["item_requirement_sheet"]["present"],
+            results["lot_audit_trail"]["present"],
+        ]
+        results["completeness"] = sum(checks) / len(checks) * 100
+
+        return results
+
+    def _audit_alert_technical_architecture(self) -> Dict[str, Any]:
+        """Audit Section 3: Alert System Technical Architecture."""
+        results = {
+            "realtime_inventory_query": {"present": False, "files": []},
+            "alert_escalation_rules": {"present": False, "files": []},
+            "safety_stock_reorder": {"present": False, "files": []},
+            "completeness": 0,
+        }
+
+        # Check for real-time inventory query integration
+        query_files = [
+            "app/services/inventory_alert_service.py",
+            "app/services/variant_service.py",
+        ]
+        for file in query_files:
+            if (self.project_root / file).exists():
+                try:
+                    with open(self.project_root / file, "r", encoding="utf-8") as f:
+                        content = f.read()
+                        if "opening_stock" in content or "current_stock" in content:
+                            results["realtime_inventory_query"]["files"].append(file)
+                            results["realtime_inventory_query"]["present"] = True
+                except Exception:
+                    pass
+
+        # Check for alert escalation rules
+        alert_service = self.project_root / "app/services/inventory_alert_service.py"
+        if alert_service.exists():
+            try:
+                with open(alert_service, "r", encoding="utf-8") as f:
+                    content = f.read()
+                    # Look for severity logic
+                    if "CRITICAL" in content and "required_quantity" in content:
+                        results["alert_escalation_rules"]["files"].append(
+                            str(alert_service.relative_to(self.project_root))
+                        )
+                        results["alert_escalation_rules"]["present"] = True
+            except Exception:
+                pass
+
+        # Check for safety stock and reorder points
+        migration_file = self.project_root / "migrations/migration_add_inventory_alert_system.py"
+        if migration_file.exists():
+            try:
+                with open(migration_file, "r", encoding="utf-8") as f:
+                    content = f.read()
+                    if "safety_stock" in content and "reorder_point" in content:
+                        results["safety_stock_reorder"]["files"].append(
+                            str(migration_file.relative_to(self.project_root))
+                        )
+                        results["safety_stock_reorder"]["present"] = True
+            except Exception:
+                pass
+
+        # Calculate completeness
+        checks = [
+            results["realtime_inventory_query"]["present"],
+            results["alert_escalation_rules"]["present"],
+            results["safety_stock_reorder"]["present"],
+        ]
+        results["completeness"] = sum(checks) / len(checks) * 100
+
+        return results
+
+    def _audit_data_flow_integration(self) -> Dict[str, Any]:
+        """Audit Section 4: Data Flow Overview."""
+        results = {
+            "inventory_system": {"present": False, "files": []},
+            "supplier_vendor_db": {"present": False, "files": []},
+            "process_bom_library": {"present": False, "files": []},
+            "alert_notification_engine": {"present": False, "files": []},
+            "ledger_reporting": {"present": False, "files": []},
+            "completeness": 0,
+        }
+
+        # Check inventory system integration
+        inventory_files = [
+            "app/models/process.py",  # VariantSupplierPricing
+            "app/services/variant_service.py",
+        ]
+        for file in inventory_files:
+            if (self.project_root / file).exists():
+                results["inventory_system"]["files"].append(file)
+                results["inventory_system"]["present"] = True
+
+        # Check supplier/vendor database
+        supplier_patterns = ["supplier", "vendor"]
+        db_files = [
+            "app/models/process.py",
+            "app/services/variant_service.py",
+        ]
+        for file in db_files:
+            if (self.project_root / file).exists():
+                try:
+                    with open(self.project_root / file, "r", encoding="utf-8") as f:
+                        content = f.read()
+                        if any(p in content.lower() for p in supplier_patterns):
+                            results["supplier_vendor_db"]["files"].append(file)
+                            results["supplier_vendor_db"]["present"] = True
+                except Exception:
+                    pass
+
+        # Check process/BOM library
+        process_files = [
+            "app/models/process.py",
+            "app/services/process_service.py",
+            "app/services/subprocess_service.py",
+        ]
+        for file in process_files:
+            if (self.project_root / file).exists():
+                results["process_bom_library"]["files"].append(file)
+                results["process_bom_library"]["present"] = True
+
+        # Check alert & notification engine
+        alert_files = [
+            "app/services/inventory_alert_service.py",
+            "app/api/inventory_alerts.py",
+        ]
+        for file in alert_files:
+            if (self.project_root / file).exists():
+                results["alert_notification_engine"]["files"].append(file)
+                results["alert_notification_engine"]["present"] = True
+
+        # Check ledger/reporting
+        ledger_patterns = ["created_at", "updated_at", "timestamp", "track", "history", "audit"]
+        reporting_files = [
+            "app/services/production_service.py",
+            "app/models/production_lot.py",
+            "migrations/migration_add_inventory_alert_system.py",
+        ]
+        for file in reporting_files:
+            if (self.project_root / file).exists():
+                try:
+                    with open(self.project_root / file, "r", encoding="utf-8") as f:
+                        content = f.read()
+                        # Check for audit/tracking features (at least 2 patterns)
+                        found = sum(1 for p in ledger_patterns if p in content.lower())
+                        if found >= 2:
+                            results["ledger_reporting"]["files"].append(file)
+                            results["ledger_reporting"]["present"] = True
+                            break
+                except Exception:
+                    pass
+
+        # Calculate completeness
+        checks = [
+            results["inventory_system"]["present"],
+            results["supplier_vendor_db"]["present"],
+            results["process_bom_library"]["present"],
+            results["alert_notification_engine"]["present"],
+            results["ledger_reporting"]["present"],
+        ]
+        results["completeness"] = sum(checks) / len(checks) * 100
+
+        return results
+
+    def _audit_alert_endpoints(self) -> Dict[str, Any]:
+        """Audit alert system API endpoints (legacy check)."""
+        results = {
+            "endpoints": [],
+            "services": [],
+            "templates": [],
+            "static_assets": [],
+            "tests": [],
+            "documentation": [],
+        }
+
         # Check for alert endpoints
         alert_endpoints = [
-            "/api/upf/inventory-alerts/lot/<lot_id>",
-            "/api/upf/inventory-alerts/lot/<lot_id>/acknowledge-bulk",
-            "/api/upf/monitoring/alerts-health",
+            "/api/inventory-alerts",
+            "/api/inventory-alert-rules",
+            "/api/procurement-recommendations",
             "/upf/production-lots",
-            "/upf/production-lot/<lot_id>",
+            "/upf/production-lot/",
             "/monitoring",
         ]
 
         for route in self.results["flask_routes"]:
             if any(endpoint in route["full_path"] for endpoint in alert_endpoints):
-                upf_data["endpoints"].append(route)
+                results["endpoints"].append(route)
 
         # Check for alert service
-        service_file = (
-            self.project_root / "app" / "services" / "inventory_alert_service.py"
-        )
+        service_file = self.project_root / "app/services/inventory_alert_service.py"
         if service_file.exists():
-            upf_data["services"].append(
-                str(service_file.relative_to(self.project_root))
-            )
+            results["services"].append(str(service_file.relative_to(self.project_root)))
 
         # Check templates
         template_files = [
@@ -675,7 +1130,7 @@ class EnhancedFlaskAuditor:
         ]
         for template in template_files:
             if (self.project_root / template).exists():
-                upf_data["templates"].append(template)
+                results["templates"].append(template)
 
         # Check static assets
         static_files = [
@@ -684,7 +1139,7 @@ class EnhancedFlaskAuditor:
         ]
         for asset in static_files:
             if (self.project_root / asset).exists():
-                upf_data["static_assets"].append(asset)
+                results["static_assets"].append(asset)
 
         # Check tests
         test_files = [
@@ -694,30 +1149,49 @@ class EnhancedFlaskAuditor:
         ]
         for test in test_files:
             if (self.project_root / test).exists():
-                upf_data["tests"].append(test)
+                results["tests"].append(test)
 
         # Check documentation
         doc_files = [
             "docs/UPF_INVENTORY_ALERTS_USAGE.md",
             "docs/ALERT_UI_INTEGRATION.md",
+            "API_REFERENCE_INVENTORY_ALERTS.md",
         ]
         for doc in doc_files:
             if (self.project_root / doc).exists():
-                upf_data["documentation"].append(doc)
+                results["documentation"].append(doc)
 
-        # Calculate completeness
-        upf_data["completeness"] = {
-            "endpoints": f"{len(upf_data['endpoints'])}/6 ({len(upf_data['endpoints']) / 6 * 100:.0f}%)",
-            "services": f"{len(upf_data['services'])}/1 ({len(upf_data['services']) * 100:.0f}%)",
-            "templates": f"{len(upf_data['templates'])}/3 ({len(upf_data['templates']) / 3 * 100:.0f}%)",
-            "static_assets": f"{len(upf_data['static_assets'])}/2 ({len(upf_data['static_assets']) / 2 * 100:.0f}%)",
-            "tests": f"{len(upf_data['tests'])}/3 ({len(upf_data['tests']) / 3 * 100:.0f}%)",
-            "documentation": f"{len(upf_data['documentation'])}/2 ({len(upf_data['documentation']) / 2 * 100:.0f}%)",
-        }
+        return results
 
-        print(f"   ✓ Found {len(upf_data['endpoints'])} UPF alert endpoints")
-        print(f"   ✓ Found {len(upf_data['templates'])} UPF templates")
-        print(f"   ✓ Found {len(upf_data['tests'])} UPF test files")
+    def _calculate_upf_completeness(self, upf_data: Dict[str, Any]) -> Dict[str, Any]:
+        """Calculate overall UPF framework completeness."""
+        completeness = {}
+
+        # Section scores
+        completeness["process_bom"] = upf_data["process_bom_architecture"]["completeness"]
+        completeness["production_lot_alerts"] = upf_data["production_lot_alerts"]["completeness"]
+        completeness["alert_technical"] = upf_data["alert_technical"]["completeness"]
+        completeness["data_flow"] = upf_data["data_flow_integration"]["completeness"]
+
+        # Endpoint/file counts
+        alert_ep = upf_data["alert_endpoints"]
+        completeness["endpoints"] = f"{len(alert_ep['endpoints'])}/6 ({len(alert_ep['endpoints']) / 6 * 100:.0f}%)"
+        completeness["services"] = f"{len(alert_ep['services'])}/1 ({len(alert_ep['services']) * 100:.0f}%)"
+        completeness["templates"] = f"{len(alert_ep['templates'])}/3 ({len(alert_ep['templates']) / 3 * 100:.0f}%)"
+        completeness["static_assets"] = f"{len(alert_ep['static_assets'])}/2 ({len(alert_ep['static_assets']) / 2 * 100:.0f}%)"
+        completeness["tests"] = f"{len(alert_ep['tests'])}/3 ({len(alert_ep['tests']) / 3 * 100:.0f}%)"
+        completeness["documentation"] = f"{len(alert_ep['documentation'])}/3 ({len(alert_ep['documentation']) / 3 * 100:.0f}%)"
+
+        # Overall score (weighted average)
+        section_scores = [
+            completeness["process_bom"],
+            completeness["production_lot_alerts"],
+            completeness["alert_technical"],
+            completeness["data_flow"],
+        ]
+        completeness["overall_score"] = sum(section_scores) / len(section_scores)
+
+        return completeness
 
     def audit_database(self):
         """Audit database models and migrations."""
@@ -1012,13 +1486,11 @@ class EnhancedFlaskAuditor:
                     self.results["route_api_sync"]["method_mismatches"]
                 ),
                 "unused_backend": len(self.results["route_api_sync"]["unused_backend"]),
-                "upf_completeness": sum(
-                    1
-                    for v in self.results["upf_alert_system"]["completeness"].values()
-                    if "100%" in v
-                )
-                / 6
-                * 100,
+                "upf_overall_score": self.results["upf_alert_system"]["completeness"].get("overall_score", 0),
+                "upf_process_bom_score": self.results["upf_alert_system"]["process_bom_architecture"].get("completeness", 0),
+                "upf_production_lot_score": self.results["upf_alert_system"]["production_lot_alerts"].get("completeness", 0),
+                "upf_alert_technical_score": self.results["upf_alert_system"]["alert_technical"].get("completeness", 0),
+                "upf_data_flow_score": self.results["upf_alert_system"]["data_flow_integration"].get("completeness", 0),
                 "test_files": len(self.results["tests"]["test_files"]),
                 "total_tests": self.results["tests"]["total_tests"],
                 "documentation_score": self.results["documentation"][
@@ -1089,10 +1561,55 @@ def main():
     print(f"  ℹ️  Unused backend routes: {stats['unused_backend']}")
 
     print("\n🚨 UPF INVENTORY ALERT SYSTEM:")
-    print(f"  Completeness: {stats['upf_completeness']:.0f}%")
-    upf = results["upf_alert_system"]["completeness"]
-    for component, status in upf.items():
-        print(f"  {component.replace('_', ' ').title()}: {status}")
+    print(f"  Overall Framework Completeness: {stats['upf_overall_score']:.1f}%")
+    print(f"  └─ Process/BOM Architecture: {stats['upf_process_bom_score']:.1f}%")
+    print(f"  └─ Production Lot Alerts: {stats['upf_production_lot_score']:.1f}%")
+    print(f"  └─ Alert Technical Architecture: {stats['upf_alert_technical_score']:.1f}%")
+    print(f"  └─ Data Flow Integration: {stats['upf_data_flow_score']:.1f}%")
+    
+    # Detailed UPF subsystem breakdown
+    upf = results["upf_alert_system"]
+    
+    print("\n  📋 Process/BOM Architecture:")
+    pba = upf["process_bom_architecture"]
+    print(f"    ✓ Process as BOM: {'✅ Yes' if pba['process_as_bom']['present'] else '❌ No'}")
+    print(f"    ✓ Subprocess Templates: {'✅ Yes' if pba['subprocess_templates']['present'] else '❌ No'}")
+    print(f"    ✓ Variant/Cost/Supplier: {'✅ Yes' if pba['variant_cost_supplier']['present'] else '❌ No'}")
+    print(f"    ✓ User Experience: {'✅ Yes' if pba['user_experience']['present'] else '❌ No'}")
+    print(f"    ✓ Audit Trail: {'✅ Yes' if pba['audit_trail']['present'] else '❌ No'}")
+    
+    print("\n  🏭 Production Lot Alert System:")
+    pla = upf["production_lot_alerts"]
+    print(f"    ✓ Lot Creation Workflow: {'✅ Yes' if pla['lot_creation']['present'] else '❌ No'}")
+    print(f"    ✓ Real-time Stock Analysis: {'✅ Yes' if pla['realtime_stock_analysis']['present'] else '❌ No'}")
+    print(f"    ✓ Alert Severity Levels: {'✅ Yes' if pla['alert_severity_levels']['present'] else '❌ No'} {pla['alert_severity_levels']['details']}")
+    print(f"    ✓ Alert Display/Interaction: {'✅ Yes' if pla['alert_display_interaction']['present'] else '❌ No'}")
+    print(f"    ✓ Automatic Procurement: {'✅ Yes' if pla['automatic_procurement']['present'] else '❌ No'}")
+    print(f"    ✓ Item Requirement Sheet: {'✅ Yes' if pla['item_requirement_sheet']['present'] else '❌ No'}")
+    print(f"    ✓ Lot Audit Trail: {'✅ Yes' if pla['lot_audit_trail']['present'] else '❌ No'}")
+    
+    print("\n  ⚙️  Alert Technical Architecture:")
+    ata = upf["alert_technical"]
+    print(f"    ✓ Real-time Inventory Query: {'✅ Yes' if ata['realtime_inventory_query']['present'] else '❌ No'}")
+    print(f"    ✓ Alert Escalation Rules: {'✅ Yes' if ata['alert_escalation_rules']['present'] else '❌ No'}")
+    print(f"    ✓ Safety Stock/Reorder Points: {'✅ Yes' if ata['safety_stock_reorder']['present'] else '❌ No'}")
+    
+    print("\n  🔄 Data Flow Integration:")
+    dfi = upf["data_flow_integration"]
+    print(f"    ✓ Inventory System: {'✅ Yes' if dfi['inventory_system']['present'] else '❌ No'}")
+    print(f"    ✓ Supplier/Vendor DB: {'✅ Yes' if dfi['supplier_vendor_db']['present'] else '❌ No'}")
+    print(f"    ✓ Process/BOM Library: {'✅ Yes' if dfi['process_bom_library']['present'] else '❌ No'}")
+    print(f"    ✓ Alert Notification Engine: {'✅ Yes' if dfi['alert_notification_engine']['present'] else '❌ No'}")
+    print(f"    ✓ Ledger/Reporting: {'✅ Yes' if dfi['ledger_reporting']['present'] else '❌ No'}")
+    
+    print("\n  📡 API Endpoints & Assets:")
+    completeness = upf["completeness"]
+    print(f"    Endpoints: {completeness.get('endpoints', 'N/A')}")
+    print(f"    Services: {completeness.get('services', 'N/A')}")
+    print(f"    Templates: {completeness.get('templates', 'N/A')}")
+    print(f"    Static Assets: {completeness.get('static_assets', 'N/A')}")
+    print(f"    Tests: {completeness.get('tests', 'N/A')}")
+    print(f"    Documentation: {completeness.get('documentation', 'N/A')}")
 
     print("\n🗄️  DATABASE:")
     db = results["database"]
