@@ -199,7 +199,7 @@ jobs:
       POSTGRES_DB: testdb
       # Flask testing environment
       FLASK_ENV: testing
-      SECRET_KEY: ${{ secrets.TEST_SECRET_KEY || 'test-secret-key-for-ci' }}
+      SECRET_KEY: test-secret-key-for-ci
       # Rate limiting (use in-memory for tests)
       RATELIMIT_STORAGE_URL: memory://
       # Python encoding
@@ -379,4 +379,5 @@ jobs:
           flags: unittests
           name: codecov-py${{ matrix.python-version }}
           fail_ci_if_error: false
+          token: ${{ secrets.CODECOV_TOKEN }}
         continue-on-error: true

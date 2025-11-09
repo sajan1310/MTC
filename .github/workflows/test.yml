@@ -495,8 +495,7 @@ jobs:
           flags: full-suite
           name: codecov-py${{ matrix.python-version }}
           fail_ci_if_error: false
-        env:
-          CODECOV_TOKEN: ${{ secrets.CODECOV_TOKEN }}
+          token: ${{ secrets.CODECOV_TOKEN }}
         continue-on-error: true
 
   #============================================================================
