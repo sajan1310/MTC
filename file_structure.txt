@@ -444,5 +444,6 @@
         validate_alert_schema.py
         verify_schema_post_migration.py
     tests/
+        test_auditor_core.py
         test_upf_alerts_contracts.py
         test_upf_reports_contracts.py
