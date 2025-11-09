@@ -22301,3 +22301,6 @@ DETAIL:  Failing row contains (240, Frame Assembly, null, manufacturing, Active,
 2025-11-08 17:42:30,042 INFO: Subprocess cache cleared [in C:\Users\erkar\OneDrive\Desktop\MTC\project-root\app\services\subprocess_service.py:40]
 2025-11-08 17:42:30,466 INFO: Universal Process Framework API blueprints exempted from CSRF protection [in C:\Users\erkar\OneDrive\Desktop\MTC\project-root\app\__init__.py:321]
 2025-11-08 17:42:36,350 INFO: Loaded 2 subprocesses into cache [in C:\Users\erkar\OneDrive\Desktop\MTC\project-root\app\services\subprocess_service.py:76]
+2025-11-09 14:15:57,900 INFO: Request ID middleware enabled [in C:\Users\erkar\OneDrive\Desktop\MTC\Project-root\app\middleware\request_id.py:45]
+2025-11-09 14:15:57,950 INFO: Subprocess cache cleared [in C:\Users\erkar\OneDrive\Desktop\MTC\Project-root\app\services\subprocess_service.py:40]
+2025-11-09 14:15:58,439 INFO: Universal Process Framework API blueprints exempted from CSRF protection [in C:\Users\erkar\OneDrive\Desktop\MTC\Project-root\app\__init__.py:324]
