@@ -8,6 +8,7 @@ Provides REST endpoints for:
 Hyphenated primary endpoints + underscored legacy compatibility.
 """
 
+import warnings
 from flask import request, current_app, Blueprint
 from flask_login import login_required, current_user
 from datetime import datetime
@@ -33,6 +34,15 @@ def is_admin():
 @api_bp.route("/inventory_alert_rules", methods=["POST"])  # legacy
 @login_required
 def upsert_alert_rule():
+    # Deprecation warning for underscore route
+    if request.path == "/api/inventory_alert_rules":
+        msg = (
+            "POST /api/inventory_alert_rules is deprecated. Use POST /api/inventory-alert-rules instead. "
+            "Underscore routes will be removed after November 23, 2025."
+        )
+        warnings.warn(msg, DeprecationWarning, stacklevel=2)
+        current_app.logger.warning(f"DEPRECATION: {msg}")
+    
     data = request.json or {}
     required = [
         "variant_id",
@@ -88,6 +98,15 @@ def upf_put_rule(item_variant_id: int):
 @api_bp.route("/inventory_alert_rules", methods=["GET"])  # legacy
 @login_required
 def list_alert_rules():
+    # Deprecation warning for underscore route
+    if request.path == "/api/inventory_alert_rules":
+        msg = (
+            "GET /api/inventory_alert_rules is deprecated. Use GET /api/inventory-alert-rules instead. "
+            "Underscore routes will be removed after November 23, 2025."
+        )
+        warnings.warn(msg, DeprecationWarning, stacklevel=2)
+        current_app.logger.warning(f"DEPRECATION: {msg}")
+    
     active_only = request.args.get("active_only") == "true"
     variant_id = request.args.get("variant_id")
     try:
@@ -117,6 +136,16 @@ def upf_get_rules():
 )  # legacy
 @login_required
 def deactivate_alert_rule(rule_id):
+    # Deprecation warning for underscore route
+    if "inventory_alert_rules" in request.path:
+        msg = (
+            f"PATCH /api/inventory_alert_rules/{rule_id}/deactivate is deprecated. "
+            f"Use PATCH /api/inventory-alert-rules/{rule_id}/deactivate instead. "
+            "Underscore routes will be removed after November 23, 2025."
+        )
+        warnings.warn(msg, DeprecationWarning, stacklevel=2)
+        current_app.logger.warning(f"DEPRECATION: {msg}")
+    
     try:
         if not is_admin():
             return APIResponse.error("forbidden", "Admin required", 403)
@@ -136,6 +165,15 @@ def deactivate_alert_rule(rule_id):
 @api_bp.route("/inventory_alerts", methods=["POST"])  # legacy
 @login_required
 def create_inventory_alert():
+    # Deprecation warning for underscore route
+    if request.path == "/api/inventory_alerts" and request.method == "POST":
+        msg = (
+            "POST /api/inventory_alerts is deprecated. Use POST /api/inventory-alerts instead. "
+            "Underscore routes will be removed after November 23, 2025."
+        )
+        warnings.warn(msg, DeprecationWarning, stacklevel=2)
+        current_app.logger.warning(f"DEPRECATION: {msg}")
+    
     data = request.json or {}
     required = ["production_lot_id", "variant_id", "required_quantity"]
     missing = [f for f in required if f not in data]
@@ -159,6 +197,15 @@ def create_inventory_alert():
 @api_bp.route("/inventory_alerts", methods=["GET"])  # legacy
 @login_required
 def list_inventory_alerts():
+    # Deprecation warning for underscore route
+    if request.path == "/api/inventory_alerts" and request.method == "GET":
+        msg = (
+            "GET /api/inventory_alerts is deprecated. Use GET /api/inventory-alerts instead. "
+            "Underscore routes will be removed after November 23, 2025."
+        )
+        warnings.warn(msg, DeprecationWarning, stacklevel=2)
+        current_app.logger.warning(f"DEPRECATION: {msg}")
+    
     lot_id = request.args.get("production_lot_id")
     severity = request.args.get("severity")
     try:
@@ -178,6 +225,16 @@ def list_inventory_alerts():
 )  # legacy
 @login_required
 def acknowledge_inventory_alert(alert_id):
+    # Deprecation warning for underscore route
+    if "inventory_alerts" in request.path:
+        msg = (
+            f"POST /api/inventory_alerts/{alert_id}/acknowledge is deprecated. "
+            f"Use POST /api/inventory-alerts/{alert_id}/acknowledge instead. "
+            "Underscore routes will be removed after November 23, 2025."
+        )
+        warnings.warn(msg, DeprecationWarning, stacklevel=2)
+        current_app.logger.warning(f"DEPRECATION: {msg}")
+    
     data = request.json or {}
     try:
         updated = InventoryAlertService.acknowledge_alert(
@@ -208,6 +265,15 @@ def upf_acknowledge_alert(alert_id: int):
 @api_bp.route("/procurement_recommendations", methods=["POST"])  # legacy
 @login_required
 def create_procurement_recommendation():
+    # Deprecation warning for underscore route
+    if request.path == "/api/procurement_recommendations":
+        msg = (
+            "POST /api/procurement_recommendations is deprecated. Use POST /api/procurement-recommendations instead. "
+            "Underscore routes will be removed after November 23, 2025."
+        )
+        warnings.warn(msg, DeprecationWarning, stacklevel=2)
+        current_app.logger.warning(f"DEPRECATION: {msg}")
+    
     data = request.json or {}
     required = [
         "production_lot_id",
@@ -243,6 +309,15 @@ def create_procurement_recommendation():
 @api_bp.route("/procurement_recommendations", methods=["GET"])  # legacy
 @login_required
 def list_procurement_recommendations():
+    # Deprecation warning for underscore route
+    if request.path == "/api/procurement_recommendations":
+        msg = (
+            "GET /api/procurement_recommendations is deprecated. Use GET /api/procurement-recommendations instead. "
+            "Underscore routes will be removed after November 23, 2025."
+        )
+        warnings.warn(msg, DeprecationWarning, stacklevel=2)
+        current_app.logger.warning(f"DEPRECATION: {msg}")
+    
     lot_id = request.args.get("production_lot_id")
     status = request.args.get("status")
     try:
@@ -273,6 +348,16 @@ def upf_list_procurement():
 )  # legacy
 @login_required
 def update_procurement_status(recommendation_id):
+    # Deprecation warning for underscore route
+    if "procurement_recommendations" in request.path:
+        msg = (
+            f"PATCH /api/procurement_recommendations/{recommendation_id}/status is deprecated. "
+            f"Use PATCH /api/procurement-recommendations/{recommendation_id}/status instead. "
+            "Underscore routes will be removed after November 23, 2025."
+        )
+        warnings.warn(msg, DeprecationWarning, stacklevel=2)
+        current_app.logger.warning(f"DEPRECATION: {msg}")
+    
     data = request.json or {}
     if "procurement_status" not in data:
         return APIResponse.error(

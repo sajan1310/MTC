@@ -25,6 +25,7 @@
     COPILOT_PROMPTS.md
     debug_process_structure.py
     dependency_report.json
+    DEPRECATION_WARNINGS_ADDED.md
     enhanced_project_auditor.py
     ERROR_FIX_SUMMARY.md
     file_structure.txt
@@ -62,6 +63,7 @@
     read_issues.py
     ROUTE_CLEANUP_STRATEGY.md
     schema_validation_report.txt
+    test_deprecation_warnings.py
     test_output.txt
     UI_UX_IMPROVEMENTS_SUMMARY.md
     UI_UX_TESTING_GUIDE.md
@@ -142,6 +144,7 @@
         fix_update_lot_inventory_status_function.sql
         migration_add_inventory_alert_system.py
     Project-root/
+        .coverage
         .env
         .env.example
         .gitignore
