@@ -1,5 +1,5 @@
 {
-  "audit_timestamp": "2025-11-09T11:26:24.230731",
+  "audit_timestamp": "2025-11-09T14:04:30.452387",
   "project_root": "Project-root",
   "blueprints": [
     {
@@ -1931,9 +1931,15 @@
       "type": "fetch"
     },
     {
+      "file": "static\\js\\cost_calculator.js",
+      "url": "/api/upf/processes/${this.processId}/costing",
+      "method": "GET",
+      "type": "fetch"
+    },
+    {
       "file": "static\\js\\inventory_alerts.js",
       "url": "__HELPER_FUNCTION_PATTERN__",
-      "method": "POST",
+      "method": "GET",
       "type": "fetch"
     },
     {
@@ -1945,6 +1951,12 @@
     {
       "file": "static\\js\\process_editor.js",
       "url": "/api/upf/processes/${processId}",
+      "method": "GET",
+      "type": "fetch"
+    },
+    {
+      "file": "static\\js\\process_editor.js",
+      "url": "/api/upf/processes/${this.processId}",
       "method": "GET",
       "type": "fetch"
     },
@@ -2083,6 +2095,12 @@
     {
       "file": "static\\js\\process_manager.js",
       "url": "/api/upf/process/${processId}",
+      "method": "GET",
+      "type": "fetch"
+    },
+    {
+      "file": "static\\js\\process_manager.js",
+      "url": "/api/upf/process/${this.deletingProcessId}",
       "method": "DELETE",
       "type": "fetch"
     },
@@ -2191,6 +2209,18 @@
     {
       "file": "templates\\stock_ledger.html",
       "url": "/api/stock-receipts",
+      "method": "GET",
+      "type": "fetch"
+    },
+    {
+      "file": "templates\\stock_ledger.html",
+      "url": "/api/stock-receipts/${receiptId}",
+      "method": "GET",
+      "type": "fetch"
+    },
+    {
+      "file": "templates\\stock_ledger.html",
+      "url": "/api/stock-receipts/${receiptId}",
       "method": "DELETE",
       "type": "fetch"
     },
@@ -2203,6 +2233,12 @@
     {
       "file": "templates\\upf_production_lot_detail.html",
       "url": "/api/upf/inventory-alerts/lot/${this.lotId}",
+      "method": "GET",
+      "type": "fetch"
+    },
+    {
+      "file": "templates\\upf_production_lot_detail.html",
+      "url": "/api/upf/inventory-alerts/lot/${this.lotId}/acknowledge-bulk",
       "method": "POST",
       "type": "fetch"
     },
@@ -2227,12 +2263,30 @@
     {
       "file": "templates\\upf_production_lot_new.html",
       "url": "/api/upf/inventory-alerts/lot/${this.lotId}",
+      "method": "GET",
+      "type": "fetch"
+    },
+    {
+      "file": "templates\\upf_production_lot_new.html",
+      "url": "/api/upf/inventory-alerts/lot/${this.lotId}",
+      "method": "GET",
+      "type": "fetch"
+    },
+    {
+      "file": "templates\\upf_production_lot_new.html",
+      "url": "/api/upf/inventory-alerts/lot/${this.lotId}/acknowledge-bulk",
       "method": "POST",
       "type": "fetch"
     },
     {
       "file": "templates\\upf_variant_selection.html",
       "url": "/api/upf/production_lot/${this.lotId}/variant_options",
+      "method": "GET",
+      "type": "fetch"
+    },
+    {
+      "file": "templates\\upf_variant_selection.html",
+      "url": "/api/upf/production_lot/${this.lotId}/batch_select_variants",
       "method": "POST",
       "type": "fetch"
     }
@@ -2246,6 +2300,12 @@
         "file": "static\\js\\cost_calculator.js"
       },
       {
+        "url": "/api/upf/processes/${this.processId}/costing",
+        "method": "GET",
+        "route": "/api/upf/processes/\\d+/costing",
+        "file": "static\\js\\cost_calculator.js"
+      },
+      {
         "url": "/api/login",
         "method": "POST",
         "route": "/api/login",
@@ -2253,6 +2313,12 @@
       },
       {
         "url": "/api/upf/processes/${processId}",
+        "method": "GET",
+        "route": "/api/upf/processes/\\d+",
+        "file": "static\\js\\process_editor.js"
+      },
+      {
+        "url": "/api/upf/processes/${this.processId}",
         "method": "GET",
         "route": "/api/upf/processes/\\d+",
         "file": "static\\js\\process_editor.js"
@@ -2391,6 +2457,12 @@
       },
       {
         "url": "/api/upf/process/${processId}",
+        "method": "GET",
+        "route": "/api/upf/process/\\d+",
+        "file": "static\\js\\process_manager.js"
+      },
+      {
+        "url": "/api/upf/process/${this.deletingProcessId}",
         "method": "DELETE",
         "route": "/api/upf/process/\\d+",
         "file": "static\\js\\process_manager.js"
@@ -2486,15 +2558,27 @@
         "file": "templates\\signup.html"
       },
       {
-        "url": "/api/stock-receipts",
+        "url": "/api/stock-receipts/${receiptId}",
         "method": "DELETE",
-        "route": "/api/stock-receipts",
+        "route": "/api/stock-receipts/\\d+",
         "file": "templates\\stock_ledger.html"
       },
       {
         "url": "/api/upf/production-lots/${this.lotId}",
         "method": "GET",
         "route": "/api/upf/production-lots/\\d+",
+        "file": "templates\\upf_production_lot_detail.html"
+      },
+      {
+        "url": "/api/upf/inventory-alerts/lot/${this.lotId}",
+        "method": "GET",
+        "route": "/api/upf/inventory-alerts/lot/\\d+",
+        "file": "templates\\upf_production_lot_detail.html"
+      },
+      {
+        "url": "/api/upf/inventory-alerts/lot/${this.lotId}/acknowledge-bulk",
+        "method": "POST",
+        "route": "/api/upf/inventory-alerts/lot/\\d+/acknowledge-bulk",
         "file": "templates\\upf_production_lot_detail.html"
       },
       {
@@ -2516,9 +2600,33 @@
         "file": "templates\\upf_production_lot_new.html"
       },
       {
-        "url": "/api/upf/production_lot/${this.lotId}/variant_options",
+        "url": "/api/upf/inventory-alerts/lot/${this.lotId}",
+        "method": "GET",
+        "route": "/api/upf/inventory-alerts/lot/\\d+",
+        "file": "templates\\upf_production_lot_new.html"
+      },
+      {
+        "url": "/api/upf/inventory-alerts/lot/${this.lotId}",
+        "method": "GET",
+        "route": "/api/upf/inventory-alerts/lot/\\d+",
+        "file": "templates\\upf_production_lot_new.html"
+      },
+      {
+        "url": "/api/upf/inventory-alerts/lot/${this.lotId}/acknowledge-bulk",
         "method": "POST",
+        "route": "/api/upf/inventory-alerts/lot/\\d+/acknowledge-bulk",
+        "file": "templates\\upf_production_lot_new.html"
+      },
+      {
+        "url": "/api/upf/production_lot/${this.lotId}/variant_options",
+        "method": "GET",
         "route": "/api/upf/production_lot/\\d+/variant_options",
+        "file": "templates\\upf_variant_selection.html"
+      },
+      {
+        "url": "/api/upf/production_lot/${this.lotId}/batch_select_variants",
+        "method": "POST",
+        "route": "/api/upf/production_lot/\\d+/batch_select_variants",
         "file": "templates\\upf_variant_selection.html"
       }
     ],
@@ -2777,15 +2885,6 @@
         "message": "Route defined but not called from frontend"
       },
       {
-        "route": "/api/upf/inventory-alerts/lot/<int:production_lot_id>/acknowledge-bulk",
-        "methods": [
-          "POST"
-        ],
-        "handler": "upf_acknowledge_bulk",
-        "file": "app\\api\\inventory_alerts.py",
-        "message": "Route defined but not called from frontend"
-      },
-      {
         "route": "/api/upf/process",
         "methods": [
           "POST"
@@ -2854,15 +2953,6 @@
           "POST"
         ],
         "handler": "reorder_subprocesses",
-        "file": "app\\api\\process_management.py",
-        "message": "Route defined but not called from frontend"
-      },
-      {
-        "route": "/api/upf/processes/<int:process_id>/costing",
-        "methods": [
-          "GET"
-        ],
-        "handler": "get_worst_case_costing",
         "file": "app\\api\\process_management.py",
         "message": "Route defined but not called from frontend"
       },
@@ -2998,15 +3088,6 @@
           "GET"
         ],
         "handler": "get_lot_selections",
-        "file": "app\\api\\production_lot.py",
-        "message": "Route defined but not called from frontend"
-      },
-      {
-        "route": "/api/upf/production_lot/<int:lot_id>/batch_select_variants",
-        "methods": [
-          "POST"
-        ],
-        "handler": "batch_select_variants",
         "file": "app\\api\\production_lot.py",
         "message": "Route defined but not called from frontend"
       },
@@ -3353,15 +3434,6 @@
         "message": "Route defined but not called from frontend"
       },
       {
-        "route": "/api/stock-receipts/<int:receipt_id>",
-        "methods": [
-          "DELETE"
-        ],
-        "handler": "unknown",
-        "file": "app\\api\\routes.py",
-        "message": "Route defined but not called from frontend"
-      },
-      {
         "route": "/api/items/bulk-delete",
         "methods": [
           "POST"
@@ -3665,22 +3737,22 @@
         "message": "Method GET not allowed, available: POST"
       },
       {
-        "url": "/api/upf/inventory-alerts/lot/${this.lotId}",
-        "method": "POST",
+        "url": "/api/stock-receipts",
+        "method": "GET",
         "available_methods": [
-          "GET"
+          "DELETE"
         ],
-        "file": "templates\\upf_production_lot_detail.html",
-        "message": "Method POST not allowed, available: GET"
+        "file": "templates\\stock_ledger.html",
+        "message": "Method GET not allowed, available: DELETE"
       },
       {
-        "url": "/api/upf/inventory-alerts/lot/${this.lotId}",
-        "method": "POST",
+        "url": "/api/stock-receipts/${receiptId}",
+        "method": "GET",
         "available_methods": [
-          "GET"
+          "DELETE"
         ],
-        "file": "templates\\upf_production_lot_new.html",
-        "message": "Method POST not allowed, available: GET"
+        "file": "templates\\stock_ledger.html",
+        "message": "Method GET not allowed, available: DELETE"
       }
     ]
   },
@@ -4462,11 +4534,11 @@
   "duplicate_functions": [],
   "statistics": {
     "total_routes": 183,
-    "total_api_calls": 52,
-    "matched_routes": 47,
+    "total_api_calls": 61,
+    "matched_routes": 56,
     "missing_backend": 0,
     "method_mismatches": 3,
-    "unused_backend": 125,
+    "unused_backend": 121,
     "upf_overall_score": 100.0,
     "upf_process_bom_score": 100.0,
     "upf_production_lot_score": 100.0,

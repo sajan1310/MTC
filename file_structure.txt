@@ -6,7 +6,10 @@
     API_REFERENCE_INVENTORY_ALERTS.md
     app.py
     app.py.backup
+    AUDITOR_FINDINGS_REPORT.md
+    auditor_full_output.txt
     AUDITOR_IMPROVEMENTS_REPORT.md
+    auditor_output.txt
     AUDITOR_USAGE_GUIDE.md
     AUDITOR_VERIFICATION_COMPLETE.md
     AUDIT_COMPLETE.md
@@ -28,6 +31,7 @@
     FINAL_AUDIT_SUMMARY.md
     FINAL_FIX_SUMMARY.md
     FINAL_VERIFICATION_REPORT.md
+    fix_results.txt
     FRONTEND_BACKEND_SYNC_ANALYSIS.md
     FRONTEND_BACKEND_SYNC_FIXES.md
     FRONTEND_CRASH_AUDIT_REPORT.md
@@ -56,7 +60,9 @@
     QUICK_REFERENCE_CARD.md
     QUICK_START (2).md
     read_issues.py
+    ROUTE_CLEANUP_STRATEGY.md
     schema_validation_report.txt
+    test_output.txt
     UI_UX_IMPROVEMENTS_SUMMARY.md
     UI_UX_TESTING_GUIDE.md
     UI_UX_VISUAL_COMPARISON.md
@@ -127,13 +133,15 @@
         code_snapshot_20251108_132304.zip
         db_backup_20251108_132106.sql
         db_backup_20251108_132303.sql
+        refactor_20251109/
+            ci.yml.bak
+    examples/
     logs/
         app.log
     migrations/
         fix_update_lot_inventory_status_function.sql
         migration_add_inventory_alert_system.py
     Project-root/
-        .coverage
         .env
         .env.example
         .gitignore

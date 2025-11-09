@@ -116,26 +116,8 @@ def reset_password_stub():
 # STOCK & INVENTORY STUBS
 # ============================================================================
 
-
-@api_bp.route("/stock-receipts", methods=["DELETE"])
-@login_required
-def delete_stock_receipt_stub():
-    """
-    TODO: Implement stock receipt deletion logic
-    Stub endpoint to prevent 404 errors during development
-    """
-    logger.warning("Stub endpoint called: DELETE /api/stock-receipts")
-    receipt_id = (
-        request.args.get("id") or request.json.get("id") if request.json else None
-    )
-    return jsonify(
-        {
-            "status": "stub",
-            "message": "Stock receipt deletion feature in development",
-            "receipt_id": receipt_id,
-        }
-    ), 200
-
+# NOTE: DELETE /stock-receipts/<int:receipt_id> is fully implemented in routes.py
+# The previous stub at this location has been removed as it conflicted with the real implementation
 
 # ============================================================================
 # PROCESS API BLUEPRINT STUBS (already have process_api_bp routes)

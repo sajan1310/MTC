@@ -9,6 +9,8 @@ ENHANCEMENTS v3.0:
 - Test coverage statistics
 - Documentation completeness check
 - Security configuration audit
+
+NOTE: Uses ASCII-safe output for Windows PowerShell compatibility
 - Performance bottleneck detection
 - Static asset analysis
 
@@ -118,8 +120,9 @@ class EnhancedFlaskAuditor:
         )
 
         # JS API call patterns
+        # Match fetch() calls and look for method in the immediate options object only (within 200 chars)
         self.fetch_pattern = re.compile(
-            r'fetch\([\'"`]([^\'")`]+)[\'"`](?:.*?method:\s*[\'"`](\w+)[\'"`])?',
+            r'fetch\(\s*[\'"`]([^\'")`]+)[\'"`]\s*(?:,\s*\{.{0,200}?method:\s*[\'"`](\w+)[\'"`])?',
             re.DOTALL,
         )
         self.ajax_pattern = re.compile(
@@ -136,7 +139,7 @@ class EnhancedFlaskAuditor:
         if file_path:
             error_entry["file"] = str(file_path)
         self.results["errors"].append(error_entry)
-        print(f"⚠️  ERROR: {error_msg}")
+        print(f"[!] ERROR: {error_msg}")
 
     def extract_blueprints(self) -> Dict[str, str]:
         """
@@ -146,7 +149,7 @@ class EnhancedFlaskAuditor:
         Returns:
             Dict mapping blueprint variable names to their URL prefixes
         """
-        print("🔍 Extracting Blueprint registrations...")
+        print("[?] Extracting Blueprint registrations...")
 
         blueprint_map = {}
 
@@ -193,7 +196,7 @@ class EnhancedFlaskAuditor:
                                 bp["source"] = "Blueprint definition"
                                 break
 
-            print(f"   ✓ Found {len(blueprint_map)} Blueprint registrations")
+            print(f"   [+] Found {len(blueprint_map)} Blueprint registrations")
 
         except Exception as e:
             self.log_error(f"Error reading app/__init__.py: {str(e)}")
@@ -249,7 +252,7 @@ class EnhancedFlaskAuditor:
         Returns:
             List of route definitions
         """
-        print("🛣️  Extracting Flask routes (Blueprint-aware)...")
+        print("[ROUTES]  Extracting Flask routes (Blueprint-aware)...")
 
         routes = []
         python_files = list(self.project_root.rglob("*.py"))
@@ -353,7 +356,7 @@ class EnhancedFlaskAuditor:
             "by_blueprint": self._count_by_blueprint(routes),
         }
 
-        print(f"   ✓ Found {len(routes)} Flask routes")
+        print(f"   [+] Found {len(routes)} Flask routes")
         return routes
 
     def _count_by_method(self, routes: List[Dict]) -> Dict[str, int]:
@@ -373,7 +376,7 @@ class EnhancedFlaskAuditor:
 
     def extract_javascript_api_calls(self) -> List[Dict[str, Any]]:
         """Extract API calls from JavaScript and HTML files."""
-        print("📡 Extracting JavaScript API calls...")
+        print("[SYNC] Extracting JavaScript API calls...")
 
         api_calls = []
         js_files = list(self.project_root.rglob("*.js"))
@@ -430,7 +433,7 @@ class EnhancedFlaskAuditor:
                 )
 
         self.results["javascript_api_calls"] = api_calls
-        print(f"   ✓ Found {len(api_calls)} JavaScript API calls")
+        print(f"   [+] Found {len(api_calls)} JavaScript API calls")
         return api_calls
 
     def _normalize_api_call_url(self, url: str) -> str:
@@ -462,7 +465,7 @@ class EnhancedFlaskAuditor:
 
     def synchronize_routes_and_calls(self):
         """Compare backend routes with frontend API calls."""
-        print("🔄 Synchronizing routes with API calls...")
+        print("[LOOP] Synchronizing routes with API calls...")
 
         routes = self.results["flask_routes"]
         api_calls = self.results["javascript_api_calls"]
@@ -568,15 +571,15 @@ class EnhancedFlaskAuditor:
                         }
                     )
 
-        print(f"   ✓ Matched: {len(self.results['route_api_sync']['matched'])}")
+        print(f"   [+] Matched: {len(self.results['route_api_sync']['matched'])}")
         print(
-            f"   ⚠️  Missing backend: {len(self.results['route_api_sync']['missing_backend'])}"
+            f"   [!]  Missing backend: {len(self.results['route_api_sync']['missing_backend'])}"
         )
         print(
-            f"   ⚠️  Method mismatches: {len(self.results['route_api_sync']['method_mismatches'])}"
+            f"   [!]  Method mismatches: {len(self.results['route_api_sync']['method_mismatches'])}"
         )
         print(
-            f"   ℹ️  Unused backend: {len(self.results['route_api_sync']['unused_backend'])}"
+            f"   [i]  Unused backend: {len(self.results['route_api_sync']['unused_backend'])}"
         )
 
     def _normalize_path(self, path: str) -> str:
@@ -683,34 +686,34 @@ class EnhancedFlaskAuditor:
 
     def audit_upf_alert_system(self):
         """Audit the complete UPF framework implementation against executive summary."""
-        print("🚨 Auditing Universal Process Framework (UPF) Implementation...")
+        print("[ALERT] Auditing Universal Process Framework (UPF) Implementation...")
 
         upf_data = self.results["upf_alert_system"]
 
         # === 1. Advanced BOM-Centric Process Architecture ===
-        print("   📋 Auditing Process/BOM Architecture...")
+        print("   [LIST] Auditing Process/BOM Architecture...")
         upf_data["process_bom_architecture"] = self._audit_process_bom_architecture()
 
         # === 2. Production Lot Architecture with Alert System ===
-        print("   🏭 Auditing Production Lot Alert System...")
+        print("   [PROD] Auditing Production Lot Alert System...")
         upf_data["production_lot_alerts"] = self._audit_production_lot_alerts()
 
         # === 3. Alert System Technical Architecture ===
-        print("   ⚙️  Auditing Alert Technical Architecture...")
+        print("   [GEAR]  Auditing Alert Technical Architecture...")
         upf_data["alert_technical"] = self._audit_alert_technical_architecture()
 
         # === 4. Data Flow and Integration ===
-        print("   🔄 Auditing Data Flow Integration...")
+        print("   [LOOP] Auditing Data Flow Integration...")
         upf_data["data_flow_integration"] = self._audit_data_flow_integration()
 
         # === 5. Legacy Alert System Checks (from original) ===
-        print("   🔔 Auditing Alert System Endpoints...")
+        print("   [BELL] Auditing Alert System Endpoints...")
         upf_data["alert_endpoints"] = self._audit_alert_endpoints()
 
         # Calculate overall completeness
         upf_data["completeness"] = self._calculate_upf_completeness(upf_data)
 
-        print(f"   ✅ UPF Framework Completeness: {upf_data['completeness']['overall_score']:.1f}%")
+        print(f"   [OK] UPF Framework Completeness: {upf_data['completeness']['overall_score']:.1f}%")
 
     def _audit_process_bom_architecture(self) -> Dict[str, Any]:
         """Audit Section 1: Advanced BOM-Centric Process Architecture."""
@@ -1195,7 +1198,7 @@ class EnhancedFlaskAuditor:
 
     def audit_database(self):
         """Audit database models and migrations."""
-        print("🗄️  Auditing Database...")
+        print("[FILE]  Auditing Database...")
 
         db_data = self.results["database"]
 
@@ -1253,13 +1256,13 @@ class EnhancedFlaskAuditor:
             if idx not in db_data["indexes"]:
                 db_data["missing_indexes"].append(idx)
 
-        print(f"   ✓ Found {len(db_data['models'])} model files")
-        print(f"   ✓ Found {len(db_data['migrations'])} migration files")
-        print(f"   ✓ Found {len(db_data['indexes'])} indexes")
+        print(f"   [+] Found {len(db_data['models'])} model files")
+        print(f"   [+] Found {len(db_data['migrations'])} migration files")
+        print(f"   [+] Found {len(db_data['indexes'])} indexes")
 
     def audit_tests(self):
         """Audit test coverage."""
-        print("🧪 Auditing Tests...")
+        print("[TEST] Auditing Tests...")
 
         test_data = self.results["tests"]
 
@@ -1294,12 +1297,12 @@ class EnhancedFlaskAuditor:
             if (self.project_root / test_file).exists():
                 test_data["coverage_summary"]["upf_alerts_tested"] = True
 
-        print(f"   ✓ Found {len(test_data['test_files'])} test files")
-        print(f"   ✓ Total test functions: {test_data['total_tests']}")
+        print(f"   [+] Found {len(test_data['test_files'])} test files")
+        print(f"   [+] Total test functions: {test_data['total_tests']}")
 
     def audit_documentation(self):
         """Audit documentation completeness."""
-        print("📚 Auditing Documentation...")
+        print("[DOCS] Auditing Documentation...")
 
         doc_data = self.results["documentation"]
 
@@ -1334,12 +1337,12 @@ class EnhancedFlaskAuditor:
 
         doc_data["completeness_score"] = sum(key_docs.values()) / len(key_docs) * 100
 
-        print(f"   ✓ Found {len(doc_data['markdown_files'])} documentation files")
-        print(f"   ✓ Documentation completeness: {doc_data['completeness_score']:.0f}%")
+        print(f"   [+] Found {len(doc_data['markdown_files'])} documentation files")
+        print(f"   [+] Documentation completeness: {doc_data['completeness_score']:.0f}%")
 
     def audit_security(self):
         """Audit security configuration."""
-        print("🔒 Auditing Security...")
+        print("[LOCK] Auditing Security...")
 
         sec_data = self.results["security"]
 
@@ -1393,21 +1396,21 @@ class EnhancedFlaskAuditor:
         # Add recommendations
         if len(sec_data["secrets_exposed"]) > 0:
             sec_data["recommendations"].append(
-                "⚠️  Hardcoded secrets found - use environment variables"
+                "[!]  Hardcoded secrets found - use environment variables"
             )
         if len(sec_data["env_vars_documented"]) < 5:
             sec_data["recommendations"].append(
-                "ℹ️  Document all required environment variables"
+                "[i]  Document all required environment variables"
             )
 
         print(
-            f"   ✓ {len(sec_data['env_vars_documented'])} environment variables documented"
+            f"   [+] {len(sec_data['env_vars_documented'])} environment variables documented"
         )
-        print(f"   ⚠️  {len(sec_data['secrets_exposed'])} potential secret exposures")
+        print(f"   [!]  {len(sec_data['secrets_exposed'])} potential secret exposures")
 
     def audit_static_assets(self):
         """Audit static assets."""
-        print("📦 Auditing Static Assets...")
+        print("[PKG] Auditing Static Assets...")
 
         static_data = self.results["static_assets"]
 
@@ -1443,14 +1446,14 @@ class EnhancedFlaskAuditor:
 
         total_assets = len(static_data["css_files"]) + len(static_data["js_files"])
         print(
-            f"   ✓ Found {total_assets} static assets ({static_data['total_size'] / 1024:.1f} KB)"
+            f"   [+] Found {total_assets} static assets ({static_data['total_size'] / 1024:.1f} KB)"
         )
-        print(f"   ✓ Minified: {static_data['minified_count']}/{total_assets}")
+        print(f"   [+] Minified: {static_data['minified_count']}/{total_assets}")
 
     def run_audit(self) -> Dict[str, Any]:
         """Run the complete enhanced audit."""
         print("\n" + "=" * 60)
-        print("🚀 Starting Comprehensive Flask Project Audit v3.0")
+        print("[>>] Starting Comprehensive Flask Project Audit v3.0")
         print("=" * 60 + "\n")
 
         try:
@@ -1503,7 +1506,7 @@ class EnhancedFlaskAuditor:
             }
 
             print("\n" + "=" * 60)
-            print("✅ Comprehensive Audit Complete!")
+            print("[OK] Comprehensive Audit Complete!")
             print("=" * 60)
 
             return self.results
@@ -1520,7 +1523,7 @@ class EnhancedFlaskAuditor:
             with open(output_path, "w", encoding="utf-8") as f:
                 json.dump(self.results, f, indent=2, ensure_ascii=False)
 
-            print(f"\n📄 Report saved to: {output_path}")
+            print(f"\n[DOC] Report saved to: {output_path}")
             print(f"   File size: {output_path.stat().st_size / 1024:.2f} KB")
 
         except Exception as e:
@@ -1540,7 +1543,7 @@ def main():
         else:
             project_root = current_dir
 
-    print(f"\n📂 Project root: {project_root}\n")
+    print(f"\n[DIR] Project root: {project_root}\n")
 
     auditor = EnhancedFlaskAuditor(project_root)
     results = auditor.run_audit()
@@ -1548,61 +1551,61 @@ def main():
 
     # Print comprehensive summary
     print("\n" + "=" * 60)
-    print("📋 COMPREHENSIVE AUDIT SUMMARY")
+    print("[LIST] COMPREHENSIVE AUDIT SUMMARY")
     print("=" * 60)
     stats = results["statistics"]
 
-    print("\n🛣️  ROUTES & API SYNC:")
+    print("\n[ROUTES]  ROUTES & API SYNC:")
     print(f"  Total backend routes: {stats['total_routes']}")
     print(f"  Total frontend API calls: {stats['total_api_calls']}")
-    print(f"  ✅ Matched & synchronized: {stats['matched_routes']}")
-    print(f"  ❌ Missing backend routes: {stats['missing_backend']}")
-    print(f"  ⚠️  HTTP method mismatches: {stats['method_mismatches']}")
-    print(f"  ℹ️  Unused backend routes: {stats['unused_backend']}")
+    print(f"  [OK] Matched & synchronized: {stats['matched_routes']}")
+    print(f"  [X] Missing backend routes: {stats['missing_backend']}")
+    print(f"  [!]  HTTP method mismatches: {stats['method_mismatches']}")
+    print(f"  [i]  Unused backend routes: {stats['unused_backend']}")
 
-    print("\n🚨 UPF INVENTORY ALERT SYSTEM:")
+    print("\n[ALERT] UPF INVENTORY ALERT SYSTEM:")
     print(f"  Overall Framework Completeness: {stats['upf_overall_score']:.1f}%")
-    print(f"  └─ Process/BOM Architecture: {stats['upf_process_bom_score']:.1f}%")
-    print(f"  └─ Production Lot Alerts: {stats['upf_production_lot_score']:.1f}%")
-    print(f"  └─ Alert Technical Architecture: {stats['upf_alert_technical_score']:.1f}%")
-    print(f"  └─ Data Flow Integration: {stats['upf_data_flow_score']:.1f}%")
+    print(f"  +-- Process/BOM Architecture: {stats['upf_process_bom_score']:.1f}%")
+    print(f"  +-- Production Lot Alerts: {stats['upf_production_lot_score']:.1f}%")
+    print(f"  +-- Alert Technical Architecture: {stats['upf_alert_technical_score']:.1f}%")
+    print(f"  +-- Data Flow Integration: {stats['upf_data_flow_score']:.1f}%")
     
     # Detailed UPF subsystem breakdown
     upf = results["upf_alert_system"]
     
-    print("\n  📋 Process/BOM Architecture:")
+    print("\n  [LIST] Process/BOM Architecture:")
     pba = upf["process_bom_architecture"]
-    print(f"    ✓ Process as BOM: {'✅ Yes' if pba['process_as_bom']['present'] else '❌ No'}")
-    print(f"    ✓ Subprocess Templates: {'✅ Yes' if pba['subprocess_templates']['present'] else '❌ No'}")
-    print(f"    ✓ Variant/Cost/Supplier: {'✅ Yes' if pba['variant_cost_supplier']['present'] else '❌ No'}")
-    print(f"    ✓ User Experience: {'✅ Yes' if pba['user_experience']['present'] else '❌ No'}")
-    print(f"    ✓ Audit Trail: {'✅ Yes' if pba['audit_trail']['present'] else '❌ No'}")
+    print(f"    [+] Process as BOM: {'[OK] Yes' if pba['process_as_bom']['present'] else '[X] No'}")
+    print(f"    [+] Subprocess Templates: {'[OK] Yes' if pba['subprocess_templates']['present'] else '[X] No'}")
+    print(f"    [+] Variant/Cost/Supplier: {'[OK] Yes' if pba['variant_cost_supplier']['present'] else '[X] No'}")
+    print(f"    [+] User Experience: {'[OK] Yes' if pba['user_experience']['present'] else '[X] No'}")
+    print(f"    [+] Audit Trail: {'[OK] Yes' if pba['audit_trail']['present'] else '[X] No'}")
     
-    print("\n  🏭 Production Lot Alert System:")
+    print("\n  [PROD] Production Lot Alert System:")
     pla = upf["production_lot_alerts"]
-    print(f"    ✓ Lot Creation Workflow: {'✅ Yes' if pla['lot_creation']['present'] else '❌ No'}")
-    print(f"    ✓ Real-time Stock Analysis: {'✅ Yes' if pla['realtime_stock_analysis']['present'] else '❌ No'}")
-    print(f"    ✓ Alert Severity Levels: {'✅ Yes' if pla['alert_severity_levels']['present'] else '❌ No'} {pla['alert_severity_levels']['details']}")
-    print(f"    ✓ Alert Display/Interaction: {'✅ Yes' if pla['alert_display_interaction']['present'] else '❌ No'}")
-    print(f"    ✓ Automatic Procurement: {'✅ Yes' if pla['automatic_procurement']['present'] else '❌ No'}")
-    print(f"    ✓ Item Requirement Sheet: {'✅ Yes' if pla['item_requirement_sheet']['present'] else '❌ No'}")
-    print(f"    ✓ Lot Audit Trail: {'✅ Yes' if pla['lot_audit_trail']['present'] else '❌ No'}")
+    print(f"    [+] Lot Creation Workflow: {'[OK] Yes' if pla['lot_creation']['present'] else '[X] No'}")
+    print(f"    [+] Real-time Stock Analysis: {'[OK] Yes' if pla['realtime_stock_analysis']['present'] else '[X] No'}")
+    print(f"    [+] Alert Severity Levels: {'[OK] Yes' if pla['alert_severity_levels']['present'] else '[X] No'} {pla['alert_severity_levels']['details']}")
+    print(f"    [+] Alert Display/Interaction: {'[OK] Yes' if pla['alert_display_interaction']['present'] else '[X] No'}")
+    print(f"    [+] Automatic Procurement: {'[OK] Yes' if pla['automatic_procurement']['present'] else '[X] No'}")
+    print(f"    [+] Item Requirement Sheet: {'[OK] Yes' if pla['item_requirement_sheet']['present'] else '[X] No'}")
+    print(f"    [+] Lot Audit Trail: {'[OK] Yes' if pla['lot_audit_trail']['present'] else '[X] No'}")
     
-    print("\n  ⚙️  Alert Technical Architecture:")
+    print("\n  [GEAR]  Alert Technical Architecture:")
     ata = upf["alert_technical"]
-    print(f"    ✓ Real-time Inventory Query: {'✅ Yes' if ata['realtime_inventory_query']['present'] else '❌ No'}")
-    print(f"    ✓ Alert Escalation Rules: {'✅ Yes' if ata['alert_escalation_rules']['present'] else '❌ No'}")
-    print(f"    ✓ Safety Stock/Reorder Points: {'✅ Yes' if ata['safety_stock_reorder']['present'] else '❌ No'}")
+    print(f"    [+] Real-time Inventory Query: {'[OK] Yes' if ata['realtime_inventory_query']['present'] else '[X] No'}")
+    print(f"    [+] Alert Escalation Rules: {'[OK] Yes' if ata['alert_escalation_rules']['present'] else '[X] No'}")
+    print(f"    [+] Safety Stock/Reorder Points: {'[OK] Yes' if ata['safety_stock_reorder']['present'] else '[X] No'}")
     
-    print("\n  🔄 Data Flow Integration:")
+    print("\n  [LOOP] Data Flow Integration:")
     dfi = upf["data_flow_integration"]
-    print(f"    ✓ Inventory System: {'✅ Yes' if dfi['inventory_system']['present'] else '❌ No'}")
-    print(f"    ✓ Supplier/Vendor DB: {'✅ Yes' if dfi['supplier_vendor_db']['present'] else '❌ No'}")
-    print(f"    ✓ Process/BOM Library: {'✅ Yes' if dfi['process_bom_library']['present'] else '❌ No'}")
-    print(f"    ✓ Alert Notification Engine: {'✅ Yes' if dfi['alert_notification_engine']['present'] else '❌ No'}")
-    print(f"    ✓ Ledger/Reporting: {'✅ Yes' if dfi['ledger_reporting']['present'] else '❌ No'}")
+    print(f"    [+] Inventory System: {'[OK] Yes' if dfi['inventory_system']['present'] else '[X] No'}")
+    print(f"    [+] Supplier/Vendor DB: {'[OK] Yes' if dfi['supplier_vendor_db']['present'] else '[X] No'}")
+    print(f"    [+] Process/BOM Library: {'[OK] Yes' if dfi['process_bom_library']['present'] else '[X] No'}")
+    print(f"    [+] Alert Notification Engine: {'[OK] Yes' if dfi['alert_notification_engine']['present'] else '[X] No'}")
+    print(f"    [+] Ledger/Reporting: {'[OK] Yes' if dfi['ledger_reporting']['present'] else '[X] No'}")
     
-    print("\n  📡 API Endpoints & Assets:")
+    print("\n  [SYNC] API Endpoints & Assets:")
     completeness = upf["completeness"]
     print(f"    Endpoints: {completeness.get('endpoints', 'N/A')}")
     print(f"    Services: {completeness.get('services', 'N/A')}")
@@ -1611,53 +1614,53 @@ def main():
     print(f"    Tests: {completeness.get('tests', 'N/A')}")
     print(f"    Documentation: {completeness.get('documentation', 'N/A')}")
 
-    print("\n🗄️  DATABASE:")
+    print("\n[FILE]  DATABASE:")
     db = results["database"]
     print(f"  Model files: {len(db['models'])}")
     print(f"  Migration files: {len(db['migrations'])}")
     print(f"  Indexes found: {len(db['indexes'])}")
     if db["missing_indexes"]:
-        print(f"  ⚠️  Missing indexes: {', '.join(db['missing_indexes'])}")
+        print(f"  [!]  Missing indexes: {', '.join(db['missing_indexes'])}")
 
-    print("\n🧪 TESTS:")
+    print("\n[TEST] TESTS:")
     print(f"  Test files: {stats['test_files']}")
     print(f"  Total test functions: {stats['total_tests']}")
 
-    print("\n📚 DOCUMENTATION:")
+    print("\n[DOCS] DOCUMENTATION:")
     print(f"  Completeness score: {stats['documentation_score']:.0f}%")
     print(f"  Deployment guides: {len(results['documentation']['deployment_guides'])}")
     print(f"  API docs: {len(results['documentation']['api_docs'])}")
 
-    print("\n🔒 SECURITY:")
+    print("\n[LOCK] SECURITY:")
     print(
         f"  Environment vars documented: {len(results['security']['env_vars_documented'])}"
     )
     if stats["security_issues"] > 0:
-        print(f"  ⚠️  Potential secret exposures: {stats['security_issues']}")
+        print(f"  [!]  Potential secret exposures: {stats['security_issues']}")
     if results["security"]["recommendations"]:
         for rec in results["security"]["recommendations"]:
             print(f"  {rec}")
 
-    print("\n📦 STATIC ASSETS:")
+    print("\n[PKG] STATIC ASSETS:")
     print(f"  Total assets: {stats['static_assets']}")
     print(f"  Total size: {results['static_assets']['total_size'] / 1024:.1f} KB")
     print(
         f"  Minified: {results['static_assets']['minified_count']}/{stats['static_assets']}"
     )
 
-    print("\n⚠️  ISSUES:")
+    print("\n[!]  ISSUES:")
     print(f"  Errors encountered: {stats['errors']}")
 
     print("=" * 60 + "\n")
 
     if stats["missing_backend"] > 0:
-        print("⚠️  WARNING: Frontend is calling backend routes that don't exist!")
+        print("[!]  WARNING: Frontend is calling backend routes that don't exist!")
     if stats["method_mismatches"] > 0:
-        print("⚠️  WARNING: HTTP method mismatches detected!")
+        print("[!]  WARNING: HTTP method mismatches detected!")
     if stats["security_issues"] > 0:
-        print("⚠️  WARNING: Potential security issues found!")
+        print("[!]  WARNING: Potential security issues found!")
 
-    print("\n✨ Review the detailed report in 'enhanced_audit_report.json'\n")
+    print("\n[*] Review the detailed report in 'enhanced_audit_report.json'\n")
 
 
 if __name__ == "__main__":

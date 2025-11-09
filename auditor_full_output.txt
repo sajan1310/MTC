@@ -1,0 +1,17 @@
+﻿python : Traceback (most recent call last):
+At line:1 char:1
++ python enhanced_project_auditor.py Project-root 2>&1 | Out-File -File ...
++ ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+    + CategoryInfo          : NotSpecified: (Traceback (most recent call last)::String) [], RemoteException
+    + FullyQualifiedErrorId : NativeCommandError
+ 
+  File "C:\Users\erkar\OneDrive\Desktop\MTC\enhanced_project_auditor.py", line 1664, in <module>
+    main()
+    ~~~~^^
+  File "C:\Users\erkar\OneDrive\Desktop\MTC\enhanced_project_auditor.py", line 1543, in main
+    print(f"\n\U0001f4c2 Project root: {project_root}\n")
+    ~~~~~^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "C:\Users\erkar\AppData\Local\Programs\Python\Python313\Lib\encodings\cp1252.py", line 19, in encode
+    return codecs.charmap_encode(input,self.errors,encoding_table)[0]
+           ~~~~~~~~~~~~~~~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+UnicodeEncodeError: 'charmap' codec can't encode character '\U0001f4c2' in position 2: character maps to <undefined>
