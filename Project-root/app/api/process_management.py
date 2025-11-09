@@ -18,6 +18,8 @@ from app.services.process_service import ProcessService
 from app.services.subprocess_service import SubprocessService
 from app.utils.response import APIResponse
 from app.validators import ProcessValidationError
+from database import get_conn
+from psycopg2.extras import RealDictCursor
 
 process_api_bp = Blueprint("process_api", __name__)
 
@@ -767,6 +769,119 @@ def recalculate_worst_case(process_id):
     except Exception as e:
         current_app.logger.error(f"Error recalculating costs: {e}")
         return APIResponse.error("internal_error", str(e), 500)
+
+
+# ===== PROCESS_SUBPROCESS DIRECT OPERATIONS (Prompts 7 & 8) =====
+
+@process_api_bp.route('/process_subprocess/<int:subprocess_id>', methods=['DELETE'])
+@login_required
+def delete_process_subprocess(subprocess_id: int):
+    """Delete a process_subprocess association (hard delete or soft depending on schema).
+
+    Contract (Prompt 7):
+    - On success: {"process_subprocess_id": <id>, "deleted": true}
+    - If not found: APIResponse.not_found("Process subprocess", id)
+    - Hard delete preferred; fallback to soft delete if constraint issues.
+    """
+    try:
+        with get_conn(cursor_factory=RealDictCursor) as (conn, cur):
+            # HARD DELETE (table doesn't track deleted_at in current schema)
+            cur.execute(
+                "DELETE FROM process_subprocesses WHERE id = %s RETURNING id",
+                (subprocess_id,)
+            )
+            row = cur.fetchone()
+            if not row:
+                return APIResponse.not_found("Process subprocess", subprocess_id)
+            current_app.logger.info(
+                f"Process subprocess {subprocess_id} deleted by user {getattr(current_user, 'id', 'anon')}"
+            )
+        return APIResponse.success({"process_subprocess_id": subprocess_id, "deleted": True})
+    except Exception as e:
+        current_app.logger.error(f"Error deleting process_subprocess {subprocess_id}: {e}", exc_info=True)
+        return APIResponse.error("internal_error", "Failed to delete process_subprocess", 500)
+
+
+@process_api_bp.route('/process_subprocess/<int:process_subprocess_id>/substitute_groups', methods=['GET'])
+@login_required
+def get_substitute_groups(process_subprocess_id: int):
+    """Retrieve substitute (OR) groups and their variant entries for a process_subprocess.
+
+    Response shape:
+    {
+      "substitute_groups": [
+        {
+          "id": int,
+          "name": str,
+          "description": str | None,
+          "variants": [
+             {"id": int, "item_id": int, "quantity": int, "unit": str, "is_alternative": bool}
+          ]
+        }
+      ]
+    }
+    """
+    try:
+        groups: list[dict] = []
+        with get_conn(cursor_factory=RealDictCursor) as (conn, cur):
+            # Fetch substitute groups for the given process_subprocess_id
+            cur.execute(
+                """
+                SELECT id, group_name, group_description
+                FROM substitute_groups
+                WHERE process_subprocess_id = %s
+                ORDER BY id
+                """,
+                (process_subprocess_id,)
+            )
+            group_rows = cur.fetchall() or []
+            if not group_rows:
+                return APIResponse.success({"substitute_groups": []})
+
+            # Fetch variants per group (single query for efficiency)
+            cur.execute(
+                """
+                SELECT g.id as group_id, vu.id, vu.variant_id as item_id, vu.quantity,
+                       COALESCE(vu.is_alternative, FALSE) AS is_alternative
+                FROM substitute_groups g
+                JOIN variant_usage vu ON vu.substitute_group_id = g.id
+                WHERE g.process_subprocess_id = %s
+                ORDER BY g.id, vu.id
+                """,
+                (process_subprocess_id,)
+            )
+            variant_rows = cur.fetchall() or []
+
+        # Organize variant rows by group_id
+        variants_by_group: dict[int, list[dict]] = {}
+        for vr in variant_rows:
+            variants_by_group.setdefault(vr["group_id"], []).append(
+                {
+                    "id": vr.get("id"),
+                    "item_id": vr.get("item_id"),
+                    "quantity": int(vr.get("quantity") or 0),
+                    "unit": vr.get("unit") or "",
+                    "is_alternative": bool(vr.get("is_alternative")),
+                }
+            )
+
+        for g in group_rows:
+            groups.append(
+                {
+                    "id": g.get("id"),
+                    "name": g.get("group_name"),
+                    "description": g.get("group_description"),
+                    "variants": variants_by_group.get(g.get("id"), []),
+                }
+            )
+
+        return APIResponse.success({"substitute_groups": groups})
+    except Exception as e:
+        current_app.logger.error(
+            f"Error fetching substitute groups for process_subprocess {process_subprocess_id}: {e}",
+            exc_info=True,
+        )
+        return APIResponse.error("internal_error", "Failed to load substitute groups", 500)
 
 
 # Error handlers

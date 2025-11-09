@@ -292,6 +292,7 @@ def create_app(config_name: str | None = None) -> Flask:
 
     # Universal Process Framework API blueprints
     from .api.process_management import process_api_bp
+    from .api.reports import reports_api_bp
     from .api.production_lot import production_api_bp
     from .api.subprocess_management import subprocess_api_bp
     from .api.variant_management import variant_api_bp
@@ -306,6 +307,7 @@ def create_app(config_name: str | None = None) -> Flask:
 
     # Register Universal Process Framework APIs
     app.register_blueprint(process_api_bp, url_prefix="/api/upf")
+    app.register_blueprint(reports_api_bp, url_prefix="/api/upf")
     app.register_blueprint(variant_api_bp, url_prefix="/api/upf")
     app.register_blueprint(production_api_bp, url_prefix="/api/upf")
     app.register_blueprint(subprocess_api_bp, url_prefix="/api/upf")
@@ -314,6 +316,7 @@ def create_app(config_name: str | None = None) -> Flask:
     # Exempt Universal Process Framework API endpoints from CSRF
     # These are JSON APIs accessed via fetch() without CSRF tokens
     csrf.exempt(process_api_bp)
+    csrf.exempt(reports_api_bp)
     csrf.exempt(variant_api_bp)
     csrf.exempt(production_api_bp)
     csrf.exempt(subprocess_api_bp)

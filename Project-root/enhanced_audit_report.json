@@ -1,5 +1,5 @@
 {
-  "audit_timestamp": "2025-11-08T16:48:40.298609",
+  "audit_timestamp": "2025-11-09T11:26:24.230731",
   "project_root": "Project-root",
   "blueprints": [
     {
@@ -25,6 +25,11 @@
     },
     {
       "variable": "process_api_bp",
+      "url_prefix": "/api/upf",
+      "file": "app/__init__.py"
+    },
+    {
+      "variable": "reports_api_bp",
       "url_prefix": "/api/upf",
       "file": "app/__init__.py"
     },
@@ -112,6 +117,16 @@
     },
     {
       "file": "app\\api\\inventory_alerts.py",
+      "blueprint": "inventory_alerts_bp",
+      "route": "/inventory-alerts/rules/<int:item_variant_id>",
+      "full_path": "/api/upf/inventory-alerts/rules/<int:item_variant_id>",
+      "methods": [
+        "PUT"
+      ],
+      "handler": "upf_put_rule"
+    },
+    {
+      "file": "app\\api\\inventory_alerts.py",
       "blueprint": "api_bp",
       "route": "/inventory-alert-rules",
       "full_path": "/api/inventory-alert-rules",
@@ -129,6 +144,16 @@
         "GET"
       ],
       "handler": "list_alert_rules"
+    },
+    {
+      "file": "app\\api\\inventory_alerts.py",
+      "blueprint": "inventory_alerts_bp",
+      "route": "/inventory-alerts/rules",
+      "full_path": "/api/upf/inventory-alerts/rules",
+      "methods": [
+        "GET"
+      ],
+      "handler": "upf_get_rules"
     },
     {
       "file": "app\\api\\inventory_alerts.py",
@@ -212,6 +237,16 @@
     },
     {
       "file": "app\\api\\inventory_alerts.py",
+      "blueprint": "inventory_alerts_bp",
+      "route": "/inventory-alerts/<int:alert_id>/acknowledge",
+      "full_path": "/api/upf/inventory-alerts/<int:alert_id>/acknowledge",
+      "methods": [
+        "POST"
+      ],
+      "handler": "upf_acknowledge_alert"
+    },
+    {
+      "file": "app\\api\\inventory_alerts.py",
       "blueprint": "api_bp",
       "route": "/procurement-recommendations",
       "full_path": "/api/procurement-recommendations",
@@ -249,6 +284,16 @@
         "GET"
       ],
       "handler": "list_procurement_recommendations"
+    },
+    {
+      "file": "app\\api\\inventory_alerts.py",
+      "blueprint": "inventory_alerts_bp",
+      "route": "/inventory-alerts/procurement-recommendations",
+      "full_path": "/api/upf/inventory-alerts/procurement-recommendations",
+      "methods": [
+        "GET"
+      ],
+      "handler": "upf_list_procurement"
     },
     {
       "file": "app\\api\\inventory_alerts.py",
@@ -279,6 +324,46 @@
         "GET"
       ],
       "handler": "health"
+    },
+    {
+      "file": "app\\api\\inventory_alerts.py",
+      "blueprint": "inventory_alerts_bp",
+      "route": "/inventory-alerts/check-lot/<int:production_lot_id>",
+      "full_path": "/api/upf/inventory-alerts/check-lot/<int:production_lot_id>",
+      "methods": [
+        "POST"
+      ],
+      "handler": "upf_check_lot"
+    },
+    {
+      "file": "app\\api\\inventory_alerts.py",
+      "blueprint": "inventory_alerts_bp",
+      "route": "/inventory-alerts/lot/<int:production_lot_id>",
+      "full_path": "/api/upf/inventory-alerts/lot/<int:production_lot_id>",
+      "methods": [
+        "GET"
+      ],
+      "handler": "upf_get_lot_alerts"
+    },
+    {
+      "file": "app\\api\\inventory_alerts.py",
+      "blueprint": "inventory_alerts_bp",
+      "route": "/inventory-alerts/lot/<int:production_lot_id>/acknowledge-bulk",
+      "full_path": "/api/upf/inventory-alerts/lot/<int:production_lot_id>/acknowledge-bulk",
+      "methods": [
+        "POST"
+      ],
+      "handler": "upf_acknowledge_bulk"
+    },
+    {
+      "file": "app\\api\\inventory_alerts.py",
+      "blueprint": "inventory_alerts_bp",
+      "route": "/monitoring/alerts-health",
+      "full_path": "/api/upf/monitoring/alerts-health",
+      "methods": [
+        "GET"
+      ],
+      "handler": "monitoring_alerts_health"
     },
     {
       "file": "app\\api\\process_management.py",
@@ -433,6 +518,26 @@
     {
       "file": "app\\api\\process_management.py",
       "blueprint": "process_api_bp",
+      "route": "/processes/<int:process_id>/subprocesses/<int:ps_id>",
+      "full_path": "/api/upf/processes/<int:process_id>/subprocesses/<int:ps_id>",
+      "methods": [
+        "PUT"
+      ],
+      "handler": "update_process_subprocess"
+    },
+    {
+      "file": "app\\api\\process_management.py",
+      "blueprint": "process_api_bp",
+      "route": "/processes/<int:process_id>/subprocesses/<int:ps_id>",
+      "full_path": "/api/upf/processes/<int:process_id>/subprocesses/<int:ps_id>",
+      "methods": [
+        "DELETE"
+      ],
+      "handler": "remove_subprocess_from_process"
+    },
+    {
+      "file": "app\\api\\process_management.py",
+      "blueprint": "process_api_bp",
       "route": "/processes/<int:process_id>/reorder_subprocesses",
       "full_path": "/api/upf/processes/<int:process_id>/reorder_subprocesses",
       "methods": [
@@ -511,6 +616,36 @@
       "handler": "set_sales_price"
     },
     {
+      "file": "app\\api\\process_management.py",
+      "blueprint": "process_api_bp",
+      "route": "/process/<int:process_id>/recalculate_worst_case",
+      "full_path": "/api/upf/process/<int:process_id>/recalculate_worst_case",
+      "methods": [
+        "POST"
+      ],
+      "handler": "recalculate_worst_case"
+    },
+    {
+      "file": "app\\api\\process_management.py",
+      "blueprint": "process_api_bp",
+      "route": "/process_subprocess/<int:subprocess_id>",
+      "full_path": "/api/upf/process_subprocess/<int:subprocess_id>",
+      "methods": [
+        "DELETE"
+      ],
+      "handler": "delete_process_subprocess"
+    },
+    {
+      "file": "app\\api\\process_management.py",
+      "blueprint": "process_api_bp",
+      "route": "/process_subprocess/<int:process_subprocess_id>/substitute_groups",
+      "full_path": "/api/upf/process_subprocess/<int:process_subprocess_id>/substitute_groups",
+      "methods": [
+        "GET"
+      ],
+      "handler": "get_substitute_groups"
+    },
+    {
       "file": "app\\api\\production_lot.py",
       "blueprint": "production_api_bp",
       "route": "/production-lots",
@@ -573,6 +708,16 @@
     {
       "file": "app\\api\\production_lot.py",
       "blueprint": "production_api_bp",
+      "route": "/production_lot/<int:lot_id>/variant_options",
+      "full_path": "/api/upf/production_lot/<int:lot_id>/variant_options",
+      "methods": [
+        "GET"
+      ],
+      "handler": "get_variant_options"
+    },
+    {
+      "file": "app\\api\\production_lot.py",
+      "blueprint": "production_api_bp",
       "route": "/production-lots",
       "full_path": "/api/upf/production-lots",
       "methods": [
@@ -593,6 +738,26 @@
     {
       "file": "app\\api\\production_lot.py",
       "blueprint": "production_api_bp",
+      "route": "/production-lots/<int:lot_id>/select-variant",
+      "full_path": "/api/upf/production-lots/<int:lot_id>/select-variant",
+      "methods": [
+        "POST"
+      ],
+      "handler": "select_variant_for_group"
+    },
+    {
+      "file": "app\\api\\production_lot.py",
+      "blueprint": "production_api_bp",
+      "route": "/production_lot/<int:lot_id>/select_variant",
+      "full_path": "/api/upf/production_lot/<int:lot_id>/select_variant",
+      "methods": [
+        "POST"
+      ],
+      "handler": "select_variant_for_group"
+    },
+    {
+      "file": "app\\api\\production_lot.py",
+      "blueprint": "production_api_bp",
       "route": "/production-lots/<int:lot_id>/selections",
       "full_path": "/api/upf/production-lots/<int:lot_id>/selections",
       "methods": [
@@ -609,6 +774,16 @@
         "GET"
       ],
       "handler": "get_lot_selections"
+    },
+    {
+      "file": "app\\api\\production_lot.py",
+      "blueprint": "production_api_bp",
+      "route": "/production_lot/<int:lot_id>/batch_select_variants",
+      "full_path": "/api/upf/production_lot/<int:lot_id>/batch_select_variants",
+      "methods": [
+        "POST"
+      ],
+      "handler": "batch_select_variants"
     },
     {
       "file": "app\\api\\production_lot.py",
@@ -703,6 +878,26 @@
     {
       "file": "app\\api\\production_lot.py",
       "blueprint": "production_api_bp",
+      "route": "/production-lots/<int:lot_id>/variance-analysis",
+      "full_path": "/api/upf/production-lots/<int:lot_id>/variance-analysis",
+      "methods": [
+        "GET"
+      ],
+      "handler": "get_variance_analysis"
+    },
+    {
+      "file": "app\\api\\production_lot.py",
+      "blueprint": "production_api_bp",
+      "route": "/production_lot/<int:lot_id>/variance_analysis",
+      "full_path": "/api/upf/production_lot/<int:lot_id>/variance_analysis",
+      "methods": [
+        "GET"
+      ],
+      "handler": "get_variance_analysis"
+    },
+    {
+      "file": "app\\api\\production_lot.py",
+      "blueprint": "production_api_bp",
       "route": "/production-lots/summary",
       "full_path": "/api/upf/production-lots/summary",
       "methods": [
@@ -741,70 +936,60 @@
       "handler": "get_recent_lots"
     },
     {
+      "file": "app\\api\\reports.py",
+      "blueprint": "reports_api_bp",
+      "route": "/reports/metrics",
+      "full_path": "/api/upf/reports/metrics",
+      "methods": [
+        "GET"
+      ],
+      "handler": "get_upf_metrics"
+    },
+    {
+      "file": "app\\api\\reports.py",
+      "blueprint": "reports_api_bp",
+      "route": "/reports/top-processes",
+      "full_path": "/api/upf/reports/top-processes",
+      "methods": [
+        "GET"
+      ],
+      "handler": "get_top_processes"
+    },
+    {
+      "file": "app\\api\\reports.py",
+      "blueprint": "reports_api_bp",
+      "route": "/reports/process-status",
+      "full_path": "/api/upf/reports/process-status",
+      "methods": [
+        "GET"
+      ],
+      "handler": "get_process_status"
+    },
+    {
+      "file": "app\\api\\reports.py",
+      "blueprint": "reports_api_bp",
+      "route": "/reports/subprocess-usage",
+      "full_path": "/api/upf/reports/subprocess-usage",
+      "methods": [
+        "GET"
+      ],
+      "handler": "get_subprocess_usage"
+    },
+    {
+      "file": "app\\api\\reports.py",
+      "blueprint": "reports_api_bp",
+      "route": "/reports/variant-usage",
+      "full_path": "/api/upf/reports/variant-usage",
+      "methods": [
+        "GET"
+      ],
+      "handler": "get_variant_usage"
+    },
+    {
       "file": "app\\api\\routes.py",
       "blueprint": "api_bp",
       "route": "/stock-trend",
       "full_path": "/api/stock-trend",
-      "methods": [
-        "GET"
-      ],
-      "handler": "stock_trend_data"
-    },
-    {
-      "file": "app\\api\\routes.py",
-      "blueprint": "api_bp",
-      "route": "/colors/<int:color_id>/dependencies",
-      "full_path": "/api/colors/<int:color_id>/dependencies",
-      "methods": [
-        "GET"
-      ],
-      "handler": "get_color_dependencies"
-    },
-    {
-      "file": "app\\api\\routes.py",
-      "blueprint": "api_bp",
-      "route": "/sizes/<int:size_id>/dependencies",
-      "full_path": "/api/sizes/<int:size_id>/dependencies",
-      "methods": [
-        "GET"
-      ],
-      "handler": "get_size_dependencies"
-    },
-    {
-      "file": "app\\api\\routes.py",
-      "blueprint": "api_bp",
-      "route": "/models/<int:model_id>/dependencies",
-      "full_path": "/api/models/<int:model_id>/dependencies",
-      "methods": [
-        "GET"
-      ],
-      "handler": "get_model_dependencies"
-    },
-    {
-      "file": "app\\api\\routes.py",
-      "blueprint": "api_bp",
-      "route": "/variations/<int:variation_id>/dependencies",
-      "full_path": "/api/variations/<int:variation_id>/dependencies",
-      "methods": [
-        "GET"
-      ],
-      "handler": "get_variation_dependencies"
-    },
-    {
-      "file": "app\\api\\routes.py",
-      "blueprint": "api_bp",
-      "route": "/suppliers",
-      "full_path": "/api/suppliers",
-      "methods": [
-        "GET"
-      ],
-      "handler": "get_suppliers"
-    },
-    {
-      "file": "app\\api\\routes.py",
-      "blueprint": "api_bp",
-      "route": "/suppliers",
-      "full_path": "/api/suppliers",
       "methods": [
         "POST"
       ],
@@ -836,26 +1021,6 @@
       "route": "/suppliers/<int:supplier_id>/contacts",
       "full_path": "/api/suppliers/<int:supplier_id>/contacts",
       "methods": [
-        "GET"
-      ],
-      "handler": "get_supplier_contacts"
-    },
-    {
-      "file": "app\\api\\routes.py",
-      "blueprint": "api_bp",
-      "route": "/suppliers/<int:supplier_id>/rates",
-      "full_path": "/api/suppliers/<int:supplier_id>/rates",
-      "methods": [
-        "GET"
-      ],
-      "handler": "get_supplier_rates"
-    },
-    {
-      "file": "app\\api\\routes.py",
-      "blueprint": "api_bp",
-      "route": "/suppliers/<int:supplier_id>/rates",
-      "full_path": "/api/suppliers/<int:supplier_id>/rates",
-      "methods": [
         "POST"
       ],
       "handler": "add_supplier_rate"
@@ -876,16 +1041,6 @@
       "route": "/suppliers/<int:supplier_id>/ledger",
       "full_path": "/api/suppliers/<int:supplier_id>/ledger",
       "methods": [
-        "GET"
-      ],
-      "handler": "get_supplier_ledger"
-    },
-    {
-      "file": "app\\api\\routes.py",
-      "blueprint": "api_bp",
-      "route": "/stock-receipts",
-      "full_path": "/api/stock-receipts",
-      "methods": [
         "POST"
       ],
       "handler": "add_stock_receipt"
@@ -895,26 +1050,6 @@
       "blueprint": "api_bp",
       "route": "/stock-receipts",
       "full_path": "/api/stock-receipts",
-      "methods": [
-        "GET"
-      ],
-      "handler": "get_stock_receipts"
-    },
-    {
-      "file": "app\\api\\routes.py",
-      "blueprint": "api_bp",
-      "route": "/stock-receipts/<int:receipt_id>",
-      "full_path": "/api/stock-receipts/<int:receipt_id>",
-      "methods": [
-        "GET"
-      ],
-      "handler": "get_stock_receipt_details"
-    },
-    {
-      "file": "app\\api\\routes.py",
-      "blueprint": "api_bp",
-      "route": "/stock-receipts/<int:receipt_id>",
-      "full_path": "/api/stock-receipts/<int:receipt_id>",
       "methods": [
         "DELETE"
       ],
@@ -926,29 +1061,9 @@
       "route": "/purchase-orders",
       "full_path": "/api/purchase-orders",
       "methods": [
-        "GET"
-      ],
-      "handler": "get_purchase_orders"
-    },
-    {
-      "file": "app\\api\\routes.py",
-      "blueprint": "api_bp",
-      "route": "/purchase-orders",
-      "full_path": "/api/purchase-orders",
-      "methods": [
         "POST"
       ],
       "handler": "create_purchase_order"
-    },
-    {
-      "file": "app\\api\\routes.py",
-      "blueprint": "api_bp",
-      "route": "/purchase-orders/<int:po_id>",
-      "full_path": "/api/purchase-orders/<int:po_id>",
-      "methods": [
-        "GET"
-      ],
-      "handler": "get_purchase_order"
     },
     {
       "file": "app\\api\\routes.py",
@@ -978,46 +1093,6 @@
       "methods": [
         "GET"
       ],
-      "handler": "get_purchase_order_by_number"
-    },
-    {
-      "file": "app\\api\\routes.py",
-      "blueprint": "api_bp",
-      "route": "/item-names",
-      "full_path": "/api/item-names",
-      "methods": [
-        "GET"
-      ],
-      "handler": "get_item_names"
-    },
-    {
-      "file": "app\\api\\routes.py",
-      "blueprint": "api_bp",
-      "route": "/models-by-item",
-      "full_path": "/api/models-by-item",
-      "methods": [
-        "GET"
-      ],
-      "handler": "get_models_for_item"
-    },
-    {
-      "file": "app\\api\\routes.py",
-      "blueprint": "api_bp",
-      "route": "/variations-by-item-model",
-      "full_path": "/api/variations-by-item-model",
-      "methods": [
-        "GET"
-      ],
-      "handler": "get_variations_for_item_model"
-    },
-    {
-      "file": "app\\api\\routes.py",
-      "blueprint": "api_bp",
-      "route": "/items",
-      "full_path": "/api/items",
-      "methods": [
-        "GET"
-      ],
       "handler": "get_items"
     },
     {
@@ -1036,76 +1111,6 @@
       "route": "/items/<int:item_id>",
       "full_path": "/api/items/<int:item_id>",
       "methods": [
-        "GET"
-      ],
-      "handler": "get_item"
-    },
-    {
-      "file": "app\\api\\routes.py",
-      "blueprint": "api_bp",
-      "route": "/items/by-name",
-      "full_path": "/api/items/by-name",
-      "methods": [
-        "GET"
-      ],
-      "handler": "get_item_by_name"
-    },
-    {
-      "file": "app\\api\\routes.py",
-      "blueprint": "api_bp",
-      "route": "/all-variants",
-      "full_path": "/api/all-variants",
-      "methods": [
-        "GET"
-      ],
-      "handler": "get_all_variants"
-    },
-    {
-      "file": "app\\api\\routes.py",
-      "blueprint": "api_bp",
-      "route": "/variants/select2",
-      "full_path": "/api/variants/select2",
-      "methods": [
-        "GET"
-      ],
-      "handler": "get_variants_select2"
-    },
-    {
-      "file": "app\\api\\routes.py",
-      "blueprint": "api_bp",
-      "route": "/variants/search",
-      "full_path": "/api/variants/search",
-      "methods": [
-        "GET"
-      ],
-      "handler": "search_variants"
-    },
-    {
-      "file": "app\\api\\routes.py",
-      "blueprint": "api_bp",
-      "route": "/compare-rates/<int:variant_id>",
-      "full_path": "/api/compare-rates/<int:variant_id>",
-      "methods": [
-        "GET"
-      ],
-      "handler": "compare_rates"
-    },
-    {
-      "file": "app\\api\\routes.py",
-      "blueprint": "api_bp",
-      "route": "/variant-rate",
-      "full_path": "/api/variant-rate",
-      "methods": [
-        "GET"
-      ],
-      "handler": "get_variant_rate"
-    },
-    {
-      "file": "app\\api\\routes.py",
-      "blueprint": "api_bp",
-      "route": "/items/<int:item_id>",
-      "full_path": "/api/items/<int:item_id>",
-      "methods": [
         "PUT"
       ],
       "handler": "update_item"
@@ -1115,16 +1120,6 @@
       "blueprint": "api_bp",
       "route": "/items/<int:item_id>/variants",
       "full_path": "/api/items/<int:item_id>/variants",
-      "methods": [
-        "GET"
-      ],
-      "handler": "get_item_variants"
-    },
-    {
-      "file": "app\\api\\routes.py",
-      "blueprint": "api_bp",
-      "route": "/items/bulk-delete",
-      "full_path": "/api/items/bulk-delete",
       "methods": [
         "POST"
       ],
@@ -1196,26 +1191,6 @@
       "route": "/low-stock-report",
       "full_path": "/api/low-stock-report",
       "methods": [
-        "GET"
-      ],
-      "handler": "get_low_stock_report"
-    },
-    {
-      "file": "app\\api\\routes.py",
-      "blueprint": "api_bp",
-      "route": "/inventory/export/csv",
-      "full_path": "/api/inventory/export/csv",
-      "methods": [
-        "GET"
-      ],
-      "handler": "export_inventory_csv"
-    },
-    {
-      "file": "app\\api\\routes.py",
-      "blueprint": "api_bp",
-      "route": "/imports",
-      "full_path": "/api/imports",
-      "methods": [
         "POST"
       ],
       "handler": "import_data"
@@ -1261,64 +1236,59 @@
       "handler": "import_commit"
     },
     {
-      "file": "app\\api\\stubs.py",
+      "file": "app\\api\\routes.py",
       "blueprint": "api_bp",
-      "route": "/upf/reports/metrics",
-      "full_path": "/api/upf/reports/metrics",
+      "route": "/suppliers",
+      "full_path": "/api/suppliers",
       "methods": [
-        "GET"
+        "POST"
       ],
-      "handler": "get_report_metrics_stub"
+      "handler": "unknown",
+      "extraction": "fallback_simple_pattern"
     },
     {
-      "file": "app\\api\\stubs.py",
+      "file": "app\\api\\routes.py",
       "blueprint": "api_bp",
-      "route": "/upf/reports/top-processes",
-      "full_path": "/api/upf/reports/top-processes",
+      "route": "/suppliers/<int:supplier_id>/rates",
+      "full_path": "/api/suppliers/<int:supplier_id>/rates",
       "methods": [
-        "GET"
+        "POST"
       ],
-      "handler": "get_report_top_processes_stub"
+      "handler": "unknown",
+      "extraction": "fallback_simple_pattern"
     },
     {
-      "file": "app\\api\\stubs.py",
+      "file": "app\\api\\routes.py",
       "blueprint": "api_bp",
-      "route": "/upf/reports/process-status",
-      "full_path": "/api/upf/reports/process-status",
-      "methods": [
-        "GET"
-      ],
-      "handler": "get_report_process_status_stub"
-    },
-    {
-      "file": "app\\api\\stubs.py",
-      "blueprint": "api_bp",
-      "route": "/upf/reports/subprocess-usage",
-      "full_path": "/api/upf/reports/subprocess-usage",
-      "methods": [
-        "GET"
-      ],
-      "handler": "get_report_subprocess_usage_stub"
-    },
-    {
-      "file": "app\\api\\stubs.py",
-      "blueprint": "api_bp",
-      "route": "/upf/process_subprocess/<int:subprocess_id>",
-      "full_path": "/api/upf/process_subprocess/<int:subprocess_id>",
+      "route": "/stock-receipts/<int:receipt_id>",
+      "full_path": "/api/stock-receipts/<int:receipt_id>",
       "methods": [
         "DELETE"
       ],
-      "handler": "delete_process_subprocess_stub"
+      "handler": "unknown",
+      "extraction": "fallback_simple_pattern"
     },
     {
-      "file": "app\\api\\stubs.py",
+      "file": "app\\api\\routes.py",
       "blueprint": "api_bp",
-      "route": "/upf/process_subprocess/<int:process_subprocess_id>/substitute_groups",
-      "full_path": "/api/upf/process_subprocess/<int:process_subprocess_id>/substitute_groups",
+      "route": "/items/bulk-delete",
+      "full_path": "/api/items/bulk-delete",
       "methods": [
-        "GET"
+        "POST"
       ],
-      "handler": "get_substitute_groups_stub"
+      "handler": "unknown",
+      "extraction": "fallback_simple_pattern"
+    },
+    {
+      "file": "app\\api\\routes.py",
+      "blueprint": "api_bp",
+      "route": "/imports",
+      "full_path": "/api/imports",
+      "methods": [
+        "POST"
+      ],
+      "handler": "unknown",
+      "extraction": "fallback_simple_pattern"
     },
     {
       "file": "app\\api\\stubs.py",
@@ -1523,6 +1493,16 @@
     {
       "file": "app\\api\\variant_management.py",
       "blueprint": "variant_api_bp",
+      "route": "/process_subprocess/<int:ps_id>/substitute_groups",
+      "full_path": "/api/upf/process_subprocess/<int:ps_id>/substitute_groups",
+      "methods": [
+        "GET"
+      ],
+      "handler": "get_subprocess_substitute_groups"
+    },
+    {
+      "file": "app\\api\\variant_management.py",
+      "blueprint": "variant_api_bp",
       "route": "/substitute_group/<int:group_id>",
       "full_path": "/api/upf/substitute_group/<int:group_id>",
       "methods": [
@@ -1549,6 +1529,16 @@
         "POST"
       ],
       "handler": "add_variant_to_group"
+    },
+    {
+      "file": "app\\api\\variant_management.py",
+      "blueprint": "variant_api_bp",
+      "route": "/variant_usage/<int:usage_id>/remove_from_group",
+      "full_path": "/api/upf/variant_usage/<int:usage_id>/remove_from_group",
+      "methods": [
+        "POST"
+      ],
+      "handler": "remove_variant_from_group"
     },
     {
       "file": "app\\api\\variant_management.py",
@@ -1657,26 +1647,6 @@
       "route": "/signup",
       "full_path": "/auth/signup",
       "methods": [
-        "GET"
-      ],
-      "handler": "signup"
-    },
-    {
-      "file": "app\\auth\\routes.py",
-      "blueprint": "auth_bp",
-      "route": "/forgot-password",
-      "full_path": "/auth/forgot-password",
-      "methods": [
-        "GET"
-      ],
-      "handler": "forgot_password"
-    },
-    {
-      "file": "app\\auth\\routes.py",
-      "blueprint": "auth_bp",
-      "route": "/api/login",
-      "full_path": "/auth/api/login",
-      "methods": [
         "POST"
       ],
       "handler": "api_login"
@@ -1732,60 +1702,21 @@
       "handler": "logout"
     },
     {
+      "file": "app\\auth\\routes.py",
+      "blueprint": "auth_bp",
+      "route": "/api/login",
+      "full_path": "/auth/api/login",
+      "methods": [
+        "POST"
+      ],
+      "handler": "unknown",
+      "extraction": "fallback_simple_pattern"
+    },
+    {
       "file": "app\\main\\routes.py",
       "blueprint": "main_bp",
       "route": "/",
       "full_path": "/",
-      "methods": [
-        "GET"
-      ],
-      "handler": "home"
-    },
-    {
-      "file": "app\\main\\routes.py",
-      "blueprint": "main_bp",
-      "route": "/health",
-      "full_path": "/health",
-      "methods": [
-        "GET"
-      ],
-      "handler": "health"
-    },
-    {
-      "file": "app\\main\\routes.py",
-      "blueprint": "main_bp",
-      "route": "/favicon.ico",
-      "full_path": "/favicon.ico",
-      "methods": [
-        "GET"
-      ],
-      "handler": "favicon"
-    },
-    {
-      "file": "app\\main\\routes.py",
-      "blueprint": "main_bp",
-      "route": "/dashboard",
-      "full_path": "/dashboard",
-      "methods": [
-        "GET"
-      ],
-      "handler": "dashboard"
-    },
-    {
-      "file": "app\\main\\routes.py",
-      "blueprint": "main_bp",
-      "route": "/inventory",
-      "full_path": "/inventory",
-      "methods": [
-        "GET"
-      ],
-      "handler": "inventory"
-    },
-    {
-      "file": "app\\main\\routes.py",
-      "blueprint": "main_bp",
-      "route": "/add_item",
-      "full_path": "/add_item",
       "methods": [
         "GET",
         "POST"
@@ -1808,76 +1739,6 @@
       "route": "/user-management",
       "full_path": "/user-management",
       "methods": [
-        "GET"
-      ],
-      "handler": "user_management"
-    },
-    {
-      "file": "app\\main\\routes.py",
-      "blueprint": "main_bp",
-      "route": "/suppliers",
-      "full_path": "/suppliers",
-      "methods": [
-        "GET"
-      ],
-      "handler": "suppliers"
-    },
-    {
-      "file": "app\\main\\routes.py",
-      "blueprint": "main_bp",
-      "route": "/purchase-orders",
-      "full_path": "/purchase-orders",
-      "methods": [
-        "GET"
-      ],
-      "handler": "purchase_orders"
-    },
-    {
-      "file": "app\\main\\routes.py",
-      "blueprint": "main_bp",
-      "route": "/stock-ledger",
-      "full_path": "/stock-ledger",
-      "methods": [
-        "GET"
-      ],
-      "handler": "stock_ledger"
-    },
-    {
-      "file": "app\\main\\routes.py",
-      "blueprint": "main_bp",
-      "route": "/low-stock-report",
-      "full_path": "/low-stock-report",
-      "methods": [
-        "GET"
-      ],
-      "handler": "low_stock_report"
-    },
-    {
-      "file": "app\\main\\routes.py",
-      "blueprint": "main_bp",
-      "route": "/inventory-alerts",
-      "full_path": "/inventory-alerts",
-      "methods": [
-        "GET"
-      ],
-      "handler": "inventory_alerts_page"
-    },
-    {
-      "file": "app\\main\\routes.py",
-      "blueprint": "main_bp",
-      "route": "/master-data",
-      "full_path": "/master-data",
-      "methods": [
-        "GET"
-      ],
-      "handler": "master_data"
-    },
-    {
-      "file": "app\\main\\routes.py",
-      "blueprint": "main_bp",
-      "route": "/profile",
-      "full_path": "/profile",
-      "methods": [
         "GET",
         "POST"
       ],
@@ -1898,46 +1759,6 @@
       "blueprint": "main_bp",
       "route": "/static/img/<filename>",
       "full_path": "/static/img/<filename>",
-      "methods": [
-        "GET"
-      ],
-      "handler": "img_file"
-    },
-    {
-      "file": "app\\main\\routes.py",
-      "blueprint": "main_bp",
-      "route": "/login",
-      "full_path": "/login",
-      "methods": [
-        "GET"
-      ],
-      "handler": "compat_login"
-    },
-    {
-      "file": "app\\main\\routes.py",
-      "blueprint": "main_bp",
-      "route": "/signup",
-      "full_path": "/signup",
-      "methods": [
-        "GET"
-      ],
-      "handler": "compat_signup"
-    },
-    {
-      "file": "app\\main\\routes.py",
-      "blueprint": "main_bp",
-      "route": "/forgot-password",
-      "full_path": "/forgot-password",
-      "methods": [
-        "GET"
-      ],
-      "handler": "compat_forgot_password"
-    },
-    {
-      "file": "app\\main\\routes.py",
-      "blueprint": "main_bp",
-      "route": "/api/login",
-      "full_path": "/api/login",
       "methods": [
         "POST"
       ],
@@ -2042,27 +1863,64 @@
         "GET"
       ],
       "handler": "monitoring"
+    },
+    {
+      "file": "app\\main\\routes.py",
+      "blueprint": "main_bp",
+      "route": "/add_item",
+      "full_path": "/add_item",
+      "methods": [
+        "GET",
+        "POST"
+      ],
+      "handler": "unknown",
+      "extraction": "fallback_simple_pattern"
+    },
+    {
+      "file": "app\\main\\routes.py",
+      "blueprint": "main_bp",
+      "route": "/profile",
+      "full_path": "/profile",
+      "methods": [
+        "GET",
+        "POST"
+      ],
+      "handler": "unknown",
+      "extraction": "fallback_simple_pattern"
+    },
+    {
+      "file": "app\\main\\routes.py",
+      "blueprint": "main_bp",
+      "route": "/api/login",
+      "full_path": "/api/login",
+      "methods": [
+        "POST"
+      ],
+      "handler": "unknown",
+      "extraction": "fallback_simple_pattern"
     }
   ],
   "route_summary": {
-    "total_routes": 199,
+    "total_routes": 183,
     "by_method": {
-      "GET": 109,
-      "POST": 57,
+      "GET": 75,
+      "POST": 73,
+      "PUT": 18,
       "PATCH": 4,
-      "PUT": 16,
-      "DELETE": 16
+      "DELETE": 18
     },
     "by_blueprint": {
-      "api_bp": 82,
+      "api_bp": 54,
       "app": 1,
       "files_bp": 2,
-      "process_api_bp": 23,
-      "production_api_bp": 23,
+      "inventory_alerts_bp": 8,
+      "process_api_bp": 28,
+      "production_api_bp": 29,
+      "reports_api_bp": 5,
       "subprocess_api_bp": 11,
-      "variant_api_bp": 17,
-      "auth_bp": 9,
-      "main_bp": 31
+      "variant_api_bp": 19,
+      "auth_bp": 8,
+      "main_bp": 18
     }
   },
   "javascript_api_calls": [
@@ -2074,7 +1932,7 @@
     },
     {
       "file": "static\\js\\inventory_alerts.js",
-      "url": "/api${path}",
+      "url": "__HELPER_FUNCTION_PATTERN__",
       "method": "POST",
       "type": "fetch"
     },
@@ -2610,10 +2468,10 @@
         "file": "templates\\forgot_password.html"
       },
       {
-        "url": "/api/low-stock-report",
+        "url": "/api/upf/monitoring/alerts-health",
         "method": "GET",
-        "route": "/api/low-stock-report",
-        "file": "templates\\low_stock_report.html"
+        "route": "/api/upf/monitoring/alerts-health",
+        "file": "templates\\monitoring.html"
       },
       {
         "url": "/api/reset-password",
@@ -2664,32 +2522,7 @@
         "file": "templates\\upf_variant_selection.html"
       }
     ],
-    "missing_backend": [
-      {
-        "url": "/api${path}",
-        "method": "POST",
-        "file": "static\\js\\inventory_alerts.js",
-        "message": "No backend route found for POST /api${path}"
-      },
-      {
-        "url": "/api/upf/monitoring/alerts-health",
-        "method": "GET",
-        "file": "templates\\monitoring.html",
-        "message": "No backend route found for GET /api/upf/monitoring/alerts-health"
-      },
-      {
-        "url": "/api/upf/inventory-alerts/lot/${this.lotId}",
-        "method": "POST",
-        "file": "templates\\upf_production_lot_detail.html",
-        "message": "No backend route found for POST /api/upf/inventory-alerts/lot/${this.lotId}"
-      },
-      {
-        "url": "/api/upf/inventory-alerts/lot/${this.lotId}",
-        "method": "POST",
-        "file": "templates\\upf_production_lot_new.html",
-        "message": "No backend route found for POST /api/upf/inventory-alerts/lot/${this.lotId}"
-      }
-    ],
+    "missing_backend": [],
     "unused_backend": [
       {
         "route": "/api/api/upf/monitoring/alerts-health",
@@ -2746,6 +2579,15 @@
         "message": "Route defined but not called from frontend"
       },
       {
+        "route": "/api/upf/inventory-alerts/rules/<int:item_variant_id>",
+        "methods": [
+          "PUT"
+        ],
+        "handler": "upf_put_rule",
+        "file": "app\\api\\inventory_alerts.py",
+        "message": "Route defined but not called from frontend"
+      },
+      {
         "route": "/api/inventory-alert-rules",
         "methods": [
           "GET"
@@ -2760,6 +2602,15 @@
           "GET"
         ],
         "handler": "list_alert_rules",
+        "file": "app\\api\\inventory_alerts.py",
+        "message": "Route defined but not called from frontend"
+      },
+      {
+        "route": "/api/upf/inventory-alerts/rules",
+        "methods": [
+          "GET"
+        ],
+        "handler": "upf_get_rules",
         "file": "app\\api\\inventory_alerts.py",
         "message": "Route defined but not called from frontend"
       },
@@ -2836,6 +2687,15 @@
         "message": "Route defined but not called from frontend"
       },
       {
+        "route": "/api/upf/inventory-alerts/<int:alert_id>/acknowledge",
+        "methods": [
+          "POST"
+        ],
+        "handler": "upf_acknowledge_alert",
+        "file": "app\\api\\inventory_alerts.py",
+        "message": "Route defined but not called from frontend"
+      },
+      {
         "route": "/api/procurement-recommendations",
         "methods": [
           "POST"
@@ -2868,6 +2728,15 @@
           "GET"
         ],
         "handler": "list_procurement_recommendations",
+        "file": "app\\api\\inventory_alerts.py",
+        "message": "Route defined but not called from frontend"
+      },
+      {
+        "route": "/api/upf/inventory-alerts/procurement-recommendations",
+        "methods": [
+          "GET"
+        ],
+        "handler": "upf_list_procurement",
         "file": "app\\api\\inventory_alerts.py",
         "message": "Route defined but not called from frontend"
       },
@@ -2895,6 +2764,24 @@
           "GET"
         ],
         "handler": "health",
+        "file": "app\\api\\inventory_alerts.py",
+        "message": "Route defined but not called from frontend"
+      },
+      {
+        "route": "/api/upf/inventory-alerts/check-lot/<int:production_lot_id>",
+        "methods": [
+          "POST"
+        ],
+        "handler": "upf_check_lot",
+        "file": "app\\api\\inventory_alerts.py",
+        "message": "Route defined but not called from frontend"
+      },
+      {
+        "route": "/api/upf/inventory-alerts/lot/<int:production_lot_id>/acknowledge-bulk",
+        "methods": [
+          "POST"
+        ],
+        "handler": "upf_acknowledge_bulk",
         "file": "app\\api\\inventory_alerts.py",
         "message": "Route defined but not called from frontend"
       },
@@ -2940,6 +2827,24 @@
           "GET"
         ],
         "handler": "search_processes",
+        "file": "app\\api\\process_management.py",
+        "message": "Route defined but not called from frontend"
+      },
+      {
+        "route": "/api/upf/processes/<int:process_id>/subprocesses/<int:ps_id>",
+        "methods": [
+          "PUT"
+        ],
+        "handler": "update_process_subprocess",
+        "file": "app\\api\\process_management.py",
+        "message": "Route defined but not called from frontend"
+      },
+      {
+        "route": "/api/upf/processes/<int:process_id>/subprocesses/<int:ps_id>",
+        "methods": [
+          "DELETE"
+        ],
+        "handler": "remove_subprocess_from_process",
         "file": "app\\api\\process_management.py",
         "message": "Route defined but not called from frontend"
       },
@@ -3007,6 +2912,15 @@
         "message": "Route defined but not called from frontend"
       },
       {
+        "route": "/api/upf/process/<int:process_id>/recalculate_worst_case",
+        "methods": [
+          "POST"
+        ],
+        "handler": "recalculate_worst_case",
+        "file": "app\\api\\process_management.py",
+        "message": "Route defined but not called from frontend"
+      },
+      {
         "route": "/api/upf/production_lot",
         "methods": [
           "POST"
@@ -3052,6 +2966,24 @@
         "message": "Route defined but not called from frontend"
       },
       {
+        "route": "/api/upf/production-lots/<int:lot_id>/select-variant",
+        "methods": [
+          "POST"
+        ],
+        "handler": "select_variant_for_group",
+        "file": "app\\api\\production_lot.py",
+        "message": "Route defined but not called from frontend"
+      },
+      {
+        "route": "/api/upf/production_lot/<int:lot_id>/select_variant",
+        "methods": [
+          "POST"
+        ],
+        "handler": "select_variant_for_group",
+        "file": "app\\api\\production_lot.py",
+        "message": "Route defined but not called from frontend"
+      },
+      {
         "route": "/api/upf/production-lots/<int:lot_id>/selections",
         "methods": [
           "GET"
@@ -3066,6 +2998,15 @@
           "GET"
         ],
         "handler": "get_lot_selections",
+        "file": "app\\api\\production_lot.py",
+        "message": "Route defined but not called from frontend"
+      },
+      {
+        "route": "/api/upf/production_lot/<int:lot_id>/batch_select_variants",
+        "methods": [
+          "POST"
+        ],
+        "handler": "batch_select_variants",
         "file": "app\\api\\production_lot.py",
         "message": "Route defined but not called from frontend"
       },
@@ -3142,6 +3083,24 @@
         "message": "Route defined but not called from frontend"
       },
       {
+        "route": "/api/upf/production-lots/<int:lot_id>/variance-analysis",
+        "methods": [
+          "GET"
+        ],
+        "handler": "get_variance_analysis",
+        "file": "app\\api\\production_lot.py",
+        "message": "Route defined but not called from frontend"
+      },
+      {
+        "route": "/api/upf/production_lot/<int:lot_id>/variance_analysis",
+        "methods": [
+          "GET"
+        ],
+        "handler": "get_variance_analysis",
+        "file": "app\\api\\production_lot.py",
+        "message": "Route defined but not called from frontend"
+      },
+      {
         "route": "/api/upf/production-lots/summary",
         "methods": [
           "GET"
@@ -3178,61 +3137,16 @@
         "message": "Route defined but not called from frontend"
       },
       {
+        "route": "/api/upf/reports/variant-usage",
+        "methods": [
+          "GET"
+        ],
+        "handler": "get_variant_usage",
+        "file": "app\\api\\reports.py",
+        "message": "Route defined but not called from frontend"
+      },
+      {
         "route": "/api/stock-trend",
-        "methods": [
-          "GET"
-        ],
-        "handler": "stock_trend_data",
-        "file": "app\\api\\routes.py",
-        "message": "Route defined but not called from frontend"
-      },
-      {
-        "route": "/api/colors/<int:color_id>/dependencies",
-        "methods": [
-          "GET"
-        ],
-        "handler": "get_color_dependencies",
-        "file": "app\\api\\routes.py",
-        "message": "Route defined but not called from frontend"
-      },
-      {
-        "route": "/api/sizes/<int:size_id>/dependencies",
-        "methods": [
-          "GET"
-        ],
-        "handler": "get_size_dependencies",
-        "file": "app\\api\\routes.py",
-        "message": "Route defined but not called from frontend"
-      },
-      {
-        "route": "/api/models/<int:model_id>/dependencies",
-        "methods": [
-          "GET"
-        ],
-        "handler": "get_model_dependencies",
-        "file": "app\\api\\routes.py",
-        "message": "Route defined but not called from frontend"
-      },
-      {
-        "route": "/api/variations/<int:variation_id>/dependencies",
-        "methods": [
-          "GET"
-        ],
-        "handler": "get_variation_dependencies",
-        "file": "app\\api\\routes.py",
-        "message": "Route defined but not called from frontend"
-      },
-      {
-        "route": "/api/suppliers",
-        "methods": [
-          "GET"
-        ],
-        "handler": "get_suppliers",
-        "file": "app\\api\\routes.py",
-        "message": "Route defined but not called from frontend"
-      },
-      {
-        "route": "/api/suppliers",
         "methods": [
           "POST"
         ],
@@ -3261,24 +3175,6 @@
       {
         "route": "/api/suppliers/<int:supplier_id>/contacts",
         "methods": [
-          "GET"
-        ],
-        "handler": "get_supplier_contacts",
-        "file": "app\\api\\routes.py",
-        "message": "Route defined but not called from frontend"
-      },
-      {
-        "route": "/api/suppliers/<int:supplier_id>/rates",
-        "methods": [
-          "GET"
-        ],
-        "handler": "get_supplier_rates",
-        "file": "app\\api\\routes.py",
-        "message": "Route defined but not called from frontend"
-      },
-      {
-        "route": "/api/suppliers/<int:supplier_id>/rates",
-        "methods": [
           "POST"
         ],
         "handler": "add_supplier_rate",
@@ -3297,36 +3193,9 @@
       {
         "route": "/api/suppliers/<int:supplier_id>/ledger",
         "methods": [
-          "GET"
+          "POST"
         ],
-        "handler": "get_supplier_ledger",
-        "file": "app\\api\\routes.py",
-        "message": "Route defined but not called from frontend"
-      },
-      {
-        "route": "/api/stock-receipts/<int:receipt_id>",
-        "methods": [
-          "GET"
-        ],
-        "handler": "get_stock_receipt_details",
-        "file": "app\\api\\routes.py",
-        "message": "Route defined but not called from frontend"
-      },
-      {
-        "route": "/api/stock-receipts/<int:receipt_id>",
-        "methods": [
-          "DELETE"
-        ],
-        "handler": "delete_stock_receipt",
-        "file": "app\\api\\routes.py",
-        "message": "Route defined but not called from frontend"
-      },
-      {
-        "route": "/api/purchase-orders",
-        "methods": [
-          "GET"
-        ],
-        "handler": "get_purchase_orders",
+        "handler": "add_stock_receipt",
         "file": "app\\api\\routes.py",
         "message": "Route defined but not called from frontend"
       },
@@ -3336,15 +3205,6 @@
           "POST"
         ],
         "handler": "create_purchase_order",
-        "file": "app\\api\\routes.py",
-        "message": "Route defined but not called from frontend"
-      },
-      {
-        "route": "/api/purchase-orders/<int:po_id>",
-        "methods": [
-          "GET"
-        ],
-        "handler": "get_purchase_order",
         "file": "app\\api\\routes.py",
         "message": "Route defined but not called from frontend"
       },
@@ -3371,42 +3231,6 @@
         "methods": [
           "GET"
         ],
-        "handler": "get_purchase_order_by_number",
-        "file": "app\\api\\routes.py",
-        "message": "Route defined but not called from frontend"
-      },
-      {
-        "route": "/api/item-names",
-        "methods": [
-          "GET"
-        ],
-        "handler": "get_item_names",
-        "file": "app\\api\\routes.py",
-        "message": "Route defined but not called from frontend"
-      },
-      {
-        "route": "/api/models-by-item",
-        "methods": [
-          "GET"
-        ],
-        "handler": "get_models_for_item",
-        "file": "app\\api\\routes.py",
-        "message": "Route defined but not called from frontend"
-      },
-      {
-        "route": "/api/variations-by-item-model",
-        "methods": [
-          "GET"
-        ],
-        "handler": "get_variations_for_item_model",
-        "file": "app\\api\\routes.py",
-        "message": "Route defined but not called from frontend"
-      },
-      {
-        "route": "/api/items",
-        "methods": [
-          "GET"
-        ],
         "handler": "get_items",
         "file": "app\\api\\routes.py",
         "message": "Route defined but not called from frontend"
@@ -3421,70 +3245,7 @@
         "message": "Route defined but not called from frontend"
       },
       {
-        "route": "/api/items/by-name",
-        "methods": [
-          "GET"
-        ],
-        "handler": "get_item_by_name",
-        "file": "app\\api\\routes.py",
-        "message": "Route defined but not called from frontend"
-      },
-      {
-        "route": "/api/all-variants",
-        "methods": [
-          "GET"
-        ],
-        "handler": "get_all_variants",
-        "file": "app\\api\\routes.py",
-        "message": "Route defined but not called from frontend"
-      },
-      {
-        "route": "/api/variants/select2",
-        "methods": [
-          "GET"
-        ],
-        "handler": "get_variants_select2",
-        "file": "app\\api\\routes.py",
-        "message": "Route defined but not called from frontend"
-      },
-      {
-        "route": "/api/variants/search",
-        "methods": [
-          "GET"
-        ],
-        "handler": "search_variants",
-        "file": "app\\api\\routes.py",
-        "message": "Route defined but not called from frontend"
-      },
-      {
-        "route": "/api/compare-rates/<int:variant_id>",
-        "methods": [
-          "GET"
-        ],
-        "handler": "compare_rates",
-        "file": "app\\api\\routes.py",
-        "message": "Route defined but not called from frontend"
-      },
-      {
-        "route": "/api/variant-rate",
-        "methods": [
-          "GET"
-        ],
-        "handler": "get_variant_rate",
-        "file": "app\\api\\routes.py",
-        "message": "Route defined but not called from frontend"
-      },
-      {
         "route": "/api/items/<int:item_id>/variants",
-        "methods": [
-          "GET"
-        ],
-        "handler": "get_item_variants",
-        "file": "app\\api\\routes.py",
-        "message": "Route defined but not called from frontend"
-      },
-      {
-        "route": "/api/items/bulk-delete",
         "methods": [
           "POST"
         ],
@@ -3538,24 +3299,6 @@
         "message": "Route defined but not called from frontend"
       },
       {
-        "route": "/api/inventory/export/csv",
-        "methods": [
-          "GET"
-        ],
-        "handler": "export_inventory_csv",
-        "file": "app\\api\\routes.py",
-        "message": "Route defined but not called from frontend"
-      },
-      {
-        "route": "/api/imports",
-        "methods": [
-          "POST"
-        ],
-        "handler": "import_data",
-        "file": "app\\api\\routes.py",
-        "message": "Route defined but not called from frontend"
-      },
-      {
         "route": "/api/import/preview-json",
         "methods": [
           "POST"
@@ -3588,6 +3331,51 @@
           "POST"
         ],
         "handler": "import_commit",
+        "file": "app\\api\\routes.py",
+        "message": "Route defined but not called from frontend"
+      },
+      {
+        "route": "/api/suppliers",
+        "methods": [
+          "POST"
+        ],
+        "handler": "unknown",
+        "file": "app\\api\\routes.py",
+        "message": "Route defined but not called from frontend"
+      },
+      {
+        "route": "/api/suppliers/<int:supplier_id>/rates",
+        "methods": [
+          "POST"
+        ],
+        "handler": "unknown",
+        "file": "app\\api\\routes.py",
+        "message": "Route defined but not called from frontend"
+      },
+      {
+        "route": "/api/stock-receipts/<int:receipt_id>",
+        "methods": [
+          "DELETE"
+        ],
+        "handler": "unknown",
+        "file": "app\\api\\routes.py",
+        "message": "Route defined but not called from frontend"
+      },
+      {
+        "route": "/api/items/bulk-delete",
+        "methods": [
+          "POST"
+        ],
+        "handler": "unknown",
+        "file": "app\\api\\routes.py",
+        "message": "Route defined but not called from frontend"
+      },
+      {
+        "route": "/api/imports",
+        "methods": [
+          "POST"
+        ],
+        "handler": "unknown",
         "file": "app\\api\\routes.py",
         "message": "Route defined but not called from frontend"
       },
@@ -3651,6 +3439,15 @@
           "POST"
         ],
         "handler": "add_variant_to_group",
+        "file": "app\\api\\variant_management.py",
+        "message": "Route defined but not called from frontend"
+      },
+      {
+        "route": "/api/upf/variant_usage/<int:usage_id>/remove_from_group",
+        "methods": [
+          "POST"
+        ],
+        "handler": "remove_variant_from_group",
         "file": "app\\api\\variant_management.py",
         "message": "Route defined but not called from frontend"
       },
@@ -3729,51 +3526,6 @@
       {
         "route": "/",
         "methods": [
-          "GET"
-        ],
-        "handler": "home",
-        "file": "app\\main\\routes.py",
-        "message": "Route defined but not called from frontend"
-      },
-      {
-        "route": "/health",
-        "methods": [
-          "GET"
-        ],
-        "handler": "health",
-        "file": "app\\main\\routes.py",
-        "message": "Route defined but not called from frontend"
-      },
-      {
-        "route": "/favicon.ico",
-        "methods": [
-          "GET"
-        ],
-        "handler": "favicon",
-        "file": "app\\main\\routes.py",
-        "message": "Route defined but not called from frontend"
-      },
-      {
-        "route": "/dashboard",
-        "methods": [
-          "GET"
-        ],
-        "handler": "dashboard",
-        "file": "app\\main\\routes.py",
-        "message": "Route defined but not called from frontend"
-      },
-      {
-        "route": "/inventory",
-        "methods": [
-          "GET"
-        ],
-        "handler": "inventory",
-        "file": "app\\main\\routes.py",
-        "message": "Route defined but not called from frontend"
-      },
-      {
-        "route": "/add_item",
-        "methods": [
           "GET",
           "POST"
         ],
@@ -3793,69 +3545,6 @@
       {
         "route": "/user-management",
         "methods": [
-          "GET"
-        ],
-        "handler": "user_management",
-        "file": "app\\main\\routes.py",
-        "message": "Route defined but not called from frontend"
-      },
-      {
-        "route": "/suppliers",
-        "methods": [
-          "GET"
-        ],
-        "handler": "suppliers",
-        "file": "app\\main\\routes.py",
-        "message": "Route defined but not called from frontend"
-      },
-      {
-        "route": "/purchase-orders",
-        "methods": [
-          "GET"
-        ],
-        "handler": "purchase_orders",
-        "file": "app\\main\\routes.py",
-        "message": "Route defined but not called from frontend"
-      },
-      {
-        "route": "/stock-ledger",
-        "methods": [
-          "GET"
-        ],
-        "handler": "stock_ledger",
-        "file": "app\\main\\routes.py",
-        "message": "Route defined but not called from frontend"
-      },
-      {
-        "route": "/low-stock-report",
-        "methods": [
-          "GET"
-        ],
-        "handler": "low_stock_report",
-        "file": "app\\main\\routes.py",
-        "message": "Route defined but not called from frontend"
-      },
-      {
-        "route": "/inventory-alerts",
-        "methods": [
-          "GET"
-        ],
-        "handler": "inventory_alerts_page",
-        "file": "app\\main\\routes.py",
-        "message": "Route defined but not called from frontend"
-      },
-      {
-        "route": "/master-data",
-        "methods": [
-          "GET"
-        ],
-        "handler": "master_data",
-        "file": "app\\main\\routes.py",
-        "message": "Route defined but not called from frontend"
-      },
-      {
-        "route": "/profile",
-        "methods": [
           "GET",
           "POST"
         ],
@@ -3869,33 +3558,6 @@
           "POST"
         ],
         "handler": "change_password",
-        "file": "app\\main\\routes.py",
-        "message": "Route defined but not called from frontend"
-      },
-      {
-        "route": "/login",
-        "methods": [
-          "GET"
-        ],
-        "handler": "compat_login",
-        "file": "app\\main\\routes.py",
-        "message": "Route defined but not called from frontend"
-      },
-      {
-        "route": "/signup",
-        "methods": [
-          "GET"
-        ],
-        "handler": "compat_signup",
-        "file": "app\\main\\routes.py",
-        "message": "Route defined but not called from frontend"
-      },
-      {
-        "route": "/forgot-password",
-        "methods": [
-          "GET"
-        ],
-        "handler": "compat_forgot_password",
         "file": "app\\main\\routes.py",
         "message": "Route defined but not called from frontend"
       },
@@ -3970,201 +3632,571 @@
         "handler": "monitoring",
         "file": "app\\main\\routes.py",
         "message": "Route defined but not called from frontend"
+      },
+      {
+        "route": "/add_item",
+        "methods": [
+          "GET",
+          "POST"
+        ],
+        "handler": "unknown",
+        "file": "app\\main\\routes.py",
+        "message": "Route defined but not called from frontend"
+      },
+      {
+        "route": "/profile",
+        "methods": [
+          "GET",
+          "POST"
+        ],
+        "handler": "unknown",
+        "file": "app\\main\\routes.py",
+        "message": "Route defined but not called from frontend"
       }
     ],
-    "method_mismatches": []
+    "method_mismatches": [
+      {
+        "url": "/api/low-stock-report",
+        "method": "GET",
+        "available_methods": [
+          "POST"
+        ],
+        "file": "templates\\low_stock_report.html",
+        "message": "Method GET not allowed, available: POST"
+      },
+      {
+        "url": "/api/upf/inventory-alerts/lot/${this.lotId}",
+        "method": "POST",
+        "available_methods": [
+          "GET"
+        ],
+        "file": "templates\\upf_production_lot_detail.html",
+        "message": "Method POST not allowed, available: GET"
+      },
+      {
+        "url": "/api/upf/inventory-alerts/lot/${this.lotId}",
+        "method": "POST",
+        "available_methods": [
+          "GET"
+        ],
+        "file": "templates\\upf_production_lot_new.html",
+        "message": "Method POST not allowed, available: GET"
+      }
+    ]
   },
   "upf_alert_system": {
-    "endpoints": [
-      {
-        "file": "audit_quick_fix.py",
-        "blueprint": "api_bp",
-        "route": "/api/upf/monitoring/alerts-health",
-        "full_path": "/api/api/upf/monitoring/alerts-health",
-        "methods": [
-          "GET"
-        ],
-        "handler": "get_alerts_health"
+    "process_bom_architecture": {
+      "process_as_bom": {
+        "present": true,
+        "files": [
+          "app/models/process.py",
+          "app/services/process_service.py",
+          "app/api/process_management.py"
+        ]
       },
-      {
-        "file": "app\\api\\production_lot.py",
-        "blueprint": "production_api_bp",
-        "route": "/production-lots",
-        "full_path": "/api/upf/production-lots",
-        "methods": [
-          "POST"
-        ],
-        "handler": "create_production_lot"
+      "subprocess_templates": {
+        "present": true,
+        "files": [
+          "app/models/process.py",
+          "app/services/subprocess_service.py",
+          "app/api/subprocess_management.py"
+        ]
       },
-      {
-        "file": "app\\api\\production_lot.py",
-        "blueprint": "production_api_bp",
-        "route": "/production-lots/<int:lot_id>/validate-inventory",
-        "full_path": "/api/upf/production-lots/<int:lot_id>/validate-inventory",
-        "methods": [
-          "POST"
-        ],
-        "handler": "validate_inventory"
+      "variant_cost_supplier": {
+        "present": true,
+        "files": [
+          "app/services/variant_service.py",
+          "app/services/costing_service.py",
+          "app/models/process.py"
+        ]
       },
-      {
-        "file": "app\\api\\production_lot.py",
-        "blueprint": "production_api_bp",
-        "route": "/production-lots/<int:lot_id>/acknowledge-all-alerts",
-        "full_path": "/api/upf/production-lots/<int:lot_id>/acknowledge-all-alerts",
-        "methods": [
-          "POST"
-        ],
-        "handler": "acknowledge_all_alerts"
+      "user_experience": {
+        "present": true,
+        "files": [
+          "templates/upf_process_editor.html",
+          "static/js/process_editor.js",
+          "app/validators/process_validator.py"
+        ]
       },
-      {
-        "file": "app\\api\\production_lot.py",
-        "blueprint": "production_api_bp",
-        "route": "/production-lots/<int:lot_id>",
-        "full_path": "/api/upf/production-lots/<int:lot_id>",
-        "methods": [
-          "GET"
-        ],
-        "handler": "get_production_lot"
+      "audit_trail": {
+        "present": true,
+        "files": [
+          "app/models/process.py",
+          "app/services/process_service.py"
+        ]
       },
-      {
-        "file": "app\\api\\production_lot.py",
-        "blueprint": "production_api_bp",
-        "route": "/production-lots",
-        "full_path": "/api/upf/production-lots",
-        "methods": [
-          "GET"
-        ],
-        "handler": "list_production_lots"
+      "completeness": 100.0
+    },
+    "production_lot_alerts": {
+      "lot_creation": {
+        "present": true,
+        "files": [
+          "app/services/production_service.py",
+          "app/api/production_lot.py",
+          "templates/upf_production_lots.html"
+        ]
       },
-      {
-        "file": "app\\api\\production_lot.py",
-        "blueprint": "production_api_bp",
-        "route": "/production-lots/<int:lot_id>/selections",
-        "full_path": "/api/upf/production-lots/<int:lot_id>/selections",
-        "methods": [
-          "GET"
-        ],
-        "handler": "get_lot_selections"
+      "realtime_stock_analysis": {
+        "present": true,
+        "files": [
+          "app\\services\\inventory_alert_service.py"
+        ]
       },
-      {
-        "file": "app\\api\\production_lot.py",
-        "blueprint": "production_api_bp",
-        "route": "/production-lots/<int:lot_id>/validate",
-        "full_path": "/api/upf/production-lots/<int:lot_id>/validate",
-        "methods": [
-          "POST"
-        ],
-        "handler": "validate_lot_readiness"
+      "alert_severity_levels": {
+        "present": true,
+        "details": [
+          "CRITICAL",
+          "HIGH",
+          "MEDIUM",
+          "LOW",
+          "OK"
+        ]
       },
-      {
-        "file": "app\\api\\production_lot.py",
-        "blueprint": "production_api_bp",
-        "route": "/production-lots/<int:lot_id>/execute",
-        "full_path": "/api/upf/production-lots/<int:lot_id>/execute",
-        "methods": [
-          "POST"
-        ],
-        "handler": "execute_production_lot"
+      "alert_display_interaction": {
+        "present": true,
+        "files": [
+          "templates/upf_production_lot_detail.html",
+          "static/js/production_lot_alerts.js"
+        ]
       },
-      {
-        "file": "app\\api\\production_lot.py",
-        "blueprint": "production_api_bp",
-        "route": "/production-lots/<int:lot_id>/finalize",
-        "full_path": "/api/upf/production-lots/<int:lot_id>/finalize",
-        "methods": [
-          "PUT"
-        ],
-        "handler": "finalize_production_lot"
+      "automatic_procurement": {
+        "present": true,
+        "files": [
+          "app/services/inventory_alert_service.py"
+        ]
       },
-      {
-        "file": "app\\api\\production_lot.py",
-        "blueprint": "production_api_bp",
-        "route": "/production-lots/<int:lot_id>/cancel",
-        "full_path": "/api/upf/production-lots/<int:lot_id>/cancel",
-        "methods": [
-          "POST"
-        ],
-        "handler": "cancel_production_lot"
+      "item_requirement_sheet": {
+        "present": true,
+        "files": [
+          "app/services/production_service.py",
+          "templates/upf_production_lot_detail.html"
+        ]
       },
-      {
-        "file": "app\\api\\production_lot.py",
-        "blueprint": "production_api_bp",
-        "route": "/production-lots/<int:lot_id>/actual-costing",
-        "full_path": "/api/upf/production-lots/<int:lot_id>/actual-costing",
-        "methods": [
-          "GET"
-        ],
-        "handler": "get_lot_actual_costing"
+      "lot_audit_trail": {
+        "present": true,
+        "files": [
+          "migrations\\migration_add_inventory_alert_system_temp.py"
+        ]
       },
-      {
-        "file": "app\\api\\production_lot.py",
-        "blueprint": "production_api_bp",
-        "route": "/production-lots/summary",
-        "full_path": "/api/upf/production-lots/summary",
-        "methods": [
-          "GET"
-        ],
-        "handler": "get_production_summary"
+      "completeness": 100.0
+    },
+    "alert_technical": {
+      "realtime_inventory_query": {
+        "present": true,
+        "files": [
+          "app/services/inventory_alert_service.py",
+          "app/services/variant_service.py"
+        ]
       },
-      {
-        "file": "app\\api\\production_lot.py",
-        "blueprint": "production_api_bp",
-        "route": "/production-lots/recent",
-        "full_path": "/api/upf/production-lots/recent",
-        "methods": [
-          "GET"
-        ],
-        "handler": "get_recent_lots"
+      "alert_escalation_rules": {
+        "present": true,
+        "files": [
+          "app\\services\\inventory_alert_service.py"
+        ]
       },
-      {
-        "file": "app\\main\\routes.py",
-        "blueprint": "main_bp",
-        "route": "/upf/production-lots",
-        "full_path": "/upf/production-lots",
-        "methods": [
-          "GET"
-        ],
-        "handler": "upf_production_lots"
+      "safety_stock_reorder": {
+        "present": true,
+        "files": [
+          "migrations\\migration_add_inventory_alert_system.py"
+        ]
       },
-      {
-        "file": "app\\main\\routes.py",
-        "blueprint": "main_bp",
-        "route": "/monitoring",
-        "full_path": "/monitoring",
-        "methods": [
-          "GET"
-        ],
-        "handler": "monitoring"
-      }
-    ],
-    "services": [
-      "app\\services\\inventory_alert_service.py"
-    ],
-    "templates": [
-      "templates/upf_production_lots.html",
-      "templates/upf_production_lot_detail.html",
-      "templates/monitoring.html"
-    ],
-    "static_assets": [
-      "static/js/production_lot_alerts.js",
-      "static/css/inventory_alerts.css"
-    ],
-    "tests": [
-      "tests/api/test_inventory_alerts.py",
-      "tests/api/test_monitoring.py",
-      "tests/ui/test_upf_pages.py"
-    ],
-    "documentation": [
-      "docs/UPF_INVENTORY_ALERTS_USAGE.md",
-      "docs/ALERT_UI_INTEGRATION.md"
-    ],
+      "completeness": 100.0
+    },
+    "data_flow_integration": {
+      "inventory_system": {
+        "present": true,
+        "files": [
+          "app/models/process.py",
+          "app/services/variant_service.py"
+        ]
+      },
+      "supplier_vendor_db": {
+        "present": true,
+        "files": [
+          "app/models/process.py",
+          "app/services/variant_service.py"
+        ]
+      },
+      "process_bom_library": {
+        "present": true,
+        "files": [
+          "app/models/process.py",
+          "app/services/process_service.py",
+          "app/services/subprocess_service.py"
+        ]
+      },
+      "alert_notification_engine": {
+        "present": true,
+        "files": [
+          "app/services/inventory_alert_service.py",
+          "app/api/inventory_alerts.py"
+        ]
+      },
+      "ledger_reporting": {
+        "present": true,
+        "files": [
+          "app/services/production_service.py"
+        ]
+      },
+      "completeness": 100.0
+    },
+    "alert_endpoints": {
+      "endpoints": [
+        {
+          "file": "audit_quick_fix.py",
+          "blueprint": "api_bp",
+          "route": "/api/upf/monitoring/alerts-health",
+          "full_path": "/api/api/upf/monitoring/alerts-health",
+          "methods": [
+            "GET"
+          ],
+          "handler": "get_alerts_health"
+        },
+        {
+          "file": "app\\api\\inventory_alerts.py",
+          "blueprint": "api_bp",
+          "route": "/inventory-alert-rules",
+          "full_path": "/api/inventory-alert-rules",
+          "methods": [
+            "POST"
+          ],
+          "handler": "upsert_alert_rule"
+        },
+        {
+          "file": "app\\api\\inventory_alerts.py",
+          "blueprint": "api_bp",
+          "route": "/inventory-alert-rules",
+          "full_path": "/api/inventory-alert-rules",
+          "methods": [
+            "GET"
+          ],
+          "handler": "list_alert_rules"
+        },
+        {
+          "file": "app\\api\\inventory_alerts.py",
+          "blueprint": "api_bp",
+          "route": "/inventory-alert-rules/<int:rule_id>/deactivate",
+          "full_path": "/api/inventory-alert-rules/<int:rule_id>/deactivate",
+          "methods": [
+            "PATCH"
+          ],
+          "handler": "deactivate_alert_rule"
+        },
+        {
+          "file": "app\\api\\inventory_alerts.py",
+          "blueprint": "api_bp",
+          "route": "/inventory-alerts",
+          "full_path": "/api/inventory-alerts",
+          "methods": [
+            "POST"
+          ],
+          "handler": "create_inventory_alert"
+        },
+        {
+          "file": "app\\api\\inventory_alerts.py",
+          "blueprint": "api_bp",
+          "route": "/inventory-alerts",
+          "full_path": "/api/inventory-alerts",
+          "methods": [
+            "GET"
+          ],
+          "handler": "list_inventory_alerts"
+        },
+        {
+          "file": "app\\api\\inventory_alerts.py",
+          "blueprint": "api_bp",
+          "route": "/inventory-alerts/<int:alert_id>/acknowledge",
+          "full_path": "/api/inventory-alerts/<int:alert_id>/acknowledge",
+          "methods": [
+            "POST"
+          ],
+          "handler": "acknowledge_inventory_alert"
+        },
+        {
+          "file": "app\\api\\inventory_alerts.py",
+          "blueprint": "api_bp",
+          "route": "/procurement-recommendations",
+          "full_path": "/api/procurement-recommendations",
+          "methods": [
+            "POST"
+          ],
+          "handler": "create_procurement_recommendation"
+        },
+        {
+          "file": "app\\api\\inventory_alerts.py",
+          "blueprint": "api_bp",
+          "route": "/procurement-recommendations",
+          "full_path": "/api/procurement-recommendations",
+          "methods": [
+            "GET"
+          ],
+          "handler": "list_procurement_recommendations"
+        },
+        {
+          "file": "app\\api\\inventory_alerts.py",
+          "blueprint": "api_bp",
+          "route": "/procurement-recommendations/<int:recommendation_id>/status",
+          "full_path": "/api/procurement-recommendations/<int:recommendation_id>/status",
+          "methods": [
+            "PATCH"
+          ],
+          "handler": "update_procurement_status"
+        },
+        {
+          "file": "app\\api\\inventory_alerts.py",
+          "blueprint": "api_bp",
+          "route": "/inventory-alerts/health",
+          "full_path": "/api/inventory-alerts/health",
+          "methods": [
+            "GET"
+          ],
+          "handler": "health"
+        },
+        {
+          "file": "app\\api\\inventory_alerts.py",
+          "blueprint": "inventory_alerts_bp",
+          "route": "/monitoring/alerts-health",
+          "full_path": "/api/upf/monitoring/alerts-health",
+          "methods": [
+            "GET"
+          ],
+          "handler": "monitoring_alerts_health"
+        },
+        {
+          "file": "app\\api\\production_lot.py",
+          "blueprint": "production_api_bp",
+          "route": "/production-lots",
+          "full_path": "/api/upf/production-lots",
+          "methods": [
+            "POST"
+          ],
+          "handler": "create_production_lot"
+        },
+        {
+          "file": "app\\api\\production_lot.py",
+          "blueprint": "production_api_bp",
+          "route": "/production-lots/<int:lot_id>/validate-inventory",
+          "full_path": "/api/upf/production-lots/<int:lot_id>/validate-inventory",
+          "methods": [
+            "POST"
+          ],
+          "handler": "validate_inventory"
+        },
+        {
+          "file": "app\\api\\production_lot.py",
+          "blueprint": "production_api_bp",
+          "route": "/production-lots/<int:lot_id>/acknowledge-all-alerts",
+          "full_path": "/api/upf/production-lots/<int:lot_id>/acknowledge-all-alerts",
+          "methods": [
+            "POST"
+          ],
+          "handler": "acknowledge_all_alerts"
+        },
+        {
+          "file": "app\\api\\production_lot.py",
+          "blueprint": "production_api_bp",
+          "route": "/production-lots/<int:lot_id>",
+          "full_path": "/api/upf/production-lots/<int:lot_id>",
+          "methods": [
+            "GET"
+          ],
+          "handler": "get_production_lot"
+        },
+        {
+          "file": "app\\api\\production_lot.py",
+          "blueprint": "production_api_bp",
+          "route": "/production-lots",
+          "full_path": "/api/upf/production-lots",
+          "methods": [
+            "GET"
+          ],
+          "handler": "list_production_lots"
+        },
+        {
+          "file": "app\\api\\production_lot.py",
+          "blueprint": "production_api_bp",
+          "route": "/production-lots/<int:lot_id>/select-variant",
+          "full_path": "/api/upf/production-lots/<int:lot_id>/select-variant",
+          "methods": [
+            "POST"
+          ],
+          "handler": "select_variant_for_group"
+        },
+        {
+          "file": "app\\api\\production_lot.py",
+          "blueprint": "production_api_bp",
+          "route": "/production-lots/<int:lot_id>/selections",
+          "full_path": "/api/upf/production-lots/<int:lot_id>/selections",
+          "methods": [
+            "GET"
+          ],
+          "handler": "get_lot_selections"
+        },
+        {
+          "file": "app\\api\\production_lot.py",
+          "blueprint": "production_api_bp",
+          "route": "/production-lots/<int:lot_id>/validate",
+          "full_path": "/api/upf/production-lots/<int:lot_id>/validate",
+          "methods": [
+            "POST"
+          ],
+          "handler": "validate_lot_readiness"
+        },
+        {
+          "file": "app\\api\\production_lot.py",
+          "blueprint": "production_api_bp",
+          "route": "/production-lots/<int:lot_id>/execute",
+          "full_path": "/api/upf/production-lots/<int:lot_id>/execute",
+          "methods": [
+            "POST"
+          ],
+          "handler": "execute_production_lot"
+        },
+        {
+          "file": "app\\api\\production_lot.py",
+          "blueprint": "production_api_bp",
+          "route": "/production-lots/<int:lot_id>/finalize",
+          "full_path": "/api/upf/production-lots/<int:lot_id>/finalize",
+          "methods": [
+            "PUT"
+          ],
+          "handler": "finalize_production_lot"
+        },
+        {
+          "file": "app\\api\\production_lot.py",
+          "blueprint": "production_api_bp",
+          "route": "/production-lots/<int:lot_id>/cancel",
+          "full_path": "/api/upf/production-lots/<int:lot_id>/cancel",
+          "methods": [
+            "POST"
+          ],
+          "handler": "cancel_production_lot"
+        },
+        {
+          "file": "app\\api\\production_lot.py",
+          "blueprint": "production_api_bp",
+          "route": "/production-lots/<int:lot_id>/actual-costing",
+          "full_path": "/api/upf/production-lots/<int:lot_id>/actual-costing",
+          "methods": [
+            "GET"
+          ],
+          "handler": "get_lot_actual_costing"
+        },
+        {
+          "file": "app\\api\\production_lot.py",
+          "blueprint": "production_api_bp",
+          "route": "/production-lots/<int:lot_id>/variance-analysis",
+          "full_path": "/api/upf/production-lots/<int:lot_id>/variance-analysis",
+          "methods": [
+            "GET"
+          ],
+          "handler": "get_variance_analysis"
+        },
+        {
+          "file": "app\\api\\production_lot.py",
+          "blueprint": "production_api_bp",
+          "route": "/production-lots/summary",
+          "full_path": "/api/upf/production-lots/summary",
+          "methods": [
+            "GET"
+          ],
+          "handler": "get_production_summary"
+        },
+        {
+          "file": "app\\api\\production_lot.py",
+          "blueprint": "production_api_bp",
+          "route": "/production-lots/recent",
+          "full_path": "/api/upf/production-lots/recent",
+          "methods": [
+            "GET"
+          ],
+          "handler": "get_recent_lots"
+        },
+        {
+          "file": "app\\main\\routes.py",
+          "blueprint": "main_bp",
+          "route": "/upf/production-lot/<int:lot_id>",
+          "full_path": "/upf/production-lot/<int:lot_id>",
+          "methods": [
+            "GET"
+          ],
+          "handler": "upf_production_lot_detail"
+        },
+        {
+          "file": "app\\main\\routes.py",
+          "blueprint": "main_bp",
+          "route": "/upf/production-lot/new",
+          "full_path": "/upf/production-lot/new",
+          "methods": [
+            "GET"
+          ],
+          "handler": "upf_production_lot_new"
+        },
+        {
+          "file": "app\\main\\routes.py",
+          "blueprint": "main_bp",
+          "route": "/upf/production-lot/<int:lot_id>/select-variants",
+          "full_path": "/upf/production-lot/<int:lot_id>/select-variants",
+          "methods": [
+            "GET"
+          ],
+          "handler": "upf_variant_selection"
+        },
+        {
+          "file": "app\\main\\routes.py",
+          "blueprint": "main_bp",
+          "route": "/upf/production-lots",
+          "full_path": "/upf/production-lots",
+          "methods": [
+            "GET"
+          ],
+          "handler": "upf_production_lots"
+        },
+        {
+          "file": "app\\main\\routes.py",
+          "blueprint": "main_bp",
+          "route": "/monitoring",
+          "full_path": "/monitoring",
+          "methods": [
+            "GET"
+          ],
+          "handler": "monitoring"
+        }
+      ],
+      "services": [
+        "app\\services\\inventory_alert_service.py"
+      ],
+      "templates": [
+        "templates/upf_production_lots.html",
+        "templates/upf_production_lot_detail.html",
+        "templates/monitoring.html"
+      ],
+      "static_assets": [
+        "static/js/production_lot_alerts.js",
+        "static/css/inventory_alerts.css"
+      ],
+      "tests": [
+        "tests/api/test_inventory_alerts.py",
+        "tests/api/test_monitoring.py",
+        "tests/ui/test_upf_pages.py"
+      ],
+      "documentation": [
+        "docs/UPF_INVENTORY_ALERTS_USAGE.md",
+        "docs/ALERT_UI_INTEGRATION.md"
+      ]
+    },
     "completeness": {
-      "endpoints": "16/6 (267%)",
+      "process_bom": 100.0,
+      "production_lot_alerts": 100.0,
+      "alert_technical": 100.0,
+      "data_flow": 100.0,
+      "endpoints": "32/6 (533%)",
       "services": "1/1 (100%)",
       "templates": "3/3 (100%)",
       "static_assets": "2/2 (100%)",
       "tests": "3/3 (100%)",
-      "documentation": "2/2 (100%)"
+      "documentation": "2/3 (67%)",
+      "overall_score": 100.0
     }
   },
   "database": {
@@ -4179,7 +4211,9 @@
       "migrations\\006_add_performance_indexes.sql",
       "migrations\\add_indexes.sql",
       "migrations\\add_missing_upf_tables.sql",
-      "migrations\\init_schema.sql"
+      "migrations\\init_schema.sql",
+      "migrations\\migration_add_missing_schema_nov2025.sql",
+      "migrations\\migration_fix_schema_nov2025.sql"
     ],
     "tables_found": [
       "production_lot_inventory_alerts"
@@ -4187,6 +4221,7 @@
     "indexes": [
       "idx_inventory_alerts_lot_id",
       "idx_inventory_alerts_severity",
+      "idx_production_lots_status",
       "idx_production_lots_status"
     ],
     "missing_indexes": []
@@ -4234,6 +4269,7 @@
       "DEPLOYMENT.md",
       "DOCUMENTATION_INDEX.md",
       "DUPLICATE_ROUTES_REPORT.md",
+      "ENDPOINT_INVENTORY.md",
       "FRONTEND_DEVELOPER_GUIDE.md",
       "HIGH_PRIORITY_IMPLEMENTATION_COMPLETE.md",
       "IMPLEMENTATION_COMPLETE.md",
@@ -4246,6 +4282,7 @@
       "QUICK_START_UNIVERSAL_PROCESS_FRAMEWORK.md",
       "QUICK_TEST_GUIDE.md",
       "README.md",
+      "STACK_SYNC_AUDIT_REPORT.md",
       "SYNC_ANALYSIS_REPORT.md",
       "TASK_4_PRODUCTION_LOT_VARIANT_SELECTION_COMPLETE.md",
       "TESTING_CHECKLIST.md",
@@ -4384,7 +4421,7 @@
       },
       {
         "path": "static\\js\\process_framework_unified.js",
-        "size": 41296,
+        "size": 41660,
         "minified": false
       },
       {
@@ -4404,7 +4441,7 @@
       },
       {
         "path": "static\\js\\subprocess_library.js",
-        "size": 10684,
+        "size": 10854,
         "minified": false
       },
       {
@@ -4418,19 +4455,23 @@
         "minified": false
       }
     ],
-    "total_size": 357640,
+    "total_size": 358174,
     "minified_count": 1
   },
   "incomplete_functions": [],
   "duplicate_functions": [],
   "statistics": {
-    "total_routes": 199,
+    "total_routes": 183,
     "total_api_calls": 52,
     "matched_routes": 47,
-    "missing_backend": 4,
-    "method_mismatches": 0,
-    "unused_backend": 142,
-    "upf_completeness": 83.33333333333334,
+    "missing_backend": 0,
+    "method_mismatches": 3,
+    "unused_backend": 125,
+    "upf_overall_score": 100.0,
+    "upf_process_bom_score": 100.0,
+    "upf_production_lot_score": 100.0,
+    "upf_alert_technical_score": 100.0,
+    "upf_data_flow_score": 100.0,
     "test_files": 20,
     "total_tests": 139,
     "documentation_score": 100.0,
