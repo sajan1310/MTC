@@ -9,6 +9,7 @@ with underscored versions (/production_lot, /production_lots) as legacy compatib
 Frontend JavaScript expects hyphenated URLs (e.g., /api/upf/production-lots).
 """
 
+import warnings
 from functools import wraps
 
 from flask import Blueprint, current_app, request, jsonify
@@ -67,6 +68,15 @@ def role_required(*roles):
 @limiter.limit("50 per hour")
 def create_production_lot():
     """Create a new production lot."""
+    # Deprecation warning for underscore route
+    if request.path == "/api/upf/production_lot":
+        msg = (
+            "POST /api/upf/production_lot is deprecated. Use POST /api/upf/production-lots instead. "
+            "Underscore routes will be removed after November 23, 2025."
+        )
+        warnings.warn(msg, DeprecationWarning, stacklevel=2)
+        current_app.logger.warning(f"DEPRECATION: {msg}")
+    
     try:
         data = request.json
 
@@ -177,6 +187,15 @@ def acknowledge_all_alerts(lot_id: int):
 @login_required
 def get_production_lot(lot_id):
     """Get production lot with full details."""
+    # Deprecation warning for underscore route
+    if "production_lot" in request.path and "production-lots" not in request.path:
+        msg = (
+            f"GET /api/upf/production_lot/{lot_id} is deprecated. Use GET /api/upf/production-lots/{lot_id} instead. "
+            "Underscore routes will be removed after November 23, 2025."
+        )
+        warnings.warn(msg, DeprecationWarning, stacklevel=2)
+        current_app.logger.warning(f"DEPRECATION: {msg}")
+    
     try:
         lot = ProductionService.get_production_lot(lot_id)
         if not lot:
@@ -330,6 +349,15 @@ def get_variant_options(lot_id):
 @login_required
 def list_production_lots():
     """List production lots with pagination."""
+    # Deprecation warning for underscore route
+    if request.path == "/api/upf/production_lots":
+        msg = (
+            "GET /api/upf/production_lots is deprecated. Use GET /api/upf/production-lots instead. "
+            "Underscore routes will be removed after November 23, 2025."
+        )
+        warnings.warn(msg, DeprecationWarning, stacklevel=2)
+        current_app.logger.warning(f"DEPRECATION: {msg}")
+    
     try:
         page = int(request.args.get("page", 1))
         per_page = min(int(request.args.get("per_page", 25)), 100)
@@ -367,6 +395,16 @@ def list_production_lots():
 @login_required
 def select_variant_for_group(lot_id):
     """Select variant from substitute group (OR feature)."""
+    # Deprecation warning for underscore route
+    if "select_variant" in request.path:
+        msg = (
+            f"POST /api/upf/production_lot/{lot_id}/select_variant is deprecated. "
+            f"Use POST /api/upf/production-lots/{lot_id}/select-variant instead. "
+            "Underscore routes will be removed after November 23, 2025."
+        )
+        warnings.warn(msg, DeprecationWarning, stacklevel=2)
+        current_app.logger.warning(f"DEPRECATION: {msg}")
+    
     try:
         # Check access
         lot = ProductionService.get_production_lot(lot_id)
@@ -415,6 +453,16 @@ def select_variant_for_group(lot_id):
 @login_required
 def get_lot_selections(lot_id):
     """Get all variant selections for a lot."""
+    # Deprecation warning for underscore route
+    if "production_lot" in request.path and "production-lots" not in request.path:
+        msg = (
+            f"GET /api/upf/production_lot/{lot_id}/selections is deprecated. "
+            f"Use GET /api/upf/production-lots/{lot_id}/selections instead. "
+            "Underscore routes will be removed after November 23, 2025."
+        )
+        warnings.warn(msg, DeprecationWarning, stacklevel=2)
+        current_app.logger.warning(f"DEPRECATION: {msg}")
+    
     try:
         # Check access
         lot = ProductionService.get_production_lot(lot_id)
@@ -519,6 +567,16 @@ def batch_select_variants(lot_id):
 @login_required
 def validate_lot_readiness(lot_id):
     """Validate lot readiness (all OR groups selected, stock available)."""
+    # Deprecation warning for underscore route
+    if "production_lot" in request.path and "production-lots" not in request.path:
+        msg = (
+            f"POST /api/upf/production_lot/{lot_id}/validate is deprecated. "
+            f"Use POST /api/upf/production-lots/{lot_id}/validate instead. "
+            "Underscore routes will be removed after November 23, 2025."
+        )
+        warnings.warn(msg, DeprecationWarning, stacklevel=2)
+        current_app.logger.warning(f"DEPRECATION: {msg}")
+    
     try:
         # Check access
         lot = ProductionService.get_production_lot(lot_id)
@@ -544,6 +602,16 @@ def validate_lot_readiness(lot_id):
 @role_required("admin", "inventory_manager", "production_manager")
 def execute_production_lot(lot_id):
     """Execute production lot (deduct inventory, track actual costs)."""
+    # Deprecation warning for underscore route
+    if "production_lot" in request.path and "production-lots" not in request.path:
+        msg = (
+            f"POST /api/upf/production_lot/{lot_id}/execute is deprecated. "
+            f"Use POST /api/upf/production-lots/{lot_id}/execute instead. "
+            "Underscore routes will be removed after November 23, 2025."
+        )
+        warnings.warn(msg, DeprecationWarning, stacklevel=2)
+        current_app.logger.warning(f"DEPRECATION: {msg}")
+    
     try:
         # Check access
         lot = ProductionService.get_production_lot(lot_id)
@@ -638,6 +706,16 @@ def finalize_production_lot(lot_id: int):
 @login_required
 def cancel_production_lot(lot_id):
     """Cancel production lot."""
+    # Deprecation warning for underscore route
+    if "production_lot" in request.path and "production-lots" not in request.path:
+        msg = (
+            f"POST /api/upf/production_lot/{lot_id}/cancel is deprecated. "
+            f"Use POST /api/upf/production-lots/{lot_id}/cancel instead. "
+            "Underscore routes will be removed after November 23, 2025."
+        )
+        warnings.warn(msg, DeprecationWarning, stacklevel=2)
+        current_app.logger.warning(f"DEPRECATION: {msg}")
+    
     try:
         # Check access
         lot = ProductionService.get_production_lot(lot_id)
@@ -674,6 +752,16 @@ def cancel_production_lot(lot_id):
 @login_required
 def get_lot_actual_costing(lot_id):
     """Get actual costing breakdown for lot."""
+    # Deprecation warning for underscore route
+    if "actual_costing" in request.path:
+        msg = (
+            f"GET /api/upf/production_lot/{lot_id}/actual_costing is deprecated. "
+            f"Use GET /api/upf/production-lots/{lot_id}/actual-costing instead. "
+            "Underscore routes will be removed after November 23, 2025."
+        )
+        warnings.warn(msg, DeprecationWarning, stacklevel=2)
+        current_app.logger.warning(f"DEPRECATION: {msg}")
+    
     try:
         # Check access
         lot = ProductionService.get_production_lot(lot_id)
@@ -700,6 +788,16 @@ def get_lot_actual_costing(lot_id):
 @login_required
 def get_variance_analysis(lot_id):
     """Get variance analysis (worst-case vs actual)."""
+    # Deprecation warning for underscore route
+    if "variance_analysis" in request.path:
+        msg = (
+            f"GET /api/upf/production_lot/{lot_id}/variance_analysis is deprecated. "
+            f"Use GET /api/upf/production-lots/{lot_id}/variance-analysis instead. "
+            "Underscore routes will be removed after November 23, 2025."
+        )
+        warnings.warn(msg, DeprecationWarning, stacklevel=2)
+        current_app.logger.warning(f"DEPRECATION: {msg}")
+    
     try:
         # Check access
         lot = ProductionService.get_production_lot(lot_id)
@@ -732,6 +830,15 @@ def get_variance_analysis(lot_id):
 @login_required
 def get_production_summary():
     """Get production summary statistics."""
+    # Deprecation warning for underscore route
+    if request.path == "/api/upf/production_lots/summary":
+        msg = (
+            "GET /api/upf/production_lots/summary is deprecated. Use GET /api/upf/production-lots/summary instead. "
+            "Underscore routes will be removed after November 23, 2025."
+        )
+        warnings.warn(msg, DeprecationWarning, stacklevel=2)
+        current_app.logger.warning(f"DEPRECATION: {msg}")
+    
     try:
         from database import get_conn
         from psycopg2.extras import RealDictCursor
@@ -769,6 +876,15 @@ def get_production_summary():
 @login_required
 def get_recent_lots():
     """Get recently executed production lots."""
+    # Deprecation warning for underscore route
+    if request.path == "/api/upf/production_lots/recent":
+        msg = (
+            "GET /api/upf/production_lots/recent is deprecated. Use GET /api/upf/production-lots/recent instead. "
+            "Underscore routes will be removed after November 23, 2025."
+        )
+        warnings.warn(msg, DeprecationWarning, stacklevel=2)
+        current_app.logger.warning(f"DEPRECATION: {msg}")
+    
     try:
         limit = min(int(request.args.get("limit", 10)), 50)
 
