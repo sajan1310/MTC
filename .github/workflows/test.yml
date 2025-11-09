@@ -388,6 +388,11 @@ jobs:
             --durations=10 \
             tests/
           echo "::endgroup::"
+      - name: Auditor static analysis tests
+        run: |
+          echo "::group::Running auditor core extraction tests"
+          python -m pytest -q tests/test_auditor_core.py || { echo "::error::Auditor tests failed"; exit 1; }
+          echo "::endgroup::"
 
       - name: Generate coverage summary
         if: always()
