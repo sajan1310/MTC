@@ -187,7 +187,6 @@ jobs:
           --health-retries 5
 
     env:
-      # Database configuration
       DATABASE_URL: postgresql://postgres:testpass@127.0.0.1:5432/testdb
       DB_USER: postgres
       DB_PASS: testpass
@@ -197,12 +196,9 @@ jobs:
       POSTGRES_USER: postgres
       POSTGRES_PASSWORD: testpass
       POSTGRES_DB: testdb
-      # Flask testing environment
       FLASK_ENV: testing
       SECRET_KEY: test-secret-key-for-ci
-      # Rate limiting (use in-memory for tests)
       RATELIMIT_STORAGE_URL: memory://
-      # Python encoding
       PYTHONIOENCODING: utf-8
 
     steps:
