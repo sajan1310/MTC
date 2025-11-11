@@ -341,3 +341,35 @@ def not_found(error):
 def internal_error(error):
     current_app.logger.error(f"Internal server error: {error}")
     return APIResponse.error("internal_error", "Internal server error", 500)
+
+
+# ===== METADATA/HELPERS =====
+
+
+@subprocess_api_bp.route("/subprocesses/metadata", methods=["GET"])
+@login_required
+def get_subprocess_metadata():
+    """Return allowed categories and other metadata for subprocess creation UX."""
+    try:
+        # Standard categories for subprocess templates
+        categories = [
+            "Preparation",
+            "Assembly",
+            "Finishing",
+            "Quality Control",
+            "Packaging",
+            "Testing",
+            "Maintenance",
+            "Inspection",
+            "Other"
+        ]
+
+        return APIResponse.success({
+            "categories": categories,
+            "default_category": "Other",
+            "time_unit": "minutes",
+            "cost_currency": "USD"
+        })
+    except Exception as e:
+        current_app.logger.error(f"Error building subprocess metadata: {e}", exc_info=True)
+        return APIResponse.error("internal_error", "Failed to fetch metadata", 500)

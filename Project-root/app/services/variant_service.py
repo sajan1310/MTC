@@ -406,7 +406,7 @@ class VariantService:
                 f"""
                 SELECT DISTINCT
                     iv.variant_id,
-                    iv.name as variant_name,
+                    im.name as variant_name,
                     iv.opening_stock,
                     iv.threshold,
                     im.name as item_name,
@@ -434,7 +434,7 @@ class VariantService:
                 FROM item_variant iv
                 JOIN item_master im ON im.item_id = iv.item_id
                 WHERE {where_clause}
-                ORDER BY iv.name
+                ORDER BY im.name
                 LIMIT %s
             """,
                 params + [limit],
@@ -476,10 +476,11 @@ class VariantService:
                 """
                 SELECT
                     iv.variant_id,
-                    iv.name as variant_name,
+                    im.name as variant_name,
                     iv.opening_stock,
                     iv.threshold
                 FROM item_variant iv
+                JOIN item_master im ON im.item_id = iv.item_id
                 WHERE iv.variant_id = %s
             """,
                 (variant_id,),

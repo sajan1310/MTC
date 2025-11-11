@@ -271,11 +271,12 @@ class ProductionService:
                         SELECT
                             pls.*,
                             sg.group_name,
-                            iv.name as variant_name,
+                            im.name as variant_name,
                             s.firm_name as supplier_name
                         FROM production_lot_variant_selections pls
                         JOIN substitute_groups sg ON sg.id = pls.substitute_group_id
                         JOIN item_variant iv ON iv.variant_id = pls.selected_variant_id
+                        JOIN item_master im ON im.item_id = iv.item_id
                         LEFT JOIN suppliers s ON s.supplier_id = pls.selected_supplier_id
                         WHERE pls.lot_id = %s
                         """,
@@ -301,10 +302,11 @@ class ProductionService:
                         """
                         SELECT
                             plac.*,
-                            iv.name as variant_name,
+                            im.name as variant_name,
                             s.firm_name as supplier_name
                         FROM production_lot_actual_costing plac
                         JOIN item_variant iv ON iv.variant_id = plac.variant_id
+                        JOIN item_master im ON im.item_id = iv.item_id
                         LEFT JOIN suppliers s ON s.supplier_id = plac.supplier_id
                         WHERE plac.production_lot_id = %s
                         """,
@@ -742,11 +744,12 @@ class ProductionService:
                 SELECT
                     vu.variant_id,
                     vu.quantity,
-                    iv.name as variant_name,
+                    im.name as variant_name,
                     iv.opening_stock as current_stock
                 FROM variant_usage vu
                 JOIN process_subprocesses ps ON ps.id = vu.process_subprocess_id
                 JOIN item_variant iv ON iv.variant_id = vu.variant_id
+                JOIN item_master im ON im.item_id = iv.item_id
                 WHERE ps.process_id = %s
                   AND vu.substitute_group_id IS NULL
             """,
@@ -778,10 +781,11 @@ class ProductionService:
                 SELECT
                     pls.selected_variant_id as variant_id,
                     pls.selected_quantity as quantity,
-                    iv.name as variant_name,
+                    im.name as variant_name,
                     iv.opening_stock as current_stock
                 FROM production_lot_variant_selections pls
                 JOIN item_variant iv ON iv.variant_id = pls.selected_variant_id
+                JOIN item_master im ON im.item_id = iv.item_id
                 WHERE pls.lot_id = %s
             """,
                 (lot_id,),

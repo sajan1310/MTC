@@ -108,13 +108,17 @@ const processEditor = {
             console.log('Variant selected event received:', e.detail);
             // Store selected variant for user to add to subprocess
             this.selectedVariant = e.detail;
-            this.showAlert('Variant selected! Now click on a subprocess to add it.', 'success');
+            this.updateSelectedVariantChip();
+            this.showAlert('Variant selected! Drag the chip to a subprocess or use ➕ Variant.', 'success');
         });
 
         await this.loadProcess();
         await this.loadAvailableSubprocesses();
         await this.loadProcessStructure();
         this.initializeSortable();
+
+        // Initialize selected variant chip drag handlers
+        this.initSelectedVariantChipDrag();
     },
 
     /**
@@ -122,22 +126,9 @@ const processEditor = {
      */
     async loadProcess() {
         try {
-            const response = await fetch(`/api/upf/processes/${this.processId}`, {
-                method: 'GET',
-                credentials: 'include'
-            });
-
-            if (response.status === 401) {
-                window.location.href = '/auth/login';
-                return;
-            }
-
-            if (!response.ok) {
-                throw new Error('Failed to load process');
-            }
-
-            const data = await response.json();
-            this.processData = data.process;
+            // Use centralized API client with caching
+            const data = await window.upfApi.getProcess(this.processId);
+            this.processData = data.process || data;
             this.renderProcessHeader();
         } catch (error) {
             console.error('Error loading process:', error);
@@ -150,23 +141,12 @@ const processEditor = {
      */
     async loadAvailableSubprocesses() {
         try {
-            const response = await fetch('/api/upf/subprocesses?per_page=1000', {
-                method: 'GET',
-                credentials: 'include'
-            });
-
-            if (response.status === 401) {
-                window.location.href = '/auth/login';
-                return;
+            // Use centralized API client with caching
+            this.availableSubprocesses = await window.upfApi.getSubprocesses({ perPage: 1000 });
+            // If modal already open refresh existing list display
+            if (document.getElementById('subprocess-modal')?.style.display === 'block') {
+                this.renderExistingSubprocessList();
             }
-
-            if (!response.ok) {
-                throw new Error('Failed to load subprocesses');
-            }
-
-            const data = await response.json();
-            this.availableSubprocesses = data.subprocesses || [];
-            this.renderSubprocessDropdown();
         } catch (error) {
             console.error('Error loading subprocesses:', error);
             this.showAlert('Failed to load subprocess templates', 'error');
@@ -196,7 +176,9 @@ const processEditor = {
             }
 
             const data = await response.json();
-            this.subprocesses = data.subprocesses || [];
+            // API returns {success, data, error, message}, so unwrap it
+            const processData = data.data || data;
+            this.subprocesses = processData.subprocesses || [];
             this.renderSubprocesses();
             costCalculator.calculate();
         } catch (error) {
@@ -225,19 +207,7 @@ const processEditor = {
         }
     },
 
-    /**
-     * Render subprocess dropdown in modal
-     */
-    renderSubprocessDropdown() {
-        const select = document.getElementById('subprocess-select');
-        if (!select) return;
 
-        let html = '<option value="">-- Select Subprocess --</option>';
-        this.availableSubprocesses.forEach(sp => {
-            html += `<option value="${sp.id}">${sp.name} (${sp.category})</option>`;
-        });
-        select.innerHTML = html;
-    },
 
     /**
      * Render subprocesses in the main list
@@ -287,6 +257,9 @@ const processEditor = {
                         ${hasORGroups ? '<span class="or-group-badge">Has OR Groups</span>' : ''}
                     </div>
                     <div class="subprocess-actions">
+                        <button onclick="processEditor.addVariantToSubprocess(${index})" title="Add Variant">➕ Variant</button>
+                        <button onclick="processEditor.openRenameSubprocessModal(${index})" title="Rename Instance">📝 Rename</button>
+                        <button onclick="processEditor.openEditSubprocessModal(${index})" title="Edit Subprocess Template">✏️ Edit</button>
                         <button onclick="processEditor.configureORGroups(${index})" title="Configure OR Groups">⚙️ OR Groups</button>
                         <button onclick="processEditor.openCostItemModal(${index})" title="Add Cost Item">💰 Cost</button>
                         <button onclick="processEditor.removeSubprocess(${index})" title="Remove Subprocess">🗑️ Remove</button>
@@ -297,6 +270,67 @@ const processEditor = {
                 </div>
             </div>
         `;
+    },
+
+    /**
+     * Show or update the selected variant draggable chip
+     */
+    updateSelectedVariantChip() {
+        const chip = document.getElementById('selected-variant-chip');
+        const nameEl = document.getElementById('selected-variant-chip-name');
+        if (!chip || !nameEl) return;
+
+        if (!this.selectedVariant) {
+            chip.style.display = 'none';
+            nameEl.textContent = 'No variant selected';
+            return;
+        }
+
+        nameEl.textContent = this.selectedVariant.text || this.selectedVariant.item_name || this.selectedVariant.name || `Variant #${this.selectedVariant.id}`;
+        chip.style.display = 'inline-flex';
+    },
+
+    /**
+     * Initialize dragstart on selected variant chip
+     */
+    initSelectedVariantChipDrag() {
+        const chip = document.getElementById('selected-variant-chip');
+        if (!chip) return;
+        chip.addEventListener('dragstart', (e) => {
+            if (!this.selectedVariant) {
+                e.preventDefault();
+                return;
+            }
+            chip.classList.add('dragging');
+            const payload = {
+                id: this.selectedVariant.id,
+                name: this.selectedVariant.text || this.selectedVariant.item_name || this.selectedVariant.name
+            };
+            try {
+                e.dataTransfer.setData('application/json', JSON.stringify(payload));
+                e.dataTransfer.effectAllowed = 'copy';
+            } catch (err) {
+                console.error('Failed to set drag data:', err);
+            }
+        });
+        chip.addEventListener('dragend', () => chip.classList.remove('dragging'));
+    },
+
+    /**
+     * Quick add variant via button using the currently selected variant
+     */
+    addVariantToSubprocess(subprocessIndex) {
+        if (!this.selectedVariant) {
+            this.showAlert('Select a variant in the left panel first.', 'error');
+            return;
+        }
+        // Prefill modal with selected variant
+        document.getElementById('selected-variant-id').value = this.selectedVariant.id;
+        document.getElementById('selected-variant-name').textContent = this.selectedVariant.text || this.selectedVariant.item_name || this.selectedVariant.name;
+        document.getElementById('target-subprocess-id').value = subprocessIndex;
+        document.getElementById('variant-quantity').value = '1';
+        document.getElementById('variant-unit').value = 'pcs';
+        document.getElementById('variant-modal').style.display = 'block';
     },
 
     /**
@@ -385,7 +419,9 @@ const processEditor = {
 
         // Update sequence numbers
         this.subprocesses.forEach((sp, index) => {
+            // Keep both fields in sync for compatibility with API/UI fallbacks
             sp.sequence = index + 1;
+            sp.sequence_order = index + 1;
         });
 
         this.isDirty = true;
@@ -436,8 +472,12 @@ const processEditor = {
      * Show add subprocess modal
      */
     addSubprocess() {
-        document.getElementById('subprocess-modal').style.display = 'block';
-        document.getElementById('subprocess-form').reset();
+        const modal = document.getElementById('subprocess-modal');
+        if (!modal) return;
+        // Default to existing tab
+        this.switchSubprocessTab('existing');
+        this.renderExistingSubprocessList();
+        modal.style.display = 'block';
     },
 
     /**
@@ -448,43 +488,82 @@ const processEditor = {
     },
 
     /**
-     * Handle add subprocess form submission
+     * Switch tabs in subprocess modal
      */
-    async handleAddSubprocess(event) {
-        event.preventDefault();
+    switchSubprocessTab(tab) {
+        const tabs = document.querySelectorAll('#subprocess-modal .modal-tab');
+        const panels = document.querySelectorAll('#subprocess-modal .tab-panel');
+        tabs.forEach(t => t.classList.toggle('active', t.getAttribute('data-tab') === tab));
+        panels.forEach(p => p.classList.toggle('active', p.id === `tab-${tab}`));
+    },
 
-        const subprocessId = document.getElementById('subprocess-select').value;
-        const customName = document.getElementById('custom-name').value;
+    filterSubprocessList() {
+        this.renderExistingSubprocessList();
+    },
 
-        if (!subprocessId) {
-            this.showAlert('Please select a subprocess', 'error');
+    /**
+     * Render existing subprocess list with unambiguous details
+     */
+    renderExistingSubprocessList() {
+        const listEl = document.getElementById('sp-list');
+        if (!listEl) return;
+        const term = (document.getElementById('sp-search')?.value || '').toLowerCase();
+        const items = (this.availableSubprocesses || []).filter(sp => {
+            const name = (sp.name || '').toLowerCase();
+            const cat = (sp.category || '').toLowerCase();
+            const desc = (sp.description || '').toLowerCase();
+            return !term || name.includes(term) || cat.includes(term) || desc.includes(term);
+        });
+
+        if (items.length === 0) {
+            listEl.innerHTML = '<div class="empty-state" style="padding:12px;">No templates found</div>';
             return;
         }
 
+        listEl.innerHTML = items.map(sp => {
+            const time = parseInt(sp.estimated_time_minutes || 0, 10);
+            const cost = parseFloat(sp.labor_cost || 0).toFixed(2);
+            const id = sp.id;
+            return `
+                <div class="sp-item">
+                    <div>
+                        <div class="sp-name">${sp.name} <span class="sp-meta">(#${id})</span></div>
+                        <div class="sp-meta">Category: ${sp.category || '—'} | Time: ${time} min | Cost: $${cost}</div>
+                    </div>
+                    <div class="sp-actions">
+                        <button class="btn btn-secondary" onclick="processEditor.promptCustomNameAndAdd(${id}, '${(sp.name||'').replace(/'/g,"&#39;")}')">Select</button>
+                    </div>
+                </div>`;
+        }).join('');
+    },
+
+    /**
+     * Ask for optional custom name then attach subprocess
+     */
+    async promptCustomNameAndAdd(subprocessId, defaultName='') {
+        const customName = prompt('Custom name (optional):', defaultName) || null;
+        await this.attachSubprocessToProcess(parseInt(subprocessId, 10), customName);
+    },
+
+    /**
+     * Shared attach logic with sequence calculation
+     */
+    async attachSubprocessToProcess(subprocessId, customName) {
         try {
-            const response = await fetch(`/api/upf/processes/${this.processId}/subprocesses`, {
-                method: 'POST',
-                headers: {
-                    'Content-Type': 'application/json',
-                    'X-CSRFToken': this.getCSRFToken()
-                },
-                credentials: 'include',
-                body: JSON.stringify({
-                    subprocess_id: parseInt(subprocessId),
-                    custom_name: customName || null,
-                    sequence: this.subprocesses.length + 1
-                })
+            let maxSequence = 0;
+            if (this.subprocesses.length > 0) {
+                maxSequence = Math.max(...this.subprocesses.map(sp => {
+                    const seq = sp.sequence_order || sp.sequence || 0;
+                    return typeof seq === 'number' ? seq : parseInt(seq) || 0;
+                }));
+            }
+            const nextSequence = maxSequence + 1;
+
+            await window.upfApi.addSubprocessToProcess(this.processId, {
+                subprocess_id: parseInt(subprocessId, 10),
+                custom_name: customName || null,
+                sequence_order: nextSequence
             });
-
-            if (response.status === 401) {
-                window.location.href = '/auth/login';
-                return;
-            }
-
-            if (!response.ok) {
-                const error = await response.json();
-                throw new Error(error.message || 'Failed to add subprocess');
-            }
 
             this.showAlert('Subprocess added successfully', 'success');
             this.closeSubprocessModal();
@@ -492,8 +571,44 @@ const processEditor = {
             this.isDirty = false;
         } catch (error) {
             console.error('Error adding subprocess:', error);
-            this.showAlert(error.message, 'error');
+            this.showAlert(error.message || 'Failed to add subprocess', 'error');
         }
+    },
+
+    /**
+     * Create new subprocess template then attach
+     */
+    async handleCreateSubprocessTemplate(event) {
+        event.preventDefault();
+        const payload = {
+            name: document.getElementById('new-sp-name').value,
+            category: document.getElementById('new-sp-category').value || null,
+            description: document.getElementById('new-sp-description').value || null,
+            estimated_time_minutes: parseInt(document.getElementById('new-sp-time').value || '0', 10),
+            labor_cost: parseFloat(document.getElementById('new-sp-cost').value || '0')
+        };
+        try {
+            const created = await window.upfApi.createSubprocess(payload);
+            const spId = created.data?.id || created.id; // unwrap
+            if (!spId) throw new Error('Created subprocess id not returned');
+            await this.attachSubprocessToProcess(spId, payload.name);
+        } catch (error) {
+            console.error('Error creating subprocess:', error);
+            this.showAlert(error.message || 'Failed to create subprocess', 'error');
+        }
+    },
+
+
+    /**
+     * Lightweight self-test (developer utility)
+     */
+    _devSelfTest() {
+        try {
+            const seqs = this.subprocesses.map(sp => sp.sequence_order || sp.sequence || 0);
+            const sorted = [...seqs].sort((a,b)=>a-b);
+            const contiguous = sorted.every((v,i)=> v === 0 || i===0 || v - sorted[i-1] <= 2);
+            console.log('[ProcessEditor SelfTest] sequences:', seqs, 'sorted:', sorted, 'gap-ok:', contiguous);
+        } catch (e) { console.warn('SelfTest failed', e); }
     },
 
     /**
@@ -530,8 +645,8 @@ const processEditor = {
                 },
                 credentials: 'include',
                 body: JSON.stringify({
-                    subprocess_id: subprocess.subprocess_id,  // Note: subprocess_id, not process_subprocess_id
-                    item_id: parseInt(variantId),  // Note: item_id, not variant_id
+                    subprocess_id: subprocess.subprocess_id,  // backend expects subprocess_id for create
+                    item_id: parseInt(variantId),
                     quantity: quantity,
                     unit: unit
                 })
@@ -554,6 +669,94 @@ const processEditor = {
         } catch (error) {
             console.error('Error adding variant:', error);
             this.showAlert(error.message, 'error');
+        }
+    },
+
+    /**
+     * Open modal to edit subprocess TEMPLATE (global)
+     */
+    async openEditSubprocessModal(index) {
+        const subprocess = this.subprocesses[index];
+        if (!subprocess) return;
+        try {
+            const data = await window.upfApi.getSubprocess(subprocess.subprocess_id);
+            const sp = data.data || data; // unwrap if needed
+            document.getElementById('edit-subprocess-id').value = sp.id;
+            document.getElementById('edit-subprocess-name').value = sp.name || '';
+            document.getElementById('edit-subprocess-category').value = sp.category || '';
+            document.getElementById('edit-subprocess-description').value = sp.description || '';
+            document.getElementById('edit-estimated-time').value = parseInt(sp.estimated_time_minutes || 0, 10);
+            document.getElementById('edit-labor-cost').value = parseFloat(sp.labor_cost || 0);
+            document.getElementById('edit-subprocess-modal').style.display = 'block';
+        } catch (error) {
+            console.error('Error loading subprocess:', error);
+            this.showAlert('Failed to load subprocess template', 'error');
+        }
+    },
+
+    closeEditSubprocessModal() {
+        document.getElementById('edit-subprocess-modal').style.display = 'none';
+        document.getElementById('edit-subprocess-form').reset();
+    },
+
+    async handleEditSubprocessSubmit(event) {
+        event.preventDefault();
+        const id = document.getElementById('edit-subprocess-id').value;
+        const payload = {
+            name: document.getElementById('edit-subprocess-name').value,
+            category: document.getElementById('edit-subprocess-category').value || null,
+            description: document.getElementById('edit-subprocess-description').value || null,
+            estimated_time_minutes: parseInt(document.getElementById('edit-estimated-time').value || '0', 10),
+            labor_cost: parseFloat(document.getElementById('edit-labor-cost').value || '0')
+        };
+        try {
+            await window.upfApi.updateSubprocess(id, payload);
+            this.showAlert('Subprocess template updated', 'success');
+            this.closeEditSubprocessModal();
+            await this.loadProcessStructure();
+        } catch (error) {
+            console.error('Error updating subprocess:', error);
+            this.showAlert(error.message || 'Failed to update subprocess', 'error');
+        }
+    },
+
+    /**
+     * Rename subprocess INSTANCE (custom_name)
+     */
+    openRenameSubprocessModal(index) {
+        const subprocess = this.subprocesses[index];
+        if (!subprocess) return;
+        document.getElementById('rename-ps-id').value = subprocess.process_subprocess_id;
+        document.getElementById('rename-custom-name').value = subprocess.custom_name || '';
+        document.getElementById('rename-subprocess-modal').style.display = 'block';
+    },
+
+    closeRenameSubprocessModal() {
+        document.getElementById('rename-subprocess-modal').style.display = 'none';
+        document.getElementById('rename-subprocess-form').reset();
+    },
+
+    async handleRenameSubprocessSubmit(event) {
+        event.preventDefault();
+        const psId = document.getElementById('rename-ps-id').value;
+        const name = document.getElementById('rename-custom-name').value || null;
+        try {
+            const resp = await fetch(`/api/upf/processes/${this.processId}/subprocesses/${psId}`, {
+                method: 'PUT',
+                headers: {
+                    'Content-Type': 'application/json',
+                    'X-CSRFToken': this.getCSRFToken()
+                },
+                credentials: 'include',
+                body: JSON.stringify({ custom_name: name })
+            });
+            if (!resp.ok) throw new Error('Failed to rename subprocess');
+            this.showAlert('Subprocess renamed', 'success');
+            this.closeRenameSubprocessModal();
+            await this.loadProcessStructure();
+        } catch (error) {
+            console.error('Error renaming subprocess:', error);
+            this.showAlert(error.message || 'Failed to rename', 'error');
         }
     },
 
@@ -986,6 +1189,8 @@ window.addEventListener('click', function(event) {
     const variantModal = document.getElementById('variant-modal');
     const orGroupModal = document.getElementById('or-group-modal');
     const costItemModal = document.getElementById('cost-item-modal');
+    const editSubprocessModal = document.getElementById('edit-subprocess-modal');
+    const renameSubprocessModal = document.getElementById('rename-subprocess-modal');
 
     if (event.target === subprocessModal) {
         processEditor.closeSubprocessModal();
@@ -998,5 +1203,11 @@ window.addEventListener('click', function(event) {
     }
     if (event.target === costItemModal) {
         processEditor.closeCostItemModal();
+    }
+    if (event.target === editSubprocessModal) {
+        processEditor.closeEditSubprocessModal();
+    }
+    if (event.target === renameSubprocessModal) {
+        processEditor.closeRenameSubprocessModal();
     }
 });

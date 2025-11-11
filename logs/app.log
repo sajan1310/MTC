@@ -22304,3 +22304,241 @@ DETAIL:  Failing row contains (240, Frame Assembly, null, manufacturing, Active,
 2025-11-09 14:15:57,900 INFO: Request ID middleware enabled [in C:\Users\erkar\OneDrive\Desktop\MTC\Project-root\app\middleware\request_id.py:45]
 2025-11-09 14:15:57,950 INFO: Subprocess cache cleared [in C:\Users\erkar\OneDrive\Desktop\MTC\Project-root\app\services\subprocess_service.py:40]
 2025-11-09 14:15:58,439 INFO: Universal Process Framework API blueprints exempted from CSRF protection [in C:\Users\erkar\OneDrive\Desktop\MTC\Project-root\app\__init__.py:324]
+2025-11-09 14:35:11,566 INFO: Request ID middleware enabled [in C:\Users\erkar\OneDrive\Desktop\MTC\project-root\app\middleware\request_id.py:45]
+2025-11-09 14:35:11,622 INFO: Subprocess cache cleared [in C:\Users\erkar\OneDrive\Desktop\MTC\project-root\app\services\subprocess_service.py:40]
+2025-11-09 14:35:12,225 INFO: Universal Process Framework API blueprints exempted from CSRF protection [in C:\Users\erkar\OneDrive\Desktop\MTC\project-root\app\__init__.py:324]
+2025-11-09 14:36:58,517 INFO: Loaded 2 subprocesses into cache [in C:\Users\erkar\OneDrive\Desktop\MTC\project-root\app\services\subprocess_service.py:76]
+2025-11-09 14:38:26,432 INFO: Process deleted: 7 by user 3 [in C:\Users\erkar\OneDrive\Desktop\MTC\project-root\app\api\process_management.py:385]
+2025-11-10 16:39:13,988 INFO: Request ID middleware enabled [in C:\Users\erkar\OneDrive\Desktop\MTC\project-root\app\middleware\request_id.py:45]
+2025-11-10 16:39:14,038 INFO: Subprocess cache cleared [in C:\Users\erkar\OneDrive\Desktop\MTC\project-root\app\services\subprocess_service.py:40]
+2025-11-10 16:39:14,484 INFO: Universal Process Framework API blueprints exempted from CSRF protection [in C:\Users\erkar\OneDrive\Desktop\MTC\project-root\app\__init__.py:324]
+2025-11-10 16:39:37,597 INFO: Request ID middleware enabled [in C:\Users\erkar\OneDrive\Desktop\MTC\project-root\app\middleware\request_id.py:45]
+2025-11-10 16:39:37,637 INFO: Subprocess cache cleared [in C:\Users\erkar\OneDrive\Desktop\MTC\project-root\app\services\subprocess_service.py:40]
+2025-11-10 16:39:37,929 INFO: Universal Process Framework API blueprints exempted from CSRF protection [in C:\Users\erkar\OneDrive\Desktop\MTC\project-root\app\__init__.py:324]
+2025-11-10 16:40:05,986 INFO: [CREATE PROCESS] Received request from user 3 [in C:\Users\erkar\OneDrive\Desktop\MTC\project-root\app\api\process_management.py:100]
+2025-11-10 16:40:05,988 INFO: [CREATE PROCESS] Creating process 'demo 1' with class 'Manufacturing' [in C:\Users\erkar\OneDrive\Desktop\MTC\project-root\app\api\process_management.py:166]
+2025-11-10 16:40:06,013 WARNING: Database integrity error: new row for relation "processes" violates check constraint "processes_process_class_check"
+DETAIL:  Failing row contains (302, demo 1, null, manufacturing, Active, 0.00, null, 3, 2025-11-10 16:40:05.989169, 2025-11-10 16:40:05.989169).
+ [in C:\Users\erkar\OneDrive\Desktop\MTC\project-root\database.py:168]
+2025-11-10 16:40:06,014 ERROR: [CREATE PROCESS] Unexpected error: new row for relation "processes" violates check constraint "processes_process_class_check"
+DETAIL:  Failing row contains (302, demo 1, null, manufacturing, Active, 0.00, null, 3, 2025-11-10 16:40:05.989169, 2025-11-10 16:40:05.989169).
+ [in C:\Users\erkar\OneDrive\Desktop\MTC\project-root\app\api\process_management.py:206]
+Traceback (most recent call last):
+  File "C:\Users\erkar\OneDrive\Desktop\MTC\project-root\app\api\process_management.py", line 170, in create_process
+    process = ProcessService.create_process(
+        name=data["name"].strip(),
+    ...<2 lines>...
+        process_class=process_class,
+    )
+  File "C:\Users\erkar\OneDrive\Desktop\MTC\project-root\app\services\process_service.py", line 94, in create_process
+    cur.execute(
+    ~~~~~~~~~~~^
+        """
+        ^^^
+    ...<10 lines>...
+        ),
+        ^^
+    )
+    ^
+  File "C:\Users\erkar\OneDrive\Desktop\MTC\venv2\Lib\site-packages\psycopg2\extras.py", line 236, in execute
+    return super().execute(query, vars)
+           ~~~~~~~~~~~~~~~^^^^^^^^^^^^^
+psycopg2.errors.CheckViolation: new row for relation "processes" violates check constraint "processes_process_class_check"
+DETAIL:  Failing row contains (302, demo 1, null, manufacturing, Active, 0.00, null, 3, 2025-11-10 16:40:05.989169, 2025-11-10 16:40:05.989169).
+
+2025-11-10 16:52:41,224 INFO: [CREATE PROCESS] Received request from user 3 [in C:\Users\erkar\OneDrive\Desktop\MTC\project-root\app\api\process_management.py:100]
+2025-11-10 16:52:41,227 INFO: [CREATE PROCESS] Creating process 'demo 1' with class 'Manufacturing' [in C:\Users\erkar\OneDrive\Desktop\MTC\project-root\app\api\process_management.py:166]
+2025-11-10 16:52:41,238 WARNING: Database integrity error: new row for relation "processes" violates check constraint "processes_process_class_check"
+DETAIL:  Failing row contains (303, demo 1, null, manufacturing, Active, 0.00, null, 3, 2025-11-10 16:52:41.228419, 2025-11-10 16:52:41.228419).
+ [in C:\Users\erkar\OneDrive\Desktop\MTC\project-root\database.py:168]
+2025-11-10 16:52:41,240 ERROR: [CREATE PROCESS] Unexpected error: new row for relation "processes" violates check constraint "processes_process_class_check"
+DETAIL:  Failing row contains (303, demo 1, null, manufacturing, Active, 0.00, null, 3, 2025-11-10 16:52:41.228419, 2025-11-10 16:52:41.228419).
+ [in C:\Users\erkar\OneDrive\Desktop\MTC\project-root\app\api\process_management.py:206]
+Traceback (most recent call last):
+  File "C:\Users\erkar\OneDrive\Desktop\MTC\project-root\app\api\process_management.py", line 170, in create_process
+    process = ProcessService.create_process(
+        name=data["name"].strip(),
+    ...<2 lines>...
+        process_class=process_class,
+    )
+  File "C:\Users\erkar\OneDrive\Desktop\MTC\project-root\app\services\process_service.py", line 94, in create_process
+    # Detect processes table schema to support both legacy and new migrations
+    ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+    ...<12 lines>...
+    status_value = (
+    ^
+  File "C:\Users\erkar\OneDrive\Desktop\MTC\venv2\Lib\site-packages\psycopg2\extras.py", line 236, in execute
+    return super().execute(query, vars)
+           ~~~~~~~~~~~~~~~^^^^^^^^^^^^^
+psycopg2.errors.CheckViolation: new row for relation "processes" violates check constraint "processes_process_class_check"
+DETAIL:  Failing row contains (303, demo 1, null, manufacturing, Active, 0.00, null, 3, 2025-11-10 16:52:41.228419, 2025-11-10 16:52:41.228419).
+
+2025-11-10 16:57:04,222 INFO: Request ID middleware enabled [in C:\Users\erkar\OneDrive\Desktop\MTC\project-root\app\middleware\request_id.py:45]
+2025-11-10 16:57:04,261 INFO: Subprocess cache cleared [in C:\Users\erkar\OneDrive\Desktop\MTC\project-root\app\services\subprocess_service.py:40]
+2025-11-10 16:57:04,613 INFO: Universal Process Framework API blueprints exempted from CSRF protection [in C:\Users\erkar\OneDrive\Desktop\MTC\project-root\app\__init__.py:324]
+2025-11-10 16:57:31,303 INFO: [CREATE PROCESS] Received request from user 3 [in C:\Users\erkar\OneDrive\Desktop\MTC\project-root\app\api\process_management.py:100]
+2025-11-10 16:57:31,304 INFO: [CREATE PROCESS] Creating process 'demo 1' with class 'Manufacturing' [in C:\Users\erkar\OneDrive\Desktop\MTC\project-root\app\api\process_management.py:166]
+2025-11-10 16:57:31,327 INFO: Process cache invalidated [in C:\Users\erkar\OneDrive\Desktop\MTC\project-root\app\services\process_service.py:55]
+2025-11-10 16:57:31,336 INFO: [CREATE PROCESS] Process created successfully: 304 by user 3 [in C:\Users\erkar\OneDrive\Desktop\MTC\project-root\app\api\process_management.py:180]
+2025-11-10 16:57:40,474 INFO: Loaded 2 subprocesses into cache [in C:\Users\erkar\OneDrive\Desktop\MTC\project-root\app\services\subprocess_service.py:76]
+2025-11-10 17:04:24,734 INFO: Request ID middleware enabled [in c:\Users\erkar\OneDrive\Desktop\MTC\Project-root\app\middleware\request_id.py:45]
+2025-11-10 17:04:24,789 INFO: Subprocess cache cleared [in c:\Users\erkar\OneDrive\Desktop\MTC\Project-root\app\services\subprocess_service.py:40]
+2025-11-10 17:04:25,385 INFO: Universal Process Framework API blueprints exempted from CSRF protection [in c:\Users\erkar\OneDrive\Desktop\MTC\Project-root\app\__init__.py:324]
+2025-11-10 17:05:10,519 INFO: Request ID middleware enabled [in C:\Users\erkar\OneDrive\Desktop\MTC\project-root\app\middleware\request_id.py:45]
+2025-11-10 17:05:10,562 INFO: Subprocess cache cleared [in C:\Users\erkar\OneDrive\Desktop\MTC\project-root\app\services\subprocess_service.py:40]
+2025-11-10 17:05:10,847 INFO: Universal Process Framework API blueprints exempted from CSRF protection [in C:\Users\erkar\OneDrive\Desktop\MTC\project-root\app\__init__.py:324]
+2025-11-10 17:08:54,449 INFO: Loaded 2 subprocesses into cache [in C:\Users\erkar\OneDrive\Desktop\MTC\project-root\app\services\subprocess_service.py:76]
+2025-11-10 17:13:39,477 INFO: [CREATE SUBPROCESS] Received request from user 3 [in C:\Users\erkar\OneDrive\Desktop\MTC\project-root\app\api\subprocess_management.py:45]
+2025-11-10 17:13:39,489 INFO: [CREATE SUBPROCESS] Subprocess created successfully: 3 by user 3 [in C:\Users\erkar\OneDrive\Desktop\MTC\project-root\app\api\subprocess_management.py:104]
+2025-11-10 17:13:39,503 INFO: Loaded 3 subprocesses into cache [in C:\Users\erkar\OneDrive\Desktop\MTC\project-root\app\services\subprocess_service.py:76]
+2025-11-10 17:29:20,397 INFO: Request ID middleware enabled [in C:\Users\erkar\OneDrive\Desktop\MTC\project-root\app\middleware\request_id.py:45]
+2025-11-10 17:29:20,425 INFO: Subprocess cache cleared [in C:\Users\erkar\OneDrive\Desktop\MTC\project-root\app\services\subprocess_service.py:40]
+2025-11-10 17:29:20,725 INFO: Universal Process Framework API blueprints exempted from CSRF protection [in C:\Users\erkar\OneDrive\Desktop\MTC\project-root\app\__init__.py:324]
+2025-11-10 17:29:29,657 INFO: Loaded 3 subprocesses into cache [in C:\Users\erkar\OneDrive\Desktop\MTC\project-root\app\services\subprocess_service.py:76]
+2025-11-10 17:30:15,959 INFO: Request ID middleware enabled [in C:\Users\erkar\OneDrive\Desktop\MTC\project-root\app\middleware\request_id.py:45]
+2025-11-10 17:30:15,989 INFO: Subprocess cache cleared [in C:\Users\erkar\OneDrive\Desktop\MTC\project-root\app\services\subprocess_service.py:40]
+2025-11-10 17:30:16,229 INFO: Universal Process Framework API blueprints exempted from CSRF protection [in C:\Users\erkar\OneDrive\Desktop\MTC\project-root\app\__init__.py:324]
+2025-11-10 17:30:33,571 INFO: Loaded 3 subprocesses into cache [in C:\Users\erkar\OneDrive\Desktop\MTC\project-root\app\services\subprocess_service.py:76]
+2025-11-10 17:30:45,461 ERROR: Error adding subprocess to process: 'sequence_order' [in C:\Users\erkar\OneDrive\Desktop\MTC\project-root\app\api\process_management.py:520]
+2025-11-10 17:30:46,965 WARNING: Database integrity error: duplicate key value violates unique constraint "unique_process_subprocess"
+DETAIL:  Key (process_id, subprocess_id, sequence)=(304, 3, 0) already exists.
+ [in C:\Users\erkar\OneDrive\Desktop\MTC\project-root\database.py:168]
+2025-11-10 17:30:46,966 ERROR: Error adding subprocess to process: duplicate key value violates unique constraint "unique_process_subprocess"
+DETAIL:  Key (process_id, subprocess_id, sequence)=(304, 3, 0) already exists.
+ [in C:\Users\erkar\OneDrive\Desktop\MTC\project-root\app\api\process_management.py:520]
+2025-11-10 17:45:16,745 ERROR: Database error: column iv.name does not exist
+LINE 6:                     iv.name as variant_name
+                            ^
+ [in C:\Users\erkar\OneDrive\Desktop\MTC\project-root\database.py:179]
+2025-11-10 17:45:16,749 ERROR: Error calculating worst-case costing: column iv.name does not exist
+LINE 6:                     iv.name as variant_name
+                            ^
+ [in C:\Users\erkar\OneDrive\Desktop\MTC\project-root\app\api\process_management.py:669]
+2025-11-10 18:04:26,950 ERROR: Database error: column iv.name does not exist
+LINE 6:                     iv.name as variant_name
+                            ^
+ [in C:\Users\erkar\OneDrive\Desktop\MTC\project-root\database.py:179]
+2025-11-10 18:04:26,956 ERROR: Error calculating worst-case costing: column iv.name does not exist
+LINE 6:                     iv.name as variant_name
+                            ^
+ [in C:\Users\erkar\OneDrive\Desktop\MTC\project-root\app\api\process_management.py:669]
+2025-11-10 18:06:00,262 INFO: Request ID middleware enabled [in C:\Users\erkar\OneDrive\Desktop\MTC\project-root\app\middleware\request_id.py:45]
+2025-11-10 18:06:00,351 INFO: Subprocess cache cleared [in C:\Users\erkar\OneDrive\Desktop\MTC\project-root\app\services\subprocess_service.py:40]
+2025-11-10 18:06:01,259 INFO: Universal Process Framework API blueprints exempted from CSRF protection [in C:\Users\erkar\OneDrive\Desktop\MTC\project-root\app\__init__.py:324]
+2025-11-10 18:11:20,973 INFO: [CREATE SUBPROCESS] Received request from user 3 [in C:\Users\erkar\OneDrive\Desktop\MTC\project-root\app\api\subprocess_management.py:45]
+2025-11-10 18:11:21,021 WARNING: Database integrity error: duplicate key value violates unique constraint "unique_subprocess_name"
+DETAIL:  Key (name)=(demo) already exists.
+ [in C:\Users\erkar\OneDrive\Desktop\MTC\project-root\database.py:168]
+2025-11-10 18:11:21,022 WARNING: [CREATE SUBPROCESS] Duplicate subprocess name: demo [in C:\Users\erkar\OneDrive\Desktop\MTC\project-root\app\api\subprocess_management.py:110]
+2025-11-10 18:16:38,026 INFO: [CREATE SUBPROCESS] Received request from user 3 [in C:\Users\erkar\OneDrive\Desktop\MTC\project-root\app\api\subprocess_management.py:45]
+2025-11-10 18:16:38,048 INFO: [CREATE SUBPROCESS] Subprocess created successfully: 5 by user 3 [in C:\Users\erkar\OneDrive\Desktop\MTC\project-root\app\api\subprocess_management.py:104]
+2025-11-10 18:19:22,479 INFO: Request ID middleware enabled [in C:\Users\erkar\OneDrive\Desktop\MTC\project-root\app\middleware\request_id.py:45]
+2025-11-10 18:19:22,551 INFO: Subprocess cache cleared [in C:\Users\erkar\OneDrive\Desktop\MTC\project-root\app\services\subprocess_service.py:40]
+2025-11-10 18:19:23,321 INFO: Universal Process Framework API blueprints exempted from CSRF protection [in C:\Users\erkar\OneDrive\Desktop\MTC\project-root\app\__init__.py:324]
+2025-11-10 18:19:51,216 INFO: [CREATE SUBPROCESS] Received request from user 3 [in C:\Users\erkar\OneDrive\Desktop\MTC\project-root\app\api\subprocess_management.py:45]
+2025-11-10 18:19:51,249 WARNING: Database integrity error: duplicate key value violates unique constraint "unique_subprocess_name"
+DETAIL:  Key (name)=(demo3) already exists.
+ [in C:\Users\erkar\OneDrive\Desktop\MTC\project-root\database.py:168]
+2025-11-10 18:19:51,250 WARNING: [CREATE SUBPROCESS] Duplicate subprocess name: demo3 [in C:\Users\erkar\OneDrive\Desktop\MTC\project-root\app\api\subprocess_management.py:110]
+2025-11-10 18:31:07,651 INFO: Request ID middleware enabled [in C:\Users\erkar\OneDrive\Desktop\MTC\project-root\app\middleware\request_id.py:45]
+2025-11-10 18:31:07,716 INFO: Subprocess cache cleared [in C:\Users\erkar\OneDrive\Desktop\MTC\project-root\app\services\subprocess_service.py:40]
+2025-11-10 18:31:08,152 INFO: Universal Process Framework API blueprints exempted from CSRF protection [in C:\Users\erkar\OneDrive\Desktop\MTC\project-root\app\__init__.py:324]
+2025-11-10 18:31:38,895 INFO: Loaded 4 subprocesses into cache [in C:\Users\erkar\OneDrive\Desktop\MTC\project-root\app\services\subprocess_service.py:76]
+2025-11-10 18:35:38,207 INFO: Request ID middleware enabled [in C:\Users\erkar\OneDrive\Desktop\MTC\project-root\app\middleware\request_id.py:45]
+2025-11-10 18:35:38,308 INFO: Subprocess cache cleared [in C:\Users\erkar\OneDrive\Desktop\MTC\project-root\app\services\subprocess_service.py:40]
+2025-11-10 18:35:39,151 INFO: Universal Process Framework API blueprints exempted from CSRF protection [in C:\Users\erkar\OneDrive\Desktop\MTC\project-root\app\__init__.py:324]
+2025-11-10 18:35:51,384 INFO: Loaded 4 subprocesses into cache [in C:\Users\erkar\OneDrive\Desktop\MTC\project-root\app\services\subprocess_service.py:76]
+2025-11-10 18:37:31,523 ERROR: Error adding subprocess to process: 'sequence_order' [in C:\Users\erkar\OneDrive\Desktop\MTC\project-root\app\api\process_management.py:520]
+2025-11-10 18:58:28,331 INFO: Subprocess removed from process: 3 [in C:\Users\erkar\OneDrive\Desktop\MTC\project-root\app\api\process_management.py:578]
+2025-11-10 19:33:23,244 INFO: Request ID middleware enabled [in C:\Users\erkar\OneDrive\Desktop\MTC\project-root\app\middleware\request_id.py:45]
+2025-11-10 19:33:23,309 INFO: Subprocess cache cleared [in C:\Users\erkar\OneDrive\Desktop\MTC\project-root\app\services\subprocess_service.py:40]
+2025-11-10 19:33:23,907 INFO: Universal Process Framework API blueprints exempted from CSRF protection [in C:\Users\erkar\OneDrive\Desktop\MTC\project-root\app\__init__.py:324]
+2025-11-10 19:33:43,431 INFO: Loaded 4 subprocesses into cache [in C:\Users\erkar\OneDrive\Desktop\MTC\project-root\app\services\subprocess_service.py:76]
+2025-11-10 19:33:52,936 INFO: Subprocess 2 added to process 304 [in C:\Users\erkar\OneDrive\Desktop\MTC\project-root\app\api\process_management.py:515]
+2025-11-11 15:16:55,545 INFO: Request ID middleware enabled [in C:\Users\erkar\OneDrive\Desktop\MTC\project-root\app\middleware\request_id.py:45]
+2025-11-11 15:16:55,586 INFO: Subprocess cache cleared [in C:\Users\erkar\OneDrive\Desktop\MTC\project-root\app\services\subprocess_service.py:40]
+2025-11-11 15:16:55,899 INFO: Universal Process Framework API blueprints exempted from CSRF protection [in C:\Users\erkar\OneDrive\Desktop\MTC\project-root\app\__init__.py:324]
+2025-11-11 15:17:40,325 ERROR: Database error: column "sequence_order" of relation "process_subprocesses" does not exist
+LINE 3:                     SET sequence_order = 2
+                                ^
+ [in C:\Users\erkar\OneDrive\Desktop\MTC\project-root\database.py:179]
+2025-11-11 15:17:40,326 ERROR: Error reordering subprocesses: column "sequence_order" of relation "process_subprocesses" does not exist
+LINE 3:                     SET sequence_order = 2
+                                ^
+ [in C:\Users\erkar\OneDrive\Desktop\MTC\project-root\app\api\process_management.py:631]
+2025-11-11 15:17:41,583 ERROR: Database error: column "sequence_order" of relation "process_subprocesses" does not exist
+LINE 3:                     SET sequence_order = 2
+                                ^
+ [in C:\Users\erkar\OneDrive\Desktop\MTC\project-root\database.py:179]
+2025-11-11 15:17:41,583 ERROR: Error reordering subprocesses: column "sequence_order" of relation "process_subprocesses" does not exist
+LINE 3:                     SET sequence_order = 2
+                                ^
+ [in C:\Users\erkar\OneDrive\Desktop\MTC\project-root\app\api\process_management.py:631]
+2025-11-11 15:32:28,811 INFO: Request ID middleware enabled [in C:\Users\erkar\OneDrive\Desktop\MTC\project-root\app\middleware\request_id.py:45]
+2025-11-11 15:32:28,854 INFO: Subprocess cache cleared [in C:\Users\erkar\OneDrive\Desktop\MTC\project-root\app\services\subprocess_service.py:40]
+2025-11-11 15:32:29,247 INFO: Universal Process Framework API blueprints exempted from CSRF protection [in C:\Users\erkar\OneDrive\Desktop\MTC\project-root\app\__init__.py:324]
+2025-11-11 15:32:59,381 ERROR: Database error: column ps.sequence_order does not exist
+LINE 6:                     COALESCE(ps.sequence_order, ps.sequence)...
+                                     ^
+ [in C:\Users\erkar\OneDrive\Desktop\MTC\project-root\database.py:179]
+2025-11-11 15:32:59,382 ERROR: Error retrieving process 304: column ps.sequence_order does not exist
+LINE 6:                     COALESCE(ps.sequence_order, ps.sequence)...
+                                     ^
+ [in C:\Users\erkar\OneDrive\Desktop\MTC\project-root\app\api\process_management.py:257]
+2025-11-11 15:33:02,205 ERROR: Database error: column ps.sequence_order does not exist
+LINE 6:                     COALESCE(ps.sequence_order, ps.sequence)...
+                                     ^
+ [in C:\Users\erkar\OneDrive\Desktop\MTC\project-root\database.py:179]
+2025-11-11 15:33:02,206 ERROR: Error retrieving process 304: column ps.sequence_order does not exist
+LINE 6:                     COALESCE(ps.sequence_order, ps.sequence)...
+                                     ^
+ [in C:\Users\erkar\OneDrive\Desktop\MTC\project-root\app\api\process_management.py:257]
+2025-11-11 15:33:04,204 ERROR: Database error: column ps.sequence_order does not exist
+LINE 6:                     COALESCE(ps.sequence_order, ps.sequence)...
+                                     ^
+ [in C:\Users\erkar\OneDrive\Desktop\MTC\project-root\database.py:179]
+2025-11-11 15:33:04,205 ERROR: Error retrieving process 7: column ps.sequence_order does not exist
+LINE 6:                     COALESCE(ps.sequence_order, ps.sequence)...
+                                     ^
+ [in C:\Users\erkar\OneDrive\Desktop\MTC\project-root\app\api\process_management.py:257]
+2025-11-11 15:33:06,570 ERROR: Database error: column ps.sequence_order does not exist
+LINE 6:                     COALESCE(ps.sequence_order, ps.sequence)...
+                                     ^
+ [in C:\Users\erkar\OneDrive\Desktop\MTC\project-root\database.py:179]
+2025-11-11 15:33:06,571 ERROR: Error retrieving process 304: column ps.sequence_order does not exist
+LINE 6:                     COALESCE(ps.sequence_order, ps.sequence)...
+                                     ^
+ [in C:\Users\erkar\OneDrive\Desktop\MTC\project-root\app\api\process_management.py:257]
+2025-11-11 15:33:08,491 ERROR: Database error: column ps.sequence_order does not exist
+LINE 6:                     COALESCE(ps.sequence_order, ps.sequence)...
+                                     ^
+ [in C:\Users\erkar\OneDrive\Desktop\MTC\project-root\database.py:179]
+2025-11-11 15:33:08,492 ERROR: Error retrieving process 304: column ps.sequence_order does not exist
+LINE 6:                     COALESCE(ps.sequence_order, ps.sequence)...
+                                     ^
+ [in C:\Users\erkar\OneDrive\Desktop\MTC\project-root\app\api\process_management.py:257]
+2025-11-11 15:33:13,143 INFO: Loaded 4 subprocesses into cache [in C:\Users\erkar\OneDrive\Desktop\MTC\project-root\app\services\subprocess_service.py:76]
+2025-11-11 15:33:33,089 ERROR: Database error: column ps.sequence_order does not exist
+LINE 6:                     COALESCE(ps.sequence_order, ps.sequence)...
+                                     ^
+ [in C:\Users\erkar\OneDrive\Desktop\MTC\project-root\database.py:179]
+2025-11-11 15:33:33,090 ERROR: Error retrieving process 304: column ps.sequence_order does not exist
+LINE 6:                     COALESCE(ps.sequence_order, ps.sequence)...
+                                     ^
+ [in C:\Users\erkar\OneDrive\Desktop\MTC\project-root\app\api\process_management.py:257]
+2025-11-11 15:33:53,906 ERROR: Database error: column ps.sequence_order does not exist
+LINE 6:                     COALESCE(ps.sequence_order, ps.sequence)...
+                                     ^
+ [in C:\Users\erkar\OneDrive\Desktop\MTC\project-root\database.py:179]
+2025-11-11 15:33:53,909 ERROR: Error retrieving process 304: column ps.sequence_order does not exist
+LINE 6:                     COALESCE(ps.sequence_order, ps.sequence)...
+                                     ^
+ [in C:\Users\erkar\OneDrive\Desktop\MTC\project-root\app\api\process_management.py:257]
+2025-11-11 15:39:43,255 ERROR: Database error: column ps.sequence_order does not exist
+LINE 6:                     COALESCE(ps.sequence_order, ps.sequence)...
+                                     ^
+ [in C:\Users\erkar\OneDrive\Desktop\MTC\project-root\database.py:179]
+2025-11-11 15:39:43,256 ERROR: Error retrieving process 304: column ps.sequence_order does not exist
+LINE 6:                     COALESCE(ps.sequence_order, ps.sequence)...
+                                     ^
+ [in C:\Users\erkar\OneDrive\Desktop\MTC\project-root\app\api\process_management.py:257]

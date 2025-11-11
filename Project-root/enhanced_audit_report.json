@@ -1,6 +1,6 @@
 {
-  "audit_timestamp": "2025-11-09T14:04:30.452387",
-  "project_root": "Project-root",
+  "audit_timestamp": "2025-11-11T15:39:14.318051",
+  "project_root": "C:\\Users\\erkar\\OneDrive\\Desktop\\MTC\\Project-root",
   "blueprints": [
     {
       "variable": "auth_bp",
@@ -644,6 +644,16 @@
         "GET"
       ],
       "handler": "get_substitute_groups"
+    },
+    {
+      "file": "app\\api\\process_management.py",
+      "blueprint": "process_api_bp",
+      "route": "/processes/metadata",
+      "full_path": "/api/upf/processes/metadata",
+      "methods": [
+        "GET"
+      ],
+      "handler": "get_process_metadata"
     },
     {
       "file": "app\\api\\production_lot.py",
@@ -1321,16 +1331,6 @@
       "handler": "reset_password_stub"
     },
     {
-      "file": "app\\api\\stubs.py",
-      "blueprint": "api_bp",
-      "route": "/stock-receipts",
-      "full_path": "/api/stock-receipts",
-      "methods": [
-        "DELETE"
-      ],
-      "handler": "delete_stock_receipt_stub"
-    },
-    {
       "file": "app\\api\\subprocess_management.py",
       "blueprint": "subprocess_api_bp",
       "route": "/subprocess",
@@ -1439,6 +1439,16 @@
         "GET"
       ],
       "handler": "search_subprocesses"
+    },
+    {
+      "file": "app\\api\\subprocess_management.py",
+      "blueprint": "subprocess_api_bp",
+      "route": "/subprocesses/metadata",
+      "full_path": "/api/upf/subprocesses/metadata",
+      "methods": [
+        "GET"
+      ],
+      "handler": "get_subprocess_metadata"
     },
     {
       "file": "app\\api\\variant_management.py",
@@ -1901,23 +1911,23 @@
     }
   ],
   "route_summary": {
-    "total_routes": 183,
+    "total_routes": 184,
     "by_method": {
-      "GET": 75,
+      "GET": 77,
       "POST": 73,
       "PUT": 18,
       "PATCH": 4,
-      "DELETE": 18
+      "DELETE": 17
     },
     "by_blueprint": {
-      "api_bp": 54,
+      "api_bp": 53,
       "app": 1,
       "files_bp": 2,
       "inventory_alerts_bp": 8,
-      "process_api_bp": 28,
+      "process_api_bp": 29,
       "production_api_bp": 29,
       "reports_api_bp": 5,
-      "subprocess_api_bp": 11,
+      "subprocess_api_bp": 12,
       "variant_api_bp": 19,
       "auth_bp": 8,
       "main_bp": 18
@@ -1956,32 +1966,20 @@
     },
     {
       "file": "static\\js\\process_editor.js",
-      "url": "/api/upf/processes/${this.processId}",
-      "method": "GET",
-      "type": "fetch"
-    },
-    {
-      "file": "static\\js\\process_editor.js",
-      "url": "/api/upf/subprocesses?per_page=1000",
-      "method": "GET",
-      "type": "fetch"
-    },
-    {
-      "file": "static\\js\\process_editor.js",
       "url": "/api/upf/processes/${this.processId}/structure",
       "method": "GET",
       "type": "fetch"
     },
     {
       "file": "static\\js\\process_editor.js",
-      "url": "/api/upf/processes/${this.processId}/subprocesses",
+      "url": "/api/upf/variant_usage",
       "method": "POST",
       "type": "fetch"
     },
     {
       "file": "static\\js\\process_editor.js",
-      "url": "/api/upf/variant_usage",
-      "method": "POST",
+      "url": "/api/upf/processes/${this.processId}/subprocesses/${psId}",
+      "method": "PUT",
       "type": "fetch"
     },
     {
@@ -2028,12 +2026,6 @@
     },
     {
       "file": "static\\js\\process_framework_unified.js",
-      "url": "/api/upf/processes?per_page=1000",
-      "method": "GET",
-      "type": "fetch"
-    },
-    {
-      "file": "static\\js\\process_framework_unified.js",
       "url": "/api/upf/processes/${id}",
       "method": "GET",
       "type": "fetch"
@@ -2046,12 +2038,6 @@
     },
     {
       "file": "static\\js\\process_framework_unified.js",
-      "url": "/api/upf/subprocesses?per_page=1000",
-      "method": "GET",
-      "type": "fetch"
-    },
-    {
-      "file": "static\\js\\process_framework_unified.js",
       "url": "/api/upf/subprocesses/${id}",
       "method": "GET",
       "type": "fetch"
@@ -2060,12 +2046,6 @@
       "file": "static\\js\\process_framework_unified.js",
       "url": "/api/upf/subprocesses/${id}",
       "method": "DELETE",
-      "type": "fetch"
-    },
-    {
-      "file": "static\\js\\process_framework_unified.js",
-      "url": "/api/upf/production-lots?per_page=1000",
-      "method": "GET",
       "type": "fetch"
     },
     {
@@ -2090,6 +2070,30 @@
       "file": "static\\js\\process_framework_unified.js",
       "url": "/api/upf/production-lots?per_page=5",
       "method": "GET",
+      "type": "fetch"
+    },
+    {
+      "file": "static\\js\\process_framework_unified.js",
+      "url": "/api/upf/processes/${processId}/structure",
+      "method": "GET",
+      "type": "fetch"
+    },
+    {
+      "file": "static\\js\\process_framework_unified.js",
+      "url": "/api/upf/processes/${processId}/structure",
+      "method": "GET",
+      "type": "fetch"
+    },
+    {
+      "file": "static\\js\\process_framework_unified.js",
+      "url": "/api/upf/processes/${this.currentEditProcessId}/structure",
+      "method": "GET",
+      "type": "fetch"
+    },
+    {
+      "file": "static\\js\\process_framework_unified.js",
+      "url": "/api/upf/process/${this.currentEditProcessId}/reorder_subprocesses",
+      "method": "POST",
       "type": "fetch"
     },
     {
@@ -2125,6 +2129,132 @@
     {
       "file": "static\\js\\subprocess_library.js",
       "url": "/api/upf/subprocesses/${this.deleteTargetId}",
+      "method": "DELETE",
+      "type": "fetch"
+    },
+    {
+      "file": "static\\js\\upf_api_client.js",
+      "url": "/api/upf/processes",
+      "method": "POST",
+      "type": "fetch"
+    },
+    {
+      "file": "static\\js\\upf_api_client.js",
+      "url": "/api/upf/processes/${id}",
+      "method": "PUT",
+      "type": "fetch"
+    },
+    {
+      "file": "static\\js\\upf_api_client.js",
+      "url": "/api/upf/processes/${id}",
+      "method": "DELETE",
+      "type": "fetch"
+    },
+    {
+      "file": "static\\js\\upf_api_client.js",
+      "url": "/api/upf/processes/metadata",
+      "method": "GET",
+      "type": "fetch"
+    },
+    {
+      "file": "static\\js\\upf_api_client.js",
+      "url": "/api/upf/subprocesses",
+      "method": "POST",
+      "type": "fetch"
+    },
+    {
+      "file": "static\\js\\upf_api_client.js",
+      "url": "/api/upf/subprocesses/${id}",
+      "method": "PUT",
+      "type": "fetch"
+    },
+    {
+      "file": "static\\js\\upf_api_client.js",
+      "url": "/api/upf/subprocesses/${id}",
+      "method": "DELETE",
+      "type": "fetch"
+    },
+    {
+      "file": "static\\js\\upf_api_client.js",
+      "url": "/api/upf/subprocesses/metadata",
+      "method": "GET",
+      "type": "fetch"
+    },
+    {
+      "file": "static\\js\\upf_api_client.js",
+      "url": "/api/upf/production-lots",
+      "method": "POST",
+      "type": "fetch"
+    },
+    {
+      "file": "static\\js\\upf_api_client.js",
+      "url": "/api/upf/production-lots/${id}",
+      "method": "PUT",
+      "type": "fetch"
+    },
+    {
+      "file": "static\\js\\upf_api_client.js",
+      "url": "/api/upf/production-lots/${id}",
+      "method": "DELETE",
+      "type": "fetch"
+    },
+    {
+      "file": "static\\js\\upf_api_client.js",
+      "url": "/api/upf/processes/${processId}/subprocesses",
+      "method": "POST",
+      "type": "fetch"
+    },
+    {
+      "file": "static\\js\\upf_api_client.js",
+      "url": "/api/upf/processes/${processId}/subprocesses/${processSubprocessId}",
+      "method": "DELETE",
+      "type": "fetch"
+    },
+    {
+      "file": "static\\js\\upf_api_client.js",
+      "url": "/api/upf/variant_usage",
+      "method": "POST",
+      "type": "fetch"
+    },
+    {
+      "file": "static\\js\\upf_api_client.js",
+      "url": "/api/upf/variant_usage/${variantUsageId}",
+      "method": "PUT",
+      "type": "fetch"
+    },
+    {
+      "file": "static\\js\\upf_api_client.js",
+      "url": "/api/upf/variant_usage/${variantUsageId}",
+      "method": "DELETE",
+      "type": "fetch"
+    },
+    {
+      "file": "static\\js\\upf_api_client.js",
+      "url": "/api/upf/cost_item",
+      "method": "POST",
+      "type": "fetch"
+    },
+    {
+      "file": "static\\js\\upf_api_client.js",
+      "url": "/api/upf/cost_item/${costItemId}",
+      "method": "PUT",
+      "type": "fetch"
+    },
+    {
+      "file": "static\\js\\upf_api_client.js",
+      "url": "/api/upf/cost_item/${costItemId}",
+      "method": "DELETE",
+      "type": "fetch"
+    },
+    {
+      "file": "static\\js\\upf_api_client.js",
+      "url": "/api/upf/substitute_group",
+      "method": "POST",
+      "type": "fetch"
+    },
+    {
+      "file": "static\\js\\upf_api_client.js",
+      "url": "/api/upf/substitute_group/${groupId}",
       "method": "DELETE",
       "type": "fetch"
     },
@@ -2318,33 +2448,21 @@
         "file": "static\\js\\process_editor.js"
       },
       {
-        "url": "/api/upf/processes/${this.processId}",
-        "method": "GET",
-        "route": "/api/upf/processes/\\d+",
-        "file": "static\\js\\process_editor.js"
-      },
-      {
-        "url": "/api/upf/subprocesses?per_page=1000",
-        "method": "GET",
-        "route": "/api/upf/subprocesses",
-        "file": "static\\js\\process_editor.js"
-      },
-      {
         "url": "/api/upf/processes/${this.processId}/structure",
         "method": "GET",
         "route": "/api/upf/processes/\\d+/structure",
         "file": "static\\js\\process_editor.js"
       },
       {
-        "url": "/api/upf/processes/${this.processId}/subprocesses",
-        "method": "POST",
-        "route": "/api/upf/processes/\\d+/subprocesses",
-        "file": "static\\js\\process_editor.js"
-      },
-      {
         "url": "/api/upf/variant_usage",
         "method": "POST",
         "route": "/api/upf/variant_usage",
+        "file": "static\\js\\process_editor.js"
+      },
+      {
+        "url": "/api/upf/processes/${this.processId}/subprocesses/${psId}",
+        "method": "PUT",
+        "route": "/api/upf/processes/\\d+/subprocesses/\\d+",
         "file": "static\\js\\process_editor.js"
       },
       {
@@ -2390,12 +2508,6 @@
         "file": "static\\js\\process_editor.js"
       },
       {
-        "url": "/api/upf/processes?per_page=1000",
-        "method": "GET",
-        "route": "/api/upf/processes",
-        "file": "static\\js\\process_framework_unified.js"
-      },
-      {
         "url": "/api/upf/processes/${id}",
         "method": "GET",
         "route": "/api/upf/processes/\\d+",
@@ -2408,12 +2520,6 @@
         "file": "static\\js\\process_framework_unified.js"
       },
       {
-        "url": "/api/upf/subprocesses?per_page=1000",
-        "method": "GET",
-        "route": "/api/upf/subprocesses",
-        "file": "static\\js\\process_framework_unified.js"
-      },
-      {
         "url": "/api/upf/subprocesses/${id}",
         "method": "GET",
         "route": "/api/upf/subprocesses/\\d+",
@@ -2423,12 +2529,6 @@
         "url": "/api/upf/subprocesses/${id}",
         "method": "DELETE",
         "route": "/api/upf/subprocesses/\\d+",
-        "file": "static\\js\\process_framework_unified.js"
-      },
-      {
-        "url": "/api/upf/production-lots?per_page=1000",
-        "method": "GET",
-        "route": "/api/upf/production-lots",
         "file": "static\\js\\process_framework_unified.js"
       },
       {
@@ -2453,6 +2553,30 @@
         "url": "/api/upf/production-lots?per_page=5",
         "method": "GET",
         "route": "/api/upf/production-lots",
+        "file": "static\\js\\process_framework_unified.js"
+      },
+      {
+        "url": "/api/upf/processes/${processId}/structure",
+        "method": "GET",
+        "route": "/api/upf/processes/\\d+/structure",
+        "file": "static\\js\\process_framework_unified.js"
+      },
+      {
+        "url": "/api/upf/processes/${processId}/structure",
+        "method": "GET",
+        "route": "/api/upf/processes/\\d+/structure",
+        "file": "static\\js\\process_framework_unified.js"
+      },
+      {
+        "url": "/api/upf/processes/${this.currentEditProcessId}/structure",
+        "method": "GET",
+        "route": "/api/upf/processes/\\d+/structure",
+        "file": "static\\js\\process_framework_unified.js"
+      },
+      {
+        "url": "/api/upf/process/${this.currentEditProcessId}/reorder_subprocesses",
+        "method": "POST",
+        "route": "/api/upf/process/\\d+/reorder_subprocesses",
         "file": "static\\js\\process_framework_unified.js"
       },
       {
@@ -2490,6 +2614,120 @@
         "method": "DELETE",
         "route": "/api/upf/subprocesses/\\d+",
         "file": "static\\js\\subprocess_library.js"
+      },
+      {
+        "url": "/api/upf/processes",
+        "method": "POST",
+        "route": "/api/upf/processes",
+        "file": "static\\js\\upf_api_client.js"
+      },
+      {
+        "url": "/api/upf/processes/${id}",
+        "method": "PUT",
+        "route": "/api/upf/processes/\\d+",
+        "file": "static\\js\\upf_api_client.js"
+      },
+      {
+        "url": "/api/upf/processes/${id}",
+        "method": "DELETE",
+        "route": "/api/upf/processes/\\d+",
+        "file": "static\\js\\upf_api_client.js"
+      },
+      {
+        "url": "/api/upf/processes/metadata",
+        "method": "GET",
+        "route": "/api/upf/processes/metadata",
+        "file": "static\\js\\upf_api_client.js"
+      },
+      {
+        "url": "/api/upf/subprocesses",
+        "method": "POST",
+        "route": "/api/upf/subprocesses",
+        "file": "static\\js\\upf_api_client.js"
+      },
+      {
+        "url": "/api/upf/subprocesses/${id}",
+        "method": "PUT",
+        "route": "/api/upf/subprocesses/\\d+",
+        "file": "static\\js\\upf_api_client.js"
+      },
+      {
+        "url": "/api/upf/subprocesses/${id}",
+        "method": "DELETE",
+        "route": "/api/upf/subprocesses/\\d+",
+        "file": "static\\js\\upf_api_client.js"
+      },
+      {
+        "url": "/api/upf/subprocesses/metadata",
+        "method": "GET",
+        "route": "/api/upf/subprocesses/metadata",
+        "file": "static\\js\\upf_api_client.js"
+      },
+      {
+        "url": "/api/upf/production-lots",
+        "method": "POST",
+        "route": "/api/upf/production-lots",
+        "file": "static\\js\\upf_api_client.js"
+      },
+      {
+        "url": "/api/upf/processes/${processId}/subprocesses",
+        "method": "POST",
+        "route": "/api/upf/processes/\\d+/subprocesses",
+        "file": "static\\js\\upf_api_client.js"
+      },
+      {
+        "url": "/api/upf/processes/${processId}/subprocesses/${processSubprocessId}",
+        "method": "DELETE",
+        "route": "/api/upf/processes/\\d+/subprocesses/\\d+",
+        "file": "static\\js\\upf_api_client.js"
+      },
+      {
+        "url": "/api/upf/variant_usage",
+        "method": "POST",
+        "route": "/api/upf/variant_usage",
+        "file": "static\\js\\upf_api_client.js"
+      },
+      {
+        "url": "/api/upf/variant_usage/${variantUsageId}",
+        "method": "PUT",
+        "route": "/api/upf/variant_usage/\\d+",
+        "file": "static\\js\\upf_api_client.js"
+      },
+      {
+        "url": "/api/upf/variant_usage/${variantUsageId}",
+        "method": "DELETE",
+        "route": "/api/upf/variant_usage/\\d+",
+        "file": "static\\js\\upf_api_client.js"
+      },
+      {
+        "url": "/api/upf/cost_item",
+        "method": "POST",
+        "route": "/api/upf/cost_item",
+        "file": "static\\js\\upf_api_client.js"
+      },
+      {
+        "url": "/api/upf/cost_item/${costItemId}",
+        "method": "PUT",
+        "route": "/api/upf/cost_item/\\d+",
+        "file": "static\\js\\upf_api_client.js"
+      },
+      {
+        "url": "/api/upf/cost_item/${costItemId}",
+        "method": "DELETE",
+        "route": "/api/upf/cost_item/\\d+",
+        "file": "static\\js\\upf_api_client.js"
+      },
+      {
+        "url": "/api/upf/substitute_group",
+        "method": "POST",
+        "route": "/api/upf/substitute_group",
+        "file": "static\\js\\upf_api_client.js"
+      },
+      {
+        "url": "/api/upf/substitute_group/${groupId}",
+        "method": "DELETE",
+        "route": "/api/upf/substitute_group/\\d+",
+        "file": "static\\js\\upf_api_client.js"
       },
       {
         "url": "/api/upf/reports/metrics",
@@ -2926,24 +3164,6 @@
           "GET"
         ],
         "handler": "search_processes",
-        "file": "app\\api\\process_management.py",
-        "message": "Route defined but not called from frontend"
-      },
-      {
-        "route": "/api/upf/processes/<int:process_id>/subprocesses/<int:ps_id>",
-        "methods": [
-          "PUT"
-        ],
-        "handler": "update_process_subprocess",
-        "file": "app\\api\\process_management.py",
-        "message": "Route defined but not called from frontend"
-      },
-      {
-        "route": "/api/upf/processes/<int:process_id>/subprocesses/<int:ps_id>",
-        "methods": [
-          "DELETE"
-        ],
-        "handler": "remove_subprocess_from_process",
         "file": "app\\api\\process_management.py",
         "message": "Route defined but not called from frontend"
       },
@@ -3524,24 +3744,6 @@
         "message": "Route defined but not called from frontend"
       },
       {
-        "route": "/api/upf/cost_item/<int:cost_id>",
-        "methods": [
-          "PUT"
-        ],
-        "handler": "update_cost_item",
-        "file": "app\\api\\variant_management.py",
-        "message": "Route defined but not called from frontend"
-      },
-      {
-        "route": "/api/upf/cost_item/<int:cost_id>",
-        "methods": [
-          "DELETE"
-        ],
-        "handler": "remove_cost_item",
-        "file": "app\\api\\variant_management.py",
-        "message": "Route defined but not called from frontend"
-      },
-      {
         "route": "/api/upf/variant/<int:item_id>/supplier_pricing",
         "methods": [
           "POST"
@@ -3727,6 +3929,24 @@
       }
     ],
     "method_mismatches": [
+      {
+        "url": "/api/upf/production-lots/${id}",
+        "method": "PUT",
+        "available_methods": [
+          "GET"
+        ],
+        "file": "static\\js\\upf_api_client.js",
+        "message": "Method PUT not allowed, available: GET"
+      },
+      {
+        "url": "/api/upf/production-lots/${id}",
+        "method": "DELETE",
+        "available_methods": [
+          "GET"
+        ],
+        "file": "static\\js\\upf_api_client.js",
+        "message": "Method DELETE not allowed, available: GET"
+      },
       {
         "url": "/api/low-stock-report",
         "method": "GET",
@@ -4310,7 +4530,9 @@
       "tests\\api\\test_inventory_alerts.py",
       "tests\\api\\test_items.py",
       "tests\\api\\test_monitoring.py",
+      "tests\\api\\test_process_metadata.py",
       "tests\\api\\test_purchase_orders.py",
+      "tests\\api\\test_subprocess_metadata.py",
       "tests\\api\\test_suppliers.py",
       "tests\\auth\\test_routes.py",
       "tests\\services\\test_import_service.py",
@@ -4321,7 +4543,7 @@
       "tests\\services\\test_variant_service.py",
       "tests\\ui\\test_upf_pages.py"
     ],
-    "total_tests": 139,
+    "total_tests": 142,
     "coverage_summary": {
       "pytest_configured": true,
       "upf_alerts_tested": true
@@ -4487,13 +4709,18 @@
         "minified": false
       },
       {
+        "path": "static\\js\\performance_utils.js",
+        "size": 9681,
+        "minified": false
+      },
+      {
         "path": "static\\js\\process_editor.js",
-        "size": 35743,
+        "size": 46577,
         "minified": false
       },
       {
         "path": "static\\js\\process_framework_unified.js",
-        "size": 41660,
+        "size": 70747,
         "minified": false
       },
       {
@@ -4517,6 +4744,11 @@
         "minified": false
       },
       {
+        "path": "static\\js\\upf_api_client.js",
+        "size": 15440,
+        "minified": false
+      },
+      {
         "path": "static\\js\\upf_reports.js",
         "size": 7766,
         "minified": false
@@ -4527,28 +4759,28 @@
         "minified": false
       }
     ],
-    "total_size": 358174,
+    "total_size": 423216,
     "minified_count": 1
   },
   "incomplete_functions": [],
   "duplicate_functions": [],
   "statistics": {
-    "total_routes": 183,
-    "total_api_calls": 61,
-    "matched_routes": 56,
+    "total_routes": 184,
+    "total_api_calls": 81,
+    "matched_routes": 74,
     "missing_backend": 0,
-    "method_mismatches": 3,
-    "unused_backend": 121,
+    "method_mismatches": 5,
+    "unused_backend": 117,
     "upf_overall_score": 100.0,
     "upf_process_bom_score": 100.0,
     "upf_production_lot_score": 100.0,
     "upf_alert_technical_score": 100.0,
     "upf_data_flow_score": 100.0,
-    "test_files": 20,
-    "total_tests": 139,
+    "test_files": 22,
+    "total_tests": 142,
     "documentation_score": 100.0,
     "security_issues": 0,
-    "static_assets": 22,
+    "static_assets": 24,
     "errors": 0
   },
   "errors": []

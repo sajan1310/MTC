@@ -185,6 +185,18 @@ def create_process():
     except ProcessValidationError as e:
         current_app.logger.warning(f"[CREATE PROCESS] Validation error: {e}")
         return APIResponse.error("validation_error", str(e), 400)
+    except psycopg2.errors.CheckViolation as e:
+        # Likely caused by enum/check constraints for class/status
+        current_app.logger.warning(
+            f"[CREATE PROCESS] Check constraint violation: {e}", exc_info=True
+        )
+        # Provide schema-aware guidance
+        return APIResponse.error(
+            "validation_error",
+            "Invalid process class or status for current database schema."
+            " Use a valid class and status.",
+            400,
+        )
     except psycopg2.errors.UniqueViolation:
         current_app.logger.warning(
             f"[CREATE PROCESS] Duplicate process name: {data.get('name')}"
@@ -523,7 +535,25 @@ def update_process_subprocess(process_id, ps_id):
             updates = []
             params = []
             if "order" in data or "sequence_order" in data:
-                updates.append("sequence_order = %s")
+                # Detect correct sequence column name (sequence vs sequence_order)
+                cur.execute(
+                    """
+                    SELECT column_name
+                    FROM information_schema.columns
+                    WHERE table_name = 'process_subprocesses'
+                      AND column_name IN ('sequence', 'sequence_order')
+                    """
+                )
+                rows = cur.fetchall() or []
+                available = {r[0] if not isinstance(r, dict) else r.get("column_name") for r in rows}
+                if "sequence_order" in available:
+                    seq_col = "sequence_order"
+                elif "sequence" in available:
+                    seq_col = "sequence"
+                else:
+                    seq_col = "sequence"  # safe legacy default
+
+                updates.append(f"{seq_col} = %s")
                 params.append(int(data.get("order") or data.get("sequence_order") or 0))
             if "custom_name" in data:
                 updates.append("custom_name = %s")
@@ -920,3 +950,62 @@ def not_found(error):
 def internal_error(error):
     current_app.logger.error(f"Internal server error: {error}")
     return APIResponse.error("internal_error", "Internal server error", 500)
+
+
+# ===== METADATA/HELPERS (UX support) =====
+
+
+@process_api_bp.route("/processes/metadata", methods=["GET"])
+@login_required
+def get_process_metadata():
+    """Return schema-aware allowed values for classes and statuses.
+
+    Helps the frontend present correct dropdowns and defaults.
+    """
+    try:
+        # Detect schema
+        with get_conn(cursor_factory=RealDictCursor) as (conn, cur):
+            cur.execute(
+                "SELECT column_name FROM information_schema.columns WHERE table_name='processes'"
+            )
+            cols_raw = cur.fetchall() or []
+            cols = { (r.get("column_name") if isinstance(r, dict) else r[0]) for r in cols_raw }
+
+        is_new_schema = "class" in cols
+
+        if is_new_schema:
+            classes = [
+                "assembly",
+                "manufacturing",
+                "packaging",
+                "maintenance",
+                "service",
+                "procurement",
+            ]
+            statuses = ["draft", "active", "archived", "inactive"]
+            default_status = "draft"
+        else:
+            classes = [
+                "Manufacturing",
+                "Assembly",
+                "Packaging",
+                "Testing",
+                "Logistics",
+            ]
+            statuses = ["Draft", "Active", "Inactive"]
+            default_status = "Draft"
+
+        display_classes = [c.capitalize() if c.islower() else c for c in classes]
+
+        return APIResponse.success(
+            {
+                "schema": "new" if is_new_schema else "legacy",
+                "classes": classes,
+                "classes_display": display_classes,
+                "statuses": statuses,
+                "default_status": default_status,
+            }
+        )
+    except Exception as e:
+        current_app.logger.error(f"Error building process metadata: {e}", exc_info=True)
+        return APIResponse.error("internal_error", "Failed to fetch metadata", 500)

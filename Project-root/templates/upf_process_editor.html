@@ -19,13 +19,14 @@
 
     /* Left Panel - Variant Search (40%) */
     .variant-search-panel {
-        width: 40%;
+        width: 35%; /* moved to right side */
         background: white;
         border-radius: 8px;
         box-shadow: 0 2px 8px rgba(0,0,0,0.1);
         display: flex;
         flex-direction: column;
         overflow: hidden;
+        position: relative;
     }
 
     .panel-header {
@@ -84,6 +85,36 @@
         flex: 1;
         overflow-y: auto;
         padding: 15px;
+    }
+
+    /* Selected Variant chip (draggable) */
+    .selected-variant-container {
+        padding: 14px 20px;
+        border-top: 2px solid #e0e0e0;
+        background: #fff;
+    }
+    .selected-variant-label {
+        color: #666;
+        font-size: 12px;
+        margin-bottom: 8px;
+        display: block;
+    }
+    .selected-variant-chip {
+        display: none; /* shown when variant is selected */
+        align-items: center;
+        gap: 10px;
+        background: #e8f5e9;
+        color: #2e7d32;
+        border: 1px solid #a5d6a7;
+        border-radius: 999px;
+        padding: 8px 12px;
+        font-size: 13px;
+        user-select: none;
+        cursor: grab;
+    }
+    .selected-variant-chip.dragging {
+        opacity: 0.6;
+        cursor: grabbing;
     }
 
     .variant-card {
@@ -154,11 +185,14 @@
 
     /* Right Panel - Process Builder (60%) */
     .process-builder-panel {
-        width: 60%;
+        width: 65%;
         display: flex;
         flex-direction: column;
         gap: 20px;
     }
+
+    /* Make variant search card sticky on scroll */
+    .variant-search-panel .panel-header { position: sticky; top: 0; z-index: 5; }
 
     .process-header-card {
         background: white;
@@ -602,6 +636,47 @@
         color: #c62828;
         border: 1px solid #ef9a9a;
     }
+
+    /* Modal Tabs for subprocess selection */
+    .modal-tabs {
+        display: flex;
+        gap: 8px;
+        margin-bottom: 15px;
+        border-bottom: 1px solid #e0e0e0;
+    }
+    .modal-tab {
+        padding: 8px 12px;
+        border: 1px solid #e0e0e0;
+        border-bottom: none;
+        border-radius: 4px 4px 0 0;
+        background: #f7f7f7;
+        cursor: pointer;
+        font-size: 13px;
+    }
+    .modal-tab.active {
+        background: #fff;
+        border-color: #bdbdbd;
+        font-weight: 600;
+    }
+    .tab-panel { display: none; }
+    .tab-panel.active { display: block; }
+    .sp-list {
+        max-height: 340px;
+        overflow-y: auto;
+        border: 1px solid #eee;
+        border-radius: 6px;
+    }
+    .sp-item {
+        display: flex;
+        justify-content: space-between;
+        padding: 10px 12px;
+        border-bottom: 1px solid #f0f0f0;
+        align-items: center;
+    }
+    .sp-item:last-child { border-bottom: none; }
+    .sp-meta { color: #666; font-size: 12px; }
+    .sp-name { font-weight: 600; color: #333; }
+    .sp-actions .btn { padding: 6px 10px; font-size: 12px; }
 </style>
 {% endblock %}
 
@@ -609,41 +684,7 @@
 <div id="alert-container"></div>
 
 <div class="editor-container">
-    <!-- Left Panel: Variant Search -->
-    <div class="variant-search-panel">
-        <div class="panel-header">
-            <h2>🔍 Variant Search (Select2)</h2>
-            <div class="search-box">
-                <select id="variant-search-select" style="width: 100%;">
-                    <option></option>
-                </select>
-                <small style="color: #666; margin-top: 5px; display: block;">
-                    💡 Type to search from 7000+ variants. Results load as you type.
-                </small>
-            </div>
-            <div class="filter-row" style="display: none;">
-                <!-- Keeping for future use if needed -->
-                <select id="category-filter">
-                    <option value="">All Categories</option>
-                </select>
-                <select id="stock-filter">
-                    <option value="">All Stock</option>
-                    <option value="in_stock">In Stock</option>
-                    <option value="low_stock">Low Stock</option>
-                </select>
-            </div>
-        </div>
-        <div class="variant-info" style="padding: 20px; background: #f9f9f9;">
-            <p style="margin: 0; font-size: 14px; color: #666;">
-                <strong>How to use:</strong><br>
-                1. Start typing in the search box above<br>
-                2. Select a variant from the dropdown<br>
-                3. Drag the selected variant to a subprocess
-            </p>
-        </div>
-    </div>
-
-    <!-- Right Panel: Process Builder -->
+    <!-- Left Panel: Process Builder (moved first) -->
     <div class="process-builder-panel">
         <!-- Process Header -->
         <div class="process-header-card">
@@ -693,6 +734,46 @@
             </div>
         </div>
     </div>
+
+    <!-- Right Panel: Variant Search (moved to right side) -->
+    <div class="variant-search-panel">
+        <div class="panel-header">
+            <h2>🔍 Variant Search (Select2)</h2>
+            <div class="search-box">
+                <select id="variant-search-select" style="width: 100%;">
+                    <option></option>
+                </select>
+                <small style="color: #666; margin-top: 5px; display: block;">
+                    💡 Type to search from 7000+ variants. Results load as you type.
+                </small>
+            </div>
+            <div class="filter-row" style="display: none;">
+                <!-- Keeping for future use if needed -->
+                <select id="category-filter">
+                    <option value="">All Categories</option>
+                </select>
+                <select id="stock-filter">
+                    <option value="">All Stock</option>
+                    <option value="in_stock">In Stock</option>
+                    <option value="low_stock">Low Stock</option>
+                </select>
+            </div>
+        </div>
+        <div class="variant-info" style="padding: 20px; background: #f9f9f9;">
+            <p style="margin: 0; font-size: 14px; color: #666;">
+                <strong>How to use:</strong><br>
+                1. Start typing in the search box above<br>
+                2. Select a variant from the dropdown<br>
+                3. Drag the green chip below onto a subprocess, or use the ➕ Variant button in a subprocess
+            </p>
+        </div>
+        <div class="selected-variant-container">
+            <span class="selected-variant-label">Selected variant (drag onto a subprocess)</span>
+            <div id="selected-variant-chip" class="selected-variant-chip" draggable="true">
+                <span id="selected-variant-chip-name">No variant selected</span>
+            </div>
+        </div>
+    </div>
 </div>
 
 <!-- Add Subprocess Modal -->
@@ -702,23 +783,47 @@
             <h2>Add Subprocess</h2>
             <button class="modal-close" onclick="processEditor.closeSubprocessModal()">&times;</button>
         </div>
-        <form id="subprocess-form" onsubmit="processEditor.handleAddSubprocess(event)">
+        <div class="modal-tabs">
+            <div class="modal-tab active" data-tab="existing" onclick="processEditor.switchSubprocessTab('existing')">Select Existing</div>
+            <div class="modal-tab" data-tab="create" onclick="processEditor.switchSubprocessTab('create')">Create New</div>
+        </div>
+        <div class="tab-panel active" id="tab-existing">
             <div class="form-group">
-                <label for="subprocess-select">Select Subprocess Template</label>
-                <select id="subprocess-select" required>
-                    <option value="">Loading...</option>
-                </select>
+                <label for="sp-search">Search Templates</label>
+                <input type="text" id="sp-search" placeholder="Type to filter (name/category)..." oninput="processEditor.filterSubprocessList()">
             </div>
-            <div class="form-group">
-                <label for="custom-name">Custom Name (Optional)</label>
-                <input type="text" id="custom-name" placeholder="Override default name...">
+            <div class="sp-list" id="sp-list">
+                <!-- populated via JS -->
             </div>
-            <div class="modal-actions">
-                <button type="button" class="btn btn-secondary"
-                        onclick="processEditor.closeSubprocessModal()">Cancel</button>
-                <button type="submit" class="btn btn-primary">Add Subprocess</button>
-            </div>
-        </form>
+        </div>
+        <div class="tab-panel" id="tab-create">
+            <form id="create-subprocess-form" onsubmit="processEditor.handleCreateSubprocessTemplate(event)">
+                <div class="form-group">
+                    <label for="new-sp-name">Name *</label>
+                    <input type="text" id="new-sp-name" required>
+                </div>
+                <div class="form-group">
+                    <label for="new-sp-category">Category</label>
+                    <input type="text" id="new-sp-category" placeholder="e.g., Assembly">
+                </div>
+                <div class="form-group">
+                    <label for="new-sp-description">Description</label>
+                    <input type="text" id="new-sp-description" placeholder="Short description">
+                </div>
+                <div class="form-group">
+                    <label for="new-sp-time">Estimated Time (minutes)</label>
+                    <input type="number" id="new-sp-time" min="0" step="1" value="0">
+                </div>
+                <div class="form-group">
+                    <label for="new-sp-cost">Labor Cost</label>
+                    <input type="number" id="new-sp-cost" min="0" step="0.01" value="0">
+                </div>
+                <div class="modal-actions">
+                    <button type="button" class="btn btn-secondary" onclick="processEditor.closeSubprocessModal()">Cancel</button>
+                    <button type="submit" class="btn btn-primary">Create Template</button>
+                </div>
+            </form>
+        </div>
     </div>
 </div>
 
@@ -752,6 +857,64 @@
                 <button type="button" class="btn btn-secondary"
                         onclick="processEditor.closeVariantModal()">Cancel</button>
                 <button type="submit" class="btn btn-primary">Add Variant</button>
+            </div>
+        </form>
+    </div>
+</div>
+
+<!-- Edit Subprocess Template Modal -->
+<div id="edit-subprocess-modal" class="modal">
+    <div class="modal-content">
+        <div class="modal-header">
+            <h2>Edit Subprocess Template</h2>
+            <button class="modal-close" onclick="processEditor.closeEditSubprocessModal()">&times;</button>
+        </div>
+        <form id="edit-subprocess-form" onsubmit="processEditor.handleEditSubprocessSubmit(event)">
+            <input type="hidden" id="edit-subprocess-id">
+            <div class="form-group">
+                <label for="edit-subprocess-name">Name</label>
+                <input type="text" id="edit-subprocess-name" required>
+            </div>
+            <div class="form-group">
+                <label for="edit-subprocess-category">Category</label>
+                <input type="text" id="edit-subprocess-category">
+            </div>
+            <div class="form-group">
+                <label for="edit-subprocess-description">Description</label>
+                <input type="text" id="edit-subprocess-description">
+            </div>
+            <div class="form-group">
+                <label for="edit-estimated-time">Estimated Time (minutes)</label>
+                <input type="number" id="edit-estimated-time" min="0" step="1">
+            </div>
+            <div class="form-group">
+                <label for="edit-labor-cost">Labor Cost</label>
+                <input type="number" id="edit-labor-cost" min="0" step="0.01">
+            </div>
+            <div class="modal-actions">
+                <button type="button" class="btn btn-secondary" onclick="processEditor.closeEditSubprocessModal()">Cancel</button>
+                <button type="submit" class="btn btn-primary">Save</button>
+            </div>
+        </form>
+    </div>
+    </div>
+
+<!-- Rename Subprocess Instance Modal -->
+<div id="rename-subprocess-modal" class="modal">
+    <div class="modal-content">
+        <div class="modal-header">
+            <h2>Rename Subprocess (Instance)</h2>
+            <button class="modal-close" onclick="processEditor.closeRenameSubprocessModal()">&times;</button>
+        </div>
+        <form id="rename-subprocess-form" onsubmit="processEditor.handleRenameSubprocessSubmit(event)">
+            <input type="hidden" id="rename-ps-id">
+            <div class="form-group">
+                <label for="rename-custom-name">Custom Name</label>
+                <input type="text" id="rename-custom-name" placeholder="e.g., Wheel Assembly - Stage 1">
+            </div>
+            <div class="modal-actions">
+                <button type="button" class="btn btn-secondary" onclick="processEditor.closeRenameSubprocessModal()">Cancel</button>
+                <button type="submit" class="btn btn-primary">Save</button>
             </div>
         </form>
     </div>
@@ -874,6 +1037,8 @@
 </div>
 
 <script src="https://cdn.jsdelivr.net/npm/sortablejs@1.15.0/Sortable.min.js"></script>
+<script src="{{ url_for('static', filename='js/upf_api_client.js') }}"></script>
+<script src="{{ url_for('static', filename='js/performance_utils.js') }}"></script>
 <script src="{{ url_for('static', filename='js/variant_search.js') }}"></script>
 <script src="{{ url_for('static', filename='js/process_editor.js') }}"></script>
 <script src="{{ url_for('static', filename='js/cost_calculator.js') }}"></script>

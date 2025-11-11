@@ -91,18 +91,75 @@ class ProcessService:
             conn,
             cur,
         ):
+            # Detect processes table schema to support both legacy and new migrations
             cur.execute(
-                """
-                INSERT INTO processes (name, description, process_class, created_by, status)
+                "SELECT column_name FROM information_schema.columns WHERE table_name='processes'"
+            )
+            cols_raw = cur.fetchall() or []
+            cols = { (c["column_name"] if isinstance(c, dict) else c[0]) for c in cols_raw }
+
+            # Determine column names
+            class_col = "class" if "class" in cols else "process_class"
+            user_col = "user_id" if "user_id" in cols else "created_by"
+
+            # Determine appropriate status casing/value based on schema
+            # New universal migration uses lowercase allowed values ('draft','active','archived','inactive')
+            # Legacy migration uses Title-case subset ('Active','Inactive','Draft')
+            raw_status = validated_data["status"]
+            if class_col == "class":  # new schema
+                status_map_new = {
+                    "active": "active",
+                    "inactive": "inactive",
+                    "draft": "draft",
+                    "archived": "archived",
+                }
+                status_value = status_map_new.get(raw_status.lower(), "active")
+            else:  # legacy schema expects Title case subset
+                legacy_status_map = {
+                    "active": "Active",
+                    "inactive": "Inactive",
+                    "draft": "Draft",
+                }
+                status_value = legacy_status_map.get(raw_status.lower(), "Active")
+
+            # Determine appropriate class value based on schema
+            if class_col == "class":
+                # New schema expects lowercase values validated by ProcessValidator
+                class_value = validated_data["process_class"].lower()
+            else:
+                # Legacy schema expects Title-cased values with specific allowed set
+                lc = validated_data["process_class"].lower()
+                legacy_map = {
+                    "assembly": "Assembly",
+                    "manufacturing": "Manufacturing",
+                    "packaging": "Packaging",
+                    "testing": "Testing",
+                    "logistics": "Logistics",
+                }
+                class_value = legacy_map.get(lc, "Assembly")
+
+            # Debug logging to trace adaptive values
+            try:
+                (current_app.logger if has_app_context() else logging.getLogger(__name__)).debug(
+                    f"[CREATE PROCESS] schema cols={sorted(list(cols))} class_col={class_col} user_col={user_col} "
+                    f"mapped_class_value='{class_value}' mapped_status='{status_value}'"
+                )
+            except Exception:
+                pass
+
+            # Build and execute adaptive INSERT
+            cur.execute(
+                f"""
+                INSERT INTO processes (name, description, {class_col}, {user_col}, status)
                 VALUES (%s, %s, %s, %s, %s)
                 RETURNING *
             """,
                 (
                     validated_data["name"],
                     validated_data["description"],
-                    validated_data["process_class"],
+                    class_value,
                     validated_data["user_id"],
-                    validated_data["status"],
+                    status_value,
                 ),
             )
 
@@ -147,6 +204,24 @@ class ProcessService:
             if not process_data:
                 return None
 
+            # Determine which sequence column exists (sequence vs sequence_order)
+            cur.execute(
+                """
+                SELECT column_name
+                FROM information_schema.columns
+                WHERE table_name = 'process_subprocesses'
+                  AND column_name IN ('sequence', 'sequence_order')
+                """
+            )
+            _rows = cur.fetchall() or []
+            _avail = {r.get("column_name") for r in _rows if isinstance(r, dict)}
+            if "sequence_order" in _avail:
+                _seq_expr = "ps.sequence_order"
+            elif "sequence" in _avail:
+                _seq_expr = "ps.sequence"
+            else:
+                _seq_expr = "ps.sequence"  # legacy-safe default
+
             # Get subprocesses
             cur.execute(
                 """
@@ -154,14 +229,14 @@ class ProcessService:
                     ps.id as process_subprocess_id,
                     ps.subprocess_id,
                     ps.custom_name,
-                    ps.sequence as sequence_order,
+                    {seq_expr} as sequence_order,
                     s.name as subprocess_name,
                     s.description as subprocess_description
                 FROM process_subprocesses ps
                 JOIN subprocesses s ON s.id = ps.subprocess_id
                 WHERE ps.process_id = %s
-                ORDER BY ps.id
-            """,
+                ORDER BY {seq_expr}, ps.id
+            """.format(seq_expr=_seq_expr),
                 (process_id,),
             )
 
@@ -200,12 +275,29 @@ class ProcessService:
             conn,
             cur,
         ):
+            # Determine which sequence column exists (sequence vs sequence_order)
+            cur.execute(
+                """
+                SELECT column_name
+                FROM information_schema.columns
+                WHERE table_name = 'process_subprocesses'
+                  AND column_name IN ('sequence', 'sequence_order')
+                """
+            )
+            _rows2 = cur.fetchall() or []
+            _avail2 = {r.get("column_name") for r in _rows2 if isinstance(r, dict)}
+            if "sequence_order" in _avail2:
+                _seq_expr2 = "ps.sequence_order"
+            elif "sequence" in _avail2:
+                _seq_expr2 = "ps.sequence"
+            else:
+                _seq_expr2 = "ps.sequence"  # legacy-safe default
             # OPTIMIZATION 1: Batch load all subprocess-related data in a single query
             # Using CTEs and JSON aggregation to reduce N+1 queries
             cur.execute(
                 """
                 WITH subprocess_ids AS (
-                    SELECT ps.id as ps_id, ps.subprocess_id, ps.custom_name, ps.sequence as sequence_order
+                    SELECT ps.id as ps_id, ps.subprocess_id, ps.custom_name, {seq_expr} as sequence_order
                     FROM process_subprocesses ps
                     WHERE ps.process_id = %s
                 ),
@@ -308,7 +400,7 @@ class ProcessService:
                 LEFT JOIN groups_data gd ON gd.process_subprocess_id = si.ps_id
                 LEFT JOIN timing_data td ON td.process_subprocess_id = si.ps_id
                 ORDER BY si.sequence_order
-                """,
+                """.format(seq_expr=_seq_expr2),
                 (process_id,),
             )
 
@@ -473,19 +565,30 @@ class ProcessService:
         """
         offset = (page - 1) * per_page
 
-        conditions = ["created_by = %s"]
-        params = [user_id]
-
-        if status:
-            conditions.append("status = %s")
-            params.append(status)
-
-        where_clause = " AND ".join(conditions)
-
         with database.get_conn(cursor_factory=psycopg2.extras.RealDictCursor) as (
             conn,
             cur,
         ):
+            # Adaptive schema detection for user/status casing
+            cur.execute(
+                "SELECT column_name FROM information_schema.columns WHERE table_name='processes'"
+            )
+            cols_raw = cur.fetchall() or []
+            cols = { (c["column_name"] if isinstance(c, dict) else c[0]) for c in cols_raw }
+            user_col = "user_id" if "user_id" in cols else "created_by"
+            # If class column exists, it's the newer lowercase schema (status values lowercase)
+            class_is_lower = "class" in cols
+
+            conditions = [f"{user_col} = %s"]
+            params = [user_id]
+
+            if status:
+                normalized_status = status.lower() if class_is_lower else status.title()
+                conditions.append("status = %s")
+                params.append(normalized_status)
+
+            where_clause = " AND ".join(conditions)
+
             # Get total count
             cur.execute(
                 f"""
@@ -552,32 +655,60 @@ class ProcessService:
         Returns:
             Updated process or None if not found
         """
-        updates = []
-        params = []
-
-        if name is not None:
-            updates.append("name = %s")
-            params.append(name)
-        if description is not None:
-            updates.append("description = %s")
-            params.append(description)
-        if process_class is not None:
-            updates.append("class = %s")
-            params.append(process_class)
-        if status is not None:
-            updates.append("status = %s")
-            params.append(status)
-
-        if not updates:
-            return ProcessService.get_process(process_id)
-
-        updates.append("updated_at = CURRENT_TIMESTAMP")
-        params.append(process_id)
-
         with database.get_conn(cursor_factory=psycopg2.extras.RealDictCursor) as (
             conn,
             cur,
         ):
+            # Detect schema columns
+            cur.execute(
+                "SELECT column_name FROM information_schema.columns WHERE table_name='processes'"
+            )
+            cols_raw = cur.fetchall() or []
+            cols = { (c["column_name"] if isinstance(c, dict) else c[0]) for c in cols_raw }
+            class_col = "class" if "class" in cols else "process_class"
+
+            # Normalize incoming values per schema
+            normalized_class = None
+            if process_class is not None:
+                if class_col == "class":
+                    normalized_class = str(process_class).lower()
+                else:
+                    lc = str(process_class).lower()
+                    legacy_map = {
+                        "assembly": "Assembly",
+                        "manufacturing": "Manufacturing",
+                        "packaging": "Packaging",
+                        "testing": "Testing",
+                        "logistics": "Logistics",
+                    }
+                    normalized_class = legacy_map.get(lc, "Assembly")
+
+            normalized_status = None
+            if status is not None:
+                normalized_status = status.lower() if class_col == "class" else status.title()
+
+            updates = []
+            params = []
+
+            if name is not None:
+                updates.append("name = %s")
+                params.append(name)
+            if description is not None:
+                updates.append("description = %s")
+                params.append(description)
+            if normalized_class is not None:
+                updates.append(f"{class_col} = %s")
+                params.append(normalized_class)
+            if normalized_status is not None:
+                updates.append("status = %s")
+                params.append(normalized_status)
+
+            if not updates:
+                return ProcessService.get_process(process_id)
+
+            updates.append("updated_at = CURRENT_TIMESTAMP")
+            params.append(process_id)
+
             cur.execute(
                 f"""
                 UPDATE processes
@@ -687,18 +818,43 @@ class ProcessService:
             conn,
             cur,
         ):
+            # Detect schema variation: sequence vs sequence_order
             cur.execute(
                 """
+                SELECT column_name
+                FROM information_schema.columns
+                WHERE table_name = 'process_subprocesses'
+                  AND column_name IN ('sequence', 'sequence_order')
+                """
+            )
+            rows = cur.fetchall() or []
+
+            # Choose the correct sequence column name with safe fallback
+            available = {r.get("column_name") for r in rows if isinstance(r, dict)}
+            if "sequence_order" in available:
+                seq_col = "sequence_order"
+            elif "sequence" in available:
+                seq_col = "sequence"
+            else:
+                # Safer default to legacy 'sequence' to avoid hitting a non-existent column
+                seq_col = "sequence"
+
+            # Build INSERT with detected column name
+            query = f"""
                 INSERT INTO process_subprocesses (
-                    process_id, subprocess_id, custom_name, sequence_order, notes
+                    process_id, subprocess_id, custom_name, {seq_col}, notes
                 ) VALUES (%s, %s, %s, %s, %s)
                 RETURNING *
-            """,
-                (process_id, subprocess_id, custom_name, sequence_order, notes),
-            )
+            """
+            
+            cur.execute(query, (process_id, subprocess_id, custom_name, sequence_order, notes))
 
             ps_data = cur.fetchone()
             conn.commit()
+            
+            # Normalize column name: if database has 'sequence', map it to 'sequence_order' for the model
+            if 'sequence' in ps_data and 'sequence_order' not in ps_data:
+                ps_data['sequence_order'] = ps_data['sequence']
 
         ps = ProcessSubprocess(ps_data)
         return ps.to_dict()
@@ -740,16 +896,34 @@ class ProcessService:
         Returns:
             True if successful
         """
-        with database.get_conn() as (conn, cur):
+        with database.get_conn(cursor_factory=psycopg2.extras.RealDictCursor) as (conn, cur):
+            # Detect schema variation: sequence vs sequence_order
+            cur.execute(
+                """
+                SELECT column_name
+                FROM information_schema.columns
+                WHERE table_name = 'process_subprocesses'
+                  AND column_name IN ('sequence', 'sequence_order')
+                """
+            )
+            rows = cur.fetchall() or []
+            available = {r.get("column_name") for r in rows if isinstance(r, dict)}
+            if "sequence_order" in available:
+                seq_col = "sequence_order"
+            elif "sequence" in available:
+                seq_col = "sequence"
+            else:
+                seq_col = "sequence"
+
+            # Build adaptive UPDATE statement
+            update_sql = f"""
+                UPDATE process_subprocesses
+                SET {seq_col} = %s
+                WHERE id = %s AND process_id = %s
+            """
+
             for ps_id, new_order in sequence_map.items():
-                cur.execute(
-                    """
-                    UPDATE process_subprocesses
-                    SET sequence_order = %s
-                    WHERE id = %s AND process_id = %s
-                """,
-                    (new_order, ps_id, process_id),
-                )
+                cur.execute(update_sql, (int(new_order), int(ps_id), int(process_id)))
 
             conn.commit()
 

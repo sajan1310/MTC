@@ -211,11 +211,12 @@ def get_substitute_group(group_id):
             """
             SELECT
                 vu.*,
-                iv.name as variant_name,
+                im.name as variant_name,
                 iv.opening_stock,
                 iv.unit_price
             FROM variant_usage vu
             JOIN item_variant iv ON iv.variant_id = vu.variant_id
+            JOIN item_master im ON im.item_id = iv.item_id
             WHERE vu.substitute_group_id = %s
               AND vu.is_alternative = TRUE
             ORDER BY vu.alternative_order
@@ -266,11 +267,12 @@ def get_subprocess_substitute_groups(ps_id):
                 """
                 SELECT
                     vu.*,
-                    iv.name as variant_name,
+                    im.name as variant_name,
                     iv.opening_stock,
                     iv.unit_price
                 FROM variant_usage vu
                 JOIN item_variant iv ON iv.variant_id = vu.variant_id
+                JOIN item_master im ON im.item_id = iv.item_id
                 WHERE vu.substitute_group_id = %s
                   AND vu.is_alternative = TRUE
                 ORDER BY vu.alternative_order

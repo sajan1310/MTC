@@ -8,16 +8,8 @@ const processFramework = {
 
         async load() {
             try {
-                const response = await fetch('/api/upf/processes?per_page=1000', {
-                    method: 'GET',
-                    credentials: 'include'
-                });
-                if (response.status === 401) {
-                    window.location.href = '/auth/login';
-                    return;
-                }
-                const data = await response.json();
-                this.all = data.data?.processes || data.processes || [];
+                // Use centralized API client with caching
+                this.all = await window.upfApi.getProcesses({ perPage: 1000 });
                 this.filtered = [...this.all];
                 this.render();
             } catch (error) {
@@ -122,12 +114,44 @@ const processFramework = {
             console.log('[Processes Render] Render complete');
         },
 
-        showCreateModal() {
+        async showCreateModal() {
             document.getElementById('process-modal-title').textContent = 'Create Process';
             document.getElementById('process-form').reset();
             document.getElementById('process-id').value = '';
+            // Preload metadata for class/status dropdowns
+            await processFramework.processes.ensureMetadata();
+            processFramework.processes.populateClassOptions();
+            processFramework.processes.populateStatusOptions();
             processFramework.openModal('process-modal');
         },
+            async ensureMetadata() {
+                if (this._metadataLoaded) return;
+                try {
+                    // Use centralized API client with caching
+                    this._metadata = await window.upfApi.getProcessMetadata();
+                    this._metadataLoaded = true;
+                } catch (e) {
+                    console.warn('[Process Metadata] Error:', e);
+                }
+            },
+
+            populateClassOptions() {
+                const select = document.getElementById('process-class');
+                if (!select || !this._metadata?.data?.classes) return;
+                const classes = this._metadata.data.classes_display || this._metadata.data.classes;
+                select.innerHTML = classes.map(c => `<option value="${c}">${c}</option>`).join('');
+            },
+
+            populateStatusOptions() {
+                const select = document.getElementById('process-status');
+                if (!select) return;
+                const statuses = this._metadata?.data?.statuses || ['Draft','Active'];
+                select.innerHTML = statuses.map(s => `<option value="${s}">${s}</option>`).join('');
+                // Set default status returned by metadata
+                if (this._metadata?.data?.default_status) {
+                    select.value = this._metadata.data.default_status;
+                }
+            },
 
         async edit(id) {
             try {
@@ -167,11 +191,15 @@ const processFramework = {
             }
 
             // Build form data with validation
+            const statusEl = document.getElementById('process-status');
+            const selectedStatus = statusEl && statusEl.value ? statusEl.value : 'Draft';
+
             const formData = {
                 name: document.getElementById('process-name').value,
                 class: processClass,
                 description: document.getElementById('process-description').value || null,
-                status: 'Active'
+                // Friendlier default: start new processes as Draft (or selected)
+                status: selectedStatus
             };
 
             // Validation: Ensure required fields are present
@@ -287,7 +315,8 @@ const processFramework = {
         },
 
         viewDetail(id) {
-            window.location.href = `/upf/process/${id}`;
+            // Open inline editor instead of navigating to separate page
+            processFramework.openInlineEditor(id);
         },
 
         escapeHtml(text) {
@@ -304,16 +333,8 @@ const processFramework = {
 
         async load() {
             try {
-                const response = await fetch('/api/upf/subprocesses?per_page=1000', {
-                    method: 'GET',
-                    credentials: 'include'
-                });
-                if (response.status === 401) {
-                    window.location.href = '/auth/login';
-                    return;
-                }
-                const data = await response.json();
-                this.all = data.data?.subprocesses || data.subprocesses || [];
+                // Use centralized API client with caching
+                this.all = await window.upfApi.getSubprocesses({ perPage: 1000 });
                 this.filtered = [...this.all];
                 this.render();
             } catch (error) {
@@ -402,11 +423,33 @@ const processFramework = {
             `).join('');
         },
 
-        showCreateModal() {
+        async showCreateModal() {
             document.getElementById('subprocess-modal-title').textContent = 'Create Subprocess';
             document.getElementById('subprocess-form').reset();
             document.getElementById('subprocess-id').value = '';
+            // Preload metadata for category dropdown
+            await processFramework.subprocesses.ensureMetadata();
+            processFramework.subprocesses.populateCategoryOptions();
             processFramework.openModal('subprocess-modal');
+        },
+
+        async ensureMetadata() {
+            if (this._metadataLoaded) return;
+            try {
+                // Use centralized API client with caching
+                this._metadata = await window.upfApi.getSubprocessMetadata();
+                this._metadataLoaded = true;
+            } catch (e) {
+                console.warn('[Subprocess Metadata] Error:', e);
+            }
+        },
+
+        populateCategoryOptions() {
+            const select = document.getElementById('subprocess-category');
+            if (!select || !this._metadata?.data?.categories) return;
+            const categories = this._metadata.data.categories;
+            select.innerHTML = '<option value="">-- Select Category --</option>' +
+                categories.map(c => `<option value="${c}">${c}</option>`).join('');
         },
 
         async edit(id) {
@@ -573,16 +616,8 @@ const processFramework = {
 
         async load() {
             try {
-                const response = await fetch('/api/upf/production-lots?per_page=1000', {
-                    method: 'GET',
-                    credentials: 'include'
-                });
-                if (response.status === 401) {
-                    window.location.href = '/auth/login';
-                    return;
-                }
-                const data = await response.json();
-                this.all = data.data?.production_lots || data.production_lots || [];
+                // Use centralized API client with caching
+                this.all = await window.upfApi.getProductionLots({ perPage: 1000 });
                 this.filtered = [...this.all];
                 this.render();
             } catch (error) {
@@ -893,6 +928,561 @@ const processFramework = {
         document.getElementById(modalId).style.display = 'none';
     },
 
+    // Inline Process Editor Methods
+    currentEditProcessId: null,
+    currentEditorTab: 'details',
+
+    async openInlineEditor(processId) {
+        try {
+            console.log('[Inline Editor] Opening editor for process:', processId);
+            this.currentEditProcessId = processId;
+            
+            // Ensure metadata is loaded for class/status options
+            if (!this.processes._metadataLoaded) {
+                await this.processes.ensureMetadata();
+            }
+            
+            // Populate select options
+            await this.populateInlineEditorOptions();
+            
+            // Load process details from API
+            const process = await window.upfApi.getProcess(processId);
+            console.log('[Inline Editor] Process loaded:', process);
+            
+            // Populate form fields
+            document.getElementById('inline-process-name').value = process.name || '';
+            document.getElementById('inline-process-class').value = process.class || '';
+            document.getElementById('inline-process-status').value = process.status || 'draft';
+            document.getElementById('inline-process-description').value = process.description || '';
+            
+            // Update title
+            document.getElementById('inline-editor-title').textContent = `Edit Process: ${process.name}`;
+            document.getElementById('inline-editor-subtitle').textContent = `ID: ${processId} | Class: ${process.class || 'N/A'}`;
+            
+            // Load subprocesses for structure tab
+            await this.loadInlineSubprocesses(processId);
+            
+            // Switch to details tab
+            this.switchEditorTab('details');
+            
+            // Show the editor panel with expand animation
+            const panel = document.getElementById('inline-editor-panel');
+            panel.style.display = 'block';
+            
+            // Smooth scroll to the editor
+            setTimeout(() => {
+                panel.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
+            }, 100);
+            
+        } catch (error) {
+            console.error('[Inline Editor] Error opening editor:', error);
+            this.showAlert('Failed to load process details', 'error');
+        }
+    },
+
+    async populateInlineEditorOptions() {
+        // Populate class options
+        const classSelect = document.getElementById('inline-process-class');
+        if (classSelect && this.processes._metadata?.data?.classes) {
+            const classes = this.processes._metadata.data.classes_display || this.processes._metadata.data.classes;
+            classSelect.innerHTML = '<option value="">Select class...</option>' + 
+                classes.map(c => `<option value="${c}">${c}</option>`).join('');
+        }
+        
+        // Populate status options
+        const statusSelect = document.getElementById('inline-process-status');
+        if (statusSelect) {
+            const statuses = this.processes._metadata?.data?.statuses || ['draft', 'active', 'completed'];
+            statusSelect.innerHTML = '<option value="">Select status...</option>' + 
+                statuses.map(s => `<option value="${s}">${s.charAt(0).toUpperCase() + s.slice(1)}</option>`).join('');
+        }
+    },
+
+    closeInlineEditor() {
+        console.log('[Inline Editor] Collapsing editor');
+        const panel = document.getElementById('inline-editor-panel');
+        
+        // Add collapse animation - collapse upwards (to top)
+        panel.style.transformOrigin = 'top center';
+        panel.style.opacity = '0';
+        panel.style.transform = 'scaleY(0)';
+        panel.style.maxHeight = '0';
+        
+        setTimeout(() => {
+            panel.style.display = 'none';
+            panel.style.opacity = '1';
+            panel.style.transform = 'scaleY(1)';
+            panel.style.maxHeight = '600px';
+        }, 300);
+        
+        this.currentEditProcessId = null;
+        this.currentEditorTab = 'details';
+        
+        // Clear form
+        document.getElementById('inline-process-form').reset();
+    },
+
+    switchEditorTab(tab) {
+        console.log('[Inline Editor] Switching to tab:', tab);
+        this.currentEditorTab = tab;
+        
+        // Update tab buttons
+        document.querySelectorAll('.editor-tab').forEach(btn => {
+            btn.classList.remove('active');
+        });
+        document.querySelector(`.editor-tab[onclick*="${tab}"]`).classList.add('active');
+        
+        // Update tab content visibility
+        document.getElementById('editor-tab-details').style.display = tab === 'details' ? 'block' : 'none';
+        document.getElementById('editor-tab-structure').style.display = tab === 'structure' ? 'block' : 'none';
+        document.getElementById('editor-tab-costing').style.display = tab === 'costing' ? 'block' : 'none';
+    },
+
+    async saveInlineProcessEdit(event) {
+        event.preventDefault();
+        
+        if (!this.currentEditProcessId) {
+            console.error('[Inline Editor] No process ID set');
+            return;
+        }
+        
+        try {
+            console.log('[Inline Editor] Saving process:', this.currentEditProcessId);
+            
+            const data = {
+                name: document.getElementById('inline-process-name').value,
+                class: document.getElementById('inline-process-class').value,
+                status: document.getElementById('inline-process-status').value,
+                description: document.getElementById('inline-process-description').value
+            };
+            
+            // Save using API client
+            await window.upfApi.updateProcess(this.currentEditProcessId, data);
+            
+            console.log('[Inline Editor] Process saved successfully');
+            this.showAlert('Process updated successfully', 'success');
+            
+            // Close editor
+            this.closeInlineEditor();
+            
+            // Refresh process list (event listener will handle this automatically)
+            
+        } catch (error) {
+            console.error('[Inline Editor] Error saving process:', error);
+            this.showAlert('Failed to update process', 'error');
+        }
+    },
+
+    async loadInlineSubprocesses(processId) {
+        try {
+            console.log('[Inline Editor] Loading subprocesses for process:', processId);
+            
+            // Use the process structure endpoint to get subprocesses
+            const response = await fetch(`/api/upf/processes/${processId}/structure`);
+            if (!response.ok) {
+                throw new Error(`HTTP error! status: ${response.status}`);
+            }
+            
+            const structure = await response.json();
+            const subprocesses = structure.data?.subprocesses || [];
+            console.log('[Inline Editor] Subprocesses loaded:', subprocesses.length);
+            
+            const container = document.getElementById('inline-subprocesses-list');
+            
+            if (!subprocesses || subprocesses.length === 0) {
+                container.innerHTML = '<p style="color: #666; text-align: center; padding: 20px;">No subprocesses added yet</p>';
+                this.updateInlineCosting([]);
+                return;
+            }
+            
+            // Sort by sequence
+            subprocesses.sort((a, b) => {
+                const seqA = a.sequence_order || a.sequence || 0;
+                const seqB = b.sequence_order || b.sequence || 0;
+                return seqA - seqB;
+            });
+            
+            container.innerHTML = subprocesses.map(sp => {
+                const sequence = sp.sequence_order || sp.sequence || 0;
+                const name = sp.subprocess?.name || sp.subprocess_name || sp.name || 'Unknown';
+                const category = sp.subprocess?.category || sp.category || 'N/A';
+                // Get the correct ID - structure endpoint returns process_subprocess_id
+                const psId = sp.process_subprocess_id || sp.id;
+                
+                return `
+                    <div class="subprocess-item">
+                        <div class="subprocess-info">
+                            <h4>${sequence}. ${name}</h4>
+                            <p>Category: ${category}</p>
+                        </div>
+                        <div class="subprocess-actions">
+                            <button class="btn btn-sm btn-secondary" onclick="processFramework.moveSubprocess(${psId}, 'up')" title="Move Up">↑</button>
+                            <button class="btn btn-sm btn-secondary" onclick="processFramework.moveSubprocess(${psId}, 'down')" title="Move Down">↓</button>
+                            <button class="btn btn-sm btn-danger" onclick="processFramework.removeInlineSubprocess(${psId})" title="Remove">×</button>
+                        </div>
+                    </div>
+                `;
+            }).join('');
+            
+            // Update costing tab
+            this.updateInlineCosting(subprocesses);
+            
+        } catch (error) {
+            console.error('[Inline Editor] Error loading subprocesses:', error);
+            this.showAlert('Failed to load subprocesses', 'error');
+        }
+    },
+
+    updateInlineCosting(subprocesses) {
+        const totalLaborCost = subprocesses.reduce((sum, sp) => {
+            const cost = parseFloat(sp.subprocess?.labor_cost || sp.labor_cost || 0);
+            return sum + cost;
+        }, 0);
+        
+        const totalTime = subprocesses.reduce((sum, sp) => {
+            const time = parseFloat(sp.subprocess?.estimated_time || sp.estimated_time || 0);
+            return sum + time;
+        }, 0);
+        
+        // Update existing HTML elements
+        document.getElementById('inline-labor-cost').textContent = `$${totalLaborCost.toFixed(2)}`;
+        document.getElementById('inline-material-cost').textContent = '$0.00'; // TODO: Calculate from variants
+        document.getElementById('inline-total-cost').textContent = `$${totalLaborCost.toFixed(2)}`;
+    },
+
+    async removeInlineSubprocess(subprocessId) {
+        if (!confirm('Remove this subprocess from the process?')) {
+            return;
+        }
+        
+        try {
+            console.log('[Inline Editor] Removing subprocess:', subprocessId);
+            await window.upfApi.removeSubprocessFromProcess(this.currentEditProcessId, subprocessId);
+            
+            this.showAlert('Subprocess removed successfully', 'success');
+            
+            // Reload subprocesses
+            await this.loadInlineSubprocesses(this.currentEditProcessId);
+            
+        } catch (error) {
+            console.error('[Inline Editor] Error removing subprocess:', error);
+            this.showAlert('Failed to remove subprocess', 'error');
+        }
+    },
+
+    addSubprocessInline() {
+        // Open the subprocess modal to add a new subprocess to the current process
+        if (!this.currentEditProcessId) {
+            console.error('[Inline Editor] No process ID set for adding subprocess');
+            this.showAlert('No process selected', 'error');
+            return;
+        }
+        
+        console.log('[Inline Editor] Opening subprocess modal for process:', this.currentEditProcessId);
+        
+        // Store the process ID for the subprocess form
+        window.currentProcessIdForSubprocess = this.currentEditProcessId;
+        
+        // Show the modal with tabs
+        this.showSubprocessSelectionModal();
+    },
+
+    async showSubprocessSelectionModal() {
+        // Show modal tabs
+        document.getElementById('subprocess-modal-tabs').style.display = 'flex';
+        
+        // Switch to select tab by default
+        this.switchSubprocessModalTab('select');
+        
+        // Load existing subprocesses
+        await this.loadExistingSubprocessesForSelection();
+        
+        // Open the modal
+        this.openModal('subprocess-modal');
+    },
+
+    switchSubprocessModalTab(tab) {
+        const selectTab = document.getElementById('subprocess-select-tab');
+        const createForm = document.getElementById('subprocess-form');
+        const tabs = document.querySelectorAll('.modal-tab');
+        
+        tabs.forEach(t => t.classList.remove('active'));
+        
+        if (tab === 'select') {
+            selectTab.style.display = 'block';
+            createForm.style.display = 'none';
+            document.querySelector('.modal-tab:first-child').classList.add('active');
+        } else {
+            selectTab.style.display = 'none';
+            createForm.style.display = 'block';
+            document.querySelector('.modal-tab:last-child').classList.add('active');
+            
+            // Override form submission when in inline mode
+            this.setupCreateSubprocessForm();
+        }
+    },
+
+    async loadExistingSubprocessesForSelection() {
+        const container = document.getElementById('existing-subprocesses-list');
+        container.innerHTML = '<p style="color: #999; text-align: center;">Loading...</p>';
+        
+        try {
+            // getSubprocesses already returns the unwrapped array
+            const subprocesses = await window.upfApi.getSubprocesses({ perPage: 1000 });
+            
+            console.log('[Inline Editor] Loaded subprocesses for selection:', subprocesses);
+            
+            if (!subprocesses || subprocesses.length === 0) {
+                container.innerHTML = '<p style="color: #999; text-align: center;">No subprocesses available. Create one using the "Create New" tab.</p>';
+                return;
+            }
+            
+            window.availableSubprocesses = subprocesses;
+            this.renderSubprocessList(subprocesses);
+        } catch (error) {
+            console.error('[Inline Editor] Error loading subprocesses:', error);
+            container.innerHTML = '<p style="color: #d32f2f; text-align: center;">Failed to load subprocesses</p>';
+        }
+    },
+
+    renderSubprocessList(subprocesses) {
+        const container = document.getElementById('existing-subprocesses-list');
+        
+        if (subprocesses.length === 0) {
+            container.innerHTML = '<p style="color: #999; text-align: center;">No subprocesses found</p>';
+            return;
+        }
+        
+        container.innerHTML = subprocesses.map(sp => {
+            // Safely parse numeric values
+            const laborCost = parseFloat(sp.labor_cost) || 0;
+            const estimatedTime = parseInt(sp.estimated_time_minutes) || 0;
+            
+            return `
+                <div class="subprocess-item" data-subprocess-id="${sp.id}" onclick="processFramework.selectSubprocess(${sp.id})">
+                    <div class="subprocess-item-name">${sp.name}</div>
+                    <div class="subprocess-item-details">
+                        ${sp.category || 'No category'} • 
+                        ${estimatedTime} min • 
+                        $${laborCost.toFixed(2)}
+                    </div>
+                </div>
+            `;
+        }).join('');
+    },
+
+    selectSubprocess(subprocessId) {
+        // Deselect all
+        document.querySelectorAll('.subprocess-item').forEach(item => {
+            item.classList.remove('selected');
+        });
+        
+        // Select clicked
+        const item = document.querySelector(`.subprocess-item[data-subprocess-id="${subprocessId}"]`);
+        if (item) {
+            item.classList.add('selected');
+            window.selectedSubprocessId = subprocessId;
+        }
+    },
+
+    async addSelectedSubprocess() {
+        if (!window.selectedSubprocessId) {
+            this.showAlert('Please select a subprocess', 'warning');
+            return;
+        }
+        
+        if (!this.currentEditProcessId) {
+            this.showAlert('No process selected', 'error');
+            return;
+        }
+        
+        try {
+            // Compute next sequence_order to keep ordering consistent
+            const nextSequence = await this._getNextSequenceForProcess(this.currentEditProcessId);
+            await window.upfApi.addSubprocessToProcess(this.currentEditProcessId, {
+                subprocess_id: window.selectedSubprocessId,
+                sequence_order: nextSequence
+            });
+            
+            this.showAlert('Subprocess added successfully', 'success');
+            this.closeModal('subprocess-modal');
+            
+            // Reload subprocesses in inline editor
+            await this.loadInlineSubprocesses(this.currentEditProcessId);
+            
+            // Clear selection
+            window.selectedSubprocessId = null;
+        } catch (error) {
+            console.error('[Inline Editor] Error adding subprocess:', error);
+            this.showAlert('Failed to add subprocess: ' + error.message, 'error');
+        }
+    },
+
+    filterExistingSubprocesses(searchTerm) {
+        const allSubprocesses = window.availableSubprocesses || [];
+        const filtered = allSubprocesses.filter(sp => 
+            sp.name.toLowerCase().includes(searchTerm.toLowerCase()) ||
+            (sp.category && sp.category.toLowerCase().includes(searchTerm.toLowerCase()))
+        );
+        this.renderSubprocessList(filtered);
+    },
+
+    setupCreateSubprocessForm() {
+        // Store reference to this for use in the async function
+        const self = this;
+        
+        // Override the form submission to add to current process
+        const form = document.getElementById('subprocess-form');
+        const originalSubmit = form.onsubmit;
+        
+        form.onsubmit = async (event) => {
+            event.preventDefault();
+            
+            try {
+                const subprocessData = {
+                    name: document.getElementById('subprocess-name').value,
+                    category: document.getElementById('subprocess-category').value,
+                    description: document.getElementById('subprocess-description').value || null,
+                    estimated_time_minutes: parseInt(document.getElementById('estimated-time').value || '0', 10),
+                    labor_cost: parseFloat(document.getElementById('labor-cost').value || '0')
+                };
+                
+                console.log('[Inline Editor] Creating subprocess:', subprocessData);
+                
+                // Create the subprocess first
+                const subprocessResponse = await window.upfApi.createSubprocess(subprocessData);
+                console.log('[Inline Editor] Subprocess created:', subprocessResponse);
+                
+                // Extract subprocess ID from response (API returns {success, data, error, message})
+                const subprocessId = subprocessResponse.data?.id || subprocessResponse.id;
+                
+                if (!subprocessId) {
+                    throw new Error('Failed to get subprocess ID from response');
+                }
+                
+                // Then add it to the current process
+                const nextSequence = await self._getNextSequenceForProcess(self.currentEditProcessId);
+                await window.upfApi.addSubprocessToProcess(self.currentEditProcessId, {
+                    subprocess_id: subprocessId,
+                    sequence_order: nextSequence
+                });
+                
+                self.showAlert('Subprocess created and added successfully', 'success');
+                self.closeModal('subprocess-modal');
+                
+                // Reload subprocesses in inline editor
+                await self.loadInlineSubprocesses(self.currentEditProcessId);
+                
+                // Restore original form handler
+                form.onsubmit = originalSubmit;
+                
+            } catch (error) {
+                console.error('[Inline Editor] Error adding subprocess:', error);
+                self.showAlert('Failed to add subprocess: ' + error.message, 'error');
+            }
+        };
+    },
+
+    /**
+     * Compute next sequence_order for a process by inspecting structure
+     */
+    async _getNextSequenceForProcess(processId) {
+        try {
+            const res = await fetch(`/api/upf/processes/${processId}/structure`, { credentials: 'include' });
+            if (!res.ok) throw new Error(`HTTP ${res.status}`);
+            const json = await res.json();
+            const data = json.data || json;
+            const list = data.subprocesses || [];
+            if (list.length === 0) return 1;
+            const maxSeq = Math.max(
+                ...list.map(sp => {
+                    const seq = sp.sequence_order || sp.sequence || 0;
+                    return typeof seq === 'number' ? seq : parseInt(seq) || 0;
+                })
+            );
+            return maxSeq + 1;
+        } catch (e) {
+            console.warn('[Inline Editor] Failed to compute next sequence, defaulting to 1', e);
+            return 1;
+        }
+    },
+
+    moveSubprocess(subprocessId, direction) {
+        // Delegate to async handler
+        this._moveSubprocessAsync(subprocessId, direction).catch(err => {
+            console.error('[Inline Editor] Reorder failed:', err);
+            this.showAlert('Failed to reorder subprocesses', 'error');
+        });
+    },
+
+    async _moveSubprocessAsync(processSubprocessId, direction) {
+        if (!this.currentEditProcessId) {
+            this.showAlert('No process selected', 'error');
+            return;
+        }
+
+        // Load current structure to compute new order safely
+        const res = await fetch(`/api/upf/processes/${this.currentEditProcessId}/structure`, { credentials: 'include' });
+        if (!res.ok) throw new Error(`HTTP ${res.status}`);
+        const json = await res.json();
+        const data = json.data || json;
+        const list = (data.subprocesses || []).slice();
+
+        if (list.length === 0) return;
+
+        // Sort by sequence for predictable operations
+        list.sort((a,b)=>{
+            const sa = a.sequence_order || a.sequence || 0;
+            const sb = b.sequence_order || b.sequence || 0;
+            return (parseInt(sa)||0) - (parseInt(sb)||0);
+        });
+
+        const idFor = (sp) => sp.process_subprocess_id || sp.id;
+        const idx = list.findIndex(sp => idFor(sp) == processSubprocessId);
+        if (idx === -1) throw new Error('Subprocess not found in structure');
+
+        const target = direction === 'up' ? idx - 1 : idx + 1;
+        if (target < 0 || target >= list.length) {
+            this.showAlert(direction === 'up' ? 'Already at the top' : 'Already at the bottom', 'info');
+            return;
+        }
+
+        // Swap
+        const temp = list[idx];
+        list[idx] = list[target];
+        list[target] = temp;
+
+        // Build new sequence_map (1..n in current visual order)
+        const sequence_map = {};
+        list.forEach((sp, i) => {
+            sequence_map[idFor(sp)] = i + 1;
+        });
+
+        // Persist via API
+        const resp = await fetch(`/api/upf/process/${this.currentEditProcessId}/reorder_subprocesses`, {
+            method: 'POST',
+            headers: {
+                'Content-Type': 'application/json',
+                'X-CSRFToken': this.getCSRFToken()
+            },
+            credentials: 'include',
+            body: JSON.stringify({ sequence_map })
+        });
+
+        if (!resp.ok) {
+            let msg = 'Failed to save order';
+            try { const e = await resp.json(); msg = e.error || e.message || msg; } catch(_){}
+            throw new Error(msg);
+        }
+
+        this.showAlert('Subprocess order updated', 'success');
+        await this.loadInlineSubprocesses(this.currentEditProcessId);
+    },
+
+    getCSRFToken() {
+        return document.querySelector('meta[name="csrf-token"]')?.getAttribute('content') || '';
+    },
+
     showAlert(message, type) {
         const container = document.getElementById('alert-container');
         if (!container) {
@@ -914,6 +1504,77 @@ const processFramework = {
         }, 5000);
     }
 };
+
+// Initialize event listeners for cross-component reactivity
+if (window.upfApi) {
+    // Auto-refresh processes when data changes
+    window.upfApi.on('process:created', () => {
+        console.log('[Process Framework] Process created, refreshing list');
+        if (processFramework.currentTab === 'processes') {
+            processFramework.processes.load();
+        }
+    });
+    
+    window.upfApi.on('process:updated', () => {
+        console.log('[Process Framework] Process updated, refreshing list');
+        if (processFramework.currentTab === 'processes') {
+            processFramework.processes.load();
+        }
+    });
+    
+    window.upfApi.on('process:deleted', () => {
+        console.log('[Process Framework] Process deleted, refreshing list');
+        if (processFramework.currentTab === 'processes') {
+            processFramework.processes.load();
+        }
+    });
+
+    // Auto-refresh subprocesses when data changes
+    window.upfApi.on('subprocess:created', () => {
+        console.log('[Process Framework] Subprocess created, refreshing list');
+        if (processFramework.currentTab === 'subprocesses') {
+            processFramework.subprocesses.load();
+        }
+    });
+    
+    window.upfApi.on('subprocess:updated', () => {
+        console.log('[Process Framework] Subprocess updated, refreshing list');
+        if (processFramework.currentTab === 'subprocesses') {
+            processFramework.subprocesses.load();
+        }
+    });
+    
+    window.upfApi.on('subprocess:deleted', () => {
+        console.log('[Process Framework] Subprocess deleted, refreshing list');
+        if (processFramework.currentTab === 'subprocesses') {
+            processFramework.subprocesses.load();
+        }
+    });
+
+    // Auto-refresh production lots when data changes
+    window.upfApi.on('production-lot:created', () => {
+        console.log('[Process Framework] Production lot created, refreshing list');
+        if (processFramework.currentTab === 'lots') {
+            processFramework.productionLots.load();
+        }
+    });
+    
+    window.upfApi.on('production-lot:updated', () => {
+        console.log('[Process Framework] Production lot updated, refreshing list');
+        if (processFramework.currentTab === 'lots') {
+            processFramework.productionLots.load();
+        }
+    });
+    
+    window.upfApi.on('production-lot:deleted', () => {
+        console.log('[Process Framework] Production lot deleted, refreshing list');
+        if (processFramework.currentTab === 'lots') {
+            processFramework.productionLots.load();
+        }
+    });
+
+    console.log('[Process Framework] Event listeners registered for reactive updates');
+}
 
 // Close modals when clicking outside
 window.onclick = function(event) {

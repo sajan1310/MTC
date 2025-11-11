@@ -126,9 +126,10 @@ class CostingService:
                     vu.variant_id,
                     vu.quantity,
                     vu.alternative_order,
-                    iv.name as variant_name
+                    im.name as variant_name
                 FROM variant_usage vu
                 JOIN item_variant iv ON iv.variant_id = vu.variant_id
+                JOIN item_master im ON im.item_id = iv.item_id
                 WHERE vu.substitute_group_id = %s
                   AND vu.is_alternative = TRUE
                 ORDER BY vu.alternative_order
@@ -223,9 +224,10 @@ class CostingService:
                     vu.id,
                     vu.variant_id,
                     vu.quantity,
-                    iv.name as variant_name
+                    im.name as variant_name
                 FROM variant_usage vu
                 JOIN item_variant iv ON iv.variant_id = vu.variant_id
+                JOIN item_master im ON im.item_id = iv.item_id
                 WHERE vu.process_subprocess_id = %s
                   AND (vu.substitute_group_id IS NULL OR vu.is_alternative = FALSE)
             """,
