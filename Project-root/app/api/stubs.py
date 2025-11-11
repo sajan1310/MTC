@@ -11,7 +11,7 @@ All stubs log warnings when called and return status='stub' in responses.
 from __future__ import annotations
 
 import logging
-from flask import jsonify, request
+from flask import jsonify
 from flask_login import login_required
 
 from . import api_bp
@@ -50,9 +50,9 @@ def get_categories():
         with get_conn(cursor_factory=None) as (conn, cur):
             # Use the actual item_category_master table from the schema
             cur.execute("""
-                SELECT item_category_id as id, item_category_name as name, 
-                       NULL as description 
-                FROM item_category_master 
+                SELECT item_category_id as id, item_category_name as name,
+                       NULL as description
+                FROM item_category_master
                 ORDER BY item_category_name
             """)
             rows = cur.fetchall()

@@ -1,0 +1,30 @@
+{
+  "name": "mtc-frontend-tests",
+  "version": "1.0.0",
+  "description": "Frontend JavaScript tests for MTC application",
+  "scripts": {
+    "test": "jest",
+    "test:watch": "jest --watch",
+    "test:coverage": "jest --coverage"
+  },
+  "jest": {
+    "testEnvironment": "jsdom",
+    "testMatch": [
+      "**/static/js/tests/**/*.test.js"
+    ],
+    "collectCoverageFrom": [
+      "static/js/**/*.js",
+      "!static/js/tests/**",
+      "!static/js/vendor/**",
+      "!static/js/lib/**"
+    ],
+    "coverageDirectory": "coverage",
+    "coverageReporters": ["text", "lcov", "html"]
+  },
+  "devDependencies": {
+    "jest": "^29.7.0",
+    "jest-environment-jsdom": "^29.7.0",
+    "@types/jest": "^29.5.8"
+  },
+  "private": true
+}

@@ -368,9 +368,22 @@
     }
 
     .subprocess-item.selected {
-        border-color: #667eea;
-        background: linear-gradient(135deg, rgba(102, 126, 234, 0.1) 0%, rgba(118, 75, 162, 0.1) 100%);
+        border-color: #4CAF50;
+        background: linear-gradient(135deg, rgba(76,175,80,0.08) 0%, rgba(76,175,80,0.15) 100%);
+        box-shadow: 0 0 0 2px rgba(76,175,80,0.15);
+        position: relative;
     }
+    .subprocess-item.selected:before {
+        content: '';
+        position: absolute;
+        left: -2px;
+        top: -2px;
+        bottom: -2px;
+        width: 4px;
+        background: #4CAF50;
+        border-radius: 4px 0 0 4px;
+    }
+    
 
     .subprocess-item-name {
         font-weight: 600;
@@ -765,6 +778,406 @@
     .cost-item strong {
         color: #333;
     }
+
+    /* Variant Row Styles */
+    .variant-row {
+        display: flex;
+        gap: 8px;
+        align-items: flex-start;
+        padding: 8px;
+        border-bottom: 1px solid var(--border-color, #f2f2f2);
+        cursor: grab;
+        transition: background-color 0.2s;
+        background-color: var(--bg-primary, #fff);
+    }
+
+    .variant-row:hover {
+        background-color: var(--bg-hover, #f9f9f9);
+    }
+
+    .variant-row:active {
+        cursor: grabbing;
+    }
+
+    /* Variant Stock Status Badges */
+    .variant-stock {
+        display: inline-block;
+        padding: 3px 8px;
+        border-radius: 4px;
+        font-size: 11px;
+        font-weight: 600;
+        text-transform: uppercase;
+    }
+
+    .variant-stock.stock-good {
+        background-color: #d4edda;
+        color: #155724;
+    }
+
+    .variant-stock.stock-low {
+        background-color: #fff3cd;
+        color: #856404;
+    }
+
+    .variant-stock.stock-out {
+        background-color: #f8d7da;
+        color: #721c24;
+    }
+
+    /* Drop Zone Styles */
+    .drop-zone {
+        min-height: 60px;
+        border: 2px dashed var(--border-color, #ddd);
+        border-radius: 8px;
+        padding: 15px;
+        text-align: center;
+        color: var(--text-muted, #999);
+        background-color: var(--bg-secondary, #f9f9f9);
+        transition: all 0.2s ease;
+        cursor: pointer;
+    }
+
+    .drop-zone:hover, .drop-zone.drag-over {
+        border-color: #4CAF50;
+        background-color: #e8f5e9;
+        color: #2e7d32;
+    }
+
+    /* Dark Mode Support */
+    [data-theme="dark"] .variant-row {
+        background-color: #2d2d2d;
+        border-bottom-color: #444;
+        color: #e0e0e0;
+    }
+    [data-theme="dark"] .variant-search-card {
+        background: #23272e;
+        border-radius: 8px;
+        box-shadow: 0 2px 8px rgba(0,0,0,0.4);
+        color: #e0e0e0;
+    }
+
+    [data-theme="dark"] .variant-search-card .search-input {
+        background: #23272e;
+        color: #e0e0e0;
+        border: 1px solid #444;
+    }
+
+    [data-theme="dark"] .variant-list-container,
+    [data-theme="dark"] .variant-list {
+        background: #23272e !important;
+        color: #e0e0e0 !important;
+        border-radius: 8px;
+    }
+    }
+
+    [data-theme="dark"] .card {
+        background: #23272e;
+        color: #e0e0e0;
+        box-shadow: 0 2px 8px rgba(0,0,0,0.4);
+    }
+
+    [data-theme="dark"] .card:hover {
+        box-shadow: 0 4px 12px rgba(0,0,0,0.6);
+        background: #2d2d2d;
+    }
+
+    [data-theme="dark"] .card-title {
+        color: #e0e0e0;
+    }
+
+    [data-theme="dark"] .card-description {
+        color: #b0b0b0;
+    }
+
+    [data-theme="dark"] .card-meta {
+        border-top: 1px solid #444;
+        color: #b0b0b0;
+    }
+
+    [data-theme="dark"] .badge-active {
+        background: #1b5e20;
+        color: #a5d6a7;
+    }
+    [data-theme="dark"] .badge-inactive {
+        background: #b71c1c;
+        color: #ef9a9a;
+    }
+    [data-theme="dark"] .badge-draft {
+        background: #f57f17;
+        color: #fff59d;
+    }
+    [data-theme="dark"] .badge-category {
+        background: #1976d2;
+        color: #e3f2fd;
+    }
+
+    /* Improved light mode for cards and badges */
+    .card {
+        background: #f8fafc;
+        color: #222;
+        box-shadow: 0 2px 8px rgba(0,0,0,0.08);
+    }
+    .card-title {
+        color: #222;
+    }
+    .card-description {
+        color: #444;
+    }
+    .card-meta {
+        border-top: 1px solid #dbeafe;
+        color: #555;
+    }
+    .badge-active {
+        background: #d1e7dd;
+        color: #0f5132;
+    }
+    .badge-inactive {
+        background: #f8d7da;
+        color: #842029;
+    }
+    .badge-draft {
+        background: #fff3cd;
+        color: #856404;
+    }
+    .badge-category {
+        background: #e3f2fd;
+        color: #1976d2;
+    }
+
+    [data-theme="dark"] .variant-row:hover {
+        background-color: #3a3a3a;
+    }
+
+    [data-theme="dark"] .variant-stock.stock-good {
+        background-color: #1b5e20;
+        color: #a5d6a7;
+    }
+
+    [data-theme="dark"] .variant-stock.stock-low {
+        background-color: #f57f17;
+        color: #fff59d;
+    }
+
+    [data-theme="dark"] .variant-stock.stock-out {
+        background-color: #b71c1c;
+        color: #ef9a9a;
+    }
+
+    [data-theme="dark"] .drop-zone {
+        background-color: #2d2d2d;
+        border-color: #555;
+        color: #999;
+    }
+
+    [data-theme="dark"] .drop-zone:hover,
+    [data-theme="dark"] .drop-zone.drag-over {
+        background-color: #1b5e20;
+        border-color: #4CAF50;
+        color: #a5d6a7;
+    }
+
+    /* Variant Search Card Adaptive Styles */
+    .variant-search-card {
+        display: flex;
+        flex-direction: column;
+    }
+
+    .variant-search-card .search-input {
+        flex-shrink: 0;
+    }
+
+    #variant-search-results {
+        scrollbar-width: thin;
+        scrollbar-color: #bbb #f1f1f1;
+    }
+
+    #variant-search-results::-webkit-scrollbar {
+        width: 8px;
+    }
+
+    #variant-search-results::-webkit-scrollbar-track {
+        background: #f1f1f1;
+        border-radius: 4px;
+    }
+
+    #variant-search-results::-webkit-scrollbar-thumb {
+        background: #bbb;
+        border-radius: 4px;
+    }
+
+    #variant-search-results::-webkit-scrollbar-thumb:hover {
+        background: #999;
+    }
+
+    /* Dark mode scrollbar */
+    [data-theme="dark"] #variant-search-results {
+        scrollbar-color: #555 #2d2d2d;
+    }
+
+    [data-theme="dark"] #variant-search-results::-webkit-scrollbar-track {
+        background: #2d2d2d;
+    }
+
+    [data-theme="dark"] #variant-search-results::-webkit-scrollbar-thumb {
+        background: #555;
+    }
+
+    [data-theme="dark"] #variant-search-results::-webkit-scrollbar-thumb:hover {
+        background: #666;
+    }
+
+    /* Responsive layout for smaller screens */
+    @media (max-width: 1200px) {
+        #editor-tab-structure > div {
+            flex-direction: column !important;
+            max-height: none !important;
+        }
+
+        #editor-tab-structure > div > div:last-child {
+            width: 100% !important;
+            min-width: 100% !important;
+            max-width: 100% !important;
+            margin-top: 20px;
+        }
+
+        .variant-search-card {
+            max-height: 400px !important;
+        }
+    }
+
+    /* Comprehensive Dark Mode Support */
+    [data-theme="dark"] .editor-content {
+        background: #2d2d2d;
+        border-color: #555;
+    }
+
+    [data-theme="dark"] .editor-header {
+        background: linear-gradient(135deg, #424242 0%, #212121 100%);
+    }
+
+    [data-theme="dark"] .editor-tabs {
+        background: #1e1e1e;
+        border-bottom-color: #444;
+    }
+
+    [data-theme="dark"] .editor-tab {
+        color: #aaa;
+    }
+
+    [data-theme="dark"] .editor-tab:hover {
+        color: #fff;
+        background: rgba(255, 255, 255, 0.05);
+    }
+
+    [data-theme="dark"] .editor-tab.active {
+        color: #81c784;
+        border-bottom-color: #81c784;
+        background: #2d2d2d;
+    }
+
+    [data-theme="dark"] .editor-body {
+        background: #2d2d2d;
+        color: #e0e0e0;
+    }
+
+    [data-theme="dark"] .section-header h3 {
+        color: #e0e0e0;
+    }
+
+    [data-theme="dark"] .subprocess-item {
+        background: #1e1e1e;
+        border-color: #444;
+    }
+
+    [data-theme="dark"] .subprocess-item:hover {
+        background: #333;
+        border-color: #666;
+    }
+
+    [data-theme="dark"] .subprocess-item.selected {
+        border-color: #81c784;
+        background: #2a4d2a;
+    }
+
+    [data-theme="dark"] .subprocess-info h4 {
+        color: #e0e0e0;
+    }
+
+    [data-theme="dark"] .subprocess-info p {
+        color: #aaa;
+    }
+
+    [data-theme="dark"] .variants-list {
+        background: #1e1e1e !important;
+        border: 1px solid #444;
+    }
+
+    [data-theme="dark"] .variants-list table {
+        color: #e0e0e0;
+    }
+
+    [data-theme="dark"] .variants-list th {
+        color: #aaa !important;
+        border-bottom: 1px solid #444;
+    }
+
+    [data-theme="dark"] .variants-list td {
+        color: #e0e0e0 !important;
+        border-bottom: 1px solid #333;
+    }
+
+    [data-theme="dark"] .variants-list input {
+        background: #333;
+        border: 1px solid #555;
+        color: #e0e0e0;
+    }
+
+    [data-theme="dark"] .variants-list input:focus {
+        background: #3a3a3a;
+        border-color: #81c784;
+    }
+
+    [data-theme="dark"] input[type="text"],
+    [data-theme="dark"] input[type="number"],
+    [data-theme="dark"] select,
+    [data-theme="dark"] textarea {
+        background: #333;
+        border-color: #555;
+        color: #e0e0e0;
+    }
+
+    [data-theme="dark"] .search-input {
+        background: #333;
+        border-color: #555;
+        color: #e0e0e0;
+    }
+
+    [data-theme="dark"] .search-input::placeholder {
+        color: #777;
+    }
+
+    [data-theme="dark"] #variant-search-results {
+        background: #1e1e1e !important;
+        border-color: #444;
+    }
+
+    [data-theme="dark"] .cost-summary {
+        background: linear-gradient(135deg, #2d2d2d 0%, #1e1e1e 100%);
+        color: #e0e0e0;
+    }
+
+    [data-theme="dark"] .cost-item {
+        border-bottom-color: rgba(255, 255, 255, 0.1);
+        color: #e0e0e0;
+    }
+
+    [data-theme="dark"] .cost-item.total {
+        border-top-color: rgba(255, 255, 255, 0.2);
+    }
+
+    [data-theme="dark"] .cost-item strong {
+        color: #81c784;
+    }
 </style>
 {% endblock %}
 
@@ -875,23 +1288,41 @@
                 </div>
                 
                 <div class="editor-body" id="editor-tab-structure" style="display: none;">
-                    <div class="subprocess-section">
-                        <div class="section-header">
-                            <h3>Process Subprocesses</h3>
-                            <button class="btn btn-sm btn-primary" onclick="processFramework.addSubprocessInline()">
-                                ➕ Add Subprocess
-                            </button>
+                    <div style="display: flex; gap: 20px; min-height: 500px; max-height: 70vh;">
+                        <!-- Left: Subprocess List -->
+                        <div style="flex: 1; display: flex; flex-direction: column; min-width: 0;">
+                            <div class="section-header">
+                                <h3>Process Subprocesses</h3>
+                                <button class="btn btn-sm btn-primary" onclick="processFramework.addSubprocessInline()">
+                                    ➕ Add Subprocess
+                                </button>
+                            </div>
+                            <div id="inline-subprocesses-list" class="subprocesses-list" style="flex: 1; overflow-y: auto; overflow-x: hidden;">
+                                <p style="color: #999; text-align: center; padding: 20px;">
+                                    No subprocesses yet. Click "Add Subprocess" to get started.
+                                </p>
+                            </div>
                         </div>
-                        <div id="inline-subprocesses-list" class="subprocesses-list">
-                            <p style="color: #999; text-align: center; padding: 20px;">
-                                No subprocesses yet. Click "Add Subprocess" to get started.
-                            </p>
+                        
+                        <!-- Right: Variant Search -->
+                        <div style="width: 400px; min-width: 350px; max-width: 450px; display: flex; flex-direction: column; background: #f9f9f9; border-radius: 8px; padding: 15px; box-shadow: 0 2px 8px rgba(0,0,0,0.1);">
+                            <div style="margin-bottom: 10px;">
+                                <h3 style="margin: 0 0 10px 0; font-size: 16px; color: #333;">🔍 Variant Search</h3>
+                            </div>
+                            <div class="variant-search-card" style="display: flex; flex-direction: column; gap: 10px; flex: 1; min-height: 0;">
+                                <input id="variant-search-input" class="search-input" placeholder="Type to search variants..." style="width: 100%; flex-shrink: 0;" />
+                                <div id="variant-search-results" style="flex: 1; overflow-y: auto; overflow-x: hidden; border: 1px solid #eee; border-radius: 6px; padding: 6px; background: #fff; min-height: 300px;"></div>
+                                <div style="flex-shrink: 0; display: flex; flex-direction: column; gap: 8px;">
+                                    <div style="font-size: 12px; color: #777; text-align: center;">Select multiple results using checkboxes</div>
+                                    <button id="add-selected-variants-btn" class="btn btn-primary" style="padding: 10px 12px; width: 100%;">Add selected to subprocess</button>
+                                </div>
+                            </div>
                         </div>
                     </div>
                 </div>
                 
                 <div class="editor-body" id="editor-tab-costing" style="display: none;">
-                    <div class="cost-summary">
+                    <div class="cost-summary" style="display:flex; gap:20px; flex-wrap:wrap;">
                         <div class="cost-item">
                             <span>Labor Cost:</span>
                             <strong id="inline-labor-cost">$0.00</strong>
@@ -914,6 +1345,28 @@
         
         <div class="card-grid" id="processes-grid"></div>
         <div class="pagination" id="processes-pagination"></div>
+    </div>
+
+    <!-- Batch Add Variants Modal -->
+    <div id="batch-add-variants-modal" class="modal">
+        <div class="modal-content">
+            <div class="modal-header">
+                <h3 class="modal-title">Add Selected Variants</h3>
+                <button class="modal-close" onclick="processFramework.closeModal('batch-add-variants-modal')">&times;</button>
+            </div>
+            <div class="form-group">
+                <label for="batch-default-quantity">Default Quantity</label>
+                <input id="batch-default-quantity" type="number" min="0" step="0.01" value="1" />
+            </div>
+            <div class="form-group">
+                <label for="batch-default-rate">Default Rate (optional)</label>
+                <input id="batch-default-rate" type="number" min="0" step="0.01" placeholder="0.00" />
+            </div>
+            <div style="display:flex; gap:10px; justify-content:flex-end;">
+                <button class="btn" onclick="processFramework.closeModal('batch-add-variants-modal')">Cancel</button>
+                <button class="btn btn-primary" onclick="processFramework.confirmBatchAddVariants()">Add</button>
+            </div>
+        </div>
     </div>
 
     <!-- Tab 2: Subprocess Library -->
@@ -1113,6 +1566,7 @@
 
 <script src="{{ url_for('static', filename='js/upf_api_client.js') }}"></script>
 <script src="{{ url_for('static', filename='js/performance_utils.js') }}"></script>
+<script src="{{ url_for('static', filename='js/variant_search.js') }}"></script>
 <script src="{{ url_for('static', filename='js/process_framework_unified.js') }}"></script>
 <script>
     document.addEventListener('DOMContentLoaded', function() {

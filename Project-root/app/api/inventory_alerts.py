@@ -42,7 +42,7 @@ def upsert_alert_rule():
         )
         warnings.warn(msg, DeprecationWarning, stacklevel=2)
         current_app.logger.warning(f"DEPRECATION: {msg}")
-    
+
     data = request.json or {}
     required = [
         "variant_id",
@@ -106,7 +106,7 @@ def list_alert_rules():
         )
         warnings.warn(msg, DeprecationWarning, stacklevel=2)
         current_app.logger.warning(f"DEPRECATION: {msg}")
-    
+
     active_only = request.args.get("active_only") == "true"
     variant_id = request.args.get("variant_id")
     try:
@@ -145,7 +145,7 @@ def deactivate_alert_rule(rule_id):
         )
         warnings.warn(msg, DeprecationWarning, stacklevel=2)
         current_app.logger.warning(f"DEPRECATION: {msg}")
-    
+
     try:
         if not is_admin():
             return APIResponse.error("forbidden", "Admin required", 403)
@@ -173,7 +173,7 @@ def create_inventory_alert():
         )
         warnings.warn(msg, DeprecationWarning, stacklevel=2)
         current_app.logger.warning(f"DEPRECATION: {msg}")
-    
+
     data = request.json or {}
     required = ["production_lot_id", "variant_id", "required_quantity"]
     missing = [f for f in required if f not in data]
@@ -205,7 +205,7 @@ def list_inventory_alerts():
         )
         warnings.warn(msg, DeprecationWarning, stacklevel=2)
         current_app.logger.warning(f"DEPRECATION: {msg}")
-    
+
     lot_id = request.args.get("production_lot_id")
     severity = request.args.get("severity")
     try:
@@ -234,7 +234,7 @@ def acknowledge_inventory_alert(alert_id):
         )
         warnings.warn(msg, DeprecationWarning, stacklevel=2)
         current_app.logger.warning(f"DEPRECATION: {msg}")
-    
+
     data = request.json or {}
     try:
         updated = InventoryAlertService.acknowledge_alert(
@@ -273,7 +273,7 @@ def create_procurement_recommendation():
         )
         warnings.warn(msg, DeprecationWarning, stacklevel=2)
         current_app.logger.warning(f"DEPRECATION: {msg}")
-    
+
     data = request.json or {}
     required = [
         "production_lot_id",
@@ -317,7 +317,7 @@ def list_procurement_recommendations():
         )
         warnings.warn(msg, DeprecationWarning, stacklevel=2)
         current_app.logger.warning(f"DEPRECATION: {msg}")
-    
+
     lot_id = request.args.get("production_lot_id")
     status = request.args.get("status")
     try:
@@ -357,7 +357,7 @@ def update_procurement_status(recommendation_id):
         )
         warnings.warn(msg, DeprecationWarning, stacklevel=2)
         current_app.logger.warning(f"DEPRECATION: {msg}")
-    
+
     data = request.json or {}
     if "procurement_status" not in data:
         return APIResponse.error(

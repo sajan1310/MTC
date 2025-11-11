@@ -1107,7 +1107,7 @@ def get_all_variants():
         ):
             cur.execute(
                 """
-                SELECT 
+                SELECT
                     iv.variant_id as id,
                     iv.item_id,
                     im.name || ' - ' || cm.color_name || ' - ' || sm.size_name as name,
@@ -1219,7 +1219,7 @@ def get_variants_select2():
 
             # Get paginated results
             data_query = f"""
-                SELECT 
+                SELECT
                     iv.variant_id as id,
                     im.name || ' - ' || cm.color_name || ' - ' || sm.size_name as text,
                     im.name as item_name,

@@ -71,11 +71,10 @@ def add_variant_usage():
             return APIResponse.error("validation_error", "quantity is required", 400)
 
         variant_usage = VariantService.add_variant_usage(
-            subprocess_id=data["subprocess_id"],
-            item_id=data["item_id"],
+            process_subprocess_id=data["subprocess_id"],
+            variant_id=data["item_id"],
             quantity=data["quantity"],
-            unit=data.get("unit", "pcs"),
-            notes=data.get("notes"),
+            cost_per_unit=data.get("cost_per_unit"),
         )
 
         # Audit log
@@ -98,18 +97,19 @@ def add_variant_usage():
 @variant_api_bp.route("/variant_usage/<int:usage_id>", methods=["PUT"])
 @login_required
 def update_variant_usage(usage_id):
-    """Update variant usage quantity/unit."""
+    """Update variant usage quantity/cost."""
     try:
         data = request.json
+        current_app.logger.info(f"[UPDATE VARIANT USAGE] Request for ID {usage_id} with data: {data}")
 
         updated = VariantService.update_variant_usage(
             usage_id,
             quantity=data.get("quantity"),
-            unit=data.get("unit"),
-            notes=data.get("notes"),
+            cost_per_unit=data.get("cost_per_unit"),
         )
 
         if not updated:
+            current_app.logger.warning(f"[UPDATE VARIANT USAGE] Not found: {usage_id}")
             return APIResponse.not_found("Variant usage", usage_id)
 
         # Audit log
@@ -118,7 +118,9 @@ def update_variant_usage(usage_id):
         current_app.logger.info(f"Variant usage updated: {usage_id}")
         return APIResponse.success(updated, "Variant usage updated")
     except Exception as e:
-        current_app.logger.error(f"Error updating variant usage: {e}")
+        import traceback
+        current_app.logger.error(f"Error updating variant usage {usage_id}: {e}")
+        current_app.logger.error(f"Traceback: {traceback.format_exc()}")
         return APIResponse.error("internal_error", str(e), 500)
 
 

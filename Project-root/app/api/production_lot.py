@@ -76,7 +76,7 @@ def create_production_lot():
         )
         warnings.warn(msg, DeprecationWarning, stacklevel=2)
         current_app.logger.warning(f"DEPRECATION: {msg}")
-    
+
     try:
         data = request.json
 
@@ -185,8 +185,11 @@ def acknowledge_all_alerts(lot_id: int):
     "/production_lot/<int:lot_id>", methods=["GET"]
 )  # Legacy compatibility
 @login_required
-def get_production_lot(lot_id):
-    """Get production lot with full details."""
+def get_production_lot_data(lot_id):
+    """Get production lot by ID."""
+    # Import at function level to avoid circular dependency
+    from flask import current_app
+
     # Deprecation warning for underscore route
     if "production_lot" in request.path and "production-lots" not in request.path:
         msg = (
@@ -195,15 +198,13 @@ def get_production_lot(lot_id):
         )
         warnings.warn(msg, DeprecationWarning, stacklevel=2)
         current_app.logger.warning(f"DEPRECATION: {msg}")
-    
+
     try:
         lot = ProductionService.get_production_lot(lot_id)
         if not lot:
             return APIResponse.not_found("Production lot", lot_id)
 
         # Check access - skip in test mode with LOGIN_DISABLED
-        from flask import current_app
-
         if not current_app.config.get("LOGIN_DISABLED", False):
             # Only enforce access control in production
             if (
@@ -357,7 +358,7 @@ def list_production_lots():
         )
         warnings.warn(msg, DeprecationWarning, stacklevel=2)
         current_app.logger.warning(f"DEPRECATION: {msg}")
-    
+
     try:
         page = int(request.args.get("page", 1))
         per_page = min(int(request.args.get("per_page", 25)), 100)
@@ -404,7 +405,7 @@ def select_variant_for_group(lot_id):
         )
         warnings.warn(msg, DeprecationWarning, stacklevel=2)
         current_app.logger.warning(f"DEPRECATION: {msg}")
-    
+
     try:
         # Check access
         lot = ProductionService.get_production_lot(lot_id)
@@ -462,7 +463,7 @@ def get_lot_selections(lot_id):
         )
         warnings.warn(msg, DeprecationWarning, stacklevel=2)
         current_app.logger.warning(f"DEPRECATION: {msg}")
-    
+
     try:
         # Check access
         lot = ProductionService.get_production_lot(lot_id)
@@ -576,7 +577,7 @@ def validate_lot_readiness(lot_id):
         )
         warnings.warn(msg, DeprecationWarning, stacklevel=2)
         current_app.logger.warning(f"DEPRECATION: {msg}")
-    
+
     try:
         # Check access
         lot = ProductionService.get_production_lot(lot_id)
@@ -611,7 +612,7 @@ def execute_production_lot(lot_id):
         )
         warnings.warn(msg, DeprecationWarning, stacklevel=2)
         current_app.logger.warning(f"DEPRECATION: {msg}")
-    
+
     try:
         # Check access
         lot = ProductionService.get_production_lot(lot_id)
@@ -715,7 +716,7 @@ def cancel_production_lot(lot_id):
         )
         warnings.warn(msg, DeprecationWarning, stacklevel=2)
         current_app.logger.warning(f"DEPRECATION: {msg}")
-    
+
     try:
         # Check access
         lot = ProductionService.get_production_lot(lot_id)
@@ -761,7 +762,7 @@ def get_lot_actual_costing(lot_id):
         )
         warnings.warn(msg, DeprecationWarning, stacklevel=2)
         current_app.logger.warning(f"DEPRECATION: {msg}")
-    
+
     try:
         # Check access
         lot = ProductionService.get_production_lot(lot_id)
@@ -797,7 +798,7 @@ def get_variance_analysis(lot_id):
         )
         warnings.warn(msg, DeprecationWarning, stacklevel=2)
         current_app.logger.warning(f"DEPRECATION: {msg}")
-    
+
     try:
         # Check access
         lot = ProductionService.get_production_lot(lot_id)
@@ -838,7 +839,7 @@ def get_production_summary():
         )
         warnings.warn(msg, DeprecationWarning, stacklevel=2)
         current_app.logger.warning(f"DEPRECATION: {msg}")
-    
+
     try:
         from database import get_conn
         from psycopg2.extras import RealDictCursor
@@ -884,7 +885,7 @@ def get_recent_lots():
         )
         warnings.warn(msg, DeprecationWarning, stacklevel=2)
         current_app.logger.warning(f"DEPRECATION: {msg}")
-    
+
     try:
         limit = min(int(request.args.get("limit", 10)), 50)
 

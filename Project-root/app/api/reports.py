@@ -25,7 +25,7 @@ using created_at ranges. If created_at missing or counts zero, returns 0.
 from __future__ import annotations
 
 from flask import Blueprint, current_app
-from flask_login import login_required, current_user
+from flask_login import login_required
 from psycopg2.extras import RealDictCursor
 
 from app.utils.response import APIResponse

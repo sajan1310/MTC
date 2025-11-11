@@ -1,7 +1,7 @@
 ﻿/**
- * Variant Search Component - Select2 Enhanced Version
- * @version 2.0.0
- * @requires jQuery, Select2
+ * Variant Search Component - Multi-select with search bar
+ * @version 3.0.0
+ * Simpler UI: text input + checkbox results + Add Selected
  */
 
 function escapeHtml(text) {
@@ -12,108 +12,39 @@ function escapeHtml(text) {
 }
 
 const variantSearch = {
-    select2Instance: null,
     categories: [],
-    
+    selected: new Set(),
+    lastQuery: '',
+    page: 1,
+    hasMore: true,
+    loading: false,
+
     async init() {
-        console.log('Initializing Variant Search with Select2...');
-        if (!this.checkDependencies()) return;
+        console.log('Initializing Variant Search (multi-select)...');
         await this.loadCategories();
-        this.initSelect2();
         this.attachEventListeners();
+        this.performSearch('');
         console.log('Variant Search initialized successfully');
     },
 
-    checkDependencies() {
-        if (typeof jQuery === 'undefined') {
-            console.error('jQuery is not loaded! Select2 requires jQuery.');
-            return false;
-        }
-        if (typeof jQuery.fn.select2 === 'undefined') {
-            console.error('Select2 is not loaded!');
-            return false;
-        }
-        return true;
-    },
-
-    initSelect2() {
-        const selectElement = $('#variant-search-select');
-        if (selectElement.length === 0) {
-            console.warn('Variant search select element not found');
-            return;
-        }
-
-        try {
-            this.select2Instance = selectElement.select2({
-                ajax: {
-                    url: '/api/variants/select2',
-                    dataType: 'json',
-                    delay: 250,
-                    data: function (params) {
-                        return {
-                            q: params.term,
-                            page: params.page || 1,
-                            page_size: 30
-                        };
-                    },
-                    processResults: function (data, params) {
-                        params.page = params.page || 1;
-                        if (data.error) {
-                            console.error('API Error:', data.error);
-                            return { results: [], pagination: { more: false } };
-                        }
-                        return {
-                            results: data.results || [],
-                            pagination: { more: data.pagination ? data.pagination.more : false }
-                        };
-                    },
-                    cache: true
-                },
-                placeholder: 'Search for variants...',
-                minimumInputLength: 0,
-                allowClear: true,
-                width: '100%',
-                templateResult: this.formatVariant.bind(this),
-                templateSelection: this.formatVariantSelection.bind(this)
-            });
-
-            selectElement.on('select2:select', (e) => {
-                this.onVariantSelected(e.params.data);
-            });
-            
-            console.log('Select2 initialized successfully');
-        } catch (error) {
-            console.error('Failed to initialize Select2:', error);
-        }
-    },
-
-    formatVariant(variant) {
-        if (variant.loading) return variant.text;
-        if (!variant.id) return variant.text;
-
-        try {
-            const stockStatus = this.getStockStatusHTML(variant);
-            const html = `
-                <div class="select2-variant-result">
-                    <div class="variant-name">
-                        <strong>${escapeHtml(variant.text || variant.item_name || 'Unknown')}</strong>
-                    </div>
-                    <div class="variant-details">
-                        <span class="variant-brand"> ${escapeHtml(variant.brand || 'N/A')}</span>
-                        <span class="variant-model"> ${escapeHtml(variant.model || 'N/A')}</span>
-                        ${stockStatus}
+    renderResultRow(variant) {
+        const checked = this.selected.has(variant.id) ? 'checked' : '';
+        const stock = this.getStockStatusHTML(variant);
+        const vname = escapeHtml(variant.text || variant.item_name || 'Unknown');
+        return `
+            <label class="variant-row" draggable="true" data-variant-id="${variant.id}" data-variant-name="${vname}" style="display:flex; gap:8px; align-items:flex-start; padding:8px; border-bottom:1px solid #f2f2f2; cursor:grab;">
+                <input type="checkbox" data-variant-id="${variant.id}" ${checked} />
+                <div style="flex:1;">
+                    <div style="font-weight:600;">${vname}</div>
+                    <div style="font-size:12px; color:#666; display:flex; gap:12px;">
+                        <span>${escapeHtml(variant.brand || 'N/A')}</span>
+                        <span>${escapeHtml(variant.model || 'N/A')}</span>
+                        ${stock}
                     </div>
                 </div>
-            `;
-            return $(html);
-        } catch (error) {
-            console.error('Error formatting variant:', error);
-            return variant.text || 'Error';
-        }
-    },
-
-    formatVariantSelection(variant) {
-        return variant.text || variant.item_name || 'Select a variant';
+                <span title="Drag to subprocess" style="font-size:14px; color:#999;">↔</span>
+            </label>
+        `;
     },
 
     getStockStatusHTML(variant) {
@@ -136,32 +67,85 @@ const variantSearch = {
         return `<span class="variant-stock ${statusClass}">${statusIcon} ${statusText}</span>`;
     },
 
-    onVariantSelected(variant) {
-        console.log('Variant selected:', variant);
+    async performSearch(query) {
+        if (this.loading) return;
+        this.loading = true;
+        this.lastQuery = query;
+        this.page = 1;
+        const resultsEl = document.getElementById('variant-search-results');
+        if (!resultsEl) { this.loading = false; return; }
+        resultsEl.innerHTML = '<div style="padding:8px; color:#666;">Searching...</div>';
         try {
-            const event = new CustomEvent('variantSelected', {
-                detail: variant,
-                bubbles: true,
-                cancelable: true
+            const resp = await fetch(`/api/variants/select2?q=${encodeURIComponent(query)}&page=${this.page}&page_size=30`, {
+                credentials: 'include'
             });
-            document.dispatchEvent(event);
-
-            setTimeout(() => {
-                if (this.select2Instance) {
-                    $('#variant-search-select').val(null).trigger('change');
-                }
-            }, 100);
-        } catch (error) {
-            console.error('Error handling selection:', error);
+            const data = await resp.json();
+            const items = data.results || [];
+            this.hasMore = data.pagination ? !!data.pagination.more : false;
+            resultsEl.innerHTML = items.map(v => this.renderResultRow(v)).join('') || '<div style="padding:8px; color:#999;">No results</div>';
+            this.wireResultCheckboxes();
+        } catch (e) {
+            console.error('Search error', e);
+            resultsEl.innerHTML = '<div style="padding:8px; color:#d32f2f;">Failed to load variants</div>';
+        } finally {
+            this.loading = false;
         }
     },
 
+    wireResultCheckboxes() {
+        const container = document.getElementById('variant-search-results');
+        if (!container) return;
+        container.querySelectorAll('input[type="checkbox"]').forEach(cb => {
+            cb.addEventListener('change', (e) => {
+                const id = parseInt(e.target.getAttribute('data-variant-id'));
+                if (e.target.checked) this.selected.add(id); else this.selected.delete(id);
+            });
+        });
+        // Enable drag-and-drop
+        container.querySelectorAll('.variant-row').forEach(row => {
+            row.addEventListener('dragstart', (e) => {
+                const id = parseInt(row.getAttribute('data-variant-id'));
+                const name = row.getAttribute('data-variant-name') || '';
+                try {
+                    e.dataTransfer.effectAllowed = 'copy';
+                    
+                    // If multiple variants are selected, include all of them
+                    if (this.selected.size > 0) {
+                        const selectedIds = Array.from(this.selected);
+                        e.dataTransfer.setData('application/json', JSON.stringify({ 
+                            ids: selectedIds,
+                            multiSelect: true
+                        }));
+                    } else {
+                        // Single variant drag
+                        e.dataTransfer.setData('application/json', JSON.stringify({ 
+                            id: id, 
+                            name: name 
+                        }));
+                    }
+                } catch(err) {
+                    console.error('Drag start error', err);
+                }
+            });
+        });
+    },
+
     attachEventListeners() {
-        const categoryFilter = document.getElementById('category-filter');
-        if (categoryFilter) {
-            categoryFilter.addEventListener('change', () => {
-                if (this.select2Instance) {
-                    $('#variant-search-select').val(null).trigger('change');
+        const input = document.getElementById('variant-search-input');
+        if (input) {
+            input.addEventListener('input', this.debounce((e) => {
+                this.performSearch(e.target.value || '');
+            }, 300));
+        }
+
+        const addBtn = document.getElementById('add-selected-variants-btn');
+        if (addBtn) {
+            addBtn.addEventListener('click', () => {
+                const pf = window.processFramework || (typeof processFramework !== 'undefined' ? processFramework : null);
+                if (pf && typeof pf.openBatchAddModal === 'function') {
+                    pf.openBatchAddModal();
+                } else {
+                    alert('Select a process and subprocess first');
                 }
             });
         }
@@ -211,23 +195,15 @@ const variantSearch = {
     },
 
     destroy() {
-        if (this.select2Instance) {
-            try {
-                $('#variant-search-select').select2('destroy');
-                this.select2Instance = null;
-            } catch (error) {
-                console.error('Error destroying Select2:', error);
-            }
-        }
+        // no-op for simple component
     },
 
     refresh() {
-        if (this.select2Instance) {
-            try {
-                $('#variant-search-select').val(null).trigger('change');
-            } catch (error) {
-                console.error('Error refreshing Select2:', error);
-            }
-        }
+        this.performSearch(this.lastQuery || '');
+    },
+
+    // simple debounce
+    debounce(fn, wait) {
+        let t; return (...args) => { clearTimeout(t); t = setTimeout(() => fn.apply(this, args), wait); };
     }
 };

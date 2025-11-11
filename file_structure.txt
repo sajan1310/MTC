@@ -20,6 +20,7 @@
     check_process.py
     check_ps_columns.py
     CI_DATABASE_FIX_SUMMARY.md
+    CLEANUP_AND_AUDIT_REPORT.md
     CLEANUP_REPORT.md
     COMPLETE_FIX_SUMMARY.md
     COMPREHENSIVE_AUDIT_REPORT.md
@@ -74,6 +75,7 @@
     SUBPROCESS_INVESTIGATION_COMPLETE.md
     test_deprecation_warnings.py
     test_output.txt
+    test_variant_update.py
     UI_UX_IMPROVEMENTS_SUMMARY.md
     UI_UX_TESTING_GUIDE.md
     UI_UX_VISUAL_COMPARISON.md
@@ -192,6 +194,8 @@
         logging_config.py
         minify_assets.py
         models.py
+        MULTI_SELECT_DRAG_DROP_FIX.md
+        package.json
         PHASES_1-6_COMPLETION_SUMMARY.md
         PHASE_1_ROUTE_STANDARDIZATION_COMPLETE.md
         Procfile
@@ -199,6 +203,7 @@
         project_audit_report.json
         pyproject.toml
         pytest.ini
+        QUALITY_IMPROVEMENTS_SUMMARY.md
         QUICK_START_GUIDE.md
         QUICK_START_UNIVERSAL_PROCESS_FRAMEWORK.md
         QUICK_TEST_GUIDE.md
@@ -207,6 +212,7 @@
         run.py
         run_migration.py
         run_production.py
+        SESSION_AUTH_FIX.md
         STACK_SYNC_AUDIT_REPORT.md
         SYNC_ANALYSIS_REPORT.md
         TASK_4_PRODUCTION_LOT_VARIANT_SELECTION_COMPLETE.md
@@ -241,6 +247,8 @@
             0.14.3/
                 10144634690075818160
                 11178895765437835426
+                1221071182147248314
+                1241944628598012558
                 12792328541295669378
                 13211992639582236678
                 13616493732774918919
@@ -248,6 +256,8 @@
                 3086970208881744565
                 4338602252615452610
                 6262011805177608698
+                6991402356567539060
+                7665886955406916355
                 9644310379215571484
                 983038721472191113
         .vscode/
@@ -313,6 +323,12 @@
                 __init__.py
         auth/
             routes.py
+        backups/
+            removed_templates_20251111_161514/
+                upf_process_management.html
+                upf_production_lot_detail.html.audit_backup
+                upf_reports.html
+                upf_subprocess_library.html
         docs/
             ALERT_UI_INTEGRATION.md
             DEPLOYMENT_DOCKER.md
@@ -367,6 +383,7 @@
             __init__.py
         private_uploads/
         scripts/
+            improve_error_handling.py
             verify_upf_endpoints.py
         static/
             dashboard.js
@@ -397,6 +414,8 @@
                 upf_api_client.js
                 upf_reports.js
                 variant_search.js
+                tests/
+                    process_framework_unified.test.js
             uploads/
                 1_1a278be4_ChatGPT Image Aug 7, 2025, 11_10_55 AM.png
                 placeholder.png
@@ -422,13 +441,9 @@
             stock_ledger.html
             suppliers.html
             upf_process_editor.html
-            upf_process_management.html
             upf_production_lots.html
             upf_production_lot_detail.html
-            upf_production_lot_detail.html.audit_backup
             upf_production_lot_new.html
-            upf_reports.html
-            upf_subprocess_library.html
             upf_unified.html
             upf_variant_selection.html
             user_management.html
@@ -459,6 +474,7 @@
                 test_subprocess_service.py
                 test_variant_service.py
             ui/
+                test_inline_editor_variants.py
                 test_upf_pages.py
     scripts/
         analyze_dependencies.py

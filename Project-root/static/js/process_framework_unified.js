@@ -1,6 +1,17 @@
 const processFramework = {
     currentTab: 'processes',
 
+    // Centralized error handler - shows user-friendly messages in UI
+    handleError(error, context = '', fallbackMessage = 'An error occurred') {
+        const userMessage = error?.message || fallbackMessage;
+        this.showAlert(`${context ? context + ': ' : ''}${userMessage}`, 'error');
+        
+        // Still log to console for debugging, but only in development
+        if (window.location.hostname === 'localhost' || window.location.hostname === '127.0.0.1') {
+            console.error(`[${context || 'Error'}]`, error);
+        }
+    },
+
     processes: {
         all: [],
         filtered: [],
@@ -13,8 +24,7 @@ const processFramework = {
                 this.filtered = [...this.all];
                 this.render();
             } catch (error) {
-                console.error('Error loading processes:', error);
-                processFramework.showAlert('Failed to load processes', 'error');
+                processFramework.handleError(error, 'Load Processes', 'Failed to load processes');
             }
         },
 
@@ -41,12 +51,14 @@ const processFramework = {
         },
 
         render() {
-            console.log('[Processes Render] Starting render. Filtered count:', this.filtered.length);
             const grid = document.getElementById('processes-grid');
-            console.log('[Processes Render] Grid element:', grid);
             
             if (!grid) {
-                console.error('[Processes Render] processes-grid element not found!');
+                processFramework.handleError(
+                    new Error('processes-grid element not found'),
+                    'Render Processes',
+                    'Unable to display processes - page element missing'
+                );
                 return;
             }
             
@@ -109,9 +121,7 @@ const processFramework = {
                 </div>
             `).join('');
             
-            console.log('[Processes Render] Generated HTML length:', html.length);
             grid.innerHTML = html;
-            console.log('[Processes Render] Render complete');
         },
 
         async showCreateModal() {
@@ -131,7 +141,7 @@ const processFramework = {
                     this._metadata = await window.upfApi.getProcessMetadata();
                     this._metadataLoaded = true;
                 } catch (e) {
-                    console.warn('[Process Metadata] Error:', e);
+                    processFramework.handleError(e, 'Process Metadata', 'Failed to load process metadata');
                 }
             },
 
@@ -172,8 +182,7 @@ const processFramework = {
                 document.getElementById('process-description').value = data.description || '';
                 processFramework.openModal('process-modal');
             } catch (error) {
-                console.error('Error loading process:', error);
-                processFramework.showAlert('Failed to load process', 'error');
+                processFramework.handleError(error, 'Load Process', 'Failed to load process');
             }
         },
 
@@ -309,8 +318,7 @@ const processFramework = {
                     processFramework.showAlert(error.error || 'Failed to delete process', 'error');
                 }
             } catch (error) {
-                console.error('Error deleting process:', error);
-                processFramework.showAlert('Failed to delete process', 'error');
+                processFramework.handleError(error, 'Delete Process', 'Failed to delete process');
             }
         },
 
@@ -338,8 +346,7 @@ const processFramework = {
                 this.filtered = [...this.all];
                 this.render();
             } catch (error) {
-                console.error('Error loading subprocesses:', error);
-                processFramework.showAlert('Failed to load subprocesses', 'error');
+                processFramework.handleError(error, 'Load Subprocesses', 'Failed to load subprocesses');
             }
         },
 
@@ -473,8 +480,7 @@ const processFramework = {
                 document.getElementById('labor-cost').value = data.labor_cost || 0;
                 processFramework.openModal('subprocess-modal');
             } catch (error) {
-                console.error('Error loading subprocess:', error);
-                processFramework.showAlert('Failed to load subprocess', 'error');
+                processFramework.handleError(error, 'Load Subprocess', 'Failed to load subprocess');
             }
         },
 
@@ -597,8 +603,7 @@ const processFramework = {
                     processFramework.showAlert(error.error || 'Failed to delete subprocess', 'error');
                 }
             } catch (error) {
-                console.error('Error deleting subprocess:', error);
-                processFramework.showAlert('Failed to delete subprocess', 'error');
+                processFramework.handleError(error, 'Delete Subprocess', 'Failed to delete subprocess');
             }
         },
 
@@ -621,8 +626,7 @@ const processFramework = {
                 this.filtered = [...this.all];
                 this.render();
             } catch (error) {
-                console.error('Error loading production lots:', error);
-                processFramework.showAlert('Failed to load production lots', 'error');
+                processFramework.handleError(error, 'Load Production Lots', 'Failed to load production lots');
             }
         },
 
@@ -835,7 +839,17 @@ const processFramework = {
         }
     },
 
+    selectedVariant: null,
+
     async init() {
+        // Listen for variant selection from Select2
+        document.addEventListener('variantSelected', (e) => {
+            console.log('[Variant Selection] Variant selected event received:', e.detail);
+            this.selectedVariant = e.detail;
+            this.updateSelectedVariantChip();
+            this.showAlert('Variant selected! Drag to a subprocess or click ➕ Variant.', 'success');
+        });
+
         // Check if there's a tab parameter in the URL
         const urlParams = new URLSearchParams(window.location.search);
         const initialTab = urlParams.get('tab') || 'processes';
@@ -846,6 +860,52 @@ const processFramework = {
         
         await this.switchTab(tabToLoad);
         this.updateHeaderActions();
+    },
+
+    updateSelectedVariantChip() {
+        const chip = document.getElementById('selected-variant-chip');
+        const nameEl = document.getElementById('selected-variant-name');
+        const detailsEl = document.getElementById('selected-variant-details');
+        
+        if (!chip || !nameEl) {
+            console.log('[Variant Chip] Elements not found');
+            return;
+        }
+
+        if (!this.selectedVariant) {
+            chip.style.display = 'none';
+            return;
+        }
+
+        const variantName = this.selectedVariant.text || this.selectedVariant.item_name || this.selectedVariant.name || `Variant #${this.selectedVariant.id}`;
+        const variantBrand = this.selectedVariant.brand || 'N/A';
+        const variantModel = this.selectedVariant.model || 'N/A';
+        
+        nameEl.textContent = variantName;
+        if (detailsEl) {
+            detailsEl.textContent = `${variantBrand} | ${variantModel}`;
+        }
+        chip.style.display = 'flex';
+        
+        // Make chip draggable
+        chip.setAttribute('draggable', 'true');
+        chip.ondragstart = (e) => {
+            const payload = {
+                id: this.selectedVariant.id,
+                name: variantName
+            };
+            e.dataTransfer.setData('application/json', JSON.stringify(payload));
+            e.dataTransfer.effectAllowed = 'copy';
+            chip.style.opacity = '0.5';
+        };
+        chip.ondragend = () => {
+            chip.style.opacity = '1';
+        };
+    },
+
+    clearSelectedVariant() {
+        this.selectedVariant = null;
+        this.updateSelectedVariantChip();
     },
 
     async switchTab(tabName) {
@@ -1036,13 +1096,21 @@ const processFramework = {
         document.getElementById('editor-tab-details').style.display = tab === 'details' ? 'block' : 'none';
         document.getElementById('editor-tab-structure').style.display = tab === 'structure' ? 'block' : 'none';
         document.getElementById('editor-tab-costing').style.display = tab === 'costing' ? 'block' : 'none';
+        
+        // Initialize variant search when structure tab is shown
+        if (tab === 'structure' && typeof variantSearch !== 'undefined') {
+            console.log('[Inline Editor] Initializing variant search for structure tab');
+            setTimeout(() => {
+                variantSearch.init();
+            }, 100);
+        }
     },
 
     async saveInlineProcessEdit(event) {
         event.preventDefault();
         
         if (!this.currentEditProcessId) {
-            console.error('[Inline Editor] No process ID set');
+            processFramework.handleError(new Error('No process selected'), 'Inline Editor', 'Please select a process first');
             return;
         }
         
@@ -1102,24 +1170,78 @@ const processFramework = {
                 return seqA - seqB;
             });
             
-            container.innerHTML = subprocesses.map(sp => {
+            container.innerHTML = subprocesses.map((sp, idx) => {
                 const sequence = sp.sequence_order || sp.sequence || 0;
                 const name = sp.subprocess?.name || sp.subprocess_name || sp.name || 'Unknown';
                 const category = sp.subprocess?.category || sp.category || 'N/A';
                 // Get the correct ID - structure endpoint returns process_subprocess_id
                 const psId = sp.process_subprocess_id || sp.id;
+                const variants = sp.variants || [];
+                
+                let variantsHtml = '';
+                                if (variants.length > 0) {
+                                        variantsHtml = `
+                                                <div class="variants-list" style="margin-top: 10px; padding: 10px; background: #f5f5f5; border-radius: 4px;">
+                                                        <div style="font-size: 12px; font-weight: 600; color: #666; margin-bottom: 8px;">🔧 Variants (${variants.length})</div>
+                                                        <div style="overflow-x:auto;">
+                                                            <table style="width:100%; border-collapse:collapse; font-size:13px;">
+                                                                <thead>
+                                                                    <tr style="text-align:left; color:#555;">
+                                                                        <th style="padding:6px 4px;">Item</th>
+                                                                        <th style="padding:6px 4px; width:90px;">Qty</th>
+                                                                        <th style="padding:6px 4px; width:120px;">Rate</th>
+                                                                        <th style="padding:6px 4px; width:120px;">Total</th>
+                                                                        <th style="padding:6px 4px; width:40px;"></th>
+                                                                    </tr>
+                                                                </thead>
+                                                                <tbody>
+                                                                    ${variants.map(v => {
+                                                                        const qty = parseFloat(v.quantity || 0);
+                                                                        const rate = parseFloat(v.cost_per_unit || 0);
+                                                                        const total = qty * rate;
+                                                                        const vid = v.id; // usage id
+                                                                        return `
+                                                                            <tr data-usage-id="${vid}">
+                                                                                <td style="padding:6px 4px;">${v.variant_name || 'Unknown'}</td>
+                                                                                <td style="padding:6px 4px;"><input type="number" min="0" step="0.01" value="${qty}" style="width:80px;" onchange="processFramework.updateVariantUsageDebounced(${vid}, this.value, null)" oninput="processFramework.updateTotalCell(${vid})" /></td>
+                                                                                <td style="padding:6px 4px;"><input type="number" min="0" step="0.01" value="${isNaN(rate)?'':rate}" placeholder="0.00" style="width:110px;" onchange="processFramework.updateVariantUsageDebounced(${vid}, null, this.value)" oninput="processFramework.updateTotalCell(${vid})" /></td>
+                                                                                <td style="padding:6px 4px;" class="total-cell" data-usage-id="${vid}">$${total.toFixed(2)}</td>
+                                                                                <td style="padding:6px 4px;"><button class="btn btn-sm" style="padding:2px 8px; font-size:11px; background:#f44336; color:white;" onclick="processFramework.removeVariantFromSubprocess(${psId}, ${vid})">×</button></td>
+                                                                            </tr>
+                                                                        `;
+                                                                    }).join('')}
+                                                                </tbody>
+                                                            </table>
+                                                        </div>
+                                                </div>
+                                        `;
+                                } else {
+                    variantsHtml = `
+                        <div class="drop-zone" 
+                             style="margin-top: 10px; padding: 20px; background: #f9f9f9; border: 2px dashed #ddd; border-radius: 4px; text-align: center; color: #999; font-size: 12px;"
+                             ondrop="processFramework.handleVariantDrop(event, ${psId})"
+                             ondragover="processFramework.handleDragOver(event)"
+                             ondragleave="processFramework.handleDragLeave(event)">
+                            Drag variant here or click ➕ Variant
+                        </div>
+                    `;
+                }
                 
                 return `
-                    <div class="subprocess-item">
-                        <div class="subprocess-info">
-                            <h4>${sequence}. ${name}</h4>
-                            <p>Category: ${category}</p>
+                    <div class="subprocess-item" style="margin-bottom: 15px; border:2px solid #e0e0e0; border-radius:8px; padding:10px;" data-ps-id="${psId}" onclick="processFramework.selectInlineSubprocess(${psId}, event)">
+                        <div class="subprocess-info" style="display: flex; justify-content: space-between; align-items: start;">
+                            <div>
+                                <h4>${sequence}. ${name}</h4>
+                                <p style="font-size: 12px; color: #666; margin: 4px 0;">Category: ${category}</p>
+                            </div>
+                            <div class="subprocess-actions" style="display: flex; gap: 4px;">
+                                <button class="btn btn-sm btn-primary" onclick="processFramework.addVariantToSubprocess(${psId}); event.stopPropagation();" title="Add Variant">➕ Variant</button>
+                                <button class="btn btn-sm btn-secondary" onclick="processFramework.moveSubprocess(${psId}, 'up'); event.stopPropagation();" title="Move Up">↑</button>
+                                <button class="btn btn-sm btn-secondary" onclick="processFramework.moveSubprocess(${psId}, 'down'); event.stopPropagation();" title="Move Down">↓</button>
+                                <button class="btn btn-sm btn-danger" onclick="processFramework.removeInlineSubprocess(${psId}); event.stopPropagation();" title="Remove">×</button>
+                            </div>
                         </div>
-                        <div class="subprocess-actions">
-                            <button class="btn btn-sm btn-secondary" onclick="processFramework.moveSubprocess(${psId}, 'up')" title="Move Up">↑</button>
-                            <button class="btn btn-sm btn-secondary" onclick="processFramework.moveSubprocess(${psId}, 'down')" title="Move Down">↓</button>
-                            <button class="btn btn-sm btn-danger" onclick="processFramework.removeInlineSubprocess(${psId})" title="Remove">×</button>
-                        </div>
+                        ${variantsHtml}
                     </div>
                 `;
             }).join('');
@@ -1128,26 +1250,46 @@ const processFramework = {
             this.updateInlineCosting(subprocesses);
             
         } catch (error) {
-            console.error('[Inline Editor] Error loading subprocesses:', error);
-            this.showAlert('Failed to load subprocesses', 'error');
+            processFramework.handleError(error, 'Load Subprocesses', 'Failed to load subprocesses');
         }
+    },
+    
+    selectInlineSubprocess(psId, evt) {
+        // Remove selection from others
+        document.querySelectorAll('#inline-subprocesses-list .subprocess-item').forEach(el => el.classList.remove('selected'));
+        const el = document.querySelector(`#inline-subprocesses-list .subprocess-item[data-ps-id="${psId}"]`);
+        if (el) {
+            el.classList.add('selected');
+        }
+        this.currentInlineSelectedSubprocessId = psId;
     },
 
     updateInlineCosting(subprocesses) {
         const totalLaborCost = subprocesses.reduce((sum, sp) => {
             const cost = parseFloat(sp.subprocess?.labor_cost || sp.labor_cost || 0);
-            return sum + cost;
+            return sum + (isNaN(cost) ? 0 : cost);
         }, 0);
-        
-        const totalTime = subprocesses.reduce((sum, sp) => {
-            const time = parseFloat(sp.subprocess?.estimated_time || sp.estimated_time || 0);
-            return sum + time;
+
+        const materialCost = subprocesses.reduce((sum, sp) => {
+            const variants = sp.variants || [];
+            const spMat = variants.reduce((s, v) => {
+                const qty = parseFloat(v.quantity || 0);
+                const rate = parseFloat(v.cost_per_unit || 0);
+                let total = (!isNaN(qty) && !isNaN(rate) && rate > 0) ? qty * rate : 0;
+                if (!total && v.total_cost) {
+                    const t = parseFloat(v.total_cost);
+                    total = isNaN(t) ? 0 : t;
+                }
+                return s + total;
+            }, 0);
+            return sum + spMat;
         }, 0);
-        
-        // Update existing HTML elements
+
+        const total = totalLaborCost + materialCost;
+
         document.getElementById('inline-labor-cost').textContent = `$${totalLaborCost.toFixed(2)}`;
-        document.getElementById('inline-material-cost').textContent = '$0.00'; // TODO: Calculate from variants
-        document.getElementById('inline-total-cost').textContent = `$${totalLaborCost.toFixed(2)}`;
+        document.getElementById('inline-material-cost').textContent = `$${materialCost.toFixed(2)}`;
+        document.getElementById('inline-total-cost').textContent = `$${total.toFixed(2)}`;
     },
 
     async removeInlineSubprocess(subprocessId) {
@@ -1165,8 +1307,242 @@ const processFramework = {
             await this.loadInlineSubprocesses(this.currentEditProcessId);
             
         } catch (error) {
-            console.error('[Inline Editor] Error removing subprocess:', error);
-            this.showAlert('Failed to remove subprocess', 'error');
+            processFramework.handleError(error, 'Remove Subprocess', 'Failed to remove subprocess');
+        }
+    },
+
+    // Variant handling functions
+    handleDragOver(event) {
+        event.preventDefault();
+        event.dataTransfer.dropEffect = 'copy';
+        event.currentTarget.style.background = '#e8f5e9';
+        event.currentTarget.style.borderColor = '#4CAF50';
+    },
+
+    handleDragLeave(event) {
+        event.currentTarget.style.background = '#f9f9f9';
+        event.currentTarget.style.borderColor = '#ddd';
+    },
+
+    async handleVariantDrop(event, subprocessId) {
+        event.preventDefault();
+        event.currentTarget.style.background = '#f9f9f9';
+        event.currentTarget.style.borderColor = '#ddd';
+        
+        try {
+            const data = JSON.parse(event.dataTransfer.getData('application/json'));
+            console.log('[Variant Drop] Dropped variant:', data, 'on subprocess:', subprocessId);
+            
+            // Check if this is a multi-select drag
+            if (data.multiSelect && data.ids && Array.isArray(data.ids)) {
+                // Add all selected variants
+                for (const variantId of data.ids) {
+                    await this.addVariantToSubprocessById(subprocessId, variantId, 1);
+                }
+                // Clear selections after adding
+                if (window.variantSearch) {
+                    variantSearch.selected.clear();
+                    variantSearch.refresh();
+                }
+            } else if (data.id) {
+                // Single variant drag (legacy behavior)
+                await this.addVariantToSubprocessById(subprocessId, data.id, 1);
+            } else {
+                this.showAlert('Invalid variant data', 'error');
+                return;
+            }
+            
+        } catch (error) {
+            processFramework.handleError(error, 'Variant Drop', 'Failed to add variant via drag-and-drop');
+        }
+    },
+
+    async addVariantToSubprocess(subprocessId) {
+        // New behavior: set target subprocess and focus the variant search to guide user
+        this.currentInlineSelectedSubprocessId = subprocessId;
+        // visually mark as selected
+        document.querySelectorAll('#inline-subprocesses-list .subprocess-item').forEach(el => el.classList.remove('selected'));
+        const el = document.querySelector(`#inline-subprocesses-list .subprocess-item[data-ps-id="${subprocessId}"]`);
+        if (el) el.classList.add('selected');
+        // focus the search input on the right
+        const input = document.getElementById('variant-search-input');
+        if (input) input.focus();
+        this.showAlert('Select variants on the right, then click "Add selected to subprocess"', 'info');
+    },
+
+    async addVariantToSubprocessById(subprocessId, variantId, quantity, costPerUnit) {
+        try {
+            console.log('[Add Variant] Adding variant', variantId, 'to subprocess', subprocessId, 'qty:', quantity);
+            
+            const response = await fetch('/api/upf/variant_usage', {
+                method: 'POST',
+                credentials: 'include',
+                headers: {
+                    'Content-Type': 'application/json'
+                },
+                body: JSON.stringify({
+                    subprocess_id: subprocessId,
+                    item_id: variantId,
+                    quantity: quantity,
+                    ...(typeof costPerUnit !== 'undefined' && costPerUnit !== null ? { cost_per_unit: costPerUnit } : {})
+                })
+            });
+            
+            if (!response.ok) {
+                const errorData = await response.json().catch(() => ({}));
+                throw new Error(errorData.error || errorData.message || 'Failed to add variant');
+            }
+            
+            this.showAlert('Variant added successfully', 'success');
+            
+            // Reload subprocesses to show the new variant
+            await this.loadInlineSubprocesses(this.currentEditProcessId);
+            
+            // Clear selected variant
+            this.clearSelectedVariant();
+            
+        } catch (error) {
+            processFramework.handleError(error, 'Add Variant', 'Failed to add variant');
+        }
+    },
+
+    openBatchAddModal() {
+        if (!this.currentInlineSelectedSubprocessId) {
+            this.showAlert('Select a subprocess first', 'warning');
+            return;
+        }
+        this.openModal('batch-add-variants-modal');
+    },
+
+    async confirmBatchAddVariants() {
+        try {
+            const qtyInput = document.getElementById('batch-default-quantity');
+            const rateInput = document.getElementById('batch-default-rate');
+            const qty = parseFloat(qtyInput.value || '0');
+            const rateRaw = rateInput.value;
+            const rate = rateRaw ? parseFloat(rateRaw) : null;
+            if (isNaN(qty) || qty <= 0) {
+                this.showAlert('Enter a valid quantity > 0', 'error');
+                return;
+            }
+            const ids = Array.from(variantSearch.selected);
+            if (!ids.length) {
+                this.showAlert('No variants selected', 'warning');
+                return;
+            }
+            const target = this.currentInlineSelectedSubprocessId;
+            for (const vid of ids) {
+                await this.addVariantToSubprocessById(target, vid, qty, rate);
+            }
+            variantSearch.selected.clear();
+            variantSearch.refresh();
+            this.closeModal('batch-add-variants-modal');
+            this.showAlert('Variants added', 'success');
+        } catch (e) {
+            console.error('[Batch Add] Error', e);
+            this.showAlert(e.message || 'Failed batch add', 'error');
+        }
+    },
+
+    async removeVariantFromSubprocess(subprocessId, variantUsageId) {
+        if (!confirm('Remove this variant from the subprocess?')) {
+            return;
+        }
+        
+        try {
+            console.log('[Remove Variant] Removing variant usage:', variantUsageId);
+            
+            const response = await fetch(`/api/upf/variant_usage/${variantUsageId}`, {
+                method: 'DELETE',
+                credentials: 'include'
+            });
+            
+            if (!response.ok) {
+                const errorData = await response.json().catch(() => ({}));
+                throw new Error(errorData.error || errorData.message || 'Failed to remove variant');
+            }
+            
+            this.showAlert('Variant removed successfully', 'success');
+            
+            // Reload subprocesses
+            await this.loadInlineSubprocesses(this.currentEditProcessId);
+            
+        } catch (error) {
+            processFramework.handleError(error, 'Remove Variant', 'Failed to remove variant');
+        }
+    },
+
+    // expose to global
+    
+
+    async updateVariantUsage(usageId, quantityOrNull, rateOrNull) {
+        try {
+            const payload = {};
+            if (quantityOrNull !== null && quantityOrNull !== undefined) {
+                const q = parseFloat(quantityOrNull);
+                if (!isNaN(q)) payload.quantity = q;
+            }
+            if (rateOrNull !== null && rateOrNull !== undefined) {
+                const r = parseFloat(rateOrNull);
+                if (!isNaN(r)) payload.cost_per_unit = r;
+            }
+            if (Object.keys(payload).length === 0) return;
+
+            const resp = await fetch(`/api/upf/variant_usage/${usageId}`, {
+                method: 'PUT',
+                credentials: 'include',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify(payload)
+            });
+            
+            // Check if we got redirected to login (HTML response instead of JSON)
+            const contentType = resp.headers.get('content-type');
+            if (contentType && contentType.includes('text/html')) {
+                throw new Error('Session expired. Please refresh the page and log in again.');
+            }
+            
+            // Handle 401 Unauthorized
+            if (resp.status === 401) {
+                throw new Error('Session expired. Please refresh the page and log in again.');
+            }
+            
+            if (!resp.ok) {
+                const err = await resp.json().catch(() => ({}));
+                throw new Error(err.error || err.message || 'Failed to update variant usage');
+            }
+            
+            // refresh list to reflect totals
+            await this.loadInlineSubprocesses(this.currentEditProcessId);
+        } catch (e) {
+            processFramework.handleError(e, 'Variant Usage Update', 'Failed to update variant');
+        }
+    },
+
+    // Debounced wrapper to minimize excessive reloads
+    updateVariantUsageDebounced: (() => {
+        let timers = {};
+        return function(usageId, quantityOrNull, rateOrNull) {
+            if (timers[usageId]) clearTimeout(timers[usageId]);
+            timers[usageId] = setTimeout(() => {
+                this.updateVariantUsage(usageId, quantityOrNull, rateOrNull);
+            }, 400);
+        };
+    })(),
+
+    updateTotalCell(usageId) {
+        // Update the total cell in real-time as user types
+        const row = document.querySelector(`tr[data-usage-id="${usageId}"]`);
+        if (!row) return;
+        
+        const qtyInput = row.querySelector('input[type="number"]:nth-of-type(1)');
+        const rateInput = row.querySelector('input[type="number"]:nth-of-type(2)');
+        const totalCell = row.querySelector('.total-cell');
+        
+        if (qtyInput && rateInput && totalCell) {
+            const qty = parseFloat(qtyInput.value) || 0;
+            const rate = parseFloat(rateInput.value) || 0;
+            const total = qty * rate;
+            totalCell.textContent = `$${total.toFixed(2)}`;
         }
     },
 
@@ -1582,3 +1958,6 @@ window.onclick = function(event) {
         event.target.style.display = 'none';
     }
 };
+
+    // Expose to global for other modules (e.g., variant_search.js) and inline handlers
+    window.processFramework = processFramework;
