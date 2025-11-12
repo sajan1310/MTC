@@ -38,31 +38,91 @@ class VariantService:
         Returns:
             Created variant usage
         """
+        """
+        Add a variant to a subprocess. If the same variant already exists in the
+        subprocess (non-alternative, same variant_id and no substitute_group),
+        increment its quantity instead of creating a duplicate row. This mirrors
+        user expectation when adding the same variant multiple times via the
+        multi-select/batch add UI.
+
+        Returns the created or updated variant usage record.
+        """
         total_cost = (cost_per_unit * quantity) if cost_per_unit else None
 
         with database.get_conn(cursor_factory=psycopg2.extras.RealDictCursor) as (
             conn,
             cur,
         ):
+            # Check for existing non-alternative usage for same subprocess & variant
             cur.execute(
                 """
-                INSERT INTO variant_usage (
-                    process_subprocess_id, variant_id, quantity,
-                    cost_per_unit, total_cost
-                ) VALUES (%s, %s, %s, %s, %s)
-                RETURNING *
+                SELECT * FROM variant_usage
+                WHERE process_subprocess_id = %s
+                  AND variant_id = %s
+                  AND (substitute_group_id IS NULL)
+                  AND (is_alternative IS FALSE OR is_alternative IS NULL)
+                LIMIT 1
             """,
-                (
-                    process_subprocess_id,
-                    variant_id,
-                    quantity,
-                    cost_per_unit,
-                    total_cost,
-                ),
+                (process_subprocess_id, variant_id),
             )
 
-            usage_data = cur.fetchone()
-            conn.commit()
+            existing = cur.fetchone()
+
+            if existing:
+                # Merge quantities: add incoming quantity to existing
+                try:
+                    existing_qty = float(existing.get('quantity') or 0)
+                except Exception:
+                    existing_qty = 0
+
+                new_qty = existing_qty + (float(quantity) if quantity is not None else 0)
+
+                # Determine which cost to use: prefer incoming cost_per_unit if provided
+                if cost_per_unit is not None:
+                    new_cost = cost_per_unit
+                else:
+                    try:
+                        new_cost = float(existing.get('cost_per_unit')) if existing.get('cost_per_unit') is not None else None
+                    except Exception:
+                        new_cost = None
+
+                new_total = (new_cost * new_qty) if new_cost is not None else None
+
+                cur.execute(
+                    """
+                    UPDATE variant_usage
+                    SET quantity = %s,
+                        cost_per_unit = %s,
+                        total_cost = %s,
+                        updated_at = CURRENT_TIMESTAMP
+                    WHERE id = %s
+                    RETURNING *
+                """,
+                    (new_qty, new_cost, new_total, existing.get('id')),
+                )
+
+                usage_data = cur.fetchone()
+                conn.commit()
+            else:
+                cur.execute(
+                    """
+                    INSERT INTO variant_usage (
+                        process_subprocess_id, variant_id, quantity,
+                        cost_per_unit, total_cost
+                    ) VALUES (%s, %s, %s, %s, %s)
+                    RETURNING *
+                """,
+                    (
+                        process_subprocess_id,
+                        variant_id,
+                        quantity,
+                        cost_per_unit,
+                        total_cost,
+                    ),
+                )
+
+                usage_data = cur.fetchone()
+                conn.commit()
 
         usage = VariantUsage(usage_data)
         return usage.to_dict()

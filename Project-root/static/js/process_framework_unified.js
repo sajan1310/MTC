@@ -1068,6 +1068,9 @@ const processFramework = {
         panel.style.transform = 'scaleY(0)';
         panel.style.maxHeight = '0';
         
+        // Remove attached visual state when collapsing
+        try { panel.classList.remove('attached'); } catch (e) { /* ignore */ }
+
         setTimeout(() => {
             panel.style.display = 'none';
             panel.style.opacity = '1';
@@ -1179,9 +1182,14 @@ const processFramework = {
                 const variants = sp.variants || [];
                 
                 let variantsHtml = '';
-                                if (variants.length > 0) {
-                                        variantsHtml = `
-                                                <div class="variants-list" style="margin-top: 10px; padding: 10px; background: #f5f5f5; border-radius: 4px;">
+                if (variants.length > 0) {
+                    // Allow dropping onto existing variants list so multi-select drag works even when there are already variants
+                    variantsHtml = `
+                        <div class="variants-list" 
+                             ondrop="processFramework.handleVariantDrop(event, ${psId})"
+                             ondragover="processFramework.handleDragOver(event)"
+                             ondragleave="processFramework.handleDragLeave(event)"
+                             style="margin-top: 10px; padding: 10px; border-radius: 4px;">
                                                         <div style="font-size: 12px; font-weight: 600; color: #666; margin-bottom: 8px;">🔧 Variants (${variants.length})</div>
                                                         <div style="overflow-x:auto;">
                                                             <table style="width:100%; border-collapse:collapse; font-size:13px;">
@@ -1196,15 +1204,19 @@ const processFramework = {
                                                                 </thead>
                                                                 <tbody>
                                                                     ${variants.map(v => {
-                                                                        const qty = parseFloat(v.quantity || 0);
-                                                                        const rate = parseFloat(v.cost_per_unit || 0);
-                                                                        const total = qty * rate;
+                                                                        const qty = parseFloat(v.quantity);
+                                                                        const rate = parseFloat(v.cost_per_unit);
+                                                                        let total = (!isNaN(qty) && !isNaN(rate) && rate > 0) ? qty * rate : 0;
+                                                                        if ((!total || isNaN(total)) && v.total_cost) {
+                                                                            let t = parseFloat(v.total_cost);
+                                                                            total = isNaN(t) ? 0 : t;
+                                                                        }
                                                                         const vid = v.id; // usage id
                                                                         return `
                                                                             <tr data-usage-id="${vid}">
-                                                                                <td style="padding:6px 4px;">${v.variant_name || 'Unknown'}</td>
-                                                                                <td style="padding:6px 4px;"><input type="number" min="0" step="0.01" value="${qty}" style="width:80px;" onchange="processFramework.updateVariantUsageDebounced(${vid}, this.value, null)" oninput="processFramework.updateTotalCell(${vid})" /></td>
-                                                                                <td style="padding:6px 4px;"><input type="number" min="0" step="0.01" value="${isNaN(rate)?'':rate}" placeholder="0.00" style="width:110px;" onchange="processFramework.updateVariantUsageDebounced(${vid}, null, this.value)" oninput="processFramework.updateTotalCell(${vid})" /></td>
+                                                                                <td style="padding:6px 4px;">${v.variant_name || v.item_name || v.name || 'Unknown'}</td>
+                                                                                <td style="padding:6px 4px;"><input type="number" min="0" step="0.01" value="${!isNaN(qty) ? qty : ''}" style="width:80px;" onchange="processFramework.updateVariantUsageDebounced(${vid}, this.value, null)" oninput="processFramework.updateTotalCell(${vid})" /></td>
+                                                                                <td style="padding:6px 4px;"><input type="number" min="0" step="0.01" value="${(v.cost_per_unit === null || v.cost_per_unit === undefined || isNaN(rate)) ? '' : rate}" placeholder="0.00" style="width:110px;" oninput="processFramework.updateVariantUsageDebounced.call(processFramework, ${vid}, null, this.value); processFramework.updateTotalCell(${vid});" /></td>
                                                                                 <td style="padding:6px 4px;" class="total-cell" data-usage-id="${vid}">$${total.toFixed(2)}</td>
                                                                                 <td style="padding:6px 4px;"><button class="btn btn-sm" style="padding:2px 8px; font-size:11px; background:#f44336; color:white;" onclick="processFramework.removeVariantFromSubprocess(${psId}, ${vid})">×</button></td>
                                                                             </tr>
@@ -1262,6 +1274,30 @@ const processFramework = {
             el.classList.add('selected');
         }
         this.currentInlineSelectedSubprocessId = psId;
+        console.debug('[Inline Editor] selectInlineSubprocess set currentInlineSelectedSubprocessId =', psId);
+
+        // Move the inline editor panel to appear directly below the selected subprocess
+        try {
+            const panel = document.getElementById('inline-editor-panel');
+            if (panel && el && el.parentNode) {
+                // Insert the panel right after the selected subprocess element so it expands inline
+                el.parentNode.insertBefore(panel, el.nextSibling);
+                // Ensure the panel is visible (openInlineEditor normally handles content population)
+                panel.style.display = 'block';
+                // Mark as attached so CSS can visually tie the panel to the subprocess
+                try { panel.classList.add('attached'); } catch (e) { /* ignore */ }
+                // Smoothly scroll the panel into view, aligning so the panel appears just below the subprocess
+                setTimeout(() => {
+                    try {
+                        panel.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
+                    } catch (e) {
+                        console.warn('[Inline Editor] scrollIntoView failed', e);
+                    }
+                }, 60);
+            }
+        } catch (err) {
+            console.error('[Inline Editor] Failed to reposition inline editor panel', err);
+        }
     },
 
     updateInlineCosting(subprocesses) {
@@ -1335,10 +1371,13 @@ const processFramework = {
             
             // Check if this is a multi-select drag
             if (data.multiSelect && data.ids && Array.isArray(data.ids)) {
-                // Add all selected variants
+                // Add all selected variants without reloading after each add
                 for (const variantId of data.ids) {
-                    await this.addVariantToSubprocessById(subprocessId, variantId, 1);
+                    // Pass null for costPerUnit and true for skipReload (avoid sending boolean as cost)
+                    await this.addVariantToSubprocessById(subprocessId, variantId, 1, null, true);
                 }
+                // Single reload at end
+                await this.loadInlineSubprocesses(this.currentEditProcessId);
                 // Clear selections after adding
                 if (window.variantSearch) {
                     variantSearch.selected.clear();
@@ -1370,7 +1409,7 @@ const processFramework = {
         this.showAlert('Select variants on the right, then click "Add selected to subprocess"', 'info');
     },
 
-    async addVariantToSubprocessById(subprocessId, variantId, quantity, costPerUnit) {
+    async addVariantToSubprocessById(subprocessId, variantId, quantity, costPerUnit, skipReload = false) {
         try {
             console.log('[Add Variant] Adding variant', variantId, 'to subprocess', subprocessId, 'qty:', quantity);
             
@@ -1394,12 +1433,14 @@ const processFramework = {
             }
             
             this.showAlert('Variant added successfully', 'success');
-            
-            // Reload subprocesses to show the new variant
-            await this.loadInlineSubprocesses(this.currentEditProcessId);
-            
-            // Clear selected variant
-            this.clearSelectedVariant();
+
+            // Reload subprocesses to show the new variant unless caller requested skipReload
+            if (!skipReload) {
+                await this.loadInlineSubprocesses(this.currentEditProcessId);
+
+                // Clear selected variant
+                this.clearSelectedVariant();
+            }
             
         } catch (error) {
             processFramework.handleError(error, 'Add Variant', 'Failed to add variant');
@@ -1431,9 +1472,12 @@ const processFramework = {
                 return;
             }
             const target = this.currentInlineSelectedSubprocessId;
+            // Add all variants without reloading after each add; reload once at the end.
             for (const vid of ids) {
-                await this.addVariantToSubprocessById(target, vid, qty, rate);
+                await this.addVariantToSubprocessById(target, vid, qty, rate, true);
             }
+            // Single reload to update the UI
+            await this.loadInlineSubprocesses(this.currentEditProcessId);
             variantSearch.selected.clear();
             variantSearch.refresh();
             this.closeModal('batch-add-variants-modal');

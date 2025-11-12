@@ -161,7 +161,7 @@ class VariantUsage:
         self.variant_id: int = data["variant_id"]
         self.quantity: float = float(data["quantity"])
         self.cost_per_unit: Optional[float] = (
-            float(data["cost_per_unit"]) if data.get("cost_per_unit") else None
+            float(data["cost_per_unit"]) if data.get("cost_per_unit") is not None else None
         )
         self.total_cost: Optional[float] = (
             float(data["total_cost"]) if data.get("total_cost") else None

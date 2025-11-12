@@ -23,6 +23,8 @@ const variantSearch = {
         console.log('Initializing Variant Search (multi-select)...');
         await this.loadCategories();
         this.attachEventListeners();
+        // Insert the select/unselect toggle button into the UI (will insert near results)
+        this.insertToggleButton();
         this.performSearch('');
         console.log('Variant Search initialized successfully');
     },
@@ -99,6 +101,8 @@ const variantSearch = {
             cb.addEventListener('change', (e) => {
                 const id = parseInt(e.target.getAttribute('data-variant-id'));
                 if (e.target.checked) this.selected.add(id); else this.selected.delete(id);
+                // Keep toggle button label/state up to date
+                this.updateToggleButton();
             });
         });
         // Enable drag-and-drop
@@ -128,6 +132,102 @@ const variantSearch = {
                 }
             });
         });
+        // After wiring checkboxes and drag, update the toggle button state
+        this.updateToggleButton();
+    },
+
+    // Insert a single toggle button that switches between Select All and Unselect All
+    insertToggleButton() {
+        // Prefer explicit container if developer added one; otherwise place next to results element
+        const resultsEl = document.getElementById('variant-search-results');
+        if (!resultsEl) return;
+
+        const resultsContainer = document.getElementById('variant-search-results-container') || resultsEl.parentNode;
+        if (!resultsContainer) return;
+
+        let toggleBtn = document.getElementById('variant-toggle-select-btn');
+        if (!toggleBtn) {
+            toggleBtn = document.createElement('button');
+            toggleBtn.id = 'variant-toggle-select-btn';
+            toggleBtn.className = 'variant-toggle-btn';
+            toggleBtn.style.margin = '8px 0';
+            toggleBtn.textContent = 'Select All';
+            // Accessibility attributes
+            toggleBtn.setAttribute('role', 'button');
+            toggleBtn.setAttribute('aria-pressed', 'false');
+            toggleBtn.setAttribute('aria-label', 'Select all visible variants');
+            toggleBtn.tabIndex = 0;
+            // Insert before the results list so it appears above
+            resultsContainer.insertBefore(toggleBtn, resultsEl);
+        }
+
+        toggleBtn.onclick = (e) => {
+            e.preventDefault();
+            this.toggleSelectAll();
+        };
+        // Keyboard activation (Enter / Space)
+        toggleBtn.addEventListener('keydown', (e) => {
+            if (e.key === 'Enter' || e.key === ' ') {
+                e.preventDefault();
+                this.toggleSelectAll();
+            }
+        });
+    },
+
+    // Toggle all visible checkboxes: select them if any are unselected, otherwise unselect all
+    toggleSelectAll() {
+        const resultsEl = document.getElementById('variant-search-results');
+        if (!resultsEl) return;
+        const checkboxes = Array.from(resultsEl.querySelectorAll('input[type="checkbox"]'));
+        if (checkboxes.length === 0) return;
+        // If any checkbox is selected, interpret the toggle as "Unselect All".
+        // This makes the toggle respond immediately when the user selects a single checkbox.
+        const anySelected = checkboxes.some(cb => cb.checked);
+        if (anySelected) {
+            // Unselect all
+            checkboxes.forEach(cb => {
+                cb.checked = false;
+                const id = parseInt(cb.getAttribute('data-variant-id'));
+                this.selected.delete(id);
+            });
+        } else {
+            // Select all
+            checkboxes.forEach(cb => {
+                cb.checked = true;
+                const id = parseInt(cb.getAttribute('data-variant-id'));
+                this.selected.add(id);
+            });
+        }
+        this.updateToggleButton();
+    },
+
+    // Update the toggle button label according to the visible checkbox state
+    updateToggleButton() {
+        const resultsEl = document.getElementById('variant-search-results');
+        const toggleBtn = document.getElementById('variant-toggle-select-btn');
+        if (!resultsEl || !toggleBtn) return;
+        const checkboxes = Array.from(resultsEl.querySelectorAll('input[type="checkbox"]'));
+        // Show 'Unselect All' as soon as any visible checkbox is selected
+        const anySelected = checkboxes.length > 0 && checkboxes.some(cb => cb.checked);
+        // Use the internal selected set for a stable selected count (may include selections across pages)
+        const selectedCount = (this.selected && typeof this.selected.size === 'number') ? this.selected.size : (checkboxes.filter(cb => cb.checked).length);
+        if (anySelected && selectedCount > 0) {
+            toggleBtn.textContent = `Unselect All (${selectedCount})`;
+        } else if (anySelected && selectedCount === 0) {
+            // Fallback: some visible checkboxes are checked but selectedSet is empty (sync issue) — show visible count
+            const visibleCount = checkboxes.filter(cb => cb.checked).length;
+            toggleBtn.textContent = `Unselect All (${visibleCount})`;
+        } else {
+            toggleBtn.textContent = 'Select All';
+        }
+        // Update ARIA pressed state and label for screen readers
+        try {
+            toggleBtn.setAttribute('aria-pressed', anySelected ? 'true' : 'false');
+            const ariaLabel = anySelected ? `Unselect all visible variants${selectedCount ? ` (${selectedCount})` : ''}` : 'Select all visible variants';
+            toggleBtn.setAttribute('aria-label', ariaLabel);
+        } catch (err) {
+            // ignore
+        }
     },
 
     attachEventListeners() {
@@ -140,14 +240,44 @@ const variantSearch = {
 
         const addBtn = document.getElementById('add-selected-variants-btn');
         if (addBtn) {
-            addBtn.addEventListener('click', () => {
+            console.debug('[VariantSearch] add-selected-variants-btn found, attaching click handler');
+            addBtn.addEventListener('click', (evt) => {
+                console.debug('[VariantSearch] add-selected-variants-btn clicked', { selectedCount: this.selected.size });
                 const pf = window.processFramework || (typeof processFramework !== 'undefined' ? processFramework : null);
                 if (pf && typeof pf.openBatchAddModal === 'function') {
-                    pf.openBatchAddModal();
+                    try {
+                        // If a subprocess is already selected in the inline editor, open batch modal
+                        if (pf.currentInlineSelectedSubprocessId) {
+                            pf.openBatchAddModal();
+                        } else {
+                            // No subprocess selected — open the subprocess selection modal to let user pick a target
+                            console.debug('[VariantSearch] No subprocess selected — opening subprocess selector');
+                            // Ensure the subprocess modal knows which process we're editing
+                            try {
+                                window.currentProcessIdForSubprocess = pf.currentEditProcessId;
+                                // Use the inline helper to show the selector
+                                if (typeof pf.showSubprocessSelectionModal === 'function') {
+                                    pf.showSubprocessSelectionModal();
+                                } else {
+                                    // Fallback: alert the user to click a subprocess
+                                    alert('Please select a subprocess on the left, then click Add selected.');
+                                }
+                            } catch (innerErr) {
+                                console.error('[VariantSearch] Error opening subprocess selector', innerErr);
+                                alert('Please select a subprocess on the left, then click Add selected.');
+                            }
+                        }
+                    } catch (err) {
+                        console.error('[VariantSearch] Error calling processFramework.openBatchAddModal', err);
+                        alert('Failed to open batch add dialog. See console for details.');
+                    }
                 } else {
+                    console.warn('[VariantSearch] processFramework.openBatchAddModal not available');
                     alert('Select a process and subprocess first');
                 }
             });
+        } else {
+            console.warn('[VariantSearch] add-selected-variants-btn NOT found in DOM when attaching listeners');
         }
     },
 

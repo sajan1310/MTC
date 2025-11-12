@@ -550,6 +550,17 @@
         display: block;
     }
 
+    /* Visual attachment when the inline editor is inserted below a subprocess
+       Gives a subtle left indent and accent border so the panel feels connected
+       to the subprocess it is editing. The JS will add/remove the "attached"
+       class when the panel is moved inline. */
+    .inline-editor-panel.attached .editor-content {
+        margin-left: 18px;
+        border-left: 4px solid rgba(102, 126, 234, 0.15);
+        padding-left: 12px;
+        box-shadow: 0 6px 18px rgba(0,0,0,0.08);
+    }
+
     .editor-overlay {
         display: none; /* No overlay needed for inline expansion */
     }
@@ -566,6 +577,9 @@
         overflow: hidden;
         transform-origin: top center;
         animation: expandDown 0.3s ease-out;
+        /* Smoothly animate visual attachment changes (indent, padding, box-shadow, border-left) */
+        transition: margin-left 240ms ease, padding-left 240ms ease, box-shadow 240ms ease, border-left-width 240ms ease, border-left-color 240ms ease;
+        will-change: margin-left, box-shadow, padding-left;
     }
 
     @keyframes expandDown {
@@ -868,7 +882,6 @@
         color: #e0e0e0 !important;
         border-radius: 8px;
     }
-    }
 
     [data-theme="dark"] .card {
         background: #23272e;
@@ -982,6 +995,33 @@
         flex-direction: column;
     }
 
+    /* Toggle button for variant selection (Select All / Unselect All) */
+    .variant-toggle-btn {
+        background: #ffffff;
+        border: 1px solid #e0e0e0;
+        color: #333;
+        padding: 6px 10px;
+        border-radius: 6px;
+        cursor: pointer;
+        font-size: 13px;
+        align-self: flex-start;
+    }
+
+    .variant-toggle-btn:hover {
+        background: #f5f5f5;
+    }
+
+    .variant-toggle-btn:focus {
+        outline: 2px solid #4a90e2;
+        outline-offset: 2px;
+    }
+
+    [data-theme="dark"] .variant-toggle-btn {
+        background: #2e2e2e;
+        border-color: #444;
+        color: #e0e0e0;
+    }
+
     .variant-search-card .search-input {
         flex-shrink: 0;
     }
@@ -1050,6 +1090,21 @@
         background: #2d2d2d;
         border-color: #555;
     }
+
+    [data-theme="dark"] .inline-editor-panel {
+        background: #23272e !important;
+        color: #e0e0e0 !important;
+    }
+
+    [data-theme="dark"] .variant-list,
+    [data-theme="dark"] .variant-list-container,
+    [data-theme="dark"] .variant-search-card {
+        background: #23272e !important;
+        color: #e0e0e0 !important;
+        border-radius: 8px !important;
+        box-shadow: 0 2px 8px rgba(0,0,0,0.4) !important;
+    }
+    
 
     [data-theme="dark"] .editor-header {
         background: linear-gradient(135deg, #424242 0%, #212121 100%);
@@ -1305,13 +1360,13 @@
                         </div>
                         
                         <!-- Right: Variant Search -->
-                        <div style="width: 400px; min-width: 350px; max-width: 450px; display: flex; flex-direction: column; background: #f9f9f9; border-radius: 8px; padding: 15px; box-shadow: 0 2px 8px rgba(0,0,0,0.1);">
+                        <div class="variant-list-container" style="width: 400px; min-width: 350px; max-width: 450px; display: flex; flex-direction: column; border-radius: 8px; padding: 15px; box-shadow: 0 2px 8px rgba(0,0,0,0.1);">
                             <div style="margin-bottom: 10px;">
-                                <h3 style="margin: 0 0 10px 0; font-size: 16px; color: #333;">🔍 Variant Search</h3>
+                                <h3 style="margin: 0 0 10px 0; font-size: 16px; color: #f7f3f3;">🔍 Variant Search</h3>
                             </div>
                             <div class="variant-search-card" style="display: flex; flex-direction: column; gap: 10px; flex: 1; min-height: 0;">
                                 <input id="variant-search-input" class="search-input" placeholder="Type to search variants..." style="width: 100%; flex-shrink: 0;" />
-                                <div id="variant-search-results" style="flex: 1; overflow-y: auto; overflow-x: hidden; border: 1px solid #eee; border-radius: 6px; padding: 6px; background: #fff; min-height: 300px;"></div>
+                                <div id="variant-search-results" style="flex: 1; overflow-y: auto; overflow-x: hidden; border: 1px solid #eee; border-radius: 6px; padding: 6px; min-height: 300px;"></div>
                                 <div style="flex-shrink: 0; display: flex; flex-direction: column; gap: 8px;">
                                     <div style="font-size: 12px; color: #777; text-align: center;">Select multiple results using checkboxes</div>
                                     <button id="add-selected-variants-btn" class="btn btn-primary" style="padding: 10px 12px; width: 100%;">Add selected to subprocess</button>

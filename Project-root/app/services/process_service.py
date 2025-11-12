@@ -297,13 +297,17 @@ class ProcessService:
                 _seq_expr2 = "ps.sequence"  # legacy-safe default
             # OPTIMIZATION 1: Batch load all subprocess-related data in a single query
             # Using CTEs and JSON aggregation to reduce N+1 queries
+            # Each CTE is commented for maintainability
+
             cur.execute(
                 """
+                -- CTE: Get all subprocess IDs for the process
                 WITH subprocess_ids AS (
                     SELECT ps.id as ps_id, ps.subprocess_id, ps.custom_name, {seq_expr} as sequence_order
                     FROM process_subprocesses ps
                     WHERE ps.process_id = %s
                 ),
+                -- CTE: Aggregate variant usage for each subprocess
                 variants_data AS (
                     SELECT
                         vu.process_subprocess_id,
@@ -316,16 +320,20 @@ class ProcessService:
                                 'quantity', vu.quantity,
                                 'unit', iv.unit,
                                 'is_alternative', vu.is_alternative,
-                                'substitute_group_id', vu.substitute_group_id
+                                'substitute_group_id', vu.substitute_group_id,
+                                'cost_per_unit', vu.cost_per_unit,
+                                'total_cost', vu.total_cost
                             ) ORDER BY vu.id
                         ) as variants
-                    FROM variant_usage vu
+                        FROM variant_usage vu
+                        -- Only include non-alternative variants (is_alternative = FALSE)
                     JOIN item_variant iv ON iv.variant_id = vu.variant_id
                     JOIN item_master im ON im.item_id = iv.item_id
                     WHERE vu.process_subprocess_id IN (SELECT ps_id FROM subprocess_ids)
-                      AND (vu.substitute_group_id IS NULL OR vu.is_alternative = FALSE)
+                    AND (vu.substitute_group_id IS NULL OR vu.is_alternative = FALSE)
                     GROUP BY vu.process_subprocess_id
                 ),
+                -- CTE: Aggregate cost items for each subprocess
                 cost_items_data AS (
                     SELECT
                         ci.process_subprocess_id,
@@ -343,6 +351,7 @@ class ProcessService:
                     WHERE ci.process_subprocess_id IN (SELECT ps_id FROM subprocess_ids)
                     GROUP BY ci.process_subprocess_id
                 ),
+                -- CTE: Aggregate substitute groups for each subprocess
                 groups_data AS (
                     SELECT
                         sg.process_subprocess_id,
@@ -357,6 +366,7 @@ class ProcessService:
                     WHERE sg.process_subprocess_id IN (SELECT ps_id FROM subprocess_ids)
                     GROUP BY sg.process_subprocess_id
                 ),
+                -- CTE: Aggregate group alternatives for each substitute group
                 group_alternatives AS (
                     SELECT
                         sg.process_subprocess_id,
@@ -379,6 +389,7 @@ class ProcessService:
                     WHERE sg.process_subprocess_id IN (SELECT ps_id FROM subprocess_ids)
                     GROUP BY sg.process_subprocess_id, sg.id
                 ),
+                -- CTE: Aggregate timing data for each subprocess
                 timing_data AS (
                     SELECT
                         pt.process_subprocess_id,
@@ -391,6 +402,7 @@ class ProcessService:
                     FROM process_timing pt
                     WHERE pt.process_subprocess_id IN (SELECT ps_id FROM subprocess_ids)
                 )
+                -- Final SELECT: Join all aggregated data for each subprocess
                 SELECT
                     si.ps_id,
                     COALESCE(vd.variants, '[]'::json) as variants,
