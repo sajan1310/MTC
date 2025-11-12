@@ -1,43 +1,57 @@
-﻿/**
- * Variant Search Component - Multi-select with search bar
- * @version 3.0.0
- * Simpler UI: text input + checkbox results + Add Selected
- */
-
-function escapeHtml(text) {
-    if (!text) return '';
-    const div = document.createElement('div');
-    div.textContent = text;
-    return div.innerHTML;
-}
-
-const variantSearch = {
-    categories: [],
-    selected: new Set(),
-    lastQuery: '',
-    page: 1,
-    hasMore: true,
-    loading: false,
-
-    async init() {
-        console.log('Initializing Variant Search (multi-select)...');
-        await this.loadCategories();
-        this.attachEventListeners();
-        // Insert the select/unselect toggle button into the UI (will insert near results)
-        this.insertToggleButton();
-        this.performSearch('');
-        console.log('Variant Search initialized successfully');
-    },
-
-    renderResultRow(variant) {
-        const checked = this.selected.has(variant.id) ? 'checked' : '';
-        const stock = this.getStockStatusHTML(variant);
-        const vname = escapeHtml(variant.text || variant.item_name || 'Unknown');
-        return `
-            <label class="variant-row" draggable="true" data-variant-id="${variant.id}" data-variant-name="${vname}" style="display:flex; gap:8px; align-items:flex-start; padding:8px; border-bottom:1px solid #f2f2f2; cursor:grab;">
-                <input type="checkbox" data-variant-id="${variant.id}" ${checked} />
-                <div style="flex:1;">
-                    <div style="font-weight:600;">${vname}</div>
+﻿        if (addBtn) {
+            console.debug('[VariantSearch] add-selected-variants-btn found, attaching click handler');
+            addBtn.addEventListener('click', (evt) => {
+                console.debug('[VariantSearch] add-selected-variants-btn clicked', { selectedCount: this.selected.size });
+                const pf = window.processFramework || (typeof processFramework !== 'undefined' ? processFramework : null);
+                if (pf) {
+                    try {
+                        // If a subprocess is already selected in the inline editor, perform a batch add immediately
+                        // (use default quantity/rate from the hidden modal inputs). This makes the button a one-click
+                        // "add selected to active subprocess" action when a target exists.
+                        if (pf.currentInlineSelectedSubprocessId) {
+                            if (this.selected.size > 0) {
+                                // Directly confirm batch add (this will perform adds and reload)
+                                if (typeof pf.confirmBatchAddVariants === 'function') {
+                                    pf.confirmBatchAddVariants();
+                                } else {
+                                    // Fallback: open the batch modal so user can confirm
+                                    pf.openBatchAddModal && pf.openBatchAddModal();
+                                }
+                            } else {
+                                // No variants selected
+                                this.updateToggleButton();
+                                alert('No variants selected. Please select variants to add.');
+                            }
+                        } else {
+                            // No subprocess selected — open the subprocess selection modal to let user pick a target
+                            console.debug('[VariantSearch] No subprocess selected — opening subprocess selector');
+                            // Ensure the subprocess modal knows which process we're editing
+                            try {
+                                window.currentProcessIdForSubprocess = pf.currentEditProcessId;
+                                // Use the inline helper to show the selector
+                                if (typeof pf.showSubprocessSelectionModal === 'function') {
+                                    pf.showSubprocessSelectionModal();
+                                } else {
+                                    // Fallback: alert the user to click a subprocess
+                                    alert('Please select a subprocess on the left, then click Add selected.');
+                                }
+                            } catch (innerErr) {
+                                console.error('[VariantSearch] Error opening subprocess selector', innerErr);
+                                alert('Please select a subprocess on the left, then click Add selected.');
+                            }
+                        }
+                    } catch (err) {
+                        console.error('[VariantSearch] Error handling add-selected click', err);
+                        alert('Failed to add selected variants. See console for details.');
+                    }
+                } else {
+                    console.warn('[VariantSearch] processFramework not available');
+                    alert('Select a process and subprocess first');
+                }
+            });
+        } else {
+            console.warn('[VariantSearch] add-selected-variants-btn NOT found in DOM when attaching listeners');
+        }
                     <div style="font-size:12px; color:#666; display:flex; gap:12px;">
                         <span>${escapeHtml(variant.brand || 'N/A')}</span>
                         <span>${escapeHtml(variant.model || 'N/A')}</span>
