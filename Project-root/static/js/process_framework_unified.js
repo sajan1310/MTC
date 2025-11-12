@@ -1247,7 +1247,7 @@ const processFramework = {
                                 <p style="font-size: 12px; color: #666; margin: 4px 0;">Category: ${category}</p>
                             </div>
                             <div class="subprocess-actions" style="display: flex; gap: 4px;">
-                                <button class="btn btn-sm btn-primary" onclick="processFramework.addVariantToSubprocess(${psId}); event.stopPropagation();" title="Add Variant">➕ Variant</button>
+                                <button class="btn btn-sm btn-primary" onclick="processFramework.toggleVariantSearch(${psId}); event.stopPropagation();" title="Add Variant">➕ Variant</button>
                                 <button class="btn btn-sm btn-secondary" onclick="processFramework.moveSubprocess(${psId}, 'up'); event.stopPropagation();" title="Move Up">↑</button>
                                 <button class="btn btn-sm btn-secondary" onclick="processFramework.moveSubprocess(${psId}, 'down'); event.stopPropagation();" title="Move Down">↓</button>
                                 <button class="btn btn-sm btn-danger" onclick="processFramework.removeInlineSubprocess(${psId}); event.stopPropagation();" title="Remove">×</button>
@@ -1409,6 +1409,43 @@ const processFramework = {
         this.showAlert('Select variants on the right, then click "Add selected to subprocess"', 'info');
     },
 
+    toggleVariantSearch(subprocessId) {
+        try {
+            // Ensure inline editor is open and structure tab is visible
+            if (!this.currentEditProcessId) {
+                this.showAlert('Open a process first to manage subprocess variants', 'warning');
+                return;
+            }
+
+            // Select the subprocess visually and reposition inline editor under it
+            this.selectInlineSubprocess(subprocessId);
+            this.switchEditorTab('structure');
+
+            // Find the variant search container inside the inline editor
+            const panel = document.getElementById('inline-editor-panel');
+            if (!panel) return;
+            const variantContainer = panel.querySelector('.variant-list-container');
+
+            // Toggle collapsed state
+            if (variantContainer) {
+                const isCollapsed = variantContainer.classList.toggle('collapsed');
+                if (!isCollapsed) {
+                    // expanded -> focus input
+                    const input = document.getElementById('variant-search-input');
+                    if (input) {
+                        setTimeout(() => input.focus(), 50);
+                    }
+                }
+            } else {
+                // Fallback: focus search input directly
+                const input = document.getElementById('variant-search-input');
+                if (input) input.focus();
+            }
+        } catch (e) {
+            console.error('[Toggle Variant Search] Error toggling variant search', e);
+        }
+    },
+
     async addVariantToSubprocessById(subprocessId, variantId, quantity, costPerUnit, skipReload = false) {
         try {
             console.log('[Add Variant] Adding variant', variantId, 'to subprocess', subprocessId, 'qty:', quantity);
@@ -1441,6 +1478,22 @@ const processFramework = {
                 // Clear selected variant
                 this.clearSelectedVariant();
             }
+            // Reset the variant search UI (clear multi-select state and input) so the card is ready for new searches
+            try {
+                if (window.variantSearch) {
+                    variantSearch.selected.clear();
+                    // clear search input and refresh results
+                    const input = document.getElementById('variant-search-input');
+                    if (input) input.value = '';
+                    variantSearch.refresh();
+                    // update toggle button label/state
+                    variantSearch.updateToggleButton && variantSearch.updateToggleButton();
+                }
+            } catch (e) {
+                console.warn('[Add Variant] Failed to reset variant search UI', e);
+            }
+            // Small toast to indicate the search card was reset
+            try { this.showAlert('Variant search reset', 'info'); } catch (e) { /* ignore */ }
             
         } catch (error) {
             processFramework.handleError(error, 'Add Variant', 'Failed to add variant');
@@ -1486,6 +1539,20 @@ const processFramework = {
             console.error('[Batch Add] Error', e);
             this.showAlert(e.message || 'Failed batch add', 'error');
         }
+        // Ensure variant search UI is reset after batch add as well
+        try {
+            if (window.variantSearch) {
+                const input = document.getElementById('variant-search-input');
+                if (input) input.value = '';
+                variantSearch.selected.clear();
+                variantSearch.refresh();
+                variantSearch.updateToggleButton && variantSearch.updateToggleButton();
+            }
+        } catch (err) {
+            console.warn('[Batch Add] Failed to fully reset variant search UI', err);
+        }
+        // Small toast to indicate the search card was reset after batch add
+        try { this.showAlert('Variant search reset', 'info'); } catch (e) { /* ignore */ }
     },
 
     async removeVariantFromSubprocess(subprocessId, variantUsageId) {
