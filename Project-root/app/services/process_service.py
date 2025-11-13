@@ -322,13 +322,22 @@ class ProcessService:
                                 'is_alternative', vu.is_alternative,
                                 'substitute_group_id', vu.substitute_group_id,
                                 'cost_per_unit', vu.cost_per_unit,
-                                'total_cost', vu.total_cost
+                                'total_cost', vu.total_cost,
+                                -- include master attributes for richer frontend rendering
+                                'model', COALESCE(mm.model_name, NULL),
+                                'variation', COALESCE(vm.variation_name, NULL),
+                                'size', COALESCE(sm.size_name, NULL),
+                                'color', COALESCE(cm.color_name, NULL)
                             ) ORDER BY vu.id
                         ) as variants
                         FROM variant_usage vu
                         -- Only include non-alternative variants (is_alternative = FALSE)
                     JOIN item_variant iv ON iv.variant_id = vu.variant_id
                     JOIN item_master im ON im.item_id = iv.item_id
+                    LEFT JOIN model_master mm ON mm.model_id = im.model_id
+                    LEFT JOIN variation_master vm ON vm.variation_id = im.variation_id
+                    LEFT JOIN color_master cm ON cm.color_id = iv.color_id
+                    LEFT JOIN size_master sm ON sm.size_id = iv.size_id
                     WHERE vu.process_subprocess_id IN (SELECT ps_id FROM subprocess_ids)
                     AND (vu.substitute_group_id IS NULL OR vu.is_alternative = FALSE)
                     GROUP BY vu.process_subprocess_id

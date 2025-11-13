@@ -240,8 +240,23 @@ def get_variant_options(lot_id):
         with get_conn() as (conn, cur):
             cur = conn.cursor(cursor_factory=RealDictCursor)
 
-            # Get process structure with subprocesses and variants
-            cur.execute(
+            # Helper to check whether a given column exists on a table in current schema
+            def _column_exists(table: str, column: str) -> bool:
+                cur.execute(
+                    """
+                    SELECT 1 FROM information_schema.columns
+                    WHERE table_schema = current_schema() AND table_name = %s AND column_name = %s
+                    """,
+                    (table, column),
+                )
+                return bool(cur.fetchone())
+
+            ps_has_deleted = _column_exists("process_subprocesses", "deleted_at")
+            s_has_deleted = _column_exists("subprocesses", "deleted_at")
+            vu_has_deleted = _column_exists("variant_usage", "deleted_at")
+
+            # Build process_subprocesses + subprocesses query conditionally including deleted_at filters
+            base_subprocess_q = (
                 """
                 SELECT
                     ps.id as process_subprocess_id,
@@ -252,19 +267,24 @@ def get_variant_options(lot_id):
                 FROM process_subprocesses ps
                 JOIN subprocesses s ON s.id = ps.subprocess_id
                 WHERE ps.process_id = %s
-                  AND ps.deleted_at IS NULL
-                  AND s.deleted_at IS NULL
-                ORDER BY ps.id
-            """,
-                (lot["process_id"],),
+                """
             )
+
+            if ps_has_deleted:
+                base_subprocess_q += "\n  AND ps.deleted_at IS NULL"
+            if s_has_deleted:
+                base_subprocess_q += "\n  AND s.deleted_at IS NULL"
+
+            base_subprocess_q += "\nORDER BY ps.id"
+
+            cur.execute(base_subprocess_q, (lot["process_id"],))
 
             subprocesses = cur.fetchall()
 
             result = []
             for sp in subprocesses:
                 # Get all variants for this subprocess
-                cur.execute(
+                base_variants_q = (
                     """
                     SELECT
                         vu.id as usage_id,
@@ -281,11 +301,15 @@ def get_variant_options(lot_id):
                     FROM variant_usage vu
                     JOIN item_variant iv ON iv.item_id = vu.item_id
                     WHERE vu.process_subprocess_id = %s
-                      AND vu.deleted_at IS NULL
-                    ORDER BY vu.substitute_group_id NULLS FIRST, vu.alternative_order NULLS LAST
-                """,
-                    (sp["process_subprocess_id"],),
+                    """
                 )
+
+                if vu_has_deleted:
+                    base_variants_q += "\n  AND vu.deleted_at IS NULL"
+
+                base_variants_q += "\nORDER BY vu.substitute_group_id NULLS FIRST, vu.alternative_order NULLS LAST"
+
+                cur.execute(base_variants_q, (sp["process_subprocess_id"],))
 
                 variants = cur.fetchall()
 

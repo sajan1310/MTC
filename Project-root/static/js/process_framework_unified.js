@@ -1283,11 +1283,18 @@ const processFramework = {
                 const category = sp.subprocess?.category || sp.category || 'N/A';
                 // Get the correct ID - structure endpoint returns process_subprocess_id
                 const psId = sp.process_subprocess_id || sp.id;
-                const variants = sp.variants || [];
-                const esc = this.escapeHtml;
+                                const variants = sp.variants || [];
+                                // Prefer a local escapeHtml if available on the framework (fallback to processes.escapeHtml)
+                                const esc = (typeof this.escapeHtml === 'function')
+                                        ? this.escapeHtml.bind(this)
+                                        : ((this.processes && typeof this.processes.escapeHtml === 'function')
+                                                ? this.processes.escapeHtml.bind(this.processes)
+                                                : function(text) { const d = document.createElement('div'); d.textContent = text; return d.innerHTML; }
+                                            );
                 
                 let variantsHtml = '';
                 if (variants.length > 0) {
+                    try { console.debug('[Inline Editor] variants sample (raw):', variants[0]); } catch(e){}
                     // Allow dropping onto existing variants list so multi-select drag works even when there are already variants
                     variantsHtml = `
                         <div class="variants-list" 
@@ -1301,6 +1308,11 @@ const processFramework = {
                                                                 <thead>
                                                                     <tr style="text-align:left; color:#555;">
                                                                         <th style="padding:6px 4px;">Item</th>
+                                                                        <th style="padding:6px 4px; width:120px;">Model</th>
+                                                                        <th style="padding:6px 4px; width:120px;">Variation</th>
+                                                                        <th style="padding:6px 4px; width:80px;">Size</th>
+                                                                        <th style="padding:6px 4px; width:90px;">Color</th>
+                                                                        <th style="padding:6px 4px; width:110px;">Stock</th>
                                                                         <th style="padding:6px 4px; width:90px;">Qty</th>
                                                                         <th style="padding:6px 4px; width:120px;">Rate</th>
                                                                         <th style="padding:6px 4px; width:120px;">Total</th>
@@ -1308,7 +1320,14 @@ const processFramework = {
                                                                     </tr>
                                                                 </thead>
                                                                 <tbody>
-                                                                    ${variants.map(v => {
+                                                                    ${variants.map(vRaw => {
+                                                                        // Normalize variant entry: some responses may return JSON strings
+                                                                        let v = vRaw;
+                                                                        try {
+                                                                            if (typeof v === 'string') v = JSON.parse(v);
+                                                                        } catch (e) {
+                                                                            console.warn('[Inline Editor] Failed to parse variant entry', e, vRaw);
+                                                                        }
                                                                         const qty = parseFloat(v.quantity);
                                                                         const rate = parseFloat(v.cost_per_unit);
                                                                         let total = (!isNaN(qty) && !isNaN(rate) && rate > 0) ? qty * rate : 0;
@@ -1316,27 +1335,35 @@ const processFramework = {
                                                                             let t = parseFloat(v.total_cost);
                                                                             total = isNaN(t) ? 0 : t;
                                                                         }
-                                                                        const vid = v.id; // usage id
-                                                                        // Build a concise details line: Model • Variation • Size • Color
-                                                                        const detailsParts = [];
-                                                                        const modelVal = v.model || v.model_name || (v.item && v.item.model) || '';
-                                                                        if (modelVal) detailsParts.push(modelVal);
-                                                                        const variationVal = v.variation_name || v.variation || '';
-                                                                        if (variationVal) detailsParts.push(variationVal);
-                                                                        if (v.size) detailsParts.push(v.size);
-                                                                        if (v.color) detailsParts.push(v.color);
-                                                                        const detailsLine = detailsParts.join(' • ');
-                                                                        const descriptionVal = v.description || v.text || v.item_description || '';
+                                                                        const vid = v.id || v.usage_id || v.variant_usage_id || v.variant_id; // usage id fallback
+                                                                        // Extract attribute values
+                                                                        const modelVal = v.model || v.model_name || v.variant_model || (v.item && v.item.model) || '';
+                                                                        const variationVal = v.variation_name || v.variation || v.variant_name || '';
+                                                                        const sizeVal = v.size || (v.item && v.item.size) || '';
+                                                                        const colorVal = v.color || (v.item && v.item.color) || '';
+                                                                        const descriptionVal = v.description || v.text || v.item_description || v.variant_description || '';
+
+                                                                        // Stock badge computation
+                                                                        const qtyInt = parseInt(v.quantity) || 0;
+                                                                        const reorder = parseInt(v.reorder_level) || 0;
+                                                                        let stockClass = 'stock-good';
+                                                                        let stockText = `In Stock (${qtyInt})`;
+                                                                        if (qtyInt === 0) { stockClass = 'stock-out'; stockText = 'Out of Stock'; }
+                                                                        else if (qtyInt <= reorder) { stockClass = 'stock-low'; stockText = `Low Stock (${qtyInt})`; }
 
                                                                         return `
                                                                             <tr data-usage-id="${vid}">
-                                                                                <td style="padding:6px 4px; vertical-align: top;">
+                                                                                <td style="padding:6px 4px; vertical-align: top; width: 40%;">
                                                                                     <div style="display:flex; flex-direction:column; gap:6px; min-width:0;">
                                                                                         <div style="font-weight:600; overflow:hidden; text-overflow:ellipsis; white-space:nowrap;">${esc(v.variant_name || v.item_name || v.name || 'Unknown')}</div>
-                                                                                        <div style="font-size:12px; color:#666; overflow:hidden; text-overflow:ellipsis; white-space:nowrap;">${esc(detailsLine)}</div>
                                                                                         ${descriptionVal ? `<div style="font-size:12px; color:#444; margin-top:4px; overflow:hidden; text-overflow:ellipsis; max-height:3em;">${esc(descriptionVal)}</div>` : ''}
                                                                                     </div>
                                                                                 </td>
+                                                                                <td style="padding:6px 4px; vertical-align: middle;">${esc(modelVal)}</td>
+                                                                                <td style="padding:6px 4px; vertical-align: middle;">${esc(variationVal)}</td>
+                                                                                <td style="padding:6px 4px; vertical-align: middle;">${esc(sizeVal)}</td>
+                                                                                <td style="padding:6px 4px; vertical-align: middle;">${esc(colorVal)}</td>
+                                                                                <td style="padding:6px 4px; vertical-align: middle;"><span class="variant-stock ${stockClass}" style="font-size:12px;">${esc(stockText)}</span></td>
                                                                                 <td style="padding:6px 4px; vertical-align: middle;"><input type="number" min="0" step="0.01" value="${!isNaN(qty) ? qty : ''}" style="width:80px;" onchange="processFramework.updateVariantUsageDebounced(${vid}, this.value, null)" oninput="processFramework.updateTotalCell(${vid})" /></td>
                                                                                 <td style="padding:6px 4px; vertical-align: middle;"><input type="number" min="0" step="0.01" value="${(v.cost_per_unit === null || v.cost_per_unit === undefined || isNaN(rate)) ? '' : rate}" placeholder="0.00" style="width:110px;" oninput="processFramework.updateVariantUsageDebounced.call(processFramework, ${vid}, null, this.value); processFramework.updateTotalCell(${vid});" /></td>
                                                                                 <td style="padding:6px 4px; vertical-align: middle;" class="total-cell" data-usage-id="${vid}">$${total.toFixed(2)}</td>
@@ -2252,5 +2279,23 @@ window.onclick = function(event) {
     }
 };
 
-    // Expose to global for other modules (e.g., variant_search.js) and inline handlers
-    window.processFramework = processFramework;
+// Expose to global for other modules (e.g., variant_search.js) and inline handlers
+window.processFramework = processFramework;
+
+// Small debug helper: call from browser console to force-open inline editor for a process id
+window.showInlineEditorFor = async function(processId) {
+    try {
+        console.log('[Debug] showInlineEditorFor called with id=', processId);
+        if (!window.processFramework) {
+            console.error('[Debug] processFramework is not available on window');
+            return;
+        }
+        await window.processFramework.openInlineEditor(processId);
+        console.log('[Debug] openInlineEditor returned');
+    } catch (err) {
+        console.error('[Debug] showInlineEditorFor error', err);
+        try { window.processFramework.showAlert('Debug: failed to open inline editor: ' + (err && err.message), 'error'); } catch(e){}
+    }
+};
+
+console.log('[Process Framework] loaded and ready');

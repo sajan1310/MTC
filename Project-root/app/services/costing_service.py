@@ -52,6 +52,29 @@ class CostingService:
             conn,
             cur,
         ):
+            # If the pricing table doesn't exist in this schema, return None so callers can
+            # fallback to other logic. This avoids hard failures on environments that
+            # haven't run the full migrations.
+            cur.execute(
+                """
+                SELECT 1 FROM information_schema.tables
+                WHERE table_schema = current_schema() AND table_name = %s
+                """,
+                ("variant_supplier_pricing",),
+            )
+            if not cur.fetchone():
+                # Table missing; log and return None
+                # Defer to callers to fallback to alternate cost source
+                try:
+                    from flask import current_app
+
+                    current_app.logger.warning(
+                        "variant_supplier_pricing table not found; skipping supplier-based costing"
+                    )
+                except Exception:
+                    pass
+                return None
+
             cur.execute(
                 """
                 SELECT

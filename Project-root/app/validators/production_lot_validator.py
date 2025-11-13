@@ -28,15 +28,42 @@ def validate_production_lot_creation(
         conn,
         cur,
     ):
-        # 1) process exists and is active/draft
-        cur.execute(
-            """
-            SELECT id, status
-            FROM processes
-            WHERE id = %s AND deleted_at IS NULL
-            """,
-            (process_id,),
+        # Helper: detect if a column exists on the connected DB/schema
+        def _column_exists(table: str, column: str) -> bool:
+            cur.execute(
+                """
+                SELECT 1 FROM information_schema.columns
+                WHERE table_schema = current_schema() AND table_name = %s AND column_name = %s
+                """,
+                (table, column),
+            )
+            return bool(cur.fetchone())
+
+        # Detect whether soft-delete column exists for processes and process_subprocesses
+        processes_has_deleted = _column_exists("processes", "deleted_at")
+        subprocesses_has_deleted = _column_exists(
+            "process_subprocesses", "deleted_at"
         )
+
+        # 1) process exists and is active/draft
+        if processes_has_deleted:
+            cur.execute(
+                """
+                SELECT id, status
+                FROM processes
+                WHERE id = %s AND deleted_at IS NULL
+                """,
+                (process_id,),
+            )
+        else:
+            cur.execute(
+                """
+                SELECT id, status
+                FROM processes
+                WHERE id = %s
+                """,
+                (process_id,),
+            )
         row = cur.fetchone()
         if not row:
             errors.append(f"Process {process_id} not found")
@@ -60,15 +87,26 @@ def validate_production_lot_creation(
             errors.append(f"user_id {user_id} not found")
 
         # 4) process has at least 1 subprocess
-        cur.execute(
-            """
-            SELECT 1
-            FROM process_subprocesses
-            WHERE process_id = %s AND deleted_at IS NULL
-            LIMIT 1
-            """,
-            (process_id,),
-        )
+        if subprocesses_has_deleted:
+            cur.execute(
+                """
+                SELECT 1
+                FROM process_subprocesses
+                WHERE process_id = %s AND deleted_at IS NULL
+                LIMIT 1
+                """,
+                (process_id,),
+            )
+        else:
+            cur.execute(
+                """
+                SELECT 1
+                FROM process_subprocesses
+                WHERE process_id = %s
+                LIMIT 1
+                """,
+                (process_id,),
+            )
         if not cur.fetchone():
             errors.append(
                 f"Process {process_id} has no subprocesses; cannot create lot"

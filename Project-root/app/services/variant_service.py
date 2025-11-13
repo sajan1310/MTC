@@ -290,6 +290,25 @@ class VariantService:
             conn,
             cur,
         ):
+            # If the pricing table is not present in this schema, avoid querying it and return empty list
+            cur.execute(
+                """
+                SELECT 1 FROM information_schema.tables
+                WHERE table_schema = current_schema() AND table_name = %s
+                """,
+                ("variant_supplier_pricing",),
+            )
+            if not cur.fetchone():
+                try:
+                    from flask import current_app
+
+                    current_app.logger.debug(
+                        "variant_supplier_pricing table missing; get_variant_suppliers returning empty list"
+                    )
+                except Exception:
+                    pass
+                return []
+
             cur.execute(
                 """
                 SELECT
@@ -462,43 +481,75 @@ class VariantService:
             conn,
             cur,
         ):
+            # Check if supplier pricing table exists; if not, build a simpler query without subselects
             cur.execute(
-                f"""
-                SELECT DISTINCT
-                    iv.variant_id,
-                    im.name as variant_name,
-                    iv.opening_stock,
-                    iv.threshold,
-                    im.name as item_name,
-                    COALESCE(
-                        (SELECT MIN(vsp.cost_per_unit)
-                         FROM variant_supplier_pricing vsp
-                         WHERE vsp.variant_id = iv.variant_id
-                           AND vsp.is_active = TRUE
-                        ), 0
-                    ) as min_cost,
-                    COALESCE(
-                        (SELECT MAX(vsp.cost_per_unit)
-                         FROM variant_supplier_pricing vsp
-                         WHERE vsp.variant_id = iv.variant_id
-                           AND vsp.is_active = TRUE
-                        ), 0
-                    ) as max_cost,
-                    COALESCE(
-                        (SELECT COUNT(*)
-                         FROM variant_supplier_pricing vsp
-                         WHERE vsp.variant_id = iv.variant_id
-                           AND vsp.is_active = TRUE
-                        ), 0
-                    ) as supplier_count
-                FROM item_variant iv
-                JOIN item_master im ON im.item_id = iv.item_id
-                WHERE {where_clause}
-                ORDER BY im.name
-                LIMIT %s
-            """,
-                params + [limit],
+                """
+                SELECT 1 FROM information_schema.tables
+                WHERE table_schema = current_schema() AND table_name = %s
+                """,
+                ("variant_supplier_pricing",),
             )
+            pricing_table_exists = bool(cur.fetchone())
+
+            if pricing_table_exists:
+                cur.execute(
+                    f"""
+                    SELECT DISTINCT
+                        iv.variant_id,
+                        im.name as variant_name,
+                        iv.opening_stock,
+                        iv.threshold,
+                        im.name as item_name,
+                        COALESCE(
+                            (SELECT MIN(vsp.cost_per_unit)
+                             FROM variant_supplier_pricing vsp
+                             WHERE vsp.variant_id = iv.variant_id
+                               AND vsp.is_active = TRUE
+                            ), 0
+                        ) as min_cost,
+                        COALESCE(
+                            (SELECT MAX(vsp.cost_per_unit)
+                             FROM variant_supplier_pricing vsp
+                             WHERE vsp.variant_id = iv.variant_id
+                               AND vsp.is_active = TRUE
+                            ), 0
+                        ) as max_cost,
+                        COALESCE(
+                            (SELECT COUNT(*)
+                             FROM variant_supplier_pricing vsp
+                             WHERE vsp.variant_id = iv.variant_id
+                               AND vsp.is_active = TRUE
+                            ), 0
+                        ) as supplier_count
+                    FROM item_variant iv
+                    JOIN item_master im ON im.item_id = iv.item_id
+                    WHERE {where_clause}
+                    ORDER BY im.name
+                    LIMIT %s
+                """,
+                    params + [limit],
+                )
+            else:
+                # Pricing table missing - don't attempt subselects; provide default zeros
+                cur.execute(
+                    f"""
+                    SELECT DISTINCT
+                        iv.variant_id,
+                        im.name as variant_name,
+                        iv.opening_stock,
+                        iv.threshold,
+                        im.name as item_name,
+                        0 as min_cost,
+                        0 as max_cost,
+                        0 as supplier_count
+                    FROM item_variant iv
+                    JOIN item_master im ON im.item_id = iv.item_id
+                    WHERE {where_clause}
+                    ORDER BY im.name
+                    LIMIT %s
+                """,
+                    params + [limit],
+                )
 
             variants = cur.fetchall()
 

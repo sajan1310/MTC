@@ -462,18 +462,36 @@ class ProductionService:
         ):
             # Get variant cost (use supplier-specific or worst-case)
             if supplier_id:
-                cur.execute(
-                    """
-                    SELECT cost_per_unit
-                    FROM variant_supplier_pricing
-                    WHERE variant_id = %s AND supplier_id = %s AND is_active = TRUE
-                    ORDER BY effective_from DESC
-                    LIMIT 1
-                """,
-                    (variant_id, supplier_id),
-                )
-                cost_row = cur.fetchone()
-                cost = float(cost_row["cost_per_unit"]) if cost_row else None
+                # Ensure the variant_supplier_pricing table exists in this schema before querying.
+                try:
+                    cur.execute(
+                        """
+                        SELECT 1 FROM information_schema.tables
+                        WHERE table_schema = current_schema() AND table_name = %s
+                        """,
+                        ("variant_supplier_pricing",),
+                    )
+                    if cur.fetchone():
+                        cur.execute(
+                            """
+                            SELECT cost_per_unit
+                            FROM variant_supplier_pricing
+                            WHERE variant_id = %s AND supplier_id = %s AND is_active = TRUE
+                            ORDER BY effective_from DESC
+                            LIMIT 1
+                        """,
+                            (variant_id, supplier_id),
+                        )
+                        cost_row = cur.fetchone()
+                        cost = float(cost_row["cost_per_unit"]) if cost_row else None
+                    else:
+                        # Table missing; fallback to worst-case costing
+                        cost_info = CostingService.get_variant_worst_case_cost(variant_id)
+                        cost = cost_info["worst_case_cost"] if cost_info else None
+                except Exception:
+                    # On any unexpected DB error, fallback to worst-case costing
+                    cost_info = CostingService.get_variant_worst_case_cost(variant_id)
+                    cost = cost_info["worst_case_cost"] if cost_info else None
             else:
                 cost_info = CostingService.get_variant_worst_case_cost(variant_id)
                 cost = cost_info["worst_case_cost"] if cost_info else None
