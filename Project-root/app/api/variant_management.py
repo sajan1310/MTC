@@ -734,8 +734,60 @@ def check_variant_availability(item_id):
         required_qty = float(request.args.get("quantity", 1))
         availability = VariantService.check_variant_availability(item_id, required_qty)
         return APIResponse.success(availability)
+    
+    
+    
+    
+    
+    
+    
+    
+    
+    
+    
+    
+    
+    
+    
+    
+    
+    
+    
+    
+    
+    
+    
+    
+    
+    
+    
+    
+    
+    
+    
+    
+    
+    
+    
+    
+    
+    
+    
+    
     except Exception as e:
         current_app.logger.error(f"Error checking availability: {e}")
+        return APIResponse.error("internal_error", str(e), 500)
+
+
+@variant_api_bp.route("/supplier/<int:supplier_id>/variants", methods=["GET"])
+@login_required
+def get_supplier_variants(supplier_id):
+    """Get all variants and pricing supplied by a specific supplier."""
+    try:
+        variants = VariantService.get_supplier_variants(supplier_id)
+        return APIResponse.success(variants)
+    except Exception as e:
+        current_app.logger.error(f"Error getting supplier variants: {e}")
         return APIResponse.error("internal_error", str(e), 500)
 
 

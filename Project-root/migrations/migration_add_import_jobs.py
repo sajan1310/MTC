@@ -68,6 +68,9 @@ def upgrade():
         print("✅ Created index on import_jobs(created_at)")
 
         # Create import_results table to store detailed results
+        # Create import_results table. The foreign key to import_jobs(import_id) is added
+        # conditionally below to avoid failing when an existing import_jobs table has
+        # a mismatched column type (e.g., varchar vs uuid) in legacy schemas.
         cur.execute("""
             CREATE TABLE IF NOT EXISTS import_results (
                 id SERIAL PRIMARY KEY,
@@ -78,11 +81,29 @@ def upgrade():
                 success_rate DECIMAL(5, 2),
                 duration_seconds DECIMAL(10, 2),
                 failed_rows JSONB,
-                created_at TIMESTAMP DEFAULT NOW(),
-                CONSTRAINT fk_import FOREIGN KEY (import_id) REFERENCES import_jobs(import_id) ON DELETE CASCADE
+                created_at TIMESTAMP DEFAULT NOW()
             );
         """)
-        print("✅ Created import_results table")
+        print("✅ Created import_results table (FK added conditionally)")
+
+        # Conditionally add FK constraint only if import_jobs.import_id exists and is of type uuid
+        cur.execute("""
+        DO $$
+        BEGIN
+            IF EXISTS (SELECT 1 FROM information_schema.columns
+                       WHERE table_name = 'import_jobs' AND column_name = 'import_id'
+                       AND data_type = 'uuid') THEN
+                BEGIN
+                    ALTER TABLE import_results
+                      ADD CONSTRAINT fk_import FOREIGN KEY (import_id) REFERENCES import_jobs(import_id) ON DELETE CASCADE;
+                EXCEPTION WHEN duplicate_object THEN
+                    -- constraint already exists; ignore
+                    NULL;
+                END;
+            END IF;
+        END
+        $$;
+        """)
 
         # Create index on import_results
         cur.execute("""

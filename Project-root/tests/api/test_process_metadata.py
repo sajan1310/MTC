@@ -1,4 +1,3 @@
-import json
 
 def test_process_metadata(client):
     # The test client is authenticated via LOGIN_DISABLED in conftest

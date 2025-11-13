@@ -177,7 +177,7 @@
                         {% endif %}
                     </svg>
                     <span>{{ message }}</span>
-                    <button type="button" class="flash-close" onclick="this.parentElement.remove()">×</button>
+                    <button type="button" class="flash-close" aria-label="Close notification">×</button>
                 </div>
                 {% endfor %}
             </div>
@@ -193,6 +193,9 @@
         </footer>
     </div>
 
+    {# Include shared PO modals so they are available on every page #}
+    {% include '_po_modals.html' %}
+
     {% block scripts %}
     <script src="https://code.jquery.com/jquery-3.6.0.min.js" defer></script>
     <script src="https://cdn.jsdelivr.net/npm/select2@4.1.0-rc.0/dist/js/select2.min.js" defer></script>
@@ -204,6 +207,7 @@
 <script src="{{ url_for('static', filename='suppliers.js') }}?v={{ config.VERSION }}" defer></script>
 <script src="{{ url_for('static', filename='purchaseOrders.js') }}?v={{ config.VERSION }}" defer></script>
 <script src="{{ url_for('static', filename='masterData.js') }}?v={{ config.VERSION }}" defer></script>
+<script src="{{ url_for('static', filename='js/poModal.js') }}?v={{ config.VERSION }}" defer></script>
 <link rel="stylesheet" href="{{ url_for('static', filename='css/inventory_alerts.css') }}?v={{ config.VERSION }}">
 <script src="{{ url_for('static', filename='js/production_lot_alerts.js') }}?v={{ config.VERSION }}" defer></script>
     {% endblock %}

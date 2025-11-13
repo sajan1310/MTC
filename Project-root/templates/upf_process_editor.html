@@ -850,7 +850,7 @@
     <div class="modal-content">
         <div class="modal-header">
             <h2>Add Subprocess</h2>
-            <button class="modal-close" onclick="processEditor.closeSubprocessModal()">&times;</button>
+            <button class="modal-close">&times;</button>
         </div>
         <div class="modal-tabs">
             <div class="modal-tab active" data-tab="existing" onclick="processEditor.switchSubprocessTab('existing')">Select Existing</div>
@@ -888,7 +888,7 @@
                     <input type="number" id="new-sp-cost" min="0" step="0.01" value="0">
                 </div>
                 <div class="modal-actions">
-                    <button type="button" class="btn btn-secondary" onclick="processEditor.closeSubprocessModal()">Cancel</button>
+                    <button type="button" class="btn btn-secondary modal-close">Cancel</button>
                     <button type="submit" class="btn btn-primary">Create Template</button>
                 </div>
             </form>
@@ -898,10 +898,10 @@
 
 <!-- Add Variant Modal (for quantity) -->
 <div id="variant-modal" class="modal">
-    <div class="modal-content">
+        <div class="modal-content">
         <div class="modal-header">
             <h2>Add Variant</h2>
-            <button class="modal-close" onclick="processEditor.closeVariantModal()">&times;</button>
+            <button class="modal-close">&times;</button>
         </div>
         <form id="variant-form" onsubmit="processEditor.handleAddVariant(event)">
             <input type="hidden" id="selected-variant-id">
@@ -923,8 +923,7 @@
             </div>
 
             <div class="modal-actions">
-                <button type="button" class="btn btn-secondary"
-                        onclick="processEditor.closeVariantModal()">Cancel</button>
+                <button type="button" class="btn btn-secondary modal-close">Cancel</button>
                 <button type="submit" class="btn btn-primary">Add Variant</button>
             </div>
         </form>
@@ -933,10 +932,10 @@
 
 <!-- Edit Subprocess Template Modal -->
 <div id="edit-subprocess-modal" class="modal">
-    <div class="modal-content">
+        <div class="modal-content">
         <div class="modal-header">
             <h2>Edit Subprocess Template</h2>
-            <button class="modal-close" onclick="processEditor.closeEditSubprocessModal()">&times;</button>
+            <button class="modal-close">&times;</button>
         </div>
         <form id="edit-subprocess-form" onsubmit="processEditor.handleEditSubprocessSubmit(event)">
             <input type="hidden" id="edit-subprocess-id">
@@ -961,7 +960,7 @@
                 <input type="number" id="edit-labor-cost" min="0" step="0.01">
             </div>
             <div class="modal-actions">
-                <button type="button" class="btn btn-secondary" onclick="processEditor.closeEditSubprocessModal()">Cancel</button>
+                <button type="button" class="btn btn-secondary modal-close">Cancel</button>
                 <button type="submit" class="btn btn-primary">Save</button>
             </div>
         </form>
@@ -970,10 +969,10 @@
 
 <!-- Rename Subprocess Instance Modal -->
 <div id="rename-subprocess-modal" class="modal">
-    <div class="modal-content">
+        <div class="modal-content">
         <div class="modal-header">
             <h2>Rename Subprocess (Instance)</h2>
-            <button class="modal-close" onclick="processEditor.closeRenameSubprocessModal()">&times;</button>
+            <button class="modal-close">&times;</button>
         </div>
         <form id="rename-subprocess-form" onsubmit="processEditor.handleRenameSubprocessSubmit(event)">
             <input type="hidden" id="rename-ps-id">
@@ -982,7 +981,7 @@
                 <input type="text" id="rename-custom-name" placeholder="e.g., Wheel Assembly - Stage 1">
             </div>
             <div class="modal-actions">
-                <button type="button" class="btn btn-secondary" onclick="processEditor.closeRenameSubprocessModal()">Cancel</button>
+                <button type="button" class="btn btn-secondary modal-close">Cancel</button>
                 <button type="submit" class="btn btn-primary">Save</button>
             </div>
         </form>
@@ -991,10 +990,10 @@
 
 <!-- OR Group Configuration Modal -->
 <div id="or-group-modal" class="modal">
-    <div class="modal-content" style="max-width: 700px;">
+        <div class="modal-content" style="max-width: 700px;">
         <div class="modal-header">
             <h2>Configure OR Groups</h2>
-            <button class="modal-close" onclick="processEditor.closeORGroupModal()">&times;</button>
+            <button class="modal-close">&times;</button>
         </div>
 
         <div style="margin-bottom: 20px;">
@@ -1040,8 +1039,7 @@
                 </div>
 
                 <div class="modal-actions">
-                    <button type="button" class="btn btn-secondary"
-                            onclick="processEditor.closeORGroupModal()">Cancel</button>
+                    <button type="button" class="btn btn-secondary modal-close">Cancel</button>
                     <button type="submit" class="btn btn-primary">Create OR Group</button>
                 </div>
             </form>
@@ -1051,10 +1049,10 @@
 
 <!-- Cost Item Modal -->
 <div id="cost-item-modal" class="modal">
-    <div class="modal-content">
+        <div class="modal-content">
         <div class="modal-header">
             <h2>Add Cost Item</h2>
-            <button class="modal-close" onclick="processEditor.closeCostItemModal()">&times;</button>
+            <button class="modal-close">&times;</button>
         </div>
 
         <form id="cost-item-form" onsubmit="processEditor.handleAddCostItem(event)">
@@ -1097,8 +1095,7 @@
             </div>
 
             <div class="modal-actions">
-                <button type="button" class="btn btn-secondary"
-                        onclick="processEditor.closeCostItemModal()">Cancel</button>
+                <button type="button" class="btn btn-secondary modal-close">Cancel</button>
                 <button type="submit" class="btn btn-primary">Add Cost Item</button>
             </div>
         </form>

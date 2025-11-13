@@ -1,0 +1,96 @@
+<!-- PO and Variant Search Modals (shared partial) -->
+
+<!-- Add/Edit PO Modal -->
+<div id="po-modal" class="modal" aria-hidden="true">
+    <div class="modal-content large">
+        <div class="modal-header">
+            <h3 class="modal-title">New Purchase Order</h3>
+            <button type="button" class="button cancel close-modal-btn" aria-label="Close">&times;</button>
+        </div>
+
+        <div class="modal-body">
+            <form id="po-form">
+                <input type="hidden" id="po-id">
+
+                <div id="po-supplier-container">
+                    <!-- Supplier dropdown will be rendered here by JS -->
+                </div>
+
+                <hr>
+
+                <div style="display:flex; align-items:center; gap:1rem; margin-bottom:0.5rem;">
+                    <label style="display:flex; align-items:center; gap:0.5rem;">
+                        <input type="checkbox" id="hide-rates-checkbox"> <span>Hide rates</span>
+                    </label>
+                    <div id="po-notes-status-container">
+                        <!-- Notes and status fields will be rendered here by JS -->
+                    </div>
+                </div>
+
+                <h4>Items</h4>
+
+                <div class="table-wrapper">
+                    <table id="po-items-table" class="inventory-table">
+                        <thead>
+                            <tr>
+                                <th>Item</th>
+                                <th style="width:120px">Quantity</th>
+                                <th class="rate-column" style="width:140px">Rate</th>
+                                <th style="width:120px">Total</th>
+                                <th style="width:60px">Remove</th>
+                            </tr>
+                        </thead>
+                        <tbody id="po-items-tbody">
+                            <!-- PO item rows will be dynamically added here -->
+                        </tbody>
+                    </table>
+                </div>
+
+                <div style="margin-top:0.75rem;">
+                    <button type="button" id="add-po-item-btn" class="button">Add Item from List</button>
+                </div>
+            </form>
+        </div>
+
+        <div class="modal-footer">
+            <button type="button" class="button cancel close-modal-btn">Cancel</button>
+            <button type="submit" form="po-form" class="button create">Save Purchase Order</button>
+        </div>
+    </div>
+</div>
+
+<!-- Variant Search Modal -->
+<div id="variant-search-modal" class="modal" aria-hidden="true">
+    <div class="modal-content large">
+        <div class="modal-header">
+            <h3>Select Variants</h3>
+            <button type="button" class="button cancel close-modal-btn" aria-label="Close">&times;</button>
+        </div>
+
+        <div class="modal-body">
+            <input type="text" id="variant-search-input" placeholder="Search variants..." class="search-input">
+
+            <div class="table-wrapper" style="margin-top: 1rem;">
+                <table class="inventory-table">
+                    <thead>
+                        <tr>
+                            <th><input type="checkbox" id="select-all-variants"></th>
+                            <th>Item</th>
+                            <th>Variation</th>
+                            <th>Color</th>
+                            <th>Size</th>
+                        </tr>
+                    </thead>
+                    <tbody id="variant-search-results">
+                        <!-- Search results will be populated here (rows with a checkbox + item columns) -->
+                    </tbody>
+                </table>
+            </div>
+        </div>
+
+        <div class="modal-footer">
+            <button type="button" class="button cancel close-modal-btn">Cancel</button>
+            <button type="button" id="add-selected-variants-btn" class="button create">Add Selected</button>
+        </div>
+    </div>
+</div>

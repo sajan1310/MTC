@@ -615,3 +615,49 @@ class VariantService:
             "is_low_stock": current_stock <= float(variant["threshold"] or 0),
             "threshold": float(variant["threshold"] or 0),
         }
+
+    @staticmethod
+    def get_supplier_variants(supplier_id: int) -> List[Dict[str, Any]]:
+        """
+        Get all variants (with pricing) supplied by a specific supplier.
+
+        Returns a list of variant entries including pricing info from
+        variant_supplier_pricing for the given supplier_id.
+        """
+        with database.get_conn(cursor_factory=psycopg2.extras.RealDictCursor) as (
+            conn,
+            cur,
+        ):
+            # If the pricing table is not present, return empty list
+            cur.execute(
+                """
+                SELECT 1 FROM information_schema.tables
+                WHERE table_schema = current_schema() AND table_name = %s
+                """,
+                ("variant_supplier_pricing",),
+            )
+            if not cur.fetchone():
+                return []
+
+            cur.execute(
+                """
+                SELECT
+                    vsp.*,
+                    iv.variant_id,
+                    im.name as variant_name,
+                    iv.opening_stock,
+                    iv.threshold
+                FROM variant_supplier_pricing vsp
+                JOIN item_variant iv ON iv.variant_id = vsp.variant_id
+                JOIN item_master im ON im.item_id = iv.item_id
+                WHERE vsp.supplier_id = %s
+                  AND vsp.is_active = TRUE
+                  AND (vsp.effective_to IS NULL OR vsp.effective_to > CURRENT_TIMESTAMP)
+                ORDER BY vsp.cost_per_unit
+            """,
+                (supplier_id,),
+            )
+
+            rows = cur.fetchall()
+
+        return [dict(r) for r in rows]

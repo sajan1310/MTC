@@ -1323,16 +1323,16 @@
 
     <!-- Tab Navigation -->
     <div class="tab-navigation">
-        <button class="tab-btn active" onclick="processFramework.switchTab('processes')" data-tab="processes">
+        <button class="tab-btn tab-link active" data-tab="tab-processes">
             📋 Processes
         </button>
-        <button class="tab-btn" onclick="processFramework.switchTab('subprocesses')" data-tab="subprocesses">
+        <button class="tab-btn tab-link" data-tab="tab-subprocesses">
             ⚙️ Subprocess Library
         </button>
-        <button class="tab-btn" onclick="processFramework.switchTab('production')" data-tab="production">
+        <button class="tab-btn tab-link" data-tab="tab-production">
             🏭 Production Lots
         </button>
-        <button class="tab-btn" onclick="processFramework.switchTab('reports')" data-tab="reports">
+        <button class="tab-btn tab-link" data-tab="tab-reports">
             📊 Reports
         </button>
     </div>
@@ -1483,7 +1483,7 @@
         <div class="modal-content">
             <div class="modal-header">
                 <h3 class="modal-title">Add Selected Variants</h3>
-                <button class="modal-close" onclick="processFramework.closeModal('batch-add-variants-modal')">&times;</button>
+                <button class="modal-close">&times;</button>
             </div>
             <div class="form-group">
                 <label for="batch-default-quantity">Default Quantity</label>
@@ -1494,7 +1494,7 @@
                 <input id="batch-default-rate" type="number" min="0" step="0.01" placeholder="0.00" />
             </div>
             <div style="display:flex; gap:10px; justify-content:flex-end;">
-                <button class="btn" onclick="processFramework.closeModal('batch-add-variants-modal')">Cancel</button>
+                <button class="btn modal-close">Cancel</button>
                 <button class="btn btn-primary" onclick="processFramework.confirmBatchAddVariants()">Add</button>
             </div>
         </div>
@@ -1594,7 +1594,7 @@
     <div class="modal-content">
         <div class="modal-header">
             <h2 class="modal-title" id="process-modal-title">Create Process</h2>
-            <button class="modal-close" onclick="processFramework.closeModal('process-modal')">&times;</button>
+            <button class="modal-close">&times;</button>
         </div>
         <form id="process-form" onsubmit="processFramework.processes.handleSubmit(event)">
             <input type="hidden" id="process-id">
@@ -1621,7 +1621,7 @@
                 <textarea id="process-description"></textarea>
             </div>
             <div class="modal-actions">
-                <button type="button" class="btn btn-secondary" onclick="processFramework.closeModal('process-modal')">Cancel</button>
+                <button type="button" class="btn btn-secondary modal-close">Cancel</button>
                 <button type="submit" class="btn btn-primary">Save Process</button>
             </div>
         </form>
@@ -1632,7 +1632,7 @@
     <div class="modal-content">
         <div class="modal-header">
             <h2 class="modal-title" id="subprocess-modal-title">Add Subprocess to Process</h2>
-            <button class="modal-close" onclick="processFramework.closeModal('subprocess-modal')">&times;</button>
+            <button class="modal-close">&times;</button>
         </div>
         
         <!-- Tab selector for Create vs Select -->
@@ -1656,7 +1656,7 @@
                 <p style="color: #999; text-align: center;">Loading subprocesses...</p>
             </div>
             <div class="modal-actions" style="margin-top: 15px;">
-                <button type="button" class="btn btn-secondary" onclick="processFramework.closeModal('subprocess-modal')">Cancel</button>
+                <button type="button" class="btn btn-secondary modal-close">Cancel</button>
                 <button type="button" class="btn btn-primary" onclick="processFramework.addSelectedSubprocess()">Add Selected</button>
             </div>
         </div>
@@ -1688,7 +1688,7 @@
                 <input type="number" id="labor-cost" min="0" step="0.01" value="0">
             </div>
             <div class="modal-actions">
-                <button type="button" class="btn btn-secondary" onclick="processFramework.closeModal('subprocess-modal')">Cancel</button>
+                <button type="button" class="btn btn-secondary modal-close">Cancel</button>
                 <button type="submit" class="btn btn-primary">Save Subprocess</button>
             </div>
         </form>

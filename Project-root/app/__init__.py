@@ -107,7 +107,9 @@ def _load_config(app: Flask, config_name: str) -> None:
 def _init_logging(app: Flask) -> None:
     level = logging.DEBUG if app.debug else logging.INFO
     app.logger.setLevel(level)
-    if not app.debug:
+    # Avoid file-based rotating logs during tests (Windows file locks / CI interference).
+    # Use file handler only in non-debug, non-testing production-like runs.
+    if not app.debug and not app.config.get("TESTING"):
         os.makedirs("logs", exist_ok=True)
         fh = RotatingFileHandler("logs/app.log", maxBytes=10_000_000, backupCount=10)
         fh.setFormatter(

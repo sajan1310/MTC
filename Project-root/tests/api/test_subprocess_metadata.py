@@ -4,8 +4,6 @@ Tests for Subprocess Metadata API Endpoint.
 Verifies that /api/upf/subprocesses/metadata returns proper category metadata
 to support dynamic frontend dropdown population.
 """
-import pytest
-from flask import Flask
 
 
 def test_subprocess_metadata_endpoint(client):

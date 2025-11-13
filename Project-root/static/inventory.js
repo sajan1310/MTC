@@ -608,8 +608,8 @@ const Inventory = {
     const reportBody = document.getElementById("low-stock-report-body");
     if (!reportModal || !reportBody) return;
 
-    reportBody.innerHTML = '<tr><td colspan="7" class="text-center">Loading report...</td></tr>';
-    reportModal.classList.add("is-open");
+  reportBody.innerHTML = '<tr><td colspan="7" class="text-center">Loading report...</td></tr>';
+  try { Modal.open(reportModal); } catch (e) { reportModal.classList.add("is-open"); }
 
     const data = await App.fetchJson(`${App.config.apiBase}/low-stock-report`);
     if (data) {
@@ -643,7 +643,7 @@ const Inventory = {
   openImportModal() {
     const modal = document.getElementById("import-modal");
     if (modal) {
-      modal.classList.add("is-open");
+      try { Modal.open(modal); } catch (e) { modal.classList.add("is-open"); }
       // Reset to step 1
       document.getElementById("import-step-1").style.display = "block";
       document.getElementById("import-step-2").style.display = "none";
@@ -659,7 +659,7 @@ const Inventory = {
   openReceiveStockModal() {
     const modal = document.getElementById("receive-stock-modal");
     if (modal) {
-      modal.classList.add("is-open");
+      try { Modal.open(modal); } catch (e) { modal.classList.add("is-open"); }
       this.loadSuppliersForReceive();
       this.clearReceiveStockForm();
     }
@@ -671,7 +671,7 @@ const Inventory = {
   openPOModal() {
     const modal = document.getElementById("po-modal");
     if (modal) {
-      modal.classList.add("is-open");
+      try { Modal.open(modal); } catch (e) { modal.classList.add("is-open"); }
       this.loadSuppliersForPO();
       this.clearPOForm();
     }
@@ -835,7 +835,7 @@ const Inventory = {
   openVariantSearchModal() {
     const modal = document.getElementById("variant-search-modal");
     if (modal) {
-      modal.classList.add("is-open");
+      try { Modal.open(modal); } catch (e) { modal.classList.add("is-open"); }
       this.loadAllVariantsForSearch();
     }
   },
@@ -844,18 +844,22 @@ const Inventory = {
    * Loads all variants for the search modal
    * [BUG FIX] Added proper error handling and null checks
    */
-  async loadAllVariantsForSearch() {
+  async loadAllVariantsForSearch(page = 1, perPage = 50, q = '') {
     try {
-      const data = await App.fetchJson(`${App.config.apiBase}/all-variants`);
-      if (data && Array.isArray(data)) {
+      const url = new URL(`${App.config.apiBase}/all-variants`, window.location.origin);
+      url.searchParams.append('page', page);
+      url.searchParams.append('per_page', perPage);
+      if (q) url.searchParams.append('q', q);
+      const data = await App.fetchJson(url.toString());
+      // Support both paginated and legacy array responses
+      if (data && data.items && Array.isArray(data.items)) {
+        this.state.allVariants = data.items;
+      } else if (Array.isArray(data)) {
         this.state.allVariants = data;
-        this.renderVariantSearchResults();
       } else {
-        // [BUG FIX] Handle invalid response format
         this.state.allVariants = [];
-        this.renderVariantSearchResults();
-        console.warn('Invalid variant data format received from backend');
       }
+      this.renderVariantSearchResults();
     } catch (error) {
       console.error("Error loading variants:", error);
       this.state.allVariants = [];
@@ -875,8 +879,8 @@ const Inventory = {
     if (!resultsBody) return;
 
     const searchTerm = searchInput?.value.toLowerCase() || '';
-    
-    // [BUG FIX] Backend returns simple {id, name} format, parse it for display
+
+    // Filter the currently loaded page
     const filtered = this.state.allVariants?.filter(v =>
       (v.name || '').toLowerCase().includes(searchTerm)
     ) || [];
@@ -896,7 +900,11 @@ const Inventory = {
 
     // Add search input listener if not already added
     if (searchInput && !searchInput.dataset.listenerAdded) {
-      searchInput.addEventListener('input', () => this.renderVariantSearchResults());
+      const debounced = debounce((e) => {
+        // Fetch fresh page from server for current query
+        this.loadAllVariantsForSearch(1, 50, e.target.value.trim());
+      }, 300);
+      searchInput.addEventListener('input', (e) => debounced(e));
       searchInput.dataset.listenerAdded = 'true';
     }
   },
@@ -938,7 +946,7 @@ const Inventory = {
     // Close modal
     const modal = document.getElementById("variant-search-modal");
     if (modal) {
-      modal.classList.remove("is-open");
+      try { Modal.close(modal); } catch (e) { modal.classList.remove("is-open"); }
     }
 
     App.showNotification(`Added ${selected.length} variant(s) to PO`, "success");
@@ -1163,6 +1171,9 @@ const Inventory = {
     }
   },
 };
+
+// Expose to window so other modules can call into Inventory
+window.Inventory = Inventory;
 
 // Ensure App is loaded before initializing Inventory
 if (document.readyState === "loading") {

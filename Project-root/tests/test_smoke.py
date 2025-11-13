@@ -12,7 +12,7 @@ def test_app_creation(app):
         ("/login", 200),
         ("/dashboard", [200, 302]),  # 200 with LOGIN_DISABLED, 302 normally
         ("/inventory", [200, 302]),
-        ("/suppliers", [200, 302]),
+    ("/suppliers/view", [200, 302]),
         ("/purchase-orders", [200, 302]),
     ],
 )

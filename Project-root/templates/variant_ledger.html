@@ -1,0 +1,59 @@
+{% extends "base.html" %}
+{% block title %}Variant Ledger - Rate Comparison{% endblock %}
+
+{% block content %}
+<div class="container">
+  <div class="form-card" style="padding:1.5rem;">
+    <div class="page-header">
+      <div class="header-left"><h2>Variant Ledger — Compare Rates Across Suppliers</h2></div>
+      <div class="header-actions"></div>
+    </div>
+
+    <div class="table-filters" style="display:flex; gap:0.5rem; align-items:center; margin-bottom:0.75rem;">
+      <label style="white-space:nowrap;">Variant</label>
+      <select id="variant-select" style="width: 360px;"></select>
+
+      <label style="white-space:nowrap;">Supplier (optional)</label>
+      <select id="supplier-filter" style="width:220px;"></select>
+
+      <label style="white-space:nowrap;">Date from</label>
+      <input type="date" id="start-date">
+      <label style="white-space:nowrap;">to</label>
+      <input type="date" id="end-date">
+
+      <button id="variant-search-btn" class="button">Search</button>
+      <button id="variant-clear-btn" class="button">Clear</button>
+    </div>
+
+    <div class="table-wrapper">
+      <table class="inventory-table">
+        <thead>
+          <tr>
+            <th>Date</th>
+            <th>Supplier</th>
+            <th>Bill Number</th>
+            <th>Variant</th>
+            <th>Qty</th>
+            <th>Cost / Unit</th>
+            <th>Supplier Current Rate</th>
+            <th>Action</th>
+          </tr>
+        </thead>
+        <tbody id="variant-ledger-body">
+        </tbody>
+      </table>
+    </div>
+
+    <div style="margin-top:0.75rem; display:flex; justify-content:space-between; align-items:center;">
+      <div id="variant-ledger-pager"></div>
+      <div><small id="variant-ledger-count"></small></div>
+    </div>
+
+  </div>
+</div>
+{% endblock %}
+
+{% block scripts %}
+{{ super() }}
+<script src="{{ url_for('static', filename='variantLedger.js') }}?v={{ config.VERSION }}" defer></script>
+{% endblock %}

@@ -14,6 +14,7 @@
     AUDITOR_VERIFICATION_COMPLETE.md
     AUDIT_COMPLETE.md
     audit_output.txt
+    audit_report.json
     BACKEND_FRONTEND_DB_SYNC_COMPLETE.md
     BACKEND_FRONTEND_DB_SYNC_REPORT.md
     check_columns.sql
@@ -62,6 +63,7 @@
     PRODUCTION_READINESS_REPORT.md
     project_auditor.py
     Project_Summary.md
+    pytest.ini
     QUICK_FIX_APPLIED.md
     QUICK_FIX_GUIDE.md
     QUICK_FIX_REFERENCE.md
@@ -70,6 +72,8 @@
     QUICK_START (2).md
     read_issues.py
     ROUTE_CLEANUP_STRATEGY.md
+    route_list.py
+    run_app.py
     schema_validation_report.txt
     SUBPROCESS_ADDITION_FIX.md
     SUBPROCESS_INVESTIGATION_COMPLETE.md
@@ -119,6 +123,7 @@
             2321728001451997110
             3574304971547025042
             4111050184384059389
+            4144005601368569231
             4650478382468658153
             5677812442673862182
             7543534490094582628
@@ -151,6 +156,7 @@
     examples/
     logs/
         app.log
+        app.log.1
     migrations/
         fix_update_lot_inventory_status_function.sql
         migration_add_inventory_alert_system.py
@@ -371,6 +377,7 @@
             migration_add_po_tracking.py
             migration_add_stock_receipts.py
             migration_add_suppliers_tables.py
+            migration_add_supplier_ledger_view.py
             migration_add_unique_indexes_for_upsert.py
             migration_add_universal_process_framework.py
             migration_add_upf_tables.py
@@ -383,6 +390,9 @@
             __init__.py
         private_uploads/
         scripts/
+            check_supplier_ledger.py
+            create_supplier_ledger_view.py
+            db_explain.py
             improve_error_handling.py
             verify_upf_endpoints.py
         static/
@@ -394,6 +404,8 @@
             styles.css
             styles.min.css
             suppliers.js
+            suppliers_extra.js
+            variantLedger.js
             css/
                 inventory_alerts.css
                 login.css
@@ -405,6 +417,7 @@
                 inventory_alerts.js
                 login.js
                 performance_utils.js
+                poModal.js
                 process_editor.js
                 process_framework_unified.js
                 process_manager.js
@@ -447,14 +460,18 @@
             upf_unified.html
             upf_variant_selection.html
             user_management.html
+            variant_ledger.html
+            _po_modals.html
         tests/
             conftest.py
+            test_api_stock_receipts_filters.py
             test_app.py
             test_auth.py
             test_file_validation.py
             test_integration_flows.py
             test_oauth_redirect_uri.py
             test_process_flow.py
+            test_project_audit.py
             test_smoke.py
             api/
                 test_inventory_alerts.py
@@ -464,6 +481,9 @@
                 test_purchase_orders.py
                 test_subprocess_metadata.py
                 test_suppliers.py
+                test_supplier_ledger.py
+                test_supplier_ledger_contract.py
+                test_supplier_variant_ledger_pagination.py
             auth/
                 test_routes.py
             services/

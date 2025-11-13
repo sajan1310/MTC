@@ -410,28 +410,85 @@ def delete_supplier_rate(rate_id):
 @api_bp.route("/suppliers/<int:supplier_id>/ledger")
 @login_required
 def get_supplier_ledger(supplier_id):
+    # Enhanced supplier ledger: supports optional filters and pagination.
+    # If a DB view `supplier_ledger` exists prefer querying it (simpler and index-friendly).
+    variant = request.args.get("variant")
+    start_date = request.args.get("start_date")
+    end_date = request.args.get("end_date")
+    page = int(request.args.get("page", 1))
+    per_page = int(request.args.get("per_page", 50))
+    offset = (page - 1) * per_page
+
     try:
         with database.get_conn(cursor_factory=psycopg2.extras.DictCursor) as (
             conn,
             cur,
         ):
-            cur.execute(
+            # Check if supplier_ledger view exists
+            cur.execute("SELECT to_regclass('public.supplier_ledger')")
+            reg = cur.fetchone()[0]
+            if reg:
+                # Use the consolidated view
+                where_clauses = ["supplier_id = %s"]
+                params = [supplier_id]
+                if variant:
+                    where_clauses.append("variant_id = %s")
+                    params.append(int(variant))
+                if start_date:
+                    where_clauses.append("event_date >= %s")
+                    params.append(start_date)
+                if end_date:
+                    where_clauses.append("event_date <= %s")
+                    params.append(end_date)
+
+                where_sql = " AND ".join(where_clauses)
+                count_q = f"SELECT COUNT(*) FROM supplier_ledger WHERE {where_sql}"
+                cur.execute(count_q, tuple(params))
+                total = cur.fetchone()[0]
+
+                query = f"""
+                    SELECT event_date, event_type, reference_number, receipt_id, stock_entry_id, variant_id, quantity, cost_per_unit, po_status, notes
+                    FROM supplier_ledger
+                    WHERE {where_sql}
+                    ORDER BY event_date DESC
+                    LIMIT %s OFFSET %s
                 """
-                SELECT se.entry_date, im.name as item_name, iv.variant_id, se.quantity_added, se.cost_per_unit
+                cur.execute(query, tuple(params + [per_page, offset]))
+                rows = [dict(r) for r in cur.fetchall()]
+                return jsonify({"items": rows, "total": total, "page": page, "per_page": per_page})
+
+            # Fallback: view not present — query stock_entries & receipts directly
+            base_where = "se.supplier_id = %s"
+            params = [supplier_id]
+            if variant:
+                base_where += " AND se.variant_id = %s"
+                params.append(int(variant))
+            if start_date:
+                base_where += " AND se.entry_date >= %s"
+                params.append(start_date)
+            if end_date:
+                base_where += " AND se.entry_date <= %s"
+                params.append(end_date)
+
+            count_q = f"SELECT COUNT(*) FROM stock_entries se WHERE {base_where}"
+            cur.execute(count_q, tuple(params))
+            total = cur.fetchone()[0]
+
+            query = f"""
+                SELECT se.entry_date, im.name as item_name, iv.variant_id, se.quantity_added, se.cost_per_unit, sr.receipt_id, sr.receipt_number, sr.bill_number
                 FROM stock_entries se
+                JOIN stock_receipts sr ON se.receipt_id = sr.receipt_id
                 JOIN item_variant iv ON se.variant_id = iv.variant_id
                 JOIN item_master im ON iv.item_id = im.item_id
-                WHERE se.supplier_id = %s
+                WHERE {base_where}
                 ORDER BY se.entry_date DESC
-                """,
-                (supplier_id,),
-            )
+                LIMIT %s OFFSET %s
+            """
+            cur.execute(query, tuple(params + [per_page, offset]))
             ledger_entries = [dict(row) for row in cur.fetchall()]
-        return jsonify(ledger_entries)
+        return jsonify({"items": ledger_entries, "total": total, "page": page, "per_page": per_page})
     except Exception as e:
-        current_app.logger.error(
-            f"Error fetching ledger for supplier {supplier_id}: {e}"
-        )
+        current_app.logger.error(f"Error fetching ledger for supplier {supplier_id}: {e}")
         return jsonify({"error": "Failed to fetch ledger"}), 500
 
 
@@ -537,13 +594,100 @@ def add_stock_receipt():
 @login_required
 def get_stock_receipts():
     try:
+        type_filter = request.args.get('type')
+        q = (request.args.get('q') or '').strip()
+        # optional pagination
+        page = request.args.get('page')
+        per_page = request.args.get('per_page')
+        # explicit supplier/variant filters (preferred for server-side filtering)
+        supplier_id = request.args.get('supplier_id')
+        variant_id = request.args.get('variant_id')
         with database.get_conn(cursor_factory=psycopg2.extras.DictCursor) as (
             conn,
             cur,
         ):
-            cur.execute(
-                "SELECT sr.*, s.firm_name FROM stock_receipts sr JOIN suppliers s ON sr.supplier_id = s.supplier_id ORDER BY sr.receipt_date DESC"
-            )
+            base_query = "SELECT sr.*, s.firm_name FROM stock_receipts sr JOIN suppliers s ON sr.supplier_id = s.supplier_id"
+            params = []
+            conditions = []
+
+            # prefer explicit supplier_id / variant_id if provided
+            if supplier_id is not None:
+                try:
+                    sid = int(supplier_id)
+                    conditions.append("sr.supplier_id = %s")
+                    params.append(sid)
+                except ValueError:
+                    return jsonify({"error": "supplier_id must be an integer"}), 400
+            if variant_id is not None:
+                try:
+                    vid = int(variant_id)
+                    # receipts that have at least one stock_entries row for this variant
+                    conditions.append("EXISTS (SELECT 1 FROM stock_entries se WHERE se.receipt_id = sr.receipt_id AND se.variant_id = %s)")
+                    params.append(vid)
+                except ValueError:
+                    return jsonify({"error": "variant_id must be an integer"}), 400
+
+            # Support filtering by supplier name or supplier id (legacy q/type behavior)
+            if type_filter == 'supplier' and q:
+                # If q is numeric, treat as supplier_id
+                try:
+                    supplier_q = int(q)
+                    conditions.append("sr.supplier_id = %s")
+                    params.append(supplier_q)
+                except ValueError:
+                    conditions.append("LOWER(s.firm_name) LIKE LOWER(%s)")
+                    params.append(f"%{q}%")
+
+            # Support filtering by variant id or item/variant name
+            if (type_filter in ('variant', 'item') or (not type_filter and q)) and q:
+                # Use EXISTS subquery to only return receipts that have matching entries
+                try:
+                    variant_q = int(q)
+                    conditions.append(
+                        "EXISTS (SELECT 1 FROM stock_entries se WHERE se.receipt_id = sr.receipt_id AND se.variant_id = %s)"
+                    )
+                    params.append(variant_q)
+                except ValueError:
+                    # treat q as text to match item name or variant display
+                    conditions.append(
+                        "EXISTS (SELECT 1 FROM stock_entries se JOIN item_variant iv ON se.variant_id = iv.variant_id JOIN item_master im ON iv.item_id = im.item_id WHERE se.receipt_id = sr.receipt_id AND (LOWER(im.name) LIKE LOWER(%s) OR CAST(iv.variant_id AS TEXT) LIKE %s))"
+                    )
+                    params.extend([f"%{q}%", f"%{q}%"])
+
+            if conditions:
+                base_query += " WHERE " + " AND ".join(conditions)
+
+            base_query += " ORDER BY sr.receipt_date DESC"
+
+            # If pagination requested, return metadata and items
+            if page and per_page:
+                try:
+                    page = int(page)
+                    per_page = int(per_page)
+                    if page < 1:
+                        page = 1
+                    if per_page < 1:
+                        per_page = 50
+                except ValueError:
+                    page = 1
+                    per_page = 50
+
+                # build count query
+                count_query = base_query.replace("SELECT sr.*, s.firm_name", "SELECT COUNT(*) as total")
+                # remove ORDER BY from count_query if present
+                if " ORDER BY " in count_query:
+                    count_query = count_query.split(" ORDER BY ")[0]
+                cur.execute(count_query, tuple(params))
+                total = cur.fetchone()[0]
+
+                offset = (page - 1) * per_page
+                paged_query = base_query + " LIMIT %s OFFSET %s"
+                cur.execute(paged_query, tuple(params + [per_page, offset]))
+                receipts = [dict(row) for row in cur.fetchall()]
+                return jsonify({"items": receipts, "total": total, "page": page, "per_page": per_page})
+
+            # fallback: no pagination requested — return the full list (backwards compatible)
+            cur.execute(base_query, tuple(params))
             receipts = [dict(row) for row in cur.fetchall()]
         return jsonify(receipts)
     except Exception as e:
@@ -1101,10 +1245,128 @@ def get_item_by_name():
 def get_all_variants():
     """Get all item variants with their details for search and selection."""
     try:
+        # support optional pagination and search to avoid returning the entire dataset
+        page = request.args.get("page")
+        per_page = request.args.get("per_page")
+        search_term = request.args.get("q", "").strip()
+
         with database.get_conn(cursor_factory=psycopg2.extras.DictCursor) as (
             conn,
             cur,
         ):
+            # If page/per_page provided, return paginated response with metadata
+            if page and per_page:
+                try:
+                    page = int(page)
+                    per_page = int(per_page)
+                    if page < 1:
+                        page = 1
+                    if per_page < 1:
+                        per_page = 50
+                except ValueError:
+                    page = 1
+                    per_page = 50
+
+                offset = (page - 1) * per_page
+
+                # Build optional search condition
+                params = []
+                search_condition = ""
+                if search_term:
+                    search_condition = """
+                        AND (
+                            LOWER(im.name) LIKE LOWER(%s) OR
+                            LOWER(cm.color_name) LIKE LOWER(%s) OR
+                            LOWER(sm.size_name) LIKE LOWER(%s) OR
+                            LOWER(mm.model_name) LIKE LOWER(%s) OR
+                            LOWER(ibm.item_brand_name) LIKE LOWER(%s)
+                        )
+                    """
+                    pattern = f"%{search_term}%"
+                    params = [pattern] * 5
+
+                # get total
+                count_query = f"""
+                    SELECT COUNT(*) as total
+                    FROM item_variant iv
+                    JOIN item_master im ON iv.item_id = im.item_id
+                    JOIN color_master cm ON iv.color_id = cm.color_id
+                    JOIN size_master sm ON iv.size_id = sm.size_id
+                    LEFT JOIN model_master mm ON im.model_id = mm.model_id
+                    LEFT JOIN item_brand_master ibm ON im.item_brand_id = ibm.item_brand_id
+                    WHERE iv.deleted_at IS NULL
+                      AND im.deleted_at IS NULL
+                      {search_condition}
+                """
+                cur.execute(count_query, params)
+                total = cur.fetchone()["total"]
+
+                data_query = f"""
+                    SELECT
+                        iv.variant_id as id,
+                        iv.item_id,
+                        im.name || ' - ' || cm.color_name || ' - ' || sm.size_name as name,
+                        im.name as item_name,
+                        cm.color_name as color,
+                        sm.size_name as size,
+                        iv.opening_stock as quantity,
+                        iv.unit,
+                        COALESCE(mm.model_name, 'N/A') as model,
+                        COALESCE(ibm.item_brand_name, 'N/A') as brand,
+                        0.00 as unit_price,
+                        iv.threshold as reorder_level,
+                        COALESCE(icm.item_category_name, 'N/A') as category,
+                        im.item_category_id as category_id,
+                        im.description
+                    FROM item_variant iv
+                    JOIN item_master im ON iv.item_id = im.item_id
+                    JOIN color_master cm ON iv.color_id = cm.color_id
+                    JOIN size_master sm ON iv.size_id = sm.size_id
+                    LEFT JOIN model_master mm ON im.model_id = mm.model_id
+                    LEFT JOIN item_brand_master ibm ON im.item_brand_id = ibm.item_brand_id
+                    LEFT JOIN item_category_master icm ON im.item_category_id = icm.item_category_id
+                    WHERE iv.deleted_at IS NULL
+                      AND im.deleted_at IS NULL
+                      {search_condition}
+                    ORDER BY im.name, cm.color_name, sm.size_name
+                    LIMIT %s OFFSET %s
+                """
+                cur.execute(data_query, params + [per_page, offset])
+                items = []
+                for row in cur.fetchall():
+                    items.append(
+                        {
+                            "id": row["id"],
+                            "item_id": row["item_id"],
+                            "name": row["name"],
+                            "item_name": row["item_name"],
+                            "color": row["color"],
+                            "size": row["size"],
+                            "quantity": row["quantity"] or 0,
+                            "unit": row["unit"] or "pcs",
+                            "model": row["model"],
+                            "brand": row["brand"],
+                            "unit_price": float(row["unit_price"] or 0),
+                            "reorder_level": row["reorder_level"] or 5,
+                            "category": row["category"],
+                            "category_id": row["category_id"],
+                            "description": row["description"],
+                        }
+                    )
+
+                return (
+                    jsonify(
+                        {
+                            "items": items,
+                            "page": page,
+                            "per_page": per_page,
+                            "total": total,
+                        }
+                    ),
+                    200,
+                )
+
+            # fallback: no pagination requested — return the full list (backwards compatible)
             cur.execute(
                 """
                 SELECT
@@ -1351,6 +1613,66 @@ def get_variant_rate():
     except Exception as e:
         current_app.logger.error(f"Error fetching variant rate: {e}")
         return jsonify({"error": "Failed to fetch rate"}), 500
+
+
+        @api_bp.route('/variant-ledger')
+        @login_required
+        def variant_ledger():
+            """Return received-stock records for a variant across suppliers for rate comparison.
+            Query params:
+              - variant_id (required)
+              - supplier_id (optional)
+              - start_date, end_date (optional)
+              - page, per_page (pagination)
+            """
+            variant_id = request.args.get('variant_id')
+            if not variant_id:
+                return jsonify({'error': 'variant_id is required'}), 400
+            supplier_id = request.args.get('supplier_id')
+            start_date = request.args.get('start_date')
+            end_date = request.args.get('end_date')
+            page = int(request.args.get('page', 1))
+            per_page = int(request.args.get('per_page', 50))
+            offset = (page - 1) * per_page
+
+            try:
+                with database.get_conn(cursor_factory=psycopg2.extras.DictCursor) as (conn, cur):
+                    base_where = 'se.variant_id = %s'
+                    params = [int(variant_id)]
+                    if supplier_id:
+                        base_where += ' AND sr.supplier_id = %s'
+                        params.append(int(supplier_id))
+                    if start_date:
+                        base_where += ' AND se.entry_date >= %s'
+                        params.append(start_date)
+                    if end_date:
+                        base_where += ' AND se.entry_date <= %s'
+                        params.append(end_date)
+
+                    count_q = f"SELECT COUNT(*) FROM stock_entries se JOIN stock_receipts sr ON se.receipt_id = sr.receipt_id WHERE {base_where}"
+                    cur.execute(count_q, tuple(params))
+                    total = cur.fetchone()[0]
+
+                    query = f"""
+                        SELECT se.entry_date, sr.receipt_id, sr.receipt_number, sr.bill_number, sr.supplier_id, s.firm_name as supplier_name,
+                               se.variant_id, im.name as item_name, se.quantity_added as qty, se.cost_per_unit,
+                               COALESCE(sir.rate, NULL) as supplier_current_rate
+                        FROM stock_entries se
+                        JOIN stock_receipts sr ON se.receipt_id = sr.receipt_id
+                        JOIN suppliers s ON sr.supplier_id = s.supplier_id
+                        JOIN item_variant iv ON se.variant_id = iv.variant_id
+                        JOIN item_master im ON iv.item_id = im.item_id
+                        LEFT JOIN supplier_item_rates sir ON sir.item_id = iv.item_id AND sir.supplier_id = sr.supplier_id
+                        WHERE {base_where}
+                        ORDER BY se.entry_date DESC
+                        LIMIT %s OFFSET %s
+                    """
+                    cur.execute(query, tuple(params + [per_page, offset]))
+                    rows = [dict(r) for r in cur.fetchall()]
+                return jsonify({'items': rows, 'total': total, 'page': page, 'per_page': per_page})
+            except Exception as e:
+                current_app.logger.error(f"Error fetching variant ledger: {e}")
+                return jsonify({'error': 'Failed to fetch variant ledger'}), 500
 
 
 @api_bp.route("/items/<int:item_id>", methods=["PUT"])

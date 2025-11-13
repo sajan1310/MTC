@@ -1,4 +1,3 @@
-import sys
 from pathlib import Path
 import importlib.util
 import psycopg2.extras

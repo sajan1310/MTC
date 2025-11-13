@@ -1,4 +1,5 @@
 import os
+import sys
 
 from authlib.integrations.flask_client import OAuth
 from dotenv import load_dotenv
@@ -13,6 +14,15 @@ from flask_login import (
 
 # Load environment variables
 load_dotenv()
+
+# If an `app/` package directory exists alongside this file, allow imports like
+# `import app.api.routes` to resolve to that package even though this module is
+# named `app.py`. This preserves backwards-compatibility with tests that expect
+# an `app` package while keeping this simple top-level runner file.
+_pkg_dir = os.path.join(os.path.dirname(__file__), "app")
+if os.path.isdir(_pkg_dir) and _pkg_dir not in sys.path:
+    # Make the module act like a package by setting __path__ so submodules can be found
+    __path__ = [_pkg_dir]
 
 app = Flask(__name__)
 app.secret_key = os.environ.get("SECRET_KEY") or os.urandom(24)
@@ -121,3 +131,20 @@ def logout():
 
 if __name__ == "__main__":
     app.run(debug=True, port=5000)
+
+
+def create_app(config=None):
+    """Return the main Flask application instance.
+
+    Kept for test compatibility: some test suites import `create_app` from
+    the top-level `app` module. This function simply returns the already
+    configured `app` instance. If a config dict/object is provided it will
+    be applied to the app before returning.
+    """
+    if config:
+        # allow passing a dict-like config
+        try:
+            app.config.update(config)
+        except Exception:
+            pass
+    return app

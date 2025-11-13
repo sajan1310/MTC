@@ -293,70 +293,7 @@
     </div>
 </div>
 
-<!-- Add/Edit PO Modal -->
-<div id="po-modal" class="modal">
-    <div class="modal-content large">
-        <div class="modal-header">
-            <h3 id="po-modal-title">New Purchase Order</h3>
-            <button type="button" class="button cancel close-modal-btn">&times;</button>
-        </div>
-        <div class="modal-body">
-            <form id="po-form">
-                <input type="hidden" id="po-id">
-                <div id="po-supplier-container">
-                    <!-- Supplier dropdown will be rendered here by JS -->
-                </div>
-                <hr>
-                <h4>Items</h4>
-                <div id="po-items-container">
-                    <!-- PO item rows will be dynamically added here -->
-                </div>
-                <div id="po-notes-status-container">
-                    <!-- Notes and status fields will be rendered here by JS -->
-                </div>
-                <button type="button" id="add-po-item-btn" class="button">Add Item from List</button>
-            </form>
-        </div>
-        <div class="modal-footer">
-            <button type="button" class="button cancel close-modal-btn">Cancel</button>
-            <button type="submit" form="po-form" class="button create">Save Purchase Order</button>
-        </div>
-    </div>
-</div>
-
-<!-- Variant Search Modal -->
-<div id="variant-search-modal" class="modal">
-    <div class="modal-content large">
-        <div class="modal-header">
-            <h3>Select Variants</h3>
-            <button type="button" class="button cancel close-modal-btn">&times;</button>
-        </div>
-        <div class="modal-body">
-            <input type="text" id="variant-search-input" placeholder="Search variants..." class="search-input">
-            <div class="table-wrapper" style="margin-top: 1rem;">
-                <table class="inventory-table">
-                    <thead>
-                        <tr>
-                            <th><input type="checkbox" id="select-all-variants"></th>
-                            <th>Item</th>
-                            <th>Model</th>
-                            <th>Variation</th>
-                            <th>Color</th>
-                            <th>Size</th>
-                        </tr>
-                    </thead>
-                    <tbody id="variant-search-results">
-                        <!-- Search results will be populated here -->
-                    </tbody>
-                </table>
-            </div>
-        </div>
-        <div class="modal-footer">
-            <button type="button" class="button cancel close-modal-btn">Cancel</button>
-            <button type="button" id="add-selected-variants-btn" class="button create">Add Selected</button>
-        </div>
-    </div>
-</div>
+{# PO modal and variant search modal moved to shared partial _po_modals.html included in base.html #}
 {% endblock %}
 
 {% block scripts %}

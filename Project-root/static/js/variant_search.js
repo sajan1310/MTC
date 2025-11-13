@@ -171,7 +171,29 @@
                 const data = await resp.json();
                 const items = data.results || [];
                 this.hasMore = data.pagination ? !!data.pagination.more : false;
-                resultsEl.innerHTML = items.map(v => this.renderResultRow(v)).join('') || '<div style="padding:8px; color:#999;">No results</div>';
+
+                // If the results container is a table body, render rows (tr); otherwise render compact label blocks
+                if (resultsEl.tagName && resultsEl.tagName.toUpperCase() === 'TBODY') {
+                    const rowsHtml = items.map(v => {
+                        const id = v.id || v.item_id || 0;
+                        const name = escapeHtml(v.text || v.name || v.item_name || v.title || 'Unnamed');
+                        const variation = escapeHtml(v.variation || v.variant || '');
+                        const color = escapeHtml(v.color || '');
+                        const size = escapeHtml(v.size || '');
+                        return `
+                            <tr data-variant-id="${id}">
+                                <td><input type="checkbox" data-variant-id="${id}" class="variant-checkbox" /></td>
+                                <td>${name}</td>
+                                <td>${variation}</td>
+                                <td>${color}</td>
+                                <td>${size}</td>
+                            </tr>
+                        `;
+                    }).join('');
+                    resultsEl.innerHTML = rowsHtml || '<tr><td colspan="5" style="padding:8px; color:#999;">No results</td></tr>';
+                } else {
+                    resultsEl.innerHTML = items.map(v => this.renderResultRow(v)).join('') || '<div style="padding:8px; color:#999;">No results</div>';
+                }
                 this.wireResultCheckboxes();
                 this.insertToggleButton();
                 this.updateToggleButton();
@@ -196,11 +218,12 @@
                 cb._vs_change = handler;
                 cb.addEventListener('change', handler);
             });
-            // Enable drag-and-drop
-            container.querySelectorAll('.variant-row').forEach(row => {
+            // Enable drag-and-drop where possible. Support both label-based and table-row based renderings.
+            const dragRows = Array.from(container.querySelectorAll('.variant-row')).concat(Array.from(container.querySelectorAll('tr[data-variant-id]')));
+            dragRows.forEach(row => {
                 row.addEventListener('dragstart', (e) => {
-                    const id = parseInt(row.getAttribute('data-variant-id'));
-                    const name = row.getAttribute('data-variant-name') || '';
+                    const id = parseInt(row.getAttribute('data-variant-id')) || parseInt(row.querySelector('input[type="checkbox"]')?.getAttribute('data-variant-id')) || 0;
+                    const name = row.getAttribute('data-variant-name') || row.querySelector('[data-variant-name]')?.getAttribute('data-variant-name') || '';
                     try {
                         e.dataTransfer.effectAllowed = 'copy';
                         if (this.selected.size > 0) {

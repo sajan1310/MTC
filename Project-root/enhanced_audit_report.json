@@ -1,5 +1,5 @@
 {
-  "audit_timestamp": "2025-11-11T15:39:14.318051",
+  "audit_timestamp": "2025-11-13T17:03:51.492139",
   "project_root": "C:\\Users\\erkar\\OneDrive\\Desktop\\MTC\\Project-root",
   "blueprints": [
     {
@@ -703,7 +703,7 @@
       "methods": [
         "GET"
       ],
-      "handler": "get_production_lot"
+      "handler": "get_production_lot_data"
     },
     {
       "file": "app\\api\\production_lot.py",
@@ -713,7 +713,7 @@
       "methods": [
         "GET"
       ],
-      "handler": "get_production_lot"
+      "handler": "get_production_lot_data"
     },
     {
       "file": "app\\api\\production_lot.py",
@@ -1641,6 +1641,16 @@
       "handler": "check_variant_availability"
     },
     {
+      "file": "app\\api\\variant_management.py",
+      "blueprint": "variant_api_bp",
+      "route": "/supplier/<int:supplier_id>/variants",
+      "full_path": "/api/upf/supplier/<int:supplier_id>/variants",
+      "methods": [
+        "GET"
+      ],
+      "handler": "get_supplier_variants"
+    },
+    {
       "file": "app\\auth\\routes.py",
       "blueprint": "auth_bp",
       "route": "/login",
@@ -1911,9 +1921,9 @@
     }
   ],
   "route_summary": {
-    "total_routes": 184,
+    "total_routes": 185,
     "by_method": {
-      "GET": 77,
+      "GET": 78,
       "POST": 73,
       "PUT": 18,
       "PATCH": 4,
@@ -1928,7 +1938,7 @@
       "production_api_bp": 29,
       "reports_api_bp": 5,
       "subprocess_api_bp": 12,
-      "variant_api_bp": 19,
+      "variant_api_bp": 20,
       "auth_bp": 8,
       "main_bp": 18
     }
@@ -2076,6 +2086,24 @@
       "file": "static\\js\\process_framework_unified.js",
       "url": "/api/upf/processes/${processId}/structure",
       "method": "GET",
+      "type": "fetch"
+    },
+    {
+      "file": "static\\js\\process_framework_unified.js",
+      "url": "/api/upf/variant_usage",
+      "method": "POST",
+      "type": "fetch"
+    },
+    {
+      "file": "static\\js\\process_framework_unified.js",
+      "url": "/api/upf/variant_usage/${variantUsageId}",
+      "method": "DELETE",
+      "type": "fetch"
+    },
+    {
+      "file": "static\\js\\process_framework_unified.js",
+      "url": "/api/upf/variant_usage/${usageId}",
+      "method": "PUT",
       "type": "fetch"
     },
     {
@@ -2292,6 +2320,12 @@
       "file": "static\\js\\variant_search.js",
       "url": "/api/categories",
       "method": "GET",
+      "type": "fetch"
+    },
+    {
+      "file": "static\\js\\tests\\process_framework_unified.test.js",
+      "url": "/api/upf/variant_usage/${usageId}",
+      "method": "PUT",
       "type": "fetch"
     },
     {
@@ -2562,6 +2596,24 @@
         "file": "static\\js\\process_framework_unified.js"
       },
       {
+        "url": "/api/upf/variant_usage",
+        "method": "POST",
+        "route": "/api/upf/variant_usage",
+        "file": "static\\js\\process_framework_unified.js"
+      },
+      {
+        "url": "/api/upf/variant_usage/${variantUsageId}",
+        "method": "DELETE",
+        "route": "/api/upf/variant_usage/\\d+",
+        "file": "static\\js\\process_framework_unified.js"
+      },
+      {
+        "url": "/api/upf/variant_usage/${usageId}",
+        "method": "PUT",
+        "route": "/api/upf/variant_usage/\\d+",
+        "file": "static\\js\\process_framework_unified.js"
+      },
+      {
         "url": "/api/upf/processes/${processId}/structure",
         "method": "GET",
         "route": "/api/upf/processes/\\d+/structure",
@@ -2764,6 +2816,12 @@
         "method": "GET",
         "route": "/api/categories",
         "file": "static\\js\\variant_search.js"
+      },
+      {
+        "url": "/api/upf/variant_usage/${usageId}",
+        "method": "PUT",
+        "route": "/api/upf/variant_usage/\\d+",
+        "file": "static\\js\\tests\\process_framework_unified.test.js"
       },
       {
         "url": "/api/items/${itemId}",
@@ -3262,7 +3320,7 @@
         "methods": [
           "GET"
         ],
-        "handler": "get_production_lot",
+        "handler": "get_production_lot_data",
         "file": "app\\api\\production_lot.py",
         "message": "Route defined but not called from frontend"
       },
@@ -3798,6 +3856,15 @@
         "message": "Route defined but not called from frontend"
       },
       {
+        "route": "/api/upf/supplier/<int:supplier_id>/variants",
+        "methods": [
+          "GET"
+        ],
+        "handler": "get_supplier_variants",
+        "file": "app\\api\\variant_management.py",
+        "message": "Route defined but not called from frontend"
+      },
+      {
         "route": "/",
         "methods": [
           "GET",
@@ -4292,7 +4359,7 @@
           "methods": [
             "GET"
           ],
-          "handler": "get_production_lot"
+          "handler": "get_production_lot_data"
         },
         {
           "file": "app\\api\\production_lot.py",
@@ -4541,9 +4608,10 @@
       "tests\\services\\test_production_service.py",
       "tests\\services\\test_subprocess_service.py",
       "tests\\services\\test_variant_service.py",
+      "tests\\ui\\test_inline_editor_variants.py",
       "tests\\ui\\test_upf_pages.py"
     ],
-    "total_tests": 142,
+    "total_tests": 145,
     "coverage_summary": {
       "pytest_configured": true,
       "upf_alerts_tested": true
@@ -4570,12 +4638,15 @@
       "IMPLEMENTATION_ROADMAP.md",
       "INDEX.md",
       "ISSUES_TO_FIX.md",
+      "MULTI_SELECT_DRAG_DROP_FIX.md",
       "PHASES_1-6_COMPLETION_SUMMARY.md",
       "PHASE_1_ROUTE_STANDARDIZATION_COMPLETE.md",
+      "QUALITY_IMPROVEMENTS_SUMMARY.md",
       "QUICK_START_GUIDE.md",
       "QUICK_START_UNIVERSAL_PROCESS_FRAMEWORK.md",
       "QUICK_TEST_GUIDE.md",
       "README.md",
+      "SESSION_AUTH_FIX.md",
       "STACK_SYNC_AUDIT_REPORT.md",
       "SYNC_ANALYSIS_REPORT.md",
       "TASK_4_PRODUCTION_LOT_VARIANT_SELECTION_COMPLETE.md",
@@ -4665,12 +4736,12 @@
       },
       {
         "path": "static\\inventory.js",
-        "size": 46370,
+        "size": 47074,
         "minified": false
       },
       {
         "path": "static\\main.js",
-        "size": 7507,
+        "size": 12681,
         "minified": false
       },
       {
@@ -4680,12 +4751,22 @@
       },
       {
         "path": "static\\purchaseOrders.js",
-        "size": 17458,
+        "size": 27736,
         "minified": false
       },
       {
         "path": "static\\suppliers.js",
-        "size": 9335,
+        "size": 27284,
+        "minified": false
+      },
+      {
+        "path": "static\\suppliers_extra.js",
+        "size": 316,
+        "minified": false
+      },
+      {
+        "path": "static\\variantLedger.js",
+        "size": 5664,
         "minified": false
       },
       {
@@ -4714,13 +4795,18 @@
         "minified": false
       },
       {
+        "path": "static\\js\\poModal.js",
+        "size": 7412,
+        "minified": false
+      },
+      {
         "path": "static\\js\\process_editor.js",
         "size": 46577,
         "minified": false
       },
       {
         "path": "static\\js\\process_framework_unified.js",
-        "size": 70747,
+        "size": 112480,
         "minified": false
       },
       {
@@ -4755,32 +4841,37 @@
       },
       {
         "path": "static\\js\\variant_search.js",
-        "size": 7813,
+        "size": 19040,
+        "minified": false
+      },
+      {
+        "path": "static\\js\\tests\\process_framework_unified.test.js",
+        "size": 10056,
         "minified": false
       }
     ],
-    "total_size": 423216,
+    "total_size": 533729,
     "minified_count": 1
   },
   "incomplete_functions": [],
   "duplicate_functions": [],
   "statistics": {
-    "total_routes": 184,
-    "total_api_calls": 81,
-    "matched_routes": 74,
+    "total_routes": 185,
+    "total_api_calls": 85,
+    "matched_routes": 78,
     "missing_backend": 0,
     "method_mismatches": 5,
-    "unused_backend": 117,
+    "unused_backend": 118,
     "upf_overall_score": 100.0,
     "upf_process_bom_score": 100.0,
     "upf_production_lot_score": 100.0,
     "upf_alert_technical_score": 100.0,
     "upf_data_flow_score": 100.0,
-    "test_files": 22,
-    "total_tests": 142,
+    "test_files": 23,
+    "total_tests": 145,
     "documentation_score": 100.0,
     "security_issues": 0,
-    "static_assets": 24,
+    "static_assets": 28,
     "errors": 0
   },
   "errors": []
