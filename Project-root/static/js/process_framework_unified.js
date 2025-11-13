@@ -860,6 +860,110 @@ const processFramework = {
         
         await this.switchTab(tabToLoad);
         this.updateHeaderActions();
+
+        // Ensure variant search panels that are marked collapsed are actually removed from layout
+        // (we keep them in the DOM for transitions but set display:none so computed display is none)
+        try {
+            document.querySelectorAll('.variant-list-container.collapsed').forEach(el => {
+                try { el.style.display = 'none'; } catch (e) { /* ignore */ }
+            });
+        } catch (e) {
+            console.warn('[Init] Failed to hide collapsed variant list containers', e);
+        }
+
+        // Setup responsive max-height for variant list so it never overflows the editor
+        try {
+            // add resize listener (debounced)
+            window.addEventListener('resize', this._debounce(() => { try { this.setVariantListMaxHeight(); } catch(e){} }, 120));
+            // initial sizing
+            setTimeout(() => { try { this.setVariantListMaxHeight(); } catch(e){} }, 50);
+        } catch (e) {
+            console.warn('[Init] Failed to initialize variant list sizing', e);
+        }
+    },
+
+    // Small debounce utility used locally for resize handling
+    _debounce(fn, wait) {
+        let t;
+        return function(...args) {
+            clearTimeout(t);
+            t = setTimeout(() => fn.apply(this, args), wait);
+        };
+    },
+
+    // Compute and set a sensible max-height on the variant list container so it fits inside
+    // the inline editor and viewport. This avoids overflow of the whole card.
+    setVariantListMaxHeight() {
+        try {
+            const panel = document.getElementById('inline-editor-panel');
+            if (!panel) return;
+            const variantContainer = panel.querySelector('.variant-list-container');
+            if (!variantContainer) return;
+
+            // Compute available vertical space from the top of the panel to the bottom of the viewport
+            const panelRect = panel.getBoundingClientRect();
+            const viewportHeight = window.innerHeight || document.documentElement.clientHeight;
+
+            // Measure actual heights of elements we need to reserve rather than relying on a constant
+            const headerEl = panel.querySelector('.editor-header');
+            const tabsEl = panel.querySelector('.editor-tabs');
+
+            const headerHeight = headerEl ? Math.ceil(headerEl.getBoundingClientRect().height) : 0;
+            const tabsHeight = tabsEl ? Math.ceil(tabsEl.getBoundingClientRect().height) : 0;
+
+            // Try to find the footer area inside the variant container. The footer may be an element
+            // with class 'variants-footer', or the Add button area (#add-selected-variants-btn) or the
+            // last child of the .variant-search-card. We measure whichever is present.
+            let footerHeight = 0;
+            try {
+                let footerEl = variantContainer.querySelector('.variants-footer');
+                if (!footerEl) {
+                    const addBtn = variantContainer.querySelector('#add-selected-variants-btn');
+                    if (addBtn) {
+                        // The button is wrapped by a flex container in the template; pick its parent
+                        footerEl = addBtn.parentElement || addBtn;
+                    }
+                }
+                if (!footerEl) {
+                    // last resort: the last child inside the variant-search-card
+                    const card = variantContainer.querySelector('.variant-search-card');
+                    if (card && card.lastElementChild) footerEl = card.lastElementChild;
+                }
+                if (footerEl) footerHeight = Math.ceil(footerEl.getBoundingClientRect().height);
+            } catch (e) {
+                footerHeight = 0;
+            }
+
+            // Also measure the search input height (it sits above the results area)
+            let inputHeight = 0;
+            try {
+                const inputEl = variantContainer.querySelector('#variant-search-input');
+                if (inputEl) inputHeight = Math.ceil(inputEl.getBoundingClientRect().height);
+            } catch (e) { inputHeight = 0; }
+
+            // account for paddings/gaps inside the container (small buffer)
+            const buffer = 20;
+
+            // Available space for the entire variant container (including input, results, footer)
+            const available = Math.max(180, Math.floor(viewportHeight - panelRect.top - headerHeight - tabsHeight - buffer));
+
+            // Set a safe max-height on the outer container
+            variantContainer.style.maxHeight = `${available}px`;
+
+            // Now compute space for the results area inside the variant card by subtracting
+            // input + footer + small gaps from the available space.
+            try {
+                const resultsEl = variantContainer.querySelector('#variant-search-results');
+                if (resultsEl) {
+                    const resultsAvailable = Math.max(80, available - inputHeight - footerHeight - 24);
+                    resultsEl.style.maxHeight = `${resultsAvailable}px`;
+                }
+            } catch (e) {
+                // ignore
+            }
+        } catch (e) {
+            console.warn('[VariantListSizing] Error computing max-height', e);
+        }
     },
 
     updateSelectedVariantChip() {
@@ -1180,6 +1284,7 @@ const processFramework = {
                 // Get the correct ID - structure endpoint returns process_subprocess_id
                 const psId = sp.process_subprocess_id || sp.id;
                 const variants = sp.variants || [];
+                const esc = this.escapeHtml;
                 
                 let variantsHtml = '';
                 if (variants.length > 0) {
@@ -1212,13 +1317,30 @@ const processFramework = {
                                                                             total = isNaN(t) ? 0 : t;
                                                                         }
                                                                         const vid = v.id; // usage id
+                                                                        // Build a concise details line: Model • Variation • Size • Color
+                                                                        const detailsParts = [];
+                                                                        const modelVal = v.model || v.model_name || (v.item && v.item.model) || '';
+                                                                        if (modelVal) detailsParts.push(modelVal);
+                                                                        const variationVal = v.variation_name || v.variation || '';
+                                                                        if (variationVal) detailsParts.push(variationVal);
+                                                                        if (v.size) detailsParts.push(v.size);
+                                                                        if (v.color) detailsParts.push(v.color);
+                                                                        const detailsLine = detailsParts.join(' • ');
+                                                                        const descriptionVal = v.description || v.text || v.item_description || '';
+
                                                                         return `
                                                                             <tr data-usage-id="${vid}">
-                                                                                <td style="padding:6px 4px;">${v.variant_name || v.item_name || v.name || 'Unknown'}</td>
-                                                                                <td style="padding:6px 4px;"><input type="number" min="0" step="0.01" value="${!isNaN(qty) ? qty : ''}" style="width:80px;" onchange="processFramework.updateVariantUsageDebounced(${vid}, this.value, null)" oninput="processFramework.updateTotalCell(${vid})" /></td>
-                                                                                <td style="padding:6px 4px;"><input type="number" min="0" step="0.01" value="${(v.cost_per_unit === null || v.cost_per_unit === undefined || isNaN(rate)) ? '' : rate}" placeholder="0.00" style="width:110px;" oninput="processFramework.updateVariantUsageDebounced.call(processFramework, ${vid}, null, this.value); processFramework.updateTotalCell(${vid});" /></td>
-                                                                                <td style="padding:6px 4px;" class="total-cell" data-usage-id="${vid}">$${total.toFixed(2)}</td>
-                                                                                <td style="padding:6px 4px;"><button class="btn btn-sm" style="padding:2px 8px; font-size:11px; background:#f44336; color:white;" onclick="processFramework.removeVariantFromSubprocess(${psId}, ${vid})">×</button></td>
+                                                                                <td style="padding:6px 4px; vertical-align: top;">
+                                                                                    <div style="display:flex; flex-direction:column; gap:6px; min-width:0;">
+                                                                                        <div style="font-weight:600; overflow:hidden; text-overflow:ellipsis; white-space:nowrap;">${esc(v.variant_name || v.item_name || v.name || 'Unknown')}</div>
+                                                                                        <div style="font-size:12px; color:#666; overflow:hidden; text-overflow:ellipsis; white-space:nowrap;">${esc(detailsLine)}</div>
+                                                                                        ${descriptionVal ? `<div style="font-size:12px; color:#444; margin-top:4px; overflow:hidden; text-overflow:ellipsis; max-height:3em;">${esc(descriptionVal)}</div>` : ''}
+                                                                                    </div>
+                                                                                </td>
+                                                                                <td style="padding:6px 4px; vertical-align: middle;"><input type="number" min="0" step="0.01" value="${!isNaN(qty) ? qty : ''}" style="width:80px;" onchange="processFramework.updateVariantUsageDebounced(${vid}, this.value, null)" oninput="processFramework.updateTotalCell(${vid})" /></td>
+                                                                                <td style="padding:6px 4px; vertical-align: middle;"><input type="number" min="0" step="0.01" value="${(v.cost_per_unit === null || v.cost_per_unit === undefined || isNaN(rate)) ? '' : rate}" placeholder="0.00" style="width:110px;" oninput="processFramework.updateVariantUsageDebounced.call(processFramework, ${vid}, null, this.value); processFramework.updateTotalCell(${vid});" /></td>
+                                                                                <td style="padding:6px 4px; vertical-align: middle;" class="total-cell" data-usage-id="${vid}">$${total.toFixed(2)}</td>
+                                                                                <td style="padding:6px 4px; vertical-align: middle;"><button class="btn btn-sm" style="padding:2px 8px; font-size:11px; background:#f44336; color:white;" onclick="processFramework.removeVariantFromSubprocess(${psId}, ${vid})">×</button></td>
                                                                             </tr>
                                                                         `;
                                                                     }).join('')}
@@ -1279,9 +1401,14 @@ const processFramework = {
         // Move the inline editor panel to appear directly below the selected subprocess
         try {
             const panel = document.getElementById('inline-editor-panel');
-            if (panel && el && el.parentNode) {
-                // Insert the panel right after the selected subprocess element so it expands inline
-                el.parentNode.insertBefore(panel, el.nextSibling);
+            if (panel && el) {
+                // Guard: avoid inserting the panel into one of its own descendants which causes
+                // a HierarchyRequestError. If the panel already contains the target element, skip moving.
+                const alreadyContains = panel.contains(el);
+                if (!alreadyContains && el.parentNode) {
+                    // Insert the panel right after the selected subprocess element so it expands inline
+                    el.parentNode.insertBefore(panel, el.nextSibling);
+                }
                 // Ensure the panel is visible (openInlineEditor normally handles content population)
                 panel.style.display = 'block';
                 // Mark as attached so CSS can visually tie the panel to the subprocess
@@ -1293,6 +1420,8 @@ const processFramework = {
                     } catch (e) {
                         console.warn('[Inline Editor] scrollIntoView failed', e);
                     }
+                    // adjust variant list sizing after reposition
+                    try { this.setVariantListMaxHeight(); } catch(e){}
                 }, 60);
             }
         } catch (err) {
@@ -1426,15 +1555,68 @@ const processFramework = {
             if (!panel) return;
             const variantContainer = panel.querySelector('.variant-list-container');
 
-            // Toggle collapsed state
+            // Toggle collapsed state with animated show/hide and correct display handling
             if (variantContainer) {
-                const isCollapsed = variantContainer.classList.toggle('collapsed');
-                if (!isCollapsed) {
-                    // expanded -> focus input
+                const wasCollapsed = variantContainer.classList.contains('collapsed');
+
+                if (wasCollapsed) {
+                    // Expanding: ensure element participates in layout, then remove collapsed to animate
+                    try { variantContainer.style.display = 'flex'; } catch (e) { /* ignore */ }
+                    // Force reflow so transition runs
+                    // eslint-disable-next-line no-unused-expressions
+                    variantContainer.offsetWidth;
+                    // Update sizing before removing collapsed so the expanded height is correct
+                    try { this.setVariantListMaxHeight(); } catch (e) {}
+                    variantContainer.classList.remove('collapsed');
+
+                    // focus input a moment after expand begins
                     const input = document.getElementById('variant-search-input');
-                    if (input) {
-                        setTimeout(() => input.focus(), 50);
+                    if (input) setTimeout(() => input.focus(), 80);
+
+                    // If there was a previous transitionend handler, remove it
+                    if (variantContainer._vs_transition_handler) {
+                        try { variantContainer.removeEventListener('transitionend', variantContainer._vs_transition_handler); } catch(e){}
+                        variantContainer._vs_transition_handler = null;
                     }
+                } else {
+                    // Collapsing: add collapsed class to animate, then set display:none at transition end
+                    // Remove any existing handler first
+                    if (variantContainer._vs_transition_handler) {
+                        try { variantContainer.removeEventListener('transitionend', variantContainer._vs_transition_handler); } catch(e){}
+                        variantContainer._vs_transition_handler = null;
+                    }
+
+                    const onTransitionEnd = (ev) => {
+                        // We only care about the max-height/opacity transition finishing
+                        if (ev.propertyName === 'max-height' || ev.propertyName === 'opacity') {
+                            try { variantContainer.style.display = 'none'; } catch (e) {}
+                            try { variantContainer.removeEventListener('transitionend', onTransitionEnd); } catch(e){}
+                            variantContainer._vs_transition_handler = null;
+                            // clear any fallback timer
+                            if (variantContainer._vs_fallback_timer) {
+                                clearTimeout(variantContainer._vs_fallback_timer);
+                                variantContainer._vs_fallback_timer = null;
+                            }
+                        }
+                    };
+
+                    variantContainer._vs_transition_handler = onTransitionEnd;
+                    variantContainer.addEventListener('transitionend', onTransitionEnd);
+                    // Start collapse animation
+                    variantContainer.classList.add('collapsed');
+
+                    // Fallback: if transitionend doesn't fire (browser quirk, interrupted), hide after 260ms
+                    try {
+                        if (variantContainer._vs_fallback_timer) clearTimeout(variantContainer._vs_fallback_timer);
+                        variantContainer._vs_fallback_timer = setTimeout(() => {
+                            try { variantContainer.style.display = 'none'; } catch(e){}
+                            if (variantContainer._vs_transition_handler) {
+                                try { variantContainer.removeEventListener('transitionend', variantContainer._vs_transition_handler); } catch(e){}
+                                variantContainer._vs_transition_handler = null;
+                            }
+                            variantContainer._vs_fallback_timer = null;
+                        }, 260);
+                    } catch (e) { /* ignore */ }
                 }
             } else {
                 // Fallback: focus search input directly

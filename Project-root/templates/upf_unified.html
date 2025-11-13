@@ -731,7 +731,8 @@
         background: #f9f9f9;
         border-radius: 8px;
         padding: 15px;
-        min-height: 200px;
+        /* allow this flex child to shrink inside the inline editor */
+        min-height: 0;
     }
 
     .subprocess-item {
@@ -741,22 +742,36 @@
         padding: 15px;
         margin-bottom: 10px;
         display: flex;
+        flex-direction: column;
         justify-content: space-between;
-        align-items: center;
+        overflow: hidden;
         transition: all 0.2s;
+        /* Prevent individual subprocess cards from growing beyond viewport and allow
+           the variants section inside each card to scroll inline. Use min-height:0
+           so flex children can shrink properly. */
+        min-height: 0;
+        max-height: calc(70vh - 160px); /* leave room for headers/footers */
     }
 
-    .subprocess-item:hover {
-        border-color: #667eea;
-        box-shadow: 0 2px 8px rgba(102, 126, 234, 0.1);
+    .subprocess-item .variants-list {
+        overflow-y: auto;
+        min-height: 0;
+        max-height: calc(40vh - 80px);
+        padding: 10px;
     }
-
-    .subprocess-info h4 {
-        margin: 0 0 5px 0;
-        font-size: 15px;
-        color: #333;
+    /* Make any footer inside the variants list sticky so action buttons remain visible */
+    .subprocess-item .variants-list {
+        position: relative; /* anchor for sticky children */
     }
-
+    .subprocess-item .variants-list .variants-footer {
+        position: sticky;
+        bottom: 0;
+        background: inherit;
+        padding-top: 8px;
+        margin-top: 8px;
+        z-index: 4;
+        box-shadow: 0 -6px 12px rgba(0,0,0,0.04);
+    }
     .subprocess-info p {
         margin: 0;
         font-size: 13px;
@@ -1234,9 +1249,65 @@
         color: #81c784;
     }
 
-    /* Collapsible variant list: hidden when collapsed via JS toggle */
+    /* Collapsible variant list: animated expand/collapse when JS toggles .collapsed */
+    .variant-list-container {
+        /* allow smooth height/opacity transitions; inline styles may set display:flex */
+        transition: max-height 160ms ease, opacity 160ms ease, transform 160ms ease;
+        max-height: 1000px; /* large enough to contain expanded content */
+        overflow: hidden;
+        opacity: 1;
+        transform: translateY(0);
+    }
+
+    /* Ensure variant list fits inside the card and scrolls when necessary */
+    .variant-list-container {
+        box-sizing: border-box;
+        max-height: calc(70vh - 120px); /* keep it within the editor area */
+    }
+
+    .variant-list-container .variant-search-card {
+        display: flex;
+        flex-direction: column;
+        min-height: 0; /* allow children to shrink and scroll */
+    }
+
+    /* Make the results area flexible and allow scrolling without overflowing the card */
+    #variant-search-results {
+        flex: 1 1 auto;
+        min-height: 0;
+        overflow-y: auto;
+        word-break: break-word;
+    }
+
+    /* Variant row text truncation for long names */
+    .variant-row .variant-name {
+        overflow: hidden;
+        text-overflow: ellipsis;
+        white-space: nowrap;
+        display: block;
+        max-width: 100%;
+    }
+    /* Ensure variant rows inherit readable color in both light/dark themes */
+    .variant-row {
+        color: inherit;
+    }
+    .variant-row .variant-name {
+        color: inherit;
+    }
+
     .variant-list-container.collapsed {
-        display: none !important;
+        /* collapse visually but keep element in flow to allow transition */
+        max-height: 0 !important;
+        opacity: 0 !important;
+        transform: translateY(-6px);
+        pointer-events: none;
+        /* Also remove inner spacing and visual chrome so the panel is not visible
+           while still allowing the CSS transition to run. We avoid display:none
+           here so the expand/collapse can animate. */
+        padding: 0 !important;
+        box-shadow: none !important;
+        border: none !important;
+        background: transparent !important;
     }
 </style>
 {% endblock %}
@@ -1364,14 +1435,14 @@
                             </div>
                         </div>
                         
-                        <!-- Right: Variant Search -->
-                        <div class="variant-list-container" style="width: 400px; min-width: 350px; max-width: 450px; display: flex; flex-direction: column; border-radius: 8px; padding: 15px; box-shadow: 0 2px 8px rgba(0,0,0,0.1);">
+                        <!-- Right: Variant Search (collapsed by default; expands when "+ Variant" is clicked) -->
+                        <div class="variant-list-container collapsed" style="width: 400px; min-width: 350px; max-width: 450px; display: none; flex-direction: column; border-radius: 8px; padding: 15px; box-shadow: 0 2px 8px rgba(0,0,0,0.1);">
                             <div style="margin-bottom: 10px;">
                                 <h3 style="margin: 0 0 10px 0; font-size: 16px; color: #f7f3f3;">🔍 Variant Search</h3>
                             </div>
                             <div class="variant-search-card" style="display: flex; flex-direction: column; gap: 10px; flex: 1; min-height: 0;">
                                 <input id="variant-search-input" class="search-input" placeholder="Type to search variants..." style="width: 100%; flex-shrink: 0;" />
-                                <div id="variant-search-results" style="flex: 1; overflow-y: auto; overflow-x: hidden; border: 1px solid #eee; border-radius: 6px; padding: 6px; min-height: 300px;"></div>
+                                <div id="variant-search-results" style="flex: 1; overflow-y: auto; overflow-x: hidden; border: 1px solid #eee; border-radius: 6px; padding: 6px; min-height: 120px;"></div>
                                 <div style="flex-shrink: 0; display: flex; flex-direction: column; gap: 8px;">
                                     <div style="font-size: 12px; color: #777; text-align: center;">Select multiple results using checkboxes</div>
                                     <button id="add-selected-variants-btn" class="btn btn-primary" style="padding: 10px 12px; width: 100%;">Add selected to subprocess</button>

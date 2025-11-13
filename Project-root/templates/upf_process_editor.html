@@ -27,6 +27,8 @@
         flex-direction: column;
         overflow: hidden;
         position: relative;
+        /* allow children to shrink when vertical space is constrained */
+        min-height: 0;
     }
 
     .panel-header {
@@ -84,14 +86,57 @@
     .variant-list {
         flex: 1;
         overflow-y: auto;
-        padding: 15px;
+        padding: 10px;
+        /* allow this flex child to shrink inside the panel */
+        min-height: 0;
+    }
+
+    /* Make inline variant-list behave like the variant search card: allow shrinking,
+       provide a scrollable results area and keep footer visible */
+    .variant-list-container {
+        display: flex;
+        flex-direction: column;
+        box-sizing: border-box;
+        max-height: calc(70vh - 120px);
+        transition: max-height 160ms ease, opacity 160ms ease, transform 160ms ease;
+        overflow: hidden;
+        min-height: 0;
+    }
+
+    .variant-list-container .variant-search-card {
+        display: flex;
+        flex-direction: column;
+        gap: 10px;
+        min-height: 0;
+        flex: 1 1 auto;
+    }
+
+    .variant-list-container #variant-search-results,
+    .variant-list #variant-search-results {
+        flex: 1 1 auto;
+        min-height: 0;
+        overflow-y: auto;
+        word-break: break-word;
+    }
+
+    .variant-list-container.collapsed {
+        max-height: 0 !important;
+        opacity: 0 !important;
+        transform: translateY(-6px);
+        pointer-events: none;
+        padding: 0 !important;
+        box-shadow: none !important;
+        border: none !important;
+        background: transparent !important;
     }
 
     /* Selected Variant chip (draggable) */
     .selected-variant-container {
-        padding: 14px 20px;
+        padding: 10px 12px;
         border-top: 2px solid #e0e0e0;
         background: #fff;
+        /* keep footer compact and let the results area shrink */
+        flex-shrink: 0;
     }
     .selected-variant-label {
         color: #666;
@@ -320,6 +365,30 @@
         margin-bottom: 15px;
         overflow: hidden;
         transition: all 0.2s;
+        display: flex;
+        flex-direction: column;
+        min-height: 0; /* allow child .variants-list to shrink */
+        max-height: calc(70vh - 160px);
+    }
+
+    .subprocess-item .variants-list {
+        overflow-y: auto;
+        min-height: 0;
+        max-height: calc(40vh - 80px);
+        padding: 10px;
+    }
+    /* Sticky footer inside variants-list so action buttons stay visible while scrolling */
+    .subprocess-item .variants-list {
+        position: relative;
+    }
+    .subprocess-item .variants-list .variants-footer {
+        position: sticky;
+        bottom: 0;
+        background: inherit;
+        padding-top: 8px;
+        margin-top: 8px;
+        z-index: 4;
+        box-shadow: 0 -6px 12px rgba(0,0,0,0.04);
     }
 
     .subprocess-item.drag-over {
@@ -759,7 +828,7 @@
                 </select>
             </div>
         </div>
-        <div class="variant-info" style="padding: 20px; background: #f9f9f9;">
+    <div class="variant-info" style="padding: 12px; background: #f9f9f9; flex-shrink: 0;">
             <p style="margin: 0; font-size: 14px; color: #666;">
                 <strong>How to use:</strong><br>
                 1. Start typing in the search box above<br>
