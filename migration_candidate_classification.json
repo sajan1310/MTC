@@ -1,0 +1,285 @@
+{
+  "__future__": {
+    "classification": "column",
+    "usage_count": 21,
+    "sample_usages": [
+      "from __future__ import annotations",
+      "from __future__ import annotations",
+      "from __future__ import annotations",
+      "from __future__ import annotations",
+      "from __future__ import annotations",
+      "missing_reqs = sorted([imp for imp in imports if imp not in reqs and imp not in (\"__future__\", \"os\", \"sys\", \"re\", \"json\", \"pathlib\", \"typing\")])"
+    ]
+  },
+  "__init__": {
+    "classification": "column",
+    "usage_count": 63,
+    "sample_usages": [
+      "_init_py = os.path.join(_pkg_dir, \"__init__.py\")",
+      "def __init__(self):",
+      "def __init__(self, user_data):",
+      "def __init__(self):",
+      "def __init__(self, user_data):",
+      "def __init__(self):"
+    ]
+  },
+  "alert_summary_json": {
+    "classification": "column",
+    "usage_count": 7,
+    "sample_usages": [
+      "UPDATE production_lots SET alert_summary_json = (",
+      "UPDATE production_lots SET alert_summary_json = (",
+      "ALTER TABLE production_lots ADD COLUMN IF NOT EXISTS alert_summary_json JSONB DEFAULT '{}';",
+      "-- Update alert_summary_json",
+      "UPDATE production_lots SET alert_summary_json = (",
+      "ALTER TABLE production_lots DROP COLUMN IF EXISTS alert_summary_json;"
+    ]
+  },
+  "cost_items_data": {
+    "classification": "cte",
+    "usage_count": 2,
+    "sample_usages": [
+      "cost_items_data AS (",
+      "LEFT JOIN cost_items_data cid ON cid.process_subprocess_id = si.ps_id"
+    ]
+  },
+  "count_query": {
+    "classification": "column",
+    "usage_count": 11,
+    "sample_usages": [
+      "count_query = base_query.replace(\"SELECT sr.*, s.firm_name\", \"SELECT COUNT(*) as total\")",
+      "# remove ORDER BY from count_query if present",
+      "if \" ORDER BY \" in count_query:",
+      "count_query = count_query.split(\" ORDER BY \")[0]",
+      "cur.execute(count_query, tuple(params))",
+      "count_query = f\"SELECT COUNT(i.item_id) {base_query} {where_clause}\""
+    ]
+  },
+  "flask_cors": {
+    "classification": "column",
+    "usage_count": 1,
+    "sample_usages": [
+      "from flask_cors import CORS"
+    ]
+  },
+  "flask_limiter": {
+    "classification": "column",
+    "usage_count": 2,
+    "sample_usages": [
+      "from flask_limiter import Limiter",
+      "from flask_limiter.util import get_remote_address"
+    ]
+  },
+  "flask_login": {
+    "classification": "column",
+    "usage_count": 19,
+    "sample_usages": [
+      "from flask_login import UserMixin",
+      "from flask_login import UserMixin",
+      "from flask_login import current_user",
+      "from flask_login import LoginManager",
+      "from flask_login import current_user, login_required",
+      "from flask_login import login_required, current_user"
+    ]
+  },
+  "flask_wtf": {
+    "classification": "column",
+    "usage_count": 2,
+    "sample_usages": [
+      "from flask_wtf import CSRFProtect",
+      "from flask_wtf.csrf import CSRFError"
+    ]
+  },
+  "generate_series": {
+    "classification": "column",
+    "usage_count": 1,
+    "sample_usages": [
+      "FROM generate_series(CURRENT_DATE - INTERVAL '29 days', CURRENT_DATE, '1 day') as date_series(day)"
+    ]
+  },
+  "groups_data": {
+    "classification": "cte",
+    "usage_count": 2,
+    "sample_usages": [
+      "groups_data AS (",
+      "LEFT JOIN groups_data gd ON gd.process_subprocess_id = si.ps_id"
+    ]
+  },
+  "item_id": {
+    "classification": "column",
+    "usage_count": 253,
+    "sample_usages": [
+      "# Get all item_ids for this duplicate set",
+      "SELECT item_id FROM item_master",
+      "ORDER BY item_id;",
+      "item_ids = [row[0] for row in cur.fetchall()]",
+      "id_to_keep = item_ids[0]",
+      "ids_to_delete = item_ids[1:]"
+    ]
+  },
+  "key_column_usage": {
+    "classification": "column",
+    "usage_count": 1,
+    "sample_usages": [
+      "JOIN information_schema.key_column_usage AS kcu"
+    ]
+  },
+  "logging_config": {
+    "classification": "column",
+    "usage_count": 2,
+    "sample_usages": [
+      "from logging_config import setup_logging",
+      "- `logging_config.py` (new)"
+    ]
+  },
+  "pg_class": {
+    "classification": "column",
+    "usage_count": 6,
+    "sample_usages": [
+      "JOIN pg_class t ON c.conrelid = t.oid",
+      "JOIN pg_class t ON c.conrelid = t.oid",
+      "SELECT 1 FROM pg_constraint c JOIN pg_class t ON c.conrelid = t.oid",
+      "JOIN pg_class t ON c.conrelid = t.oid",
+      "JOIN pg_class t ON c.conrelid = t.oid",
+      "JOIN pg_class t ON c.conrelid = t.oid"
+    ]
+  },
+  "pg_constraint": {
+    "classification": "column",
+    "usage_count": 8,
+    "sample_usages": [
+      "IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conname = 'unique_po_number') THEN",
+      "SELECT 1 FROM pg_constraint c",
+      "SELECT 1 FROM pg_constraint c",
+      "SELECT 1 FROM pg_constraint c JOIN pg_class t ON c.conrelid = t.oid",
+      "FROM pg_constraint c",
+      "SELECT 1 FROM pg_constraint c"
+    ]
+  },
+  "pg_database": {
+    "classification": "column",
+    "usage_count": 1,
+    "sample_usages": [
+      "cur_admin.execute(\"SELECT 1 FROM pg_database WHERE datname = %s;\", (db_name,))"
+    ]
+  },
+  "pg_indexes": {
+    "classification": "column",
+    "usage_count": 3,
+    "sample_usages": [
+      "FROM pg_indexes",
+      "FROM pg_indexes",
+      "FROM pg_indexes"
+    ]
+  },
+  "pg_tables": {
+    "classification": "column",
+    "usage_count": 2,
+    "sample_usages": [
+      "FROM pg_tables",
+      "FROM pg_tables"
+    ]
+  },
+  "pg_trigger": {
+    "classification": "column",
+    "usage_count": 1,
+    "sample_usages": [
+      "FROM pg_trigger"
+    ]
+  },
+  "private_uploads": {
+    "classification": "column",
+    "usage_count": 14,
+    "sample_usages": [
+      "- Files are served from private_uploads directory only",
+      "uploads_dir = os.path.join(current_app.root_path, \"..\", \"private_uploads\")",
+      "(f\"private_uploads/{filename}\",),",
+      "uploads_dir = os.path.join(current_app.root_path, \"..\", \"private_uploads\")",
+      "uploads_dir = os.path.join(current_app.root_path, \"..\", \"private_uploads\")",
+      "image_path = f\"private_uploads/{filename}\""
+    ]
+  },
+  "subprocess_ids": {
+    "classification": "cte",
+    "usage_count": 9,
+    "sample_usages": [
+      "def create_process_with_subprocesses(conn, cur, name, subprocess_ids):",
+      "for sp_id in subprocess_ids:",
+      "WITH subprocess_ids AS (",
+      "WHERE vu.process_subprocess_id IN (SELECT ps_id FROM subprocess_ids)",
+      "WHERE ci.process_subprocess_id IN (SELECT ps_id FROM subprocess_ids)",
+      "WHERE sg.process_subprocess_id IN (SELECT ps_id FROM subprocess_ids)"
+    ]
+  },
+  "supplier_ledger": {
+    "classification": "view",
+    "usage_count": 24,
+    "sample_usages": [
+      "Migration: Create supplier_ledger view and add performance indexes",
+      "This creates a plain SQL view `supplier_ledger` that unifies purchase order events",
+      "sql := 'DROP VIEW IF EXISTS supplier_ledger; CREATE VIEW supplier_ledger AS ' ||",
+      "\"DROP VIEW IF EXISTS supplier_ledger;\",",
+      "cur.execute(\"SELECT to_regclass('public.supplier_ledger');\")",
+      "print('supplier_ledger regclass:', res)"
+    ]
+  },
+  "table_constraints": {
+    "classification": "column",
+    "usage_count": 1,
+    "sample_usages": [
+      "FROM information_schema.table_constraints AS tc"
+    ]
+  },
+  "table_name": {
+    "classification": "column",
+    "usage_count": 115,
+    "sample_usages": [
+      "WHERE table_name='process_subprocesses'",
+      "WHERE table_name = %s",
+      "WHERE table_name = 'item_variant'",
+      "WHERE table_name = 'item_master'",
+      "WHERE table_name='item_category_master'",
+      "def get_or_create_master_id(cur, value, table_name, id_col, name_col):"
+    ]
+  },
+  "test_inventory_alerts": {
+    "classification": "column",
+    "usage_count": 6,
+    "sample_usages": [
+      "# Seed some alerts using the existing helper from test_inventory_alerts",
+      "from tests.api.test_inventory_alerts import _seed_lot_with_alerts",
+      "\u2502   \u251c\u2500\u2500 test_inventory_alerts.py \u2705",
+      "- `tests/api/test_inventory_alerts.py`",
+      "pytest tests/api/test_inventory_alerts.py -v",
+      "pytest tests/api/test_inventory_alerts.py -v"
+    ]
+  },
+  "timing_data": {
+    "classification": "cte",
+    "usage_count": 2,
+    "sample_usages": [
+      "timing_data AS (",
+      "LEFT JOIN timing_data td ON td.process_subprocess_id = si.ps_id"
+    ]
+  },
+  "updated_at": {
+    "classification": "column",
+    "usage_count": 152,
+    "sample_usages": [
+      "updated_at TIMESTAMP DEFAULT NOW(),",
+      "# Create trigger to update updated_at timestamp",
+      "CREATE OR REPLACE FUNCTION update_import_jobs_updated_at()",
+      "NEW.updated_at = NOW();",
+      "DROP TRIGGER IF EXISTS trigger_update_import_jobs_updated_at ON import_jobs;",
+      "CREATE TRIGGER trigger_update_import_jobs_updated_at"
+    ]
+  },
+  "variants_data": {
+    "classification": "cte",
+    "usage_count": 2,
+    "sample_usages": [
+      "variants_data AS (",
+      "LEFT JOIN variants_data vd ON vd.process_subprocess_id = si.ps_id"
+    ]
+  }
+}

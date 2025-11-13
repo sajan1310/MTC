@@ -1,0 +1,179 @@
+{
+  "mode": "offline",
+  "offline": {
+    "__future__": {
+      "expected_kind": "column",
+      "in_migrations_table": false,
+      "in_migrations_view": false,
+      "in_migrations_column": false
+    },
+    "__init__": {
+      "expected_kind": "column",
+      "in_migrations_table": false,
+      "in_migrations_view": false,
+      "in_migrations_column": false
+    },
+    "alert_summary_json": {
+      "expected_kind": "column",
+      "in_migrations_table": false,
+      "in_migrations_view": false,
+      "in_migrations_column": false
+    },
+    "cost_items_data": {
+      "expected_kind": "cte",
+      "in_migrations_table": false,
+      "in_migrations_view": false,
+      "in_migrations_column": false
+    },
+    "count_query": {
+      "expected_kind": "column",
+      "in_migrations_table": false,
+      "in_migrations_view": false,
+      "in_migrations_column": false
+    },
+    "flask_cors": {
+      "expected_kind": "column",
+      "in_migrations_table": false,
+      "in_migrations_view": false,
+      "in_migrations_column": false
+    },
+    "flask_limiter": {
+      "expected_kind": "column",
+      "in_migrations_table": false,
+      "in_migrations_view": false,
+      "in_migrations_column": false
+    },
+    "flask_login": {
+      "expected_kind": "column",
+      "in_migrations_table": false,
+      "in_migrations_view": false,
+      "in_migrations_column": false
+    },
+    "flask_wtf": {
+      "expected_kind": "column",
+      "in_migrations_table": false,
+      "in_migrations_view": false,
+      "in_migrations_column": false
+    },
+    "generate_series": {
+      "expected_kind": "column",
+      "in_migrations_table": false,
+      "in_migrations_view": false,
+      "in_migrations_column": false
+    },
+    "groups_data": {
+      "expected_kind": "cte",
+      "in_migrations_table": false,
+      "in_migrations_view": false,
+      "in_migrations_column": false
+    },
+    "item_id": {
+      "expected_kind": "column",
+      "in_migrations_table": false,
+      "in_migrations_view": false,
+      "in_migrations_column": false
+    },
+    "key_column_usage": {
+      "expected_kind": "column",
+      "in_migrations_table": false,
+      "in_migrations_view": false,
+      "in_migrations_column": false
+    },
+    "logging_config": {
+      "expected_kind": "column",
+      "in_migrations_table": false,
+      "in_migrations_view": false,
+      "in_migrations_column": false
+    },
+    "pg_class": {
+      "expected_kind": "column",
+      "in_migrations_table": false,
+      "in_migrations_view": false,
+      "in_migrations_column": false
+    },
+    "pg_constraint": {
+      "expected_kind": "column",
+      "in_migrations_table": false,
+      "in_migrations_view": false,
+      "in_migrations_column": false
+    },
+    "pg_database": {
+      "expected_kind": "column",
+      "in_migrations_table": false,
+      "in_migrations_view": false,
+      "in_migrations_column": false
+    },
+    "pg_indexes": {
+      "expected_kind": "column",
+      "in_migrations_table": false,
+      "in_migrations_view": false,
+      "in_migrations_column": false
+    },
+    "pg_tables": {
+      "expected_kind": "column",
+      "in_migrations_table": false,
+      "in_migrations_view": false,
+      "in_migrations_column": false
+    },
+    "pg_trigger": {
+      "expected_kind": "column",
+      "in_migrations_table": false,
+      "in_migrations_view": false,
+      "in_migrations_column": false
+    },
+    "private_uploads": {
+      "expected_kind": "column",
+      "in_migrations_table": false,
+      "in_migrations_view": false,
+      "in_migrations_column": false
+    },
+    "subprocess_ids": {
+      "expected_kind": "cte",
+      "in_migrations_table": false,
+      "in_migrations_view": false,
+      "in_migrations_column": false
+    },
+    "supplier_ledger": {
+      "expected_kind": "view",
+      "in_migrations_table": false,
+      "in_migrations_view": true,
+      "in_migrations_column": false
+    },
+    "table_constraints": {
+      "expected_kind": "column",
+      "in_migrations_table": false,
+      "in_migrations_view": false,
+      "in_migrations_column": false
+    },
+    "table_name": {
+      "expected_kind": "column",
+      "in_migrations_table": false,
+      "in_migrations_view": false,
+      "in_migrations_column": false
+    },
+    "test_inventory_alerts": {
+      "expected_kind": "column",
+      "in_migrations_table": false,
+      "in_migrations_view": false,
+      "in_migrations_column": false
+    },
+    "timing_data": {
+      "expected_kind": "cte",
+      "in_migrations_table": false,
+      "in_migrations_view": false,
+      "in_migrations_column": false
+    },
+    "updated_at": {
+      "expected_kind": "column",
+      "in_migrations_table": false,
+      "in_migrations_view": false,
+      "in_migrations_column": false
+    },
+    "variants_data": {
+      "expected_kind": "cte",
+      "in_migrations_table": false,
+      "in_migrations_view": false,
+      "in_migrations_column": false
+    }
+  }
+}

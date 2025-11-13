@@ -69,6 +69,7 @@ def gather_frontend_endpoints(root: Path):
 
 def gather_migration_tables(root: Path):
     """Parse migration SQL/Python migrations for CREATE TABLE occurrences."""
+    # Kept for backward compatibility; prefer gather_migration_db_objects below.
     migrations = list(root.rglob("migrations/*"))
     table_re = re.compile(r"CREATE\s+TABLE\s+(?:IF\s+NOT\s+EXISTS\s+)?(?:\w+\.)?\"?([a-zA-Z0-9_]+)\"?", re.I)
     tables = set()
@@ -78,6 +79,62 @@ def gather_migration_tables(root: Path):
             for m in table_re.finditer(txt):
                 tables.add(m.group(1))
     return tables
+
+
+def gather_migration_db_objects(root: Path):
+    """Scan migrations for CREATE TABLE, CREATE VIEW, and column definitions (including ALTER TABLE ADD COLUMN).
+
+    Returns a tuple of (tables_set, views_set, columns_set).
+    """
+    migrations = list(root.rglob("migrations/*"))
+    table_re = re.compile(r"CREATE\s+TABLE\s+(?:IF\s+NOT\s+EXISTS\s+)?(?:\w+\.)?\"?([a-zA-Z0-9_]+)\"?", re.I)
+    view_re = re.compile(r"CREATE\s+(?:MATERIALIZED\s+)?VIEW\s+(?:IF\s+NOT\s+EXISTS\s+)?(?:\w+\.)?\"?([a-zA-Z0-9_]+)\"?", re.I)
+    alter_add_col_re = re.compile(r"ALTER\s+TABLE\s+(?:\w+\.)?\"?[a-zA-Z0-9_]+\"?\s+ADD\s+COLUMN\s+(?:IF\s+NOT\s+EXISTS\s+)?\"?([a-zA-Z0-9_]+)\"?", re.I)
+    # crude column definition detection inside CREATE TABLE blocks or standalone column defs
+    col_def_re = re.compile(r"\b([a-zA-Z_][a-zA-Z0-9_]*)\s+(?:integer|bigint|serial|text|varchar|character varying|timestamp|boolean|jsonb|uuid)\b", re.I)
+
+    tables = set()
+    views = set()
+    columns = set()
+    for f in migrations:
+        if f.is_file():
+            txt = _read_text(f)
+            low = txt
+            for m in table_re.finditer(low):
+                tables.add(m.group(1))
+            for m in view_re.finditer(low):
+                views.add(m.group(1))
+            for m in alter_add_col_re.finditer(low):
+                columns.add(m.group(1))
+            for m in col_def_re.finditer(low):
+                columns.add(m.group(1))
+    return tables, views, columns
+
+
+def gather_cte_aliases(root: Path):
+    """Find common CTE aliases in SQL strings (e.g. 'my_cte AS ('). These are not DB objects to migrate."""
+    files = list(root.rglob("*.py")) + list(root.rglob("*.sql"))
+    cte_re = re.compile(r"\b([a-zA-Z_][a-zA-Z0-9_]*)\s+AS\s*\(", re.I)
+    ctes = set()
+    for f in files:
+        if any(s in str(f).lower() for s in SKIP_DIRS):
+            continue
+        txt = _read_text(f)
+        for m in cte_re.finditer(txt):
+            ctes.add(m.group(1))
+    return ctes
+
+
+def is_noise_token(name: str):
+    n = name.lower()
+    if n.startswith("flask_") or n.startswith("__") or n.startswith("pg_"):
+        return True
+    if n in ("information_schema", "generate_series", "key_column_usage", "table_constraints", "table_name"):
+        return True
+    if n.startswith("test_") or n.endswith("_data"):
+        # many test helpers and ephemeral CTE-style aliases end with _data
+        return True
+    return False
 
 
 def gather_blueprint_prefixes(root: Path):
@@ -233,13 +290,30 @@ def test_project_audit():
         for r, fs in list(dupes.items())[:10]:
             warnings.append(f"Route {r} declared in: {sorted(set(fs))[:3]}")
 
-    # 5) Migrations vs code table usage
-    migration_tables = gather_migration_tables(scan_root)
+    # 5) Migrations vs code table usage (improved)
+    migration_tables, migration_views, migration_columns = gather_migration_db_objects(scan_root)
     code_tables = gather_tables_used_in_code(scan_root)
-    # Tables used in code but not found in migrations
-    missing_tables = sorted([t for t in code_tables if t not in migration_tables])
-    if missing_tables:
-        warnings.append(f"{len(missing_tables)} table(s) are referenced in code but not found in migrations: {missing_tables[:10]}")
+    cte_aliases = gather_cte_aliases(scan_root)
+
+    missing_db_objects = []
+    for t in sorted(code_tables):
+        if is_noise_token(t):
+            continue
+        if t in migration_tables or t in migration_views:
+            continue
+        if t in migration_columns:
+            # token is present as a column in migrations
+            continue
+        if t in cte_aliases:
+            # token is a CTE alias used in queries
+            continue
+        # otherwise, consider as a potentially missing DB object (table/view)
+        missing_db_objects.append(t)
+
+    if missing_db_objects:
+        warnings.append(
+            f"{len(missing_db_objects)} DB object(s) are referenced in code but not found in migrations (tables/views/columns): {missing_db_objects[:10]}"
+        )
 
     # 6) Sensitive/unwanted files
     sens = find_sensitive_files(scan_root)
