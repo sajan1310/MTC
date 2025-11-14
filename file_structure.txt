@@ -76,6 +76,7 @@
     QUICK_REFERENCE_CARD.md
     QUICK_START (2).md
     read_issues.py
+    REFERENCE_INVENTORY.md
     ROUTE_CLEANUP_STRATEGY.md
     route_list.py
     run_app.py
@@ -355,6 +356,7 @@
             app.log
             app.log.1
             app.log.10
+            client_actions.log
         migrations/
             006_add_performance_indexes.sql
             add_indexes.sql
@@ -366,6 +368,7 @@
             migration_add_cascade_delete.py
             migration_add_category_type_brand_tables.py
             migration_add_discount_and_receipt_number.py
+            migration_add_finalized_at_to_production_lots.py
             migration_add_fix_update_lot_inventory_status_function.py
             migration_add_import_jobs.py
             migration_add_inventory_alert_system.py
@@ -398,6 +401,8 @@
             check_supplier_ledger.py
             create_supplier_ledger_view.py
             db_explain.py
+            debug_select_variant.py
+            debug_variant_options.py
             improve_error_handling.py
             verify_upf_endpoints.py
         static/

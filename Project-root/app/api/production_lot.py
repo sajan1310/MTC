@@ -220,6 +220,9 @@ def get_production_lot_data(lot_id):
 
 
 @production_api_bp.route(
+    "/production-lots/<int:lot_id>/variant_options", methods=["GET"]
+)
+@production_api_bp.route(
     "/production_lot/<int:lot_id>/variant_options", methods=["GET"]
 )
 @login_required
@@ -234,7 +237,16 @@ def get_variant_options(lot_id):
         if not lot:
             return APIResponse.not_found("Production lot", lot_id)
 
-        if lot["created_by"] != getattr(current_user, "id", None) and not is_admin():
+        # Allow any authenticated user to view variant options (read-only).
+        # Previously this endpoint was restricted to the creator/admin which
+        # prevented other users from seeing subprocess/variant information in
+        # the production lot detail page. Keep modifications restricted elsewhere.
+        try:
+            user_id = getattr(current_user, "id", None)
+            if not current_user.is_authenticated:
+                return APIResponse.error("unauthenticated", "Authentication required", 401)
+        except Exception:
+            # Fallback: if current_user isn't available, deny access
             return APIResponse.error("forbidden", "Access denied", 403)
 
         with get_conn() as (conn, cur):
@@ -288,18 +300,31 @@ def get_variant_options(lot_id):
                     """
                     SELECT
                         vu.id as usage_id,
-                        vu.item_id,
+                        vu.variant_id,
                         vu.quantity,
                         iv.unit,
                         vu.substitute_group_id,
                         vu.is_alternative,
                         vu.alternative_order,
-                        iv.item_number,
-                        iv.description,
+                        im.name as item_number,
+                        im.description,
                         iv.opening_stock,
-                        iv.unit_price
+                        COALESCE((
+                            SELECT rate FROM supplier_item_rates sir WHERE sir.item_id = iv.item_id ORDER BY rate ASC LIMIT 1
+                        ), 0) as unit_price,
+                        iv.item_id,
+                        -- Enrich with item/variant attributes to let frontend build concatenated details and color/size/model columns
+                        COALESCE(mm.model_name, '') as model_name,
+                        COALESCE(vm.variation_name, '') as variation_name,
+                        COALESCE(cm.color_name, '') as color_name,
+                        COALESCE(sm.size_name, '') as size_name
                     FROM variant_usage vu
-                    JOIN item_variant iv ON iv.item_id = vu.item_id
+                    JOIN item_variant iv ON iv.variant_id = vu.variant_id
+                    LEFT JOIN item_master im ON im.item_id = iv.item_id
+                    LEFT JOIN model_master mm ON im.model_id = mm.model_id
+                    LEFT JOIN variation_master vm ON im.variation_id = vm.variation_id
+                    LEFT JOIN color_master cm ON iv.color_id = cm.color_id
+                    LEFT JOIN size_master sm ON iv.size_id = sm.size_id
                     WHERE vu.process_subprocess_id = %s
                     """
                 )
@@ -329,6 +354,22 @@ def get_variant_options(lot_id):
 
                 or_groups = cur.fetchall()
 
+                # Get cost items (labor/overhead) for this subprocess if available
+                try:
+                    cur.execute(
+                        """
+                        SELECT ci.*
+                        FROM cost_items ci
+                        WHERE ci.process_subprocess_id = %s
+                          AND (ci.deleted_at IS NULL OR ci.deleted_at IS NULL)
+                        ORDER BY ci.id
+                    """,
+                        (sp["process_subprocess_id"],),
+                    )
+                    cost_items = cur.fetchall()
+                except Exception:
+                    cost_items = []
+
                 # Organize variants by OR group
                 grouped_variants = {}
                 standalone_variants = []
@@ -351,6 +392,7 @@ def get_variant_options(lot_id):
                         "or_groups": [dict(g) for g in or_groups],
                         "grouped_variants": grouped_variants,
                         "standalone_variants": standalone_variants,
+                        "cost_items": [dict(ci) for ci in (cost_items or [])],
                     }
                 )
 
@@ -444,11 +486,14 @@ def select_variant_for_group(lot_id):
                 "validation_error", "Lot must be in planning status", 400
             )
 
-        data = request.json
+        data = request.json or {}
 
-        if not data.get("substitute_group_id"):
+        # allow either substitute_group_id (or_group) OR process_subprocess_id to be provided
+        if not data.get("substitute_group_id") and not data.get("process_subprocess_id"):
             return APIResponse.error(
-                "validation_error", "substitute_group_id is required", 400
+                "validation_error",
+                "Either substitute_group_id or process_subprocess_id is required",
+                400,
             )
         if not data.get("selected_variant_id"):
             return APIResponse.error(
@@ -457,9 +502,11 @@ def select_variant_for_group(lot_id):
 
         selection = ProductionService.select_variant_for_group(
             lot_id=lot_id,
-            substitute_group_id=data["substitute_group_id"],
-            selected_variant_id=data["selected_variant_id"],
-            reason=data.get("reason"),
+            substitute_group_id=data.get("substitute_group_id"),
+            variant_id=data.get("selected_variant_id"),
+            supplier_id=data.get("selected_supplier_id"),
+            quantity=data.get("quantity"),
+            process_subprocess_id=data.get("process_subprocess_id"),
         )
 
         current_app.logger.info(
@@ -762,6 +809,76 @@ def cancel_production_lot(lot_id):
         return APIResponse.success(cancelled_lot, "Production lot cancelled")
     except Exception as e:
         current_app.logger.error(f"Error cancelling production lot: {e}")
+        return APIResponse.error("internal_error", str(e), 500)
+
+
+# ----- Update / Delete endpoints for production lots -----
+@production_api_bp.route("/production-lots/<int:lot_id>", methods=["PUT"])
+@login_required
+def update_production_lot(lot_id: int):
+    """Update editable fields for a production lot."""
+    try:
+        data = request.json or {}
+
+        # Permission: only creator or admin
+        lot = ProductionService.get_production_lot(lot_id)
+        if not lot:
+            return APIResponse.not_found("Production lot", lot_id)
+
+        if lot.get("created_by") != getattr(current_user, "id", None) and not is_admin():
+            return APIResponse.error("forbidden", "Insufficient permissions", 403)
+
+        updated = ProductionService.update_production_lot(lot_id, data, getattr(current_user, "id", None))
+        return APIResponse.success(updated, "Production lot updated")
+    except ValueError as ve:
+        current_app.logger.warning(f"Update validation error for lot {lot_id}: {ve}")
+        return APIResponse.error("validation_error", str(ve), 400)
+    except Exception as e:
+        current_app.logger.error(f"Error updating production lot: {e}")
+        return APIResponse.error("internal_error", str(e), 500)
+
+
+@production_api_bp.route("/production-lots/<int:lot_id>", methods=["DELETE"])
+@login_required
+def delete_production_lot(lot_id: int):
+    """Delete a production lot (if allowed)."""
+    try:
+        lot = ProductionService.get_production_lot(lot_id)
+        if not lot:
+            return APIResponse.not_found("Production lot", lot_id)
+
+        if lot.get("created_by") != getattr(current_user, "id", None) and not is_admin():
+            return APIResponse.error("forbidden", "Insufficient permissions", 403)
+
+        result = ProductionService.delete_production_lot(lot_id, getattr(current_user, "id", None))
+        if not result:
+            return APIResponse.error("not_found", "Production lot not found or could not be deleted", 404)
+        return APIResponse.success({"deleted": True}, "Production lot deleted")
+    except ValueError as ve:
+        return APIResponse.error("validation_error", str(ve), 400)
+    except Exception as e:
+        current_app.logger.error(f"Error deleting production lot: {e}")
+        return APIResponse.error("internal_error", str(e), 500)
+
+
+@production_api_bp.route("/production-lots/<int:lot_id>/selections/<int:selection_id>", methods=["DELETE"])
+@login_required
+def delete_variant_selection(lot_id: int, selection_id: int):
+    """Delete a single variant selection from a production lot."""
+    try:
+        lot = ProductionService.get_production_lot(lot_id)
+        if not lot:
+            return APIResponse.not_found("Production lot", lot_id)
+
+        if lot.get("created_by") != getattr(current_user, "id", None) and not is_admin():
+            return APIResponse.error("forbidden", "Insufficient permissions", 403)
+
+        removed = ProductionService.remove_variant_selection(selection_id, lot_id)
+        if not removed:
+            return APIResponse.error("not_found", "Selection not found", 404)
+        return APIResponse.success({"removed": True}, "Selection removed")
+    except Exception as e:
+        current_app.logger.error(f"Error removing selection {selection_id} from lot {lot_id}: {e}")
         return APIResponse.error("internal_error", str(e), 500)
 
 

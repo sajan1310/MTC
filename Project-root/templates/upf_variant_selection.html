@@ -527,7 +527,8 @@ const variantSelector = {
                     ${!hasStock ? 'disabled' : ''}
                 >
                 <div class="variant-details">
-                    <div class="variant-name">${variant.item_number}</div>
+                    <!-- Concatenate item details: item_number, model, variation, size -->
+                    <div class="variant-name">${[variant.item_number || variant.variant_name, variant.model || variant.item_model, variant.variation || variant.variant_sku, variant.size].filter(Boolean).join(' - ')}</div>
                     <div class="variant-info">
                         <span>📦 ${variant.description || 'No description'}</span>
                         <span>💰 $${(variant.unit_price || 0).toFixed(2)}</span>

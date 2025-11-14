@@ -266,6 +266,85 @@
         justify-content: flex-end;
         margin-top: 30px;
     }
+
+    /* Modal styles */
+    .modal-overlay {
+        position: fixed;
+        inset: 0;
+        background: rgba(0,0,0,0.4);
+        display: none;
+        align-items: center;
+        justify-content: center;
+        z-index: 1200;
+    }
+
+    .modal {
+        background: white;
+        border-radius: 8px;
+        padding: 20px;
+        width: 520px;
+        max-width: 95%;
+        box-shadow: 0 8px 24px rgba(0,0,0,0.2);
+    }
+
+    .modal-header {
+        display:flex;align-items:center;justify-content:space-between;margin-bottom:12px
+    }
+
+    .modal-actions { display:flex;gap:8px;justify-content:flex-end;margin-top:12px }
+
+    .modal input[type="text"], .modal input[type="number"], .modal textarea, .modal select {
+        width:100%;padding:8px;border:1px solid #ddd;border-radius:4px;box-sizing:border-box;margin-top:6px
+    }
+
+        /* Variant matrix table styles */
+        .matrix-table th,
+        .matrix-table td {
+            border: 1px solid #e6e9ee;
+            padding: 8px 10px;
+            vertical-align: middle;
+            font-size: 13px;
+        }
+
+        .matrix-table thead th {
+            background: #f7fafc;
+            font-weight: 700;
+            position: sticky;
+            top: 0;
+            z-index: 3;
+            text-align: left;
+        }
+
+            /* Subtle partition between color groups and columns */
+            .matrix-table {
+                border-collapse: separate;
+                border-spacing: 0;
+                background: white;
+                border-radius: 6px;
+                overflow: hidden;
+                box-shadow: 0 2px 6px rgba(0,0,0,0.04);
+            }
+
+            .matrix-table th,
+            .matrix-table td {
+                border-bottom: 1px solid #eef2f7;
+                padding: 10px 12px;
+            }
+
+            /* stronger vertical partition between color groups */
+            .matrix-table td + td, .matrix-table th + th { border-left: 1px solid #eef2f7; }
+
+            .matrix-table thead th {
+                background: linear-gradient(180deg,#fbfdff,#f7fafc);
+                color: #263238;
+                font-size: 13px;
+            }
+
+        .matrix-table tbody tr:nth-child(even) td { background: #fbfcfd; }
+
+        .matrix-table .lot-total { text-align: right; font-weight:600; min-width:90px }
+
+        .inline-qty-input { width:86px; padding:6px; box-sizing:border-box }
 </style>
 {% endblock %}
 
@@ -285,9 +364,90 @@
 
     <div class="page-header">
         <h1 class="page-title" id="page-title">🏭 Production Lot Details</h1>
-        <a href="/upf/production-lots" class="back-link">
+        <div style="display:flex;align-items:center;gap:12px;">
+            <a href="/upf/production-lots" class="back-link">
             ← Back to Production Lots
         </a>
+            <button class="btn" id="edit-lot-btn">✏️ Edit</button>
+            <button class="btn btn-danger" id="delete-lot-btn">🗑️ Delete</button>
+        </div>
+    </div>
+
+    <!-- Edit Lot Modal -->
+    <div id="modal-overlay" class="modal-overlay">
+        <div class="modal" role="dialog" aria-modal="true" aria-labelledby="modal-title">
+            <div class="modal-header">
+                <h3 id="modal-title">Edit Production Lot</h3>
+                <button id="modal-close" class="btn">✖</button>
+            </div>
+            <form id="edit-lot-form">
+                <label>Quantity</label>
+                <input type="number" id="modal-quantity" min="1" required />
+
+                <label style="margin-top:8px">Status</label>
+                <select id="modal-status">
+                    <option value="Planning">Planning</option>
+                    <option value="Ready">Ready</option>
+                    <option value="In Progress">In Progress</option>
+                    <option value="completed">completed</option>
+                    <option value="finalized">finalized</option>
+                    <option value="cancelled">cancelled</option>
+                </select>
+
+                <label style="margin-top:8px">Notes</label>
+                <textarea id="modal-notes" rows="4"></textarea>
+
+                <div class="modal-actions">
+                    <button type="button" class="btn" id="modal-cancel">Cancel</button>
+                    <button type="submit" class="btn btn-primary">Save</button>
+                </div>
+            </form>
+        </div>
+    </div>
+
+    <!-- Add Variant Modal -->
+    <div id="variant-modal-overlay" class="modal-overlay">
+        <div class="modal" role="dialog" aria-modal="true" aria-labelledby="variant-modal-title">
+            <div class="modal-header">
+                <h3 id="variant-modal-title">Add / Update Variant Selection</h3>
+                <button id="variant-modal-close" class="btn">✖</button>
+            </div>
+            <form id="add-variant-form">
+                <label>Substitute Group</label>
+                <select id="variant-group-select">
+                    <option value="">-- Select Group (or standalone) --</option>
+                </select>
+
+                <label style="margin-top:8px">Variant</label>
+                <input type="text" id="variant-search" placeholder="Search variants (name, SKU)..." style="margin-top:6px;padding:8px;border:1px solid #ddd;border-radius:4px;" />
+                <select id="variant-select" required style="margin-top:8px">
+                    <option value="">-- Select Variant --</option>
+                </select>
+
+                <label style="margin-top:8px">Quantity (per unit)</label>
+                <input type="number" id="variant-qty" min="0" step="0.01" value="1" required />
+
+                <div class="modal-actions">
+                    <button type="button" class="btn" id="variant-modal-cancel">Cancel</button>
+                    <button type="submit" class="btn btn-primary">Save Variant</button>
+                </div>
+            </form>
+        </div>
+    </div>
+
+    <!-- Edit Subprocess Modal -->
+    <div id="edit-subprocess-modal-overlay" class="modal-overlay">
+        <div class="modal" role="dialog" aria-modal="true" aria-labelledby="edit-subprocess-modal-title">
+            <div class="modal-header">
+                <h3 id="edit-subprocess-modal-title">Edit Subprocess Selections</h3>
+                <button id="edit-subprocess-modal-close" class="btn">✖</button>
+            </div>
+            <div id="edit-subprocess-body" style="max-height:400px;overflow:auto"></div>
+            <div class="modal-actions">
+                <button type="button" class="btn" id="edit-subprocess-cancel">Cancel</button>
+                <button type="button" class="btn btn-primary" id="edit-subprocess-save">Save Selections</button>
+            </div>
+        </div>
     </div>
 
     <div class="detail-grid">
@@ -295,7 +455,7 @@
         <div class="detail-card">
             <div class="card-header">
                 <h2 class="card-title">Lot Information</h2>
-                <div id="lot-status-badge"></div>
+                    <div id="lot-status-badge"></div>
             </div>
             <div id="lot-details-content" class="loading-state">
                 Loading lot details...
@@ -310,6 +470,32 @@
             <div id="summary-content" class="loading-state">
                 Loading summary...
             </div>
+        </div>
+    </div>
+
+    <!-- Subprocesses + variant options (editable) -->
+    <div class="detail-grid">
+        <div class="detail-card" id="subprocesses-card">
+            <div class="card-header">
+                <h2 class="card-title">Subprocesses & Variant Options</h2>
+                <div>
+                    <button class="btn" id="refresh-variant-options">Refresh</button>
+                </div>
+            </div>
+            <div id="subprocesses-content" class="loading-state">Loading subprocesses...</div>
+        </div>
+    </div>
+
+    <!-- Variants / Selections Panel -->
+    <div class="detail-grid">
+        <div class="detail-card" id="variants-card">
+            <div class="card-header">
+                <h2 class="card-title">Selected Variants</h2>
+                <div>
+                    <button class="btn btn-primary" id="add-variant-btn">+ Add Variant</button>
+                </div>
+            </div>
+            <div id="variants-content" class="loading-state">Loading variants...</div>
         </div>
     </div>
 
@@ -382,7 +568,14 @@ const lotDetailPage = {
     async init() {
         await this.loadLotDetails();
         await this.loadAlerts();
+        // Prefetch variant options (subprocesses + variants) and render subprocess editor
+        try {
+            await this.fetchVariantOptions();
+        } catch (e) {
+            // ignore - fetchVariantOptions already logs
+        }
         this.setupEventListeners();
+        this.renderSubprocesses();
         
         // Initialize alert handler
         if (window.ProductionLotAlertHandler) {
@@ -410,11 +603,307 @@ const lotDetailPage = {
             this.lotData = data.data || data;
             this.renderLotDetails();
             this.renderSummary();
+            this.renderVariants();
         } catch (error) {
             console.error('Error loading lot details:', error);
             document.getElementById('lot-details-content').innerHTML = 
                 '<div class="empty-state">❌ Failed to load lot details</div>';
         }
+    },
+
+    renderVariants() {
+        const selections = this.lotData?.selections || [];
+        const container = document.getElementById('variants-content');
+        if (!container) return;
+
+        if (selections.length === 0) {
+            container.innerHTML = '<div class="empty-state">No variant selections yet.</div>';
+            return;
+        }
+
+        const lotQty = (this.lotData && Number(this.lotData.quantity)) || 1;
+        const rows = selections.map(s => {
+            const selId = s.get ? s.get('id') : s.id || s['id'];
+            // Concatenate item details if available: item_number, model, variation, size
+            const itemName = s.item_number || s.item_name || s.variant_name || '';
+            const model = s.model || s.item_model || '';
+            const variation = s.variation || s.variant_sku || '';
+            const size = s.size || '';
+            const details = [itemName, model, variation, size].filter(Boolean).join(' - ') || (s.selected_variant_id || 'Variant');
+            const perUnitQty = Number(s.selected_quantity || s.quantity || 0);
+            const totalQty = (perUnitQty * lotQty) || 0;
+            return `
+                <div class="detail-row" data-selection-id="${selId}">
+                    <div style="flex:1">
+                        <div class="detail-label">${this.escapeHtml(String(details))}</div>
+                        <div class="detail-value">Quantity per unit: ${perUnitQty} — Total required: ${totalQty}</div>
+                    </div>
+                    <div style="display:flex;gap:8px;align-items:center">
+                        <button class="btn" onclick="lotDetailPage.handleRemoveVariant(${selId})">Remove</button>
+                    </div>
+                </div>
+            `;
+        }).join('');
+
+        container.innerHTML = rows;
+    },
+
+    renderSubprocesses() {
+        const data = (this._variantOptions || {});
+        const subs = data.subprocesses || [];
+        const container = document.getElementById('subprocesses-content');
+        if (!container) return;
+
+        if (subs.length === 0) {
+            container.innerHTML = '<div class="empty-state">No subprocess variant options available.</div>';
+            return;
+        }
+
+        // map existing selections by substitute_group_id and by usage id
+        const selections = (this.lotData?.selections || []).reduce((acc, s) => {
+            try {
+                if (s.substitute_group_id) acc.byGroup = acc.byGroup || {}, acc.byGroup[s.substitute_group_id] = s;
+                if (s.variant_usage_id) acc.byUsage = acc.byUsage || {}, acc.byUsage[s.variant_usage_id] = s;
+            } catch (e) {}
+            return acc;
+        }, {});
+
+        // Render each subprocess and include cost items scaled by lot quantity
+        const lotQty = (this.lotData && Number(this.lotData.quantity)) || 1;
+
+        const html = subs.map(sp => {
+            // compute subtotal from cost_items (per process unit)
+            const costItems = sp.cost_items || [];
+            let subtotalPerUnit = 0;
+            costItems.forEach(ci => {
+                const q = Number(ci.quantity) || 0;
+                const rate = Number(ci.amount || ci.rate) || 0;
+                subtotalPerUnit += q * rate;
+            });
+            const scaledSubtotal = subtotalPerUnit * lotQty;
+
+            // Aggregate all variants for color grouping
+            const variants = [];
+            (Object.values(sp.grouped_variants || {}).flat() || []).forEach(v => variants.push(v));
+            (sp.standalone_variants || []).forEach(v => variants.push(v));
+
+            // Derive unique colors from the new `color_name` field returned by the API
+            const uniqueColors = Array.from(new Set(variants.map(v => (v.color_name || v.color || v.variant_color || 'Default').toString())));
+            const colorHeaders = uniqueColors.map(c => `<th colspan="2">${this.escapeHtml(c)}</th>`).join('');
+            const colorSubHeaders = uniqueColors.map(_ => `<th>Qty per Unit</th><th>Lot Qty</th>`).join('');
+
+            // Group rows by usage id
+            const rowsById = {};
+            variants.forEach(v => {
+                const vid = v.usage_id || v.id || v.variant_id || v.item_id;
+                if (!rowsById[vid]) rowsById[vid] = { variants: [] };
+                rowsById[vid].variants.push(v);
+            });
+
+            const rowsHtml = Object.keys(rowsById).map(vid => {
+                const vGroup = rowsById[vid].variants[0];
+                // Prefer the new enriched fields from backend: item_number, model_name, variation_name, size_name
+                const itemName = vGroup.item_number || vGroup.variant_name || vGroup.description || String(vid);
+                const model = vGroup.model_name || vGroup.model || vGroup.item_model || '';
+                const variation = vGroup.variation_name || vGroup.variation || vGroup.variant_sku || '';
+                const size = vGroup.size_name || vGroup.size || '';
+
+                // Concatenate item details with '-' separator, skipping empty parts
+                const details = [itemName, model, variation, size].filter(Boolean).join(' - ');
+
+                const colorCells = uniqueColors.map(col => {
+                    // Match using color_name first (preferred), fall back to older fields
+                    const match = rowsById[vid].variants.find(x => (x.color_name || x.color || x.variant_color || x.description || 'Default').toString() === col);
+                    if (!match) return '<td></td><td></td>';
+                    const perUnit = Number(match.quantity || match.qty || 0);
+                    const lotTotal = perUnit * lotQty;
+                    return `<td><input type="number" value="${perUnit}" min="0" step="0.01" data-usage-id="${match.usage_id || match.id || ''}" class="inline-qty-input"/></td><td class="lot-total">${lotTotal}</td>`;
+                }).join('');
+
+                return `<tr>
+                            <td>${this.escapeHtml(details)}</td>
+                            ${colorCells}
+                        </tr>`;
+            }).join('');
+
+            return `
+                <div style="margin-bottom:12px;padding-bottom:12px;border-bottom:2px solid #f5f5f5">
+                            <div class="detail-row" style="align-items:center;gap:12px;">
+                                <div style="flex:1">
+                                    <div class="detail-label">${this.escapeHtml(sp.subprocess_name || sp.custom_name || 'Subprocess')}</div>
+                                    <div class="detail-value">Sequence: ${sp.sequence_order || ''}</div>
+                                </div>
+                                <div style="display:flex;align-items:center;gap:12px">
+                                    <button class="btn btn-primary" onclick="lotDetailPage.showAddVariantModal(${sp.process_subprocess_id})">+ Add Variant</button>
+                                    <div style="text-align:right">
+                                        <div style="font-size:13px;color:#666">Labour subtotal (scaled):</div>
+                                        <div style="font-weight:600;font-size:18px">${Number(scaledSubtotal || 0).toFixed(2)}</div>
+                                    </div>
+                                </div>
+                            </div>
+                    <div style="overflow:auto;margin-top:8px" class="variant-matrix" data-lot-quantity="${lotQty}">
+                        <table class="matrix-table" style="width:100%">
+                            <thead>
+                                <tr>
+                                            <th rowspan="2">Item Details</th>
+                                            ${colorHeaders}
+                                </tr>
+                                <tr>
+                                    ${colorSubHeaders}
+                                </tr>
+                            </thead>
+                            <tbody>
+                                ${rowsHtml}
+                            </tbody>
+                        </table>
+                    </div>
+                    ${costItems.length ? `
+                      <hr/>
+                      <div style="margin-top:8px"><strong>Cost Items (per process unit)</strong></div>
+                      <ul style="margin:6px 0 0 12px;padding:0;list-style:disc">
+                        ${costItems.map(ci => `<li>${this.escapeHtml(ci.name || 'Labour')} — qty: ${ci.quantity || 0}, rate: ${Number(ci.amount || ci.rate || 0).toFixed(2)}, line: ${(Number(ci.quantity || 0) * Number(ci.amount || ci.rate || 0)).toFixed(2)}</li>`).join('')}
+                      </ul>
+                    ` : ''}
+                </div>
+            `;
+        }).join('');
+
+        container.innerHTML = html;
+    },
+
+    showEditSubprocessModal(processSubprocessId) {
+        // Build editor content dynamically using _variantOptions
+        const payload = this._variantOptions || {};
+        const sp = (payload.subprocesses || []).find(s => s.process_subprocess_id === processSubprocessId || s.sequence_order === processSubprocessId);
+        if (!sp) {
+            alert('Subprocess options not available');
+            return;
+        }
+
+        const modal = document.getElementById('edit-subprocess-modal-overlay');
+        const body = document.getElementById('edit-subprocess-body');
+        body.innerHTML = '';
+
+        // For each OR group show a select
+        (sp.or_groups || []).forEach(g => {
+            const gid = g.group_id || g.id;
+            const wrapper = document.createElement('div');
+            wrapper.style.marginBottom = '10px';
+            const label = document.createElement('label');
+            label.textContent = `OR Group: ${g.group_name || g.name || gid}`;
+            wrapper.appendChild(label);
+            const sel = document.createElement('select');
+            sel.dataset.orGroupId = gid;
+            sel.style.marginTop = '6px';
+            sel.style.width = '100%';
+            sel.innerHTML = '<option value="">-- None --</option>';
+            const groupVariants = (sp.grouped_variants && sp.grouped_variants[gid]) || [];
+            groupVariants.forEach(v => {
+                const opt = document.createElement('option');
+                const id = v.usage_id || v.id || v.item_id || v.variant_id;
+                const itemName = v.item_number || v.variant_name || v.description || String(id);
+                const model = v.model_name || v.model || '';
+                const variation = v.variation_name || v.variation || '';
+                const size = v.size_name || v.size || '';
+                const color = v.color_name || v.color || '';
+                const labelParts = [itemName, model, variation, size].filter(Boolean);
+                opt.value = id;
+                opt.textContent = labelParts.join(' - ') + (color ? ` (${color})` : '');
+                sel.appendChild(opt);
+            });
+            wrapper.appendChild(sel);
+            body.appendChild(wrapper);
+        });
+
+        // Standalone variants: checkbox + qty
+        if ((sp.standalone_variants || []).length > 0) {
+            const h = document.createElement('div');
+            h.style.marginTop = '8px';
+            h.innerHTML = '<strong>Standalone Variants</strong>';
+            body.appendChild(h);
+            (sp.standalone_variants || []).forEach(v => {
+                const row = document.createElement('div');
+                row.style.display = 'flex';
+                row.style.gap = '8px';
+                row.style.alignItems = 'center';
+                row.style.marginTop = '6px';
+                const cb = document.createElement('input');
+                cb.type = 'checkbox';
+                cb.dataset.usageId = v.usage_id || v.id || v.item_id || v.variant_id;
+                const itemName = v.item_number || v.variant_name || v.description || String(cb.dataset.usageId);
+                const model = v.model_name || v.model || '';
+                const variation = v.variation_name || v.variation || '';
+                const size = v.size_name || v.size || '';
+                const color = v.color_name || v.color || '';
+                const labelParts = [itemName, model, variation, size].filter(Boolean);
+                const lbl = document.createElement('div');
+                lbl.style.flex = '1';
+                lbl.innerHTML = `<div class="detail-label">${this.escapeHtml(labelParts.join(' - ') + (color ? ` (${color})` : ''))}</div>\n                                 <div class="detail-value">Qty: ${v.quantity || '-'}</div>`;
+                const qty = document.createElement('input');
+                qty.type = 'number';
+                qty.min = '0';
+                qty.step = '0.01';
+                qty.value = v.quantity || 1;
+                qty.style.width = '80px';
+                row.appendChild(cb);
+                row.appendChild(lbl);
+                row.appendChild(qty);
+                body.appendChild(row);
+            });
+        }
+
+        // Save handler binds process_subprocess_id on the modal
+        const saveBtn = document.getElementById('edit-subprocess-save');
+        saveBtn.onclick = async () => {
+            // Build selections array
+            const selections = [];
+            // OR group selects
+            Array.from(body.querySelectorAll('select[data-or-group-id]')).forEach(sel => {
+                const gid = sel.dataset.orGroupId;
+                const usageId = sel.value ? Number(sel.value) : null;
+                if (usageId) selections.push({ or_group_id: Number(gid), variant_usage_id: usageId });
+            });
+            // Standalone checked
+            Array.from(body.querySelectorAll('input[type="checkbox"][data-usage-id]')).forEach((cb, idx) => {
+                if (cb.checked) {
+                    const usage = Number(cb.dataset.usageId);
+                    const qtyInput = body.querySelectorAll('input[type="number"]')[idx];
+                    const q = qtyInput ? Number(qtyInput.value) : null;
+                    selections.push({ or_group_id: null, variant_usage_id: usage, quantity_override: q });
+                }
+            });
+
+            if (selections.length === 0) {
+                if (!confirm('No selections chosen — this will clear selections for this subprocess. Proceed?')) return;
+            }
+
+            try {
+                const resp = await fetch(`/api/upf/production_lot/${this.lotId}/batch_select_variants`, {
+                    method: 'POST',
+                    credentials: 'include',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ selections })
+                });
+                if (!resp.ok) {
+                    const err = await resp.json().catch(() => ({}));
+                    throw new Error(err.message || 'Save failed');
+                }
+                this.hideEditSubprocessModal();
+                await this.loadLotDetails();
+                await this.fetchVariantOptions();
+                this.renderSubprocesses();
+                alert('Selections saved');
+            } catch (e) {
+                console.error('Failed to save selections:', e);
+                alert('Failed to save selections: ' + e.message);
+            }
+        };
+
+        modal.style.display = 'flex';
+    },
+
+    hideEditSubprocessModal() {
+        document.getElementById('edit-subprocess-modal-overlay').style.display = 'none';
     },
 
     async loadAlerts() {
@@ -486,11 +975,15 @@ const lotDetailPage = {
 
     renderSummary() {
         const lot = this.lotData;
-        
+        // Coerce cost values to numbers before formatting to avoid runtime errors
+        const rawCost = (lot && (lot.total_cost ?? lot.worst_case_estimated_cost)) || 0;
+        const costNum = Number(rawCost);
+        const costDisplay = isFinite(costNum) ? costNum.toFixed(2) : '0.00';
+
         const summaryHtml = `
             <div class="detail-row">
                 <span class="detail-label">Total Cost</span>
-                <span class="detail-value">$${(lot.total_cost || lot.worst_case_estimated_cost || 0).toFixed(2)}</span>
+                <span class="detail-value">$${costDisplay}</span>
             </div>
             <div class="detail-row">
                 <span class="detail-label">Total Alerts</span>
@@ -506,7 +999,8 @@ const lotDetailPage = {
             </div>
         `;
 
-        document.getElementById('summary-content').innerHTML = summaryHtml;
+        const summaryEl = document.getElementById('summary-content');
+        if (summaryEl) summaryEl.innerHTML = summaryHtml;
     },
 
     renderAlerts() {
@@ -515,16 +1009,19 @@ const lotDetailPage = {
 
         // Update counts badge
         const totalAlerts = alerts.length;
-        document.getElementById('alerts-count-badge').innerHTML = 
-            totalAlerts > 0 ? `<span class="status-badge">${totalAlerts} Total</span>` : '';
+        const badgeEl = document.getElementById('alerts-count-badge');
+        if (badgeEl) badgeEl.innerHTML = totalAlerts > 0 ? `<span class="status-badge">${totalAlerts} Total</span>` : '';
 
-        // Update summary counts
+        // Update summary counts safely (guard DOM nodes)
         const acknowledgedCount = alerts.filter(a => a.user_acknowledged).length;
         const pendingCount = totalAlerts - acknowledgedCount;
-        
-        document.getElementById('total-alerts-count').textContent = totalAlerts;
-        document.getElementById('acknowledged-count').textContent = acknowledgedCount;
-        document.getElementById('pending-count').textContent = pendingCount;
+
+        const totalEl = document.getElementById('total-alerts-count');
+        const ackEl = document.getElementById('acknowledged-count');
+        const pendingEl = document.getElementById('pending-count');
+        if (totalEl) totalEl.textContent = String(totalAlerts);
+        if (ackEl) ackEl.textContent = String(acknowledgedCount);
+        if (pendingEl) pendingEl.textContent = String(pendingCount);
 
         if (alerts.length === 0) {
             document.getElementById('alerts-content').innerHTML = 
@@ -638,6 +1135,554 @@ const lotDetailPage = {
         if (finalizeBtn) {
             finalizeBtn.addEventListener('click', () => this.handleFinalize());
         }
+
+        // Edit/Delete/Add variant buttons (open modals)
+        const editBtn = document.getElementById('edit-lot-btn');
+        if (editBtn) {
+            // Toggle inline edit: if already editing, submit; otherwise show inline editor
+            editBtn.addEventListener('click', (e) => {
+                if (editBtn.dataset.editing === '1') {
+                    this.submitInlineEdit();
+                } else {
+                    this.showInlineEdit();
+                }
+            });
+        }
+        const deleteBtn = document.getElementById('delete-lot-btn');
+        if (deleteBtn) {
+            deleteBtn.addEventListener('click', () => this.handleDeleteLot());
+        }
+        const addVariantBtn = document.getElementById('add-variant-btn');
+        if (addVariantBtn) {
+            addVariantBtn.addEventListener('click', () => this.showAddVariantModal());
+        }
+        const refreshBtn = document.getElementById('refresh-variant-options');
+        if (refreshBtn) refreshBtn.addEventListener('click', async () => { await this.fetchVariantOptions(); this.renderSubprocesses(); alert('Variant options refreshed'); });
+
+        // Modal close/cancel handlers
+        document.getElementById('modal-close').addEventListener('click', () => this.hideEditModal());
+        document.getElementById('modal-cancel').addEventListener('click', () => this.hideEditModal());
+        document.getElementById('variant-modal-close').addEventListener('click', () => this.hideAddVariantModal());
+        document.getElementById('variant-modal-cancel').addEventListener('click', () => this.hideAddVariantModal());
+
+        // Edit subprocess modal close/cancel
+        document.getElementById('edit-subprocess-modal-close').addEventListener('click', () => this.hideEditSubprocessModal());
+        document.getElementById('edit-subprocess-cancel').addEventListener('click', () => this.hideEditSubprocessModal());
+
+        // Variant modal group change -> populate variant options for that group
+        const groupSelect = document.getElementById('variant-group-select');
+        if (groupSelect) {
+            groupSelect.addEventListener('change', () => this.onVariantGroupChange());
+        }
+        // Variant search input (autocomplete)
+        const variantSearch = document.getElementById('variant-search');
+        if (variantSearch) {
+            // basic debounce utility
+            const debounce = (fn, wait) => {
+                let t = null;
+                return (...args) => {
+                    clearTimeout(t);
+                    t = setTimeout(() => fn.apply(this, args), wait);
+                };
+            };
+
+            variantSearch.addEventListener('input', debounce((e) => this.onVariantSearchInput(e.target.value), 300));
+        }
+
+        // Inline qty inputs in subprocess tables — update lot total on change
+        document.addEventListener('input', (e) => {
+            if (e.target && e.target.classList && e.target.classList.contains('inline-qty-input')) {
+                const perUnit = Number(e.target.value) || 0;
+                const lotQty = (this.lotData && Number(this.lotData.quantity)) || 1;
+                const lotTotal = perUnit * lotQty;
+                // find corresponding lot-total cell (next sibling td)
+                const td = e.target.closest('td');
+                if (td && td.nextElementSibling) td.nextElementSibling.textContent = lotTotal;
+                // mark as dirty for potential save
+                e.target.dataset.dirty = '1';
+            }
+        });
+
+        // Form submissions
+        document.getElementById('edit-lot-form').addEventListener('submit', (e) => { e.preventDefault(); this.submitEditModal(); });
+        document.getElementById('add-variant-form').addEventListener('submit', (e) => { e.preventDefault(); this.submitAddVariant(); });
+    },
+
+    async handleEditLot() {
+        // legacy kept for compatibility; prefer modal
+        this.showEditModal();
+    },
+
+    async handleDeleteLot() {
+        if (!confirm('Delete this production lot? This action cannot be undone.')) return;
+        try {
+            const resp = await fetch(`/api/upf/production-lots/${this.lotId}`, {
+                method: 'DELETE',
+                credentials: 'include'
+            });
+            if (!resp.ok) {
+                const err = await resp.json().catch(() => ({}));
+                throw new Error(err.message || 'Delete failed');
+            }
+            alert('Lot deleted');
+            window.location.href = '/upf/production-lots';
+        } catch (e) {
+            console.error('Error deleting lot:', e);
+            alert('Failed to delete lot: ' + e.message);
+        }
+    },
+
+    async handleAddVariant() {
+        // Show modal-based add variant
+        this.showAddVariantModal();
+    },
+
+    async handleRemoveVariant(selectionId) {
+        if (!confirm('Remove this variant selection from the lot?')) return;
+        try {
+            const resp = await fetch(`/api/upf/production-lots/${this.lotId}/selections/${selectionId}`, {
+                method: 'DELETE',
+                credentials: 'include'
+            });
+            if (!resp.ok) {
+                const err = await resp.json().catch(() => ({}));
+                throw new Error(err.message || 'Remove failed');
+            }
+            alert('Selection removed');
+            await this.loadLotDetails();
+        } catch (e) {
+            console.error('Error removing selection:', e);
+            alert('Failed to remove selection: ' + e.message);
+        }
+    },
+
+    /* Modal helpers */
+    showEditModal() {
+        // populate fields
+        const qtyEl = document.getElementById('modal-quantity');
+        const notesEl = document.getElementById('modal-notes');
+        const statusEl = document.getElementById('modal-status');
+        qtyEl.value = this.lotData?.quantity || 1;
+        notesEl.value = this.lotData?.notes || '';
+        statusEl.value = this.lotData?.status || 'Planning';
+        document.getElementById('modal-overlay').style.display = 'flex';
+    },
+
+    hideEditModal() {
+        document.getElementById('modal-overlay').style.display = 'none';
+    },
+
+    async submitEditModal() {
+        const qty = Number(document.getElementById('modal-quantity').value) || 0;
+        const notes = document.getElementById('modal-notes').value;
+        const status = document.getElementById('modal-status').value;
+        const payload = { quantity: qty, notes: notes, status: status };
+        try {
+            const resp = await fetch(`/api/upf/production-lots/${this.lotId}`, {
+                method: 'PUT',
+                credentials: 'include',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify(payload)
+            });
+            if (!resp.ok) {
+                const err = await resp.json().catch(() => ({}));
+                throw new Error(err.message || 'Update failed');
+            }
+            this.hideEditModal();
+            await this.loadLotDetails();
+            alert('Lot updated');
+        } catch (e) {
+            console.error('Error updating lot:', e);
+            alert('Failed to update lot: ' + e.message);
+        }
+    },
+
+    /* Inline edit helpers */
+    showInlineEdit() {
+        const content = document.getElementById('lot-details-content');
+        const lot = this.lotData || {};
+        const qty = this.lotData?.quantity || 1;
+        const notes = this.escapeHtml(this.lotData?.notes || '');
+        const status = this.lotData?.status || 'Planning';
+
+        // Build inline edit form (only editable fields: quantity, status, notes)
+        content.innerHTML = `
+            <div style="display:flex;flex-direction:column;gap:8px">
+                <div class="detail-row">
+                    <span class="detail-label">Lot Number</span>
+                    <span class="detail-value">${this.escapeHtml(lot.lot_number || 'N/A')}</span>
+                </div>
+                <div class="detail-row">
+                    <span class="detail-label">Process</span>
+                    <span class="detail-value">${this.escapeHtml(lot.process_name || 'N/A')}</span>
+                </div>
+                <div class="detail-row">
+                    <span class="detail-label">Quantity</span>
+                    <span class="detail-value"><input id="inline-lot-quantity" type="number" min="1" value="${qty}" style="width:120px" /></span>
+                </div>
+                <div class="detail-row">
+                    <span class="detail-label">Status</span>
+                    <span class="detail-value">
+                        <select id="inline-lot-status">
+                            <option value="Planning">Planning</option>
+                            <option value="Ready">Ready</option>
+                            <option value="In Progress">In Progress</option>
+                            <option value="completed">completed</option>
+                            <option value="finalized">finalized</option>
+                            <option value="cancelled">cancelled</option>
+                        </select>
+                    </span>
+                </div>
+                <div class="detail-row">
+                    <span class="detail-label">Notes</span>
+                    <span class="detail-value"><textarea id="inline-lot-notes" rows="3">${notes}</textarea></span>
+                </div>
+                <div class="detail-row">
+                    <span class="detail-label">Created By</span>
+                    <span class="detail-value">${this.escapeHtml(lot.created_by_name || String(lot.created_by || ''))}</span>
+                </div>
+                <div class="detail-row">
+                    <span class="detail-label">Created At</span>
+                    <span class="detail-value">${lot.created_at ? new Date(lot.created_at).toLocaleString() : 'N/A'}</span>
+                </div>
+            </div>
+        `;
+
+        // Set status select value after inserting
+        const statusEl = document.getElementById('inline-lot-status');
+        if (statusEl) statusEl.value = status;
+
+        // Toggle edit button state and add cancel button
+        const editBtn = document.getElementById('edit-lot-btn');
+        if (editBtn) {
+            editBtn.textContent = '💾 Save';
+            editBtn.classList.add('btn-primary');
+            editBtn.dataset.editing = '1';
+        }
+
+        // Add cancel button if not present
+        if (!document.getElementById('cancel-edit-btn')) {
+            const header = document.querySelector('.page-header div');
+            if (header) {
+                const cancelBtn = document.createElement('button');
+                cancelBtn.id = 'cancel-edit-btn';
+                cancelBtn.className = 'btn';
+                cancelBtn.textContent = '✖ Cancel';
+                cancelBtn.style.marginLeft = '8px';
+                cancelBtn.addEventListener('click', () => this.hideInlineEdit());
+                header.appendChild(cancelBtn);
+            }
+        }
+    },
+
+    hideInlineEdit() {
+        // Reset editing state and re-render details
+        const editBtn = document.getElementById('edit-lot-btn');
+        if (editBtn) {
+            editBtn.textContent = '✏️ Edit';
+            editBtn.classList.remove('btn-primary');
+            editBtn.dataset.editing = '0';
+        }
+        const cancelBtn = document.getElementById('cancel-edit-btn');
+        if (cancelBtn) cancelBtn.remove();
+        // Re-render lot details from current data
+        this.renderLotDetails();
+    },
+
+    async submitInlineEdit() {
+        const qty = Number(document.getElementById('inline-lot-quantity')?.value) || 0;
+        const notes = document.getElementById('inline-lot-notes')?.value || '';
+        const status = document.getElementById('inline-lot-status')?.value || '';
+        const payload = { quantity: qty, notes: notes, status: status };
+
+        try {
+            const resp = await fetch(`/api/upf/production-lots/${this.lotId}`, {
+                method: 'PUT',
+                credentials: 'include',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify(payload)
+            });
+            if (!resp.ok) {
+                const err = await resp.json().catch(() => ({}));
+                throw new Error(err.message || 'Update failed');
+            }
+            // Success: reload lot details and remove cancel button
+            await this.loadLotDetails();
+            const cancelBtn = document.getElementById('cancel-edit-btn');
+            if (cancelBtn) cancelBtn.remove();
+            const editBtn = document.getElementById('edit-lot-btn');
+            if (editBtn) {
+                editBtn.textContent = '✏️ Edit';
+                editBtn.classList.remove('btn-primary');
+                editBtn.dataset.editing = '0';
+            }
+            alert('Lot updated');
+        } catch (e) {
+            console.error('Error updating lot (inline):', e);
+            alert('Failed to update lot: ' + e.message);
+        }
+    },
+
+    showAddVariantModal(processSubprocessId) {
+        // allow opening modal in context of a specific subprocess
+        console.debug('showAddVariantModal called', { processSubprocessId, hasVariantOptions: !!this._variantOptions });
+        this._activeProcessSubprocessId = processSubprocessId || null;
+        // clear fields
+        const qtyEl = document.getElementById('variant-qty');
+        if (qtyEl) qtyEl.value = 1;
+
+        // Immediately show overlay so we can detect visibility/z-index issues while populating
+        try {
+            const immediateOverlay = document.getElementById('variant-modal-overlay');
+            console.debug('showAddVariantModal: immediateOverlay element', immediateOverlay);
+            if (immediateOverlay) {
+                immediateOverlay.style.display = 'flex';
+                // force a visible backdrop and high z-index for debugging
+                immediateOverlay.style.background = 'rgba(0,0,0,0.5)';
+                immediateOverlay.style.zIndex = '9999';
+            }
+        } catch (err) {
+            console.warn('showAddVariantModal: failed to force-open overlay', err);
+        }
+
+        // fetch variant options for this lot and populate selects
+        this.fetchVariantOptions().then(() => {
+            // If opened for a specific subprocess, limit group select to groups from that subprocess
+            try {
+                const groupSelect = document.getElementById('variant-group-select');
+                // clear and repopulate based on subprocess
+                if (this._activeProcessSubprocessId && this._variantOptions) {
+                    groupSelect.innerHTML = '<option value="">-- Select Group (or standalone) --</option>';
+                    const sp = (this._variantOptions.subprocesses || []).find(s => s.process_subprocess_id === this._activeProcessSubprocessId);
+                    if (sp) {
+                        (sp.or_groups || []).forEach(g => {
+                            const opt = document.createElement('option');
+                            const gid = g.group_id || g.id;
+                            opt.value = gid;
+                            opt.textContent = g.group_name || g.name || `Group ${gid}`;
+                            groupSelect.appendChild(opt);
+                        });
+                        // If subprocess has standalone variants, add them to variant-select
+                        const variantSelect = document.getElementById('variant-select');
+                        variantSelect.innerHTML = '<option value="">-- Select Variant --</option>';
+                        (sp.standalone_variants || []).forEach(v => {
+                            const vo = document.createElement('option');
+                            const vid = v.item_id || v.variant_id || v.usage_id || v.id;
+                            const nameParts = [v.item_number || v.variant_name || v.description || String(vid), v.model_name || v.model || '', v.variation_name || v.variation || '', v.size_name || v.size || ''].filter(Boolean);
+                            vo.value = vid;
+                            vo.textContent = nameParts.join(' - ') + (v.color_name ? ` (${v.color_name})` : '');
+                            variantSelect.appendChild(vo);
+                        });
+                    }
+                }
+            } catch (e) {
+                console.warn('Error scoping add-variant modal to subprocess:', e);
+            }
+            const overlay = document.getElementById('variant-modal-overlay');
+            console.debug('showAddVariantModal: overlay element after populate:', overlay);
+            if (overlay) {
+                // ensure overlay remains visible after successful population
+                overlay.style.display = 'flex';
+                overlay.style.background = overlay.style.background || 'rgba(0,0,0,0.5)';
+                overlay.style.zIndex = overlay.style.zIndex || '9999';
+            }
+        }).catch((e) => {
+            console.error('Failed to load variant options:', e);
+            // still show modal so user can enter numeric IDs as fallback
+            const overlay = document.getElementById('variant-modal-overlay');
+            console.debug('showAddVariantModal (catch): overlay element:', overlay);
+            if (overlay) {
+                overlay.style.display = 'flex';
+                overlay.style.background = overlay.style.background || 'rgba(0,0,0,0.5)';
+                overlay.style.zIndex = overlay.style.zIndex || '9999';
+            }
+        });
+    },
+
+    hideAddVariantModal() {
+        document.getElementById('variant-modal-overlay').style.display = 'none';
+    },
+
+    async submitAddVariant() {
+        const groupVal = document.getElementById('variant-group-select').value;
+        const variantVal = document.getElementById('variant-select').value;
+        const qty = Number(document.getElementById('variant-qty').value) || 0;
+        const substitute_group_id = groupVal ? Number(groupVal) : null;
+        const selected_variant_id = variantVal ? Number(variantVal) : 0;
+        if (!selected_variant_id) {
+            alert('Please select a variant');
+            return;
+        }
+        // include optional process_subprocess_id context if modal was opened from a subprocess
+        const payload = { substitute_group_id, selected_variant_id, quantity: qty };
+        if (this._activeProcessSubprocessId) payload.process_subprocess_id = this._activeProcessSubprocessId;
+        try {
+            const resp = await fetch(`/api/upf/production-lots/${this.lotId}/select-variant`, {
+                method: 'POST',
+                credentials: 'include',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify(payload)
+            });
+            if (!resp.ok) {
+                const err = await resp.json().catch(() => ({}));
+                throw new Error(err.message || 'Add variant failed');
+            }
+            this.hideAddVariantModal();
+            await this.loadLotDetails();
+            alert('Variant added/updated');
+        } catch (e) {
+            console.error('Error adding variant:', e);
+            alert('Failed to add variant: ' + e.message);
+        }
+    },
+
+    async fetchVariantOptions() {
+        try {
+            const resp = await fetch(`/api/upf/production-lots/${this.lotId}/variant_options`, { credentials: 'include' });
+            if (!resp.ok) throw new Error('Failed to fetch variant options');
+            const data = await resp.json();
+            const payload = data.data || data;
+            // Store the full payload so subprocess rendering can access it
+            this._variantOptions = payload;
+            // Build group list and variant map
+            const groupSelect = document.getElementById('variant-group-select');
+            const variantSelect = document.getElementById('variant-select');
+            // Clear existing options
+            groupSelect.innerHTML = '<option value="">-- Select Group (or standalone) --</option>';
+            variantSelect.innerHTML = '<option value="">-- Select Variant --</option>';
+
+            // Aggregate groups and standalone variants from subprocesses
+            const groups = [];
+            const variantsByGroup = {};
+            const standalone = [];
+
+            (payload.subprocesses || []).forEach(sp => {
+                (sp.or_groups || []).forEach(g => {
+                    // ensure unique
+                    if (!groups.find(x => x.group_id === g.group_id || x.id === g.id)) {
+                        const gid = g.group_id || g.id;
+                        groups.push({ id: gid, name: g.group_name || g.group_name || g.name || `Group ${gid}` });
+                        variantsByGroup[gid] = [];
+                    }
+                });
+
+                // grouped_variants: map substitute_group_id -> array of variants
+                const gv = sp.grouped_variants || {};
+                Object.keys(gv || {}).forEach(k => {
+                    const gid = Number(k);
+                    const arr = gv[k] || [];
+                    variantsByGroup[gid] = (variantsByGroup[gid] || []).concat(arr.map(v => {
+                        const id = v.item_id || v.variant_id || v.usage_id || v.id;
+                        const itemName = v.item_number || v.variant_name || v.description || String(id);
+                        const model = v.model_name || v.model || '';
+                        const variation = v.variation_name || v.variation || '';
+                        const size = v.size_name || v.size || '';
+                        const color = v.color_name || v.color || '';
+                        const labelParts = [itemName, model, variation, size].filter(Boolean);
+                        const label = labelParts.join(' - ') + (color ? ` (${color})` : '');
+                        return { id, label };
+                    }));
+                });
+
+                (sp.standalone_variants || []).forEach(v => {
+                    const id = v.item_id || v.variant_id || v.usage_id || v.id;
+                    const itemName = v.item_number || v.variant_name || v.description || String(id);
+                    const model = v.model_name || v.model || '';
+                    const variation = v.variation_name || v.variation || '';
+                    const size = v.size_name || v.size || '';
+                    const color = v.color_name || v.color || '';
+                    const labelParts = [itemName, model, variation, size].filter(Boolean);
+                    const label = labelParts.join(' - ') + (color ? ` (${color})` : '');
+                    standalone.push({ id, label });
+                });
+            });
+
+            // Populate groups select
+            groups.forEach(g => {
+                const opt = document.createElement('option');
+                opt.value = g.id;
+                opt.textContent = g.name;
+                groupSelect.appendChild(opt);
+            });
+
+            // Add standalone group option that shows standalone variants
+            if (standalone.length > 0) {
+                // Populate variantSelect with standalone by default
+                standalone.forEach(v => {
+                    const vo = document.createElement('option');
+                    vo.value = v.id;
+                    vo.textContent = v.label;
+                    variantSelect.appendChild(vo);
+                });
+            }
+
+            // Store variantsByGroup on the page object for later use
+            this._variantsByGroup = variantsByGroup;
+            this._standaloneVariants = standalone;
+        } catch (e) {
+            console.error('Error fetching variant options:', e);
+            throw e;
+        }
+    },
+
+    onVariantGroupChange() {
+        const groupVal = document.getElementById('variant-group-select').value;
+        const variantSelect = document.getElementById('variant-select');
+        variantSelect.innerHTML = '<option value="">-- Select Variant --</option>';
+        if (!groupVal) {
+            // show standalone variants
+            (this._standaloneVariants || []).forEach(v => {
+                const vo = document.createElement('option');
+                vo.value = v.id;
+                vo.textContent = v.label;
+                variantSelect.appendChild(vo);
+            });
+            return;
+        }
+        const gid = Number(groupVal);
+        const variants = (this._variantsByGroup && this._variantsByGroup[gid]) || [];
+        variants.forEach(v => {
+            const vo = document.createElement('option');
+            vo.value = v.id;
+            vo.textContent = v.label;
+            variantSelect.appendChild(vo);
+        });
+    },
+
+    async onVariantSearchInput(query) {
+        const q = String(query || '').trim();
+        const variantSelect = document.getElementById('variant-select');
+        if (!variantSelect) return;
+
+        if (!q) {
+            // If search cleared, restore group/standalone listing
+            this.onVariantGroupChange();
+            return;
+        }
+
+        try {
+            const resp = await fetch(`/api/upf/variants/search?q=${encodeURIComponent(q)}&limit=50`, { credentials: 'include' });
+            if (!resp.ok) {
+                console.warn('Variant search returned non-ok response');
+                return;
+            }
+            const data = await resp.json();
+            const results = data.data || data || [];
+
+            // Populate select with search results
+            variantSelect.innerHTML = '<option value="">-- Select Variant --</option>';
+            (results || []).forEach(v => {
+                // expected fields: item_id / variant_id and item_number / variant_name
+                const id = v.item_id || v.variant_id || v.id;
+                const label = v.item_number || v.variant_name || v.name || (v.description && v.description.slice(0,60)) || String(id);
+                const opt = document.createElement('option');
+                opt.value = id;
+                opt.textContent = `${label}`;
+                variantSelect.appendChild(opt);
+            });
+        } catch (e) {
+            console.error('Error during variant search:', e);
+        }
     },
 
     updateBulkActionButton() {
@@ -726,6 +1771,9 @@ const lotDetailPage = {
         return div.innerHTML;
     }
 };
+
+// Expose to global scope so inline `onclick="lotDetailPage..."` handlers work
+window.lotDetailPage = lotDetailPage;
 
 document.addEventListener('DOMContentLoaded', function() {
     lotDetailPage.init();

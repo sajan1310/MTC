@@ -436,10 +436,11 @@ class ProductionService:
     @staticmethod
     def select_variant_for_group(
         lot_id: int,
-        substitute_group_id: int,
+        substitute_group_id: Optional[int],
         variant_id: int,
         supplier_id: Optional[int] = None,
         quantity: Optional[float] = None,
+        process_subprocess_id: Optional[int] = None,
     ) -> Dict[str, Any]:
         """
         Select a specific variant from an OR/substitute group for a production lot.
@@ -460,6 +461,16 @@ class ProductionService:
             conn,
             cur,
         ):
+            # Detect which schema variant of production_lot_variant_selections exists
+            cur.execute(
+                """
+                SELECT column_name FROM information_schema.columns
+                WHERE table_schema = current_schema() AND table_name = %s
+                """,
+                ("production_lot_variant_selections",),
+            )
+            cols = {r["column_name"] for r in cur.fetchall()}
+            use_variant_usage_column = "variant_usage_id" in cols
             # Get variant cost (use supplier-specific or worst-case)
             if supplier_id:
                 # Ensure the variant_supplier_pricing table exists in this schema before querying.
@@ -496,6 +507,81 @@ class ProductionService:
                 cost_info = CostingService.get_variant_worst_case_cost(variant_id)
                 cost = cost_info["worst_case_cost"] if cost_info else None
 
+            # If DB uses variant_usage_id (migration schema), map variant_id + process_subprocess_id
+            if use_variant_usage_column:
+                # Try to find the variant_usage row
+                vu_row = None
+                if process_subprocess_id is not None:
+                    cur.execute(
+                        "SELECT * FROM variant_usage WHERE process_subprocess_id = %s AND variant_id = %s LIMIT 1",
+                        (process_subprocess_id, variant_id),
+                    )
+                    vu_row = cur.fetchone()
+
+                if vu_row is None and substitute_group_id is not None:
+                    cur.execute(
+                        "SELECT * FROM variant_usage WHERE substitute_group_id = %s AND variant_id = %s LIMIT 1",
+                        (substitute_group_id, variant_id),
+                    )
+                    vu_row = cur.fetchone()
+
+                if vu_row is None:
+                    # Fallback: try any variant_usage for this variant
+                    cur.execute(
+                        "SELECT * FROM variant_usage WHERE variant_id = %s LIMIT 1",
+                        (variant_id,),
+                    )
+                    vu_row = cur.fetchone()
+
+                variant_usage_id = int(vu_row["id"]) if vu_row else None
+                resolved_or_group_id = substitute_group_id or (vu_row and vu_row.get("substitute_group_id"))
+
+                # If quantity not provided, try to use variant_usage quantity
+                if quantity is None:
+                    if vu_row and vu_row.get("quantity") is not None:
+                        quantity = float(vu_row.get("quantity"))
+                    else:
+                        quantity = 1
+
+                # Compute selected_cost using same logic as before (supplier-specific fallback)
+                selected_cost = cost
+
+                # Insert into production_lot_variant_selections using migration schema
+                from flask_login import current_user
+
+                cur.execute(
+                    """
+                    INSERT INTO production_lot_variant_selections
+                    (lot_id, or_group_id, variant_usage_id, quantity_override, reason, created_by)
+                    VALUES (%s, %s, %s, %s, %s, %s)
+                    RETURNING *
+                    """,
+                    (
+                        lot_id,
+                        resolved_or_group_id,
+                        variant_usage_id,
+                        quantity if quantity is not None else None,
+                        None,
+                        getattr(current_user, 'id', None),
+                    ),
+                )
+                sel_row = cur.fetchone()
+                conn.commit()
+
+                # Normalize return payload so frontend receives expected keys
+                normalized = {
+                    "id": int(sel_row["id"]),
+                    "production_lot_id": int(lot_id),
+                    "substitute_group_id": resolved_or_group_id,
+                    "selected_variant_id": int(variant_id) if variant_id else None,
+                    "selected_supplier_id": supplier_id,
+                    "selected_cost": float(selected_cost) if selected_cost is not None else None,
+                    "selected_quantity": float(quantity) if quantity is not None else None,
+                    "variant_usage_id": int(variant_usage_id) if variant_usage_id else None,
+                }
+                return normalized
+
+            # Fallback: legacy schema with selected_variant_id column
             # Get default quantity if not provided
             if quantity is None:
                 cur.execute(
@@ -511,7 +597,7 @@ class ProductionService:
                 qty_row = cur.fetchone()
                 quantity = float(qty_row["quantity"]) if qty_row else 1
 
-            # Insert or update selection
+            # Insert or update selection (legacy columns)
             cur.execute(
                 """
                 INSERT INTO production_lot_variant_selections (
@@ -908,15 +994,33 @@ class ProductionService:
             )
 
         with database.get_conn() as (conn, cur):
-            cur.execute(
-                """
-                UPDATE production_lots
-                SET status = 'finalized', finalized_at = CURRENT_TIMESTAMP
-                WHERE id = %s
-                """,
-                (lot_id,),
-            )
-            conn.commit()
+            try:
+                cur.execute(
+                    """
+                    UPDATE production_lots
+                    SET status = 'finalized', finalized_at = CURRENT_TIMESTAMP
+                    WHERE id = %s
+                    """,
+                    (lot_id,),
+                )
+                conn.commit()
+            except Exception as e:
+                # If the schema lacks finalized_at (older DB), fall back to updating status only
+                # Log and attempt fallback update to avoid 500s in runtime when migration not applied yet.
+                try:
+                    conn.rollback()
+                except Exception:
+                    pass
+                current_app.logger.warning(f"finalize_production_lot: failed to set finalized_at column - falling back: {e}")
+                cur.execute(
+                    """
+                    UPDATE production_lots
+                    SET status = 'finalized'
+                    WHERE id = %s
+                    """,
+                    (lot_id,),
+                )
+                conn.commit()
 
         return {
             "lot_id": lot_id,
@@ -956,6 +1060,85 @@ class ProductionService:
                 current_app.logger.info(f"Lot {lot_id} cancelled. Reason: {reason}")
 
         return affected > 0
+
+    @staticmethod
+    def update_production_lot(lot_id: int, updates: Dict[str, Any], user_id: Optional[int] = None) -> Dict[str, Any]:
+        """Update editable fields on a production lot (quantity, notes, status).
+
+        Returns the updated lot dict or raises ValueError on invalid operation.
+        """
+        allowed_fields = {"quantity", "notes", "status"}
+        to_set = {k: v for k, v in updates.items() if k in allowed_fields}
+
+        if not to_set:
+            raise ValueError("No valid fields to update")
+
+        # Simple permission check: only allow updates from creator or admin is enforced at API layer.
+        with database.get_conn(cursor_factory=psycopg2.extras.RealDictCursor) as (
+            conn,
+            cur,
+        ):
+            # Verify lot exists
+            cur.execute("SELECT id, lot_number, created_by, status FROM production_lots WHERE id = %s", (lot_id,))
+            lot = cur.fetchone()
+            if not lot:
+                raise ValueError("Lot not found")
+
+            # Prevent modifying completed or finalized lots
+            if lot["status"] in ("completed", "finalized"):
+                raise ValueError("Cannot modify a completed or finalized lot")
+
+            # Build SET clause
+            set_parts = []
+            params = []
+            for k, v in to_set.items():
+                set_parts.append(f"{k} = %s")
+                params.append(v)
+
+            params.append(lot_id)
+            sql = f"UPDATE production_lots SET {', '.join(set_parts)} WHERE id = %s RETURNING *"
+            cur.execute(sql, params)
+            updated = cur.fetchone()
+            conn.commit()
+
+        # Normalize output using existing getter
+        return ProductionService.get_production_lot(lot_id)
+
+    @staticmethod
+    def delete_production_lot(lot_id: int, user_id: Optional[int] = None) -> bool:
+        """Delete (soft or hard) a production lot. By default perform hard delete if allowed.
+
+        Returns True if deleted.
+        """
+        with database.get_conn() as (conn, cur):
+            cur.execute("SELECT id, status FROM production_lots WHERE id = %s", (lot_id,))
+            lot = cur.fetchone()
+            if not lot:
+                return False
+
+            if lot["status"] in ("completed", "finalized"):
+                raise ValueError("Cannot delete a completed or finalized lot")
+
+            # Perform hard delete to remove lot and cascade selections
+            cur.execute("DELETE FROM production_lots WHERE id = %s", (lot_id,))
+            affected = cur.rowcount
+            conn.commit()
+            return affected > 0
+
+    @staticmethod
+    def remove_variant_selection(selection_id: int, lot_id: Optional[int] = None) -> bool:
+        """Remove a single variant selection by its id. Optionally verify lot_id.
+
+        Returns True if removed.
+        """
+        with database.get_conn() as (conn, cur):
+            if lot_id:
+                cur.execute("DELETE FROM production_lot_variant_selections WHERE id = %s AND production_lot_id = %s", (selection_id, lot_id))
+            else:
+                cur.execute("DELETE FROM production_lot_variant_selections WHERE id = %s", (selection_id,))
+            affected = cur.rowcount
+            conn.commit()
+            return affected > 0
 
     @staticmethod
     def get_variance_analysis(lot_id: int) -> Dict[str, Any]:

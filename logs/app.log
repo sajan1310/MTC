@@ -2,3 +2,174 @@
 2025-11-13 19:08:33,634 INFO: Subprocess cache cleared [in C:\Users\erkar\OneDrive\Desktop\MTC\project-root\app\services\subprocess_service.py:40]
 2025-11-13 19:08:34,250 INFO: Universal Process Framework API blueprints exempted from CSRF protection [in C:\Users\erkar\OneDrive\Desktop\MTC\project-root\app\__init__.py:341]
 2025-11-13 19:10:24,795 INFO: Variant usage added: item 53019 to subprocess 6 [in C:\Users\erkar\OneDrive\Desktop\MTC\project-root\app\api\variant_management.py:88]
+2025-11-14 15:57:03,700 INFO: Request ID middleware enabled [in C:\Users\erkar\OneDrive\Desktop\MTC\project-root\app\middleware\request_id.py:45]
+2025-11-14 15:57:03,790 INFO: Subprocess cache cleared [in C:\Users\erkar\OneDrive\Desktop\MTC\project-root\app\services\subprocess_service.py:40]
+2025-11-14 15:57:04,591 INFO: Universal Process Framework API blueprints exempted from CSRF protection [in C:\Users\erkar\OneDrive\Desktop\MTC\project-root\app\__init__.py:341]
+2025-11-14 16:01:51,340 INFO: Variant usage added: item 34039 to subprocess 6 [in C:\Users\erkar\OneDrive\Desktop\MTC\project-root\app\api\variant_management.py:88]
+2025-11-14 16:02:15,487 INFO: Variant usage removed: 18 [in C:\Users\erkar\OneDrive\Desktop\MTC\project-root\app\api\variant_management.py:140]
+2025-11-14 16:02:19,013 INFO: Variant usage removed: 19 [in C:\Users\erkar\OneDrive\Desktop\MTC\project-root\app\api\variant_management.py:140]
+2025-11-14 16:02:21,997 INFO: Variant usage removed: 20 [in C:\Users\erkar\OneDrive\Desktop\MTC\project-root\app\api\variant_management.py:140]
+2025-11-14 16:02:28,326 INFO: Variant usage removed: 37 [in C:\Users\erkar\OneDrive\Desktop\MTC\project-root\app\api\variant_management.py:140]
+2025-11-14 16:04:11,575 INFO: [UPDATE VARIANT USAGE] Request for ID 35 with data: {'cost_per_unit': 56} [in C:\Users\erkar\OneDrive\Desktop\MTC\project-root\app\api\variant_management.py:103]
+2025-11-14 16:04:11,622 INFO: Variant usage updated: 35 [in C:\Users\erkar\OneDrive\Desktop\MTC\project-root\app\api\variant_management.py:118]
+2025-11-14 16:04:16,436 INFO: [UPDATE VARIANT USAGE] Request for ID 63 with data: {'cost_per_unit': 100} [in C:\Users\erkar\OneDrive\Desktop\MTC\project-root\app\api\variant_management.py:103]
+2025-11-14 16:04:16,474 INFO: Variant usage updated: 63 [in C:\Users\erkar\OneDrive\Desktop\MTC\project-root\app\api\variant_management.py:118]
+2025-11-14 16:06:38,604 INFO: Request ID middleware enabled [in C:\Users\erkar\OneDrive\Desktop\MTC\project-root\app\middleware\request_id.py:45]
+2025-11-14 16:06:38,660 INFO: Subprocess cache cleared [in C:\Users\erkar\OneDrive\Desktop\MTC\project-root\app\services\subprocess_service.py:40]
+2025-11-14 16:06:39,164 INFO: Universal Process Framework API blueprints exempted from CSRF protection [in C:\Users\erkar\OneDrive\Desktop\MTC\project-root\app\__init__.py:341]
+2025-11-14 16:09:27,640 INFO: Request ID middleware enabled [in C:\Users\erkar\OneDrive\Desktop\MTC\project-root\app\middleware\request_id.py:45]
+2025-11-14 16:09:27,716 INFO: Subprocess cache cleared [in C:\Users\erkar\OneDrive\Desktop\MTC\project-root\app\services\subprocess_service.py:40]
+2025-11-14 16:09:28,441 INFO: Universal Process Framework API blueprints exempted from CSRF protection [in C:\Users\erkar\OneDrive\Desktop\MTC\project-root\app\__init__.py:341]
+2025-11-14 16:09:56,219 ERROR: Database error: column "finalized_at" of relation "production_lots" does not exist
+LINE 3:                 SET status = 'finalized', finalized_at = CUR...
+                                                  ^
+ [in C:\Users\erkar\OneDrive\Desktop\MTC\project-root\database.py:179]
+2025-11-14 16:09:56,225 ERROR: Error finalizing production lot 124: column "finalized_at" of relation "production_lots" does not exist
+LINE 3:                 SET status = 'finalized', finalized_at = CUR...
+                                                  ^
+ [in C:\Users\erkar\OneDrive\Desktop\MTC\project-root\app\api\production_lot.py:723]
+2025-11-14 16:18:14,929 INFO: Request ID middleware enabled [in C:\Users\erkar\OneDrive\Desktop\MTC\project-root\app\middleware\request_id.py:45]
+2025-11-14 16:18:14,966 INFO: Subprocess cache cleared [in C:\Users\erkar\OneDrive\Desktop\MTC\project-root\app\services\subprocess_service.py:40]
+2025-11-14 16:18:15,475 INFO: Universal Process Framework API blueprints exempted from CSRF protection [in C:\Users\erkar\OneDrive\Desktop\MTC\project-root\app\__init__.py:341]
+2025-11-14 16:18:28,205 ERROR: Database error: column "finalized_at" of relation "production_lots" does not exist
+LINE 3:                 SET status = 'finalized', finalized_at = CUR...
+                                                  ^
+ [in C:\Users\erkar\OneDrive\Desktop\MTC\project-root\database.py:179]
+2025-11-14 16:18:28,208 ERROR: Error finalizing production lot 124: column "finalized_at" of relation "production_lots" does not exist
+LINE 3:                 SET status = 'finalized', finalized_at = CUR...
+                                                  ^
+ [in C:\Users\erkar\OneDrive\Desktop\MTC\project-root\app\api\production_lot.py:723]
+2025-11-14 16:18:45,189 ERROR: Database error: column "finalized_at" of relation "production_lots" does not exist
+LINE 3:                 SET status = 'finalized', finalized_at = CUR...
+                                                  ^
+ [in C:\Users\erkar\OneDrive\Desktop\MTC\project-root\database.py:179]
+2025-11-14 16:18:45,190 ERROR: Error finalizing production lot 124: column "finalized_at" of relation "production_lots" does not exist
+LINE 3:                 SET status = 'finalized', finalized_at = CUR...
+                                                  ^
+ [in C:\Users\erkar\OneDrive\Desktop\MTC\project-root\app\api\production_lot.py:723]
+2025-11-14 16:32:51,601 INFO: Request ID middleware enabled [in C:\Users\erkar\OneDrive\Desktop\MTC\project-root\app\middleware\request_id.py:45]
+2025-11-14 16:32:51,639 INFO: Subprocess cache cleared [in C:\Users\erkar\OneDrive\Desktop\MTC\project-root\app\services\subprocess_service.py:40]
+2025-11-14 16:32:52,053 INFO: Universal Process Framework API blueprints exempted from CSRF protection [in C:\Users\erkar\OneDrive\Desktop\MTC\project-root\app\__init__.py:341]
+2025-11-14 16:34:14,599 ERROR: Database error: tuple indices must be integers or slices, not str [in C:\Users\erkar\OneDrive\Desktop\MTC\project-root\database.py:179]
+2025-11-14 16:34:14,601 ERROR: Error deleting production lot: tuple indices must be integers or slices, not str [in C:\Users\erkar\OneDrive\Desktop\MTC\project-root\app\api\production_lot.py:813]
+2025-11-14 16:35:03,638 INFO: Loaded 4 subprocesses into cache [in C:\Users\erkar\OneDrive\Desktop\MTC\project-root\app\services\subprocess_service.py:76]
+2025-11-14 16:54:01,958 INFO: Request ID middleware enabled [in C:\Users\erkar\OneDrive\Desktop\MTC\project-root\app\middleware\request_id.py:45]
+2025-11-14 16:54:01,996 INFO: Subprocess cache cleared [in C:\Users\erkar\OneDrive\Desktop\MTC\project-root\app\services\subprocess_service.py:40]
+2025-11-14 16:54:02,472 INFO: Universal Process Framework API blueprints exempted from CSRF protection [in C:\Users\erkar\OneDrive\Desktop\MTC\project-root\app\__init__.py:341]
+2025-11-14 16:56:34,325 INFO: Request ID middleware enabled [in C:\Users\erkar\OneDrive\Desktop\MTC\project-root\app\middleware\request_id.py:45]
+2025-11-14 16:56:34,391 INFO: Subprocess cache cleared [in C:\Users\erkar\OneDrive\Desktop\MTC\project-root\app\services\subprocess_service.py:40]
+2025-11-14 16:56:35,058 INFO: Universal Process Framework API blueprints exempted from CSRF protection [in C:\Users\erkar\OneDrive\Desktop\MTC\project-root\app\__init__.py:341]
+2025-11-14 16:56:42,479 ERROR: Database error: column vu.item_id does not exist
+LINE 15: ...             JOIN item_variant iv ON iv.item_id = vu.item_id
+                                                              ^
+HINT:  Perhaps you meant to reference the column "iv.item_id".
+ [in C:\Users\erkar\OneDrive\Desktop\MTC\project-root\database.py:179]
+2025-11-14 16:56:42,480 ERROR: Error getting variant options: column vu.item_id does not exist
+LINE 15: ...             JOIN item_variant iv ON iv.item_id = vu.item_id
+                                                              ^
+HINT:  Perhaps you meant to reference the column "iv.item_id".
+ [in C:\Users\erkar\OneDrive\Desktop\MTC\project-root\app\api\production_lot.py:388]
+2025-11-14 17:10:19,361 INFO: Request ID middleware enabled [in C:\Users\erkar\OneDrive\Desktop\MTC\project-root\app\middleware\request_id.py:45]
+2025-11-14 17:10:19,401 INFO: Subprocess cache cleared [in C:\Users\erkar\OneDrive\Desktop\MTC\project-root\app\services\subprocess_service.py:40]
+2025-11-14 17:10:20,437 INFO: Universal Process Framework API blueprints exempted from CSRF protection [in C:\Users\erkar\OneDrive\Desktop\MTC\project-root\app\__init__.py:341]
+2025-11-14 17:10:25,937 ERROR: Database error: column iv.item_number does not exist
+LINE 10:                         iv.item_number,
+                                 ^
+ [in C:\Users\erkar\OneDrive\Desktop\MTC\project-root\database.py:179]
+2025-11-14 17:10:25,938 ERROR: Error getting variant options: column iv.item_number does not exist
+LINE 10:                         iv.item_number,
+                                 ^
+ [in C:\Users\erkar\OneDrive\Desktop\MTC\project-root\app\api\production_lot.py:388]
+2025-11-14 17:14:54,439 INFO: Request ID middleware enabled [in C:\Users\erkar\OneDrive\Desktop\MTC\project-root\app\middleware\request_id.py:45]
+2025-11-14 17:14:54,476 INFO: Subprocess cache cleared [in C:\Users\erkar\OneDrive\Desktop\MTC\project-root\app\services\subprocess_service.py:40]
+2025-11-14 17:14:54,990 INFO: Universal Process Framework API blueprints exempted from CSRF protection [in C:\Users\erkar\OneDrive\Desktop\MTC\project-root\app\__init__.py:341]
+2025-11-14 17:14:59,187 ERROR: Database error: column iv.description does not exist
+LINE 11:                         iv.description,
+                                 ^
+HINT:  Perhaps you meant to reference the column "im.description".
+ [in C:\Users\erkar\OneDrive\Desktop\MTC\project-root\database.py:179]
+2025-11-14 17:14:59,188 ERROR: Error getting variant options: column iv.description does not exist
+LINE 11:                         iv.description,
+                                 ^
+HINT:  Perhaps you meant to reference the column "im.description".
+ [in C:\Users\erkar\OneDrive\Desktop\MTC\project-root\app\api\production_lot.py:390]
+2025-11-14 17:16:52,834 INFO: Request ID middleware enabled [in C:\Users\erkar\OneDrive\Desktop\MTC\project-root\app\middleware\request_id.py:45]
+2025-11-14 17:16:52,876 INFO: Subprocess cache cleared [in C:\Users\erkar\OneDrive\Desktop\MTC\project-root\app\services\subprocess_service.py:40]
+2025-11-14 17:16:53,331 INFO: Universal Process Framework API blueprints exempted from CSRF protection [in C:\Users\erkar\OneDrive\Desktop\MTC\project-root\app\__init__.py:341]
+2025-11-14 17:16:56,980 ERROR: Database error: column iv.unit_price does not exist
+LINE 13:                         iv.unit_price,
+                                 ^
+ [in C:\Users\erkar\OneDrive\Desktop\MTC\project-root\database.py:179]
+2025-11-14 17:16:56,981 ERROR: Error getting variant options: column iv.unit_price does not exist
+LINE 13:                         iv.unit_price,
+                                 ^
+ [in C:\Users\erkar\OneDrive\Desktop\MTC\project-root\app\api\production_lot.py:390]
+2025-11-14 17:17:02,888 ERROR: Database error: column iv.unit_price does not exist
+LINE 13:                         iv.unit_price,
+                                 ^
+ [in C:\Users\erkar\OneDrive\Desktop\MTC\project-root\database.py:179]
+2025-11-14 17:17:02,890 ERROR: Error getting variant options: column iv.unit_price does not exist
+LINE 13:                         iv.unit_price,
+                                 ^
+ [in C:\Users\erkar\OneDrive\Desktop\MTC\project-root\app\api\production_lot.py:390]
+2025-11-14 17:58:56,479 INFO: Request ID middleware enabled [in C:\Users\erkar\OneDrive\Desktop\MTC\project-root\app\middleware\request_id.py:45]
+2025-11-14 17:58:56,552 INFO: Subprocess cache cleared [in C:\Users\erkar\OneDrive\Desktop\MTC\project-root\app\services\subprocess_service.py:40]
+2025-11-14 17:58:57,282 INFO: Universal Process Framework API blueprints exempted from CSRF protection [in C:\Users\erkar\OneDrive\Desktop\MTC\project-root\app\__init__.py:341]
+2025-11-14 18:09:38,139 INFO: Request ID middleware enabled [in C:\Users\erkar\OneDrive\Desktop\MTC\project-root\app\middleware\request_id.py:45]
+2025-11-14 18:09:38,163 INFO: Subprocess cache cleared [in C:\Users\erkar\OneDrive\Desktop\MTC\project-root\app\services\subprocess_service.py:40]
+2025-11-14 18:09:38,587 INFO: Universal Process Framework API blueprints exempted from CSRF protection [in C:\Users\erkar\OneDrive\Desktop\MTC\project-root\app\__init__.py:341]
+2025-11-14 18:13:50,355 INFO: Request ID middleware enabled [in C:\Users\erkar\OneDrive\Desktop\MTC\Project-root\app\middleware\request_id.py:45]
+2025-11-14 18:13:50,384 INFO: Subprocess cache cleared [in C:\Users\erkar\OneDrive\Desktop\MTC\Project-root\app\services\subprocess_service.py:40]
+2025-11-14 18:13:51,309 INFO: Universal Process Framework API blueprints exempted from CSRF protection [in C:\Users\erkar\OneDrive\Desktop\MTC\Project-root\app\__init__.py:341]
+2025-11-14 18:15:00,290 INFO: Request ID middleware enabled [in C:\Users\erkar\OneDrive\Desktop\MTC\project-root\app\middleware\request_id.py:45]
+2025-11-14 18:15:00,350 INFO: Subprocess cache cleared [in C:\Users\erkar\OneDrive\Desktop\MTC\project-root\app\services\subprocess_service.py:40]
+2025-11-14 18:15:00,955 INFO: Universal Process Framework API blueprints exempted from CSRF protection [in C:\Users\erkar\OneDrive\Desktop\MTC\project-root\app\__init__.py:341]
+2025-11-14 18:26:48,939 INFO: Request ID middleware enabled [in C:\Users\erkar\OneDrive\Desktop\MTC\project-root\app\middleware\request_id.py:45]
+2025-11-14 18:26:48,990 INFO: Subprocess cache cleared [in C:\Users\erkar\OneDrive\Desktop\MTC\project-root\app\services\subprocess_service.py:40]
+2025-11-14 18:26:49,734 INFO: Universal Process Framework API blueprints exempted from CSRF protection [in C:\Users\erkar\OneDrive\Desktop\MTC\project-root\app\__init__.py:341]
+2025-11-14 18:34:47,090 INFO: Request ID middleware enabled [in C:\Users\erkar\OneDrive\Desktop\MTC\project-root\app\middleware\request_id.py:45]
+2025-11-14 18:34:47,153 INFO: Subprocess cache cleared [in C:\Users\erkar\OneDrive\Desktop\MTC\project-root\app\services\subprocess_service.py:40]
+2025-11-14 18:34:48,237 INFO: Universal Process Framework API blueprints exempted from CSRF protection [in C:\Users\erkar\OneDrive\Desktop\MTC\project-root\app\__init__.py:341]
+2025-11-14 18:35:17,853 ERROR: Database error: tuple indices must be integers or slices, not str [in C:\Users\erkar\OneDrive\Desktop\MTC\project-root\database.py:179]
+2025-11-14 18:35:17,855 ERROR: Error updating production lot: tuple indices must be integers or slices, not str [in C:\Users\erkar\OneDrive\Desktop\MTC\project-root\app\api\production_lot.py:823]
+2025-11-14 18:37:49,744 INFO: Request ID middleware enabled [in C:\Users\erkar\OneDrive\Desktop\MTC\project-root\app\middleware\request_id.py:45]
+2025-11-14 18:37:49,787 INFO: Subprocess cache cleared [in C:\Users\erkar\OneDrive\Desktop\MTC\project-root\app\services\subprocess_service.py:40]
+2025-11-14 18:37:51,006 INFO: Universal Process Framework API blueprints exempted from CSRF protection [in C:\Users\erkar\OneDrive\Desktop\MTC\project-root\app\__init__.py:341]
+2025-11-14 18:44:35,570 INFO: Request ID middleware enabled [in C:\Users\erkar\OneDrive\Desktop\MTC\project-root\app\middleware\request_id.py:45]
+2025-11-14 18:44:35,609 INFO: Subprocess cache cleared [in C:\Users\erkar\OneDrive\Desktop\MTC\project-root\app\services\subprocess_service.py:40]
+2025-11-14 18:44:36,085 INFO: Universal Process Framework API blueprints exempted from CSRF protection [in C:\Users\erkar\OneDrive\Desktop\MTC\project-root\app\__init__.py:341]
+2025-11-14 18:50:49,952 INFO: Request ID middleware enabled [in C:\Users\erkar\OneDrive\Desktop\MTC\project-root\app\middleware\request_id.py:45]
+2025-11-14 18:50:50,019 INFO: Subprocess cache cleared [in C:\Users\erkar\OneDrive\Desktop\MTC\project-root\app\services\subprocess_service.py:40]
+2025-11-14 18:50:50,551 INFO: Universal Process Framework API blueprints exempted from CSRF protection [in C:\Users\erkar\OneDrive\Desktop\MTC\project-root\app\__init__.py:341]
+2025-11-14 19:06:13,186 INFO: Request ID middleware enabled [in C:\Users\erkar\OneDrive\Desktop\MTC\project-root\app\middleware\request_id.py:45]
+2025-11-14 19:06:13,227 INFO: Subprocess cache cleared [in C:\Users\erkar\OneDrive\Desktop\MTC\project-root\app\services\subprocess_service.py:40]
+2025-11-14 19:06:13,841 INFO: Universal Process Framework API blueprints exempted from CSRF protection [in C:\Users\erkar\OneDrive\Desktop\MTC\project-root\app\__init__.py:341]
+2025-11-14 19:07:15,118 INFO: Request ID middleware enabled [in C:\Users\erkar\OneDrive\Desktop\MTC\Project-root\app\middleware\request_id.py:45]
+2025-11-14 19:07:15,134 INFO: Subprocess cache cleared [in C:\Users\erkar\OneDrive\Desktop\MTC\Project-root\app\services\subprocess_service.py:40]
+2025-11-14 19:07:15,766 INFO: Universal Process Framework API blueprints exempted from CSRF protection [in C:\Users\erkar\OneDrive\Desktop\MTC\Project-root\app\__init__.py:341]
+2025-11-14 19:16:12,191 INFO: Request ID middleware enabled [in C:\Users\erkar\OneDrive\Desktop\MTC\Project-root\app\middleware\request_id.py:45]
+2025-11-14 19:16:12,211 INFO: Subprocess cache cleared [in C:\Users\erkar\OneDrive\Desktop\MTC\Project-root\app\services\subprocess_service.py:40]
+2025-11-14 19:16:12,779 INFO: Universal Process Framework API blueprints exempted from CSRF protection [in C:\Users\erkar\OneDrive\Desktop\MTC\Project-root\app\__init__.py:341]
+2025-11-14 19:16:12,896 WARNING: variant_supplier_pricing table not found; skipping supplier-based costing [in C:\Users\erkar\OneDrive\Desktop\MTC\Project-root\app\services\costing_service.py:71]
+2025-11-14 19:16:46,182 INFO: Request ID middleware enabled [in C:\Users\erkar\OneDrive\Desktop\MTC\Project-root\app\middleware\request_id.py:45]
+2025-11-14 19:16:46,208 INFO: Subprocess cache cleared [in C:\Users\erkar\OneDrive\Desktop\MTC\Project-root\app\services\subprocess_service.py:40]
+2025-11-14 19:16:46,781 INFO: Universal Process Framework API blueprints exempted from CSRF protection [in C:\Users\erkar\OneDrive\Desktop\MTC\Project-root\app\__init__.py:341]
+2025-11-14 19:16:46,896 WARNING: variant_supplier_pricing table not found; skipping supplier-based costing [in C:\Users\erkar\OneDrive\Desktop\MTC\Project-root\app\services\costing_service.py:71]
+2025-11-14 19:18:38,507 INFO: Request ID middleware enabled [in C:\Users\erkar\OneDrive\Desktop\MTC\project-root\app\middleware\request_id.py:45]
+2025-11-14 19:18:38,568 INFO: Subprocess cache cleared [in C:\Users\erkar\OneDrive\Desktop\MTC\project-root\app\services\subprocess_service.py:40]
+2025-11-14 19:18:39,235 INFO: Universal Process Framework API blueprints exempted from CSRF protection [in C:\Users\erkar\OneDrive\Desktop\MTC\project-root\app\__init__.py:341]
+2025-11-14 19:26:19,415 INFO: Request ID middleware enabled [in C:\Users\erkar\OneDrive\Desktop\MTC\project-root\app\middleware\request_id.py:45]
+2025-11-14 19:26:19,474 INFO: Subprocess cache cleared [in C:\Users\erkar\OneDrive\Desktop\MTC\project-root\app\services\subprocess_service.py:40]
+2025-11-14 19:26:20,072 INFO: Universal Process Framework API blueprints exempted from CSRF protection [in C:\Users\erkar\OneDrive\Desktop\MTC\project-root\app\__init__.py:341]
+2025-11-14 19:35:00,576 INFO: Request ID middleware enabled [in C:\Users\erkar\OneDrive\Desktop\MTC\project-root\app\middleware\request_id.py:45]
+2025-11-14 19:35:00,624 INFO: Subprocess cache cleared [in C:\Users\erkar\OneDrive\Desktop\MTC\project-root\app\services\subprocess_service.py:40]
+2025-11-14 19:35:01,090 INFO: Universal Process Framework API blueprints exempted from CSRF protection [in C:\Users\erkar\OneDrive\Desktop\MTC\project-root\app\__init__.py:341]
+2025-11-14 19:37:47,865 INFO: Request ID middleware enabled [in C:\Users\erkar\OneDrive\Desktop\MTC\project-root\app\middleware\request_id.py:45]
+2025-11-14 19:37:47,913 INFO: Subprocess cache cleared [in C:\Users\erkar\OneDrive\Desktop\MTC\project-root\app\services\subprocess_service.py:40]
+2025-11-14 19:37:49,134 INFO: Universal Process Framework API blueprints exempted from CSRF protection [in C:\Users\erkar\OneDrive\Desktop\MTC\project-root\app\__init__.py:341]
+2025-11-14 19:39:50,889 INFO: Request ID middleware enabled [in C:\Users\erkar\OneDrive\Desktop\MTC\project-root\app\middleware\request_id.py:45]
+2025-11-14 19:39:50,943 INFO: Subprocess cache cleared [in C:\Users\erkar\OneDrive\Desktop\MTC\project-root\app\services\subprocess_service.py:40]
+2025-11-14 19:39:51,246 INFO: Universal Process Framework API blueprints exempted from CSRF protection [in C:\Users\erkar\OneDrive\Desktop\MTC\project-root\app\__init__.py:341]
+2025-11-14 19:41:47,976 INFO: Request ID middleware enabled [in C:\Users\erkar\OneDrive\Desktop\MTC\project-root\app\middleware\request_id.py:45]
+2025-11-14 19:41:48,008 INFO: Subprocess cache cleared [in C:\Users\erkar\OneDrive\Desktop\MTC\project-root\app\services\subprocess_service.py:40]
+2025-11-14 19:41:48,342 INFO: Universal Process Framework API blueprints exempted from CSRF protection [in C:\Users\erkar\OneDrive\Desktop\MTC\project-root\app\__init__.py:341]

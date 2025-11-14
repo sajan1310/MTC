@@ -215,7 +215,9 @@ def get_substitute_group(group_id):
                 vu.*,
                 im.name as variant_name,
                 iv.opening_stock,
-                iv.unit_price
+                COALESCE((
+                    SELECT rate FROM supplier_item_rates sir WHERE sir.item_id = iv.item_id ORDER BY rate ASC LIMIT 1
+                ), 0) as unit_price
             FROM variant_usage vu
             JOIN item_variant iv ON iv.variant_id = vu.variant_id
             JOIN item_master im ON im.item_id = iv.item_id
@@ -271,7 +273,9 @@ def get_subprocess_substitute_groups(ps_id):
                     vu.*,
                     im.name as variant_name,
                     iv.opening_stock,
-                    iv.unit_price
+                    COALESCE((
+                        SELECT rate FROM supplier_item_rates sir WHERE sir.item_id = iv.item_id ORDER BY rate ASC LIMIT 1
+                    ), 0) as unit_price
                 FROM variant_usage vu
                 JOIN item_variant iv ON iv.variant_id = vu.variant_id
                 JOIN item_master im ON im.item_id = iv.item_id
