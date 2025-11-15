@@ -105,7 +105,7 @@ class EnhancedFlaskAuditor:
             r"@(?:app|api_bp|auth_bp|main_bp|files_bp|process_api_bp|production_api_bp|"
             r"subprocess_api_bp|variant_api_bp|reports_api_bp|inventory_alerts_bp|bp|blueprint)\.route\(\s*"
             r'[\'"]([^\'"]+)[\'"](?:.*?methods\s*=\s*\[([^\]]+)\])?',
-            re.DOTALL
+            re.DOTALL,
         )
 
         # Blueprint registration pattern
@@ -320,7 +320,9 @@ class EnhancedFlaskAuditor:
                     route_path = sm.group(2)
                     methods_str = sm.group(3)
                     url_prefix = blueprint_map.get(bp_var, "")
-                    full_path = f"{url_prefix}{route_path}" if url_prefix else route_path
+                    full_path = (
+                        f"{url_prefix}{route_path}" if url_prefix else route_path
+                    )
                     methods = [m.strip().strip("'\"") for m in methods_str.split(",")]
                     # Skip if already captured
                     if any(
@@ -713,7 +715,9 @@ class EnhancedFlaskAuditor:
         # Calculate overall completeness
         upf_data["completeness"] = self._calculate_upf_completeness(upf_data)
 
-        print(f"   [OK] UPF Framework Completeness: {upf_data['completeness']['overall_score']:.1f}%")
+        print(
+            f"   [OK] UPF Framework Completeness: {upf_data['completeness']['overall_score']:.1f}%"
+        )
 
     def _audit_process_bom_architecture(self) -> Dict[str, Any]:
         """Audit Section 1: Advanced BOM-Centric Process Architecture."""
@@ -838,7 +842,10 @@ class EnhancedFlaskAuditor:
             try:
                 with open(alert_service, "r", encoding="utf-8") as f:
                     content = f.read()
-                    if "check_inventory_levels" in content or "evaluate_variant_stock" in content:
+                    if (
+                        "check_inventory_levels" in content
+                        or "evaluate_variant_stock" in content
+                    ):
                         results["realtime_stock_analysis"]["present"] = True
             except Exception:
                 pass
@@ -854,10 +861,14 @@ class EnhancedFlaskAuditor:
                 try:
                     with open(self.project_root / file, "r", encoding="utf-8") as f:
                         content = f.read()
-                        found_severities = [s for s in severity_patterns if s in content]
+                        found_severities = [
+                            s for s in severity_patterns if s in content
+                        ]
                         if len(found_severities) >= 4:  # At least 4 severity levels
                             results["alert_severity_levels"]["present"] = True
-                            results["alert_severity_levels"]["details"] = found_severities
+                            results["alert_severity_levels"][
+                                "details"
+                            ] = found_severities
                 except Exception:
                     pass
 
@@ -905,11 +916,17 @@ class EnhancedFlaskAuditor:
                     pass
 
         # Check for lot audit trail
-        audit_columns = ["inventory_validated_at", "inventory_validated_by", "alert_summary_json"]
+        audit_columns = [
+            "inventory_validated_at",
+            "inventory_validated_by",
+            "alert_summary_json",
+        ]
         migration_files = [
             self.project_root / "migrations/migration_add_inventory_alert_system.py",
-            self.project_root / "Project-root/migrations/migration_add_inventory_alert_system.py",
-            self.project_root / "migrations/migration_add_inventory_alert_system_temp.py",
+            self.project_root
+            / "Project-root/migrations/migration_add_inventory_alert_system.py",
+            self.project_root
+            / "migrations/migration_add_inventory_alert_system_temp.py",
         ]
         for migration_file in migration_files:
             if migration_file.exists():
@@ -980,7 +997,9 @@ class EnhancedFlaskAuditor:
                 pass
 
         # Check for safety stock and reorder points
-        migration_file = self.project_root / "migrations/migration_add_inventory_alert_system.py"
+        migration_file = (
+            self.project_root / "migrations/migration_add_inventory_alert_system.py"
+        )
         if migration_file.exists():
             try:
                 with open(migration_file, "r", encoding="utf-8") as f:
@@ -1063,7 +1082,14 @@ class EnhancedFlaskAuditor:
                 results["alert_notification_engine"]["present"] = True
 
         # Check ledger/reporting
-        ledger_patterns = ["created_at", "updated_at", "timestamp", "track", "history", "audit"]
+        ledger_patterns = [
+            "created_at",
+            "updated_at",
+            "timestamp",
+            "track",
+            "history",
+            "audit",
+        ]
         reporting_files = [
             "app/services/production_service.py",
             "app/models/production_lot.py",
@@ -1171,19 +1197,35 @@ class EnhancedFlaskAuditor:
         completeness = {}
 
         # Section scores
-        completeness["process_bom"] = upf_data["process_bom_architecture"]["completeness"]
-        completeness["production_lot_alerts"] = upf_data["production_lot_alerts"]["completeness"]
+        completeness["process_bom"] = upf_data["process_bom_architecture"][
+            "completeness"
+        ]
+        completeness["production_lot_alerts"] = upf_data["production_lot_alerts"][
+            "completeness"
+        ]
         completeness["alert_technical"] = upf_data["alert_technical"]["completeness"]
         completeness["data_flow"] = upf_data["data_flow_integration"]["completeness"]
 
         # Endpoint/file counts
         alert_ep = upf_data["alert_endpoints"]
-        completeness["endpoints"] = f"{len(alert_ep['endpoints'])}/6 ({len(alert_ep['endpoints']) / 6 * 100:.0f}%)"
-        completeness["services"] = f"{len(alert_ep['services'])}/1 ({len(alert_ep['services']) * 100:.0f}%)"
-        completeness["templates"] = f"{len(alert_ep['templates'])}/3 ({len(alert_ep['templates']) / 3 * 100:.0f}%)"
-        completeness["static_assets"] = f"{len(alert_ep['static_assets'])}/2 ({len(alert_ep['static_assets']) / 2 * 100:.0f}%)"
-        completeness["tests"] = f"{len(alert_ep['tests'])}/3 ({len(alert_ep['tests']) / 3 * 100:.0f}%)"
-        completeness["documentation"] = f"{len(alert_ep['documentation'])}/3 ({len(alert_ep['documentation']) / 3 * 100:.0f}%)"
+        completeness["endpoints"] = (
+            f"{len(alert_ep['endpoints'])}/6 ({len(alert_ep['endpoints']) / 6 * 100:.0f}%)"
+        )
+        completeness["services"] = (
+            f"{len(alert_ep['services'])}/1 ({len(alert_ep['services']) * 100:.0f}%)"
+        )
+        completeness["templates"] = (
+            f"{len(alert_ep['templates'])}/3 ({len(alert_ep['templates']) / 3 * 100:.0f}%)"
+        )
+        completeness["static_assets"] = (
+            f"{len(alert_ep['static_assets'])}/2 ({len(alert_ep['static_assets']) / 2 * 100:.0f}%)"
+        )
+        completeness["tests"] = (
+            f"{len(alert_ep['tests'])}/3 ({len(alert_ep['tests']) / 3 * 100:.0f}%)"
+        )
+        completeness["documentation"] = (
+            f"{len(alert_ep['documentation'])}/3 ({len(alert_ep['documentation']) / 3 * 100:.0f}%)"
+        )
 
         # Overall score (weighted average)
         section_scores = [
@@ -1338,7 +1380,9 @@ class EnhancedFlaskAuditor:
         doc_data["completeness_score"] = sum(key_docs.values()) / len(key_docs) * 100
 
         print(f"   [+] Found {len(doc_data['markdown_files'])} documentation files")
-        print(f"   [+] Documentation completeness: {doc_data['completeness_score']:.0f}%")
+        print(
+            f"   [+] Documentation completeness: {doc_data['completeness_score']:.0f}%"
+        )
 
     def audit_security(self):
         """Audit security configuration."""
@@ -1489,11 +1533,21 @@ class EnhancedFlaskAuditor:
                     self.results["route_api_sync"]["method_mismatches"]
                 ),
                 "unused_backend": len(self.results["route_api_sync"]["unused_backend"]),
-                "upf_overall_score": self.results["upf_alert_system"]["completeness"].get("overall_score", 0),
-                "upf_process_bom_score": self.results["upf_alert_system"]["process_bom_architecture"].get("completeness", 0),
-                "upf_production_lot_score": self.results["upf_alert_system"]["production_lot_alerts"].get("completeness", 0),
-                "upf_alert_technical_score": self.results["upf_alert_system"]["alert_technical"].get("completeness", 0),
-                "upf_data_flow_score": self.results["upf_alert_system"]["data_flow_integration"].get("completeness", 0),
+                "upf_overall_score": self.results["upf_alert_system"][
+                    "completeness"
+                ].get("overall_score", 0),
+                "upf_process_bom_score": self.results["upf_alert_system"][
+                    "process_bom_architecture"
+                ].get("completeness", 0),
+                "upf_production_lot_score": self.results["upf_alert_system"][
+                    "production_lot_alerts"
+                ].get("completeness", 0),
+                "upf_alert_technical_score": self.results["upf_alert_system"][
+                    "alert_technical"
+                ].get("completeness", 0),
+                "upf_data_flow_score": self.results["upf_alert_system"][
+                    "data_flow_integration"
+                ].get("completeness", 0),
                 "test_files": len(self.results["tests"]["test_files"]),
                 "total_tests": self.results["tests"]["total_tests"],
                 "documentation_score": self.results["documentation"][
@@ -1567,44 +1621,86 @@ def main():
     print(f"  Overall Framework Completeness: {stats['upf_overall_score']:.1f}%")
     print(f"  +-- Process/BOM Architecture: {stats['upf_process_bom_score']:.1f}%")
     print(f"  +-- Production Lot Alerts: {stats['upf_production_lot_score']:.1f}%")
-    print(f"  +-- Alert Technical Architecture: {stats['upf_alert_technical_score']:.1f}%")
+    print(
+        f"  +-- Alert Technical Architecture: {stats['upf_alert_technical_score']:.1f}%"
+    )
     print(f"  +-- Data Flow Integration: {stats['upf_data_flow_score']:.1f}%")
-    
+
     # Detailed UPF subsystem breakdown
     upf = results["upf_alert_system"]
-    
+
     print("\n  [LIST] Process/BOM Architecture:")
     pba = upf["process_bom_architecture"]
-    print(f"    [+] Process as BOM: {'[OK] Yes' if pba['process_as_bom']['present'] else '[X] No'}")
-    print(f"    [+] Subprocess Templates: {'[OK] Yes' if pba['subprocess_templates']['present'] else '[X] No'}")
-    print(f"    [+] Variant/Cost/Supplier: {'[OK] Yes' if pba['variant_cost_supplier']['present'] else '[X] No'}")
-    print(f"    [+] User Experience: {'[OK] Yes' if pba['user_experience']['present'] else '[X] No'}")
-    print(f"    [+] Audit Trail: {'[OK] Yes' if pba['audit_trail']['present'] else '[X] No'}")
-    
+    print(
+        f"    [+] Process as BOM: {'[OK] Yes' if pba['process_as_bom']['present'] else '[X] No'}"
+    )
+    print(
+        f"    [+] Subprocess Templates: {'[OK] Yes' if pba['subprocess_templates']['present'] else '[X] No'}"
+    )
+    print(
+        f"    [+] Variant/Cost/Supplier: {'[OK] Yes' if pba['variant_cost_supplier']['present'] else '[X] No'}"
+    )
+    print(
+        f"    [+] User Experience: {'[OK] Yes' if pba['user_experience']['present'] else '[X] No'}"
+    )
+    print(
+        f"    [+] Audit Trail: {'[OK] Yes' if pba['audit_trail']['present'] else '[X] No'}"
+    )
+
     print("\n  [PROD] Production Lot Alert System:")
     pla = upf["production_lot_alerts"]
-    print(f"    [+] Lot Creation Workflow: {'[OK] Yes' if pla['lot_creation']['present'] else '[X] No'}")
-    print(f"    [+] Real-time Stock Analysis: {'[OK] Yes' if pla['realtime_stock_analysis']['present'] else '[X] No'}")
-    print(f"    [+] Alert Severity Levels: {'[OK] Yes' if pla['alert_severity_levels']['present'] else '[X] No'} {pla['alert_severity_levels']['details']}")
-    print(f"    [+] Alert Display/Interaction: {'[OK] Yes' if pla['alert_display_interaction']['present'] else '[X] No'}")
-    print(f"    [+] Automatic Procurement: {'[OK] Yes' if pla['automatic_procurement']['present'] else '[X] No'}")
-    print(f"    [+] Item Requirement Sheet: {'[OK] Yes' if pla['item_requirement_sheet']['present'] else '[X] No'}")
-    print(f"    [+] Lot Audit Trail: {'[OK] Yes' if pla['lot_audit_trail']['present'] else '[X] No'}")
-    
+    print(
+        f"    [+] Lot Creation Workflow: {'[OK] Yes' if pla['lot_creation']['present'] else '[X] No'}"
+    )
+    print(
+        f"    [+] Real-time Stock Analysis: {'[OK] Yes' if pla['realtime_stock_analysis']['present'] else '[X] No'}"
+    )
+    print(
+        f"    [+] Alert Severity Levels: {'[OK] Yes' if pla['alert_severity_levels']['present'] else '[X] No'} {pla['alert_severity_levels']['details']}"
+    )
+    print(
+        f"    [+] Alert Display/Interaction: {'[OK] Yes' if pla['alert_display_interaction']['present'] else '[X] No'}"
+    )
+    print(
+        f"    [+] Automatic Procurement: {'[OK] Yes' if pla['automatic_procurement']['present'] else '[X] No'}"
+    )
+    print(
+        f"    [+] Item Requirement Sheet: {'[OK] Yes' if pla['item_requirement_sheet']['present'] else '[X] No'}"
+    )
+    print(
+        f"    [+] Lot Audit Trail: {'[OK] Yes' if pla['lot_audit_trail']['present'] else '[X] No'}"
+    )
+
     print("\n  [GEAR]  Alert Technical Architecture:")
     ata = upf["alert_technical"]
-    print(f"    [+] Real-time Inventory Query: {'[OK] Yes' if ata['realtime_inventory_query']['present'] else '[X] No'}")
-    print(f"    [+] Alert Escalation Rules: {'[OK] Yes' if ata['alert_escalation_rules']['present'] else '[X] No'}")
-    print(f"    [+] Safety Stock/Reorder Points: {'[OK] Yes' if ata['safety_stock_reorder']['present'] else '[X] No'}")
-    
+    print(
+        f"    [+] Real-time Inventory Query: {'[OK] Yes' if ata['realtime_inventory_query']['present'] else '[X] No'}"
+    )
+    print(
+        f"    [+] Alert Escalation Rules: {'[OK] Yes' if ata['alert_escalation_rules']['present'] else '[X] No'}"
+    )
+    print(
+        f"    [+] Safety Stock/Reorder Points: {'[OK] Yes' if ata['safety_stock_reorder']['present'] else '[X] No'}"
+    )
+
     print("\n  [LOOP] Data Flow Integration:")
     dfi = upf["data_flow_integration"]
-    print(f"    [+] Inventory System: {'[OK] Yes' if dfi['inventory_system']['present'] else '[X] No'}")
-    print(f"    [+] Supplier/Vendor DB: {'[OK] Yes' if dfi['supplier_vendor_db']['present'] else '[X] No'}")
-    print(f"    [+] Process/BOM Library: {'[OK] Yes' if dfi['process_bom_library']['present'] else '[X] No'}")
-    print(f"    [+] Alert Notification Engine: {'[OK] Yes' if dfi['alert_notification_engine']['present'] else '[X] No'}")
-    print(f"    [+] Ledger/Reporting: {'[OK] Yes' if dfi['ledger_reporting']['present'] else '[X] No'}")
-    
+    print(
+        f"    [+] Inventory System: {'[OK] Yes' if dfi['inventory_system']['present'] else '[X] No'}"
+    )
+    print(
+        f"    [+] Supplier/Vendor DB: {'[OK] Yes' if dfi['supplier_vendor_db']['present'] else '[X] No'}"
+    )
+    print(
+        f"    [+] Process/BOM Library: {'[OK] Yes' if dfi['process_bom_library']['present'] else '[X] No'}"
+    )
+    print(
+        f"    [+] Alert Notification Engine: {'[OK] Yes' if dfi['alert_notification_engine']['present'] else '[X] No'}"
+    )
+    print(
+        f"    [+] Ledger/Reporting: {'[OK] Yes' if dfi['ledger_reporting']['present'] else '[X] No'}"
+    )
+
     print("\n  [SYNC] API Endpoints & Assets:")
     completeness = upf["completeness"]
     print(f"    Endpoints: {completeness.get('endpoints', 'N/A')}")

@@ -152,9 +152,10 @@ def api_signup():
         ):
             cur.execute("SELECT user_id FROM users WHERE email = %s", (email,))
             if cur.fetchone():
-                return jsonify(
-                    {"error": "An account with this email already exists."}
-                ), 409
+                return (
+                    jsonify({"error": "An account with this email already exists."}),
+                    409,
+                )
 
             from werkzeug.security import generate_password_hash
 
@@ -179,9 +180,14 @@ def api_forgot_password():
     email = (data.get("email") or "").strip().lower()
     if email:
         current_app.logger.info(f"[ForgotPassword] Request received for {email}")
-    return jsonify(
-        {"message": "If an account exists for that email, a reset link will be sent."}
-    ), 200
+    return (
+        jsonify(
+            {
+                "message": "If an account exists for that email, a reset link will be sent."
+            }
+        ),
+        200,
+    )
 
 
 @auth_bp.route("/google")

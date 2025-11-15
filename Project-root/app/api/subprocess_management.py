@@ -206,12 +206,16 @@ def update_subprocess(subprocess_id):
             name=data.get("name"),
             description=data.get("description"),
             category=data.get("category"),
-            estimated_time_minutes=int(data.get("estimated_time_minutes"))
-            if data.get("estimated_time_minutes") is not None
-            else None,
-            labor_cost=float(data.get("labor_cost"))
-            if data.get("labor_cost") is not None
-            else None,
+            estimated_time_minutes=(
+                int(data.get("estimated_time_minutes"))
+                if data.get("estimated_time_minutes") is not None
+                else None
+            ),
+            labor_cost=(
+                float(data.get("labor_cost"))
+                if data.get("labor_cost") is not None
+                else None
+            ),
         )
 
         if not updated:
@@ -361,15 +365,19 @@ def get_subprocess_metadata():
             "Testing",
             "Maintenance",
             "Inspection",
-            "Other"
+            "Other",
         ]
 
-        return APIResponse.success({
-            "categories": categories,
-            "default_category": "Other",
-            "time_unit": "minutes",
-            "cost_currency": "USD"
-        })
+        return APIResponse.success(
+            {
+                "categories": categories,
+                "default_category": "Other",
+                "time_unit": "minutes",
+                "cost_currency": "USD",
+            }
+        )
     except Exception as e:
-        current_app.logger.error(f"Error building subprocess metadata: {e}", exc_info=True)
+        current_app.logger.error(
+            f"Error building subprocess metadata: {e}", exc_info=True
+        )
         return APIResponse.error("internal_error", "Failed to fetch metadata", 500)

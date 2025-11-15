@@ -283,10 +283,12 @@ class ImportService:
             item_id of inserted/updated record
         """
         # Check if table has deleted_at column
-        cur.execute("""
+        cur.execute(
+            """
             SELECT column_name FROM information_schema.columns
             WHERE table_name='item_master' AND column_name='deleted_at'
-        """)
+        """
+        )
         has_deleted_at = cur.fetchone() is not None
 
         # Build query dynamically based on table structure
@@ -296,11 +298,13 @@ class ImportService:
             conflict_where = ""
 
         # Check if category, model_id, variation_id columns exist
-        cur.execute("""
+        cur.execute(
+            """
             SELECT column_name FROM information_schema.columns
             WHERE table_name='item_master'
             AND column_name IN ('category', 'model_id', 'variation_id', 'description')
-        """)
+        """
+        )
         existing_columns = {row[0] for row in cur.fetchall()}
 
         # Build dynamic INSERT query
@@ -340,10 +344,12 @@ class ImportService:
             update_parts.append("variation_id = EXCLUDED.variation_id")
 
         # Add updated_at if column exists
-        cur.execute("""
+        cur.execute(
+            """
             SELECT column_name FROM information_schema.columns
             WHERE table_name='item_master' AND column_name='updated_at'
-        """)
+        """
+        )
         if cur.fetchone():
             update_parts.append("updated_at = NOW()")
 
@@ -375,10 +381,12 @@ class ImportService:
             color_id of inserted/updated record
         """
         # Check for deleted_at column
-        cur.execute("""
+        cur.execute(
+            """
             SELECT column_name FROM information_schema.columns
             WHERE table_name='color_master' AND column_name='deleted_at'
-        """)
+        """
+        )
         has_deleted_at = cur.fetchone() is not None
 
         if has_deleted_at:
@@ -387,10 +395,12 @@ class ImportService:
             conflict_where = ""
 
         # Check for updated_at column
-        cur.execute("""
+        cur.execute(
+            """
             SELECT column_name FROM information_schema.columns
             WHERE table_name='color_master' AND column_name='updated_at'
-        """)
+        """
+        )
         has_updated_at = cur.fetchone() is not None
 
         update_clause = (
@@ -423,10 +433,12 @@ class ImportService:
             size_id of inserted/updated record
         """
         # Check for deleted_at column
-        cur.execute("""
+        cur.execute(
+            """
             SELECT column_name FROM information_schema.columns
             WHERE table_name='size_master' AND column_name='deleted_at'
-        """)
+        """
+        )
         has_deleted_at = cur.fetchone() is not None
 
         if has_deleted_at:
@@ -435,10 +447,12 @@ class ImportService:
             conflict_where = ""
 
         # Check for updated_at column
-        cur.execute("""
+        cur.execute(
+            """
             SELECT column_name FROM information_schema.columns
             WHERE table_name='size_master' AND column_name='updated_at'
-        """)
+        """
+        )
         has_updated_at = cur.fetchone() is not None
 
         update_clause = (
@@ -469,18 +483,22 @@ class ImportService:
             model_id of inserted/updated record
         """
         # Check if table exists
-        cur.execute("""
+        cur.execute(
+            """
             SELECT table_name FROM information_schema.tables
             WHERE table_name='model_master'
-        """)
+        """
+        )
         if not cur.fetchone():
             raise ValueError("model_master table does not exist")
 
         # Check for deleted_at column
-        cur.execute("""
+        cur.execute(
+            """
             SELECT column_name FROM information_schema.columns
             WHERE table_name='model_master' AND column_name='deleted_at'
-        """)
+        """
+        )
         has_deleted_at = cur.fetchone() is not None
 
         if has_deleted_at:
@@ -512,18 +530,22 @@ class ImportService:
             variation_id of inserted/updated record
         """
         # Check if table exists
-        cur.execute("""
+        cur.execute(
+            """
             SELECT table_name FROM information_schema.tables
             WHERE table_name='variation_master'
-        """)
+        """
+        )
         if not cur.fetchone():
             raise ValueError("variation_master table does not exist")
 
         # Check for deleted_at column
-        cur.execute("""
+        cur.execute(
+            """
             SELECT column_name FROM information_schema.columns
             WHERE table_name='variation_master' AND column_name='deleted_at'
-        """)
+        """
+        )
         has_deleted_at = cur.fetchone() is not None
 
         if has_deleted_at:
@@ -571,10 +593,12 @@ class ImportService:
             variant_id of inserted/updated record
         """
         # Check for deleted_at column
-        cur.execute("""
+        cur.execute(
+            """
             SELECT column_name FROM information_schema.columns
             WHERE table_name='item_variant' AND column_name='deleted_at'
-        """)
+        """
+        )
         has_deleted_at = cur.fetchone() is not None
 
         if has_deleted_at:

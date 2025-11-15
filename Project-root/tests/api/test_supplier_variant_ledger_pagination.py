@@ -24,7 +24,9 @@ def test_supplier_ledger_pagination_contract(authenticated_client):
 
 
 def test_variant_ledger_pagination_contract(authenticated_client):
-    resp = authenticated_client.get("/api/variant-ledger?variant_id=1&page=1&per_page=5")
+    resp = authenticated_client.get(
+        "/api/variant-ledger?variant_id=1&page=1&per_page=5"
+    )
     assert resp.status_code in (200, 400, 404)
     if resp.status_code != 200:
         return

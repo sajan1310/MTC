@@ -163,21 +163,28 @@ def create_app(config_name: str | None = None) -> Flask:
     csrf.init_app(app)
     login_manager.init_app(app)
     login_manager.login_view = "auth.login"
-    
+
     # Handle unauthorized API requests with JSON instead of redirects
     @login_manager.unauthorized_handler
     def unauthorized():
         from flask import request, jsonify
+
         # If it's an API request, return JSON
-        if request.path.startswith('/api/'):
-            return jsonify({
-                'success': False,
-                'error': 'unauthorized',
-                'message': 'Authentication required. Please log in.'
-            }), 401
+        if request.path.startswith("/api/"):
+            return (
+                jsonify(
+                    {
+                        "success": False,
+                        "error": "unauthorized",
+                        "message": "Authentication required. Please log in.",
+                    }
+                ),
+                401,
+            )
         # Otherwise, redirect to login page (default behavior)
         from flask import redirect, url_for
-        return redirect(url_for('auth.login'))
+
+        return redirect(url_for("auth.login"))
 
     # Setup rate limiting (respect memory backend in tests to avoid warnings)
     from redis import ConnectionPool, Redis
@@ -219,6 +226,7 @@ def create_app(config_name: str | None = None) -> Flask:
                     app.logger.info("[RATE LIMIT] Redis connection pool closed.")
                 except Exception as e:
                     app.logger.warning(f"[RATE LIMIT] Redis pool cleanup failed: {e}")
+
         except Exception as e:
             app.logger.warning(
                 f"[RATE LIMIT] Redis unavailable, falling back to in-memory rate limiting: {e}"

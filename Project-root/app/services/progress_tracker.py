@@ -131,9 +131,9 @@ class ProgressTracker:
             "percentage": round(percentage, 2),
             "current_batch": current_batch,
             "total_batches": total_batches,
-            "estimated_seconds_remaining": round(eta_seconds, 1)
-            if eta_seconds
-            else None,
+            "estimated_seconds_remaining": (
+                round(eta_seconds, 1) if eta_seconds else None
+            ),
             "updated_at": datetime.utcnow().isoformat(),
             "status": "processing",
         }

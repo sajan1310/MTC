@@ -18,21 +18,26 @@ def upgrade():
     """
     with get_conn() as (conn, cur):
         # Create master tables
-        cur.execute("""
+        cur.execute(
+            """
             CREATE TABLE IF NOT EXISTS model_master (
                 model_id SERIAL PRIMARY KEY,
                 model_name VARCHAR(255) UNIQUE NOT NULL
             );
-        """)
-        cur.execute("""
+        """
+        )
+        cur.execute(
+            """
             CREATE TABLE IF NOT EXISTS variation_master (
                 variation_id SERIAL PRIMARY KEY,
                 variation_name VARCHAR(255) UNIQUE NOT NULL
             );
-        """)
+        """
+        )
 
         # Populate master tables
-        cur.execute("""
+        cur.execute(
+            """
             DO $$
             BEGIN
                 IF EXISTS (SELECT 1 FROM information_schema.columns WHERE table_name='item_master' AND column_name='model') THEN
@@ -41,8 +46,10 @@ def upgrade():
                     ON CONFLICT (model_name) DO NOTHING;
                 END IF;
             END$$;
-        """)
-        cur.execute("""
+        """
+        )
+        cur.execute(
+            """
             DO $$
             BEGIN
                 IF EXISTS (SELECT 1 FROM information_schema.columns WHERE table_name='item_master' AND column_name='variation') THEN
@@ -51,7 +58,8 @@ def upgrade():
                     ON CONFLICT (variation_name) DO NOTHING;
                 END IF;
             END$$;
-        """)
+        """
+        )
 
         # Add foreign key columns
         cur.execute(
@@ -62,7 +70,8 @@ def upgrade():
         )
 
         # Update foreign key references
-        cur.execute("""
+        cur.execute(
+            """
             DO $$
             BEGIN
                 IF EXISTS (SELECT 1 FROM information_schema.columns WHERE table_name='item_master' AND column_name='model') THEN
@@ -72,8 +81,10 @@ def upgrade():
                     WHERE item_master.model = m.model_name;
                 END IF;
             END$$;
-        """)
-        cur.execute("""
+        """
+        )
+        cur.execute(
+            """
             DO $$
             BEGIN
                 IF EXISTS (SELECT 1 FROM information_schema.columns WHERE table_name='item_master' AND column_name='variation') THEN
@@ -83,7 +94,8 @@ def upgrade():
                     WHERE item_master.variation = v.variation_name;
                 END IF;
             END$$;
-        """)
+        """
+        )
 
         conn.commit()
         print("Upgrade complete: Master tables created and data migrated.")

@@ -22,11 +22,13 @@ def test_data():
             cur,
         ):
             # First, check the actual columns in item_category_master
-            cur.execute("""
+            cur.execute(
+                """
                 SELECT column_name FROM information_schema.columns 
                 WHERE table_name='item_category_master' 
                 ORDER BY ordinal_position
-            """)
+            """
+            )
             cat_columns = [r["column_name"] for r in cur.fetchall()]
             print(f"✓ item_category_master columns: {cat_columns}")
 
@@ -56,7 +58,8 @@ def test_data():
 
             # Sample variant query (same as the API)
             if variant_count > 0:
-                cur.execute("""
+                cur.execute(
+                    """
                     SELECT 
                         iv.variant_id as id,
                         im.name || ' - ' || cm.color_name || ' - ' || sm.size_name as name,
@@ -70,7 +73,8 @@ def test_data():
                     LEFT JOIN item_brand_master ibm ON im.item_brand_id = ibm.item_brand_id
                     WHERE iv.deleted_at IS NULL AND im.deleted_at IS NULL
                     LIMIT 3
-                """)
+                """
+                )
                 print("\n✓ Sample variants:")
                 for row in cur.fetchall():
                     print(f"  - {row['name']} (ID: {row['id']})")
@@ -83,18 +87,22 @@ def test_data():
                     else "category_name"
                 )
                 if "deleted_at" in cat_columns:
-                    cur.execute(f"""
+                    cur.execute(
+                        f"""
                         SELECT item_category_id as id, {name_col} as name
                         FROM item_category_master 
                         WHERE deleted_at IS NULL
                         LIMIT 5
-                    """)
+                    """
+                    )
                 else:
-                    cur.execute(f"""
+                    cur.execute(
+                        f"""
                         SELECT item_category_id as id, {name_col} as name
                         FROM item_category_master 
                         LIMIT 5
-                    """)
+                    """
+                    )
                 print("\n✓ Sample categories:")
                 for row in cur.fetchall():
                     print(f"  - {row['name']} (ID: {row['id']})")

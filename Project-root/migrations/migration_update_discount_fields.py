@@ -18,20 +18,24 @@ def upgrade():
     """
     with get_conn() as (conn, cur):
         # Rename original discount_amount to discount_percentage
-        cur.execute("""
+        cur.execute(
+            """
             DO $$
             BEGIN
                 IF EXISTS (SELECT 1 FROM information_schema.columns WHERE table_name='stock_receipts' AND column_name='discount_amount') AND NOT EXISTS (SELECT 1 FROM information_schema.columns WHERE table_name='stock_receipts' AND column_name='discount_percentage') THEN
                     ALTER TABLE stock_receipts RENAME COLUMN discount_amount TO discount_percentage;
                 END IF;
             END$$;
-        """)
+        """
+        )
 
         # Add a new discount_amount column for the fixed value
-        cur.execute("""
+        cur.execute(
+            """
             ALTER TABLE stock_receipts
             ADD COLUMN IF NOT EXISTS discount_amount NUMERIC(10, 2) DEFAULT 0;
-        """)
+        """
+        )
 
         conn.commit()
         print("Upgrade complete: Updated discount fields in stock_receipts.")
@@ -44,20 +48,24 @@ def downgrade():
     """
     with get_conn() as (conn, cur):
         # Remove the new discount_amount column
-        cur.execute("""
+        cur.execute(
+            """
             ALTER TABLE stock_receipts
             DROP COLUMN IF EXISTS discount_amount;
-        """)
+        """
+        )
 
         # Rename discount_percentage back to discount_amount
-        cur.execute("""
+        cur.execute(
+            """
             DO $$
             BEGIN
                 IF EXISTS (SELECT 1 FROM information_schema.columns WHERE table_name='stock_receipts' AND column_name='discount_percentage') THEN
                     ALTER TABLE stock_receipts RENAME COLUMN discount_percentage TO discount_amount;
                 END IF;
             END$$;
-        """)
+        """
+        )
 
         conn.commit()
         print("Downgrade complete: Reverted discount fields in stock_receipts.")

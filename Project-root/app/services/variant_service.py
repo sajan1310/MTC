@@ -71,18 +71,24 @@ class VariantService:
             if existing:
                 # Merge quantities: add incoming quantity to existing
                 try:
-                    existing_qty = float(existing.get('quantity') or 0)
+                    existing_qty = float(existing.get("quantity") or 0)
                 except Exception:
                     existing_qty = 0
 
-                new_qty = existing_qty + (float(quantity) if quantity is not None else 0)
+                new_qty = existing_qty + (
+                    float(quantity) if quantity is not None else 0
+                )
 
                 # Determine which cost to use: prefer incoming cost_per_unit if provided
                 if cost_per_unit is not None:
                     new_cost = cost_per_unit
                 else:
                     try:
-                        new_cost = float(existing.get('cost_per_unit')) if existing.get('cost_per_unit') is not None else None
+                        new_cost = (
+                            float(existing.get("cost_per_unit"))
+                            if existing.get("cost_per_unit") is not None
+                            else None
+                        )
                     except Exception:
                         new_cost = None
 
@@ -98,7 +104,7 @@ class VariantService:
                     WHERE id = %s
                     RETURNING *
                 """,
-                    (new_qty, new_cost, new_total, existing.get('id')),
+                    (new_qty, new_cost, new_total, existing.get("id")),
                 )
 
                 usage_data = cur.fetchone()
@@ -454,25 +460,29 @@ class VariantService:
 
         # Cost range filter
         if filters.get("min_cost"):
-            conditions.append("""
+            conditions.append(
+                """
                 EXISTS (
                     SELECT 1 FROM variant_supplier_pricing vsp
                     WHERE vsp.variant_id = iv.variant_id
                       AND vsp.cost_per_unit >= %s
                       AND vsp.is_active = TRUE
                 )
-            """)
+            """
+            )
             params.append(filters["min_cost"])
 
         if filters.get("max_cost"):
-            conditions.append("""
+            conditions.append(
+                """
                 EXISTS (
                     SELECT 1 FROM variant_supplier_pricing vsp
                     WHERE vsp.variant_id = iv.variant_id
                       AND vsp.cost_per_unit <= %s
                       AND vsp.is_active = TRUE
                 )
-            """)
+            """
+            )
             params.append(filters["max_cost"])
 
         where_clause = " AND ".join(conditions)
@@ -558,9 +568,9 @@ class VariantService:
                 **dict(v),
                 "is_low_stock": float(v["opening_stock"] or 0)
                 <= float(v["threshold"] or 0),
-                "stock_status": "in_stock"
-                if float(v["opening_stock"] or 0) > 0
-                else "out_of_stock",
+                "stock_status": (
+                    "in_stock" if float(v["opening_stock"] or 0) > 0 else "out_of_stock"
+                ),
             }
             for v in variants
         ]

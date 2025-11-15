@@ -20,7 +20,8 @@ def upgrade():
         print("Creating import_jobs table...")
 
         # Create import_jobs table
-        cur.execute("""
+        cur.execute(
+            """
             CREATE TABLE IF NOT EXISTS import_jobs (
                 id SERIAL PRIMARY KEY,
                 import_id UUID UNIQUE NOT NULL,
@@ -38,40 +39,50 @@ def upgrade():
                 CONSTRAINT fk_user FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE,
                 CONSTRAINT chk_status CHECK (status IN ('pending', 'processing', 'completed', 'failed', 'cancelled'))
             );
-        """)
+        """
+        )
         print("✅ Created import_jobs table")
 
         # Create indexes for efficient queries
-        cur.execute("""
+        cur.execute(
+            """
             CREATE INDEX IF NOT EXISTS idx_import_jobs_import_id
             ON import_jobs(import_id);
-        """)
+        """
+        )
         print("✅ Created index on import_jobs(import_id)")
 
-        cur.execute("""
+        cur.execute(
+            """
             CREATE INDEX IF NOT EXISTS idx_import_jobs_user_id
             ON import_jobs(user_id);
-        """)
+        """
+        )
         print("✅ Created index on import_jobs(user_id)")
 
-        cur.execute("""
+        cur.execute(
+            """
             CREATE INDEX IF NOT EXISTS idx_import_jobs_status
             ON import_jobs(status)
             WHERE status IN ('pending', 'processing');
-        """)
+        """
+        )
         print("✅ Created index on import_jobs(status)")
 
-        cur.execute("""
+        cur.execute(
+            """
             CREATE INDEX IF NOT EXISTS idx_import_jobs_created_at
             ON import_jobs(created_at DESC);
-        """)
+        """
+        )
         print("✅ Created index on import_jobs(created_at)")
 
         # Create import_results table to store detailed results
         # Create import_results table. The foreign key to import_jobs(import_id) is added
         # conditionally below to avoid failing when an existing import_jobs table has
         # a mismatched column type (e.g., varchar vs uuid) in legacy schemas.
-        cur.execute("""
+        cur.execute(
+            """
             CREATE TABLE IF NOT EXISTS import_results (
                 id SERIAL PRIMARY KEY,
                 import_id UUID UNIQUE NOT NULL,
@@ -83,11 +94,13 @@ def upgrade():
                 failed_rows JSONB,
                 created_at TIMESTAMP DEFAULT NOW()
             );
-        """)
+        """
+        )
         print("✅ Created import_results table (FK added conditionally)")
 
         # Conditionally add FK constraint only if import_jobs.import_id exists and is of type uuid
-        cur.execute("""
+        cur.execute(
+            """
         DO $$
         BEGIN
             IF EXISTS (SELECT 1 FROM information_schema.columns
@@ -103,17 +116,21 @@ def upgrade():
             END IF;
         END
         $$;
-        """)
+        """
+        )
 
         # Create index on import_results
-        cur.execute("""
+        cur.execute(
+            """
             CREATE INDEX IF NOT EXISTS idx_import_results_import_id
             ON import_results(import_id);
-        """)
+        """
+        )
         print("✅ Created index on import_results(import_id)")
 
         # Create trigger to update updated_at timestamp
-        cur.execute("""
+        cur.execute(
+            """
             CREATE OR REPLACE FUNCTION update_import_jobs_updated_at()
             RETURNS TRIGGER AS $$
             BEGIN
@@ -121,18 +138,23 @@ def upgrade():
                 RETURN NEW;
             END;
             $$ LANGUAGE plpgsql;
-        """)
+        """
+        )
 
-        cur.execute("""
+        cur.execute(
+            """
             DROP TRIGGER IF EXISTS trigger_update_import_jobs_updated_at ON import_jobs;
-        """)
+        """
+        )
 
-        cur.execute("""
+        cur.execute(
+            """
             CREATE TRIGGER trigger_update_import_jobs_updated_at
             BEFORE UPDATE ON import_jobs
             FOR EACH ROW
             EXECUTE FUNCTION update_import_jobs_updated_at();
-        """)
+        """
+        )
         print("✅ Created trigger for updated_at timestamp")
 
         conn.commit()

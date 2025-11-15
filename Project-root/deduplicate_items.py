@@ -27,12 +27,14 @@ def deduplicate():
     with get_conn() as (conn, cur):
         # Find duplicate items
         print("Finding duplicate items...")
-        cur.execute("""
+        cur.execute(
+            """
             SELECT name, model_id, variation_id, COALESCE(description, '')
             FROM item_master
             GROUP BY name, model_id, variation_id, COALESCE(description, '')
             HAVING COUNT(*) > 1;
-        """)
+        """
+        )
         duplicates = cur.fetchall()
 
         if not duplicates:

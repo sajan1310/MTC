@@ -41,9 +41,7 @@ def validate_production_lot_creation(
 
         # Detect whether soft-delete column exists for processes and process_subprocesses
         processes_has_deleted = _column_exists("processes", "deleted_at")
-        subprocesses_has_deleted = _column_exists(
-            "process_subprocesses", "deleted_at"
-        )
+        subprocesses_has_deleted = _column_exists("process_subprocesses", "deleted_at")
 
         # 1) process exists and is active/draft
         if processes_has_deleted:

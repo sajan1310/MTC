@@ -1,5 +1,4 @@
 ./
-    .coverage
     .env.example
     .pre-commit-config.yaml
     .secrets.baseline
@@ -65,6 +64,8 @@
     OPTIMIZATION_QUICK_REFERENCE.md
     PROCESS_EDITOR_OPTIMIZATION_SUMMARY.md
     PROCESS_FRAMEWORK_INTEGRATION_COMPLETE.md
+    Production lot detail.js
+    Production lot detail.json
     PRODUCTION_READINESS_REPORT.md
     project_auditor.py
     Project_Summary.md
@@ -404,6 +405,7 @@
             debug_select_variant.py
             debug_variant_options.py
             improve_error_handling.py
+            smoke_variant_endpoints.py
             verify_upf_endpoints.py
         static/
             dashboard.js
@@ -419,10 +421,13 @@
             css/
                 inventory_alerts.css
                 login.css
+                production_lot_detail.css
+                upf_core.css
             img/
                 Final_Logo.png
             js/
                 api_client.js
+                console_guard.js
                 cost_calculator.js
                 inventory_alerts.js
                 login.js
@@ -433,6 +438,7 @@
                 process_manager.js
                 production_lots.js
                 production_lot_alerts.js
+                production_lot_detail.js
                 subprocess_library.js
                 upf_api_client.js
                 upf_reports.js
@@ -481,6 +487,8 @@
             test_integration_flows.py
             test_oauth_redirect_uri.py
             test_process_flow.py
+            test_production_lot_api.py
+            test_production_lot_api_clean.py
             test_project_audit.py
             test_smoke.py
             api/

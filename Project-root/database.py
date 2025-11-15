@@ -131,6 +131,7 @@ def get_conn(cursor_factory=None, autocommit=False):
             # Try to log warning if Flask app context is available
             try:
                 from flask import current_app
+
                 current_app.logger.warning("Stale connection detected, reconnecting...")
             except (ImportError, RuntimeError):
                 print("WARNING: Stale connection detected, reconnecting...")
@@ -150,6 +151,7 @@ def get_conn(cursor_factory=None, autocommit=False):
         # Connection-level error (network, server crash, etc.)
         try:
             from flask import current_app
+
             current_app.logger.error(f"Database connection error: {e}")
         except (ImportError, RuntimeError):
             print(f"ERROR: Database connection error: {e}")
@@ -165,6 +167,7 @@ def get_conn(cursor_factory=None, autocommit=False):
         # Constraint violation (unique, foreign key, etc.)
         try:
             from flask import current_app
+
             current_app.logger.warning(f"Database integrity error: {e}")
         except (ImportError, RuntimeError):
             print(f"WARNING: Database integrity error: {e}")
@@ -176,6 +179,7 @@ def get_conn(cursor_factory=None, autocommit=False):
         # General error (syntax, logic, etc.)
         try:
             from flask import current_app
+
             current_app.logger.error(f"Database error: {e}")
         except (ImportError, RuntimeError):
             print(f"ERROR: Database error: {e}")
@@ -242,6 +246,7 @@ def transactional(func):
                 # get_conn context manager handles rollback
                 try:
                     from flask import current_app
+
                     current_app.logger.error(
                         f"Transaction failed in {func.__name__}: {e}", exc_info=True
                     )

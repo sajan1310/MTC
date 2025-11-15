@@ -32,17 +32,28 @@ def classify_candidate(token, migrations_texts, usages_snippets):
     classification = "other"
 
     # check for explicit CREATE TABLE or CREATE VIEW
-    create_table_re = re.compile(r"create\s+table\s+if\s+not\s+exists\s+" + re.escape(t), re.I)
-    create_view_re = re.compile(r"create\s+view\s+if\s+not\s+exists\s+" + re.escape(t), re.I)
-    alter_add_column_re = re.compile(r"alter\s+table\s+\w+\s+add\s+column\s+if\s+not\s+exists\s+" + re.escape(t), re.I)
+    create_table_re = re.compile(
+        r"create\s+table\s+if\s+not\s+exists\s+" + re.escape(t), re.I
+    )
+    create_view_re = re.compile(
+        r"create\s+view\s+if\s+not\s+exists\s+" + re.escape(t), re.I
+    )
+    alter_add_column_re = re.compile(
+        r"alter\s+table\s+\w+\s+add\s+column\s+if\s+not\s+exists\s+" + re.escape(t),
+        re.I,
+    )
     # also allow ALTER TABLE ... ADD COLUMN <colname>
-    alter_any_add_col_re = re.compile(r"alter\s+table[\s\S]{0,80}add\s+column[\s\S]{0,40}" + re.escape(t), re.I)
+    alter_any_add_col_re = re.compile(
+        r"alter\s+table[\s\S]{0,80}add\s+column[\s\S]{0,40}" + re.escape(t), re.I
+    )
 
     for fn, text in migrations_texts:
         low = text.lower()
         if create_table_re.search(low):
             return "table"
-        if create_view_re.search(low) or re.search(r"create\s+view\s+" + re.escape(t), low):
+        if create_view_re.search(low) or re.search(
+            r"create\s+view\s+" + re.escape(t), low
+        ):
             return "view"
         if alter_add_column_re.search(low) or alter_any_add_col_re.search(low):
             # if candidate looks like a column name in migrations
@@ -59,7 +70,13 @@ def classify_candidate(token, migrations_texts, usages_snippets):
         return "column"
 
     # system/pg names
-    if t.startswith("pg_") or t in ("information_schema", "key_column_usage", "table_constraints", "pg_class", "pg_tables"):
+    if t.startswith("pg_") or t in (
+        "information_schema",
+        "key_column_usage",
+        "table_constraints",
+        "pg_class",
+        "pg_tables",
+    ):
         return "system_view"
 
     # python/module false positives
@@ -92,7 +109,11 @@ def main():
         for u in usages.get(c, []):
             snippets.append(u.get("snippet", "") if isinstance(u, dict) else str(u))
         cls = classify_candidate(c, migrations_texts, snippets)
-        out[c] = {"classification": cls, "usage_count": len(snippets), "sample_usages": snippets[:6]}
+        out[c] = {
+            "classification": cls,
+            "usage_count": len(snippets),
+            "sample_usages": snippets[:6],
+        }
 
     out_path = os.path.join(ROOT, "migration_candidate_classification.json")
     with open(out_path, "w", encoding="utf-8") as f:

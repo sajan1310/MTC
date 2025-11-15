@@ -23,10 +23,12 @@ def upgrade():
         cur.execute("DROP INDEX IF EXISTS unique_item_definition;")
 
         # Create the new unique index
-        cur.execute("""
+        cur.execute(
+            """
             CREATE UNIQUE INDEX unique_item_definition
             ON item_master (name, COALESCE(model, ''), COALESCE(variation, ''), COALESCE(description, ''));
-        """)
+        """
+        )
 
         conn.commit()
         print("Upgrade complete: unique_item_definition index created.")

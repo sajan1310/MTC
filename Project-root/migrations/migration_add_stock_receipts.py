@@ -17,7 +17,8 @@ def upgrade():
     """
     with get_conn() as (conn, cur):
         # Create the stock_receipts table
-        cur.execute("""
+        cur.execute(
+            """
             CREATE TABLE IF NOT EXISTS stock_receipts (
                 receipt_id SERIAL PRIMARY KEY,
                 bill_number VARCHAR(255),
@@ -27,13 +28,16 @@ def upgrade():
                 tax_percentage NUMERIC(5, 2),
                 grand_total NUMERIC(10, 2)
             );
-        """)
+        """
+        )
 
         # Add receipt_id to stock_entries table
-        cur.execute("""
+        cur.execute(
+            """
             ALTER TABLE stock_entries
             ADD COLUMN IF NOT EXISTS receipt_id INTEGER REFERENCES stock_receipts(receipt_id);
-        """)
+        """
+        )
 
         conn.commit()
         print("Upgrade complete: stock_receipts created and stock_entries updated.")
@@ -45,10 +49,12 @@ def downgrade():
     """
     with get_conn() as (conn, cur):
         # Remove the receipt_id from stock_entries
-        cur.execute("""
+        cur.execute(
+            """
             ALTER TABLE stock_entries
             DROP COLUMN IF EXISTS receipt_id;
-        """)
+        """
+        )
 
         # Drop the stock_receipts table
         cur.execute("DROP TABLE IF EXISTS stock_receipts;")

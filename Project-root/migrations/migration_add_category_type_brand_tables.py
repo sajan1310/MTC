@@ -17,24 +17,30 @@ def upgrade():
     """
     with get_conn() as (conn, cur):
         # Create master tables
-        cur.execute("""
+        cur.execute(
+            """
             CREATE TABLE IF NOT EXISTS item_category_master (
                 item_category_id SERIAL PRIMARY KEY,
                 item_category_name VARCHAR(255) UNIQUE NOT NULL
             );
-        """)
-        cur.execute("""
+        """
+        )
+        cur.execute(
+            """
             CREATE TABLE IF NOT EXISTS item_type_master (
                 item_type_id SERIAL PRIMARY KEY,
                 item_type_name VARCHAR(255) UNIQUE NOT NULL
             );
-        """)
-        cur.execute("""
+        """
+        )
+        cur.execute(
+            """
             CREATE TABLE IF NOT EXISTS item_brand_master (
                 item_brand_id SERIAL PRIMARY KEY,
                 item_brand_name VARCHAR(255) UNIQUE NOT NULL
             );
-        """)
+        """
+        )
 
         # Add foreign key columns to item_master
         cur.execute(

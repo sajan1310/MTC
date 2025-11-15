@@ -41,14 +41,16 @@ def upgrade():
             )
 
         # Add a unique constraint
-        cur.execute("""
+        cur.execute(
+            """
             DO $$
             BEGIN
                 IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conname = 'unique_po_number') THEN
                     ALTER TABLE purchase_orders ADD CONSTRAINT unique_po_number UNIQUE (po_number);
                 END IF;
             END$$;
-        """)
+        """
+        )
 
         conn.commit()
         print("Upgrade complete: Added and populated po_number in purchase_orders.")

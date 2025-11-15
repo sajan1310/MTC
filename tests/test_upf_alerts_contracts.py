@@ -10,6 +10,7 @@ Tests assert response schema presence/shape and avoid asserting actual values.
 They gracefully skip if authentication is required and not present, or if DB
 is unavailable in the environment.
 """
+
 from __future__ import annotations
 
 import pytest
@@ -106,9 +107,7 @@ def test_put_rule_contract(client, variant_id):
         "alert_threshold_percentage": 75.0,
     }
     try:
-        resp = client.put(
-            f"/api/upf/inventory-alerts/rules/{variant_id}", json=body
-        )
+        resp = client.put(f"/api/upf/inventory-alerts/rules/{variant_id}", json=body)
     except psycopg2.OperationalError:
         pytest.xfail("Database unavailable for alerts tests")
     assert resp.status_code in (200, 401, 404, 409, 422, 500)

@@ -88,32 +88,37 @@ def setup_test_db():
 
         # Initialize database module for migrations
         import database
-        
+
         class MockApp:
             def __init__(self):
                 class MockLogger:
-                    def info(self, msg): print(f"INFO: {msg}")
-                    def critical(self, msg): print(f"CRITICAL: {msg}")
-                    def warning(self, msg): print(f"WARNING: {msg}")
-                
+                    def info(self, msg):
+                        print(f"INFO: {msg}")
+
+                    def critical(self, msg):
+                        print(f"CRITICAL: {msg}")
+
+                    def warning(self, msg):
+                        print(f"WARNING: {msg}")
+
                 self.logger = MockLogger()
                 self.config = {
-                    'DATABASE_URL': f'postgresql://{db_user}:{db_pass}@{db_host}/{db_name}',
-                    'DB_HOST': db_host,
-                    'DB_NAME': db_name,
-                    'DB_USER': db_user,
-                    'DB_PASS': db_pass,
-                    'DB_POOL_MIN': 2,
-                    'DB_POOL_MAX': 10,
-                    'DB_CONNECT_TIMEOUT': 10,
-                    'DB_STATEMENT_TIMEOUT': 60000,
-                    'TESTING': True,
-                    'ENV': 'testing'
+                    "DATABASE_URL": f"postgresql://{db_user}:{db_pass}@{db_host}/{db_name}",
+                    "DB_HOST": db_host,
+                    "DB_NAME": db_name,
+                    "DB_USER": db_user,
+                    "DB_PASS": db_pass,
+                    "DB_POOL_MIN": 2,
+                    "DB_POOL_MAX": 10,
+                    "DB_CONNECT_TIMEOUT": 10,
+                    "DB_STATEMENT_TIMEOUT": 60000,
+                    "TESTING": True,
+                    "ENV": "testing",
                 }
-            
+
             def get(self, key, default=None):
                 return self.config.get(key, default)
-        
+
         # Initialize database pool for migrations
         try:
             database.init_app(MockApp())
@@ -122,12 +127,14 @@ def setup_test_db():
             print(f"  [WARNING] Database pool initialization: {e}")
 
         # Ensure schema_migrations table exists
-        cur.execute("""
+        cur.execute(
+            """
             CREATE TABLE IF NOT EXISTS schema_migrations (
                 version VARCHAR(255) PRIMARY KEY,
                 applied_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP
             );
-        """)
+        """
+        )
 
         # Get applied migrations
         cur.execute("SELECT version FROM schema_migrations;")
@@ -135,7 +142,7 @@ def setup_test_db():
 
         # Discover and apply pending migrations
         migration_files = sorted([f for f in migrations_dir.glob("migration_*.py")])
-        
+
         print(f"  Found {len(migration_files)} migration files")
 
         for migration_file in migration_files:
@@ -167,6 +174,7 @@ def setup_test_db():
                 except Exception as e:
                     print(f"  [ERROR] Migration {version} failed: {e}")
                     import traceback
+
                     traceback.print_exc()
                     # Continue with other migrations even if one fails
                     continue
@@ -181,7 +189,7 @@ def setup_test_db():
                 "SELECT EXISTS (SELECT FROM information_schema.tables WHERE table_name='processes');"
             )
             processes_exists = cur.fetchone()[0]
-            
+
             if not processes_exists:
                 print("  [ERROR] processes table does not exist after migrations!")
                 print("  [INFO] Available tables:")
@@ -191,16 +199,16 @@ def setup_test_db():
                 for row in cur.fetchall():
                     print(f"    - {row[0]}")
                 raise Exception("processes table not created by migrations")
-            
+
             # Detect column names for process table
             cur.execute(
                 "SELECT column_name FROM information_schema.columns WHERE table_name='processes' ORDER BY ordinal_position;"
             )
             process_cols = {row[0] for row in cur.fetchall()}
-            
+
             if not process_cols:
                 raise Exception("processes table has no columns!")
-            
+
             print(f"  [OK] processes table columns: {sorted(process_cols)}")
 
             process_class_col = "class" if "class" in process_cols else "process_class"

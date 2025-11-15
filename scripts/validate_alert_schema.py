@@ -224,9 +224,11 @@ def test_cascade_delete(cur):
 
 def test_performance(cur):
     try:
-        cur.execute("""
+        cur.execute(
+            """
             EXPLAIN ANALYZE SELECT * FROM production_lot_inventory_alerts WHERE alert_severity = 'CRITICAL' LIMIT 1000000;
-        """)
+        """
+        )
         _ = cur.fetchall()  # Execute query but don't need result
         return True, "Performance test query executed."
     except Exception as e:

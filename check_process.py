@@ -19,6 +19,7 @@ from app import create_app
 
 # Dynamically load the database module from the project root to avoid static-import resolution errors
 import importlib.util
+
 db_path = os.path.join(project_root, "database.py")
 spec = importlib.util.spec_from_file_location("database", db_path)
 database = importlib.util.module_from_spec(spec)

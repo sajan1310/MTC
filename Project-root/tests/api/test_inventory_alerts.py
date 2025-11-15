@@ -203,9 +203,9 @@ def _seed_lot_with_alerts(severities: List[str]) -> int:
                 if inserted:
                     break
 
-        assert process_id is not None, (
-            f"Failed to insert process; tried classes: {proc_class_candidates}"
-        )
+        assert (
+            process_id is not None
+        ), f"Failed to insert process; tried classes: {proc_class_candidates}"
 
         # Insert production lot (use 'Planning' status - valid per migration_add_upf_tables.py schema)
         cur.execute(

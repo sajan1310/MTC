@@ -3,7 +3,6 @@ Integration Tests for Flask Application
 Tests complete user workflows end-to-end
 """
 
-
 # Remove duplicate fixtures - use the ones from conftest.py instead
 # The conftest.py provides:
 # - app: Flask app configured for testing

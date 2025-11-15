@@ -15,6 +15,8 @@
 {% else %}
 <link rel="stylesheet" href="{{ url_for('static', filename='styles.css') }}?v={{ config.VERSION }}">
 {% endif %}
+<!-- UPF core utilities (non-invasive) -->
+<link rel="stylesheet" href="{{ url_for('static', filename='css/upf_core.css') }}?v={{ config.VERSION }}">
     <link href="https://cdn.jsdelivr.net/npm/select2@4.1.0-rc.0/dist/css/select2.min.css" rel="stylesheet" />
 </head>
 <body>
@@ -197,6 +199,8 @@
     {% include '_po_modals.html' %}
 
     {% block scripts %}
+    <!-- Console guard: suppress non-error logs unless window.__UPF_DEBUG__ is set -->
+    <script src="{{ url_for('static', filename='js/console_guard.js') }}?v={{ config.VERSION }}"></script>
     <script src="https://code.jquery.com/jquery-3.6.0.min.js" defer></script>
     <script src="https://cdn.jsdelivr.net/npm/select2@4.1.0-rc.0/dist/js/select2.min.js" defer></script>
     <script src="https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js" defer></script>

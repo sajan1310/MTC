@@ -110,7 +110,8 @@ class BackgroundImportWorker:
         try:
             with get_conn() as (conn, cur):
                 # Get oldest pending job and mark as processing
-                cur.execute("""
+                cur.execute(
+                    """
                     UPDATE import_jobs
                     SET status = 'processing',
                         started_at = NOW()
@@ -122,7 +123,8 @@ class BackgroundImportWorker:
                         FOR UPDATE SKIP LOCKED
                     )
                     RETURNING id, import_id, user_id, table_name, total_rows;
-                """)
+                """
+                )
 
                 result = cur.fetchone()
                 if result:

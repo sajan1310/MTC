@@ -41,7 +41,8 @@ def upgrade():
 
         # ===== TABLE 1: PROCESS MANAGEMENT =====
         print("Creating processes table...")
-        cur.execute("""
+        cur.execute(
+            """
             CREATE TABLE IF NOT EXISTS processes (
                 id SERIAL PRIMARY KEY,
                 name VARCHAR(255) NOT NULL,
@@ -58,11 +59,13 @@ def upgrade():
                 updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
                 UNIQUE(id, user_id)
             );
-        """)
+        """
+        )
 
         # ===== TABLE 2: SUBPROCESS MANAGEMENT =====
         print("Creating subprocesses table...")
-        cur.execute("""
+        cur.execute(
+            """
             CREATE TABLE IF NOT EXISTS subprocesses (
                 id SERIAL PRIMARY KEY,
                 name VARCHAR(255) NOT NULL,
@@ -75,11 +78,13 @@ def upgrade():
                 created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
                 updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
             );
-        """)
+        """
+        )
 
         # ===== TABLE 3: PROCESS-SUBPROCESS ASSOCIATION =====
         print("Creating process_subprocesses table...")
-        cur.execute("""
+        cur.execute(
+            """
             CREATE TABLE IF NOT EXISTS process_subprocesses (
                 id SERIAL PRIMARY KEY,
                 process_id INTEGER NOT NULL REFERENCES processes(id) ON DELETE CASCADE,
@@ -90,11 +95,13 @@ def upgrade():
                 created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
                 UNIQUE(process_id, subprocess_id, sequence_order)
             );
-        """)
+        """
+        )
 
         # ===== TABLE 4: VARIANT USAGE IN SUBPROCESS =====
         print("Creating variant_usage table...")
-        cur.execute("""
+        cur.execute(
+            """
             CREATE TABLE IF NOT EXISTS variant_usage (
                 id SERIAL PRIMARY KEY,
                 process_subprocess_id INTEGER NOT NULL REFERENCES process_subprocesses(id) ON DELETE CASCADE,
@@ -108,11 +115,13 @@ def upgrade():
                 created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
                 updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
             );
-        """)
+        """
+        )
 
         # ===== TABLE 5: COST ITEMS =====
         print("Creating cost_items table...")
-        cur.execute("""
+        cur.execute(
+            """
             CREATE TABLE IF NOT EXISTS cost_items (
                 id SERIAL PRIMARY KEY,
                 process_subprocess_id INTEGER NOT NULL REFERENCES process_subprocesses(id) ON DELETE CASCADE,
@@ -127,11 +136,13 @@ def upgrade():
                 created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
                 updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
             );
-        """)
+        """
+        )
 
         # ===== TABLE 6: ADDITIONAL OVERALL COSTS =====
         print("Creating additional_costs table...")
-        cur.execute("""
+        cur.execute(
+            """
             CREATE TABLE IF NOT EXISTS additional_costs (
                 id SERIAL PRIMARY KEY,
                 process_id INTEGER NOT NULL REFERENCES processes(id) ON DELETE CASCADE,
@@ -141,11 +152,13 @@ def upgrade():
                 is_fixed BOOLEAN DEFAULT TRUE,
                 created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
             );
-        """)
+        """
+        )
 
         # ===== TABLE 7: PROCESS TIMING =====
         print("Creating process_timing table...")
-        cur.execute("""
+        cur.execute(
+            """
             CREATE TABLE IF NOT EXISTS process_timing (
                 id SERIAL PRIMARY KEY,
                 process_subprocess_id INTEGER NOT NULL REFERENCES process_subprocesses(id) ON DELETE CASCADE,
@@ -156,11 +169,13 @@ def upgrade():
                 created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
                 updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
             );
-        """)
+        """
+        )
 
         # ===== TABLE 8: CONDITIONAL FLAGS =====
         print("Creating conditional_flags table...")
-        cur.execute("""
+        cur.execute(
+            """
             CREATE TABLE IF NOT EXISTS conditional_flags (
                 id SERIAL PRIMARY KEY,
                 process_subprocess_id INTEGER NOT NULL REFERENCES process_subprocesses(id) ON DELETE CASCADE,
@@ -172,11 +187,13 @@ def upgrade():
                 created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
                 updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
             );
-        """)
+        """
+        )
 
         # ===== TABLE 9: PROFITABILITY TRACKING =====
         print("Creating profitability table...")
-        cur.execute("""
+        cur.execute(
+            """
             CREATE TABLE IF NOT EXISTS profitability (
                 id SERIAL PRIMARY KEY,
                 process_id INTEGER NOT NULL REFERENCES processes(id) ON DELETE CASCADE,
@@ -189,11 +206,13 @@ def upgrade():
                 updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
                 UNIQUE(process_id)
             );
-        """)
+        """
+        )
 
         # ===== TABLE 10: SUBSTITUTE/ALTERNATIVE GROUPS =====
         print("Creating substitute_groups table...")
-        cur.execute("""
+        cur.execute(
+            """
             CREATE TABLE IF NOT EXISTS substitute_groups (
                 id SERIAL PRIMARY KEY,
                 process_subprocess_id INTEGER NOT NULL REFERENCES process_subprocesses(id) ON DELETE CASCADE,
@@ -204,20 +223,24 @@ def upgrade():
                 created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
                 updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
             );
-        """)
+        """
+        )
 
         # Add foreign key constraint for substitute groups
-        cur.execute("""
+        cur.execute(
+            """
             ALTER TABLE variant_usage
             ADD CONSTRAINT fk_substitute_group
             FOREIGN KEY (substitute_group_id)
             REFERENCES substitute_groups(id)
             ON DELETE CASCADE;
-        """)
+        """
+        )
 
         # ===== TABLE 11: SUPPLIER PRICING FOR VARIANTS =====
         print("Creating variant_supplier_pricing table...")
-        cur.execute("""
+        cur.execute(
+            """
             CREATE TABLE IF NOT EXISTS variant_supplier_pricing (
                 id SERIAL PRIMARY KEY,
                 variant_id INTEGER NOT NULL REFERENCES item_variant(variant_id) ON DELETE CASCADE,
@@ -232,11 +255,13 @@ def upgrade():
                 updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
                 UNIQUE(variant_id, supplier_id, effective_from)
             );
-        """)
+        """
+        )
 
         # ===== TABLE 12: WORST-CASE COSTING TRACKING =====
         print("Creating process_worst_case_costing table...")
-        cur.execute("""
+        cur.execute(
+            """
             CREATE TABLE IF NOT EXISTS process_worst_case_costing (
                 id SERIAL PRIMARY KEY,
                 process_id INTEGER NOT NULL REFERENCES processes(id) ON DELETE CASCADE,
@@ -253,11 +278,13 @@ def upgrade():
                 created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
                 updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
             );
-        """)
+        """
+        )
 
         # ===== TABLE 13: PRODUCTION LOTS =====
         print("Creating production_lots table...")
-        cur.execute("""
+        cur.execute(
+            """
             CREATE TABLE IF NOT EXISTS production_lots (
                 id SERIAL PRIMARY KEY,
                 process_id INTEGER NOT NULL REFERENCES processes(id) ON DELETE RESTRICT,
@@ -274,11 +301,13 @@ def upgrade():
                 completed_at TIMESTAMP,
                 UNIQUE(id, process_id)
             );
-        """)
+        """
+        )
 
         # ===== TABLE 14: PRODUCTION LOT VARIANT SELECTIONS =====
         print("Creating production_lot_selections table...")
-        cur.execute("""
+        cur.execute(
+            """
             CREATE TABLE IF NOT EXISTS production_lot_selections (
                 id SERIAL PRIMARY KEY,
                 production_lot_id INTEGER NOT NULL REFERENCES production_lots(id) ON DELETE CASCADE,
@@ -291,11 +320,13 @@ def upgrade():
                 updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
                 UNIQUE(production_lot_id, substitute_group_id)
             );
-        """)
+        """
+        )
 
         # ===== TABLE 15: PRODUCTION LOT ACTUAL COSTING =====
         print("Creating production_lot_actual_costing table...")
-        cur.execute("""
+        cur.execute(
+            """
             CREATE TABLE IF NOT EXISTS production_lot_actual_costing (
                 id SERIAL PRIMARY KEY,
                 production_lot_id INTEGER NOT NULL REFERENCES production_lots(id) ON DELETE CASCADE,
@@ -308,7 +339,8 @@ def upgrade():
                 notes TEXT,
                 created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
             );
-        """)
+        """
+        )
 
         # ===== PERFORMANCE INDEXES =====
         print("Creating performance indexes...")
@@ -408,7 +440,8 @@ def upgrade():
         # ===== TRIGGERS FOR AUTO-UPDATE TIMESTAMPS =====
         print("Creating update timestamp triggers...")
 
-        cur.execute("""
+        cur.execute(
+            """
             CREATE OR REPLACE FUNCTION update_updated_at_column()
             RETURNS TRIGGER AS $$
             BEGIN
@@ -416,7 +449,8 @@ def upgrade():
                 RETURN NEW;
             END;
             $$ LANGUAGE plpgsql;
-        """)
+        """
+        )
 
         # Apply triggers to tables with updated_at columns
         tables_with_updated_at = [
@@ -434,13 +468,15 @@ def upgrade():
         ]
 
         for table in tables_with_updated_at:
-            cur.execute(f"""
+            cur.execute(
+                f"""
                 DROP TRIGGER IF EXISTS update_{table}_updated_at ON {table};
                 CREATE TRIGGER update_{table}_updated_at
                 BEFORE UPDATE ON {table}
                 FOR EACH ROW
                 EXECUTE FUNCTION update_updated_at_column();
-            """)
+            """
+            )
 
         conn.commit()
         print("✅ Universal Process Framework migration completed successfully!")

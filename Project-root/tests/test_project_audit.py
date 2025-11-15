@@ -71,7 +71,10 @@ def gather_migration_tables(root: Path):
     """Parse migration SQL/Python migrations for CREATE TABLE occurrences."""
     # Kept for backward compatibility; prefer gather_migration_db_objects below.
     migrations = list(root.rglob("migrations/*"))
-    table_re = re.compile(r"CREATE\s+TABLE\s+(?:IF\s+NOT\s+EXISTS\s+)?(?:\w+\.)?\"?([a-zA-Z0-9_]+)\"?", re.I)
+    table_re = re.compile(
+        r"CREATE\s+TABLE\s+(?:IF\s+NOT\s+EXISTS\s+)?(?:\w+\.)?\"?([a-zA-Z0-9_]+)\"?",
+        re.I,
+    )
     tables = set()
     for f in migrations:
         if f.is_file():
@@ -87,11 +90,23 @@ def gather_migration_db_objects(root: Path):
     Returns a tuple of (tables_set, views_set, columns_set).
     """
     migrations = list(root.rglob("migrations/*"))
-    table_re = re.compile(r"CREATE\s+TABLE\s+(?:IF\s+NOT\s+EXISTS\s+)?(?:\w+\.)?\"?([a-zA-Z0-9_]+)\"?", re.I)
-    view_re = re.compile(r"CREATE\s+(?:MATERIALIZED\s+)?VIEW\s+(?:IF\s+NOT\s+EXISTS\s+)?(?:\w+\.)?\"?([a-zA-Z0-9_]+)\"?", re.I)
-    alter_add_col_re = re.compile(r"ALTER\s+TABLE\s+(?:\w+\.)?\"?[a-zA-Z0-9_]+\"?\s+ADD\s+COLUMN\s+(?:IF\s+NOT\s+EXISTS\s+)?\"?([a-zA-Z0-9_]+)\"?", re.I)
+    table_re = re.compile(
+        r"CREATE\s+TABLE\s+(?:IF\s+NOT\s+EXISTS\s+)?(?:\w+\.)?\"?([a-zA-Z0-9_]+)\"?",
+        re.I,
+    )
+    view_re = re.compile(
+        r"CREATE\s+(?:MATERIALIZED\s+)?VIEW\s+(?:IF\s+NOT\s+EXISTS\s+)?(?:\w+\.)?\"?([a-zA-Z0-9_]+)\"?",
+        re.I,
+    )
+    alter_add_col_re = re.compile(
+        r"ALTER\s+TABLE\s+(?:\w+\.)?\"?[a-zA-Z0-9_]+\"?\s+ADD\s+COLUMN\s+(?:IF\s+NOT\s+EXISTS\s+)?\"?([a-zA-Z0-9_]+)\"?",
+        re.I,
+    )
     # crude column definition detection inside CREATE TABLE blocks or standalone column defs
-    col_def_re = re.compile(r"\b([a-zA-Z_][a-zA-Z0-9_]*)\s+(?:integer|bigint|serial|text|varchar|character varying|timestamp|boolean|jsonb|uuid)\b", re.I)
+    col_def_re = re.compile(
+        r"\b([a-zA-Z_][a-zA-Z0-9_]*)\s+(?:integer|bigint|serial|text|varchar|character varying|timestamp|boolean|jsonb|uuid)\b",
+        re.I,
+    )
 
     tables = set()
     views = set()
@@ -129,7 +144,13 @@ def is_noise_token(name: str):
     n = name.lower()
     if n.startswith("flask_") or n.startswith("__") or n.startswith("pg_"):
         return True
-    if n in ("information_schema", "generate_series", "key_column_usage", "table_constraints", "table_name"):
+    if n in (
+        "information_schema",
+        "generate_series",
+        "key_column_usage",
+        "table_constraints",
+        "table_name",
+    ):
         return True
     if n.startswith("test_") or n.endswith("_data"):
         # many test helpers and ephemeral CTE-style aliases end with _data
@@ -144,8 +165,12 @@ def gather_blueprint_prefixes(root: Path):
     """
     prefixes = set()
     files = list(root.rglob("*.py"))
-    bp_def_re = re.compile(r"(\w+)\s*=\s*Blueprint\([^\)]*?url_prefix\s*=\s*['\"]([^'\"]+)['\"]", re.I)
-    reg_bp_re = re.compile(r"register_blueprint\(\s*(\w+)\s*,\s*url_prefix\s*=\s*['\"]([^'\"]+)['\"]", re.I)
+    bp_def_re = re.compile(
+        r"(\w+)\s*=\s*Blueprint\([^\)]*?url_prefix\s*=\s*['\"]([^'\"]+)['\"]", re.I
+    )
+    reg_bp_re = re.compile(
+        r"register_blueprint\(\s*(\w+)\s*,\s*url_prefix\s*=\s*['\"]([^'\"]+)['\"]", re.I
+    )
     for f in files:
         if any(s in str(f).lower() for s in SKIP_DIRS):
             continue
@@ -162,7 +187,9 @@ def gather_tables_used_in_code(root: Path):
     files = list(root.rglob("*.py")) + list(root.rglob("*.sql"))
     usage = set()
     # look for simple patterns: FROM table_name, INTO table_name, JOIN table_name
-    pat = re.compile(r"\b(?:FROM|JOIN|INTO|UPDATE)\s+(?:\w+\.)?\"?([a-zA-Z0-9_]+)\"?", re.I)
+    pat = re.compile(
+        r"\b(?:FROM|JOIN|INTO|UPDATE)\s+(?:\w+\.)?\"?([a-zA-Z0-9_]+)\"?", re.I
+    )
     for f in files:
         if any(s in str(f).lower() for s in SKIP_DIRS):
             continue
@@ -185,7 +212,9 @@ def find_sensitive_files(root: Path):
         if not f.is_file():
             continue
         # skip virtualenvs, backups and site-packages to avoid false positives
-        if any(x in str(f).lower() for x in ("venv", "venv2", "site-packages", "backups")):
+        if any(
+            x in str(f).lower() for x in ("venv", "venv2", "site-packages", "backups")
+        ):
             continue
         name = f.name.lower()
         for pat in patterns:
@@ -251,14 +280,16 @@ def test_project_audit():
     # 1) Backend routes
     backend = gather_backend_routes(scan_root)
     if not backend:
-        warnings.append("No backend routes found (no @app.route or add_url_rule patterns).")
+        warnings.append(
+            "No backend routes found (no @app.route or add_url_rule patterns)."
+        )
     # Enrich backend routes with blueprint prefixes so frontend /api/... can match bp.route('/...')
     bp_prefixes = gather_blueprint_prefixes(scan_root)
     enriched_backend = set(backend.keys())
     for p in bp_prefixes:
         for r in list(backend.keys()):
             if r.startswith("/"):
-                enriched_backend.add(p.rstrip('/') + r)
+                enriched_backend.add(p.rstrip("/") + r)
     backend_routes = enriched_backend
 
     # 2) Frontend endpoints
@@ -273,14 +304,27 @@ def test_project_audit():
         # Normalize template params to path up to query/param
         norm = ep.split("?")[0]
         # if endpoint contains template variables, strip to static prefix before ${
-        norm = re.split(r"\$\{.*|\\{.*|\%s", norm)[0] if "${" in norm or "{" in norm else norm
+        norm = (
+            re.split(r"\$\{.*|\\{.*|\%s", norm)[0]
+            if "${" in norm or "{" in norm
+            else norm
+        )
         # check for direct and prefix matches
-        if not any(norm == r or norm.startswith(r.rstrip('/') + '/') or r.startswith(norm.rstrip('/') + '/') for r in backend_routes):
+        if not any(
+            norm == r
+            or norm.startswith(r.rstrip("/") + "/")
+            or r.startswith(norm.rstrip("/") + "/")
+            for r in backend_routes
+        ):
             missing_endpoints.append((ep, files))
     if missing_endpoints:
-        errors.append(f"{len(missing_endpoints)} frontend API endpoint(s) have no matching backend route.")
+        errors.append(
+            f"{len(missing_endpoints)} frontend API endpoint(s) have no matching backend route."
+        )
         # include first few details in message
-        details = [f"{ep} referenced in {files[:2]}" for ep, files in missing_endpoints[:10]]
+        details = [
+            f"{ep} referenced in {files[:2]}" for ep, files in missing_endpoints[:10]
+        ]
         errors.extend(details)
 
     # 4) Duplicate backend routes (now treated as warnings)
@@ -291,7 +335,9 @@ def test_project_audit():
             warnings.append(f"Route {r} declared in: {sorted(set(fs))[:3]}")
 
     # 5) Migrations vs code table usage (improved)
-    migration_tables, migration_views, migration_columns = gather_migration_db_objects(scan_root)
+    migration_tables, migration_views, migration_columns = gather_migration_db_objects(
+        scan_root
+    )
     code_tables = gather_tables_used_in_code(scan_root)
     cte_aliases = gather_cte_aliases(scan_root)
 
@@ -318,19 +364,33 @@ def test_project_audit():
     # 6) Sensitive/unwanted files
     sens = find_sensitive_files(scan_root)
     if sens:
-        warnings.append(f"Found {len(sens)} potentially sensitive/unwanted files: {sens[:10]}")
+        warnings.append(
+            f"Found {len(sens)} potentially sensitive/unwanted files: {sens[:10]}"
+        )
 
     # 7) Dependency consistency: imports vs requirements
     reqs = parse_requirements(scan_root)
     imports = gather_python_imports(scan_root)
-    missing_reqs = sorted([imp for imp in imports if imp not in reqs and imp not in ("__future__", "os", "sys", "re", "json", "pathlib", "typing")])
+    missing_reqs = sorted(
+        [
+            imp
+            for imp in imports
+            if imp not in reqs
+            and imp
+            not in ("__future__", "os", "sys", "re", "json", "pathlib", "typing")
+        ]
+    )
     if missing_reqs:
-        warnings.append(f"{len(missing_reqs)} top-level imports not listed in requirements.txt (heuristic): {missing_reqs[:20]}")
+        warnings.append(
+            f"{len(missing_reqs)} top-level imports not listed in requirements.txt (heuristic): {missing_reqs[:20]}"
+        )
 
     # 8) Large files that may affect performance or maintenance
     large_files = file_size_warnings(scan_root)
     if large_files:
-        warnings.append(f"{len(large_files)} large file(s) >200KB detected: {large_files[:10]}")
+        warnings.append(
+            f"{len(large_files)} large file(s) >200KB detected: {large_files[:10]}"
+        )
 
     # 9) Migration file naming or duplication issues
     migration_dir = root / "Project-root" / "migrations"

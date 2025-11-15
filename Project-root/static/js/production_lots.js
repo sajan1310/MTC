@@ -107,12 +107,15 @@ const productionLots = {
         const processId = document.getElementById('process-filter')?.value || '';
 
         this.filteredLots = this.lots.filter(lot => {
-            const matchesSearch = !searchTerm ||
-                lot.lot_number.toLowerCase().includes(searchTerm) ||
-                lot.process_name.toLowerCase().includes(searchTerm);
+            const lotNumber = (lot.lot_number || '').toString().toLowerCase();
+            const processName = (lot.process_name || '').toString().toLowerCase();
 
-            const matchesStatus = !status || lot.status === status;
-            const matchesProcess = !processId || lot.process_id == processId;
+            const matchesSearch = !searchTerm ||
+                lotNumber.includes(searchTerm) ||
+                processName.includes(searchTerm);
+
+            const matchesStatus = !status || String(lot.status || '') === String(status);
+            const matchesProcess = !processId || String(lot.process_id || '') == String(processId);
 
             return matchesSearch && matchesStatus && matchesProcess;
         });
@@ -136,8 +139,8 @@ const productionLots = {
                 // Filtered results are empty
                 tbody.innerHTML = `
                     <tr>
-                        <td colspan="7" class="empty-state">
-                            <div style="font-size: 48px; margin-bottom: 15px;">�</div>
+                        <td colspan="8" class="empty-state">
+                            <div style="font-size: 48px; margin-bottom: 15px;">🔍</div>
                             <div style="font-size: 18px; margin-bottom: 10px;">No production lots match your filters</div>
                             <p style="color: #999;">Try adjusting your search term, status, or process filter</p>
                         </td>
@@ -147,7 +150,7 @@ const productionLots = {
                 // No production lots at all
                 tbody.innerHTML = `
                     <tr>
-                        <td colspan="7" class="empty-state">
+                        <td colspan="8" class="empty-state">
                             <div style="font-size: 48px; margin-bottom: 15px;">📦</div>
                             <div style="font-size: 18px; margin-bottom: 10px;">No production lots yet</div>
                             <p style="color: #999; margin-bottom: 20px;">Create your first production lot to start manufacturing</p>
@@ -163,16 +166,17 @@ const productionLots = {
 
         let html = '';
         this.filteredLots.forEach(lot => {
-            const statusClass = `status-${lot.status.toLowerCase().replace(' ', '-')}`;
-            const cost = lot.total_cost ? `$${parseFloat(lot.total_cost).toFixed(2)}` : 'Not Set';
-            const createdAt = new Date(lot.created_at).toLocaleDateString();
+            const statusText = lot.status || '';
+            const statusClass = `status-${statusText.toString().toLowerCase().replace(/\s+/g, '-')}`;
+            const cost = (lot.total_cost != null) ? `$${Number(lot.total_cost).toFixed(2)}` : 'Not Set';
+            const createdAt = lot.created_at ? new Date(lot.created_at).toLocaleDateString() : '';
 
             html += `
                 <tr onclick="productionLots.viewDetail(${lot.id})">
-                    <td><span class="lot-number">${lot.lot_number}</span></td>
-                    <td>${lot.process_name}</td>
-                    <td>${lot.quantity}</td>
-                    <td><span class="status-badge ${statusClass}">${lot.status}</span></td>
+                    <td><span class="lot-number">${lot.lot_number || ''}</span></td>
+                    <td>${lot.process_name || ''}</td>
+                    <td>${lot.quantity != null ? lot.quantity : ''}</td>
+                    <td><span class="status-badge ${statusClass}">${statusText}</span></td>
                     <td>${renderAlertsCell(lot)}</td>
                     <td>${cost}</td>
                     <td>${lot.created_by_name || 'System'}</td>
@@ -274,3 +278,28 @@ function renderAlertsCell(lot) {
     const parts = sevOrder.filter(s => bySeverity[s] > 0).map(s => `<span class="severity-badge ${s}" style="margin-right:4px;">${s[0]}:${bySeverity[s]}</span>`);
     return parts.join('') || total;
 }
+
+// Expose helper to global scope for pages that may reuse it
+try {
+    window.renderAlertsCell = renderAlertsCell;
+} catch (e) {
+    // ignore in non-browser contexts
+}
+
+// Attach some helpful DOM bindings so filters/search work without inline handlers
+document.addEventListener('DOMContentLoaded', function() {
+    try {
+        productionLots.init();
+    } catch (e) {
+        console.warn('productionLots.init() failed to run automatically:', e);
+    }
+
+    const search = document.getElementById('search-input');
+    if (search) search.addEventListener('input', () => productionLots.handleSearch());
+
+    const status = document.getElementById('status-filter');
+    if (status) status.addEventListener('change', () => productionLots.applyFilters());
+
+    const process = document.getElementById('process-filter');
+    if (process) process.addEventListener('change', () => productionLots.applyFilters());
+});

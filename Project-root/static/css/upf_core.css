@@ -1,0 +1,78 @@
+/* upf_core.css
+   Centralized, non-invasive styling helpers and CSS variables for UPF pages.
+   This file provides design tokens and utility classes that UPF templates can opt-in to.
+   Keep rules scoped and low-risk to avoid breaking other pages.
+*/
+:root{
+  --upf-primary: #1866d1;
+  --upf-accent: #4CAF50;
+  --upf-danger: #dc3545;
+  --upf-surface: #ffffff;
+  --upf-muted: #6b7280;
+  --upf-shadow: 0 6px 20px rgba(16,24,40,0.08);
+  --upf-radius: 8px;
+  --upf-gap: 12px;
+  --upf-max-width: 1280px;
+}
+
+/* Lightweight container specifically for UPF pages (opt-in by adding .upf-root to an ancestor)
+   Default rules are safe and only apply when the .upf-root class is present. */
+.upf-root .upf-container {
+  max-width: var(--upf-max-width);
+  margin: 0 auto;
+  padding: 20px;
+  box-sizing: border-box;
+  color: #111827;
+  font-family: Inter, system-ui, -apple-system, "Segoe UI", Roboto, "Helvetica Neue", Arial;
+}
+
+.upf-root .upf-card {
+  background: var(--upf-surface);
+  border-radius: var(--upf-radius);
+  box-shadow: var(--upf-shadow);
+  padding: 16px;
+  margin-bottom: var(--upf-gap);
+}
+
+.upf-root .upf-grid { display: grid; gap: var(--upf-gap); }
+.upf-root .upf-grid.cols-2 { grid-template-columns: 2fr 1fr; }
+.upf-root .upf-grid.cols-3 { grid-template-columns: repeat(3, 1fr); }
+
+.upf-root .upf-row { display:flex; gap: var(--upf-gap); align-items:center; }
+.upf-root .upf-actions { display:flex; gap:8px; justify-content:flex-end; }
+
+/* Form controls (opt-in) */
+.upf-root input[type="text"], .upf-root input[type="number"], .upf-root select, .upf-root textarea {
+  border: 1px solid #e6e9ee;
+  border-radius: 6px;
+  padding: 8px 10px;
+  font-size: 14px;
+  color: #111827;
+  background: #fff;
+  box-sizing: border-box;
+}
+
+.upf-root .btn-upf { padding: 10px 14px; border-radius:6px; border:none; cursor:pointer; font-weight:600; }
+.upf-root .btn-upf.primary { background: var(--upf-primary); color: white; }
+.upf-root .btn-upf.ghost { background: transparent; border: 1px solid #e6e9ee; color: var(--upf-primary); }
+.upf-root .btn-upf.danger { background: var(--upf-danger); color: white; }
+
+/* Responsive helpers */
+@media (max-width: 900px) {
+  .upf-root .upf-grid.cols-2 { grid-template-columns: 1fr; }
+  .upf-root .upf-grid.cols-3 { grid-template-columns: 1fr; }
+}
+
+/* Modal utilities (safe z-index and centering) */
+.upf-root .upf-modal { max-width: 720px; width: 100%; border-radius: 10px; box-shadow: 0 20px 60px rgba(2,6,23,0.35); }
+.upf-root .upf-modal-backdrop { z-index: 120000 !important; }
+
+/* Tiny helper classes */
+.upf-root .muted { color: var(--upf-muted); }
+.upf-root .small { font-size: 13px; }
+.upf-root .text-right { text-align: right; }
+
+/* Accessibility helpers */
+.upf-root .sr-only { position:absolute; width:1px; height:1px; overflow:hidden; clip:rect(1px,1px,1px,1px); white-space:nowrap; }
+
+/* Keep this file intentionally minimal. Use component-specific stylesheets for heavier changes. */

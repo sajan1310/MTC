@@ -39,7 +39,8 @@ def is_admin():
 
 def can_access_process(process):
     """Check if current user can access the given process.
-    Returns True if user is admin, owns the process, or not authenticated (for testing)."""
+    Returns True if user is admin, owns the process, or not authenticated (for testing).
+    """
     if not current_user.is_authenticated:
         return True  # Allow access in test mode with LOGIN_DISABLED
     if is_admin():
@@ -505,9 +506,11 @@ def add_subprocess_to_process(process_id):
         association = ProcessService.add_subprocess_to_process(
             process_id=process_id,
             subprocess_id=subprocess_id,
-            sequence_order=int(order)
-            if isinstance(order, (int, float, str)) and str(order).isdigit()
-            else 0,
+            sequence_order=(
+                int(order)
+                if isinstance(order, (int, float, str)) and str(order).isdigit()
+                else 0
+            ),
             custom_name=data.get("custom_name"),
             notes=data.get("notes"),
         )
@@ -545,7 +548,10 @@ def update_process_subprocess(process_id, ps_id):
                     """
                 )
                 rows = cur.fetchall() or []
-                available = {r[0] if not isinstance(r, dict) else r.get("column_name") for r in rows}
+                available = {
+                    r[0] if not isinstance(r, dict) else r.get("column_name")
+                    for r in rows
+                }
                 if "sequence_order" in available:
                     seq_col = "sequence_order"
                 elif "sequence" in available:
@@ -803,7 +809,8 @@ def recalculate_worst_case(process_id):
 
 # ===== PROCESS_SUBPROCESS DIRECT OPERATIONS (Prompts 7 & 8) =====
 
-@process_api_bp.route('/process_subprocess/<int:subprocess_id>', methods=['DELETE'])
+
+@process_api_bp.route("/process_subprocess/<int:subprocess_id>", methods=["DELETE"])
 @login_required
 def delete_process_subprocess(subprocess_id: int):
     """Delete a process_subprocess association (hard delete or soft depending on schema).
@@ -818,7 +825,7 @@ def delete_process_subprocess(subprocess_id: int):
             # HARD DELETE (table doesn't track deleted_at in current schema)
             cur.execute(
                 "DELETE FROM process_subprocesses WHERE id = %s RETURNING id",
-                (subprocess_id,)
+                (subprocess_id,),
             )
             row = cur.fetchone()
             if not row:
@@ -826,13 +833,21 @@ def delete_process_subprocess(subprocess_id: int):
             current_app.logger.info(
                 f"Process subprocess {subprocess_id} deleted by user {getattr(current_user, 'id', 'anon')}"
             )
-        return APIResponse.success({"process_subprocess_id": subprocess_id, "deleted": True})
+        return APIResponse.success(
+            {"process_subprocess_id": subprocess_id, "deleted": True}
+        )
     except Exception as e:
-        current_app.logger.error(f"Error deleting process_subprocess {subprocess_id}: {e}", exc_info=True)
-        return APIResponse.error("internal_error", "Failed to delete process_subprocess", 500)
+        current_app.logger.error(
+            f"Error deleting process_subprocess {subprocess_id}: {e}", exc_info=True
+        )
+        return APIResponse.error(
+            "internal_error", "Failed to delete process_subprocess", 500
+        )
 
 
-@process_api_bp.route('/process_subprocess/<int:process_subprocess_id>/substitute_groups', methods=['GET'])
+@process_api_bp.route(
+    "/process_subprocess/<int:process_subprocess_id>/substitute_groups", methods=["GET"]
+)
 @login_required
 def get_substitute_groups(process_subprocess_id: int):
     """Retrieve substitute (OR) groups and their variant entries for a process_subprocess.
@@ -862,7 +877,7 @@ def get_substitute_groups(process_subprocess_id: int):
                 WHERE process_subprocess_id = %s
                 ORDER BY id
                 """,
-                (process_subprocess_id,)
+                (process_subprocess_id,),
             )
             group_rows = cur.fetchall() or []
             if not group_rows:
@@ -878,7 +893,7 @@ def get_substitute_groups(process_subprocess_id: int):
                 WHERE g.process_subprocess_id = %s
                 ORDER BY g.id, vu.id
                 """,
-                (process_subprocess_id,)
+                (process_subprocess_id,),
             )
             variant_rows = cur.fetchall() or []
 
@@ -911,7 +926,9 @@ def get_substitute_groups(process_subprocess_id: int):
             f"Error fetching substitute groups for process_subprocess {process_subprocess_id}: {e}",
             exc_info=True,
         )
-        return APIResponse.error("internal_error", "Failed to load substitute groups", 500)
+        return APIResponse.error(
+            "internal_error", "Failed to load substitute groups", 500
+        )
 
 
 # Error handlers
@@ -969,7 +986,10 @@ def get_process_metadata():
                 "SELECT column_name FROM information_schema.columns WHERE table_name='processes'"
             )
             cols_raw = cur.fetchall() or []
-            cols = { (r.get("column_name") if isinstance(r, dict) else r[0]) for r in cols_raw }
+            cols = {
+                (r.get("column_name") if isinstance(r, dict) else r[0])
+                for r in cols_raw
+            }
 
         is_new_schema = "class" in cols
 

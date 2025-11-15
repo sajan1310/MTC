@@ -33,7 +33,9 @@ def _by_full_path(aud: EnhancedFlaskAuditor, full_path: str):
 
 
 def _by_route(aud: EnhancedFlaskAuditor, file: str, route: str):
-    return [r for r in _routes(aud) if r.get("file") == file and r.get("route") == route]
+    return [
+        r for r in _routes(aud) if r.get("file") == file and r.get("route") == route
+    ]
 
 
 def test_extracts_multiline_process_get(auditor: EnhancedFlaskAuditor):
@@ -42,28 +44,37 @@ def test_extracts_multiline_process_get(auditor: EnhancedFlaskAuditor):
     """
     matches = _by_full_path(auditor, "/api/upf/processes/<int:process_id>")
     assert matches, "Expected GET /api/upf/processes/<int:process_id> to be extracted"
-    assert any("GET" in r["methods"] for r in matches), "GET method missing on process detail route"
+    assert any(
+        "GET" in r["methods"] for r in matches
+    ), "GET method missing on process detail route"
 
 
 def test_compat_login_route_present(auditor: EnhancedFlaskAuditor):
     """Compatibility route in main_bp should be picked up: POST /api/login."""
     matches = _by_route(auditor, "app\\main\\routes.py", "/api/login")
     assert matches, "Expected POST /api/login from main_bp to be extracted"
-    assert any("POST" in r["methods"] for r in matches), "POST method missing for /api/login"
+    assert any(
+        "POST" in r["methods"] for r in matches
+    ), "POST method missing for /api/login"
 
 
 def test_helper_pattern_detected_and_skipped(auditor: EnhancedFlaskAuditor):
     """Helper patterns like /api${path} should be detected but skipped in sync results."""
     api_calls = auditor.results["javascript_api_calls"]
     # At least one helper pattern should be detected from inventory_alerts.js
-    assert any(call["url"] == "__HELPER_FUNCTION_PATTERN__" for call in api_calls), (
-        "Expected helper pattern to be marked as __HELPER_FUNCTION_PATTERN__"
-    )
+    assert any(
+        call["url"] == "__HELPER_FUNCTION_PATTERN__" for call in api_calls
+    ), "Expected helper pattern to be marked as __HELPER_FUNCTION_PATTERN__"
 
     # Ensure sync did not count helper pattern as missing or matched
     sync = auditor.results["route_api_sync"]
-    assert all(entry["url"] != "__HELPER_FUNCTION_PATTERN__" for entry in sync["matched"])
-    assert all(entry["url"] != "__HELPER_FUNCTION_PATTERN__" for entry in sync["missing_backend"])
+    assert all(
+        entry["url"] != "__HELPER_FUNCTION_PATTERN__" for entry in sync["matched"]
+    )
+    assert all(
+        entry["url"] != "__HELPER_FUNCTION_PATTERN__"
+        for entry in sync["missing_backend"]
+    )
 
 
 def test_normalize_path_equivalence():
@@ -76,6 +87,6 @@ def test_normalize_path_equivalence():
 
 def test_zero_missing_backend_after_sync(auditor: EnhancedFlaskAuditor):
     sync = auditor.results["route_api_sync"]
-    assert len(sync["missing_backend"]) == 0, (
-        f"Expected 0 missing backend routes, found {len(sync['missing_backend'])}: {sync['missing_backend'][:3]}"
-    )
+    assert (
+        len(sync["missing_backend"]) == 0
+    ), f"Expected 0 missing backend routes, found {len(sync['missing_backend'])}: {sync['missing_backend'][:3]}"

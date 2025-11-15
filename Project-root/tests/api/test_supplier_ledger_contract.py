@@ -21,5 +21,13 @@ def test_supplier_ledger_includes_event_ids(authenticated_client):
 
     # Otherwise, ensure at least one of the common id fields exists per item
     for it in items:
-        assert any(k in it for k in ("receipt_id", "entry_id", "event_id", "po_id", "purchase_order_id")), \
-            f"Ledger item missing expected id fields: {it}"
+        assert any(
+            k in it
+            for k in (
+                "receipt_id",
+                "entry_id",
+                "event_id",
+                "po_id",
+                "purchase_order_id",
+            )
+        ), f"Ledger item missing expected id fields: {it}"

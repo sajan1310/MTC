@@ -6,25 +6,31 @@ class APIResponse:
 
     @staticmethod
     def success(data=None, message: str = "Success", status_code: int = 200):
-        return jsonify(
-            {
-                "success": True,
-                "data": data,
-                "error": None,
-                "message": message,
-            }
-        ), status_code
+        return (
+            jsonify(
+                {
+                    "success": True,
+                    "data": data,
+                    "error": None,
+                    "message": message,
+                }
+            ),
+            status_code,
+        )
 
     @staticmethod
     def error(error_code: str, message: str, status_code: int = 400, data=None):
-        return jsonify(
-            {
-                "success": False,
-                "data": data,
-                "error": error_code,
-                "message": message,
-            }
-        ), status_code
+        return (
+            jsonify(
+                {
+                    "success": False,
+                    "data": data,
+                    "error": error_code,
+                    "message": message,
+                }
+            ),
+            status_code,
+        )
 
     @staticmethod
     def created(data=None, message: str = "Resource created"):

@@ -161,7 +161,9 @@ class VariantUsage:
         self.variant_id: int = data["variant_id"]
         self.quantity: float = float(data["quantity"])
         self.cost_per_unit: Optional[float] = (
-            float(data["cost_per_unit"]) if data.get("cost_per_unit") is not None else None
+            float(data["cost_per_unit"])
+            if data.get("cost_per_unit") is not None
+            else None
         )
         self.total_cost: Optional[float] = (
             float(data["total_cost"]) if data.get("total_cost") else None
@@ -393,9 +395,9 @@ class Profitability:
             "estimated_sales_price": self.estimated_sales_price,
             "profit_margin": self.profit_margin,
             "profit_amount": self.profit_amount,
-            "last_calculated": self.last_calculated.isoformat()
-            if self.last_calculated
-            else None,
+            "last_calculated": (
+                self.last_calculated.isoformat() if self.last_calculated else None
+            ),
             "created_at": self.created_at.isoformat() if self.created_at else None,
             "updated_at": self.updated_at.isoformat() if self.updated_at else None,
         }
@@ -431,12 +433,12 @@ class VariantSupplierPricing:
             "cost_per_unit": self.cost_per_unit,
             "currency": self.currency,
             "minimum_order_qty": self.minimum_order_qty,
-            "effective_from": self.effective_from.isoformat()
-            if self.effective_from
-            else None,
-            "effective_to": self.effective_to.isoformat()
-            if self.effective_to
-            else None,
+            "effective_from": (
+                self.effective_from.isoformat() if self.effective_from else None
+            ),
+            "effective_to": (
+                self.effective_to.isoformat() if self.effective_to else None
+            ),
             "is_active": self.is_active,
             "created_at": self.created_at.isoformat() if self.created_at else None,
             "updated_at": self.updated_at.isoformat() if self.updated_at else None,

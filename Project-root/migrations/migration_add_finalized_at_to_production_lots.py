@@ -12,6 +12,7 @@ import sys
 sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), "..")))
 
 from dotenv import load_dotenv
+
 load_dotenv()
 
 from config import get_config
@@ -53,9 +54,7 @@ def downgrade():
                 DROP COLUMN IF EXISTS finalized_at;
                 """
             )
-            cur.execute(
-                "DROP INDEX IF EXISTS idx_production_lots_finalized_at;"
-            )
+            cur.execute("DROP INDEX IF EXISTS idx_production_lots_finalized_at;")
             conn.commit()
             print("✅ finalized_at column removed (if it existed).")
         except Exception as e:
@@ -68,11 +67,13 @@ if __name__ == "__main__":
     # Initialize DB pool using project config so get_conn() works
     try:
         cfg_class = get_config()
+
         # Build a minimal app-like object expected by database.init_app
         class _MockApp:
             def __init__(self, cfg):
                 # expose a mapping-like config with .get
                 self.config = {k: getattr(cfg, k) for k in dir(cfg) if k.isupper()}
+
                 # simple logger
                 class _Logger:
                     def info(self, *a, **k):

@@ -9,6 +9,7 @@ Usage:
 
 Env (optional): DB_HOST, DB_NAME, DB_USER, DB_PASS, DB_PORT
 """
+
 import os
 import sys
 from typing import List, Tuple
@@ -166,7 +167,9 @@ def main():
                 r = cur.fetchone()
                 if r and r[0] not in STATUS_ALLOWED:
                     ok = False
-                    print(f"  ❌ Found disallowed status value in production_lots: {r[0]}")
+                    print(
+                        f"  ❌ Found disallowed status value in production_lots: {r[0]}"
+                    )
             except Exception as e:
                 # Table might not exist or permission issues; non-fatal
                 print(f"  ℹ️ Skipped sample status check: {e}")

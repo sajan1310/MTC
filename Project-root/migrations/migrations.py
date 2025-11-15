@@ -60,12 +60,14 @@ def run_sql(sql, params=None, fetch=None):
 
 def initialize_migrations_table():
     """Ensure the schema_migrations table exists."""
-    run_sql("""
+    run_sql(
+        """
         CREATE TABLE IF NOT EXISTS schema_migrations (
             version VARCHAR(255) PRIMARY KEY,
             applied_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP
         );
-    """)
+    """
+    )
     print("✅ schema_migrations table initialized.")
 
 

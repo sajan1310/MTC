@@ -257,13 +257,19 @@ def add_supplier():
                     ),
                 )
             conn.commit()
-        return jsonify(
-            {"message": "Supplier added successfully", "supplier_id": supplier_id}
-        ), 201
+        return (
+            jsonify(
+                {"message": "Supplier added successfully", "supplier_id": supplier_id}
+            ),
+            201,
+        )
     except psycopg2.IntegrityError:
-        return jsonify(
-            {"error": f'Supplier with firm name "{firm_name}" already exists.'}
-        ), 409
+        return (
+            jsonify(
+                {"error": f'Supplier with firm name "{firm_name}" already exists.'}
+            ),
+            409,
+        )
     except Exception as e:
         current_app.logger.error(f"Error adding supplier: {e}")
         return jsonify({"error": "Database error"}), 500
@@ -299,9 +305,12 @@ def update_supplier(supplier_id):
             conn.commit()
         return jsonify({"message": "Supplier updated successfully"}), 200
     except psycopg2.IntegrityError:
-        return jsonify(
-            {"error": f'Supplier with firm name "{firm_name}" already exists.'}
-        ), 409
+        return (
+            jsonify(
+                {"error": f'Supplier with firm name "{firm_name}" already exists.'}
+            ),
+            409,
+        )
     except Exception as e:
         current_app.logger.error(f"Error updating supplier {supplier_id}: {e}")
         return jsonify({"error": "Database error"}), 500
@@ -383,9 +392,10 @@ def add_supplier_rate(supplier_id):
             conn.commit()
         return jsonify({"message": "Rate added successfully", "rate_id": rate_id}), 201
     except psycopg2.IntegrityError:
-        return jsonify(
-            {"error": "This item already has a rate for this supplier."}
-        ), 409
+        return (
+            jsonify({"error": "This item already has a rate for this supplier."}),
+            409,
+        )
     except Exception as e:
         current_app.logger.error(f"Error adding rate for supplier {supplier_id}: {e}")
         return jsonify({"error": "Database error"}), 500
@@ -455,7 +465,9 @@ def get_supplier_ledger(supplier_id):
                 """
                 cur.execute(query, tuple(params + [per_page, offset]))
                 rows = [dict(r) for r in cur.fetchall()]
-                return jsonify({"items": rows, "total": total, "page": page, "per_page": per_page})
+                return jsonify(
+                    {"items": rows, "total": total, "page": page, "per_page": per_page}
+                )
 
             # Fallback: view not present — query stock_entries & receipts directly
             base_where = "se.supplier_id = %s"
@@ -486,9 +498,18 @@ def get_supplier_ledger(supplier_id):
             """
             cur.execute(query, tuple(params + [per_page, offset]))
             ledger_entries = [dict(row) for row in cur.fetchall()]
-        return jsonify({"items": ledger_entries, "total": total, "page": page, "per_page": per_page})
+        return jsonify(
+            {
+                "items": ledger_entries,
+                "total": total,
+                "page": page,
+                "per_page": per_page,
+            }
+        )
     except Exception as e:
-        current_app.logger.error(f"Error fetching ledger for supplier {supplier_id}: {e}")
+        current_app.logger.error(
+            f"Error fetching ledger for supplier {supplier_id}: {e}"
+        )
         return jsonify({"error": "Failed to fetch ledger"}), 500
 
 
@@ -582,9 +603,12 @@ def add_stock_receipt():
                     (new_status, po_id),
                 )
             conn.commit()
-        return jsonify(
-            {"message": "Stock received successfully", "receipt_id": receipt_id}
-        ), 201
+        return (
+            jsonify(
+                {"message": "Stock received successfully", "receipt_id": receipt_id}
+            ),
+            201,
+        )
     except Exception as e:
         current_app.logger.error(f"Error receiving stock receipt: {e}")
         return jsonify({"error": "Database error"}), 500
@@ -594,14 +618,14 @@ def add_stock_receipt():
 @login_required
 def get_stock_receipts():
     try:
-        type_filter = request.args.get('type')
-        q = (request.args.get('q') or '').strip()
+        type_filter = request.args.get("type")
+        q = (request.args.get("q") or "").strip()
         # optional pagination
-        page = request.args.get('page')
-        per_page = request.args.get('per_page')
+        page = request.args.get("page")
+        per_page = request.args.get("per_page")
         # explicit supplier/variant filters (preferred for server-side filtering)
-        supplier_id = request.args.get('supplier_id')
-        variant_id = request.args.get('variant_id')
+        supplier_id = request.args.get("supplier_id")
+        variant_id = request.args.get("variant_id")
         with database.get_conn(cursor_factory=psycopg2.extras.DictCursor) as (
             conn,
             cur,
@@ -622,13 +646,15 @@ def get_stock_receipts():
                 try:
                     vid = int(variant_id)
                     # receipts that have at least one stock_entries row for this variant
-                    conditions.append("EXISTS (SELECT 1 FROM stock_entries se WHERE se.receipt_id = sr.receipt_id AND se.variant_id = %s)")
+                    conditions.append(
+                        "EXISTS (SELECT 1 FROM stock_entries se WHERE se.receipt_id = sr.receipt_id AND se.variant_id = %s)"
+                    )
                     params.append(vid)
                 except ValueError:
                     return jsonify({"error": "variant_id must be an integer"}), 400
 
             # Support filtering by supplier name or supplier id (legacy q/type behavior)
-            if type_filter == 'supplier' and q:
+            if type_filter == "supplier" and q:
                 # If q is numeric, treat as supplier_id
                 try:
                     supplier_q = int(q)
@@ -639,7 +665,7 @@ def get_stock_receipts():
                     params.append(f"%{q}%")
 
             # Support filtering by variant id or item/variant name
-            if (type_filter in ('variant', 'item') or (not type_filter and q)) and q:
+            if (type_filter in ("variant", "item") or (not type_filter and q)) and q:
                 # Use EXISTS subquery to only return receipts that have matching entries
                 try:
                     variant_q = int(q)
@@ -673,7 +699,9 @@ def get_stock_receipts():
                     per_page = 50
 
                 # build count query
-                count_query = base_query.replace("SELECT sr.*, s.firm_name", "SELECT COUNT(*) as total")
+                count_query = base_query.replace(
+                    "SELECT sr.*, s.firm_name", "SELECT COUNT(*) as total"
+                )
                 # remove ORDER BY from count_query if present
                 if " ORDER BY " in count_query:
                     count_query = count_query.split(" ORDER BY ")[0]
@@ -684,7 +712,14 @@ def get_stock_receipts():
                 paged_query = base_query + " LIMIT %s OFFSET %s"
                 cur.execute(paged_query, tuple(params + [per_page, offset]))
                 receipts = [dict(row) for row in cur.fetchall()]
-                return jsonify({"items": receipts, "total": total, "page": page, "per_page": per_page})
+                return jsonify(
+                    {
+                        "items": receipts,
+                        "total": total,
+                        "page": page,
+                        "per_page": per_page,
+                    }
+                )
 
             # fallback: no pagination requested — return the full list (backwards compatible)
             cur.execute(base_query, tuple(params))
@@ -1131,11 +1166,14 @@ def add_item_api():
                 (data["name"], model_id, variation_id, data.get("description", "")),
             )
             if cur.fetchone():
-                return jsonify(
-                    {
-                        "error": "An item with the same name, model, variation, and description already exists."
-                    }
-                ), 409
+                return (
+                    jsonify(
+                        {
+                            "error": "An item with the same name, model, variation, and description already exists."
+                        }
+                    ),
+                    409,
+                )
             cur.execute(
                 "INSERT INTO item_master (name, model_id, variation_id, description, image_path) VALUES (%s, %s, %s, %s, %s) RETURNING item_id",
                 (
@@ -1170,11 +1208,14 @@ def add_item_api():
         return jsonify({"message": "Item saved successfully", "item_id": item_id}), 201
     except psycopg2.IntegrityError as e:
         current_app.logger.warning(f"Integrity error adding item variant: {e}")
-        return jsonify(
-            {
-                "error": "A variant with the same color and size already exists for this item."
-            }
-        ), 409
+        return (
+            jsonify(
+                {
+                    "error": "A variant with the same color and size already exists for this item."
+                }
+            ),
+            409,
+        )
     except Exception as e:
         current_app.logger.error(f"Error in add_item API: {e}")
         return jsonify({"error": "Failed to save item due to a server error."}), 500
@@ -1614,8 +1655,7 @@ def get_variant_rate():
         current_app.logger.error(f"Error fetching variant rate: {e}")
         return jsonify({"error": "Failed to fetch rate"}), 500
 
-
-        @api_bp.route('/variant-ledger')
+        @api_bp.route("/variant-ledger")
         @login_required
         def variant_ledger():
             """Return received-stock records for a variant across suppliers for rate comparison.
@@ -1625,28 +1665,31 @@ def get_variant_rate():
               - start_date, end_date (optional)
               - page, per_page (pagination)
             """
-            variant_id = request.args.get('variant_id')
+            variant_id = request.args.get("variant_id")
             if not variant_id:
-                return jsonify({'error': 'variant_id is required'}), 400
-            supplier_id = request.args.get('supplier_id')
-            start_date = request.args.get('start_date')
-            end_date = request.args.get('end_date')
-            page = int(request.args.get('page', 1))
-            per_page = int(request.args.get('per_page', 50))
+                return jsonify({"error": "variant_id is required"}), 400
+            supplier_id = request.args.get("supplier_id")
+            start_date = request.args.get("start_date")
+            end_date = request.args.get("end_date")
+            page = int(request.args.get("page", 1))
+            per_page = int(request.args.get("per_page", 50))
             offset = (page - 1) * per_page
 
             try:
-                with database.get_conn(cursor_factory=psycopg2.extras.DictCursor) as (conn, cur):
-                    base_where = 'se.variant_id = %s'
+                with database.get_conn(cursor_factory=psycopg2.extras.DictCursor) as (
+                    conn,
+                    cur,
+                ):
+                    base_where = "se.variant_id = %s"
                     params = [int(variant_id)]
                     if supplier_id:
-                        base_where += ' AND sr.supplier_id = %s'
+                        base_where += " AND sr.supplier_id = %s"
                         params.append(int(supplier_id))
                     if start_date:
-                        base_where += ' AND se.entry_date >= %s'
+                        base_where += " AND se.entry_date >= %s"
                         params.append(start_date)
                     if end_date:
-                        base_where += ' AND se.entry_date <= %s'
+                        base_where += " AND se.entry_date <= %s"
                         params.append(end_date)
 
                     count_q = f"SELECT COUNT(*) FROM stock_entries se JOIN stock_receipts sr ON se.receipt_id = sr.receipt_id WHERE {base_where}"
@@ -1669,10 +1712,12 @@ def get_variant_rate():
                     """
                     cur.execute(query, tuple(params + [per_page, offset]))
                     rows = [dict(r) for r in cur.fetchall()]
-                return jsonify({'items': rows, 'total': total, 'page': page, 'per_page': per_page})
+                return jsonify(
+                    {"items": rows, "total": total, "page": page, "per_page": per_page}
+                )
             except Exception as e:
                 current_app.logger.error(f"Error fetching variant ledger: {e}")
-                return jsonify({'error': 'Failed to fetch variant ledger'}), 500
+                return jsonify({"error": "Failed to fetch variant ledger"}), 500
 
 
 @api_bp.route("/items/<int:item_id>", methods=["PUT"])
@@ -1770,9 +1815,12 @@ def update_item(item_id):
                 ),
             )
             if cur.fetchone():
-                return jsonify(
-                    {"error": "An item with these specifications already exists"}
-                ), 409
+                return (
+                    jsonify(
+                        {"error": "An item with these specifications already exists"}
+                    ),
+                    409,
+                )
             update_fields = {
                 "name": data["name"],
                 "model_id": model_id,
@@ -1860,31 +1908,37 @@ def update_item(item_id):
             updated_item_data = cur.fetchone()
             if not updated_item_data:
                 return jsonify({"error": "Item not found after update"}), 404
-        return jsonify(
-            {
-                "message": "Item updated successfully",
-                "item": {
-                    "id": updated_item_data["item_id"],
-                    "name": updated_item_data["name"],
-                    "model": updated_item_data["model"],
-                    "variation": updated_item_data["variation"],
-                    "description": updated_item_data["description"],
-                    "image_path": updated_item_data["image_path"],
-                    "variant_count": updated_item_data["variant_count"],
-                    "total_stock": int(updated_item_data["total_stock"] or 0),
-                    "has_low_stock_variants": updated_item_data[
-                        "has_low_stock_variants"
-                    ],
-                },
-            }
-        ), 200
+        return (
+            jsonify(
+                {
+                    "message": "Item updated successfully",
+                    "item": {
+                        "id": updated_item_data["item_id"],
+                        "name": updated_item_data["name"],
+                        "model": updated_item_data["model"],
+                        "variation": updated_item_data["variation"],
+                        "description": updated_item_data["description"],
+                        "image_path": updated_item_data["image_path"],
+                        "variant_count": updated_item_data["variant_count"],
+                        "total_stock": int(updated_item_data["total_stock"] or 0),
+                        "has_low_stock_variants": updated_item_data[
+                            "has_low_stock_variants"
+                        ],
+                    },
+                }
+            ),
+            200,
+        )
     except psycopg2.IntegrityError as e:
         current_app.logger.warning(f"Integrity error updating item variant: {e}")
-        return jsonify(
-            {
-                "error": "A variant with the same color and size already exists for this item."
-            }
-        ), 409
+        return (
+            jsonify(
+                {
+                    "error": "A variant with the same color and size already exists for this item."
+                }
+            ),
+            409,
+        )
     except json.JSONDecodeError as e:
         current_app.logger.error(f"Invalid JSON in variants data: {e}")
         return jsonify({"error": "Invalid variants data format"}), 400
@@ -1966,9 +2020,10 @@ def update_variant_stock(variant_id):
     data = request.json
     new_stock = data.get("stock")
     if new_stock is None or not str(new_stock).isdigit():
-        return jsonify(
-            {"error": "A valid, non-negative stock number is required."}
-        ), 400
+        return (
+            jsonify({"error": "A valid, non-negative stock number is required."}),
+            400,
+        )
     try:
         with database.get_conn() as (conn, cur):
             cur.execute(
@@ -1990,18 +2045,21 @@ def update_variant_stock(variant_id):
             )
             item_has_low_stock = cur.fetchone()[0]
             conn.commit()
-            return jsonify(
-                {
-                    "message": "Stock updated successfully",
-                    "new_total_stock": int(total_stock or 0),
-                    "item_has_low_stock": item_has_low_stock,
-                    "updated_variant": {
-                        "stock": updated_stock,
-                        "threshold": threshold,
-                        "is_low_stock": updated_stock <= threshold,
-                    },
-                }
-            ), 200
+            return (
+                jsonify(
+                    {
+                        "message": "Stock updated successfully",
+                        "new_total_stock": int(total_stock or 0),
+                        "item_has_low_stock": item_has_low_stock,
+                        "updated_variant": {
+                            "stock": updated_stock,
+                            "threshold": threshold,
+                            "is_low_stock": updated_stock <= threshold,
+                        },
+                    }
+                ),
+                200,
+            )
     except Exception as e:
         current_app.logger.error(f"Error updating stock for variant {variant_id}: {e}")
         return jsonify({"error": "Database error"}), 500
@@ -2069,16 +2127,22 @@ def add_variant(item_id):
             )
             variant_id = cur.fetchone()[0]
             conn.commit()
-            return jsonify(
-                {"message": "Variant added successfully", "variant_id": variant_id}
-            ), 201
+            return (
+                jsonify(
+                    {"message": "Variant added successfully", "variant_id": variant_id}
+                ),
+                201,
+            )
     except psycopg2.IntegrityError as e:
         current_app.logger.warning(f"Integrity error adding variant: {e}")
-        return jsonify(
-            {
-                "error": "A variant with the same color and size already exists for this item."
-            }
-        ), 409
+        return (
+            jsonify(
+                {
+                    "error": "A variant with the same color and size already exists for this item."
+                }
+            ),
+            409,
+        )
     except Exception as e:
         current_app.logger.error(f"Error in add_variant API: {e}")
         return jsonify({"error": "Failed to save variant due to a server error."}), 500
@@ -2112,11 +2176,14 @@ def update_variant(variant_id):
             return jsonify({"message": "Variant updated successfully"}), 200
     except psycopg2.IntegrityError as e:
         current_app.logger.warning(f"Integrity error updating variant: {e}")
-        return jsonify(
-            {
-                "error": "A variant with the same color and size already exists for this item."
-            }
-        ), 409
+        return (
+            jsonify(
+                {
+                    "error": "A variant with the same color and size already exists for this item."
+                }
+            ),
+            409,
+        )
     except Exception as e:
         current_app.logger.error(f"Error updating variant {variant_id}: {e}")
         return jsonify({"error": "Failed to update variant"}), 500
@@ -2242,9 +2309,10 @@ def import_data():
         )
 
         if not rows or not isinstance(rows, list):
-            return jsonify(
-                {"error": "Invalid data format. Expected list of items"}
-            ), 400
+            return (
+                jsonify({"error": "Invalid data format. Expected list of items"}),
+                400,
+            )
 
         if len(rows) == 0:
             return jsonify({"error": "No rows to import"}), 400
@@ -2253,17 +2321,20 @@ def import_data():
         import_service = ImportService()
         result = import_service.import_items_chunked(rows)
 
-        return jsonify(
-            {
-                "success": True,
-                "processed": result["processed"],
-                "failed": len(result["failed"]),
-                "total": result["total_rows"],
-                "success_rate": result["success_rate"],
-                "duration": result["import_duration"],
-                "errors": result["failed"][:10],  # Return first 10 errors only
-            }
-        ), 200
+        return (
+            jsonify(
+                {
+                    "success": True,
+                    "processed": result["processed"],
+                    "failed": len(result["failed"]),
+                    "total": result["total_rows"],
+                    "success_rate": result["success_rate"],
+                    "duration": result["import_duration"],
+                    "errors": result["failed"][:10],  # Return first 10 errors only
+                }
+            ),
+            200,
+        )
 
     except ValueError as e:
         current_app.logger.error(f"Validation error in import: {e}")
@@ -2447,6 +2518,11 @@ def import_commit():
         return jsonify(response), 200
     except Exception as e:
         current_app.logger.error(f"Import commit error: {e}", exc_info=True)
-        return jsonify(
-            {"error": "Import failed due to a server error. Please contact support."}
-        ), 500
+        return (
+            jsonify(
+                {
+                    "error": "Import failed due to a server error. Please contact support."
+                }
+            ),
+            500,
+        )

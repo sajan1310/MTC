@@ -1,12 +1,12 @@
-"""
-Production Lot API for Universal Process Framework.
+"""Production Lot API for Universal Process Framework.
 
-Provides REST API endpoints for production lot lifecycle: creation, variant selection,
-validation, execution, and variance analysis.
+Provides REST API endpoints for production lot lifecycle: creation,
+variant selection, validation, execution, and variance analysis.
 
-[BUG FIX] Updated all routes to use hyphenated URLs (/production-lots) as primary endpoints
-with underscored versions (/production_lot, /production_lots) as legacy compatibility.
-Frontend JavaScript expects hyphenated URLs (e.g., /api/upf/production-lots).
+[BUG FIX] Routes: prefer hyphenated URLs (`/production-lots`) as primary
+endpoints. Underscored versions (`/production_lot`, `/production_lots`) are
+kept for legacy compatibility. Frontend JavaScript expects hyphenated URLs
+(for example: `/api/upf/production-lots`).
 """
 
 import warnings
@@ -19,7 +19,7 @@ from app import limiter
 from app.services.production_service import ProductionService
 from datetime import datetime
 from app.validators.production_lot_validator import (
-    validate_production_lot_creation,
+    validate_production_lot_creation
 )
 from app.utils.response import APIResponse
 
@@ -71,8 +71,9 @@ def create_production_lot():
     # Deprecation warning for underscore route
     if request.path == "/api/upf/production_lot":
         msg = (
-            "POST /api/upf/production_lot is deprecated. Use POST /api/upf/production-lots instead. "
-            "Underscore routes will be removed after November 23, 2025."
+            "POST /api/upf/production_lot is deprecated. Use POST /api/upf/"
+            "production-lots instead. Underscore routes will be removed after "
+            "November 23, 2025."
         )
         warnings.warn(msg, DeprecationWarning, stacklevel=2)
         current_app.logger.warning(f"DEPRECATION: {msg}")
@@ -193,8 +194,9 @@ def get_production_lot_data(lot_id):
     # Deprecation warning for underscore route
     if "production_lot" in request.path and "production-lots" not in request.path:
         msg = (
-            f"GET /api/upf/production_lot/{lot_id} is deprecated. Use GET /api/upf/production-lots/{lot_id} instead. "
-            "Underscore routes will be removed after November 23, 2025."
+            f"GET /api/upf/production_lot/{lot_id} is deprecated. Use GET /api/upf/"
+            f"production-lots/{lot_id} instead. Underscore routes will be removed "
+            "after November 23, 2025."
         )
         warnings.warn(msg, DeprecationWarning, stacklevel=2)
         current_app.logger.warning(f"DEPRECATION: {msg}")
@@ -212,6 +214,19 @@ def get_production_lot_data(lot_id):
                 and not is_admin()
             ):
                 return APIResponse.error("forbidden", "Access denied", 403)
+
+        # Ensure frontend-friendly username fields exist (some clients expect created_by_username)
+        # ProductionService currently returns `created_by_name` where available; create aliases.
+        try:
+            if isinstance(lot, dict):
+                if "created_by_name" in lot and "created_by_username" not in lot:
+                    lot["created_by_username"] = lot.get("created_by_name")
+                # also map created_by to a consistent key if present
+                if "created_by" in lot and "created_by_id" not in lot:
+                    lot["created_by_id"] = lot.get("created_by")
+        except Exception:
+            # non-fatal; continue returning the lot as-is
+            pass
 
         return APIResponse.success(lot)
     except Exception as e:
@@ -242,9 +257,10 @@ def get_variant_options(lot_id):
         # prevented other users from seeing subprocess/variant information in
         # the production lot detail page. Keep modifications restricted elsewhere.
         try:
-            user_id = getattr(current_user, "id", None)
             if not current_user.is_authenticated:
-                return APIResponse.error("unauthenticated", "Authentication required", 401)
+                return APIResponse.error(
+                    "unauthenticated", "Authentication required", 401
+                )
         except Exception:
             # Fallback: if current_user isn't available, deny access
             return APIResponse.error("forbidden", "Access denied", 403)
@@ -268,8 +284,7 @@ def get_variant_options(lot_id):
             vu_has_deleted = _column_exists("variant_usage", "deleted_at")
 
             # Build process_subprocesses + subprocesses query conditionally including deleted_at filters
-            base_subprocess_q = (
-                """
+            base_subprocess_q = """
                 SELECT
                     ps.id as process_subprocess_id,
                     ps.id as sequence_order,
@@ -280,7 +295,6 @@ def get_variant_options(lot_id):
                 JOIN subprocesses s ON s.id = ps.subprocess_id
                 WHERE ps.process_id = %s
                 """
-            )
 
             if ps_has_deleted:
                 base_subprocess_q += "\n  AND ps.deleted_at IS NULL"
@@ -296,8 +310,7 @@ def get_variant_options(lot_id):
             result = []
             for sp in subprocesses:
                 # Get all variants for this subprocess
-                base_variants_q = (
-                    """
+                base_variants_q = """
                     SELECT
                         vu.id as usage_id,
                         vu.variant_id,
@@ -310,7 +323,11 @@ def get_variant_options(lot_id):
                         im.description,
                         iv.opening_stock,
                         COALESCE((
-                            SELECT rate FROM supplier_item_rates sir WHERE sir.item_id = iv.item_id ORDER BY rate ASC LIMIT 1
+                            SELECT rate
+                            FROM supplier_item_rates sir
+                            WHERE sir.item_id = iv.item_id
+                            ORDER BY rate ASC
+                            LIMIT 1
                         ), 0) as unit_price,
                         iv.item_id,
                         -- Enrich with item/variant attributes to let frontend build concatenated details and color/size/model columns
@@ -327,12 +344,14 @@ def get_variant_options(lot_id):
                     LEFT JOIN size_master sm ON iv.size_id = sm.size_id
                     WHERE vu.process_subprocess_id = %s
                     """
-                )
 
                 if vu_has_deleted:
                     base_variants_q += "\n  AND vu.deleted_at IS NULL"
 
-                base_variants_q += "\nORDER BY vu.substitute_group_id NULLS FIRST, vu.alternative_order NULLS LAST"
+                base_variants_q += (
+                    "\nORDER BY vu.substitute_group_id NULLS FIRST, "
+                    "vu.alternative_order NULLS LAST"
+                )
 
                 cur.execute(base_variants_q, (sp["process_subprocess_id"],))
 
@@ -408,6 +427,193 @@ def get_variant_options(lot_id):
 
     except Exception as e:
         current_app.logger.error(f"Error getting variant options: {e}")
+        return APIResponse.error("internal_error", str(e), 500)
+
+
+# Compatibility: allow fetching variant options by subprocess id directly
+@production_api_bp.route(
+    "/subprocess/<int:subprocess_id>/variant-options", methods=["GET"]
+)
+@production_api_bp.route(
+    "/subprocesses/<int:subprocess_id>/variant_options", methods=["GET"]
+)  # alternate style
+@login_required
+def get_variant_options_by_subprocess(subprocess_id: int):
+    """Return variant options scoped to a single process_subprocess id.
+
+    This provides compatibility for frontend code that queries by subprocess id.
+    Response format mirrors `get_variant_options` but `subprocesses` will contain a single item.
+    """
+    try:
+        from database import get_conn
+        from psycopg2.extras import RealDictCursor
+
+        with get_conn() as (conn, cur):
+            cur = conn.cursor(cursor_factory=RealDictCursor)
+
+            # Fetch the process_subprocess and its process_id
+            cur.execute(
+                "SELECT ps.id as process_subprocess_id, ps.process_id, s.name as subprocess_name, ps.custom_name FROM process_subprocesses ps JOIN subprocesses s ON s.id = ps.subprocess_id WHERE ps.id = %s",
+                (subprocess_id,),
+            )
+            sp = cur.fetchone()
+            if not sp:
+                return APIResponse.not_found("Process subprocess", subprocess_id)
+
+            # Reuse logic similar to get_variant_options to fetch variants and groups for this subprocess
+            cur.execute(
+                """
+                SELECT
+                    vu.id as usage_id,
+                    vu.variant_id,
+                    vu.quantity,
+                    iv.unit,
+                    vu.substitute_group_id,
+                    vu.is_alternative,
+                    vu.alternative_order,
+                    im.name as item_number,
+                    im.description,
+                    iv.opening_stock,
+                    COALESCE((
+                        SELECT rate FROM supplier_item_rates sir WHERE sir.item_id = iv.item_id ORDER BY rate ASC LIMIT 1
+                    ), 0) as unit_price,
+                    iv.item_id,
+                    COALESCE(mm.model_name, '') as model_name,
+                    COALESCE(vm.variation_name, '') as variation_name,
+                    COALESCE(cm.color_name, '') as color_name,
+                    COALESCE(sm.size_name, '') as size_name
+                FROM variant_usage vu
+                JOIN item_variant iv ON iv.variant_id = vu.variant_id
+                LEFT JOIN item_master im ON im.item_id = iv.item_id
+                LEFT JOIN model_master mm ON im.model_id = mm.model_id
+                LEFT JOIN variation_master vm ON im.variation_id = vm.variation_id
+                LEFT JOIN color_master cm ON iv.color_id = cm.color_id
+                LEFT JOIN size_master sm ON iv.size_id = sm.size_id
+                WHERE vu.process_subprocess_id = %s
+                """,
+                (subprocess_id,),
+            )
+            variants = cur.fetchall()
+
+            cur.execute(
+                (
+                    "SELECT DISTINCT og.id as group_id, og.name as group_name, "
+                    "og.description FROM or_groups og WHERE "
+                    "og.process_subprocess_id = %s ORDER BY og.id"
+                ),
+                (subprocess_id,),
+            )
+            or_groups = cur.fetchall()
+
+            # cost items
+            try:
+                cur.execute(
+                    (
+                        "SELECT ci.* FROM cost_items ci WHERE "
+                        "ci.process_subprocess_id = %s ORDER BY ci.id"
+                    ),
+                    (subprocess_id,),
+                )
+                cost_items = cur.fetchall()
+            except Exception:
+                cost_items = []
+
+            grouped_variants = {}
+            standalone_variants = []
+            for v in variants:
+                variant_data = dict(v)
+                if v.get("substitute_group_id"):
+                    gid = v.get("substitute_group_id")
+                    grouped_variants.setdefault(gid, []).append(variant_data)
+                else:
+                    standalone_variants.append(variant_data)
+
+            result = [
+                {
+                    "process_subprocess_id": sp["process_subprocess_id"],
+                    "subprocess_id": None,
+                    "subprocess_name": (
+                        sp.get("custom_name") or sp.get("subprocess_name")
+                    ),
+                    "sequence_order": sp.get("process_subprocess_id"),
+                    "or_groups": [dict(g) for g in or_groups],
+                    "grouped_variants": grouped_variants,
+                    "standalone_variants": standalone_variants,
+                    "cost_items": [dict(ci) for ci in (cost_items or [])],
+                }
+            ]
+
+            return APIResponse.success(
+                {
+                    "lot_id": None,
+                    "lot_number": None,
+                    "process_name": None,
+                    "quantity": None,
+                    "subprocesses": result,
+                }
+            )
+    except Exception as e:
+        current_app.logger.error(f"Error getting variant options by subprocess: {e}")
+        return APIResponse.error("internal_error", str(e), 500)
+
+
+@production_api_bp.route("/production-lots/<int:lot_id>/recalculate", methods=["GET"])
+@production_api_bp.route(
+    "/production_lot/<int:lot_id>/recalculate", methods=["GET"]
+)  # Legacy compatibility
+@login_required
+def recalculate_lot(lot_id: int):
+    """Recalculate estimated and actual costs for a production lot.
+
+    Returns a JSON object with consistent keys:
+      - total_cost: (estimated total cost) - primary key frontend looks for
+      - estimated_total: alias for total_cost
+      - actual_cost: actual cost (if calculated)
+      - data: { total_cost, actual_cost } (for callers expecting nested data)
+    """
+    try:
+        lot = ProductionService.get_production_lot(lot_id)
+        if not lot:
+            return APIResponse.not_found("Production lot", lot_id)
+
+        # Estimated cost: use costing service to compute worst-case estimate for process
+        from app.services.costing_service import CostingService
+
+        process_id = lot.get("process_id")
+        qty = int(lot.get("quantity") or 1)
+        estimated = 0
+        try:
+            estimate_breakdown = CostingService.calculate_process_total_cost(process_id)
+            # Some implementations return nested totals.grand_total
+            estimated = float(
+                (estimate_breakdown.get("totals") or {}).get("grand_total", 0)
+            )
+        except Exception:
+            # Fallback: use lot.total_cost or worst_case_estimated_cost
+            estimated = float(
+                lot.get("worst_case_estimated_cost") or lot.get("total_cost") or 0
+            )
+
+        estimated_total = estimated * qty
+
+        # Actual cost: may be costly to compute; attempt but tolerate failures
+        actual_total = None
+        try:
+            actual_total = float(
+                ProductionService.calculate_lot_actual_cost(lot_id) or 0
+            )
+        except Exception:
+            actual_total = None
+
+        payload = {
+            "total_cost": estimated_total,
+            "estimated_total": estimated_total,
+            "actual_cost": actual_total,
+            "data": {"total_cost": estimated_total, "actual_cost": actual_total},
+        }
+        return APIResponse.success(payload)
+    except Exception as e:
+        current_app.logger.error(f"Error recalculating lot costs for {lot_id}: {e}")
         return APIResponse.error("internal_error", str(e), 500)
 
 
@@ -489,7 +695,9 @@ def select_variant_for_group(lot_id):
         data = request.json or {}
 
         # allow either substitute_group_id (or_group) OR process_subprocess_id to be provided
-        if not data.get("substitute_group_id") and not data.get("process_subprocess_id"):
+        if not data.get("substitute_group_id") and not data.get(
+            "process_subprocess_id"
+        ):
             return APIResponse.error(
                 "validation_error",
                 "Either substitute_group_id or process_subprocess_id is required",
@@ -552,6 +760,9 @@ def get_lot_selections(lot_id):
 
 
 @production_api_bp.route(
+    "/production-lots/<int:lot_id>/batch_select_variants", methods=["POST"]
+)
+@production_api_bp.route(
     "/production_lot/<int:lot_id>/batch_select_variants", methods=["POST"]
 )
 @login_required
@@ -581,32 +792,44 @@ def batch_select_variants(lot_id):
         if not selections:
             return APIResponse.error("validation_error", "No selections provided", 400)
 
+        # Use an explicit transaction block and rollback on failure to ensure atomicity
         with get_conn() as (conn, cur):
-            # Delete existing selections for this lot
-            cur.execute(
-                "DELETE FROM production_lot_variant_selections WHERE lot_id = %s",
-                (lot_id,),
-            )
-
-            # Insert new selections
-            for sel in selections:
+            try:
+                # Delete existing selections for this lot
                 cur.execute(
-                    """
-                    INSERT INTO production_lot_variant_selections
-                    (lot_id, or_group_id, variant_usage_id, quantity_override, reason, created_by)
-                    VALUES (%s, %s, %s, %s, %s, %s)
-                """,
-                    (
-                        lot_id,
-                        sel.get("or_group_id"),
-                        sel["variant_usage_id"],
-                        sel.get("quantity_override"),
-                        sel.get("reason"),
-                        current_user.id,
-                    ),
+                    "DELETE FROM production_lot_variant_selections WHERE lot_id = %s",
+                    (lot_id,),
                 )
 
-            conn.commit()
+                # Insert new selections
+                for sel in selections:
+                    # Support selected_variant_id (from variant search) by mapping to variant_usage_id when provided
+                    variant_usage_id = sel.get("variant_usage_id") or sel.get(
+                        "selected_variant_id"
+                    )
+                    cur.execute(
+                        """
+                        INSERT INTO production_lot_variant_selections
+                        (lot_id, or_group_id, variant_usage_id, quantity_override, reason, created_by)
+                        VALUES (%s, %s, %s, %s, %s, %s)
+                    """,
+                        (
+                            lot_id,
+                            sel.get("or_group_id"),
+                            variant_usage_id,
+                            sel.get("quantity_override"),
+                            sel.get("reason"),
+                            current_user.id,
+                        ),
+                    )
+
+                conn.commit()
+            except Exception:
+                try:
+                    conn.rollback()
+                except Exception:
+                    pass
+                raise
 
         # Audit log
         audit.log_action(
@@ -731,14 +954,17 @@ def finalize_production_lot(lot_id: int):
             crit = (summary.get("alerts_by_severity") or {}).get("CRITICAL", 0)
             if crit and crit > 0:
                 msg = "Critical inventory alerts pending. Please acknowledge before finalizing."
-                return jsonify(
-                    {
-                        "success": False,
-                        "data": None,
-                        "error": {"code": "conflict", "message": msg},
-                        "message": msg,
-                    }
-                ), 409
+                return (
+                    jsonify(
+                        {
+                            "success": False,
+                            "data": None,
+                            "error": {"code": "conflict", "message": msg},
+                            "message": msg,
+                        }
+                    ),
+                    409,
+                )
         except Exception:
             # If pre-check fails, proceed to service which will also validate
             pass
@@ -750,14 +976,17 @@ def finalize_production_lot(lot_id: int):
         except ValueError as ve:
             # Provide structured conflict error consistent with tests
             msg = str(ve)
-            return jsonify(
-                {
-                    "success": False,
-                    "data": None,
-                    "error": {"code": "conflict", "message": msg},
-                    "message": msg,
-                }
-            ), 409
+            return (
+                jsonify(
+                    {
+                        "success": False,
+                        "data": None,
+                        "error": {"code": "conflict", "message": msg},
+                        "message": msg,
+                    }
+                ),
+                409,
+            )
         return APIResponse.success(
             {
                 "lot_id": result.get("lot_id"),
@@ -825,10 +1054,15 @@ def update_production_lot(lot_id: int):
         if not lot:
             return APIResponse.not_found("Production lot", lot_id)
 
-        if lot.get("created_by") != getattr(current_user, "id", None) and not is_admin():
+        if (
+            lot.get("created_by") != getattr(current_user, "id", None)
+            and not is_admin()
+        ):
             return APIResponse.error("forbidden", "Insufficient permissions", 403)
 
-        updated = ProductionService.update_production_lot(lot_id, data, getattr(current_user, "id", None))
+        updated = ProductionService.update_production_lot(
+            lot_id, data, getattr(current_user, "id", None)
+        )
         return APIResponse.success(updated, "Production lot updated")
     except ValueError as ve:
         current_app.logger.warning(f"Update validation error for lot {lot_id}: {ve}")
@@ -847,12 +1081,19 @@ def delete_production_lot(lot_id: int):
         if not lot:
             return APIResponse.not_found("Production lot", lot_id)
 
-        if lot.get("created_by") != getattr(current_user, "id", None) and not is_admin():
+        if (
+            lot.get("created_by") != getattr(current_user, "id", None)
+            and not is_admin()
+        ):
             return APIResponse.error("forbidden", "Insufficient permissions", 403)
 
-        result = ProductionService.delete_production_lot(lot_id, getattr(current_user, "id", None))
+        result = ProductionService.delete_production_lot(
+            lot_id, getattr(current_user, "id", None)
+        )
         if not result:
-            return APIResponse.error("not_found", "Production lot not found or could not be deleted", 404)
+            return APIResponse.error(
+                "not_found", "Production lot not found or could not be deleted", 404
+            )
         return APIResponse.success({"deleted": True}, "Production lot deleted")
     except ValueError as ve:
         return APIResponse.error("validation_error", str(ve), 400)
@@ -861,7 +1102,9 @@ def delete_production_lot(lot_id: int):
         return APIResponse.error("internal_error", str(e), 500)
 
 
-@production_api_bp.route("/production-lots/<int:lot_id>/selections/<int:selection_id>", methods=["DELETE"])
+@production_api_bp.route(
+    "/production-lots/<int:lot_id>/selections/<int:selection_id>", methods=["DELETE"]
+)
 @login_required
 def delete_variant_selection(lot_id: int, selection_id: int):
     """Delete a single variant selection from a production lot."""
@@ -870,7 +1113,10 @@ def delete_variant_selection(lot_id: int, selection_id: int):
         if not lot:
             return APIResponse.not_found("Production lot", lot_id)
 
-        if lot.get("created_by") != getattr(current_user, "id", None) and not is_admin():
+        if (
+            lot.get("created_by") != getattr(current_user, "id", None)
+            and not is_admin()
+        ):
             return APIResponse.error("forbidden", "Insufficient permissions", 403)
 
         removed = ProductionService.remove_variant_selection(selection_id, lot_id)
@@ -878,7 +1124,9 @@ def delete_variant_selection(lot_id: int, selection_id: int):
             return APIResponse.error("not_found", "Selection not found", 404)
         return APIResponse.success({"removed": True}, "Selection removed")
     except Exception as e:
-        current_app.logger.error(f"Error removing selection {selection_id} from lot {lot_id}: {e}")
+        current_app.logger.error(
+            f"Error removing selection {selection_id} from lot {lot_id}: {e}"
+        )
         return APIResponse.error("internal_error", str(e), 500)
 
 
@@ -991,7 +1239,8 @@ def get_production_summary():
         # Get summary by status
         user_filter = "" if is_admin() else f"AND created_by = {current_user.id}"
 
-        cur.execute(f"""
+        cur.execute(
+            f"""
             SELECT
                 status,
                 COUNT(*) as count,
@@ -1000,7 +1249,8 @@ def get_production_summary():
             FROM production_lots
             WHERE 1=1 {user_filter}
             GROUP BY status
-        """)
+        """
+        )
 
         summary = cur.fetchall()
         cur.close()

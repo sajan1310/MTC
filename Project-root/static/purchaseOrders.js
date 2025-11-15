@@ -16,7 +16,10 @@ const PurchaseOrders = {
   init() {
     // Initialize on all pages so PO modal can be opened from anywhere.
     this.isPOPage = !!document.getElementById("po-table-body");
-    console.log("PurchaseOrders module initialized. PO page:", this.isPOPage);
+    // Only log in debug mode to avoid noisy production consoles
+    try {
+      if (window.__UPF_DEBUG__) console.debug("PurchaseOrders module initialized. PO page:", this.isPOPage);
+    } catch (e) { /* ignore if window not accessible */ }
 
     this.cacheDOMElements();
     this.bindEventListeners();

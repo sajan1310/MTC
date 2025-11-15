@@ -100,7 +100,9 @@ def update_variant_usage(usage_id):
     """Update variant usage quantity/cost."""
     try:
         data = request.json
-        current_app.logger.info(f"[UPDATE VARIANT USAGE] Request for ID {usage_id} with data: {data}")
+        current_app.logger.info(
+            f"[UPDATE VARIANT USAGE] Request for ID {usage_id} with data: {data}"
+        )
 
         updated = VariantService.update_variant_usage(
             usage_id,
@@ -119,6 +121,7 @@ def update_variant_usage(usage_id):
         return APIResponse.success(updated, "Variant usage updated")
     except Exception as e:
         import traceback
+
         current_app.logger.error(f"Error updating variant usage {usage_id}: {e}")
         current_app.logger.error(f"Traceback: {traceback.format_exc()}")
         return APIResponse.error("internal_error", str(e), 500)
@@ -738,46 +741,7 @@ def check_variant_availability(item_id):
         required_qty = float(request.args.get("quantity", 1))
         availability = VariantService.check_variant_availability(item_id, required_qty)
         return APIResponse.success(availability)
-    
-    
-    
-    
-    
-    
-    
-    
-    
-    
-    
-    
-    
-    
-    
-    
-    
-    
-    
-    
-    
-    
-    
-    
-    
-    
-    
-    
-    
-    
-    
-    
-    
-    
-    
-    
-    
-    
-    
-    
+
     except Exception as e:
         current_app.logger.error(f"Error checking availability: {e}")
         return APIResponse.error("internal_error", str(e), 500)

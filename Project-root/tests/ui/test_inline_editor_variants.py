@@ -26,7 +26,10 @@ def _get_columns(cur, table_name: str):
 
 @pytest.fixture
 def ensure_process_and_subprocess(authenticated_client):
-    with database.get_conn(cursor_factory=psycopg2.extras.RealDictCursor) as (conn, cur):
+    with database.get_conn(cursor_factory=psycopg2.extras.RealDictCursor) as (
+        conn,
+        cur,
+    ):
         # Ensure process
         cur.execute("SELECT id FROM processes LIMIT 1")
         row = cur.fetchone()
@@ -105,8 +108,10 @@ def ensure_process_and_subprocess(authenticated_client):
             ps_id = link["id"] if isinstance(link, dict) else link[0]
         else:
             psp_cols = _get_columns(cur, "process_subprocesses")
-            seq_col = "sequence_order" if "sequence_order" in psp_cols else (
-                "sequence" if "sequence" in psp_cols else None
+            seq_col = (
+                "sequence_order"
+                if "sequence_order" in psp_cols
+                else ("sequence" if "sequence" in psp_cols else None)
             )
             if not seq_col:
                 raise AssertionError("process_subprocesses missing sequence column")
@@ -129,20 +134,30 @@ def _ensure_variant(cur):
         return r["variant_id"] if isinstance(r, dict) else r[0]
 
     # Ensure color and size
-    cur.execute("SELECT color_id FROM color_master WHERE color_name=%s LIMIT 1", ("TestColor",))
+    cur.execute(
+        "SELECT color_id FROM color_master WHERE color_name=%s LIMIT 1", ("TestColor",)
+    )
     cr = cur.fetchone()
     if cr:
         color_id = cr["color_id"] if isinstance(cr, dict) else cr[0]
     else:
-        cur.execute("INSERT INTO color_master (color_name) VALUES (%s) RETURNING color_id", ("TestColor",))
+        cur.execute(
+            "INSERT INTO color_master (color_name) VALUES (%s) RETURNING color_id",
+            ("TestColor",),
+        )
         color_id = cur.fetchone()["color_id"]
 
-    cur.execute("SELECT size_id FROM size_master WHERE size_name=%s LIMIT 1", ("TestSize",))
+    cur.execute(
+        "SELECT size_id FROM size_master WHERE size_name=%s LIMIT 1", ("TestSize",)
+    )
     sr = cur.fetchone()
     if sr:
         size_id = sr["size_id"] if isinstance(sr, dict) else sr[0]
     else:
-        cur.execute("INSERT INTO size_master (size_name) VALUES (%s) RETURNING size_id", ("TestSize",))
+        cur.execute(
+            "INSERT INTO size_master (size_name) VALUES (%s) RETURNING size_id",
+            ("TestSize",),
+        )
         size_id = cur.fetchone()["size_id"]
 
     # Ensure item
@@ -151,7 +166,10 @@ def _ensure_variant(cur):
     if ir:
         item_id = ir["item_id"] if isinstance(ir, dict) else ir[0]
     else:
-        cur.execute("INSERT INTO item_master (name, description) VALUES (%s,%s) RETURNING item_id", ("Test Item", "Seed"))
+        cur.execute(
+            "INSERT INTO item_master (name, description) VALUES (%s,%s) RETURNING item_id",
+            ("Test Item", "Seed"),
+        )
         item_id = cur.fetchone()["item_id"]
 
     # Create item_variant
@@ -174,7 +192,9 @@ def _ensure_two_variants(cur):
     return ids[:2]
 
 
-def test_inline_editor_structure_tab_loads(authenticated_client, ensure_process_and_subprocess):
+def test_inline_editor_structure_tab_loads(
+    authenticated_client, ensure_process_and_subprocess
+):
     process_id, _ = ensure_process_and_subprocess
     resp = authenticated_client.get(INLINE_EDITOR_URL)
     assert resp.status_code == 200
@@ -197,10 +217,15 @@ def test_inline_editor_structure_tab_loads(authenticated_client, ensure_process_
     assert "inline-total-cost" in html
 
 
-def test_variant_usage_api_contract(authenticated_client, ensure_process_and_subprocess):
+def test_variant_usage_api_contract(
+    authenticated_client, ensure_process_and_subprocess
+):
     process_id, process_subprocess_id = ensure_process_and_subprocess
 
-    with database.get_conn(cursor_factory=psycopg2.extras.RealDictCursor) as (conn, cur):
+    with database.get_conn(cursor_factory=psycopg2.extras.RealDictCursor) as (
+        conn,
+        cur,
+    ):
         variant_id = _ensure_variant(cur)
         conn.commit()
 
@@ -235,7 +260,10 @@ def test_variant_usage_api_contract(authenticated_client, ensure_process_and_sub
 def test_material_cost_computation(authenticated_client, ensure_process_and_subprocess):
     process_id, process_subprocess_id = ensure_process_and_subprocess
 
-    with database.get_conn(cursor_factory=psycopg2.extras.RealDictCursor) as (conn, cur):
+    with database.get_conn(cursor_factory=psycopg2.extras.RealDictCursor) as (
+        conn,
+        cur,
+    ):
         variant_ids = _ensure_two_variants(cur)
         # Add usages with explicit costs
         for idx, vid in enumerate(variant_ids):

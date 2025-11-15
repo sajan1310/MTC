@@ -96,7 +96,9 @@ class ProcessService:
                 "SELECT column_name FROM information_schema.columns WHERE table_name='processes'"
             )
             cols_raw = cur.fetchall() or []
-            cols = { (c["column_name"] if isinstance(c, dict) else c[0]) for c in cols_raw }
+            cols = {
+                (c["column_name"] if isinstance(c, dict) else c[0]) for c in cols_raw
+            }
 
             # Determine column names
             class_col = "class" if "class" in cols else "process_class"
@@ -140,7 +142,11 @@ class ProcessService:
 
             # Debug logging to trace adaptive values
             try:
-                (current_app.logger if has_app_context() else logging.getLogger(__name__)).debug(
+                (
+                    current_app.logger
+                    if has_app_context()
+                    else logging.getLogger(__name__)
+                ).debug(
                     f"[CREATE PROCESS] schema cols={sorted(list(cols))} class_col={class_col} user_col={user_col} "
                     f"mapped_class_value='{class_value}' mapped_status='{status_value}'"
                 )
@@ -236,7 +242,9 @@ class ProcessService:
                 JOIN subprocesses s ON s.id = ps.subprocess_id
                 WHERE ps.process_id = %s
                 ORDER BY {seq_expr}, ps.id
-            """.format(seq_expr=_seq_expr),
+            """.format(
+                    seq_expr=_seq_expr
+                ),
                 (process_id,),
             )
 
@@ -291,7 +299,9 @@ class ProcessService:
                     has_sequence_order = bool(row.get("exists"))
                 elif isinstance(row, (list, tuple)):
                     has_sequence_order = bool(row[0])
-                _seq_expr2 = "ps.sequence_order" if has_sequence_order else "ps.sequence"
+                _seq_expr2 = (
+                    "ps.sequence_order" if has_sequence_order else "ps.sequence"
+                )
             except Exception:
                 # Safe legacy default if detection fails under mocks
                 _seq_expr2 = "ps.sequence"  # legacy-safe default
@@ -424,7 +434,9 @@ class ProcessService:
                 LEFT JOIN groups_data gd ON gd.process_subprocess_id = si.ps_id
                 LEFT JOIN timing_data td ON td.process_subprocess_id = si.ps_id
                 ORDER BY si.sequence_order
-                """.format(seq_expr=_seq_expr2),
+                """.format(
+                    seq_expr=_seq_expr2
+                ),
                 (process_id,),
             )
 
@@ -699,7 +711,9 @@ class ProcessService:
                 "SELECT column_name FROM information_schema.columns WHERE table_name='processes'"
             )
             cols_raw = cur.fetchall() or []
-            cols = { (c["column_name"] if isinstance(c, dict) else c[0]) for c in cols_raw }
+            cols = {
+                (c["column_name"] if isinstance(c, dict) else c[0]) for c in cols_raw
+            }
             class_col = "class" if "class" in cols else "process_class"
 
             # Normalize incoming values per schema
@@ -720,7 +734,9 @@ class ProcessService:
 
             normalized_status = None
             if status is not None:
-                normalized_status = status.lower() if class_col == "class" else status.title()
+                normalized_status = (
+                    status.lower() if class_col == "class" else status.title()
+                )
 
             updates = []
             params = []
@@ -882,14 +898,16 @@ class ProcessService:
                 RETURNING *
             """
 
-            cur.execute(query, (process_id, subprocess_id, custom_name, sequence_order, notes))
+            cur.execute(
+                query, (process_id, subprocess_id, custom_name, sequence_order, notes)
+            )
 
             ps_data = cur.fetchone()
             conn.commit()
 
             # Normalize column name: if database has 'sequence', map it to 'sequence_order' for the model
-            if 'sequence' in ps_data and 'sequence_order' not in ps_data:
-                ps_data['sequence_order'] = ps_data['sequence']
+            if "sequence" in ps_data and "sequence_order" not in ps_data:
+                ps_data["sequence_order"] = ps_data["sequence"]
 
         ps = ProcessSubprocess(ps_data)
         return ps.to_dict()
@@ -931,7 +949,10 @@ class ProcessService:
         Returns:
             True if successful
         """
-        with database.get_conn(cursor_factory=psycopg2.extras.RealDictCursor) as (conn, cur):
+        with database.get_conn(cursor_factory=psycopg2.extras.RealDictCursor) as (
+            conn,
+            cur,
+        ):
             # Detect schema variation: sequence vs sequence_order
             cur.execute(
                 """
@@ -959,7 +980,7 @@ class ProcessService:
                     SET {seq_col} = -{seq_col} - 100000
                     WHERE id = %s AND process_id = %s
                     """,
-                    (int(ps_id), int(process_id))
+                    (int(ps_id), int(process_id)),
                 )
 
             # Phase 2: Update to final positive sequence values
@@ -970,7 +991,7 @@ class ProcessService:
                     SET {seq_col} = %s
                     WHERE id = %s AND process_id = %s
                     """,
-                    (int(new_order), int(ps_id), int(process_id))
+                    (int(new_order), int(ps_id), int(process_id)),
                 )
 
             conn.commit()

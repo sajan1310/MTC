@@ -199,9 +199,7 @@ def down():
         cur.execute(
             "ALTER TABLE IF EXISTS production_lots DROP COLUMN IF EXISTS created_by;"
         )
-        cur.execute(
-            "ALTER TABLE IF EXISTS item_master DROP COLUMN IF EXISTS category;"
-        )
+        cur.execute("ALTER TABLE IF EXISTS item_master DROP COLUMN IF EXISTS category;")
         cur.execute(
             "ALTER TABLE IF EXISTS substitute_groups DROP COLUMN IF EXISTS deleted_at;"
         )
@@ -219,6 +217,7 @@ def down():
 
 if __name__ == "__main__":
     import sys
+
     if len(sys.argv) > 1 and sys.argv[1] == "down":
         down()
     else:

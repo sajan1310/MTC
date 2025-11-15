@@ -25,20 +25,24 @@ def upgrade():
         )
 
         # Add new foreign key constraints with ON DELETE CASCADE
-        cur.execute("""
+        cur.execute(
+            """
             ALTER TABLE item_master
             ADD CONSTRAINT item_master_model_id_fkey
             FOREIGN KEY (model_id)
             REFERENCES model_master(model_id)
             ON DELETE CASCADE;
-        """)
-        cur.execute("""
+        """
+        )
+        cur.execute(
+            """
             ALTER TABLE item_master
             ADD CONSTRAINT item_master_variation_id_fkey
             FOREIGN KEY (variation_id)
             REFERENCES variation_master(variation_id)
             ON DELETE CASCADE;
-        """)
+        """
+        )
 
         conn.commit()
         print("Upgrade complete: Added ON DELETE CASCADE to foreign keys.")
@@ -58,18 +62,22 @@ def downgrade():
         )
 
         # Re-add foreign key constraints without ON DELETE CASCADE
-        cur.execute("""
+        cur.execute(
+            """
             ALTER TABLE item_master
             ADD CONSTRAINT item_master_model_id_fkey
             FOREIGN KEY (model_id)
             REFERENCES model_master(model_id);
-        """)
-        cur.execute("""
+        """
+        )
+        cur.execute(
+            """
             ALTER TABLE item_master
             ADD CONSTRAINT item_master_variation_id_fkey
             FOREIGN KEY (variation_id)
             REFERENCES variation_master(variation_id);
-        """)
+        """
+        )
 
         conn.commit()
         print("Downgrade complete: Removed ON DELETE CASCADE from foreign keys.")

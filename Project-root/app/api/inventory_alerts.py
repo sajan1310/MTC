@@ -295,9 +295,11 @@ def create_procurement_recommendation():
             supplier_id=int(data["supplier_id"]) if data.get("supplier_id") else None,
             recommended_quantity=int(data["recommended_quantity"]),
             required_delivery_date=req_date,
-            estimated_cost=float(data.get("estimated_cost"))
-            if data.get("estimated_cost")
-            else None,
+            estimated_cost=(
+                float(data.get("estimated_cost"))
+                if data.get("estimated_cost")
+                else None
+            ),
         )
         return APIResponse.created(rec, "Procurement recommendation created")
     except Exception as e:
@@ -367,9 +369,11 @@ def update_procurement_status(recommendation_id):
         updated = ProcurementRecommendationService.update_status(
             recommendation_id=recommendation_id,
             procurement_status=data["procurement_status"],
-            purchase_order_id=int(data["purchase_order_id"])
-            if data.get("purchase_order_id")
-            else None,
+            purchase_order_id=(
+                int(data["purchase_order_id"])
+                if data.get("purchase_order_id")
+                else None
+            ),
         )
         if updated.get("error"):
             return APIResponse.not_found(

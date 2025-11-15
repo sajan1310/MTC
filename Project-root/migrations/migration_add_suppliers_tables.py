@@ -17,15 +17,18 @@ def upgrade():
     """
     with get_conn() as (conn, cur):
         # Suppliers and related tables
-        cur.execute("""
+        cur.execute(
+            """
             CREATE TABLE IF NOT EXISTS suppliers (
                 supplier_id SERIAL PRIMARY KEY,
                 firm_name VARCHAR(255) NOT NULL UNIQUE,
                 address TEXT,
                 gstin VARCHAR(15)
             );
-        """)
-        cur.execute("""
+        """
+        )
+        cur.execute(
+            """
             CREATE TABLE IF NOT EXISTS supplier_contacts (
                 contact_id SERIAL PRIMARY KEY,
                 supplier_id INTEGER NOT NULL REFERENCES suppliers(supplier_id) ON DELETE CASCADE,
@@ -33,8 +36,10 @@ def upgrade():
                 contact_phone VARCHAR(20),
                 contact_email VARCHAR(255)
             );
-        """)
-        cur.execute("""
+        """
+        )
+        cur.execute(
+            """
             CREATE TABLE IF NOT EXISTS supplier_item_rates (
                 rate_id SERIAL PRIMARY KEY,
                 supplier_id INTEGER NOT NULL REFERENCES suppliers(supplier_id) ON DELETE CASCADE,
@@ -42,10 +47,12 @@ def upgrade():
                 rate NUMERIC(10, 2) NOT NULL,
                 UNIQUE(supplier_id, item_id)
             );
-        """)
+        """
+        )
 
         # Purchase orders and related tables
-        cur.execute("""
+        cur.execute(
+            """
             CREATE TABLE IF NOT EXISTS purchase_orders (
                 po_id SERIAL PRIMARY KEY,
                 po_number VARCHAR(50) UNIQUE,
@@ -54,8 +61,10 @@ def upgrade():
                 status VARCHAR(20) NOT NULL DEFAULT 'Draft',
                 total_amount NUMERIC(12, 2)
             );
-        """)
-        cur.execute("""
+        """
+        )
+        cur.execute(
+            """
             CREATE TABLE IF NOT EXISTS purchase_order_items (
                 po_item_id SERIAL PRIMARY KEY,
                 po_id INTEGER NOT NULL REFERENCES purchase_orders(po_id) ON DELETE CASCADE,
@@ -63,10 +72,12 @@ def upgrade():
                 quantity INTEGER NOT NULL,
                 rate NUMERIC(10, 2) NOT NULL
             );
-        """)
+        """
+        )
 
         # Stock entries
-        cur.execute("""
+        cur.execute(
+            """
             CREATE TABLE IF NOT EXISTS stock_entries (
                 entry_id SERIAL PRIMARY KEY,
                 variant_id INTEGER NOT NULL REFERENCES item_variant(variant_id) ON DELETE RESTRICT,
@@ -77,7 +88,8 @@ def upgrade():
                 cost_per_unit NUMERIC(10, 2),
                 notes TEXT
             );
-        """)
+        """
+        )
 
         conn.commit()
         print("Upgrade complete: Suppliers and PO tables created.")

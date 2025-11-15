@@ -497,7 +497,9 @@ class ProductionService:
                         cost = float(cost_row["cost_per_unit"]) if cost_row else None
                     else:
                         # Table missing; fallback to worst-case costing
-                        cost_info = CostingService.get_variant_worst_case_cost(variant_id)
+                        cost_info = CostingService.get_variant_worst_case_cost(
+                            variant_id
+                        )
                         cost = cost_info["worst_case_cost"] if cost_info else None
                 except Exception:
                     # On any unexpected DB error, fallback to worst-case costing
@@ -534,7 +536,9 @@ class ProductionService:
                     vu_row = cur.fetchone()
 
                 variant_usage_id = int(vu_row["id"]) if vu_row else None
-                resolved_or_group_id = substitute_group_id or (vu_row and vu_row.get("substitute_group_id"))
+                resolved_or_group_id = substitute_group_id or (
+                    vu_row and vu_row.get("substitute_group_id")
+                )
 
                 # If quantity not provided, try to use variant_usage quantity
                 if quantity is None:
@@ -562,7 +566,7 @@ class ProductionService:
                         variant_usage_id,
                         quantity if quantity is not None else None,
                         None,
-                        getattr(current_user, 'id', None),
+                        getattr(current_user, "id", None),
                     ),
                 )
                 sel_row = cur.fetchone()
@@ -575,9 +579,15 @@ class ProductionService:
                     "substitute_group_id": resolved_or_group_id,
                     "selected_variant_id": int(variant_id) if variant_id else None,
                     "selected_supplier_id": supplier_id,
-                    "selected_cost": float(selected_cost) if selected_cost is not None else None,
-                    "selected_quantity": float(quantity) if quantity is not None else None,
-                    "variant_usage_id": int(variant_usage_id) if variant_usage_id else None,
+                    "selected_cost": (
+                        float(selected_cost) if selected_cost is not None else None
+                    ),
+                    "selected_quantity": (
+                        float(quantity) if quantity is not None else None
+                    ),
+                    "variant_usage_id": (
+                        int(variant_usage_id) if variant_usage_id else None
+                    ),
                 }
                 return normalized
 
@@ -1011,7 +1021,9 @@ class ProductionService:
                     conn.rollback()
                 except Exception:
                     pass
-                current_app.logger.warning(f"finalize_production_lot: failed to set finalized_at column - falling back: {e}")
+                current_app.logger.warning(
+                    f"finalize_production_lot: failed to set finalized_at column - falling back: {e}"
+                )
                 cur.execute(
                     """
                     UPDATE production_lots
@@ -1062,7 +1074,9 @@ class ProductionService:
         return affected > 0
 
     @staticmethod
-    def update_production_lot(lot_id: int, updates: Dict[str, Any], user_id: Optional[int] = None) -> Dict[str, Any]:
+    def update_production_lot(
+        lot_id: int, updates: Dict[str, Any], user_id: Optional[int] = None
+    ) -> Dict[str, Any]:
         """Update editable fields on a production lot (quantity, notes, status).
 
         Returns the updated lot dict or raises ValueError on invalid operation.
@@ -1079,7 +1093,10 @@ class ProductionService:
             cur,
         ):
             # Verify lot exists
-            cur.execute("SELECT id, lot_number, created_by, status FROM production_lots WHERE id = %s", (lot_id,))
+            cur.execute(
+                "SELECT id, lot_number, created_by, status FROM production_lots WHERE id = %s",
+                (lot_id,),
+            )
             lot = cur.fetchone()
             if not lot:
                 raise ValueError("Lot not found")
@@ -1111,7 +1128,9 @@ class ProductionService:
         Returns True if deleted.
         """
         with database.get_conn() as (conn, cur):
-            cur.execute("SELECT id, status FROM production_lots WHERE id = %s", (lot_id,))
+            cur.execute(
+                "SELECT id, status FROM production_lots WHERE id = %s", (lot_id,)
+            )
             lot = cur.fetchone()
             if not lot:
                 return False
@@ -1126,16 +1145,24 @@ class ProductionService:
             return affected > 0
 
     @staticmethod
-    def remove_variant_selection(selection_id: int, lot_id: Optional[int] = None) -> bool:
+    def remove_variant_selection(
+        selection_id: int, lot_id: Optional[int] = None
+    ) -> bool:
         """Remove a single variant selection by its id. Optionally verify lot_id.
 
         Returns True if removed.
         """
         with database.get_conn() as (conn, cur):
             if lot_id:
-                cur.execute("DELETE FROM production_lot_variant_selections WHERE id = %s AND production_lot_id = %s", (selection_id, lot_id))
+                cur.execute(
+                    "DELETE FROM production_lot_variant_selections WHERE id = %s AND production_lot_id = %s",
+                    (selection_id, lot_id),
+                )
             else:
-                cur.execute("DELETE FROM production_lot_variant_selections WHERE id = %s", (selection_id,))
+                cur.execute(
+                    "DELETE FROM production_lot_variant_selections WHERE id = %s",
+                    (selection_id,),
+                )
             affected = cur.rowcount
             conn.commit()
             return affected > 0

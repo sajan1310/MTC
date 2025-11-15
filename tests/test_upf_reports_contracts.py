@@ -11,6 +11,7 @@ exact numeric values (which depend on dynamic DB state). If database is
 unavailable (OperationalError), tests are xfailed gracefully so CI doesn't
 produce false negatives before DB setup.
 """
+
 from __future__ import annotations
 
 import pytest
@@ -37,16 +38,19 @@ def _get_json(resp):
 @pytest.mark.parametrize(
     "endpoint,required_fields",
     [
-        ("/api/upf/reports/metrics", [
-            "total_processes",
-            "total_lots",
-            "avg_cost",
-            "completed_lots",
-            "processes_change",
-            "lots_change",
-            "cost_change",
-            "completed_change",
-        ]),
+        (
+            "/api/upf/reports/metrics",
+            [
+                "total_processes",
+                "total_lots",
+                "avg_cost",
+                "completed_lots",
+                "processes_change",
+                "lots_change",
+                "cost_change",
+                "completed_change",
+            ],
+        ),
         ("/api/upf/reports/process-status", ["active", "inactive", "draft"]),
     ],
 )
@@ -65,7 +69,9 @@ def test_basic_report_field_presence(test_client, endpoint, required_fields):
         assert field in data, f"Missing field '{field}' in response JSON"
         # Type sanity (allow int or float for costs/change metrics)
         if field.endswith("_change") or field == "avg_cost":
-            assert isinstance(data[field], (int, float)), f"Field {field} must be numeric"
+            assert isinstance(
+                data[field], (int, float)
+            ), f"Field {field} must be numeric"
         else:
             assert isinstance(data[field], int), f"Field {field} must be int"
 

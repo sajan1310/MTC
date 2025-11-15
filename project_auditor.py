@@ -191,9 +191,11 @@ class FlaskProjectAuditor:
                                         ),
                                         "function": node.name,
                                         "line": node.lineno,
-                                        "type": "async"
-                                        if isinstance(node, ast.AsyncFunctionDef)
-                                        else "sync",
+                                        "type": (
+                                            "async"
+                                            if isinstance(node, ast.AsyncFunctionDef)
+                                            else "sync"
+                                        ),
                                         "args": [arg.arg for arg in node.args.args],
                                     }
                                 )

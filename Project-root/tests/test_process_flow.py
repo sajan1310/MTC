@@ -143,7 +143,8 @@ def test_process_creation_flow():
     print("\n" + "=" * 60)
     print("FLOW VERIFICATION COMPLETE")
     print("=" * 60)
-    print("""
+    print(
+        """
 The UPF Process Creation Flow Works As Follows:
 
 1. CREATE PROCESS:
@@ -172,7 +173,8 @@ Key Features:
 ✓ Optimized batch loading (CTEs + JSON aggregation)
 ✓ Soft delete support
 ✓ Version tracking
-    """)
+    """
+    )
 
     return True
 

@@ -25,9 +25,16 @@ def role_required(role: str):
                 current_app.logger.warning(
                     f"[AUTH] Unauthenticated access attempt to {f.__name__}"
                 )
-                return jsonify(
-                    {"success": False, "data": {}, "error": "Authentication required"}
-                ), 401
+                return (
+                    jsonify(
+                        {
+                            "success": False,
+                            "data": {},
+                            "error": "Authentication required",
+                        }
+                    ),
+                    401,
+                )
 
             # Admin role has access to everything
             if current_user.role == "admin":
@@ -41,9 +48,16 @@ def role_required(role: str):
                     f"required={role} | "
                     f"actual={current_user.role}"
                 )
-                return jsonify(
-                    {"success": False, "data": {}, "error": "Insufficient permissions"}
-                ), 403
+                return (
+                    jsonify(
+                        {
+                            "success": False,
+                            "data": {},
+                            "error": "Insufficient permissions",
+                        }
+                    ),
+                    403,
+                )
 
             return f(*args, **kwargs)
 

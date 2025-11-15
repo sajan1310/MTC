@@ -1,0 +1,55 @@
+.item-details-table {
+    width: 100%;
+    border-collapse: collapse;
+}
+.item-details-table th, .item-details-table td {
+    border: 1px solid var(--border-color, #e6e9ee);
+    padding: 8px;
+    text-align: left;
+}
+.item-details-table input[type="number"] {
+    width: 80px;
+    padding: 4px;
+}
+
+.subprocess-header {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    margin-bottom: 16px;
+}
+
+.lot-detail-section {
+    margin-bottom: 24px;
+}
+
+.lot-detail-section h2, .lot-detail-section h3 {
+    margin-top: 0;
+    margin-bottom: 16px;
+}
+
+/* Small spinner used for inline actions */
+.production-spinner {
+    border: 3px solid #f3f3f3;
+    border-top: 3px solid #3498db;
+    border-radius: 50%;
+    width: 18px;
+    height: 18px;
+    animation: pl-spin 1s linear infinite;
+    display: inline-block;
+    margin-right: 8px;
+}
+@keyframes pl-spin {
+    0% { transform: rotate(0deg); }
+    100% { transform: rotate(360deg); }
+}
+
+/* Inline qty input sizing */
+.inline-qty-input { width:86px; padding:6px; box-sizing:border-box }
+
+/* Ensure modals have high z-index if re-parented */
+.modal-overlay { z-index: 100000 !important; }
+
+/* Make toast container accessible */
+#global-toast-container { pointer-events: none; }
+#global-toast-container .toast { pointer-events: auto; }

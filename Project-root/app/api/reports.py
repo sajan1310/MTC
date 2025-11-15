@@ -22,6 +22,7 @@ NOTE: Adjust table/column names if schema differs. This code assumes:
 Change metrics logic is defensive: attempts month-over-month comparison
 using created_at ranges. If created_at missing or counts zero, returns 0.
 """
+
 from __future__ import annotations
 
 from flask import Blueprint, current_app
@@ -34,6 +35,7 @@ from database import get_conn
 reports_api_bp = Blueprint("reports_api", __name__)
 
 # Helper utilities ---------------------------------------------------------
+
 
 def _safe_pct_change(current: int | float, previous: int | float) -> float:
     """Compute percentage change, guarding division by zero.
@@ -55,7 +57,9 @@ def _coalesce_number(value, cast=float, default=0):
     except Exception:
         return default
 
+
 # Endpoints ----------------------------------------------------------------
+
 
 @reports_api_bp.route("/reports/metrics", methods=["GET"])
 @login_required
@@ -185,7 +189,9 @@ def get_top_processes():
         processes = [
             {
                 "name": r.get("name"),
-                "worst_case_cost": _coalesce_number(r.get("worst_case_cost"), float, 0.0),
+                "worst_case_cost": _coalesce_number(
+                    r.get("worst_case_cost"), float, 0.0
+                ),
             }
             for r in rows
         ]

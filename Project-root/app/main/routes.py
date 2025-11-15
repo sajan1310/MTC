@@ -195,11 +195,11 @@ def stock_ledger():
     return render_template("stock_ledger.html")
 
 
-@main_bp.route('/variant-ledger')
+@main_bp.route("/variant-ledger")
 @login_required
 def variant_ledger_page():
     """Page: Item/Variant-wise ledger to compare rates across suppliers."""
-    return render_template('variant_ledger.html')
+    return render_template("variant_ledger.html")
 
 
 @main_bp.route("/low-stock-report")
@@ -338,6 +338,7 @@ def compat_login():
     if current_user.is_authenticated:
         return redirect(url_for("main.dashboard"))
     from flask import current_app as _cap
+
     if _cap.config.get("TESTING"):
         return render_template("login.html")
     return redirect(url_for("auth.login"))

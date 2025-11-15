@@ -25,10 +25,12 @@ def upgrade():
         )
 
         # Create a new unique index
-        cur.execute("""
+        cur.execute(
+            """
             CREATE UNIQUE INDEX unique_item_master_name_model_variation_desc
             ON item_master (name, model_id, variation_id, COALESCE(description, ''));
-        """)
+        """
+        )
 
         conn.commit()
         print("Upgrade complete: Added unique index to item_master.")

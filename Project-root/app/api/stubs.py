@@ -51,6 +51,7 @@ This prevents duplicate route registrations on /api/upf/reports/*.
 
 
 if STUBS_ENABLED:
+
     @api_bp.route("/categories", methods=["GET"])
     @login_required
     def get_categories():
@@ -63,15 +64,18 @@ if STUBS_ENABLED:
         try:
             with get_conn(cursor_factory=None) as (conn, cur):
                 # Use the actual item_category_master table from the schema
-                cur.execute("""
+                cur.execute(
+                    """
                     SELECT item_category_id as id, item_category_name as name,
                            NULL as description
                     FROM item_category_master
                     ORDER BY item_category_name
-                """)
+                """
+                )
                 rows = cur.fetchall()
                 categories = [
-                    {"id": row[0], "name": row[1], "description": row[2]} for row in rows
+                    {"id": row[0], "name": row[1], "description": row[2]}
+                    for row in rows
                 ]
             return jsonify(categories), 200
         except Exception as e:
@@ -86,6 +90,7 @@ if STUBS_ENABLED:
 
 
 if STUBS_ENABLED:
+
     @api_bp.route("/upf/production_lot/<int:lot_id>/variant_options", methods=["POST"])
     @login_required
     def post_variant_options_stub(lot_id):
@@ -96,14 +101,17 @@ if STUBS_ENABLED:
         logger.warning(
             f"Stub endpoint called: POST /api/upf/production_lot/{lot_id}/variant_options"
         )
-        return jsonify(
-            {
-                "status": "stub",
-                "message": "Variant options selection feature in development",
-                "lot_id": lot_id,
-                "data": {},
-            }
-        ), 200
+        return (
+            jsonify(
+                {
+                    "status": "stub",
+                    "message": "Variant options selection feature in development",
+                    "lot_id": lot_id,
+                    "data": {},
+                }
+            ),
+            200,
+        )
 
 
 # ============================================================================
@@ -112,6 +120,7 @@ if STUBS_ENABLED:
 
 
 if STUBS_ENABLED:
+
     @api_bp.route("/reset-password", methods=["POST"])
     def reset_password_stub():
         """
@@ -119,13 +128,16 @@ if STUBS_ENABLED:
         Stub endpoint to prevent 404 errors during development
         """
         logger.warning("Stub endpoint called: POST /api/reset-password")
-        return jsonify(
-            {
-                "status": "stub",
-                "message": "Password reset feature in development",
-                "data": {},
-            }
-        ), 200
+        return (
+            jsonify(
+                {
+                    "status": "stub",
+                    "message": "Password reset feature in development",
+                    "data": {},
+                }
+            ),
+            200,
+        )
 
 
 # ============================================================================
@@ -136,6 +148,7 @@ if STUBS_ENABLED:
 # The previous stub at this location has been removed as it conflicted with the real implementation
 
 if STUBS_ENABLED:
+
     @api_bp.route("/stock-receipts", methods=["DELETE"])
     @login_required
     def delete_stock_receipts_stub():
@@ -146,7 +159,11 @@ if STUBS_ENABLED:
         """
         logger.warning("Stub endpoint called: DELETE /api/stock-receipts")
         # Silently accept and acknowledge to match test expectations
-        return jsonify({"status": "stub", "message": "stock receipt delete (stub)"}), 200
+        return (
+            jsonify({"status": "stub", "message": "stock receipt delete (stub)"}),
+            200,
+        )
+
 
 # ============================================================================
 # PROCESS API BLUEPRINT STUBS (already have process_api_bp routes)

@@ -265,9 +265,9 @@ class TestSecurityRegression:
         )
         with open(file_path, "r") as f:
             content = f.read()
-            assert "except ImportError" not in content, (
-                "Fallback import logic found - python-magic must be hard dependency"
-            )
+            assert (
+                "except ImportError" not in content
+            ), "Fallback import logic found - python-magic must be hard dependency"
             assert "import magic" in content, "python-magic import missing"
 
     def test_validate_upload_raises_on_failure(self):

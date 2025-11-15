@@ -30,7 +30,7 @@ OUT = ROOT / "scripts" / "schema_check_report.json"
 
 def _read_text(p: Path):
     try:
-        return p.read_text(encoding='utf-8', errors='ignore')
+        return p.read_text(encoding="utf-8", errors="ignore")
     except Exception:
         return ""
 
@@ -41,16 +41,16 @@ def load_candidates():
     candidates = []
     if cand.exists():
         try:
-            j = json.loads(cand.read_text(encoding='utf-8'))
+            j = json.loads(cand.read_text(encoding="utf-8"))
             for k, v in j.items():
-                candidates.append((k, v.get('classification', 'unknown')))
+                candidates.append((k, v.get("classification", "unknown")))
         except Exception:
             pass
     elif counts.exists():
         try:
-            j = json.loads(counts.read_text(encoding='utf-8'))
-            for k, cnt in j.get('counts', []):
-                candidates.append((k, 'unknown'))
+            j = json.loads(counts.read_text(encoding="utf-8"))
+            for k, cnt in j.get("counts", []):
+                candidates.append((k, "unknown"))
         except Exception:
             pass
     else:
@@ -62,9 +62,17 @@ def load_candidates():
 
 def scan_migrations_for_objects():
     mig_dir = ROOT / "Project-root" / "migrations"
-    table_re = re.compile(r"CREATE\s+TABLE\s+(?:IF\s+NOT\s+EXISTS\s+)?(?:\w+\.)?\"?([a-zA-Z0-9_]+)\"?", re.I)
-    view_re = re.compile(r"CREATE\s+(?:MATERIALIZED\s+)?VIEW\s+(?:IF\s+NOT\s+EXISTS\s+)?(?:\w+\.)?\"?([a-zA-Z0-9_]+)\"?", re.I)
-    col_re = re.compile(r"ALTER\s+TABLE[\s\S]{0,200}ADD\s+COLUMN[\s\S]{0,40}\"?([a-zA-Z0-9_]+)\"?", re.I)
+    table_re = re.compile(
+        r"CREATE\s+TABLE\s+(?:IF\s+NOT\s+EXISTS\s+)?(?:\w+\.)?\"?([a-zA-Z0-9_]+)\"?",
+        re.I,
+    )
+    view_re = re.compile(
+        r"CREATE\s+(?:MATERIALIZED\s+)?VIEW\s+(?:IF\s+NOT\s+EXISTS\s+)?(?:\w+\.)?\"?([a-zA-Z0-9_]+)\"?",
+        re.I,
+    )
+    col_re = re.compile(
+        r"ALTER\s+TABLE[\s\S]{0,200}ADD\s+COLUMN[\s\S]{0,40}\"?([a-zA-Z0-9_]+)\"?", re.I
+    )
     tables = set()
     views = set()
     cols = set()
@@ -103,26 +111,39 @@ def check_online(dsn, checks):
         entry = {"expected_kind": kind, "present": False, "details": None}
         try:
             # check view
-            cur.execute("SELECT to_regclass(%s)", (f'public.{name}',))
+            cur.execute("SELECT to_regclass(%s)", (f"public.{name}",))
             reg = cur.fetchone()[0]
             if reg:
-                entry['present'] = True
-                entry['details'] = 'regclass'
+                entry["present"] = True
+                entry["details"] = "regclass"
                 res[name] = entry
                 continue
             # check table
-            cur.execute("SELECT EXISTS (SELECT 1 FROM information_schema.tables WHERE table_schema='public' AND table_name=%s)", (name,))
+            cur.execute(
+                "SELECT EXISTS (SELECT 1 FROM information_schema.tables WHERE table_schema='public' AND table_name=%s)",
+                (name,),
+            )
             if cur.fetchone()[0]:
-                entry['present'] = True
-                entry['details'] = 'table'
+                entry["present"] = True
+                entry["details"] = "table"
                 res[name] = entry
                 continue
             # check column in any table
-            cur.execute("SELECT table_schema, table_name, column_name, data_type FROM information_schema.columns WHERE column_name=%s LIMIT 1", (name,))
+            cur.execute(
+                "SELECT table_schema, table_name, column_name, data_type FROM information_schema.columns WHERE column_name=%s LIMIT 1",
+                (name,),
+            )
             row = cur.fetchone()
             if row:
-                entry['present'] = True
-                entry['details'] = {'column_in_table': {'schema': row[0], 'table': row[1], 'column': row[2], 'data_type': row[3]}}
+                entry["present"] = True
+                entry["details"] = {
+                    "column_in_table": {
+                        "schema": row[0],
+                        "table": row[1],
+                        "column": row[2],
+                        "data_type": row[3],
+                    }
+                }
                 res[name] = entry
                 continue
             res[name] = entry
@@ -139,7 +160,11 @@ def check_online(dsn, checks):
 
 def main():
     parser = argparse.ArgumentParser()
-    parser.add_argument("--dsn", help="Postgres DSN (postgres://user:pass@host:port/db)", default=os.environ.get('SCHEMA_CHECK_DSN'))
+    parser.add_argument(
+        "--dsn",
+        help="Postgres DSN (postgres://user:pass@host:port/db)",
+        default=os.environ.get("SCHEMA_CHECK_DSN"),
+    )
     args = parser.parse_args()
 
     candidates = load_candidates()
@@ -148,8 +173,8 @@ def main():
         countsf = ROOT / "migration_candidate_counts.json"
         if countsf.exists():
             try:
-                j = json.loads(countsf.read_text(encoding='utf-8'))
-                candidates = [(k, 'unknown') for k, _ in j.get('counts', [])[:40]]
+                j = json.loads(countsf.read_text(encoding="utf-8"))
+                candidates = [(k, "unknown") for k, _ in j.get("counts", [])[:40]]
             except Exception:
                 candidates = []
 
@@ -158,24 +183,24 @@ def main():
     offline_report = {}
     for name, kind in candidates:
         status = {
-            'expected_kind': kind,
-            'in_migrations_table': name in mig_tables,
-            'in_migrations_view': name in mig_views,
-            'in_migrations_column': name in mig_columns,
+            "expected_kind": kind,
+            "in_migrations_table": name in mig_tables,
+            "in_migrations_view": name in mig_views,
+            "in_migrations_column": name in mig_columns,
         }
         offline_report[name] = status
 
-    report = {'mode': 'offline', 'offline': offline_report}
+    report = {"mode": "offline", "offline": offline_report}
 
     if args.dsn:
         online = check_online(args.dsn, candidates)
         if online is not None:
-            report['mode'] = 'online'
-            report['online'] = online
+            report["mode"] = "online"
+            report["online"] = online
 
     OUT.write_text(json.dumps(report, indent=2))
-    print('Wrote', OUT)
+    print("Wrote", OUT)
 
 
-if __name__ == '__main__':
+if __name__ == "__main__":
     main()

@@ -591,22 +591,34 @@ class CostingService:
 
         return {
             "process_id": process_id,
-            "total_worst_case_cost": float(profitability["total_worst_case_cost"])
-            if profitability["total_worst_case_cost"]
-            else 0,
-            "estimated_sales_price": float(profitability["estimated_sales_price"])
-            if profitability["estimated_sales_price"]
-            else None,
-            "profit_margin": float(profitability["profit_margin"])
-            if profitability["profit_margin"]
-            else None,
-            "profit_amount": float(profitability["profit_amount"])
-            if profitability["profit_amount"]
-            else None,
-            "last_calculated": profitability["last_calculated"].isoformat()
-            if profitability["last_calculated"]
-            else None,
-            "is_profitable": (float(profitability["profit_amount"]) > 0)
-            if profitability["profit_amount"]
-            else False,
+            "total_worst_case_cost": (
+                float(profitability["total_worst_case_cost"])
+                if profitability["total_worst_case_cost"]
+                else 0
+            ),
+            "estimated_sales_price": (
+                float(profitability["estimated_sales_price"])
+                if profitability["estimated_sales_price"]
+                else None
+            ),
+            "profit_margin": (
+                float(profitability["profit_margin"])
+                if profitability["profit_margin"]
+                else None
+            ),
+            "profit_amount": (
+                float(profitability["profit_amount"])
+                if profitability["profit_amount"]
+                else None
+            ),
+            "last_calculated": (
+                profitability["last_calculated"].isoformat()
+                if profitability["last_calculated"]
+                else None
+            ),
+            "is_profitable": (
+                (float(profitability["profit_amount"]) > 0)
+                if profitability["profit_amount"]
+                else False
+            ),
         }

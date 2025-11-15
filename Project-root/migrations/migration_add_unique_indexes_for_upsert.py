@@ -28,31 +28,38 @@ def upgrade():
 
         # Primary unique index for item names (required for UPSERT)
         # Partial index excludes soft-deleted records
-        cur.execute("""
+        cur.execute(
+            """
             CREATE UNIQUE INDEX IF NOT EXISTS idx_item_master_name_unique
             ON item_master(name)
             WHERE deleted_at IS NULL;
-        """)
+        """
+        )
         print("✅ Created unique index on item_master(name)")
 
         # Performance index for category filtering
-        cur.execute("""
+        cur.execute(
+            """
             CREATE INDEX IF NOT EXISTS idx_item_master_category
             ON item_master(category)
             WHERE deleted_at IS NULL;
-        """)
+        """
+        )
         print("✅ Created index on item_master(category)")
 
         # Performance index for updated_at (useful for tracking recent changes)
-        cur.execute("""
+        cur.execute(
+            """
             CREATE INDEX IF NOT EXISTS idx_item_master_updated_at
             ON item_master(updated_at DESC)
             WHERE deleted_at IS NULL;
-        """)
+        """
+        )
         print("✅ Created index on item_master(updated_at)")
 
         # Composite index for model/variation lookups (if these columns exist)
-        cur.execute("""
+        cur.execute(
+            """
             DO $$
             BEGIN
                 IF EXISTS (
@@ -64,7 +71,8 @@ def upgrade():
                     WHERE deleted_at IS NULL;
                 END IF;
             END$$;
-        """)
+        """
+        )
         print("✅ Created composite index on item_master(model_id, variation_id)")
 
         # ============================================
@@ -72,15 +80,18 @@ def upgrade():
         # ============================================
 
         # Primary unique index for color names (required for UPSERT)
-        cur.execute("""
+        cur.execute(
+            """
             CREATE UNIQUE INDEX IF NOT EXISTS idx_color_master_name_unique
             ON color_master(color_name)
             WHERE deleted_at IS NULL;
-        """)
+        """
+        )
         print("✅ Created unique index on color_master(color_name)")
 
         # Optional: Index on color_code if it exists
-        cur.execute("""
+        cur.execute(
+            """
             DO $$
             BEGIN
                 IF EXISTS (
@@ -92,7 +103,8 @@ def upgrade():
                     WHERE deleted_at IS NULL;
                 END IF;
             END$$;
-        """)
+        """
+        )
         print("✅ Created index on color_master(color_code) if column exists")
 
         # ============================================
@@ -100,15 +112,18 @@ def upgrade():
         # ============================================
 
         # Primary unique index for size names (required for UPSERT)
-        cur.execute("""
+        cur.execute(
+            """
             CREATE UNIQUE INDEX IF NOT EXISTS idx_size_master_name_unique
             ON size_master(size_name)
             WHERE deleted_at IS NULL;
-        """)
+        """
+        )
         print("✅ Created unique index on size_master(size_name)")
 
         # Performance index for size_code if it exists
-        cur.execute("""
+        cur.execute(
+            """
             DO $$
             BEGIN
                 IF EXISTS (
@@ -120,7 +135,8 @@ def upgrade():
                     WHERE deleted_at IS NULL;
                 END IF;
             END$$;
-        """)
+        """
+        )
         print("✅ Created unique index on size_master(size_code) if column exists")
 
         # ============================================
@@ -128,7 +144,8 @@ def upgrade():
         # ============================================
 
         # Model master unique index
-        cur.execute("""
+        cur.execute(
+            """
             DO $$
             BEGIN
                 IF EXISTS (
@@ -140,11 +157,13 @@ def upgrade():
                     WHERE deleted_at IS NULL;
                 END IF;
             END$$;
-        """)
+        """
+        )
         print("✅ Created unique index on model_master(model_name)")
 
         # Variation master unique index
-        cur.execute("""
+        cur.execute(
+            """
             DO $$
             BEGIN
                 IF EXISTS (
@@ -156,7 +175,8 @@ def upgrade():
                     WHERE deleted_at IS NULL;
                 END IF;
             END$$;
-        """)
+        """
+        )
         print("✅ Created unique index on variation_master(variation_name)")
 
         # ============================================
@@ -165,19 +185,23 @@ def upgrade():
 
         # Composite unique index for item+color+size combinations
         # This prevents duplicate variants and enables UPSERT on variants
-        cur.execute("""
+        cur.execute(
+            """
             CREATE UNIQUE INDEX IF NOT EXISTS idx_item_variant_unique_combo
             ON item_variant(item_id, color_id, size_id)
             WHERE deleted_at IS NULL;
-        """)
+        """
+        )
         print("✅ Created unique index on item_variant(item_id, color_id, size_id)")
 
         # Performance index for stock lookups
-        cur.execute("""
+        cur.execute(
+            """
             CREATE INDEX IF NOT EXISTS idx_item_variant_stock
             ON item_variant(opening_stock)
             WHERE deleted_at IS NULL AND opening_stock < threshold;
-        """)
+        """
+        )
         print("✅ Created index on item_variant for low stock queries")
 
         conn.commit()

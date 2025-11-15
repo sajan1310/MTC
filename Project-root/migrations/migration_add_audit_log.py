@@ -23,7 +23,8 @@ def up():
     try:
         print("Creating audit_log table...")
 
-        cur.execute("""
+        cur.execute(
+            """
             CREATE TABLE IF NOT EXISTS audit_log (
                 id SERIAL PRIMARY KEY,
                 user_id INTEGER NOT NULL,
@@ -38,30 +39,39 @@ def up():
 
                 FOREIGN KEY (user_id) REFERENCES users(user_id) ON DELETE CASCADE
             );
-        """)
+        """
+        )
 
         # Indexes for performance
         print("Creating indexes on audit_log...")
 
-        cur.execute("""
+        cur.execute(
+            """
             CREATE INDEX IF NOT EXISTS idx_audit_user_id
             ON audit_log(user_id) WHERE deleted_at IS NULL;
-        """)
+        """
+        )
 
-        cur.execute("""
+        cur.execute(
+            """
             CREATE INDEX IF NOT EXISTS idx_audit_entity
             ON audit_log(entity_type, entity_id) WHERE deleted_at IS NULL;
-        """)
+        """
+        )
 
-        cur.execute("""
+        cur.execute(
+            """
             CREATE INDEX IF NOT EXISTS idx_audit_timestamp
             ON audit_log(timestamp DESC) WHERE deleted_at IS NULL;
-        """)
+        """
+        )
 
-        cur.execute("""
+        cur.execute(
+            """
             CREATE INDEX IF NOT EXISTS idx_audit_action_type
             ON audit_log(action_type) WHERE deleted_at IS NULL;
-        """)
+        """
+        )
 
         conn.commit()
         print("✓ Audit log table created successfully")
