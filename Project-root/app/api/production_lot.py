@@ -453,7 +453,16 @@ def get_variant_options_by_subprocess(subprocess_id: int):
 
             # Fetch the process_subprocess and its process_id
             cur.execute(
-                "SELECT ps.id as process_subprocess_id, ps.process_id, s.name as subprocess_name, ps.custom_name FROM process_subprocesses ps JOIN subprocesses s ON s.id = ps.subprocess_id WHERE ps.id = %s",
+                """
+                SELECT
+                    ps.id as process_subprocess_id,
+                    ps.process_id,
+                    s.name as subprocess_name,
+                    ps.custom_name
+                FROM process_subprocesses ps
+                JOIN subprocesses s ON s.id = ps.subprocess_id
+                WHERE ps.id = %s
+                """,
                 (subprocess_id,),
             )
             sp = cur.fetchone()
@@ -496,11 +505,15 @@ def get_variant_options_by_subprocess(subprocess_id: int):
             variants = cur.fetchall()
 
             cur.execute(
-                (
-                    "SELECT DISTINCT og.id as group_id, og.name as group_name, "
-                    "og.description FROM or_groups og WHERE "
-                    "og.process_subprocess_id = %s ORDER BY og.id"
-                ),
+                """
+                SELECT DISTINCT
+                    og.id as group_id,
+                    og.name as group_name,
+                    og.description
+                FROM or_groups og
+                WHERE og.process_subprocess_id = %s
+                ORDER BY og.id
+                """,
                 (subprocess_id,),
             )
             or_groups = cur.fetchall()
