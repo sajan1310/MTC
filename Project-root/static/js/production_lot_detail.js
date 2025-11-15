@@ -1,400 +1,4 @@
-(function(){
-    'use strict';
-
-    function safeFetchJson(url, opts){
-        return fetch(url, opts).then(r => {
-            if (!r.ok) throw new Error('Network response not ok: ' + r.status);
-            return r.json().catch(()=>({}));
-        });
-    }
-
-    function findSummaryCostElement(){
-        const rows = document.querySelectorAll('#summary-content .detail-row');
-        for (const r of rows){
-            const label = r.querySelector('.detail-label');
-            if (!label) continue;
-            if (label.textContent.trim().toLowerCase().includes('total cost')){
-                return r.querySelector('.detail-value');
-            }
-        }
-        return null;
-    }
-
-    function updateTotalCostDisplay(amount){
-        const el = findSummaryCostElement();
-        if (!el) return;
-        const num = (typeof amount === 'number') ? amount : Number(amount || 0);
-        el.textContent = `$${(isFinite(num)? num.toFixed(2) : '0.00')}`;
-    }
-
-    async function recalculateLotCosts(lotId){
-        try{
-            const resp = await safeFetchJson(`/api/upf/production-lots/${lotId}/recalculate`, { credentials: 'include' });
-            // Expecting { total_cost: 123.45 } or similar
-            const total = resp.total_cost ?? resp.data?.total_cost ?? resp.data?.totalCost ?? resp.totalCost;
-            if (typeof total !== 'undefined') updateTotalCostDisplay(Number(total));
-            return resp;
-        }catch(e){
-            console.warn('recalculateLotCosts failed', e);
-            return null;
-        }
-    }
-
-    async function loadVariantOptionsForSubprocess(subprocessId){
-        // Try a few fallback endpoints commonly used in this app
-        const candidates = [
-            `/api/upf/subprocess/${subprocessId}/variant-options`,
-            `/api/upf/subprocesses/${subprocessId}/variant_options`,
-            `/api/upf/production-lots/${window.LOT_ID || ''}/variant_options?subprocess_id=${subprocessId}`
-        ];
-        for (const url of candidates){
-            try{
-                const res = await fetch(url, { credentials: 'include' });
-                if (!res.ok) continue;
-                const data = await res.json();
-                // dispatch a custom event so page code can pick it up
-                const ev = new CustomEvent('production:subprocess-variant-options', { detail: { subprocessId, data } });
-                document.dispatchEvent(ev);
-                return data;
-            }catch(e){/* try next */}
-        }
-        console.warn('loadVariantOptionsForSubprocess: no endpoint returned data');
-        return null;
-    }
-
-    // The large page object extracted from the template
-    const lotDetailPage = {
-        lotId: window.LOT_ID || null,
-        lotData: null,
-        alertsData: null,
-
-        async init() {
-            await this.loadLotDetails();
-            await this.loadAlerts();
-            try { await this.fetchVariantOptions(); } catch (e) {}
-            this.setupEventListeners();
-            this.renderSubprocesses();
-            if (window.ProductionLotAlertHandler) {
-                window.ProductionLotAlertHandler.init(this.lotId);
-            }
-        },
-
-        showToast(message, type = 'info', timeout = 4000) {
-            try {
-                const container = document.getElementById('global-toast-container');
-                if (!container) { try { alert(message); } catch (e) {} return; }
-                const toast = document.createElement('div');
-                toast.className = `toast ${type}`;
-                toast.role = 'status';
-                toast.innerHTML = `
-                <div style="flex-shrink:0">${type === 'success' ? '✅' : type === 'error' ? '❌' : 'ℹ️'}</div>
-                <div style="flex:1;">${this.escapeHtml(String(message))}</div>
-                <div class="toast-close" aria-label="close">✖</div>
-            `;
-                container.appendChild(toast);
-                requestAnimationFrame(() => toast.classList.add('show'));
-                toast.querySelector('.toast-close')?.addEventListener('click', () => { try { toast.classList.remove('show'); setTimeout(() => toast.remove(), 240); } catch (e) {} });
-                if (timeout > 0) setTimeout(() => { try { toast.classList.remove('show'); setTimeout(() => toast.remove(), 240); } catch (e) {} }, timeout);
-            } catch (e) { console.warn('showToast failed', e); }
-        },
-
-        showButtonLoading(btn, text) {
-            if (!btn) return;
-            try {
-                if (!btn.dataset._prevHtml) btn.dataset._prevHtml = btn.innerHTML || '';
-                if (typeof btn.disabled !== 'undefined' && !btn.dataset._prevDisabled) btn.dataset._prevDisabled = btn.disabled ? '1' : '0';
-                btn.disabled = true;
-                btn.innerHTML = `<span class="spinner" aria-hidden="true"></span>${this.escapeHtml(String(text || 'Loading...'))}`;
-            } catch (e) { console.warn('showButtonLoading failed', e); }
-        },
-
-        restoreButton(btn) {
-            if (!btn) return;
-            try {
-                if (btn.dataset._prevHtml !== undefined) { btn.innerHTML = btn.dataset._prevHtml; delete btn.dataset._prevHtml; }
-                if (btn.dataset._prevDisabled !== undefined) { btn.disabled = btn.dataset._prevDisabled === '1'; delete btn.dataset._prevDisabled; } else { btn.disabled = false; }
-            } catch (e) { console.warn('restoreButton failed', e); }
-        },
-
-        async loadLotDetails() {
-            try {
-                const response = await fetch(`/api/upf/production-lots/${this.lotId}`, { method: 'GET', credentials: 'include' });
-                if (response.status === 401) { window.location.href = '/auth/login'; return; }
-                if (!response.ok) throw new Error('Failed to load lot details');
-                const data = await response.json();
-                this.lotData = data.data || data;
-                this.renderLotDetails(); this.renderSummary(); this.renderVariants();
-            } catch (error) {
-                console.error('Error loading lot details:', error);
-                document.getElementById('lot-details-content').innerHTML = '<div class="empty-state">❌ Failed to load lot details</div>';
-            }
-        },
-
-        renderVariants() {
-            const selections = this.lotData?.selections || [];
-            const container = document.getElementById('variants-content'); if (!container) return;
-            if (selections.length === 0) { container.innerHTML = '<div class="empty-state">No variant selections yet.</div>'; return; }
-            const lotQty = (this.lotData && Number(this.lotData.quantity)) || 1;
-            const rows = selections.map(s => {
-                const selId = s.get ? s.get('id') : s.id || s['id'];
-                const itemName = s.item_number || s.item_name || s.variant_name || '';
-                const model = s.model || s.item_model || '';
-                const variation = s.variation || s.variant_sku || '';
-                const size = s.size || '';
-                const details = [itemName, model, variation, size].filter(Boolean).join(' - ') || (s.selected_variant_id || 'Variant');
-                const perUnitQty = Number(s.selected_quantity || s.quantity || 0);
-                const totalQty = (perUnitQty * lotQty) || 0;
-                return `
-                <div class="detail-row" data-selection-id="${selId}">
-                    <div style="flex:1">
-                        <div class="detail-label">${this.escapeHtml(String(details))}</div>
-                        <div class="detail-value">Quantity per unit: ${perUnitQty} — Total required: ${totalQty}</div>
-                    </div>
-                    <div style="display:flex;gap:8px;align-items:center">
-                        <button class="btn" onclick="lotDetailPage.handleRemoveVariant(${selId})">Remove</button>
-                    </div>
-                </div>
-            `;
-            }).join('');
-            container.innerHTML = rows;
-        },
-
-        renderSubprocesses() {
-            const data = (this._variantOptions || {});
-            const subs = data.subprocesses || [];
-            const container = document.getElementById('subprocesses-content'); if (!container) return;
-            if (subs.length === 0) { container.innerHTML = '<div class="empty-state">No subprocess variant options available.</div>'; return; }
-            const lotQty = (this.lotData && Number(this.lotData.quantity)) || 1;
-
-            const html = subs.map(sp => {
-                const costItems = sp.cost_items || []; let subtotalPerUnit = 0;
-                costItems.forEach(ci => { const q = Number(ci.quantity) || 0; const rate = Number(ci.amount || ci.rate) || 0; subtotalPerUnit += q * rate; });
-                const scaledSubtotal = subtotalPerUnit * lotQty;
-                const variants = []; (Object.values(sp.grouped_variants || {}).flat() || []).forEach(v => variants.push(v)); (sp.standalone_variants || []).forEach(v => variants.push(v));
-                const uniqueColors = Array.from(new Set(variants.map(v => (v.color_name || v.color || v.variant_color || 'Default').toString())));
-                const colorHeaders = uniqueColors.map(c => `<th colspan="2">${this.escapeHtml(c)}</th>`).join('');
-                const colorSubHeaders = uniqueColors.map(_ => `<th>Qty per Unit</th><th>Lot Qty</th>`).join('');
-                const rowsById = {};
-                variants.forEach(v => { const vid = v.usage_id || v.id || v.variant_id || v.item_id; if (!rowsById[vid]) rowsById[vid] = { variants: [] }; rowsById[vid].variants.push(v); });
-
-                const rowsHtml = Object.keys(rowsById).map(vid => {
-                    const vGroup = rowsById[vid].variants[0];
-                    const itemName = vGroup.item_number || vGroup.variant_name || vGroup.description || String(vid);
-                    const model = vGroup.model_name || vGroup.model || vGroup.item_model || '';
-                    const variation = vGroup.variation_name || vGroup.variation || vGroup.variant_sku || '';
-                    const size = vGroup.size_name || vGroup.size || '';
-                    const details = [itemName, model, variation, size].filter(Boolean).join(' - ');
-                    const colorCells = uniqueColors.map(col => {
-                        const match = rowsById[vid].variants.find(x => (x.color_name || x.color || x.variant_color || x.description || 'Default').toString() === col);
-                        if (!match) return '<td></td><td></td>';
-                        const perUnit = Number(match.quantity || match.qty || 0);
-                        const lotTotal = perUnit * lotQty;
-                        return `<td><input type="number" value="${perUnit}" min="0" step="0.01" data-usage-id="${match.usage_id || match.id || ''}" class="inline-qty-input"/></td><td class="lot-total">${lotTotal}</td>`;
-                    }).join('');
-                    return `<tr><td>${this.escapeHtml(details)}</td>${colorCells}</tr>`;
-                }).join('');
-
-                return `
-                <div data-ps-id="${sp.process_subprocess_id}" style="margin-bottom:12px;padding-bottom:12px;border-bottom:2px solid #f5f5f5">
-                            <div class="detail-row" style="align-items:center;gap:12px;">
-                                <div style="flex:1">
-                                    <div class="detail-label">${this.escapeHtml(sp.subprocess_name || sp.custom_name || 'Subprocess')}</div>
-                                    <div class="detail-value">Sequence: ${sp.sequence_order || ''}</div>
-                                </div>
-                                <div style="display:flex;align-items:center;gap:12px">
-                                    <button class="btn btn-primary" onclick="lotDetailPage.showEditSubprocessModal(${sp.process_subprocess_id})">+ Add Variant</button>
-                                    <div style="text-align:right">
-                                        <div style="font-size:13px;color:#666">Labour subtotal (scaled):</div>
-                                        <div style="font-weight:600;font-size:18px">${Number(scaledSubtotal || 0).toFixed(2)}</div>
-                                    </div>
-                                </div>
-                            </div>
-                    <div style="overflow:auto;margin-top:8px" class="variant-matrix" data-lot-quantity="${lotQty}">
-                        <table class="matrix-table" style="width:100%">
-                            <thead>
-                                <tr>
-                                            <th rowspan="2">Item Details</th>
-                                            ${colorHeaders}
-                                </tr>
-                                <tr>
-                                    ${colorSubHeaders}
-                                </tr>
-                            </thead>
-                            <tbody>
-                                ${rowsHtml}
-                            </tbody>
-                        </table>
-                    </div>
-                    ${costItems.length ? `
-                      <hr/>
-                      <div style="margin-top:8px"><strong>Cost Items (per process unit)</strong></div>
-                      <ul style="margin:6px 0 0 12px;padding:0;list-style:disc">
-                        ${costItems.map(ci => `<li>${this.escapeHtml(ci.name || 'Labour')} — qty: ${ci.quantity || 0}, rate: ${Number(ci.amount || ci.rate || 0).toFixed(2)}, line: ${(Number(ci.quantity || 0) * Number(ci.amount || ci.rate || 0)).toFixed(2)}</li>`).join('')}
-                      </ul>
-                    ` : ''}
-                </div>
-            `;
-            }).join('');
-
-            container.innerHTML = html;
-
-            try {
-                const headerSelect = document.getElementById('subprocess-select-for-add');
-                if (headerSelect) {
-                    headerSelect.innerHTML = '<option value="">-- Select subprocess --</option>';
-                    subs.forEach(s => { const opt = document.createElement('option'); opt.value = s.process_subprocess_id || s.sequence_order || ''; opt.textContent = s.subprocess_name || s.custom_name || (`Subprocess ${opt.value}`); headerSelect.appendChild(opt); });
-                }
-            } catch (e) { console.warn('renderSubprocesses: failed to populate header subprocess select', e); }
-        },
-
-        showEditSubprocessModal(processSubprocessId) {
-            const payload = this._variantOptions || {};
-            const sp = (payload.subprocesses || []).find(s => s.process_subprocess_id === processSubprocessId || s.sequence_order === processSubprocessId);
-            if (!sp) { alert('Subprocess options not available'); return; }
-            const modal = document.getElementById('edit-subprocess-modal-overlay');
-            const body = document.getElementById('edit-subprocess-body'); body.innerHTML = '';
-            try {
-                const searchWrapper = document.createElement('div'); searchWrapper.style.marginBottom = '12px'; const searchBtn = document.createElement('button'); searchBtn.type = 'button'; searchBtn.className = 'btn'; searchBtn.textContent = '🔎 Search / Add from Catalog'; searchBtn.addEventListener('click', (e) => { e.preventDefault(); try { this.openVariantSearchForSubprocess(processSubprocessId); } catch (err) { console.warn('openVariantSearchForSubprocess failed', err); } }); searchWrapper.appendChild(searchBtn); body.appendChild(searchWrapper);
-            } catch (e) { console.warn('Failed to add search button', e); }
-
-            (sp.or_groups || []).forEach(g => { const gid = g.group_id || g.id; const wrapper = document.createElement('div'); wrapper.style.marginBottom = '10px'; const label = document.createElement('label'); label.textContent = `OR Group: ${g.group_name || g.name || gid}`; wrapper.appendChild(label); const sel = document.createElement('select'); sel.dataset.orGroupId = gid; sel.style.marginTop = '6px'; sel.style.width = '100%'; sel.innerHTML = '<option value="">-- None --</option>'; const groupVariants = (sp.grouped_variants && sp.grouped_variants[gid]) || []; groupVariants.forEach(v => { const opt = document.createElement('option'); const id = v.usage_id || v.id || v.item_id || v.variant_id; const itemName = v.item_number || v.variant_name || v.description || String(id); const model = v.model_name || v.model || ''; const variation = v.variation_name || v.variation || ''; const size = v.size_name || v.size || ''; const color = v.color_name || v.color || ''; const labelParts = [itemName, model, variation, size].filter(Boolean); opt.value = id; opt.textContent = labelParts.join(' - ') + (color ? ` (${color})` : ''); sel.appendChild(opt); }); wrapper.appendChild(sel); body.appendChild(wrapper); });
-
-            if ((sp.standalone_variants || []).length > 0) {
-                const h = document.createElement('div'); h.style.marginTop = '8px'; h.innerHTML = '<strong>Standalone Variants</strong>'; body.appendChild(h);
-                (sp.standalone_variants || []).forEach(v => { const row = document.createElement('div'); row.style.display = 'flex'; row.style.gap = '8px'; row.style.alignItems = 'center'; row.style.marginTop = '6px'; const cb = document.createElement('input'); cb.type = 'checkbox'; cb.dataset.usageId = v.usage_id || v.id || v.item_id || v.variant_id; const itemName = v.item_number || v.variant_name || v.description || String(cb.dataset.usageId); const model = v.model_name || v.model || ''; const variation = v.variation_name || v.variation || ''; const size = v.size_name || v.size || ''; const color = v.color_name || v.color || ''; const labelParts = [itemName, model, variation, size].filter(Boolean); const lbl = document.createElement('div'); lbl.style.flex = '1'; lbl.innerHTML = `<div class="detail-label">${this.escapeHtml(labelParts.join(' - ') + (color ? ` (${color})` : ''))}</div>\n                                 <div class="detail-value">Qty: ${v.quantity || '-'}</div>`; const qty = document.createElement('input'); qty.type = 'number'; qty.min = '0'; qty.step = '0.01'; qty.value = v.quantity || 1; qty.style.width = '80px'; row.appendChild(cb); row.appendChild(lbl); row.appendChild(qty); body.appendChild(row); });
-            }
-
-            const saveBtn = document.getElementById('edit-subprocess-save');
-            saveBtn.onclick = async () => {
-                const selections = [];
-                Array.from(body.querySelectorAll('select[data-or-group-id]')).forEach(sel => { const gid = sel.dataset.orGroupId; const usageId = sel.value ? Number(sel.value) : null; if (usageId) selections.push({ or_group_id: Number(gid), variant_usage_id: usageId }); });
-                Array.from(body.querySelectorAll('input[type="checkbox"][data-usage-id]')).forEach((cb, idx) => { if (cb.checked) { const usage = Number(cb.dataset.usageId); const qtyInput = body.querySelectorAll('input[type="number"]')[idx]; const q = qtyInput ? Number(qtyInput.value) : null; selections.push({ or_group_id: null, variant_usage_id: usage, quantity_override: q }); } });
-
-                if (selections.length === 0) { if (!confirm('No selections chosen — this will clear selections for this subprocess. Proceed?')) return; }
-
-                try {
-                    const resp = await fetch(`/api/upf/production-lots/${this.lotId}/batch_select_variants`, { method: 'POST', credentials: 'include', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ selections }) });
-                    if (!resp.ok) { const err = await resp.json().catch(() => ({})); throw new Error(err.message || 'Save failed'); }
-                    this.hideEditSubprocessModal(); await this.loadLotDetails(); await this.fetchVariantOptions(); this.renderSubprocesses(); alert('Selections saved');
-                } catch (e) { console.error('Failed to save selections:', e); alert('Failed to save selections: ' + e.message); }
-            };
-
-            modal.style.display = 'flex';
-        },
-
-        hideEditSubprocessModal() { document.getElementById('edit-subprocess-modal-overlay').style.display = 'none'; },
-
-        async loadAlerts() {
-            try {
-                const response = await fetch(`/api/upf/inventory-alerts/lot/${this.lotId}`, { credentials: 'include' });
-                if (!response.ok) throw new Error('Failed to load alerts');
-                const data = await response.json(); this.alertsData = data.data || data; this.renderAlerts(); this.updateCriticalBanner(); this.updateFinalizeButton();
-            } catch (error) { console.error('Error loading alerts:', error); document.getElementById('alerts-content').innerHTML = '<div class="empty-state">No alerts available</div>'; }
-        },
-
-        renderLotDetails() {
-            const lot = this.lotData || {};
-            document.getElementById('page-title').textContent = `🏭 Production Lot: ${lot.lot_number || 'N/A'}`;
-            const statusClass = (lot.status || 'planning').toLowerCase().replace(/\s+/g, '-');
-            document.getElementById('lot-status-badge').innerHTML = `<span class="status-badge status-${statusClass}">${lot.status || 'Planning'}</span>`;
-            document.getElementById('lot-details-content').innerHTML = detailsHtml;
-        }
-
-        renderSummary() {
-            const lot = this.lotData || {};
-            const rawCost = (lot && (lot.total_cost ?? lot.worst_case_estimated_cost)) || 0;
-            const costNum = Number(rawCost); const costDisplay = isFinite(costNum) ? costNum.toFixed(2) : '0.00';
-            const summaryHtml = `
-            <div class="detail-row">
-                <span class="detail-label">Total Cost</span>
-                <span class="detail-value">$${costDisplay}</span>
-            </div>
-            <div class="detail-row">
-                <span class="detail-label">Total Alerts</span>
-                <span class="detail-value" id="total-alerts-count">-</span>
-            </div>
-            <div class="detail-row">
-                <span class="detail-label">Acknowledged</span>
-                <span class="detail-value" id="acknowledged-count">-</span>
-            </div>
-            <div class="detail-row">
-                <span class="detail-label">Pending</span>
-                <span class="detail-value" id="pending-count">-</span>
-            </div>
-        `;
-            const summaryEl = document.getElementById('summary-content'); if (summaryEl) summaryEl.innerHTML = summaryHtml;
-        }
-
-        renderAlerts() {
-            const alerts = this.alertsData?.alert_details || [];
-            const totalAlerts = alerts.length; const badgeEl = document.getElementById('alerts-count-badge'); if (badgeEl) badgeEl.innerHTML = totalAlerts > 0 ? `<span class="status-badge">${totalAlerts} Total</span>` : '';
-            const acknowledgedCount = alerts.filter(a => a.user_acknowledged).length; const pendingCount = totalAlerts - acknowledgedCount;
-            const totalEl = document.getElementById('total-alerts-count'); const ackEl = document.getElementById('acknowledged-count'); const pendingEl = document.getElementById('pending-count'); if (totalEl) totalEl.textContent = String(totalAlerts); if (ackEl) ackEl.textContent = String(acknowledgedCount); if (pendingEl) pendingEl.textContent = String(pendingCount);
-            if (alerts.length === 0) { document.getElementById('alerts-content').innerHTML = '<div class="empty-state">✅ No inventory alerts for this lot</div>'; return; }
-            document.getElementById('alerts-content').style.display = 'none'; document.getElementById('alerts-table-container').style.display = 'block';
-            const tbody = document.getElementById('alerts-table-body'); tbody.innerHTML = alerts.map(alert => {
-                const severityClass = (alert.alert_severity || '').toString().toLowerCase(); const statusText = alert.user_acknowledged ? 'Acknowledged' : 'Pending'; const statusClass = alert.user_acknowledged ? 'acknowledged' : 'pending';
-                return `
-                <tr data-alert-id="${alert.alert_id}">
-                    <td>
-                        <input type="checkbox" class="alert-checkbox" ${alert.user_acknowledged ? 'disabled' : ''} data-alert-id="${alert.alert_id}">
-                    </td>
-                    <td>
-                        <span class="alert-severity alert-severity-${severityClass}">${alert.alert_severity}</span>
-                    </td>
-                    <td>${this.escapeHtml(alert.variant_name || 'N/A')}</td>
-                    <td>${alert.current_stock_quantity || 0}</td>
-                    <td>${alert.required_quantity || 0}</td>
-                    <td class="shortfall-qty">${alert.shortfall_quantity || 0}</td>
-                    <td>${alert.suggested_procurement_quantity || 0}</td>
-                    <td>
-                        <span class="status-badge status-${statusClass}">${statusText}</span>
-                    </td>
-                    <td class="alert-actions-inline">
-                        ${!alert.user_acknowledged ? `
-                            <select class="alert-user-action" data-alert-id="${alert.alert_id}">
-                                <option value="">Select action...</option>
-                                <option value="PROCEED">Proceed</option>
-                                <option value="USE_SUBSTITUTE">Use Substitute</option>
-                                <option value="DELAY">Delay Production</option>
-                                <option value="PROCURE">Procure Now</option>
-                            </select>
-                            <textarea class="alert-action-notes" data-alert-id="${alert.alert_id}" placeholder="Action notes..."></textarea>
-                        ` : `
-                            <div class="acknowledged-info">
-                                Action: ${alert.user_action || 'N/A'}<br>
-                                ${alert.action_notes ? `Notes: ${this.escapeHtml(alert.action_notes)}` : ''}
-                            </div>
-                        `}
-                    </td>
-                </tr>
-            `;
-            }).join('');
-        }
-        
-            document.getElementById('lot-details-content').innerHTML = detailsHtml;
-        },
-
-        renderSummary() {
-            const lot = this.lotData || {};
-            const rawCost = (lot && (lot.total_cost ?? lot.worst_case_estimated_cost)) || 0;
-            const costNum = Number(rawCost); const costDisplay = isFinite(costNum) ? costNum.toFixed(2) : '0.00';
-            const summaryHtml = `\n+            <div class="detail-row">\n+                <span class="detail-label">Total Cost</span>\n+                <span class="detail-value">$${costDisplay}</span>\n+            </div>\n+            <div class="detail-row">\n+                <span class="detail-label">Total Alerts</span>\n+                <span class="detail-value" id="total-alerts-count">-</span>\n+            </div>\n+            <div class="detail-row">\n+                <span class="detail-label">Acknowledged</span>\n+                <span class="detail-value" id="acknowledged-count">-</span>\n+            </div>\n+            <div class="detail-row">\n+                <span class="detail-label">Pending</span>\n+                <span class="detail-value" id="pending-count">-</span>\n+            </div>\n+        `;
-            const summaryEl = document.getElementById('summary-content'); if (summaryEl) summaryEl.innerHTML = summaryHtml;
-        },
-
-        renderAlerts() {
-            const alerts = this.alertsData?.alert_details || [];
-            const totalAlerts = alerts.length; const badgeEl = document.getElementById('alerts-count-badge'); if (badgeEl) badgeEl.innerHTML = totalAlerts > 0 ? `<span class="status-badge">${totalAlerts} Total</span>` : '';
-            const acknowledgedCount = alerts.filter(a => a.user_acknowledged).length; const pendingCount = totalAlerts - acknowledgedCount;
-            const totalEl = document.getElementById('total-alerts-count'); const ackEl = document.getElementById('acknowledged-count'); const pendingEl = document.getElementById('pending-count'); if (totalEl) totalEl.textContent = String(totalAlerts); if (ackEl) ackEl.textContent = String(acknowledgedCount); if (pendingEl) pendingEl.textContent = String(pendingCount);
-            if (alerts.length === 0) { document.getElementById('alerts-content').innerHTML = '<div class="empty-state">✅ No inventory alerts for this lot</div>'; return; }
-            document.getElementById('alerts-content').style.display = 'none'; document.getElementById('alerts-table-container').style.display = 'block';
-            const tbody = document.getElementById('alerts-table-body'); tbody.innerHTML = alerts.map(alert => {
-                const severityClass = (alert.alert_severity || '').toString().toLowerCase(); const statusText = alert.user_acknowledged ? 'Acknowledged' : 'Pending'; const statusClass = alert.user_acknowledged ? 'acknowledged' : 'pending';
-                return `\n+                <tr data-alert-id="${alert.alert_id}">\n+                    <td>\n+                        <input type="checkbox" class="alert-checkbox" ${alert.user_acknowledged ? 'disabled' : ''} data-alert-id="${alert.alert_id}">\n+                    </td>\n+                    <td>\n+                        <span class="alert-severity alert-severity-${severityClass}">${alert.alert_severity}</span>\n+                    </td>\n+                    <td>${this.escapeHtml(alert.variant_name || 'N/A')}</td>\n+                    <td>${alert.current_stock_quantity || 0}</td>\n+                    <td>${alert.required_quantity || 0}</td>\n+                    <td class="shortfall-qty">${alert.shortfall_quantity || 0}</td>\n+                    <td>${alert.suggested_procurement_quantity || 0}</td>\n+                    <td>\n+                        <span class="status-badge status-${statusClass}">${statusText}</span>\n+                    </td>\n+                    <td class="alert-actions-inline">\n+                        ${!alert.user_acknowledged ? `\n+                            <select class="alert-user-action" data-alert-id="${alert.alert_id}">\n+                                <option value="">Select action...</option>\n+                                <option value="PROCEED">Proceed</option>\n+                                <option value="USE_SUBSTITUTE">Use Substitute</option>\n+                                <option value="DELAY">Delay Production</option>\n+                                <option value="PROCURE">Procure Now</option>\n+                            </select>\n+                            <textarea class="alert-action-notes" data-alert-id="${alert.alert_id}" placeholder="Action notes..."></textarea>\n+                        ` : `\n+                            <div class="acknowledged-info">\n+                                Action: ${alert.user_action || 'N/A'}<br>\n+                                ${alert.action_notes ? `Notes: ${this.escapeHtml(alert.action_notes)}` : ''}\n+                            </div>\n+                        `}\n+                    </td>\n+                </tr>\n+            `;
-            }).join('');
-        },
+*** End Patch
 
         updateCriticalBanner() {
             const alerts = this.alertsData?.alert_details || [];
@@ -523,109 +127,192 @@
         escapeHtml(text) { const div = document.createElement('div'); div.textContent = text; return div.innerHTML; }
     };
 
-    window.lotDetailPage = lotDetailPage;
+    (function(){
+        'use strict';
 
-    document.addEventListener('DOMContentLoaded', function() {
-        lotDetailPage.init();
-        try {
-            if (window.__UPF_DEBUG__) {
-                const headerAdd = document.getElementById('header-add-variant-btn');
-                if (headerAdd) {
-                    headerAdd.addEventListener('click', function(e) {
-                        try {
-                            const cs = window.getComputedStyle(headerAdd);
-                            console.debug('DEBUG: header-add-variant-btn clicked', { disabled: headerAdd.disabled, display: cs.display, visibility: cs.visibility, pointerEvents: cs.pointerEvents, zIndex: cs.zIndex });
-                            const prev = headerAdd.style.outline; headerAdd.style.outline = '3px solid lime'; setTimeout(() => { headerAdd.style.outline = prev; }, 900);
-                        } catch (inner) { console.warn('DEBUG handler error', inner); }
-                    }, true);
+        // Minimal, cleaned version of the production lot page script.
+        // Purpose: preserve the helper API and primary page object while
+        // removing stray characters that caused literal '+' to appear in HTML.
+
+        function safeFetchJson(url, opts){
+            return fetch(url, opts).then(r => {
+                if (!r.ok) throw new Error('Network response not ok: ' + r.status);
+                return r.json().catch(()=>({}));
+            });
+        }
+
+        function findSummaryCostElement(){
+            const rows = document.querySelectorAll('#summary-content .detail-row');
+            for (const r of rows){
+                const label = r.querySelector('.detail-label');
+                if (!label) continue;
+                if (label.textContent.trim().toLowerCase().includes('total cost')){
+                    return r.querySelector('.detail-value');
                 }
             }
-        } catch (e) { console.warn('Failed to attach debug handler to header add button', e); }
+            return null;
+        }
 
-        try { window.addEventListener('error', function(evt) { try { const msg = String(evt.message || ''); if (msg.includes('Extension context invalidated') || msg.includes('message port closed') || msg.includes('The message port closed')) { console.warn('External extension error (non-fatal):', msg); } } catch (e) {} }, true); } catch (e) {}
-    });
+        function updateTotalCostDisplay(amount){
+            const el = findSummaryCostElement();
+            if (!el) return;
+            const num = (typeof amount === 'number') ? amount : Number(amount || 0);
+            el.textContent = `$${(isFinite(num)? num.toFixed(2) : '0.00')}`;
+        }
 
-    // Move modal overlays into document.body early and defensively manage pointer-events.
-    function _moveOverlaysToBodyAndDefensiveHide() {
-        try {
-            const moveOne = (ov) => {
-                if (!ov) return;
+        async function recalculateLotCosts(lotId){
+            try{
+                const resp = await safeFetchJson(`/api/upf/production-lots/${lotId}/recalculate`, { credentials: 'include' });
+                const total = resp.total_cost ?? resp.data?.total_cost ?? resp.totalCost ?? null;
+                if (typeof total !== 'undefined' && total !== null) updateTotalCostDisplay(Number(total));
+                return resp;
+            }catch(e){
+                console.warn('recalculateLotCosts failed', e);
+                return null;
+            }
+        }
+
+        async function loadVariantOptionsForSubprocess(subprocessId){
+            const candidates = [
+                `/api/upf/subprocess/${subprocessId}/variant-options`,
+                `/api/upf/subprocesses/${subprocessId}/variant_options`,
+                `/api/upf/production-lots/${window.LOT_ID || ''}/variant_options?subprocess_id=${subprocessId}`
+            ];
+            for (const url of candidates){
+                try{
+                    const res = await fetch(url, { credentials: 'include' });
+                    if (!res.ok) continue;
+                    const data = await res.json();
+                    const ev = new CustomEvent('production:subprocess-variant-options', { detail: { subprocessId, data } });
+                    document.dispatchEvent(ev);
+                    return data;
+                }catch(e){/* try next */}
+            }
+            console.warn('loadVariantOptionsForSubprocess: no endpoint returned data');
+            return null;
+        }
+
+        const lotDetailPage = {
+            lotId: window.LOT_ID || null,
+            lotData: null,
+            alertsData: null,
+
+            async init() {
+                await this.loadLotDetails();
+                await this.loadAlerts();
+                try { await this.fetchVariantOptions(); } catch (e) {}
+                this.setupEventListeners();
+            },
+
+            async loadLotDetails() {
                 try {
-                    if (ov.parentElement !== document.body) document.body.appendChild(ov);
-                    ov.style.position = ov.style.position || 'fixed';
-                    ov.style.top = ov.style.top || '0';
-                    ov.style.left = ov.style.left || '0';
-                    ov.style.right = ov.style.right || '0';
-                    ov.style.bottom = ov.style.bottom || '0';
-                    // defensive: ensure backdrop doesn't capture pointer events unless visible intentionally
-                    if (!ov.dataset.keepOpen) {
-                        ov.style.pointerEvents = 'none';
-                        const modal = ov.querySelector && ov.querySelector('.modal');
-                        if (modal) modal.style.pointerEvents = 'auto';
-                    }
-                } catch (e) { /* swallow per-run errors */ }
-            };
+                    if (!this.lotId) return;
+                    const response = await fetch(`/api/upf/production-lots/${this.lotId}`, { method: 'GET', credentials: 'include' });
+                    if (response.status === 401) { window.location.href = '/auth/login'; return; }
+                    if (!response.ok) throw new Error('Failed to load lot details');
+                    const data = await response.json();
+                    this.lotData = data.data || data;
+                    this.renderLotDetails(); this.renderSummary();
+                } catch (error) {
+                    console.error('Error loading lot details:', error);
+                    const el = document.getElementById('lot-details-content'); if (el) el.innerHTML = '<div class="empty-state">❌ Failed to load lot details</div>';
+                }
+            },
 
-            document.querySelectorAll && document.querySelectorAll('.modal-overlay').forEach(moveOne);
+            async loadAlerts() {
+                try {
+                    if (!this.lotId) return;
+                    const response = await fetch(`/api/upf/inventory-alerts/lot/${this.lotId}`, { credentials: 'include' });
+                    if (!response.ok) throw new Error('Failed to load alerts');
+                    const data = await response.json(); this.alertsData = data.data || data; this.renderAlerts(); this.updateCriticalBanner(); this.updateFinalizeButton();
+                } catch (error) { console.error('Error loading alerts:', error); const ac = document.getElementById('alerts-content'); if (ac) ac.innerHTML = '<div class="empty-state">No alerts available</div>'; }
+            },
 
-            // Observe later DOM additions and move overlays
-            try {
-                const observer = new MutationObserver(function(mutations) {
-                    mutations.forEach(function(m) {
-                        (m.addedNodes || []).forEach(function(n) {
-                            if (n && n.nodeType === 1) {
-                                if (n.classList && n.classList.contains('modal-overlay')) moveOne(n);
-                                n.querySelectorAll && n.querySelectorAll('.modal-overlay').forEach(moveOne);
-                            }
-                        });
-                    });
-                });
-                observer.observe(document.documentElement || document.body, { childList: true, subtree: true });
-            } catch (e) { /* if MutationObserver unavailable, no-op */ }
-        } catch (e) { console.warn('overlay management failed', e); }
-    }
+            async fetchVariantOptions() {
+                try {
+                    if (!this.lotId) return;
+                    const resp = await fetch(`/api/upf/production-lots/${this.lotId}/variant_options`, { credentials: 'include' });
+                    if (!resp.ok) throw new Error('Failed to fetch variant options');
+                    const data = await resp.json(); this._variantOptions = data.data || data || {};
+                } catch (e) { console.error('Error fetching variant options:', e); }
+            },
 
-    // Debug controls for overlays — only applied when the server exposes debug flag
-    function _attachDebugOverlayToggle() {
-        try {
-            if (!window.__UPF_DEBUG__) return;
-            const btn = document.getElementById('debug-toggle-overlays');
-            if (!btn) return;
-            let hidden = false;
-            const setStatus = (msg) => { try { const s = document.getElementById('debug-tools-status'); if (s) s.textContent = msg; } catch (e) {} };
-            btn.addEventListener('click', function() {
-                const overlays = Array.from(document.querySelectorAll('.modal-overlay'));
-                hidden = !hidden;
-                overlays.forEach(function(ov) {
-                    try {
-                        if (hidden) {
-                            ov.dataset._prevDisplay = ov.style.display || '';
-                            ov.style.display = 'none';
-                            ov.style.pointerEvents = 'none';
-                        } else {
-                            ov.style.display = ov.dataset._prevDisplay || '';
-                            ov.style.pointerEvents = 'none';
-                            const modal = ov.querySelector && ov.querySelector('.modal');
-                            if (modal) modal.style.pointerEvents = 'auto';
-                            delete ov.dataset._prevDisplay;
-                        }
-                    } catch (e) {}
-                });
-                btn.textContent = hidden ? 'Show overlays (debug)' : 'Hide overlays (debug)';
-                setStatus(hidden ? `${overlays.length} overlays hidden` : 'overlays restored');
-                setTimeout(() => setStatus(''), 2000);
-            }, true);
-        } catch (e) { console.warn('Failed to attach debug overlay toggle', e); }
-    }
+            renderLotDetails() {
+                const lot = this.lotData || {};
+                const title = document.getElementById('page-title'); if (title) title.textContent = `🏭 Production Lot: ${lot.lot_number || 'N/A'}`;
+                const statusClass = (lot.status || 'planning').toLowerCase().replace(/\s+/g, '-');
+                const badge = document.getElementById('lot-status-badge'); if (badge) badge.innerHTML = `<span class="status-badge status-${statusClass}">${lot.status || 'Planning'}</span>`;
+                const details = document.getElementById('lot-details-content'); if (details) {
+                    const notes = this.escapeHtml(lot.notes || '');
+                    details.innerHTML = `<div class="detail-row"><span class="detail-label">Lot Number</span><span class="detail-value">${this.escapeHtml(lot.lot_number || 'N/A')}</span></div><div class="detail-row"><span class="detail-label">Notes</span><span class="detail-value">${notes}</span></div>`;
+                }
+            },
 
-    // Run overlay move early (if DOM already ready run now, else on DOMContentLoaded)
-    if (document.readyState === 'loading') {
-        document.addEventListener('DOMContentLoaded', function() { _moveOverlaysToBodyAndDefensiveHide(); _attachDebugOverlayToggle(); });
-    } else {
-        _moveOverlaysToBodyAndDefensiveHide(); _attachDebugOverlayToggle();
-    }
+            renderSummary() {
+                const lot = this.lotData || {};
+                const rawCost = (lot && (lot.total_cost ?? lot.worst_case_estimated_cost)) || 0;
+                const costNum = Number(rawCost); const costDisplay = isFinite(costNum) ? costNum.toFixed(2) : '0.00';
+                const summaryEl = document.getElementById('summary-content'); if (summaryEl) {
+                    summaryEl.innerHTML = `
+                        <div class="detail-row"><span class="detail-label">Total Cost</span><span class="detail-value">$${costDisplay}</span></div>
+                        <div class="detail-row"><span class="detail-label">Total Alerts</span><span class="detail-value" id="total-alerts-count">-</span></div>
+                        <div class="detail-row"><span class="detail-label">Acknowledged</span><span class="detail-value" id="acknowledged-count">-</span></div>
+                        <div class="detail-row"><span class="detail-label">Pending</span><span class="detail-value" id="pending-count">-</span></div>
+                    `;
+                }
+            },
 
-    // Expose some helper functions for other scripts
-    window.productionLotDetailHelpers = { loadVariantOptionsForSubprocess, recalculateLotCosts, updateTotalCostDisplay };
+            renderAlerts() {
+                const alerts = this.alertsData?.alert_details || [];
+                const totalAlerts = alerts.length; const badgeEl = document.getElementById('alerts-count-badge'); if (badgeEl) badgeEl.innerHTML = totalAlerts > 0 ? `<span class="status-badge">${totalAlerts} Total</span>` : '';
+                const acknowledgedCount = alerts.filter(a => a.user_acknowledged).length; const pendingCount = totalAlerts - acknowledgedCount;
+                const totalEl = document.getElementById('total-alerts-count'); const ackEl = document.getElementById('acknowledged-count'); const pendingEl = document.getElementById('pending-count'); if (totalEl) totalEl.textContent = String(totalAlerts); if (ackEl) ackEl.textContent = String(acknowledgedCount); if (pendingEl) pendingEl.textContent = String(pendingCount);
+                const container = document.getElementById('alerts-table-body'); if (!container) return;
+                if (alerts.length === 0) { const ac = document.getElementById('alerts-content'); if (ac) ac.innerHTML = '<div class="empty-state">✅ No inventory alerts for this lot</div>'; return; }
+                container.innerHTML = alerts.map(a => `<tr data-alert-id="${a.alert_id}"><td>${a.alert_id}</td><td>${this.escapeHtml(a.variant_name || 'N/A')}</td><td>${a.current_stock_quantity || 0}</td><td>${a.required_quantity || 0}</td></tr>`).join('');
+            },
 
-})();
+            updateCriticalBanner() {
+                const alerts = this.alertsData?.alert_details || [];
+                const hasCriticalUnacknowledged = alerts.some(a => a.alert_severity === 'CRITICAL' && !a.user_acknowledged);
+                const banner = document.getElementById('critical-alert-banner'); if (banner) banner.style.display = hasCriticalUnacknowledged ? 'flex' : 'none';
+            },
+
+            updateFinalizeButton() {
+                const alerts = this.alertsData?.alert_details || [];
+                const hasCriticalUnacknowledged = alerts.some(a => a.alert_severity === 'CRITICAL' && !a.user_acknowledged);
+                const finalizeBtn = document.getElementById('finalize-btn'); if (finalizeBtn) { finalizeBtn.disabled = hasCriticalUnacknowledged; finalizeBtn.title = hasCriticalUnacknowledged ? 'Cannot finalize: Unacknowledged CRITICAL alerts present' : 'Finalize this production lot'; }
+            },
+
+            setupEventListeners() {
+                const editBtn = document.getElementById('edit-lot-btn'); if (editBtn) editBtn.addEventListener('click', (e) => { if (editBtn.dataset.editing === '1') { this.submitInlineEdit(); } else { this.showInlineEdit(); } });
+                const refreshBtn = document.getElementById('refresh-variant-options'); if (refreshBtn) refreshBtn.addEventListener('click', async () => { await this.fetchVariantOptions(); this.renderSubprocesses && this.renderSubprocesses(); this.showToast && this.showToast('Variant options refreshed', 'success'); });
+            },
+
+            showToast(message, type = 'info') { try { const container = document.getElementById('global-toast-container'); if (!container) { console.log(type, message); return; } const t = document.createElement('div'); t.className = `toast ${type}`; t.innerHTML = `${this.escapeHtml(String(message))}`; container.appendChild(t); setTimeout(() => t.remove(), 4000); } catch (e) { console.warn(e); } },
+
+            showInlineEdit() { const content = document.getElementById('lot-details-content'); const lot = this.lotData || {}; const qty = this.lotData?.quantity || 1; const notes = this.escapeHtml(this.lotData?.notes || ''); const status = this.lotData?.status || 'Planning'; if (!content) return; content.innerHTML = `
+                <div style="display:flex;flex-direction:column;gap:8px">
+                    <div class="detail-row"><span class="detail-label">Lot Number</span><span class="detail-value">${this.escapeHtml(lot.lot_number || 'N/A')}</span></div>
+                    <div class="detail-row"><span class="detail-label">Process</span><span class="detail-value">${this.escapeHtml(lot.process_name || 'N/A')}</span></div>
+                    <div class="detail-row"><span class="detail-label">Quantity</span><span class="detail-value"><input id="inline-lot-quantity" type="number" min="1" value="${qty}" style="width:120px" /></span></div>
+                    <div class="detail-row"><span class="detail-label">Notes</span><span class="detail-value"><textarea id="inline-lot-notes" rows="3">${notes}</textarea></span></div>
+                </div>
+            `; const editBtn = document.getElementById('edit-lot-btn'); if (editBtn) { editBtn.textContent = '💾 Save'; editBtn.dataset.editing = '1'; } },
+
+            hideInlineEdit() { const editBtn = document.getElementById('edit-lot-btn'); if (editBtn) { editBtn.textContent = '✏️ Edit'; editBtn.dataset.editing = '0'; } this.renderLotDetails(); },
+
+            async submitInlineEdit() { const qty = Number(document.getElementById('inline-lot-quantity')?.value) || 0; const notes = document.getElementById('inline-lot-notes')?.value || ''; const payload = { quantity: qty, notes }; try { const resp = await fetch(`/api/upf/production-lots/${this.lotId}`, { method: 'PUT', credentials: 'include', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(payload) }); if (!resp.ok) { const err = await resp.json().catch(()=>({})); throw new Error(err.message || 'Update failed'); } await this.loadLotDetails(); alert('Lot updated'); } catch (e) { console.error(e); alert('Failed to update lot: ' + e.message); } },
+
+            renderSubprocesses() { /* noop in minimal build; full renderer available in original file */ },
+
+            escapeHtml(text) { const div = document.createElement('div'); div.textContent = text; return div.innerHTML; }
+        };
+
+        window.lotDetailPage = lotDetailPage;
+
+        document.addEventListener('DOMContentLoaded', function() { try { lotDetailPage.init(); } catch (e) { console.warn('lotDetailPage init failed', e); } });
+
+        window.productionLotDetailHelpers = { loadVariantOptionsForSubprocess, recalculateLotCosts, updateTotalCostDisplay };
+
+    })();
