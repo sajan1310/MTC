@@ -107,17 +107,34 @@ def _load_config(app: Flask, config_name: str) -> None:
 def _init_logging(app: Flask) -> None:
     level = logging.DEBUG if app.debug else logging.INFO
     app.logger.setLevel(level)
-    # Avoid file-based rotating logs during tests (Windows file locks / CI interference).
-    # Use file handler only in non-debug, non-testing production-like runs.
-    if not app.debug and not app.config.get("TESTING"):
-        os.makedirs("logs", exist_ok=True)
-        fh = RotatingFileHandler("logs/app.log", maxBytes=10_000_000, backupCount=10)
-        fh.setFormatter(
-            logging.Formatter(
-                "%(asctime)s %(levelname)s: %(message)s [in %(pathname)s:%(lineno)d]"
-            )
-        )
-        fh.setLevel(logging.INFO)
+
+    # Formatter used for all handlers we attach here
+    formatter = logging.Formatter(
+        "%(asctime)s %(levelname)s: %(message)s [in %(pathname)s:%(lineno)d]"
+    )
+
+    # Console (stdout) handler: attach in all modes (including testing)
+    # so logs are duplicated to console for easier debugging in CI/IDE.
+    import sys
+
+    sh = logging.StreamHandler(stream=sys.stdout)
+    sh.setFormatter(formatter)
+    sh.setLevel(level)
+    # Avoid attaching duplicate stream handlers
+    if not any(isinstance(h, logging.StreamHandler) for h in app.logger.handlers):
+        app.logger.addHandler(sh)
+
+    # File handler: attach in all modes so logs are duplicated to disk as well.
+    os.makedirs("logs", exist_ok=True)
+    fh = RotatingFileHandler("logs/app.log", maxBytes=10_000_000, backupCount=10)
+    fh.setFormatter(formatter)
+    fh.setLevel(logging.INFO)
+    # Avoid duplicate file handlers bound to the same file
+    if not any(
+        isinstance(h, RotatingFileHandler)
+        and getattr(h, "baseFilename", "").endswith("logs/app.log")
+        for h in app.logger.handlers
+    ):
         app.logger.addHandler(fh)
 
 

@@ -570,13 +570,150 @@
         },
 
         populateEditSubprocessForm(subprocessId) {
-            // noop placeholder - implement if UI exists
+            try {
+                const body = document.getElementById('edit-subprocess-body');
+                if (!body) return;
+
+                // Clear previous content
+                body.innerHTML = '';
+
+                // Try to find variant options for this subprocess from cached variant options
+                let subprocessData = null;
+                try {
+                    const vo = this._variantOptions || {};
+                    // If server returned { subprocesses: [...] }
+                    const subsArr = vo.subprocesses || vo;
+                    if (Array.isArray(subsArr)) {
+                        subprocessData = subsArr.find(s => Number(s.process_subprocess_id) === Number(subprocessId) || Number(s.subprocess_id) === Number(subprocessId) || Number(s.sequence_order) === Number(subprocessId));
+                    }
+                } catch (e) {
+                    console.error('lookup variant options failed', e);
+                }
+
+                // Fallback to lotData subprocesses
+                if (!subprocessData) {
+                    const subs = this.lotData?.subprocesses || [];
+                    subprocessData = subs.find(s => Number(s.id) === Number(subprocessId) || Number(s.process_subprocess_id) === Number(subprocessId) || Number(s.subprocess_id) === Number(subprocessId));
+                }
+
+                // Header
+                const header = document.createElement('div');
+                header.style.marginBottom = '12px';
+                header.innerHTML = `<strong>Edit selections for subprocess</strong> <span style="color:#666;margin-left:8px">ID: ${escapeHtml(String(subprocessId))}</span>`;
+                body.appendChild(header);
+
+                // If we have grouped_variants or standalone_variants, render selects for each group
+                const form = document.createElement('div');
+                form.id = 'edit-subprocess-form-inner';
+                body.appendChild(form);
+
+                const groups = (subprocessData && (subprocessData.grouped_variants || {})) || {};
+                const standalone = (subprocessData && (subprocessData.standalone_variants || [])) || [];
+
+                // OR groups (grouped_variants is an object mapping group_id -> [variants])
+                for (const [groupId, variants] of Object.entries(groups || {})) {
+                    const wrap = document.createElement('div');
+                    wrap.style.marginBottom = '10px';
+                    const label = document.createElement('label');
+                    label.textContent = `Group ${groupId} (choose one)`;
+                    label.style.display = 'block';
+                    label.style.fontWeight = '600';
+                    wrap.appendChild(label);
+
+                    const sel = document.createElement('select');
+                    sel.dataset.processSubprocessId = subprocessId;
+                    sel.dataset.groupId = groupId;
+                    const emptyOpt = document.createElement('option'); emptyOpt.value = ''; emptyOpt.text = '-- No selection --'; sel.appendChild(emptyOpt);
+                    for (const v of variants) {
+                        const opt = document.createElement('option');
+                        // Prefer usage_id if present
+                        opt.value = v.usage_id || v.variant_id || v.id || '';
+                        const labelText = `${v.model_name || ''} ${v.variation_name || ''} ${v.color_name || ''} ${v.size_name || ''}`.trim() || (v.item_number || v.name || ('Variant ' + opt.value));
+                        opt.text = `${labelText} (${v.quantity ?? ''})`;
+                        sel.appendChild(opt);
+                    }
+                    wrap.appendChild(sel);
+                    form.appendChild(wrap);
+                }
+
+                // Standalone variants
+                if (standalone && standalone.length) {
+                    const wrap = document.createElement('div');
+                    wrap.style.marginBottom = '10px';
+                    const label = document.createElement('label');
+                    label.textContent = 'Standalone variants (choose one per subprocess if applicable)';
+                    label.style.display = 'block';
+                    label.style.fontWeight = '600';
+                    wrap.appendChild(label);
+
+                    const sel = document.createElement('select');
+                    sel.dataset.processSubprocessId = subprocessId;
+                    const emptyOpt = document.createElement('option'); emptyOpt.value = ''; emptyOpt.text = '-- No selection --'; sel.appendChild(emptyOpt);
+                    for (const v of standalone) {
+                        const opt = document.createElement('option');
+                        opt.value = v.usage_id || v.variant_id || v.id || '';
+                        const labelText = `${v.model_name || ''} ${v.variation_name || ''} ${v.color_name || ''} ${v.size_name || ''}`.trim() || (v.item_number || v.name || ('Variant ' + opt.value));
+                        opt.text = `${labelText} (${v.quantity ?? ''})`;
+                        sel.appendChild(opt);
+                    }
+                    wrap.appendChild(sel);
+                    form.appendChild(wrap);
+                }
+
+                // If no options found, inform the user
+                if (Object.keys(groups || {}).length === 0 && (!standalone || standalone.length === 0)) {
+                    const p = document.createElement('div');
+                    p.className = 'empty-state';
+                    p.textContent = 'No variant options available for this subprocess.';
+                    form.appendChild(p);
+                }
+
+                // Attach brief help and ensure Save button remains wired via existing handler
+                const help = document.createElement('div');
+                help.style.marginTop = '8px';
+                help.style.color = '#666';
+                help.style.fontSize = '13px';
+                help.textContent = 'Select variants and click Save Selections.';
+                body.appendChild(help);
+            } catch (e) { console.error('populateEditSubprocessForm', e); }
         },
 
         async submitEditSubprocessForm(e) {
             e && e.preventDefault();
-            // Implementation depends on API shape - placeholder
-            showToast('Edit subprocess saved', 'success');
+            try {
+                const body = document.getElementById('edit-subprocess-body');
+                if (!body) return showToast('Edit form not available', 'error');
+
+                // Collect selections from selects we rendered
+                const selects = Array.from(body.querySelectorAll('select[data-process-subprocess-id]'));
+                const selections = [];
+                for (const s of selects) {
+                    const pid = s.dataset.processSubprocessId || s.dataset.process_subprocess_id || s.dataset.processSubprocessid;
+                    const val = s.value;
+                    if (!pid) continue;
+                    if (!val) continue;
+                    selections.push({ process_subprocess_id: Number(pid), variant_usage_id: Number(val) });
+                }
+
+                if (!selections.length) return showToast('No selections made', 'warning');
+
+                const btn = document.getElementById('edit-subprocess-save');
+                const original = btn ? btn.textContent : '';
+                if (btn) { btn.disabled = true; btn.textContent = 'Saving...'; }
+
+                const payload = { selections };
+                const resp = await safeFetchJson(`/api/upf/production-lots/${this.lotId}/batch_select_variants`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(payload) });
+                showToast('Subprocess selections saved', 'success');
+                // Refresh data and close modal
+                await this.loadLotDetails();
+                this.closeEditSubprocessModal();
+            } catch (err) {
+                console.error('submitEditSubprocessForm', err);
+                showToast('Failed to save subprocess selections: ' + (err.message || ''), 'error');
+            } finally {
+                const btn = document.getElementById('edit-subprocess-save');
+                if (btn) { btn.disabled = false; btn.textContent = 'Save Selections'; }
+            }
         },
 
         // -------------------------
