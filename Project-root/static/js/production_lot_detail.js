@@ -730,7 +730,8 @@
                 if (resp && resp.success) {
                     showToast('Lot deleted', 'success');
                     // Redirect to lots list
-                    window.location.href = '/production-lots';
+                    // Redirect to the Process Framework page and open the Production tab
+                    window.location.href = '/upf/processes?tab=production#production';
                 } else {
                     throw new Error('Delete failed');
                 }

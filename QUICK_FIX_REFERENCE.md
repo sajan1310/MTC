@@ -27,7 +27,7 @@ psql -U postgres -d mtc_dev -f Project-root/migrations/init_schema.sql
 
 # 3. Run the app
 cd Project-root
-python app.py
+python run.py
 ```
 
 ### Running Tests Locally

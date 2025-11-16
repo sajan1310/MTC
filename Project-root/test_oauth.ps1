@@ -61,7 +61,7 @@ try {
         $passed++
     } catch {
         Write-Host "  ❌ Server is not running or not accessible" -ForegroundColor Red
-        Write-Host "     Start server with: python app.py" -ForegroundColor Red
+        Write-Host "     Start server with: python run.py" -ForegroundColor Red
         $failed++
     }
 }

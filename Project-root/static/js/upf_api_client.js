@@ -24,6 +24,27 @@ class UPFApiClient {
     }
 
     /**
+     * Normalize and build query string for API calls.
+     * Ensures `perPage` (camelCase) is mapped to `per_page` (snake_case)
+     * and prevents duplicate keys when spreading `params`.
+     */
+    _buildQueryString(params = {}, defaults = { per_page: 1000, page: 1 }) {
+        const p = { ...params };
+
+        // Prefer explicit camelCase `perPage` mapping to snake_case `per_page`
+        if (p.perPage !== undefined) {
+            p.per_page = p.perPage;
+            delete p.perPage;
+        }
+
+        // Apply defaults only when not present
+        for (const [k, v] of Object.entries(defaults)) {
+            if (p[k] === undefined || p[k] === null || p[k] === "") p[k] = v;
+        }
+
+        return new URLSearchParams(p).toString();
+    }
+    /**
      * Generic fetch with caching and deduplication
      */
     async fetch(url, options = {}, cacheKey = null, ttl = 60000) {
@@ -151,15 +172,11 @@ class UPFApiClient {
     // ============================================
 
     async getProcesses(params = {}) {
-        const queryString = new URLSearchParams({
-            per_page: params.perPage || 1000,
-            page: params.page || 1,
-            ...params
-        }).toString();
-        
+        const queryString = this._buildQueryString(params, { per_page: 1000, page: 1 });
+
         const url = `/api/upf/processes?${queryString}`;
         const cacheKey = `processes:${queryString}`;
-        
+
         const data = await this.fetch(url, {}, cacheKey, this.cacheConfig.processes.ttl);
         return data.data?.processes || data.processes || [];
     }
@@ -218,15 +235,11 @@ class UPFApiClient {
     // ============================================
 
     async getSubprocesses(params = {}) {
-        const queryString = new URLSearchParams({
-            per_page: params.perPage || 1000,
-            page: params.page || 1,
-            ...params
-        }).toString();
-        
+        const queryString = this._buildQueryString(params, { per_page: 1000, page: 1 });
+
         const url = `/api/upf/subprocesses?${queryString}`;
         const cacheKey = `subprocesses:${queryString}`;
-        
+
         const data = await this.fetch(url, {}, cacheKey, this.cacheConfig.subprocesses.ttl);
         return data.data?.subprocesses || data.subprocesses || [];
     }
@@ -285,15 +298,11 @@ class UPFApiClient {
     // ============================================
 
     async getProductionLots(params = {}) {
-        const queryString = new URLSearchParams({
-            per_page: params.perPage || 1000,
-            page: params.page || 1,
-            ...params
-        }).toString();
-        
+        const queryString = this._buildQueryString(params, { per_page: 1000, page: 1 });
+
         const url = `/api/upf/production-lots?${queryString}`;
         const cacheKey = `production-lots:${queryString}`;
-        
+
         const data = await this.fetch(url, {}, cacheKey, this.cacheConfig.productionLots.ttl);
         return data.data?.production_lots || data.production_lots || [];
     }

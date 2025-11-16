@@ -297,6 +297,9 @@
                 decorators.py
                 routes.py
                 __init__.py
+            logs/
+                app.log
+                error.log
             main/
                 routes.py
             middleware/
@@ -533,3 +536,7 @@
         test_auditor_core.py
         test_upf_alerts_contracts.py
         test_upf_reports_contracts.py
+    tmp_logs_test/
+        logs/
+            app.log
+            error.log

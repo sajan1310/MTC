@@ -77,18 +77,20 @@ def setup_logging(app):
     root_logger.handlers = []
 
     # === FILE HANDLER: General Application Logs ===
-    # Rotates daily, keeps 30 days of logs
+    # Rotates daily. Retention (number of rotated files) is configurable via
+    # LOG_RETENTION_DAYS (default 30).
+    retention_days = int(app.config.get("LOG_RETENTION_DAYS", 30))
     file_handler = logging.handlers.TimedRotatingFileHandler(
         filename=log_dir / "app.log",
         when="midnight",
         interval=1,
-        backupCount=30,
+        backupCount=retention_days,
         encoding="utf-8",
     )
     file_handler.setLevel(logging.INFO)
 
-    # Use JSON format for production, plain text for development
-    if app.config.get("ENV") == "production":
+    # Use JSON format when not in debug (production-like), plain text for debug
+    if not app.debug:
         file_handler.setFormatter(JsonFormatter())
     else:
         file_formatter = logging.Formatter(
@@ -100,11 +102,12 @@ def setup_logging(app):
 
     # === FILE HANDLER: Error Logs Only ===
     # Rotates weekly, keeps 90 days of logs
+    error_retention_weeks = int(app.config.get("ERROR_LOG_RETENTION_WEEKS", 12))
     error_handler = logging.handlers.TimedRotatingFileHandler(
         filename=log_dir / "error.log",
         when="W0",  # Monday
         interval=1,
-        backupCount=12,  # ~3 months
+        backupCount=error_retention_weeks,  # number of weekly files to keep
         encoding="utf-8",
     )
     error_handler.setLevel(logging.ERROR)
@@ -115,7 +118,7 @@ def setup_logging(app):
     console_handler = logging.StreamHandler()
     console_handler.setLevel(logging.DEBUG if app.debug else logging.INFO)
 
-    # Colored output for console (optional)
+    # Plain text output for console (always human-readable)
     console_formatter = logging.Formatter(
         "%(asctime)s | %(levelname)-8s | %(name)s | %(message)s", datefmt="%H:%M:%S"
     )
@@ -123,8 +126,16 @@ def setup_logging(app):
     root_logger.addHandler(console_handler)
 
     # === CONFIGURE THIRD-PARTY LOGGERS ===
-    # Reduce noise from verbose libraries
-    logging.getLogger("werkzeug").setLevel(logging.WARNING)
+    # Reduce noise from verbose libraries. Keep `werkzeug` at INFO when the
+    # app is in debug or not running in production so local developers still
+    # see request/activity logs on the terminal. In production silence
+    # `werkzeug` to WARNING to reduce console noise.
+    if getattr(app, "debug", False) or app.config.get("ENV") != "production":
+        logging.getLogger("werkzeug").setLevel(logging.INFO)
+    else:
+        logging.getLogger("werkzeug").setLevel(logging.WARNING)
+
+    # Keep other noisy libraries quiet by default
     logging.getLogger("urllib3").setLevel(logging.WARNING)
     logging.getLogger("psycopg2").setLevel(logging.WARNING)
 

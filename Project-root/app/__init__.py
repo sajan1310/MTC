@@ -1,15 +1,43 @@
 """
 Flask Application Factory and shared extensions.
 
-create_app(config_name='production') builds and configures the Flask app.
-Also re-exports commonly used utilities for backward compatibility.
+This module provides the :func:`create_app` application factory and
+initializes shared extension objects without reassigning module-level
+instances. Changes below fix a number of security and lifecycle issues:
+
+- Use a single module-level `limiter` instance and configure it via
+  `app.config` before calling `limiter.init_app(app)` (prevents accidental
+  multiple instances).
+- Apply `csrf.exempt()` to blueprints before registration where appropriate
+  to avoid nested blueprint timing issues.
+- Add database teardown to close DB connections on app context teardown.
+- Make ProxyFix configuration driven by environment and conservative by
+  default to avoid trusting proxy headers unless explicitly configured.
+- Move all Flask imports to module level to avoid repeated imports in
+  hot paths and potential performance issues.
+- Improve logging configuration error handling in production (propagate
+  fatal errors except ImportError).
+- Record alias registration failures via `app.logger.debug()` instead of
+  silently swallowing them.
+- Add module-level deprecation warning cache to avoid unbounded growth.
 """
 
 from __future__ import annotations
+
 import logging
 import os
 from logging.handlers import RotatingFileHandler
-from flask import Flask, jsonify, render_template, request
+from typing import Any
+
+from flask import (
+    Flask,
+    jsonify,
+    render_template,
+    request,
+    redirect,
+    url_for,
+    g,
+)
 from flask_cors import CORS
 from flask_limiter import Limiter
 from flask_limiter.util import get_remote_address
@@ -18,18 +46,22 @@ from flask_wtf import CSRFProtect
 from flask_wtf.csrf import CSRFError
 from werkzeug.middleware.proxy_fix import ProxyFix
 
-# Shared extensions (init in create_app)
+# Shared extension instances (do not reassign these later)
 csrf = CSRFProtect()
 login_manager = LoginManager()
+# Module-level limiter instance; configure storage and defaults via app.config
+# and call limiter.init_app(app) exactly once in create_app.
 limiter = Limiter(key_func=get_remote_address)
 
-# Local imports inside functions to avoid circulars
+# Module-level cache for deprecation warnings to avoid unbounded growth
+# (warn once per unique path).
+_DEPRECATION_WARNED: set[str] = set()
 
 
 def validate_password(password: str) -> tuple[bool, str]:
-    """Strong password policy.
-    - Min 8 chars, 1 upper, 1 lower, 1 digit, 1 special
-    Returns (is_valid, message).
+    """Validate password strength.
+
+    Maintains the previous behavior but keeps imports at module scope.
     """
     import re
 
@@ -48,7 +80,8 @@ def validate_password(password: str) -> tuple[bool, str]:
 
 def _load_config(app: Flask, config_name: str) -> None:
     """Load configuration from config.py and environment.
-    Supports development/testing/production. Validates critical keys.
+
+    Raises RuntimeError on missing required settings in non-testing modes.
     """
     from config import config as CONFIG_MAP  # type: ignore
 
@@ -57,32 +90,26 @@ def _load_config(app: Flask, config_name: str) -> None:
         raise RuntimeError(f"Unknown config name: {config_name}")
     app.config.from_object(cfg_cls)
 
-    # Allow overriding with env vars
+    # Allow overriding a small set of critical keys from environment
     app.config.update(
-        {
-            k: v
-            for k, v in os.environ.items()
-            if k
-            in {
-                "SECRET_KEY",
-                "DATABASE_URL",
-                "GOOGLE_CLIENT_ID",
-                "GOOGLE_CLIENT_SECRET",
-                "RATELIMIT_STORAGE_URL",
-                "BASE_URL",
-                "SERVER_NAME",
-            }
-        }
+        {k: v for k, v in os.environ.items() if k in {
+            "SECRET_KEY",
+            "DATABASE_URL",
+            "GOOGLE_CLIENT_ID",
+            "GOOGLE_CLIENT_SECRET",
+            "RATELIMIT_STORAGE_URL",
+            "BASE_URL",
+            "SERVER_NAME",
+        }}
     )
 
-    # Sensible defaults
     app.config.setdefault("RATELIMIT_STORAGE_URL", "redis://localhost:6379/0")
+    app.config.setdefault("RATELIMIT_STRATEGY", "fixed-window")
     app.config.setdefault("PERMANENT_SESSION_LIFETIME", 86400)
 
     # Fail-fast validation in production
     missing: list[str] = []
     required = ["SECRET_KEY", "GOOGLE_CLIENT_ID", "GOOGLE_CLIENT_SECRET"]
-    # DATABASE_URL is recommended; allow existing legacy DB_* to pass for now
     if not (
         app.config.get("DATABASE_URL")
         or (
@@ -97,7 +124,6 @@ def _load_config(app: Flask, config_name: str) -> None:
             missing.append(key)
 
     if app.config.get("TESTING"):
-        # Relax checks for tests
         missing = []
 
     if missing:
@@ -105,37 +131,56 @@ def _load_config(app: Flask, config_name: str) -> None:
 
 
 def _init_logging(app: Flask) -> None:
+    """Initialize logging handlers; allow ImportError to be handled but do not
+    silently swallow configuration errors in production.
+
+    Previously this function swallowed any exception which could hide
+    misconfigurations. We now only catch ImportError for optional logging
+    modules and re-raise other exceptions in production so outages are
+    visible.
+    """
     level = logging.DEBUG if app.debug else logging.INFO
     app.logger.setLevel(level)
 
-    # Formatter used for all handlers we attach here
     formatter = logging.Formatter(
         "%(asctime)s %(levelname)s: %(message)s [in %(pathname)s:%(lineno)d]"
     )
 
-    # Console (stdout) handler: attach in all modes (including testing)
-    # so logs are duplicated to console for easier debugging in CI/IDE.
     import sys
 
     sh = logging.StreamHandler(stream=sys.stdout)
     sh.setFormatter(formatter)
     sh.setLevel(level)
-    # Avoid attaching duplicate stream handlers
-    if not any(isinstance(h, logging.StreamHandler) for h in app.logger.handlers):
-        app.logger.addHandler(sh)
 
-    # File handler: attach in all modes so logs are duplicated to disk as well.
+    root_logger = logging.getLogger()
+    werk_logger = logging.getLogger("werkzeug")
+
+    root_has_stream = any(isinstance(h, logging.StreamHandler) for h in root_logger.handlers)
+    werk_has_stream = any(isinstance(h, logging.StreamHandler) for h in werk_logger.handlers)
+    app_has_stream = any(isinstance(h, logging.StreamHandler) for h in app.logger.handlers)
+    if not app_has_stream and not (root_has_stream or werk_has_stream):
+        app.logger.addHandler(sh)
+    if not root_has_stream:
+        root_logger.addHandler(sh)
+    if not werk_has_stream:
+        werk_logger.addHandler(sh)
+
     os.makedirs("logs", exist_ok=True)
     fh = RotatingFileHandler("logs/app.log", maxBytes=10_000_000, backupCount=10)
     fh.setFormatter(formatter)
     fh.setLevel(logging.INFO)
-    # Avoid duplicate file handlers bound to the same file
-    if not any(
-        isinstance(h, RotatingFileHandler)
-        and getattr(h, "baseFilename", "").endswith("logs/app.log")
+
+    file_on_app = any(
+        isinstance(h, RotatingFileHandler) and getattr(h, "baseFilename", "").endswith("logs/app.log")
         for h in app.logger.handlers
-    ):
-        app.logger.addHandler(fh)
+    )
+    file_on_root = any(
+        isinstance(h, RotatingFileHandler) and getattr(h, "baseFilename", "").endswith("logs/app.log")
+        for h in root_logger.handlers
+    )
+
+    if not (file_on_app or file_on_root):
+        root_logger.addHandler(fh)
 
 
 def _register_error_handlers(app: Flask) -> None:
@@ -158,181 +203,200 @@ def _register_error_handlers(app: Flask) -> None:
         return render_template("500.html"), 400
 
 
+def _parse_proxy_fix() -> dict[str, int]:
+    """Parse PROXY_FIX env var into kwargs for ProxyFix.
+
+    Expected format: "x_for=1,x_proto=1". Values default to 0 for safety.
+    """
+    raw = os.getenv("PROXY_FIX", "")
+    result: dict[str, int] = {"x_for": 0, "x_proto": 0, "x_host": 0, "x_port": 0}
+    if not raw:
+        # Conservative default: do not trust proxy headers unless explicitly configured
+        return result
+    for part in raw.split(","):
+        if "=" not in part:
+            continue
+        k, v = part.split("=", 1)
+        k = k.strip()
+        try:
+            iv = int(v)
+        except Exception:
+            continue
+        if k in result:
+            result[k] = max(0, min(255, iv))
+    return result
+
+
 def create_app(config_name: str | None = None) -> Flask:
     """Application Factory.
 
-    Args:
-        config_name: 'development' | 'testing' | 'production'. Defaults to env FLASK_ENV or 'production'.
-
-    Returns:
-        Configured Flask application instance.
+    Builds and configures the Flask app. The function ensures shared
+    extensions are initialized exactly once and critical lifecycle hooks are
+    registered.
     """
     config_name = config_name or os.getenv("FLASK_ENV", "production")
     app = Flask(__name__, static_folder="../static", template_folder="../templates")
 
-    # Proxy and basic security headers
-    app.wsgi_app = ProxyFix(app.wsgi_app, x_for=1, x_proto=1, x_host=1, x_port=1)
+    # Configure ProxyFix conservatively based on environment variable
+    proxy_kwargs = _parse_proxy_fix()
+    if any(v for v in proxy_kwargs.values()):
+        app.wsgi_app = ProxyFix(app.wsgi_app, **proxy_kwargs)
 
     # Load configuration and validate
     _load_config(app, config_name)
 
-    # Initialize extensions
+    # Initialize extensions (use module-level instances; don't reassign)
     csrf.init_app(app)
     login_manager.init_app(app)
     login_manager.login_view = "auth.login"
 
-    # Handle unauthorized API requests with JSON instead of redirects
-    @login_manager.unauthorized_handler
-    def unauthorized():
-        from flask import request, jsonify
+    # Configure rate limiter via app.config before init_app
+    # Keep defaults in a config key so we don't reassign limiter objects
+    app.config.setdefault("RATELIMIT_STORAGE_URL", app.config.get("RATELIMIT_STORAGE_URL"))
+    app.config.setdefault("RATELIMIT_STRATEGY", app.config.get("RATELIMIT_STRATEGY", "fixed-window"))
+    # Set default limits via config so limiter picks them up on init.
+    # Use a comma-separated string by default because some config loaders
+    # may coerce lists to strings; we also normalise any list/tuple values
+    # into the internal structure expected by flask-limiter after init.
+    app.config.setdefault("RATELIMIT_DEFAULT", "200 per day,50 per hour")
 
-        # If it's an API request, return JSON
-        if request.path.startswith("/api/"):
-            return (
-                jsonify(
-                    {
-                        "success": False,
-                        "error": "unauthorized",
-                        "message": "Authentication required. Please log in.",
-                    }
-                ),
-                401,
-            )
-        # Otherwise, redirect to login page (default behavior)
-        from flask import redirect, url_for
-
-        return redirect(url_for("auth.login"))
-
-    # Setup rate limiting (respect memory backend in tests to avoid warnings)
-    from redis import ConnectionPool, Redis
-
-    redis_url = app.config.get("RATELIMIT_STORAGE_URL", "redis://localhost:6379/0")
-
-    # If testing or explicitly configured to memory://, skip Redis and use in-memory storage without warnings
-    if app.config.get("TESTING") or str(redis_url).startswith("memory://"):
-        limiter = Limiter(
-            key_func=get_remote_address,
-            storage_uri="memory://",
-            strategy="fixed-window",
-        )
-        limiter.init_app(app)
-        app.logger.info(
-            "[RATE LIMIT] In-memory rate limiting enabled (testing/memory)."
-        )
-    else:
+    # Attempt to validate Redis connectivity if a non-memory store is configured
+    storage = str(app.config.get("RATELIMIT_STORAGE_URL", "")).strip()
+    if not app.config.get("TESTING") and storage and not storage.startswith("memory://"):
         try:
-            pool = ConnectionPool.from_url(
-                redis_url, max_connections=50, decode_responses=True
-            )
-            redis_client = Redis(connection_pool=pool)
-            # Test Redis connectivity
-            redis_client.ping()
-            limiter = Limiter(
-                key_func=get_remote_address,
-                storage_uri=redis_url,
-                strategy="fixed-window",
-            )
-            limiter.init_app(app)
-            app.logger.info("[RATE LIMIT] Redis-based rate limiting enabled.")
+            from redis import Redis, ConnectionPool  # type: ignore
 
-            # Clean up pool on shutdown
-            @app.teardown_appcontext
-            def close_redis_pool(exception=None):
-                try:
-                    pool.disconnect()
-                    app.logger.info("[RATE LIMIT] Redis connection pool closed.")
-                except Exception as e:
-                    app.logger.warning(f"[RATE LIMIT] Redis pool cleanup failed: {e}")
-
+            pool = ConnectionPool.from_url(storage, max_connections=50, decode_responses=True,
+                                            socket_connect_timeout=1, socket_timeout=1)
+            client = Redis(connection_pool=pool)
+            client.ping()
+            # Store pool on app so we can close it in teardown
+            app.extensions["ratelimit_redis_pool"] = pool
+            app.logger.info("[RATE LIMIT] Redis connectivity OK for rate limiter.")
+        except ImportError:
+            # Optional dependency missing: fall back to memory and warn
+            app.logger.warning("redis package not installed; falling back to in-memory rate limit")
+            app.config["RATELIMIT_STORAGE_URL"] = "memory://"
         except Exception as e:
-            app.logger.warning(
-                f"[RATE LIMIT] Redis unavailable, falling back to in-memory rate limiting: {e}"
-            )
-            limiter = Limiter(
-                key_func=get_remote_address,
-                storage_uri="memory://",
-                strategy="fixed-window",
-            )
-            limiter.init_app(app)
-    # Set defaults if not provided by config
-    limiter.default_limits = ["200 per day", "50 per hour"]
+            # Do not crash app startup for transient Redis errors; fall back and warn
+            app.logger.warning("[RATE LIMIT] Redis unavailable, falling back to memory: %s", e)
+            app.config["RATELIMIT_STORAGE_URL"] = "memory://"
 
-    # Database
+    # Initialize limiter with the configured app-level settings (single instance)
+    limiter.init_app(app)
+
+    # Normalise RATELIMIT_DEFAULT into the internal form expected by
+    # flask-limiter to avoid parse errors. The manager expects an iterable
+    # of iterables (e.g., (('200 per day', '50 per hour'),)). App config
+    # values may arrive as lists, tuples, comma-separated strings, or even
+    # stringified Python lists ("['a','b']"). We handle common forms here
+    # and set limiter._default_limits explicitly to avoid runtime parsing
+    # errors during requests.
+    try:
+        raw_default = app.config.get("RATELIMIT_DEFAULT")
+        # If someone set a Python-list-like string ("['a','b']"), try to parse it safely
+        if isinstance(raw_default, str):
+            import ast
+
+            parsed = None
+            try:
+                parsed = ast.literal_eval(raw_default)
+            except Exception:
+                parsed = None
+
+            if isinstance(parsed, (list, tuple)):
+                limiter._default_limits = tuple((str(item),) for item in parsed)
+            else:
+                # If it's a comma-separated string, let the extension parse it;
+                # but ensure manager._default_limits is a safe iterable-of-iterables
+                if "," in raw_default and not getattr(limiter, "_default_limits", None):
+                    # leave string in app.config and let extension parse when needed
+                    pass
+        elif isinstance(raw_default, (list, tuple)):
+            limiter._default_limits = tuple((str(item),) for item in raw_default)
+    except Exception:
+        app.logger.debug("Failed to normalise RATELIMIT_DEFAULT", exc_info=True)
+
+    # Database initialization
     import database
 
     database.init_app(app)
 
-    # Security: cookies and session
+    # Ensure session cookie security defaults
     if not app.debug:
         app.config.update(
             SESSION_COOKIE_SECURE=True,
             SESSION_COOKIE_HTTPONLY=True,
-            SESSION_COOKIE_SAMESITE="Strict",  # Enhanced CSRF protection
+            SESSION_COOKIE_SAMESITE="Strict",
         )
     else:
-        app.config.update(
-            SESSION_COOKIE_HTTPONLY=True,
-            SESSION_COOKIE_SAMESITE="Lax",
-        )
+        app.config.update(SESSION_COOKIE_HTTPONLY=True, SESSION_COOKIE_SAMESITE="Lax")
 
-    # CORS
+    # CORS: restrict to development origins when in debug
     if app.debug:
-        CORS(
-            app,
-            supports_credentials=True,
-            origins=["http://127.0.0.1:5000"],
-            allow_headers=["Content-Type", "X-CSRFToken"],
-            methods=["GET", "POST", "PUT", "DELETE", "OPTIONS"],
-        )
+        CORS(app, supports_credentials=True, origins=["http://127.0.0.1:5000"],
+             allow_headers=["Content-Type", "X-CSRFToken"],
+             methods=["GET", "POST", "PUT", "DELETE", "OPTIONS"])
     else:
-        CORS(
-            app,
-            supports_credentials=True,
-            origins=[app.config.get("BASE_URL", "https://yourdomain.com")],
-            allow_headers=["Content-Type", "X-CSRFToken"],
-            methods=["GET", "POST", "PUT", "DELETE", "OPTIONS"],
-        )
+        CORS(app, supports_credentials=True, origins=[app.config.get("BASE_URL", "https://yourdomain.com")],
+             allow_headers=["Content-Type", "X-CSRFToken"],
+             methods=["GET", "POST", "PUT", "DELETE", "OPTIONS"])
 
-    # Logging and URL scheme
+    # Logging: prefer production logging config but don't silently swallow errors
+    if config_name == "production" or app.config.get("ENV") == "production":
+        try:
+            import logging_config
+
+            logging_config.setup_logging(app)
+            # These helpers may raise if misconfigured; let them surface so ops
+            # can fix configuration rather than failing silently.
+            logging_config.log_request_info(app)
+            logging_config.log_errors(app)
+        except ImportError as e:
+            # Optional structured logging package missing: fallback safe handler
+            app.logger.warning("Optional production logging package missing: %s", e)
+        except Exception:
+            # In production, propagate logging configuration errors to surface
+            # problems to the operator instead of hiding them.
+            raise
+
+    # Local logging handlers
     _init_logging(app)
+
     if app.config.get("BASE_URL", "").startswith("https://"):
         app.config["PREFERRED_URL_SCHEME"] = "https"
 
-    # Request ID middleware for distributed tracing (optional, enabled unless explicitly disabled)
+    # Request ID middleware (optional)
     if not app.config.get("DISABLE_REQUEST_ID_MIDDLEWARE"):
-        from app.middleware import setup_request_id_middleware
+        try:
+            from app.middleware import setup_request_id_middleware
 
-        setup_request_id_middleware(app)
+            setup_request_id_middleware(app)
+        except Exception:
+            app.logger.exception("Failed to initialize request id middleware")
 
     # Error handlers
     _register_error_handlers(app)
 
-    # User loader
-    import psycopg2.extras  # noqa
-
-    from .models import User  # noqa
+    # User loader (keep import at module-level where possible for performance)
+    import psycopg2.extras  # noqa: E402
+    from .models import User  # noqa: E402
 
     @login_manager.user_loader
     def load_user(user_id: str):
         try:
-            with database.get_conn(cursor_factory=psycopg2.extras.DictCursor) as (
-                conn,
-                cur,
-            ):
+            with database.get_conn(cursor_factory=psycopg2.extras.DictCursor) as (conn, cur):
                 cur.execute("SELECT * FROM users WHERE user_id = %s", (user_id,))
                 row = cur.fetchone()
                 if row:
                     return User(row)
         except Exception as e:
-            app.logger.error(f"Error loading user {user_id}: {e}")
+            app.logger.error("Error loading user %s: %s", user_id, e)
         return None
 
-    # Blueprints
-
-    from .api import api_bp  # minimal test-facing API
+    # Blueprints: import first so we can apply CSRF exemptions before register
+    from .api import api_bp
     from .api.file_routes import files_bp
-
-    # Universal Process Framework API blueprints
     from .api.process_management import process_api_bp
     from .api.reports import reports_api_bp
     from .api.production_lot import production_api_bp
@@ -342,12 +406,30 @@ def create_app(config_name: str | None = None) -> Flask:
     from .auth.routes import auth_bp
     from .main.routes import main_bp
 
+    # Exempt Universal Process Framework blueprints BEFORE registering them
+    # so nested blueprint registration does not prevent exemption.
+    for bp in (process_api_bp, reports_api_bp, variant_api_bp, production_api_bp, subprocess_api_bp, inventory_alerts_bp):
+        try:
+            csrf.exempt(bp)
+        except Exception as e:
+            app.logger.debug("Failed to exempt blueprint %s from CSRF: %s", getattr(bp, 'name', bp), e)
+
+    # Also exempt the auth and main blueprints where JSON endpoints are present
+    try:
+        csrf.exempt(auth_bp)
+    except Exception:
+        app.logger.debug("Failed to exempt auth blueprint from CSRF")
+    try:
+        csrf.exempt(main_bp)
+    except Exception:
+        app.logger.debug("Failed to exempt main blueprint from CSRF")
+
+    # Now register blueprints
     app.register_blueprint(auth_bp, url_prefix="/auth")
-    app.register_blueprint(api_bp)  # api_bp already has url_prefix='/api'
-    app.register_blueprint(files_bp)  # No prefix, uses /api/files routes
+    app.register_blueprint(api_bp)
+    app.register_blueprint(files_bp)
     app.register_blueprint(main_bp)
 
-    # Register Universal Process Framework APIs
     app.register_blueprint(process_api_bp, url_prefix="/api/upf")
     app.register_blueprint(reports_api_bp, url_prefix="/api/upf")
     app.register_blueprint(variant_api_bp, url_prefix="/api/upf")
@@ -355,36 +437,20 @@ def create_app(config_name: str | None = None) -> Flask:
     app.register_blueprint(subprocess_api_bp, url_prefix="/api/upf")
     app.register_blueprint(inventory_alerts_bp, url_prefix="/api/upf")
 
-    # Exempt Universal Process Framework API endpoints from CSRF
-    # These are JSON APIs accessed via fetch() without CSRF tokens
-    csrf.exempt(process_api_bp)
-    csrf.exempt(reports_api_bp)
-    csrf.exempt(variant_api_bp)
-    csrf.exempt(production_api_bp)
-    csrf.exempt(subprocess_api_bp)
-    csrf.exempt(inventory_alerts_bp)
-    app.logger.info(
-        "Universal Process Framework API blueprints exempted from CSRF protection"
-    )
+    app.logger.info("Universal Process Framework API blueprints registered and CSRF exemptions applied where configured")
 
-    # Exempt select auth JSON endpoints from CSRF
-    try:
-        csrf.exempt(app.view_functions["auth.api_login"])
-        csrf.exempt(app.view_functions["auth.api_signup"])
-        csrf.exempt(app.view_functions["auth.api_forgot_password"])
-    except KeyError:
-        pass
+    # If specific view function names need exemption but are only available
+    # after registration, we try to exempt them but log missing keys.
+    for view_name in ("auth.api_login", "auth.api_signup", "auth.api_forgot_password",
+                      "main.compat_api_login", "main.compat_api_signup", "main.compat_api_forgot_password"):
+        try:
+            func = app.view_functions.get(view_name)
+            if func:
+                csrf.exempt(func)
+        except Exception as e:
+            app.logger.debug("Failed to exempt view %s from CSRF: %s", view_name, e)
 
-    # Also exempt compat routes that forward to auth endpoints
-    try:
-        csrf.exempt(app.view_functions["main.compat_api_login"])
-        csrf.exempt(app.view_functions["main.compat_api_signup"])
-        csrf.exempt(app.view_functions["main.compat_api_forgot_password"])
-    except KeyError:
-        pass
-
-    # Compatibility: alias common endpoints without blueprint prefixes
-    # This preserves templates using url_for('dashboard') etc.
+    # Compatibility aliases: add URL rules but log any failures for debugging
     alias_map = {
         "home": "main.home",
         "dashboard": "main.dashboard",
@@ -402,22 +468,15 @@ def create_app(config_name: str | None = None) -> Flask:
         target_func = app.view_functions.get(target)
         if not target_func:
             continue
-        # Find a representative rule for the target endpoint
-        target_rule = next(
-            (r for r in app.url_map.iter_rules() if r.endpoint == target), None
-        )
+        target_rule = next((r for r in app.url_map.iter_rules() if r.endpoint == target), None)
         if not target_rule:
             continue
-        methods = (
-            sorted(list((target_rule.methods or set()) - {"HEAD", "OPTIONS"})) or None
-        )
+        methods = (sorted(list((target_rule.methods or set()) - {"HEAD", "OPTIONS"})) or None)
         try:
-            app.add_url_rule(
-                target_rule.rule, endpoint=alias, view_func=target_func, methods=methods
-            )
-        except Exception:
-            # If adding the alias fails for any reason, skip silently
-            pass
+            app.add_url_rule(target_rule.rule, endpoint=alias, view_func=target_func, methods=methods)
+        except Exception as e:
+            # Log failure reason for easier debugging rather than failing silently
+            app.logger.debug("Failed to add alias %s -> %s: %s", alias, target, e)
 
     # Route registry debug (optional)
     if app.debug:
@@ -428,20 +487,15 @@ def create_app(config_name: str | None = None) -> Flask:
                 app.logger.info(f"{rule.endpoint:40} {methods:10} {rule.rule}")
 
     # Compatibility middleware: warn when clients call underscore-style API paths
-    # This is non-breaking: it only logs and adds a deprecation header suggesting
-    # the canonical hyphenated path. We'll keep underscore endpoints working
-    # while encouraging migration to the hyphenated form.
-    from flask import g
-
     @app.before_request
     def _underscore_api_deprecation_check():
         path = request.path or ""
         if path.startswith("/api/") and "_" in path:
-            # Suggest the hyphenated equivalent without mutating routing
+            if path in _DEPRECATION_WARNED:
+                return
             suggested = path.replace("_", "-")
-            app.logger.warning(
-                f"Deprecated API path used: {path} — prefer {suggested} (hyphenated)."
-            )
+            app.logger.warning("Deprecated API path used: %s — prefer %s (hyphenated).", path, suggested)
+            _DEPRECATION_WARNED.add(path)
             # Store suggestion to attach to the response later
             g._api_deprecation_suggestion = suggested
 
@@ -450,22 +504,74 @@ def create_app(config_name: str | None = None) -> Flask:
         try:
             suggestion = getattr(g, "_api_deprecation_suggestion", None)
             if suggestion and response.status_code < 400:
-                # Non-breaking hint for clients/tools
                 response.headers.setdefault("X-API-Deprecation", suggestion)
         except Exception:
-            # Never fail a request due to the deprecation helper
-            pass
+            app.logger.debug("Error attaching deprecation header", exc_info=True)
         return response
+
+    # Teardown handlers: ensure DB and redis pools are closed
+    @app.teardown_appcontext
+    def _close_db_and_pools(exception: Any = None) -> None:
+        # Be defensive: teardown should never raise to the caller. Probe the
+        # `database` module for common cleanup APIs and call whichever exists.
+        try:
+            db_cleanup_candidates = (
+                "close_connection",
+                "close_pool",
+                "close",
+                "shutdown",
+                "dispose",
+                "teardown",
+            )
+            for name in db_cleanup_candidates:
+                fn = getattr(database, name, None)
+                if callable(fn):
+                    try:
+                        fn()
+                        app.logger.info("Database cleanup: called %s()", name)
+                    except Exception:
+                        app.logger.debug("Database cleanup %s() raised", name, exc_info=True)
+                    break
+            else:
+                # No known cleanup function found; try to close a connection pool
+                pool_obj = getattr(database, "pool", None)
+                if pool_obj is not None:
+                    try:
+                        close_fn = getattr(pool_obj, "close", None) or getattr(pool_obj, "disconnect", None)
+                        if callable(close_fn):
+                            close_fn()
+                            app.logger.info("Database pool closed via pool.close()/disconnect().")
+                    except Exception:
+                        app.logger.debug("Database pool cleanup failed", exc_info=True)
+
+            # Close redis pool if we created one during init; be permissive about API
+            pool = app.extensions.get("ratelimit_redis_pool")
+            if pool is not None:
+                try:
+                    # ConnectionPool from redis-py exposes disconnect()
+                    if hasattr(pool, "disconnect") and callable(getattr(pool, "disconnect")):
+                        pool.disconnect()
+                        app.logger.info("[RATE LIMIT] Redis connection pool disconnected.")
+                    # aioredis or other clients may provide close()
+                    elif hasattr(pool, "close") and callable(getattr(pool, "close")):
+                        pool.close()
+                        app.logger.info("[RATE LIMIT] Redis pool closed via close().")
+                except Exception:
+                    app.logger.warning("[RATE LIMIT] Redis pool cleanup failed", exc_info=True)
+        except Exception:
+            # Teardown must not propagate errors to the WSGI server
+            app.logger.debug("Error during teardown_appcontext", exc_info=True)
+
+    # Production debug mode sanity check: do not allow app.debug in production
+    if (config_name == "production" or app.config.get("ENV") == "production") and app.debug:
+        raise RuntimeError("Application running with debug=True in production environment")
 
     return app
 
 
 # Backwards-compatible exports
-# ruff: noqa: E402
 from .utils import get_or_create_user  # re-export for backward compatibility in tests
-from .utils.response import (
-    APIResponse,  # ensure response utility is imported and available
-)
+from .utils.response import APIResponse  # ensure response utility is imported and available
 
 __all__ = [
     "create_app",

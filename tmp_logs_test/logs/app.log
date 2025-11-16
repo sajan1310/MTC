@@ -1,0 +1,4 @@
+{"timestamp": "2025-11-16T07:18:00.325668Z", "level": "INFO", "logger": "tmp", "message": "Logging configured: level=INFO, logs_dir=tmp_logs_test\\logs, env=production", "module": "logging_config", "function": "setup_logging", "line": 135}
+{"timestamp": "2025-11-16T07:18:00.327024Z", "level": "INFO", "logger": "tmp", "message": "production-json-test", "module": "<stdin>-10", "function": "<module>", "line": 1}
+{"timestamp": "2025-11-16T07:18:54.026035Z", "level": "INFO", "logger": "tmp", "message": "Logging configured: level=INFO, logs_dir=tmp_logs_test\\logs, env=production", "module": "logging_config", "function": "setup_logging", "line": 135}
+{"timestamp": "2025-11-16T07:18:54.026835Z", "level": "INFO", "logger": "tmp", "message": "production-json-test", "module": "<string>", "function": "<module>", "line": 1}
