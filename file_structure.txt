@@ -80,7 +80,6 @@
     REFERENCE_INVENTORY.md
     ROUTE_CLEANUP_STRATEGY.md
     route_list.py
-    run_app.py
     schema_validation_report.txt
     SUBPROCESS_ADDITION_FIX.md
     SUBPROCESS_INVESTIGATION_COMPLETE.md
