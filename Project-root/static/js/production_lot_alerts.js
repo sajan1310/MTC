@@ -18,10 +18,19 @@ window.ProductionLotAlertHandler = (function () {
     return data.data || data;
   };
 
+  // Compatibility helper: prefer first existing id from list
+  function getEl(...ids) {
+    for (let i = 0; i < ids.length; i++) {
+      const el = document.getElementById(ids[i]);
+      if (el) return el;
+    }
+    return null;
+  }
+
   function init(productionLotId) {
     state.production_lot_id = productionLotId;
     // Attach bulk acknowledge button listener if present
-    const bulkBtn = document.getElementById('bulk-acknowledge-btn');
+    const bulkBtn = getEl('bulk-acknowledge-btn', 'bulk-acknowledge');
     if (bulkBtn) {
       bulkBtn.addEventListener('click', handleBulkAcknowledge);
     }
@@ -29,52 +38,141 @@ window.ProductionLotAlertHandler = (function () {
 
   function displayAlerts(alerts) {
     state.alerts_list = alerts || [];
-    const list = document.getElementById('alerts-list');
-    if (!list) return;
-    list.innerHTML = '';
-    
+    // Prefer table body if present (new layout), otherwise fall back to legacy list
+    const container = getEl('alerts-table-body', 'alerts-list');
+    if (!container) return;
+    // Clear existing content
+    container.innerHTML = '';
+
     if (state.alerts_list.length === 0) {
-      list.innerHTML = '<p style="text-align: center; color: #999;">No alerts found</p>';
+      if (container.tagName === 'TBODY') {
+        const tr = document.createElement('tr');
+        const td = document.createElement('td');
+        td.colSpan = 7;
+        td.style.textAlign = 'center';
+        td.style.color = '#999';
+        td.textContent = 'No alerts found';
+        tr.appendChild(td);
+        container.appendChild(tr);
+      } else {
+        container.innerHTML = '<p style="text-align: center; color: #999;">No alerts found</p>';
+      }
       return;
     }
 
     state.alerts_list.forEach((a) => {
-      const div = document.createElement('div');
-      div.className = `alert-item alert-severity-${a.alert_severity || 'OK'}`;
-      div.dataset.alertId = a.alert_id;
-      
       const isAcknowledged = a.user_acknowledged;
-      const checkboxHtml = isAcknowledged
-        ? '<input type="checkbox" disabled checked title="Already acknowledged">'
-        : '<input type="checkbox" class="alert-checkbox" data-alert-id="' + a.alert_id + '">';
-      
-      div.innerHTML = `
-        <div class="alert-header">
-          ${checkboxHtml}
-          <span class="severity-badge ${a.alert_severity}">${a.alert_severity}</span>
-          <span class="variant-name">${a.variant_name || a.item_variant_id || 'Variant #' + a.variant_id}</span>
-        </div>
-        <div class="alert-body">
-          <div class="info-row"><span class="label">Current Stock:</span><span class="value">${a.current_stock_quantity || 0}</span></div>
-          <div class="info-row"><span class="label">Required:</span><span class="value">${a.required_quantity || 0}</span></div>
-          <div class="info-row alert-shortfall"><span class="label">Shortfall:</span><span class="value">${a.shortfall_quantity || 0}</span></div>
-          ${!isAcknowledged ? `
-            <div class="alert-actions-inline">
-              <select class="action-select" data-alert-id="${a.alert_id}">
-                <option value="">Select action...</option>
-                <option value="PROCEED">Proceed (accept shortfall)</option>
-                <option value="USE_SUBSTITUTE">Use substitute variant</option>
-                <option value="DELAY">Delay production</option>
-                <option value="PROCURE">Create procurement order</option>
-              </select>
-              <textarea class="alert-notes" data-alert-id="${a.alert_id}" placeholder="Action notes (optional)..." rows="2"></textarea>
-            </div>
-          ` : `<div style="color: #28a745; font-weight: bold; margin-top: 8px;">✓ Acknowledged by ${a.acknowledged_by || 'user'}</div>`}
-        </div>`;
-      list.appendChild(div);
+      if (container.tagName === 'TBODY') {
+        // Render as table row (compact)
+        const tr = document.createElement('tr');
+        tr.dataset.alertId = a.alert_id;
+
+        // Checkbox cell
+        const tdCheckbox = document.createElement('td');
+        if (isAcknowledged) {
+          const chk = document.createElement('input');
+          chk.type = 'checkbox';
+          chk.disabled = true;
+          chk.checked = true;
+          tdCheckbox.appendChild(chk);
+        } else {
+          const chk = document.createElement('input');
+          chk.type = 'checkbox';
+          chk.className = 'alert-checkbox';
+          chk.dataset.alertId = a.alert_id;
+          tdCheckbox.appendChild(chk);
+        }
+        tr.appendChild(tdCheckbox);
+
+        // Severity
+        const tdSeverity = document.createElement('td');
+        tdSeverity.textContent = a.alert_severity || 'OK';
+        tr.appendChild(tdSeverity);
+
+        // Variant
+        const tdVariant = document.createElement('td');
+        tdVariant.textContent = a.variant_name || a.item_variant_id || '';
+        tr.appendChild(tdVariant);
+
+        // Current stock
+        const tdStock = document.createElement('td');
+        tdStock.textContent = a.current_stock_quantity || a.current_stock || 0;
+        tr.appendChild(tdStock);
+
+        // Required
+        const tdReq = document.createElement('td');
+        tdReq.textContent = a.required_quantity || 0;
+        tr.appendChild(tdReq);
+
+        // Shortfall
+        const tdShort = document.createElement('td');
+        tdShort.textContent = a.shortfall_quantity || a.shortfall || 0;
+        tr.appendChild(tdShort);
+
+        // Actions
+        const tdActions = document.createElement('td');
+        if (!isAcknowledged) {
+          const select = document.createElement('select');
+          select.className = 'action-select';
+          select.dataset.alertId = a.alert_id;
+          ['','PROCEED','USE_SUBSTITUTE','DELAY','PROCURE'].forEach((v)=>{
+            const opt = document.createElement('option');
+            opt.value = v;
+            opt.textContent = v === '' ? 'Select action...' : v;
+            select.appendChild(opt);
+          });
+          const txt = document.createElement('textarea');
+          txt.className = 'alert-notes';
+          txt.dataset.alertId = a.alert_id;
+          txt.rows = 1;
+          txt.placeholder = 'Action notes (optional)...';
+          tdActions.appendChild(select);
+          tdActions.appendChild(txt);
+        } else {
+          tdActions.textContent = 'Acknowledged';
+        }
+        tr.appendChild(tdActions);
+
+        container.appendChild(tr);
+      } else {
+        // Legacy card layout
+        const div = document.createElement('div');
+        div.className = `alert-item alert-severity-${a.alert_severity || 'OK'}`;
+        div.dataset.alertId = a.alert_id;
+
+        const checkboxHtml = isAcknowledged
+          ? '<input type="checkbox" disabled checked title="Already acknowledged">'
+          : '<input type="checkbox" class="alert-checkbox" data-alert-id="' + a.alert_id + '">';
+
+        div.innerHTML = `
+          <div class="alert-header">
+            ${checkboxHtml}
+            <span class="severity-badge ${a.alert_severity}">${a.alert_severity}</span>
+            <span class="variant-name">${a.variant_name || a.item_variant_id || 'Variant #' + a.variant_id}</span>
+          </div>
+          <div class="alert-body">
+            <div class="info-row"><span class="label">Current Stock:</span><span class="value">${a.current_stock_quantity || 0}</span></div>
+            <div class="info-row"><span class="label">Required:</span><span class="value">${a.required_quantity || 0}</span></div>
+            <div class="info-row alert-shortfall"><span class="label">Shortfall:</span><span class="value">${a.shortfall_quantity || 0}</span></div>
+            ${!isAcknowledged ? `
+              <div class="alert-actions-inline">
+                <select class="action-select" data-alert-id="${a.alert_id}">
+                  <option value="">Select action...</option>
+                  <option value="PROCEED">Proceed (accept shortfall)</option>
+                  <option value="USE_SUBSTITUTE">Use substitute variant</option>
+                  <option value="DELAY">Delay production</option>
+                  <option value="PROCURE">Create procurement order</option>
+                </select>
+                <textarea class="alert-notes" data-alert-id="${a.alert_id}" placeholder="Action notes (optional)..." rows="2"></textarea>
+              </div>
+            ` : `<div style="color: #28a745; font-weight: bold; margin-top: 8px;">✓ Acknowledged by ${a.acknowledged_by || 'user'}</div>`}
+          </div>`;
+        container.appendChild(div);
+      }
     });
-    
-    const panel = document.getElementById('alert-panel');
+
+    // Reveal panel if present
+    const panel = getEl('alert-panel', 'alerts-panel');
     if (panel) panel.classList.remove('hidden');
   }
 

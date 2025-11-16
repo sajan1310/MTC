@@ -614,5 +614,23 @@
 <!-- Global toast container -->
 <div id="global-toast-container" aria-live="polite" aria-atomic="true"></div>
 <!-- Global overlay management and debug toggle are handled in `static/js/production_lot_detail.js` -->
+<!-- Compatibility shims: create legacy/non-overlay modal IDs if missing so older scripts won't break -->
+<script>
+    (function(){
+        var legacyIds = ['variant-modal','edit-subprocess-modal','subprocess-modal','process-modal'];
+        legacyIds.forEach(function(id){
+            if(!document.getElementById(id)){
+                var el = document.createElement('div');
+                el.id = id;
+                // keep completely inert and hidden; pages that expect a node by ID will find it
+                el.style.display = 'none';
+                // mark as shim for debugging
+                el.dataset.upfShim = 'true';
+                document.body.appendChild(el);
+                if(window.__UPF_DEBUG__){ console.info('UPF shim created for legacy id: ' + id); }
+            }
+        });
+    })();
+</script>
 </div>
 {% endblock %}

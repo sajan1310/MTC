@@ -236,3 +236,6 @@ LINE 13:                         iv.unit_price,
 2025-11-15 17:23:26,957 INFO: Subprocess cache cleared [in C:\Users\erkar\OneDrive\Desktop\MTC\project-root\app\services\subprocess_service.py:40]
 2025-11-15 17:23:27,541 INFO: Universal Process Framework API blueprints exempted from CSRF protection [in C:\Users\erkar\OneDrive\Desktop\MTC\project-root\app\__init__.py:349]
 2025-11-15 17:37:16,318 INFO: Loaded 8 subprocesses into cache [in C:\Users\erkar\OneDrive\Desktop\MTC\project-root\app\services\subprocess_service.py:76]
+2025-11-16 08:51:41,410 INFO: Request ID middleware enabled [in C:\Users\erkar\OneDrive\Desktop\MTC\project-root\app\middleware\request_id.py:45]
+2025-11-16 08:51:41,472 INFO: Subprocess cache cleared [in C:\Users\erkar\OneDrive\Desktop\MTC\project-root\app\services\subprocess_service.py:40]
+2025-11-16 08:51:42,429 INFO: Universal Process Framework API blueprints exempted from CSRF protection [in C:\Users\erkar\OneDrive\Desktop\MTC\project-root\app\__init__.py:349]

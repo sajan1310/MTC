@@ -410,6 +410,36 @@ def create_app(config_name: str | None = None) -> Flask:
             if methods:
                 app.logger.info(f"{rule.endpoint:40} {methods:10} {rule.rule}")
 
+    # Compatibility middleware: warn when clients call underscore-style API paths
+    # This is non-breaking: it only logs and adds a deprecation header suggesting
+    # the canonical hyphenated path. We'll keep underscore endpoints working
+    # while encouraging migration to the hyphenated form.
+    from flask import g
+
+    @app.before_request
+    def _underscore_api_deprecation_check():
+        path = request.path or ""
+        if path.startswith("/api/") and "_" in path:
+            # Suggest the hyphenated equivalent without mutating routing
+            suggested = path.replace("_", "-")
+            app.logger.warning(
+                f"Deprecated API path used: {path} — prefer {suggested} (hyphenated)."
+            )
+            # Store suggestion to attach to the response later
+            g._api_deprecation_suggestion = suggested
+
+    @app.after_request
+    def _attach_deprecation_header(response):
+        try:
+            suggestion = getattr(g, "_api_deprecation_suggestion", None)
+            if suggestion and response.status_code < 400:
+                # Non-breaking hint for clients/tools
+                response.headers.setdefault("X-API-Deprecation", suggestion)
+        except Exception:
+            # Never fail a request due to the deprecation helper
+            pass
+        return response
+
     return app
 
 

@@ -20283,3 +20283,6 @@ LINE 3:                     COUNT(*) FILTER (WHERE p.deleted_at IS N...
 2025-11-11 17:41:25,297 INFO: Request ID middleware enabled [in C:\Users\erkar\OneDrive\Desktop\MTC\Project-root\app\middleware\request_id.py:45]
 2025-11-11 17:41:25,350 INFO: Subprocess cache cleared [in C:\Users\erkar\OneDrive\Desktop\MTC\Project-root\app\services\subprocess_service.py:40]
 2025-11-11 17:41:25,988 INFO: Universal Process Framework API blueprints exempted from CSRF protection [in C:\Users\erkar\OneDrive\Desktop\MTC\Project-root\app\__init__.py:324]
+2025-11-16 11:47:50,158 INFO: Request ID middleware enabled [in C:\Users\erkar\OneDrive\Desktop\MTC\Project-root\app\middleware\request_id.py:45]
+2025-11-16 11:47:50,233 INFO: Subprocess cache cleared [in C:\Users\erkar\OneDrive\Desktop\MTC\Project-root\app\services\subprocess_service.py:40]
+2025-11-16 11:47:50,948 INFO: Universal Process Framework API blueprints exempted from CSRF protection [in C:\Users\erkar\OneDrive\Desktop\MTC\Project-root\app\__init__.py:349]
