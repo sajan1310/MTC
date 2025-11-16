@@ -2,25 +2,25 @@
   "errors": [],
   "warnings": [
     "11 duplicate backend route(s) found across files.",
-    "Route /stock-receipts declared in: ['c:\\\\Users\\\\erkar\\\\OneDrive\\\\Desktop\\\\MTC\\\\Project-root\\\\app\\\\api\\\\routes.py', 'c:\\\\Users\\\\erkar\\\\OneDrive\\\\Desktop\\\\MTC\\\\Project-root\\\\app\\\\api\\\\stubs.py']",
-    "Route /purchase-orders declared in: ['c:\\\\Users\\\\erkar\\\\OneDrive\\\\Desktop\\\\MTC\\\\Project-root\\\\app\\\\api\\\\routes.py', 'c:\\\\Users\\\\erkar\\\\OneDrive\\\\Desktop\\\\MTC\\\\Project-root\\\\app\\\\main\\\\routes.py']",
-    "Route /variants/search declared in: ['c:\\\\Users\\\\erkar\\\\OneDrive\\\\Desktop\\\\MTC\\\\Project-root\\\\app\\\\api\\\\routes.py', 'c:\\\\Users\\\\erkar\\\\OneDrive\\\\Desktop\\\\MTC\\\\Project-root\\\\app\\\\api\\\\variant_management.py']",
-    "Route /variant-ledger declared in: ['c:\\\\Users\\\\erkar\\\\OneDrive\\\\Desktop\\\\MTC\\\\Project-root\\\\app\\\\api\\\\routes.py', 'c:\\\\Users\\\\erkar\\\\OneDrive\\\\Desktop\\\\MTC\\\\Project-root\\\\app\\\\main\\\\routes.py']",
-    "Route /low-stock-report declared in: ['c:\\\\Users\\\\erkar\\\\OneDrive\\\\Desktop\\\\MTC\\\\Project-root\\\\app\\\\api\\\\routes.py', 'c:\\\\Users\\\\erkar\\\\OneDrive\\\\Desktop\\\\MTC\\\\Project-root\\\\app\\\\main\\\\routes.py']",
-    "Route /login declared in: ['c:\\\\Users\\\\erkar\\\\OneDrive\\\\Desktop\\\\MTC\\\\Project-root\\\\app\\\\auth\\\\routes.py', 'c:\\\\Users\\\\erkar\\\\OneDrive\\\\Desktop\\\\MTC\\\\Project-root\\\\app\\\\main\\\\routes.py']",
-    "Route /signup declared in: ['c:\\\\Users\\\\erkar\\\\OneDrive\\\\Desktop\\\\MTC\\\\Project-root\\\\app\\\\auth\\\\routes.py', 'c:\\\\Users\\\\erkar\\\\OneDrive\\\\Desktop\\\\MTC\\\\Project-root\\\\app\\\\main\\\\routes.py']",
-    "Route /forgot-password declared in: ['c:\\\\Users\\\\erkar\\\\OneDrive\\\\Desktop\\\\MTC\\\\Project-root\\\\app\\\\auth\\\\routes.py', 'c:\\\\Users\\\\erkar\\\\OneDrive\\\\Desktop\\\\MTC\\\\Project-root\\\\app\\\\main\\\\routes.py']",
-    "Route /api/login declared in: ['c:\\\\Users\\\\erkar\\\\OneDrive\\\\Desktop\\\\MTC\\\\Project-root\\\\app\\\\auth\\\\routes.py', 'c:\\\\Users\\\\erkar\\\\OneDrive\\\\Desktop\\\\MTC\\\\Project-root\\\\app\\\\main\\\\routes.py']",
-    "Route /api/signup declared in: ['c:\\\\Users\\\\erkar\\\\OneDrive\\\\Desktop\\\\MTC\\\\Project-root\\\\app\\\\auth\\\\routes.py', 'c:\\\\Users\\\\erkar\\\\OneDrive\\\\Desktop\\\\MTC\\\\Project-root\\\\app\\\\main\\\\routes.py']",
-    "116 DB object(s) are referenced in code but not found in migrations (tables/views/columns): ['CSRF', 'DB', 'Flask', 'Google', 'LATERAL', 'ON', 'OR', 'POST', 'Redis', 'SET']",
-    "Found 3 potentially sensitive/unwanted files: ['c:\\\\Users\\\\erkar\\\\OneDrive\\\\Desktop\\\\MTC\\\\Project-root\\\\.env', 'c:\\\\Users\\\\erkar\\\\OneDrive\\\\Desktop\\\\MTC\\\\Project-root\\\\.env.example', 'c:\\\\Users\\\\erkar\\\\OneDrive\\\\Desktop\\\\MTC\\\\Project-root\\\\production.env.example']",
-    "35 top-level imports not listed in requirements.txt (heuristic): ['app', 'argparse', 'auth', 'config', 'contextlib', 'csv', 'database', 'datetime', 'dotenv', 'flask_cors', 'flask_limiter', 'flask_login', 'flask_wtf', 'functools', 'importlib', 'io', 'logging', 'logging_config', 'magic', 'migrations']",
-    "2 large file(s) >200KB detected: [('c:\\\\Users\\\\erkar\\\\OneDrive\\\\Desktop\\\\MTC\\\\Project-root\\\\static\\\\img\\\\Final_Logo.png', 564868), ('c:\\\\Users\\\\erkar\\\\OneDrive\\\\Desktop\\\\MTC\\\\Project-root\\\\static\\\\uploads\\\\1_1a278be4_ChatGPT Image Aug 7, 2025, 11_10_55 AM.png', 1636625)]"
+    "Route /stock-receipts declared in: ['C:\\\\Users\\\\erkar\\\\OneDrive\\\\Desktop\\\\MTC\\\\Project-root\\\\app\\\\api\\\\routes.py', 'C:\\\\Users\\\\erkar\\\\OneDrive\\\\Desktop\\\\MTC\\\\Project-root\\\\app\\\\api\\\\stubs.py']",
+    "Route /purchase-orders declared in: ['C:\\\\Users\\\\erkar\\\\OneDrive\\\\Desktop\\\\MTC\\\\Project-root\\\\app\\\\api\\\\routes.py', 'C:\\\\Users\\\\erkar\\\\OneDrive\\\\Desktop\\\\MTC\\\\Project-root\\\\app\\\\main\\\\routes.py']",
+    "Route /variants/search declared in: ['C:\\\\Users\\\\erkar\\\\OneDrive\\\\Desktop\\\\MTC\\\\Project-root\\\\app\\\\api\\\\routes.py', 'C:\\\\Users\\\\erkar\\\\OneDrive\\\\Desktop\\\\MTC\\\\Project-root\\\\app\\\\api\\\\variant_management.py']",
+    "Route /variant-ledger declared in: ['C:\\\\Users\\\\erkar\\\\OneDrive\\\\Desktop\\\\MTC\\\\Project-root\\\\app\\\\api\\\\routes.py', 'C:\\\\Users\\\\erkar\\\\OneDrive\\\\Desktop\\\\MTC\\\\Project-root\\\\app\\\\main\\\\routes.py']",
+    "Route /low-stock-report declared in: ['C:\\\\Users\\\\erkar\\\\OneDrive\\\\Desktop\\\\MTC\\\\Project-root\\\\app\\\\api\\\\routes.py', 'C:\\\\Users\\\\erkar\\\\OneDrive\\\\Desktop\\\\MTC\\\\Project-root\\\\app\\\\main\\\\routes.py']",
+    "Route /login declared in: ['C:\\\\Users\\\\erkar\\\\OneDrive\\\\Desktop\\\\MTC\\\\Project-root\\\\app\\\\auth\\\\routes.py', 'C:\\\\Users\\\\erkar\\\\OneDrive\\\\Desktop\\\\MTC\\\\Project-root\\\\app\\\\main\\\\routes.py']",
+    "Route /signup declared in: ['C:\\\\Users\\\\erkar\\\\OneDrive\\\\Desktop\\\\MTC\\\\Project-root\\\\app\\\\auth\\\\routes.py', 'C:\\\\Users\\\\erkar\\\\OneDrive\\\\Desktop\\\\MTC\\\\Project-root\\\\app\\\\main\\\\routes.py']",
+    "Route /forgot-password declared in: ['C:\\\\Users\\\\erkar\\\\OneDrive\\\\Desktop\\\\MTC\\\\Project-root\\\\app\\\\auth\\\\routes.py', 'C:\\\\Users\\\\erkar\\\\OneDrive\\\\Desktop\\\\MTC\\\\Project-root\\\\app\\\\main\\\\routes.py']",
+    "Route /api/login declared in: ['C:\\\\Users\\\\erkar\\\\OneDrive\\\\Desktop\\\\MTC\\\\Project-root\\\\app\\\\auth\\\\routes.py', 'C:\\\\Users\\\\erkar\\\\OneDrive\\\\Desktop\\\\MTC\\\\Project-root\\\\app\\\\main\\\\routes.py']",
+    "Route /api/signup declared in: ['C:\\\\Users\\\\erkar\\\\OneDrive\\\\Desktop\\\\MTC\\\\Project-root\\\\app\\\\auth\\\\routes.py', 'C:\\\\Users\\\\erkar\\\\OneDrive\\\\Desktop\\\\MTC\\\\Project-root\\\\app\\\\main\\\\routes.py']",
+    "118 DB object(s) are referenced in code but not found in migrations (tables/views/columns): ['CSRF', 'DB', 'Flask', 'Google', 'LATERAL', 'ON', 'OR', 'POST', 'Redis', 'SET']",
+    "Found 3 potentially sensitive/unwanted files: ['C:\\\\Users\\\\erkar\\\\OneDrive\\\\Desktop\\\\MTC\\\\Project-root\\\\.env', 'C:\\\\Users\\\\erkar\\\\OneDrive\\\\Desktop\\\\MTC\\\\Project-root\\\\.env.example', 'C:\\\\Users\\\\erkar\\\\OneDrive\\\\Desktop\\\\MTC\\\\Project-root\\\\production.env.example']",
+    "37 top-level imports not listed in requirements.txt (heuristic): ['app', 'argparse', 'ast', 'auth', 'config', 'contextlib', 'csv', 'database', 'datetime', 'dotenv', 'flask_cors', 'flask_limiter', 'flask_login', 'flask_wtf', 'functools', 'importlib', 'io', 'logging', 'logging_config', 'magic']",
+    "2 large file(s) >200KB detected: [('C:\\\\Users\\\\erkar\\\\OneDrive\\\\Desktop\\\\MTC\\\\Project-root\\\\static\\\\img\\\\Final_Logo.png', 564868), ('C:\\\\Users\\\\erkar\\\\OneDrive\\\\Desktop\\\\MTC\\\\Project-root\\\\static\\\\uploads\\\\1_1a278be4_ChatGPT Image Aug 7, 2025, 11_10_55 AM.png', 1636625)]"
   ],
   "counts": {
-    "backend_routes": 182,
+    "backend_routes": 183,
     "frontend_endpoints": 23,
     "migration_tables": 50,
-    "code_tables": 185
+    "code_tables": 189
   }
 }

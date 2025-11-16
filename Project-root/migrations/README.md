@@ -1,3 +1,26 @@
+# Migrations
+
+This folder contains small, idempotent Python migration scripts for schema
+fixes needed by the application. Each migration is safe to run multiple times
+and uses `ALTER TABLE ... ADD COLUMN IF NOT EXISTS` so it won't fail if the
+column already exists.
+
+How to run a migration (recommended):
+
+1. Backup your database before running any migration.
+2. From the project root run the migration file with Python. Example (PowerShell):
+
+```powershell
+# run finalized_at + variant compatibility migration
+python .\Project-root\migrations\migration_ensure_variant_and_finalized_columns_20251116.py
+```
+
+3. Restart the application after the migration completes.
+
+Notes:
+- The migrations are written to be non-destructive and idempotent.
+- If you have a proper migration tool (Alembic, Flyway), prefer using that
+  workflow and convert these scripts as appropriate.
 # Database Migrations
 
 This directory contains all database migration scripts for the MTC Inventory Management System.
