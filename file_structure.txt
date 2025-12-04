@@ -49,6 +49,7 @@
     ERROR_FIX_SUMMARY.md
     EXECUTIVE_SUMMARY.md
     file_structure.txt
+    FILE_STRUCTURE_GUIDE.md
     FINAL_AUDIT_SUMMARY.md
     FINAL_COMPLETION_STATUS.md
     FINAL_DELIVERY_REPORT.md
@@ -111,6 +112,7 @@
     QUICK_REFERENCE.md
     QUICK_REFERENCE_CARD.md
     QUICK_START (2).md
+    README.md
     README_PRODUCTION_LOT_FIXES.md
     README_START_HERE.md
     REFERENCE_INVENTORY.md
@@ -201,12 +203,16 @@
             973905827700233134
     .vscode/
         settings.json
+    archive/
+        README.md
     backups/
         code_snapshot_20251108_132304.zip
         db_backup_20251108_132106.sql
         db_backup_20251108_132303.sql
         refactor_20251109/
             ci.yml.bak
+    docs/
+        README.md
     examples/
     logs/
         app.log
@@ -613,3 +619,5 @@
         logs/
             app.log
             error.log
+    utilities/
+        README.md
