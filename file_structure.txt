@@ -104,6 +104,7 @@
     PRODUCTION_PAGES_REPAIR_REPORT.md
     PRODUCTION_READINESS_REPORT.md
     project_auditor.py
+    PROJECT_GUIDE.md
     Project_Summary.md
     pytest.ini
     QUICK_FIX_APPLIED.md
