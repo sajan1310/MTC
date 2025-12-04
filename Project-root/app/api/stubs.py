@@ -122,6 +122,7 @@ if STUBS_ENABLED:
 if STUBS_ENABLED:
 
     @api_bp.route("/reset-password", methods=["POST"])
+    @login_required
     def reset_password_stub():
         """
         TODO: Implement password reset logic
@@ -151,6 +152,7 @@ if STUBS_ENABLED:
 
     @api_bp.route("/stock-receipts", methods=["DELETE"])
     @login_required
+    @role_required("admin")
     def delete_stock_receipts_stub():
         """
         Accepts JSON body { "id": <receipt_id> } and returns a stubbed response.

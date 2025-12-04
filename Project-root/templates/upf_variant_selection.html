@@ -395,7 +395,7 @@ const variantSelector = {
 
     async loadVariantOptions() {
         try {
-            const response = await fetch(`/api/upf/production_lot/${this.lotId}/variant_options`, {
+            const response = await fetch(`/api/upf/production-lots/${this.lotId}/variant-options`, {
                 credentials: 'include'
             });
 
@@ -623,7 +623,7 @@ const variantSelector = {
                 });
             });
 
-            const response = await fetch(`/api/upf/production_lot/${this.lotId}/batch_select_variants`, {
+            const response = await fetch(`/api/upf/production-lots/${this.lotId}/batch-select-variants`, {
                 method: 'POST',
                 headers: {
                     'Content-Type': 'application/json',

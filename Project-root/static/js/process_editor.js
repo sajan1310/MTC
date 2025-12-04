@@ -860,8 +860,8 @@ const processEditor = {
                 sequence_map[sp.process_subprocess_id] = index + 1;
             });
 
-            // Fixed: Use correct endpoint and payload format
-            const response = await fetch(`/api/upf/process/${this.processId}/reorder_subprocesses`, {
+            // Fixed: Use correct endpoint (plural processes, not process) and payload format
+            const response = await fetch(`/api/upf/processes/${this.processId}/reorder_subprocesses`, {
                 method: 'POST',
                 headers: {
                     'Content-Type': 'application/json',

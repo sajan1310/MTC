@@ -1,8 +1,14 @@
 """Development-only Flask runner with safe defaults and validation.
 
+PRIMARY DEVELOPMENT RUNNER for the Inventory Management System.
+
 This module provides a secure developer entrypoint intended strictly for
 local development and CI environments. It performs preflight checks and
 validates environment variables before calling the application factory.
+
+Note: All deprecated app.py files have been removed. This run.py file is the
+single, unified development runner. For production, use run_production.py or
+a WSGI server (see below).
 
 Important:
 - This runner will REFUSE to enable the Flask debugger in a production
@@ -12,6 +18,10 @@ Important:
 
 Usage (development):
     python run.py
+
+Other runners:
+- run_production.py: Production-grade deployment server selector
+- wsgi.py: WSGI entry point for gunicorn / waitress / uWSGI
 
 Environment variables used:
 - FLASK_ENV: 'development' (default) | 'testing' | 'production'

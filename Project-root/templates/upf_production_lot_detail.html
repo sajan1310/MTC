@@ -126,7 +126,11 @@
                 <h2 class="card-title">Summary</h2>
             </div>
             <div id="summary-content" class="loading-state">
-                Loading summary...
+                <div class="detail-row">
+                    <span class="detail-label">Total Cost:</span>
+                    <span class="detail-value" id="lot-total-cost">Loading...</span>
+                    <button class="btn btn-secondary" id="recalc-cost-btn" title="Recalculate cost" style="margin-left:8px">Recalc</button>
+                </div>
             </div>
         </div>
     </div>
@@ -150,7 +154,15 @@
             <div class="card-header">
                 <h2 class="card-title">Selected Variants</h2>
                 <div>
-                    <select id="subprocess-select-for-add" style="margin-right:8px;padding:4px 8px"></select>
+                    <select id="subprocess-select-for-add" name="subprocess_id" style="margin-right:8px;padding:4px 8px">
+                        <option value="">-- Select subprocess --</option>
+                        {% if available_subprocesses %}
+                            {% for sp in available_subprocesses %}
+                                <option value="{{ sp.id }}">{{ sp.name }}</option>
+                            {% endfor %}
+                        {% endif %}
+                    </select>
+                    <button type="button" class="btn" id="add-subprocess-btn" style="margin-right:8px">➕ Add Subprocess</button>
                     <button type="button" tabindex="0" aria-label="Add Variant" class="btn btn-primary" id="header-add-variant-btn" style="position:relative;z-index:1100001;pointer-events:auto">+ Add Variant</button>
                 </div>
             </div>

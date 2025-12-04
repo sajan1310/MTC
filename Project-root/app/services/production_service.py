@@ -3,7 +3,7 @@ Production Service for Universal Process Framework.
 
 Handles production lot creation, variant selection, execution, and inventory integration.
 This is where the OR/Substitute feature comes to life - users select specific variants
-from each substitute group, and the system tracks actual costs vs. estimates.
+from each substitute group, and the system tracks actual costs vs. estimates. 
 """
 
 from __future__ import annotations
@@ -20,7 +20,16 @@ from ..models.production_lot import (
     ProductionLotSelection,
     generate_lot_number,
 )
+from ..utils.production_lot_utils import (
+    validate_cost_calculation,
+    log_production_lot_creation,
+    log_variant_selection,
+    validate_status_transition,
+    coerce_numeric,
+    get_logger,
+)
 from .costing_service import CostingService
+from .production_lot_subprocess_manager import link_subprocesses_to_production_lot
 
 
 class ProductionService:
@@ -46,31 +55,68 @@ class ProductionService:
 
         Returns:
             Created production lot with initial cost estimate
+
+        Raises:
+            ValueError: If cost calculation fails or returns invalid data
         """
+        logger = get_logger()
+
         if not lot_number:
             lot_number = generate_lot_number()
 
-        # Calculate worst-case estimated cost
-        cost_breakdown = CostingService.calculate_process_total_cost(process_id)
-        worst_case_cost = cost_breakdown["totals"]["grand_total"] * quantity
+        # Calculate worst-case estimated cost with validation
+        try:
+            cost_breakdown = CostingService.calculate_process_total_cost(process_id)
+
+            # Validate cost breakdown BEFORE using it
+            is_valid, total_cost, issues = validate_cost_calculation(
+                process_id, quantity, cost_breakdown
+            )
+
+            if issues:
+                for issue in issues:
+                    logger.warning(f"Cost validation issue: {issue}")
+
+            # Use validated total cost
+            worst_case_cost = coerce_numeric(total_cost, 0, f"process_{process_id}")
+
+            if worst_case_cost == 0:
+                logger.warning(
+                    f"Creating lot with zero cost for process {process_id}; "
+                    f"this may indicate missing supplier pricing data"
+                )
+
+        except Exception as e:
+            logger.error(
+                f"Failed to calculate cost for process {process_id}: {str(e)}"
+            )
+            raise ValueError(
+                f"Cost calculation failed for process {process_id}: {str(e)}"
+            )
 
         with database.get_conn(cursor_factory=psycopg2.extras.RealDictCursor) as (
             conn,
             cur,
         ):
-            cur.execute(
-                """
-                INSERT INTO production_lots (
-                    process_id, lot_number, created_by, quantity,
-                    total_cost, status
-                ) VALUES (%s, %s, %s, %s, %s, 'Planning')
-                RETURNING *
-            """,
-                (process_id, lot_number, user_id, quantity, worst_case_cost),
-            )
+            try:
+                cur.execute(
+                    """
+                    INSERT INTO production_lots (
+                        process_id, lot_number, created_by, quantity,
+                        total_cost, status
+                    ) VALUES (%s, %s, %s, %s, %s, 'Planning')
+                    RETURNING *
+                """,
+                    (process_id, lot_number, user_id, quantity, worst_case_cost),
+                )
 
-            lot_data = cur.fetchone()
-            conn.commit()
+                lot_data = cur.fetchone()
+                conn.commit()
+
+            except Exception as e:
+                conn.rollback()
+                logger.error(f"Database error creating production lot: {str(e)}")
+                raise
 
         lot = ProductionLot(lot_data)
         # Merge raw DB fields back into result to preserve any extra keys
@@ -78,9 +124,34 @@ class ProductionService:
         for k, v in dict(lot_data).items():
             if k not in result:
                 result[k] = v
+
         # Ensure alias exists if callers expect it
         if "worst_case_estimated_cost" not in result:
             result["worst_case_estimated_cost"] = result.get("total_cost")
+
+        # Link all subprocesses from the process to this lot (NEW)
+        try:
+            lot_id = lot_data["id"]
+            subprocess_ids = link_subprocesses_to_production_lot(lot_id, process_id)
+            result["linked_subprocesses"] = len(subprocess_ids)
+            logger.debug(
+                f"Linked {len(subprocess_ids)} subprocesses to lot {lot_id}"
+            )
+        except Exception as e:
+            logger.warning(
+                f"Failed to link subprocesses to lot {lot_data['id']}: {str(e)}"
+            )
+
+        # Log creation with full context
+        log_production_lot_creation(
+            lot_data["id"],
+            lot_number,
+            process_id,
+            quantity,
+            worst_case_cost,
+            "Planning",
+        )
+
         return result
 
     @staticmethod
@@ -398,11 +469,20 @@ class ProductionService:
             )
             total = cur.fetchone()["total"]
 
-            # Get page of results
+            # Get page of results - ensure cost fields are included with proper NULL handling
             cur.execute(
                 f"""
                 SELECT
-                    pl.*,
+                    pl.id,
+                    pl.process_id,
+                    pl.lot_number,
+                    pl.quantity,
+                    pl.created_by,
+                    pl.status,
+                    pl.created_at,
+                    pl.started_at,
+                    pl.completed_at,
+                    COALESCE(pl.total_cost, 0) as total_cost,
                     p.name as process_name,
                     u.name as created_by_name,
                     COUNT(plvs.id) as selections_count
@@ -411,7 +491,9 @@ class ProductionService:
                 LEFT JOIN users u ON u.user_id = pl.created_by
                 LEFT JOIN production_lot_variant_selections plvs ON plvs.lot_id = pl.id
                 {where_clause}
-                GROUP BY pl.id, p.name, u.name
+                GROUP BY pl.id, pl.process_id, pl.lot_number, pl.quantity, pl.created_by,
+                         pl.status, pl.created_at, pl.started_at, pl.completed_at,
+                         pl.total_cost, p.name, u.name
                 ORDER BY pl.created_at DESC
                 LIMIT %s OFFSET %s
             """,
@@ -501,13 +583,22 @@ class ProductionService:
                             variant_id
                         )
                         cost = cost_info["worst_case_cost"] if cost_info else None
-                except Exception:
+                except Exception as e:
                     # On any unexpected DB error, fallback to worst-case costing
+                    logger = get_logger()
+                    logger.warning(
+                        f"Error fetching supplier pricing for variant {variant_id}, supplier {supplier_id}: {str(e)}"
+                    )
                     cost_info = CostingService.get_variant_worst_case_cost(variant_id)
                     cost = cost_info["worst_case_cost"] if cost_info else None
             else:
                 cost_info = CostingService.get_variant_worst_case_cost(variant_id)
                 cost = cost_info["worst_case_cost"] if cost_info else None
+
+            # Log the selection with cost information
+            log_variant_selection(
+                lot_id, substitute_group_id, variant_id, cost, supplier_id
+            )
 
             # If DB uses variant_usage_id (migration schema), map variant_id + process_subprocess_id
             if use_variant_usage_column:
@@ -611,10 +702,10 @@ class ProductionService:
             cur.execute(
                 """
                 INSERT INTO production_lot_variant_selections (
-                    production_lot_id, substitute_group_id, selected_variant_id,
+                    lot_id, substitute_group_id, selected_variant_id,
                     selected_supplier_id, selected_cost, selected_quantity
                 ) VALUES (%s, %s, %s, %s, %s, %s)
-                ON CONFLICT (production_lot_id, substitute_group_id)
+                ON CONFLICT (lot_id, substitute_group_id)
                 DO UPDATE SET
                     selected_variant_id = EXCLUDED.selected_variant_id,
                     selected_supplier_id = EXCLUDED.selected_supplier_id,
@@ -944,7 +1035,7 @@ class ProductionService:
                 """
                 UPDATE production_lots
                 SET status = 'completed',
-                    actual_cost = %s,
+                    total_cost = %s,
                     started_at = COALESCE(started_at, CURRENT_TIMESTAMP),
                     completed_at = CURRENT_TIMESTAMP
                 WHERE id = %s
@@ -1127,7 +1218,7 @@ class ProductionService:
 
         Returns True if deleted.
         """
-        with database.get_conn() as (conn, cur):
+        with database.get_conn(cursor_factory=psycopg2.extras.RealDictCursor) as (conn, cur):
             cur.execute(
                 "SELECT id, status FROM production_lots WHERE id = %s", (lot_id,)
             )
@@ -1155,7 +1246,7 @@ class ProductionService:
         with database.get_conn() as (conn, cur):
             if lot_id:
                 cur.execute(
-                    "DELETE FROM production_lot_variant_selections WHERE id = %s AND production_lot_id = %s",
+                    "DELETE FROM production_lot_variant_selections WHERE id = %s AND lot_id = %s",
                     (selection_id, lot_id),
                 )
             else:

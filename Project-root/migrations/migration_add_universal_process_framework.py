@@ -295,7 +295,7 @@ def upgrade():
                                                                      'cancelled')),
                 quantity INTEGER NOT NULL DEFAULT 1 CHECK (quantity > 0),
                 worst_case_estimated_cost NUMERIC(12,2),
-                actual_cost NUMERIC(12,2),
+                total_cost NUMERIC(12,2),
                 created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
                 started_at TIMESTAMP,
                 completed_at TIMESTAMP,

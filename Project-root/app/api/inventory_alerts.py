@@ -477,6 +477,138 @@ def upf_acknowledge_bulk(production_lot_id: int):
     )
 
 
+@inventory_alerts_bp.route(
+    "/inventory-alerts/bulk-acknowledge", methods=["POST"]
+)
+@login_required
+def bulk_acknowledge_alerts():
+    """Generic bulk acknowledge endpoint for multiple alerts.
+    
+    Request JSON:
+    {
+        "alert_ids": [int, ...] or "acknowledgments": [{"alert_id": int, "user_action": str, "action_notes": str}]
+    }
+    
+    Response:
+    {
+        "acknowledged_count": int,
+        "failed_count": int,
+        "alerts_acknowledged": [...]
+    }
+    """
+    try:
+        if not request.is_json:
+            return APIResponse.error(
+                "validation_error", "Content-Type must be application/json", 400
+            )
+
+        data = request.json or {}
+
+        # Support both formats: simple alert_ids array or full acknowledgments array
+        alert_ids = data.get("alert_ids", [])
+        acknowledgments = data.get("acknowledgments", [])
+
+        if not alert_ids and not acknowledgments:
+            return APIResponse.error(
+                "validation_error",
+                "Either alert_ids or acknowledgments array is required",
+                400,
+            )
+
+        from database import get_conn
+        from psycopg2.extras import RealDictCursor
+
+        uid = getattr(current_user, "id", None)
+        if uid is None:
+            return APIResponse.error(
+                "unauthenticated", "Authentication required", 401
+            )
+
+        # Convert alert_ids to acknowledgments format if needed
+        if alert_ids and not acknowledgments:
+            acknowledgments = [
+                {
+                    "alert_id": aid,
+                    "user_action": "PROCEED",
+                    "action_notes": data.get("notes", ""),
+                }
+                for aid in alert_ids
+            ]
+
+        acknowledged_records = []
+        failed_records = []
+
+        with get_conn(cursor_factory=RealDictCursor) as (conn, cur):
+            for ack in acknowledgments:
+                alert_id = ack.get("alert_id")
+                user_action = ack.get("user_action", "PROCEED")
+                action_notes = ack.get("action_notes", "")
+
+                if not alert_id:
+                    failed_records.append(
+                        {
+                            "alert_id": alert_id,
+                            "error": "alert_id is required",
+                        }
+                    )
+                    continue
+
+                try:
+                    alert_id = int(alert_id)
+
+                    # Update alert with acknowledgment
+                    cur.execute(
+                        """
+                        UPDATE production_lot_inventory_alerts
+                        SET user_acknowledged = true,
+                            user_action = %s,
+                            action_notes = %s,
+                            acknowledged_at = %s,
+                            acknowledged_by = %s
+                        WHERE id = %s
+                        RETURNING id, production_lot_id, user_acknowledged, user_action
+                        """,
+                        (user_action, action_notes, datetime.utcnow(), uid, alert_id),
+                    )
+                    result = cur.fetchone()
+
+                    if result:
+                        acknowledged_records.append(dict(result))
+                    else:
+                        failed_records.append(
+                            {
+                                "alert_id": alert_id,
+                                "error": "Alert not found",
+                            }
+                        )
+                except Exception as e:
+                    failed_records.append(
+                        {
+                            "alert_id": alert_id,
+                            "error": str(e),
+                        }
+                    )
+
+            conn.commit()
+
+        current_app.logger.info(
+            f"Bulk acknowledged {len(acknowledged_records)} alerts by user {uid}"
+        )
+
+        return APIResponse.success(
+            {
+                "acknowledged_count": len(acknowledged_records),
+                "failed_count": len(failed_records),
+                "alerts_acknowledged": acknowledged_records,
+                "failed_alerts": failed_records if failed_records else None,
+            }
+        )
+
+    except Exception as e:
+        current_app.logger.error(f"Error bulk acknowledging alerts: {e}")
+        return APIResponse.error("internal_error", str(e), 500)
+
+
 @inventory_alerts_bp.route("/monitoring/alerts-health", methods=["GET"])
 @login_required
 def monitoring_alerts_health():

@@ -246,16 +246,54 @@ def add_supplier():
                 (firm_name, data.get("address"), data.get("gstin")),
             )
             supplier_id = cur.fetchone()[0]
+            
+            # Add contacts
             for contact in data.get("contacts", []):
-                cur.execute(
-                    "INSERT INTO supplier_contacts (supplier_id, contact_name, contact_phone, contact_email) VALUES (%s, %s, %s, %s)",
-                    (
-                        supplier_id,
-                        contact.get("name"),
-                        contact.get("phone"),
-                        contact.get("email"),
-                    ),
-                )
+                if contact.get("name") or contact.get("phone") or contact.get("email"):
+                    cur.execute(
+                        "INSERT INTO supplier_contacts (supplier_id, contact_name, contact_phone, contact_email) VALUES (%s, %s, %s, %s)",
+                        (
+                            supplier_id,
+                            contact.get("name"),
+                            contact.get("phone"),
+                            contact.get("email"),
+                        ),
+                    )
+            
+            # Add variant rates
+            for variant in data.get("variants", []):
+                variant_id = variant.get("variant_id")
+                rate = variant.get("rate")
+                
+                if variant_id and rate:
+                    try:
+                        variant_id_int = int(variant_id)
+                        rate_float = float(rate)
+                        
+                        # Get the item_id from variant_id
+                        cur.execute(
+                            "SELECT item_id FROM item_variant WHERE variant_id = %s",
+                            (variant_id_int,)
+                        )
+                        result = cur.fetchone()
+                        if result:
+                            item_id = result[0]
+                            # Insert or update the rate
+                            cur.execute(
+                                """
+                                INSERT INTO supplier_item_rates (supplier_id, item_id, rate)
+                                VALUES (%s, %s, %s)
+                                ON CONFLICT (supplier_id, item_id) 
+                                DO UPDATE SET rate = EXCLUDED.rate
+                                """,
+                                (supplier_id, item_id, rate_float)
+                            )
+                    except (ValueError, TypeError) as e:
+                        current_app.logger.warning(
+                            f"Invalid variant data for supplier {supplier_id}: {e}"
+                        )
+                        continue
+            
             conn.commit()
         return (
             jsonify(
@@ -289,19 +327,59 @@ def update_supplier(supplier_id):
                 "UPDATE suppliers SET firm_name = %s, address = %s, gstin = %s WHERE supplier_id = %s",
                 (firm_name, data.get("address"), data.get("gstin"), supplier_id),
             )
+            
+            # Update contacts - delete old and insert new
             cur.execute(
                 "DELETE FROM supplier_contacts WHERE supplier_id = %s", (supplier_id,)
             )
             for contact in data.get("contacts", []):
-                cur.execute(
-                    "INSERT INTO supplier_contacts (supplier_id, contact_name, contact_phone, contact_email) VALUES (%s, %s, %s, %s)",
-                    (
-                        supplier_id,
-                        contact.get("name"),
-                        contact.get("phone"),
-                        contact.get("email"),
-                    ),
-                )
+                if contact.get("name") or contact.get("phone") or contact.get("email"):
+                    cur.execute(
+                        "INSERT INTO supplier_contacts (supplier_id, contact_name, contact_phone, contact_email) VALUES (%s, %s, %s, %s)",
+                        (
+                            supplier_id,
+                            contact.get("name"),
+                            contact.get("phone"),
+                            contact.get("email"),
+                        ),
+                    )
+            
+            # Update variant rates - delete old and insert new
+            cur.execute(
+                "DELETE FROM supplier_item_rates WHERE supplier_id = %s", 
+                (supplier_id,)
+            )
+            for variant in data.get("variants", []):
+                variant_id = variant.get("variant_id")
+                rate = variant.get("rate")
+                
+                if variant_id and rate:
+                    try:
+                        variant_id_int = int(variant_id)
+                        rate_float = float(rate)
+                        
+                        # Get the item_id from variant_id
+                        cur.execute(
+                            "SELECT item_id FROM item_variant WHERE variant_id = %s",
+                            (variant_id_int,)
+                        )
+                        result = cur.fetchone()
+                        if result:
+                            item_id = result[0]
+                            # Insert the rate
+                            cur.execute(
+                                """
+                                INSERT INTO supplier_item_rates (supplier_id, item_id, rate)
+                                VALUES (%s, %s, %s)
+                                """,
+                                (supplier_id, item_id, rate_float)
+                            )
+                    except (ValueError, TypeError) as e:
+                        current_app.logger.warning(
+                            f"Invalid variant data for supplier {supplier_id}: {e}"
+                        )
+                        continue
+            
             conn.commit()
         return jsonify({"message": "Supplier updated successfully"}), 200
     except psycopg2.IntegrityError:
@@ -415,6 +493,54 @@ def delete_supplier_rate(rate_id):
     except Exception as e:
         current_app.logger.error(f"Error deleting rate {rate_id}: {e}")
         return jsonify({"error": "Database error"}), 500
+
+
+@api_bp.route("/upf/supplier/<int:supplier_id>/variants")
+@login_required
+def get_supplier_variants(supplier_id):
+    """Get all variants supplied by a specific supplier with their rates"""
+    try:
+        with database.get_conn(cursor_factory=psycopg2.extras.DictCursor) as (
+            conn,
+            cur,
+        ):
+            cur.execute(
+                """
+                SELECT 
+                    iv.variant_id,
+                    im.name as item_name,
+                    cm.color_name,
+                    sm.size_name,
+                    sir.rate as supply_rate,
+                    sir.rate_id,
+                    '' as remarks
+                FROM supplier_item_rates sir
+                JOIN item_master im ON sir.item_id = im.item_id
+                LEFT JOIN item_variant iv ON im.item_id = iv.item_id
+                LEFT JOIN color_master cm ON iv.color_id = cm.color_id
+                LEFT JOIN size_master sm ON iv.size_id = sm.size_id
+                WHERE sir.supplier_id = %s
+                ORDER BY im.name, cm.color_name, sm.size_name
+                """,
+                (supplier_id,),
+            )
+            variants = []
+            for row in cur.fetchall():
+                variant_dict = dict(row)
+                # Create a display name for the variant
+                variant_name = variant_dict.get("item_name", "")
+                if variant_dict.get("color_name"):
+                    variant_name += f" - {variant_dict['color_name']}"
+                if variant_dict.get("size_name"):
+                    variant_name += f" - {variant_dict['size_name']}"
+                variant_dict["name"] = variant_name
+                variants.append(variant_dict)
+        return jsonify(variants)
+    except Exception as e:
+        current_app.logger.error(
+            f"Error fetching variants for supplier {supplier_id}: {e}"
+        )
+        return jsonify({"error": "Failed to fetch supplier variants"}), 500
 
 
 @api_bp.route("/suppliers/<int:supplier_id>/ledger")

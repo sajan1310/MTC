@@ -71,6 +71,28 @@ const Suppliers = {
     const ledgerClearBtn = document.getElementById('ledger-clear-btn');
     ledgerSearchBtn?.addEventListener('click', () => this.handleLedgerSearch());
     ledgerClearBtn?.addEventListener('click', () => this.clearLedgerSearch());
+    
+    // Bulk actions
+    const selectAllCheckbox = document.getElementById('select-all-suppliers');
+    const bulkDeleteBtn = document.getElementById('bulk-delete-btn-suppliers');
+    const bulkActionsContainer = document.getElementById('bulk-actions-container-suppliers');
+    
+    selectAllCheckbox?.addEventListener('change', (e) => {
+      const isChecked = e.target.checked;
+      document.querySelectorAll('.supplier-checkbox').forEach(cb => {
+        cb.checked = isChecked;
+      });
+      this.updateBulkActionsVisibility();
+    });
+    
+    this.elements.suppliersTableBody?.addEventListener('change', (e) => {
+      if (e.target.classList.contains('supplier-checkbox')) {
+        this.updateBulkActionsVisibility();
+      }
+    });
+    
+    bulkDeleteBtn?.addEventListener('click', () => this.handleBulkDelete());
+    
     // When Ledger tab is clicked, load recent ledger entries lazily
     // Prefer data-tab attribute instead of parsing inline onclick handlers (avoids ReferenceError if
     // legacy openTab() is not present). Fall back to textContent when data-tab missing.
@@ -86,6 +108,55 @@ const Suppliers = {
         }
       });
     });
+  },
+  
+  updateBulkActionsVisibility() {
+    const checkedBoxes = document.querySelectorAll('.supplier-checkbox:checked');
+    const bulkActionsContainer = document.getElementById('bulk-actions-container-suppliers');
+    if (bulkActionsContainer) {
+      bulkActionsContainer.style.display = checkedBoxes.length > 0 ? 'block' : 'none';
+    }
+  },
+  
+  async handleBulkDelete() {
+    const checkedBoxes = document.querySelectorAll('.supplier-checkbox:checked');
+    if (checkedBoxes.length === 0) return;
+    
+    if (!confirm(`Are you sure you want to delete ${checkedBoxes.length} supplier(s)?`)) return;
+    
+    let successCount = 0;
+    let errorCount = 0;
+    
+    for (const checkbox of checkedBoxes) {
+      const supplierId = checkbox.dataset.supplierId;
+      try {
+        await App.fetchJson(`${App.config.apiBase}/suppliers/${supplierId}`, {
+          method: "DELETE",
+        });
+        successCount++;
+      } catch (error) {
+        console.error(`Error deleting supplier ${supplierId}:`, error);
+        errorCount++;
+      }
+    }
+    
+    // Refresh the list and show notification
+    this.fetchSuppliers();
+    
+    if (errorCount === 0) {
+      App.showNotification(`Successfully deleted ${successCount} supplier(s).`, "success");
+    } else {
+      App.showNotification(
+        `Deleted ${successCount} supplier(s). ${errorCount} failed (may be in use).`,
+        errorCount > successCount ? "error" : "warning"
+      );
+    }
+    
+    // Hide bulk actions container
+    const bulkActionsContainer = document.getElementById('bulk-actions-container-suppliers');
+    if (bulkActionsContainer) {
+      bulkActionsContainer.style.display = 'none';
+    }
   },
 
   /**
@@ -134,7 +205,7 @@ const Suppliers = {
     if (this.elements.variantsContainer) this.elements.variantsContainer.innerHTML = "";
 
     try {
-  const supplierVariants = await App.fetchJson(`${App.config.apiBase}/upf/supplier/${supplierId}/variants`);
+      const supplierVariants = await App.fetchJson(`${App.config.apiBase}/upf/supplier/${supplierId}/variants`);
       if (supplierVariants && Array.isArray(supplierVariants) && supplierVariants.length > 0) {
         supplierVariants.forEach(v => this.addVariantRow(v));
       } else {
@@ -143,6 +214,7 @@ const Suppliers = {
       }
     } catch (err) {
       console.error('Error fetching supplier variants:', err);
+      // Add empty row as fallback
       this.addVariantRow();
     }
   },
@@ -188,6 +260,10 @@ const Suppliers = {
           </td>
         </tr>
       `;
+      // Hide bulk actions and reset select-all checkbox
+      const selectAll = document.getElementById('select-all-suppliers');
+      if (selectAll) selectAll.checked = false;
+      this.updateBulkActionsVisibility();
       return;
     }
 
@@ -204,6 +280,11 @@ const Suppliers = {
         </td>
       </tr>
     `).join("");
+    
+    // Reset select-all checkbox and hide bulk actions
+    const selectAll = document.getElementById('select-all-suppliers');
+    if (selectAll) selectAll.checked = false;
+    this.updateBulkActionsVisibility();
   },
 
   openSupplierModal(supplier = null) {
@@ -420,11 +501,19 @@ const Suppliers = {
         const nameEl = group.querySelector('[name="contact_name"]');
         const phoneEl = group.querySelector('[name="contact_phone"]');
         const emailEl = group.querySelector('[name="contact_email"]');
-        data.contacts.push({
-          name: nameEl ? nameEl.value : "",
-          phone: phoneEl ? phoneEl.value : "",
-          email: emailEl ? emailEl.value : "",
-        });
+        
+        const name = nameEl ? nameEl.value.trim() : "";
+        const phone = phoneEl ? phoneEl.value.trim() : "";
+        const email = emailEl ? emailEl.value.trim() : "";
+        
+        // Only include contacts with at least one field filled
+        if (name || phone || email) {
+          data.contacts.push({
+            name: name,
+            phone: phone,
+            email: email,
+          });
+        }
       });
     }
 
@@ -440,10 +529,11 @@ const Suppliers = {
         const rateVal = rateInput ? rateInput.value : '';
         const remarksVal = remarksInput ? remarksInput.value : '';
 
-        if (variantId || rateVal || remarksVal) {
+        // Only include if we have both variant_id and rate
+        if (variantId && rateVal) {
           data.variants.push({
             variant_id: variantId,
-            rate: rateVal,
+            rate: parseFloat(rateVal) || 0,
             remarks: remarksVal,
           });
         }
@@ -455,15 +545,20 @@ const Suppliers = {
       : `${App.config.apiBase}/suppliers`;
     const method = this.state.currentSupplierId ? "PUT" : "POST";
 
-    const result = await App.fetchJson(url, {
-      method,
-      body: JSON.stringify(data),
-    });
+    try {
+      const result = await App.fetchJson(url, {
+        method,
+        body: JSON.stringify(data),
+      });
 
-    if (result) {
-      try { Modal.close(this.elements.supplierModal); } catch (e) { this.elements.supplierModal.classList.remove("is-open"); }
-      this.fetchSuppliers(); // Refresh the list
-      App.showNotification(`Supplier ${this.state.currentSupplierId ? 'updated' : 'added'} successfully.`, "success");
+      if (result) {
+        try { Modal.close(this.elements.supplierModal); } catch (e) { this.elements.supplierModal.classList.remove("is-open"); }
+        this.fetchSuppliers(); // Refresh the list
+        App.showNotification(`Supplier ${this.state.currentSupplierId ? 'updated' : 'added'} successfully.`, "success");
+      }
+    } catch (error) {
+      console.error('Error saving supplier:', error);
+      App.showNotification(`Failed to ${this.state.currentSupplierId ? 'update' : 'add'} supplier. Please try again.`, "error");
     }
   },
 
@@ -489,13 +584,23 @@ const Suppliers = {
   async deleteSupplier(supplierId, firmName) {
     if (!confirm(`Are you sure you want to delete supplier "${firmName}"?`)) return;
 
-    const result = await App.fetchJson(`${App.config.apiBase}/suppliers/${supplierId}`, {
-      method: "DELETE",
-    });
+    try {
+      const result = await App.fetchJson(`${App.config.apiBase}/suppliers/${supplierId}`, {
+        method: "DELETE",
+      });
 
-    if (result) {
-      this.fetchSuppliers();
-      App.showNotification("Supplier deleted successfully.", "success");
+      if (result !== null) {
+        this.fetchSuppliers();
+        App.showNotification("Supplier deleted successfully.", "success");
+      }
+    } catch (error) {
+      console.error('Error deleting supplier:', error);
+      // Check if it's an integrity constraint error
+      if (error.message && error.message.includes('in use')) {
+        App.showNotification("Cannot delete supplier - it's currently in use.", "error");
+      } else {
+        App.showNotification("Failed to delete supplier. Please try again.", "error");
+      }
     }
   },
 };

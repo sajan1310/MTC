@@ -23,6 +23,7 @@ from werkzeug.utils import secure_filename
 
 from .. import validate_password
 from ..utils import role_required, validate_upload
+from ..services.subprocess_service import SubprocessService
 
 main_bp = Blueprint("main", __name__)
 
@@ -400,7 +401,39 @@ def upf_process_editor(process_id):
 @login_required
 def upf_production_lot_detail(lot_id):
     """Production lot detail page - view/execute lot."""
-    return render_template("upf_production_lot_detail.html", lot_id=lot_id)
+    # Preload available subprocess templates for server-side select population
+    try:
+        subs_resp = SubprocessService.list_subprocesses(page=1, per_page=1000)
+        available_subprocesses = subs_resp.get("subprocesses") or []
+    except Exception as e:
+        current_app.logger.warning(f"Failed to load subprocess list for UI: {e}")
+        available_subprocesses = []
+
+    return render_template(
+        "upf_production_lot_detail.html",
+        lot_id=lot_id,
+        available_subprocesses=available_subprocesses,
+    )
+
+
+@main_bp.route("/api/upf/production-lots/<int:lot_id>/available-subprocesses", methods=["GET"])
+@login_required
+def api_available_subprocesses(lot_id):
+    """API: Return available subprocess templates for a given production lot.
+
+    This endpoint mirrors the path expected by the frontend JS. It returns a
+    JSON envelope with a `data` key holding an array of subprocess objects so
+    the frontend's `resp.data || resp` parsing works consistently.
+    """
+    try:
+        subs_resp = SubprocessService.list_subprocesses(page=1, per_page=1000)
+        subs = subs_resp.get("subprocesses") or []
+        return jsonify({"data": subs}), 200
+    except Exception as e:
+        current_app.logger.error(f"Error fetching available subprocesses for lot {lot_id}: {e}")
+        # Return empty array instead of 500 to avoid breaking the UI; frontend will
+        # fall back to global list if empty.
+        return jsonify({"data": []}), 200
 
 
 @main_bp.route("/upf/production-lot/new")

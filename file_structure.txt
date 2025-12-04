@@ -1,9 +1,10 @@
 ./
-    .coverage
     .env.example
     .pre-commit-config.yaml
     .secrets.baseline
+    API_ENDPOINTS_COMPLETE.md
     API_REFERENCE_INVENTORY_ALERTS.md
+    API_VALIDATION_REPORT.md
     app.py
     app.py.backup
     AUDITOR_FINDINGS_REPORT.md
@@ -17,38 +18,58 @@
     audit_report.json
     BACKEND_FRONTEND_DB_SYNC_COMPLETE.md
     BACKEND_FRONTEND_DB_SYNC_REPORT.md
+    BACKEND_IMPLEMENTATION_GUIDE.md
     check_columns.sql
     check_process.py
+    check_production_lots_schema.py
     check_ps_columns.py
+    check_schema.py
+    check_tables.py
     CI_DATABASE_FIX_SUMMARY.md
     CLEANUP_AND_AUDIT_REPORT.md
     CLEANUP_REPORT.md
+    CODE_IMPLEMENTATION_REFERENCE.md
+    CODE_LOGIC_AND_WORKFLOW_REVIEW.md
     COMPLETE_FIX_SUMMARY.md
     COMPREHENSIVE_AUDIT_REPORT.md
     COMPREHENSIVE_SYNCHRONIZATION_AUDIT.md
     COPILOT_PROMPTS.md
+    DATABASE_AND_REFERENCE_SYNCHRONIZATION_REPORT.md
     DATABASE_QUERY_FIX_COMPLETE.md
     debug_process_structure.py
+    DELIVERY_SUMMARY.md
     dependency_report.json
+    DEPLOYMENT_GUIDE.md
     DEPRECATION_WARNINGS_ADDED.md
     enhanced_project_auditor.py
     ERROR_FIX_SUMMARY.md
+    EXECUTIVE_SUMMARY.md
     file_structure.txt
     FINAL_AUDIT_SUMMARY.md
+    FINAL_COMPLETION_STATUS.md
+    FINAL_DELIVERY_REPORT.md
     FINAL_FIX_SUMMARY.md
+    FINAL_SUMMARY.md
     FINAL_VERIFICATION_REPORT.md
     fix_results.txt
+    FIX_SUBPROCESS_CHECK_FALLBACK.md
+    FRONTEND_BACKEND_INTEGRATION_INDEX.md
+    FRONTEND_BACKEND_INTEGRATION_SUMMARY.md
     FRONTEND_BACKEND_SYNC_ANALYSIS.md
     FRONTEND_BACKEND_SYNC_FIXES.md
     FRONTEND_CRASH_AUDIT_REPORT.md
     generate_structure.py
     GITHUB_ACTIONS_FIXES.md
     How_To_Use_Repairs.md
+    IMPLEMENTATION_CHECKLIST.md
+    IMPLEMENTATION_COMPLETE.md
+    IMPLEMENTATION_STATUS.md
     IMPLEMENTATION_VERIFICATION_REPORT.md
     IMPORT_FIX.md
     INLINE_EDITOR_AUDIT_COMPLETE.md
     INLINE_EDITOR_INTEGRATION_COMPLETE.md
     INLINE_EDITOR_VERIFICATION_SUMMARY.md
+    INTEGRATION_VERIFICATION_COMPLETE.md
     Issue-Impact-FixTime-Severity.csv
     ISSUES_RESOLVED.md
     migration_candidate_classification.json
@@ -67,6 +88,14 @@
     PROCESS_FRAMEWORK_INTEGRATION_COMPLETE.md
     Production lot detail.js
     Production lot detail.json
+    PRODUCTION_LOT_CODE_CHANGES.md
+    PRODUCTION_LOT_DETAIL_FIXES.md
+    PRODUCTION_LOT_FIXES.md
+    PRODUCTION_LOT_FIXES_COMPLETE.md
+    PRODUCTION_LOT_IMPLEMENTATION_VERIFICATION.md
+    PRODUCTION_LOT_QUICK_REFERENCE.md
+    PRODUCTION_LOT_SOLUTION_SUMMARY.md
+    PRODUCTION_PAGES_REPAIR_REPORT.md
     PRODUCTION_READINESS_REPORT.md
     project_auditor.py
     Project_Summary.md
@@ -77,13 +106,17 @@
     QUICK_REFERENCE.md
     QUICK_REFERENCE_CARD.md
     QUICK_START (2).md
-    read_issues.py
+    README_PRODUCTION_LOT_FIXES.md
+    README_START_HERE.md
     REFERENCE_INVENTORY.md
     ROUTE_CLEANUP_STRATEGY.md
     route_list.py
     schema_validation_report.txt
+    SESSION_DELIVERABLES.md
+    SESSION_SUMMARY_FINAL.md
     SUBPROCESS_ADDITION_FIX.md
     SUBPROCESS_INVESTIGATION_COMPLETE.md
+    SUBPROCESS_VARIANT_ANALYSIS_REPORT.md
     test_deprecation_warnings.py
     test_output.txt
     test_variant_update.py
@@ -91,11 +124,19 @@
     UI_UX_TESTING_GUIDE.md
     UI_UX_VISUAL_COMPARISON.md
     UPF_AUDIT_SUMMARY.md
+    UPF_COMPREHENSIVE_REPAIR_REPORT.md
+    UPF_FINAL_INTEGRATION_REPORT.md
     upf_integration_action_plan.md
+    upf_integration_verification.py
+    UPF_PROJECT_COMPLETION_SUMMARY.md
+    UPF_REPAIR_DETAILED_FIXES.md
     UPF_SYNC_AUDIT.md
     VARIANT_SEARCH_MERGE_COMPLETE.md
+    VERIFY_IMPLEMENTATION.py
+    verify_production_lot_fixes.py
     view_audit_issues.py
     view_unused_routes.py
+    VISUAL_SESSION_SUMMARY.md
     .github/
         chatmodes/
             Plan Mode.chatmode.md
@@ -173,23 +214,26 @@
         .env.example
         .gitignore
         API_REFERENCE_UNIVERSAL_PROCESS_FRAMEWORK.md
-        app.py
-        app.py.old_duplicates
-        app.py.phase2_backup
         APP_PY_CLEANUP_REPORT.md
         audit_quick_fix.py
         BACKEND_IMPLEMENTATION_COMPLETE.md
         CHANGELOG.md
+        check_all_cols.py
         check_columns.py
         check_oauth_config.py
+        check_pl_cols.py
+        check_pl_subproc.py
         check_schema_mismatches.py
         check_table.py
+        check_table_structure.py
+        check_users.py
         COMPLETE_CHANGE_LOG.md
         COMPREHENSIVE_AUDIT_REPORT.md
         config.py
-        config.py.backup
         CONSOLIDATION_SUMMARY.md
         CONTRIBUTING.md
+        create_table_nofk.py
+        create_table_simple.py
         database.py
         deduplicate_items.py
         DEPLOYMENT.md
@@ -204,7 +248,11 @@
         IMPLEMENTATION_ROADMAP.md
         INDEX.md
         ISSUES_TO_FIX.md
+        list_tables.py
         logging_config.py
+        migration_final.py
+        migration_new_endpoints.py
+        migration_safe.py
         minify_assets.py
         models.py
         MULTI_SELECT_DRAG_DROP_FIX.md
@@ -231,6 +279,7 @@
         TASK_4_PRODUCTION_LOT_VARIANT_SELECTION_COMPLETE.md
         TESTING_CHECKLIST.md
         TESTING_FIXES_SUMMARY.md
+        test_endpoints.py
         test_oauth.ps1
         test_select2_endpoint.py
         test_variants.py
@@ -242,6 +291,12 @@
         UPF_IMPLEMENTATION_COMPLETE.md
         UPF_TESTING_GUIDE.md
         wsgi.py
+        .gemini/
+            antigravity/
+                brain/
+                    fa4be437-988f-4fad-82b0-4a19639fa2e5/
+                        implementation_plan.md
+                        task.md
         .github/
             workflows/
                 test.yml
@@ -300,7 +355,9 @@
                 __init__.py
             logs/
                 app.log
+                app.log.2025-11-16
                 error.log
+                error.log.2025-11-11
             main/
                 routes.py
             middleware/
@@ -320,6 +377,8 @@
                 import_service.py
                 inventory_alert_service.py
                 process_service.py
+                production_calculations.py
+                production_lot_subprocess_manager.py
                 production_service.py
                 progress_tracker.py
                 subprocess_service.py
@@ -328,6 +387,7 @@
             utils/
                 file_validation.py
                 helpers.py
+                production_lot_utils.py
                 response.py
                 validators.py
                 virus_scan.py
@@ -388,6 +448,7 @@
             migration_add_po_number.py
             migration_add_po_tracking.py
             migration_add_production_lots_user_id_20251116.py
+            migration_add_production_lot_subprocesses.py
             migration_add_ps_notes_and_variant_name_20251116.py
             migration_add_stock_receipts.py
             migration_add_suppliers_tables.py
@@ -447,6 +508,7 @@
                 production_lot_detail.js
                 subprocess_library.js
                 upf_api_client.js
+                UPF_API_RESPONSE_STANDARD.js
                 upf_reports.js
                 variant_search.js
                 tests/
@@ -495,6 +557,7 @@
             test_process_flow.py
             test_production_lot_api.py
             test_production_lot_api_clean.py
+            test_production_lot_lifecycle.py
             test_project_audit.py
             test_smoke.py
             api/
