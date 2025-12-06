@@ -1,0 +1,558 @@
+/**
+ * Enhanced UI Components CSS
+ * Provides styling for improved error handling, notifications, form validation,
+ * and pagination controls
+ */
+
+/* ============================================================================
+   Notifications
+   ============================================================================ */
+
+.notification-container {
+    position: fixed;
+    top: 20px;
+    right: 20px;
+    z-index: 10000;
+    display: flex;
+    flex-direction: column;
+    gap: 10px;
+    max-width: 400px;
+    pointer-events: none;
+}
+
+.notification {
+    display: flex;
+    align-items: center;
+    gap: 12px;
+    padding: 14px 16px;
+    border-radius: 6px;
+    box-shadow: 0 2px 8px rgba(0, 0, 0, 0.15);
+    animation: slideIn 0.3s ease-out;
+    pointer-events: auto;
+    background: white;
+    border-left: 4px solid;
+}
+
+@keyframes slideIn {
+    from {
+        transform: translateX(400px);
+        opacity: 0;
+    }
+    to {
+        transform: translateX(0);
+        opacity: 1;
+    }
+}
+
+.notification-error {
+    background: #fee;
+    border-left-color: #c33;
+    color: #933;
+}
+
+.notification-success {
+    background: #efe;
+    border-left-color: #3c3;
+    color: #393;
+}
+
+.notification-warning {
+    background: #ffe;
+    border-left-color: #cc3;
+    color: #993;
+}
+
+.notification-info {
+    background: #eef;
+    border-left-color: #33c;
+    color: #339;
+}
+
+.notification-close {
+    margin-left: auto;
+    background: none;
+    border: none;
+    font-size: 18px;
+    cursor: pointer;
+    color: inherit;
+    padding: 0 4px;
+    line-height: 1;
+}
+
+.notification-close:hover {
+    opacity: 0.7;
+}
+
+/* ============================================================================
+   Form Validation
+   ============================================================================ */
+
+.field-error {
+    border-color: #c33 !important;
+    background-color: #fee;
+}
+
+.field-error:focus {
+    outline-color: #c33;
+}
+
+.field-error-message {
+    display: block;
+    color: #c33;
+    font-size: 12px;
+    margin-top: 4px;
+    font-weight: 500;
+}
+
+.form-field {
+    position: relative;
+    margin-bottom: 16px;
+}
+
+.form-field label {
+    display: block;
+    margin-bottom: 6px;
+    font-weight: 500;
+    color: #333;
+}
+
+.form-field input,
+.form-field textarea,
+.form-field select {
+    width: 100%;
+    padding: 8px 12px;
+    border: 1px solid #ddd;
+    border-radius: 4px;
+    font-size: 14px;
+    transition: border-color 0.3s, background-color 0.3s;
+}
+
+.form-field input:focus,
+.form-field textarea:focus,
+.form-field select:focus {
+    outline: none;
+    border-color: #0066cc;
+    box-shadow: 0 0 0 3px rgba(0, 102, 204, 0.1);
+}
+
+.form-field textarea {
+    resize: vertical;
+    min-height: 100px;
+}
+
+/* ============================================================================
+   Loading States
+   ============================================================================ */
+
+.loading-state {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    min-height: 200px;
+    color: #666;
+}
+
+.loading-spinner {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    gap: 16px;
+}
+
+.spinner {
+    width: 40px;
+    height: 40px;
+    border: 3px solid #f0f0f0;
+    border-top: 3px solid #0066cc;
+    border-radius: 50%;
+    animation: spin 0.8s linear infinite;
+}
+
+@keyframes spin {
+    to {
+        transform: rotate(360deg);
+    }
+}
+
+/* ============================================================================
+   Pagination
+   ============================================================================ */
+
+.pagination-controls {
+    display: flex;
+    gap: 8px;
+    align-items: center;
+    padding: 16px;
+    background: #f8f8f8;
+    border-radius: 4px;
+    border: 1px solid #e0e0e0;
+    flex-wrap: wrap;
+}
+
+.pagination-controls button {
+    padding: 8px 12px;
+    border: 1px solid #ddd;
+    border-radius: 4px;
+    background: white;
+    cursor: pointer;
+    font-size: 13px;
+    transition: all 0.3s;
+}
+
+.pagination-controls button:hover:not(:disabled) {
+    background: #0066cc;
+    color: white;
+    border-color: #0066cc;
+}
+
+.pagination-controls button:disabled {
+    opacity: 0.5;
+    cursor: not-allowed;
+}
+
+.pagination-info {
+    font-size: 13px;
+    color: #666;
+    font-weight: 500;
+    white-space: nowrap;
+}
+
+.pagination-select {
+    padding: 6px 10px;
+    border: 1px solid #ddd;
+    border-radius: 4px;
+    font-size: 13px;
+}
+
+/* ============================================================================
+   Modal Enhancements
+   ============================================================================ */
+
+.modal {
+    display: none;
+    position: fixed;
+    top: 0;
+    left: 0;
+    width: 100%;
+    height: 100%;
+    background: rgba(0, 0, 0, 0.5);
+    z-index: 1000;
+    align-items: center;
+    justify-content: center;
+}
+
+.modal.active {
+    display: flex;
+}
+
+.modal-content {
+    background: white;
+    border-radius: 8px;
+    box-shadow: 0 4px 20px rgba(0, 0, 0, 0.15);
+    max-width: 90%;
+    max-height: 90vh;
+    overflow: auto;
+    animation: slideUp 0.3s ease-out;
+}
+
+@keyframes slideUp {
+    from {
+        transform: translateY(20px);
+        opacity: 0;
+    }
+    to {
+        transform: translateY(0);
+        opacity: 1;
+    }
+}
+
+.modal-header {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    padding: 20px;
+    border-bottom: 1px solid #e0e0e0;
+}
+
+.modal-header h3 {
+    margin: 0;
+    font-size: 18px;
+    color: #333;
+}
+
+.modal-body {
+    padding: 20px;
+}
+
+.modal-footer {
+    display: flex;
+    justify-content: flex-end;
+    gap: 12px;
+    padding: 16px 20px;
+    border-top: 1px solid #e0e0e0;
+}
+
+/* ============================================================================
+   Table Enhancements
+   ============================================================================ */
+
+.table-filters {
+    display: flex;
+    gap: 8px;
+    align-items: center;
+    padding: 12px;
+    background: #f8f8f8;
+    border-radius: 4px;
+    margin-bottom: 12px;
+    flex-wrap: wrap;
+}
+
+.table-filters label {
+    font-weight: 500;
+    white-space: nowrap;
+}
+
+.table-filters input,
+.table-filters select {
+    padding: 6px 10px;
+    border: 1px solid #ddd;
+    border-radius: 4px;
+    font-size: 13px;
+}
+
+.table-filters button {
+    padding: 6px 12px;
+    border: 1px solid #0066cc;
+    background: #0066cc;
+    color: white;
+    border-radius: 4px;
+    cursor: pointer;
+    font-size: 13px;
+    transition: all 0.3s;
+}
+
+.table-filters button:hover {
+    background: #0052a3;
+    border-color: #0052a3;
+}
+
+/* ============================================================================
+   Status Badges
+   ============================================================================ */
+
+.status-badge {
+    display: inline-block;
+    padding: 4px 10px;
+    border-radius: 12px;
+    font-size: 12px;
+    font-weight: 600;
+    text-transform: uppercase;
+    letter-spacing: 0.5px;
+}
+
+.status-badge.success {
+    background: #efe;
+    color: #393;
+}
+
+.status-badge.error {
+    background: #fee;
+    color: #933;
+}
+
+.status-badge.warning {
+    background: #ffe;
+    color: #993;
+}
+
+.status-badge.info {
+    background: #eef;
+    color: #339;
+}
+
+/* ============================================================================
+   Buttons
+   ============================================================================ */
+
+.button {
+    padding: 8px 16px;
+    border: 1px solid #ddd;
+    border-radius: 4px;
+    background: #f8f8f8;
+    cursor: pointer;
+    font-size: 13px;
+    font-weight: 500;
+    transition: all 0.3s;
+    white-space: nowrap;
+}
+
+.button:hover:not(:disabled) {
+    background: #e8e8e8;
+    border-color: #ccc;
+}
+
+.button.primary {
+    background: #0066cc;
+    color: white;
+    border-color: #0066cc;
+}
+
+.button.primary:hover:not(:disabled) {
+    background: #0052a3;
+    border-color: #0052a3;
+}
+
+.button.danger {
+    background: #dc3545;
+    color: white;
+    border-color: #dc3545;
+}
+
+.button.danger:hover:not(:disabled) {
+    background: #c82333;
+    border-color: #c82333;
+}
+
+.button.success {
+    background: #28a745;
+    color: white;
+    border-color: #28a745;
+}
+
+.button.success:hover:not(:disabled) {
+    background: #218838;
+    border-color: #218838;
+}
+
+.button:disabled {
+    opacity: 0.6;
+    cursor: not-allowed;
+}
+
+/* ============================================================================
+   Responsive
+   ============================================================================ */
+
+@media (max-width: 768px) {
+    .notification-container {
+        left: 10px;
+        right: 10px;
+        max-width: 100%;
+    }
+
+    .modal-content {
+        max-width: 95%;
+    }
+
+    .pagination-controls {
+        flex-direction: column;
+        align-items: stretch;
+    }
+
+    .pagination-controls button {
+        width: 100%;
+    }
+
+    .table-filters {
+        flex-direction: column;
+        align-items: stretch;
+    }
+
+    .table-filters input,
+    .table-filters select {
+        width: 100%;
+    }
+}
+
+/* ============================================================================
+   Accessibility
+   ============================================================================ */
+
+.sr-only {
+    position: absolute;
+    width: 1px;
+    height: 1px;
+    padding: 0;
+    margin: -1px;
+    overflow: hidden;
+    clip: rect(0, 0, 0, 0);
+    white-space: nowrap;
+    border-width: 0;
+}
+
+button:focus-visible,
+input:focus-visible,
+select:focus-visible,
+textarea:focus-visible {
+    outline: 2px solid #0066cc;
+    outline-offset: 2px;
+}
+
+/* ============================================================================
+   Dark Mode Support (Optional)
+   ============================================================================ */
+
+@media (prefers-color-scheme: dark) {
+    .notification {
+        background: #2a2a2a;
+        color: #e0e0e0;
+    }
+
+    .notification-error {
+        background: #4a2c2c;
+        color: #ff9999;
+    }
+
+    .notification-success {
+        background: #2c4a2c;
+        color: #99ff99;
+    }
+
+    .notification-warning {
+        background: #4a4a2c;
+        color: #ffff99;
+    }
+
+    .notification-info {
+        background: #2c2c4a;
+        color: #9999ff;
+    }
+
+    .form-field input,
+    .form-field textarea,
+    .form-field select {
+        background: #2a2a2a;
+        color: #e0e0e0;
+        border-color: #444;
+    }
+
+    .modal-content {
+        background: #2a2a2a;
+        color: #e0e0e0;
+    }
+
+    .modal-header,
+    .modal-footer {
+        border-color: #444;
+    }
+
+    .table-filters {
+        background: #333;
+    }
+
+    .status-badge.success {
+        background: #2c4a2c;
+    }
+
+    .status-badge.error {
+        background: #4a2c2c;
+    }
+
+    .status-badge.warning {
+        background: #4a4a2c;
+    }
+
+    .status-badge.info {
+        background: #2c2c4a;
+    }
+}

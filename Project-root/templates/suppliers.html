@@ -1,6 +1,10 @@
 {% extends "base.html" %}
 {% block title %}Supplier Management{% endblock %}
 
+{% block extra_css %}
+<link rel="stylesheet" href="{{ url_for('static', filename='css/ui-enhancements.css') }}">
+{% endblock %}
+
 {% block content %}
 <div class="container">
     <div class="form-card" style="padding: 1.5rem;">
@@ -238,9 +242,16 @@
 {% endblock %}
 
 {% block scripts %}
+<script src="{{ url_for('static', filename='js/api-response-handler.js') }}"></script>
+<script src="{{ url_for('static', filename='suppliers-enhanced.js') }}"></script>
 <script>
 document.addEventListener('DOMContentLoaded', () => {
-    if (typeof Suppliers !== 'undefined') {
+    // Initialize enhanced suppliers module
+    if (typeof SuppliersEnhanced !== 'undefined') {
+        SuppliersEnhanced.init();
+    }
+    // Fallback to legacy module if enhanced not loaded
+    else if (typeof Suppliers !== 'undefined') {
         Suppliers.init();
     }
 });

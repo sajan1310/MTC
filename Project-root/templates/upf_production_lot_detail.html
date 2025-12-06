@@ -5,6 +5,7 @@
 {% block extra_css %}
 <link rel="stylesheet" href="{{ url_for('static', filename='css/inventory_alerts.css') }}">
 <link rel="stylesheet" href="{{ url_for('static', filename='css/production_lot_detail.css') }}">
+<link rel="stylesheet" href="{{ url_for('static', filename='css/ui-enhancements.css') }}">
 {% endblock %}
 
 {% block content %}
@@ -248,5 +249,7 @@
         });
     })();
 </script>
+<script src="{{ url_for('static', filename='js/api-response-handler.js') }}"></script>
+<script src="{{ url_for('static', filename='production-lot-detail-enhanced.js') }}"></script>
 </div>
 {% endblock %}
