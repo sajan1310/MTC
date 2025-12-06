@@ -1848,7 +1848,7 @@ def get_variant_rate():
 
 @api_bp.route("/items/<int:item_id>", methods=["PUT"])
 @login_required
-@role_required("admin")
+@role_required("admin", "inventory_manager")
 def update_item(item_id):
     if not isinstance(item_id, int) or item_id <= 0:
         return jsonify({"error": "Invalid item ID"}), 400
