@@ -501,6 +501,11 @@ def create_app(config_name: str | None = None) -> Flask:
     # Compatibility middleware: warn when clients call underscore-style API paths
     @app.before_request
     def _underscore_api_deprecation_check():
+        from .middleware.error_handling import request_id_middleware
+        
+        # PHASE 5: Initialize request ID middleware for tracking
+        request_id_middleware()
+        
         path = request.path or ""
         if path.startswith("/api/") and "_" in path:
             if path in _DEPRECATION_WARNED:
@@ -513,13 +518,17 @@ def create_app(config_name: str | None = None) -> Flask:
 
     @app.after_request
     def _attach_deprecation_header(response):
+        from .middleware.error_handling import log_response_handler
+        
         try:
             suggestion = getattr(g, "_api_deprecation_suggestion", None)
             if suggestion and response.status_code < 400:
                 response.headers.setdefault("X-API-Deprecation", suggestion)
         except Exception:
             app.logger.debug("Error attaching deprecation header", exc_info=True)
-        return response
+        
+        # PHASE 5: Log response with request tracking
+        return log_response_handler()(response)
 
     # Teardown handlers: ensure DB and redis pools are closed
     @app.teardown_appcontext

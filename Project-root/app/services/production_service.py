@@ -38,6 +38,32 @@ class ProductionService:
     """
 
     @staticmethod
+    def _normalize_lot_quantity(row: Dict[str, Any]) -> float:
+        """Return a usable quantity value from a lot row.
+
+        Older datasets sometimes store quantity under alternative column
+        names or leave it null; coalesce through common aliases and default
+        to 1 to keep UI displays consistent.
+        """
+        if row is None:
+            return 1
+
+        quantity = row.get("quantity")
+
+        if quantity in (None, ""):
+            quantity = (
+                row.get("qty")
+                or row.get("quantity_required")
+                or row.get("planned_quantity")
+                or row.get("lot_quantity")
+            )
+
+        try:
+            return float(quantity) if quantity is not None else 1
+        except (TypeError, ValueError):
+            return 1
+
+    @staticmethod
     def create_production_lot(
         process_id: int,
         user_id: int,
@@ -333,6 +359,9 @@ class ProductionService:
             if "worst_case_estimated_cost" not in result:
                 result["worst_case_estimated_cost"] = result.get("total_cost")
 
+            # Normalize quantity for legacy/nullable schemas
+            result["quantity"] = ProductionService._normalize_lot_quantity(result)
+
             if include_selections:
                 # Get all variant selections (schema differences tolerated)
                 result["selections"] = []
@@ -502,11 +531,18 @@ class ProductionService:
 
             lots = cur.fetchall()
 
+        # Normalize quantities for all rows to handle legacy/nullable schemas
+        normalized_lots = []
+        for lot in lots:
+            lot_dict = dict(lot)
+            lot_dict["quantity"] = ProductionService._normalize_lot_quantity(lot_dict)
+            normalized_lots.append(lot_dict)
+
         # [BUG FIX] Return both "production_lots" (for frontend) and "lots" (for legacy)
         # Frontend JavaScript expects response.data.production_lots
         return {
-            "production_lots": [dict(lot) for lot in lots],
-            "lots": [dict(lot) for lot in lots],  # Legacy compatibility
+            "production_lots": normalized_lots,
+            "lots": normalized_lots,  # Legacy compatibility
             "pagination": {
                 "page": page,
                 "per_page": per_page,

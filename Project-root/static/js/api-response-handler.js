@@ -12,7 +12,20 @@ class APIResponseHandler {
      * @returns {Promise<object>} - Parsed APIResponse data or throws error
      */
     static async parseResponse(response, context = "API") {
-        const data = await response.json();
+        const contentType = response.headers.get("content-type") || "";
+        let data;
+
+        // Handle non-JSON responses (e.g., redirects to login or HTML errors)
+        if (!contentType.toLowerCase().includes("application/json")) {
+            const text = await response.text();
+            const statusInfo = `${response.status} ${response.statusText}`;
+            const hint = response.status === 401 || response.status === 403
+                ? " (authentication/authorization required)"
+                : "";
+            throw new Error(`${context}: Non-JSON response ${statusInfo}${hint}`);
+        }
+
+        data = await response.json();
 
         // Check if response follows APIResponse envelope format
         if (typeof data !== "object" || !("success" in data)) {

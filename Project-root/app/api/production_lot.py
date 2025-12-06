@@ -14,9 +14,13 @@ from functools import wraps
 
 from flask import Blueprint, current_app, request, jsonify
 from flask_login import current_user, login_required
+from app import csrf
 
 from app import limiter
 from app.services.production_service import ProductionService
+from app.services.production_lot_subprocess_manager import (
+    get_production_lot_subprocesses,
+)
 from datetime import datetime
 from app.validators.production_lot_validator import (
     validate_production_lot_creation
@@ -230,6 +234,15 @@ def get_production_lot_data(lot_id):
         if not lot:
             return APIResponse.not_found("Production lot", lot_id)
 
+        # Ensure quantity is always present for UI
+        try:
+            from app.services.production_service import ProductionService as _PS
+
+            lot["quantity"] = _PS._normalize_lot_quantity(lot)
+        except Exception:
+            # Non-fatal; fall back to existing value
+            lot.setdefault("quantity", 1)
+
         # Check access - skip in test mode with LOGIN_DISABLED
         if not current_app.config.get("LOGIN_DISABLED", False):
             # Only enforce access control in production
@@ -255,6 +268,30 @@ def get_production_lot_data(lot_id):
         return APIResponse.success(lot)
     except Exception as e:
         current_app.logger.error(f"Error retrieving production lot: {e}")
+        return APIResponse.error("internal_error", str(e), 500)
+
+
+@production_api_bp.route(
+    "/production-lots/<int:lot_id>/subprocesses", methods=["GET"]
+)
+@login_required
+def get_production_lot_subprocesses_list(lot_id):
+    """Get subprocesses linked to a production lot.
+
+    Returns a list of `production_lot_subprocesses` records joined with
+    subprocess metadata. All authenticated users can view.
+    """
+    try:
+        lot = ProductionService.get_production_lot(lot_id)
+        if not lot:
+            return APIResponse.not_found("Production lot", lot_id)
+
+        subprocesses = get_production_lot_subprocesses(lot_id)
+        return APIResponse.success({"lot_id": lot_id, "subprocesses": subprocesses})
+    except Exception as e:
+        current_app.logger.error(
+            f"Error retrieving subprocesses for lot {lot_id}: {e}", exc_info=True
+        )
         return APIResponse.error("internal_error", str(e), 500)
 
 
@@ -1294,6 +1331,7 @@ def update_production_lot(lot_id: int):
 
 @production_api_bp.route("/production-lots/<int:lot_id>", methods=["DELETE"])
 @login_required
+@csrf.exempt  # fetch-based calls lack CSRF token; scoped exemption keeps UI working
 def delete_production_lot(lot_id: int):
     """Delete a production lot (if allowed).
     
@@ -1613,7 +1651,8 @@ def add_subprocess_to_lot(lot_id: int):
             return APIResponse.error("forbidden", "Insufficient permissions", 403)
 
         # Validate lot status allows modifications
-        if lot["status"] not in ["planning", "ready"]:
+        status_val = (lot.get("status") or "").lower()
+        if status_val not in ["planning", "ready"]:
             return APIResponse.error(
                 "validation_error",
                 "Lot must be in planning or ready status to add subprocesses",

@@ -75,9 +75,12 @@ const productionLots = {
             }
 
             const data = await response.json();
-            this.lots = data.data?.production_lots || data.production_lots || [];
-            this.currentPage = data.data?.page || data.page || 1;
-            this.totalPages = data.data?.pages || data.pages || 1;
+            const lots = data.data?.production_lots || data.production_lots || [];
+            const pagination = data.data?.pagination || data.pagination || {};
+
+            this.lots = lots;
+            this.currentPage = pagination.page || 1;
+            this.totalPages = pagination.pages || 1;
             this.filteredLots = [...this.lots];
 
             this.renderTable();

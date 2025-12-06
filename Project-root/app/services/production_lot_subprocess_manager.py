@@ -115,28 +115,95 @@ def get_production_lot_subprocesses(
         conn,
         cur,
     ):
-        cur.execute(
-            """
-            SELECT
-                pls.id,
-                pls.production_lot_id,
-                pls.process_subprocess_id,
-                pls.status,
-                pls.started_at,
-                pls.completed_at,
-                pls.notes,
-                pls.created_at,
-                pls.updated_at,
-                ps.subprocess_id,
-                s.name as subprocess_name
-            FROM production_lot_subprocesses pls
-            JOIN process_subprocesses ps ON ps.id = pls.process_subprocess_id
-            JOIN subprocesses s ON s.id = ps.subprocess_id
-            WHERE pls.production_lot_id = %s
-            ORDER BY ps.id
-            """,
-            (production_lot_id,),
+        # Detect column shape to avoid errors on older schemas
+        def _column_exists(table: str, column: str) -> bool:
+            cur.execute(
+                """
+                SELECT 1 FROM information_schema.columns
+                WHERE table_schema = current_schema()
+                  AND table_name = %s
+                  AND column_name = %s
+                """,
+                (table, column),
+            )
+            return bool(cur.fetchone())
+
+        has_process_subprocess_id = _column_exists(
+            "production_lot_subprocesses", "process_subprocess_id"
         )
+        has_subprocess_id = _column_exists("production_lot_subprocesses", "subprocess_id")
+        has_pl_created_at = _column_exists("production_lot_subprocesses", "created_at")
+        has_pl_updated_at = _column_exists("production_lot_subprocesses", "updated_at")
+        has_ps_created_at = _column_exists("process_subprocesses", "created_at")
+        has_ps_updated_at = _column_exists("process_subprocesses", "updated_at")
+        has_pl_sequence = _column_exists("production_lot_subprocesses", "sequence")
+        has_ps_sequence = _column_exists("process_subprocesses", "sequence")
+
+        created_at_expr = (
+            "pls.created_at"
+            if has_pl_created_at
+            else ("ps.created_at" if has_ps_created_at else "NULL::timestamp")
+        )
+        updated_at_expr = (
+            "pls.updated_at"
+            if has_pl_updated_at
+            else ("ps.updated_at" if has_ps_updated_at else "NULL::timestamp")
+        )
+        sequence_expr = (
+            "pls.sequence"
+            if has_pl_sequence
+            else ("ps.sequence" if has_ps_sequence else "NULL")
+        )
+
+        if has_process_subprocess_id:
+            query = f"""
+                SELECT
+                    pls.id,
+                    pls.production_lot_id,
+                    pls.process_subprocess_id,
+                    pls.status,
+                    pls.started_at,
+                    pls.completed_at,
+                    pls.notes,
+                    {created_at_expr} AS created_at,
+                    {updated_at_expr} AS updated_at,
+                    {sequence_expr} AS sequence,
+                    ps.subprocess_id,
+                    s.name AS subprocess_name
+                FROM production_lot_subprocesses pls
+                JOIN process_subprocesses ps ON ps.id = pls.process_subprocess_id
+                JOIN subprocesses s ON s.id = ps.subprocess_id
+                WHERE pls.production_lot_id = %s
+                ORDER BY {sequence_expr}, ps.id
+            """
+        elif has_subprocess_id:
+            # Older schema: production_lot_subprocesses links directly to subprocesses
+            query = f"""
+                SELECT
+                    pls.id,
+                    pls.production_lot_id,
+                    COALESCE(ps.id, pls.subprocess_id) AS process_subprocess_id,
+                    pls.status,
+                    pls.started_at,
+                    pls.completed_at,
+                    pls.notes,
+                    {created_at_expr} AS created_at,
+                    {updated_at_expr} AS updated_at,
+                    {sequence_expr} AS sequence,
+                    COALESCE(ps.subprocess_id, pls.subprocess_id) AS subprocess_id,
+                    s.name AS subprocess_name
+                FROM production_lot_subprocesses pls
+                LEFT JOIN process_subprocesses ps ON ps.subprocess_id = pls.subprocess_id
+                JOIN subprocesses s ON s.id = pls.subprocess_id
+                WHERE pls.production_lot_id = %s
+                ORDER BY {sequence_expr}, COALESCE(ps.id, pls.subprocess_id)
+            """
+        else:
+            raise ValueError(
+                "production_lot_subprocesses table missing expected subprocess reference column"
+            )
+
+        cur.execute(query, (production_lot_id,))
 
         return [dict(row) for row in cur.fetchall()]
 

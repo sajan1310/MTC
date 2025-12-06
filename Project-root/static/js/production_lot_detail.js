@@ -23,10 +23,8 @@
         lotFinalize: (id) => `/api/upf/production-lots/${id}/finalize`,
         lotRecalc: (id) => `/api/upf/production-lots/${id}/recalculate`,
         subprocesses: (lotId) => `/api/upf/production-lots/${lotId}/subprocesses`,
-        // Use canonical subprocess listing endpoint. The backend exposes
-        // GET /api/upf/subprocesses which returns the subprocess library.
-        // Add per_page hint so large lists can be requested when needed.
-        availableSubprocesses: (lotId) => `/api/upf/subprocesses?per_page=1000`,
+        // Prefer lot-scoped available subprocesses; fallback remains global list
+        availableSubprocesses: (lotId) => `/api/upf/production-lots/${lotId}/available-subprocesses`,
         availableAllSubprocesses: () => `/api/upf/subprocesses?per_page=1000`,
         subprocessVariants: (subprocessId, lotId) => `/api/upf/production-lots/${lotId}/subprocesses/${subprocessId}/variants`,
         // Backend exposes compatibility routes: singular `/subprocess/<id>/variant-options`
@@ -105,7 +103,7 @@
 
         // Subprocess edit modal / variant container selectors used by modal/populate code
         editSubprocessVariantsModal: '#edit-subprocess-variants-modal, #edit-subprocess-modal, .edit-subprocess-modal',
-        variantSelectionContainer: '#variant-selection-container, .variant-selection-container, #variant-selection',
+        variantSelectionContainer: '#variant-selection-container, .variant-selection-container, #variant-selection, #edit-subprocess-body',
         saveSubprocessVariantsBtn: '#save-subprocess-variants-btn, #save-subprocess-btn, [data-action="save-subprocess-variants"]',
 
         // Lot totals
@@ -205,10 +203,12 @@
 
     class ApiService {
         constructor() {
+            const csrfToken = document.querySelector('meta[name="csrf-token"]')?.getAttribute('content');
             this.defaultOptions = {
                 credentials: 'include',
                 headers: {
-                    'Content-Type': 'application/json'
+                    'Content-Type': 'application/json',
+                    'X-CSRFToken': csrfToken
                 }
             };
         }
@@ -765,12 +765,25 @@
 
                 // Extract data from response envelopes
                 const lot = lotData.data || lotData;
+
+                // Load lot-linked subprocesses (new endpoint)
+                try {
+                    const subsResp = await this.api.get(API_PATHS.subprocesses(lotId));
+                    const subsBody = (subsResp && (subsResp.data || subsResp)) || subsResp || {};
+                    const subsList = subsBody.subprocesses || subsBody || [];
+                    if (Array.isArray(subsList) && subsList.length) {
+                        lot.subprocesses = subsList;
+                    }
+                } catch (subsErr) {
+                    logger.warn('⚠️ Failed to load lot subprocesses:', subsErr.message || subsErr);
+                }
                 // Attempt to load lot-scoped subprocesses (variant-options) so we can render subprocess cards
                 try {
                     const vo = await this.api.get(API_PATHS.lotVariantOptions(lotId));
                     const voBody = (vo && (vo.data || vo)) || vo || {};
                     const subs = voBody.subprocesses || voBody.subprocesses || [];
                     if (Array.isArray(subs) && subs.length) {
+                        // Prefer variant-options data (includes grouped variants) if available
                         lot.subprocesses = subs;
                     }
                 } catch (voErr) {
@@ -1282,6 +1295,9 @@
 
                 // Reload data to reflect new subprocess
                 await this._loadAllData();
+
+                // Refresh available subprocess select (removes the one just added from options if backend filters)
+                await this._loadAvailableSubprocesses();
 
             } catch (error) {
                 logger.error('❌ Error adding subprocess:', error);

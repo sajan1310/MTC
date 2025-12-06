@@ -221,18 +221,13 @@
     </div>
 </div>
 
-<script src="{{ url_for('static', filename='js/production_lot_alerts.js') }}"></script>
+<script src="{{ url_for('static', filename='js/api-response-handler.js') }}?v={{ config.VERSION }}"></script>
+<script src="{{ url_for('static', filename='js/production_lot_alerts.js') }}?v={{ config.VERSION }}"></script>
 <script>
     // Expose server-rendered values for the static page JS
     window.LOT_ID = {{ lot_id | tojson }};
     window.__UPF_DEBUG__ = {{ config.DEBUG | tojson }};
-</script>
-<script src="{{ url_for('static', filename='js/production_lot_detail.js') }}"></script>
-<!-- Global toast container -->
-<div id="global-toast-container" aria-live="polite" aria-atomic="true"></div>
-<!-- Global overlay management and debug toggle are handled in `static/js/production_lot_detail.js` -->
-<!-- Compatibility shims: create legacy/non-overlay modal IDs if missing so older scripts won't break -->
-<script>
+    // Compatibility shims: create legacy/non-overlay modal IDs if missing so older scripts won't break
     (function(){
         var legacyIds = ['variant-modal','edit-subprocess-modal','subprocess-modal','process-modal'];
         legacyIds.forEach(function(id){
@@ -249,7 +244,8 @@
         });
     })();
 </script>
-<script src="{{ url_for('static', filename='js/api-response-handler.js') }}"></script>
-<script src="{{ url_for('static', filename='production-lot-detail-enhanced.js') }}"></script>
+<script src="{{ url_for('static', filename='js/production_lot_detail.js') }}?v={{ config.VERSION }}"></script>
+<!-- Global toast container -->
+<div id="global-toast-container" aria-live="polite" aria-atomic="true"></div>
 </div>
 {% endblock %}
