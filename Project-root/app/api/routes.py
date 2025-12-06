@@ -16,6 +16,7 @@ from psycopg2 import sql
 from .. import limiter
 from ..utils import get_or_create_item_master_id, get_or_create_master_id, role_required
 from ..utils.file_validation import validate_upload
+from ..utils.response import APIResponse
 
 # Import api_bp from __init__ after it's been defined
 from . import api_bp
@@ -247,10 +248,10 @@ def get_suppliers():
                 contact_count = cur.fetchone()['contact_count']
                 supplier_dict['contact_count'] = contact_count
                 suppliers.append(supplier_dict)
-        return jsonify(suppliers)
+        return APIResponse.success(suppliers, "Suppliers retrieved successfully")
     except Exception as e:
         current_app.logger.error(f"Error fetching suppliers: {e}")
-        return jsonify({"error": "Failed to fetch suppliers"}), 500
+        return APIResponse.error("fetch_error", "Failed to fetch suppliers", 500)
 
 
 @api_bp.route("/suppliers", methods=["POST"])
@@ -260,7 +261,7 @@ def add_supplier():
     data = request.json
     firm_name = (data.get("firm_name") or "").strip()
     if not firm_name:
-        return jsonify({"error": "Firm name is required"}), 400
+        return APIResponse.error("validation_error", "Firm name is required", 400)
     try:
         with database.get_conn() as (conn, cur):
             cur.execute(
@@ -317,22 +318,19 @@ def add_supplier():
                         continue
             
             conn.commit()
-        return (
-            jsonify(
-                {"message": "Supplier added successfully", "supplier_id": supplier_id}
-            ),
-            201,
+        return APIResponse.created(
+            {"supplier_id": supplier_id},
+            "Supplier added successfully"
         )
     except psycopg2.IntegrityError:
-        return (
-            jsonify(
-                {"error": f'Supplier with firm name "{firm_name}" already exists.'}
-            ),
-            409,
+        return APIResponse.error(
+            "duplicate_error",
+            f'Supplier with firm name "{firm_name}" already exists.',
+            409
         )
     except Exception as e:
         current_app.logger.error(f"Error adding supplier: {e}")
-        return jsonify({"error": "Database error"}), 500
+        return APIResponse.error("database_error", "Database error", 500)
 
 
 @api_bp.route("/suppliers/<int:supplier_id>", methods=["PUT"])
@@ -342,7 +340,7 @@ def update_supplier(supplier_id):
     data = request.json
     firm_name = (data.get("firm_name") or "").strip()
     if not firm_name:
-        return jsonify({"error": "Firm name is required"}), 400
+        return APIResponse.error("validation_error", "Firm name is required", 400)
     try:
         with database.get_conn() as (conn, cur):
             cur.execute(
@@ -403,17 +401,16 @@ def update_supplier(supplier_id):
                         continue
             
             conn.commit()
-        return jsonify({"message": "Supplier updated successfully"}), 200
+        return APIResponse.success(None, "Supplier updated successfully")
     except psycopg2.IntegrityError:
-        return (
-            jsonify(
-                {"error": f'Supplier with firm name "{firm_name}" already exists.'}
-            ),
-            409,
+        return APIResponse.error(
+            "duplicate_error",
+            f'Supplier with firm name "{firm_name}" already exists.',
+            409
         )
     except Exception as e:
         current_app.logger.error(f"Error updating supplier {supplier_id}: {e}")
-        return jsonify({"error": "Database error"}), 500
+        return APIResponse.error("database_error", "Database error", 500)
 
 
 @api_bp.route("/suppliers/<int:supplier_id>", methods=["DELETE"])
@@ -424,12 +421,12 @@ def delete_supplier(supplier_id):
         with database.get_conn() as (conn, cur):
             cur.execute("DELETE FROM suppliers WHERE supplier_id = %s", (supplier_id,))
             conn.commit()
-        return "", 204
+        return APIResponse.success(None, "Supplier deleted successfully")
     except psycopg2.IntegrityError:
-        return jsonify({"error": "This supplier is in use and cannot be deleted."}), 409
+        return APIResponse.error("in_use_error", "This supplier is in use and cannot be deleted.", 409)
     except Exception as e:
         current_app.logger.error(f"Error deleting supplier {supplier_id}: {e}")
-        return jsonify({"error": "Database error"}), 500
+        return APIResponse.error("database_error", "Database error", 500)
 
 
 @api_bp.route("/suppliers/<int:supplier_id>/contacts")
@@ -444,12 +441,12 @@ def get_supplier_contacts(supplier_id):
                 "SELECT * FROM supplier_contacts WHERE supplier_id = %s", (supplier_id,)
             )
             contacts = [dict(row) for row in cur.fetchall()]
-        return jsonify(contacts)
+        return APIResponse.success(contacts, "Contacts retrieved successfully")
     except Exception as e:
         current_app.logger.error(
             f"Error fetching contacts for supplier {supplier_id}: {e}"
         )
-        return jsonify({"error": "Failed to fetch contacts"}), 500
+        return APIResponse.error("fetch_error", "Failed to fetch contacts", 500)
 
 
 @api_bp.route("/suppliers/<int:supplier_id>/rates")
@@ -465,12 +462,12 @@ def get_supplier_rates(supplier_id):
                 (supplier_id,),
             )
             rates = [dict(row) for row in cur.fetchall()]
-        return jsonify(rates)
+        return APIResponse.success(rates, "Rates retrieved successfully")
     except Exception as e:
         current_app.logger.error(
             f"Error fetching rates for supplier {supplier_id}: {e}"
         )
-        return jsonify({"error": "Failed to fetch rates"}), 500
+        return APIResponse.error("fetch_error", "Failed to fetch rates", 500)
 
 
 @api_bp.route("/suppliers/<int:supplier_id>/rates", methods=["POST"])
@@ -481,7 +478,7 @@ def add_supplier_rate(supplier_id):
     item_id = data.get("item_id")
     rate = data.get("rate")
     if not item_id or not rate:
-        return jsonify({"error": "Item and rate are required"}), 400
+        return APIResponse.error("validation_error", "Item and rate are required", 400)
     try:
         with database.get_conn() as (conn, cur):
             cur.execute(
@@ -490,15 +487,19 @@ def add_supplier_rate(supplier_id):
             )
             rate_id = cur.fetchone()[0]
             conn.commit()
-        return jsonify({"message": "Rate added successfully", "rate_id": rate_id}), 201
+        return APIResponse.created(
+            {"rate_id": rate_id},
+            "Rate added successfully"
+        )
     except psycopg2.IntegrityError:
-        return (
-            jsonify({"error": "This item already has a rate for this supplier."}),
-            409,
+        return APIResponse.error(
+            "duplicate_error",
+            "This item already has a rate for this supplier.",
+            409
         )
     except Exception as e:
         current_app.logger.error(f"Error adding rate for supplier {supplier_id}: {e}")
-        return jsonify({"error": "Database error"}), 500
+        return APIResponse.error("database_error", "Database error", 500)
 
 
 @api_bp.route("/suppliers/rates/<int:rate_id>", methods=["DELETE"])
@@ -511,10 +512,10 @@ def delete_supplier_rate(rate_id):
                 "DELETE FROM supplier_item_rates WHERE rate_id = %s", (rate_id,)
             )
             conn.commit()
-        return "", 204
+        return APIResponse.success(None, "Rate deleted successfully")
     except Exception as e:
         current_app.logger.error(f"Error deleting rate {rate_id}: {e}")
-        return jsonify({"error": "Database error"}), 500
+        return APIResponse.error("database_error", "Database error", 500)
 
 
 @api_bp.route("/upf/supplier/<int:supplier_id>/variants")
@@ -616,8 +617,9 @@ def get_supplier_ledger(supplier_id):
                 """
                 cur.execute(query, tuple(params + [per_page, offset]))
                 rows = [dict(r) for r in cur.fetchall()]
-                return jsonify(
-                    {"items": rows, "total": total, "page": page, "per_page": per_page}
+                return APIResponse.success(
+                    {"items": rows, "total": total, "page": page, "per_page": per_page},
+                    "Ledger retrieved successfully"
                 )
 
             # Fallback: view not present — query stock_entries & receipts directly
@@ -660,19 +662,20 @@ def get_supplier_ledger(supplier_id):
             """
             cur.execute(query, tuple(params + [per_page, offset]))
             ledger_entries = [dict(row) for row in cur.fetchall()]
-        return jsonify(
+        return APIResponse.success(
             {
                 "items": ledger_entries,
                 "total": total,
                 "page": page,
                 "per_page": per_page,
-            }
+            },
+            "Ledger retrieved successfully"
         )
     except Exception as e:
         current_app.logger.error(
             f"Error fetching ledger for supplier {supplier_id}: {e}"
         )
-        return jsonify({"error": "Failed to fetch ledger"}), 500
+        return APIResponse.error("fetch_error", "Failed to fetch ledger", 500)
 
 
 # Stock receipts
