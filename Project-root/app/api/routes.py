@@ -223,8 +223,30 @@ def get_suppliers():
             conn,
             cur,
         ):
-            cur.execute("SELECT * FROM suppliers ORDER BY firm_name")
-            suppliers = [dict(row) for row in cur.fetchall()]
+            # Check if deleted_at column exists
+            cur.execute("""
+                SELECT column_name FROM information_schema.columns 
+                WHERE table_name = 'suppliers' AND column_name = 'deleted_at'
+            """)
+            has_deleted_at = cur.fetchone() is not None
+            
+            # Build query based on column availability
+            if has_deleted_at:
+                cur.execute("SELECT * FROM suppliers WHERE deleted_at IS NULL ORDER BY firm_name")
+            else:
+                cur.execute("SELECT * FROM suppliers ORDER BY firm_name")
+            
+            suppliers = []
+            for row in cur.fetchall():
+                supplier_dict = dict(row)
+                # Fetch contact count for this supplier
+                cur.execute(
+                    "SELECT COUNT(*) as contact_count FROM supplier_contacts WHERE supplier_id = %s",
+                    (supplier_dict['supplier_id'],)
+                )
+                contact_count = cur.fetchone()['contact_count']
+                supplier_dict['contact_count'] = contact_count
+                suppliers.append(supplier_dict)
         return jsonify(suppliers)
     except Exception as e:
         current_app.logger.error(f"Error fetching suppliers: {e}")
@@ -508,12 +530,12 @@ def get_supplier_variants(supplier_id):
                 """
                 SELECT 
                     iv.variant_id,
+                    im.item_id,
                     im.name as item_name,
                     cm.color_name,
                     sm.size_name,
-                    sir.rate as supply_rate,
-                    sir.rate_id,
-                    '' as remarks
+                    sir.rate,
+                    sir.rate_id
                 FROM supplier_item_rates sir
                 JOIN item_master im ON sir.item_id = im.item_id
                 LEFT JOIN item_variant iv ON im.item_id = iv.item_id
@@ -534,6 +556,9 @@ def get_supplier_variants(supplier_id):
                 if variant_dict.get("size_name"):
                     variant_name += f" - {variant_dict['size_name']}"
                 variant_dict["name"] = variant_name
+                # Ensure rate field is present
+                if "rate" not in variant_dict:
+                    variant_dict["rate"] = None
                 variants.append(variant_dict)
         return jsonify(variants)
     except Exception as e:
@@ -613,9 +638,20 @@ def get_supplier_ledger(supplier_id):
             total = cur.fetchone()[0]
 
             query = f"""
-                SELECT se.entry_date, im.name as item_name, iv.variant_id, se.quantity_added, se.cost_per_unit, sr.receipt_id, sr.receipt_number, sr.bill_number
+                SELECT 
+                    se.entry_date as date,
+                    s.firm_name as supplier_name,
+                    sr.bill_number,
+                    im.name as item_name,
+                    se.quantity_added as qty,
+                    se.cost_per_unit,
+                    sr.receipt_id,
+                    sr.receipt_number,
+                    sr.supplier_id,
+                    'receipt' as event_type
                 FROM stock_entries se
                 JOIN stock_receipts sr ON se.receipt_id = sr.receipt_id
+                JOIN suppliers s ON sr.supplier_id = s.supplier_id
                 JOIN item_variant iv ON se.variant_id = iv.variant_id
                 JOIN item_master im ON iv.item_id = im.item_id
                 WHERE {base_where}

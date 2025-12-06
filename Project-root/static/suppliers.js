@@ -167,27 +167,50 @@ const Suppliers = {
     if (this.state.variantsList && this.state.variantsList.length > 0) return this.state.variantsList;
 
     try {
-      // Use the existing all-variants endpoint used elsewhere in the app (purchaseOrders)
-      // Fallback to /variants/select2 if server exposes that instead
+      // Use the existing all-variants endpoint with pagination
       let variants = null;
       try {
-        variants = await App.fetchJson(`${App.config.apiBase}/all-variants`);
+        // Fetch all variants with pagination support
+        const allVariants = [];
+        let page = 1;
+        let hasMore = true;
+        
+        while (hasMore && allVariants.length < 500) {
+          const response = await App.fetchJson(
+            `${App.config.apiBase}/all-variants?page=${page}&per_page=100`
+          );
+          
+          if (response && response.items && Array.isArray(response.items)) {
+            allVariants.push(...response.items);
+            hasMore = response.page < response.total_pages;
+            page++;
+          } else if (Array.isArray(response)) {
+            allVariants.push(...response);
+            hasMore = false;
+          } else {
+            hasMore = false;
+          }
+        }
+        
+        variants = allVariants.length > 0 ? allVariants : null;
       } catch (e) {
         // Try the select2 endpoint as a fallback
-        try { variants = await App.fetchJson(`${App.config.apiBase}/variants/select2?q=&page=1&page_size=100`); } catch (e2) { throw e; }
+        try { 
+          const select2Response = await App.fetchJson(
+            `${App.config.apiBase}/variants/select2?q=&page=1&page_size=100`
+          ); 
+          if (select2Response && select2Response.results) {
+            variants = select2Response.results;
+          }
+        } catch (e2) { 
+          throw e; 
+        }
       }
+      
       if (variants && Array.isArray(variants)) {
         this.state.variantsList = variants;
       } else {
-        // If backend returned paginated object { items: [...] }
-        if (variants && variants.items && Array.isArray(variants.items)) {
-          this.state.variantsList = variants.items;
-        } else if (variants && variants.results && Array.isArray(variants.results)) {
-          // Some select2 endpoints return { results: [...] }
-          this.state.variantsList = variants.results;
-        } else {
-          this.state.variantsList = [];
-        }
+        this.state.variantsList = [];
       }
     } catch (err) {
       console.error('Error fetching variants list:', err);

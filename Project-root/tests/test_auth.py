@@ -1,6 +1,6 @@
 from unittest.mock import patch
 
-from models import User
+from app.models import User
 
 
 def test_login_page(client):
