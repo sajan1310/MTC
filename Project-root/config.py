@@ -113,6 +113,25 @@ class TestingConfig(Config):
     DB_USER = os.getenv("TEST_DB_USER", os.getenv("DB_USER", "postgres"))
     DB_PASS = os.getenv("TEST_DB_PASS", os.getenv("DB_PASS", "testpass"))
 
+    def __init__(self):
+        """PHASE 1C: Prevent test config using production DB.
+        
+        Raises RuntimeError if TEST_DB_NAME equals production DB_NAME.
+        This ensures tests cannot accidentally run against production data.
+        """
+        super().__init__()
+        # Get the production database name for comparison
+        prod_db = os.getenv("DB_NAME", "MTC")  # production default
+        test_db = self.DB_NAME
+        
+        if test_db == prod_db and test_db != "testdb":
+            raise RuntimeError(
+                f"FATAL: TestingConfig is configured to use production database '{test_db}'. "
+                f"This is a safety violation. Please ensure TEST_DB_NAME is set to a dedicated test database "
+                f"(default: 'testdb', not '{prod_db}'). "
+                f"Set TEST_DB_NAME environment variable to a test database name."
+            )
+
 
 class ProductionConfig(Config):
     DEBUG = False

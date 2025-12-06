@@ -82,13 +82,21 @@ def _load_config(app: Flask, config_name: str) -> None:
     """Load configuration from config.py and environment.
 
     Raises RuntimeError on missing required settings in non-testing modes.
+    In testing mode, PHASE 1C also validates that test DB != production DB.
     """
     from config import config as CONFIG_MAP  # type: ignore
 
     cfg_cls = CONFIG_MAP.get(config_name) or CONFIG_MAP.get("production")
     if cfg_cls is None:
         raise RuntimeError(f"Unknown config name: {config_name}")
-    app.config.from_object(cfg_cls)
+    
+    # PHASE 1C: For TestingConfig, instantiate to trigger __init__ validation
+    # that prevents test DB from being set to production DB name
+    if config_name == "testing":
+        cfg_instance = cfg_cls()  # Instantiate to trigger __init__ checks
+        app.config.from_object(cfg_instance)
+    else:
+        app.config.from_object(cfg_cls)
 
     # Allow overriding a small set of critical keys from environment
     app.config.update(
@@ -261,8 +269,11 @@ def create_app(config_name: str | None = None) -> Flask:
     app.config.setdefault("RATELIMIT_DEFAULT", "200 per day,50 per hour")
 
     # Attempt to validate Redis connectivity if a non-memory store is configured
+    # PHASE 1B: Harden rate limiter - in production, fail-fast if Redis is misconfigured
     storage = str(app.config.get("RATELIMIT_STORAGE_URL", "")).strip()
-    if not app.config.get("TESTING") and storage and not storage.startswith("memory://"):
+    is_production = config_name == "production" or app.config.get("ENV") == "production"
+    
+    if storage and not storage.startswith("memory://"):
         try:
             from redis import Redis, ConnectionPool  # type: ignore
 
@@ -272,14 +283,24 @@ def create_app(config_name: str | None = None) -> Flask:
             client.ping()
             # Store pool on app so we can close it in teardown
             app.extensions["ratelimit_redis_pool"] = pool
-            app.logger.info("[RATE LIMIT] Redis connectivity OK for rate limiter.")
+            app.logger.info("[RATE LIMIT] Redis connectivity validated; rate limiter using Redis backend.")
         except ImportError:
-            # Optional dependency missing: fall back to memory and warn
-            app.logger.warning("redis package not installed; falling back to in-memory rate limit")
+            # Optional dependency missing
+            if is_production:
+                raise RuntimeError(
+                    "FATAL: redis package required for production rate limiting but not installed. "
+                    "Install redis package or set RATELIMIT_STORAGE_URL=memory:// to fallback (not recommended for production)."
+                )
+            app.logger.warning("[RATE LIMIT] redis package not installed; falling back to in-memory rate limit (development only)")
             app.config["RATELIMIT_STORAGE_URL"] = "memory://"
         except Exception as e:
-            # Do not crash app startup for transient Redis errors; fall back and warn
-            app.logger.warning("[RATE LIMIT] Redis unavailable, falling back to memory: %s", e)
+            # Connection failed
+            if is_production:
+                raise RuntimeError(
+                    f"FATAL: Redis rate limiter backend unreachable in production: {e}. "
+                    f"Verify RATELIMIT_STORAGE_URL={storage} is correct and Redis is running."
+                )
+            app.logger.warning("[RATE LIMIT] Redis unavailable in development, falling back to in-memory: %s", e)
             app.config["RATELIMIT_STORAGE_URL"] = "memory://"
 
     # Initialize limiter with the configured app-level settings (single instance)
@@ -406,23 +427,10 @@ def create_app(config_name: str | None = None) -> Flask:
     from .auth.routes import auth_bp
     from .main.routes import main_bp
 
-    # Exempt Universal Process Framework blueprints BEFORE registering them
-    # so nested blueprint registration does not prevent exemption.
-    for bp in (process_api_bp, reports_api_bp, variant_api_bp, production_api_bp, subprocess_api_bp, inventory_alerts_bp):
-        try:
-            csrf.exempt(bp)
-        except Exception as e:
-            app.logger.debug("Failed to exempt blueprint %s from CSRF: %s", getattr(bp, 'name', bp), e)
-
-    # Also exempt the auth and main blueprints where JSON endpoints are present
-    try:
-        csrf.exempt(auth_bp)
-    except Exception:
-        app.logger.debug("Failed to exempt auth blueprint from CSRF")
-    try:
-        csrf.exempt(main_bp)
-    except Exception:
-        app.logger.debug("Failed to exempt main blueprint from CSRF")
+    # PHASE 1: Re-enable CSRF protection by removing blanket blueprint exemptions.
+    # Instead, only exempt specific webhook endpoints that require it.
+    # JSON API endpoints are protected via CORS + origin validation in production.
+    # No blueprints are exempt; individual view functions are exempted as needed below.
 
     # Now register blueprints
     app.register_blueprint(auth_bp, url_prefix="/auth")
@@ -441,12 +449,16 @@ def create_app(config_name: str | None = None) -> Flask:
 
     # If specific view function names need exemption but are only available
     # after registration, we try to exempt them but log missing keys.
+    # Only exempt explicit endpoints that require CSRF exemption:
+    # - JSON login/signup/forgot-password endpoints (for API clients without session)
+    # - External webhook endpoints (if any exist)
     for view_name in ("auth.api_login", "auth.api_signup", "auth.api_forgot_password",
                       "main.compat_api_login", "main.compat_api_signup", "main.compat_api_forgot_password"):
         try:
             func = app.view_functions.get(view_name)
             if func:
                 csrf.exempt(func)
+                app.logger.debug("CSRF exemption applied to view: %s (authenticated API endpoint)", view_name)
         except Exception as e:
             app.logger.debug("Failed to exempt view %s from CSRF: %s", view_name, e)
 
