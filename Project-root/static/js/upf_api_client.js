@@ -304,14 +304,28 @@ class UPFApiClient {
         const cacheKey = `production-lots:${queryString}`;
 
         const data = await this.fetch(url, {}, cacheKey, this.cacheConfig.productionLots.ttl);
-        return data.data?.production_lots || data.production_lots || [];
+        const lots = data.data?.production_lots || data.production_lots || [];
+        
+        // Ensure quantity is always present in each lot
+        return lots.map(lot => ({
+            ...lot,
+            quantity: lot.quantity ?? 1
+        }));
     }
 
     async getProductionLot(id) {
         const url = `/api/upf/production-lots/${id}`;
         const cacheKey = `production-lot:${id}`;
         
-        return this.fetch(url, {}, cacheKey, this.cacheConfig.productionLots.ttl);
+        const data = await this.fetch(url, {}, cacheKey, this.cacheConfig.productionLots.ttl);
+        const lot = data.data || data;
+        
+        // Ensure quantity is always present
+        if (lot && typeof lot === 'object') {
+            lot.quantity = lot.quantity ?? 1;
+        }
+        
+        return lot;
     }
 
     async createProductionLot(lotData) {

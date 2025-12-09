@@ -285,16 +285,28 @@ class InventoryAlertService:
             if not lot:
                 return []
 
-            # Gather variant usages for the process (fixed + OR groups)
+            # Check if deleted_at column exists in variant_usage table
             cur.execute(
                 """
+                SELECT 1 FROM information_schema.columns
+                WHERE table_schema = current_schema()
+                  AND table_name = 'variant_usage'
+                  AND column_name = 'deleted_at'
+                """,
+            )
+            vu_has_deleted = bool(cur.fetchone())
+
+            # Gather variant usages for the process (fixed + OR groups)
+            variant_usage_query = """
                 SELECT vu.variant_id, vu.quantity
                 FROM variant_usage vu
                 JOIN process_subprocesses ps ON ps.id = vu.process_subprocess_id
-                WHERE ps.process_id = %s AND vu.deleted_at IS NULL
-                """,
-                (lot["process_id"],),
-            )
+                WHERE ps.process_id = %s
+                """
+            if vu_has_deleted:
+                variant_usage_query += " AND vu.deleted_at IS NULL"
+
+            cur.execute(variant_usage_query, (lot["process_id"],))
             usages = cur.fetchall()
 
             # Fetch variant names in one go

@@ -108,11 +108,15 @@ def create_production_lot():
 
         # Pre-validate per plan
         user_id_safe = getattr(current_user, "id", None)
-        errs = validate_production_lot_creation(
-            int(data["process_id"]), int(qty_val), int(user_id_safe or 0)
-        )
-        if errs:
-            return APIResponse.error("validation_error", errs, 400)
+        try:
+            errs = validate_production_lot_creation(
+                int(data["process_id"]), int(qty_val), int(user_id_safe or 0)
+            )
+            if errs:
+                return APIResponse.error("validation_error", errs, 400)
+        except Exception as e:
+            current_app.logger.error(f"Error during production lot validation: {e}")
+            return APIResponse.error("validation_error", f"Validation failed: {str(e)}", 400)
 
         # Verify process exists before creating
         from database import get_conn
@@ -382,6 +386,7 @@ def get_variant_options(lot_id):
                         vu.id as usage_id,
                         vu.variant_id,
                         vu.quantity,
+                        vu.process_subprocess_id,
                         iv.unit,
                         vu.substitute_group_id,
                         vu.is_alternative,
@@ -575,7 +580,26 @@ def get_variant_options_by_subprocess(subprocess_id: int):
                 """,
                 (subprocess_id,),
             )
-            variants = [dict(r) for r in cur.fetchall()]
+            variants_raw = [dict(r) for r in cur.fetchall()]
+            
+            # Compose a human-readable variant_name for each variant
+            variants = []
+            for v in variants_raw:
+                variant_data = dict(v)
+                # Build variant_name from item_number + model + variation + color + size
+                name_parts = [variant_data.get("item_number") or ""]
+                if variant_data.get("model_name"):
+                    name_parts.append(variant_data["model_name"])
+                if variant_data.get("variation_name"):
+                    name_parts.append(variant_data["variation_name"])
+                if variant_data.get("color_name"):
+                    name_parts.append(variant_data["color_name"])
+                if variant_data.get("size_name"):
+                    name_parts.append(variant_data["size_name"])
+                
+                variant_data["variant_name"] = " - ".join(filter(None, name_parts)) or f"Variant #{variant_data.get('variant_id', '')}"
+                variant_data["name"] = variant_data["variant_name"]  # alias for frontend compatibility
+                variants.append(variant_data)
 
             cur.execute(
                 """
@@ -1875,6 +1899,19 @@ def update_subprocess_variants(lot_id: int, subprocess_id: int):
                             "Variant quantity must be a valid number",
                             400,
                         )
+
+            # Delete existing variant selections for this subprocess before inserting new ones
+            cur.execute(
+                """
+                DELETE FROM production_lot_subprocess_variants
+                WHERE lot_id = %s AND process_subprocess_id = %s
+                """,
+                (lot_id, subprocess_id),
+            )
+            deleted_count = cur.rowcount
+            current_app.logger.debug(
+                f"Deleted {deleted_count} existing variant selections for subprocess {subprocess_id} in lot {lot_id}"
+            )
 
             # Insert variant selections for this subprocess
             variant_records_inserted = []

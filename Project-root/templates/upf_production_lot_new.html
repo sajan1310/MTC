@@ -372,10 +372,16 @@ const productionLotForm = {
         submitBtn.textContent = 'Creating...';
 
         try {
+            // Get CSRF token from meta tag or cookie
+            const csrfToken = document.querySelector('meta[name="csrf-token"]')?.getAttribute('content') 
+                || document.cookie.split('; ').find(row => row.startsWith('csrf_token='))?.split('=')[1]
+                || '';
+
             const response = await fetch('/api/upf/production-lots', {
                 method: 'POST',
                 headers: {
                     'Content-Type': 'application/json',
+                    'X-CSRFToken': csrfToken,
                 },
                 credentials: 'include',
                 body: JSON.stringify({

@@ -36,111 +36,135 @@ def validate_production_lot_creation(
     errors: List[str] = []
     logger = _get_logger()
 
-    with database.get_conn(cursor_factory=psycopg2.extras.RealDictCursor) as (
-        conn,
-        cur,
-    ):
-        # Helper: detect if a column exists on the connected DB/schema
-        def _column_exists(table: str, column: str) -> bool:
-            cur.execute(
-                """
-                SELECT 1 FROM information_schema.columns
-                WHERE table_schema = current_schema() AND table_name = %s AND column_name = %s
-                """,
-                (table, column),
-            )
-            return bool(cur.fetchone())
+    try:
+        with database.get_conn(cursor_factory=psycopg2.extras.RealDictCursor) as (
+            conn,
+            cur,
+        ):
+            # Helper: detect if a column exists on the connected DB/schema
+            def _column_exists(table: str, column: str) -> bool:
+                try:
+                    cur.execute(
+                        """
+                        SELECT 1 FROM information_schema.columns
+                        WHERE table_schema = current_schema() AND table_name = %s AND column_name = %s
+                        """,
+                        (table, column),
+                    )
+                    return bool(cur.fetchone())
+                except Exception as e:
+                    logger.warning(f"Could not check if {table}.{column} exists: {e}")
+                    return False
 
-        # Detect whether soft-delete column exists for processes and process_subprocesses
-        processes_has_deleted = _column_exists("processes", "deleted_at")
-        subprocesses_has_deleted = _column_exists("process_subprocesses", "deleted_at")
+            # Detect whether soft-delete column exists for processes and process_subprocesses
+            processes_has_deleted = _column_exists("processes", "deleted_at")
+            subprocesses_has_deleted = _column_exists("process_subprocesses", "deleted_at")
 
-        # 1) process exists and is active/draft
-        if processes_has_deleted:
-            cur.execute(
-                """
-                SELECT id, status
-                FROM processes
-                WHERE id = %s AND deleted_at IS NULL
-                """,
-                (process_id,),
-            )
-        else:
-            cur.execute(
-                """
-                SELECT id, status
-                FROM processes
-                WHERE id = %s
-                """,
-                (process_id,),
-            )
-        row = cur.fetchone()
-        if not row:
-            errors.append(f"Process {process_id} not found")
-        else:
-            if str(row.get("status", "")).lower() not in ("active", "draft"):
-                errors.append(f"Process {process_id} not active/draft")
+            # 1) process exists and is active/draft
+            try:
+                if processes_has_deleted:
+                    cur.execute(
+                        """
+                        SELECT id, status
+                        FROM processes
+                        WHERE id = %s AND deleted_at IS NULL
+                        """,
+                        (process_id,),
+                    )
+                else:
+                    cur.execute(
+                        """
+                        SELECT id, status
+                        FROM processes
+                        WHERE id = %s
+                        """,
+                        (process_id,),
+                    )
+                row = cur.fetchone()
+                if not row:
+                    errors.append(f"Process {process_id} not found")
+                else:
+                    if str(row.get("status", "")).lower() not in ("active", "draft"):
+                        errors.append(f"Process {process_id} not active/draft")
+            except Exception as e:
+                logger.error(f"Error checking process {process_id}: {e}")
+                errors.append(f"Failed to validate process: {str(e)}")
 
-        # 2) quantity bounds
-        try:
-            q = int(quantity)
-            if q <= 0:
-                errors.append("quantity must be > 0")
-            if q > MAX_LOT_QUANTITY:
-                errors.append(f"quantity exceeds MAX_LOT_QUANTITY ({MAX_LOT_QUANTITY})")
-        except Exception:
-            errors.append("quantity must be an integer")
+            # 2) quantity bounds
+            try:
+                q = int(quantity)
+                if q <= 0:
+                    errors.append("quantity must be > 0")
+                if q > MAX_LOT_QUANTITY:
+                    errors.append(f"quantity exceeds MAX_LOT_QUANTITY ({MAX_LOT_QUANTITY})")
+            except Exception:
+                errors.append("quantity must be an integer")
 
-        # 3) user exists (basic check)
-        cur.execute("SELECT 1 FROM users WHERE user_id = %s", (user_id,))
-        if not cur.fetchone():
-            errors.append(f"user_id {user_id} not found")
+            # 3) user exists (basic check)
+            try:
+                cur.execute("SELECT 1 FROM users WHERE user_id = %s", (user_id,))
+                if not cur.fetchone():
+                    errors.append(f"user_id {user_id} not found")
+            except Exception as e:
+                logger.error(f"Error checking user {user_id}: {e}")
+                errors.append(f"Failed to validate user: {str(e)}")
 
-        # 4) process has at least 1 subprocess
-        if subprocesses_has_deleted:
-            cur.execute(
-                """
-                SELECT id FROM process_subprocesses
-                WHERE process_id = %s AND deleted_at IS NULL
-                LIMIT 1
-                """,
-                (process_id,),
-            )
-        else:
-            cur.execute(
-                """
-                SELECT id FROM process_subprocesses
-                WHERE process_id = %s
-                LIMIT 1
-                """,
-                (process_id,),
-            )
-        if not cur.fetchone():
-            errors.append(
-                f"Process {process_id} has no subprocesses; cannot create lot"
-            )
+            # 4) process has at least 1 subprocess
+            try:
+                if subprocesses_has_deleted:
+                    cur.execute(
+                        """
+                        SELECT id FROM process_subprocesses
+                        WHERE process_id = %s AND deleted_at IS NULL
+                        LIMIT 1
+                        """,
+                        (process_id,),
+                    )
+                else:
+                    cur.execute(
+                        """
+                        SELECT id FROM process_subprocesses
+                        WHERE process_id = %s
+                        LIMIT 1
+                        """,
+                        (process_id,),
+                    )
+                if not cur.fetchone():
+                    errors.append(
+                        f"Process {process_id} has no subprocesses; cannot create lot"
+                    )
+            except Exception as e:
+                logger.error(f"Error checking subprocesses for process {process_id}: {e}")
+                errors.append(f"Failed to validate subprocesses: {str(e)}")
 
-        # 5) Check for cost data availability (NEW VALIDATION)
-        # Warn if process has no supplier pricing configured
-        cur.execute(
-            """
-            SELECT COUNT(DISTINCT vsp.variant_id) as variants_with_pricing
-            FROM process_subprocesses ps
-            JOIN variant_usage vu ON vu.process_subprocess_id = ps.id
-            JOIN variant_supplier_pricing vsp ON vsp.variant_id = vu.variant_id
-            WHERE ps.process_id = %s AND vsp.is_active = TRUE
-            """,
-            (process_id,),
-        )
-        pricing_result = cur.fetchone()
-        variants_with_pricing = pricing_result.get("variants_with_pricing", 0) if pricing_result else 0
+            # 5) Check for cost data availability (NEW VALIDATION)
+            # Warn if process has no supplier pricing configured
+            try:
+                cur.execute(
+                    """
+                    SELECT COUNT(DISTINCT vsp.variant_id) as variants_with_pricing
+                    FROM process_subprocesses ps
+                    JOIN variant_usage vu ON vu.process_subprocess_id = ps.id
+                    JOIN variant_supplier_pricing vsp ON vsp.variant_id = vu.variant_id
+                    WHERE ps.process_id = %s AND vsp.is_active = TRUE
+                    """,
+                    (process_id,),
+                )
+                pricing_result = cur.fetchone()
+                variants_with_pricing = pricing_result.get("variants_with_pricing", 0) if pricing_result else 0
 
-        if variants_with_pricing == 0:
-            logger.warning(
-                f"Process {process_id} has no supplier pricing configured; "
-                f"production lot will be created with zero cost estimate"
-            )
-            # This is a warning but not a hard error - lot can still be created
+                if variants_with_pricing == 0:
+                    logger.warning(
+                        f"Process {process_id} has no supplier pricing configured; "
+                        f"production lot will be created with zero cost estimate"
+                    )
+                    # This is a warning but not a hard error - lot can still be created
+            except Exception as e:
+                logger.warning(f"Error checking pricing for process {process_id}: {e}")
+                # Don't add error - pricing check is informational only
+    except Exception as e:
+        logger.error(f"Unexpected error during production lot validation: {e}")
+        errors.append(f"Validation error: {str(e)}")
 
     return errors
 

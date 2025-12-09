@@ -98,13 +98,11 @@
         alertsCountBadge: '#alerts-count-badge',
         criticalAlertBanner: '#critical-alert-banner',
         // Aliases / additional selectors used by functions
+        editSubprocessVariantsModal: '#edit-subprocess-modal-overlay',
+        saveSubprocessVariantsBtn: '#edit-subprocess-save',
+        variantSelectionContainer: '#edit-subprocess-body',
+        bulkAckBtn: '#bulk-acknowledge-btn',
         selectAllAlertsCheckbox: '#select-all-alerts, .select-all-alerts, [data-action="select-all-alerts"]',
-        bulkAckBtn: '#bulk-acknowledge-btn, .bulk-acknowledge-btn, [data-action="bulk-ack"]',
-
-        // Subprocess edit modal / variant container selectors used by modal/populate code
-        editSubprocessVariantsModal: '#edit-subprocess-variants-modal, #edit-subprocess-modal, .edit-subprocess-modal',
-        variantSelectionContainer: '#variant-selection-container, .variant-selection-container, #variant-selection, #edit-subprocess-body',
-        saveSubprocessVariantsBtn: '#save-subprocess-variants-btn, #save-subprocess-btn, [data-action="save-subprocess-variants"]',
 
         // Lot totals
         lotTotalCost: '#lot-total-cost',
@@ -515,21 +513,38 @@
          * @param {string} selectorString
          */
         open(selectorString) {
-            logger.debug('🔓 Opening modal:', selectorString);
-            const modal = findElement(selectorString);
-            if (!modal) {
-                logger.warn('⚠️ Modal not found:', selectorString);
+            logger.info('🔓 Opening modal:', selectorString);
+            const modalOverlay = findElement(selectorString);
+            if (!modalOverlay) {
+                logger.error('❌ Modal overlay element not found:', selectorString);
                 return;
             }
 
-            // Add display and overlay classes
-            modal.style.display = 'flex';
-            modal.classList.add('modal--show');
-            modal.setAttribute('aria-hidden', 'false');
+            logger.debug('📦 Modal overlay found:', modalOverlay);
+            logger.debug('📏 Modal overlay current display:', modalOverlay.style.display);
+
+            // Set overlay to flex
+            modalOverlay.style.display = 'flex';
+            modalOverlay.classList.add('modal--show');
+            modalOverlay.setAttribute('aria-hidden', 'false');
+            
+            // CRITICAL: Also set the inner .modal div to display:flex
+            // because base CSS has .modal { display: none }
+            const innerModal = modalOverlay.querySelector('.modal');
+            if (innerModal) {
+                logger.debug('📦 Inner modal found, setting display:flex');
+                innerModal.style.display = 'flex';
+                innerModal.style.flexDirection = 'column';
+            } else {
+                logger.warn('⚠️ No inner .modal element found inside overlay');
+            }
+            
             this.activeModal = selectorString;
+            
+            logger.debug('✅ Modal opened - overlay display now:', modalOverlay.style.display);
 
             // Focus first focusable element
-            const focusable = modal.querySelector('input, button, select, textarea');
+            const focusable = modalOverlay.querySelector('input, button, select, textarea');
             if (focusable) {
                 setTimeout(() => focusable.focus(), 100);
             }
@@ -541,13 +556,20 @@
          */
         close(selectorString) {
             logger.debug('🔒 Closing modal:', selectorString);
-            const modal = findElement(selectorString);
-            if (!modal) return;
+            const modalOverlay = findElement(selectorString);
+            if (!modalOverlay) return;
 
             // Remove display and overlay classes
-            modal.style.display = 'none';
-            modal.classList.remove('modal--show');
-            modal.setAttribute('aria-hidden', 'true');
+            modalOverlay.style.display = 'none';
+            modalOverlay.classList.remove('modal--show');
+            modalOverlay.setAttribute('aria-hidden', 'true');
+            
+            // Also hide inner modal
+            const innerModal = modalOverlay.querySelector('.modal');
+            if (innerModal) {
+                innerModal.style.display = 'none';
+            }
+            
             if (this.activeModal === selectorString) {
                 this.activeModal = null;
             }
@@ -765,14 +787,24 @@
 
                 // Extract data from response envelopes
                 const lot = lotData.data || lotData;
+                
+                // Initialize subprocesses array if not present
+                if (!lot.subprocesses) {
+                    lot.subprocesses = [];
+                }
 
                 // Load lot-linked subprocesses (new endpoint)
                 try {
                     const subsResp = await this.api.get(API_PATHS.subprocesses(lotId));
+                    logger.debug('📦 Raw subprocesses response:', subsResp);
                     const subsBody = (subsResp && (subsResp.data || subsResp)) || subsResp || {};
-                    const subsList = subsBody.subprocesses || subsBody || [];
+                    const subsList = subsBody.subprocesses || (Array.isArray(subsBody) ? subsBody : []);
+                    logger.debug('📋 Parsed subprocesses list:', subsList);
                     if (Array.isArray(subsList) && subsList.length) {
                         lot.subprocesses = subsList;
+                        logger.info(`✅ Loaded ${subsList.length} subprocesses from API`);
+                    } else {
+                        logger.debug('ℹ️ No subprocesses returned from API');
                     }
                 } catch (subsErr) {
                     logger.warn('⚠️ Failed to load lot subprocesses:', subsErr.message || subsErr);
@@ -780,19 +812,95 @@
                 // Attempt to load lot-scoped subprocesses (variant-options) so we can render subprocess cards
                 try {
                     const vo = await this.api.get(API_PATHS.lotVariantOptions(lotId));
+                    logger.debug('📦 Raw variant-options response:', vo);
                     const voBody = (vo && (vo.data || vo)) || vo || {};
-                    const subs = voBody.subprocesses || voBody.subprocesses || [];
-                    if (Array.isArray(subs) && subs.length) {
-                        // Prefer variant-options data (includes grouped variants) if available
-                        lot.subprocesses = subs;
+                    const voSubs = Array.isArray(voBody?.subprocesses) ? voBody.subprocesses : [];
+                    logger.debug('📋 Parsed variant-options subprocesses:', voSubs);
+
+                    // If the lot payload is missing quantity, backfill from variant-options response or default to 1
+                    if (lot.quantity == null || lot.quantity === '') {
+                        lot.quantity = voBody.quantity ?? 1;
+                    }
+
+                    // Prime the variant options cache so Edit Variants does not refetch
+                    const { variantOptionsCache } = this.state.getState();
+                    const cacheUpdates = {};
+
+                    // Helper: flatten grouped/standalone variants into a single list with quantity/sku/name
+                    const flattenVariants = (vsp) => {
+                        const items = [];
+                        const grouped = vsp.grouped_variants || {};
+                        Object.keys(grouped).forEach(gid => {
+                            const arr = grouped[gid] || [];
+                            arr.forEach(v => items.push({ ...v }));
+                        });
+                        (vsp.standalone_variants || []).forEach(v => items.push({ ...v }));
+                        return items.map(v => ({
+                            variant_id: v.variant_id,
+                            variant_name: v.variant_name || v.item_number || v.description || v.full_name || `Variant #${v.variant_id || ''}`,
+                            variant_sku: v.variant_sku || v.sku || '',
+                            quantity: v.quantity ?? v.variant_quantity ?? v.qty ?? null
+                        }));
+                    };
+
+                    if (voSubs.length) {
+                        // Merge variant-option details into existing subprocesses when possible
+                        const subsById = (lot.subprocesses || []).reduce((acc, sp) => {
+                            const key = sp.process_subprocess_id || sp.id || sp.subprocess_id;
+                            if (key != null) acc[key] = sp;
+                            return acc;
+                        }, {});
+
+                        voSubs.forEach(vsp => {
+                            const key = vsp.process_subprocess_id || vsp.subprocess_id;
+                            if (key == null) return;
+
+                            // Cache variant options for this subprocess
+                            cacheUpdates[key] = vsp;
+
+                            // If we already have a subprocess entry, enrich it; otherwise add it
+                            const existing = subsById[key];
+                            if (existing) {
+                                if (!existing.variants || !existing.variants.length) {
+                                    const flattened = flattenVariants(vsp);
+                                    if (flattened.length) {
+                                        existing.variants = flattened;
+                                    }
+                                }
+                                // Preserve status/notes from existing; attach option metadata for later use
+                                existing.variant_options = vsp;
+                            } else {
+                                const flattened = flattenVariants(vsp);
+                                lot.subprocesses = Array.isArray(lot.subprocesses) ? lot.subprocesses : [];
+                                lot.subprocesses.push({
+                                    ...vsp,
+                                    variants: flattenVariants(vsp)
+                                });
+                            }
+                        });
+
+                        logger.info(`✅ After variant merge: ${lot.subprocesses.length} subprocesses`);
+                        
+                        // Apply cache updates in state
+                        this.state.setState({
+                            variantOptionsCache: {
+                                ...variantOptionsCache,
+                                ...cacheUpdates
+                            }
+                        });
                     }
                 } catch (voErr) {
                     logger.warn('⚠️ Failed to load lot-scoped variant options:', voErr.message || voErr);
                 }
                 // Map 'selections' to 'subprocesses' for compatibility
-                 if (lot.selections && !lot.subprocesses) {
+                if (lot.selections && (!lot.subprocesses || lot.subprocesses.length === 0)) {
                     lot.subprocesses = lot.selections;
-               }
+                    logger.debug('ℹ️ Mapped selections to subprocesses for compatibility');
+                }
+                
+                // Log final subprocess count before rendering
+                logger.info(`📊 Final subprocess count: ${lot.subprocesses?.length || 0}`);
+                
                 const alerts = alertsData.data || alertsData.alert_details || alertsData || [];
 
                 logger.debug('✅ Processed lot:', lot);
@@ -810,6 +918,10 @@
                 this._renderLotDetails();
                 this._renderSubprocesses();
                 this._renderAlerts();
+                
+                // Re-setup delegated handlers after content is rendered
+                // This ensures buttons in dynamically rendered content have handlers
+                this._setupDelegatedHandlersForDynamicContent();
 
                 logger.info('✅ All data loaded and rendered successfully');
 
@@ -858,6 +970,10 @@
             this._addEventHandler(SELECTORS.modalClose, 'click', () => this.modal.close(SELECTORS.modalOverlay), signal);
             this._addEventHandler(SELECTORS.modalCancel, 'click', () => this.modal.close(SELECTORS.modalOverlay), signal);
 
+            // Variant modal close/cancel handlers
+            this._addEventHandler(SELECTORS.variantModalClose, 'click', () => this.modal.close(SELECTORS.variantModalOverlay), signal);
+            this._addEventHandler(SELECTORS.variantModalCancel, 'click', () => this.modal.close(SELECTORS.variantModalOverlay), signal);
+
             // Subprocess actions (delegated)
             // Ensure delegated handler forwards both event and resolved target
             this._addDelegatedHandler(SELECTORS.subprocessesContent, 'click', '[data-action="edit-variants"]', 
@@ -890,7 +1006,7 @@
         /**
          * Add event handler with cleanup tracking
          */
-        _addEventHandler(selectorString, event, handler, signal) {
+        _addEventHandler(selectorString, event, handler, signal, retries = 2) {
             if (!selectorString) {
                 logger.warn('⚠️ _addEventHandler: selectorString is null/undefined');
                 return;
@@ -899,6 +1015,10 @@
             const element = findElement(selectorString);
             if (!element) {
                 logger.debug(`ℹ️ Element not yet available: ${selectorString.split(',')[0]}`);
+                if (retries > 0) {
+                    // Retry shortly in case the DOM node is injected later
+                    setTimeout(() => this._addEventHandler(selectorString, event, handler, signal, retries - 1), 200);
+                }
                 return;
             }
 
@@ -912,22 +1032,29 @@
         /**
          * Add delegated event handler
          */
-        _addDelegatedHandler(parentSelectorString, event, childSelector, handler, signal) {
+        _addDelegatedHandler(parentSelectorString, event, childSelector, handler, signal, retries = 3) {
             const parent = findElement(parentSelectorString);
             if (!parent) {
                 logger.debug(`ℹ️ Parent element not yet available: ${parentSelectorString.split(',')[0]}`);
+                if (retries > 0) {
+                    // Retry shortly in case the DOM node is injected later
+                    setTimeout(() => this._addDelegatedHandler(parentSelectorString, event, childSelector, handler, signal, retries - 1), 200);
+                } else {
+                    logger.warn(`⚠️ Parent element never found after retries: ${parentSelectorString.split(',')[0]}`);
+                }
                 return;
             }
 
             const delegatedHandler = (e) => {
                 const target = e.target.closest(childSelector);
                 if (target) {
-                    logger.debug(`🎯 Delegated event triggered: ${childSelector}`);
+                    logger.debug(`🎯 Delegated event triggered: ${childSelector}`, target);
                     handler.call(this, e, target);
                 }
             };
 
             parent.addEventListener(event, delegatedHandler, { signal });
+            logger.debug(`✅ Delegated handler setup: ${parentSelectorString.split(',')[0]} > ${childSelector}`);
             
             const key = `${parentSelectorString.split(',')[0]}-${event}-${childSelector}`;
             this.eventHandlers.set(key, { element: parent, event, handler: delegatedHandler });
@@ -943,6 +1070,40 @@
                 this.abortController.abort();
             }
             this.eventHandlers.clear();
+        }
+
+        /**
+         * Setup delegated handlers for dynamically rendered content
+         * Called after rendering to ensure buttons have handlers
+         */
+        _setupDelegatedHandlersForDynamicContent() {
+            logger.debug('🔄 Setting up delegated handlers for dynamic content...');
+            
+            // Use the existing AbortController signal if available
+            const signal = this.abortController?.signal;
+            
+            // Re-setup subprocess edit-variants handler
+            const subprocessContainer = findElement(SELECTORS.subprocessesContent);
+            if (subprocessContainer) {
+                // Check if handler already exists to avoid duplicates
+                const key = `${SELECTORS.subprocessesContent.split(',')[0]}-click-[data-action="edit-variants"]`;
+                if (!this.eventHandlers.has(key)) {
+                    this._addDelegatedHandler(SELECTORS.subprocessesContent, 'click', '[data-action="edit-variants"]', 
+                        (e, target) => this._handleEditSubprocessVariants(e, target), signal);
+                }
+            }
+            
+            // Re-setup alert acknowledge handler
+            const alertsContainer = findElement(SELECTORS.alertsTableBody);
+            if (alertsContainer) {
+                const key = `${SELECTORS.alertsTableBody.split(',')[0]}-click-[data-action="ack-alert"]`;
+                if (!this.eventHandlers.has(key)) {
+                    this._addDelegatedHandler(SELECTORS.alertsTableBody, 'click', '[data-action="ack-alert"]',
+                        (e, target) => this._handleAcknowledgeAlert(e, target), signal);
+                }
+            }
+            
+            logger.debug('✅ Delegated handlers for dynamic content setup complete');
         }
 
         // =========================
@@ -1079,20 +1240,39 @@
          * Handle edit lot button
          */
         _handleEditLot() {
-            logger.debug('📝 Handle edit lot');
-            const { lot } = this.state.getState();
-            if (!lot) return;
+            try {
+                logger.info('📝 Handle edit lot clicked');
+                const { lot } = this.state.getState();
+                logger.debug('📦 Current lot state:', lot);
+                
+                if (!lot) {
+                    logger.warn('⚠️ No lot data available - cannot open edit modal');
+                    this.toast.error('Lot data not loaded yet. Please wait and try again.');
+                    return;
+                }
 
-            // Populate form
-            const quantityInput = findElement(SELECTORS.modalQuantity);
-            const statusInput = findElement(SELECTORS.modalStatus);
-            const notesInput = findElement(SELECTORS.modalNotes);
+                // Populate form
+                const quantityInput = findElement(SELECTORS.modalQuantity);
+                const statusInput = findElement(SELECTORS.modalStatus);
+                const notesInput = findElement(SELECTORS.modalNotes);
 
-            if (quantityInput) quantityInput.value = lot.quantity || '1';
-            if (statusInput) statusInput.value = lot.status || 'Planning';
-            if (notesInput) notesInput.value = lot.notes || '';
+                logger.debug('📋 Form elements found:', {
+                    quantityInput: !!quantityInput,
+                    statusInput: !!statusInput,
+                    notesInput: !!notesInput
+                });
 
-            this.modal.open(SELECTORS.modalOverlay);
+                if (quantityInput) quantityInput.value = lot.quantity || '1';
+                if (statusInput) statusInput.value = lot.status || 'Planning';
+                if (notesInput) notesInput.value = lot.notes || '';
+
+                logger.debug('🔓 Opening modal:', SELECTORS.modalOverlay);
+                this.modal.open(SELECTORS.modalOverlay);
+                logger.info('✅ Edit modal opened successfully');
+            } catch (error) {
+                logger.error('❌ Error opening edit modal:', error);
+                this.toast.error('Failed to open edit modal');
+            }
         }
 
         /**
@@ -1351,12 +1531,12 @@
             
             const container = findElement(SELECTORS.subprocessesContent);
             if (!container) {
-                logger.debug('ℹ️ Subprocess container not found');
+                logger.warn('⚠️ Subprocess container not found - selector:', SELECTORS.subprocessesContent);
                 return;
             }
 
             if (!lot || !lot.subprocesses) {
-                logger.debug('ℹ️ No subprocess data to render');
+                logger.debug('ℹ️ No subprocess data to render - lot:', lot);
                 container.innerHTML = '<p class="empty-state">No subprocess data available</p>';
                 container.classList.remove('loading-state');
                 return;
@@ -1369,10 +1549,11 @@
                 return;
             }
 
+            logger.debug(`📋 Rendering ${lot.subprocesses.length} subprocesses:`, lot.subprocesses);
             const html = lot.subprocesses.map(sp => this._renderSubprocessCard(sp)).join('');
             container.innerHTML = html;
             container.classList.remove('loading-state');
-            logger.debug(`✅ Rendered ${lot.subprocesses.length} subprocesses`);
+            logger.debug(`✅ Rendered ${lot.subprocesses.length} subprocesses - HTML length: ${html.length} chars`);
         }
 
         /**
@@ -1427,9 +1608,12 @@
          * Handle edit subprocess variants
          */
         async _handleEditSubprocessVariants(e, target) {
+            logger.debug('🔍 _handleEditSubprocessVariants called', { hasEvent: !!e, hasTarget: !!target });
+            
             // Defensive: resolve target if not provided (caller may pass only event)
             if (!target && e && e.target) {
                 target = e.target.closest('[data-action="edit-variants"]');
+                logger.debug('🔍 Resolved target from event:', target);
             }
 
             if (!target) {
@@ -1440,7 +1624,7 @@
             const subprocessId = target.dataset.subprocessId;
             const subprocessName = target.dataset.subprocessName;
 
-            logger.debug('✏️ Handle edit variants for subprocess:', subprocessId, subprocessName);
+            logger.debug('✏️ Handle edit variants for subprocess:', { subprocessId, subprocessName, dataset: target.dataset });
 
             if (!subprocessId) {
                 logger.warn('⚠️ No subprocess ID found');
@@ -1458,11 +1642,16 @@
                 // Populate modal
                 await this._populateVariantModal(subprocessId, subprocessName);
 
+                // Open modal
+                logger.debug('🔓 Opening edit subprocess modal');
                 this.modal.open(SELECTORS.editSubprocessVariantsModal);
+                
+                logger.debug('✅ Edit variants modal opened successfully');
 
             } catch (error) {
                 logger.error('❌ Error loading variant options:', error);
-                this.toast.error('Failed to load variant options');
+                logger.error('Error stack:', error.stack);
+                this.toast.error(`Failed to load variant options: ${error.message}`);
             }
         }
 
@@ -1497,8 +1686,33 @@
                     timeoutPromise
                 ]);
                 
-                const options = response.data || response;
-                logger.debug('✅ Loaded variant options:', options);
+                let rawData = response.data || response;
+                logger.debug('✅ Raw variant options response:', rawData);
+
+                // Backend returns { subprocesses: [...] } - extract the first subprocess data
+                // to normalize: { or_groups, grouped_variants, standalone_variants }
+                let options = {};
+                if (rawData.subprocesses && Array.isArray(rawData.subprocesses) && rawData.subprocesses.length > 0) {
+                    const sp = rawData.subprocesses[0];
+                    options = {
+                        or_groups: sp.or_groups || [],
+                        grouped_variants: sp.grouped_variants || {},
+                        standalone_variants: sp.standalone_variants || [],
+                        cost_items: sp.cost_items || [],
+                        subprocess_name: sp.subprocess_name || ''
+                    };
+                } else {
+                    // Fallback if data is already in expected format
+                    options = {
+                        or_groups: rawData.or_groups || [],
+                        grouped_variants: rawData.grouped_variants || {},
+                        standalone_variants: rawData.standalone_variants || [],
+                        cost_items: rawData.cost_items || [],
+                        subprocess_name: rawData.subprocess_name || ''
+                    };
+                }
+                
+                logger.debug('✅ Normalized variant options:', options);
 
                 // Cache the result
                 this.state.setState({
@@ -1533,59 +1747,119 @@
         }
 
         /**
-         * Populate variant selection modal
+         * Normalize variant data to include all detail fields
+         */
+        _normalizeVariantData(v) {
+            // Build a detailed display name from item + model + variation + color + size
+            const itemName = v.item_number || v.item_name || '';
+            const modelName = v.model_name || '';
+            const variationName = v.variation_name || '';
+            const colorName = v.color_name || '';
+            const sizeName = v.size_name || '';
+            
+            // Create display name with all parts
+            const nameParts = [itemName, modelName, variationName, colorName, sizeName].filter(Boolean);
+            const displayName = nameParts.join(' - ') || v.variant_name || v.name || `Variant #${v.variant_id || ''}`;
+            
+            return {
+                usage_id: v.usage_id,
+                variant_id: v.variant_id,
+                variant_name: displayName,
+                // Keep individual fields for detailed display
+                item_name: itemName,
+                model_name: modelName,
+                variation_name: variationName,
+                color_name: colorName,
+                size_name: sizeName,
+                description: v.description || '',
+                variant_sku: v.variant_sku || v.sku || '',
+                quantity: v.quantity || 1,
+                unit: v.unit || 'pcs',
+                unit_price: v.unit_price || 0,
+                opening_stock: v.opening_stock || 0
+            };
+        }
+
+        /**
+         * Build HTML for variant details display
+         */
+        _buildVariantDetailsHtml(v) {
+            const details = [];
+            if (v.item_name) details.push(`<span class="detail-item"><strong>Item:</strong> ${escapeHtml(v.item_name)}</span>`);
+            if (v.model_name) details.push(`<span class="detail-model"><strong>Model:</strong> ${escapeHtml(v.model_name)}</span>`);
+            if (v.variation_name) details.push(`<span class="detail-variation"><strong>Variation:</strong> ${escapeHtml(v.variation_name)}</span>`);
+            if (v.color_name) details.push(`<span class="detail-color"><strong>Color:</strong> ${escapeHtml(v.color_name)}</span>`);
+            if (v.size_name) details.push(`<span class="detail-size"><strong>Size:</strong> ${escapeHtml(v.size_name)}</span>`);
+            
+            if (details.length === 0) {
+                return `<span class="variant-name">${escapeHtml(v.variant_name || `Variant #${v.variant_id}`)}</span>`;
+            }
+            
+            return `
+                <div class="variant-details">
+                    ${details.join('')}
+                </div>
+            `;
+        }
+
+        /**
+         * Populate variant selection modal with full edit capabilities
          */
         async _populateVariantModal(subprocessId, subprocessName) {
-            logger.debug('🎨 Populating variant modal...');
+            logger.debug('🎨 Populating variant modal for subprocess:', subprocessId, subprocessName);
             const { lot, variantOptionsCache } = this.state.getState();
             
-            // Update modal title
+            // Update modal title (use h3 as per template)
             const modal = findElement(SELECTORS.editSubprocessVariantsModal);
-            const modalTitle = modal?.querySelector('h2');
+            const modalTitle = modal?.querySelector('h3');
             if (modalTitle) {
                 modalTitle.textContent = `Edit Variants - ${subprocessName}`;
             }
 
-            // Get current subprocess data
-            const subprocess = lot.subprocesses.find(sp => sp.subprocess_id === parseInt(subprocessId));
+            // Get current subprocess data - try process_subprocess_id first, then id, then subprocess_id
+            const parsedId = parseInt(subprocessId);
+            const subprocess = lot.subprocesses.find(sp => 
+                sp.process_subprocess_id === parsedId || 
+                sp.id === parsedId || 
+                sp.subprocess_id === parsedId
+            );
+            
+            logger.debug('📊 Found subprocess:', subprocess);
+            
+            // Get current variant selections with their details
             const currentVariants = subprocess?.variants || [];
-            const currentVariantIds = new Set(currentVariants.map(v => v.variant_id));
-
+            
             logger.debug('📊 Current variants:', currentVariants);
 
-            // Get variant options and normalize multiple backend shapes.
-            // Backend may return:
-            //  - { or_groups: [...], grouped_variants: { group_id: [...] }, standalone_variants: [...] }
-            //  - or legacy: { variant_groups: [ { group_id, group_name, variants: [...] } ], standalone_variants: [...] }
+            // Get variant options and normalize
             const options = variantOptionsCache[subprocessId] || {};
 
-            // Normalize grouped variants: prefer `variant_groups` if present, otherwise
-            // build `variant_groups` from `or_groups` + `grouped_variants` (backend shape).
+            // Normalize grouped variants
             let variantGroups = [];
             if (Array.isArray(options.variant_groups) && options.variant_groups.length > 0) {
                 variantGroups = options.variant_groups;
-            } else if (Array.isArray(options.or_groups) && Object(options.grouped_variants) !== options.grouped_variants) {
-                // If grouped_variants is not an object (defensive), fallback
-                variantGroups = options.or_groups.map(g => ({ ...g, variants: [] }));
             } else if (Array.isArray(options.or_groups) && options.grouped_variants) {
-                const grouped = options.grouped_variants || options.groupedVariants || {};
+                const grouped = options.grouped_variants || {};
                 variantGroups = options.or_groups.map(g => ({
-                    group_id: g.get ? g.get('group_id') : g.group_id || g.id,
+                    group_id: g.group_id || g.id,
                     group_name: g.group_name || g.name || '',
                     description: g.description || '',
-                    // Ensure variants array exists and map variant fields to expected shape
-                    variants: (grouped[g.group_id] || grouped[g.id] || []).map(v => ({
-                        variant_id: v.variant_id || v.variant_id || v.variant_id,
-                        variant_name: v.variant_name || v.name || v.variation_name || v.full_name || `Variant #${v.variant_id || ''}`,
-                        variant_sku: v.variant_sku || v.sku || ''
-                    }))
+                    variants: (grouped[g.group_id] || grouped[g.id] || []).map(v => this._normalizeVariantData(v))
                 }));
             }
 
-            const standaloneVariants = options.standalone_variants || options.standaloneVariants || [];
+            // Normalize standalone variants
+            const standaloneVariantsRaw = options.standalone_variants || [];
+            const standaloneVariants = standaloneVariantsRaw.map(v => this._normalizeVariantData(v));
+
+            // Build all available variants for the "Add New" dropdown
+            const allAvailableVariants = [];
+            variantGroups.forEach(g => g.variants.forEach(v => allAvailableVariants.push({...v, group_name: g.group_name})));
+            standaloneVariants.forEach(v => allAvailableVariants.push({...v, group_name: 'Standalone'}));
 
             logger.debug('📋 Variant groups:', variantGroups);
             logger.debug('📋 Standalone variants:', standaloneVariants);
+            logger.debug('📋 All available variants:', allAvailableVariants);
 
             const container = findElement(SELECTORS.variantSelectionContainer);
             if (!container) {
@@ -1593,21 +1867,143 @@
                 return;
             }
 
+            // Build map of variant_id -> variant data for lookups
+            const variantMap = new Map();
+            allAvailableVariants.forEach(v => {
+                if (v.usage_id) variantMap.set(v.usage_id, v);
+            });
+
+            // Build current selections with full details
+            const currentSelections = currentVariants.map(cv => {
+                const availableData = allAvailableVariants.find(av => av.variant_id === cv.variant_id) || {};
+                return {
+                    usage_id: availableData.usage_id || cv.usage_id,
+                    variant_id: cv.variant_id,
+                    variant_name: cv.variant_name || availableData.variant_name || `Variant #${cv.variant_id}`,
+                    // Detail fields
+                    item_name: cv.item_name || availableData.item_name || '',
+                    model_name: cv.model_name || availableData.model_name || '',
+                    variation_name: cv.variation_name || availableData.variation_name || '',
+                    color_name: cv.color_name || availableData.color_name || '',
+                    size_name: cv.size_name || availableData.size_name || '',
+                    description: cv.description || availableData.description || '',
+                    quantity: cv.quantity || availableData.quantity || 1,
+                    notes: cv.notes || '',
+                    unit: cv.unit || availableData.unit || 'pcs',
+                    unit_price: cv.unit_price || availableData.unit_price || 0,
+                    opening_stock: cv.opening_stock || availableData.opening_stock || 0
+                };
+            });
+
+            // Get set of already selected usage_ids
+            const selectedUsageIds = new Set(currentSelections.map(s => s.usage_id).filter(Boolean));
+
             let html = '';
 
-            // Render grouped variants
+            // Section 1: Current Selections (with edit/delete)
+            html += `
+                <div class="variant-section">
+                    <h4 class="section-title">Current Selections</h4>
+                    <div id="current-variant-selections">
+            `;
+
+            if (currentSelections.length > 0) {
+                currentSelections.forEach((sel, index) => {
+                    html += `
+                        <div class="variant-selection-row" data-usage-id="${sel.usage_id}" data-variant-id="${sel.variant_id}">
+                            <div class="variant-info">
+                                ${this._buildVariantDetailsHtml(sel)}
+                                ${sel.opening_stock !== undefined ? `<span class="stock-info">Stock: ${sel.opening_stock} ${escapeHtml(sel.unit)}</span>` : ''}
+                            </div>
+                            <div class="variant-inputs">
+                                <div class="input-group">
+                                    <label>Qty:</label>
+                                    <input type="number" 
+                                           class="form-control variant-quantity" 
+                                           value="${sel.quantity}" 
+                                           min="0.01" 
+                                           step="0.01"
+                                           data-usage-id="${sel.usage_id}">
+                                    <span class="unit-label">${escapeHtml(sel.unit)}</span>
+                                </div>
+                                <div class="input-group notes-group">
+                                    <label>Notes:</label>
+                                    <input type="text" 
+                                           class="form-control variant-notes" 
+                                           value="${escapeHtml(sel.notes || '')}" 
+                                           placeholder="Optional notes"
+                                           data-usage-id="${sel.usage_id}">
+                                </div>
+                            </div>
+                            <button type="button" class="btn-remove-variant" data-usage-id="${sel.usage_id}" title="Remove variant">
+                                <span>&times;</span>
+                            </button>
+                        </div>
+                    `;
+                });
+            } else {
+                html += `<p class="empty-state">No variants selected yet</p>`;
+            }
+
+            html += `
+                    </div>
+                </div>
+            `;
+
+            // Section 2: Add New Variant
+            // Filter out already selected variants
+            const availableToAdd = allAvailableVariants.filter(v => v.usage_id && !selectedUsageIds.has(v.usage_id));
+
+            html += `
+                <div class="variant-section add-variant-section">
+                    <h4 class="section-title">Add Variant</h4>
+                    <div class="add-variant-row">
+                        <select id="add-variant-select" class="form-control">
+                            <option value="">-- Select variant to add --</option>
+                            ${availableToAdd.map(v => `
+                                <option value="${v.usage_id}" data-variant-id="${v.variant_id}">
+                                    ${escapeHtml(v.variant_name)}${v.group_name ? ` (${escapeHtml(v.group_name)})` : ''}
+                                </option>
+                            `).join('')}
+                        </select>
+                        <div class="add-variant-inputs">
+                            <input type="number" 
+                                   id="add-variant-quantity" 
+                                   class="form-control" 
+                                   value="1" 
+                                   min="0.01" 
+                                   step="0.01" 
+                                   placeholder="Qty">
+                            <input type="text" 
+                                   id="add-variant-notes" 
+                                   class="form-control" 
+                                   placeholder="Notes (optional)">
+                        </div>
+                        <button type="button" id="btn-add-variant" class="button secondary">
+                            + Add
+                        </button>
+                    </div>
+                </div>
+            `;
+
+            // Section 3: OR Groups (select one from each group)
             if (variantGroups.length > 0) {
+                html += `
+                    <div class="variant-section or-groups-section">
+                        <h4 class="section-title">OR Groups (Select One Per Group)</h4>
+                `;
                 variantGroups.forEach(group => {
+                    const selectedInGroup = group.variants.find(v => selectedUsageIds.has(v.usage_id));
                     html += `
                         <div class="form-group">
                             <label class="form-label">${escapeHtml(group.group_name)}</label>
-                            <select class="form-control variant-select" 
-                                    data-group-id="${group.group_id}"
-                                    data-selection-type="single">
+                            <select class="form-control variant-select or-group-select" 
+                                    data-group-id="${group.group_id}">
                                 <option value="">-- Select ${escapeHtml(group.group_name)} --</option>
                                 ${group.variants.map(v => `
-                                    <option value="${v.variant_id}" 
-                                            ${currentVariantIds.has(v.variant_id) ? 'selected' : ''}>
+                                    <option value="${v.usage_id}" 
+                                            data-variant-id="${v.variant_id}"
+                                            ${selectedInGroup && selectedInGroup.usage_id === v.usage_id ? 'selected' : ''}>
                                         ${escapeHtml(v.variant_name)}${v.variant_sku ? ` (${escapeHtml(v.variant_sku)})` : ''}
                                     </option>
                                 `).join('')}
@@ -1615,33 +2011,235 @@
                         </div>
                     `;
                 });
+                html += `</div>`;
             }
 
-            // Render standalone variants
-            if (standaloneVariants.length > 0) {
-                html += '<div class="form-group"><label class="form-label">Additional Variants</label>';
-                standaloneVariants.forEach(v => {
-                    html += `
-                        <div class="checkbox-wrapper">
-                            <label>
-                                <input type="checkbox" 
-                                       class="variant-checkbox" 
-                                       data-variant-id="${v.variant_id}"
-                                       ${currentVariantIds.has(v.variant_id) ? 'checked' : ''}>
-                                ${escapeHtml(v.variant_name)}${v.variant_sku ? ` (${escapeHtml(v.variant_sku)})` : ''}
-                            </label>
-                        </div>
-                    `;
-                });
-                html += '</div>';
-            }
-
-            if (!html) {
-                html = '<p class="empty-state">No variant options available</p>';
+            if (!html || html.trim() === '') {
+                html = '<p class="empty-state">No variant options available for this subprocess</p>';
             }
 
             container.innerHTML = html;
-            logger.debug('✅ Variant modal populated');
+
+            // Attach event listeners for the add/remove functionality
+            this._attachVariantModalEventListeners(container, allAvailableVariants);
+            
+            logger.debug('✅ Variant modal populated with full edit capabilities');
+        }
+
+        /**
+         * Attach event listeners for variant modal interactions
+         */
+        _attachVariantModalEventListeners(container, allAvailableVariants) {
+            // Add variant button
+            const addBtn = container.querySelector('#btn-add-variant');
+            if (addBtn) {
+                addBtn.addEventListener('click', () => this._handleAddVariantToList(container, allAvailableVariants));
+            }
+
+            // Remove variant buttons
+            container.querySelectorAll('.btn-remove-variant').forEach(btn => {
+                btn.addEventListener('click', (e) => {
+                    const usageId = btn.dataset.usageId;
+                    this._handleRemoveVariantFromList(container, usageId, allAvailableVariants);
+                });
+            });
+
+            // OR group select changes - update current selections
+            container.querySelectorAll('.or-group-select').forEach(select => {
+                select.addEventListener('change', (e) => {
+                    this._handleOrGroupChange(container, select, allAvailableVariants);
+                });
+            });
+        }
+
+        /**
+         * Handle adding a variant to the current selections list
+         */
+        _handleAddVariantToList(container, allAvailableVariants) {
+            const select = container.querySelector('#add-variant-select');
+            const qtyInput = container.querySelector('#add-variant-quantity');
+            const notesInput = container.querySelector('#add-variant-notes');
+
+            if (!select || !select.value) {
+                this.toast.warning('Please select a variant to add');
+                return;
+            }
+
+            const usageId = parseInt(select.value);
+            const quantity = parseFloat(qtyInput?.value) || 1;
+            const notes = notesInput?.value || '';
+
+            // Find the variant data
+            const variantData = allAvailableVariants.find(v => v.usage_id === usageId);
+            if (!variantData) {
+                this.toast.error('Variant not found');
+                return;
+            }
+
+            // Add to the current selections list
+            const selectionsContainer = container.querySelector('#current-variant-selections');
+            const emptyState = selectionsContainer.querySelector('.empty-state');
+            if (emptyState) emptyState.remove();
+
+            const newRow = document.createElement('div');
+            newRow.className = 'variant-selection-row';
+            newRow.dataset.usageId = usageId;
+            newRow.dataset.variantId = variantData.variant_id;
+            newRow.innerHTML = `
+                <div class="variant-info">
+                    ${this._buildVariantDetailsHtml(variantData)}
+                    ${variantData.opening_stock !== undefined ? `<span class="stock-info">Stock: ${variantData.opening_stock} ${escapeHtml(variantData.unit || 'pcs')}</span>` : ''}
+                </div>
+                <div class="variant-inputs">
+                    <div class="input-group">
+                        <label>Qty:</label>
+                        <input type="number" 
+                               class="form-control variant-quantity" 
+                               value="${quantity}" 
+                               min="0.01" 
+                               step="0.01"
+                               data-usage-id="${usageId}">
+                        <span class="unit-label">${escapeHtml(variantData.unit || 'pcs')}</span>
+                    </div>
+                    <div class="input-group notes-group">
+                        <label>Notes:</label>
+                        <input type="text" 
+                               class="form-control variant-notes" 
+                               value="${escapeHtml(notes)}" 
+                               placeholder="Optional notes"
+                               data-usage-id="${usageId}">
+                    </div>
+                </div>
+                <button type="button" class="btn-remove-variant" data-usage-id="${usageId}" title="Remove variant">
+                    <span>&times;</span>
+                </button>
+            `;
+
+            selectionsContainer.appendChild(newRow);
+
+            // Add remove handler
+            newRow.querySelector('.btn-remove-variant').addEventListener('click', () => {
+                this._handleRemoveVariantFromList(container, usageId, allAvailableVariants);
+            });
+
+            // Remove from the add dropdown
+            const optionToRemove = select.querySelector(`option[value="${usageId}"]`);
+            if (optionToRemove) optionToRemove.remove();
+
+            // Reset inputs
+            select.value = '';
+            if (qtyInput) qtyInput.value = '1';
+            if (notesInput) notesInput.value = '';
+
+            this.toast.success('Variant added');
+        }
+
+        /**
+         * Handle removing a variant from the current selections list
+         */
+        _handleRemoveVariantFromList(container, usageId, allAvailableVariants) {
+            const row = container.querySelector(`.variant-selection-row[data-usage-id="${usageId}"]`);
+            if (row) {
+                row.remove();
+
+                // Check if list is now empty
+                const selectionsContainer = container.querySelector('#current-variant-selections');
+                if (selectionsContainer && !selectionsContainer.querySelector('.variant-selection-row')) {
+                    selectionsContainer.innerHTML = '<p class="empty-state">No variants selected yet</p>';
+                }
+
+                // Add back to the add dropdown
+                const variantData = allAvailableVariants.find(v => v.usage_id === parseInt(usageId));
+                if (variantData) {
+                    const addSelect = container.querySelector('#add-variant-select');
+                    if (addSelect) {
+                        const option = document.createElement('option');
+                        option.value = variantData.usage_id;
+                        option.dataset.variantId = variantData.variant_id;
+                        option.textContent = `${variantData.variant_name}${variantData.group_name ? ` (${variantData.group_name})` : ''}`;
+                        addSelect.appendChild(option);
+                    }
+                }
+            }
+        }
+
+        /**
+         * Handle OR group selection change
+         */
+        _handleOrGroupChange(container, select, allAvailableVariants) {
+            const groupId = select.dataset.groupId;
+            const newUsageId = select.value ? parseInt(select.value) : null;
+
+            // Find previously selected variant from this group
+            const selectionsContainer = container.querySelector('#current-variant-selections');
+            const groupVariants = allAvailableVariants.filter(v => {
+                // Check if this variant belongs to the same group by finding it in select options
+                const option = select.querySelector(`option[value="${v.usage_id}"]`);
+                return option !== null;
+            });
+
+            // Remove any existing selection from this group
+            groupVariants.forEach(gv => {
+                const existingRow = container.querySelector(`.variant-selection-row[data-usage-id="${gv.usage_id}"]`);
+                if (existingRow) existingRow.remove();
+            });
+
+            // Add the newly selected variant
+            if (newUsageId) {
+                const variantData = allAvailableVariants.find(v => v.usage_id === newUsageId);
+                if (variantData) {
+                    const emptyState = selectionsContainer?.querySelector('.empty-state');
+                    if (emptyState) emptyState.remove();
+
+                    const newRow = document.createElement('div');
+                    newRow.className = 'variant-selection-row';
+                    newRow.dataset.usageId = newUsageId;
+                    newRow.dataset.variantId = variantData.variant_id;
+                    newRow.innerHTML = `
+                        <div class="variant-info">
+                            ${this._buildVariantDetailsHtml(variantData)}
+                            <span class="variant-group-badge">${escapeHtml(variantData.group_name || '')}</span>
+                            ${variantData.opening_stock !== undefined ? `<span class="stock-info">Stock: ${variantData.opening_stock} ${escapeHtml(variantData.unit || 'pcs')}</span>` : ''}
+                        </div>
+                        <div class="variant-inputs">
+                            <div class="input-group">
+                                <label>Qty:</label>
+                                <input type="number" 
+                                       class="form-control variant-quantity" 
+                                       value="${variantData.quantity || 1}" 
+                                       min="0.01" 
+                                       step="0.01"
+                                       data-usage-id="${newUsageId}">
+                                <span class="unit-label">${escapeHtml(variantData.unit || 'pcs')}</span>
+                            </div>
+                            <div class="input-group notes-group">
+                                <label>Notes:</label>
+                                <input type="text" 
+                                       class="form-control variant-notes" 
+                                       value="" 
+                                       placeholder="Optional notes"
+                                       data-usage-id="${newUsageId}">
+                            </div>
+                        </div>
+                        <button type="button" class="btn-remove-variant" data-usage-id="${newUsageId}" title="Remove variant">
+                            <span>&times;</span>
+                        </button>
+                    `;
+
+                    selectionsContainer.appendChild(newRow);
+
+                    // Add remove handler (which also clears the OR group select)
+                    newRow.querySelector('.btn-remove-variant').addEventListener('click', () => {
+                        this._handleRemoveVariantFromList(container, newUsageId, allAvailableVariants);
+                        select.value = '';
+                    });
+                }
+            }
+
+            // Check if list is now empty
+            if (selectionsContainer && !selectionsContainer.querySelector('.variant-selection-row')) {
+                selectionsContainer.innerHTML = '<p class="empty-state">No variants selected yet</p>';
+            }
         }
 
         /**
@@ -1661,14 +2259,22 @@
             this.spinner.showInButton(saveBtn);
 
             try {
-                // Collect selected variant IDs
-                const variantIds = this._collectSelectedVariantIds();
-                logger.debug('📤 Saving variant IDs:', variantIds);
+                // Collect selected variants in format: [{ variant_usage_id, quantity, notes }]
+                const selectedVariants = this._collectSelectedVariants();
+                logger.debug('📤 Saving selected variants:', selectedVariants);
 
-                // Send to API
+                if (selectedVariants.length === 0) {
+                    this.toast.warning('Please select at least one variant before saving');
+                    this.spinner.hideInButton(saveBtn);
+                    return;
+                }
+
+                // Log what's being saved for debugging
+                logger.info(`💾 Saving ${selectedVariants.length} variant(s) for subprocess ${subprocessId}`);
+                // Send to API with correct payload format
                 await this.api.post(
                     API_PATHS.subprocessVariants(subprocessId, lotId),
-                    { variant_ids: variantIds }
+                    { selected_variants: selectedVariants }
                 );
 
                 this.toast.success('Variants updated successfully');
@@ -1691,29 +2297,66 @@
         }
 
         /**
-         * Collect selected variant IDs from modal
+         * Collect selected variant usage IDs from modal
+         * Returns array of objects in format: [{ variant_usage_id: number, quantity: number, notes: string }]
          */
-        _collectSelectedVariantIds() {
+        _collectSelectedVariants() {
             const container = findElement(SELECTORS.variantSelectionContainer);
             if (!container) return [];
 
-            const ids = new Set();
+            const selections = [];
+            const addedUsageIds = new Set();
 
-            // Collect from dropdowns
-            container.querySelectorAll('.variant-select').forEach(select => {
+            // Collect from the current selections list (primary source)
+            container.querySelectorAll('.variant-selection-row').forEach(row => {
+                const usageId = parseInt(row.dataset.usageId);
+                if (!usageId || addedUsageIds.has(usageId)) return;
+
+                const quantityInput = row.querySelector('.variant-quantity');
+                const notesInput = row.querySelector('.variant-notes');
+
+                const quantity = parseFloat(quantityInput?.value) || 1;
+                const notes = notesInput?.value || '';
+
+                selections.push({
+                    variant_usage_id: usageId,
+                    quantity: quantity,
+                    notes: notes
+                });
+                addedUsageIds.add(usageId);
+            });
+
+            // Also collect from OR group dropdowns that might not be in the selections list
+            container.querySelectorAll('.or-group-select').forEach(select => {
                 const value = select.value;
-                if (value) ids.add(parseInt(value));
+                if (value) {
+                    const usageId = parseInt(value);
+                    if (!addedUsageIds.has(usageId)) {
+                        selections.push({
+                            variant_usage_id: usageId,
+                            quantity: 1,
+                            notes: ''
+                        });
+                        addedUsageIds.add(usageId);
+                    }
+                }
             });
 
-            // Collect from checkboxes
+            // Collect from standalone checkboxes (legacy fallback)
             container.querySelectorAll('.variant-checkbox:checked').forEach(checkbox => {
-                const id = checkbox.dataset.variantId;
-                if (id) ids.add(parseInt(id));
+                const usageId = parseInt(checkbox.dataset.usageId);
+                if (usageId && !addedUsageIds.has(usageId)) {
+                    selections.push({
+                        variant_usage_id: usageId,
+                        quantity: 1,
+                        notes: ''
+                    });
+                    addedUsageIds.add(usageId);
+                }
             });
 
-            const result = Array.from(ids);
-            logger.debug('📋 Collected variant IDs:', result);
-            return result;
+            logger.debug('📋 Collected selected variants:', selections);
+            return selections;
         }
 
         /**

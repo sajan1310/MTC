@@ -37,28 +37,35 @@
         <div class="modal" role="dialog" aria-modal="true" aria-labelledby="modal-title">
             <div class="modal-header">
                 <h3 id="modal-title">Edit Production Lot</h3>
-                <button id="modal-close" class="btn">✖</button>
+                <button id="modal-close" class="close-modal-btn" type="button">&times;</button>
             </div>
             <form id="edit-lot-form">
-                <label>Quantity</label>
-                <input type="number" id="modal-quantity" min="1" required />
+                <div class="modal-body">
+                    <div class="form-group">
+                        <label for="modal-quantity">Quantity</label>
+                        <input type="number" id="modal-quantity" min="1" required />
+                    </div>
 
-                <label style="margin-top:8px">Status</label>
-                <select id="modal-status">
-                    <option value="Planning">Planning</option>
-                    <option value="Ready">Ready</option>
-                    <option value="In Progress">In Progress</option>
-                    <option value="completed">completed</option>
-                    <option value="finalized">finalized</option>
-                    <option value="cancelled">cancelled</option>
-                </select>
+                    <div class="form-group">
+                        <label for="modal-status">Status</label>
+                        <select id="modal-status">
+                            <option value="Planning">Planning</option>
+                            <option value="Ready">Ready</option>
+                            <option value="In Progress">In Progress</option>
+                            <option value="Completed">Completed</option>
+                            <option value="Failed">Failed</option>
+                            <option value="Cancelled">Cancelled</option>
+                        </select>
+                    </div>
 
-                <label style="margin-top:8px">Notes</label>
-                <textarea id="modal-notes" rows="4"></textarea>
-
-                <div class="modal-actions">
-                    <button type="button" class="btn" id="modal-cancel">Cancel</button>
-                    <button type="submit" class="btn btn-primary">Save</button>
+                    <div class="form-group">
+                        <label for="modal-notes">Notes</label>
+                        <textarea id="modal-notes" rows="4"></textarea>
+                    </div>
+                </div>
+                <div class="modal-footer">
+                    <button type="button" class="button cancel" id="modal-cancel">Cancel</button>
+                    <button type="submit" class="button primary">Save Changes</button>
                 </div>
             </form>
         </div>
@@ -69,28 +76,35 @@
         <div class="modal" role="dialog" aria-modal="true" aria-labelledby="variant-modal-title">
             <div class="modal-header">
                 <h3 id="variant-modal-title">Add / Update Variant Selection</h3>
-                <button id="variant-modal-close" class="btn">✖</button>
+                <button id="variant-modal-close" class="close-modal-btn" type="button">&times;</button>
             </div>
             <form id="add-variant-form">
-                <label>Substitute Group</label>
-                <select id="variant-group-select">
-                    <option value="">-- Select Group (or standalone) --</option>
-                </select>
+                <div class="modal-body">
+                    <div class="form-group">
+                        <label for="variant-group-select">Substitute Group</label>
+                        <select id="variant-group-select">
+                            <option value="">-- Select Group (or standalone) --</option>
+                        </select>
+                    </div>
 
-                <label style="margin-top:8px">Variant</label>
-                <input type="text" id="variant-search" placeholder="Search variants (name, SKU)..." style="margin-top:6px;padding:8px;border:1px solid #ddd;border-radius:4px;" />
-                <select id="variant-select" required style="margin-top:8px">
-                    <option value="">-- Select Variant --</option>
-                </select>
+                    <div class="form-group">
+                        <label for="variant-search">Variant</label>
+                        <input type="text" id="variant-search" placeholder="Search variants (name, SKU)..." />
+                        <select id="variant-select" required>
+                            <option value="">-- Select Variant --</option>
+                        </select>
+                    </div>
 
-                <label style="margin-top:8px">Quantity (per unit)</label>
-                <input type="number" id="variant-qty" min="0" step="0.01" value="1" required />
-
-                <div class="modal-actions">
-                    <button type="button" class="btn" id="variant-modal-cancel">Cancel</button>
-                    <button type="submit" class="btn btn-primary">Save Variant</button>
+                    <div class="form-group">
+                        <label for="variant-qty">Quantity (per unit)</label>
+                        <input type="number" id="variant-qty" min="0" step="0.01" value="1" required />
+                    </div>
                 </div>
-            </form>
+                <div class="modal-footer">
+                    <button type="button" class="button cancel" id="variant-modal-cancel">Cancel</button>
+                    <button type="submit" class="button primary">Save Variant</button>
+                </div>
+            </form>>
         </div>
     </div>
 
@@ -98,13 +112,15 @@
     <div id="edit-subprocess-modal-overlay" class="modal-overlay">
         <div class="modal" role="dialog" aria-modal="true" aria-labelledby="edit-subprocess-modal-title">
             <div class="modal-header">
-                <h3 id="edit-subprocess-modal-title">Edit Subprocess Selections</h3>
-                <button id="edit-subprocess-modal-close" class="btn">✖</button>
+                <h3 id="edit-subprocess-modal-title">Edit Subprocess Variants</h3>
+                <button id="edit-subprocess-modal-close" class="close-modal-btn" type="button">&times;</button>
             </div>
-            <div id="edit-subprocess-body" style="max-height:400px;overflow:auto"></div>
-            <div class="modal-actions">
-                <button type="button" class="btn" id="edit-subprocess-cancel">Cancel</button>
-                <button type="button" class="btn btn-primary" id="edit-subprocess-save">Save Selections</button>
+            <div class="modal-body" id="edit-subprocess-body" style="max-height:60vh;overflow-y:auto">
+                <!-- Dynamic content populated by JS -->
+            </div>
+            <div class="modal-footer">
+                <button type="button" class="button cancel" id="edit-subprocess-cancel">Cancel</button>
+                <button type="button" class="button primary" id="edit-subprocess-save">Save Changes</button>
             </div>
         </div>
     </div>
@@ -225,7 +241,7 @@
 <script src="{{ url_for('static', filename='js/production_lot_alerts.js') }}?v={{ config.VERSION }}"></script>
 <script>
     // Expose server-rendered values for the static page JS
-    window.LOT_ID = {{ lot_id | tojson }};
+    window.LOT_ID = {{ lot_id }};
     window.__UPF_DEBUG__ = {{ config.DEBUG | tojson }};
     // Compatibility shims: create legacy/non-overlay modal IDs if missing so older scripts won't break
     (function(){

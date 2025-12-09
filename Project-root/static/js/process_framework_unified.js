@@ -623,6 +623,14 @@ const processFramework = {
             try {
                 // Use centralized API client with caching
                 this.all = await window.upfApi.getProductionLots({ perPage: 1000 });
+                console.log('[PRODUCTION LOTS] Loaded lots:', {
+                    count: this.all.length,
+                    sample: this.all.length > 0 ? {
+                        id: this.all[0].id,
+                        quantity: this.all[0].quantity,
+                        lot_number: this.all[0].lot_number
+                    } : null
+                });
                 this.filtered = [...this.all];
                 this.render();
             } catch (error) {

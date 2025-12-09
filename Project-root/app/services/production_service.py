@@ -537,6 +537,15 @@ class ProductionService:
             lot_dict = dict(lot)
             lot_dict["quantity"] = ProductionService._normalize_lot_quantity(lot_dict)
             normalized_lots.append(lot_dict)
+        
+        from flask import current_app
+        if normalized_lots:
+            current_app.logger.debug(
+                f"[PRODUCTION LOTS] Fetched {len(normalized_lots)} lots. "
+                f"Sample lot: id={normalized_lots[0].get('id')}, "
+                f"quantity={normalized_lots[0].get('quantity')}, "
+                f"lot_number={normalized_lots[0].get('lot_number')}"
+            )
 
         # [BUG FIX] Return both "production_lots" (for frontend) and "lots" (for legacy)
         # Frontend JavaScript expects response.data.production_lots
@@ -1228,9 +1237,20 @@ class ProductionService:
             if not lot:
                 raise ValueError("Lot not found")
 
-            # Prevent modifying completed or finalized lots
-            if lot["status"] in ("completed", "finalized"):
+            current_status = lot["status"]
+            
+            # Prevent modifying completed or finalized lots (case-insensitive check)
+            if current_status and current_status.lower() in ("completed", "finalized"):
                 raise ValueError("Cannot modify a completed or finalized lot")
+
+            # Validate status transition if status is being updated
+            if "status" in to_set:
+                new_status = to_set["status"]
+                is_valid, error_msg = validate_status_transition(current_status, new_status)
+                if not is_valid:
+                    # Log warning but allow update for flexibility (some workflows may need direct status changes)
+                    logger = get_logger()
+                    logger.warning(f"Status transition warning for lot {lot_id}: {error_msg}")
 
             # Build SET clause
             set_parts = []
