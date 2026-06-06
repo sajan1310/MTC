@@ -370,15 +370,15 @@ class ProductionService:
                         """
                         SELECT
                             pls.*,
-                            sg.group_name,
+                            og.name as group_name,
                             im.name as variant_name,
                             s.firm_name as supplier_name
                         FROM production_lot_variant_selections pls
-                        JOIN substitute_groups sg ON sg.id = pls.substitute_group_id
+                        JOIN or_groups og ON og.id = pls.or_group_id
                         JOIN item_variant iv ON iv.variant_id = pls.selected_variant_id
                         JOIN item_master im ON im.item_id = iv.item_id
                         LEFT JOIN suppliers s ON s.supplier_id = pls.selected_supplier_id
-                        WHERE pls.lot_id = %s
+                        WHERE pls.production_lot_id = %s
                         """,
                         (lot_id,),
                     )
@@ -795,14 +795,14 @@ class ProductionService:
             if not lot:
                 return False, ["Lot not found"]
 
-            # Get all substitute groups for this process
+            # Get all OR groups for this process
             cur.execute(
                 """
                 SELECT
-                    sg.id,
-                    sg.group_name
-                FROM substitute_groups sg
-                JOIN process_subprocesses ps ON ps.id = sg.process_subprocess_id
+                    og.id,
+                    og.name AS group_name
+                FROM or_groups og
+                JOIN process_subprocesses ps ON ps.id = og.process_subprocess_id
                 WHERE ps.process_id = %s
             """,
                 (lot["process_id"],),
@@ -816,14 +816,14 @@ class ProductionService:
             # Get selections made for this lot
             cur.execute(
                 """
-                SELECT substitute_group_id
+                SELECT or_group_id
                 FROM production_lot_variant_selections
-                WHERE lot_id = %s
+                WHERE production_lot_id = %s
             """,
                 (lot_id,),
             )
 
-            selected_group_ids = {row["substitute_group_id"] for row in cur.fetchall()}
+            selected_group_ids = {row["or_group_id"] for row in cur.fetchall()}
 
             # Find missing selections
             missing = []
@@ -979,7 +979,7 @@ class ProductionService:
             if not lot:
                 raise ValueError("Lot not found")
 
-            if lot["status"] not in ("draft", "ready"):
+            if (lot.get("status") or "").lower() not in ("draft", "ready", "planning"):
                 raise ValueError(f"Lot cannot be executed from status: {lot['status']}")
 
             # Calculate actual cost

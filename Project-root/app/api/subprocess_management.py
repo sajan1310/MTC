@@ -263,7 +263,7 @@ def duplicate_subprocess(subprocess_id):
         if not new_name:
             return APIResponse.error("validation_error", "new_name is required", 400)
 
-        duplicated = SubprocessService.duplicate_subprocess(subprocess_id, new_name)
+        duplicated = SubprocessService.duplicate_subprocess(subprocess_id, new_name, current_user.id)
 
         if not duplicated:
             return APIResponse.not_found("Subprocess", subprocess_id)
@@ -298,35 +298,31 @@ def search_subprocesses():
         from database import get_conn
         from psycopg2.extras import RealDictCursor
 
-        conn = get_conn()
-        cur = conn.cursor(cursor_factory=RealDictCursor)
-
         type_filter = ""
         params = [f"%{query}%", f"%{query}%"]
 
         if subprocess_type:
-            type_filter = "AND type = %s"
+            type_filter = "AND category = %s"
             params.append(subprocess_type)
 
         params.append(limit)
 
-        cur.execute(
-            f"""
-            SELECT
-                id, name, description, type, duration_minutes,
-                created_at, updated_at
-            FROM subprocesses
-            WHERE deleted_at IS NULL
-                AND (name ILIKE %s OR description ILIKE %s)
-                {type_filter}
-            ORDER BY name
-            LIMIT %s
-        """,
-            params,
-        )
-
-        results = cur.fetchall()
-        cur.close()
+        with get_conn(cursor_factory=RealDictCursor) as (conn, cur):
+            cur.execute(
+                f"""
+                SELECT
+                    id, name, description, category, estimated_time_minutes,
+                    created_at, updated_at
+                FROM subprocesses
+                WHERE is_deleted = FALSE
+                    AND (name ILIKE %s OR description ILIKE %s)
+                    {type_filter}
+                ORDER BY name
+                LIMIT %s
+            """,
+                params,
+            )
+            results = cur.fetchall()
 
         return APIResponse.success([dict(row) for row in results])
 

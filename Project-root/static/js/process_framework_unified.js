@@ -302,7 +302,8 @@ const processFramework = {
             try {
                 const response = await fetch(`/api/upf/processes/${id}`, {
                     method: 'DELETE',
-                    credentials: 'include'
+                    credentials: 'include',
+                    headers: { 'X-CSRFToken': processFramework.getCSRFToken() }
                 });
 
                 if (response.status === 401) {
@@ -587,7 +588,8 @@ const processFramework = {
             try {
                 const response = await fetch(`/api/upf/subprocesses/${id}`, {
                     method: 'DELETE',
-                    credentials: 'include'
+                    credentials: 'include',
+                    headers: { 'X-CSRFToken': processFramework.getCSRFToken() }
                 });
 
                 if (response.status === 401) {
@@ -1671,7 +1673,8 @@ const processFramework = {
                 method: 'POST',
                 credentials: 'include',
                 headers: {
-                    'Content-Type': 'application/json'
+                    'Content-Type': 'application/json',
+                    'X-CSRFToken': this.getCSRFToken()
                 },
                 body: JSON.stringify({
                     subprocess_id: subprocessId,
@@ -1782,9 +1785,10 @@ const processFramework = {
             
             const response = await fetch(`/api/upf/variant_usage/${variantUsageId}`, {
                 method: 'DELETE',
-                credentials: 'include'
+                credentials: 'include',
+                headers: { 'X-CSRFToken': this.getCSRFToken() }
             });
-            
+
             if (!response.ok) {
                 const errorData = await response.json().catch(() => ({}));
                 throw new Error(errorData.error || errorData.message || 'Failed to remove variant');

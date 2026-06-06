@@ -7,8 +7,8 @@
     <!-- CSRF token for secure POSTs -->
     <meta name="csrf-token" content="{{ csrf_token() }}">
     <!-- Use the main stylesheet for consistent look -->
-    <link rel="stylesheet" href="{{ url_for('static', filename='styles.css') }}">
-    <link rel="stylesheet" href="{{ url_for('static', filename='css/login.css') }}">
+    <link rel="stylesheet" href="{{ url_for('static', filename='styles.css') }}?v={{ config.VERSION }}">
+    <link rel="stylesheet" href="{{ url_for('static', filename='css/login.css') }}?v={{ config.VERSION }}">
     <style>
         .login-page {
             min-height: 100vh;
@@ -21,9 +21,10 @@
         .login-container {
             width: 100%;
             max-width: 440px;
-            background: #fff;
-            border-radius: var(--border-radius-lg);
-            box-shadow: var(--shadow-xl);
+            background: var(--card-bg);
+            border: 1px solid var(--border-color);
+            border-radius: var(--border-radius-xl);
+            box-shadow: var(--shadow-2xl);
             padding: 2.5rem;
         }
         .login-header {
@@ -104,6 +105,7 @@
     </style>
 </head>
 <body class="login-page">
+    <script>(function(){if(localStorage.getItem('theme')==='dark')document.body.classList.add('dark-mode');})()</script>
     <div class="login-container card">
         <div class="login-header">
             <img src="{{ url_for('static', filename='img/Final_Logo.png') }}" alt="MTC App Logo" class="logo-img" width="64" height="64">

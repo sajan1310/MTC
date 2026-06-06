@@ -43,9 +43,9 @@ class Config:
 
     # URL generation and base
     BASE_URL = os.getenv("BASE_URL", "http://127.0.0.1:5000")
-    SERVER_NAME = os.getenv("SERVER_NAME") or BASE_URL.replace("http://", "").replace(
-        "https://", ""
-    )
+    # Only set SERVER_NAME when explicitly configured — Flask enforces host-matching
+    # when this is set, which breaks url_for() in CLI contexts and dev environments.
+    SERVER_NAME = os.getenv("SERVER_NAME") or None
 
     # Session lifetime
     PERMANENT_SESSION_LIFETIME = int(os.getenv("PERMANENT_SESSION_LIFETIME", 86400))

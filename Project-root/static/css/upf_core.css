@@ -4,14 +4,15 @@
    Keep rules scoped and low-risk to avoid breaking other pages.
 */
 :root{
-  --upf-primary: #1866d1;
-  --upf-accent: #4CAF50;
-  --upf-danger: #dc3545;
-  --upf-surface: #ffffff;
-  --upf-muted: #6b7280;
-  --upf-shadow: 0 6px 20px rgba(16,24,40,0.08);
-  --upf-radius: 8px;
-  --upf-gap: 12px;
+  /* Align UPF design tokens with the main design system to avoid visual fragmentation */
+  --upf-primary: var(--primary-color, #6366f1);
+  --upf-accent: var(--success-color, #10b981);
+  --upf-danger: var(--danger-color, #ef4444);
+  --upf-surface: var(--card-bg, #ffffff);
+  --upf-muted: var(--text-muted, #6b7280);
+  --upf-shadow: var(--shadow-md, 0 6px 20px rgba(16,24,40,0.08));
+  --upf-radius: var(--border-radius-lg, 10px);
+  --upf-gap: 1rem;
   --upf-max-width: 1280px;
 }
 
@@ -20,17 +21,18 @@
 .upf-root .upf-container {
   max-width: var(--upf-max-width);
   margin: 0 auto;
-  padding: 20px;
+  padding: 1.5rem;
   box-sizing: border-box;
-  color: #111827;
-  font-family: Inter, system-ui, -apple-system, "Segoe UI", Roboto, "Helvetica Neue", Arial;
+  color: var(--text-color, #111827);
+  font-family: var(--font-family, Inter, system-ui, -apple-system, "Segoe UI", Roboto, "Helvetica Neue", Arial);
 }
 
 .upf-root .upf-card {
   background: var(--upf-surface);
+  border: 1px solid var(--border-color, #e5e7eb);
   border-radius: var(--upf-radius);
   box-shadow: var(--upf-shadow);
-  padding: 16px;
+  padding: 1.25rem;
   margin-bottom: var(--upf-gap);
 }
 
@@ -41,21 +43,31 @@
 .upf-root .upf-row { display:flex; gap: var(--upf-gap); align-items:center; }
 .upf-root .upf-actions { display:flex; gap:8px; justify-content:flex-end; }
 
-/* Form controls (opt-in) */
+/* Form controls (opt-in) — delegate to the main design system where possible */
 .upf-root input[type="text"], .upf-root input[type="number"], .upf-root select, .upf-root textarea {
-  border: 1px solid #e6e9ee;
-  border-radius: 6px;
-  padding: 8px 10px;
-  font-size: 14px;
-  color: #111827;
-  background: #fff;
+  border: 1.5px solid var(--border-color, #e6e9ee);
+  border-radius: var(--border-radius-md, 6px);
+  padding: 0.6rem 0.875rem;
+  font-size: 0.9375rem;
+  color: var(--text-color, #111827);
+  background: var(--input-bg, #fff);
   box-sizing: border-box;
+  transition: border-color 0.15s;
 }
 
-.upf-root .btn-upf { padding: 10px 14px; border-radius:6px; border:none; cursor:pointer; font-weight:600; }
+.upf-root input:focus, .upf-root select:focus, .upf-root textarea:focus {
+  border-color: var(--primary-color, #6366f1);
+  outline: none;
+  box-shadow: 0 0 0 3px var(--shadow-colored, rgba(99,102,241,0.15));
+}
+
+.upf-root .btn-upf { padding: 0.625rem 0.875rem; border-radius: var(--border-radius-md, 6px); border: none; cursor: pointer; font-weight: 600; font-size: 0.9rem; transition: all var(--transition-fast); }
 .upf-root .btn-upf.primary { background: var(--upf-primary); color: white; }
-.upf-root .btn-upf.ghost { background: transparent; border: 1px solid #e6e9ee; color: var(--upf-primary); }
+.upf-root .btn-upf.primary:hover { filter: brightness(1.1); }
+.upf-root .btn-upf.ghost { background: transparent; border: 1px solid var(--border-color); color: var(--upf-primary); }
+.upf-root .btn-upf.ghost:hover { background: var(--bg-secondary); }
 .upf-root .btn-upf.danger { background: var(--upf-danger); color: white; }
+.upf-root .btn-upf.danger:hover { filter: brightness(1.1); }
 
 /* Responsive helpers */
 @media (max-width: 900px) {

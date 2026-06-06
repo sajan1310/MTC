@@ -34,12 +34,10 @@ class SubprocessService:
     def invalidate_cache(cls):
         """Invalidate subprocess cache when data changes."""
         cls._cache_version += 1
-        # Clear the LRU cache
         SubprocessService.get_all_subprocesses_cached.cache_clear()
-
-    (current_app.logger if has_app_context() else logging.getLogger(__name__)).info(
-        "Subprocess cache cleared"
-    )
+        (current_app.logger if has_app_context() else logging.getLogger(__name__)).info(
+            "Subprocess cache cleared"
+        )
 
     @staticmethod
     @lru_cache(maxsize=1)

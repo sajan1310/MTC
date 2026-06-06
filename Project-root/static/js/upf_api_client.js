@@ -82,6 +82,10 @@ class UPFApiClient {
         }
     }
 
+    _getCSRFToken() {
+        return document.querySelector('meta[name="csrf-token"]')?.getAttribute('content') || '';
+    }
+
     /**
      * Internal request handler
      */
@@ -95,6 +99,16 @@ class UPFApiClient {
         };
 
         const finalOptions = { ...defaultOptions, ...options };
+        // Merge headers instead of overwriting
+        finalOptions.headers = { ...defaultOptions.headers, ...(options.headers || {}) };
+
+        // Inject CSRF token for mutating requests
+        const method = (finalOptions.method || 'GET').toUpperCase();
+        if (method !== 'GET' && method !== 'HEAD') {
+            const csrf = this._getCSRFToken();
+            if (csrf) finalOptions.headers['X-CSRFToken'] = csrf;
+        }
+
         if (finalOptions.body && typeof finalOptions.body === 'object') {
             finalOptions.body = JSON.stringify(finalOptions.body);
         }

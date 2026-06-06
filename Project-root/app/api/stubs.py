@@ -17,6 +17,7 @@ from flask import jsonify
 from flask_login import login_required
 
 from . import api_bp
+from ..utils import role_required
 
 logger = logging.getLogger(__name__)
 

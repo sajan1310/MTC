@@ -799,7 +799,7 @@ def select_variant_for_group(lot_id):
         if lot["created_by"] != getattr(current_user, "id", None) and not is_admin():
             return APIResponse.error("forbidden", "Access denied", 403)
 
-        if lot["status"] != "planning":
+        if (lot.get("status") or "").lower() != "planning":
             return APIResponse.error(
                 "validation_error", "Lot must be in planning status", 400
             )
@@ -841,15 +841,22 @@ def select_variant_for_group(lot_id):
 
         with get_conn(cursor_factory=RealDictCursor) as (conn, cur):
             if sel_variant_id:
-                # BUG FIX: Validate that the selected variant is a valid option for the group/subprocess
-                # This prevents selecting a variant that doesn't belong to the specified context
-                query = "SELECT 1 FROM variant_usage WHERE id = %s AND substitute_group_id = %s AND process_subprocess_id = %s LIMIT 1"
-                params = (sel_variant_id, substitute_group_id, process_subprocess_id)
-                cur.execute(query, params)
+                # Validate the variant belongs to the specified group or subprocess context.
+                # sel_variant_id is item_variant.variant_id, NOT variant_usage.id.
+                if substitute_group_id is not None:
+                    cur.execute(
+                        "SELECT 1 FROM variant_usage WHERE variant_id = %s AND substitute_group_id = %s LIMIT 1",
+                        (sel_variant_id, substitute_group_id),
+                    )
+                else:
+                    cur.execute(
+                        "SELECT 1 FROM variant_usage WHERE variant_id = %s AND process_subprocess_id = %s LIMIT 1",
+                        (sel_variant_id, process_subprocess_id),
+                    )
                 if not cur.fetchone():
                     return APIResponse.error(
                         "validation_error",
-                        f"Invalid variant selection: {sel_variant_id} is not a valid option for the specified group or subprocess.",
+                        f"Invalid variant selection: variant {sel_variant_id} is not a valid option for the specified group or subprocess.",
                         400,
                     )
 
@@ -887,7 +894,7 @@ def select_variant_for_group(lot_id):
         )
 
         current_app.logger.info(
-            f"Variant selected for lot {lot_id}, group {data['substitute_group_id']}"
+            f"Variant selected for lot {lot_id}, group {data.get('substitute_group_id') or data.get('process_subprocess_id')}"
         )
         return APIResponse.created(selection, "Variant selected")
     except Exception as e:
@@ -949,7 +956,7 @@ def batch_select_variants(lot_id):
         if lot["created_by"] != getattr(current_user, "id", None) and not is_admin():
             return APIResponse.error("forbidden", "Access denied", 403)
 
-        if lot["status"] not in ["planning", "ready"]:
+        if (lot.get("status") or "").lower() not in ["planning", "ready"]:
             return APIResponse.error(
                 "validation_error", "Lot must be in planning or ready status", 400
             )
@@ -1080,9 +1087,8 @@ def validate_lot_readiness(lot_id):
         if lot["created_by"] != getattr(current_user, "id", None) and not is_admin():
             return APIResponse.error("forbidden", "Access denied", 403)
 
-        validation_result = ProductionService.validate_lot_readiness(lot_id)
-
-        return APIResponse.success(validation_result)
+        is_ready, missing = ProductionService.validate_lot_readiness(lot_id)
+        return APIResponse.success({"is_ready": is_ready, "missing": missing})
     except Exception as e:
         current_app.logger.error(f"Error validating lot: {e}")
         return APIResponse.error("internal_error", str(e), 500)
@@ -1112,14 +1118,14 @@ def execute_production_lot(lot_id):
         if lot["created_by"] != current_user.id and not is_admin():
             return APIResponse.error("forbidden", "Access denied", 403)
 
-        if lot["status"] != "planning":
+        if (lot.get("status") or "").lower() != "planning":
             return APIResponse.error(
                 "validation_error", "Lot must be in planning status", 400
             )
 
-        # Validate before execution
-        validation = ProductionService.validate_lot_readiness(lot_id)
-        if not validation["is_ready"]:
+        # Validate before execution — returns (is_ready, missing_groups) tuple
+        is_ready, _missing = ProductionService.validate_lot_readiness(lot_id)
+        if not is_ready:
             return APIResponse.error(
                 "validation_error", "Lot is not ready for execution", 400
             )
@@ -1261,11 +1267,12 @@ def cancel_production_lot(lot_id):
         data = request.json or {}
         reason = data.get("reason", "User cancelled")
 
-        cancelled_lot = ProductionService.cancel_production_lot(lot_id, reason)
+        # cancel_production_lot returns bool; use already-fetched `lot` for response
+        ProductionService.cancel_production_lot(lot_id, reason)
 
         safe_uid = getattr(current_user, "id", "anon")
         current_app.logger.info(
-            f"Production lot cancelled: {cancelled_lot['lot_number']} by user {safe_uid}"
+            f"Production lot cancelled: {lot['lot_number']} by user {safe_uid}"
         )
 
         # Audit
@@ -1276,15 +1283,16 @@ def cancel_production_lot(lot_id):
                 action="CANCEL",
                 resource_type="production_lot",
                 resource_id=lot_id,
-                resource_name=cancelled_lot.get("lot_number"),
-                changes={"status": cancelled_lot.get("status")},
+                resource_name=lot.get("lot_number"),
+                changes={"status": "cancelled"},
                 user_id=getattr(current_user, "id", None),
                 timestamp=datetime.utcnow(),
             )
         except Exception:
             current_app.logger.exception("Failed to write audit log for cancel_production_lot")
 
-        return APIResponse.success(cancelled_lot, "Production lot cancelled")
+        lot["status"] = "cancelled"
+        return APIResponse.success(lot, "Production lot cancelled")
     except Exception as e:
         current_app.logger.error(f"Error cancelling production lot: {e}")
         return APIResponse.error("internal_error", str(e), 500)
@@ -1647,13 +1655,10 @@ def get_recent_lots():
 @login_required
 def add_subprocess_to_lot(lot_id: int):
     """Add a subprocess to a production lot.
-    
-    Request JSON:
-    {
-        "process_subprocess_id": int,
-        "custom_name": str (optional),
-        "sequence_order": int (optional)
-    }
+
+    Accepts either:
+      - subprocess_id: subprocesses.id (template ID sent by the frontend dropdown)
+      - process_subprocess_id: process_subprocesses.id (direct join-table ID)
     """
     try:
         if not request.is_json:
@@ -1683,55 +1688,75 @@ def add_subprocess_to_lot(lot_id: int):
                 400,
             )
 
-        # Validate required fields
-        process_subprocess_id = data.get("process_subprocess_id")
-        if not process_subprocess_id:
+        # Accept subprocess_id (template ID from frontend) OR process_subprocess_id (join-table ID)
+        raw_subprocess_id = data.get("subprocess_id")
+        raw_process_subprocess_id = data.get("process_subprocess_id")
+
+        if not raw_subprocess_id and not raw_process_subprocess_id:
             return APIResponse.error(
-                "validation_error", "process_subprocess_id is required", 400
+                "validation_error", "subprocess_id or process_subprocess_id is required", 400
             )
 
         try:
-            process_subprocess_id = int(process_subprocess_id)
+            subprocess_id = int(raw_subprocess_id) if raw_subprocess_id else None
+            process_subprocess_id = int(raw_process_subprocess_id) if raw_process_subprocess_id else None
         except (TypeError, ValueError):
             return APIResponse.error(
-                "validation_error", "process_subprocess_id must be an integer", 400
+                "validation_error", "subprocess_id and process_subprocess_id must be integers", 400
             )
 
         from database import get_conn
         from psycopg2.extras import RealDictCursor
 
-        # Validate subprocess exists and belongs to the lot's process
         with get_conn(cursor_factory=RealDictCursor) as (conn, cur):
-            cur.execute(
-                """
-                SELECT ps.id, ps.process_id, s.name as subprocess_name
-                FROM process_subprocesses ps
-                JOIN subprocesses s ON s.id = ps.subprocess_id
-                WHERE ps.id = %s
-                """,
-                (process_subprocess_id,),
-            )
-            subprocess_row = cur.fetchone()
-            if not subprocess_row:
-                return APIResponse.error(
-                    "validation_error",
-                    f"Invalid process_subprocess_id: {process_subprocess_id}",
-                    400,
+            if subprocess_id and not process_subprocess_id:
+                # Frontend sends subprocesses.id — resolve to process_subprocesses.id for this lot's process
+                cur.execute(
+                    """
+                    SELECT ps.id, ps.process_id, s.name as subprocess_name
+                    FROM process_subprocesses ps
+                    JOIN subprocesses s ON s.id = ps.subprocess_id
+                    WHERE ps.subprocess_id = %s AND ps.process_id = %s
+                    """,
+                    (subprocess_id, lot["process_id"]),
                 )
-
-            # Verify subprocess belongs to lot's process
-            if subprocess_row["process_id"] != lot["process_id"]:
-                return APIResponse.error(
-                    "validation_error",
-                    "Subprocess does not belong to this lot's process",
-                    400,
+                subprocess_row = cur.fetchone()
+                if not subprocess_row:
+                    return APIResponse.error(
+                        "validation_error",
+                        f"Subprocess {subprocess_id} is not part of this lot's process",
+                        400,
+                    )
+                process_subprocess_id = subprocess_row["id"]
+            else:
+                cur.execute(
+                    """
+                    SELECT ps.id, ps.process_id, s.name as subprocess_name
+                    FROM process_subprocesses ps
+                    JOIN subprocesses s ON s.id = ps.subprocess_id
+                    WHERE ps.id = %s
+                    """,
+                    (process_subprocess_id,),
                 )
+                subprocess_row = cur.fetchone()
+                if not subprocess_row:
+                    return APIResponse.error(
+                        "validation_error",
+                        f"Invalid process_subprocess_id: {process_subprocess_id}",
+                        400,
+                    )
+                if subprocess_row["process_id"] != lot["process_id"]:
+                    return APIResponse.error(
+                        "validation_error",
+                        "Subprocess does not belong to this lot's process",
+                        400,
+                    )
 
             # Check if subprocess already added to this lot
             cur.execute(
                 """
                 SELECT 1 FROM production_lot_subprocesses
-                WHERE lot_id = %s AND process_subprocess_id = %s
+                WHERE production_lot_id = %s AND process_subprocess_id = %s
                 """,
                 (lot_id, process_subprocess_id),
             )
@@ -1742,16 +1767,15 @@ def add_subprocess_to_lot(lot_id: int):
                     400,
                 )
 
-            # Insert the subprocess into the lot
             custom_name = data.get("custom_name") or subprocess_row["subprocess_name"]
             sequence_order = data.get("sequence_order", process_subprocess_id)
 
             cur.execute(
                 """
                 INSERT INTO production_lot_subprocesses
-                (lot_id, process_subprocess_id, custom_name, sequence_order, created_at)
+                (production_lot_id, process_subprocess_id, custom_name, sequence_order, created_at)
                 VALUES (%s, %s, %s, %s, %s)
-                RETURNING id, lot_id, process_subprocess_id, custom_name, sequence_order
+                RETURNING id, production_lot_id, process_subprocess_id, custom_name, sequence_order
                 """,
                 (lot_id, process_subprocess_id, custom_name, sequence_order, datetime.utcnow()),
             )
@@ -1810,7 +1834,7 @@ def update_subprocess_variants(lot_id: int, subprocess_id: int):
             return APIResponse.error("forbidden", "Insufficient permissions", 403)
 
         # Validate lot status
-        if lot["status"] not in ["planning", "ready"]:
+        if (lot.get("status") or "").lower() not in ["planning", "ready"]:
             return APIResponse.error(
                 "validation_error",
                 "Lot must be in planning or ready status to modify variants",
@@ -1825,10 +1849,10 @@ def update_subprocess_variants(lot_id: int, subprocess_id: int):
             # Check subprocess exists in lot
             cur.execute(
                 """
-                SELECT pls.id, ps.process_subprocess_id
+                SELECT pls.id, ps.id AS process_subprocess_id
                 FROM production_lot_subprocesses pls
                 JOIN process_subprocesses ps ON ps.id = pls.process_subprocess_id
-                WHERE pls.lot_id = %s AND ps.id = %s
+                WHERE pls.production_lot_id = %s AND ps.id = %s
                 """,
                 (lot_id, subprocess_id),
             )

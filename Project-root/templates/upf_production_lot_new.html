@@ -5,184 +5,60 @@
 {% block extra_css %}
 <style>
     .create-lot-container {
-        padding: 30px;
+        padding: 2rem;
         max-width: 800px;
         margin: 0 auto;
     }
-
-    .page-header {
-        display: flex;
-        justify-content: space-between;
-        align-items: center;
-        margin-bottom: 30px;
-    }
-
-    .page-title {
-        font-size: 28px;
-        font-weight: 600;
-        color: #333;
-        margin: 0;
-    }
-
-    .back-link {
-        color: #2196F3;
-        text-decoration: none;
-        display: flex;
-        align-items: center;
-        gap: 5px;
-        font-size: 14px;
-    }
-
-    .back-link:hover {
-        text-decoration: underline;
-    }
-
-    .form-card {
-        background: white;
-        border-radius: 8px;
-        box-shadow: 0 2px 8px rgba(0,0,0,0.1);
-        padding: 30px;
-    }
-
-    .form-group {
-        margin-bottom: 25px;
-    }
-
-    .form-label {
-        display: block;
-        font-weight: 600;
-        color: #333;
-        margin-bottom: 8px;
-        font-size: 14px;
-    }
-
     .form-label.required::after {
         content: ' *';
-        color: #f44336;
+        color: var(--danger-color);
     }
-
-    .form-input, .form-select, .form-textarea {
-        width: 100%;
-        padding: 12px 15px;
-        border: 2px solid #e0e0e0;
-        border-radius: 6px;
-        font-size: 14px;
-        font-family: inherit;
-        transition: border-color 0.2s;
-    }
-
-    .form-input:focus, .form-select:focus, .form-textarea:focus {
-        outline: none;
-        border-color: #4CAF50;
-    }
-
-    .form-textarea {
-        resize: vertical;
-        min-height: 100px;
-    }
-
-    .form-help {
-        font-size: 12px;
-        color: #666;
-        margin-top: 5px;
-    }
-
-    .form-actions {
-        display: flex;
-        gap: 15px;
-        justify-content: flex-end;
-        margin-top: 30px;
-        padding-top: 25px;
-        border-top: 2px solid #f0f0f0;
-    }
-
-    .btn {
-        padding: 12px 24px;
-        border: none;
-        border-radius: 6px;
-        font-size: 14px;
-        font-weight: 500;
-        cursor: pointer;
-        transition: all 0.2s;
-    }
-
-    .btn-primary {
-        background: #4CAF50;
-        color: white;
-    }
-
-    .btn-primary:hover:not(:disabled) {
-        background: #45a049;
-    }
-
-    .btn-secondary {
-        background: #e0e0e0;
-        color: #333;
-    }
-
-    .btn-secondary:hover {
-        background: #d0d0d0;
-    }
-
-    .btn:disabled {
-        opacity: 0.6;
-        cursor: not-allowed;
-    }
-
-    .alert {
-        padding: 15px 20px;
-        border-radius: 6px;
-        margin-bottom: 25px;
-    }
-
-    .alert-success {
-        background: #e8f5e9;
-        color: #2e7d32;
-        border: 1px solid #a5d6a7;
-    }
-
-    .alert-error {
-        background: #ffebee;
-        color: #c62828;
-        border: 1px solid #ef9a9a;
-    }
-
-    .alert-warning {
-        background: #fff3cd;
-        color: #856404;
-        border: 1px solid #ffc107;
-    }
-
-    .loading-state {
-        text-align: center;
-        padding: 20px;
-        color: #999;
-    }
-
     .process-preview {
-        background: #f9f9f9;
-        padding: 15px;
-        border-radius: 6px;
-        margin-top: 10px;
+        background: var(--bg-secondary);
+        padding: 1rem;
+        border-radius: var(--border-radius-md);
+        border: 1px solid var(--border-color);
+        margin-top: 0.75rem;
         display: none;
     }
-
-    .process-preview.active {
-        display: block;
-    }
-
+    .process-preview.active { display: block; }
     .preview-label {
-        font-weight: 600;
-        color: #666;
-        font-size: 12px;
+        font-weight: 700;
+        color: var(--text-muted);
+        font-size: 0.75rem;
         text-transform: uppercase;
-        margin-bottom: 5px;
+        letter-spacing: 0.05em;
+        margin-bottom: 0.25rem;
     }
-
-    .preview-value {
-        color: #333;
-        font-size: 14px;
+    .preview-value { color: var(--text-color); font-size: 0.9375rem; }
+    .alert-panel, .procurement-panel { margin-top: 1.5rem; }
+    .alert-panel.hidden, .procurement-panel.hidden { display: none; }
+    .alert-header, .panel-header {
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        margin-bottom: 1rem;
     }
+    .alerts-summary {
+        display: flex;
+        gap: 1rem;
+        flex-wrap: wrap;
+        margin-bottom: 1rem;
+    }
+    .summary-stat {
+        padding: 0.5rem 1rem;
+        border-radius: var(--border-radius-full);
+        font-weight: 700;
+        font-size: 0.875rem;
+    }
+    .summary-stat.critical { background: rgba(239,68,68,0.15); color: var(--danger-color); border: 1px solid rgba(239,68,68,0.3); }
+    .summary-stat.high { background: rgba(245,158,11,0.15); color: var(--warning-color); border: 1px solid rgba(245,158,11,0.3); }
+    .summary-stat.medium { background: rgba(59,130,246,0.15); color: var(--info-color); border: 1px solid rgba(59,130,246,0.3); }
+    .summary-stat.low { background: rgba(16,185,129,0.15); color: var(--success-color); border: 1px solid rgba(16,185,129,0.3); }
+    .alert-actions { display: flex; gap: 0.75rem; justify-content: flex-end; margin-top: 1rem; }
+    .recommendations-table { width: 100%; border-collapse: separate; border-spacing: 0; }
+    .recommendations-table th, .recommendations-table td { padding: 0.75rem 1rem; border-bottom: 1px solid var(--border-color); text-align: left; }
+    .recommendations-table th { background: var(--table-header-bg); font-size: 0.8125rem; text-transform: uppercase; letter-spacing: 0.05em; color: var(--text-secondary); }
 </style>
 {% endblock %}
 
@@ -192,9 +68,10 @@
     <div id="alert-container"></div>
 
     <div class="page-header">
-        <h1 class="page-title">🏭 Create Production Lot</h1>
+        <h1 class="page-title">Create Production Lot</h1>
         <a href="/upf?tab=production" class="back-link">
-            ← Back to Production Lots
+            <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="15 18 9 12 15 6"></polyline></svg>
+            Back to Production Lots
         </a>
     </div>
 
@@ -202,38 +79,29 @@
         <form id="lot-form">
             <div class="form-group">
                 <label class="form-label required" for="process-select">Select Process</label>
-                <select class="form-select" id="process-select" required>
+                <select id="process-select" required>
                     <option value="">-- Loading processes... --</option>
                 </select>
-                <div class="form-help">Choose the process for which you want to create a production lot</div>
+                <span class="form-text">Choose the process for which you want to create a production lot</span>
                 <div id="process-preview" class="process-preview"></div>
             </div>
 
             <div class="form-group">
                 <label class="form-label required" for="quantity-input">Quantity</label>
-                <input type="number" 
-                       class="form-input" 
-                       id="quantity-input" 
-                       min="1" 
-                       step="1" 
-                       required
-                       placeholder="Enter production quantity">
-                <div class="form-help">Number of units to produce in this lot</div>
+                <input type="number" id="quantity-input" min="1" step="1" required placeholder="Enter production quantity">
+                <span class="form-text">Number of units to produce in this lot</span>
             </div>
 
             <div class="form-group">
-                <label class="form-label" for="notes-input">Notes</label>
-                <textarea class="form-textarea" 
-                          id="notes-input" 
-                          placeholder="Optional notes about this production lot..."></textarea>
-                <div class="form-help">Any additional information or special instructions</div>
+                <label for="notes-input">Notes</label>
+                <textarea id="notes-input" placeholder="Optional notes about this production lot..."></textarea>
+                <span class="form-text">Any additional information or special instructions</span>
             </div>
 
             <div class="form-actions">
-                <button type="button" class="btn btn-secondary" onclick="window.location.href='/upf?tab=production'">
-                    Cancel
-                </button>
-                <button type="submit" class="btn btn-primary" id="submit-btn">
+                <button type="button" class="button cancel" onclick="window.location.href='/upf?tab=production'">Cancel</button>
+                <button type="submit" class="button primary" id="submit-btn">
+                    <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><line x1="12" y1="5" x2="12" y2="19"></line><line x1="5" y1="12" x2="19" y2="12"></line></svg>
                     Create Production Lot
                 </button>
             </div>
@@ -242,7 +110,7 @@
         <div id="alert-panel" class="alert-panel hidden">
             <div class="alert-header">
                 <h3>Inventory Alerts</h3>
-                <button id="dismiss-alerts" class="btn-secondary" type="button" onclick="document.getElementById('alert-panel').classList.add('hidden')">Dismiss</button>
+                <button id="dismiss-alerts" class="button cancel small" type="button" onclick="document.getElementById('alert-panel').classList.add('hidden')">Dismiss</button>
             </div>
             <div class="alerts-summary">
                 <div class="summary-stat critical"><span class="count" id="count-critical">0</span> Critical</div>
@@ -252,14 +120,14 @@
             </div>
             <div id="alerts-list" class="alerts-list"></div>
             <div class="alert-actions">
-                <button id="ack-proceed" type="button" class="btn-primary" disabled>Acknowledge & Proceed</button>
-                <button id="ack-delay" type="button" class="btn-secondary" disabled>Delay Production</button>
+                <button id="ack-proceed" type="button" class="button primary" disabled>Acknowledge &amp; Proceed</button>
+                <button id="ack-delay" type="button" class="button cancel" disabled>Delay Production</button>
             </div>
         </div>
         <div id="procurement-panel" class="procurement-panel hidden">
             <div class="panel-header">
                 <h3>Procurement Recommendations</h3>
-                <button id="export-recommendations" class="btn-secondary" type="button">Export to CSV</button>
+                <button id="export-recommendations" class="button secondary small" type="button">Export to CSV</button>
             </div>
             <table class="recommendations-table">
                 <thead>
@@ -332,6 +200,31 @@ const productionLotForm = {
 
         form.addEventListener('submit', (e) => this.handleSubmit(e));
         processSelect.addEventListener('change', () => this.showProcessPreview());
+
+        const exportBtn = document.getElementById('export-recommendations');
+        if (exportBtn) {
+            exportBtn.addEventListener('click', () => this.exportRecommendationsCSV());
+        }
+    },
+
+    exportRecommendationsCSV() {
+        const tbody = document.getElementById('recommendations-tbody');
+        if (!tbody || !tbody.rows.length) {
+            this.showAlert('No recommendations to export', 'warning');
+            return;
+        }
+        const headers = ['Variant', 'Supplier', 'Recommended Qty', 'Delivery Date', 'Est. Cost', 'Status'];
+        const rows = Array.from(tbody.rows).map(tr =>
+            Array.from(tr.cells).slice(0, 6).map(td => `"${(td.textContent || '').replace(/"/g, '""')}"`).join(',')
+        );
+        const csv = [headers.join(','), ...rows].join('\n');
+        const blob = new Blob([csv], { type: 'text/csv' });
+        const url = URL.createObjectURL(blob);
+        const a = document.createElement('a');
+        a.href = url;
+        a.download = `procurement-recommendations${this.lotId ? '-lot-' + this.lotId : ''}.csv`;
+        a.click();
+        URL.revokeObjectURL(url);
     },
 
     showProcessPreview() {
@@ -443,9 +336,14 @@ const productionLotForm = {
                 proceedBtn.onclick = () => productionLotForm.bulkAcknowledge('PROCEED');
                 delayBtn.onclick = () => productionLotForm.bulkAcknowledge('DELAY');
             } else {
-                this.showAlert('Production lot created successfully! Redirecting...', 'success');
+                this.showAlert('Production lot created successfully! Redirecting to lot detail...', 'success');
+                const redirectId = data.data?.lot_id || data.data?.id || this.lotId;
                 setTimeout(() => {
-                    window.location.href = `/upf?tab=production`;
+                    if (redirectId) {
+                        window.location.href = `/upf/production-lot/${redirectId}`;
+                    } else {
+                        window.location.href = `/upf/production-lots`;
+                    }
                 }, 1200);
             }
 

@@ -1,467 +1,194 @@
 /**
- * Enhanced UI Components CSS
- * Provides styling for improved error handling, notifications, form validation,
- * and pagination controls
+ * UI Enhancements — supplemental styles for notifications, form validation,
+ * and pagination controls. Duplicate modal/button/spinner rules removed since
+ * those live in styles.css. All colors use CSS variables for dark-mode support.
  */
 
 /* ============================================================================
-   Notifications
+   Toast / In-page Notifications
    ============================================================================ */
 
 .notification-container {
     position: fixed;
-    top: 20px;
-    right: 20px;
+    top: 1.25rem;
+    right: 1.25rem;
     z-index: 10000;
     display: flex;
     flex-direction: column;
-    gap: 10px;
+    gap: 0.625rem;
     max-width: 400px;
     pointer-events: none;
 }
 
 .notification {
     display: flex;
-    align-items: center;
-    gap: 12px;
-    padding: 14px 16px;
-    border-radius: 6px;
-    box-shadow: 0 2px 8px rgba(0, 0, 0, 0.15);
-    animation: slideIn 0.3s ease-out;
+    align-items: flex-start;
+    gap: 0.75rem;
+    padding: 0.875rem 1rem;
+    border-radius: var(--border-radius-lg, 10px);
+    box-shadow: var(--shadow-lg, 0 4px 16px rgba(0,0,0,0.15));
+    animation: notifySlideIn 0.3s cubic-bezier(0.22, 1, 0.36, 1);
     pointer-events: auto;
-    background: white;
+    background: var(--card-bg, #fff);
+    border: 1px solid var(--border-color);
     border-left: 4px solid;
+    font-size: 0.9rem;
+    color: var(--text-color);
 }
 
-@keyframes slideIn {
-    from {
-        transform: translateX(400px);
-        opacity: 0;
-    }
-    to {
-        transform: translateX(0);
-        opacity: 1;
-    }
+@keyframes notifySlideIn {
+    from { transform: translateX(420px); opacity: 0; }
+    to   { transform: translateX(0);     opacity: 1; }
 }
 
 .notification-error {
-    background: #fee;
-    border-left-color: #c33;
-    color: #933;
+    background: linear-gradient(135deg, rgba(239,68,68,0.1), rgba(239,68,68,0.04));
+    border-left-color: var(--danger-color, #ef4444);
+    color: var(--danger-hover, #991b1b);
+    border-color: rgba(239,68,68,0.25);
 }
+
+body.dark-mode .notification-error { color: var(--danger-color, #ef4444); }
 
 .notification-success {
-    background: #efe;
-    border-left-color: #3c3;
-    color: #393;
+    background: linear-gradient(135deg, rgba(16,185,129,0.1), rgba(16,185,129,0.04));
+    border-left-color: var(--success-color, #10b981);
+    color: var(--success-hover, #065f46);
+    border-color: rgba(16,185,129,0.25);
 }
+
+body.dark-mode .notification-success { color: var(--success-color, #10b981); }
 
 .notification-warning {
-    background: #ffe;
-    border-left-color: #cc3;
-    color: #993;
+    background: linear-gradient(135deg, rgba(245,158,11,0.1), rgba(245,158,11,0.04));
+    border-left-color: var(--warning-color, #f59e0b);
+    color: var(--warning-hover, #92400e);
+    border-color: rgba(245,158,11,0.25);
 }
 
+body.dark-mode .notification-warning { color: var(--warning-color, #f59e0b); }
+
 .notification-info {
-    background: #eef;
-    border-left-color: #33c;
-    color: #339;
+    background: linear-gradient(135deg, rgba(59,130,246,0.1), rgba(59,130,246,0.04));
+    border-left-color: var(--info-color, #3b82f6);
+    color: var(--info-hover, #1e40af);
+    border-color: rgba(59,130,246,0.25);
 }
+
+body.dark-mode .notification-info { color: var(--info-color, #3b82f6); }
 
 .notification-close {
     margin-left: auto;
     background: none;
     border: none;
-    font-size: 18px;
+    font-size: 1.125rem;
     cursor: pointer;
-    color: inherit;
-    padding: 0 4px;
+    color: var(--text-muted);
+    padding: 0 0.25rem;
     line-height: 1;
+    flex-shrink: 0;
+    transition: color var(--transition-fast);
 }
 
-.notification-close:hover {
-    opacity: 0.7;
-}
+.notification-close:hover { color: var(--text-color); }
 
 /* ============================================================================
-   Form Validation
+   Form Validation States
    ============================================================================ */
 
 .field-error {
-    border-color: #c33 !important;
-    background-color: #fee;
+    border-color: var(--danger-color, #ef4444) !important;
+    background-color: rgba(239, 68, 68, 0.04);
 }
 
 .field-error:focus {
-    outline-color: #c33;
+    box-shadow: 0 0 0 3px rgba(239, 68, 68, 0.12) !important;
 }
 
 .field-error-message {
     display: block;
-    color: #c33;
-    font-size: 12px;
-    margin-top: 4px;
+    color: var(--danger-color, #ef4444);
+    font-size: 0.8125rem;
+    margin-top: 0.25rem;
     font-weight: 500;
 }
 
-.form-field {
-    position: relative;
-    margin-bottom: 16px;
-}
-
-.form-field label {
-    display: block;
-    margin-bottom: 6px;
-    font-weight: 500;
-    color: #333;
-}
-
-.form-field input,
-.form-field textarea,
-.form-field select {
-    width: 100%;
-    padding: 8px 12px;
-    border: 1px solid #ddd;
-    border-radius: 4px;
-    font-size: 14px;
-    transition: border-color 0.3s, background-color 0.3s;
-}
-
-.form-field input:focus,
-.form-field textarea:focus,
-.form-field select:focus {
-    outline: none;
-    border-color: #0066cc;
-    box-shadow: 0 0 0 3px rgba(0, 102, 204, 0.1);
-}
-
-.form-field textarea {
-    resize: vertical;
-    min-height: 100px;
-}
-
 /* ============================================================================
-   Loading States
-   ============================================================================ */
-
-.loading-state {
-    display: flex;
-    align-items: center;
-    justify-content: center;
-    min-height: 200px;
-    color: #666;
-}
-
-.loading-spinner {
-    display: flex;
-    flex-direction: column;
-    align-items: center;
-    gap: 16px;
-}
-
-.spinner {
-    width: 40px;
-    height: 40px;
-    border: 3px solid #f0f0f0;
-    border-top: 3px solid #0066cc;
-    border-radius: 50%;
-    animation: spin 0.8s linear infinite;
-}
-
-@keyframes spin {
-    to {
-        transform: rotate(360deg);
-    }
-}
-
-/* ============================================================================
-   Pagination
+   Pagination Controls (supplemental, used on production lot pages)
    ============================================================================ */
 
 .pagination-controls {
     display: flex;
-    gap: 8px;
+    gap: 0.5rem;
     align-items: center;
-    padding: 16px;
-    background: #f8f8f8;
-    border-radius: 4px;
-    border: 1px solid #e0e0e0;
+    padding: 1rem;
+    background: var(--bg-secondary);
+    border-radius: var(--border-radius-md, 6px);
+    border: 1px solid var(--border-color);
     flex-wrap: wrap;
 }
 
 .pagination-controls button {
-    padding: 8px 12px;
-    border: 1px solid #ddd;
-    border-radius: 4px;
-    background: white;
+    padding: 0.5rem 0.75rem;
+    border: 1.5px solid var(--border-color);
+    border-radius: var(--border-radius-md, 6px);
+    background: var(--card-bg);
+    color: var(--text-color);
     cursor: pointer;
-    font-size: 13px;
-    transition: all 0.3s;
+    font-size: 0.875rem;
+    font-family: var(--font-family);
+    transition: all var(--transition-fast);
 }
 
 .pagination-controls button:hover:not(:disabled) {
-    background: #0066cc;
-    color: white;
-    border-color: #0066cc;
+    background: var(--primary-color, #6366f1);
+    color: #fff;
+    border-color: var(--primary-color, #6366f1);
 }
 
 .pagination-controls button:disabled {
-    opacity: 0.5;
+    opacity: 0.4;
     cursor: not-allowed;
 }
 
 .pagination-info {
-    font-size: 13px;
-    color: #666;
+    font-size: 0.875rem;
+    color: var(--text-muted);
     font-weight: 500;
     white-space: nowrap;
 }
 
-.pagination-select {
-    padding: 6px 10px;
-    border: 1px solid #ddd;
-    border-radius: 4px;
-    font-size: 13px;
-}
-
 /* ============================================================================
-   Modal Enhancements
-   ============================================================================ */
-
-.modal {
-    display: none;
-    position: fixed;
-    top: 0;
-    left: 0;
-    width: 100%;
-    height: 100%;
-    background: rgba(0, 0, 0, 0.5);
-    z-index: 1000;
-    align-items: center;
-    justify-content: center;
-}
-
-.modal.active {
-    display: flex;
-}
-
-.modal-content {
-    background: white;
-    border-radius: 8px;
-    box-shadow: 0 4px 20px rgba(0, 0, 0, 0.15);
-    max-width: 90%;
-    max-height: 90vh;
-    overflow: auto;
-    animation: slideUp 0.3s ease-out;
-}
-
-@keyframes slideUp {
-    from {
-        transform: translateY(20px);
-        opacity: 0;
-    }
-    to {
-        transform: translateY(0);
-        opacity: 1;
-    }
-}
-
-.modal-header {
-    display: flex;
-    justify-content: space-between;
-    align-items: center;
-    padding: 20px;
-    border-bottom: 1px solid #e0e0e0;
-}
-
-.modal-header h3 {
-    margin: 0;
-    font-size: 18px;
-    color: #333;
-}
-
-.modal-body {
-    padding: 20px;
-}
-
-.modal-footer {
-    display: flex;
-    justify-content: flex-end;
-    gap: 12px;
-    padding: 16px 20px;
-    border-top: 1px solid #e0e0e0;
-}
-
-/* ============================================================================
-   Table Enhancements
+   Table Filters Bar
    ============================================================================ */
 
 .table-filters {
     display: flex;
-    gap: 8px;
+    gap: 0.5rem;
     align-items: center;
-    padding: 12px;
-    background: #f8f8f8;
-    border-radius: 4px;
-    margin-bottom: 12px;
+    padding: 0.875rem 1rem;
+    background: var(--bg-secondary);
+    border-radius: var(--border-radius-md, 6px);
+    margin-bottom: 0.75rem;
     flex-wrap: wrap;
-}
-
-.table-filters label {
-    font-weight: 500;
-    white-space: nowrap;
+    border: 1px solid var(--border-color);
 }
 
 .table-filters input,
 .table-filters select {
-    padding: 6px 10px;
-    border: 1px solid #ddd;
-    border-radius: 4px;
-    font-size: 13px;
+    padding: 0.5rem 0.75rem;
+    border: 1.5px solid var(--border-color);
+    border-radius: var(--border-radius-md, 6px);
+    font-size: 0.875rem;
+    background: var(--input-bg);
+    color: var(--text-color);
+    transition: border-color var(--transition-fast);
 }
 
-.table-filters button {
-    padding: 6px 12px;
-    border: 1px solid #0066cc;
-    background: #0066cc;
-    color: white;
-    border-radius: 4px;
-    cursor: pointer;
-    font-size: 13px;
-    transition: all 0.3s;
-}
-
-.table-filters button:hover {
-    background: #0052a3;
-    border-color: #0052a3;
-}
-
-/* ============================================================================
-   Status Badges
-   ============================================================================ */
-
-.status-badge {
-    display: inline-block;
-    padding: 4px 10px;
-    border-radius: 12px;
-    font-size: 12px;
-    font-weight: 600;
-    text-transform: uppercase;
-    letter-spacing: 0.5px;
-}
-
-.status-badge.success {
-    background: #efe;
-    color: #393;
-}
-
-.status-badge.error {
-    background: #fee;
-    color: #933;
-}
-
-.status-badge.warning {
-    background: #ffe;
-    color: #993;
-}
-
-.status-badge.info {
-    background: #eef;
-    color: #339;
-}
-
-/* ============================================================================
-   Buttons
-   ============================================================================ */
-
-.button {
-    padding: 8px 16px;
-    border: 1px solid #ddd;
-    border-radius: 4px;
-    background: #f8f8f8;
-    cursor: pointer;
-    font-size: 13px;
-    font-weight: 500;
-    transition: all 0.3s;
-    white-space: nowrap;
-}
-
-.button:hover:not(:disabled) {
-    background: #e8e8e8;
-    border-color: #ccc;
-}
-
-.button.primary {
-    background: #0066cc;
-    color: white;
-    border-color: #0066cc;
-}
-
-.button.primary:hover:not(:disabled) {
-    background: #0052a3;
-    border-color: #0052a3;
-}
-
-.button.danger {
-    background: #dc3545;
-    color: white;
-    border-color: #dc3545;
-}
-
-.button.danger:hover:not(:disabled) {
-    background: #c82333;
-    border-color: #c82333;
-}
-
-.button.success {
-    background: #28a745;
-    color: white;
-    border-color: #28a745;
-}
-
-.button.success:hover:not(:disabled) {
-    background: #218838;
-    border-color: #218838;
-}
-
-.button:disabled {
-    opacity: 0.6;
-    cursor: not-allowed;
-}
-
-/* ============================================================================
-   Responsive
-   ============================================================================ */
-
-@media (max-width: 768px) {
-    .notification-container {
-        left: 10px;
-        right: 10px;
-        max-width: 100%;
-    }
-
-    .modal-content {
-        max-width: 95%;
-    }
-
-    .pagination-controls {
-        flex-direction: column;
-        align-items: stretch;
-    }
-
-    .pagination-controls button {
-        width: 100%;
-    }
-
-    .table-filters {
-        flex-direction: column;
-        align-items: stretch;
-    }
-
-    .table-filters input,
-    .table-filters select {
-        width: 100%;
-    }
+.table-filters input:focus,
+.table-filters select:focus {
+    border-color: var(--primary-color, #6366f1);
+    outline: none;
 }
 
 /* ============================================================================
@@ -484,75 +211,34 @@ button:focus-visible,
 input:focus-visible,
 select:focus-visible,
 textarea:focus-visible {
-    outline: 2px solid #0066cc;
+    outline: 2px solid var(--primary-color, #6366f1);
     outline-offset: 2px;
 }
 
 /* ============================================================================
-   Dark Mode Support (Optional)
+   Mobile
    ============================================================================ */
 
-@media (prefers-color-scheme: dark) {
-    .notification {
-        background: #2a2a2a;
-        color: #e0e0e0;
+@media (max-width: 768px) {
+    .notification-container {
+        left: 0.75rem;
+        right: 0.75rem;
+        top: 0.75rem;
+        max-width: 100%;
     }
 
-    .notification-error {
-        background: #4a2c2c;
-        color: #ff9999;
-    }
-
-    .notification-success {
-        background: #2c4a2c;
-        color: #99ff99;
-    }
-
-    .notification-warning {
-        background: #4a4a2c;
-        color: #ffff99;
-    }
-
-    .notification-info {
-        background: #2c2c4a;
-        color: #9999ff;
-    }
-
-    .form-field input,
-    .form-field textarea,
-    .form-field select {
-        background: #2a2a2a;
-        color: #e0e0e0;
-        border-color: #444;
-    }
-
-    .modal-content {
-        background: #2a2a2a;
-        color: #e0e0e0;
-    }
-
-    .modal-header,
-    .modal-footer {
-        border-color: #444;
+    .pagination-controls {
+        flex-direction: column;
+        align-items: stretch;
     }
 
     .table-filters {
-        background: #333;
+        flex-direction: column;
+        align-items: stretch;
     }
 
-    .status-badge.success {
-        background: #2c4a2c;
-    }
-
-    .status-badge.error {
-        background: #4a2c2c;
-    }
-
-    .status-badge.warning {
-        background: #4a4a2c;
-    }
-
-    .status-badge.info {
-        background: #2c2c4a;
+    .table-filters input,
+    .table-filters select {
+        width: 100%;
     }
 }

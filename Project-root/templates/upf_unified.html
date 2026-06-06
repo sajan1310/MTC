@@ -1309,6 +1309,88 @@
         border: none !important;
         background: transparent !important;
     }
+
+    /* ===== Design System Alignment Overrides =====
+       These rules have higher specificity (.upf-root prefix) and override
+       the hardcoded green/white colors above with CSS variable equivalents. */
+    .upf-root .tab-btn.active {
+        color: var(--primary-color) !important;
+        border-bottom-color: var(--primary-color) !important;
+        background: var(--bg-secondary) !important;
+    }
+    .upf-root .tab-btn:hover {
+        color: var(--text-color) !important;
+        background: var(--bg-secondary) !important;
+    }
+    .upf-root .tab-btn {
+        color: var(--text-muted) !important;
+    }
+    .upf-root .tab-navigation {
+        background: var(--card-bg) !important;
+        border-bottom-color: var(--border-color) !important;
+        box-shadow: var(--shadow-sm) !important;
+    }
+    .upf-root .btn-primary, .upf-root .btn-submit {
+        background: var(--primary-color) !important;
+        color: #fff !important;
+    }
+    .upf-root .btn-primary:hover, .upf-root .btn-submit:hover {
+        background: var(--primary-hover) !important;
+    }
+    .upf-root .card {
+        background: var(--card-bg) !important;
+        border: 1px solid var(--border-color) !important;
+        box-shadow: var(--shadow-md) !important;
+        color: var(--text-color) !important;
+    }
+    .upf-root .card:hover {
+        box-shadow: var(--shadow-lg) !important;
+        border-color: var(--primary-color) !important;
+    }
+    .upf-root .card-title {
+        color: var(--text-color) !important;
+    }
+    .upf-root .card-description {
+        color: var(--text-muted) !important;
+    }
+    .upf-root .page-title {
+        color: var(--text-color) !important;
+    }
+    .upf-root .search-filter-bar,
+    .upf-root .filter-bar {
+        background: var(--card-bg) !important;
+        border: 1px solid var(--border-color) !important;
+        box-shadow: var(--shadow-sm) !important;
+    }
+    .upf-root .search-input:focus,
+    .upf-root .filter-select:focus {
+        border-color: var(--primary-color) !important;
+        box-shadow: 0 0 0 3px var(--shadow-colored) !important;
+    }
+    .upf-root .search-input,
+    .upf-root .filter-select {
+        background: var(--input-bg) !important;
+        color: var(--text-color) !important;
+        border-color: var(--border-color) !important;
+    }
+    .upf-root .modal-content,
+    .upf-root .dialog-content,
+    .upf-root .form-section,
+    .upf-root .section-card {
+        background: var(--card-bg) !important;
+        border-color: var(--border-color) !important;
+        color: var(--text-color) !important;
+    }
+    .upf-root input[type="text"]:focus,
+    .upf-root input[type="number"]:focus,
+    .upf-root select:focus,
+    .upf-root textarea:focus {
+        border-color: var(--primary-color) !important;
+    }
+    .upf-root .badge-active { background: rgba(16,185,129,0.15) !important; color: var(--success-color) !important; border: 1px solid rgba(16,185,129,0.3) !important; }
+    .upf-root .badge-inactive { background: rgba(239,68,68,0.15) !important; color: var(--danger-color) !important; border: 1px solid rgba(239,68,68,0.3) !important; }
+    .upf-root .badge-draft { background: rgba(245,158,11,0.15) !important; color: var(--warning-color) !important; border: 1px solid rgba(245,158,11,0.3) !important; }
+    .upf-root .badge-category { background: rgba(59,130,246,0.15) !important; color: var(--info-color) !important; border: 1px solid rgba(59,130,246,0.3) !important; }
 </style>
 {% endblock %}
 
@@ -1318,7 +1400,7 @@
     <div id="alert-container"></div>
 
     <div class="page-header">
-        <h1 class="page-title">🏭 Process Framework</h1>
+        <h1 class="page-title">Process Framework</h1>
         <div id="header-actions"></div>
     </div>
 

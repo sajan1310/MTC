@@ -563,12 +563,11 @@ def bulk_acknowledge_alerts():
                         SET user_acknowledged = true,
                             user_action = %s,
                             action_notes = %s,
-                            acknowledged_at = %s,
-                            acknowledged_by = %s
-                        WHERE id = %s
-                        RETURNING id, production_lot_id, user_acknowledged, user_action
+                            acknowledged_at = %s
+                        WHERE alert_id = %s
+                        RETURNING alert_id, production_lot_id, user_acknowledged, user_action
                         """,
-                        (user_action, action_notes, datetime.utcnow(), uid, alert_id),
+                        (user_action, action_notes, datetime.utcnow(), alert_id),
                     )
                     result = cur.fetchone()
 

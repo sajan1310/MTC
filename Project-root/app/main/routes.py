@@ -90,14 +90,76 @@ def inventory():
 @login_required
 def add_item():
     if request.method == "POST":
-        item_name = request.form.get("item_name")
-        quantity = request.form.get("quantity")
-        if not item_name or not quantity:
-            flash("Item name and quantity are required.", "error")
+        item_name = (request.form.get("name") or "").strip()
+        if not item_name:
+            flash("Item name is required.", "error")
             return redirect(url_for("main.add_item"))
+
+        model = (request.form.get("model") or "").strip() or None
+        variation = (request.form.get("variation") or "").strip() or None
+        description = (request.form.get("description") or "").strip() or None
+
+        # Handle image upload
+        image_path = None
+        file = request.files.get("image")
+        if file and file.filename:
+            try:
+                validate_upload(file, user_id=getattr(current_user, "id", None))
+            except Exception as e:
+                flash(str(e), "error")
+                return redirect(url_for("main.add_item"))
+            uploads_dir = os.path.join(current_app.root_path, "..", "static", "uploads")
+            os.makedirs(uploads_dir, exist_ok=True)
+            filename = f"{uuid.uuid4().hex[:12]}_{secure_filename(file.filename)}"
+            file.save(os.path.join(uploads_dir, filename))
+            image_path = f"static/uploads/{filename}"
+
+        # Collect variant rows (multi-value form fields)
+        colors = request.form.getlist("color")
+        sizes = request.form.getlist("size")
+        opening_stocks = request.form.getlist("opening_stock")
+        thresholds = request.form.getlist("threshold")
+        units = request.form.getlist("unit")
+
         try:
-            # Placeholder behaviour; actual DB write handled via API path.
-            flash("Item added successfully!", "success")
+            with database.get_conn(cursor_factory=psycopg2.extras.DictCursor) as (conn, cur):
+                from ..utils import get_or_create_master_id, get_or_create_item_master_id
+
+                item_id = get_or_create_item_master_id(cur, item_name, model, variation, description)
+
+                # Update image path if uploaded
+                if image_path:
+                    cur.execute(
+                        "UPDATE item_master SET image_path = %s WHERE item_id = %s",
+                        (image_path, item_id),
+                    )
+
+                # Insert each variant row
+                variants_added = 0
+                for i, color in enumerate(colors):
+                    color = color.strip()
+                    size = sizes[i].strip() if i < len(sizes) else ""
+                    if not color or not size:
+                        continue
+                    color_id = get_or_create_master_id(cur, color, "color_master", "color_id", "color_name")
+                    size_id = get_or_create_master_id(cur, size, "size_master", "size_id", "size_name")
+                    stock = int(opening_stocks[i]) if i < len(opening_stocks) and opening_stocks[i] else 0
+                    threshold = int(thresholds[i]) if i < len(thresholds) and thresholds[i] else 5
+                    unit = units[i].strip() if i < len(units) and units[i].strip() else "Pcs"
+
+                    cur.execute(
+                        """
+                        INSERT INTO item_variant (item_id, color_id, size_id, opening_stock, threshold, unit)
+                        VALUES (%s, %s, %s, %s, %s, %s)
+                        ON CONFLICT (item_id, color_id, size_id) DO NOTHING
+                        """,
+                        (item_id, color_id, size_id, stock, threshold, unit),
+                    )
+                    variants_added += 1
+
+                conn.commit()
+
+            flash(f"Item '{item_name}' added with {variants_added} variant(s).", "success")
             return redirect(url_for("main.inventory"))
         except Exception as e:
             current_app.logger.error(f"Error adding item: {e}")
@@ -419,20 +481,64 @@ def upf_production_lot_detail(lot_id):
 @main_bp.route("/api/upf/production-lots/<int:lot_id>/available-subprocesses", methods=["GET"])
 @login_required
 def api_available_subprocesses(lot_id):
-    """API: Return available subprocess templates for a given production lot.
+    """Return subprocess templates linked to this lot's process via process_subprocesses.
 
-    This endpoint mirrors the path expected by the frontend JS. It returns a
-    JSON envelope with a `data` key holding an array of subprocess objects so
-    the frontend's `resp.data || resp` parsing works consistently.
+    Only returns subprocesses that belong to the lot's process and haven't
+    already been added to the lot, so the frontend dropdown is scoped correctly.
+    Falls back to all subprocess templates if the lot cannot be resolved.
     """
     try:
-        subs_resp = SubprocessService.list_subprocesses(page=1, per_page=1000)
-        subs = subs_resp.get("subprocesses") or []
-        return jsonify({"data": subs}), 200
+        import psycopg2.extras as _pge
+        import database as _db
+
+        with _db.get_conn(cursor_factory=_pge.RealDictCursor) as (conn, cur):
+            # Resolve the lot's process_id
+            cur.execute(
+                "SELECT process_id FROM production_lots WHERE id = %s LIMIT 1",
+                (lot_id,),
+            )
+            lot_row = cur.fetchone()
+
+            if not lot_row:
+                # Lot not found — return all templates as fallback
+                subs_resp = SubprocessService.list_subprocesses(page=1, per_page=1000)
+                subs = subs_resp.get("subprocesses") or []
+                return jsonify({"data": subs}), 200
+
+            process_id = lot_row["process_id"]
+
+            # Fetch subprocesses in this process that are NOT yet added to the lot
+            cur.execute(
+                """
+                SELECT
+                    s.id AS subprocess_id,
+                    s.id,
+                    ps.id AS process_subprocess_id,
+                    s.name AS subprocess_name,
+                    s.name,
+                    s.description,
+                    s.category,
+                    s.estimated_time_minutes,
+                    ps.custom_name
+                FROM process_subprocesses ps
+                JOIN subprocesses s ON s.id = ps.subprocess_id
+                WHERE ps.process_id = %s
+                  AND ps.id NOT IN (
+                      SELECT pls.process_subprocess_id
+                      FROM production_lot_subprocesses pls
+                      WHERE pls.production_lot_id = %s
+                  )
+                ORDER BY ps.id
+                """,
+                (process_id, lot_id),
+            )
+            rows = [dict(r) for r in cur.fetchall()]
+
+        return jsonify({"data": rows}), 200
     except Exception as e:
-        current_app.logger.error(f"Error fetching available subprocesses for lot {lot_id}: {e}")
-        # Return empty array instead of 500 to avoid breaking the UI; frontend will
-        # fall back to global list if empty.
+        current_app.logger.error(
+            f"Error fetching available subprocesses for lot {lot_id}: {e}"
+        )
         return jsonify({"data": []}), 200
 
 

@@ -746,6 +746,48 @@
     .sp-meta { color: #666; font-size: 12px; }
     .sp-name { font-weight: 600; color: #333; }
     .sp-actions .btn { padding: 6px 10px; font-size: 12px; }
+
+    /* ===== Design System Alignment Overrides ===== */
+    .upf-root .btn-primary, .upf-root .save-btn, .upf-root .add-btn, .upf-root .create-btn {
+        background: var(--primary-color) !important;
+        color: #fff !important;
+    }
+    .upf-root .btn-primary:hover, .upf-root .save-btn:hover, .upf-root .add-btn:hover, .upf-root .create-btn:hover {
+        background: var(--primary-hover) !important;
+    }
+    .upf-root .editor-container,
+    .upf-root .process-builder-panel,
+    .upf-root .sidebar-panel,
+    .upf-root .form-section,
+    .upf-root .subprocess-list,
+    .upf-root .sp-list {
+        background: var(--card-bg) !important;
+        border-color: var(--border-color) !important;
+        color: var(--text-color) !important;
+    }
+    .upf-root .section-title,
+    .upf-root .panel-title,
+    .upf-root .sp-name,
+    .upf-root h2, .upf-root h3 {
+        color: var(--text-color) !important;
+    }
+    .upf-root .sp-meta,
+    .upf-root .label,
+    .upf-root .meta-value {
+        color: var(--text-muted) !important;
+    }
+    .upf-root input:focus,
+    .upf-root select:focus,
+    .upf-root textarea:focus {
+        border-color: var(--primary-color) !important;
+        box-shadow: 0 0 0 3px var(--shadow-colored) !important;
+    }
+    .upf-root .sp-item {
+        border-bottom-color: var(--border-color) !important;
+    }
+    .upf-root .stock-good { background: var(--success-color) !important; }
+    .upf-root .stock-warn { background: var(--warning-color) !important; }
+    .upf-root .stock-low { background: var(--danger-color) !important; }
 </style>
 {% endblock %}
 

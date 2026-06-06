@@ -18,6 +18,7 @@
 <!-- UPF core utilities (non-invasive) -->
 <link rel="stylesheet" href="{{ url_for('static', filename='css/upf_core.css') }}?v={{ config.VERSION }}">
     <link href="https://cdn.jsdelivr.net/npm/select2@4.1.0-rc.0/dist/css/select2.min.css" rel="stylesheet" />
+    {% block extra_css %}{% endblock %}
 </head>
 <body>
     <!-- This script must be right after the body tag to prevent FOUC (Flash Of Unstyled Content) -->
@@ -30,6 +31,7 @@
         })();
     </script>
 
+    <div id="sidebar-overlay" class="sidebar-overlay" aria-hidden="true"></div>
     <div class="sidebar">
         <div class="sidebar-header">
             <a href="{{ url_for('main.dashboard') }}" class="logo-link">
@@ -74,6 +76,7 @@
                 {% endif %}
             </div>
             <div class="nav-section">
+                <h2 class="nav-section-title">Manufacturing</h2>
                 <a href="{{ url_for('main.upf_unified') }}" class="nav-item" data-tooltip="Processes">
                     <svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="3" width="7" height="7"></rect><rect x="14" y="3" width="7" height="7"></rect><rect x="14" y="14" width="7" height="7"></rect><rect x="3" y="14" width="7" height="7"></rect></svg>
                     <span>Processes</span>
@@ -82,7 +85,7 @@
         </nav>
         <div class="sidebar-footer">
             <div class="nav-section">
-                <h2 class="nav-section-title">User Actions</h2>
+                <h2 class="nav-section-title">Account</h2>
                 <a href="{{ url_for('main.profile') }}" class="nav-item" data-tooltip="Profile">
                     <svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" title="Profile Icon"><path d="M20 21v-2a4 4 0 0 0-4-4H8a4 4 0 0 0-4 4v2"></path><circle cx="12" cy="7" r="4"></circle></svg>
                     <span>Profile</span>
@@ -123,6 +126,13 @@
     <div class="content-wrapper">
         <header class="main-header">
             <div class="header-left">
+                <button id="mobile-menu-toggle" class="mobile-menu-btn" aria-label="Open navigation menu" title="Menu">
+                    <svg xmlns="http://www.w3.org/2000/svg" width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                        <line x1="3" y1="12" x2="21" y2="12"></line>
+                        <line x1="3" y1="6" x2="21" y2="6"></line>
+                        <line x1="3" y1="18" x2="21" y2="18"></line>
+                    </svg>
+                </button>
                 {% block breadcrumbs %}
                 <nav class="breadcrumbs" aria-label="Breadcrumb">
                     <ol>
@@ -191,7 +201,7 @@
         </main>
 
         <footer class="main-footer">
-            <p>&copy; 2024 MTC App. All Rights Reserved.</p>
+            <p>&copy; <span id="footer-year">2025</span> MTC App. All Rights Reserved.</p>
         </footer>
     </div>
 
@@ -199,6 +209,61 @@
     {% include '_po_modals.html' %}
 
     {% block scripts %}
+    <script>
+    (function() {
+        // Set footer year
+        var el = document.getElementById('footer-year');
+        if (el) el.textContent = new Date().getFullYear();
+
+        // Active nav highlighting
+        var path = window.location.pathname;
+        document.querySelectorAll('.nav-item').forEach(function(link) {
+            var href = link.getAttribute('href');
+            if (href && href !== '/' && path.startsWith(href)) {
+                link.classList.add('active');
+            } else if (href === '/' && path === '/') {
+                link.classList.add('active');
+            }
+        });
+
+        // Mobile sidebar toggle
+        var mobileBtn = document.getElementById('mobile-menu-toggle');
+        var overlay = document.getElementById('sidebar-overlay');
+        var sidebar = document.querySelector('.sidebar');
+        function openSidebar() {
+            document.body.classList.add('mobile-sidebar-open');
+            overlay.setAttribute('aria-hidden', 'false');
+        }
+        function closeSidebar() {
+            document.body.classList.remove('mobile-sidebar-open');
+            overlay.setAttribute('aria-hidden', 'true');
+        }
+        if (mobileBtn) mobileBtn.addEventListener('click', openSidebar);
+        if (overlay) overlay.addEventListener('click', closeSidebar);
+
+        // Flash message auto-dismiss and close button
+        document.querySelectorAll('.flash-close').forEach(function(btn) {
+            btn.addEventListener('click', function() {
+                var flash = btn.closest('.flash');
+                if (flash) {
+                    flash.style.transition = 'opacity 0.3s, transform 0.3s';
+                    flash.style.opacity = '0';
+                    flash.style.transform = 'translateY(-8px)';
+                    setTimeout(function() { flash.remove(); }, 310);
+                }
+            });
+        });
+        // Auto-dismiss flash after 6s
+        setTimeout(function() {
+            document.querySelectorAll('.flash').forEach(function(flash) {
+                flash.style.transition = 'opacity 0.4s, transform 0.4s';
+                flash.style.opacity = '0';
+                flash.style.transform = 'translateY(-8px)';
+                setTimeout(function() { flash.remove(); }, 420);
+            });
+        }, 6000);
+    })();
+    </script>
     <!-- Console guard: suppress non-error logs unless window.__UPF_DEBUG__ is set -->
     <script src="{{ url_for('static', filename='js/console_guard.js') }}?v={{ config.VERSION }}"></script>
     <script src="https://code.jquery.com/jquery-3.6.0.min.js" defer></script>

@@ -7,8 +7,13 @@ window.ProductionLotAlertHandler = (function () {
   };
 
   const api = async (url, opts = {}) => {
+    const csrfToken = document.querySelector('meta[name="csrf-token"]')?.getAttribute('content');
     const res = await fetch(url, {
-      headers: { 'Content-Type': 'application/json' },
+      headers: {
+        'Content-Type': 'application/json',
+        ...(csrfToken ? { 'X-CSRFToken': csrfToken } : {}),
+      },
+      credentials: 'include',
       ...opts,
     });
     const data = await res.json();
@@ -17,6 +22,31 @@ window.ProductionLotAlertHandler = (function () {
     }
     return data.data || data;
   };
+
+  // Normalize alert record from backend to a consistent shape.
+  // Backend may use different field names depending on the endpoint used.
+  function normalizeAlert(a) {
+    return {
+      alert_id: a.alert_id,
+      // severity: prefer 'severity' (production_lot_detail.js style), fall back to 'alert_severity'
+      severity: a.severity || a.alert_severity || 'WARNING',
+      alert_severity: a.severity || a.alert_severity || 'WARNING',
+      // variant
+      variant_name: a.variant_name || a.item_variant_id || '',
+      variant_id: a.variant_id || a.item_variant_id,
+      // stock fields — normalize to both naming conventions
+      current_stock: a.current_stock ?? a.current_stock_quantity ?? 0,
+      current_stock_quantity: a.current_stock ?? a.current_stock_quantity ?? 0,
+      required_quantity: a.required_quantity ?? 0,
+      shortfall: a.shortfall ?? a.shortfall_quantity ?? 0,
+      shortfall_quantity: a.shortfall ?? a.shortfall_quantity ?? 0,
+      suggested_procurement: a.suggested_procurement,
+      // status
+      status: a.status || (a.user_acknowledged ? 'ACKNOWLEDGED' : 'PENDING'),
+      user_acknowledged: a.user_acknowledged || a.status === 'ACKNOWLEDGED',
+      acknowledged_by: a.acknowledged_by,
+    };
+  }
 
   // Compatibility helper: prefer first existing id from list
   function getEl(...ids) {
@@ -29,7 +59,6 @@ window.ProductionLotAlertHandler = (function () {
 
   function init(productionLotId) {
     state.production_lot_id = productionLotId;
-    // Attach bulk acknowledge button listener if present
     const bulkBtn = getEl('bulk-acknowledge-btn', 'bulk-acknowledge');
     if (bulkBtn) {
       bulkBtn.addEventListener('click', handleBulkAcknowledge);
@@ -37,18 +66,16 @@ window.ProductionLotAlertHandler = (function () {
   }
 
   function displayAlerts(alerts) {
-    state.alerts_list = alerts || [];
-    // Prefer table body if present (new layout), otherwise fall back to legacy list
+    state.alerts_list = (alerts || []).map(normalizeAlert);
     const container = getEl('alerts-table-body', 'alerts-list');
     if (!container) return;
-    // Clear existing content
     container.innerHTML = '';
 
     if (state.alerts_list.length === 0) {
       if (container.tagName === 'TBODY') {
         const tr = document.createElement('tr');
         const td = document.createElement('td');
-        td.colSpan = 7;
+        td.colSpan = 9;
         td.style.textAlign = 'center';
         td.style.color = '#999';
         td.textContent = 'No alerts found';
@@ -63,109 +90,100 @@ window.ProductionLotAlertHandler = (function () {
     state.alerts_list.forEach((a) => {
       const isAcknowledged = a.user_acknowledged;
       if (container.tagName === 'TBODY') {
-        // Render as table row (compact)
         const tr = document.createElement('tr');
         tr.dataset.alertId = a.alert_id;
 
-        // Checkbox cell
+        // Checkbox
         const tdCheckbox = document.createElement('td');
+        const chk = document.createElement('input');
+        chk.type = 'checkbox';
         if (isAcknowledged) {
-          const chk = document.createElement('input');
-          chk.type = 'checkbox';
           chk.disabled = true;
           chk.checked = true;
-          tdCheckbox.appendChild(chk);
         } else {
-          const chk = document.createElement('input');
-          chk.type = 'checkbox';
           chk.className = 'alert-checkbox';
           chk.dataset.alertId = a.alert_id;
-          tdCheckbox.appendChild(chk);
         }
+        tdCheckbox.appendChild(chk);
         tr.appendChild(tdCheckbox);
 
         // Severity
         const tdSeverity = document.createElement('td');
-        tdSeverity.textContent = a.alert_severity || 'OK';
+        tdSeverity.innerHTML = `<span class="status ${a.severity === 'CRITICAL' ? 'status--error' : 'status--warning'}">${a.severity}</span>`;
         tr.appendChild(tdSeverity);
 
         // Variant
         const tdVariant = document.createElement('td');
-        tdVariant.textContent = a.variant_name || a.item_variant_id || '';
+        tdVariant.textContent = a.variant_name || '';
         tr.appendChild(tdVariant);
 
         // Current stock
         const tdStock = document.createElement('td');
-        tdStock.textContent = a.current_stock_quantity || a.current_stock || 0;
+        tdStock.textContent = a.current_stock;
         tr.appendChild(tdStock);
 
         // Required
         const tdReq = document.createElement('td');
-        tdReq.textContent = a.required_quantity || 0;
+        tdReq.textContent = a.required_quantity;
         tr.appendChild(tdReq);
 
         // Shortfall
         const tdShort = document.createElement('td');
-        tdShort.textContent = a.shortfall_quantity || a.shortfall || 0;
+        tdShort.textContent = a.shortfall;
         tr.appendChild(tdShort);
 
-        // Actions
-        const tdActions = document.createElement('td');
-        if (!isAcknowledged) {
-          const select = document.createElement('select');
-          select.className = 'action-select';
-          select.dataset.alertId = a.alert_id;
-          ['','PROCEED','USE_SUBSTITUTE','DELAY','PROCURE'].forEach((v)=>{
-            const opt = document.createElement('option');
-            opt.value = v;
-            opt.textContent = v === '' ? 'Select action...' : v;
-            select.appendChild(opt);
-          });
-          const txt = document.createElement('textarea');
-          txt.className = 'alert-notes';
-          txt.dataset.alertId = a.alert_id;
-          txt.rows = 1;
-          txt.placeholder = 'Action notes (optional)...';
-          tdActions.appendChild(select);
-          tdActions.appendChild(txt);
+        // Suggested Procurement
+        const tdSugg = document.createElement('td');
+        tdSugg.textContent = a.suggested_procurement ?? '—';
+        tr.appendChild(tdSugg);
+
+        // Status
+        const tdStatus = document.createElement('td');
+        tdStatus.innerHTML = isAcknowledged
+          ? '<span class="status status--success">Acknowledged</span>'
+          : '<span class="status status--warning">Pending</span>';
+        tr.appendChild(tdStatus);
+
+        // Action
+        const tdAction = document.createElement('td');
+        if (isAcknowledged) {
+          tdAction.innerHTML = '<span class="text-muted">—</span>';
         } else {
-          tdActions.textContent = 'Acknowledged';
+          const btn = document.createElement('button');
+          btn.className = 'btn btn--secondary btn--sm';
+          btn.dataset.action = 'ack-alert';
+          btn.dataset.alertId = a.alert_id;
+          btn.textContent = 'Acknowledge';
+          tdAction.appendChild(btn);
         }
-        tr.appendChild(tdActions);
+        tr.appendChild(tdAction);
 
         container.appendChild(tr);
       } else {
         // Legacy card layout
         const div = document.createElement('div');
-        div.className = `alert-item alert-severity-${a.alert_severity || 'OK'}`;
+        div.className = `alert-item alert-severity-${a.severity}`;
         div.dataset.alertId = a.alert_id;
 
         const checkboxHtml = isAcknowledged
           ? '<input type="checkbox" disabled checked title="Already acknowledged">'
-          : '<input type="checkbox" class="alert-checkbox" data-alert-id="' + a.alert_id + '">';
+          : `<input type="checkbox" class="alert-checkbox" data-alert-id="${a.alert_id}">`;
 
         div.innerHTML = `
           <div class="alert-header">
             ${checkboxHtml}
-            <span class="severity-badge ${a.alert_severity}">${a.alert_severity}</span>
-            <span class="variant-name">${a.variant_name || a.item_variant_id || 'Variant #' + a.variant_id}</span>
+            <span class="severity-badge ${a.severity}">${a.severity}</span>
+            <span class="variant-name">${a.variant_name || 'Variant #' + (a.variant_id || '')}</span>
           </div>
           <div class="alert-body">
-            <div class="info-row"><span class="label">Current Stock:</span><span class="value">${a.current_stock_quantity || 0}</span></div>
-            <div class="info-row"><span class="label">Required:</span><span class="value">${a.required_quantity || 0}</span></div>
-            <div class="info-row alert-shortfall"><span class="label">Shortfall:</span><span class="value">${a.shortfall_quantity || 0}</span></div>
+            <div class="info-row"><span class="label">Current Stock:</span><span class="value">${a.current_stock}</span></div>
+            <div class="info-row"><span class="label">Required:</span><span class="value">${a.required_quantity}</span></div>
+            <div class="info-row alert-shortfall"><span class="label">Shortfall:</span><span class="value">${a.shortfall}</span></div>
             ${!isAcknowledged ? `
               <div class="alert-actions-inline">
-                <select class="action-select" data-alert-id="${a.alert_id}">
-                  <option value="">Select action...</option>
-                  <option value="PROCEED">Proceed (accept shortfall)</option>
-                  <option value="USE_SUBSTITUTE">Use substitute variant</option>
-                  <option value="DELAY">Delay production</option>
-                  <option value="PROCURE">Create procurement order</option>
-                </select>
-                <textarea class="alert-notes" data-alert-id="${a.alert_id}" placeholder="Action notes (optional)..." rows="2"></textarea>
+                <button class="btn btn--secondary btn--sm" data-action="ack-alert" data-alert-id="${a.alert_id}">Acknowledge</button>
               </div>
-            ` : `<div style="color: #28a745; font-weight: bold; margin-top: 8px;">✓ Acknowledged by ${a.acknowledged_by || 'user'}</div>`}
+            ` : `<div style="color:#28a745;font-weight:bold;margin-top:8px;">✓ Acknowledged${a.acknowledged_by ? ' by ' + a.acknowledged_by : ''}</div>`}
           </div>`;
         container.appendChild(div);
       }
@@ -183,28 +201,16 @@ window.ProductionLotAlertHandler = (function () {
       return;
     }
 
-    const acknowledgments = [];
-    checkboxes.forEach((cb) => {
-      const alertId = parseInt(cb.dataset.alertId);
-      const actionSelect = document.querySelector(`.action-select[data-alert-id="${alertId}"]`);
-      const notesTextarea = document.querySelector(`.alert-notes[data-alert-id="${alertId}"]`);
-      
-      acknowledgments.push({
-        alert_id: alertId,
-        user_action: actionSelect?.value || 'PROCEED',
-        action_notes: notesTextarea?.value || '',
-      });
-    });
+    const alert_ids = Array.from(checkboxes).map((cb) => parseInt(cb.dataset.alertId));
 
     try {
-      const result = await api(`/api/upf/inventory-alerts/lot/${state.production_lot_id}/acknowledge-bulk`, {
+      // Use the generic bulk-acknowledge endpoint (accepts alert_ids array)
+      const result = await api('/api/upf/inventory-alerts/bulk-acknowledge', {
         method: 'POST',
-        body: JSON.stringify({ acknowledgments }),
+        body: JSON.stringify({ alert_ids }),
       });
-      
-      alert(`Successfully acknowledged ${result.acknowledged_count || acknowledgments.length} alert(s). Lot status: ${result.updated_lot_status || 'updated'}`);
-      
-      // Reload alerts to show updated state
+
+      alert(`Successfully acknowledged ${result.acknowledged_count || alert_ids.length} alert(s).`);
       await loadAlertsForLot(state.production_lot_id);
     } catch (err) {
       console.error('Bulk acknowledge failed:', err);
@@ -215,13 +221,14 @@ window.ProductionLotAlertHandler = (function () {
   async function loadAlertsForLot(lotId) {
     try {
       const data = await api(`/api/upf/inventory-alerts/lot/${lotId}`);
-      displayAlerts(data.alert_details || []);
-      
-      // Update summary if present
+      // Backend returns { lot_id, alert_details: [...], alerts_summary: {...} }
+      const alertDetails = data.alert_details || data.alerts || [];
+      displayAlerts(alertDetails);
+
       const summaryEl = document.getElementById('alerts-summary');
       if (summaryEl && data.alerts_summary) {
         summaryEl.innerHTML = Object.entries(data.alerts_summary)
-          .filter(([sev, count]) => count > 0)
+          .filter(([, count]) => count > 0)
           .map(([sev, count]) => `<span class="summary-stat ${sev.toLowerCase()}">${sev}: ${count}</span>`)
           .join('');
       }
@@ -251,7 +258,6 @@ window.ProductionLotAlertHandler = (function () {
   }
 
   function viewRecommendation(recId) {
-    // Placeholder for viewing recommendation details
     console.log('View recommendation:', recId);
   }
 

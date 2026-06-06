@@ -10,7 +10,7 @@
     const CONFIG = {
         TOAST_DURATION: 4000,
         SPINNER_SIZE: '14px',
-        DEBUG: true, // ENABLED for debugging
+        DEBUG: window.__UPF_DEBUG__ || false,
         RETRY_ATTEMPTS: 2,
         RETRY_DELAY: 1000,
         INIT_RETRY_DELAY: 500,
@@ -115,9 +115,15 @@
     // Status configuration
     const STATUS_CONFIG = {
         'draft': { label: 'Draft', class: 'status--info' },
+        'planning': { label: 'Planning', class: 'status--info' },
+        'ready': { label: 'Ready', class: 'status--success' },
         'in_progress': { label: 'In Progress', class: 'status--warning' },
+        'in progress': { label: 'In Progress', class: 'status--warning' },
         'completed': { label: 'Completed', class: 'status--success' },
-        'cancelled': { label: 'Cancelled', class: 'status--error' }
+        'failed': { label: 'Failed', class: 'status--error' },
+        'finalized': { label: 'Finalized', class: 'status--success' },
+        'cancelled': { label: 'Cancelled', class: 'status--error' },
+        'canceled': { label: 'Canceled', class: 'status--error' }
     };
 
     const SEVERITY_CONFIG = {
@@ -901,7 +907,9 @@
                 // Log final subprocess count before rendering
                 logger.info(`📊 Final subprocess count: ${lot.subprocesses?.length || 0}`);
                 
-                const alerts = alertsData.data || alertsData.alert_details || alertsData || [];
+                const rawAlerts = alertsData.data || alertsData;
+                const alerts = Array.isArray(rawAlerts) ? rawAlerts
+                    : (rawAlerts?.alert_details || rawAlerts?.alerts || []);
 
                 logger.debug('✅ Processed lot:', lot);
                 logger.debug('✅ Processed alerts:', alerts);
@@ -917,6 +925,7 @@
                 logger.debug('🎨 Rendering UI components...');
                 this._renderLotDetails();
                 this._renderSubprocesses();
+                this._renderVariantsSummary();
                 this._renderAlerts();
                 
                 // Re-setup delegated handlers after content is rendered
@@ -955,6 +964,8 @@
             this._addEventHandler(SELECTORS.refreshVariantOptions, 'click', () => this._loadAllData(), signal);
             // Add subprocess to lot
             this._addEventHandler(SELECTORS.addSubprocessBtn, 'click', () => this._handleAddSubprocess(), signal);
+            // Add variant button (opens edit-variants modal for the first subprocess, or shows guidance)
+            this._addEventHandler(SELECTORS.headerAddVariantBtn, 'click', () => this._handleHeaderAddVariant(), signal);
             // Recalculate cost
             this._addEventHandler(SELECTORS.recalcCostBtn, 'click', () => this._handleRecalculateCost(), signal);
 
@@ -1137,7 +1148,8 @@
             // Update status badge
             const statusBadge = findElement(SELECTORS.lotStatusBadge);
             if (statusBadge) {
-                const statusConfig = STATUS_CONFIG[lot.status] || STATUS_CONFIG.draft;
+                const statusKey = (lot.status || '').toLowerCase();
+                const statusConfig = STATUS_CONFIG[statusKey] || { label: lot.status || 'Unknown', class: 'status--info' };
                 statusBadge.innerHTML = `<span class="status ${statusConfig.class}">${statusConfig.label}</span>`;
                 logger.debug('✅ Updated status badge:', lot.status);
             }
@@ -1215,7 +1227,10 @@
          */
         _updateFinalizeButton() {
             const { alerts } = this.state.getState();
-            const hasCritical = alerts.some(a => a.severity === 'CRITICAL' && a.status !== 'ACKNOWLEDGED');
+            const hasCritical = alerts.some(a =>
+                (a.severity || a.alert_severity || '').toUpperCase() === 'CRITICAL' &&
+                a.status !== 'ACKNOWLEDGED' && !a.user_acknowledged
+            );
 
             logger.debug('🚨 Has critical unacknowledged alerts:', hasCritical);
 
@@ -1518,6 +1533,42 @@
             }
         }
 
+        /**
+         * Handle "Add Variant" button in the header of the Selected Variants card.
+         * If subprocesses exist, opens the edit-variants modal for the first subprocess.
+         * Otherwise guides the user to add a subprocess first.
+         */
+        _handleHeaderAddVariant() {
+            logger.debug('➕ Handle header add variant');
+            const { lot } = this.state.getState();
+            const subprocesses = lot?.subprocesses || [];
+
+            if (subprocesses.length === 0) {
+                this.toast.info('Add a subprocess first, then use "Edit Variants" on the subprocess card to manage variants.');
+                return;
+            }
+
+            // If only one subprocess, directly open its edit-variants modal
+            if (subprocesses.length === 1) {
+                const sp = subprocesses[0];
+                const psId = sp.process_subprocess_id || sp.id || sp.subprocess_id;
+                const spName = sp.subprocess_name || sp.name || 'Subprocess';
+
+                const fakeTarget = document.createElement('button');
+                fakeTarget.dataset.subprocessId = String(psId);
+                fakeTarget.dataset.subprocessName = spName;
+                this._handleEditSubprocessVariants(null, fakeTarget);
+                return;
+            }
+
+            // Multiple subprocesses — scroll to the subprocess section and prompt
+            const subprocessContainer = findElement(SELECTORS.subprocessesContent);
+            if (subprocessContainer) {
+                subprocessContainer.scrollIntoView({ behavior: 'smooth', block: 'start' });
+            }
+            this.toast.info('Click "Edit Variants" on the subprocess card you want to update.');
+        }
+
         // =========================
         // Subprocess Rendering
         // =========================
@@ -1554,6 +1605,92 @@
             container.innerHTML = html;
             container.classList.remove('loading-state');
             logger.debug(`✅ Rendered ${lot.subprocesses.length} subprocesses - HTML length: ${html.length} chars`);
+        }
+
+        /**
+         * Render a consolidated materials summary into #variants-content.
+         * Groups all variants across all subprocesses into one table.
+         */
+        _renderVariantsSummary() {
+            logger.debug('🎨 Rendering variants summary...');
+            const { lot } = this.state.getState();
+            const container = findElement(SELECTORS.variantsContent);
+            if (!container) {
+                logger.debug('ℹ️ Variants content container not found');
+                return;
+            }
+
+            container.classList.remove('loading-state');
+
+            const subprocesses = lot?.subprocesses || [];
+            if (!subprocesses.length) {
+                container.innerHTML = '<p class="empty-state">No subprocesses or variants defined for this lot.</p>';
+                return;
+            }
+
+            // Collect all variants across subprocesses, aggregating duplicates
+            const variantMap = new Map();
+            subprocesses.forEach(sp => {
+                const spName = escapeHtml(sp.subprocess_name || sp.name || 'Subprocess');
+                (sp.variants || []).forEach(v => {
+                    const key = v.variant_id || v.usage_id || `${sp.subprocess_name}-${v.variant_name}`;
+                    const existing = variantMap.get(key);
+                    const qty = parseFloat(v.quantity ?? v.qty ?? v.variant_quantity ?? 1);
+                    const lotQty = parseFloat(lot?.quantity ?? 1);
+                    const totalQty = qty * lotQty;
+                    if (existing) {
+                        existing.total_qty += totalQty;
+                        existing.subprocesses.push(spName);
+                    } else {
+                        variantMap.set(key, {
+                            variant_name: escapeHtml(v.variant_name || v.name || v.full_name || `Variant #${v.variant_id || ''}`),
+                            variant_sku: escapeHtml(v.variant_sku || v.sku || '—'),
+                            qty_per_unit: qty,
+                            total_qty: totalQty,
+                            unit: escapeHtml(v.unit || 'pcs'),
+                            subprocesses: [spName]
+                        });
+                    }
+                });
+            });
+
+            if (variantMap.size === 0) {
+                container.innerHTML = `
+                    <p class="empty-state">No variants selected yet. Use "Edit Variants" on each subprocess card to add materials.</p>
+                `;
+                return;
+            }
+
+            let rows = '';
+            variantMap.forEach(v => {
+                rows += `
+                    <tr>
+                        <td>${v.variant_name}</td>
+                        <td>${v.variant_sku}</td>
+                        <td>${v.qty_per_unit}</td>
+                        <td>${v.total_qty}</td>
+                        <td>${v.unit}</td>
+                        <td>${v.subprocesses.join(', ')}</td>
+                    </tr>
+                `;
+            });
+
+            container.innerHTML = `
+                <table class="table" style="width:100%;border-collapse:collapse;font-size:13px">
+                    <thead>
+                        <tr>
+                            <th style="text-align:left;padding:8px 6px;border-bottom:2px solid #e0e0e0">Variant</th>
+                            <th style="text-align:left;padding:8px 6px;border-bottom:2px solid #e0e0e0">SKU</th>
+                            <th style="text-align:right;padding:8px 6px;border-bottom:2px solid #e0e0e0">Qty/Unit</th>
+                            <th style="text-align:right;padding:8px 6px;border-bottom:2px solid #e0e0e0">Total Qty</th>
+                            <th style="text-align:left;padding:8px 6px;border-bottom:2px solid #e0e0e0">Unit</th>
+                            <th style="text-align:left;padding:8px 6px;border-bottom:2px solid #e0e0e0">Used In</th>
+                        </tr>
+                    </thead>
+                    <tbody>${rows}</tbody>
+                </table>
+            `;
+            logger.debug(`✅ Variants summary rendered: ${variantMap.size} distinct variant(s)`);
         }
 
         /**
@@ -2516,29 +2653,35 @@
          * Render single alert row
          */
         _renderAlertRow(alert) {
-            const isAcked = alert.status === 'ACKNOWLEDGED';
-            const severityConfig = SEVERITY_CONFIG[alert.severity] || SEVERITY_CONFIG.WARNING;
+            const isAcked = alert.status === 'ACKNOWLEDGED' || alert.user_acknowledged === true;
+            const severityKey = (alert.severity || alert.alert_severity || 'WARNING').toUpperCase();
+            const severityConfig = SEVERITY_CONFIG[severityKey] || SEVERITY_CONFIG.WARNING;
 
             return `
                 <tr data-alert-id="${alert.alert_id}">
                     <td>
-                        <input type="checkbox" 
-                               class="alert-checkbox" 
+                        <input type="checkbox"
+                               class="alert-checkbox"
                                data-alert-id="${alert.alert_id}"
                                ${isAcked ? 'disabled' : ''}>
                     </td>
-                    <td><span class="status ${severityConfig.class}">${escapeHtml(alert.severity)}</span></td>
+                    <td><span class="status ${severityConfig.class}">${escapeHtml(alert.severity || alert.alert_severity || 'N/A')}</span></td>
                     <td>${escapeHtml(alert.variant_name || 'N/A')}</td>
-                    <td>${escapeHtml(alert.variant_sku || 'N/A')}</td>
-                    <td>${alert.current_stock ?? 'N/A'}</td>
+                    <td>${alert.current_stock ?? alert.current_stock_quantity ?? 'N/A'}</td>
                     <td>${alert.required_quantity ?? 'N/A'}</td>
-                    <td>${alert.shortfall ?? 'N/A'}</td>
+                    <td>${alert.shortfall ?? alert.shortfall_quantity ?? 'N/A'}</td>
                     <td>${alert.suggested_procurement ?? 'N/A'}</td>
                     <td>
-                        ${isAcked 
+                        ${isAcked
                             ? '<span class="status status--success">Acknowledged</span>'
-                            : `<button class="btn btn--secondary btn--sm" 
-                                       data-action="ack-alert" 
+                            : '<span class="status status--warning">Pending</span>'
+                        }
+                    </td>
+                    <td>
+                        ${isAcked
+                            ? '<span class="text-muted">—</span>'
+                            : `<button class="btn btn--secondary btn--sm"
+                                       data-action="ack-alert"
                                        data-alert-id="${alert.alert_id}">
                                     Acknowledge
                                 </button>`
