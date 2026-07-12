@@ -1,9 +1,10 @@
 #!/usr/bin/env python
-import os, sys
+import os
+import sys
 os.chdir('c:\\Users\\erkar\\OneDrive\\Desktop\\MTC\\Project-root')
 sys.path.insert(0, os.getcwd())
-from app import create_app
-from database import get_conn
+from app import create_app  # noqa: E402
+from database import get_conn  # noqa: E402
 
 app = create_app()
 with app.app_context():

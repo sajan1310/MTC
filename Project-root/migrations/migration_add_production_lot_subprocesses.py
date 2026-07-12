@@ -24,7 +24,6 @@ This is critical for:
 def upgrade():
     """Create production_lot_subprocesses table and related supporting structures."""
     import database
-    import psycopg2.extras
 
     with database.get_conn() as (conn, cur):
         # Create the new table for subprocess tracking

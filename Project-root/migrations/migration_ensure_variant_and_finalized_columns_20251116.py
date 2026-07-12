@@ -9,7 +9,6 @@ on existing schemas. It will add columns only if they do not exist.
 
 import sys
 import os
-from datetime import datetime
 
 sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), "..")))
 
@@ -17,8 +16,8 @@ from dotenv import load_dotenv
 
 load_dotenv()
 
-from config import get_config
-from database import init_app, get_conn
+from config import get_config  # noqa: E402
+from database import init_app, get_conn  # noqa: E402
 
 
 def upgrade():

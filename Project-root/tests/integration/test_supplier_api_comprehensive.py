@@ -4,7 +4,6 @@ Tests all CRUD operations, pagination, filtering, and error handling.
 Verifies APIResponse envelope format and consistency.
 """
 import pytest
-from flask import current_app
 
 
 @pytest.fixture

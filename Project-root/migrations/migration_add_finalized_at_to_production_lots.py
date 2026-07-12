@@ -15,8 +15,8 @@ from dotenv import load_dotenv
 
 load_dotenv()
 
-from config import get_config
-from database import init_app, get_conn
+from config import get_config  # noqa: E402
+from database import init_app, get_conn  # noqa: E402
 
 
 def upgrade():

@@ -7,8 +7,8 @@ import sys
 os.chdir('c:\\Users\\erkar\\OneDrive\\Desktop\\MTC\\Project-root')
 sys.path.insert(0, os.getcwd())
 
-from app import create_app
-from database import get_conn
+from app import create_app  # noqa: E402
+from database import get_conn  # noqa: E402
 
 migrations = [
     # First: Create the new table

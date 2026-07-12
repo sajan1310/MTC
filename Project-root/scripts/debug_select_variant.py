@@ -2,11 +2,10 @@ from pathlib import Path
 import sys
 
 base = Path(__file__).resolve().parents[1]
-import sys
 
 sys.path.insert(0, str(base))
-from app import create_app
-from app.services.production_service import ProductionService
+from app import create_app  # noqa: E402
+from app.services.production_service import ProductionService  # noqa: E402
 
 app = create_app("testing") if "testing" in sys.argv else create_app()
 app.config["LOGIN_DISABLED"] = True

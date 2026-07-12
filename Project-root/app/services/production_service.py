@@ -1262,7 +1262,7 @@ class ProductionService:
             params.append(lot_id)
             sql = f"UPDATE production_lots SET {', '.join(set_parts)} WHERE id = %s RETURNING *"
             cur.execute(sql, params)
-            updated = cur.fetchone()
+            cur.fetchone()
             conn.commit()
 
         # Normalize output using existing getter

@@ -7,8 +7,8 @@ import sys
 os.chdir('c:\\Users\\erkar\\OneDrive\\Desktop\\MTC\\Project-root')
 sys.path.insert(0, os.getcwd())
 
-from app import create_app
-from database import get_conn
+from app import create_app  # noqa: E402
+from database import get_conn  # noqa: E402
 
 try:
     app = create_app()
@@ -44,7 +44,7 @@ try:
                     ON production_lot_subprocess_variants(lot_id)
                 """)
                 conn.commit()
-            except:
+            except Exception:
                 conn.rollback()
             
             try:
@@ -53,7 +53,7 @@ try:
                     ON production_lot_subprocess_variants(process_subprocess_id)
                 """)
                 conn.commit()
-            except:
+            except Exception:
                 conn.rollback()
             print("    OK - Indexes created")
             
@@ -72,7 +72,7 @@ try:
                         FOREIGN KEY ({col}) REFERENCES {ref} ON DELETE CASCADE
                     """)
                     conn.commit()
-                except Exception as e:
+                except Exception:
                     conn.rollback()
                     # FK might already exist, that's OK
                     pass
@@ -121,12 +121,12 @@ try:
                             ADD COLUMN acknowledged_by INTEGER REFERENCES users(user_id)
                         """)
                         conn2.commit()
-                        print(f"    OK - Added acknowledged_by with FK")
+                        print("    OK - Added acknowledged_by with FK")
                     except Exception as e:
                         conn2.rollback()
                         print(f"    SKIP/ERROR - acknowledged_by: {e}")
                 else:
-                    print(f"    SKIP - acknowledged_by already exists")
+                    print("    SKIP - acknowledged_by already exists")
             
             print("\nSUCCESS: All migrations completed!")
         

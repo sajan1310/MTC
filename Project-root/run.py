@@ -12,7 +12,6 @@ and CI/CD pipelines that reference this file.
 """
 
 import os
-import sys
 import importlib.util
 
 # Load the root app.py directly to avoid naming conflicts

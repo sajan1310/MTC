@@ -7,7 +7,7 @@ Handles cost and quantity calculations for production lots, including:
 - Formatting currency for Indian Rupees (₹)
 """
 
-from typing import Dict, Any, Optional, Tuple
+from typing import Dict, Any, Tuple
 import database
 import psycopg2.extras
 from flask import current_app

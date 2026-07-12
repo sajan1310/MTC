@@ -53,7 +53,7 @@ def do_get(session, url):
                     def json(self):
                         return json.loads(self.text)
                 return R()
-        except Exception as e:
+        except Exception:
             raise
 
 
@@ -77,7 +77,7 @@ def do_post(session, url, payload):
                     def json(self):
                         return json.loads(self.text)
                 return R()
-        except Exception as e:
+        except Exception:
             raise
 
 

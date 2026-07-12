@@ -10,8 +10,6 @@ Tests the full workflow:
 """
 
 import pytest
-from datetime import datetime, timedelta
-from typing import Dict, Any, Optional
 
 import database
 import psycopg2.extras
@@ -163,7 +161,7 @@ class TestProductionLotLifecycle:
         from app.services.production_service import ProductionService
 
         # Create a lot
-        lot1 = ProductionService.create_production_lot(
+        ProductionService.create_production_lot(
             process_id=test_process["process_id"],
             user_id=test_user["user_id"],
             quantity=1,

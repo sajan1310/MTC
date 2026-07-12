@@ -1370,7 +1370,6 @@ def delete_production_lot(lot_id: int):
     Checks for active subprocesses and prevents deletion if they exist.
     """
     try:
-        import psycopg2.extras
         from database import get_conn
         from psycopg2.extras import RealDictCursor
         

@@ -34,8 +34,6 @@ from flask import (
     jsonify,
     render_template,
     request,
-    redirect,
-    url_for,
     g,
 )
 from flask_cors import CORS
@@ -591,8 +589,8 @@ def create_app(config_name: str | None = None) -> Flask:
 
 
 # Backwards-compatible exports
-from .utils import get_or_create_user  # re-export for backward compatibility in tests
-from .utils.response import APIResponse  # ensure response utility is imported and available
+from .utils import get_or_create_user  # re-export for backward compatibility in tests  # noqa: E402
+from .utils.response import APIResponse  # ensure response utility is imported and available  # noqa: E402
 
 __all__ = [
     "create_app",

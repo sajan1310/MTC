@@ -364,7 +364,6 @@ def log_database_query(operation: str, table: str, duration_ms: float):
         table: Table name
         duration_ms: Query duration in milliseconds
     """
-    rid = RequestContext.get_request_id()
     RequestContext.log_event(
         "database_query",
         {
@@ -387,7 +386,6 @@ def log_authentication_attempt(
         method: Authentication method (oauth, password, etc.)
         reason: Reason for failure if unsuccessful
     """
-    rid = RequestContext.get_request_id()
     RequestContext.log_event(
         "authentication_attempt",
         {
@@ -411,7 +409,6 @@ def log_authorization_check(
         allowed: Whether action was allowed
         reason: Reason if denied
     """
-    rid = RequestContext.get_request_id()
     RequestContext.log_event(
         "authorization_check",
         {

@@ -3,12 +3,11 @@
 
 import os
 import sys
-import json
 
 os.chdir('c:\\Users\\erkar\\OneDrive\\Desktop\\MTC\\Project-root')
 sys.path.insert(0, os.getcwd())
 
-from app import create_app
+from app import create_app  # noqa: E402
 
 try:
     app = create_app()

@@ -8,7 +8,6 @@ Note: Running EXPLAIN ANALYZE will execute the queries; use with caution against
 """
 
 from __future__ import annotations
-import sys
 import database
 
 queries = {
