@@ -153,7 +153,7 @@ jobs:
         working-directory: Project-root
         run: |
           echo "::group::Python syntax validation"
-          python -m py_compile app.py
+          python -m py_compile ../app.py wsgi.py
           python -m compileall -q app/
           echo "::endgroup::"
 
