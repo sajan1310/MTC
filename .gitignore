@@ -1,0 +1,51 @@
+# Environment variables
+.env
+*.env
+*.env.local
+!*.env.example
+!production.env.example
+
+# Python
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+.Python
+env/
+venv/
+venv*/
+*.egg-info/
+dist/
+build/
+
+# Logs — never commit application logs
+logs/
+*.log
+*.log.*
+tmp_logs_test/
+
+# Backups and database dumps — never commit
+backups/
+*.sql.bak
+db_backup_*.sql
+code_snapshot_*.zip
+
+# Test / coverage artifacts
+.coverage
+.coverage.*
+htmlcov/
+.pytest_cache/
+
+# Generated reports and artifacts
+*_audit_report.json
+file_structure.txt
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# OS
+.DS_Store
+Thumbs.db
