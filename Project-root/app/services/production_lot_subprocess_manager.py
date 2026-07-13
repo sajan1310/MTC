@@ -44,9 +44,9 @@ def link_subprocesses_to_production_lot(
             # Get all subprocesses for this process
             cur.execute(
                 """
-                SELECT id FROM process_subprocesses
+                SELECT subprocess_id, sequence_order FROM process_subprocesses
                 WHERE process_id = %s
-                ORDER BY id
+                ORDER BY sequence_order, id
                 """,
                 (process_id,),
             )
@@ -59,23 +59,36 @@ def link_subprocesses_to_production_lot(
                     logger.warning(msg)
                 return []
 
-            # Create subprocess-lot links
+            # Create subprocess-lot links. production_lot_subprocesses references
+            # subprocesses(id) via subprocess_id, carries a sequence, and has a
+            # status CHECK of Pending/In Progress/Completed/Skipped. There is no
+            # unique constraint, so guard the insert with NOT EXISTS for
+            # idempotency.
             created_ids = []
 
             for subprocess_row in subprocesses:
-                process_subprocess_id = subprocess_row["id"]
+                subprocess_id = subprocess_row["subprocess_id"]
+                sequence = subprocess_row["sequence_order"]
 
-                # Insert into production_lot_subprocesses
                 cur.execute(
                     """
                     INSERT INTO production_lot_subprocesses (
-                        production_lot_id, process_subprocess_id, status
-                    ) VALUES (%s, %s, %s)
-                    ON CONFLICT (production_lot_id, process_subprocess_id)
-                    DO UPDATE SET updated_at = CURRENT_TIMESTAMP
+                        production_lot_id, subprocess_id, sequence, status
+                    )
+                    SELECT %s, %s, %s, 'Pending'
+                    WHERE NOT EXISTS (
+                        SELECT 1 FROM production_lot_subprocesses
+                        WHERE production_lot_id = %s AND subprocess_id = %s
+                    )
                     RETURNING id
                     """,
-                    (production_lot_id, process_subprocess_id, "Planning"),
+                    (
+                        production_lot_id,
+                        subprocess_id,
+                        sequence,
+                        production_lot_id,
+                        subprocess_id,
+                    ),
                 )
 
                 row = cur.fetchone()

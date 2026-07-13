@@ -294,16 +294,18 @@ def validate_lot_status_transition(
 
             process_id = lot["process_id"]
 
-            # Count substitute groups needing selection
+            # Count OR-groups still needing a variant selection. Variant
+            # selections are recorded in production_lot_variant_selections keyed
+            # by (lot_id, or_group_id) against the or_groups table.
             cur.execute(
                 """
-                SELECT COUNT(DISTINCT sg.id) as groups_needing_selection
+                SELECT COUNT(DISTINCT og.id) as groups_needing_selection
                 FROM process_subprocesses ps
-                JOIN substitute_groups sg ON sg.process_subprocess_id = ps.id
+                JOIN or_groups og ON og.process_subprocess_id = ps.id
                 WHERE ps.process_id = %s
-                  AND sg.id NOT IN (
-                      SELECT substitute_group_id FROM production_lot_variant_selections
-                      WHERE production_lot_id = %s
+                  AND og.id NOT IN (
+                      SELECT or_group_id FROM production_lot_variant_selections
+                      WHERE lot_id = %s
                   )
                 """,
                 (process_id, lot_id),

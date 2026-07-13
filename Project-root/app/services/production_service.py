@@ -363,9 +363,11 @@ class ProductionService:
                 return None
 
             result = dict(lot_data)
-            # Compatibility alias: ensure expected key exists
-            if "worst_case_estimated_cost" not in result:
-                result["worst_case_estimated_cost"] = result.get("total_cost")
+            # Compatibility alias: the column exists but is often NULL, while
+            # create/list report costs coalesced to a number. Fall back to
+            # total_cost (then 0) so cost is consistent across operations.
+            if result.get("worst_case_estimated_cost") is None:
+                result["worst_case_estimated_cost"] = result.get("total_cost") or 0
 
             # Normalize quantity for legacy/nullable schemas
             result["quantity"] = ProductionService._normalize_lot_quantity(result)
