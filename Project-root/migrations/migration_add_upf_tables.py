@@ -37,8 +37,20 @@ class _TolerantCursor:
         return getattr(self._cur, name)
 
 
+def _migration_database_url():
+    """Prefer TEST_DB_NAME so this migration never touches production when
+    invoked from the test harness (tests/conftest.py)."""
+    test_db_name = os.getenv("TEST_DB_NAME")
+    if not test_db_name:
+        return Config.DATABASE_URL
+    host = os.getenv("TEST_DB_HOST", os.getenv("DB_HOST", "127.0.0.1"))
+    user = os.getenv("TEST_DB_USER", os.getenv("DB_USER", "postgres"))
+    password = os.getenv("TEST_DB_PASS", os.getenv("DB_PASS", "abcd"))
+    return f"postgresql://{user}:{password}@{host}/{test_db_name}"
+
+
 def create_upf_tables():
-    DATABASE_URL = Config.DATABASE_URL
+    DATABASE_URL = _migration_database_url()
     """Create all UPF database tables"""
 
     conn = psycopg2.connect(DATABASE_URL)

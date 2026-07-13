@@ -13,9 +13,21 @@ import psycopg2
 from config import Config
 
 
+def _migration_database_url():
+    """Prefer TEST_DB_NAME so this migration never touches production when
+    invoked from the test harness (tests/conftest.py)."""
+    test_db_name = os.getenv("TEST_DB_NAME")
+    if not test_db_name:
+        return Config.DATABASE_URL
+    host = os.getenv("TEST_DB_HOST", os.getenv("DB_HOST", "127.0.0.1"))
+    user = os.getenv("TEST_DB_USER", os.getenv("DB_USER", "postgres"))
+    password = os.getenv("TEST_DB_PASS", os.getenv("DB_PASS", "abcd"))
+    return f"postgresql://{user}:{password}@{host}/{test_db_name}"
+
+
 def up():
     """Create production_lot_variant_selections table"""
-    conn = psycopg2.connect(Config.DATABASE_URL)
+    conn = psycopg2.connect(_migration_database_url())
     cur = conn.cursor()
 
     try:
@@ -70,7 +82,7 @@ def up():
 
 def down():
     """Drop production_lot_variant_selections table"""
-    conn = psycopg2.connect(Config.DATABASE_URL)
+    conn = psycopg2.connect(_migration_database_url())
     cur = conn.cursor()
 
     try:

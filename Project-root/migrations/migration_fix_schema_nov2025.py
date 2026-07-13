@@ -31,11 +31,14 @@ Down migration attempts to revert added columns & constraint only (non-destructi
 import os
 import psycopg2
 
-DB_NAME = os.getenv("DB_NAME", os.getenv("POSTGRES_DB", "MTC"))
-DB_USER = os.getenv("DB_USER", os.getenv("POSTGRES_USER", "postgres"))
-DB_HOST = os.getenv("DB_HOST", "127.0.0.1")
+# TEST_DB_* takes priority so this migration never touches the production
+# database when invoked from the test harness (tests/conftest.py), which
+# runs migrations against a dedicated test database.
+DB_NAME = os.getenv("TEST_DB_NAME", os.getenv("DB_NAME", os.getenv("POSTGRES_DB", "MTC")))
+DB_USER = os.getenv("TEST_DB_USER", os.getenv("DB_USER", os.getenv("POSTGRES_USER", "postgres")))
+DB_HOST = os.getenv("TEST_DB_HOST", os.getenv("DB_HOST", "127.0.0.1"))
 DB_PORT = os.getenv("DB_PORT", "5432")
-DB_PASSWORD = os.getenv("DB_PASS", os.getenv("POSTGRES_PASSWORD", "abcd"))
+DB_PASSWORD = os.getenv("TEST_DB_PASS", os.getenv("DB_PASS", os.getenv("POSTGRES_PASSWORD", "abcd")))
 
 
 def get_conn():

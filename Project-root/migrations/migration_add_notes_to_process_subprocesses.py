@@ -11,6 +11,17 @@ from contextlib import contextmanager
 
 
 def _get_conn_kwargs():
+    # TEST_DB_NAME takes priority over DATABASE_URL/DB_NAME so this migration
+    # never touches the production database when invoked from the test
+    # harness (tests/conftest.py), which sets TEST_DB_NAME.
+    test_db_name = os.getenv("TEST_DB_NAME")
+    if test_db_name:
+        return {
+            "host": os.getenv("TEST_DB_HOST", os.getenv("DB_HOST", "127.0.0.1")),
+            "database": test_db_name,
+            "user": os.getenv("TEST_DB_USER", os.getenv("DB_USER", "postgres")),
+            "password": os.getenv("TEST_DB_PASS", os.getenv("DB_PASS", "abcd")),
+        }
     # Prefer DATABASE_URL if provided
     url = os.getenv("DATABASE_URL")
     if url:

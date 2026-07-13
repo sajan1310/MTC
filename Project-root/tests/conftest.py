@@ -3,6 +3,16 @@ import sys
 
 import pytest
 
+# Migration scripts print Unicode characters (checkmarks, etc.). On Windows,
+# stdout defaults to the system codepage (e.g. cp1252) instead of UTF-8, which
+# raises UnicodeEncodeError and aborts the migration mid-transaction. CI
+# (Linux, UTF-8 by default) never hits this, which is why it stays hidden
+# until someone runs the suite fresh on Windows.
+if sys.platform == "win32":
+    for _stream in (sys.stdout, sys.stderr):
+        if hasattr(_stream, "reconfigure"):
+            _stream.reconfigure(encoding="utf-8", errors="replace")
+
 # Add the project root to the Python path to allow for absolute imports
 sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), "..")))
 
@@ -21,11 +31,21 @@ def setup_test_db():
     Ensure the test database schema is created before any tests run.
     This runs the migrations/init_schema.sql script followed by Python migrations.
     """
-    # Get database connection info from environment
-    db_host = os.getenv("DB_HOST", "127.0.0.1")
-    db_name = os.getenv("DB_NAME", "testuser")
-    db_user = os.getenv("DB_USER", "postgres")
-    db_pass = os.getenv("DB_PASS", "abcd")
+    # Get database connection info from environment.
+    # DB_NAME must NEVER be used as a fallback here: it points at the
+    # production database, and this fixture runs schema migrations and
+    # seeds data against whatever database it resolves to.
+    db_host = os.getenv("TEST_DB_HOST", os.getenv("DB_HOST", "127.0.0.1"))
+    db_name = os.getenv("TEST_DB_NAME", "testdb")
+    db_user = os.getenv("TEST_DB_USER", os.getenv("DB_USER", "postgres"))
+    db_pass = os.getenv("TEST_DB_PASS", os.getenv("DB_PASS", "abcd"))
+
+    prod_db = os.getenv("DB_NAME", "MTC")
+    if db_name == prod_db and db_name != "testdb":
+        raise RuntimeError(
+            f"FATAL: setup_test_db resolved to production database '{db_name}'. "
+            f"Set TEST_DB_NAME to a dedicated test database (e.g. 'testdb') before running tests."
+        )
 
     print("\n" + "=" * 80)
     print("Setting up test database...")
@@ -293,11 +313,6 @@ def app():
             "SECRET_KEY": "test-secret-key",
             "SERVER_NAME": "localhost.localdomain",  # Required for url_for with _external=True
             "RATELIMIT_STORAGE_URI": "memory://",  # Explicit memory storage for rate limiter
-            # Test database configuration
-            "DB_NAME": "testuser",  # Use testuser database for tests
-            "DB_HOST": os.getenv("DB_HOST", "127.0.0.1"),
-            "DB_USER": os.getenv("DB_USER", "postgres"),
-            "DB_PASS": os.getenv("DB_PASS", "abcd"),
         }
     )
     yield flask_app

@@ -10,11 +10,13 @@ import os
 
 # Database configuration - reads from environment variables (CI-compatible)
 # CI sets: DB_USER=postgres, DB_PASS=testpass, DB_NAME=testdb, DB_HOST=127.0.0.1
-DB_NAME = os.getenv("DB_NAME", "MTC")
-DB_USER = os.getenv("DB_USER", "postgres")
-DB_HOST = os.getenv("DB_HOST", "127.0.0.1")
+# TEST_DB_* takes priority so this migration never touches the production
+# database when invoked from the test harness (tests/conftest.py).
+DB_NAME = os.getenv("TEST_DB_NAME", os.getenv("DB_NAME", "MTC"))
+DB_USER = os.getenv("TEST_DB_USER", os.getenv("DB_USER", "postgres"))
+DB_HOST = os.getenv("TEST_DB_HOST", os.getenv("DB_HOST", "127.0.0.1"))
 DB_PORT = os.getenv("DB_PORT", "5432")
-DB_PASSWORD = os.getenv("DB_PASS", "abcd")
+DB_PASSWORD = os.getenv("TEST_DB_PASS", os.getenv("DB_PASS", "abcd"))
 
 
 def get_conn():

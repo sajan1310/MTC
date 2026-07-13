@@ -30,22 +30,22 @@ def test_process():
         # Create process
         cur.execute(
             """
-            INSERT INTO processes (name, description, status)
-            VALUES (%s, %s, %s)
+            INSERT INTO processes (name, description, status, user_id)
+            VALUES (%s, %s, %s, %s)
             RETURNING id
             """,
-            ("Test Process", "For testing", "active"),
+            ("Test Process", "For testing", "active", 1),
         )
         process_id = cur.fetchone()["id"]
 
         # Create subprocess
         cur.execute(
             """
-            INSERT INTO subprocesses (name, description)
-            VALUES (%s, %s)
+            INSERT INTO subprocesses (name, description, user_id)
+            VALUES (%s, %s, %s)
             RETURNING id
             """,
-            ("Test Subprocess", "For testing"),
+            ("Test Subprocess", "For testing", 1),
         )
         subprocess_id = cur.fetchone()["id"]
 
