@@ -3,12 +3,12 @@ Comprehensive integration tests for Supplier API endpoints.
 Tests all CRUD operations, pagination, filtering, and error handling.
 Verifies APIResponse envelope format and consistency.
 """
-import os
 import uuid
 
-import psycopg2
 import psycopg2.extras
 import pytest
+
+import database
 
 
 @pytest.fixture
@@ -333,28 +333,30 @@ class TestSupplierAPIFiltering:
 # role and log it in via the session (Flask-Login reads `_user_id`), then hand
 # the request an empty header dict — the session cookie carries the identity.
 def _seed_user(email, role):
-    """Insert (or update) a user with the given role, returning its user_id."""
-    conn = psycopg2.connect(
-        host=os.getenv("DB_HOST", "127.0.0.1"),
-        dbname=os.getenv("DB_NAME", "testuser"),
-        user=os.getenv("DB_USER", "postgres"),
-        password=os.getenv("DB_PASS", "abcd"),
-    )
-    conn.autocommit = True
-    try:
-        with conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor) as cur:
-            cur.execute(
-                """
-                INSERT INTO users (name, email, password_hash, role)
-                VALUES (%s, %s, %s, %s)
-                ON CONFLICT (email) DO UPDATE SET role = EXCLUDED.role
-                RETURNING user_id
-                """,
-                (f"Test {role}", email, "x", role),
-            )
-            return cur.fetchone()["user_id"]
-    finally:
-        conn.close()
+    """Insert (or update) a user with the given role, returning its user_id.
+
+    Uses the application's connection pool (initialised by the test session
+    fixture) so no database credentials are needed here. The password hash is
+    irrelevant: tests authenticate by seeding the Flask-Login session, never by
+    checking a password.
+    """
+    unused_hash = "login-disabled-in-tests"
+    with database.get_conn(cursor_factory=psycopg2.extras.RealDictCursor) as (
+        conn,
+        cur,
+    ):
+        cur.execute(
+            """
+            INSERT INTO users (name, email, password_hash, role)
+            VALUES (%s, %s, %s, %s)
+            ON CONFLICT (email) DO UPDATE SET role = EXCLUDED.role
+            RETURNING user_id
+            """,
+            (f"Test {role}", email, unused_hash, role),
+        )
+        user_id = cur.fetchone()["user_id"]
+        conn.commit()
+        return user_id
 
 
 def _login(client, user_id):
