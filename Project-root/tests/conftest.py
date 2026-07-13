@@ -61,16 +61,25 @@ def setup_test_db():
         conn_admin.set_isolation_level(ISOLATION_LEVEL_AUTOCOMMIT)
         cur_admin = conn_admin.cursor()
 
-        # Check if database exists
+        # Check if database exists. The test database is intentionally
+        # disposable, so recreate it from scratch to avoid schema drift from
+        # previous runs or half-applied migrations.
         cur_admin.execute("SELECT 1 FROM pg_database WHERE datname = %s;", (db_name,))
         exists = cur_admin.fetchone()
 
-        if not exists:
+        if exists:
+            print(f"  Recreating existing database '{db_name}'...")
+            cur_admin.execute(
+                "SELECT pg_terminate_backend(pid) FROM pg_stat_activity WHERE datname = %s AND pid <> pg_backend_pid();",
+                (db_name,),
+            )
+            cur_admin.execute(f'DROP DATABASE IF EXISTS "{db_name}";')
+            cur_admin.execute(f'CREATE DATABASE "{db_name}";')
+            print(f"  [OK] Database '{db_name}' recreated successfully")
+        else:
             print(f"  Creating database '{db_name}'...")
             cur_admin.execute(f'CREATE DATABASE "{db_name}";')
             print(f"  [OK] Database '{db_name}' created successfully")
-        else:
-            print(f"  [OK] Database '{db_name}' already exists")
 
         cur_admin.close()
         conn_admin.close()

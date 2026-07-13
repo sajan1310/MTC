@@ -17,6 +17,24 @@ import database
 import psycopg2.extras
 
 
+def _detect_column(cur, table_name, candidates):
+    """Return the first existing column name from candidates for a table."""
+    cur.execute(
+        "SELECT column_name FROM information_schema.columns WHERE table_name = %s",
+        (table_name,),
+    )
+    existing = {
+        row[0] if not isinstance(row, dict) else row.get("column_name")
+        for row in cur.fetchall()
+    }
+    for candidate in candidates:
+        if candidate in existing:
+            return candidate
+    raise AssertionError(
+        f"None of {candidates} found in {table_name}; available={sorted(existing)}"
+    )
+
+
 @pytest.fixture
 def test_process():
     """Create a test process with subprocesses and variants."""
@@ -27,21 +45,29 @@ def test_process():
         conn,
         cur,
     ):
-        # Create process
+        process_user_col = _detect_column(cur, "processes", ["user_id", "created_by"])
+
+        # Create process using the owner column that actually exists in this schema.
+        # The schema created by the UPF migration enforces a narrower set of status
+        # values than the older tests assumed, so use one that is accepted.
         cur.execute(
-            """
-            INSERT INTO processes (name, description, status, user_id)
+            f"""
+            INSERT INTO processes (name, description, status, {process_user_col})
             VALUES (%s, %s, %s, %s)
             RETURNING id
             """,
-            ("Test Process", "For testing", "active", 1),
+            ("Test Process", "For testing", "draft", 1),
         )
         process_id = cur.fetchone()["id"]
 
-        # Create subprocess
+        subprocess_user_col = _detect_column(
+            cur, "subprocesses", ["user_id", "created_by"]
+        )
+
+        # Create subprocess using the owner column that actually exists.
         cur.execute(
-            """
-            INSERT INTO subprocesses (name, description, user_id)
+            f"""
+            INSERT INTO subprocesses (name, description, {subprocess_user_col})
             VALUES (%s, %s, %s)
             RETURNING id
             """,
@@ -49,11 +75,14 @@ def test_process():
         )
         subprocess_id = cur.fetchone()["id"]
 
-        # Link subprocess to process (sequence_order is NOT NULL and the
-        # application layer always supplies it)
+        sequence_col = _detect_column(
+            cur, "process_subprocesses", ["sequence_order", "sequence"]
+        )
+
+        # Link subprocess to process using the sequence column that exists.
         cur.execute(
-            """
-            INSERT INTO process_subprocesses (process_id, subprocess_id, sequence_order)
+            f"""
+            INSERT INTO process_subprocesses (process_id, subprocess_id, {sequence_col})
             VALUES (%s, %s, %s)
             RETURNING id
             """,
