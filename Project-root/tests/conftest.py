@@ -140,46 +140,62 @@ def setup_test_db():
         cur.execute("SELECT version FROM schema_migrations;")
         applied_migrations = {row[0] for row in cur.fetchall()}
 
-        # Discover and apply pending migrations
-        migration_files = sorted([f for f in migrations_dir.glob("migration_*.py")])
+        # Discover and apply pending migrations.
+        # Migrations are not numbered, and alphabetical order does not match
+        # dependency order (e.g. migration_add_finalized_at_to_production_lots
+        # sorts before migration_add_upf_tables, which creates production_lots).
+        # Apply in passes, retrying failures, until a pass makes no progress.
+        migration_files = sorted(migrations_dir.glob("migration_*.py"))
 
         print(f"  Found {len(migration_files)} migration files")
 
-        for migration_file in migration_files:
-            version = migration_file.stem  # filename without .py extension
+        def apply_migration(migration_file):
+            version = migration_file.stem
+            spec = importlib.util.spec_from_file_location(version, migration_file)
+            migration_module = importlib.util.module_from_spec(spec)
+            spec.loader.exec_module(migration_module)
 
-            if version not in applied_migrations:
-                print(f"  Applying migration: {version}...")
+            # Migrations use several entrypoint conventions
+            entrypoint = getattr(migration_module, "upgrade", None) or getattr(
+                migration_module, "up", None
+            )
+            if entrypoint is not None:
+                entrypoint()
+            elif hasattr(migration_module, "run"):
+                migration_module.run(conn, cur)
+            else:
+                print(f"  [WARNING] {version} has no upgrade()/up()/run() function")
+
+        pending = [f for f in migration_files if f.stem not in applied_migrations]
+        for f in migration_files:
+            if f.stem in applied_migrations:
+                print(f"  [SKIP] Already applied: {f.stem}")
+
+        pass_num = 0
+        while pending:
+            pass_num += 1
+            failures = []
+            for migration_file in pending:
+                version = migration_file.stem
+                print(f"  Applying migration (pass {pass_num}): {version}...")
                 try:
-                    # Load the migration module
-                    spec = importlib.util.spec_from_file_location(
-                        version, migration_file
-                    )
-                    migration_module = importlib.util.module_from_spec(spec)
-                    spec.loader.exec_module(migration_module)
-
-                    # Run the upgrade function if it exists
-                    if hasattr(migration_module, "upgrade"):
-                        migration_module.upgrade()
-                    else:
-                        print(f"  [WARNING] {version} has no upgrade() function")
-
-                    # Record migration
+                    apply_migration(migration_file)
                     cur.execute(
                         "INSERT INTO schema_migrations (version) VALUES (%s) ON CONFLICT DO NOTHING;",
                         (version,),
                     )
-
                     print(f"  [OK] {version} applied successfully")
                 except Exception as e:
-                    print(f"  [ERROR] Migration {version} failed: {e}")
-                    import traceback
+                    print(f"  [RETRY-LATER] Migration {version} failed: {e}")
+                    failures.append((migration_file, e))
 
-                    traceback.print_exc()
-                    # Continue with other migrations even if one fails
-                    continue
-            else:
-                print(f"  [SKIP] Already applied: {version}")
+            if len(failures) == len(pending):
+                # No progress this pass; report and stop retrying
+                print(f"\n  [ERROR] {len(failures)} migration(s) failed permanently:")
+                for migration_file, e in failures:
+                    print(f"    - {migration_file.stem}: {e}")
+                break
+            pending = [f for f, _ in failures]
 
         # Step 3: Seed baseline test data (e.g., a process row for tests)
         print("\nSeeding baseline test data...")

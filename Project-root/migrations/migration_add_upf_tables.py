@@ -14,12 +14,36 @@ import psycopg2.extras
 from config import Config
 
 
+class _TolerantCursor:
+    """Cursor wrapper that skips (and reports) failing statements.
+
+    The UPF tables may already exist in older, divergent shapes (created by
+    init_schema.sql or migration_add_universal_process_framework). CREATE
+    TABLE IF NOT EXISTS then no-ops, and follow-up statements referencing
+    columns the old shape lacks would otherwise abort the whole migration,
+    leaving genuinely missing tables (e.g. or_groups) uncreated.
+    """
+
+    def __init__(self, cur):
+        self._cur = cur
+
+    def execute(self, sql, params=None):
+        try:
+            self._cur.execute(sql, params)
+        except psycopg2.Error as e:
+            print(f"   ⚠️  Statement skipped: {str(e).splitlines()[0]}")
+
+    def __getattr__(self, name):
+        return getattr(self._cur, name)
+
+
 def create_upf_tables():
     DATABASE_URL = Config.DATABASE_URL
     """Create all UPF database tables"""
 
     conn = psycopg2.connect(DATABASE_URL)
-    cur = conn.cursor()
+    conn.autocommit = True  # per-statement; tolerant cursor skips failures
+    cur = _TolerantCursor(conn.cursor())
 
     try:
         print("=" * 80)
@@ -45,8 +69,20 @@ def create_upf_tables():
             );
 
             CREATE INDEX IF NOT EXISTS idx_processes_status ON processes(status);
-            CREATE INDEX IF NOT EXISTS idx_processes_class ON processes(process_class);
-            CREATE INDEX IF NOT EXISTS idx_processes_created_by ON processes(created_by);
+            -- The processes table may pre-exist with a different column set
+            -- (older migrations used `class`/`user_id`); only index columns
+            -- that are actually present.
+            DO $$
+            BEGIN
+                IF EXISTS (SELECT 1 FROM information_schema.columns
+                           WHERE table_name = 'processes' AND column_name = 'process_class') THEN
+                    EXECUTE 'CREATE INDEX IF NOT EXISTS idx_processes_class ON processes(process_class)';
+                END IF;
+                IF EXISTS (SELECT 1 FROM information_schema.columns
+                           WHERE table_name = 'processes' AND column_name = 'created_by') THEN
+                    EXECUTE 'CREATE INDEX IF NOT EXISTS idx_processes_created_by ON processes(created_by)';
+                END IF;
+            END$$;
         """
         )
         print("   ✅ 'processes' table created")
@@ -439,6 +475,11 @@ def create_upf_tables():
     finally:
         cur.close()
         conn.close()
+
+
+def up():
+    """Standard migration entrypoint (used by tests/conftest.py and runners)."""
+    create_upf_tables()
 
 
 if __name__ == "__main__":

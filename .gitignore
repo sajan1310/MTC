@@ -38,6 +38,7 @@ htmlcov/
 
 # Generated reports and artifacts
 *_audit_report.json
+audit_report.json
 file_structure.txt
 
 # IDE

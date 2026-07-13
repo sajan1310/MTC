@@ -16,13 +16,33 @@ def role_required(*allowed_roles):
             if not current_user.is_authenticated:
                 from flask import jsonify
 
-                return jsonify({"error": "Authentication required"}), 401
+                return (
+                    jsonify(
+                        {
+                            "success": False,
+                            "data": {},
+                            "error": "unauthenticated",
+                            "message": "Authentication required",
+                        }
+                    ),
+                    401,
+                )
             if current_user.role == "super_admin":
                 return f(*args, **kwargs)
             if current_user.role not in allowed_roles:
                 from flask import jsonify
 
-                return jsonify({"error": "Insufficient permissions"}), 403
+                return (
+                    jsonify(
+                        {
+                            "success": False,
+                            "data": {},
+                            "error": "forbidden",
+                            "message": "Insufficient permissions",
+                        }
+                    ),
+                    403,
+                )
             return f(*args, **kwargs)
 
         return decorated_function

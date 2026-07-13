@@ -164,6 +164,81 @@ def up():
             """
         )
 
+        # 5. Align schema with production (source of truth: live DB schema).
+        # Earlier migrations created columns/constraints that production never
+        # had, breaking fresh databases built from migrations alone.
+        # 5a. cost_items: production uses `amount`; the UPF migration created
+        #     `rate_per_unit`. Application code queries ci.amount.
+        cur.execute(
+            """
+            DO $$
+            BEGIN
+                IF EXISTS (
+                    SELECT 1 FROM information_schema.columns
+                    WHERE table_name = 'cost_items' AND column_name = 'rate_per_unit'
+                ) AND NOT EXISTS (
+                    SELECT 1 FROM information_schema.columns
+                    WHERE table_name = 'cost_items' AND column_name = 'amount'
+                ) THEN
+                    EXECUTE 'ALTER TABLE cost_items RENAME COLUMN rate_per_unit TO amount';
+                END IF;
+                IF EXISTS (
+                    SELECT 1 FROM information_schema.tables
+                    WHERE table_name = 'cost_items'
+                ) THEN
+                    EXECUTE 'ALTER TABLE cost_items ADD COLUMN IF NOT EXISTS unit VARCHAR(20)';
+                    EXECUTE 'ALTER TABLE cost_items ALTER COLUMN quantity DROP NOT NULL';
+                END IF;
+            END$$;
+            """
+        )
+
+        # 5b. stock_receipts: init_schema.sql created a minimal table, so the
+        #     CREATE TABLE IF NOT EXISTS in migration_add_stock_receipts never
+        #     added the supplier/billing columns production has.
+        cur.execute(
+            """
+            DO $$
+            BEGIN
+                IF EXISTS (
+                    SELECT 1 FROM information_schema.tables
+                    WHERE table_name = 'stock_receipts'
+                ) THEN
+                    EXECUTE 'ALTER TABLE stock_receipts ADD COLUMN IF NOT EXISTS supplier_id INTEGER REFERENCES suppliers(supplier_id)';
+                    EXECUTE 'ALTER TABLE stock_receipts ADD COLUMN IF NOT EXISTS bill_number VARCHAR(255)';
+                    EXECUTE 'ALTER TABLE stock_receipts ADD COLUMN IF NOT EXISTS total_amount NUMERIC(10,2)';
+                    EXECUTE 'ALTER TABLE stock_receipts ADD COLUMN IF NOT EXISTS tax_percentage NUMERIC(5,2)';
+                    EXECUTE 'ALTER TABLE stock_receipts ADD COLUMN IF NOT EXISTS grand_total NUMERIC(10,2)';
+                    EXECUTE 'ALTER TABLE stock_receipts ADD COLUMN IF NOT EXISTS discount_percentage NUMERIC(10,2) DEFAULT 0';
+                    EXECUTE 'ALTER TABLE stock_receipts ADD COLUMN IF NOT EXISTS discount_amount NUMERIC(10,2) DEFAULT 0';
+                END IF;
+            END$$;
+            """
+        )
+
+        # 5c. user_id NOT NULL: production's processes/subprocesses/
+        #     production_lots use nullable created_by; the application inserts
+        #     rows without user_id. Relax the NOT NULL the UPF migration added.
+        cur.execute(
+            """
+            DO $$
+            DECLARE
+                t TEXT;
+            BEGIN
+                FOREACH t IN ARRAY ARRAY['processes', 'subprocesses', 'production_lots']
+                LOOP
+                    IF EXISTS (
+                        SELECT 1 FROM information_schema.columns
+                        WHERE table_name = t AND column_name = 'user_id'
+                          AND is_nullable = 'NO'
+                    ) THEN
+                        EXECUTE format('ALTER TABLE %I ALTER COLUMN user_id DROP NOT NULL', t);
+                    END IF;
+                END LOOP;
+            END$$;
+            """
+        )
+
         conn.commit()
         print("✅ migration_fix_schema_nov2025.up completed")
     except Exception as e:

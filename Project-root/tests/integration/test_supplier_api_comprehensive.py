@@ -3,6 +3,11 @@ Comprehensive integration tests for Supplier API endpoints.
 Tests all CRUD operations, pagination, filtering, and error handling.
 Verifies APIResponse envelope format and consistency.
 """
+import os
+import uuid
+
+import psycopg2
+import psycopg2.extras
 import pytest
 
 
@@ -83,7 +88,7 @@ class TestSupplierAPIPostEndpoints:
     def test_add_supplier_success(self, client, admin_headers, supplier_data):
         """Test adding a new supplier returns APIResponse with created status."""
         # Modify firm name to avoid duplicates
-        supplier_data["firm_name"] = f"New Supplier {hash(supplier_data)} Inc."
+        supplier_data["firm_name"] = f"New Supplier {uuid.uuid4().hex[:8]} Inc."
         
         resp = client.post(
             "/api/suppliers",
@@ -320,17 +325,55 @@ class TestSupplierAPIFiltering:
             assert "data" in data
 
 
-# Fixtures for auth headers (if not already in conftest.py)
+# Authentication fixtures.
+#
+# The supplier write endpoints use Flask-Login (@login_required) plus
+# @role_required("admin"), and role_required checks current_user directly, so
+# LOGIN_DISABLED alone does not satisfy it. We seed a real user of the desired
+# role and log it in via the session (Flask-Login reads `_user_id`), then hand
+# the request an empty header dict — the session cookie carries the identity.
+def _seed_user(email, role):
+    """Insert (or update) a user with the given role, returning its user_id."""
+    conn = psycopg2.connect(
+        host=os.getenv("DB_HOST", "127.0.0.1"),
+        dbname=os.getenv("DB_NAME", "testuser"),
+        user=os.getenv("DB_USER", "postgres"),
+        password=os.getenv("DB_PASS", "abcd"),
+    )
+    conn.autocommit = True
+    try:
+        with conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor) as cur:
+            cur.execute(
+                """
+                INSERT INTO users (name, email, password_hash, role)
+                VALUES (%s, %s, %s, %s)
+                ON CONFLICT (email) DO UPDATE SET role = EXCLUDED.role
+                RETURNING user_id
+                """,
+                (f"Test {role}", email, "x", role),
+            )
+            return cur.fetchone()["user_id"]
+    finally:
+        conn.close()
+
+
+def _login(client, user_id):
+    with client.session_transaction() as sess:
+        sess["_user_id"] = str(user_id)
+        sess["_fresh"] = True
+
+
 @pytest.fixture
 def auth_headers(client):
-    """Fixture providing authenticated user headers."""
-    # Assuming a test login endpoint or fixture setup
-    # This depends on your authentication implementation
-    return {"Authorization": "Bearer test-token"}
+    """Authenticate the client as a non-admin user; returns empty headers."""
+    user_id = _seed_user("test-user@example.com", "user")
+    _login(client, user_id)
+    return {}
 
 
 @pytest.fixture
 def admin_headers(client):
-    """Fixture providing admin authenticated user headers."""
-    # Similar to auth_headers but with admin role
-    return {"Authorization": "Bearer admin-test-token"}
+    """Authenticate the client as an admin user; returns empty headers."""
+    user_id = _seed_user("test-admin@example.com", "admin")
+    _login(client, user_id)
+    return {}

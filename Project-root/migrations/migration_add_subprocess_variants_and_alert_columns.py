@@ -25,7 +25,7 @@ MIGRATIONS = [
             variant_usage_id     INTEGER NOT NULL REFERENCES variant_usage(id) ON DELETE CASCADE,
             quantity_override    NUMERIC(12, 4),
             notes                TEXT,
-            created_by           INTEGER REFERENCES users(id),
+            created_by           INTEGER REFERENCES users(user_id),
             created_at           TIMESTAMP DEFAULT CURRENT_TIMESTAMP
         );
         """,
@@ -76,7 +76,7 @@ MIGRATIONS = [
     (
         """
         ALTER TABLE production_lot_inventory_alerts
-            ADD COLUMN IF NOT EXISTS acknowledged_by INTEGER REFERENCES users(id);
+            ADD COLUMN IF NOT EXISTS acknowledged_by INTEGER REFERENCES users(user_id);
         """,
         "Add acknowledged_by to production_lot_inventory_alerts",
     ),

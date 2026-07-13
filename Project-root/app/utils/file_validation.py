@@ -2,13 +2,11 @@ import logging
 import os
 from datetime import datetime
 
-# Optional import of the 'magic' library for MIME detection.
-# If unavailable (e.g., in environments without python-magic-bin), fall back to Python's built-in mimetypes.
-try:
-    import magic
-except ImportError:  # pragma: no cover
-    magic = None
-    import mimetypes
+# python-magic is a hard dependency: content-based MIME detection is a
+# security control, and silently degrading to filename-based mimetypes would
+# defeat it. python-magic (and python-magic-bin on Windows) are pinned in
+# requirements.txt; CI installs libmagic1.
+import magic
 
 from werkzeug.datastructures import FileStorage
 
@@ -57,11 +55,7 @@ def validate_upload(
     # --------------------
     header = file_storage.stream.read(2048)
     file_storage.stream.seek(0)
-    if magic is not None:
-        mime = magic.from_buffer(header, mime=True)
-    else:
-        # mimetypes may return None; default to generic binary type
-        mime = mimetypes.guess_type(filename)[0] or "application/octet-stream"
+    mime = magic.from_buffer(header, mime=True)
 
     if mime not in ALLOWED_MIMES:
         logger.error(

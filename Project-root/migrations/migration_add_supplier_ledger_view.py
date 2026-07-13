@@ -44,15 +44,19 @@ END $$;
     ]
 
     with get_conn() as (conn, cur):
-        # Create view
+        # Create view and commit it before attempting indexes: a failed index
+        # statement aborts the transaction, which would silently roll back
+        # the view on the final commit.
         cur.execute(view_sql)
-        # Create indexes if possible; ignore errors when tables missing
+        conn.commit()
+        # Create indexes if possible; ignore errors when tables/columns missing.
+        # CONCURRENTLY cannot run inside a transaction block, so strip it.
         for s in index_stmts:
             try:
-                cur.execute(s)
+                cur.execute(s.replace(" CONCURRENTLY", ""))
+                conn.commit()
             except Exception:
-                pass
-        conn.commit()
+                conn.rollback()
 
 
 def downgrade():

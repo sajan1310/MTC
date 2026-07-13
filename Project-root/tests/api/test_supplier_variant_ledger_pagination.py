@@ -11,16 +11,17 @@ def test_supplier_ledger_pagination_contract(authenticated_client):
 
     data = resp.get_json()
     assert isinstance(data, dict)
-    items = data.get("items")
+    payload = data.get("data", data)
+    items = payload.get("items")
     assert isinstance(items, list)
 
     # If pagination metadata present, check types
-    if "total" in data:
-        assert isinstance(data["total"], int)
-    if "page" in data:
-        assert isinstance(data["page"], int)
-    if "per_page" in data:
-        assert isinstance(data["per_page"], int)
+    if "total" in payload:
+        assert isinstance(payload["total"], int)
+    if "page" in payload:
+        assert isinstance(payload["page"], int)
+    if "per_page" in payload:
+        assert isinstance(payload["per_page"], int)
 
 
 def test_variant_ledger_pagination_contract(authenticated_client):

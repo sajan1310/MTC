@@ -30,7 +30,8 @@ def role_required(role: str):
                         {
                             "success": False,
                             "data": {},
-                            "error": "Authentication required",
+                            "error": "unauthenticated",
+                            "message": "Authentication required",
                         }
                     ),
                     401,
@@ -53,7 +54,8 @@ def role_required(role: str):
                         {
                             "success": False,
                             "data": {},
-                            "error": "Insufficient permissions",
+                            "error": "forbidden",
+                            "message": "Insufficient permissions",
                         }
                     ),
                     403,

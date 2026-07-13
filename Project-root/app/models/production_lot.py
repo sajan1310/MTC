@@ -13,6 +13,7 @@ and the system tracks actual costs for variance analysis.
 
 from __future__ import annotations
 
+import uuid
 from datetime import datetime
 from typing import Any, Dict, List, Optional
 
@@ -199,12 +200,16 @@ def generate_lot_number(prefix: str = "LOT") -> str:
     """
     Generate a unique lot number with timestamp.
 
-    Format: PREFIX-YYYYMMDD-HHMMSS
-    Example: LOT-20251104-143022
+    Format: PREFIX-YYYYMMDD-HHMMSS-XXXX
+    Example: LOT-20251104-143022-a1b2
+
+    A short random suffix is appended so that lots created within the same
+    second do not collide on the production_lots.lot_number unique constraint.
     """
     now = datetime.now()
     timestamp = now.strftime("%Y%m%d-%H%M%S")
-    return f"{prefix}-{timestamp}"
+    suffix = uuid.uuid4().hex[:4]
+    return f"{prefix}-{timestamp}-{suffix}"
 
 
 def validate_lot_selections(

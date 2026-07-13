@@ -16,4 +16,6 @@ def test_supplier_ledger_endpoint_exists(authenticated_client):
     if resp.status_code == 200:
         data = resp.get_json()
         assert isinstance(data, dict)
-        assert "items" in data
+        # Endpoint returns the APIResponse envelope: {success, data, ...}
+        payload = data.get("data", data)
+        assert "items" in payload

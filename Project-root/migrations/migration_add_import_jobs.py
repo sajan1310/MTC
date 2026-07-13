@@ -36,7 +36,7 @@ def upgrade():
                 started_at TIMESTAMP,
                 completed_at TIMESTAMP,
                 updated_at TIMESTAMP DEFAULT NOW(),
-                CONSTRAINT fk_user FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE,
+                CONSTRAINT fk_user FOREIGN KEY (user_id) REFERENCES users(user_id) ON DELETE CASCADE,
                 CONSTRAINT chk_status CHECK (status IN ('pending', 'processing', 'completed', 'failed', 'cancelled'))
             );
         """

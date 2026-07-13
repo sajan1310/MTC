@@ -139,6 +139,14 @@ class ProductionService:
                 lot_data = cur.fetchone()
                 conn.commit()
 
+            except psycopg2.IntegrityError as e:
+                # e.g. a process_id that does not exist. Surface as a ValueError
+                # so API callers return a 400 rather than a 500.
+                conn.rollback()
+                logger.error(f"Integrity error creating production lot: {str(e)}")
+                raise ValueError(
+                    f"Cannot create production lot: {e.diag.message_primary or str(e)}"
+                )
             except Exception as e:
                 conn.rollback()
                 logger.error(f"Database error creating production lot: {str(e)}")
@@ -538,9 +546,10 @@ class ProductionService:
             lot_dict["quantity"] = ProductionService._normalize_lot_quantity(lot_dict)
             normalized_lots.append(lot_dict)
         
-        from flask import current_app
         if normalized_lots:
-            current_app.logger.debug(
+            # Use the module logger, not current_app, so this service method
+            # works when called outside a Flask request/app context.
+            get_logger().debug(
                 f"[PRODUCTION LOTS] Fetched {len(normalized_lots)} lots. "
                 f"Sample lot: id={normalized_lots[0].get('id')}, "
                 f"quantity={normalized_lots[0].get('quantity')}, "

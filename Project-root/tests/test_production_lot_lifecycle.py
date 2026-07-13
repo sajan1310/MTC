@@ -9,117 +9,139 @@ Tests the full workflow:
 5. Error handling for zero costs and missing data
 """
 
+import uuid
+
 import pytest
 
 import database
 import psycopg2.extras
 
 
+@pytest.fixture
+def test_process():
+    """Create a test process with subprocesses and variants."""
+    # This fixture is function-scoped and commits, so use a unique suffix to
+    # avoid colliding with rows from prior tests (item_master.name is unique).
+    uniq = uuid.uuid4().hex[:8]
+    with database.get_conn(cursor_factory=psycopg2.extras.RealDictCursor) as (
+        conn,
+        cur,
+    ):
+        # Create process
+        cur.execute(
+            """
+            INSERT INTO processes (name, description, status)
+            VALUES (%s, %s, %s)
+            RETURNING id
+            """,
+            ("Test Process", "For testing", "active"),
+        )
+        process_id = cur.fetchone()["id"]
+
+        # Create subprocess
+        cur.execute(
+            """
+            INSERT INTO subprocesses (name, description)
+            VALUES (%s, %s)
+            RETURNING id
+            """,
+            ("Test Subprocess", "For testing"),
+        )
+        subprocess_id = cur.fetchone()["id"]
+
+        # Link subprocess to process (sequence_order is NOT NULL and the
+        # application layer always supplies it)
+        cur.execute(
+            """
+            INSERT INTO process_subprocesses (process_id, subprocess_id, sequence_order)
+            VALUES (%s, %s, %s)
+            RETURNING id
+            """,
+            (process_id, subprocess_id, 1),
+        )
+        process_subprocess_id = cur.fetchone()["id"]
+
+        # Create test items and variants (schema: item_master has no
+        # item_code; item_variant requires color/size/stock columns)
+        cur.execute(
+            """
+            INSERT INTO item_master (name, description)
+            VALUES (%s, %s)
+            RETURNING item_id
+            """,
+            (f"Test Item {uniq}", "For testing"),
+        )
+        item_id = cur.fetchone()["item_id"]
+
+        # color_id/size_id are NOT NULL FKs to the master tables; names are
+        # unique, so suffix them per fixture invocation.
+        cur.execute(
+            "INSERT INTO color_master (color_name) VALUES (%s) RETURNING color_id",
+            (f"Test Color {uniq}",),
+        )
+        color_id = cur.fetchone()["color_id"]
+        cur.execute(
+            "INSERT INTO size_master (size_name) VALUES (%s) RETURNING size_id",
+            (f"Test Size {uniq}",),
+        )
+        size_id = cur.fetchone()["size_id"]
+
+        cur.execute(
+            """
+            INSERT INTO item_variant (
+                item_id, color_id, size_id, opening_stock, threshold, description
+            ) VALUES (%s, %s, %s, %s, %s, %s)
+            RETURNING variant_id
+            """,
+            (item_id, color_id, size_id, 0, 0, "Variant 1"),
+        )
+        variant_id = cur.fetchone()["variant_id"]
+
+        # Add to subprocess
+        cur.execute(
+            """
+            INSERT INTO variant_usage (
+                process_subprocess_id, variant_id, quantity, is_alternative
+            ) VALUES (%s, %s, %s, %s)
+            RETURNING id
+            """,
+            (process_subprocess_id, variant_id, 1, False),
+        )
+
+        conn.commit()
+
+        return {
+            "process_id": process_id,
+            "subprocess_id": subprocess_id,
+            "process_subprocess_id": process_subprocess_id,
+            "item_id": item_id,
+            "variant_id": variant_id,
+        }
+
+@pytest.fixture
+def test_user():
+    """Create a test user."""
+    with database.get_conn(cursor_factory=psycopg2.extras.RealDictCursor) as (
+        conn,
+        cur,
+    ):
+        cur.execute(
+            """
+            INSERT INTO users (email, name, password_hash)
+            VALUES (%s, %s, %s)
+            ON CONFLICT (email) DO UPDATE SET name=EXCLUDED.name
+            RETURNING user_id
+            """,
+            ("test@example.com", "Test User", "hashed_password"),
+        )
+        user_id = cur.fetchone()["user_id"]
+        conn.commit()
+
+        return {"user_id": user_id}
+
+
 class TestProductionLotLifecycle:
     """Test complete production lot lifecycle."""
-
-    @pytest.fixture
-    def test_process(self):
-        """Create a test process with subprocesses and variants."""
-        with database.get_conn(cursor_factory=psycopg2.extras.RealDictCursor) as (
-            conn,
-            cur,
-        ):
-            # Create process
-            cur.execute(
-                """
-                INSERT INTO processes (name, description, status)
-                VALUES (%s, %s, %s)
-                RETURNING id
-                """,
-                ("Test Process", "For testing", "active"),
-            )
-            process_id = cur.fetchone()["id"]
-
-            # Create subprocess
-            cur.execute(
-                """
-                INSERT INTO subprocesses (name, description)
-                VALUES (%s, %s)
-                RETURNING id
-                """,
-                ("Test Subprocess", "For testing"),
-            )
-            subprocess_id = cur.fetchone()["id"]
-
-            # Link subprocess to process
-            cur.execute(
-                """
-                INSERT INTO process_subprocesses (process_id, subprocess_id)
-                VALUES (%s, %s)
-                RETURNING id
-                """,
-                (process_id, subprocess_id),
-            )
-            process_subprocess_id = cur.fetchone()["id"]
-
-            # Create test items and variants
-            cur.execute(
-                """
-                INSERT INTO item_master (item_code, name, description)
-                VALUES (%s, %s, %s)
-                RETURNING item_id
-                """,
-                ("TEST_ITEM_1", "Test Item 1", "For testing"),
-            )
-            item_id = cur.fetchone()["item_id"]
-
-            cur.execute(
-                """
-                INSERT INTO item_variant (item_id, variant_code, variant_description)
-                VALUES (%s, %s, %s)
-                RETURNING variant_id
-                """,
-                (item_id, "VAR_001", "Variant 1"),
-            )
-            variant_id = cur.fetchone()["variant_id"]
-
-            # Add to subprocess
-            cur.execute(
-                """
-                INSERT INTO variant_usage (
-                    process_subprocess_id, variant_id, quantity, is_alternative
-                ) VALUES (%s, %s, %s, %s)
-                RETURNING id
-                """,
-                (process_subprocess_id, variant_id, 1, False),
-            )
-
-            conn.commit()
-
-            return {
-                "process_id": process_id,
-                "subprocess_id": subprocess_id,
-                "process_subprocess_id": process_subprocess_id,
-                "item_id": item_id,
-                "variant_id": variant_id,
-            }
-
-    @pytest.fixture
-    def test_user(self):
-        """Create a test user."""
-        with database.get_conn(cursor_factory=psycopg2.extras.RealDictCursor) as (
-            conn,
-            cur,
-        ):
-            cur.execute(
-                """
-                INSERT INTO users (email, name, password_hash)
-                VALUES (%s, %s, %s)
-                ON CONFLICT (email) DO UPDATE SET name=EXCLUDED.name
-                RETURNING user_id
-                """,
-                ("test@example.com", "Test User", "hashed_password"),
-            )
-            user_id = cur.fetchone()["user_id"]
-            conn.commit()
-
-            return {"user_id": user_id}
 
     def test_production_lot_creation_with_valid_cost(self, test_process, test_user):
         """Test creating a production lot with valid cost calculation."""
@@ -253,8 +275,11 @@ class TestProductionLotLifecycle:
 
         assert selection is not None
         assert "selected_cost" in selection
-        # Check that logging occurred
-        assert "selected" in caplog.text.lower() or "variant" in caplog.text.lower()
+        # Check that cost-related logging occurred during selection
+        log_text = caplog.text.lower()
+        assert any(
+            term in log_text for term in ("selected", "variant", "cost", "grand_total")
+        )
 
     def test_cost_validation_detects_zero_values(self):
         """Test that cost validation properly detects and warns about zeros."""

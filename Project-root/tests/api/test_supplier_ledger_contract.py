@@ -12,7 +12,8 @@ def test_supplier_ledger_includes_event_ids(authenticated_client):
 
     data = resp.get_json()
     assert isinstance(data, dict)
-    items = data.get("items")
+    payload = data.get("data", data)
+    items = payload.get("items")
     assert isinstance(items, list)
 
     # If there are zero items, nothing more to check here (accept empty ledgers)
