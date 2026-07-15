@@ -28,13 +28,13 @@ from ..registry import rpc_method
 
 # Sheets whose VENDOR column gets renamed alongside a Vendors master rename.
 # Guarded by config_maps.TABLE_NAMES -- entries not yet present there are
-# silently skipped. PO/BILL are denormalized (header+lines); VENDOR is
-# header-level, so these target the *_HEADERS table, not a flat "PO"/"BILL"
-# entry (see config_maps.TABLE_NAMES).
+# silently skipped. PO/BILL/RETURN are denormalized (header+lines); VENDOR
+# is header-level, so these target the *_HEADERS table, not a flat
+# "PO"/"BILL"/"RETURN" entry (see config_maps.TABLE_NAMES).
 _VENDOR_RENAME_SINGLE_COLUMN_TARGETS = [
     ("PO_HEADERS", "vendor"),
     ("BILL_HEADERS", "vendor"),
-    ("RETURN", "vendor"),
+    ("RETURN_HEADERS", "vendor"),
     ("WASTAGE", "vendor"),
     ("BOM", "vendor"),
 ]

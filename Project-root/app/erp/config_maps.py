@@ -481,6 +481,8 @@ TABLE_NAMES = {
     "PO_LINES": "erp.po_lines",
     "BILL_HEADERS": "erp.bill_headers",
     "BILL_LINES": "erp.bill_lines",
+    "RETURN_HEADERS": "erp.return_headers",
+    "RETURN_LINES": "erp.return_lines",
 }
 
 _CAMEL_BOUNDARY_RE = re.compile(r"(?<!^)(?=[A-Z])")

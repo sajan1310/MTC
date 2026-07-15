@@ -219,3 +219,23 @@ def test_bill_excluded_from_stock_does_not_move_current_stock(erp_client):
     listed = _rpc(erp_client, "getStockData").get_json()["data"]
     match = next(r for r in listed if r["name"] == name)
     assert match["currentStock"] == 10  # unchanged -- this line opted out
+
+
+def test_return_subtracts_from_current_stock(erp_client):
+    """Second real (non-zero) Stock term (Phase 2d) -- mirrors the Bill
+    test, but subtracting: goods sent back to a vendor debit Stock.
+    """
+    name = _unique_name("ReturnedStockItem")
+    _create_item_with_stock(erp_client, name, initial_stock=10)
+
+    vendor = _unique_name("StockReturnVendor")
+    _rpc(
+        erp_client,
+        "saveReturn",
+        [{"vendor": vendor, "returnDate": "01/01/2026", "items": [{"name": name, "qty": 3, "price": 1}]}],
+        mutation=True,
+    )
+
+    listed = _rpc(erp_client, "getStockData").get_json()["data"]
+    match = next(r for r in listed if r["name"] == name)
+    assert match["currentStock"] == 7  # 10 initial - 3 returned
