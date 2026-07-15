@@ -464,6 +464,15 @@ COLUMN_MAPS = {
     "LOGS": LOGS_COL_NAMES,
 }
 
+# Sheet key -> real erp.* table name. Extended incrementally as each phase
+# adds tables -- not guessed ahead of the services that actually need them.
+TABLE_NAMES = {
+    "UNITS": "erp.units",
+    "COLOR_MASTER": "erp.color_master",
+    "MODEL_MASTER": "erp.model_master",
+    "PROCESS_TYPE_MASTER": "erp.process_type_master",
+}
+
 _CAMEL_BOUNDARY_RE = re.compile(r"(?<!^)(?=[A-Z])")
 
 
