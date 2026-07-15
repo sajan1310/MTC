@@ -13,20 +13,13 @@ phases that add them, not stubbed here.
 from __future__ import annotations
 
 import psycopg2.extras
-from flask_login import current_user
 
 import database
 from . import rename_utils
+from .current_user import get_current_user_id
 from .. import config_maps
 from ..envelope import build_response
 from ..registry import rpc_method
-
-
-def _current_user_id() -> int | None:
-    try:
-        return int(current_user.get_id())
-    except Exception:
-        return None
 
 
 def _table(sheet_key: str) -> str:
@@ -82,7 +75,7 @@ def _save_tag(conn, cur, sheet_key: str, label: str, form_data):
         if cur.fetchone():
             raise ValueError(f'Another entry named "{new_name}" already exists in {label}.')
 
-    user_id = _current_user_id()
+    user_id = get_current_user_id()
 
     if is_edit:
         cur.execute(
@@ -125,7 +118,7 @@ def _delete_tag(conn, cur, sheet_key: str, label: str, name):
 
     cur.execute(
         f"UPDATE {table} SET deleted_at = NOW(), updated_by = %s WHERE id = %s",
-        (_current_user_id(), row["id"]),
+        (get_current_user_id(), row["id"]),
     )
     return build_response(True, None, f'"{name}" deleted from {label}.')
 

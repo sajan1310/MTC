@@ -16,10 +16,10 @@ table is not the bottleneck the Sheets API was).
 from __future__ import annotations
 
 import psycopg2.extras
-from flask_login import current_user
 
 import database
 from . import rename_utils
+from .current_user import get_current_user_id
 from .. import config_maps
 from ..envelope import build_response
 from ..registry import rpc_method
@@ -38,13 +38,6 @@ _UNIT_RENAME_SINGLE_COLUMN_TARGETS = [
 
 # Items Master has two unit-name columns to rename.
 _ITEMS_UNIT_FIELDS = ["baseUnit", "purchaseUnit"]
-
-
-def _current_user_id() -> int | None:
-    try:
-        return int(current_user.get_id())
-    except Exception:
-        return None
 
 
 def _rename_unit_everywhere(cur, old_name: str, new_name: str) -> None:
@@ -134,7 +127,7 @@ def save_unit(conn, cur, form_data):
         if cur.fetchone():
             raise ValueError(f'Another unit named "{new_name}" already exists.')
 
-    user_id = _current_user_id()
+    user_id = get_current_user_id()
 
     if is_edit:
         cur.execute(
@@ -178,7 +171,7 @@ def delete_unit(conn, cur, unit_name):
 
     cur.execute(
         "UPDATE erp.units SET deleted_at = NOW(), updated_by = %s WHERE id = %s",
-        (_current_user_id(), row["id"]),
+        (get_current_user_id(), row["id"]),
     )
     return build_response(True, None, f'Unit "{unit_name}" deleted.')
 

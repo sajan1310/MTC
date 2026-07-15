@@ -18,8 +18,11 @@ from __future__ import annotations
 
 
 def _table_exists(cur, table: str) -> bool:
-    cur.execute("SELECT to_regclass(%s)", (table,))
-    return cur.fetchone()[0] is not None
+    # Aliased so this works under both a plain tuple cursor and the
+    # RealDictCursor database.transactional uses (which has no positional
+    # [0] access -- only column-name keys).
+    cur.execute("SELECT to_regclass(%s) AS relid", (table,))
+    return cur.fetchone()["relid"] is not None
 
 
 def rename_in_column(cur, table: str, column: str, old: str, new: str) -> None:

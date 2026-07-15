@@ -471,6 +471,8 @@ TABLE_NAMES = {
     "COLOR_MASTER": "erp.color_master",
     "MODEL_MASTER": "erp.model_master",
     "PROCESS_TYPE_MASTER": "erp.process_type_master",
+    "ITEMS": "erp.items",
+    "STOCK": "erp.stock",
 }
 
 _CAMEL_BOUNDARY_RE = re.compile(r"(?<!^)(?=[A-Z])")
