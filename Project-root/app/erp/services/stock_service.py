@@ -1,12 +1,13 @@
 """Stock, ported from Apps_Script/module_stock.js.
 
 Current Stock is computed live (never stored) via
-_get_billed_and_consumed_qty_maps -- stubbed to ({}, {}) today since Bill/
-Return/Wastage/Issue/Production don't exist yet, genuinely correct until
-they do. See the Phase 1c plan for why this isn't a SQL view yet and why
-the guarded per-table terms aren't pre-written the way Phase 1a/1b's rename
-cascades were (this formula needs 5 undesigned future schemas, not one
-predictable column name).
+_get_billed_and_consumed_qty_maps. Bill Ledger's term is real as of Phase
+2c; Return/Wastage/Issue/Production remain stubbed until their own rounds.
+See the Phase 1c plan for why this isn't a SQL view yet and why the guarded
+per-table terms aren't pre-written the way Phase 1a/1b's rename cascades
+were (this formula needs 5 undesigned future schemas, not one predictable
+column name) -- Bill's term below was filled in only once Bill Ledger's
+real schema existed, per that plan.
 
 getStockAdjustmentHistory reads a real erp.stock_adjustments table instead
 of the source's regex-parsed Logs-sheet workaround -- the feature (queryable
@@ -38,16 +39,30 @@ def _get_billed_and_consumed_qty_maps(cur) -> tuple[dict, dict]:
     """Returns (bill_qty_map, consumed_qty_map), each keyed by
     "item_name_lower|size_lower" -> net base-unit qty affecting Current Stock.
 
-    Stubbed to ({}, {}) today. Fill in incrementally as each source table's
-    own round defines its real schema:
-      - BILL: += base_qty where affects_stock != 'N'
+    BILL is real (Phase 2c). Still stubbed -- fill in as each remaining
+    source table's own round defines its real schema:
       - RETURN: -= base_qty (mirror image of a bill)
       - WASTAGE: -= base_qty
       - ISSUE: -= base_qty
       - PRODUCTION: consumed_qty_map -= ITEM-sourced components_consumed qty
         on Completed lots (POOL-sourced entries debit Warehouse Pool instead)
     """
-    return {}, {}
+    bill_qty_map: dict = {}
+    cur.execute(
+        """
+        SELECT l.item_name, l.size, l.base_qty
+        FROM erp.bill_lines l
+        JOIN erp.bill_headers h ON h.id = l.header_id
+        WHERE h.deleted_at IS NULL AND l.affects_stock = TRUE
+        """
+    )
+    for row in cur.fetchall():
+        key = f'{(row["item_name"] or "").strip().lower()}|{(row["size"] or "").strip().lower()}'
+        if not key.split("|")[0]:
+            continue
+        bill_qty_map[key] = bill_qty_map.get(key, 0) + float(row["base_qty"] or 0)
+
+    return bill_qty_map, {}
 
 
 def _find_stock_row(cur, name: str, size: str):

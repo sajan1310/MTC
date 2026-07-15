@@ -479,6 +479,8 @@ TABLE_NAMES = {
     # (e.g. PO_COL.VENDOR is header-level, PO_COL.UNIT is line-level).
     "PO_HEADERS": "erp.po_headers",
     "PO_LINES": "erp.po_lines",
+    "BILL_HEADERS": "erp.bill_headers",
+    "BILL_LINES": "erp.bill_lines",
 }
 
 _CAMEL_BOUNDARY_RE = re.compile(r"(?<!^)(?=[A-Z])")

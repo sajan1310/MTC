@@ -10,15 +10,15 @@ savePO's auto-extraction side effects (vendor/item/rate-history upsert) are
 not optional/bonus behavior -- the source performs them unconditionally on
 every save, so they're in scope here too, not deferred.
 
-PO status (_attachPoStatus) is stubbed: `billed_map` is always {} today,
-since Bill Ledger doesn't exist -- every PO genuinely shows 'PO Issued',
-which is correct (nothing has been billed yet). Filled in for real once Bill
-Ledger lands, same pattern as Stock's Current Stock formula.
+PO status (_attachPoStatus) is real as of Phase 2c: `billed_map` comes from
+bill_service._aggregate_billed_base_qty_by_po (module_bill.js's
+_aggregateBilledBaseQtyByPo -- module_po.js just calls it, matching the
+source's own module boundary). _build_po_line_key also lives in
+bill_service.py for the same reason, not duplicated here.
 
 Deferred: suggestPoAllocations (entirely Bill-Ledger-driven -- matches
 unlinked bill lines to open PO lines; exists to support bill entry, not PO
-CRUD). Lands with Bill Ledger's own round, along with _attachPoStatus's real
-billed_map.
+CRUD). Its own round.
 """
 
 from __future__ import annotations
@@ -29,6 +29,7 @@ from datetime import date
 import psycopg2.extras
 
 import database
+from . import bill_service
 from . import items_service
 from . import units_service
 from . import vendors_service
@@ -121,24 +122,13 @@ def _normalize_items(cur, raw_items) -> list:
 # ─────────────────────────────────────────────────────────────────────────
 
 
-def _build_po_line_key(po_number, name, size, narration) -> str:
-    """Must match Bill Ledger's future _aggregateBilledBaseQtyByPo key
-    exactly once that round lands -- poNumber|name|size|narration, each part
-    trimmed+lowercased.
-    """
-    return (
-        f"{str(po_number).strip().lower()}|{str(name).strip().lower()}|"
-        f"{str(size).strip().lower()}|{str(narration).strip().lower()}"
-    )
-
-
 def _attach_po_status(po: dict, billed_map: dict) -> None:
     items = po["items"]
     any_billed = False
     all_lines_complete = len(items) > 0
 
     for item in items:
-        key = _build_po_line_key(po["poNumber"], item["name"], item["size"], item["narration"])
+        key = bill_service._build_po_line_key(po["poNumber"], item["name"], item["size"], item["narration"])
         billed_base_qty = billed_map.get(key, 0)
 
         # Legacy/unconverted rows (baseQty 0) are treated as 1:1 with the
@@ -239,6 +229,7 @@ def get_po_data():
             """
         )
         rows = cur.fetchall()
+        billed_map = bill_service._aggregate_billed_base_qty_by_po(cur)
 
     po_map: dict = {}
     for row in rows:
@@ -277,8 +268,6 @@ def get_po_data():
         po["grandTotal"] += qty * price
         po["totalQty"] += qty
 
-    # Stubbed today -- see module docstring. Every PO shows 'PO Issued'.
-    billed_map: dict = {}
     for po in po_map.values():
         _attach_po_status(po, billed_map)
 

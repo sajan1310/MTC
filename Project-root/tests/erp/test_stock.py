@@ -172,3 +172,50 @@ def test_check_stock_adjustment_conflicts_empty_when_no_history(erp_client):
     body = resp.get_json()
     assert body["success"] is True
     assert body["data"] == []
+
+
+def test_bill_moves_current_stock_away_from_initial(erp_client):
+    """First real (non-zero) exercise of a _get_billed_and_consumed_qty_maps
+    term (Phase 2c) -- everything before this round only ever saw
+    currentStock == initialStock, since no source table had a real query.
+    """
+    name = _unique_name("BilledStockItem")
+    _create_item_with_stock(erp_client, name, initial_stock=10)
+
+    vendor = _unique_name("StockBillVendor")
+    _rpc(
+        erp_client,
+        "saveBill",
+        [{"vendor": vendor, "billNumber": _unique_name("StockBill"), "billDate": "01/01/2026", "items": [{"name": name, "qty": 5, "price": 1}]}],
+        mutation=True,
+    )
+
+    listed = _rpc(erp_client, "getStockData").get_json()["data"]
+    match = next(r for r in listed if r["name"] == name)
+    assert match["initialStock"] == 10
+    assert match["currentStock"] == 15  # 10 initial + 5 billed
+
+
+def test_bill_excluded_from_stock_does_not_move_current_stock(erp_client):
+    name = _unique_name("ExcludedStockItem")
+    _create_item_with_stock(erp_client, name, initial_stock=10)
+
+    vendor = _unique_name("ExcludedStockVendor")
+    _rpc(
+        erp_client,
+        "saveBill",
+        [
+            {
+                "vendor": vendor,
+                "billNumber": _unique_name("ExcludedStockBill"),
+                "billDate": "01/01/2026",
+                "items": [{"name": name, "size": "", "qty": 5, "price": 1}],
+                "excludeFromStockKeys": [f"{name.lower()}|"],
+            }
+        ],
+        mutation=True,
+    )
+
+    listed = _rpc(erp_client, "getStockData").get_json()["data"]
+    match = next(r for r in listed if r["name"] == name)
+    assert match["currentStock"] == 10  # unchanged -- this line opted out

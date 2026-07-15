@@ -221,3 +221,63 @@ def test_item_rename_cascades_into_po_lines(erp_client):
     listed = _rpc(erp_client, "getPOData").get_json()["data"]
     match = next(po for po in listed if po["poNumber"] == po_number)
     assert match["items"][0]["name"] == new_item
+
+
+def test_bill_against_po_line_flips_status(erp_client):
+    """First real exercise of _attach_po_status's actual formula (Phase 2c)
+    -- every PO before this round could only ever show the 'PO Issued'
+    stub, since billed_map was always {}.
+    """
+    vendor = _unique_name("StatusVendor")
+    item = _unique_name("StatusItem")
+
+    create = _rpc(
+        erp_client,
+        "savePO",
+        [{"vendor": vendor, "items": [{"name": item, "size": "", "qty": 10, "unit": "Pcs", "price": 1}]}],
+        mutation=True,
+    )
+    po_number = create.get_json()["data"]["poNumber"]
+
+    listed = _rpc(erp_client, "getPOData").get_json()["data"]
+    match = next(po for po in listed if po["poNumber"] == po_number)
+    assert match["status"] == "PO Issued"
+
+    _rpc(
+        erp_client,
+        "saveBill",
+        [
+            {
+                "vendor": vendor,
+                "billNumber": _unique_name("PartialBill"),
+                "billDate": "01/01/2026",
+                "items": [{"name": item, "size": "", "qty": 4, "price": 1, "po": po_number}],
+            }
+        ],
+        mutation=True,
+    )
+
+    listed = _rpc(erp_client, "getPOData").get_json()["data"]
+    match = next(po for po in listed if po["poNumber"] == po_number)
+    assert match["status"] == "Partially Received"
+    assert match["items"][0]["receivedQty"] == 4
+    assert match["items"][0]["pendingQty"] == 6
+
+    _rpc(
+        erp_client,
+        "saveBill",
+        [
+            {
+                "vendor": vendor,
+                "billNumber": _unique_name("FinalBill"),
+                "billDate": "02/01/2026",
+                "items": [{"name": item, "size": "", "qty": 6, "price": 1, "po": po_number}],
+            }
+        ],
+        mutation=True,
+    )
+
+    listed = _rpc(erp_client, "getPOData").get_json()["data"]
+    match = next(po for po in listed if po["poNumber"] == po_number)
+    assert match["status"] == "Completed"
+    assert match["items"][0]["pendingQty"] == 0

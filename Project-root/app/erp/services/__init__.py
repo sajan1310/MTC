@@ -12,6 +12,7 @@ from . import tags_service  # noqa: F401
 from . import items_service  # noqa: F401
 from . import stock_service  # noqa: F401
 from . import vendors_service  # noqa: F401
+from . import bill_service  # noqa: F401
 from . import po_service  # noqa: F401
 
 __all__ = [
@@ -21,5 +22,6 @@ __all__ = [
     "items_service",
     "stock_service",
     "vendors_service",
+    "bill_service",
     "po_service",
 ]

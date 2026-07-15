@@ -171,13 +171,14 @@ def lookup_item_unit_info(unit_map: dict, name: str, size: str) -> dict:
     return unit_map.get(key) or {"baseUnit": "Pcs", "purchaseUnit": "Pcs", "weightPerBaseUnit": 0}
 
 
-# PO_LINES is the only target that exists yet -- Bill/BOM/Process Components
-# land in their own rounds and start cascading automatically once registered
-# in config_maps.TABLE_NAMES, no code changes needed here.
+# BOM/Process Components land in their own rounds and start cascading
+# automatically once registered in config_maps.TABLE_NAMES, no code changes
+# needed here.
 def _propagate_item_identity_change(cur, old_name: str, old_size: str, new_name: str, new_size: str) -> None:
-    po_lines_table = config_maps.TABLE_NAMES.get("PO_LINES")
-    if po_lines_table:
-        rename_utils.rename_composite_key(cur, po_lines_table, "item_name", "size", old_name, old_size, new_name, new_size)
+    for sheet_key in ("PO_LINES", "BILL_LINES"):
+        table = config_maps.TABLE_NAMES.get(sheet_key)
+        if table:
+            rename_utils.rename_composite_key(cur, table, "item_name", "size", old_name, old_size, new_name, new_size)
 
 
 def _get_item_keys_in_use(cur, items: list) -> set:
