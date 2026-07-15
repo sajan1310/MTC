@@ -50,6 +50,10 @@ class Config:
     # Session lifetime
     PERMANENT_SESSION_LIFETIME = int(os.getenv("PERMANENT_SESSION_LIFETIME", 86400))
 
+    # ERP module: when true, create_app() registers only auth_bp + the ERP
+    # blueprints (skips main/api/UPF/files) and "/" serves the ERP shell.
+    ERP_ONLY = os.getenv("ERP_ONLY", "false").lower() in ("1", "true", "yes")
+
     # Database
     DATABASE_URL = os.getenv("DATABASE_URL")
     # Legacy fields for existing database.py helper

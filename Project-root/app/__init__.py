@@ -32,8 +32,10 @@ from typing import Any
 from flask import (
     Flask,
     jsonify,
+    redirect,
     render_template,
     request,
+    url_for,
     g,
 )
 from flask_cors import CORS
@@ -424,6 +426,7 @@ def create_app(config_name: str | None = None) -> Flask:
     from .api.inventory_alerts import inventory_alerts_bp
     from .auth.routes import auth_bp
     from .main.routes import main_bp
+    from .erp import erp_bp, erp_rpc_bp
 
     # PHASE 1: Re-enable CSRF protection by removing blanket blueprint exemptions.
     # Instead, only exempt specific webhook endpoints that require it.
@@ -431,19 +434,44 @@ def create_app(config_name: str | None = None) -> Flask:
     # No blueprints are exempt; individual view functions are exempted as needed below.
 
     # Now register blueprints
-    app.register_blueprint(auth_bp, url_prefix="/auth")
-    app.register_blueprint(api_bp)
-    app.register_blueprint(files_bp)
-    app.register_blueprint(main_bp)
+    erp_only = bool(app.config.get("ERP_ONLY"))
 
-    app.register_blueprint(process_api_bp, url_prefix="/api/upf")
-    app.register_blueprint(reports_api_bp, url_prefix="/api/upf")
-    app.register_blueprint(variant_api_bp, url_prefix="/api/upf")
-    app.register_blueprint(production_api_bp, url_prefix="/api/upf")
-    app.register_blueprint(subprocess_api_bp, url_prefix="/api/upf")
-    app.register_blueprint(inventory_alerts_bp, url_prefix="/api/upf")
+    if erp_only:
+        # ERP-only deployment: skip main/api/UPF/files entirely; "/" serves the ERP.
+        app.register_blueprint(auth_bp, url_prefix="/auth")
+        app.register_blueprint(erp_bp)
+        app.register_blueprint(erp_rpc_bp, url_prefix="/api/erp")
+        limiter.exempt(erp_rpc_bp)
 
-    app.logger.info("Universal Process Framework API blueprints registered and CSRF exemptions applied where configured")
+        def _erp_home_redirect():
+            return redirect(url_for("erp.index"))
+
+        # main_bp isn't registered in this mode, but auth's post-login redirects
+        # and templates still reference main.home/main.dashboard by endpoint name.
+        app.add_url_rule("/", endpoint="main.home", view_func=_erp_home_redirect)
+        app.add_url_rule(
+            "/dashboard", endpoint="main.dashboard", view_func=_erp_home_redirect
+        )
+
+        app.logger.info("ERP_ONLY mode: registered auth_bp + erp_bp + erp_rpc_bp only")
+    else:
+        app.register_blueprint(auth_bp, url_prefix="/auth")
+        app.register_blueprint(api_bp)
+        app.register_blueprint(files_bp)
+        app.register_blueprint(main_bp)
+
+        app.register_blueprint(process_api_bp, url_prefix="/api/upf")
+        app.register_blueprint(reports_api_bp, url_prefix="/api/upf")
+        app.register_blueprint(variant_api_bp, url_prefix="/api/upf")
+        app.register_blueprint(production_api_bp, url_prefix="/api/upf")
+        app.register_blueprint(subprocess_api_bp, url_prefix="/api/upf")
+        app.register_blueprint(inventory_alerts_bp, url_prefix="/api/upf")
+
+        app.register_blueprint(erp_bp)
+        app.register_blueprint(erp_rpc_bp, url_prefix="/api/erp")
+        limiter.exempt(erp_rpc_bp)
+
+        app.logger.info("Universal Process Framework API blueprints registered and CSRF exemptions applied where configured")
 
     # If specific view function names need exemption but are only available
     # after registration, we try to exempt them but log missing keys.
