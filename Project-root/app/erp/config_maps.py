@@ -473,6 +473,7 @@ TABLE_NAMES = {
     "PROCESS_TYPE_MASTER": "erp.process_type_master",
     "ITEMS": "erp.items",
     "STOCK": "erp.stock",
+    "VENDORS": "erp.vendors",
 }
 
 _CAMEL_BOUNDARY_RE = re.compile(r"(?<!^)(?=[A-Z])")

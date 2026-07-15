@@ -11,5 +11,13 @@ from . import units_service  # noqa: F401
 from . import tags_service  # noqa: F401
 from . import items_service  # noqa: F401
 from . import stock_service  # noqa: F401
+from . import vendors_service  # noqa: F401
 
-__all__ = ["system_service", "units_service", "tags_service", "items_service", "stock_service"]
+__all__ = [
+    "system_service",
+    "units_service",
+    "tags_service",
+    "items_service",
+    "stock_service",
+    "vendors_service",
+]
