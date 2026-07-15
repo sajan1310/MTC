@@ -483,6 +483,13 @@ TABLE_NAMES = {
     "BILL_LINES": "erp.bill_lines",
     "RETURN_HEADERS": "erp.return_headers",
     "RETURN_LINES": "erp.return_lines",
+    # Registering these three activates three rename cascades written back
+    # in Phase 1a (tags_service._rename_color_everywhere/
+    # _rename_process_type_everywhere) that were guarded no-ops until now --
+    # see migrations/erp/010_process_master.sql.
+    "PROCESS_MASTER": "erp.process_master",
+    "PROCESS_COMPONENTS": "erp.process_components",
+    "PROCESS_COLOR_LINKS": "erp.process_color_links",
 }
 
 _CAMEL_BOUNDARY_RE = re.compile(r"(?<!^)(?=[A-Z])")

@@ -15,6 +15,7 @@ from . import vendors_service  # noqa: F401
 from . import bill_service  # noqa: F401
 from . import po_service  # noqa: F401
 from . import return_service  # noqa: F401
+from . import process_service  # noqa: F401
 
 __all__ = [
     "system_service",
@@ -26,4 +27,5 @@ __all__ = [
     "bill_service",
     "po_service",
     "return_service",
+    "process_service",
 ]

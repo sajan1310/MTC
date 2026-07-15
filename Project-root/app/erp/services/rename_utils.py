@@ -39,35 +39,50 @@ def _has_deleted_at(cur, table: str) -> bool:
     return cur.fetchone() is not None
 
 
-def rename_in_column(cur, table: str, column: str, old: str, new: str) -> None:
+def rename_in_column(cur, table: str, column: str, old: str, new: str, extra_where: str = "") -> None:
     """UPDATE table SET column = new WHERE lower(column) = lower(old).
 
-    No-ops silently if `table` doesn't exist yet in this phase.
+    No-ops silently if `table` doesn't exist yet in this phase. `extra_where`
+    is an optional caller-supplied SQL fragment (e.g. " AND source_type =
+    'POOL'") appended to the WHERE clause -- same identifier-safety guarantee
+    as `table`/`column`: always a hardcoded literal from our own code, never
+    request input.
     """
     if not _table_exists(cur, table):
         return
     where_extra = " AND deleted_at IS NULL" if _has_deleted_at(cur, table) else ""
     cur.execute(
-        f"UPDATE {table} SET {column} = %s WHERE lower({column}) = lower(%s){where_extra}",
+        f"UPDATE {table} SET {column} = %s WHERE lower({column}) = lower(%s){where_extra}{extra_where}",
         (new, old),
     )
 
 
 def rename_composite_key(
-    cur, table: str, name_col: str, size_col: str, old_name: str, old_size: str, new_name: str, new_size: str
+    cur,
+    table: str,
+    name_col: str,
+    size_col: str,
+    old_name: str,
+    old_size: str,
+    new_name: str,
+    new_size: str,
+    extra_where: str = "",
 ) -> None:
     """UPDATE table SET name_col=new_name, size_col=new_size WHERE
     lower(name_col)=lower(old_name) AND lower(size_col)=lower(old_size).
 
     For rename cascades keyed on a (name, size) composite, e.g. an Items
     Master rename propagating into erp.po_lines.item_name/size. No-ops
-    silently if `table` doesn't exist yet in this phase.
+    silently if `table` doesn't exist yet in this phase. `extra_where` is an
+    optional caller-supplied SQL fragment appended to the WHERE clause (e.g.
+    module_items.js's backfillProcessComponentItemRefs only rewrites
+    SOURCE_TYPE 'ITEM' rows, never 'POOL' ones).
     """
     if not _table_exists(cur, table):
         return
     cur.execute(
         f"UPDATE {table} SET {name_col} = %s, {size_col} = %s "
-        f"WHERE lower({name_col}) = lower(%s) AND lower({size_col}) = lower(%s)",
+        f"WHERE lower({name_col}) = lower(%s) AND lower({size_col}) = lower(%s){extra_where}",
         (new_name, new_size, old_name, old_size),
     )
 

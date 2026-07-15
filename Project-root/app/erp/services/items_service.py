@@ -171,14 +171,25 @@ def lookup_item_unit_info(unit_map: dict, name: str, size: str) -> dict:
     return unit_map.get(key) or {"baseUnit": "Pcs", "purchaseUnit": "Pcs", "weightPerBaseUnit": 0}
 
 
-# BOM/Process Components land in their own rounds and start cascading
-# automatically once registered in config_maps.TABLE_NAMES, no code changes
-# needed here.
+# BOM lands in its own round and starts cascading automatically once
+# registered in config_maps.TABLE_NAMES, no code changes needed here.
 def _propagate_item_identity_change(cur, old_name: str, old_size: str, new_name: str, new_size: str) -> None:
     for sheet_key in ("PO_LINES", "BILL_LINES"):
         table = config_maps.TABLE_NAMES.get(sheet_key)
         if table:
             rename_utils.rename_composite_key(cur, table, "item_name", "size", old_name, old_size, new_name, new_size)
+
+    # Process Components: only ITEM-sourced rows -- a POOL row's item_name is
+    # a different identity space (an upstream process's Output Item Name),
+    # handled by process_service's own _rename_pool_output_item_name_everywhere,
+    # and must never be touched by an Items Master rename even on a
+    # name+size coincidence (backfillProcessComponentItemRefs).
+    comp_table = config_maps.TABLE_NAMES.get("PROCESS_COMPONENTS")
+    if comp_table:
+        rename_utils.rename_composite_key(
+            cur, comp_table, "item_name", "size", old_name, old_size, new_name, new_size,
+            extra_where=" AND source_type != 'POOL'",
+        )
 
 
 def _get_item_keys_in_use(cur, items: list) -> set:
@@ -206,9 +217,19 @@ def _get_item_keys_in_use(cur, items: list) -> set:
                 in_use.add(key)
 
     comp_table = config_maps.TABLE_NAMES.get("PROCESS_COMPONENTS")
-    if comp_table:
+    master_table = config_maps.TABLE_NAMES.get("PROCESS_MASTER")
+    if comp_table and master_table:
+        # erp.process_components has no deleted_at of its own (a child with
+        # no independent lifecycle, same as erp.po_lines) -- visibility
+        # comes from its parent's deleted_at via this join, not a direct
+        # column reference.
         cur.execute(
-            f"SELECT item_name, size FROM {comp_table} WHERE deleted_at IS NULL AND upper(source_type) != 'POOL'"
+            f"""
+            SELECT pc.item_name, pc.size
+            FROM {comp_table} pc
+            JOIN {master_table} pm ON pm.id = pc.master_id
+            WHERE pm.deleted_at IS NULL AND upper(pc.source_type) != 'POOL'
+            """
         )
         for row in cur.fetchall():
             key = f'{(row["item_name"] or "").strip().lower()}|{(row["size"] or "").strip().lower()}'
