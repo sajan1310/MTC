@@ -474,6 +474,11 @@ TABLE_NAMES = {
     "ITEMS": "erp.items",
     "STOCK": "erp.stock",
     "VENDORS": "erp.vendors",
+    # Denormalized sheets split into header+lines tables -- distinct keys
+    # since header-level and line-level columns live on different tables
+    # (e.g. PO_COL.VENDOR is header-level, PO_COL.UNIT is line-level).
+    "PO_HEADERS": "erp.po_headers",
+    "PO_LINES": "erp.po_lines",
 }
 
 _CAMEL_BOUNDARY_RE = re.compile(r"(?<!^)(?=[A-Z])")

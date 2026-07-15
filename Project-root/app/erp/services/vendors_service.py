@@ -27,11 +27,13 @@ from ..envelope import build_response
 from ..registry import rpc_method
 
 # Sheets whose VENDOR column gets renamed alongside a Vendors master rename.
-# Guarded by config_maps.TABLE_NAMES -- none of these exist yet, so this is
-# a no-op today, same pattern as every prior rename cascade.
+# Guarded by config_maps.TABLE_NAMES -- entries not yet present there are
+# silently skipped. PO/BILL are denormalized (header+lines); VENDOR is
+# header-level, so these target the *_HEADERS table, not a flat "PO"/"BILL"
+# entry (see config_maps.TABLE_NAMES).
 _VENDOR_RENAME_SINGLE_COLUMN_TARGETS = [
-    ("PO", "vendor"),
-    ("BILL", "vendor"),
+    ("PO_HEADERS", "vendor"),
+    ("BILL_HEADERS", "vendor"),
     ("RETURN", "vendor"),
     ("WASTAGE", "vendor"),
     ("BOM", "vendor"),
@@ -57,6 +59,32 @@ def _rename_vendor_everywhere(cur, old_name: str, new_name: str) -> None:
         "UPDATE erp.item_vendors SET vendor = %s WHERE lower(vendor) = lower(%s)",
         (new, old),
     )
+
+
+def ensure_vendor(cur, name: str, contact: str) -> None:
+    """The vendor-upsert half of module_vendors.js's autoExtractFromPoOrBill.
+    Plain cur-based helper (not its own transaction) -- callers (PO/Bill
+    save) run this inside their own transaction. Creates the vendor if
+    missing; fills a blank contact if the vendor exists but has none.
+    Never overwrites an existing non-blank contact.
+    """
+    name = (name or "").strip()
+    if not name:
+        return
+    contact = (contact or "").strip()
+
+    cur.execute(
+        "SELECT id, contact FROM erp.vendors WHERE lower(vendor_name) = lower(%s) AND deleted_at IS NULL",
+        (name,),
+    )
+    row = cur.fetchone()
+    if row is None:
+        cur.execute(
+            "INSERT INTO erp.vendors (vendor_name, contact, remarks) VALUES (%s, %s, %s)",
+            (name, contact, "Auto-extracted on save"),
+        )
+    elif contact and not (row["contact"] or "").strip():
+        cur.execute("UPDATE erp.vendors SET contact = %s WHERE id = %s", (contact, row["id"]))
 
 
 @rpc_method("getVendorsData")

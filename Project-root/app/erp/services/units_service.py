@@ -27,10 +27,12 @@ from ..registry import rpc_method
 # Sheets whose UNIT column gets renamed alongside a Unit Master rename.
 # Guarded by config_maps.TABLE_NAMES -- entries not yet present there (every
 # one of these, until later phases) are silently skipped, exactly like the
-# source's try/catch around a missing sheet.
+# source's try/catch around a missing sheet. PO/BILL are denormalized
+# (header+lines); UNIT is line-level, so these target the *_LINES table, not
+# a flat "PO"/"BILL" entry (see config_maps.TABLE_NAMES).
 _UNIT_RENAME_SINGLE_COLUMN_TARGETS = [
-    ("PO", "unit"),
-    ("BILL", "unit"),
+    ("PO_LINES", "unit"),
+    ("BILL_LINES", "unit"),
     ("RETURN", "unit"),
     ("WASTAGE", "unit"),
     ("ISSUE", "unit"),

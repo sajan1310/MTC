@@ -25,6 +25,20 @@ def _table_exists(cur, table: str) -> bool:
     return cur.fetchone()["relid"] is not None
 
 
+def _has_deleted_at(cur, table: str) -> bool:
+    """Child tables with no independent lifecycle (e.g. erp.po_lines,
+    erp.item_vendors) don't have their own deleted_at -- they're invisible
+    via their parent's deleted_at join filter instead. Rename cascades must
+    not assume every target has this column.
+    """
+    schema, _, name = table.partition(".")
+    cur.execute(
+        "SELECT 1 FROM information_schema.columns WHERE table_schema = %s AND table_name = %s AND column_name = 'deleted_at'",
+        (schema, name),
+    )
+    return cur.fetchone() is not None
+
+
 def rename_in_column(cur, table: str, column: str, old: str, new: str) -> None:
     """UPDATE table SET column = new WHERE lower(column) = lower(old).
 
@@ -32,10 +46,29 @@ def rename_in_column(cur, table: str, column: str, old: str, new: str) -> None:
     """
     if not _table_exists(cur, table):
         return
+    where_extra = " AND deleted_at IS NULL" if _has_deleted_at(cur, table) else ""
     cur.execute(
-        f"UPDATE {table} SET {column} = %s "
-        f"WHERE lower({column}) = lower(%s) AND deleted_at IS NULL",
+        f"UPDATE {table} SET {column} = %s WHERE lower({column}) = lower(%s){where_extra}",
         (new, old),
+    )
+
+
+def rename_composite_key(
+    cur, table: str, name_col: str, size_col: str, old_name: str, old_size: str, new_name: str, new_size: str
+) -> None:
+    """UPDATE table SET name_col=new_name, size_col=new_size WHERE
+    lower(name_col)=lower(old_name) AND lower(size_col)=lower(old_size).
+
+    For rename cascades keyed on a (name, size) composite, e.g. an Items
+    Master rename propagating into erp.po_lines.item_name/size. No-ops
+    silently if `table` doesn't exist yet in this phase.
+    """
+    if not _table_exists(cur, table):
+        return
+    cur.execute(
+        f"UPDATE {table} SET {name_col} = %s, {size_col} = %s "
+        f"WHERE lower({name_col}) = lower(%s) AND lower({size_col}) = lower(%s)",
+        (new_name, new_size, old_name, old_size),
     )
 
 
@@ -47,13 +80,13 @@ def rename_in_either_column(cur, table: str, column_a: str, column_b: str, old: 
     """
     if not _table_exists(cur, table):
         return
+    where_extra = " AND deleted_at IS NULL" if _has_deleted_at(cur, table) else ""
     cur.execute(
         f"""
         UPDATE {table}
         SET {column_a} = CASE WHEN lower({column_a}) = lower(%(old)s) THEN %(new)s ELSE {column_a} END,
             {column_b} = CASE WHEN lower({column_b}) = lower(%(old)s) THEN %(new)s ELSE {column_b} END
-        WHERE deleted_at IS NULL
-          AND (lower({column_a}) = lower(%(old)s) OR lower({column_b}) = lower(%(old)s))
+        WHERE (lower({column_a}) = lower(%(old)s) OR lower({column_b}) = lower(%(old)s)){where_extra}
         """,
         {"old": old, "new": new},
     )

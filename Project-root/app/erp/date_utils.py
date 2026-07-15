@@ -66,3 +66,21 @@ def to_safe_date(date_val) -> date | None:
     if not parts:
         return None
     return date(*parts)
+
+
+def to_iso_string(date_val) -> str | None:
+    """'YYYY-MM-DD' or None, ports _toSafeDateString."""
+    parts = parse_date_parts(date_val)
+    if not parts:
+        return None
+    year, month, day = parts
+    return f"{year:04d}-{month:02d}-{day:02d}"
+
+
+def to_display_string(date_val) -> str | None:
+    """'DD/MM/YYYY' or None, ports _toDisplayDate."""
+    parts = parse_date_parts(date_val)
+    if not parts:
+        return None
+    year, month, day = parts
+    return f"{day:02d}/{month:02d}/{year:04d}"

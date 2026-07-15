@@ -22,13 +22,14 @@ parameterized queries, so there's no SQL-injection concern either.
 
 Deferred: mergeItemEdit, mergeSelectedItems, keepOrphanItem(sBulk),
 autoMergeDuplicateItems, autoFixTruncatedDuplicateItems,
-runScheduledItemCleanup, and _propagateItemIdentityChange's actual backfills
--- data hygiene tooling, not core CRUD; their own round later (the source's
-_propagateItemIdentityChange already guards each backfill call with
-`typeof fn !== 'function'`, so skipping the call entirely -- since Bill/PO/
-BOM/Process don't exist yet -- is a direct port of that same tolerance, not
-a shortcut). importItemsFromStock (module_items.js:1928) is ported below,
-now that erp.stock is real (Phase 1c).
+runScheduledItemCleanup -- data hygiene tooling, not core CRUD; their own
+round later. importItemsFromStock (module_items.js:1928) is ported below,
+now that erp.stock is real (Phase 1c). _propagateItemIdentityChange
+(module_items.js:1125) is ported below too, now that erp.po_lines is real
+(Phase 2b) -- guarded per target table exactly like every other rename
+cascade, so its still-missing targets (Bill/BOM/Process Components) stay
+no-ops until their own rounds land, the same tolerance the source's own
+`typeof fn !== 'function'` guard provides.
 """
 
 from __future__ import annotations
@@ -39,6 +40,7 @@ import math
 import psycopg2.extras
 
 import database
+from . import rename_utils
 from . import stock_rows
 from . import units_service
 from .current_user import get_current_user_id
@@ -136,6 +138,46 @@ def _get_stock_initial(cur, name: str, size: str) -> float:
     )
     row = cur.fetchone()
     return float(row["initial_stock"]) if row else 0.0
+
+
+def get_item_unit_info_map(cur) -> dict:
+    """{name_lower|size_lower: {"baseUnit", "purchaseUnit", "weightPerBaseUnit"}}
+    for every active item -- ports _getItemUnitInfoMap. Not an RPC method;
+    for PO/Bill's _normalizeItems-equivalent to resolve an item's Base Unit
+    for qty/rate conversion.
+    """
+    cur.execute("SELECT item_name, size, base_unit, purchase_unit, weight_per_base_unit FROM erp.items WHERE deleted_at IS NULL")
+    result = {}
+    for row in cur.fetchall():
+        name = (row["item_name"] or "").strip()
+        if not name:
+            continue
+        size = (row["size"] or "").strip()
+        base_unit = (row["base_unit"] or "").strip() or "Pcs"
+        purchase_unit = (row["purchase_unit"] or "").strip() or base_unit
+        result[f"{name.lower()}|{size.lower()}"] = {
+            "baseUnit": base_unit,
+            "purchaseUnit": purchase_unit,
+            "weightPerBaseUnit": float(row["weight_per_base_unit"] or 0),
+        }
+    return result
+
+
+def lookup_item_unit_info(unit_map: dict, name: str, size: str) -> dict:
+    """Falls back to Pcs/Pcs/0 for an item not yet registered -- matches
+    _lookupItemUnitInfo.
+    """
+    key = f'{str(name or "").strip().lower()}|{str(size or "").strip().lower()}'
+    return unit_map.get(key) or {"baseUnit": "Pcs", "purchaseUnit": "Pcs", "weightPerBaseUnit": 0}
+
+
+# PO_LINES is the only target that exists yet -- Bill/BOM/Process Components
+# land in their own rounds and start cascading automatically once registered
+# in config_maps.TABLE_NAMES, no code changes needed here.
+def _propagate_item_identity_change(cur, old_name: str, old_size: str, new_name: str, new_size: str) -> None:
+    po_lines_table = config_maps.TABLE_NAMES.get("PO_LINES")
+    if po_lines_table:
+        rename_utils.rename_composite_key(cur, po_lines_table, "item_name", "size", old_name, old_size, new_name, new_size)
 
 
 def _get_item_keys_in_use(cur, items: list) -> set:
@@ -363,8 +405,7 @@ def save_item(conn, cur, form_data):
                 "rename",
                 {"oldName": original_name, "oldSize": original_size, "newName": new_name, "newSize": new_size},
             )
-            # _propagateItemIdentityChange's Bill/PO/BOM/Process backfills
-            # don't exist yet -- skipped entirely, see module docstring.
+            _propagate_item_identity_change(cur, original_name, original_size, new_name, new_size)
     else:
         # Plain edit (identity unchanged) -- backfills a missing Stock row
         # for orphaned items. No-ops if a Stock row already exists.
@@ -496,3 +537,62 @@ def _import_items_from_stock(cur) -> dict:
 @database.transactional
 def import_items_from_stock(conn, cur):
     return _import_items_from_stock(cur)
+
+
+def _auto_extract_item(cur, name: str, size: str, narration: str, unit: str, vendor_name: str, rate) -> int:
+    """The item-upsert half of module_vendors.js's autoExtractFromPoOrBill.
+    Plain cur-based helper (not its own transaction) -- callers (PO/Bill
+    save) run this inside their own transaction.
+
+    - New item: created with `unit` as both Base Unit and Purchase Unit (no
+      prior Base Unit to convert against, so this is an identity no-op until
+      the user edits it) plus this vendor/rate pair, and a Stock row is
+      ensured for it.
+    - Existing item: blank narration is filled; Purchase Unit is kept synced
+      to whatever unit was actually used on this line; this vendor's rate is
+      inserted or updated (existing rates for other vendors are untouched).
+
+    Returns the item's id.
+    """
+    name = (name or "").strip()
+    size = (size or "").strip()
+    narration = (narration or "").strip()
+    unit = (unit or "").strip() or "Pcs"
+    vendor_name = (vendor_name or "").strip()
+
+    item_id = _find_item(cur, name, size)
+
+    if item_id is None:
+        cur.execute(
+            """
+            INSERT INTO erp.items (item_name, size, narration, base_unit, purchase_unit)
+            VALUES (%s, %s, %s, %s, %s)
+            RETURNING id
+            """,
+            (name, size, narration, unit, unit),
+        )
+        item_id = cur.fetchone()["id"]
+        stock_rows.sync_stock_for_item(cur, "ensure", {"name": name, "size": size})
+    else:
+        cur.execute("SELECT narration, purchase_unit FROM erp.items WHERE id = %s", (item_id,))
+        row = cur.fetchone()
+        if narration and not (row["narration"] or "").strip():
+            cur.execute("UPDATE erp.items SET narration = %s WHERE id = %s", (narration, item_id))
+        if unit and unit != (row["purchase_unit"] or ""):
+            cur.execute("UPDATE erp.items SET purchase_unit = %s WHERE id = %s", (unit, item_id))
+
+    if vendor_name:
+        cur.execute(
+            "SELECT id FROM erp.item_vendors WHERE item_id = %s AND lower(vendor) = lower(%s)",
+            (item_id, vendor_name),
+        )
+        vendor_row = cur.fetchone()
+        if vendor_row is None:
+            cur.execute(
+                "INSERT INTO erp.item_vendors (item_id, vendor, rate) VALUES (%s, %s, %s)",
+                (item_id, vendor_name, rate),
+            )
+        else:
+            cur.execute("UPDATE erp.item_vendors SET rate = %s WHERE id = %s", (rate, vendor_row["id"]))
+
+    return item_id
