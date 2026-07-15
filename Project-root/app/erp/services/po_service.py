@@ -16,9 +16,10 @@ _aggregateBilledBaseQtyByPo -- module_po.js just calls it, matching the
 source's own module boundary). _build_po_line_key also lives in
 bill_service.py for the same reason, not duplicated here.
 
-Deferred: suggestPoAllocations (entirely Bill-Ledger-driven -- matches
-unlinked bill lines to open PO lines; exists to support bill entry, not PO
-CRUD). Its own round.
+suggestPoAllocations (Phase 2e) matches unlinked bill lines to open PO
+lines to support bill entry -- non-mutating (never writes) and fail-open
+(any internal error returns success with an empty list rather than
+blocking bill entry).
 """
 
 from __future__ import annotations
@@ -43,6 +44,11 @@ from ..registry import rpc_method
 # auto-extraction (but the line itself still saves normally) -- matches the
 # source's MIN_VENDOR_RATE early-return in autoExtractFromPoOrBill exactly.
 _MIN_VENDOR_RATE = 0.01
+
+# Max difference (in base-unit currency) allowed between a bill item's price
+# and a PO line's price for them to be considered the same deal --
+# suggest_po_allocations's soft price-match preference.
+_PO_PRICE_MATCH_EPSILON = 0.01
 
 
 # ─────────────────────────────────────────────────────────────────────────
@@ -214,22 +220,26 @@ def _auto_extract_from_po(cur, vendor_name: str, contact: str, items: list, po_n
 # ─────────────────────────────────────────────────────────────────────────
 
 
-@rpc_method("getPOData")
-def get_po_data():
-    with database.get_conn(cursor_factory=psycopg2.extras.RealDictCursor) as (_conn, cur):
-        cur.execute(
-            """
-            SELECT h.po_number, h.po_date, h.vendor, h.contact, h.po_description,
-                   h.po_remarks, h.supplier_remarks,
-                   l.item_name, l.narration, l.size, l.qty, l.unit, l.price, l.base_qty, l.base_rate
-            FROM erp.po_headers h
-            JOIN erp.po_lines l ON l.header_id = h.id
-            WHERE h.deleted_at IS NULL
-            ORDER BY h.id, l.id
-            """
-        )
-        rows = cur.fetchall()
-        billed_map = bill_service._aggregate_billed_base_qty_by_po(cur)
+def _load_po_list(cur, billed_map: dict) -> list:
+    """Core of getPOData: query + group + status-attach, given an
+    already-computed billed_map. Shared cursor, no envelope -- reused by
+    get_po_data() (which computes its own billed_map) and
+    suggest_po_allocations() (which reuses one already computed, avoiding a
+    second full Bill Ledger read -- matches the source's own
+    getPOData(preloadedBilledMap) optimization).
+    """
+    cur.execute(
+        """
+        SELECT h.po_number, h.po_date, h.vendor, h.contact, h.po_description,
+               h.po_remarks, h.supplier_remarks,
+               l.item_name, l.narration, l.size, l.qty, l.unit, l.price, l.base_qty, l.base_rate
+        FROM erp.po_headers h
+        JOIN erp.po_lines l ON l.header_id = h.id
+        WHERE h.deleted_at IS NULL
+        ORDER BY h.id, l.id
+        """
+    )
+    rows = cur.fetchall()
 
     po_map: dict = {}
     for row in rows:
@@ -271,7 +281,14 @@ def get_po_data():
     for po in po_map.values():
         _attach_po_status(po, billed_map)
 
-    pos = sorted(po_map.values(), key=lambda p: _po_sort_num(p["poNumber"]), reverse=True)
+    return sorted(po_map.values(), key=lambda p: _po_sort_num(p["poNumber"]), reverse=True)
+
+
+@rpc_method("getPOData")
+def get_po_data():
+    with database.get_conn(cursor_factory=psycopg2.extras.RealDictCursor) as (_conn, cur):
+        billed_map = bill_service._aggregate_billed_base_qty_by_po(cur)
+        pos = _load_po_list(cur, billed_map)
     return build_response(True, pos)
 
 
@@ -436,3 +453,160 @@ def delete_pos_bulk(conn, cur, po_numbers):
     rows_deleted = cur.rowcount
 
     return build_response(True, {"deletedIds": list(targets)}, f"Deleted {rows_deleted} PO(s).")
+
+
+@rpc_method("suggestPoAllocations")
+def suggest_po_allocations(vendor, items, bill_date=None):
+    """Given a vendor + a set of unlinked bill line items, suggests which
+    open PO line(s) each most likely belongs to. Never writes -- only
+    proposes allocations for the UI to confirm/override before a bill save.
+    Fails open: any internal error returns success with an empty list
+    rather than blocking bill entry.
+    """
+    try:
+        vendor_name = str(vendor or "").strip()
+        if not vendor_name or not isinstance(items, list) or len(items) == 0:
+            return build_response(True, [])
+
+        with database.get_conn(cursor_factory=psycopg2.extras.RealDictCursor) as (_conn, cur):
+            billed_map = bill_service._aggregate_billed_base_qty_by_po(cur)
+            all_pos = _load_po_list(cur, billed_map)
+            item_unit_map = items_service.get_item_unit_info_map(cur)
+
+        units_map = units_service.get_units_map()
+
+        vendor_pos = [po for po in all_pos if po["vendor"].strip().lower() == vendor_name.lower()]
+        if not vendor_pos:
+            return build_response(True, [])
+
+        bill_date_obj = date_utils.to_safe_date(bill_date)
+        if bill_date_obj:
+            vendor_pos = [
+                po
+                for po in vendor_pos
+                if not po["poDateRaw"] or date_utils.to_safe_date(po["poDateRaw"]) <= bill_date_obj
+            ]
+        if not vendor_pos:
+            return build_response(True, [])
+
+        # Flatten to open PO lines (remaining base qty > 0), oldest PO first.
+        candidates = []
+        for po in vendor_pos:
+            for po_item in po["items"]:
+                key = bill_service._build_po_line_key(po["poNumber"], po_item["name"], po_item["size"], po_item["narration"])
+                billed_base_qty = billed_map.get(key, 0)
+                remaining_base_qty = po_item["baseQty"] - billed_base_qty
+                if remaining_base_qty > 0.0001:
+                    candidates.append(
+                        {
+                            "poNumber": po["poNumber"],
+                            "poDateRaw": po["poDateRaw"],
+                            "name": str(po_item["name"]),
+                            "size": str(po_item["size"]),
+                            "narration": str(po_item["narration"] or ""),
+                            "price": po_item["price"],
+                            "unit": str(po_item["unit"] or "Pcs"),
+                            "baseRate": po_item["baseRate"],
+                            "remainingBaseQty": remaining_base_qty,
+                        }
+                    )
+
+        candidates.sort(key=lambda c: (c["poDateRaw"] or "", _po_sort_num(c["poNumber"])))
+
+        # Grouped once by (name,size) so each bill line's lookup is O(1).
+        # Each group holds the SAME candidate dicts (not copies), so
+        # mutating remainingBaseQty further down correctly reduces capacity
+        # for every other bill row sharing this key.
+        candidates_by_key: dict = {}
+        for c in candidates:
+            key = f'{c["name"].lower()}|{c["size"].lower()}'
+            candidates_by_key.setdefault(key, []).append(c)
+
+        results = []
+        for item in items:
+            item = item or {}
+            row_index = item.get("rowIndex")
+            name = str(item.get("name") or "").strip()
+            size = str(item.get("size") or "").strip()
+            try:
+                qty = float(item.get("qty") or 0)
+            except (TypeError, ValueError):
+                qty = 0
+            try:
+                price = float(item.get("price") or 0)
+            except (TypeError, ValueError):
+                price = 0
+            unit = str(item.get("unit") or "Pcs")
+
+            if not name or qty <= 0:
+                results.append({"rowIndex": row_index, "allocations": [], "unmatchedQty": qty})
+                continue
+
+            unit_info = items_service.lookup_item_unit_info(item_unit_map, name, size)
+            try:
+                base_qty = units_service.convert_qty_to_base_unit(qty, unit, unit_info, units_map)
+                base_rate = units_service.convert_rate_to_base_unit(price, unit, unit_info, units_map)
+            except ValueError:
+                base_qty = qty
+                base_rate = price
+
+            # qty-per-1-baseQty, used to convert allocated base qty back to
+            # the unit this bill line was actually entered in.
+            ratio = (qty / base_qty) if base_qty > 0 else 1
+
+            same_name_size = [
+                c for c in candidates_by_key.get(f"{name.lower()}|{size.lower()}", []) if c["remainingBaseQty"] > 0.0001
+            ]
+
+            # Narration/price are preferences, not hard requirements -- a
+            # missing/mismatched value never forces a fallback to unmatched.
+            narration = str(item.get("narration") or "").strip().lower()
+            narration_matched = (
+                [c for c in same_name_size if c["narration"].strip().lower() == narration] if narration else []
+            )
+            narration_pool = narration_matched if narration_matched else same_name_size
+
+            price_matched = (
+                [c for c in narration_pool if abs(c["baseRate"] - base_rate) <= _PO_PRICE_MATCH_EPSILON] if price > 0 else []
+            )
+            matching = price_matched if price_matched else narration_pool
+
+            base_qty_left = base_qty
+            allocations = []
+            for c in matching:
+                if base_qty_left <= 0.0001:
+                    break
+                take = min(c["remainingBaseQty"], base_qty_left)
+                if take <= 0:
+                    continue
+
+                # Bill rate has dominion over PO rate -- flag the
+                # disagreement so the UI can offer to keep the PO's rate
+                # instead, rather than silently overwriting it.
+                allocation = {"poNumber": c["poNumber"], "qty": round(take * ratio, 4)}
+                if price > 0 and abs(c["baseRate"] - base_rate) > _PO_PRICE_MATCH_EPSILON:
+                    allocation["rateConflict"] = {
+                        "poRate": c["price"],
+                        "poUnit": c["unit"],
+                        "billRate": price,
+                        "billUnit": unit,
+                    }
+                allocations.append(allocation)
+
+                # Mutate the shared candidate so other bill rows in this
+                # same batch don't also get allocated against capacity this
+                # row just claimed.
+                c["remainingBaseQty"] -= take
+                base_qty_left -= take
+
+            results.append(
+                {
+                    "rowIndex": row_index,
+                    "allocations": allocations,
+                    "unmatchedQty": round(base_qty_left * ratio, 4),
+                }
+            )
+
+        return build_response(True, results)
+    except Exception:  # noqa: BLE001 -- fail open, never block bill entry on a suggestion error
+        return build_response(True, [])

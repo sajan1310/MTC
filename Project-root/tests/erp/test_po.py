@@ -281,3 +281,220 @@ def test_bill_against_po_line_flips_status(erp_client):
     match = next(po for po in listed if po["poNumber"] == po_number)
     assert match["status"] == "Completed"
     assert match["items"][0]["pendingQty"] == 0
+
+
+# ─────────────────────────────────────────────────────────────────────────
+# suggestPoAllocations (Phase 2e)
+# ─────────────────────────────────────────────────────────────────────────
+
+
+def test_suggest_po_allocations_no_vendor_or_items_returns_empty(erp_client):
+    resp = _rpc(erp_client, "suggestPoAllocations", ["", [{"name": "X", "qty": 1}], "01/01/2026"])
+    assert resp.get_json()["data"] == []
+
+    resp2 = _rpc(erp_client, "suggestPoAllocations", [_unique_name("V"), [], "01/01/2026"])
+    assert resp2.get_json()["data"] == []
+
+
+def test_suggest_po_allocations_no_open_pos_for_vendor_returns_empty(erp_client):
+    vendor = _unique_name("NoPoVendor")
+    resp = _rpc(erp_client, "suggestPoAllocations", [vendor, [{"name": "X", "qty": 1, "price": 1}], None])
+    body = resp.get_json()
+    assert body["success"] is True
+    assert body["data"] == []
+
+
+def test_suggest_po_allocations_excludes_po_dated_after_bill_date(erp_client):
+    vendor = _unique_name("FutureVendor")
+    item = _unique_name("FutureItem")
+    create = _rpc(
+        erp_client,
+        "savePO",
+        [{"vendor": vendor, "poDate": "01/06/2026", "items": [{"name": item, "qty": 10, "price": 5}]}],
+        mutation=True,
+    )
+    assert create.get_json()["success"] is True
+
+    # Bill dated BEFORE the PO -> the PO can't be fulfilling it yet, excluded.
+    # With zero candidate POs left for this vendor, the source short-circuits
+    # to a flat empty list (not per-row unmatched entries) -- matches
+    # suggestPoAllocations's own `if (vendorPOs.length === 0) return [];`.
+    resp = _rpc(
+        erp_client,
+        "suggestPoAllocations",
+        [vendor, [{"rowIndex": 0, "name": item, "qty": 5, "price": 5}], "01/01/2026"],
+    )
+    body = resp.get_json()
+    assert body["success"] is True
+    assert body["data"] == []
+
+
+def test_suggest_po_allocations_exact_match_single_po(erp_client):
+    vendor = _unique_name("ExactVendor")
+    item = _unique_name("ExactItem")
+    create = _rpc(
+        erp_client,
+        "savePO",
+        [{"vendor": vendor, "poDate": "01/01/2026", "items": [{"name": item, "qty": 10, "unit": "Pcs", "price": 5}]}],
+        mutation=True,
+    )
+    po_number = create.get_json()["data"]["poNumber"]
+
+    resp = _rpc(
+        erp_client,
+        "suggestPoAllocations",
+        [vendor, [{"rowIndex": 0, "name": item, "qty": 10, "unit": "Pcs", "price": 5}], "02/01/2026"],
+    )
+    result = resp.get_json()["data"][0]
+    assert result["allocations"] == [{"poNumber": po_number, "qty": 10}]
+    assert result["unmatchedQty"] == 0
+
+
+def test_suggest_po_allocations_splits_across_two_pos_oldest_first(erp_client):
+    vendor = _unique_name("SplitVendor")
+    item = _unique_name("SplitItem")
+
+    first = _rpc(
+        erp_client,
+        "savePO",
+        [{"vendor": vendor, "poDate": "01/01/2026", "items": [{"name": item, "qty": 4, "price": 5}]}],
+        mutation=True,
+    )
+    second = _rpc(
+        erp_client,
+        "savePO",
+        [{"vendor": vendor, "poDate": "05/01/2026", "items": [{"name": item, "qty": 10, "price": 5}]}],
+        mutation=True,
+    )
+    first_num = first.get_json()["data"]["poNumber"]
+    second_num = second.get_json()["data"]["poNumber"]
+
+    resp = _rpc(
+        erp_client,
+        "suggestPoAllocations",
+        [vendor, [{"rowIndex": 0, "name": item, "qty": 9, "price": 5}], "10/01/2026"],
+    )
+    result = resp.get_json()["data"][0]
+    assert result["allocations"] == [
+        {"poNumber": first_num, "qty": 4},
+        {"poNumber": second_num, "qty": 5},
+    ]
+    assert result["unmatchedQty"] == 0
+
+
+def test_suggest_po_allocations_excludes_fully_billed_po_lines(erp_client):
+    vendor = _unique_name("FullyBilledVendor")
+    item = _unique_name("FullyBilledItem")
+    create = _rpc(
+        erp_client,
+        "savePO",
+        [{"vendor": vendor, "poDate": "01/01/2026", "items": [{"name": item, "qty": 5, "price": 5}]}],
+        mutation=True,
+    )
+    po_number = create.get_json()["data"]["poNumber"]
+
+    _rpc(
+        erp_client,
+        "saveBill",
+        [
+            {
+                "vendor": vendor,
+                "billNumber": _unique_name("FullBill"),
+                "billDate": "02/01/2026",
+                "items": [{"name": item, "qty": 5, "price": 5, "po": po_number}],
+            }
+        ],
+        mutation=True,
+    )
+
+    resp = _rpc(
+        erp_client,
+        "suggestPoAllocations",
+        [vendor, [{"rowIndex": 0, "name": item, "qty": 3, "price": 5}], "03/01/2026"],
+    )
+    result = resp.get_json()["data"][0]
+    assert result["allocations"] == []
+    assert result["unmatchedQty"] == 3
+
+
+def test_suggest_po_allocations_narration_disambiguates(erp_client):
+    vendor = _unique_name("NarrationVendor")
+    item = _unique_name("NarrationItem")
+
+    po_a = _rpc(
+        erp_client,
+        "savePO",
+        [{"vendor": vendor, "poDate": "01/01/2026", "items": [{"name": item, "narration": "Red", "qty": 5, "price": 5}]}],
+        mutation=True,
+    )
+    po_b = _rpc(
+        erp_client,
+        "savePO",
+        [{"vendor": vendor, "poDate": "01/01/2026", "items": [{"name": item, "narration": "Blue", "qty": 5, "price": 5}]}],
+        mutation=True,
+    )
+    po_b_num = po_b.get_json()["data"]["poNumber"]
+    assert po_a.get_json()["success"] is True
+
+    resp = _rpc(
+        erp_client,
+        "suggestPoAllocations",
+        [vendor, [{"rowIndex": 0, "name": item, "narration": "Blue", "qty": 5, "price": 5}], "02/01/2026"],
+    )
+    result = resp.get_json()["data"][0]
+    assert result["allocations"] == [{"poNumber": po_b_num, "qty": 5}]
+
+
+def test_suggest_po_allocations_price_mismatch_flags_rate_conflict_but_still_allocates(erp_client):
+    vendor = _unique_name("RateConflictVendor")
+    item = _unique_name("RateConflictItem")
+    create = _rpc(
+        erp_client,
+        "savePO",
+        [{"vendor": vendor, "poDate": "01/01/2026", "items": [{"name": item, "qty": 5, "price": 20}]}],
+        mutation=True,
+    )
+    po_number = create.get_json()["data"]["poNumber"]
+
+    resp = _rpc(
+        erp_client,
+        "suggestPoAllocations",
+        [vendor, [{"rowIndex": 0, "name": item, "qty": 5, "price": 25}], "02/01/2026"],
+    )
+    result = resp.get_json()["data"][0]
+    assert result["allocations"][0]["poNumber"] == po_number
+    assert result["allocations"][0]["qty"] == 5
+    assert result["allocations"][0]["rateConflict"] == {"poRate": 20, "poUnit": "Pcs", "billRate": 25, "billUnit": "Pcs"}
+
+
+def test_suggest_po_allocations_shared_candidate_not_double_allocated(erp_client):
+    vendor = _unique_name("SharedCandidateVendor")
+    item = _unique_name("SharedCandidateItem")
+    create = _rpc(
+        erp_client,
+        "savePO",
+        [{"vendor": vendor, "poDate": "01/01/2026", "items": [{"name": item, "qty": 5, "price": 5}]}],
+        mutation=True,
+    )
+    po_number = create.get_json()["data"]["poNumber"]
+
+    resp = _rpc(
+        erp_client,
+        "suggestPoAllocations",
+        [
+            vendor,
+            [
+                {"rowIndex": 0, "name": item, "qty": 3, "price": 5},
+                {"rowIndex": 1, "name": item, "qty": 3, "price": 5},
+            ],
+            "02/01/2026",
+        ],
+    )
+    results = resp.get_json()["data"]
+    first_row = next(r for r in results if r["rowIndex"] == 0)
+    second_row = next(r for r in results if r["rowIndex"] == 1)
+    assert first_row["allocations"] == [{"poNumber": po_number, "qty": 3}]
+    assert first_row["unmatchedQty"] == 0
+    # Only 2 units left after the first row claimed 3 of the 5 available.
+    assert second_row["allocations"] == [{"poNumber": po_number, "qty": 2}]
+    assert second_row["unmatchedQty"] == 1
