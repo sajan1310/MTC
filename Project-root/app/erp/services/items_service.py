@@ -20,14 +20,15 @@ Postgres text column, which is never evaluated as a formula. Plain
 str().strip() is used instead; all values are still sent through
 parameterized queries, so there's no SQL-injection concern either.
 
-Deferred (need Bill/PO/BOM/Process/Stock's full surface to be correct, not
-just to run -- see the phase plan): mergeItemEdit, mergeSelectedItems,
-keepOrphanItem(sBulk), autoMergeDuplicateItems, autoFixTruncatedDuplicateItems,
+Deferred: mergeItemEdit, mergeSelectedItems, keepOrphanItem(sBulk),
+autoMergeDuplicateItems, autoFixTruncatedDuplicateItems,
 runScheduledItemCleanup, and _propagateItemIdentityChange's actual backfills
-(the source itself already guards each backfill call with
-`typeof fn !== 'function'`, so skipping the call entirely here -- since none
-of those 4 modules exist yet -- is a direct port of that same tolerance, not
-a shortcut).
+-- data hygiene tooling, not core CRUD; their own round later (the source's
+_propagateItemIdentityChange already guards each backfill call with
+`typeof fn !== 'function'`, so skipping the call entirely -- since Bill/PO/
+BOM/Process don't exist yet -- is a direct port of that same tolerance, not
+a shortcut). importItemsFromStock (module_items.js:1928) is ported below,
+now that erp.stock is real (Phase 1c).
 """
 
 from __future__ import annotations
@@ -442,3 +443,56 @@ def delete_items_bulk(conn, cur, items):
         )
 
     return build_response(True, {"deletedItems": deleted_items, "skipped": skipped}, message)
+
+
+def _import_items_from_stock(cur) -> dict:
+    """Reads erp.stock, inserts a vendor-less erp.items row for any
+    (name,size) not already present -- the reverse direction of
+    stock_rows.sync_stock_for_item.
+
+    Plain cur-based helper, not its own transaction, so callers already
+    holding a transaction (e.g. stock_service.import_stock_data) see rows
+    they just inserted in the same call. The RPC-exposed
+    import_items_from_stock() below wraps this with its own transaction for
+    standalone calls.
+    """
+    cur.execute("SELECT item_name, size FROM erp.stock WHERE deleted_at IS NULL")
+    stock_rows_ = cur.fetchall()
+
+    cur.execute("SELECT lower(item_name) AS name, lower(size) AS size FROM erp.items WHERE deleted_at IS NULL")
+    existing_keys = {f'{r["name"]}|{r["size"]}' for r in cur.fetchall()}
+
+    added = 0
+    skipped = 0
+    user_id = get_current_user_id()
+
+    for row in stock_rows_:
+        name = str(row["item_name"] or "").strip()
+        size = str(row["size"] or "").strip()
+        if not name:
+            continue
+
+        key = f"{name.lower()}|{size.lower()}"
+        if key in existing_keys:
+            skipped += 1
+            continue
+
+        cur.execute(
+            "INSERT INTO erp.items (item_name, size, updated_by) VALUES (%s, %s, %s)",
+            (name, size, user_id),
+        )
+        existing_keys.add(key)
+        added += 1
+
+    if added > 0:
+        message = f"Imported {added} item(s) from Stock. {skipped} already existed and were skipped."
+    else:
+        message = f"All {skipped} Stock item(s) already exist in Item Master. Nothing new to import."
+
+    return build_response(True, {"added": added, "skipped": skipped}, message)
+
+
+@rpc_method("importItemsFromStock", mutation=True)
+@database.transactional
+def import_items_from_stock(conn, cur):
+    return _import_items_from_stock(cur)
