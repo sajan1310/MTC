@@ -35,7 +35,7 @@ _VENDOR_RENAME_SINGLE_COLUMN_TARGETS = [
     ("PO_HEADERS", "vendor"),
     ("BILL_HEADERS", "vendor"),
     ("RETURN_HEADERS", "vendor"),
-    ("WASTAGE", "vendor"),
+    ("WASTAGE_HEADERS", "vendor"),
     ("BOM", "vendor"),
 ]
 

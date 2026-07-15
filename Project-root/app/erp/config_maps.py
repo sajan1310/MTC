@@ -490,6 +490,10 @@ TABLE_NAMES = {
     "PROCESS_MASTER": "erp.process_master",
     "PROCESS_COMPONENTS": "erp.process_components",
     "PROCESS_COLOR_LINKS": "erp.process_color_links",
+    "WASTAGE_HEADERS": "erp.wastage_headers",
+    "WASTAGE_LINES": "erp.wastage_lines",
+    "ISSUE_HEADERS": "erp.issue_headers",
+    "ISSUE_LINES": "erp.issue_lines",
 }
 
 _CAMEL_BOUNDARY_RE = re.compile(r"(?<!^)(?=[A-Z])")

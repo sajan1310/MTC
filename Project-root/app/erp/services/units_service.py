@@ -34,8 +34,8 @@ _UNIT_RENAME_SINGLE_COLUMN_TARGETS = [
     ("PO_LINES", "unit"),
     ("BILL_LINES", "unit"),
     ("RETURN_LINES", "unit"),
-    ("WASTAGE", "unit"),
-    ("ISSUE", "unit"),
+    ("WASTAGE_LINES", "unit"),
+    ("ISSUE_LINES", "unit"),
 ]
 
 # Items Master has two unit-name columns to rename.

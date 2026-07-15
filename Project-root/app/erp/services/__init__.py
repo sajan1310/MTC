@@ -16,6 +16,8 @@ from . import bill_service  # noqa: F401
 from . import po_service  # noqa: F401
 from . import return_service  # noqa: F401
 from . import process_service  # noqa: F401
+from . import wastage_service  # noqa: F401
+from . import issue_service  # noqa: F401
 
 __all__ = [
     "system_service",
@@ -28,4 +30,6 @@ __all__ = [
     "po_service",
     "return_service",
     "process_service",
+    "wastage_service",
+    "issue_service",
 ]

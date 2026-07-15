@@ -39,10 +39,9 @@ def _get_billed_and_consumed_qty_maps(cur) -> tuple[dict, dict]:
     """Returns (bill_qty_map, consumed_qty_map), each keyed by
     "item_name_lower|size_lower" -> net base-unit qty affecting Current Stock.
 
-    BILL and RETURN are real (Phases 2c/2d). Still stubbed -- fill in as
-    each remaining source table's own round defines its real schema:
-      - WASTAGE: -= base_qty
-      - ISSUE: -= base_qty
+    BILL, RETURN, WASTAGE, and ISSUE are all real now (Phases 2c/2d/3b) --
+    all four net into bill_qty_map (Bill adds, the other three subtract,
+    same direction Return does). Still stubbed:
       - PRODUCTION: consumed_qty_map -= ITEM-sourced components_consumed qty
         on Completed lots (POOL-sourced entries debit Warehouse Pool instead)
     """
@@ -68,6 +67,35 @@ def _get_billed_and_consumed_qty_maps(cur) -> tuple[dict, dict]:
         SELECT l.item_name, l.size, l.base_qty
         FROM erp.return_lines l
         JOIN erp.return_headers h ON h.id = l.header_id
+        WHERE h.deleted_at IS NULL
+        """
+    )
+    for row in cur.fetchall():
+        key = f'{(row["item_name"] or "").strip().lower()}|{(row["size"] or "").strip().lower()}'
+        if not key.split("|")[0]:
+            continue
+        bill_qty_map[key] = bill_qty_map.get(key, 0) - float(row["base_qty"] or 0)
+
+    # Wastage and Issue both debit Stock directly, same direction as Return.
+    cur.execute(
+        """
+        SELECT l.item_name, l.size, l.base_qty
+        FROM erp.wastage_lines l
+        JOIN erp.wastage_headers h ON h.id = l.header_id
+        WHERE h.deleted_at IS NULL
+        """
+    )
+    for row in cur.fetchall():
+        key = f'{(row["item_name"] or "").strip().lower()}|{(row["size"] or "").strip().lower()}'
+        if not key.split("|")[0]:
+            continue
+        bill_qty_map[key] = bill_qty_map.get(key, 0) - float(row["base_qty"] or 0)
+
+    cur.execute(
+        """
+        SELECT l.item_name, l.size, l.base_qty
+        FROM erp.issue_lines l
+        JOIN erp.issue_headers h ON h.id = l.header_id
         WHERE h.deleted_at IS NULL
         """
     )
