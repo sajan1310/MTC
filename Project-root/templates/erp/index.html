@@ -196,9 +196,9 @@
         {% include "erp/partials/dashboard.html" %}
         {% include "erp/partials/vendors.html" %}
         {% include "erp/partials/items.html" %}
+        {% include "erp/partials/po_ledger.html" %}
 
         {% for tab_id, label in [
-          ('poLedger', 'Purchase Orders'),
           ('billLedger', 'Bill Ledger'),
           ('returnLedger', 'Returns'),
           ('stockTab', 'Stock'),
@@ -233,6 +233,7 @@
   <script src="{{ url_for('static', filename='erp/dashboard.js') }}"></script>
   <script src="{{ url_for('static', filename='erp/vendors.js') }}"></script>
   <script src="{{ url_for('static', filename='erp/items.js') }}"></script>
+  <script src="{{ url_for('static', filename='erp/po.js') }}"></script>
 
 </body>
 </html>

@@ -98,3 +98,55 @@ function formatQty(value) {
   const n = toNumber(value);
   return Number(n.toFixed(4)).toString();
 }
+
+// Mirrors config.js#PO_STATUS (server) exactly -- the one client-side copy
+// of the 3 status strings module_po.js#_attachPoStatus derives from the
+// Bill ledger. Ported from Script_ApiCore.html, which both desktop and
+// mobile shells load before their own module scripts.
+const PO_STATUS = Object.freeze({
+  ISSUED: 'PO Issued',
+  PARTIAL: 'Partially Received',
+  COMPLETED: 'Completed'
+});
+
+// Renders a PO/Bill line-item list as an HTML preview string. Handles both
+// structured item objects and legacy plain-string item entries.
+function formatItemsPreview(items) {
+  if (!Array.isArray(items)) return '';
+  return items
+    .map(i =>
+      typeof i === 'object' && i !== null
+        ? `${escapeHtml(i.name)}${i.size ? ` [${escapeHtml(i.size)}]` : ''} (${escapeHtml(i.qty)} ${escapeHtml(i.unit || 'Pcs')})` +
+          (i.affectsStock === false ? ' <span class="badge bg-warning text-dark">Ledger only</span>' : '')
+        : escapeHtml(i)
+    )
+    .join('<br>');
+}
+
+function todayIso() {
+  const d = new Date();
+  return [d.getFullYear(), String(d.getMonth() + 1).padStart(2, '0'), String(d.getDate()).padStart(2, '0')].join('-');
+}
+
+// Converts a record's raw ISO timestamp (preferred) or DD/MM/YYYY display
+// date into the YYYY-MM-DD format <input type="date"> expects/produces.
+function dateToInputValue(rawIso, displayDate) {
+  if (rawIso) {
+    const iso = String(rawIso).split('T')[0];
+    if (/^\d{4}-\d{2}-\d{2}$/.test(iso)) return iso;
+  }
+  const d = String(displayDate || '');
+  if (d.includes('/')) {
+    const [day, month, year] = d.split('/');
+    if (day && month && year?.length === 4) {
+      return `${year}-${month.padStart(2, '0')}-${day.padStart(2, '0')}`;
+    }
+  }
+  if (/^\d{4}-\d{2}-\d{2}$/.test(d)) return d;
+  return '';
+}
+
+function normalizeDateForInput(po) {
+  if (!po) return '';
+  return dateToInputValue(po.poDateRaw, po.poDate);
+}

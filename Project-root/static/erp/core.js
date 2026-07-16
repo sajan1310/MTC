@@ -78,6 +78,11 @@ document.addEventListener('hidden.bs.modal', () => {
 const App = {
   companyLogo: null,
 
+  // Print-only accent color (Script_Core.html) -- needed by the PO/Vendor/
+  // Item print-page builders, all currently unreachable dead code until
+  // App.Print exists, but kept here since they reference it unconditionally.
+  BRAND_COLOR: '#C0392B',
+
   // Forward-declared empty arrays for globals other not-yet-ported modules
   // will own (globalPOs/globalBills/globalReturns/globalIssues/globalItems)
   // -- Vendor's ledger/pending-orders calculation reads these defensively
@@ -96,7 +101,20 @@ const App = {
     globalProduction: [],
     globalStockAdjustments: [],
     globalStock: [],
-    filteredStock: []
+    filteredStock: [],
+
+    // PO Ledger's own pagination/filter/selection state (Script_PO.html).
+    filteredPOs: [],
+    poCurrentPage: 1,
+    poRowsPerPage: 25,
+    poSearchTerm: '',
+    poDateFilter: '',
+    poStatusFilter: '',
+    poSortBy: 'date-desc',
+    selectedPOs: [],
+    allPendingPOs: [],
+    filteredPendingPOs: [],
+    rowSeq: 0
   },
 
   // ── Bulk Selection Helpers ────────────────────────────────────────────
@@ -204,6 +222,92 @@ const App = {
       const tbody = buttonEl?.closest('tbody');
       if (row && tbody && $$('tr', tbody).length > 1) {
         row.remove();
+      }
+    },
+
+    // Fills #formContact from Vendor Master (preferred) or, failing that,
+    // the most recent PO that used this vendor -- so a vendor picked by
+    // free-text (Select2 tags:true) before Vendor Master even lists them
+    // still gets a contact prefilled if any past PO recorded one.
+    updateVendorContact(vendorName) {
+      const contactEl = document.getElementById('formContact');
+      if (!contactEl) return;
+      const vendor = (App.State.globalVendors || []).find(
+        v => App.Utils.sameText(v.name, vendorName) && v.contact
+      );
+      if (vendor) {
+        contactEl.value = vendor.contact;
+        return;
+      }
+      const match = App.State.globalPOs.find(
+        po => App.Utils.sameText(po.vendor, vendorName) && po.contact
+      );
+      contactEl.value = match?.contact || '';
+    },
+
+    // Sizes that actually exist for a given item name in Item Master, so
+    // PO/Bill size pickers can be filtered to valid sizes for the item just
+    // entered. Returns [] if the name doesn't match any known item.
+    getSizesForItemName(name) {
+      const nameLower = String(name || '').trim().toLowerCase();
+      if (!nameLower) return [];
+      const sizes = new Set();
+      (App.State.globalItems || []).forEach(item => {
+        if (String(item.name || '').trim().toLowerCase() === nameLower && item.size) {
+          sizes.add(item.size);
+        }
+      });
+      return [...sizes];
+    },
+
+    // Filters a row's per-row size <datalist> to the sizes valid for the
+    // entered item name, falling back to the full size list for unrecognized
+    // item names (so registering a brand-new item via PO/Bill still works).
+    // Auto-fills the size input when only one valid size exists.
+    applyDependentSizeList(nameInput, sizeListSelector) {
+      const row = nameInput.closest('tr');
+      if (!row) return;
+      const sizeInput = row.querySelector(sizeListSelector);
+      const datalist = row.querySelector('datalist.row-size-list');
+      if (!sizeInput || !datalist) return;
+
+      const name = nameInput.value.trim();
+      let sizes = App.Utils.getSizesForItemName(name);
+      if (!sizes.length) {
+        sizes = [...new Set((App.State.globalItems || []).map(i => i.size).filter(Boolean))];
+      }
+
+      datalist.innerHTML = sizes.map(s => `<option value="${escapeHtml(s)}">`).join('');
+      if (sizes.length === 1 && !sizeInput.value.trim()) sizeInput.value = sizes[0];
+    },
+
+    // Defaults a PO/Bill row's Unit field to the matched item's Purchase
+    // Unit (e.g. 'Gross') so the market-quoted unit is pre-selected instead
+    // of the generic 'Pcs' placeholder every row starts with. Only
+    // overwrites when the field still holds that generic default -- never
+    // clobbers a unit the user already picked deliberately.
+    applyDefaultPurchaseUnit(triggerEl, nameSelector, sizeSelector, unitSelector) {
+      const row = triggerEl.closest('tr');
+      if (!row) return;
+      const unitInput = row.querySelector(unitSelector);
+      const nameInput = row.querySelector(nameSelector);
+      if (!unitInput || !nameInput) return;
+
+      const name = nameInput.value.trim();
+      const sizeInput = row.querySelector(sizeSelector);
+      const size = sizeInput ? sizeInput.value.trim() : '';
+      if (!name) return;
+
+      const item = (App.State.globalItems || []).find(i =>
+        String(i.name || '').trim().toLowerCase() === name.toLowerCase() &&
+        String(i.size || '').trim().toLowerCase() === size.toLowerCase()
+      );
+      if (!item) return;
+
+      const purchaseUnit = item.purchaseUnit || item.baseUnit || 'Pcs';
+      const current = unitInput.value.trim();
+      if (!current || current === 'Pcs') {
+        unitInput.value = purchaseUnit;
       }
     },
 
@@ -330,6 +434,7 @@ const App = {
       }
       if (id === 'vendorMaster' && typeof App.Vendor !== 'undefined') App.Vendor.loadData();
       if (id === 'itemMaster' && typeof App.Item !== 'undefined') App.Item.loadData();
+      if (id === 'poLedger' && typeof App.PO !== 'undefined') App.PO.loadData();
       // Every other module's own `if (id === '<tab>') App.<Module>.loadData();`
       // line lands here in that module's own round -- same guarded pattern
       // Navigation.showTab already used in source for not-yet-loaded modules.
@@ -354,6 +459,11 @@ const App = {
     if (this.Item) {
       labels.push('Item');
       promises.push(this.Item.loadData());
+    }
+
+    if (this.PO) {
+      labels.push('PO');
+      promises.push(this.PO.loadData());
     }
 
     const results = await Promise.allSettled(promises);
@@ -417,6 +527,21 @@ function bindGlobalEvents() {
         break;
       case 'item-delete':
         App.Item.delete(decodeURIComponent(btn.dataset.name || ''), decodeURIComponent(btn.dataset.size || ''));
+        break;
+      case 'po-print':
+        App.PO.print(toNumber(btn.dataset.index));
+        break;
+      case 'po-edit':
+        App.PO.openEditModal(toNumber(btn.dataset.index));
+        break;
+      case 'po-pdf':
+        App.PO.downloadPDF(toNumber(btn.dataset.index));
+        break;
+      case 'po-delete':
+        App.PO.delete(decodeURIComponent(btn.dataset.ponumber || ''));
+        break;
+      case 'po-page':
+        App.PO.changePage(toNumber(btn.dataset.page, 1));
         break;
     }
   });

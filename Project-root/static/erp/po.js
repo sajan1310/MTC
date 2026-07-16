@@ -1,0 +1,1305 @@
+'use strict';
+// po.js -- App.PO, ported from Apps_Script/Script_PO.html.
+//
+// Adaptations from source (documented, not silent):
+// - App.Production.formatQty -> plain formatQty (renderPendingPOsTable):
+//   Production isn't ported yet; formatQty is the same pure numeric
+//   formatter, already promoted to api.js in Round 1 for exactly this
+//   reason (see dashboard.js).
+// - autoFillRate's App.Bill.getLatestRate(...) call is guarded against
+//   App.Bill not existing yet (Bill Ledger is a later round) -- it just
+//   no-ops instead of throwing, same "guard now, activate later" shape
+//   used throughout this port.
+// - print/printCurrent/downloadPDF/bulkPrint are guarded against
+//   App.Print not existing yet (print pages are their own later round);
+//   their underlying builder functions (populatePrintData,
+//   buildPOPrintPageHtml) are still ported in full as currently-
+//   unreachable dead code, ready the moment Print lands. No hidden
+//   #print-po-container markup is included in this round's partial.
+// - openVendorCatalog() is genuinely portable as-is: read-only, built
+//   purely from App.State.globalPOs/globalItems, no RPC and no App.Print
+//   dependency.
+
+App.PO = {
+  async loadData() {
+    const tbody = document.getElementById('poTableBody');
+    if (tbody)
+      tbody.innerHTML =
+        '<tr><td colspan="9" class="text-center p-4">Loading Database…</td></tr>';
+
+    try {
+      const res = await Api.call('getPOData');
+      if (!res?.success) {
+        App.Utils.showToast(
+          res?.message || 'Failed to load purchase orders.',
+          true
+        );
+        return;
+      }
+
+      App.State.globalPOs = Array.isArray(res.data) ? res.data : [];
+      App.State.filteredPOs = [...App.State.globalPOs];
+      App.State.poCurrentPage = 1;
+      App.State.poSearchTerm = '';
+      App.State.poDateFilter = '';
+      App.State.poStatusFilter = 'all';
+      App.State.poSortBy = App.State.poSortBy || 'poNumberDesc';
+      App.State.selectedPOs = [];
+      this.sortFiltered();
+      this.renderTable();
+      this.updateStatusBar();
+      this.populateVendorSelects();
+    } catch (err) {
+      App.Utils.showToast(
+        err.message || 'Failed to load purchase orders.',
+        true
+      );
+    }
+  },
+
+  renderTable() {
+    const tbody = document.getElementById('poTableBody');
+    if (!tbody) return;
+
+    const emptyState = document.getElementById('poEmptyState');
+    if (!App.State.filteredPOs.length) {
+      tbody.innerHTML = '';
+      if (emptyState) emptyState.style.display = 'block';
+      App.Utils.renderPagination('poPagination', 0, 1, App.State.poRowsPerPage, 'po-page', 'Purchase Orders');
+      this.updateBulkButtons();
+      return;
+    }
+    if (emptyState) emptyState.style.display = 'none';
+
+    const { filteredPOs, poCurrentPage: cur, poRowsPerPage: rpp } = App.State;
+    const start = (cur - 1) * rpp;
+    const pageItems = filteredPOs.slice(start, start + rpp);
+
+    const selectAllChk = document.getElementById('selectAllPOs');
+    if (selectAllChk) {
+      selectAllChk.checked = pageItems.length > 0 &&
+        pageItems.every(po => App.Selection.isSelected(App.State.selectedPOs, String(po.poNumber)));
+    }
+
+    tbody.innerHTML = pageItems.map(po => {
+      const index = App.State.globalPOs.indexOf(po);
+      const itemsPreview = formatItemsPreview(po.items);
+      const key = String(po.poNumber);
+      const checkedAttr = App.Selection.isSelected(App.State.selectedPOs, key) ? 'checked' : '';
+      const statusInfo = this.getStatusBadge(po.status);
+
+      return `
+      <tr>
+        <td class="text-center">
+          <input type="checkbox" class="form-check-input po-select-chk" data-key="${escapeHtml(key)}" ${checkedAttr} onchange="App.PO.onRowSelectChange()">
+        </td>
+        <td><span class="badge bg-dark fs-6 shadow-sm">PO-${escapeHtml(po.poNumber)}</span></td>
+        <td>${escapeHtml(po.poDate || '')}</td>
+        <td><strong class="text-primary">${escapeHtml(po.vendor || '')}</strong></td>
+        <td><small class="text-muted">${itemsPreview}</small></td>
+        <td class="text-center fw-bold">${escapeHtml(String(po.totalQty ?? 0))}</td>
+        <td class="text-success fw-bold">${formatCurrency(po.grandTotal)}</td>
+        <td class="text-center"><span class="badge ${statusInfo.badgeClass} shadow-sm"><i class="bi ${statusInfo.icon} me-1"></i>${escapeHtml(po.status || PO_STATUS.ISSUED)}</span></td>
+        <td>
+          <button class="btn btn-sm btn-outline-dark    btn-action w-100 mb-1" data-action="po-print"  data-index="${index}">Print Document</button>
+          <button class="btn btn-sm btn-outline-primary  btn-action w-100 mb-1" data-action="po-edit"   data-index="${index}">Edit Order</button>
+          <button class="btn btn-sm btn-outline-success  btn-action w-100 mb-1" data-action="po-pdf"    data-index="${index}">Download PDF</button>
+          <button class="btn btn-sm btn-danger           btn-action w-100"      data-action="po-delete" data-ponumber="${escapeHtml(po.poNumber)}">Delete</button>
+        </td>
+      </tr>`;
+    }).join('');
+
+    App.Utils.renderPagination('poPagination', filteredPOs.length, cur, rpp, 'po-page', 'Purchase Orders');
+    this.updateBulkButtons();
+  },
+
+  toggleSelectAll(masterChk) {
+    App.Selection.toggleAll(App.State.selectedPOs, 'po-select-chk', masterChk);
+    this.updateBulkButtons();
+  },
+
+  onRowSelectChange() {
+    App.Selection.syncFromRows(App.State.selectedPOs, 'po-select-chk', 'selectAllPOs');
+    this.updateBulkButtons();
+  },
+
+  updateBulkButtons() {
+    const count = App.State.selectedPOs.length;
+    App.Selection.updateButton('btnBulkDeletePOs', count, '<i class="bi bi-trash"></i> Delete Selected');
+    App.Selection.updateButton('btnBulkPrintPOs', count, '<i class="bi bi-printer"></i> Print Selected');
+  },
+
+  async bulkDelete() {
+    const selected = App.State.selectedPOs;
+    if (!selected.length) return;
+
+    App.Utils.confirmAction(
+      `Are you sure you want to delete ${selected.length} selected PO(s)? Bills already linked to them will keep their PO reference and are not affected.`,
+      async () => {
+        try {
+          const res = await Api.mutate('deletePOsBulk', selected);
+          App.Utils.showToast(res?.message || 'Delete completed.', !res?.success);
+          if (res?.success) {
+            const deletedIds = new Set(res.data?.deletedIds || []);
+            App.State.globalPOs = App.State.globalPOs.filter(po => !deletedIds.has(String(po.poNumber)));
+            App.State.filteredPOs = App.State.filteredPOs.filter(po => !deletedIds.has(String(po.poNumber)));
+            App.State.selectedPOs = [];
+            this.renderTable();
+          }
+        } catch (err) {
+          App.Utils.showToast(err.message || 'Failed to delete POs.', true);
+        }
+      }
+    );
+  },
+
+  bulkPrint() {
+    if (typeof App.Print === 'undefined') {
+      App.Utils.notPortedYet('Printing');
+      return;
+    }
+
+    const selected = App.State.selectedPOs;
+    if (!selected.length) {
+      App.Utils.showToast('No purchase orders selected.', true);
+      return;
+    }
+
+    const includeRates = document.getElementById('printWithRates')?.checked ?? true;
+    const includeTotal = document.getElementById('printWithTotal')?.checked ?? true;
+
+    const pos = App.State.globalPOs.filter(po => App.Selection.isSelected(selected, String(po.poNumber)));
+    if (!pos.length) return;
+
+    App.Print.triggerBulk(
+      pos,
+      po => this.buildPOPrintPageHtml(po, includeRates, includeTotal),
+      'Purchase_Orders_Selected'
+    );
+  },
+
+  filterData(searchTerm) {
+    App.State.poSearchTerm = String(searchTerm || '');
+    this.applyFilters();
+  },
+
+  filterByDate(dateValue) {
+    App.State.poDateFilter = String(dateValue || '');
+    this.applyFilters();
+  },
+
+  // Backs the status-bar tiles above the ledger table (View_POLedger.html
+  // #poStatusBar). 'all' clears the filter; any other value must match
+  // po.status exactly (as computed server-side by getPOData/_attachPoStatus).
+  filterByStatus(status) {
+    App.State.poStatusFilter = String(status || 'all');
+
+    $$('#poStatusBar .po-status-filter-btn').forEach(btn => {
+      btn.classList.toggle('active', btn.dataset.status === App.State.poStatusFilter);
+    });
+
+    this.applyFilters();
+  },
+
+  applyFilters() {
+    const term = App.State.poSearchTerm.toLowerCase().trim();
+    const dateFilter = App.State.poDateFilter;
+    const statusFilter = App.State.poStatusFilter || 'all';
+
+    App.State.filteredPOs = App.State.globalPOs.filter(po => {
+      if (dateFilter && normalizeDateForInput(po) !== dateFilter) return false;
+      if (statusFilter !== 'all' && po.status !== statusFilter) return false;
+
+      if (term) {
+        const itemsText = (po.items || []).map(it => `${it.name || ''} ${it.size || ''} ${it.narration || ''}`).join(' ');
+        const haystack = `${po.vendor || ''} ${po.poNumber || ''} ${itemsText}`;
+        if (!App.Utils.matchesKeywords(haystack, term)) return false;
+      }
+      return true;
+    });
+
+    this.sortFiltered();
+    App.State.poCurrentPage = 1;
+    this.renderTable();
+  },
+
+  // Status -> badge color/icon. Keyed off the shared PO_STATUS constant
+  // (api.js) so this can never drift from the 3 values module_po.js emits.
+  STATUS_BADGES: {
+    [PO_STATUS.ISSUED]: { badgeClass: 'bg-primary', icon: 'bi-file-earmark-text' },
+    [PO_STATUS.PARTIAL]: { badgeClass: 'bg-info', icon: 'bi-truck' },
+    [PO_STATUS.COMPLETED]: { badgeClass: 'bg-success', icon: 'bi-check-circle' }
+  },
+
+  getStatusBadge(status) {
+    return this.STATUS_BADGES[status] || { badgeClass: 'bg-secondary', icon: 'bi-question-circle' };
+  },
+
+  // Refreshes the status-bar tile counts from the full (unfiltered) PO
+  // list, so counts stay meaningful no matter what's currently filtered.
+  updateStatusBar() {
+    const counts = { [PO_STATUS.ISSUED]: 0, [PO_STATUS.PARTIAL]: 0, [PO_STATUS.COMPLETED]: 0 };
+    App.State.globalPOs.forEach(po => {
+      if (counts[po.status] !== undefined) counts[po.status]++;
+    });
+
+    const setCount = (id, val) => {
+      const el = document.getElementById(id);
+      if (el) el.textContent = val;
+    };
+    setCount('poStatusCountAll', App.State.globalPOs.length);
+    setCount('poStatusCountIssued', counts[PO_STATUS.ISSUED]);
+    setCount('poStatusCountPartial', counts[PO_STATUS.PARTIAL]);
+    setCount('poStatusCountCompleted', counts[PO_STATUS.COMPLETED]);
+    setCount('poStatusCountPending', counts[PO_STATUS.ISSUED] + counts[PO_STATUS.PARTIAL]);
+  },
+
+  // Field/direction combos selectable via the "Sort by" dropdown
+  // (View_POLedger.html#poSortBy). Applied to filteredPOs after every
+  // filter/search pass, before the pagination slice in renderTable.
+  SORT_COMPARATORS: {
+    poNumberDesc: (a, b) => (parseInt(String(b.poNumber).replace(/\D/g, ''), 10) || 0) - (parseInt(String(a.poNumber).replace(/\D/g, ''), 10) || 0),
+    poNumberAsc: (a, b) => (parseInt(String(a.poNumber).replace(/\D/g, ''), 10) || 0) - (parseInt(String(b.poNumber).replace(/\D/g, ''), 10) || 0),
+    dateDesc: (a, b) => parseRecordDate(b.poDateRaw, b.poDate) - parseRecordDate(a.poDateRaw, a.poDate),
+    dateAsc: (a, b) => parseRecordDate(a.poDateRaw, a.poDate) - parseRecordDate(b.poDateRaw, b.poDate),
+    vendorAsc: (a, b) => String(a.vendor || '').localeCompare(String(b.vendor || '')),
+    vendorDesc: (a, b) => String(b.vendor || '').localeCompare(String(a.vendor || '')),
+    valueDesc: (a, b) => (b.grandTotal || 0) - (a.grandTotal || 0),
+    valueAsc: (a, b) => (a.grandTotal || 0) - (b.grandTotal || 0)
+  },
+
+  sortFiltered() {
+    const cmp = this.SORT_COMPARATORS[App.State.poSortBy];
+    if (cmp) App.State.filteredPOs.sort(cmp);
+  },
+
+  sortBy(value) {
+    App.State.poSortBy = value;
+    this.sortFiltered();
+    App.State.poCurrentPage = 1;
+    this.renderTable();
+  },
+
+  changePage(page) {
+    App.State.poCurrentPage = App.Utils.clampPage(page, App.State.filteredPOs.length, App.State.poRowsPerPage);
+    this.renderTable();
+  },
+
+  // ── Pending Purchase Orders (all vendors) ──────────────────────────
+  // Returns one row per PO line that still has qty pending receipt.
+  // receivedQty/pendingQty come straight from getPOData (computed
+  // server-side by _attachPoStatus), so this needs no Bill data of its
+  // own client-side.
+  calculatePendingPOLines() {
+    const result = [];
+
+    (App.State.globalPOs || []).forEach(po => {
+      if (po.status === 'Completed') return;
+      const badge = this.getStatusBadge(po.status);
+
+      (po.items || []).forEach(item => {
+        const pendingQty = Number(item.pendingQty) || 0;
+        if (pendingQty <= 0.0001) return;
+
+        result.push({
+          poNumber: po.poNumber,
+          poDate: po.poDate,
+          vendor: po.vendor,
+          itemName: item.name,
+          size: item.size,
+          unit: item.unit,
+          orderedQty: item.qty,
+          receivedQty: item.receivedQty || 0,
+          pendingQty,
+          label: po.status,
+          badgeClass: badge.badgeClass
+        });
+      });
+    });
+
+    return result;
+  },
+
+  openPendingPOsModal() {
+    App.State.allPendingPOs = this.calculatePendingPOLines();
+    App.State.filteredPendingPOs = App.State.allPendingPOs;
+
+    const searchEl = document.getElementById('searchPendingPOs');
+    if (searchEl) searchEl.value = '';
+
+    this.renderPendingPOsTable();
+    safeModalShow('pendingPOsModal');
+  },
+
+  filterPendingPOs(searchTerm) {
+    const term = String(searchTerm || '').toLowerCase().trim();
+    App.State.filteredPendingPOs = term
+      ? (App.State.allPendingPOs || []).filter(p =>
+        App.Utils.matchesKeywords(`${p.poNumber} ${p.vendor} ${p.itemName}`, term))
+      : (App.State.allPendingPOs || []);
+
+    this.renderPendingPOsTable();
+  },
+
+  renderPendingPOsTable() {
+    const tbody = document.getElementById('pendingPOsTableBody');
+    if (!tbody) return;
+
+    const items = App.State.filteredPendingPOs || [];
+    const emptyState = document.getElementById('pendingPOsEmptyState');
+
+    if (items.length === 0) {
+      tbody.innerHTML = '';
+      if (emptyState) emptyState.style.display = 'block';
+      return;
+    }
+    if (emptyState) emptyState.style.display = 'none';
+
+    tbody.innerHTML = items.map(p => `<tr>
+      <td><span class="badge bg-dark shadow-sm">PO-${escapeHtml(p.poNumber)}</span></td>
+      <td>${escapeHtml(p.poDate)}</td>
+      <td><strong>${escapeHtml(p.vendor)}</strong></td>
+      <td>${escapeHtml(p.itemName)} ${p.size ? `<span class="text-muted">(${escapeHtml(p.size)})</span>` : ''}</td>
+      <td class="text-center">${formatQty(p.orderedQty)} ${escapeHtml(p.unit || '')}</td>
+      <td class="text-center">${formatQty(p.receivedQty)} ${escapeHtml(p.unit || '')}</td>
+      <td class="text-center fw-bold text-danger">${formatQty(p.pendingQty)} ${escapeHtml(p.unit || '')}</td>
+      <td class="text-center"><span class="badge ${p.badgeClass} shadow-sm">${escapeHtml(p.label)}</span></td>
+    </tr>`).join('');
+  },
+
+  populateVendorSelects() {
+    const vendors = [
+      ...new Set([
+        ...(App.State.globalPOs || []).map(po => po.vendor).filter(Boolean),
+        ...(App.State.globalVendors || []).map(v => v.name).filter(Boolean)
+      ])
+    ].sort((a, b) => a.localeCompare(b));
+    const optionsHtml =
+      '<option value="">Select or type new vendor…</option>' +
+      vendors
+        .map(v => `<option value="${escapeHtml(v)}">${escapeHtml(v)}</option>`)
+        .join('');
+
+    $$('select.select2-vendor').forEach(el => {
+      const currentValue = el.value;
+      el.innerHTML = optionsHtml;
+      el.value = currentValue;
+
+      if (window.jQuery?.fn?.select2) {
+        const $el = window.jQuery(el);
+        if ($el.data('select2')) {
+          $el.select2('destroy');
+        }
+        const parentModal = $el.closest('.modal');
+        const select2Options = {
+          tags: true,
+          placeholder: 'Select or type new vendor…',
+          width: '100%'
+        };
+        if (parentModal.length) {
+          select2Options.dropdownParent = parentModal;
+        }
+        $el.select2(select2Options)
+          .off('change.vendorSelect')
+          .on('change.vendorSelect', function () {
+            App.Utils.updateVendorContact(this.value);
+          });
+
+        if (currentValue) {
+          $el.val(currentValue).trigger('change');
+        }
+      }
+    });
+
+    let dl = document.getElementById('vendorDatalist');
+    if (!dl) {
+      dl = document.createElement('datalist');
+      dl.id = 'vendorDatalist';
+      document.body.appendChild(dl);
+    }
+    dl.innerHTML = vendors
+      .map(v => `<option value="${escapeHtml(v)}">`)
+      .join('');
+  },
+
+  getNextPoNumber() {
+    if (!App.State.globalPOs.length) return 1001;
+    const max = App.State.globalPOs.reduce((acc, po) => {
+      const n = parseInt(String(po.poNumber).replace(/\D/g, ''), 10);
+      return Number.isFinite(n) && n > acc ? n : acc;
+    }, 0);
+    return max > 0 ? max + 1 : 1001;
+  },
+
+  openCreateModal() {
+    document.getElementById('poForm')?.reset();
+
+    const existingPoNumber = document.getElementById('existingPoNumber');
+    if (existingPoNumber) existingPoNumber.value = '';
+
+    const formTitle = document.getElementById('formTitle');
+    if (formTitle)
+      formTitle.innerText = `Create New Purchase Order (Draft #${this.getNextPoNumber()})`;
+
+    const submitBtn = document.getElementById('poSubmitBtn');
+    if (submitBtn) submitBtn.innerText = 'Generate Purchase Order';
+
+    const poDateInput = document.querySelector(
+      'input[type="date"][name="poDate"]'
+    );
+    if (poDateInput) poDateInput.value = todayIso();
+
+    const formVendor = document.getElementById('formVendor');
+    if (formVendor) {
+      if (
+        window.jQuery?.fn?.select2 &&
+        window.jQuery(formVendor).data('select2')
+      ) {
+        window.jQuery(formVendor).val(null).trigger('change');
+      } else {
+        formVendor.value = '';
+      }
+    }
+
+    const itemsBody = document.getElementById('itemsBody');
+    if (itemsBody) itemsBody.innerHTML = this.getRowHtml();
+
+    const rateBox = document.getElementById('rateComparison');
+    if (rateBox) rateBox.style.display = 'none';
+
+    const printBtn = document.getElementById('poModalPrintBtn');
+    if (printBtn) printBtn.style.display = 'none';
+
+    this.refreshRowSizeLists();
+    this.refreshRowNarrationLists();
+    safeModalShow('editPoModal');
+  },
+
+  // Re-filters every row's size <datalist> to match its currently entered item
+  // name. Needed after bulk-rendering rows (create/edit) since getRowHtml()
+  // only wires up the empty datalist shell, not its filtered contents.
+  refreshRowSizeLists() {
+    $$('#itemsBody .item-name').forEach(nameInput => {
+      if (nameInput.value.trim()) App.Utils.applyDependentSizeList(nameInput, '.item-size');
+    });
+  },
+
+  // Populates a row's Narration <datalist> from PO/Bill history. Item
+  // identity is name + size (narration is just descriptive text for
+  // that same physical item, and can vary by vendor/entry) — so
+  // suggestions are scoped to this row's name + size: vendor-matched
+  // history first, falling back to any vendor's history for that name
+  // + size, then to the Item Master's own narration. Auto-fills the
+  // narration when exactly one candidate exists and the field is empty.
+  refreshNarrationList(row) {
+    if (!row) return;
+    const datalist = $('datalist.row-narration-list', row);
+    const narrationInput = $('.item-narration', row);
+    if (!datalist || !narrationInput) return;
+
+    const name = $('.item-name', row)?.value?.trim();
+    const size = $('.item-size', row)?.value?.trim() || '';
+    const vendor = (document.getElementById('formVendor')?.value || '').trim();
+    if (!name) { datalist.innerHTML = ''; return; }
+
+    const nameLower = name.toLowerCase();
+    const sizeLower = size.toLowerCase();
+    const vendorLower = vendor.toLowerCase();
+
+    const collect = requireVendorMatch => {
+      const narrations = new Set();
+      const scan = records => (records || []).forEach(rec => {
+        if (requireVendorMatch && String(rec.vendor || '').trim().toLowerCase() !== vendorLower) return;
+        (rec.items || []).forEach(it => {
+          if (String(it.name || '').trim().toLowerCase() === nameLower &&
+              String(it.size || '').trim().toLowerCase() === sizeLower &&
+              it.narration) narrations.add(it.narration);
+        });
+      });
+      scan(App.State.globalPOs);
+      scan(App.State.globalBills);
+      return narrations;
+    };
+
+    let narrations = vendorLower ? collect(true) : new Set();
+    if (narrations.size === 0) narrations = collect(false);
+
+    if (narrations.size === 0) {
+      const masterItem = (App.State.globalItems || []).find(i =>
+        String(i.name || '').trim().toLowerCase() === nameLower &&
+        String(i.size || '').trim().toLowerCase() === sizeLower
+      );
+      if (masterItem?.narration) narrations.add(masterItem.narration);
+    }
+
+    datalist.innerHTML = [...narrations].map(n => `<option value="${escapeHtml(n)}">`).join('');
+    if (narrations.size === 1 && !narrationInput.value.trim()) narrationInput.value = [...narrations][0];
+  },
+
+  refreshRowNarrationLists() {
+    $$('#itemsBody tr').forEach(row => this.refreshNarrationList(row));
+  },
+
+  openEditModal(index) {
+    const po = App.State.globalPOs[index];
+    if (!po) {
+      App.Utils.showToast('Purchase order not found.', true);
+      return;
+    }
+
+    document.getElementById('poForm')?.reset();
+
+    const existingPoNumber = document.getElementById('existingPoNumber');
+    if (existingPoNumber) existingPoNumber.value = po.poNumber || '';
+
+    const formTitle = document.getElementById('formTitle');
+    if (formTitle)
+      formTitle.innerText = `Edit Purchase Order #${po.poNumber}`;
+
+    const submitBtn = document.getElementById('poSubmitBtn');
+    if (submitBtn) submitBtn.innerText = 'Update Database';
+
+    const poDateInput = document.querySelector(
+      'input[type="date"][name="poDate"]'
+    );
+    if (poDateInput) poDateInput.value = normalizeDateForInput(po);
+
+    const vendorSelect = document.getElementById('formVendor');
+    if (vendorSelect) {
+      if (
+        vendorSelect.tagName === 'SELECT' &&
+        po.vendor &&
+        !Array.from(vendorSelect.options).some(o => App.Utils.sameText(o.value, po.vendor))
+      ) {
+        vendorSelect.add(new Option(po.vendor, po.vendor, true, true));
+      }
+      if (
+        window.jQuery?.fn?.select2 &&
+        window.jQuery(vendorSelect).data('select2')
+      ) {
+        window.jQuery(vendorSelect).val(po.vendor || '').trigger('change');
+      } else {
+        vendorSelect.value = po.vendor || '';
+      }
+    }
+
+    App.Utils.setFieldValues({
+      formContact: po.contact || '',
+      formDesc: po.poDescription || '',
+      formRemarks: po.poRemarks || '',
+      formSuppRem: po.supplierRemarks || ''
+    });
+
+    const tbody = document.getElementById('itemsBody');
+    if (tbody)
+      tbody.innerHTML =
+        (po.items || []).map(item => this.getRowHtml(item)).join('') ||
+        this.getRowHtml();
+
+    const rateBox = document.getElementById('rateComparison');
+    if (rateBox) rateBox.style.display = 'none';
+
+    const printBtn = document.getElementById('poModalPrintBtn');
+    if (printBtn) printBtn.style.display = '';
+
+    this.refreshRowSizeLists();
+    this.refreshRowNarrationLists();
+    safeModalShow('editPoModal');
+  },
+
+  // Print button inside editPoModal itself (edit mode only). Resolves
+  // the array index from the hidden existingPoNumber field since the
+  // form only tracks the PO number, not the App.State.globalPOs index.
+  printCurrent() {
+    if (typeof App.Print === 'undefined') {
+      App.Utils.notPortedYet('Printing');
+      return;
+    }
+    const poNumber = document.getElementById('existingPoNumber')?.value;
+    if (!poNumber) return;
+    const index = App.State.globalPOs.findIndex(po => String(po.poNumber) === String(poNumber));
+    if (index === -1) return;
+    this.print(index);
+  },
+
+  async delete(poNumber) {
+    App.Utils.confirmAction(
+      `Are you sure you want to delete PO #${poNumber}? Bills already linked to it will keep their PO reference and are not affected.`,
+      async () => {
+        try {
+          const res = await Api.mutate('deletePO', poNumber);
+          App.Utils.showToast(
+            res?.message || 'Delete completed.',
+            !res?.success
+          );
+          if (res?.success) await this.loadData();
+        } catch (err) {
+          App.Utils.showToast(
+            err.message || 'Failed to delete PO.',
+            true
+          );
+        }
+      }
+    );
+  },
+
+  addRow() {
+    document
+      .getElementById('itemsBody')
+      ?.insertAdjacentHTML('beforeend', this.getRowHtml());
+  },
+
+  getRowHtml(item = {}) {
+    const rowUid = `po-${++App.State.rowSeq}`;
+    return `
+    <tr>
+      <td><input type="text"   class="form-control item-name"      list="itemList" value="${escapeHtml(item.name || '')}" required></td>
+      <td><input type="text"   class="form-control item-narration" list="narrationList-${rowUid}" value="${escapeHtml(item.narration || '')}">
+          <datalist class="row-narration-list" id="narrationList-${rowUid}"></datalist></td>
+      <td><input type="text"   class="form-control item-size"      list="sizeList-${rowUid}" value="${escapeHtml(item.size || '')}">
+          <datalist class="row-size-list" id="sizeList-${rowUid}"></datalist></td>
+      <td><input type="number" class="form-control item-qty"   min="0" step="any"   value="${escapeHtml(String(item.qty ?? ''))}" required></td>
+      <td><input type="text"   class="form-control item-unit"      list="unitList" value="${escapeHtml(item.unit || 'Pcs')}"></td>
+      <td><input type="number" class="form-control item-price" min="0" step="0.01"   value="${escapeHtml(String(item.price ?? ''))}" required></td>
+      <td><button type="button" class="btn btn-outline-danger btn-sm" data-action="remove-row">✕</button></td>
+    </tr>`;
+  },
+
+  checkRate(input) {
+    const box = document.getElementById('rateComparison');
+    if (!box) return;
+
+    const row = input?.closest('tr');
+    const vendorName = (document.getElementById('formVendor')?.value || '').trim().toLowerCase();
+    const itemName = (row ? ($('.item-name', row)?.value || '') : (input?.value || '')).trim().toLowerCase();
+    const itemSize = (row ? ($('.item-size', row)?.value || '') : '').trim().toLowerCase();
+
+    if (!itemName) {
+      box.style.display = 'none';
+      return;
+    }
+
+    const item = App.State.globalItems.find(
+      i => (i.name || '').trim().toLowerCase() === itemName &&
+           (i.size || '').trim().toLowerCase() === itemSize
+    );
+
+    if (!item || !(item.vendors || []).length) {
+      box.style.display = 'none';
+      return;
+    }
+
+    const parts = item.vendors.map(v => {
+      const isCurrent = vendorName && (v.vendor || '').trim().toLowerCase() === vendorName;
+      const label = `${escapeHtml(v.vendor)}: <strong>${formatCurrency(v.rate)}</strong>`;
+      return isCurrent ? `<span class="text-primary">${label}</span>` : label;
+    });
+
+    box.style.display = 'block';
+    box.innerHTML = `<strong>System Info:</strong> ${parts.join(' &nbsp;|&nbsp; ')}`;
+  },
+
+  // Auto-fills a PO row's Unit Price from the last known rate (master
+  // negotiated rate, or latest PO/Bill rate) for the entered item +
+  // vendor. Never overwrites a price the user already typed. Guarded
+  // against App.Bill not existing yet (Bill Ledger is a later round) --
+  // just no-ops instead of throwing.
+  autoFillRate(row) {
+    if (typeof App.Bill === 'undefined') return;
+
+    const name = $('.item-name', row)?.value?.trim();
+    const size = $('.item-size', row)?.value?.trim() || '';
+    const narration = $('.item-narration', row)?.value?.trim() || '';
+    const vendor = document.getElementById('formVendor')?.value || '';
+    const priceInput = $('.item-price', row);
+
+    if (!name || !priceInput) return;
+    if (Number(priceInput.value) > 0) return;
+
+    const rate = App.Bill.getLatestRate(name, size, narration, vendor, '');
+    if (rate !== null && rate > 0) {
+      priceInput.value = rate;
+    }
+  },
+
+  serializeForm() {
+    const form = document.getElementById('poForm');
+    const formData = Object.fromEntries(new FormData(form));
+    let totalQty = 0;
+    const items = [];
+
+    $$('#itemsBody tr').forEach(row => {
+      const name = $('.item-name', row)?.value?.trim();
+      if (!name) return;
+      const qty = toNumber($('.item-qty', row)?.value);
+      totalQty += qty;
+      items.push({
+        name,
+        narration: $('.item-narration', row)?.value?.trim() || '',
+        size: $('.item-size', row)?.value?.trim() || '',
+        qty,
+        unit: $('.item-unit', row)?.value?.trim() || 'Pcs',
+        price: toNumber($('.item-price', row)?.value)
+      });
+    });
+
+    const poDateInput = document.querySelector(
+      'input[type="date"][name="poDate"]'
+    );
+    if (poDateInput?.value) formData.poDate = poDateInput.value;
+
+    formData.items = JSON.stringify(items);
+    formData.totalQty = totalQty;
+
+    return { formData, items };
+  },
+
+  // ── Print / PDF (dead code until App.Print exists) ─────────────────
+
+  populatePrintData(index) {
+    const po = App.State.globalPOs[index];
+    if (!po) return null;
+
+    const includeRates = document.getElementById('printWithRates')?.checked ?? true;
+    const includeTotal = document.getElementById('printWithTotal')?.checked ?? true;
+
+    const setText = (id, val) => {
+      const el = document.getElementById(id);
+      if (el) el.innerText = val ?? '';
+    };
+
+    setText('print-vendor', po.vendor || '');
+    setText('print-contact', po.contact || '');
+    setText('print-supp-rem', po.supplierRemarks || '');
+    setText('print-ponum', po.poNumber || '');
+    setText('print-date', po.poDate || '');
+    setText('print-desc', po.poDescription || '');
+    setText('print-remarks', po.poRemarks || '');
+
+    const BRAND = App.BRAND_COLOR;
+    const thBase = `padding:8px 6px;background-color:${BRAND};color:#fff;font-weight:700;font-size:11px;text-transform:uppercase;letter-spacing:0.5px;border:1px solid ${BRAND};-webkit-print-color-adjust:exact;print-color-adjust:exact;`;
+    const tdBase = 'padding:7px 6px;border:1px solid #e5e5e5;word-break:break-word;overflow-wrap:break-word;font-size:12px;';
+
+    const head = document.getElementById('print-table-head');
+    if (head) {
+      if (includeRates) {
+        head.innerHTML = includeTotal
+          ? `<tr>
+            <th style="${thBase}width:5%;text-align:center">#</th>
+            <th style="${thBase}width:20%;text-align:left">Item Name</th>
+            <th style="${thBase}width:17%;text-align:left">Narration</th>
+            <th style="${thBase}width:12%;text-align:left">Size</th>
+            <th style="${thBase}width:14%;text-align:center">Qty</th>
+            <th style="${thBase}width:14%;text-align:right">Rate</th>
+            <th style="${thBase}width:18%;text-align:right">Total</th>
+           </tr>`
+          : `<tr>
+            <th style="${thBase}width:5%;text-align:center">#</th>
+            <th style="${thBase}width:25%;text-align:left">Item Name</th>
+            <th style="${thBase}width:22%;text-align:left">Narration</th>
+            <th style="${thBase}width:15%;text-align:left">Size</th>
+            <th style="${thBase}width:15%;text-align:center">Qty</th>
+            <th style="${thBase}width:18%;text-align:right">Rate</th>
+           </tr>`;
+      } else {
+        head.innerHTML = `<tr>
+        <th style="${thBase}width:5%;text-align:center">#</th>
+        <th style="${thBase}width:30%;text-align:left">Item Name</th>
+        <th style="${thBase}width:28%;text-align:left">Narration</th>
+        <th style="${thBase}width:15%;text-align:left">Size</th>
+        <th style="${thBase}width:22%;text-align:center">Quantity</th>
+       </tr>`;
+      }
+    }
+
+    let grandTotal = 0;
+
+    const bodyHtml = (po.items || [])
+      .map((item, idx) => {
+        const qty = toNumber(item.qty);
+        const price = toNumber(item.price);
+        const rowBg = idx % 2 === 0 ? '#ffffff' : '#FFF5F5';
+        const rowStyle = `background-color:${rowBg};-webkit-print-color-adjust:exact;print-color-adjust:exact;page-break-inside:avoid;break-inside:avoid;`;
+
+        let row = `
+      <tr style="${rowStyle}">
+        <td style="${tdBase}text-align:center;color:#999;font-weight:600;">${idx + 1}</td>
+        <td style="${tdBase}text-align:left;font-weight:600;">${escapeHtml(item.name || '')}</td>
+        <td style="${tdBase}text-align:left;color:#555;">${escapeHtml(item.narration || '')}</td>
+        <td style="${tdBase}text-align:left;">${escapeHtml(item.size || '')}</td>
+        <td style="${tdBase}text-align:center;font-weight:600;">${escapeHtml(String(qty))} ${escapeHtml(item.unit || 'Pcs')}</td>`;
+
+        if (includeRates) {
+          row += `<td style="${tdBase}text-align:right;">${formatCurrency(price)}</td>`;
+          if (includeTotal) {
+            const lineTotal = qty * price;
+            grandTotal += lineTotal;
+            row += `<td style="${tdBase}text-align:right;font-weight:700;color:${BRAND};-webkit-print-color-adjust:exact;print-color-adjust:exact;">${formatCurrency(lineTotal)}</td>`;
+          }
+        }
+
+        return row + '</tr>';
+      })
+      .join('');
+
+    const tblBody = document.getElementById('print-items-body');
+    if (tblBody) tblBody.innerHTML = bodyHtml;
+
+    const totalContainer = document.getElementById(
+      'print-grand-total-container'
+    );
+    if (includeRates && includeTotal) {
+      setText('print-grand-total', toNumber(grandTotal).toFixed(2));
+      if (totalContainer) totalContainer.style.display = 'block';
+    } else if (totalContainer) {
+      totalContainer.style.display = 'none';
+    }
+
+    return po;
+  },
+
+  print(index) {
+    if (typeof App.Print === 'undefined') {
+      App.Utils.notPortedYet('Printing');
+      return;
+    }
+
+    const po = this.populatePrintData(index);
+    if (!po) return;
+
+    const title = `PO_${po.poNumber}_${String(po.vendor || '')
+      .replace(/[^a-zA-Z0-9 \-]/g, '')
+      .trim()
+      .replace(/\s+/g, '_')}`;
+    App.Print.trigger('print-po-container', title);
+  },
+
+  // Builds a fully self-contained "Purchase Order" page (mirrors
+  // #print-po-container's markup/styling) for use in bulk printing.
+  buildPOPrintPageHtml(po, includeRates, includeTotal) {
+    const BRAND = App.BRAND_COLOR;
+    const thBase = `padding:8px 6px;background-color:${BRAND};color:#fff;font-weight:700;font-size:11px;text-transform:uppercase;letter-spacing:0.5px;border:1px solid ${BRAND};-webkit-print-color-adjust:exact;print-color-adjust:exact;`;
+    const tdBase = 'padding:7px 6px;border:1px solid #e5e5e5;word-break:break-word;overflow-wrap:break-word;font-size:12px;';
+
+    let headHtml;
+    if (includeRates) {
+      headHtml = includeTotal
+        ? `<tr>
+            <th style="${thBase}width:5%;text-align:center">#</th>
+            <th style="${thBase}width:20%;text-align:left">Item Name</th>
+            <th style="${thBase}width:17%;text-align:left">Narration</th>
+            <th style="${thBase}width:12%;text-align:left">Size</th>
+            <th style="${thBase}width:14%;text-align:center">Qty</th>
+            <th style="${thBase}width:14%;text-align:right">Rate</th>
+            <th style="${thBase}width:18%;text-align:right">Total</th>
+           </tr>`
+        : `<tr>
+            <th style="${thBase}width:5%;text-align:center">#</th>
+            <th style="${thBase}width:25%;text-align:left">Item Name</th>
+            <th style="${thBase}width:22%;text-align:left">Narration</th>
+            <th style="${thBase}width:15%;text-align:left">Size</th>
+            <th style="${thBase}width:15%;text-align:center">Qty</th>
+            <th style="${thBase}width:18%;text-align:right">Rate</th>
+           </tr>`;
+    } else {
+      headHtml = `<tr>
+        <th style="${thBase}width:5%;text-align:center">#</th>
+        <th style="${thBase}width:30%;text-align:left">Item Name</th>
+        <th style="${thBase}width:28%;text-align:left">Narration</th>
+        <th style="${thBase}width:15%;text-align:left">Size</th>
+        <th style="${thBase}width:22%;text-align:center">Quantity</th>
+       </tr>`;
+    }
+
+    let grandTotal = 0;
+    const bodyHtml = (po.items || [])
+      .map((item, idx) => {
+        const qty = toNumber(item.qty);
+        const price = toNumber(item.price);
+        const rowBg = idx % 2 === 0 ? '#ffffff' : '#FFF5F5';
+        const rowStyle = `background-color:${rowBg};-webkit-print-color-adjust:exact;print-color-adjust:exact;page-break-inside:avoid;break-inside:avoid;`;
+
+        let row = `
+      <tr style="${rowStyle}">
+        <td style="${tdBase}text-align:center;color:#999;font-weight:600;">${idx + 1}</td>
+        <td style="${tdBase}text-align:left;font-weight:600;">${escapeHtml(item.name || '')}</td>
+        <td style="${tdBase}text-align:left;color:#555;">${escapeHtml(item.narration || '')}</td>
+        <td style="${tdBase}text-align:left;">${escapeHtml(item.size || '')}</td>
+        <td style="${tdBase}text-align:center;font-weight:600;">${escapeHtml(String(qty))} ${escapeHtml(item.unit || 'Pcs')}</td>`;
+
+        if (includeRates) {
+          row += `<td style="${tdBase}text-align:right;">${formatCurrency(price)}</td>`;
+          if (includeTotal) {
+            const lineTotal = qty * price;
+            grandTotal += lineTotal;
+            row += `<td style="${tdBase}text-align:right;font-weight:700;color:${BRAND};-webkit-print-color-adjust:exact;print-color-adjust:exact;">${formatCurrency(lineTotal)}</td>`;
+          }
+        }
+
+        return row + '</tr>';
+      })
+      .join('');
+
+    const grandTotalHtml = (includeRates && includeTotal)
+      ? `<div style="text-align:right;margin-bottom:16px;padding:8px 0 0 0;border-top:2px solid ${BRAND};page-break-inside:avoid;break-inside:avoid;-webkit-print-color-adjust:exact;print-color-adjust:exact;">
+          <span style="font-size:13px;font-weight:600;color:#1a1a1a;">Grand Total:&nbsp;&nbsp;</span>
+          <span style="font-size:15px;font-weight:800;color:${BRAND};-webkit-print-color-adjust:exact;print-color-adjust:exact;">
+            &#8377;${toNumber(grandTotal).toFixed(2)}
+          </span>
+        </div>`
+      : '';
+
+    return `
+    <div style="background:#fff;color:#1a1a1a;font-family:'Segoe UI',Arial,sans-serif;font-size:12px;line-height:1.5;padding:14px 20px 12px 20px;margin:0;box-sizing:border-box;width:100%;border-top:5px solid ${BRAND};border-bottom:3px solid ${BRAND};-webkit-print-color-adjust:exact;print-color-adjust:exact;">
+      <div style="text-align:center;padding:4px 0 8px 0;">
+        ${App.Print.brandHeaderHtml(BRAND)}
+        <div style="font-size:10px;color:#555;margin-top:3px;letter-spacing:0.3px;">
+          6-B, SHIV SHAKTI ESTATE, VERKA CHOWK, DEHLON ROAD, BHAGWANPURA, 141114 LUDHIANA
+        </div>
+        <div style="font-size:10px;color:#555;margin-top:2px;letter-spacing:0.3px;">
+          Ph : 86996-42398, 91546-94000, 94170-42398 &nbsp;|&nbsp; E-mail : maharaja.bikes@gmail.com
+          &nbsp;&nbsp; GSTIN : 03AFIPS4089J1Z1
+        </div>
+      </div>
+
+      <div style="height:2px;background:${BRAND};margin:0 0 12px 0;-webkit-print-color-adjust:exact;print-color-adjust:exact;"></div>
+
+      <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:12px;">
+        <div style="flex:1;text-align:left;">
+          <span style="font-size:10px;color:#666;text-transform:uppercase;letter-spacing:0.5px;">PO Number</span>
+          <div style="font-size:15px;font-weight:700;color:${BRAND};-webkit-print-color-adjust:exact;print-color-adjust:exact;">${escapeHtml(po.poNumber || '')}</div>
+        </div>
+        <div style="flex:2;text-align:center;">
+          <span style="font-size:18px;font-weight:800;color:${BRAND};letter-spacing:3px;text-transform:uppercase;-webkit-print-color-adjust:exact;print-color-adjust:exact;">
+            PURCHASE ORDER
+          </span>
+        </div>
+        <div style="flex:1;text-align:right;">
+          <span style="font-size:10px;color:#666;text-transform:uppercase;letter-spacing:0.5px;">Date</span>
+          <div style="font-size:13px;font-weight:700;color:#1a1a1a;">${escapeHtml(po.poDate || '')}</div>
+        </div>
+      </div>
+
+      <div style="height:1px;background:#bbb;margin-bottom:14px;"></div>
+
+      <div style="margin-bottom:14px;padding-bottom:10px;border-bottom:1px solid #ccc;">
+        <div style="display:flex;gap:16px;">
+          <div style="flex:1;">
+            <div style="margin-bottom:6px;">
+              <span style="font-size:10px;color:#666;text-transform:uppercase;letter-spacing:0.5px;">Vendor</span>
+              <div style="font-weight:700;font-size:13px;color:#1a1a1a;margin-top:1px;">${escapeHtml(po.vendor || '')}</div>
+            </div>
+            <div>
+              <span style="font-size:10px;color:#666;text-transform:uppercase;letter-spacing:0.5px;">Supplier Rem.</span>
+              <div style="font-size:11px;color:#333;margin-top:1px;">${escapeHtml(po.supplierRemarks || '')}</div>
+            </div>
+          </div>
+          <div style="flex:1;">
+            <span style="font-size:10px;color:#666;text-transform:uppercase;letter-spacing:0.5px;">Contact</span>
+            <div style="font-size:11px;color:#333;margin-top:1px;">${escapeHtml(po.contact || '')}</div>
+          </div>
+        </div>
+      </div>
+
+      <table style="width:100%;border-collapse:collapse;margin-bottom:14px;font-size:12px;">
+        <thead style="background-color:${BRAND};color:#fff;text-align:center;font-weight:700;display:table-header-group;-webkit-print-color-adjust:exact;print-color-adjust:exact;">
+          ${headHtml}
+        </thead>
+        <tbody style="color:#1a1a1a;text-align:center;">
+          ${bodyHtml}
+        </tbody>
+      </table>
+
+      ${grandTotalHtml}
+
+      <div style="display:flex;gap:20px;margin-bottom:24px;min-height:60px;page-break-inside:avoid;break-inside:avoid;">
+        <div style="flex:1;padding-top:6px;border-top:1px solid #ccc;">
+          <div style="font-size:9px;color:${BRAND};text-transform:uppercase;letter-spacing:1px;font-weight:700;margin-bottom:4px;-webkit-print-color-adjust:exact;print-color-adjust:exact;">Description</div>
+          <span style="white-space:pre-wrap;font-size:11px;color:#444;line-height:1.5;">${escapeHtml(po.poDescription || '')}</span>
+        </div>
+        <div style="flex:1;padding-top:6px;border-top:1px solid #ccc;">
+          <div style="font-size:9px;color:${BRAND};text-transform:uppercase;letter-spacing:1px;font-weight:700;margin-bottom:4px;-webkit-print-color-adjust:exact;print-color-adjust:exact;">Remarks</div>
+          <span style="white-space:pre-wrap;font-size:11px;color:#444;line-height:1.5;">${escapeHtml(po.poRemarks || '')}</span>
+        </div>
+      </div>
+
+      <div style="display:flex;justify-content:flex-end;page-break-inside:avoid;break-inside:avoid;">
+        <div style="width:180px;text-align:center;padding-top:5px;border-top:2px solid ${BRAND};-webkit-print-color-adjust:exact;print-color-adjust:exact;">
+          <span style="font-size:10px;color:#666;letter-spacing:0.5px;font-style:italic;">Authorized Signature</span>
+        </div>
+      </div>
+    </div>`;
+  },
+
+  sanitizeFilename(text = '', allowSpaces = true) {
+    const pattern = allowSpaces ? /[^a-zA-Z0-9\s_-]/g : /[^a-zA-Z0-9_-]/g;
+    return (
+      text
+        .replace(pattern, '')
+        .trim()
+        .replace(/\s+/g, '_')
+        .slice(0, 50) || 'Document'
+    );
+  },
+
+  async ensureAssetsReady() {
+    try {
+      if (document.fonts?.ready) {
+        await document.fonts.ready;
+      }
+    } catch (err) {
+      console.warn('[PDF] Font loading check failed:', err);
+    }
+  },
+
+  async downloadPDF(index) {
+    if (typeof App.Print === 'undefined') {
+      App.Utils.notPortedYet('PDF export');
+      return;
+    }
+
+    const po = this.populatePrintData(index);
+    if (!po) {
+      console.warn('[PDF] No PO data available');
+      return;
+    }
+
+    const element = document.getElementById('print-po-container');
+    if (!element) {
+      console.warn('[PDF] Print container not found');
+      return;
+    }
+
+    if (typeof window.html2pdf !== 'function') {
+      try {
+        await loadScript('https://cdnjs.cloudflare.com/ajax/libs/html2pdf.js/0.10.1/html2pdf.bundle.min.js');
+      } catch (err) {
+        console.error('[PDF] Failed to load html2pdf library:', err);
+        App.Utils.showToast('PDF library failed to load. Check your connection and try again.', true);
+        return;
+      }
+    }
+
+    await this.ensureAssetsReady();
+
+    const safePoNumber = this.sanitizeFilename(String(po.poNumber || 'PO'));
+    const safeVendorName = this.sanitizeFilename(String(po.vendor || 'Vendor'), false);
+
+    const prevStyle = element.getAttribute('style');
+    const prevHtmlOverflow = document.documentElement.style.overflow;
+    const prevBodyPad = document.body.style.padding;
+    const prevBodyMar = document.body.style.margin;
+    const prevBodyOvf = document.body.style.overflow;
+
+    const originalParent = element.parentNode;
+    const originalSibling = element.nextSibling;
+
+    const prevScrollX = window.pageXOffset || document.documentElement.scrollLeft;
+    const prevScrollY = window.pageYOffset || document.documentElement.scrollTop;
+    window.scrollTo(0, 0);
+
+    document.body.insertBefore(element, document.body.firstChild);
+
+    document.body.style.padding = '0';
+    document.body.style.margin = '0';
+    document.body.style.overflow = 'visible';
+    document.documentElement.style.overflow = 'visible';
+
+    element.style.display = 'block';
+    element.style.width = '718px';
+    element.style.maxWidth = 'none';
+
+    await new Promise(r => requestAnimationFrame(r));
+
+    try {
+      await window.html2pdf()
+        .set({
+          margin: [10, 10, 10, 10],
+          filename: `PO_${safePoNumber}_${safeVendorName}.pdf`,
+          image: { type: 'jpeg', quality: 0.98 },
+          html2canvas: {
+            scale: 2,
+            useCORS: true,
+            allowTaint: true,
+            logging: false,
+            scrollX: 0,
+            scrollY: 0,
+            backgroundColor: '#ffffff'
+          },
+          jsPDF: { unit: 'mm', format: 'a4', orientation: 'portrait' },
+          pagebreak: {
+            mode: ['css', 'legacy'],
+            avoid: [
+              'tr',
+              '#print-grand-total-container',
+              '#print-footer-meta',
+              '#print-signature'
+            ]
+          }
+        })
+        .from(element)
+        .save();
+
+      App.Utils.showToast('PDF exported successfully!', false);
+    } catch (err) {
+      console.error('[PDF] Generation failed:', err);
+      App.Utils.showToast(err instanceof Error ? err.message : 'Failed to export PDF.', true);
+    } finally {
+      window.scrollTo(prevScrollX, prevScrollY);
+
+      document.body.style.padding = prevBodyPad;
+      document.body.style.margin = prevBodyMar;
+      document.body.style.overflow = prevBodyOvf;
+      document.documentElement.style.overflow = prevHtmlOverflow;
+      if (prevStyle !== null) {
+        element.setAttribute('style', prevStyle);
+      } else {
+        element.removeAttribute('style');
+      }
+
+      if (originalParent) {
+        if (originalSibling) {
+          originalParent.insertBefore(element, originalSibling);
+        } else {
+          originalParent.appendChild(element);
+        }
+      }
+    }
+  },
+
+  // Item x vendor rate/last-purchase-date catalog, built purely from
+  // App.State.globalPOs/globalItems -- no RPC, no App.Print dependency,
+  // so this is genuinely portable in full this round.
+  openVendorCatalog() {
+    const tbody = document.getElementById('vendorCatalogBody');
+    if (!tbody) return;
+
+    const sortedPOs = [...(App.State.globalPOs || [])].sort((a, b) =>
+      parseRecordDate(b.poDateRaw, b.poDate) - parseRecordDate(a.poDateRaw, a.poDate)
+    );
+
+    const lastPurchaseByKey = new Map();
+    sortedPOs.forEach(po => {
+      const vLower = (po.vendor || '').trim().toLowerCase();
+      (po.items || []).forEach(i => {
+        const key = [
+          vLower,
+          (i.name || '').trim().toLowerCase(),
+          (i.size || '').trim().toLowerCase(),
+          (i.narration || '').trim().toLowerCase()
+        ].join('|');
+        if (!lastPurchaseByKey.has(key)) lastPurchaseByKey.set(key, po.poDate || '');
+      });
+    });
+
+    const rows = [];
+    for (const item of (App.State.globalItems || [])) {
+      for (const v of (item.vendors || [])) {
+        const vLower = (v.vendor || '').trim().toLowerCase();
+        const nameLower = (item.name || '').trim().toLowerCase();
+        const sizeLower = (item.size || '').trim().toLowerCase();
+        const narrationLower = (item.narration || '').trim().toLowerCase();
+        const lastDate = lastPurchaseByKey.get([vLower, nameLower, sizeLower, narrationLower].join('|')) || '';
+        rows.push({ name: item.name, size: item.size || '', narration: item.narration || '', vendor: v.vendor, rate: v.rate, lastDate });
+      }
+    }
+
+    rows.sort((a, b) => (a.name + a.size).localeCompare(b.name + b.size));
+
+    tbody.innerHTML = rows.map(r => `
+      <tr>
+        <td>${escapeHtml(r.name)}</td>
+        <td>${escapeHtml(r.size)}</td>
+        <td>${escapeHtml(r.narration)}</td>
+        <td>${escapeHtml(r.vendor)}</td>
+        <td class="text-end">${formatCurrency(r.rate)}</td>
+        <td>${escapeHtml(r.lastDate)}</td>
+      </tr>`).join('');
+
+    const searchInput = document.getElementById('vendorCatalogSearch');
+    if (searchInput) {
+      searchInput.value = '';
+      searchInput.oninput = () => {
+        const q = searchInput.value.trim().toLowerCase();
+        $$('#vendorCatalogBody tr').forEach(tr => {
+          tr.style.display = !q || tr.textContent.toLowerCase().includes(q) ? '' : 'none';
+        });
+      };
+    }
+
+    safeModalShow('vendorCatalogModal');
+  }
+};
+
+// Form submit handler -- ported from Script_Core.html's poForm listener.
+// Adapted to Api.mutate (not Api.call): po_service.py's savePO is
+// mutation=True, so rpc.py requires a fresh X-Mutation-Id per call --
+// google.script.run needed no such header, so source used a plain
+// Api.call here.
+document.addEventListener('DOMContentLoaded', () => {
+  document.getElementById('poForm')?.addEventListener('submit', async e => {
+    e.preventDefault();
+    const { formData, items } = App.PO.serializeForm();
+
+    // Select2 hides the native <select>, so the browser's "required"
+    // validation never fires on the vendor field -- check it explicitly.
+    if (!String(formData.vendor || '').trim()) {
+      App.Utils.showToast('Please select a vendor.', true);
+      return;
+    }
+    if (!items.length) {
+      App.Utils.showToast('Please add at least one item to the PO.', true);
+      return;
+    }
+
+    const isEdit = !!formData.existingPoNumber;
+    setDisabled('poSubmitBtn', true);
+    try {
+      const res = await Api.mutate('savePO', formData);
+      if (res?.success) await App.PO.loadData();
+      if (res?.success && !isEdit) {
+        App.PO.openCreateModal();
+      } else {
+        safeModalHide('editPoModal');
+      }
+      App.Utils.showToast(res?.message || 'PO saved.', !res?.success);
+    } catch (err) {
+      App.Utils.showToast(err.message || 'Failed to save PO.', true);
+    } finally {
+      setDisabled('poSubmitBtn', false);
+    }
+  });
+
+  // Live rate comparison + narration/rate autofill as item fields change
+  // (ported from Script_Core.html's bindGlobalEvents 'input' delegate).
+  document.addEventListener('input', e => {
+    if (e.target.matches('#itemsBody .item-name')) {
+      App.Utils.applyDependentSizeList(e.target, '.item-size');
+      App.Utils.applyDefaultPurchaseUnit(e.target, '.item-name', '.item-size', '.item-unit');
+      App.PO.refreshNarrationList(e.target.closest('tr'));
+      App.PO.autoFillRate(e.target.closest('tr'));
+    }
+    if (e.target.matches('#itemsBody .item-size')) {
+      App.Utils.applyDefaultPurchaseUnit(e.target, '.item-name', '.item-size', '.item-unit');
+      App.PO.refreshNarrationList(e.target.closest('tr'));
+      App.PO.autoFillRate(e.target.closest('tr'));
+    }
+    if (e.target.matches('#itemsBody .item-narration')) {
+      App.PO.autoFillRate(e.target.closest('tr'));
+    }
+  });
+
+  // Rate comparison on item-name or item-size blur (capture phase).
+  document.addEventListener(
+    'blur',
+    e => {
+      if (e.target.matches('.item-name') || e.target.matches('.item-size'))
+        App.PO.checkRate(e.target);
+    },
+    true
+  );
+
+  document.getElementById('formVendor')?.addEventListener('change', function () {
+    $$('#itemsBody tr').forEach(row => App.PO.autoFillRate(row));
+  });
+});

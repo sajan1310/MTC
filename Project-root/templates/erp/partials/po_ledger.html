@@ -1,0 +1,285 @@
+<!-- Ported from Apps_Script/View_POLedger.html + the editPoModal/pendingPOsModal/
+     vendorCatalogModal sections of Apps_Script/Modals.html. -->
+
+<div id="poLedger" class="tab-content table-container" role="tabpanel" aria-labelledby="btn-poLedger">
+
+  <!-- STATUS BAR: literal PO_STATUS string values (config.js / api.js#PO_STATUS) -->
+  <div class="d-flex flex-wrap gap-2 mb-3 align-items-center" id="poStatusBar" role="group" aria-label="Filter Purchase Orders by status">
+    <button type="button" class="btn btn-outline-secondary btn-sm fw-500 po-status-filter-btn active" data-status="all" onclick="App.PO.filterByStatus('all')">
+      All <span class="badge bg-secondary ms-1" id="poStatusCountAll">0</span>
+    </button>
+    <button type="button" class="btn btn-outline-primary btn-sm fw-500 po-status-filter-btn" data-status="PO Issued" onclick="App.PO.filterByStatus('PO Issued')">
+      <i class="bi bi-file-earmark-text me-1"></i>PO Issued <span class="badge bg-primary ms-1" id="poStatusCountIssued">0</span>
+    </button>
+    <button type="button" class="btn btn-outline-info btn-sm fw-500 po-status-filter-btn" data-status="Partially Received" onclick="App.PO.filterByStatus('Partially Received')">
+      <i class="bi bi-truck me-1"></i>Partially Received <span class="badge bg-info ms-1" id="poStatusCountPartial">0</span>
+    </button>
+    <button type="button" class="btn btn-outline-success btn-sm fw-500 po-status-filter-btn" data-status="Completed" onclick="App.PO.filterByStatus('Completed')">
+      <i class="bi bi-check-circle me-1"></i>Completed <span class="badge bg-success ms-1" id="poStatusCountCompleted">0</span>
+    </button>
+    <button type="button" class="btn btn-outline-dark fw-bold shadow-sm ms-auto" id="btnPendingPOs" onclick="App.PO.openPendingPOsModal()">
+      <i class="bi bi-hourglass-split"></i> Pending Orders <span class="badge bg-dark ms-1" id="poStatusCountPending">0</span>
+    </button>
+  </div>
+
+  <!-- TOOLBAR: Search, Filters, and Action Buttons -->
+  <div class="d-flex justify-content-between flex-wrap gap-2 mb-4" style="align-items: flex-start;">
+
+    <div class="d-flex flex-grow-1 flex-wrap gap-3 align-items-center" style="max-width: 900px;">
+      <div class="flex-grow-1" style="min-width: 250px;">
+        <input type="text"
+               id="searchVendor"
+               class="form-control"
+               placeholder="Search by Party, PO#, or Item…"
+               autocomplete="off"
+               aria-label="Search Purchase Orders"
+               onkeyup="App.PO.filterData(this.value)">
+        <small class="text-muted" style="display: block; margin-top: 4px;">
+          Filter by vendor name, PO number, or item
+        </small>
+      </div>
+
+      <div style="min-width: 170px;">
+        <input type="date"
+               id="poDateFilter"
+               class="form-control"
+               aria-label="Filter Purchase Orders by Date"
+               onchange="App.PO.filterByDate(this.value)">
+        <small class="text-muted" style="display: block; margin-top: 4px;">
+          Show POs issued on this date
+        </small>
+      </div>
+
+      <div style="min-width: 190px;">
+        <select id="poSortBy" class="form-select" aria-label="Sort Purchase Orders" onchange="App.PO.sortBy(this.value)">
+          <option value="poNumberDesc">PO# (Newest first)</option>
+          <option value="poNumberAsc">PO# (Oldest first)</option>
+          <option value="dateDesc">Date (Newest first)</option>
+          <option value="dateAsc">Date (Oldest first)</option>
+          <option value="vendorAsc">Vendor (A&ndash;Z)</option>
+          <option value="vendorDesc">Vendor (Z&ndash;A)</option>
+          <option value="valueDesc">Value (High&ndash;Low)</option>
+          <option value="valueAsc">Value (Low&ndash;High)</option>
+        </select>
+        <small class="text-muted" style="display: block; margin-top: 4px;">Sort by</small>
+      </div>
+
+      <div class="d-flex flex-row gap-2 align-items-center text-nowrap">
+        <div>
+          <input type="checkbox" class="btn-check" id="printWithRates" checked autocomplete="off" aria-label="Show unit rates in print">
+          <label class="btn btn-outline-brand btn-sm fw-500" for="printWithRates" style="padding: 6px 12px; font-size: 13px;">
+            <i class="bi bi-eye me-1"></i>Show Rates
+          </label>
+        </div>
+        <div>
+          <input type="checkbox" class="btn-check" id="printWithTotal" checked autocomplete="off" aria-label="Show grand total in print">
+          <label class="btn btn-outline-brand btn-sm fw-500" for="printWithTotal" style="padding: 6px 12px; font-size: 13px;">
+            <i class="bi bi-eye me-1"></i>Show Grand Total
+          </label>
+        </div>
+      </div>
+    </div>
+
+    <div class="d-flex gap-2 flex-wrap justify-content-end">
+      <button class="btn btn-outline-dark fw-bold shadow-sm d-none" id="btnBulkPrintPOs" type="button" onclick="App.PO.bulkPrint()" style="white-space: nowrap;">
+        <i class="bi bi-printer"></i> Print Selected
+      </button>
+      <button class="btn btn-danger fw-bold shadow-sm d-none" id="btnBulkDeletePOs" type="button" onclick="App.PO.bulkDelete()" style="white-space: nowrap;">
+        <i class="bi bi-trash"></i> Delete Selected
+      </button>
+      <button class="btn btn-success fw-bold shadow-sm"
+              type="button"
+              onclick="App.PO.openCreateModal()"
+              aria-label="Create a new Purchase Order"
+              style="white-space: nowrap; padding: 10px 24px;">
+        <i class="bi bi-plus-circle me-2"></i>
+        Create New PO
+      </button>
+    </div>
+  </div>
+
+  <!-- PO LEDGER TABLE -->
+  <div class="table-responsive" style="border-radius: 8px; overflow: hidden; box-shadow: 0 1px 3px rgba(0,0,0,0.1);">
+    <table class="table table-hover table-bordered align-middle mb-0" role="table" style="margin-bottom: 0;">
+      <thead class="table-dark">
+        <tr role="row">
+          <th role="columnheader" style="width: 4%; text-align: center;">
+            <input type="checkbox" id="selectAllPOs" class="form-check-input" onclick="App.PO.toggleSelectAll(this)">
+          </th>
+          <th role="columnheader" style="width: 10%; min-width: 100px;">
+            <i class="bi bi-file-earmark-text me-2"></i>PO#
+          </th>
+          <th role="columnheader" style="width: 12%; min-width: 120px;">
+            <i class="bi bi-calendar me-2"></i>Date
+          </th>
+          <th role="columnheader" style="width: 18%; min-width: 140px;">
+            <i class="bi bi-building me-2"></i>Vendor
+          </th>
+          <th role="columnheader" style="width: 18%; min-width: 180px;">
+            <i class="bi bi-box-seam me-2"></i>Items Summary
+          </th>
+          <th role="columnheader" style="width: 10%; min-width: 80px; text-align: center;">
+            <i class="bi bi-collection me-2"></i>Qty
+          </th>
+          <th role="columnheader" style="width: 12%; min-width: 100px; text-align: right;">
+            <i class="bi bi-currency-rupee me-2"></i>Value
+          </th>
+          <th role="columnheader" style="width: 10%; min-width: 140px; text-align: center;">
+            <i class="bi bi-flag me-2"></i>Status
+          </th>
+          <th role="columnheader" style="width: 10%; min-width: 180px;">
+            <i class="bi bi-gear me-2"></i>Actions
+          </th>
+        </tr>
+      </thead>
+      <tbody id="poTableBody" role="rowgroup">
+        <!-- Rows generated by App.PO.renderTable() -->
+      </tbody>
+    </table>
+  </div>
+
+  <!-- Empty State -->
+  <div id="poEmptyState" class="text-center py-5 text-muted" style="display: none;">
+    <div style="font-size: 48px; margin-bottom: 16px;">📋</div>
+    <h5>No Purchase Orders Found</h5>
+    <p style="margin-bottom: 20px;">
+      Start by creating a new Purchase Order or search for existing ones.
+    </p>
+    <button class="btn btn-success" type="button" onclick="App.PO.openCreateModal()">
+      Create First PO
+    </button>
+  </div>
+
+  <!-- Pagination -->
+  <div id="poPagination" class="d-flex justify-content-between align-items-center mt-3 pt-3 border-top"></div>
+
+  <div class="alert alert-info mt-4" role="alert" style="display: none;">
+    <i class="bi bi-info-circle me-2"></i>
+    <strong>Tip:</strong> Use the search box to quickly find Purchase Orders by vendor name, PO number, or item, and use the date picker to find POs issued on a specific date.
+    Check "Show Rates" and "Show Total" to customize your print preview.
+  </div>
+</div>
+
+<!-- Edit / Create PO Modal -->
+<div class="modal fade" id="editPoModal" data-bs-backdrop="static" tabindex="-1" aria-hidden="true">
+  <div class="modal-dialog modal-xl modal-fullscreen-sm-down">
+    <div class="modal-content shadow-lg">
+      <div class="modal-header bg-dark text-white">
+        <h5 class="modal-title" id="formTitle">Create New Purchase Order</h5>
+        <button type="button" class="btn-close btn-close-white" data-bs-dismiss="modal"></button>
+      </div>
+      <div class="modal-body bg-light">
+        <form id="poForm" autocomplete="on">
+          <input type="hidden" id="existingPoNumber" name="existingPoNumber">
+
+          <h6 class="text-secondary border-bottom pb-1 fw-bold">Global Headers &amp; Optional Remarks</h6>
+          <div class="row g-3 mb-4">
+            <div class="col-md-3">
+              <label class="form-label fw-bold">Vendor Name *</label>
+              <select name="vendor" id="formVendor" class="form-select select2-vendor" required></select>
+            </div>
+            <div class="col-md-3"><label class="form-label fw-bold">PO Date *</label><input type="date" name="poDate" id="visiblePoDate" class="form-control" required></div>
+            <div class="col-md-3"><label class="form-label">Contact / Dispatch Address</label><input type="text" name="contact" id="formContact" class="form-control" maxlength="100"></div>
+            <div class="col-md-3"><label class="form-label">Supplier PO Remarks</label><input type="text" name="supplierRemarks" id="formSuppRem" class="form-control" placeholder="Quote or Ref No." maxlength="200"></div>
+
+            <div class="col-md-6"><label class="form-label">Description (Shown in Document Box)</label><textarea name="poDescription" id="formDesc" class="form-control" rows="2" maxlength="500"></textarea></div>
+            <div class="col-md-6"><label class="form-label">Remarks (Shown in Document Box)</label><textarea name="poRemarks" id="formRemarks" class="form-control" rows="2" maxlength="500"></textarea></div>
+          </div>
+
+          <h6 class="text-secondary border-bottom pb-1 fw-bold">Line Items</h6>
+          <div class="table-responsive">
+            <table class="table table-bordered bg-white shadow-sm">
+              <thead class="table-light">
+                <tr><th>Name *</th><th>Narration</th><th style="width:10%;">Size</th><th style="width:12%;">Qty *</th><th>Unit</th><th style="width:12%;">Unit Price *</th><th>Actions</th></tr>
+              </thead>
+              <tbody id="itemsBody"></tbody>
+            </table>
+          </div>
+          <div class="d-flex align-items-center gap-3 mb-3">
+            <button type="button" class="btn btn-outline-primary btn-sm fw-bold" onclick="App.PO.addRow()">+ Add New Row</button>
+            <a href="#" class="small text-decoration-none" onclick="App.PO.openVendorCatalog(); return false;">Vendor Catalog</a>
+          </div>
+          <div class="alert alert-info py-2 shadow-sm" id="rateComparison" style="display: none;"></div>
+
+          <div class="text-end mt-2">
+            <button type="button" class="btn btn-secondary me-2" data-bs-dismiss="modal">Cancel</button>
+            <button type="button" id="poModalPrintBtn" class="btn btn-outline-dark me-2" style="display:none;" onclick="App.PO.printCurrent()"><i class="bi bi-printer"></i> Print</button>
+            <button type="submit" id="poSubmitBtn" class="btn btn-success px-5 fw-bold shadow-sm">Save Purchase Order</button>
+          </div>
+        </form>
+      </div>
+    </div>
+  </div>
+</div>
+
+<!-- Pending Purchase Orders Modal -->
+<div class="modal fade" id="pendingPOsModal" tabindex="-1" aria-hidden="true">
+  <div class="modal-dialog modal-xl modal-fullscreen-sm-down">
+    <div class="modal-content shadow-lg">
+      <div class="modal-header bg-dark text-white">
+        <h5 class="modal-title fw-bold" style="font-family: 'Outfit', sans-serif;">Pending Purchase Orders</h5>
+        <button type="button" class="btn-close btn-close-white" data-bs-dismiss="modal"></button>
+      </div>
+      <div class="modal-body bg-light">
+        <div class="d-flex w-50 align-items-center mb-3">
+          <input type="text" id="searchPendingPOs" class="form-control" placeholder="Search PO #, Vendor, or Item..." autocomplete="off" onkeyup="App.PO.filterPendingPOs(this.value)">
+        </div>
+        <div class="table-responsive">
+          <table class="table table-bordered bg-white shadow-sm table-hover mb-0">
+            <thead class="table-dark">
+              <tr>
+                <th style="width: 10%;">PO#</th>
+                <th style="width: 8%;">Date</th>
+                <th style="width: 15%;">Vendor</th>
+                <th style="width: 27%;">Item</th>
+                <th style="width: 10%; text-align: center;">Ordered Qty</th>
+                <th style="width: 10%; text-align: center;">Received Qty</th>
+                <th style="width: 10%; text-align: center;">Pending Qty</th>
+                <th style="width: 10%; text-align: center;">Status</th>
+              </tr>
+            </thead>
+            <tbody id="pendingPOsTableBody"></tbody>
+          </table>
+        </div>
+        <div id="pendingPOsEmptyState" class="text-center p-5 border rounded-3 bg-white shadow-sm mt-3" style="display: none;">
+          <i class="bi bi-check-circle fs-1 text-success d-block mb-3"></i>
+          <h5 class="fw-bold text-dark">No Pending Purchase Orders</h5>
+          <p class="text-muted mb-0">Every issued PO has been fully received.</p>
+        </div>
+        <div class="text-end mt-4">
+          <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Close</button>
+        </div>
+      </div>
+    </div>
+  </div>
+</div>
+
+<!-- Vendor Catalog Modal -->
+<div class="modal fade" id="vendorCatalogModal" tabindex="-1" aria-hidden="true">
+  <div class="modal-dialog modal-xl modal-fullscreen-sm-down">
+    <div class="modal-content shadow-lg">
+      <div class="modal-header bg-dark text-white">
+        <h5 class="modal-title">Vendor Catalog</h5>
+        <button type="button" class="btn-close btn-close-white" data-bs-dismiss="modal"></button>
+      </div>
+      <div class="modal-body">
+        <input type="text" id="vendorCatalogSearch" class="form-control form-control-sm mb-3" placeholder="Search by item, size, narration, or vendor…">
+        <div class="table-responsive">
+          <table class="table table-sm table-bordered table-hover">
+            <thead class="table-dark sticky-top">
+              <tr>
+                <th>Item Name</th>
+                <th>Size</th>
+                <th>Narration</th>
+                <th>Vendor</th>
+                <th class="text-end">Rate</th>
+                <th>Last Purchase Date</th>
+              </tr>
+            </thead>
+            <tbody id="vendorCatalogBody"></tbody>
+          </table>
+        </div>
+      </div>
+    </div>
+  </div>
+</div>
