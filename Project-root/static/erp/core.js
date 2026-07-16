@@ -125,7 +125,25 @@ const App = {
     billSortBy: 'dateDesc',
     selectedBills: [],
     billAutoMatchTimer: null,
-    billAutoMatchPromise: null
+    billAutoMatchPromise: null,
+
+    // Return Ledger's own pagination/filter/selection state (Script_Return.html).
+    filteredReturns: [],
+    returnCurrentPage: 1,
+    returnRowsPerPage: 15,
+    returnSearchTerm: '',
+    returnDateFilter: '',
+    selectedReturns: [],
+
+    // Wastage Log's own pagination/filter/selection state -- nested inside
+    // the Return Ledger tab/view (Script_Return.html's App.Wastage).
+    globalWastage: [],
+    filteredWastage: [],
+    wastageCurrentPage: 1,
+    wastageRowsPerPage: 15,
+    wastageSearchTerm: '',
+    wastageDateFilter: '',
+    selectedWastage: []
   },
 
   // ── Bulk Selection Helpers ────────────────────────────────────────────
@@ -447,6 +465,7 @@ const App = {
       if (id === 'itemMaster' && typeof App.Item !== 'undefined') App.Item.loadData();
       if (id === 'poLedger' && typeof App.PO !== 'undefined') App.PO.loadData();
       if (id === 'billLedger' && typeof App.Bill !== 'undefined') App.Bill.loadData();
+      if (id === 'returnLedger' && typeof App.Return !== 'undefined') App.Return.loadData();
       // Every other module's own `if (id === '<tab>') App.<Module>.loadData();`
       // line lands here in that module's own round -- same guarded pattern
       // Navigation.showTab already used in source for not-yet-loaded modules.
@@ -481,6 +500,11 @@ const App = {
     if (this.Bill) {
       labels.push('Bill');
       promises.push(this.Bill.loadData());
+    }
+
+    if (this.Return) {
+      labels.push('Return');
+      promises.push(this.Return.loadData());
     }
 
     const results = await Promise.allSettled(promises);
@@ -571,6 +595,21 @@ function bindGlobalEvents() {
         break;
       case 'bill-page':
         App.Bill.changePage(toNumber(btn.dataset.page, 1));
+        break;
+      case 'return-print':
+        App.Return.print(toNumber(btn.dataset.index));
+        break;
+      case 'return-edit':
+        App.Return.openEditModal(toNumber(btn.dataset.index));
+        break;
+      case 'return-delete':
+        App.Return.delete(decodeURIComponent(btn.dataset.returnnumber || ''));
+        break;
+      case 'return-page':
+        App.Return.changePage(toNumber(btn.dataset.page, 1));
+        break;
+      case 'wastage-page':
+        App.Wastage.changePage(toNumber(btn.dataset.page, 1));
         break;
     }
   });
