@@ -51,11 +51,12 @@ algorithm (including transitive link chains) is genuinely independent
 complexity deserving its own round. saveProduction (Production's own
 round) is the only caller of any of this.
 
-Deferred still: _setProcessPrimaryColorAxis (only ever called from
-Production), the Production/Warehouse-Pool-Opening portions of
-_renamePoolOutputItemNameEverywhere and all of
-_renameProcessNameInContractorRates (their target tables don't exist yet --
-guarded no-ops below, activate automatically once those modules land).
+_setProcessPrimaryColorAxis and the Production leg of
+_renamePoolOutputItemNameEverywhere are real as of Phase 3g, now that
+Production exists to call/target them.
+_renameProcessNameInContractorRates has been real since Phase 3d
+(Contractors) -- its target table just isn't a flat rename_in_column call
+here, see that function itself.
 """
 
 from __future__ import annotations
@@ -206,11 +207,8 @@ def _get_process_ids_in_use(cur, process_ids: list) -> set:
 
 def _rename_pool_output_item_name_everywhere(cur, old_name: str, new_name: str) -> None:
     """Propagates a Process Master Output Item Name rename to every
-    de-normalized snapshot of it, so the (future) Warehouse Pool stays keyed
-    consistently under the new name. Production's OUTPUT_ITEM_NAME/
-    COMPONENTS_CONSUMED targets need structured (JSON-aware) rewriting, not
-    a generic rename_in_column call -- dedicated logic lands with Production
-    itself, same as the color rename cascade's Production comment.
+    de-normalized snapshot of it, so Warehouse Pool stays keyed
+    consistently under the new name.
     """
     old = (old_name or "").strip()
     new = (new_name or "").strip()
@@ -224,6 +222,47 @@ def _rename_pool_output_item_name_everywhere(cur, old_name: str, new_name: str) 
 
     if table := config_maps.TABLE_NAMES.get("WAREHOUSE_POOL_OPENING"):
         rename_utils.rename_in_column(cur, table, config_maps.to_snake_case("outputItemName"), old, new)
+
+    if table := config_maps.TABLE_NAMES.get("PRODUCTION"):
+        # Credit side: any lot's own output_item_name.
+        rename_utils.rename_in_column(cur, table, "output_item_name", old, new)
+
+        # Debit side: any OTHER lot's components_consumed JSON that consumed
+        # this item as a POOL-sourced component. A structured rewrite, not
+        # a plain column rename -- rename_utils has nothing for a value
+        # nested inside a JSON array.
+        cur.execute(f"SELECT id, components_consumed FROM {table} WHERE deleted_at IS NULL AND components_consumed IS NOT NULL")
+        for row in cur.fetchall():
+            components = row["components_consumed"] or []
+            changed = False
+            for comp in components:
+                if not isinstance(comp, dict):
+                    continue
+                if (
+                    str(comp.get("sourceType") or "").strip().upper() == "POOL"
+                    and str(comp.get("itemName") or "").strip().lower() == old.lower()
+                ):
+                    comp["itemName"] = new
+                    changed = True
+            if changed:
+                cur.execute(
+                    f"UPDATE {table} SET components_consumed = %s WHERE id = %s",
+                    (json.dumps(components), row["id"]),
+                )
+
+
+def _set_process_primary_color_axis(cur, process_id: str, primary_color_axis: str) -> None:
+    """Updates just one process's Primary Color Axis cell, without touching
+    its recipe/components/color links -- used when the operator picks or
+    changes the Primary Axis directly on the Production Lot form instead of
+    going through the full Process editor. Silently no-ops if the process
+    can't be found -- a best-effort "remember this choice for next time"
+    side effect, not something a Production save should fail over.
+    """
+    cur.execute(
+        "UPDATE erp.process_master SET primary_color_axis = %s WHERE lower(process_id) = lower(%s) AND deleted_at IS NULL",
+        (primary_color_axis, process_id),
+    )
 
 
 def _rename_process_name_in_contractor_rates(cur, old_name: str, new_name: str) -> None:

@@ -1,13 +1,13 @@
 """Stock, ported from Apps_Script/module_stock.js.
 
 Current Stock is computed live (never stored) via
-_get_billed_and_consumed_qty_maps. Bill and Return's terms are real as of
-Phases 2c/2d; Wastage/Issue/Production remain stubbed until their own
-rounds. See the Phase 1c plan for why this isn't a SQL view yet and why the
-guarded per-table terms aren't pre-written the way Phase 1a/1b's rename
-cascades were (this formula needs 5 undesigned future schemas, not one
-predictable column name) -- each term below was filled in only once its
-source table's real schema existed, per that plan.
+_get_billed_and_consumed_qty_maps. All five terms (Bill, Return, Wastage,
+Issue, Production) are real as of Phase 3g -- the last one, Production's
+ITEM-sourced components_consumed qty on Completed lots, was the final gap
+this function's own docstring called out since Phase 1c. See that phase's
+plan for why this isn't a SQL view (this formula needed 5 undesigned
+future schemas, not one predictable column name) -- each term was filled
+in only once its source table's real schema existed.
 
 getStockAdjustmentHistory reads a real erp.stock_adjustments table instead
 of the source's regex-parsed Logs-sheet workaround -- the feature (queryable
@@ -29,7 +29,9 @@ import psycopg2.extras
 
 import database
 from . import items_service
+from . import units_service
 from .current_user import get_current_user_id
+from .. import config_maps
 from .. import date_utils
 from ..envelope import build_response
 from ..registry import rpc_method
@@ -39,11 +41,13 @@ def _get_billed_and_consumed_qty_maps(cur) -> tuple[dict, dict]:
     """Returns (bill_qty_map, consumed_qty_map), each keyed by
     "item_name_lower|size_lower" -> net base-unit qty affecting Current Stock.
 
-    BILL, RETURN, WASTAGE, and ISSUE are all real now (Phases 2c/2d/3b) --
-    all four net into bill_qty_map (Bill adds, the other three subtract,
-    same direction Return does). Still stubbed:
-      - PRODUCTION: consumed_qty_map -= ITEM-sourced components_consumed qty
-        on Completed lots (POOL-sourced entries debit Warehouse Pool instead)
+    BILL, RETURN, WASTAGE, and ISSUE all net into bill_qty_map (Bill adds,
+    the other three subtract, same direction Return does). PRODUCTION is
+    the one term that lands in consumed_qty_map instead, kept semantically
+    separate to mirror the source's own two-map split: ITEM-sourced
+    components_consumed qty on Completed lots (POOL-sourced entries debit
+    Warehouse Pool instead -- see warehouse_service._recalculate_warehouse_pool's
+    Pass 2, not this function).
     """
     bill_qty_map: dict = {}
     cur.execute(
@@ -105,7 +109,41 @@ def _get_billed_and_consumed_qty_maps(cur) -> tuple[dict, dict]:
             continue
         bill_qty_map[key] = bill_qty_map.get(key, 0) - float(row["base_qty"] or 0)
 
-    return bill_qty_map, {}
+    consumed_qty_map: dict = {}
+    if table := config_maps.TABLE_NAMES.get("PRODUCTION"):
+        item_unit_map = items_service.get_item_unit_info_map(cur)
+        units_map = units_service.get_units_map()
+
+        cur.execute(
+            f"SELECT components_consumed FROM {table} WHERE deleted_at IS NULL AND lower(status) = 'completed'"
+        )
+        for row in cur.fetchall():
+            for comp in row["components_consumed"] or []:
+                if not isinstance(comp, dict):
+                    continue
+                if str(comp.get("sourceType") or "").strip().upper() == "POOL":
+                    continue
+                item_name = str(comp.get("itemName") or "").strip()
+                if not item_name:
+                    continue
+                size = str(comp.get("size") or "").strip()
+                qty = float(comp.get("qty") or 0)
+
+                # Blank unit = "already in the item's Base Unit" -- an
+                # unconvertible unit must never block the Stock computation,
+                # same fallback-to-entered-qty precedent every other term uses.
+                unit = str(comp.get("unit") or "").strip()
+                if unit:
+                    unit_info = items_service.lookup_item_unit_info(item_unit_map, item_name, size)
+                    try:
+                        qty = units_service.convert_qty_to_base_unit(qty, unit, unit_info, units_map)
+                    except ValueError:
+                        pass
+
+                key = f"{item_name.lower()}|{size.lower()}"
+                consumed_qty_map[key] = consumed_qty_map.get(key, 0) + qty
+
+    return bill_qty_map, consumed_qty_map
 
 
 def _find_stock_row(cur, name: str, size: str):

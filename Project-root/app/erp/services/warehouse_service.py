@@ -15,12 +15,11 @@ and rewritten by _recalculate_warehouse_pool() on every mutating call, NOT
 computed live like this project's own Stock. getWarehousePoolData (a
 plain read) never triggers a rebuild.
 
-Only Pass 0 (Opening Balances) of recalculateWarehousePool() lands this
-round -- Passes 1/2 (Production credit/debit of Completed lots) and Pass 3
-(Dispatch debit) are deferred to the Production round, which extends
-_recalculate_warehouse_pool's buckets accumulator with two more loops
-before the final write-back, rather than rewriting it (the source itself
-gates those passes behind `if (prodSheet)`/`if (dispatchSheet)`).
+Pass 1 (credit Completed lots' output) and Pass 2 (debit POOL-sourced
+consumption) landed in Phase 3g (Production), extending Phase 3e's Pass-0
+`buckets` accumulator with two more loops rather than rewriting it, guarded
+via `TABLE_NAMES.get("PRODUCTION")` -- same guard style Pass 3 (Dispatch
+debit, still deferred) already uses for its own `TABLE_NAMES.get("DISPATCH")`.
 
 getPoolAvailableQty is a genuine exception to this port's usual
 {success, data, message} envelope: the source function returns a bare
@@ -29,9 +28,9 @@ getNextProcessId/getNextProductId, ported verbatim. getPoolAvailableQtyMap
 is an internal batch-read optimization (its own doc comment frames it as
 "use this instead of calling getPoolAvailableQty() in a loop" -- advice
 for other SERVER code, not a UI consumer) -- ported as a plain Python
-helper, not RPC-exposed, for the Production round to call.
-_checkPoolCreditRemovalWarning has zero callers until Production exists
-(only deleteProduction/deleteProductionBulk call it) -- not ported yet.
+helper, not RPC-exposed. _checkPoolCreditRemovalWarning is real as of
+Phase 3g too, now that deleteProduction/deleteProductionBulk are real
+callers.
 
 adjustWarehousePoolManually's audit trail: the source writes to the
 generic Logs sheet (URI-encoded record ID + regex-parsed details string)
@@ -55,9 +54,12 @@ import psycopg2.extras
 import database
 from . import process_service
 from .current_user import get_current_user_id
+from .. import config_maps
 from .. import date_utils
 from ..envelope import build_response
 from ..registry import rpc_method
+
+_COLOR_GROUP_COMMON = config_maps.COMPONENT_COLOR_GROUP_COMMON
 
 
 def _validate_number(value, min_value: float, max_value: float) -> float:
@@ -116,11 +118,9 @@ def _get_warehouse_pool_opening_rows(cur) -> list:
 
 def _recalculate_warehouse_pool(cur) -> None:
     """Full rebuild of erp.warehouse_pool from source data -- mirrors
-    recalculateStock()'s "always rebuild from source data" approach. Only
-    Pass 0 (Opening Balances) exists this round; the Production round adds
-    Pass 1 (credit Completed lots' output) and Pass 2 (debit POOL-sourced
-    consumption) as two more loops feeding the same `buckets` dict before
-    the write-back, and a later Dispatch round adds Pass 3.
+    recalculateStock()'s "always rebuild from source data" approach.
+    Passes 1-2 are guarded via TABLE_NAMES.get("PRODUCTION") (real as of
+    Phase 3g); Pass 3 (Dispatch debit) stays guarded/deferred.
     """
     buckets: dict = {}
 
@@ -148,6 +148,59 @@ def _recalculate_warehouse_pool(cur) -> None:
     for r in _get_warehouse_pool_opening_rows(cur):
         bucket = get_bucket(r["outputItemName"], r["processId"], r["productTag"], r["color"])
         bucket["producedQty"] += r["qty"]
+
+    if table := config_maps.TABLE_NAMES.get("PRODUCTION"):
+        # Pass 1: credit every Completed lot's own output to its pool
+        # bucket(s). A multi-color lot's color_breakdown is split into one
+        # bucket per color; a color-agnostic lot credits the single
+        # blank-color bucket by its flat qty.
+        cur.execute(
+            f"""
+            SELECT process_id, output_item_name, product_id, color_breakdown, qty
+            FROM {table}
+            WHERE deleted_at IS NULL AND lower(status) = 'completed'
+            """
+        )
+        for row in cur.fetchall():
+            output_item_name = str(row["output_item_name"] or "").strip()
+            if not output_item_name:
+                continue
+            process_id = str(row["process_id"] or "").strip()
+            product_tag = str(row["product_id"] or "").strip()
+            color_breakdown = row["color_breakdown"] or []
+
+            if color_breakdown:
+                for entry in color_breakdown:
+                    entry = entry or {}
+                    color = str(entry.get("color") or "").strip()
+                    qty = float(entry.get("qty") or 0)
+                    if not color or qty <= 0:
+                        continue
+                    get_bucket(output_item_name, process_id, product_tag, color)["producedQty"] += qty
+            else:
+                qty = float(row["qty"] or 0)
+                get_bucket(output_item_name, process_id, product_tag, "")["producedQty"] += qty
+
+        # Pass 2: debit POOL-sourced components consumed by Completed lots
+        # from the (untagged, intermediate) bucket of the upstream item. A
+        # component scoped to a specific color (colorGroup other than
+        # COMMON) debits that color's bucket; a COMMON component debits the
+        # blank-color bucket.
+        cur.execute(
+            f"SELECT components_consumed FROM {table} WHERE deleted_at IS NULL AND lower(status) = 'completed'"
+        )
+        for row in cur.fetchall():
+            for comp in row["components_consumed"] or []:
+                comp = comp or {}
+                if str(comp.get("sourceType") or "").strip().upper() != "POOL":
+                    continue
+                item_name = str(comp.get("itemName") or "").strip()
+                if not item_name:
+                    continue
+                qty = float(comp.get("qty") or 0)
+                color_group = str(comp.get("colorGroup") or "").strip()
+                color = color_group if color_group and color_group.upper() != _COLOR_GROUP_COMMON else ""
+                get_bucket(item_name, "", "", color)["consumedQty"] += qty
 
     # Rewrite the table from scratch (small dataset -- process count is tiny).
     cur.execute("DELETE FROM erp.warehouse_pool")
@@ -206,6 +259,50 @@ def _get_pool_available_qty_map(cur) -> dict:
         entry["total"] += available_qty
         entry["byColor"][color] = entry["byColor"].get(color, 0.0) + available_qty
     return result
+
+
+def _check_pool_credit_removal_warning(cur, output_item_name: str, color_breakdown, flat_qty) -> str | None:
+    """Warns (never blocks) when removing a Completed lot's own credit to
+    the Warehouse Pool -- via un-completing its status or deleting it
+    outright -- would leave a bucket negative, i.e. a downstream lot
+    already consumed this credit. Mirrors _validate_pool_availability's
+    informational-only pattern for the opposite direction (a lot's own
+    POOL-sourced consumption). `color_breakdown` is None/empty for a flat
+    (non-color) lot, in which case `flat_qty` is used instead.
+    """
+    name = str(output_item_name or "").strip()
+    if not name:
+        return None
+
+    pool_map = _get_pool_available_qty_map(cur)
+    entry = pool_map.get(name.lower())
+    if not entry:
+        return None
+
+    if color_breakdown:
+        credits = [
+            {"color": str((e or {}).get("color") or "").strip(), "qty": float((e or {}).get("qty") or 0)}
+            for e in color_breakdown
+        ]
+    else:
+        credits = [{"color": "", "qty": float(flat_qty or 0)}]
+
+    shortfalls = []
+    for c in credits:
+        if c["qty"] <= 0:
+            continue
+        current_available = entry["byColor"].get(c["color"].lower(), 0)
+        would_be = current_available - c["qty"]
+        if would_be < -0.0001:
+            label = f'"{name}"' + (f' ({c["color"]})' if c["color"] else "")
+            shortfalls.append(f"{label}: {would_be:.2f}")
+
+    if not shortfalls:
+        return None
+    return (
+        f"Warning: this leaves the Warehouse Pool negative for {', '.join(shortfalls)} "
+        "-- a downstream lot already consumed this credit. The pool balance will show negative until corrected."
+    )
 
 
 # ─────────────────────────────────────────────────────────────────────────

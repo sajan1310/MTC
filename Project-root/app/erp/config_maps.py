@@ -511,6 +511,9 @@ TABLE_NAMES = {
     # _get_process_ids_in_use.
     "WAREHOUSE_POOL_OPENING": "erp.warehouse_pool_opening",
     "WAREHOUSE_POOL": "erp.warehouse_pool",
+    # Activates contractors_service's delete-guard/rename-cascade and
+    # bom_service's delete-guard, all guarded no-ops until now.
+    "PRODUCTION": "erp.production",
 }
 
 _CAMEL_BOUNDARY_RE = re.compile(r"(?<!^)(?=[A-Z])")
