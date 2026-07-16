@@ -222,9 +222,9 @@
         {% include "erp/partials/bill_ledger.html" %}
         {% include "erp/partials/return_ledger.html" %}
         {% include "erp/partials/stock.html" %}
+        {% include "erp/partials/products_processes.html" %}
 
         {% for tab_id, label in [
-          ('productsTab', 'Products & Processes'),
           ('contractorsTab', 'Contractors'),
           ('productionTab', 'Production'),
           ('dispatchTab', 'Dispatch'),
@@ -259,6 +259,7 @@
   <script src="{{ url_for('static', filename='erp/bill.js') }}"></script>
   <script src="{{ url_for('static', filename='erp/return.js') }}"></script>
   <script src="{{ url_for('static', filename='erp/stock.js') }}"></script>
+  <script src="{{ url_for('static', filename='erp/process.js') }}"></script>
 
 </body>
 </html>

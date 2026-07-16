@@ -1,0 +1,1790 @@
+'use strict';
+// process.js -- App.Products (tab-level coordinator) + App.Process, ported
+// from Apps_Script/Script_Items.html lines 1450-1474 (App.Products) and
+// Apps_Script/Script_Process.html (App.Process) in full.
+//
+// Scope this round: Process Master only. App.BOM (Script_Items.html lines
+// 1476+, the "Products" sub-tab) is its own later round -- App.Products'
+// own switchSubTab already guards its bomTab branch behind
+// `typeof App.BOM !== 'undefined'`, so it's ported as-is unmodified and
+// the Products sub-tab shows a placeholder in this round's partial
+// instead of throwing. Warehouse Pool (Stock's other sub-tab, deferred in
+// Round 7) still isn't wired up either -- it needs its own round now that
+// Process exists to actually use it.
+//
+// Adaptations from source (documented, not silent):
+// - saveProcess/deleteProcess/deleteProcessesBulk/reorderProcesses/
+//   saveContractorRate/deleteContractorRate all use Api.mutate (not
+//   Api.call): every one is mutation=True on the backend, so rpc.py
+//   requires a fresh X-Mutation-Id per call.
+// - App.Contractor.ensureLoaded() calls (openEditModal, saveContractorRateRow)
+//   are guarded against App.Contractor not existing yet (Contractors is
+//   its own later round) -- the contractor-rate mini-table's select2
+//   picker still works via tags:true (type a name, it saves as free
+//   text), it just starts with an empty suggestion list until then.
+// - bulkPrint is guarded behind App.Print not existing yet; its builder
+//   (buildProcessPrintPageHtml) stays as ported dead code.
+
+App.Products = {
+  async enterTab() {
+    this.switchSubTab('processTab');
+  },
+
+  switchSubTab(id) {
+    $$('.products-sub-tab').forEach(t => t.style.display = 'none');
+    const target = document.getElementById(id);
+    if (target) target.style.display = 'block';
+
+    $$('#productsSubTabs .nav-link').forEach(btn => btn.classList.remove('active'));
+    document.getElementById('btn-' + id)?.classList.add('active');
+
+    if (id === 'processTab' && typeof App.Process !== 'undefined') {
+      App.Process.loadData();
+      // Process table groups by Model and Process Type (see
+      // App.Process.renderTable) -- both masters need to be loaded even
+      // when landing on this sub-tab directly, not just via the BOM
+      // sub-tab's own enterTab().
+      App.Model.ensureLoaded();
+      App.ProcessType.ensureLoaded();
+    }
+    if (id === 'bomTab' && typeof App.BOM !== 'undefined') App.BOM.enterTab();
+  }
+};
+
+// ==========================================
+// PROCESS MASTER NAMESPACE
+// ==========================================
+App.Process = {
+  GROUP_ORDER_STORAGE_KEY: 'processGroupOrder',
+
+  // Bumped at the start of every openCreateModal/openEditModal/openDuplicateModal
+  // call. Each of those awaits an API call before rendering into the shared
+  // #processComponentsBody / color-group DOM, so a second click (same row or a
+  // different one) before the first's await resolves must not let the stale
+  // call's render run afterwards -- that double-appends rows since renders only
+  // clear at the *start* of the function, not right before they paint. Every
+  // render is guarded by re-checking this counter right after its await.
+  _modalLoadSeq: 0,
+
+  // The 3 dimensions selectable in the "Group by" dropdowns. getValue
+  // returns the dimension's value for a process row; rank orders those
+  // values the same way the row-level dropdown already orders them
+  // elsewhere (Process Type Master order, Model Master order, or
+  // PROCESS_SIZE_LIST), with unrecognized/blank values sorted last as
+  // 'General'.
+  GROUP_DIMENSIONS: {
+    size: {
+      label: 'Size',
+      getValue: p => App.Utils.getSizeFromOutputItemName(p.outputItemName),
+      rank: value => {
+        const i = App.Utils.PROCESS_SIZE_LIST.indexOf(value);
+        return i === -1 ? App.Utils.PROCESS_SIZE_LIST.length : i;
+      }
+    },
+    type: {
+      label: 'Process Type',
+      getValue: p => {
+        const raw = p.processType || 'General';
+        const match = (App.State.globalProcessTypes || []).find(t => App.Utils.sameText(t.name, raw));
+        return match ? match.name : raw;
+      },
+      rank: value => {
+        const names = (App.State.globalProcessTypes || []).map(t => t.name);
+        const i = names.indexOf(value);
+        return i === -1 ? names.length : i;
+      }
+    },
+    model: {
+      label: 'Model',
+      getValue: p => App.Utils.getModelFromOutputItemName(p.outputItemName),
+      rank: value => {
+        const names = (App.State.globalModels || []).map(m => m.name);
+        const i = names.indexOf(value);
+        return i === -1 ? names.length : i;
+      }
+    }
+  },
+
+  // One Map<value, rankIndex> per active tier, built ONCE per render.
+  buildRankMaps(tiers) {
+    return tiers.map(dim => {
+      const names = dim === 'size' ? App.Utils.PROCESS_SIZE_LIST
+        : dim === 'type' ? (App.State.globalProcessTypes || []).map(t => t.name)
+        : (App.State.globalModels || []).map(m => m.name);
+      const map = new Map();
+      names.forEach((n, i) => { if (!map.has(n)) map.set(n, i); });
+      return { map, fallback: names.length };
+    });
+  },
+
+  // Restores the saved tier order (if any) and (re)populates the 3
+  // "Group by" dropdowns. Each dropdown's options exclude whichever
+  // dimensions are already chosen in the other two dropdowns, so the
+  // same dimension can never be picked twice -- leaving a dropdown on
+  // "None" simply drops that tier.
+  initGroupDropdowns() {
+    let saved = null;
+    try {
+      const raw = localStorage.getItem(this.GROUP_ORDER_STORAGE_KEY);
+      if (raw) saved = JSON.parse(raw);
+    } catch (e) {
+      // Ignored -- falls back to the default order below.
+    }
+    if (Array.isArray(saved) && saved.length === 3) App.State.processGroupOrder = saved;
+
+    const order = App.State.processGroupOrder;
+    for (let i = 0; i < 3; i++) {
+      const select = document.getElementById(`processGroupTier${i + 1}`);
+      if (!select) continue;
+      const usedElsewhere = order.filter((dim, idx) => idx !== i && dim);
+      let optionsHtml = '<option value="">None</option>';
+      Object.keys(this.GROUP_DIMENSIONS).forEach(dim => {
+        if (usedElsewhere.includes(dim)) return;
+        optionsHtml += `<option value="${dim}">${escapeHtml(this.GROUP_DIMENSIONS[dim].label)}</option>`;
+      });
+      select.innerHTML = optionsHtml;
+      select.value = order[i] || '';
+    }
+  },
+
+  onGroupOrderChange() {
+    const order = [1, 2, 3].map(i => document.getElementById(`processGroupTier${i}`).value);
+    App.State.processGroupOrder = order;
+    try {
+      localStorage.setItem(this.GROUP_ORDER_STORAGE_KEY, JSON.stringify(order));
+    } catch (e) {
+      // Ignored -- the order just won't persist across reloads.
+    }
+    App.State.collapsedProcessGroups = new Set();
+    this.initGroupDropdowns();
+    this.renderTable();
+  },
+
+  async loadData() {
+    this.initGroupDropdowns();
+    const tbody = document.getElementById('processTableBody');
+    if (tbody) tbody.innerHTML = '<tr><td colspan="11" class="text-center p-4">Loading Processes...</td></tr>';
+
+    try {
+      const response = await Api.call('getProcessData');
+      if (!response.success) {
+        App.Utils.showToast(response.message, true);
+        return;
+      }
+      App.State.globalProcesses = response.data;
+      App.State.filteredProcesses = response.data;
+      App.State.selectedProcesses = [];
+      this.renderTable();
+    } catch (err) {
+      App.Utils.showToast(err.message || 'Failed to load processes', true);
+    }
+  },
+
+  // Ensures App.State.globalProcesses is populated (used by the Production
+  // tab's Process dropdown without requiring the Process Master tab to
+  // have been visited first).
+  async ensureLoaded() {
+    if (App.State.globalProcesses && App.State.globalProcesses.length) return;
+    try {
+      const response = await Api.call('getProcessData');
+      if (response.success) App.State.globalProcesses = response.data;
+    } catch (err) {
+      // Ignored -- Process dropdown will simply be empty until it loads elsewhere.
+    }
+  },
+
+  filterData(searchTerm) {
+    const term = searchTerm.toLowerCase().trim();
+    if (!term) {
+      App.State.filteredProcesses = App.State.globalProcesses;
+    } else {
+      App.State.filteredProcesses = App.State.globalProcesses.filter(p => {
+        const haystack = [p.processId, p.processName, p.lotPrefix, p.remarks].join(' ');
+        return App.Utils.matchesKeywords(haystack, term);
+      });
+    }
+    this.renderTable();
+  },
+
+  renderTable() {
+    const tbody = document.getElementById('processTableBody');
+    if (!tbody) return;
+
+    const emptyState = document.getElementById('processEmptyState');
+    if (App.State.filteredProcesses.length === 0) {
+      tbody.innerHTML = '';
+      if (emptyState) emptyState.style.display = 'block';
+      this.updateBulkButtons();
+      return;
+    }
+    if (emptyState) emptyState.style.display = 'none';
+
+    const selectAllChk = document.getElementById('selectAllProcesses');
+    if (selectAllChk) {
+      selectAllChk.checked = App.State.filteredProcesses.length > 0 &&
+        App.State.filteredProcesses.every(p => App.Selection.isSelected(App.State.selectedProcesses, p.processId));
+    }
+
+    const tiers = App.State.processGroupOrder
+      .filter(dim => dim && App.Process.GROUP_DIMENSIONS[dim]);
+
+    const searchEl = document.getElementById('searchProcess');
+    const isSearchFiltered = !!(searchEl && searchEl.value.trim());
+    const dragEnabled = tiers.length === 0 && !isSearchFiltered;
+
+    const rankMaps = this.buildRankMaps(tiers);
+    const keyedProcesses = App.State.filteredProcesses.map(p => ({
+      row: p,
+      keys: tiers.map((dim, idx) => {
+        const value = App.Process.GROUP_DIMENSIONS[dim].getValue(p);
+        const rm = rankMaps[idx];
+        return { value, rank: rm.map.has(value) ? rm.map.get(value) : rm.fallback };
+      })
+    }));
+    keyedProcesses.sort((a, b) => {
+      for (let i = 0; i < tiers.length; i++) {
+        const ka = a.keys[i], kb = b.keys[i];
+        if (ka.value !== kb.value) {
+          const rankDiff = ka.rank - kb.rank;
+          if (rankDiff !== 0) return rankDiff;
+          return ka.value < kb.value ? -1 : 1;
+        }
+      }
+      return a.row.sequence - b.row.sequence;
+    });
+    const sorted = keyedProcesses.map(k => k.row);
+
+    const collapsed = App.State.collapsedProcessGroups;
+    let html = '';
+    const lastValues = new Array(tiers.length).fill(undefined);
+    sorted.forEach(p => {
+      let keyPrefix = '';
+      let hiddenByCollapse = false;
+      for (let level = 0; level < tiers.length; level++) {
+        const dim = tiers[level];
+        const def = App.Process.GROUP_DIMENSIONS[dim];
+        const value = def.getValue(p);
+        keyPrefix += `${dim}:${value}`;
+        if (value !== lastValues[level]) {
+          lastValues[level] = value;
+          for (let deeper = level + 1; deeper < tiers.length; deeper++) lastValues[deeper] = undefined;
+          if (!hiddenByCollapse) {
+            const groupKey = keyPrefix;
+            const isCollapsed = collapsed.has(groupKey);
+            const chevron = isCollapsed ? 'bi-chevron-right' : 'bi-chevron-down';
+            const leadCells = '<td></td>'.repeat(level + 1);
+            const colspan = 10 - level;
+            const indentClass = level === 0 ? 'fw-bold py-2' : `fw-semibold py-1 ps-${Math.min(level + 3, 5)} small`;
+            html += `<tr class="table-light process-group-header" style="cursor:pointer;" onclick="App.Process.toggleGroup('${escapeHtml(groupKey)}')">
+      ${leadCells}<td colspan="${colspan}" class="text-secondary ${indentClass}"><i class="bi ${chevron} me-2"></i>${escapeHtml(value)}</td>
+    </tr>`;
+          }
+        }
+        keyPrefix += '|';
+        if (collapsed.has(keyPrefix.slice(0, -1))) hiddenByCollapse = true;
+      }
+      if (hiddenByCollapse) return;
+      const idx = App.State.globalProcesses.indexOf(p);
+      const checked = App.Selection.isSelected(App.State.selectedProcesses, p.processId) ? 'checked' : '';
+      const rowAttrs = dragEnabled
+        ? `draggable="true" ondragstart="App.Process.onDragStart(event,'${escapeHtml(p.processId)}')" ondragover="App.Process.onDragOver(event)" ondrop="App.Process.onDrop(event,'${escapeHtml(p.processId)}')" ondragend="App.Process.onDragEnd(event)"`
+        : '';
+      const handleCell = dragEnabled
+        ? '<td class="text-center text-muted" style="cursor:grab;"><i class="bi bi-grip-vertical"></i></td>'
+        : '<td></td>';
+      html += `<tr ${rowAttrs}>
+    ${handleCell}
+    <td class="text-center"><input type="checkbox" class="form-check-input process-select-chk" data-key="${escapeHtml(p.processId)}" ${checked} onchange="App.Process.onRowSelectChange()"></td>
+    <td><span class="badge bg-dark fs-6 shadow-sm">${escapeHtml(p.processId)}</span></td>
+    <td><strong>${escapeHtml(p.processName)}</strong></td>
+    <td class="text-center">${escapeHtml(String(p.sequence))}</td>
+    <td class="text-center"><span class="badge bg-secondary">${escapeHtml(p.lotPrefix)}</span></td>
+    <td>${escapeHtml(p.processType || '')}</td>
+    <td>${escapeHtml(p.outputItemName || '')}</td>
+    <td class="text-center">${p.isFinalStage ? '<span class="badge bg-success">Yes</span>' : '<span class="badge bg-light text-dark">No</span>'}</td>
+    <td class="text-center">${p.active ? '<span class="badge bg-success">Active</span>' : '<span class="badge bg-danger">Inactive</span>'}</td>
+    <td class="text-center">
+      <button class="btn btn-sm btn-outline-primary btn-action mb-1" onclick="App.Process.openEditModal('${idx}')">Edit</button>
+      <button class="btn btn-sm btn-outline-dark btn-action mb-1" onclick="App.Process.openDuplicateModal('${idx}')">Duplicate</button>
+      <button class="btn btn-sm btn-danger btn-action" onclick="App.Process.delete('${escapeHtml(p.processId)}')">Delete</button>
+    </td>
+  </tr>`;
+    });
+
+    tbody.innerHTML = html;
+    this.updateBulkButtons();
+  },
+
+  // Drag-and-drop manual reorder (flat/ungrouped view only -- see
+  // renderTable's dragEnabled check).
+  _dragSrcId: null,
+
+  onDragStart(e, processId) {
+    this._dragSrcId = processId;
+    if (e.dataTransfer) {
+      e.dataTransfer.effectAllowed = 'move';
+      try { e.dataTransfer.setData('text/plain', processId); } catch (err) { /* ignored */ }
+    }
+  },
+
+  onDragOver(e) {
+    e.preventDefault();
+    if (e.dataTransfer) e.dataTransfer.dropEffect = 'move';
+  },
+
+  async onDrop(e, targetProcessId) {
+    e.preventDefault();
+    const srcId = this._dragSrcId;
+    this._dragSrcId = null;
+    if (!srcId || srcId === targetProcessId) return;
+
+    const order = [...App.State.globalProcesses].sort((a, b) => a.sequence - b.sequence).map(p => p.processId);
+    const fromIdx = order.indexOf(srcId);
+    if (fromIdx === -1 || order.indexOf(targetProcessId) === -1) return;
+    order.splice(fromIdx, 1);
+    const toIdx = order.indexOf(targetProcessId);
+    order.splice(toIdx, 0, srcId);
+
+    try {
+      const res = await Api.mutate('reorderProcesses', order);
+      if (!res.success) {
+        App.Utils.showToast(res.message, true);
+        return;
+      }
+      this.loadData();
+    } catch (err) {
+      App.Utils.showToast(err.message || 'Failed to reorder processes', true);
+    }
+  },
+
+  onDragEnd() {
+    this._dragSrcId = null;
+  },
+
+  toggleGroup(groupKey) {
+    const collapsed = App.State.collapsedProcessGroups;
+    if (collapsed.has(groupKey)) collapsed.delete(groupKey);
+    else collapsed.add(groupKey);
+    this.renderTable();
+  },
+
+  toggleSelectAll(masterChk) {
+    App.Selection.toggleAll(App.State.selectedProcesses, 'process-select-chk', masterChk);
+    this.updateBulkButtons();
+  },
+
+  onRowSelectChange() {
+    App.Selection.syncFromRows(App.State.selectedProcesses, 'process-select-chk', 'selectAllProcesses');
+    this.updateBulkButtons();
+  },
+
+  updateBulkButtons() {
+    const count = App.State.selectedProcesses.length;
+    App.Selection.updateButton('btnBulkDeleteProcesses', count, '<i class="bi bi-trash"></i> Delete Selected');
+    App.Selection.updateButton('btnBulkPrintProcesses', count, '<i class="bi bi-printer"></i> Print Selected');
+  },
+
+  async bulkDelete() {
+    const selected = App.State.selectedProcesses.slice();
+    if (selected.length === 0) return;
+
+    App.Utils.confirmAction(
+      `Are you sure you want to permanently delete ${selected.length} process(es)? Processes already referenced by Production lots or a Product's BOM will be skipped.`,
+      async () => {
+        try {
+          const res = await Api.mutate('deleteProcessesBulk', selected);
+          App.Utils.showToast(res.message, !res.success);
+          if (res.success) {
+            App.State.selectedProcesses = [];
+            await this.loadData();
+          }
+        } catch (err) {
+          App.Utils.showToast(err.message || 'Failed to delete processes', true);
+        }
+      }
+    );
+  },
+
+  async bulkPrint() {
+    if (typeof App.Print === 'undefined') {
+      App.Utils.notPortedYet('Printing');
+      return;
+    }
+
+    const selected = App.State.selectedProcesses;
+    if (selected.length === 0) return;
+
+    const processes = App.State.globalProcesses.filter(p => App.Selection.isSelected(selected, p.processId));
+    if (processes.length === 0) return;
+
+    try {
+      const withComponents = await Promise.all(processes.map(async p => {
+        const res = await Api.call('getProcessComponentsData', p.processId);
+        return Object.assign({}, p, { components: res.success ? res.data : [] });
+      }));
+      App.Print.triggerBulk(withComponents, p => this.buildProcessPrintPageHtml(p), 'Process_Sheets_Selected');
+    } catch (err) {
+      App.Utils.showToast(err.message || 'Failed to prepare processes for printing', true);
+    }
+  },
+
+  // Builds a self-contained "Process Master / Recipe Card" print page,
+  // styled to match buildBOMPrintPageHtml's card layout.
+  buildProcessPrintPageHtml(p) {
+    const BRAND = '#6610f2';
+    const reportDate = new Date().toLocaleDateString('en-GB');
+
+    let rowsHtml = '';
+    (p.components || []).forEach(c => {
+      const colorGroup = c.colorGroup && c.colorGroup !== 'COMMON' ? c.colorGroup : 'Common';
+      rowsHtml += `<tr>
+      <td style="padding:6px;border:1px solid #e5e5e5;font-weight:600;">${escapeHtml(c.itemName)}</td>
+      <td style="padding:6px;border:1px solid #e5e5e5;">${escapeHtml(c.size || '-')}</td>
+      <td style="padding:6px;border:1px solid #e5e5e5;color:#555;">${escapeHtml(c.narration || '-')}</td>
+      <td style="padding:6px;border:1px solid #e5e5e5;text-align:center;">${escapeHtml(colorGroup)}</td>
+      <td style="padding:6px;border:1px solid #e5e5e5;text-align:center;">${Number(toNumber(c.qtyPerUnit).toFixed(4))}</td>
+      <td style="padding:6px;border:1px solid #e5e5e5;">${escapeHtml(c.remarks || '-')}</td>
+    </tr>`;
+    });
+
+    const componentsHtml = rowsHtml ? `
+  <div style="margin-bottom:14px;page-break-inside:avoid;break-inside:avoid;">
+    <h6 style="color:${BRAND};font-size:11px;font-weight:700;margin:0 0 8px 0;text-transform:uppercase;letter-spacing:0.5px;-webkit-print-color-adjust:exact;print-color-adjust:exact;">Components Involved</h6>
+    <table style="width:100%;border-collapse:collapse;font-size:11px;">
+      <thead>
+        <tr style="background-color:${BRAND};color:#fff;font-weight:700;-webkit-print-color-adjust:exact;print-color-adjust:exact;">
+          <th style="padding:6px;border:1px solid #bbb;text-align:left;width:22%;">Item Name</th>
+          <th style="padding:6px;border:1px solid #bbb;text-align:left;width:10%;">Size</th>
+          <th style="padding:6px;border:1px solid #bbb;text-align:left;width:24%;">Narration</th>
+          <th style="padding:6px;border:1px solid #bbb;text-align:center;width:12%;">Color Group</th>
+          <th style="padding:6px;border:1px solid #bbb;text-align:center;width:12%;">Qty/Unit</th>
+          <th style="padding:6px;border:1px solid #bbb;text-align:left;width:20%;">Remarks</th>
+        </tr>
+      </thead>
+      <tbody>${rowsHtml}</tbody>
+    </table>
+  </div>` : '';
+
+    const remarksHtml = p.remarks ? `
+  <div style="margin-top:10px;padding-top:8px;border-top:1px solid #ccc;">
+    <span style="font-size:10px;color:#666;text-transform:uppercase;letter-spacing:0.5px;">Remarks</span>
+    <div style="font-size:12px;color:#1a1a1a;margin-top:2px;white-space:pre-wrap;">${escapeHtml(p.remarks)}</div>
+  </div>` : '';
+
+    return `
+<div style="background:#fff;color:#1a1a1a;font-family:'Segoe UI',Arial,sans-serif;font-size:12px;line-height:1.5;padding:14px 20px 12px 20px;margin:0;box-sizing:border-box;width:100%;border-top:5px solid ${BRAND};border-bottom:3px solid ${BRAND};-webkit-print-color-adjust:exact;print-color-adjust:exact;">
+  <div style="text-align:center;padding:4px 0 8px 0;">
+    ${App.Print.brandHeaderHtml(BRAND)}
+    <div style="font-size:11px;color:${BRAND};font-weight:700;margin-top:4px;letter-spacing:1px;text-transform:uppercase;">
+      Process Master &mdash; Recipe Card
+    </div>
+  </div>
+  <div style="height:2px;background:${BRAND};margin:0 0 12px 0;-webkit-print-color-adjust:exact;print-color-adjust:exact;"></div>
+
+  <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:12px;">
+    <div style="text-align:left;">
+      <span style="font-size:10px;color:#666;text-transform:uppercase;letter-spacing:0.5px;">Process ID</span>
+      <div style="font-size:15px;font-weight:700;color:${BRAND};-webkit-print-color-adjust:exact;print-color-adjust:exact;">${escapeHtml(p.processId)}</div>
+    </div>
+    <div style="flex:1;text-align:center;">
+      <span style="font-size:10px;color:#666;text-transform:uppercase;letter-spacing:0.5px;">Process Name</span>
+      <div style="font-size:16px;font-weight:700;color:#111;">${escapeHtml(p.processName)}</div>
+    </div>
+    <div style="text-align:right;">
+      <span style="font-size:10px;color:#666;text-transform:uppercase;letter-spacing:0.5px;">Report Date</span>
+      <div style="font-size:13px;font-weight:700;color:#1a1a1a;">${reportDate}</div>
+    </div>
+  </div>
+
+  <div style="height:1px;background:#bbb;margin-bottom:14px;"></div>
+
+  <div style="display:flex;gap:18px;margin-bottom:14px;font-size:11px;">
+    <div><span style="color:#666;text-transform:uppercase;letter-spacing:0.5px;">Sequence:</span> <strong>${escapeHtml(String(p.sequence))}</strong></div>
+    <div><span style="color:#666;text-transform:uppercase;letter-spacing:0.5px;">Lot Prefix:</span> <strong>${escapeHtml(p.lotPrefix)}</strong></div>
+    <div><span style="color:#666;text-transform:uppercase;letter-spacing:0.5px;">Output Item:</span> <strong>${escapeHtml(p.outputItemName || '-')}</strong></div>
+    <div><span style="color:#666;text-transform:uppercase;letter-spacing:0.5px;">Final Stage:</span> <strong>${p.isFinalStage ? 'Yes' : 'No'}</strong></div>
+    <div><span style="color:#666;text-transform:uppercase;letter-spacing:0.5px;">Active:</span> <strong>${p.active ? 'Yes' : 'No'}</strong></div>
+  </div>
+
+  ${componentsHtml}
+  ${remarksHtml}
+</div>`;
+  },
+
+  // Suggests a Lot Prefix from a Process Name's word-initials (e.g. "Frame
+  // Painting" -> "FP"), de-duplicated against every other process's prefix.
+  suggestLotPrefix(name) {
+    const words = String(name || '').trim().split(/\s+/)
+      .map(w => w.replace(/[^A-Za-z0-9]/g, ''))
+      .filter(Boolean);
+    if (!words.length) return '';
+    let base = words.map(w => w[0]).join('').toUpperCase().slice(0, 6);
+    if (base.length < 2) base = words[0].slice(0, 2).toUpperCase();
+
+    const taken = new Set((App.State.globalProcesses || []).map(p => (p.lotPrefix || '').toUpperCase()));
+    if (!taken.has(base)) return base;
+    for (let n = 2; n < 100; n++) {
+      const suffix = String(n);
+      const candidate = (base.slice(0, 6 - suffix.length) + suffix).toUpperCase();
+      if (!taken.has(candidate)) return candidate;
+    }
+    return base;
+  },
+
+  // Process Name input handler -- keeps the Lot Prefix suggestion in sync
+  // while the operator is still typing the name, but only until they've
+  // touched Lot Prefix themselves (markLotPrefixEdited) or the field is
+  // locked (editing an existing process).
+  handleNameInput(inputEl) {
+    const prefixEl = document.getElementById('processFormLotPrefix');
+    if (!prefixEl || prefixEl.readOnly || prefixEl.dataset.userEdited === '1') return;
+    prefixEl.value = this.suggestLotPrefix(inputEl.value);
+  },
+
+  markLotPrefixEdited() {
+    const prefixEl = document.getElementById('processFormLotPrefix');
+    if (prefixEl) prefixEl.dataset.userEdited = '1';
+  },
+
+  async openCreateModal() {
+    const seq = ++this._modalLoadSeq;
+
+    const form = document.getElementById('processForm');
+    if (form) form.reset();
+
+    document.getElementById('processFormProcessId').value = '';
+    document.getElementById('processFormActive').checked = true;
+    document.getElementById('processFormIsFinalStage').checked = false;
+    document.getElementById('processFormOutputItemName').value = '';
+
+    const prefixEl = document.getElementById('processFormLotPrefix');
+    prefixEl.readOnly = false;
+    prefixEl.dataset.userEdited = '';
+    const prefixHelp = document.getElementById('processFormLotPrefixHelp');
+    if (prefixHelp) prefixHelp.textContent = 'Auto-suggested from Process Name as you type — edit if you\'d prefer a different short code.';
+
+    this.clearComponentsTable();
+    this.clearColorGroups();
+    this.loadPoolColorAxisLabels('');
+    this.clearColorLinks();
+    this.toggleColorLinksAvailability(false);
+    this.clearContractorRatesTable();
+    await App.Color.ensureLoaded();
+    await App.ProcessType.ensureLoaded();
+    if (seq !== this._modalLoadSeq) return;
+    App.ProcessType.populateSelect();
+    const newProcTypeEl = document.getElementById('processFormProcessType');
+    if (newProcTypeEl) {
+      newProcTypeEl.value = '';
+      if (window.jQuery?.fn?.select2 && window.jQuery(newProcTypeEl).data('select2'))
+        window.jQuery(newProcTypeEl).trigger('change.select2');
+    }
+
+    document.getElementById('processFormTitle').innerText = 'Add Process';
+    document.getElementById('processSubmitBtn').innerText = 'Save Process';
+    this.toggleImportBar(true);
+
+    const modalEl = document.getElementById('editProcessModal');
+    if (modalEl && typeof bootstrap !== 'undefined') {
+      bootstrap.Modal.getOrCreateInstance(modalEl).show();
+    }
+  },
+
+  // Shows/hides the "Import Existing Process" bar -- only meaningful while
+  // adding a new process (or duplicating one), hidden while editing an
+  // existing one.
+  toggleImportBar(show) {
+    const bar = document.getElementById('processImportBar');
+    if (bar) bar.style.display = show ? '' : 'none';
+  },
+
+  async openEditModal(idx) {
+    const p = App.State.globalProcesses[idx];
+    if (!p) return;
+    const seq = ++this._modalLoadSeq;
+
+    const form = document.getElementById('processForm');
+    if (form) form.reset();
+
+    document.getElementById('processFormProcessId').value = p.processId;
+    document.getElementById('processFormName').value = p.processName;
+    document.getElementById('processFormSequence').value = p.sequence;
+    const editPrefixEl = document.getElementById('processFormLotPrefix');
+    editPrefixEl.value = p.lotPrefix;
+    editPrefixEl.readOnly = true;
+    const editPrefixHelp = document.getElementById('processFormLotPrefixHelp');
+    if (editPrefixHelp) editPrefixHelp.textContent = 'Locked after creation — changing it would desync Lot Number continuity for existing lots. Use "Duplicate" to start a new process with its own prefix.';
+    document.getElementById('processFormIsFinalStage').checked = !!p.isFinalStage;
+    document.getElementById('processFormActive').checked = !!p.active;
+    document.getElementById('processFormRemarks').value = p.remarks || '';
+    document.getElementById('processFormOutputItemName').value = p.outputItemName || '';
+
+    this.toggleColorLinksAvailability(true);
+    try {
+      const [compRes, linksRes] = await Promise.all([
+        Api.call('getProcessComponentsData', p.processId),
+        Api.call('getProcessColorLinksData', p.processId),
+        typeof App.Contractor !== 'undefined' ? App.Contractor.ensureLoaded() : Promise.resolve(),
+        App.Color.ensureLoaded(),
+        App.ProcessType.ensureLoaded(),
+        this.loadContractorRatesForProcess(p.processName, seq)
+      ]);
+      if (seq !== this._modalLoadSeq) return;
+      this.renderComponentsGrouped(compRes.success ? compRes.data : []);
+      this.renderColorLinksData(linksRes.success ? linksRes.data : []);
+      await this.loadPoolColorAxisLabels(p.processId, p.primaryColorAxis || '');
+    } catch (err) {
+      App.Utils.showToast(err.message || 'Failed to load process components', true);
+    }
+    if (seq !== this._modalLoadSeq) return;
+    App.ProcessType.populateSelect();
+    const editProcTypeEl = document.getElementById('processFormProcessType');
+    if (editProcTypeEl) {
+      editProcTypeEl.value = p.processType || '';
+      if (window.jQuery?.fn?.select2 && window.jQuery(editProcTypeEl).data('select2'))
+        window.jQuery(editProcTypeEl).trigger('change.select2');
+    }
+
+    document.getElementById('processFormTitle').innerText = `Edit Process: ${p.processName}`;
+    document.getElementById('processSubmitBtn').innerText = 'Update Process';
+    this.toggleImportBar(false);
+
+    const modalEl = document.getElementById('editProcessModal');
+    if (modalEl && typeof bootstrap !== 'undefined') {
+      bootstrap.Modal.getOrCreateInstance(modalEl).show();
+    }
+  },
+
+  // Opens the Add Process modal pre-filled from an existing process, with
+  // the Process ID cleared (so saving creates a new record) and the Lot
+  // Prefix cleared (it must be unique, so it can't be copied as-is).
+  async openDuplicateModal(idx) {
+    const p = App.State.globalProcesses[idx];
+    if (!p) return;
+
+    const form = document.getElementById('processForm');
+    if (form) form.reset();
+
+    const modalEl = document.getElementById('editProcessModal');
+    if (modalEl && typeof bootstrap !== 'undefined') {
+      bootstrap.Modal.getOrCreateInstance(modalEl).show();
+    }
+
+    await this.applyProcessAsTemplate(p);
+    setTimeout(() => document.getElementById('processFormLotPrefix')?.focus(), 300);
+  },
+
+  // Shared by openDuplicateModal and chooseImportCandidate -- both pre-fill
+  // the currently-open Add Process form from process `p` as a
+  // copy-to-modify starting point: Process ID and Lot Prefix are cleared/
+  // regenerated (both must be unique to a new record), contractor rates
+  // are NOT copied (negotiated per actual process, not per recipe),
+  // everything else is.
+  async applyProcessAsTemplate(p) {
+    const seq = ++this._modalLoadSeq;
+
+    document.getElementById('processFormProcessId').value = '';
+    document.getElementById('processFormName').value = `${p.processName} (Copy)`;
+    document.getElementById('processFormSequence').value = p.sequence;
+    const prefixEl = document.getElementById('processFormLotPrefix');
+    prefixEl.readOnly = false;
+    prefixEl.dataset.userEdited = '';
+    prefixEl.value = this.suggestLotPrefix(p.processName);
+    const prefixHelp = document.getElementById('processFormLotPrefixHelp');
+    if (prefixHelp) prefixHelp.textContent = 'Auto-suggested — it must be unique, so review it before saving.';
+    document.getElementById('processFormIsFinalStage').checked = !!p.isFinalStage;
+    document.getElementById('processFormActive').checked = !!p.active;
+    document.getElementById('processFormRemarks').value = p.remarks || '';
+    document.getElementById('processFormOutputItemName').value = p.outputItemName || '';
+
+    try {
+      await App.Color.ensureLoaded();
+      await App.ProcessType.ensureLoaded();
+      const res = await Api.call('getProcessComponentsData', p.processId);
+      if (seq !== this._modalLoadSeq) return;
+      this.renderComponentsGrouped(res.success ? res.data : []);
+    } catch (err) {
+      App.Utils.showToast(err.message || 'Failed to load process components', true);
+    }
+    if (seq !== this._modalLoadSeq) return;
+    App.ProcessType.populateSelect();
+    const procTypeEl = document.getElementById('processFormProcessType');
+    if (procTypeEl) {
+      procTypeEl.value = p.processType || '';
+      if (window.jQuery?.fn?.select2 && window.jQuery(procTypeEl).data('select2'))
+        window.jQuery(procTypeEl).trigger('change.select2');
+    }
+
+    this.clearColorLinks();
+    this.toggleColorLinksAvailability(false);
+    this.clearContractorRatesTable();
+
+    this._poolAxisLabels = [];
+    this.refreshColorAxisOptions();
+    const primaryPicker = document.getElementById('processPrimaryColorAxis');
+    if (primaryPicker) primaryPicker.value = p.primaryColorAxis && this.collectColorAxisLabels().includes(p.primaryColorAxis) ? p.primaryColorAxis : '';
+
+    document.getElementById('processFormTitle').innerText = `Duplicate Process (from ${p.processId})`;
+    document.getElementById('processSubmitBtn').innerText = 'Save Process';
+    this.toggleImportBar(true);
+  },
+
+  // ── Import Existing Process picker ──────────────────────────────────
+
+  async openImportPicker() {
+    await App.Process.ensureLoaded();
+
+    const list = (App.State.globalProcesses || []).slice()
+      .sort((a, b) => a.processName.localeCompare(b.processName));
+    this._importPickerList = list;
+    this.renderImportPickerList(list);
+    const searchEl = document.getElementById('importProcessSearch');
+    if (searchEl) searchEl.value = '';
+    const modalEl = document.getElementById('importProcessModal');
+    if (modalEl && typeof bootstrap !== 'undefined') {
+      bootstrap.Modal.getOrCreateInstance(modalEl).show();
+    }
+  },
+
+  renderImportPickerList(list) {
+    const container = document.getElementById('importProcessList');
+    const empty = document.getElementById('importProcessEmpty');
+    if (!container) return;
+    if (!list.length) {
+      container.innerHTML = '';
+      if (empty) empty.style.display = 'block';
+      return;
+    }
+    if (empty) empty.style.display = 'none';
+    container.innerHTML = list.map(p => `
+      <button type="button" class="list-group-item list-group-item-action" onclick="App.Process.chooseImportCandidate('${escapeHtml(p.processId)}')">
+        <div class="d-flex justify-content-between align-items-center gap-2">
+          <span class="fw-bold">${escapeHtml(p.processName)}</span>
+          <span class="badge bg-secondary">${escapeHtml(p.processType || 'General')}</span>
+        </div>
+        <div class="small text-muted">${escapeHtml(p.processId)} &middot; Seq ${p.sequence} &middot; Output: ${escapeHtml(p.outputItemName || '—')}</div>
+      </button>
+    `).join('');
+  },
+
+  filterImportPicker(term) {
+    const source = this._importPickerList || [];
+    const t = String(term || '').trim();
+    const filtered = !t ? source : source.filter(p =>
+      App.Utils.matchesKeywords([p.processId, p.processName, p.processType, p.outputItemName].join(' '), t));
+    this.renderImportPickerList(filtered);
+  },
+
+  async chooseImportCandidate(processId) {
+    const p = (App.State.globalProcesses || []).find(x => x.processId === processId);
+    if (!p) return;
+
+    const pickerEl = document.getElementById('importProcessModal');
+    if (pickerEl && typeof bootstrap !== 'undefined') {
+      const inst = bootstrap.Modal.getInstance(pickerEl);
+      if (inst) inst.hide();
+    }
+
+    await this.applyProcessAsTemplate(p);
+    setTimeout(() => document.getElementById('processFormLotPrefix')?.focus(), 300);
+  },
+
+  // Destroys Select2 instances on all component rows and empties the table.
+  clearComponentsTable() {
+    const tbody = document.getElementById('processComponentsBody');
+    if (!tbody) return;
+    tbody.querySelectorAll('tr').forEach(row => this.destroyComponentItemSelect2(row));
+    tbody.innerHTML = '';
+  },
+
+  // ── Contractor Rates mini-table ──────────────────────────────────────
+
+  clearContractorRatesTable() {
+    const tbody = document.getElementById('processContractorRatesBody');
+    if (!tbody) return;
+    tbody.querySelectorAll('tr').forEach(row => this.destroyContractorRateSelect2(row));
+    tbody.innerHTML = '';
+    App.State.currentProcessContractorRates = { processName: '', rates: [] };
+  },
+
+  async loadContractorRatesForProcess(processName, seq) {
+    const tbody = document.getElementById('processContractorRatesBody');
+    if (tbody) tbody.innerHTML = '<tr><td colspan="4" class="text-center p-3">Loading rates...</td></tr>';
+
+    try {
+      const res = await Api.call('getContractorRatesData');
+      if (seq !== undefined && seq !== this._modalLoadSeq) return;
+      const rates = res.success
+        ? (res.data || []).filter(r => r.processName.toLowerCase() === String(processName || '').trim().toLowerCase())
+        : [];
+      App.State.currentProcessContractorRates = { processName, rates };
+
+      if (tbody) tbody.innerHTML = '';
+      rates.forEach(r => this.addContractorRateRow(r));
+    } catch (err) {
+      App.Utils.showToast(err.message || 'Failed to load contractor rates', true);
+    }
+  },
+
+  addContractorRateRow(rate) {
+    const tbody = document.getElementById('processContractorRatesBody');
+    if (!tbody) return;
+
+    const rowId = 'proc_rate_row_' + Math.floor(Math.random() * 1000000);
+    const contractorName = (rate && rate.contractorName) || '';
+
+    const rowHtml = `<tr id="${rowId}">
+  <td><select class="form-control proc-rate-contractor-select" style="width:100%;"></select></td>
+  <td><input type="number" class="form-control text-end proc-rate-amount" value="${rate && rate.ratePerUnit ? rate.ratePerUnit : 0}" min="0" step="0.01"></td>
+  <td><input type="text" class="form-control proc-rate-remarks" value="${escapeHtml((rate && rate.remarks) || '')}"></td>
+  <td class="text-center">
+    <button type="button" class="btn btn-sm btn-outline-success" onclick="App.Process.saveContractorRateRow('${rowId}')">Save</button>
+    <button type="button" class="btn btn-sm btn-outline-danger" onclick="App.Process.deleteContractorRateRow('${rowId}')">✕</button>
+  </td>
+</tr>`;
+
+    tbody.insertAdjacentHTML('beforeend', rowHtml);
+    this.initContractorRateSelect2(document.getElementById(rowId), contractorName);
+  },
+
+  // Searchable, creatable Select2 for a rate row's contractor field.
+  initContractorRateSelect2(row, currentValue) {
+    const selectEl = row?.querySelector('.proc-rate-contractor-select');
+    if (!selectEl || !window.jQuery?.fn?.select2) return;
+
+    const $select = window.jQuery(selectEl);
+    if ($select.data('select2')) $select.select2('destroy');
+    selectEl.innerHTML = '';
+    if (currentValue) selectEl.add(new Option(currentValue, currentValue, true, true));
+
+    const $parentModal = $select.closest('.modal');
+
+    $select.select2({
+      placeholder: 'Search or type contractor...',
+      width: '100%',
+      tags: true,
+      allowClear: true,
+      matcher: App.Utils.select2Matcher,
+      dropdownParent: $parentModal.length ? $parentModal : window.jQuery(document.body),
+      data: (App.State.globalContractors || []).map(c => ({ id: c.name, text: c.name })),
+      createTag(params) {
+        const term = (params.term || '').trim();
+        if (!term) return null;
+        const existing = (App.State.globalContractors || []).find(c => App.Utils.sameText(c.name, term));
+        if (existing) return { id: existing.name, text: existing.name };
+        return { id: term, text: term, newTag: true };
+      }
+    });
+  },
+
+  destroyContractorRateSelect2(row) {
+    const selectEl = row?.querySelector('.proc-rate-contractor-select');
+    if (!selectEl || !window.jQuery?.fn?.select2) return;
+    const $select = window.jQuery(selectEl);
+    if ($select.data('select2')) $select.select2('destroy');
+  },
+
+  async saveContractorRateRow(rowId) {
+    const row = document.getElementById(rowId);
+    if (!row) return;
+
+    const processName = document.getElementById('processFormName')?.value.trim();
+    if (!processName) {
+      App.Utils.showToast('Enter a Process Name first.', true);
+      return;
+    }
+
+    const contractorName = row.querySelector('.proc-rate-contractor-select').value;
+    const ratePerUnit = row.querySelector('.proc-rate-amount').value;
+    const remarks = row.querySelector('.proc-rate-remarks').value;
+
+    if (!contractorName) {
+      App.Utils.showToast('Select or type a contractor name.', true);
+      return;
+    }
+
+    try {
+      const seq = this._modalLoadSeq;
+      const res = await Api.mutate('saveContractorRate', { contractorName, processName, ratePerUnit, remarks });
+      App.Utils.showToast(res.message, !res.success);
+      if (res.success) {
+        if (typeof App.Contractor !== 'undefined') await App.Contractor.ensureLoaded();
+        await this.loadContractorRatesForProcess(processName, seq);
+      }
+    } catch (err) {
+      App.Utils.showToast(err.message || 'Failed to save contractor rate', true);
+    }
+  },
+
+  async deleteContractorRateRow(rowId) {
+    const row = document.getElementById(rowId);
+    if (!row) return;
+
+    const processName = document.getElementById('processFormName')?.value.trim();
+    const contractorName = row.querySelector('.proc-rate-contractor-select').value;
+
+    const existing = (App.State.currentProcessContractorRates?.rates || [])
+      .find(r => r.contractorName.toLowerCase() === contractorName.toLowerCase());
+
+    if (!existing || !processName) {
+      this.destroyContractorRateSelect2(row);
+      row.remove();
+      return;
+    }
+
+    App.Utils.confirmAction(
+      `Delete the rate card entry for "${contractorName}" on process "${processName}"? This cannot be undone.`,
+      async () => {
+        try {
+          const seq = this._modalLoadSeq;
+          const res = await Api.mutate('deleteContractorRate', contractorName, processName);
+          App.Utils.showToast(res.message, !res.success);
+          if (res.success) await this.loadContractorRatesForProcess(processName, seq);
+        } catch (err) {
+          App.Utils.showToast(err.message || 'Failed to delete contractor rate', true);
+        }
+      }
+    );
+  },
+
+  // Builds <option> markup for the Size dropdown of a component row.
+  buildSizeOptionsHtml(itemName, selectedSize) {
+    const items = App.State.globalItems || [];
+    const sizes = [...new Set(items.filter(it => App.Utils.sameText(it.name, itemName) && it.size).map(it => it.size))];
+    if (!selectedSize && sizes.length === 1) selectedSize = sizes[0];
+    if (selectedSize && !sizes.some(s => App.Utils.sameText(s, selectedSize))) sizes.unshift(selectedSize);
+    let html = `<option value="">${sizes.length ? '-- Select Size --' : '-'}</option>`;
+    sizes.forEach(s => {
+      html += `<option value="${escapeHtml(s)}" ${App.Utils.sameText(s, selectedSize) ? 'selected' : ''}>${escapeHtml(s)}</option>`;
+    });
+    return html;
+  },
+
+  // Adds a row to a Components table. targetTbody defaults to the Common
+  // Components table; pass a color sub-group's tbody to add there instead.
+  addComponentRow(compData = null, targetTbody = null) {
+    const tbody = targetTbody || document.getElementById('processComponentsBody');
+    if (!tbody) return;
+
+    const rowId = 'proc_comp_row_' + Date.now() + '_' + Math.floor(Math.random() * 1000);
+
+    let preSelectedOption = '';
+    if (compData && compData.itemName && compData.sourceType === 'POOL') {
+      preSelectedOption = `<option value="pool:${escapeHtml(compData.itemName)}" selected data-name="${escapeHtml(compData.itemName)}">${escapeHtml(compData.itemName)}</option>`;
+    } else if (compData && compData.itemName) {
+      const items = App.State.globalItems || [];
+      const matchIdx = items.findIndex(item => App.Utils.sameText(item.name, compData.itemName));
+      if (matchIdx >= 0) {
+        preSelectedOption = `<option value="${matchIdx}" selected data-name="${escapeHtml(compData.itemName)}">${escapeHtml(compData.itemName)}</option>`;
+      } else {
+        preSelectedOption = `<option value="orphan" selected data-name="${escapeHtml(compData.itemName)}">${escapeHtml(compData.itemName)} (Not in Items Master)</option>`;
+      }
+    }
+
+    const rowHtml = `
+  <tr id="${rowId}" draggable="true"
+      ondragstart="App.Process.onComponentDragStart(event,'${rowId}')"
+      ondragover="App.Process.onComponentDragOver(event)"
+      ondrop="App.Process.onComponentDrop(event,'${rowId}')"
+      ondragend="App.Process.onComponentDragEnd()">
+    <td class="text-center text-muted" style="cursor:grab;" title="Drag to reorder"><i class="bi bi-grip-vertical"></i></td>
+    <td>
+      <select class="form-select proc-comp-item-select" required>
+        <option value=""></option>
+        ${preSelectedOption}
+      </select>
+    </td>
+    <td>
+      <select class="form-select proc-comp-size" onchange="App.Process.handleComponentSizeChange(this)">
+        ${this.buildSizeOptionsHtml(compData && compData.itemName ? compData.itemName : '', compData && compData.size ? compData.size : '')}
+      </select>
+    </td>
+    <td><input type="text" class="form-control proc-comp-narration" placeholder="-" value="${compData && compData.narration ? escapeHtml(compData.narration) : ''}"></td>
+    <td>
+      <select class="form-select proc-comp-source" title="ITEM = raw material from Stock. POOL = an upstream process's Output Item Name from the Warehouse Pool." onchange="App.Process.handleSourceChange(this)">
+        <option value="ITEM" ${(!compData || compData.sourceType !== 'POOL') ? 'selected' : ''}>Item (Stock)</option>
+        <option value="POOL" ${(compData && compData.sourceType === 'POOL') ? 'selected' : ''}>Pool (Warehouse)</option>
+      </select>
+    </td>
+    <td><input type="number" class="form-control text-end proc-comp-qty" min="0.0001" step="any" value="${compData && compData.qtyPerUnit ? compData.qtyPerUnit : '1'}"></td>
+    <td><input type="text" class="form-control proc-comp-unit" list="unitList" placeholder="(item's own)" value="${compData && compData.unit ? escapeHtml(compData.unit) : ''}"></td>
+    <td><input type="text" class="form-control proc-comp-remarks" placeholder="-" value="${compData && compData.remarks ? escapeHtml(compData.remarks) : ''}"></td>
+    <td class="text-center"><button type="button" class="btn btn-outline-danger btn-sm" onclick="App.Process.removeComponentRow('${rowId}')">✕</button></td>
+  </tr>
+`;
+
+    tbody.insertAdjacentHTML('beforeend', rowHtml);
+    const newRow = document.getElementById(rowId);
+    this.initComponentItemSelect2(newRow);
+
+    const autoSizeSelect = newRow?.querySelector('.proc-comp-size');
+    if (autoSizeSelect && autoSizeSelect.value && !(compData && compData.narration)) {
+      this.handleComponentSizeChange(autoSizeSelect);
+    }
+
+    return rowId;
+  },
+
+  removeComponentRow(rowId) {
+    const row = document.getElementById(rowId);
+    if (row) {
+      this.destroyComponentItemSelect2(row);
+      row.remove();
+    }
+  },
+
+  // Click-drag reordering of component rows within the Process form.
+  _dragCompRowId: null,
+
+  onComponentDragStart(e, rowId) {
+    this._dragCompRowId = rowId;
+    if (e.dataTransfer) {
+      e.dataTransfer.effectAllowed = 'move';
+      try { e.dataTransfer.setData('text/plain', rowId); } catch (err) { /* ignored */ }
+    }
+  },
+
+  onComponentDragOver(e) {
+    e.preventDefault();
+    if (e.dataTransfer) e.dataTransfer.dropEffect = 'move';
+  },
+
+  onComponentDrop(e, targetRowId) {
+    e.preventDefault();
+    const srcId = this._dragCompRowId;
+    this._dragCompRowId = null;
+    if (!srcId || srcId === targetRowId) return;
+
+    const srcRow = document.getElementById(srcId);
+    const targetRow = document.getElementById(targetRowId);
+    if (!srcRow || !targetRow) return;
+
+    const srcTbody = srcRow.closest('tbody');
+    const targetTbody = targetRow.closest('tbody');
+    if (!srcTbody || srcTbody !== targetTbody) return;
+
+    const rows = Array.from(srcTbody.children);
+    if (rows.indexOf(srcRow) < rows.indexOf(targetRow)) {
+      targetRow.after(srcRow);
+    } else {
+      targetRow.before(srcRow);
+    }
+  },
+
+  onComponentDragEnd() {
+    this._dragCompRowId = null;
+  },
+
+  // Distinct Output Item Names across all processes -- the valid set of
+  // "things" a POOL-sourced component can refer to.
+  getDistinctOutputItemNames() {
+    const names = (App.State.globalProcesses || [])
+      .map(p => p.outputItemName)
+      .filter(Boolean);
+    return Array.from(new Set(names));
+  },
+
+  // Fired after picking a POOL-sourced item on a component row -- sets a
+  // native hover tooltip showing what colors the source process produces.
+  async showPoolColorHint(row, itemName) {
+    const cell = row?.querySelector('.proc-comp-item-select')?.closest('td');
+    if (!cell) return;
+    cell.removeAttribute('title');
+    if (!itemName) return;
+
+    const upstreamProcesses = (App.State.globalProcesses || []).filter(
+      p => (p.outputItemName || '').toLowerCase() === itemName.toLowerCase()
+    );
+    if (!upstreamProcesses.length) return;
+
+    let colors = [];
+    try {
+      const results = await Promise.all(
+        upstreamProcesses.map(p => Api.call('getProcessColorGroups', p.processId))
+      );
+      const merged = new Set();
+      results.forEach(res => {
+        if (res?.success) (res.data || []).forEach(c => merged.add(c));
+      });
+      colors = Array.from(merged);
+    } catch (e) {
+      return;
+    }
+    colors = colors.filter(c => !c.includes(' / '));
+    if (!colors.length) return;
+
+    cell.title = `"${itemName}" is produced in these colors by its source process: ${colors.join(', ')}`;
+  },
+
+  // Fired when a row's Source select changes between ITEM/POOL.
+  handleSourceChange(selectEl) {
+    const row = selectEl.closest('tr');
+    const itemSelect = row?.querySelector('.proc-comp-item-select');
+    if (itemSelect && window.jQuery?.fn?.select2) {
+      window.jQuery(itemSelect).val(null).trigger('change');
+    }
+    const sizeSelect = row?.querySelector('.proc-comp-size');
+    if (sizeSelect) sizeSelect.innerHTML = this.buildSizeOptionsHtml('', '');
+    const narrationInput = row?.querySelector('.proc-comp-narration');
+    if (narrationInput) narrationInput.value = '';
+    App.Process.showPoolColorHint(row, '');
+  },
+
+  // Searchable Select2 for a component row's item picker. Source list
+  // switches with the row's Source select: ITEM -> App.State.globalItems,
+  // POOL -> distinct Output Item Names from Process Master.
+  initComponentItemSelect2(rowEl) {
+    const selectEl = rowEl?.querySelector('.proc-comp-item-select');
+    if (!selectEl || !window.jQuery?.fn?.select2) return;
+
+    const $select = window.jQuery(selectEl);
+    const PAGE_SIZE = 40;
+    const $parentModal = $select.closest('.modal');
+
+    $select.select2({
+      placeholder: 'Search or type a new item...',
+      width: '100%',
+      tags: true,
+      dropdownParent: $parentModal.length ? $parentModal : window.jQuery(document.body),
+      ajax: {
+        delay: 150,
+        data(params) {
+          return { q: params.term || '', page: params.page || 1 };
+        },
+        transport(params, success) {
+          const q = (params.data.q || '').trim();
+          const page = params.data.page || 1;
+          const isPool = selectEl.closest('tr')?.querySelector('.proc-comp-source')?.value === 'POOL';
+          const names = isPool
+            ? App.Process.getDistinctOutputItemNames()
+            : Array.from(new Set((App.State.globalItems || []).map(it => it.name).filter(Boolean)));
+          const items = names.map(name => ({ name }));
+          const start = (page - 1) * PAGE_SIZE;
+
+          const pool = q
+            ? items.map((item, idx) => ({ idx, item })).filter(({ item }) =>
+              App.Utils.matchesKeywords(item.name, q))
+            : items.map((item, idx) => ({ idx, item }));
+
+          const pageItems = pool.slice(start, start + PAGE_SIZE);
+          success({
+            results: pageItems.map(({ idx, item }) => ({
+              id: (isPool ? 'pool:' : 'item:') + idx,
+              text: item.name,
+              _itemName: item.name
+            })),
+            pagination: { more: (start + PAGE_SIZE) < pool.length }
+          });
+        },
+        processResults(data) { return data; }
+      },
+      createTag(params) {
+        const term = (params.term || '').trim();
+        if (!term) return null;
+        const isPool = selectEl.closest('tr')?.querySelector('.proc-comp-source')?.value === 'POOL';
+        const names = isPool
+          ? App.Process.getDistinctOutputItemNames()
+          : Array.from(new Set((App.State.globalItems || []).map(it => it.name).filter(Boolean)));
+        const existing = names.find(n => App.Utils.sameText(n, term));
+        if (existing) return { id: (isPool ? 'pool:' : 'item:') + existing, text: existing, _itemName: existing };
+        return { id: 'custom:' + term, text: term, newTag: true, _itemName: term };
+      }
+    });
+
+    $select.on('select2:select', function (e) {
+      const data = e.params.data;
+      const opt = selectEl.options[selectEl.selectedIndex];
+      if (opt) opt.dataset.name = data._itemName || data.text;
+
+      const row = selectEl.closest('tr');
+      const sizeSelect = row?.querySelector('.proc-comp-size');
+      const narrationInput = row?.querySelector('.proc-comp-narration');
+      if (sizeSelect) sizeSelect.innerHTML = App.Process.buildSizeOptionsHtml(data._itemName || data.text, '');
+      if (narrationInput) narrationInput.value = '';
+      if (sizeSelect && sizeSelect.value) App.Process.handleComponentSizeChange(sizeSelect);
+
+      const isPoolRow = row?.querySelector('.proc-comp-source')?.value === 'POOL';
+      App.Process.showPoolColorHint(row, isPoolRow ? (data._itemName || data.text) : '');
+    });
+  },
+
+  // Size changed on a component row -- looks up that exact item+size row
+  // in Item Master and syncs Narration to it.
+  handleComponentSizeChange(selectEl) {
+    const row = selectEl.closest('tr');
+    const itemSelect = row?.querySelector('.proc-comp-item-select');
+    const itemName = itemSelect?.options[itemSelect.selectedIndex]?.dataset.name;
+    const narrationInput = row?.querySelector('.proc-comp-narration');
+    if (!itemName || !narrationInput) return;
+
+    const match = (App.State.globalItems || []).find(it => App.Utils.sameText(it.name, itemName) && App.Utils.sameText(it.size || '', selectEl.value || ''));
+    narrationInput.value = (match && match.narration) || '';
+  },
+
+  destroyComponentItemSelect2(rowEl) {
+    const selectEl = rowEl?.querySelector('.proc-comp-item-select');
+    if (!selectEl || !window.jQuery?.fn?.select2) return;
+    const $select = window.jQuery(selectEl);
+    if ($select.data('select2')) $select.select2('destroy');
+  },
+
+  // Reads one component row into a plain object, tagged with the given
+  // colorGroup ('COMMON' or a Color Master name) and, optionally, a
+  // colorAxis label.
+  _readComponentRow(row, colorGroup, colorAxis = '') {
+    const selectEl = row.querySelector('.proc-comp-item-select');
+    if (!selectEl || selectEl.value === '') return null;
+
+    const opt = selectEl.options[selectEl.selectedIndex];
+    const itemName = opt.dataset.name || opt.textContent.trim();
+    if (!itemName) return null;
+
+    return {
+      itemName,
+      size: row.querySelector('.proc-comp-size').value.trim(),
+      narration: row.querySelector('.proc-comp-narration').value.trim(),
+      qtyPerUnit: toNumber(row.querySelector('.proc-comp-qty').value) || 1,
+      unit: (row.querySelector('.proc-comp-unit')?.value || '').trim(),
+      remarks: row.querySelector('.proc-comp-remarks').value.trim(),
+      sourceType: row.querySelector('.proc-comp-source')?.value === 'POOL' ? 'POOL' : 'ITEM',
+      colorGroup,
+      colorAxis
+    };
+  },
+
+  // Reads the Common Components table plus every color sub-group's table
+  // into a flat array for submission.
+  serializeComponents() {
+    const components = [];
+
+    document.querySelectorAll('#processComponentsBody tr').forEach(row => {
+      const comp = this._readComponentRow(row, 'COMMON');
+      if (comp) components.push(comp);
+    });
+
+    document.querySelectorAll('#processColorGroupsContainer .proc-colorgroup-card').forEach(card => {
+      const colorName = (card.querySelector('.proc-colorgroup-select')?.value || '').trim();
+      if (!colorName) return;
+      const colorAxis = (card.querySelector('.proc-colorgroup-axis')?.value || '').trim();
+      card.querySelectorAll('.proc-colorgroup-body tr').forEach(row => {
+        const comp = this._readComponentRow(row, colorName, colorAxis);
+        if (comp) components.push(comp);
+      });
+    });
+
+    return components;
+  },
+
+  // Distinct, non-blank Group (Color Axis) labels currently typed across
+  // every color sub-group card on the form.
+  collectColorAxisLabels() {
+    const labels = new Set();
+    document.querySelectorAll('#processColorGroupsContainer .proc-colorgroup-axis').forEach(input => {
+      const val = (input.value || '').trim();
+      if (val) labels.add(val);
+    });
+    return Array.from(labels).sort((a, b) => a.localeCompare(b));
+  },
+
+  // Keeps the "Group" field's autocomplete datalist and the Primary Axis
+  // dropdown's options in sync with whatever's currently typed, plus any
+  // auto-detected Warehouse Pool axes.
+  refreshColorAxisOptions() {
+    const labels = Array.from(new Set([...(this._poolAxisLabels || []), ...this.collectColorAxisLabels()]))
+      .sort((a, b) => a.localeCompare(b));
+
+    const datalist = document.getElementById('processColorAxisDatalist');
+    if (datalist) {
+      datalist.innerHTML = labels.map(l => `<option value="${escapeHtml(l)}"></option>`).join('');
+    }
+
+    const picker = document.getElementById('processPrimaryColorAxis');
+    const wrapper = document.getElementById('processPrimaryColorAxisWrapper');
+    if (picker) {
+      const current = picker.value;
+      picker.innerHTML = '<option value="">— None (legacy: sum every checked color) —</option>'
+        + labels.map(l => `<option value="${escapeHtml(l)}">${escapeHtml(l)}</option>`).join('');
+      picker.value = labels.includes(current) ? current : '';
+    }
+    if (wrapper) wrapper.style.display = labels.length >= 2 ? '' : 'none';
+  },
+
+  // Fetches this (already-saved) process's auto-detected Warehouse Pool
+  // color axes so their labels appear as Primary Axis options too.
+  async loadPoolColorAxisLabels(processId, presetPrimary) {
+    this._poolAxisLabels = [];
+    if (processId) {
+      try {
+        const res = await Api.call('getProcessColorAxes', processId);
+        if (res.success && res.data && Array.isArray(res.data.axes)) {
+          this._poolAxisLabels = res.data.axes.filter(a => a.source === 'pool').map(a => a.label);
+        }
+      } catch (err) {
+        // Non-fatal -- the picker just falls back to whatever's typed on-form.
+      }
+    }
+    this.refreshColorAxisOptions();
+    const picker = document.getElementById('processPrimaryColorAxis');
+    if (picker && presetPrimary) picker.value = presetPrimary;
+  },
+
+  // Uniqueness = Item Name + Size + Color Group (Common counts as its own
+  // group, same as each named color sub-group).
+  findDuplicateComponent(components) {
+    const seen = new Set();
+    for (const comp of components) {
+      const itemName = (comp.itemName || '').trim();
+      if (!itemName) continue;
+      const size = (comp.size || '').trim();
+      const colorGroup = (comp.colorGroup || '').trim() || 'COMMON';
+      const key = `${itemName.toLowerCase()}|${size.toLowerCase()}|${colorGroup.toLowerCase()}`;
+      if (seen.has(key)) return { itemName, size, colorGroup };
+      seen.add(key);
+    }
+    return null;
+  },
+
+  // ── Color Sub-Groups ─────────────────────────────────────────────────
+
+  addColorGroup(initialColorName = '', components = [], initialAxis = '') {
+    const container = document.getElementById('processColorGroupsContainer');
+    if (!container) return;
+
+    const groupId = 'proc_colorgroup_' + Date.now() + '_' + Math.floor(Math.random() * 1000);
+    const knownColorNames = new Set((App.State.globalColors || []).map(c => c.name.toLowerCase()));
+    let colorOptionsHtml = (App.State.globalColors || [])
+      .map(c => `<option value="${escapeHtml(c.name)}" ${App.Utils.sameText(c.name, initialColorName) ? 'selected' : ''}>${escapeHtml(c.name)}</option>`)
+      .join('');
+    if (initialColorName && !knownColorNames.has(initialColorName.trim().toLowerCase())) {
+      colorOptionsHtml += `<option value="${escapeHtml(initialColorName)}" selected>${escapeHtml(initialColorName)}</option>`;
+    }
+
+    const axisValue = initialAxis || (components.find(c => c.colorAxis)?.colorAxis || '');
+
+    const html = `
+  <div class="card border-secondary-subtle shadow-sm mb-3 proc-colorgroup-card" id="${groupId}">
+    <div class="card-header bg-white d-flex align-items-center gap-2 flex-wrap">
+      <label class="fw-bold mb-0 text-secondary">Color / Sub-Group:</label>
+      <select class="form-select form-select-sm proc-colorgroup-select" style="max-width:220px;">
+        <option value="">Choose or type a name...</option>
+        ${colorOptionsHtml}
+      </select>
+      <label class="fw-bold mb-0 text-secondary ms-2">Group:</label>
+      <input type="text" class="form-control form-control-sm proc-colorgroup-axis" style="max-width:180px;"
+        list="processColorAxisDatalist" placeholder="e.g. Mudguard Color" value="${escapeHtml(axisValue)}"
+        title="Optional — groups this sub-group with any other card sharing the same Group label into one independent checkbox group on the Production Lot form. Leave blank if this process only has one color choice to make."
+        oninput="App.Process.refreshColorAxisOptions()">
+      <button type="button" class="btn btn-outline-secondary btn-sm ms-auto" onclick="App.Process.duplicateColorGroup('${groupId}')">Duplicate</button>
+      <button type="button" class="btn btn-outline-danger btn-sm" onclick="App.Process.removeColorGroup('${groupId}')">Remove Group</button>
+    </div>
+    <div class="card-body">
+      <div class="table-responsive mb-2">
+        <table class="table table-bordered bg-white shadow-sm mb-0 proc-comp-table">
+          <thead class="table-light">
+            <tr>
+              <th style="width: 32px;"></th>
+              <th style="min-width: 240px;">Item</th>
+              <th style="min-width: 130px;">Size</th>
+              <th style="min-width: 150px;">Narration</th>
+              <th style="min-width: 150px;">Source</th>
+              <th style="min-width: 110px; text-align: right;">Qty / Unit</th>
+              <th style="min-width: 100px;" title="Leave blank if Qty/Unit is already in this item's own Base Unit">Unit</th>
+              <th style="min-width: 180px;">Remarks</th>
+              <th style="width: 48px; text-align: center;">✕</th>
+            </tr>
+          </thead>
+          <tbody class="proc-colorgroup-body"></tbody>
+        </table>
+      </div>
+      <button type="button" class="btn btn-outline-primary btn-sm fw-bold" onclick="App.Process.addComponentRowToGroup('${groupId}')">+ Add Component</button>
+    </div>
+  </div>`;
+
+    container.insertAdjacentHTML('beforeend', html);
+    const card = document.getElementById(groupId);
+    this.initColorGroupSelect2(card);
+
+    const tbody = card.querySelector('.proc-colorgroup-body');
+    components.forEach(comp => this.addComponentRow(comp, tbody));
+    this.refreshColorAxisOptions();
+  },
+
+  addComponentRowToGroup(groupId) {
+    const tbody = document.getElementById(groupId)?.querySelector('.proc-colorgroup-body');
+    if (tbody) this.addComponentRow(null, tbody);
+  },
+
+  duplicateColorGroup(groupId) {
+    const sourceCard = document.getElementById(groupId);
+    if (!sourceCard) return;
+
+    const components = [];
+    sourceCard.querySelectorAll('.proc-colorgroup-body tr').forEach(row => {
+      const comp = this._readComponentRow(row, '');
+      if (comp) components.push(comp);
+    });
+
+    const axisValue = (sourceCard.querySelector('.proc-colorgroup-axis')?.value || '').trim();
+
+    this.addColorGroup('', components, axisValue);
+  },
+
+  removeColorGroup(groupId) {
+    const card = document.getElementById(groupId);
+    if (!card) return;
+    card.querySelectorAll('.proc-colorgroup-body tr').forEach(row => this.destroyComponentItemSelect2(row));
+    const selectEl = card.querySelector('.proc-colorgroup-select');
+    if (selectEl && window.jQuery?.fn?.select2) {
+      const $select = window.jQuery(selectEl);
+      if ($select.data('select2')) $select.select2('destroy');
+    }
+    card.remove();
+    this.refreshColorAxisOptions();
+  },
+
+  initColorGroupSelect2(card) {
+    const selectEl = card?.querySelector('.proc-colorgroup-select');
+    if (!selectEl || !window.jQuery?.fn?.select2) return;
+
+    const $select = window.jQuery(selectEl);
+    const $parentModal = $select.closest('.modal');
+    $select.select2({
+      placeholder: 'Choose or type a name...',
+      width: '100%',
+      tags: true,
+      matcher: App.Utils.select2Matcher,
+      dropdownParent: $parentModal.length ? $parentModal : window.jQuery(document.body),
+      createTag(params) {
+        const term = (params.term || '').trim();
+        if (!term) return null;
+        const existing = (App.State.globalColors || []).find(c => App.Utils.sameText(c.name, term));
+        if (existing) return { id: existing.name, text: existing.name };
+        return { id: term, text: term, newTag: true };
+      }
+    });
+    $select.on('change', () => this.handleColorGroupChange(card));
+  },
+
+  // Fired when a color sub-group's Color picker changes -- each row's item
+  // is checked for a Color Master name embedded in it and, if a
+  // same-named item exists under the new color (same size), re-pointed
+  // at it.
+  handleColorGroupChange(card) {
+    const tbody = card?.querySelector('.proc-colorgroup-body');
+    const colorSelect = card?.querySelector('.proc-colorgroup-select');
+    if (!tbody || !colorSelect || !colorSelect.value) return;
+
+    const newColor = colorSelect.value;
+    const colorNames = (App.State.globalColors || []).map(c => c.name).filter(Boolean);
+    if (!colorNames.length) return;
+
+    Array.from(tbody.querySelectorAll('tr')).forEach(row => this._retargetRowColor(row, newColor, colorNames, tbody));
+  },
+
+  // Swaps a single row's item for the same-named item under newColor,
+  // when one exists in Item Master at the same size.
+  _retargetRowColor(row, newColor, colorNames, tbody) {
+    if (row.querySelector('.proc-comp-source')?.value === 'POOL') return;
+
+    const itemSelect = row.querySelector('.proc-comp-item-select');
+    const currentName = itemSelect?.options[itemSelect.selectedIndex]?.dataset.name;
+    if (!currentName) return;
+
+    const foundColor = colorNames
+      .filter(c => c.toLowerCase() !== newColor.toLowerCase() && new RegExp(`\\b${this._escapeRegExp(c)}\\b`, 'i').test(currentName))
+      .sort((a, b) => b.length - a.length)[0];
+    if (!foundColor) return;
+
+    const candidateName = currentName.replace(new RegExp(`\\b${this._escapeRegExp(foundColor)}\\b`, 'i'), newColor);
+    if (candidateName === currentName) return;
+
+    const size = row.querySelector('.proc-comp-size')?.value || '';
+    const items = App.State.globalItems || [];
+    const hasMatch = items.some(it => App.Utils.sameText(it.name, candidateName) && App.Utils.sameText(it.size || '', size));
+    if (!hasMatch) return;
+
+    const comp = this._readComponentRow(row, '');
+    if (!comp) return;
+    comp.itemName = candidateName;
+    comp.narration = '';
+
+    const newRowId = this.addComponentRow(comp, tbody);
+    const newRow = document.getElementById(newRowId);
+    tbody.insertBefore(newRow, row);
+    this.destroyComponentItemSelect2(row);
+    row.remove();
+  },
+
+  _escapeRegExp(str) {
+    return String(str).replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+  },
+
+  // Groups a process's fetched recipe (flat array with a colorGroup per
+  // row) back into the Common table + one card per color, and renders both.
+  renderComponentsGrouped(components) {
+    this.clearComponentsTable();
+    this.clearColorGroups();
+
+    const all = components || [];
+    const common = all.filter(c => !c.colorGroup || c.colorGroup === 'COMMON');
+    common.forEach(comp => this.addComponentRow(comp, null));
+
+    const byColor = {};
+    all.forEach(c => {
+      if (c.colorGroup && c.colorGroup !== 'COMMON') {
+        (byColor[c.colorGroup] = byColor[c.colorGroup] || []).push(c);
+      }
+    });
+    Object.keys(byColor).sort((a, b) => a.localeCompare(b))
+      .forEach(colorName => this.addColorGroup(colorName, byColor[colorName]));
+  },
+
+  clearColorGroups() {
+    const container = document.getElementById('processColorGroupsContainer');
+    if (!container) return;
+    container.querySelectorAll('.proc-colorgroup-card').forEach(card => {
+      card.querySelectorAll('.proc-colorgroup-body tr').forEach(row => this.destroyComponentItemSelect2(row));
+      const selectEl = card.querySelector('.proc-colorgroup-select');
+      if (selectEl && window.jQuery?.fn?.select2) {
+        const $select = window.jQuery(selectEl);
+        if ($select.data('select2')) $select.select2('destroy');
+      }
+    });
+    container.innerHTML = '';
+  },
+
+  // ── Linked Processes ─────────────────────────────────────────────────
+
+  toggleColorLinksAvailability(hasProcessId) {
+    const btn = document.getElementById('processAddColorLinkBtn');
+    const hint = document.getElementById('processColorLinksHint');
+    if (btn) btn.disabled = !hasProcessId;
+    if (hint) hint.style.display = hasProcessId ? 'none' : '';
+  },
+
+  addColorLinkCard(otherProcessId = '', pairs = []) {
+    const container = document.getElementById('processColorLinksContainer');
+    const myProcessId = document.getElementById('processFormProcessId')?.value || '';
+    if (!container || !myProcessId) return;
+
+    const cardId = 'proc_colorlink_' + Date.now() + '_' + Math.floor(Math.random() * 1000);
+    const processOptionsHtml = (App.State.globalProcesses || [])
+      .filter(p => p.processId !== myProcessId)
+      .map(p => `<option value="${escapeHtml(p.processId)}" ${p.processId === otherProcessId ? 'selected' : ''}>${escapeHtml(p.processName)}</option>`)
+      .join('');
+
+    const html = `
+  <div class="card border-secondary-subtle shadow-sm mb-3 proc-colorlink-card" id="${cardId}">
+    <div class="card-header bg-white d-flex align-items-center gap-2 flex-wrap">
+      <label class="fw-bold mb-0 text-secondary">Linked Process:</label>
+      <select class="form-select form-select-sm proc-colorlink-process-select" style="max-width:260px;">
+        <option value="">Choose a process...</option>
+        ${processOptionsHtml}
+      </select>
+      <button type="button" class="btn btn-outline-danger btn-sm ms-auto" onclick="App.Process.removeColorLinkCard('${cardId}')">Remove Link</button>
+    </div>
+    <div class="card-body">
+      <p class="text-muted small mb-2 proc-colorlink-hint">Select a process above to map colors.</p>
+      <div class="table-responsive proc-colorlink-mapping-wrapper" style="display:none;">
+        <table class="table table-bordered bg-white shadow-sm mb-0">
+          <thead class="table-light">
+            <tr>
+              <th>This Process's Color</th>
+              <th>Maps To</th>
+            </tr>
+          </thead>
+          <tbody class="proc-colorlink-mapping-body"></tbody>
+        </table>
+      </div>
+    </div>
+  </div>`;
+
+    container.insertAdjacentHTML('beforeend', html);
+    const card = document.getElementById(cardId);
+    this.initColorLinkSelect2(card, myProcessId);
+
+    if (otherProcessId) this.populateColorLinkMapping(card, myProcessId, otherProcessId, pairs);
+  },
+
+  initColorLinkSelect2(card, myProcessId) {
+    const selectEl = card?.querySelector('.proc-colorlink-process-select');
+    if (!selectEl) return;
+
+    if (window.jQuery?.fn?.select2) {
+      const $select = window.jQuery(selectEl);
+      const $parentModal = $select.closest('.modal');
+      $select.select2({
+        placeholder: 'Choose a process...',
+        width: '100%',
+        matcher: App.Utils.select2Matcher,
+        dropdownParent: $parentModal.length ? $parentModal : window.jQuery(document.body)
+      });
+    }
+    selectEl.addEventListener('change', () => {
+      const otherProcessId = selectEl.value;
+      if (otherProcessId) this.populateColorLinkMapping(card, myProcessId, otherProcessId, []);
+    });
+  },
+
+  async populateColorLinkMapping(card, myProcessId, otherProcessId, existingPairs) {
+    const hint = card.querySelector('.proc-colorlink-hint');
+    const wrapper = card.querySelector('.proc-colorlink-mapping-wrapper');
+    const tbody = card.querySelector('.proc-colorlink-mapping-body');
+    if (!tbody) return;
+
+    tbody.innerHTML = '';
+    if (hint) { hint.style.display = ''; hint.textContent = 'Loading colors…'; }
+    if (wrapper) wrapper.style.display = 'none';
+
+    try {
+      const [myRes, theirRes] = await Promise.all([
+        Api.call('getProcessColorGroups', myProcessId),
+        Api.call('getProcessColorGroups', otherProcessId)
+      ]);
+      const myColors = myRes?.success ? (myRes.data || []) : [];
+      const theirColors = theirRes?.success ? (theirRes.data || []) : [];
+
+      if (myColors.length === 0 || theirColors.length === 0) {
+        if (hint) {
+          hint.style.display = '';
+          hint.textContent = myColors.length === 0
+            ? 'This process has no known colors yet — produce at least 2 colors (or configure Color Sub-Groups) before linking.'
+            : 'The selected process has no known colors yet.';
+        }
+        return;
+      }
+
+      const existingByMyColor = {};
+      (existingPairs || []).forEach(p => { existingByMyColor[String(p.myColor || '').toLowerCase()] = p.theirColor; });
+
+      const theirOptionsHtml = (selected) => '<option value="">— Unmapped —</option>' +
+        theirColors.map(c => `<option value="${escapeHtml(c)}" ${App.Utils.sameText(c, selected || '') ? 'selected' : ''}>${escapeHtml(c)}</option>`).join('');
+
+      tbody.innerHTML = myColors.map(myColor => `
+        <tr>
+          <td class="proc-colorlink-my-color" data-color="${escapeHtml(myColor)}">${escapeHtml(myColor)}</td>
+          <td><select class="form-select form-select-sm proc-colorlink-their-color">${theirOptionsHtml(existingByMyColor[myColor.toLowerCase()])}</select></td>
+        </tr>`).join('');
+
+      if (hint) hint.style.display = 'none';
+      if (wrapper) wrapper.style.display = '';
+    } catch (err) {
+      if (hint) { hint.style.display = ''; hint.textContent = 'Failed to load colors: ' + (err.message || err); }
+    }
+  },
+
+  removeColorLinkCard(cardId) {
+    const card = document.getElementById(cardId);
+    if (!card) return;
+    const selectEl = card.querySelector('.proc-colorlink-process-select');
+    if (selectEl && window.jQuery?.fn?.select2) {
+      const $select = window.jQuery(selectEl);
+      if ($select.data('select2')) $select.select2('destroy');
+    }
+    card.remove();
+  },
+
+  renderColorLinksData(links) {
+    this.clearColorLinks();
+    const byOtherProcess = {};
+    (links || []).forEach(l => {
+      (byOtherProcess[l.otherProcessId] = byOtherProcess[l.otherProcessId] || []).push(l);
+    });
+    Object.keys(byOtherProcess).forEach(otherProcessId => this.addColorLinkCard(otherProcessId, byOtherProcess[otherProcessId]));
+  },
+
+  clearColorLinks() {
+    const container = document.getElementById('processColorLinksContainer');
+    if (!container) return;
+    container.querySelectorAll('.proc-colorlink-card').forEach(card => {
+      const selectEl = card.querySelector('.proc-colorlink-process-select');
+      if (selectEl && window.jQuery?.fn?.select2) {
+        const $select = window.jQuery(selectEl);
+        if ($select.data('select2')) $select.select2('destroy');
+      }
+    });
+    container.innerHTML = '';
+  },
+
+  serializeColorLinks() {
+    const links = [];
+    document.querySelectorAll('#processColorLinksContainer .proc-colorlink-card').forEach(card => {
+      const otherProcessId = card.querySelector('.proc-colorlink-process-select')?.value || '';
+      if (!otherProcessId) return;
+      card.querySelectorAll('.proc-colorlink-mapping-body tr').forEach(row => {
+        const myColor = row.querySelector('.proc-colorlink-my-color')?.dataset.color || '';
+        const theirColor = row.querySelector('.proc-colorlink-their-color')?.value || '';
+        if (myColor && theirColor) links.push({ otherProcessId, myColor, theirColor });
+      });
+    });
+    return links;
+  },
+
+  delete(processId) {
+    App.Utils.confirmAction(
+      `Are you sure you want to delete process "${processId}"? This cannot be undone.`,
+      async () => {
+        try {
+          const res = await Api.mutate('deleteProcess', processId);
+          App.Utils.showToast(res.message, !res.success);
+          if (res.success) await this.loadData();
+        } catch (err) {
+          App.Utils.showToast(err.message || 'Failed to delete process', true);
+        }
+      }
+    );
+  }
+};
+
+// Wire up Process form submission
+document.addEventListener('DOMContentLoaded', function () {
+  const processForm = document.getElementById('processForm');
+  if (processForm) {
+    processForm.onsubmit = async function (e) {
+      e.preventDefault();
+
+      const groupsMissingColor = Array.from(document.querySelectorAll('#processColorGroupsContainer .proc-colorgroup-card'))
+        .some(card => !(card.querySelector('.proc-colorgroup-select')?.value || '').trim());
+      if (groupsMissingColor) {
+        App.Utils.showToast('Every Color Sub-Group needs a Color selected (or remove the group).', true);
+        return;
+      }
+
+      const components = App.Process.serializeComponents();
+      const dupComponent = App.Process.findDuplicateComponent(components);
+      if (dupComponent) {
+        const groupLabel = dupComponent.colorGroup === 'COMMON' ? 'Common Components' : `the "${dupComponent.colorGroup}" color sub-group`;
+        App.Utils.showToast(`Duplicate component: "${dupComponent.itemName}"${dupComponent.size ? ' (' + dupComponent.size + ')' : ''} already exists in ${groupLabel}. Each item+size may only appear once per group — adjust its Qty / Unit instead of adding it twice.`, true);
+        return;
+      }
+
+      const formData = Object.fromEntries(new FormData(processForm));
+      formData.isFinalStage = !!document.getElementById('processFormIsFinalStage')?.checked;
+      formData.active = !!document.getElementById('processFormActive')?.checked;
+      formData.components = JSON.stringify(components);
+      formData.colorLinks = JSON.stringify(App.Process.serializeColorLinks());
+      const isEdit = !!formData.processId;
+
+      const submitBtn = document.getElementById('processSubmitBtn');
+      if (submitBtn) submitBtn.disabled = true;
+
+      try {
+        const response = await Api.mutate('saveProcess', formData);
+        if (response.success) {
+          await App.Process.loadData();
+          if (isEdit) {
+            const modalEl = document.getElementById('editProcessModal');
+            if (modalEl) bootstrap.Modal.getOrCreateInstance(modalEl).hide();
+          } else {
+            await App.Process.openCreateModal();
+          }
+        }
+        App.Utils.showToast(response.message, !response.success);
+      } catch (err) {
+        App.Utils.showToast(err.message || 'Failed to save process', true);
+      } finally {
+        if (submitBtn) submitBtn.disabled = false;
+      }
+    };
+  }
+});

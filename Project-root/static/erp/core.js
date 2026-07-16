@@ -161,7 +161,19 @@ const App = {
     globalUnits: [],
     globalColors: [],
     globalModels: [],
-    globalProcessTypes: []
+    globalProcessTypes: [],
+
+    // Process Master's own state (Script_Process.html's App.Process).
+    globalProcesses: [],
+    filteredProcesses: [],
+    selectedProcesses: [],
+    collapsedProcessGroups: new Set(),
+    processGroupOrder: ['size', 'type', 'model'],
+    // Populated from the Contractors module (not ported yet) -- forward-
+    // declared so Process's contractor-rate mini-table select2 degrades to
+    // an empty (but still typeable, tags:true) picker until then.
+    globalContractors: [],
+    currentProcessContractorRates: { processName: '', rates: [] }
   },
 
   // ── Bulk Selection Helpers ────────────────────────────────────────────
@@ -406,6 +418,41 @@ const App = {
       return keywords.every(kw => text.includes(kw));
     },
 
+    // Select2 matcher using keyword search -- pass as `matcher:` in any
+    // Select2 config to replace the default substring match with
+    // multi-word keyword matching.
+    select2Matcher(params, data) {
+      if (!params.term) return data;
+      return App.Utils.matchesKeywords(data.text, params.term) ? data : null;
+    },
+
+    // Fixed bicycle-size categories a Process's Output Item Name may embed
+    // (e.g. "Painted Frame Ford 14 inch D/Gaddi"). Output Item Name is the
+    // only place size is recorded on a Process, so it's matched as a
+    // substring rather than read from a dedicated column.
+    PROCESS_SIZE_LIST: ['12 inch', '14 inch', '16 inch', '20 inch', '24 inch', '26 inch'],
+
+    // Returns the size token found in text (e.g. a Process's Output Item
+    // Name), or 'General' if none of PROCESS_SIZE_LIST appears in it.
+    getSizeFromOutputItemName(text) {
+      const lower = String(text || '').toLowerCase();
+      return this.PROCESS_SIZE_LIST.find(s => lower.includes(s)) || 'General';
+    },
+
+    // Returns the Model Master name found in text (e.g. a Process's Output
+    // Item Name), or 'General' if none of the current models appears in
+    // it. Models are read live from App.State.globalModels (not a fixed
+    // list like PROCESS_SIZE_LIST) since new models can be added in Model
+    // Master at any time. Longest name first, so a multi-word model (e.g.
+    // "Eagle Pro") wins over a shorter one that's also a substring of it
+    // (e.g. "Eagle").
+    getModelFromOutputItemName(text) {
+      const lower = String(text || '').toLowerCase();
+      const models = [...(App.State.globalModels || [])].sort((a, b) => String(b.name || '').length - String(a.name || '').length);
+      const match = models.find(m => m.name && lower.includes(String(m.name).toLowerCase()));
+      return match ? match.name : 'General';
+    },
+
     // Clamps a requested page number to a valid range for the given item count.
     clampPage(page, totalItems, rowsPerPage) {
       const totalPages = Math.max(1, Math.ceil(totalItems / rowsPerPage));
@@ -485,6 +532,7 @@ const App = {
       if (id === 'billLedger' && typeof App.Bill !== 'undefined') App.Bill.loadData();
       if (id === 'returnLedger' && typeof App.Return !== 'undefined') App.Return.loadData();
       if (id === 'stockTab' && typeof App.Stock !== 'undefined') App.Stock.loadData();
+      if (id === 'productsTab' && typeof App.Products !== 'undefined') App.Products.enterTab();
       // Every other module's own `if (id === '<tab>') App.<Module>.loadData();`
       // line lands here in that module's own round -- same guarded pattern
       // Navigation.showTab already used in source for not-yet-loaded modules.
