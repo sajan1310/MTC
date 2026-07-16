@@ -1,0 +1,257 @@
+<!--
+  Items Master tab, transcribed from Apps_Script/View_ItemMaster.html, plus
+  its three modals (itemModal/itemLedgerModal/syncReviewModal) transcribed
+  from Modals.html -- source keeps modal markup separate from the tab's own
+  view partial, this file just keeps them together since Jinja includes
+  don't need the same file-per-concern split GAS's include() did.
+
+  The Item Ledger/Comparison/Sync Review print buttons are guarded behind
+  App.Print existing (see static/erp/items.js) -- no hidden print-template
+  markup is included this round since nothing reaches it yet.
+-->
+
+<div id="itemMaster" class="tab-content table-container" role="tabpanel" aria-labelledby="btn-itemMaster">
+  <div class="d-flex justify-content-between flex-wrap gap-2 mb-3">
+    <div class="d-flex w-50 align-items-center flex-wrap gap-2">
+      <input type="text" id="searchItem" class="form-control me-2" placeholder="Search Items, Sizes, Vendors, or try 'pending orders' / 'low stock' / 'no metadata'..." autocomplete="off" onkeyup="App.Item.filterData(this.value)">
+      <button class="btn btn-outline-dark fw-bold shadow-sm d-none" id="btnBulkPrintItems" onclick="App.Item.bulkPrint()" style="white-space: nowrap;"><i class="bi bi-printer"></i> Print Selected</button>
+      <button class="btn btn-outline-warning fw-bold shadow-sm d-none" id="btnMergeSelected" onclick="App.Item.mergeSelected()" style="white-space: nowrap;" title="Check exactly 2 items: the one to KEEP first, then the duplicate to remove."><i class="bi bi-magic"></i> Merge Selected</button>
+      <button class="btn btn-danger fw-bold shadow-sm d-none" id="btnBulkDeleteItems" onclick="App.Item.bulkDelete()" style="white-space: nowrap;"><i class="bi bi-trash"></i> Delete Selected</button>
+    </div>
+    <div class="d-flex gap-2 flex-wrap justify-content-end">
+      <button id="btnSyncFromStock" class="btn btn-outline-success fw-bold shadow-sm position-relative" onclick="App.Item.syncFromStock()" title="Import items from Stock sheet that are not yet in Item Master">
+        <i class="bi bi-arrow-repeat"></i> Sync from Stock
+        <span id="itemOrphanBadge" class="position-absolute top-0 start-100 translate-middle badge rounded-pill bg-danger d-none"></span>
+      </button>
+      <button id="btnMergeDuplicates" class="btn btn-outline-warning fw-bold shadow-sm" onclick="App.Item.mergeDuplicates()" title="Fix truncated-name duplicates and merge any rows that share the same Name + Size">
+        <i class="bi bi-magic"></i> Merge Duplicates
+      </button>
+      <button class="btn btn-info fw-bold text-white shadow-sm" onclick="App.Item.openCreateModal()">+ Register New Item</button>
+    </div>
+  </div>
+  <div id="itemOrphanBanner" class="alert alert-warning d-none d-flex justify-content-between align-items-center shadow-sm mb-3" role="alert">
+    <span><i class="bi bi-exclamation-triangle-fill me-2"></i><span id="itemOrphanBannerText"></span></span>
+    <button type="button" class="btn btn-warning btn-sm fw-bold" onclick="App.Item.openSyncReview()">Review</button>
+  </div>
+  <div class="table-responsive">
+    <table class="table table-hover table-bordered align-middle mb-0">
+      <thead class="table-dark">
+        <tr>
+          <th style="width: 5%; text-align: center;"><input type="checkbox" id="selectAllItems" class="form-check-input" onclick="App.Item.toggleSelectAll(this)"></th>
+          <th style="width: 20%;">Item Name <button type="button" class="th-filter-btn" data-filter-key="name" onclick="App.Item.toggleColumnFilter(event, 'name')"><i class="bi bi-funnel"></i></button></th>
+          <th style="width: 10%;">Size <button type="button" class="th-filter-btn" data-filter-key="size" onclick="App.Item.toggleColumnFilter(event, 'size')"><i class="bi bi-funnel"></i></button></th>
+          <th style="width: 15%;">Narration <button type="button" class="th-filter-btn" data-filter-key="narration" onclick="App.Item.toggleColumnFilter(event, 'narration')"><i class="bi bi-funnel"></i></button></th>
+          <th style="width: 15%;">Meta Data <button type="button" class="th-filter-btn" data-filter-key="metadata" onclick="App.Item.toggleColumnFilter(event, 'metadata')"><i class="bi bi-funnel"></i></button></th>
+          <th style="width: 23%;">Associated Vendor Rates <button type="button" class="th-filter-btn" data-filter-key="vendor" onclick="App.Item.toggleColumnFilter(event, 'vendor')"><i class="bi bi-funnel"></i></button></th>
+          <th style="width: 12%;">Actions</th>
+        </tr>
+      </thead>
+      <tbody id="itemTableBody"></tbody>
+    </table>
+  </div>
+  <div id="itemPagination" class="d-flex justify-content-between align-items-center mt-3 pt-3 border-top"></div>
+</div>
+
+<!-- ITEM CREATE/EDIT MODAL -->
+<div class="modal fade" id="itemModal" data-bs-backdrop="static" tabindex="-1" aria-hidden="true">
+  <div class="modal-dialog modal-lg modal-fullscreen-sm-down">
+    <div class="modal-content shadow-lg">
+      <div class="modal-header bg-info text-dark">
+        <h5 class="modal-title fw-bold" id="itemFormTitle">Register New Item</h5>
+        <button type="button" class="btn-close" data-bs-dismiss="modal"></button>
+      </div>
+      <div class="modal-body bg-light">
+        <form id="itemForm" autocomplete="off">
+          <input type="hidden" id="originalItemName" name="originalItemName">
+          <input type="hidden" id="originalItemSize" name="originalItemSize">
+
+          <h6 class="text-secondary border-bottom pb-1 fw-bold">Item Identification & Metadata</h6>
+          <div class="row g-3 mb-4">
+            <div class="col-md-8"><label class="form-label fw-bold">Item Name *</label><input type="text" name="itemName" id="formItemName" class="form-control" list="itemList" required maxlength="100"></div>
+            <div class="col-md-4"><label class="form-label fw-bold">Size</label><input type="text" name="itemSize" id="formItemSize" class="form-control" list="sizeList" maxlength="50"></div>
+
+            <div class="col-md-4"><label class="form-label">Remarks</label><input type="text" name="itemRemarks" id="formItemRemarks" class="form-control" maxlength="200"></div>
+            <div class="col-md-4"><label class="form-label">Narration</label><input type="text" name="itemNarration" id="formItemNarration" class="form-control" maxlength="200"></div>
+            <div class="col-md-4"><label class="form-label">Specification</label><input type="text" name="itemSpec" id="formItemSpec" class="form-control" maxlength="200"></div>
+          </div>
+
+          <h6 class="text-secondary border-bottom pb-1 fw-bold">
+            Units <a href="#" class="float-end small" data-action="not-ported-yet" data-feature="Unit Master">Manage Unit Master &#8599;</a>
+          </h6>
+          <div class="row g-3 mb-4">
+            <div class="col-md-4">
+              <label class="form-label fw-bold">Base Unit</label>
+              <input type="text" name="itemBaseUnit" id="formItemBaseUnit" class="form-control" list="unitList" value="Pcs" placeholder="Pcs">
+              <div class="form-text">Unit stock, BOM, and production are tracked in.</div>
+            </div>
+            <div class="col-md-4">
+              <label class="form-label fw-bold">Purchase Unit</label>
+              <input type="text" name="itemPurchaseUnit" id="formItemPurchaseUnit" class="form-control" list="unitList" placeholder="Same as Base Unit">
+              <div class="form-text">Unit the vendor rate below is quoted in (e.g. Gross, Kg).</div>
+            </div>
+            <div class="col-md-4">
+              <label class="form-label">Weight per Base Unit (g)</label>
+              <input type="number" name="itemWeightPerBaseUnit" id="formItemWeightPerBaseUnit" class="form-control" min="0" step="any" placeholder="Only if bought by weight">
+              <div class="form-text">Set this when Purchase Unit is a weight (Kg/Gram) but Base Unit is a count (Pcs).</div>
+            </div>
+          </div>
+
+          <div class="row g-3 mb-4" id="initialStockRow">
+            <div class="col-md-4">
+              <label class="form-label">Initial Stock <span class="text-muted">(optional)</span></label>
+              <input type="number" name="itemInitialStock" id="formItemInitialStock" class="form-control" step="any" placeholder="0">
+              <div class="form-text" id="initialStockHint">Creates a matching Stock entry for this item. Leave blank for 0.</div>
+            </div>
+            <div class="col-md-4">
+              <label class="form-label">Reorder Threshold <span class="text-muted">(optional)</span></label>
+              <input type="number" id="formItemThreshold" class="form-control" min="0" step="1" placeholder="e.g. 10">
+              <div class="form-text">Alert when stock falls below this level. Leave blank to keep unchanged.</div>
+            </div>
+          </div>
+
+          <h6 class="text-secondary border-bottom pb-1 fw-bold">Approved Vendors & Rates</h6>
+          <div class="table-responsive">
+            <table class="table table-bordered bg-white shadow-sm">
+              <thead class="table-light">
+                <tr>
+                  <th>Vendor Name *</th>
+                  <th style="width:30%;">Negotiated Rate (&#8377;) *</th>
+                  <th style="width:10%;">Actions</th>
+                </tr>
+              </thead>
+              <tbody id="itemVendorsBody"></tbody>
+            </table>
+          </div>
+
+          <button type="button" class="btn btn-outline-info text-dark btn-sm mb-3 fw-bold border-2" onclick="App.Item.addVendorRow()">+ Add Vendor & Rate</button>
+
+          <div class="text-end mt-2">
+            <button type="button" class="btn btn-secondary me-2" data-bs-dismiss="modal">Cancel</button>
+            <button type="submit" id="itemSubmitBtn" class="btn btn-info fw-bold px-5 shadow-sm text-dark">Save Item Record</button>
+          </div>
+        </form>
+      </div>
+    </div>
+  </div>
+</div>
+
+<!-- ITEM LEDGER & COMPARISON MODAL -->
+<div class="modal fade" id="itemLedgerModal" tabindex="-1" aria-hidden="true">
+  <div class="modal-dialog modal-xl modal-fullscreen-sm-down">
+    <div class="modal-content shadow-lg">
+      <div class="modal-header bg-info text-dark">
+        <h5 class="modal-title fw-bold" id="itemLedgerTitle" style="font-family: 'Outfit', sans-serif;">Item Ledger & Comparison</h5>
+        <div class="d-flex align-items-center">
+          <button class="btn btn-dark btn-sm fw-bold me-2" onclick="App.Item.printLedger()"><i class="bi bi-printer me-1"></i> Print Ledger</button>
+          <button type="button" class="btn-close" data-bs-dismiss="modal" style="margin-top: 1px;"></button>
+        </div>
+      </div>
+      <div class="modal-body bg-light">
+        <div class="card mb-4 border-0 shadow-sm">
+          <div class="card-header bg-dark text-white fw-bold" style="font-family: 'Outfit', sans-serif;">
+            <span>Stock Position (Initial vs Current)</span>
+          </div>
+          <div class="card-body p-0">
+            <div class="table-responsive">
+              <table class="table table-hover table-striped align-middle mb-0">
+                <thead class="table-light">
+                  <tr>
+                    <th style="width: 20%;">Size</th>
+                    <th style="width: 18%; text-align: center;">Initial Stock</th>
+                    <th style="width: 18%; text-align: center;">Current Stock</th>
+                    <th style="width: 44%; text-align: center;">Pending Order</th>
+                  </tr>
+                </thead>
+                <tbody id="itemLedgerStockBody"></tbody>
+              </table>
+            </div>
+          </div>
+        </div>
+
+        <div class="card mb-4 border-0 shadow-sm">
+          <div class="card-header bg-dark text-white fw-bold d-flex justify-content-between align-items-center" style="font-family: 'Outfit', sans-serif;">
+            <span>Vendor Rates & Variants Comparison</span>
+            <span class="badge bg-info text-dark">Classified by Size</span>
+          </div>
+          <div class="card-body p-0">
+            <div class="table-responsive">
+              <table class="table table-hover table-striped align-middle mb-0">
+                <thead class="table-light">
+                  <tr>
+                    <th style="width: 15%;">Size</th>
+                    <th style="width: 20%;">Narration</th>
+                    <th style="width: 25%;">Vendor Name</th>
+                    <th style="width: 16%;">Contact Info</th>
+                    <th style="width: 12%; text-align: right;">Master Rate</th>
+                    <th style="width: 12%; text-align: right;">Latest PO Rate</th>
+                  </tr>
+                </thead>
+                <tbody id="itemLedgerComparisonBody"></tbody>
+              </table>
+            </div>
+          </div>
+        </div>
+
+        <div class="card border-0 shadow-sm">
+          <div class="card-header bg-dark text-white fw-bold" style="font-family: 'Outfit', sans-serif;">
+            <span>Transaction Ledger History (POs, Bills & Production Consumption)</span>
+          </div>
+          <div class="card-body p-0">
+            <div class="table-responsive">
+              <table class="table table-hover table-striped align-middle mb-0">
+                <thead class="table-light">
+                  <tr>
+                    <th style="width: 9%;">Date</th>
+                    <th style="width: 11%;">Type</th>
+                    <th style="width: 10%;">Ref #</th>
+                    <th style="width: 16%;">Vendor / Source</th>
+                    <th style="width: 9%;">Size</th>
+                    <th style="width: 13%;">Narration</th>
+                    <th style="width: 9%; text-align: center;">Order Qty</th>
+                    <th style="width: 9%; text-align: center;">Incoming Qty</th>
+                    <th style="width: 9%; text-align: center;">Outgoing Qty</th>
+                    <th style="width: 9%; text-align: right;">Price</th>
+                  </tr>
+                </thead>
+                <tbody id="itemLedgerHistoryBody"></tbody>
+              </table>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+</div>
+
+<!-- STOCK <-> ITEM MASTER SYNC REVIEW MODAL -->
+<div class="modal fade" id="syncReviewModal" tabindex="-1" aria-hidden="true">
+  <div class="modal-dialog modal-lg modal-dialog-scrollable modal-fullscreen-sm-down">
+    <div class="modal-content shadow-lg">
+      <div class="modal-header bg-warning text-dark">
+        <h5 class="modal-title fw-bold" style="font-family: 'Outfit', sans-serif;">Sync Review — Items missing from Stock</h5>
+        <button type="button" class="btn-close" data-bs-dismiss="modal"></button>
+      </div>
+      <div class="modal-body bg-light">
+        <p class="text-muted mb-3">These Item Master entries have no matching row on the Stock sheet (likely deleted or renamed directly on the sheet). Decide whether to keep each one — creating its Stock row with an initial quantity — or discard the Item Master entry entirely. Select multiple rows to apply an action to all of them at once.</p>
+        <div class="d-flex gap-2 mb-2">
+          <button class="btn btn-success btn-sm fw-bold d-none" id="btnSyncReviewKeepSelected" onclick="App.Item.keepSelectedOrphans()"><i class="bi bi-check-lg"></i> Keep Selected</button>
+          <button class="btn btn-danger btn-sm fw-bold d-none" id="btnSyncReviewDiscardSelected" onclick="App.Item.discardSelectedOrphans()"><i class="bi bi-trash"></i> Discard Selected</button>
+        </div>
+        <div class="table-responsive">
+          <table class="table table-hover table-bordered align-middle mb-0">
+            <thead class="table-dark">
+              <tr>
+                <th style="width: 5%; text-align: center;"><input type="checkbox" id="selectAllSyncReview" class="form-check-input" onclick="App.Item.toggleSelectAllOrphans(this)"></th>
+                <th>Item Name</th>
+                <th style="width: 15%;">Size</th>
+                <th style="width: 18%;">Initial Stock</th>
+                <th style="width: 22%; text-align: center;">Action</th>
+              </tr>
+            </thead>
+            <tbody id="syncReviewBody"></tbody>
+          </table>
+        </div>
+      </div>
+    </div>
+  </div>
+</div>

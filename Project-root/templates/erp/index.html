@@ -47,6 +47,13 @@
 </head>
 <body>
 
+  <!-- Global datalists, populated by JS (App.Item.populateDatalists() etc.) -->
+  <datalist id="itemList" style="display: none;"></datalist>
+  <datalist id="vendorList" style="display: none;"></datalist>
+  <datalist id="sizeList" style="display: none;"></datalist>
+  <datalist id="narrationList" style="display: none;"></datalist>
+  <datalist id="unitList" style="display: none;"></datalist>
+
   <!-- Mobile switch banner -->
   <div id="mobile-switch-banner" style="display:none;position:sticky;top:0;z-index:2000;background:#111827;color:#fff;padding:10px 16px;font-family:'Inter',sans-serif;font-size:14px;align-items:center;justify-content:space-between;gap:12px;">
     <span>This looks like a phone — try the mobile app view?</span>
@@ -188,12 +195,12 @@
 
         {% include "erp/partials/dashboard.html" %}
         {% include "erp/partials/vendors.html" %}
+        {% include "erp/partials/items.html" %}
 
         {% for tab_id, label in [
           ('poLedger', 'Purchase Orders'),
           ('billLedger', 'Bill Ledger'),
           ('returnLedger', 'Returns'),
-          ('itemMaster', 'Items Master'),
           ('stockTab', 'Stock'),
           ('productsTab', 'Products & Processes'),
           ('contractorsTab', 'Contractors'),
@@ -225,6 +232,7 @@
   <script src="{{ url_for('static', filename='erp/core.js') }}"></script>
   <script src="{{ url_for('static', filename='erp/dashboard.js') }}"></script>
   <script src="{{ url_for('static', filename='erp/vendors.js') }}"></script>
+  <script src="{{ url_for('static', filename='erp/items.js') }}"></script>
 
 </body>
 </html>

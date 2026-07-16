@@ -54,6 +54,11 @@ function safeModalHide(id) {
   }
 }
 
+function setDisabled(id, state) {
+  const el = document.getElementById(id);
+  if (el) el.disabled = !!state;
+}
+
 // Bootstrap 5 doesn't support real nested modals -- re-sync the body
 // scroll-lock to reality every time any modal finishes hiding, instead of
 // trusting Bootstrap's per-instance bookkeeping (which strips the lock as
@@ -87,7 +92,11 @@ const App = {
     globalBills: [],
     globalReturns: [],
     globalIssues: [],
-    globalItems: []
+    globalItems: [],
+    globalProduction: [],
+    globalStockAdjustments: [],
+    globalStock: [],
+    filteredStock: []
   },
 
   // ── Bulk Selection Helpers ────────────────────────────────────────────
@@ -178,6 +187,55 @@ const App = {
     // Action / nav click from throwing instead of silently doing nothing.
     notPortedYet(feature) {
       this.showToast(`${feature || 'This feature'} isn't wired up yet.`, true);
+    },
+
+    setFieldValues(fields) {
+      Object.entries(fields).forEach(([id, val]) => {
+        const el = document.getElementById(id);
+        if (el) el.value = val;
+      });
+    },
+
+    // Removes the closest <tr> a button lives in, unless it's the last
+    // remaining row in that <tbody> (a vendor-rows/component-rows table
+    // must always keep at least one row to add into).
+    removeRow(buttonEl) {
+      const row = buttonEl?.closest('tr');
+      const tbody = buttonEl?.closest('tbody');
+      if (row && tbody && $$('tr', tbody).length > 1) {
+        row.remove();
+      }
+    },
+
+    // Aggregates outstanding (ordered - billed) quantity per item (name+size)
+    // across all open POs, so Item Master / Item Ledger / search can all
+    // share one source of truth. Returns a Map keyed by "name|size"
+    // (lowercased) -> { qty, poNumbers: Set }. Safe before PO/Bill are
+    // ported -- App.State.globalPOs starts as an empty array, so the loop
+    // body (including the App.Bill._getBilledQty call PO/Bill's own round
+    // will make real) never runs.
+    getPendingByItem() {
+      const map = new Map();
+      (App.State.globalPOs || []).forEach(po => {
+        (po.items || []).forEach(line => {
+          const name = String(line.name || '').trim();
+          if (!name) return;
+          const size = String(line.size || '').trim();
+          const ordered = Number(line.baseQty) || 0;
+          if (ordered <= 0) return;
+
+          const billed = App.Bill._getBilledQty(po.poNumber, name, size, line.narration);
+          const pending = ordered - billed;
+          if (pending <= 0.0001) return;
+
+          const key = `${name.toLowerCase()}|${size.toLowerCase()}`;
+          const entry = map.get(key) || { qty: 0, poNumbers: new Set() };
+          entry.qty += pending;
+          entry.poNumbers.add(String(po.poNumber));
+          map.set(key, entry);
+        });
+      });
+      return map;
     },
 
     // Case/whitespace-insensitive equality for name-like fields (vendor,
@@ -271,6 +329,7 @@ const App = {
         App.Dashboard.startAutoRefresh();
       }
       if (id === 'vendorMaster' && typeof App.Vendor !== 'undefined') App.Vendor.loadData();
+      if (id === 'itemMaster' && typeof App.Item !== 'undefined') App.Item.loadData();
       // Every other module's own `if (id === '<tab>') App.<Module>.loadData();`
       // line lands here in that module's own round -- same guarded pattern
       // Navigation.showTab already used in source for not-yet-loaded modules.
@@ -290,6 +349,11 @@ const App = {
     if (this.Vendor) {
       labels.push('Vendor');
       promises.push(this.Vendor.loadData());
+    }
+
+    if (this.Item) {
+      labels.push('Item');
+      promises.push(this.Item.loadData());
     }
 
     const results = await Promise.allSettled(promises);
@@ -338,6 +402,21 @@ function bindGlobalEvents() {
         break;
       case 'vendor-page':
         App.Vendor.changePage(toNumber(btn.dataset.page, 1));
+        break;
+      case 'remove-row':
+        App.Utils.removeRow(btn);
+        break;
+      case 'item-page':
+        App.Item.changePage(toNumber(btn.dataset.page, 1));
+        break;
+      case 'item-ledger':
+        App.Item.openLedgerModal(decodeURIComponent(btn.dataset.name || ''), decodeURIComponent(btn.dataset.size || ''));
+        break;
+      case 'item-edit':
+        App.Item.openEditModal(decodeURIComponent(btn.dataset.name || ''), decodeURIComponent(btn.dataset.size || ''));
+        break;
+      case 'item-delete':
+        App.Item.delete(decodeURIComponent(btn.dataset.name || ''), decodeURIComponent(btn.dataset.size || ''));
         break;
     }
   });
