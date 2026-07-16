@@ -143,7 +143,25 @@ const App = {
     wastageRowsPerPage: 15,
     wastageSearchTerm: '',
     wastageDateFilter: '',
-    selectedWastage: []
+    selectedWastage: [],
+
+    // Items Stock sub-tab's own pagination/filter/selection state
+    // (Script_Stock.html's App.Stock). globalStock/filteredStock were
+    // already forward-declared in Round 1.
+    stockCurrentPage: 1,
+    stockRowsPerPage: 20,
+    stockSearchTerm: '',
+    stockDeadSortMode: 'default',
+    selectedStock: [],
+
+    // Small header-shortcut masters (Unit/Color/Model/Process Type),
+    // deferred since Round 1 -- ported this round alongside Stock since
+    // Script_Stock.html bundles them together and Item Master's Base/
+    // Purchase Unit fields need unitList populated.
+    globalUnits: [],
+    globalColors: [],
+    globalModels: [],
+    globalProcessTypes: []
   },
 
   // ── Bulk Selection Helpers ────────────────────────────────────────────
@@ -466,6 +484,7 @@ const App = {
       if (id === 'poLedger' && typeof App.PO !== 'undefined') App.PO.loadData();
       if (id === 'billLedger' && typeof App.Bill !== 'undefined') App.Bill.loadData();
       if (id === 'returnLedger' && typeof App.Return !== 'undefined') App.Return.loadData();
+      if (id === 'stockTab' && typeof App.Stock !== 'undefined') App.Stock.loadData();
       // Every other module's own `if (id === '<tab>') App.<Module>.loadData();`
       // line lands here in that module's own round -- same guarded pattern
       // Navigation.showTab already used in source for not-yet-loaded modules.
@@ -505,6 +524,16 @@ const App = {
     if (this.Return) {
       labels.push('Return');
       promises.push(this.Return.loadData());
+    }
+
+    // Unit Master loads eagerly (matches source) since Item Master's
+    // Base/Purchase Unit fields need unitList populated whenever that
+    // modal opens, which can happen before the user ever visits Stock.
+    // Color/Model/ProcessType stay lazy (ensureLoaded() from their own
+    // openModal()) -- nothing needs them before their own modal opens.
+    if (this.Unit) {
+      labels.push('Unit');
+      promises.push(this.Unit.ensureLoaded());
     }
 
     const results = await Promise.allSettled(promises);
@@ -610,6 +639,9 @@ function bindGlobalEvents() {
         break;
       case 'wastage-page':
         App.Wastage.changePage(toNumber(btn.dataset.page, 1));
+        break;
+      case 'stock-page':
+        App.Stock.changePage(toNumber(btn.dataset.page, 1));
         break;
     }
   });

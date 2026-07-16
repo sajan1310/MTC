@@ -53,6 +53,8 @@
   <datalist id="sizeList" style="display: none;"></datalist>
   <datalist id="narrationList" style="display: none;"></datalist>
   <datalist id="unitList" style="display: none;"></datalist>
+  <datalist id="colorList" style="display: none;"></datalist>
+  <datalist id="modelList" style="display: none;"></datalist>
 
   <!-- Mobile switch banner -->
   <div id="mobile-switch-banner" style="display:none;position:sticky;top:0;z-index:2000;background:#111827;color:#fff;padding:10px 16px;font-family:'Inter',sans-serif;font-size:14px;align-items:center;justify-content:space-between;gap:12px;">
@@ -137,6 +139,26 @@
         <h4 class="text-secondary fw-bold mb-0 border-start border-2 border-secondary ps-3 d-none d-md-block" style="font-family: 'Outfit', sans-serif; font-size: 16px; padding-left: 16px !important; opacity: 0.8;">ERP System</h4>
       </div>
 
+      <!-- Master Data Shortcuts -->
+      <div class="d-flex align-items-center gap-2 me-2">
+        <button type="button" class="btn btn-sm btn-outline-secondary" title="Manage Unit Master" onclick="App.Unit.openModal()">
+          <i class="bi bi-rulers"></i>
+          <span class="d-none d-md-inline">Units</span>
+        </button>
+        <button type="button" class="btn btn-sm btn-outline-secondary" title="Manage Color Master" onclick="App.Color.openModal()">
+          <i class="bi bi-palette"></i>
+          <span class="d-none d-md-inline">Colors</span>
+        </button>
+        <button type="button" class="btn btn-sm btn-outline-secondary" title="Manage Model Master" onclick="App.Model.openModal()">
+          <i class="bi bi-tags"></i>
+          <span class="d-none d-md-inline">Models</span>
+        </button>
+        <button type="button" class="btn btn-sm btn-outline-secondary" title="Manage Process Type Master" onclick="App.ProcessType.openModal()">
+          <i class="bi bi-diagram-3"></i>
+          <span class="d-none d-md-inline">Process Types</span>
+        </button>
+      </div>
+
       <div class="d-flex align-items-center gap-2 me-2">
         <button id="dark-mode-toggle" class="dark-mode-toggle" title="Switch to Dark Mode" type="button">
           <svg id="dm-icon-moon" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
@@ -199,9 +221,9 @@
         {% include "erp/partials/po_ledger.html" %}
         {% include "erp/partials/bill_ledger.html" %}
         {% include "erp/partials/return_ledger.html" %}
+        {% include "erp/partials/stock.html" %}
 
         {% for tab_id, label in [
-          ('stockTab', 'Stock'),
           ('productsTab', 'Products & Processes'),
           ('contractorsTab', 'Contractors'),
           ('productionTab', 'Production'),
@@ -236,6 +258,7 @@
   <script src="{{ url_for('static', filename='erp/po.js') }}"></script>
   <script src="{{ url_for('static', filename='erp/bill.js') }}"></script>
   <script src="{{ url_for('static', filename='erp/return.js') }}"></script>
+  <script src="{{ url_for('static', filename='erp/stock.js') }}"></script>
 
 </body>
 </html>

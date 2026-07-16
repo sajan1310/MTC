@@ -1,0 +1,440 @@
+<!-- Ported from Apps_Script/View_Stock.html (Items Stock sub-tab only --
+     Warehouse Pool sub-tab is a placeholder this round, see stock.js's
+     module header) + the adjustStockModal/importStockModal/deadStockModal
+     sections of that same file, + the unitModal/colorMasterModal/
+     modelMasterModal/processTypeMasterModal sections of Modals.html
+     (small header-shortcut masters, deferred since Round 1). -->
+
+<div id="stockTab" class="tab-content table-container" role="tabpanel" aria-labelledby="btn-stockTab">
+
+  <!-- Sub-tab Navigation Pills -->
+  <ul class="nav nav-pills mb-4" id="stockSubTabs">
+    <li class="nav-item">
+      <button class="nav-link active fw-bold text-dark" id="btn-itemsStockSubTab" onclick="App.Stock.switchSubTab('itemsStockSubTab')">Items Stock</button>
+    </li>
+    <li class="nav-item">
+      <button class="nav-link fw-bold text-dark" id="btn-warehousePoolSubTab" onclick="App.Stock.switchSubTab('warehousePoolSubTab')">Warehouse Pool</button>
+    </li>
+  </ul>
+
+  <!-- ITEMS STOCK SUB-TAB (raw materials, from Items Master) -->
+  <div id="itemsStockSubTab" class="stock-sub-tab">
+    <!-- Low Stock Alerts Section -->
+    <div id="lowStockAlertSection" class="mb-4">
+      <!-- Populated dynamically via JS -->
+    </div>
+
+    <div class="d-flex justify-content-between flex-wrap gap-2 mb-3">
+      <div class="d-flex w-50 align-items-center">
+        <input type="text" id="searchStock" class="form-control me-2" placeholder="Search Item Name or Size..." autocomplete="off" onkeyup="App.Stock.filterData(this.value)">
+        <select id="stockDeadSort" class="form-select me-2" style="max-width: 220px;" title="Dead Stock position" onchange="App.Stock.setDeadSortMode(this.value)">
+          <option value="default">Dead Stock: Default Order</option>
+          <option value="last">Dead Stock: Move to Bottom</option>
+          <option value="first">Dead Stock: Move to Top</option>
+        </select>
+        <button class="btn btn-outline-primary fw-bold shadow-sm" type="button" onclick="App.Stock.selectAllFiltered()" style="white-space: nowrap;">
+          <i class="bi bi-check2-square"></i> Select All
+        </button>
+      </div>
+      <div class="d-flex gap-2 flex-wrap justify-content-end">
+        <button class="btn btn-outline-dark fw-bold shadow-sm d-none" id="btnBulkPrintStock" type="button" onclick="App.Stock.bulkPrint()" style="white-space: nowrap;">
+          <i class="bi bi-printer"></i> Print Selected
+        </button>
+        <button class="btn btn-secondary fw-bold shadow-sm" onclick="App.Stock.openDeadStockDialog()" style="white-space: nowrap;">
+          <i class="bi bi-x-circle me-2"></i>Dead Stock
+        </button>
+        <button class="btn btn-danger fw-bold shadow-sm" onclick="App.Stock.printLowStockReport()">
+          <i class="bi bi-printer me-2"></i>Print Low Stock Report
+        </button>
+        <button class="btn btn-outline-dark fw-bold shadow-sm" onclick="App.Stock.printFullStockList()">
+          <i class="bi bi-printer me-2"></i>Print Complete Item/Stock List
+        </button>
+        <button class="btn btn-primary fw-bold shadow-sm" onclick="App.Stock.openImportModal()">
+          <i class="bi bi-file-earmark-arrow-up me-2"></i>Import Initial Stock
+        </button>
+      </div>
+    </div>
+
+    <!-- Main Stock Ledger Table -->
+    <div class="table-responsive">
+      <table class="table table-hover table-bordered align-middle mb-0">
+        <thead class="table-dark">
+          <tr>
+            <th style="width: 4%; text-align: center;"><input type="checkbox" id="selectAllStock" class="form-check-input" onclick="App.Stock.toggleSelectAll(this)"></th>
+            <th style="width: 28%;">Item Name</th>
+            <th style="width: 12%;">Size</th>
+            <th style="width: 10%; text-align: center;">Initial Stock</th>
+            <th style="width: 10%; text-align: center;">Current Stock</th>
+            <th style="width: 9%; text-align: center;">Threshold</th>
+            <th style="width: 9%; text-align: center;">Status</th>
+            <th style="width: 10%; text-align: center;">Dead Stock</th>
+            <th style="width: 8%; text-align: center;">Actions</th>
+          </tr>
+        </thead>
+        <tbody id="stockTableBody">
+          <tr>
+            <td colspan="9" class="text-center p-4">Loading Stock Database...</td>
+          </tr>
+        </tbody>
+      </table>
+    </div>
+
+    <!-- Empty State -->
+    <div id="stockEmptyState" class="text-center p-5 border rounded-3 bg-white shadow-sm mt-3" style="display: none;">
+      <i class="bi bi-box-seam fs-1 text-muted d-block mb-3"></i>
+      <h5 class="fw-bold text-dark">No Stock Records Found</h5>
+      <p class="text-muted mb-0">Import initial stock by uploading a CSV or Excel file.</p>
+    </div>
+
+    <!-- Pagination -->
+    <div id="stockPagination" class="d-flex justify-content-between align-items-center mt-3 pt-3 border-top"></div>
+  </div>
+
+  <!-- WAREHOUSE POOL SUB-TAB -- placeholder this round; the real table
+       needs App.Process (Products & Processes round). switchSubTab()
+       still toggles the pill so the shell is visible. -->
+  <div id="warehousePoolSubTab" class="stock-sub-tab" style="display: none;">
+    <div class="dash-section text-center text-muted py-5">
+      <i class="bi bi-cone-striped fs-1 d-block mb-2"></i>
+      Warehouse Pool isn't wired up yet — the backend is ready, this screen lands with Products &amp; Processes.
+    </div>
+  </div>
+</div>
+
+<!-- Adjust Stock Modal -->
+<div class="modal fade" id="adjustStockModal" data-bs-backdrop="static" tabindex="-1" aria-hidden="true">
+  <div class="modal-dialog">
+    <div class="modal-content shadow-lg">
+      <div class="modal-header bg-dark text-white">
+        <h5 class="modal-title fw-bold" style="font-family: 'Outfit', sans-serif;">
+          <i class="bi bi-pencil-square me-2"></i>Adjust Stock
+        </h5>
+        <button type="button" class="btn-close btn-close-white" data-bs-dismiss="modal"></button>
+      </div>
+      <div class="modal-body bg-light">
+        <div class="alert alert-warning py-2" role="alert" style="font-size: 13px;">
+          <i class="bi bi-exclamation-triangle-fill me-2"></i>Use this only to correct stock errors (e.g. after a physical recount). The correction is logged in the audit log.
+        </div>
+
+        <form id="adjustStockForm" onsubmit="App.Stock.handleAdjustSubmit(event)">
+          <input type="hidden" id="adjustStockName">
+          <input type="hidden" id="adjustStockSize">
+          <div class="mb-3">
+            <label class="form-label fw-bold">Item</label>
+            <input type="text" id="adjustStockItemLabel" class="form-control" readonly>
+          </div>
+          <div class="mb-3">
+            <label class="form-label fw-bold">Current Stock (system value)</label>
+            <input type="text" id="adjustStockOldValue" class="form-control" readonly>
+          </div>
+          <div class="mb-3">
+            <label for="adjustStockNewValue" class="form-label fw-bold">Corrected Stock Value</label>
+            <input type="number" id="adjustStockNewValue" class="form-control" required>
+          </div>
+          <div class="mb-3">
+            <label for="adjustStockReason" class="form-label fw-bold">Reason for Adjustment</label>
+            <textarea id="adjustStockReason" class="form-control" rows="2" placeholder="e.g. Physical recount found 49 units" required></textarea>
+          </div>
+          <div class="text-end mt-4">
+            <button type="button" class="btn btn-secondary me-2" data-bs-dismiss="modal">Cancel</button>
+            <button type="submit" id="adjustStockSubmitBtn" class="btn btn-warning px-4 fw-bold shadow-sm">
+              Save Correction
+            </button>
+          </div>
+        </form>
+      </div>
+    </div>
+  </div>
+</div>
+
+<!-- Import Stock Modal -->
+<div class="modal fade" id="importStockModal" data-bs-backdrop="static" tabindex="-1" aria-hidden="true">
+  <div class="modal-dialog">
+    <div class="modal-content shadow-lg">
+      <div class="modal-header bg-dark text-white">
+        <h5 class="modal-title fw-bold" style="font-family: 'Outfit', sans-serif;">
+          <i class="bi bi-file-earmark-excel me-2"></i>Import Initial Stock
+        </h5>
+        <button type="button" class="btn-close btn-close-white" data-bs-dismiss="modal"></button>
+      </div>
+      <div class="modal-body bg-light">
+        <div class="alert alert-info py-2" role="alert" style="font-size: 13px;">
+          <i class="bi bi-info-circle-fill me-2"></i><strong>File Format Requirements</strong>:
+          <ul class="mb-0 mt-1 pl-3">
+            <li>Supports <strong>.csv</strong>, <strong>.xlsx</strong>, or <strong>.xls</strong> files.</li>
+            <li>Headers must include: <strong>Item Name</strong>, <strong>Size</strong>, and <strong>Quantity</strong>.</li>
+            <li>Existing item records will update their initial stock values (preserving thresholds).</li>
+            <li>New items will be added to the stock registry.</li>
+          </ul>
+        </div>
+
+        <form id="stockImportForm" onsubmit="App.Stock.handleImport(event)">
+          <div class="mb-3">
+            <label for="stockFileInput" class="form-label fw-bold">Select File</label>
+            <input type="file" id="stockFileInput" class="form-control" accept=".csv, .xlsx, .xls" required>
+          </div>
+          <div class="text-end mt-4">
+            <button type="button" class="btn btn-secondary me-2" data-bs-dismiss="modal">Cancel</button>
+            <button type="submit" id="stockImportSubmitBtn" class="btn btn-success px-4 fw-bold shadow-sm">
+              Start Import
+            </button>
+          </div>
+        </form>
+      </div>
+    </div>
+  </div>
+</div>
+
+<!-- Dead Stock Dialog -->
+<div class="modal fade" id="deadStockModal" tabindex="-1" aria-hidden="true">
+  <div class="modal-dialog modal-lg modal-fullscreen-sm-down">
+    <div class="modal-content shadow-lg">
+      <div class="modal-header bg-secondary text-white">
+        <h5 class="modal-title fw-bold" style="font-family: 'Outfit', sans-serif;">
+          <i class="bi bi-x-circle me-2"></i>Dead Stock Items
+        </h5>
+        <button type="button" class="btn-close btn-close-white" data-bs-dismiss="modal"></button>
+      </div>
+      <div class="modal-body bg-light">
+        <div class="alert alert-secondary py-2 mb-3" role="alert" style="font-size: 13px;">
+          <i class="bi bi-info-circle-fill me-2"></i>Items checked as dead stock below. Uncheck a row in the stock table to remove an item from this list.
+        </div>
+        <div class="table-responsive">
+          <table class="table table-bordered bg-white shadow-sm table-hover mb-0">
+            <thead class="table-secondary">
+              <tr>
+                <th style="width: 40%;">Item Name</th>
+                <th style="width: 20%;">Size</th>
+                <th style="width: 20%; text-align: center;">Current Stock</th>
+                <th style="width: 20%; text-align: center;">Action</th>
+              </tr>
+            </thead>
+            <tbody id="deadStockModalBody">
+              <tr><td colspan="4" class="text-center text-muted p-4">No dead stock items found.</td></tr>
+            </tbody>
+          </table>
+        </div>
+      </div>
+      <div class="modal-footer">
+        <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Close</button>
+      </div>
+    </div>
+  </div>
+</div>
+
+<!-- Unit Master Modal -->
+<div class="modal fade" id="unitModal" tabindex="-1" aria-hidden="true">
+  <div class="modal-dialog modal-lg modal-fullscreen-sm-down">
+    <div class="modal-content shadow-lg">
+      <div class="modal-header bg-info text-dark">
+        <h5 class="modal-title fw-bold">Unit Master &mdash; Conversion Table</h5>
+        <button type="button" class="btn-close" data-bs-dismiss="modal"></button>
+      </div>
+      <div class="modal-body bg-light">
+        <p class="text-muted small">
+          Units in the same Family convert to each other by a fixed ratio (Factor to Base).
+          The Family's base unit (e.g. Pcs for Count, Gram for Weight) has Factor 1.
+        </p>
+        <h6 class="text-secondary border-bottom pb-1 fw-bold" id="unitFormTitle">Add Unit</h6>
+        <form id="unitForm" class="row g-2 align-items-end mb-4" autocomplete="off">
+          <input type="hidden" id="originalUnitName" name="originalUnitName">
+          <div class="col-md-3">
+            <label class="form-label small">Unit Name *</label>
+            <input type="text" name="unitName" id="formUnitName" class="form-control" required maxlength="50">
+          </div>
+          <div class="col-md-3">
+            <label class="form-label small">Family *</label>
+            <input type="text" name="family" id="formUnitFamily" class="form-control" list="unitFamilyList" required maxlength="50" placeholder="Count, Weight, Volume...">
+            <datalist id="unitFamilyList"></datalist>
+          </div>
+          <div class="col-md-2">
+            <label class="form-label small">Factor to Base *</label>
+            <input type="number" name="factorToBase" id="formUnitFactor" class="form-control" required min="0.0001" step="any">
+          </div>
+          <div class="col-md-3">
+            <label class="form-label small">Remarks</label>
+            <input type="text" name="remarks" id="formUnitRemarks" class="form-control" maxlength="200">
+          </div>
+          <div class="col-md-1 d-flex">
+            <button type="submit" id="unitSubmitBtn" class="btn btn-info fw-bold text-dark w-100">Save</button>
+          </div>
+        </form>
+
+        <div class="mb-2">
+          <input type="text" id="unitMasterSearch" class="form-control" placeholder="Search units..." autocomplete="off" onkeyup="App.Unit.renderTable()">
+        </div>
+        <div class="table-responsive mb-3">
+          <table class="table table-bordered bg-white shadow-sm align-middle">
+            <thead class="table-light">
+              <tr>
+                <th>Unit Name</th>
+                <th>Family</th>
+                <th style="width:20%;">Factor to Base</th>
+                <th>Remarks</th>
+                <th style="width:10%;">Actions</th>
+              </tr>
+            </thead>
+            <tbody id="unitTableBody"></tbody>
+          </table>
+        </div>
+      </div>
+    </div>
+  </div>
+</div>
+
+<!-- Color Master Modal -->
+<div class="modal fade" id="colorMasterModal" tabindex="-1" aria-hidden="true">
+  <div class="modal-dialog modal-lg modal-fullscreen-sm-down">
+    <div class="modal-content shadow-lg">
+      <div class="modal-header bg-info text-dark">
+        <h5 class="modal-title fw-bold">Color Master</h5>
+        <button type="button" class="btn-close" data-bs-dismiss="modal"></button>
+      </div>
+      <div class="modal-body bg-light">
+        <p class="text-muted small">
+          Colors used as suggestions on BOM components and Production logging. Free text is still
+          accepted everywhere &mdash; this just keeps spelling consistent (e.g. always "Red", never "red ").
+        </p>
+        <button type="button" class="btn btn-sm btn-outline-primary mb-3" onclick="App.Color.autoExtract()" title="Detects dual/multi-color variants in Item Master (e.g. Red-White) built from colors already listed below, and adds any new combination as one entry">
+          <i class="bi bi-magic"></i> Detect Color Combinations from Item Master
+        </button>
+
+        <h6 class="text-secondary border-bottom pb-1 fw-bold" id="colorMasterFormTitle">Add Color</h6>
+        <form id="colorMasterForm" class="row g-2 align-items-end mb-4" autocomplete="off">
+          <input type="hidden" id="originalColorName" name="originalName">
+          <div class="col-md-4">
+            <label class="form-label small">Color Name *</label>
+            <input type="text" name="name" id="formColorName" class="form-control" required maxlength="50">
+          </div>
+          <div class="col-md-6">
+            <label class="form-label small">Remarks</label>
+            <input type="text" name="remarks" id="formColorRemarks" class="form-control" maxlength="200">
+          </div>
+          <div class="col-md-2 d-flex">
+            <button type="submit" id="colorMasterSubmitBtn" class="btn btn-info fw-bold text-dark w-100">Save</button>
+          </div>
+        </form>
+
+        <div class="mb-2">
+          <input type="text" id="colorMasterSearch" class="form-control" placeholder="Search colors..." autocomplete="off" onkeyup="App.Color.renderTable()">
+        </div>
+        <div class="table-responsive mb-3">
+          <table class="table table-bordered bg-white shadow-sm align-middle">
+            <thead class="table-light">
+              <tr>
+                <th style="width:8%;">#</th>
+                <th>Color</th>
+                <th>Remarks</th>
+                <th style="width:10%;">Actions</th>
+              </tr>
+            </thead>
+            <tbody id="colorMasterTableBody"></tbody>
+          </table>
+        </div>
+      </div>
+    </div>
+  </div>
+</div>
+
+<!-- Model Master Modal -->
+<div class="modal fade" id="modelMasterModal" tabindex="-1" aria-hidden="true">
+  <div class="modal-dialog modal-lg modal-fullscreen-sm-down">
+    <div class="modal-content shadow-lg">
+      <div class="modal-header bg-info text-dark">
+        <h5 class="modal-title fw-bold">Model Master</h5>
+        <button type="button" class="btn-close" data-bs-dismiss="modal"></button>
+      </div>
+      <div class="modal-body bg-light">
+        <p class="text-muted small">
+          Models used as suggestions for a Product/BOM's name. Free text is still accepted when
+          creating a Product &mdash; this just keeps spelling consistent across color variants of the same Model.
+        </p>
+        <h6 class="text-secondary border-bottom pb-1 fw-bold" id="modelMasterFormTitle">Add Model</h6>
+        <form id="modelMasterForm" class="row g-2 align-items-end mb-4" autocomplete="off">
+          <input type="hidden" id="originalModelName" name="originalName">
+          <div class="col-md-4">
+            <label class="form-label small">Model Name *</label>
+            <input type="text" name="name" id="formModelName" class="form-control" required maxlength="100">
+          </div>
+          <div class="col-md-6">
+            <label class="form-label small">Remarks</label>
+            <input type="text" name="remarks" id="formModelRemarks" class="form-control" maxlength="200">
+          </div>
+          <div class="col-md-2 d-flex">
+            <button type="submit" id="modelMasterSubmitBtn" class="btn btn-info fw-bold text-dark w-100">Save</button>
+          </div>
+        </form>
+
+        <div class="mb-2">
+          <input type="text" id="modelMasterSearch" class="form-control" placeholder="Search models..." autocomplete="off" onkeyup="App.Model.renderTable()">
+        </div>
+        <div class="table-responsive mb-3">
+          <table class="table table-bordered bg-white shadow-sm align-middle">
+            <thead class="table-light">
+              <tr>
+                <th>Model</th>
+                <th>Remarks</th>
+                <th style="width:10%;">Actions</th>
+              </tr>
+            </thead>
+            <tbody id="modelMasterTableBody"></tbody>
+          </table>
+        </div>
+      </div>
+    </div>
+  </div>
+</div>
+
+<!-- Process Type Master Modal -->
+<div class="modal fade" id="processTypeMasterModal" tabindex="-1" aria-hidden="true">
+  <div class="modal-dialog modal-lg modal-fullscreen-sm-down">
+    <div class="modal-content shadow-lg">
+      <div class="modal-header bg-info text-dark">
+        <h5 class="modal-title fw-bold">Process Type Master</h5>
+        <button type="button" class="btn-close" data-bs-dismiss="modal"></button>
+      </div>
+      <div class="modal-body bg-light">
+        <div class="d-flex justify-content-between align-items-start gap-2 mb-2">
+          <p class="text-muted small mb-0">
+            Categories used to group Processes (e.g. Painting, Welding, Assembly) in the Processes table.
+            Leaving a Process's Process Type blank groups it under "General".
+          </p>
+          <button type="button" class="btn btn-outline-dark btn-sm fw-bold text-nowrap" onclick="App.ProcessType.importFromProcessNames()" title="Re-matches every Process's Process Type against the names listed here, based on whichever name is a substring of its Process Name">
+            <i class="bi bi-magic"></i> Import from Process Name
+          </button>
+        </div>
+        <h6 class="text-secondary border-bottom pb-1 fw-bold" id="processTypeMasterFormTitle">Add Process Type</h6>
+        <form id="processTypeMasterForm" class="row g-2 align-items-end mb-4" autocomplete="off">
+          <input type="hidden" id="originalProcessTypeName" name="originalName">
+          <div class="col-md-4">
+            <label class="form-label small">Process Type Name *</label>
+            <input type="text" name="name" id="formProcessTypeName" class="form-control" required maxlength="100">
+          </div>
+          <div class="col-md-6">
+            <label class="form-label small">Remarks</label>
+            <input type="text" name="remarks" id="formProcessTypeRemarks" class="form-control" maxlength="200">
+          </div>
+          <div class="col-md-2 d-flex">
+            <button type="submit" id="processTypeMasterSubmitBtn" class="btn btn-info fw-bold text-dark w-100">Save</button>
+          </div>
+        </form>
+
+        <div class="mb-2">
+          <input type="text" id="processTypeMasterSearch" class="form-control" placeholder="Search process types..." autocomplete="off" onkeyup="App.ProcessType.renderTable()">
+        </div>
+        <div class="table-responsive mb-3">
+          <table class="table table-bordered bg-white shadow-sm align-middle">
+            <thead class="table-light">
+              <tr>
+                <th>Process Type</th>
+                <th>Remarks</th>
+                <th style="width:10%;">Actions</th>
+              </tr>
+            </thead>
+            <tbody id="processTypeMasterTableBody"></tbody>
+          </table>
+        </div>
+      </div>
+    </div>
+  </div>
+</div>
