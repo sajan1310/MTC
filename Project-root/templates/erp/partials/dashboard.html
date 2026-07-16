@@ -1,0 +1,247 @@
+<!--
+  Dashboard tab, transcribed from Apps_Script/View_Dashboard.html.
+
+  Quick Actions buttons that would call into a not-yet-ported module
+  (App.PO.openCreateModal(), etc.) use data-action="not-ported-yet"
+  instead of the source's literal onclick -- App.Utils.notPortedYet
+  (core.js) shows a toast instead of throwing. Un-comment / restore the
+  real onclick as each module's own frontend round lands.
+-->
+
+<div id="dashboardTab" class="tab-content active" role="tabpanel" aria-labelledby="btn-dashboardTab">
+
+  <!-- Refresh bar -->
+  <div class="d-flex justify-content-end align-items-center gap-2 mb-2">
+    <span id="dashboardLastUpdated" class="small text-muted">&nbsp;</span>
+    <button id="dashboardRefreshBtn" class="btn btn-sm btn-outline-secondary" onclick="App.Dashboard.loadData()" title="Refresh dashboard">
+      <i class="bi bi-arrow-clockwise"></i>
+    </button>
+  </div>
+
+  <!-- KPI cards -->
+  <div class="row row-cols-2 row-cols-lg-4 g-3 mb-4" id="dashboardKpiRow">
+    <div class="col">
+      <div class="dash-kpi-card" data-action="show-tab" data-tab="poLedger" role="button" tabindex="0">
+        <div class="dash-kpi-goto"><i class="bi bi-chevron-right"></i></div>
+        <div class="dash-kpi-top">
+          <div class="dash-kpi-icon bg-primary"><i class="bi bi-file-earmark-text"></i></div>
+          <div class="dash-kpi-label">Open POs</div>
+        </div>
+        <div class="dash-kpi-value" id="kpiOpenPoCount">–</div>
+        <div class="dash-kpi-sub" id="kpiOpenPoValue">&nbsp;</div>
+      </div>
+    </div>
+    <div class="col">
+      <div class="dash-kpi-card" data-action="show-tab" data-tab="billLedger" role="button" tabindex="0">
+        <div class="dash-kpi-goto"><i class="bi bi-chevron-right"></i></div>
+        <div class="dash-kpi-top">
+          <div class="dash-kpi-icon bg-info"><i class="bi bi-receipt"></i></div>
+          <div class="dash-kpi-label">Bills This Month</div>
+        </div>
+        <div class="dash-kpi-value" id="kpiBillsMonthCount">–</div>
+        <div class="dash-kpi-sub" id="kpiBillsMonthValue">&nbsp;</div>
+      </div>
+    </div>
+    <div class="col">
+      <div class="dash-kpi-card" data-action="show-tab" data-tab="stockTab" role="button" tabindex="0">
+        <div class="dash-kpi-goto"><i class="bi bi-chevron-right"></i></div>
+        <div class="dash-kpi-top">
+          <div class="dash-kpi-icon bg-danger"><i class="bi bi-exclamation-triangle"></i></div>
+          <div class="dash-kpi-label">Stock Alerts</div>
+        </div>
+        <div class="dash-kpi-value" id="kpiLowStockCount">–</div>
+        <div class="dash-kpi-sub" id="kpiLowStockSub">&nbsp;</div>
+      </div>
+    </div>
+    <div class="col">
+      <div class="dash-kpi-card" data-action="show-tab" data-tab="productionTab" role="button" tabindex="0">
+        <div class="dash-kpi-goto"><i class="bi bi-chevron-right"></i></div>
+        <div class="dash-kpi-top">
+          <div class="dash-kpi-icon bg-warning"><i class="bi bi-play-circle"></i></div>
+          <div class="dash-kpi-label">Pending Production</div>
+        </div>
+        <div class="dash-kpi-value" id="kpiPendingProduction">–</div>
+        <div class="dash-kpi-sub" id="kpiPendingProductionSub">&nbsp;</div>
+      </div>
+    </div>
+    <div class="col">
+      <div class="dash-kpi-card" data-action="show-tab" data-tab="dispatchTab" role="button" tabindex="0">
+        <div class="dash-kpi-goto"><i class="bi bi-chevron-right"></i></div>
+        <div class="dash-kpi-top">
+          <div class="dash-kpi-icon bg-success"><i class="bi bi-truck"></i></div>
+          <div class="dash-kpi-label">Ready to Dispatch</div>
+        </div>
+        <div class="dash-kpi-value" id="kpiReadyDispatch">–</div>
+        <div class="dash-kpi-sub" id="kpiReadyDispatchSub">&nbsp;</div>
+      </div>
+    </div>
+    <div class="col">
+      <div class="dash-kpi-card" data-action="show-tab" data-tab="contractorsTab" role="button" tabindex="0">
+        <div class="dash-kpi-goto"><i class="bi bi-chevron-right"></i></div>
+        <div class="dash-kpi-top">
+          <div class="dash-kpi-icon bg-secondary"><i class="bi bi-person-badge"></i></div>
+          <div class="dash-kpi-label">Contractor Payables</div>
+        </div>
+        <div class="dash-kpi-value" id="kpiContractorPayables">–</div>
+        <div class="dash-kpi-sub" id="kpiContractorPayablesSub">&nbsp;</div>
+      </div>
+    </div>
+    <div class="col">
+      <div class="dash-kpi-card" data-action="show-tab" data-tab="returnLedger" role="button" tabindex="0">
+        <div class="dash-kpi-goto"><i class="bi bi-chevron-right"></i></div>
+        <div class="dash-kpi-top">
+          <div class="dash-kpi-icon bg-danger"><i class="bi bi-arrow-return-left"></i></div>
+          <div class="dash-kpi-label">Returns This Month</div>
+        </div>
+        <div class="dash-kpi-value" id="kpiReturnsMonthCount">–</div>
+        <div class="dash-kpi-sub" id="kpiReturnsMonthSub">&nbsp;</div>
+      </div>
+    </div>
+    <div class="col">
+      <div class="dash-kpi-card" data-action="show-tab" data-tab="returnLedger" role="button" tabindex="0">
+        <div class="dash-kpi-goto"><i class="bi bi-chevron-right"></i></div>
+        <div class="dash-kpi-top">
+          <div class="dash-kpi-icon bg-dark"><i class="bi bi-trash3"></i></div>
+          <div class="dash-kpi-label">Wastage This Month</div>
+        </div>
+        <div class="dash-kpi-value" id="kpiWastageMonthQty">–</div>
+        <div class="dash-kpi-sub" id="kpiWastageMonthSub">&nbsp;</div>
+      </div>
+    </div>
+  </div>
+
+  <!-- Quick Actions -->
+  <div class="dash-section mb-4">
+    <div class="dash-section-title">Quick Actions</div>
+    <div class="row row-cols-2 row-cols-sm-3 row-cols-lg-6 g-2">
+      <div class="col">
+        <button class="btn btn-success dash-action-tile w-100 h-100" data-action="not-ported-yet" data-feature="Create PO">
+          <i class="bi bi-plus-circle"></i><span>Create PO</span>
+        </button>
+      </div>
+      <div class="col">
+        <button class="btn btn-primary dash-action-tile w-100 h-100" data-action="not-ported-yet" data-feature="Receive Bill">
+          <i class="bi bi-receipt"></i><span>Receive Bill</span>
+        </button>
+      </div>
+      <div class="col">
+        <button class="btn btn-dark dash-action-tile w-100 h-100" data-action="not-ported-yet" data-feature="Log Production">
+          <i class="bi bi-play-circle"></i><span>Log Production</span>
+        </button>
+      </div>
+      <div class="col">
+        <button class="btn btn-dark dash-action-tile w-100 h-100" data-action="not-ported-yet" data-feature="Issue Stock">
+          <i class="bi bi-box-arrow-up"></i><span>Issue Stock</span>
+        </button>
+      </div>
+      <div class="col">
+        <button class="btn btn-secondary dash-action-tile w-100 h-100" data-action="not-ported-yet" data-feature="Log Wastage">
+          <i class="bi bi-trash3"></i><span>Log Wastage</span>
+        </button>
+      </div>
+      <div class="col">
+        <button class="btn btn-outline-danger dash-action-tile w-100 h-100" data-action="not-ported-yet" data-feature="Return Goods">
+          <i class="bi bi-arrow-return-left"></i><span>Return Goods</span>
+        </button>
+      </div>
+    </div>
+    <div class="d-flex flex-wrap justify-content-between align-items-center gap-2 dash-quick-secondary">
+      <button class="btn btn-outline-danger btn-sm fw-semibold" data-action="not-ported-yet" data-feature="Print Low Stock Report">
+        <i class="bi bi-printer me-1"></i>Print Low Stock Report
+      </button>
+      <div class="d-flex flex-wrap align-items-center gap-2">
+        <span class="dash-setup-label">Setup</span>
+        <button class="btn btn-outline-secondary btn-sm" data-action="not-ported-yet" data-feature="Item setup">
+          <i class="bi bi-box-seam me-1"></i>Item
+        </button>
+        <button class="btn btn-outline-secondary btn-sm" data-action="not-ported-yet" data-feature="Process setup">
+          <i class="bi bi-diagram-3 me-1"></i>Process
+        </button>
+        <button class="btn btn-outline-secondary btn-sm" data-action="not-ported-yet" data-feature="Vendor setup">
+          <i class="bi bi-people me-1"></i>Vendor
+        </button>
+      </div>
+    </div>
+  </div>
+
+  <!-- Process WIP Pipeline -->
+  <div class="dash-section mb-4">
+    <div class="dash-section-title">Process WIP Pipeline — Active Production Lots</div>
+    <div id="dashboardPipeline" class="dash-pipeline">
+      <div class="text-muted small">Loading pipeline…</div>
+    </div>
+  </div>
+
+  <!-- Charts -->
+  <div class="row g-3 mb-4">
+    <div class="col-lg-4">
+      <div class="dash-section h-100">
+        <div class="dash-section-title">Production Lot Status</div>
+        <div style="position:relative; height:260px;">
+          <canvas id="dashProductionStatusChart"></canvas>
+        </div>
+      </div>
+    </div>
+    <div class="col-lg-8">
+      <div class="dash-section h-100">
+        <div class="dash-section-title">Dispatch Volume — Last 30 Days</div>
+        <div style="position:relative; height:260px;">
+          <canvas id="dashDispatchTrendChart"></canvas>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- Tables -->
+  <div class="row g-3 mb-4">
+    <div class="col-lg-4">
+      <div class="dash-section h-100">
+        <div class="dash-section-title">Low Stock Items</div>
+        <div class="table-responsive">
+          <table class="table table-sm align-middle mb-0">
+            <thead>
+              <tr><th>Item</th><th>Size</th><th class="text-end">Current</th><th class="text-end">Threshold</th></tr>
+            </thead>
+            <tbody id="dashLowStockBody">
+              <tr><td colspan="4" class="text-muted text-center">Loading…</td></tr>
+            </tbody>
+          </table>
+        </div>
+        <div id="dashLowStockFooter" class="dash-table-footer"></div>
+      </div>
+    </div>
+    <div class="col-lg-4">
+      <div class="dash-section h-100">
+        <div class="dash-section-title">Ready to Dispatch</div>
+        <div class="table-responsive">
+          <table class="table table-sm align-middle mb-0">
+            <thead>
+              <tr><th>Product</th><th class="text-end">Ready Qty</th><th></th></tr>
+            </thead>
+            <tbody id="dashReadyToDispatchBody">
+              <tr><td colspan="3" class="text-muted text-center">Loading…</td></tr>
+            </tbody>
+          </table>
+        </div>
+        <div id="dashReadyToDispatchFooter" class="dash-table-footer"></div>
+      </div>
+    </div>
+    <div class="col-lg-4">
+      <div class="dash-section h-100">
+        <div class="dash-section-title">Contractor Payables Due</div>
+        <div class="table-responsive">
+          <table class="table table-sm align-middle mb-0">
+            <thead>
+              <tr><th>Contractor</th><th class="text-end">Balance Due</th></tr>
+            </thead>
+            <tbody id="dashContractorPayablesBody">
+              <tr><td colspan="2" class="text-muted text-center">Loading…</td></tr>
+            </tbody>
+          </table>
+        </div>
+        <div id="dashContractorPayablesFooter" class="dash-table-footer"></div>
+      </div>
+    </div>
+  </div>
+
+</div>
