@@ -505,6 +505,12 @@ TABLE_NAMES = {
     "CONTRACTORS": "erp.contractors",
     "CONTRACTOR_RATES": "erp.contractor_rates",
     "CONTRACTOR_PAYMENTS": "erp.contractor_payments",
+    # Activates three dormant cascades/guards: tags_service.
+    # _rename_color_everywhere, process_service.
+    # _rename_pool_output_item_name_everywhere, and process_service.
+    # _get_process_ids_in_use.
+    "WAREHOUSE_POOL_OPENING": "erp.warehouse_pool_opening",
+    "WAREHOUSE_POOL": "erp.warehouse_pool",
 }
 
 _CAMEL_BOUNDARY_RE = re.compile(r"(?<!^)(?=[A-Z])")
