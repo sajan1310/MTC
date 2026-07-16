@@ -494,6 +494,12 @@ TABLE_NAMES = {
     "WASTAGE_LINES": "erp.wastage_lines",
     "ISSUE_HEADERS": "erp.issue_headers",
     "ISSUE_LINES": "erp.issue_lines",
+    "BOM_PRODUCTS": "erp.bom_products",
+    "BOM_LINES": "erp.bom_lines",
+    # Registered now (table doesn't exist as a rename target until
+    # Contractors lands) so that round's _rename_contractor_everywhere can
+    # find it by this predictable key with zero code changes then.
+    "BOM_ADDITIONAL_COSTS": "erp.bom_additional_costs",
 }
 
 _CAMEL_BOUNDARY_RE = re.compile(r"(?<!^)(?=[A-Z])")

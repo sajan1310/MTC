@@ -145,9 +145,10 @@ def _get_process_ids_in_use(cur, process_ids: list) -> set:
     """Lower-cased Process IDs referenced by a Production lot, a Product's
     BOM component group, or a Warehouse Pool Opening balance -- unsafe to
     delete. Guarded via config_maps.TABLE_NAMES exactly like every other
-    delete-guard in this codebase: PRODUCTION/BOM/WAREHOUSE_POOL_OPENING
-    aren't registered yet, so this never blocks anything today (correct,
-    since nothing can reference a process yet either).
+    delete-guard in this codebase: PRODUCTION/WAREHOUSE_POOL_OPENING aren't
+    registered yet, so those never block anything today (correct, since
+    nothing can reference a process through them yet either); BOM is real
+    as of Phase 3c.
     """
     requested = {str(p or "").strip().lower() for p in process_ids if str(p or "").strip()}
     in_use: set = set()
@@ -162,9 +163,21 @@ def _get_process_ids_in_use(cur, process_ids: list) -> set:
             if pid in requested:
                 in_use.add(pid)
 
-    if table := config_maps.TABLE_NAMES.get("BOM"):
+    bom_lines_table = config_maps.TABLE_NAMES.get("BOM_LINES")
+    bom_products_table = config_maps.TABLE_NAMES.get("BOM_PRODUCTS")
+    if bom_lines_table and bom_products_table:
+        # erp.bom_lines has no deleted_at of its own -- join through its
+        # parent, same treatment as items_service._get_item_keys_in_use's
+        # BOM_LINES/PROCESS_COMPONENTS branches.
         col = config_maps.to_snake_case("processGroup")
-        cur.execute(f"SELECT DISTINCT {col} AS process_group FROM {table} WHERE deleted_at IS NULL")
+        cur.execute(
+            f"""
+            SELECT DISTINCT bl.{col} AS process_group
+            FROM {bom_lines_table} bl
+            JOIN {bom_products_table} bp ON bp.id = bl.header_id
+            WHERE bp.deleted_at IS NULL
+            """
+        )
         for row in cur.fetchall():
             pid = str(row["process_group"] or "").strip().lower()
             if pid in requested:

@@ -171,10 +171,8 @@ def lookup_item_unit_info(unit_map: dict, name: str, size: str) -> dict:
     return unit_map.get(key) or {"baseUnit": "Pcs", "purchaseUnit": "Pcs", "weightPerBaseUnit": 0}
 
 
-# BOM lands in its own round and starts cascading automatically once
-# registered in config_maps.TABLE_NAMES, no code changes needed here.
 def _propagate_item_identity_change(cur, old_name: str, old_size: str, new_name: str, new_size: str) -> None:
-    for sheet_key in ("PO_LINES", "BILL_LINES"):
+    for sheet_key in ("PO_LINES", "BILL_LINES", "BOM_LINES"):
         table = config_maps.TABLE_NAMES.get(sheet_key)
         if table:
             rename_utils.rename_composite_key(cur, table, "item_name", "size", old_name, old_size, new_name, new_size)
@@ -195,9 +193,8 @@ def _propagate_item_identity_change(cur, old_name: str, old_size: str, new_name:
 def _get_item_keys_in_use(cur, items: list) -> set:
     """"nameLower|sizeLower" keys referenced by a BOM component row or an
     ITEM-sourced Process Components row -- unsafe to delete. Guarded via
-    config_maps.TABLE_NAMES exactly like Phase 1a's rename cascades: BOM/
-    PROCESS_COMPONENTS aren't registered yet, so nothing is ever blocked
-    today (correct, since nothing can reference an item yet either).
+    config_maps.TABLE_NAMES exactly like Phase 1a's rename cascades; both
+    targets are real as of Phase 3c (BOM) and Phase 3a (Process Components).
     """
     requested = {
         f'{str(it.get("name") or "").strip().lower()}|{str(it.get("size") or "").strip().lower()}'
@@ -208,9 +205,19 @@ def _get_item_keys_in_use(cur, items: list) -> set:
     if not requested:
         return in_use
 
-    bom_table = config_maps.TABLE_NAMES.get("BOM")
-    if bom_table:
-        cur.execute(f"SELECT item_name, size FROM {bom_table} WHERE deleted_at IS NULL")
+    bom_lines_table = config_maps.TABLE_NAMES.get("BOM_LINES")
+    bom_products_table = config_maps.TABLE_NAMES.get("BOM_PRODUCTS")
+    if bom_lines_table and bom_products_table:
+        # erp.bom_lines has no deleted_at of its own -- same join-through-
+        # the-parent treatment as the PROCESS_COMPONENTS branch below.
+        cur.execute(
+            f"""
+            SELECT bl.item_name, bl.size
+            FROM {bom_lines_table} bl
+            JOIN {bom_products_table} bp ON bp.id = bl.header_id
+            WHERE bp.deleted_at IS NULL
+            """
+        )
         for row in cur.fetchall():
             key = f'{(row["item_name"] or "").strip().lower()}|{(row["size"] or "").strip().lower()}'
             if key in requested:

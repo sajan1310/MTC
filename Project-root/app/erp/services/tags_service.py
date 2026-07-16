@@ -124,11 +124,13 @@ def _delete_tag(conn, cur, sheet_key: str, label: str, name):
 
 
 # ─────────────────────────────────────────────────────────────────────────
-# Rename cascades. Every target table below doesn't exist yet (Process
-# Components/BOM/Warehouse Pool Opening/Process Color Links/Production/
-# Process Master all land in later phases) -- rename_utils skips silently
-# via to_regclass() until config_maps.TABLE_NAMES registers each one, at
-# which point these cascades start working with no further changes needed.
+# Rename cascades. Written against every target table up front, guarded via
+# config_maps.TABLE_NAMES -- rename_utils skips silently via to_regclass()
+# for any table not yet registered, so each target starts working with no
+# further changes needed the moment its own phase lands. PROCESS_COMPONENTS/
+# PROCESS_COLOR_LINKS/PROCESS_MASTER (Phase 3a) and BOM_LINES (Phase 3c) are
+# real now; WAREHOUSE_POOL_OPENING and Production's COLOR/COLOR_BREAKDOWN
+# (structured, not a plain column rename -- see below) still aren't.
 # ─────────────────────────────────────────────────────────────────────────
 
 
@@ -141,7 +143,7 @@ def _rename_color_everywhere(cur, old_name: str, new_name: str) -> None:
     if table := config_maps.TABLE_NAMES.get("PROCESS_COMPONENTS"):
         rename_utils.rename_in_column(cur, table, config_maps.to_snake_case("colorGroup"), old, new)
 
-    if table := config_maps.TABLE_NAMES.get("BOM"):
+    if table := config_maps.TABLE_NAMES.get("BOM_LINES"):
         rename_utils.rename_in_column(cur, table, "color", old, new)
 
     if table := config_maps.TABLE_NAMES.get("WAREHOUSE_POOL_OPENING"):
