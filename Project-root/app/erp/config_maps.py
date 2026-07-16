@@ -519,6 +519,15 @@ TABLE_NAMES = {
     # warehouse_service._recalculate_warehouse_pool's Pass 3 -- all guarded
     # no-ops until now.
     "DISPATCH": "erp.dispatch",
+    "CLIENTS": "erp.clients",
+    # Activates bom_service._get_product_ids_in_use's Client Orders leg and
+    # dispatch_service._get_client_order_line_qty -- both guarded no-ops
+    # until now. Header-level (date/client/status/remarks) vs line-level
+    # (product/qty/remarks/pushed-flag) fields live on different tables,
+    # same split as PO_HEADERS/PO_LINES and BOM_PRODUCTS/BOM_LINES -- no
+    # flat "CLIENT_ORDERS" key exists.
+    "CLIENT_ORDERS_HEADERS": "erp.client_orders_headers",
+    "CLIENT_ORDERS_LINES": "erp.client_orders_lines",
 }
 
 _CAMEL_BOUNDARY_RE = re.compile(r"(?<!^)(?=[A-Z])")

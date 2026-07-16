@@ -204,21 +204,35 @@ def _get_product_ids_in_use(cur, product_ids: list) -> set:
     """Lower-cased Product IDs referenced by a Production lot, a Client
     Order, or a Dispatch record -- unsafe to delete. Guarded via
     config_maps.TABLE_NAMES exactly like process_service.
-    _get_process_ids_in_use: none of PRODUCTION/CLIENT_ORDERS/DISPATCH are
-    registered yet, so this never blocks anything today (correct, since
-    nothing can reference a product through them yet either).
+    _get_process_ids_in_use.
     """
     requested = {str(p or "").strip().lower() for p in product_ids if str(p or "").strip()}
     in_use: set = set()
     if not requested:
         return in_use
 
-    for sheet_key in ("PRODUCTION", "CLIENT_ORDERS", "DISPATCH"):
+    col = config_maps.to_snake_case("productId")
+
+    for sheet_key in ("PRODUCTION", "DISPATCH"):
         table = config_maps.TABLE_NAMES.get(sheet_key)
         if not table:
             continue
-        col = config_maps.to_snake_case("productId")
         cur.execute(f"SELECT DISTINCT {col} AS product_id FROM {table} WHERE deleted_at IS NULL")
+        for row in cur.fetchall():
+            pid = str(row["product_id"] or "").strip().lower()
+            if pid in requested:
+                in_use.add(pid)
+
+    # Client Orders is header+lines split (product_id is a line-level
+    # column) -- a join against the header for deleted_at, not the flat
+    # single-table loop above.
+    lines_table = config_maps.TABLE_NAMES.get("CLIENT_ORDERS_LINES")
+    headers_table = config_maps.TABLE_NAMES.get("CLIENT_ORDERS_HEADERS")
+    if lines_table and headers_table:
+        cur.execute(
+            f"SELECT DISTINCT l.{col} AS product_id FROM {lines_table} l "
+            f"JOIN {headers_table} h ON h.id = l.header_id WHERE h.deleted_at IS NULL"
+        )
         for row in cur.fetchall():
             pid = str(row["product_id"] or "").strip().lower()
             if pid in requested:

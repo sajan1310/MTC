@@ -23,11 +23,11 @@ for the product, and -- if an Order Number is given -- against that
 specific PI/Estimate line's own remaining qty, so one dispatch can't
 over-fulfill a small order using stock really earmarked for a different
 order of the same product. _get_client_order_line_qty is guarded via
-TABLE_NAMES.get("CLIENT_ORDERS") (unregistered until Clients ships, so
-this is a genuine no-op today -- same graceful-degradation source itself
-has when the Client Orders sheet doesn't exist yet), written now with
-real to_snake_case(...) column derivation from CLIENT_ORDERS_COL_NAMES
-so it activates automatically with zero changes once Clients lands.
+TABLE_NAMES.get("CLIENT_ORDERS_HEADERS"/"_LINES") -- real as of Phase 4b
+(Clients). Originally written in this phase against a flat single-table
+assumption; fixed to the real header+lines join once Clients decided the
+schema, the same "flat key" mistake this project has hit and fixed
+before finalizing other denormalized sheets.
 
 Logistics Contractor rate is snapshotted via contractors_service.
 _get_contractor_rate(name, config_maps.LOGISTICS_PROCESS_NAME) -- an
@@ -134,20 +134,24 @@ def _compute_ready_to_dispatch_map(cur) -> dict:
 def _get_client_order_line_qty(cur, order_number: str, product_id: str):
     """Sums Qty Ordered across every Client Orders line matching (order,
     product) case-insensitively. Returns None if no such line exists at
-    all (order/product not found, or the table doesn't exist yet), which
-    callers use to distinguish "nothing to check against" from "0
-    remaining".
+    all (order/product not found, or Client Orders doesn't exist yet),
+    which callers use to distinguish "nothing to check against" from "0
+    remaining". Client Orders is header+lines split (order_number is
+    header-level, product_id/qty are line-level) -- a join, not a flat
+    single-table lookup.
     """
-    table = config_maps.TABLE_NAMES.get("CLIENT_ORDERS")
-    if not table:
+    headers_table = config_maps.TABLE_NAMES.get("CLIENT_ORDERS_HEADERS")
+    lines_table = config_maps.TABLE_NAMES.get("CLIENT_ORDERS_LINES")
+    if not headers_table or not lines_table:
         return None
 
     order_col = config_maps.to_snake_case("orderNumber")
     product_col = config_maps.to_snake_case("productId")
     qty_col = config_maps.to_snake_case("qty")
     cur.execute(
-        f"SELECT {qty_col} AS qty FROM {table} WHERE deleted_at IS NULL "
-        f"AND lower({order_col}) = lower(%s) AND lower({product_col}) = lower(%s)",
+        f"SELECT l.{qty_col} AS qty FROM {lines_table} l "
+        f"JOIN {headers_table} h ON h.id = l.header_id "
+        f"WHERE h.deleted_at IS NULL AND lower(h.{order_col}) = lower(%s) AND lower(l.{product_col}) = lower(%s)",
         (order_number, product_id),
     )
     rows = cur.fetchall()
