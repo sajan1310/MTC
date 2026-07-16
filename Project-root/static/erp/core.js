@@ -106,15 +106,26 @@ const App = {
     // PO Ledger's own pagination/filter/selection state (Script_PO.html).
     filteredPOs: [],
     poCurrentPage: 1,
-    poRowsPerPage: 25,
+    poRowsPerPage: 15,
     poSearchTerm: '',
     poDateFilter: '',
-    poStatusFilter: '',
-    poSortBy: 'date-desc',
+    poStatusFilter: 'all',
+    poSortBy: 'poNumberDesc',
     selectedPOs: [],
     allPendingPOs: [],
     filteredPendingPOs: [],
-    rowSeq: 0
+    rowSeq: 0,
+
+    // Bill Ledger's own pagination/filter/selection state (Script_Bill.html).
+    filteredBills: [],
+    billCurrentPage: 1,
+    billRowsPerPage: 15,
+    billSearchTerm: '',
+    billDateFilter: '',
+    billSortBy: 'dateDesc',
+    selectedBills: [],
+    billAutoMatchTimer: null,
+    billAutoMatchPromise: null
   },
 
   // ── Bulk Selection Helpers ────────────────────────────────────────────
@@ -435,6 +446,7 @@ const App = {
       if (id === 'vendorMaster' && typeof App.Vendor !== 'undefined') App.Vendor.loadData();
       if (id === 'itemMaster' && typeof App.Item !== 'undefined') App.Item.loadData();
       if (id === 'poLedger' && typeof App.PO !== 'undefined') App.PO.loadData();
+      if (id === 'billLedger' && typeof App.Bill !== 'undefined') App.Bill.loadData();
       // Every other module's own `if (id === '<tab>') App.<Module>.loadData();`
       // line lands here in that module's own round -- same guarded pattern
       // Navigation.showTab already used in source for not-yet-loaded modules.
@@ -464,6 +476,11 @@ const App = {
     if (this.PO) {
       labels.push('PO');
       promises.push(this.PO.loadData());
+    }
+
+    if (this.Bill) {
+      labels.push('Bill');
+      promises.push(this.Bill.loadData());
     }
 
     const results = await Promise.allSettled(promises);
@@ -542,6 +559,18 @@ function bindGlobalEvents() {
         break;
       case 'po-page':
         App.PO.changePage(toNumber(btn.dataset.page, 1));
+        break;
+      case 'bill-print':
+        App.Bill.print(toNumber(btn.dataset.index));
+        break;
+      case 'bill-edit':
+        App.Bill.openEditModal(toNumber(btn.dataset.index));
+        break;
+      case 'bill-delete':
+        App.Bill.delete(decodeURIComponent(btn.dataset.vendor || ''), decodeURIComponent(btn.dataset.billnumber || ''));
+        break;
+      case 'bill-page':
+        App.Bill.changePage(toNumber(btn.dataset.page, 1));
         break;
     }
   });
