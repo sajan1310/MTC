@@ -76,6 +76,20 @@ function formatCurrency(value) {
   return `₹${toNumber(value).toFixed(2)}`;
 }
 
+// Resolves a sortable Date from a record's ISO timestamp, falling back to
+// its DD/MM/YYYY display date (e.g. PO/Bill poDate/billDate fields).
+function parseRecordDate(rawIso, displayDate) {
+  if (rawIso) {
+    const fromRaw = new Date(rawIso);
+    if (!isNaN(fromRaw.getTime())) return fromRaw;
+  }
+  const parts = String(displayDate || '').split('/');
+  if (parts.length === 3) {
+    return new Date(parts.reverse().join('-'));
+  }
+  return new Date(NaN);
+}
+
 // Ported from Script_Production.html's App.Production.formatQty -- trims
 // trailing zeros after fixing to 4 decimals. Lives here (not in a
 // production.js that doesn't exist yet) since it's a pure numeric

@@ -187,13 +187,13 @@
       <div id="content" class="tab-content-wrapper">
 
         {% include "erp/partials/dashboard.html" %}
+        {% include "erp/partials/vendors.html" %}
 
         {% for tab_id, label in [
           ('poLedger', 'Purchase Orders'),
           ('billLedger', 'Bill Ledger'),
           ('returnLedger', 'Returns'),
           ('itemMaster', 'Items Master'),
-          ('vendorMaster', 'Vendors'),
           ('stockTab', 'Stock'),
           ('productsTab', 'Products & Processes'),
           ('contractorsTab', 'Contractors'),
@@ -224,6 +224,7 @@
   <script src="{{ url_for('static', filename='erp/api.js') }}"></script>
   <script src="{{ url_for('static', filename='erp/core.js') }}"></script>
   <script src="{{ url_for('static', filename='erp/dashboard.js') }}"></script>
+  <script src="{{ url_for('static', filename='erp/vendors.js') }}"></script>
 
 </body>
 </html>

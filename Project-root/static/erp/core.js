@@ -73,8 +73,68 @@ document.addEventListener('hidden.bs.modal', () => {
 const App = {
   companyLogo: null,
 
+  // Forward-declared empty arrays for globals other not-yet-ported modules
+  // will own (globalPOs/globalBills/globalReturns/globalIssues/globalItems)
+  // -- Vendor's ledger/pending-orders calculation reads these defensively
+  // (`App.State.globalPOs || []`, matching source's own guard style for
+  // globalReturns/globalIssues), so declaring them now means each of those
+  // modules' own future round just overwrites the array with real data and
+  // the ledger starts working with zero further changes here. Same
+  // guard-now-activate-later shape the backend port used throughout.
   State: {
-    confirmCallback: null
+    confirmCallback: null,
+    globalPOs: [],
+    globalBills: [],
+    globalReturns: [],
+    globalIssues: [],
+    globalItems: []
+  },
+
+  // ── Bulk Selection Helpers ────────────────────────────────────────────
+  // Generic helpers shared by every tab's "Delete Selected" / "Print
+  // Selected" checkbox columns. Selection state is a plain array of
+  // string keys (vendor names, PO numbers, row indexes, etc.).
+  Selection: {
+    toggle(arr, key, isSelected) {
+      const idx = arr.indexOf(key);
+      if (isSelected) {
+        if (idx === -1) arr.push(key);
+      } else if (idx !== -1) {
+        arr.splice(idx, 1);
+      }
+    },
+
+    isSelected(arr, key) {
+      return arr.indexOf(key) !== -1;
+    },
+
+    toggleAll(arr, chkClass, masterChk) {
+      const isChecked = masterChk.checked;
+      $$('.' + chkClass).forEach(chk => {
+        chk.checked = isChecked;
+        this.toggle(arr, chk.dataset.key, isChecked);
+      });
+    },
+
+    syncFromRows(arr, chkClass, selectAllId) {
+      const checkboxes = $$('.' + chkClass);
+      checkboxes.forEach(chk => this.toggle(arr, chk.dataset.key, chk.checked));
+      const selectAllChk = document.getElementById(selectAllId);
+      if (selectAllChk) {
+        selectAllChk.checked = checkboxes.length > 0 && checkboxes.every(chk => chk.checked);
+      }
+    },
+
+    updateButton(btnId, count, label) {
+      const btn = document.getElementById(btnId);
+      if (!btn) return;
+      if (count > 0) {
+        btn.classList.remove('d-none');
+        btn.innerHTML = `${label} (${count})`;
+      } else {
+        btn.classList.add('d-none');
+      }
+    }
   },
 
   // ── Shared UX primitives ─────────────────────────────────────────────
@@ -118,6 +178,80 @@ const App = {
     // Action / nav click from throwing instead of silently doing nothing.
     notPortedYet(feature) {
       this.showToast(`${feature || 'This feature'} isn't wired up yet.`, true);
+    },
+
+    // Case/whitespace-insensitive equality for name-like fields (vendor,
+    // item, contractor, ... names) -- "SEAT"/"seat"/"Seat" are the same
+    // real-world thing. Use instead of === wherever two user-typed/stored
+    // strings are compared this way (not for programmatic IDs/enums).
+    sameText(a, b) {
+      return String(a == null ? '' : a).trim().toLowerCase() === String(b == null ? '' : b).trim().toLowerCase();
+    },
+
+    // Keyword search: every whitespace-split keyword must appear somewhere
+    // in the haystack, regardless of order.
+    matchesKeywords(haystack, term) {
+      const keywords = String(term || '').toLowerCase().trim().split(/\s+/).filter(Boolean);
+      if (!keywords.length) return true;
+      const text = String(haystack || '').toLowerCase();
+      return keywords.every(kw => text.includes(kw));
+    },
+
+    // Clamps a requested page number to a valid range for the given item count.
+    clampPage(page, totalItems, rowsPerPage) {
+      const totalPages = Math.max(1, Math.ceil(totalItems / rowsPerPage));
+      return Math.max(1, Math.min(totalPages, toNumber(page, 1)));
+    },
+
+    // Renders a "Showing X-Y of Z" label + Bootstrap pagination control.
+    // actionName is the data-action value the delegated click handler
+    // (bindGlobalEvents, below) dispatches on click.
+    renderPagination(containerId, totalItems, currentPage, rowsPerPage, actionName, label = 'Records') {
+      const container = document.getElementById(containerId);
+      if (!container) return;
+
+      if (!totalItems) {
+        container.innerHTML = '';
+        return;
+      }
+
+      const totalPages = Math.ceil(totalItems / rowsPerPage);
+      const startItem = (currentPage - 1) * rowsPerPage + 1;
+      const endItem = Math.min(currentPage * rowsPerPage, totalItems);
+
+      let html = `<span class="text-secondary fw-bold">Showing ${startItem}–${endItem} of ${totalItems} ${label}</span>`;
+
+      if (totalPages > 1) {
+        html += `<ul class="pagination pagination-sm mb-0 shadow-sm">
+          <li class="page-item ${currentPage === 1 ? 'disabled' : ''}">
+            <button class="page-link text-dark" data-action="${actionName}" data-page="${currentPage - 1}">Prev</button>
+          </li>`;
+
+        let ellipsisLeft = false;
+        let ellipsisRight = false;
+
+        for (let i = 1; i <= totalPages; i++) {
+          if (i === 1 || i === totalPages || (i >= currentPage - 1 && i <= currentPage + 1)) {
+            const active = currentPage === i;
+            html += `<li class="page-item ${active ? 'active' : ''}">
+              <button class="page-link ${active ? 'bg-info border-info text-dark' : 'text-dark'}"
+                      data-action="${actionName}" data-page="${i}">${i}</button>
+            </li>`;
+          } else if (currentPage > i && !ellipsisLeft) {
+            html += '<li class="page-item disabled"><span class="page-link text-muted">…</span></li>';
+            ellipsisLeft = true;
+          } else if (i > currentPage && !ellipsisRight && totalPages > i) {
+            html += '<li class="page-item disabled"><span class="page-link text-muted">…</span></li>';
+            ellipsisRight = true;
+          }
+        }
+
+        html += `<li class="page-item ${currentPage === totalPages ? 'disabled' : ''}">
+          <button class="page-link text-dark" data-action="${actionName}" data-page="${currentPage + 1}">Next</button>
+        </li></ul>`;
+      }
+
+      container.innerHTML = html;
     }
   },
 
@@ -136,6 +270,7 @@ const App = {
         App.Dashboard.loadData();
         App.Dashboard.startAutoRefresh();
       }
+      if (id === 'vendorMaster' && typeof App.Vendor !== 'undefined') App.Vendor.loadData();
       // Every other module's own `if (id === '<tab>') App.<Module>.loadData();`
       // line lands here in that module's own round -- same guarded pattern
       // Navigation.showTab already used in source for not-yet-loaded modules.
@@ -150,6 +285,11 @@ const App = {
       labels.push('Dashboard');
       promises.push(this.Dashboard.loadData());
       this.Dashboard.startAutoRefresh();
+    }
+
+    if (this.Vendor) {
+      labels.push('Vendor');
+      promises.push(this.Vendor.loadData());
     }
 
     const results = await Promise.allSettled(promises);
@@ -195,6 +335,9 @@ function bindGlobalEvents() {
         break;
       case 'not-ported-yet':
         App.Utils.notPortedYet(btn.dataset.feature);
+        break;
+      case 'vendor-page':
+        App.Vendor.changePage(toNumber(btn.dataset.page, 1));
         break;
     }
   });
