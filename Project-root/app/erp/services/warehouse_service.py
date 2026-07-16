@@ -18,8 +18,10 @@ plain read) never triggers a rebuild.
 Pass 1 (credit Completed lots' output) and Pass 2 (debit POOL-sourced
 consumption) landed in Phase 3g (Production), extending Phase 3e's Pass-0
 `buckets` accumulator with two more loops rather than rewriting it, guarded
-via `TABLE_NAMES.get("PRODUCTION")` -- same guard style Pass 3 (Dispatch
-debit, still deferred) already uses for its own `TABLE_NAMES.get("DISPATCH")`.
+via `TABLE_NAMES.get("PRODUCTION")`. Pass 3 (debit finished-goods buckets
+by Dispatch quantity, including the greedy multi-color-bucket drain for a
+tagged/untagged key that spans more than one color) landed in Phase 4a
+(Dispatch), guarded via `TABLE_NAMES.get("DISPATCH")` the same way.
 
 getPoolAvailableQty is a genuine exception to this port's usual
 {success, data, message} envelope: the source function returns a bare
@@ -201,6 +203,62 @@ def _recalculate_warehouse_pool(cur) -> None:
                 color_group = str(comp.get("colorGroup") or "").strip()
                 color = color_group if color_group and color_group.upper() != _COLOR_GROUP_COMMON else ""
                 get_bucket(item_name, "", "", color)["consumedQty"] += qty
+
+    if table := config_maps.TABLE_NAMES.get("DISPATCH"):
+        # Pass 3: debit finished-goods buckets by Dispatch quantity. A
+        # Product-tagged bucket is matched by its tag; an untagged
+        # final-stage bucket has no tag, so Dispatch's own "Product ID"
+        # for that lot is the Output Item Name itself (see
+        # dispatch_service._compute_ready_to_dispatch_map) -- fall back to
+        # matching on that, restricted to final-stage buckets so an
+        # untagged intermediate-WIP bucket sharing the same Output Item
+        # Name from a non-final process is never touched.
+        cur.execute(f"SELECT product_id, qty FROM {table} WHERE deleted_at IS NULL")
+        dispatch_qty_by_key: dict = {}
+        for row in cur.fetchall():
+            product_id = str(row["product_id"] or "").strip()
+            if not product_id:
+                continue
+            key = product_id.lower()
+            dispatch_qty_by_key[key] = dispatch_qty_by_key.get(key, 0) + float(row["qty"] or 0)
+
+        final_stage_ids = {
+            p["processId"].strip().lower() for p in process_service._get_all_processes(cur) if p["isFinalStage"]
+        }
+
+        # Dispatch carries no color of its own, so a Product Tag (or
+        # untagged Output Item Name) credited across multiple color
+        # buckets (a multi-color final-stage lot) can't be debited by
+        # color -- greedily drain whichever color buckets have stock
+        # first, dumping any leftover (over-dispatch beyond total
+        # availability) on the first bucket so the total consumedQty
+        # across all matching buckets still equals the total dispatched
+        # qty.
+        for key, dispatched_qty in dispatch_qty_by_key.items():
+            remaining = dispatched_qty
+            matching = [b for b in buckets.values() if b["productTag"] and b["productTag"].lower() == key]
+            if not matching:
+                matching = [
+                    b
+                    for b in buckets.values()
+                    if not b["productTag"]
+                    and b["outputItemName"].lower() == key
+                    and b["processId"]
+                    and b["processId"].lower() in final_stage_ids
+                ]
+            if not matching:
+                continue
+
+            for bucket in matching:
+                if remaining <= 0:
+                    break
+                available = max(bucket["producedQty"] - bucket["consumedQty"], 0)
+                take = min(remaining, available)
+                bucket["consumedQty"] += take
+                remaining -= take
+
+            if remaining > 0:
+                matching[0]["consumedQty"] += remaining
 
     # Rewrite the table from scratch (small dataset -- process count is tiny).
     cur.execute("DELETE FROM erp.warehouse_pool")

@@ -514,6 +514,11 @@ TABLE_NAMES = {
     # Activates contractors_service's delete-guard/rename-cascade and
     # bom_service's delete-guard, all guarded no-ops until now.
     "PRODUCTION": "erp.production",
+    # Activates contractors_service._get_dispatch_logistics_payable_rows,
+    # bom_service._get_product_ids_in_use's DISPATCH leg, and
+    # warehouse_service._recalculate_warehouse_pool's Pass 3 -- all guarded
+    # no-ops until now.
+    "DISPATCH": "erp.dispatch",
 }
 
 _CAMEL_BOUNDARY_RE = re.compile(r"(?<!^)(?=[A-Z])")
