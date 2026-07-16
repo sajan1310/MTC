@@ -680,7 +680,7 @@ def get_contractor_account_ledger(contractor_name):
             status_col = config_maps.to_snake_case("status")
             assigned_col = config_maps.to_snake_case("assignedTo")
             payable_col = config_maps.to_snake_case("contractorPayable")
-            date_col = config_maps.to_snake_case("date")
+            date_col = config_maps.to_snake_case("productionDate")
             process_id_col = config_maps.to_snake_case("processId")
             product_col = config_maps.to_snake_case("productName")
             lot_col = config_maps.to_snake_case("lotNumber")
