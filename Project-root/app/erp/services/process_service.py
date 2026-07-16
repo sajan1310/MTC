@@ -39,10 +39,20 @@ same way for the same reason: a stale-tab double-delete surfacing as an
 error is more useful than a silent false-success, and it matches every
 other delete endpoint already shipped in this codebase.
 
-Deferred (see the Phase 3a plan): getProcessColorGroups/getProcessColorAxes/
-getAllProcessColorGroups and the pure compute functions behind them (need
-Warehouse Pool to be meaningful), _setProcessPrimaryColorAxis (only ever
-called from Production), the Production/Warehouse-Pool-Opening portions of
+getProcessColorGroups/getProcessColorAxes/getAllProcessColorGroups and the
+pure compute functions behind them (_compute_color_axes_for_process,
+_compute_color_groups_for_process, _legacy_color_group_list,
+_merge_linked_axes, _resolve_linked_color) are real as of Phase 3f, now
+that Warehouse Pool (Phase 3e) makes them meaningful -- deferred from
+Phase 3a specifically because they needed Process Color Links AND
+Warehouse Pool both real to be testable, and because
+_mergeLinkedAxes/_resolveLinkedColor's BFS-based cross-process axis-merge
+algorithm (including transitive link chains) is genuinely independent
+complexity deserving its own round. saveProduction (Production's own
+round) is the only caller of any of this.
+
+Deferred still: _setProcessPrimaryColorAxis (only ever called from
+Production), the Production/Warehouse-Pool-Opening portions of
 _renamePoolOutputItemNameEverywhere and all of
 _renameProcessNameInContractorRates (their target tables don't exist yet --
 guarded no-ops below, activate automatically once those modules land).
@@ -689,3 +699,389 @@ def get_process_color_links_data(process_id):
                     )
 
     return build_response(True, records)
+
+
+# ─────────────────────────────────────────────────────────────────────────
+# Process Color Axis computation (Phase 3f)
+# ─────────────────────────────────────────────────────────────────────────
+
+_COLOR_COMBO_DELIMITER = config_maps.COLOR_COMBO_DELIMITER
+
+
+def _add_unique_case_insensitive(ordered_map: dict, value) -> None:
+    """Adds `value` into `ordered_map` (used as a case-insensitive,
+    insertion-ordered set: key=lower, value=first-seen original casing).
+    Two names differing only in casing (typed on different rows/lots)
+    must collapse to one entry -- a plain set of raw strings would treat
+    them as two, producing duplicate/phantom color checkboxes. Read back
+    via ordered_map.values().
+    """
+    raw = str(value if value is not None else "").strip()
+    if not raw:
+        return
+    key = raw.lower()
+    if key not in ordered_map:
+        ordered_map[key] = raw
+
+
+def _get_all_process_color_links(cur) -> list:
+    """Every Process Color Link, both sides resolved to their business
+    process_id strings (not the internal serial FK) -- the shape
+    _merge_linked_axes/_resolve_linked_color's graph algorithm is built
+    on, matching every Warehouse Pool row's own processId field. Distinct
+    from get_process_color_links_data (the public, per-process-normalized
+    RPC view) -- this returns the raw {processAId, colorA, processBId,
+    colorB} shape the source's own _getAllProcessColorLinks() does.
+    """
+    cur.execute(
+        """
+        SELECT pa.process_id AS process_a_id, l.color_a, pb.process_id AS process_b_id, l.color_b
+        FROM erp.process_color_links l
+        JOIN erp.process_master pa ON pa.id = l.process_a_id
+        JOIN erp.process_master pb ON pb.id = l.process_b_id
+        WHERE pa.deleted_at IS NULL AND pb.deleted_at IS NULL
+        """
+    )
+    return [
+        {
+            "processAId": row["process_a_id"],
+            "colorA": row["color_a"],
+            "processBId": row["process_b_id"],
+            "colorB": row["color_b"],
+        }
+        for row in cur.fetchall()
+    ]
+
+
+def _get_all_warehouse_pool_rows_for_color_axes(cur) -> list:
+    """Minimal projection of erp.warehouse_pool for color-axis computation
+    -- a local query instead of importing warehouse_service here, which
+    itself imports process_service (for _get_all_processes reuse); avoids
+    a circular import, matching this codebase's established "small local
+    duplication over cross-import" precedent.
+    """
+    cur.execute("SELECT output_item_name, process_id, color FROM erp.warehouse_pool")
+    return [
+        {
+            "outputItemName": row["output_item_name"] or "",
+            "processId": row["process_id"] or "",
+            "color": row["color"] or "",
+        }
+        for row in cur.fetchall()
+    ]
+
+
+def _resolve_linked_color(from_pid: str, from_color: str, to_pid: str, adjacency: dict):
+    """Resolves the color on `to_pid` corresponding to `from_color` on
+    `from_pid`, composing multiple Process Color Link edges when the two
+    processes aren't directly linked but are connected through an
+    intermediate process (e.g. B-D-A). Returns None if no chain of
+    explicit mappings connects them for this specific color value.
+    """
+    visited = {from_pid}
+    queue = [(from_pid, from_color)]
+    while queue:
+        pid, color = queue.pop(0)
+        if pid == to_pid:
+            return color
+        for edge in adjacency.get(pid, []):
+            other = edge["otherProcessId"]
+            if other in visited:
+                continue
+            next_color = edge["map"].get(str(color or "").strip().lower())
+            if next_color is None:
+                continue
+            visited.add(other)
+            queue.append((other, next_color))
+    return None
+
+
+def _merge_linked_axes(axes: list, color_links: list) -> list:
+    """Merges axes belonging to explicitly-linked processes into single
+    paired axes instead of leaving them to be cross-multiplied. Only axes
+    contributed by exactly one process are link-eligible. Chained links
+    (B-D, D-A) group 3+ processes transitively via BFS with no dedicated
+    N-way data structure.
+    """
+    adjacency: dict = {}
+
+    def add_edge(p_from, color_from, p_to, color_to) -> None:
+        if not p_from or not p_to:
+            return
+        entries = adjacency.setdefault(p_from, [])
+        entry = next((e for e in entries if e["otherProcessId"] == p_to), None)
+        if entry is None:
+            entry = {"otherProcessId": p_to, "map": {}}
+            entries.append(entry)
+        entry["map"][str(color_from or "").strip().lower()] = color_to
+
+    for link in color_links:
+        add_edge(link["processAId"], link["colorA"], link["processBId"], link["colorB"])
+        add_edge(link["processBId"], link["colorB"], link["processAId"], link["colorA"])
+
+    # Only axes contributed by exactly one process can be placed on the graph.
+    axis_index_by_process_id: dict = {}
+    for idx, axis in enumerate(axes):
+        if len(axis["processIds"]) == 1:
+            axis_index_by_process_id[next(iter(axis["processIds"]))] = idx
+
+    visited: set = set()
+    merged_axes = []
+    used_axis_idx: set = set()
+
+    for pid, _idx in list(axis_index_by_process_id.items()):
+        if pid in visited:
+            continue
+
+        queue = [pid]
+        visited.add(pid)
+        component_process_ids = [pid]
+        while queue:
+            cur_pid = queue.pop(0)
+            for edge in adjacency.get(cur_pid, []):
+                other = edge["otherProcessId"]
+                if other in axis_index_by_process_id and other not in visited:
+                    visited.add(other)
+                    queue.append(other)
+                    component_process_ids.append(other)
+
+        if len(component_process_ids) <= 1:
+            continue  # no link partner present in this recipe -- leave axis as-is
+
+        anchor_pid = component_process_ids[0]
+        for p in component_process_ids:
+            if len(axes[axis_index_by_process_id[p]]["colors"]) > len(axes[axis_index_by_process_id[anchor_pid]]["colors"]):
+                anchor_pid = p
+        other_pids = [p for p in component_process_ids if p != anchor_pid]
+
+        merged_colors = []
+        for anchor_color in axes[axis_index_by_process_id[anchor_pid]]["colors"]:
+            parts = [anchor_color]
+            unresolved = False
+            for other_pid in other_pids:
+                resolved = _resolve_linked_color(anchor_pid, anchor_color, other_pid, adjacency)
+                if resolved is None:
+                    unresolved = True
+                    break
+                parts.append(resolved)
+            if unresolved:
+                continue
+            merged_colors.append(_COLOR_COMBO_DELIMITER.join(parts))
+
+        if merged_colors:
+            merged_axes.append({"colors": merged_colors})
+        for p in component_process_ids:
+            used_axis_idx.add(axis_index_by_process_id[p])
+
+    result = [axis for idx, axis in enumerate(axes) if idx not in used_axis_idx]
+    return result + merged_axes
+
+
+def _legacy_color_group_list(components: list, pool_rows: list, color_links: list) -> list:
+    """The original, byte-for-byte unmodified pre-Color-Axes algorithm --
+    pool axes ARE cross-multiplied into composite delimiter-joined
+    strings when 2+ exist (unlike _compute_color_axes_for_process, which
+    keeps them independent), since the legacy UI never split them into
+    separate checklist groups.
+    """
+    colors: dict = {}
+    for c in components:
+        if c["colorGroup"] and c["colorGroup"] != _COLOR_GROUP_COMMON:
+            _add_unique_case_insensitive(colors, c["colorGroup"])
+
+    pool_item_names = {c["itemName"].lower() for c in components if c["sourceType"] == "POOL"}
+    if pool_item_names:
+        colors_by_item: dict = {}
+        process_id_by_item: dict = {}
+        for r in pool_rows:
+            key = r["outputItemName"].lower()
+            if not r["color"] or key not in pool_item_names:
+                continue
+            colors_by_item.setdefault(key, {})
+            _add_unique_case_insensitive(colors_by_item[key], r["color"])
+            if key not in process_id_by_item and r["processId"]:
+                process_id_by_item[key] = r["processId"]
+
+        axes_by_signature: dict = {}
+        for item_key, item_colors in colors_by_item.items():
+            if len(item_colors) <= 1:
+                continue
+            sorted_colors = sorted(item_colors.values(), key=lambda x: x.lower())
+            signature = "|".join(c.lower() for c in sorted_colors)
+            entry = axes_by_signature.setdefault(signature, {"colors": sorted_colors, "processIds": set()})
+            pid = process_id_by_item.get(item_key)
+            if pid:
+                entry["processIds"].add(pid)
+
+        axes = list(axes_by_signature.values())
+        if len(axes) > 1 and color_links:
+            axes = _merge_linked_axes(axes, color_links)
+
+        if len(axes) == 1:
+            for color in axes[0]["colors"]:
+                _add_unique_case_insensitive(colors, color)
+        elif len(axes) > 1:
+            combos = [""]
+            for axis in axes:
+                next_combos = []
+                for prefix in combos:
+                    for color in axis["colors"]:
+                        next_combos.append(f"{prefix}{_COLOR_COMBO_DELIMITER}{color}" if prefix else color)
+                combos = next_combos
+            for combo in combos:
+                _add_unique_case_insensitive(colors, combo)
+
+    return sorted(colors.values(), key=lambda x: x.lower())
+
+
+def _compute_color_axes_for_process(components: list, pool_rows: list, color_links: list) -> list:
+    """The independent "Color Axes" breakdown for a process -- one entry
+    per contributing axis, NEVER cross-multiplied. Two sources: Warehouse
+    Pool axes (auto-detected from live pool color history of this
+    recipe's POOL-sourced components, labeled by the pool item name(s)
+    driving them) and explicitly-tagged axes (a recipe row carrying both
+    a colorGroup AND a colorAxis label).
+    """
+    axes = []
+
+    pool_item_names = {c["itemName"].lower() for c in components if c["sourceType"] == "POOL"}
+    if pool_item_names:
+        colors_by_item: dict = {}
+        process_id_by_item: dict = {}
+        item_name_by_key: dict = {}
+        for c in components:
+            if c["sourceType"] != "POOL":
+                continue
+            key = c["itemName"].lower()
+            if key not in item_name_by_key:
+                item_name_by_key[key] = c["itemName"]
+
+        for r in pool_rows:
+            key = r["outputItemName"].lower()
+            if not r["color"] or key not in pool_item_names:
+                continue
+            colors_by_item.setdefault(key, {})
+            _add_unique_case_insensitive(colors_by_item[key], r["color"])
+            if key not in process_id_by_item and r["processId"]:
+                process_id_by_item[key] = r["processId"]
+
+        axes_by_signature: dict = {}
+        for item_key, item_colors in colors_by_item.items():
+            if len(item_colors) <= 1:
+                continue
+            sorted_colors = sorted(item_colors.values(), key=lambda x: x.lower())
+            signature = "|".join(c.lower() for c in sorted_colors)
+            entry = axes_by_signature.setdefault(
+                signature, {"colors": sorted_colors, "processIds": set(), "itemNames": set()}
+            )
+            pid = process_id_by_item.get(item_key)
+            if pid:
+                entry["processIds"].add(pid)
+            item_name = item_name_by_key.get(item_key)
+            if item_name:
+                entry["itemNames"].add(item_name)
+
+        pool_axes = list(axes_by_signature.values())
+        if len(pool_axes) > 1 and color_links:
+            pool_axes = _merge_linked_axes(pool_axes, color_links)
+
+        for idx, axis in enumerate(pool_axes):
+            item_names = sorted(axis.get("itemNames") or [], key=lambda x: x.lower())
+            label = ", ".join(item_names) if item_names else f"Color Group {idx + 1}"
+            axes.append({"key": f"pool:{label.lower()}", "label": label, "colors": axis["colors"], "source": "pool"})
+
+    # Keyed by the axis label's lowercase form so "Mudguard Color" and
+    # "mudguard color" (typed on different recipe rows) collapse into one
+    # real axis instead of two.
+    raw_tag_groups: dict = {}
+    for c in components:
+        if not c["colorGroup"] or c["colorGroup"] == _COLOR_GROUP_COMMON:
+            continue
+        axis_label = str(c.get("colorAxis") or "").strip()
+        if not axis_label:
+            continue
+        axis_key = axis_label.lower()
+        group = raw_tag_groups.setdefault(axis_key, {"label": axis_label, "colors": {}})
+        _add_unique_case_insensitive(group["colors"], c["colorGroup"])
+
+    for group in raw_tag_groups.values():
+        axes.append(
+            {
+                "key": f"tag:{group['label'].lower()}",
+                "label": group["label"],
+                "colors": sorted(group["colors"].values(), key=lambda x: x.lower()),
+                "source": "tag",
+            }
+        )
+
+    return axes
+
+
+def _compute_color_groups_for_process(components: list, pool_rows: list, color_links: list) -> list:
+    """A process with 2+ independent color axes still gets the exact
+    original _legacy_color_group_list behavior when fewer than 2 axes
+    resolve -- colors explicitly tagged on recipe rows plus any single
+    pool axis's own colors, unchanged.
+    """
+    axes = _compute_color_axes_for_process(components, pool_rows, color_links)
+    if len(axes) < 2:
+        return _legacy_color_group_list(components, pool_rows, color_links)
+
+    colors: set = set()
+    for axis in axes:
+        colors.update(axis["colors"])
+    return sorted(colors, key=lambda x: x.lower())
+
+
+@rpc_method("getProcessColorGroups")
+def get_process_color_groups(process_id):
+    components = get_process_components_data(process_id)["data"]
+    with database.get_conn(cursor_factory=psycopg2.extras.RealDictCursor) as (_conn, cur):
+        pool_rows = _get_all_warehouse_pool_rows_for_color_axes(cur)
+        color_links = _get_all_process_color_links(cur)
+    groups = _compute_color_groups_for_process(components, pool_rows, color_links)
+    return build_response(True, groups)
+
+
+@rpc_method("getProcessColorAxes")
+def get_process_color_axes(process_id):
+    components = get_process_components_data(process_id)["data"]
+    with database.get_conn(cursor_factory=psycopg2.extras.RealDictCursor) as (_conn, cur):
+        pool_rows = _get_all_warehouse_pool_rows_for_color_axes(cur)
+        color_links = _get_all_process_color_links(cur)
+        process = next(
+            (p for p in _get_all_processes(cur) if p["processId"].strip().lower() == str(process_id or "").strip().lower()),
+            None,
+        )
+
+    primary_color_axis = str((process or {}).get("primaryColorAxis") or "").strip()
+    axes = _compute_color_axes_for_process(components, pool_rows, color_links)
+
+    primary_axis_key = ""
+    if primary_color_axis:
+        match = next((a for a in axes if a["label"].lower() == primary_color_axis.lower()), None)
+        if match:
+            primary_axis_key = match["key"]
+
+    return build_response(True, {"axes": axes, "primaryColorAxis": primary_color_axis, "primaryAxisKey": primary_axis_key})
+
+
+@rpc_method("getAllProcessColorGroups")
+def get_all_process_color_groups():
+    all_components = get_process_components_data()["data"]
+
+    with database.get_conn(cursor_factory=psycopg2.extras.RealDictCursor) as (_conn, cur):
+        processes = _get_all_processes(cur)
+        pool_rows = _get_all_warehouse_pool_rows_for_color_axes(cur)
+        color_links = _get_all_process_color_links(cur)
+
+    components_by_process: dict = {}
+    for c in all_components:
+        components_by_process.setdefault(c["processId"], []).append(c)
+
+    result = {}
+    for p in processes:
+        components = components_by_process.get(p["processId"], [])
+        result[p["processId"]] = _compute_color_groups_for_process(components, pool_rows, color_links)
+
+    return build_response(True, result)
