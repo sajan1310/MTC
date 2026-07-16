@@ -19,6 +19,7 @@ from . import process_service  # noqa: F401
 from . import wastage_service  # noqa: F401
 from . import issue_service  # noqa: F401
 from . import bom_service  # noqa: F401
+from . import contractors_service  # noqa: F401
 
 __all__ = [
     "system_service",
@@ -34,4 +35,5 @@ __all__ = [
     "wastage_service",
     "issue_service",
     "bom_service",
+    "contractors_service",
 ]

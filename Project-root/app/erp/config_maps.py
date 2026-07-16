@@ -500,6 +500,11 @@ TABLE_NAMES = {
     # Contractors lands) so that round's _rename_contractor_everywhere can
     # find it by this predictable key with zero code changes then.
     "BOM_ADDITIONAL_COSTS": "erp.bom_additional_costs",
+    # Activates process_service._rename_process_name_in_contractor_rates,
+    # a guarded no-op since Phase 3a.
+    "CONTRACTORS": "erp.contractors",
+    "CONTRACTOR_RATES": "erp.contractor_rates",
+    "CONTRACTOR_PAYMENTS": "erp.contractor_payments",
 }
 
 _CAMEL_BOUNDARY_RE = re.compile(r"(?<!^)(?=[A-Z])")
