@@ -10,3 +10,10 @@ def get_current_user_id() -> int | None:
         return int(current_user.get_id())
     except Exception:
         return None
+
+
+def get_current_user_email() -> str:
+    try:
+        return str(getattr(current_user, "email", "") or "")
+    except Exception:
+        return ""

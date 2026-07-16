@@ -24,6 +24,7 @@ from . import warehouse_service  # noqa: F401
 from . import production_service  # noqa: F401
 from . import dispatch_service  # noqa: F401
 from . import clients_service  # noqa: F401
+from . import dashboard_service  # noqa: F401
 
 __all__ = [
     "system_service",
@@ -44,4 +45,5 @@ __all__ = [
     "production_service",
     "dispatch_service",
     "clients_service",
+    "dashboard_service",
 ]
