@@ -2501,9 +2501,343 @@ MApp.PO = {
     }
   }
 };
-MApp.Bill = { openLedgerSheet() { MApp.Toast.error('Bill Ledger is coming soon.'); } };
-MApp.Items = { openLookupSheet() { MApp.Toast.error('Items lookup is coming soon.'); } };
-MApp.Directory = { open() { MApp.Toast.error('Directory is coming soon.'); } };
+// ================================================================
+// BILL LEDGER (read-only) — same pattern as MApp.PO, but bills have no
+// status field (no filter chips needed) and print reuses
+// #print-bill-container (desktop bill.js's own populatePrintData)
+// instead.
+// ================================================================
+MApp.Bill = {
+  bills: [],
+  filtered: [],
+  searchTerm: '',
+
+  async openLedgerSheet() {
+    const listEl = document.getElementById('bill-ledger-list');
+    const searchInput = document.getElementById('bill-ledger-search');
+    if (searchInput) searchInput.value = '';
+    this.searchTerm = '';
+    MApp.Util.renderSkeleton(listEl, 5);
+    MApp.Sheet.open('sheet-bill-ledger');
+
+    try {
+      const res = await MApp.Api.call('getBillData');
+      if (!res || !res.success) {
+        MApp.Util.renderError(listEl, res && res.message, () => this.openLedgerSheet());
+        return;
+      }
+      this.bills = res.data || [];
+      this._applyFilters();
+    } catch (err) {
+      MApp.Util.renderError(listEl, err && err.message, () => this.openLedgerSheet());
+    }
+  },
+
+  closeLedgerSheet() {
+    MApp.Sheet.close('sheet-bill-ledger');
+  },
+
+  onSearch(term) {
+    this.searchTerm = String(term || '').trim().toLowerCase();
+    this._applyFilters();
+  },
+
+  _applyFilters() {
+    let list = this.bills;
+    if (this.searchTerm) {
+      const term = this.searchTerm;
+      list = list.filter(bill =>
+        String(bill.billNumber || '').toLowerCase().includes(term) ||
+        String(bill.vendor || '').toLowerCase().includes(term));
+    }
+    this.filtered = list;
+    this.render();
+  },
+
+  render() {
+    const listEl = document.getElementById('bill-ledger-list');
+    if (!listEl) return;
+
+    if (this.filtered.length === 0) {
+      MApp.Util.renderEmpty(listEl, {
+        title: 'No bills found',
+        body: this.bills.length === 0 ? 'No bills recorded yet.' : 'Try a different search term.'
+      });
+      return;
+    }
+
+    listEl.innerHTML = this.filtered.slice(0, 100).map(bill => {
+      const idx = this.bills.indexOf(bill);
+      const poRef = (bill.poNumbers || []).length
+        ? bill.poNumbers.map(p => p === 'DIRECT' ? 'Direct' : `PO-${MApp.Util.escapeHtml(String(p))}`).join(', ')
+        : 'N/A';
+
+      return `
+      <div class="mb-card">
+        <div class="mb-card-row" style="justify-content:space-between;align-items:flex-start;">
+          <div>
+            <div class="mb-card-title">${MApp.Util.escapeHtml(bill.billNumber)}</div>
+            <div class="mb-card-sub">${MApp.Util.escapeHtml(bill.vendor || '')} · ${MApp.Util.escapeHtml(bill.billDate || '')}</div>
+          </div>
+          <button type="button" class="mapp-topbar-btn" aria-label="Print bill ${MApp.Util.escapeHtml(bill.billNumber)}" onclick="MApp.Bill.print(${idx})">
+            <svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M6 9V2h12v7"/><path d="M6 18H4a2 2 0 0 1-2-2v-5a2 2 0 0 1 2-2h16a2 2 0 0 1 2 2v5a2 2 0 0 1-2 2h-2"/><path d="M6 14h12v8H6z"/></svg>
+          </button>
+        </div>
+        <div class="mb-card-sub" style="margin-top:4px;">Qty: ${MApp.Util.formatQty(bill.totalQty)} · Total: ${MApp.Util.formatCurrency(bill.totalAmount)}</div>
+        <div class="mb-card-sub" style="margin-top:4px;">${poRef}</div>
+      </div>`;
+    }).join('');
+  },
+
+  print(index) {
+    const bill = this.bills[index];
+    if (!bill) return;
+    this._populatePrintData(bill);
+    const title = `Bill_${bill.billNumber}_${String(bill.vendor || '').replace(/[^a-zA-Z0-9 \-]/g, '').trim().replace(/\s+/g, '_')}`;
+    MApp.Print.trigger('print-bill-container', title);
+  },
+
+  // Mirrors desktop bill.js's populatePrintData() -- same #print-bill
+  // -container field IDs (shared markup from print.html). Unlike PO's
+  // print container, the items-table header here is static HTML already,
+  // so only the body + summary fields need populating.
+  _populatePrintData(bill) {
+    const setText = (id, val) => {
+      const el = document.getElementById(id);
+      if (el) el.innerText = val ?? '';
+    };
+    setText('print-bill-number', bill.billNumber || '');
+    setText('print-bill-date', bill.billDate || '');
+    setText('print-bill-vendor', bill.vendor || '');
+    setText('print-bill-remarks', bill.remarks || '');
+    setText('print-bill-contact', bill.contact || '');
+
+    const poNums = (bill.poNumbers && bill.poNumbers.length) ? bill.poNumbers : (bill.poNumber ? [bill.poNumber] : []);
+    const poRefEl = document.getElementById('print-bill-po-ref');
+    if (poRefEl) {
+      poRefEl.innerHTML = poNums.length
+        ? poNums.map(p => p === 'DIRECT' ? 'Direct Purchase (No PO)' : `PO-${MApp.Util.escapeHtml(String(p))}`).join(' | ')
+        : 'N/A';
+    }
+
+    const bodyHtml = (bill.items || []).map((item, idx) => {
+      const rowBg = idx % 2 === 0 ? '#ffffff' : '#F5F0FB';
+      const rowStyle = `background-color:${rowBg};-webkit-print-color-adjust:exact;print-color-adjust:exact;page-break-inside:avoid;break-inside:avoid;`;
+      return `<tr style="${rowStyle}">
+        <td style="padding:7px 6px;border:1px solid #e5e5e5;text-align:center;color:#999;font-weight:600;">${idx + 1}</td>
+        <td style="padding:7px 6px;border:1px solid #e5e5e5;text-align:left;font-weight:600;">${MApp.Util.escapeHtml(item.name || '')}</td>
+        <td style="padding:7px 6px;border:1px solid #e5e5e5;text-align:left;color:#555;">${MApp.Util.escapeHtml(item.narration || '')}</td>
+        <td style="padding:7px 6px;border:1px solid #e5e5e5;text-align:center;">${MApp.Util.escapeHtml(item.size || '')}</td>
+        <td style="padding:7px 6px;border:1px solid #e5e5e5;text-align:center;font-weight:600;">${MApp.Util.escapeHtml(String(MApp.Util.toNumber(item.qty)))} ${MApp.Util.escapeHtml(item.unit || 'Pcs')}</td>
+        <td style="padding:7px 6px;border:1px solid #e5e5e5;text-align:right;">${MApp.Util.formatCurrency(item.price)}</td>
+        <td style="padding:7px 6px;border:1px solid #e5e5e5;text-align:right;">${MApp.Util.escapeHtml(String(item.gstRatePct ?? 0))}%</td>
+        <td style="padding:7px 6px;border:1px solid #e5e5e5;text-align:right;font-weight:700;color:#6F42C1;-webkit-print-color-adjust:exact;print-color-adjust:exact;">${MApp.Util.formatCurrency(item.lineTotal)}</td>
+      </tr>`;
+    }).join('');
+    const tblBody = document.getElementById('print-bill-items-body');
+    if (tblBody) tblBody.innerHTML = bodyHtml;
+
+    setText('print-bill-grand-total', MApp.Util.toNumber(bill.totalAmount).toFixed(2));
+  }
+};
+// ================================================================
+// ITEMS LOOKUP (More tab) — read-only search sheet over the full item
+// master, for a quick "does this item exist / what's it called" check.
+// ================================================================
+MApp.Items = {
+  items: [],
+  filtered: [],
+
+  async openLookupSheet() {
+    const listEl = document.getElementById('items-lookup-list');
+    const searchInput = document.getElementById('items-lookup-search');
+    if (searchInput) searchInput.value = '';
+    MApp.Util.renderSkeleton(listEl, 5);
+    MApp.Sheet.open('sheet-items-lookup');
+
+    try {
+      const res = await MApp.Api.call('getItemsData');
+      if (!res || !res.success) {
+        MApp.Util.renderError(listEl, res && res.message, () => this.openLookupSheet());
+        return;
+      }
+      this.items = res.data || [];
+
+      // Stock-on-hand lives in a separate sheet (getStockData), keyed by
+      // (name, size) -- fetched alongside items but allowed to fail open:
+      // this is a secondary enhancement, not the primary data this screen
+      // exists for, so a stock-load failure shouldn't block the lookup
+      // itself (items just render without a stock figure).
+      try {
+        const stockRes = await MApp.Api.call('getStockData');
+        if (stockRes && stockRes.success) {
+          const stockMap = new Map();
+          (stockRes.data || []).forEach(s => {
+            stockMap.set(s.name.toLowerCase() + '|' + s.size.toLowerCase(), s);
+          });
+          this.items.forEach(it => {
+            const stock = stockMap.get(it.name.toLowerCase() + '|' + (it.size || '').toLowerCase());
+            it.currentStock = stock ? stock.currentStock : null;
+            it.isLowStock = stock ? stock.isLowStock : false;
+          });
+        }
+      } catch (stockErr) {
+        // Non-critical -- item lookup still works without stock figures.
+      }
+
+      this.filtered = this.items;
+      this.render();
+    } catch (err) {
+      MApp.Util.renderError(listEl, err && err.message, () => this.openLookupSheet());
+    }
+  },
+
+  closeLookupSheet() {
+    MApp.Sheet.close('sheet-items-lookup');
+  },
+
+  onSearch(term) {
+    const lower = String(term || '').toLowerCase();
+    this.filtered = !lower ? this.items : this.items.filter(it =>
+      it.name.toLowerCase().includes(lower) ||
+      (it.size || '').toLowerCase().includes(lower) ||
+      (it.narration || '').toLowerCase().includes(lower));
+    this.render();
+  },
+
+  render() {
+    const listEl = document.getElementById('items-lookup-list');
+    if (!listEl) return;
+
+    if (this.filtered.length === 0) {
+      MApp.Util.renderEmpty(listEl, { title: 'No items found', body: 'Try a different search term.' });
+      return;
+    }
+
+    // currentStock is null when getStockData() failed or this item/size
+    // has no Stock row yet (see openLookupSheet) -- distinct from a real 0.
+    listEl.innerHTML = this.filtered.slice(0, 100).map(it => `
+      <div class="mb-card">
+        <div class="mb-card-row">
+          <div>
+            <div class="mb-card-title">${MApp.Util.escapeHtml(it.name)}</div>
+            <div class="mb-card-sub">${MApp.Util.escapeHtml(it.size || 'No size')}${it.narration ? ' · ' + MApp.Util.escapeHtml(it.narration) : ''}</div>
+          </div>
+          ${it.currentStock !== null && it.currentStock !== undefined ? `
+          <div style="text-align:right;">
+            <div class="mb-card-number${it.isLowStock ? ' mb-alert' : ''}">${MApp.Util.formatQty(it.currentStock)}</div>
+            <div class="mb-card-sub">${MApp.Util.escapeHtml(it.baseUnit)}</div>
+          </div>` : `<div class="mb-card-sub">${MApp.Util.escapeHtml(it.baseUnit)}</div>`}
+        </div>
+        ${it.isLowStock ? '<div class="mb-mt-2"><span class="mb-chip mb-chip-lowstock">Low stock</span></div>' : ''}
+      </div>
+    `).join('');
+  }
+};
+
+// ================================================================
+// DIRECTORY (read-only) — shared by Vendors/Clients/Contractors, one
+// sheet instance reused across all 3 (see sheet-directory in
+// mobile_views.html): the 3 desktop list APIs are structurally identical
+// (name, contact, address, gstin/gstPan, remarks) and none of them
+// returns a pre-computed "outstanding" figure -- that's a client-side
+// calculation on desktop (e.g. App.Vendor.calculateLedgerAndPending)
+// built from separate PO/Bill/Return/Payment reads, out of scope for
+// this read-only first pass. Contact renders as a tel: link.
+// ================================================================
+MApp.Directory = {
+  CONFIGS: {
+    vendor: { title: 'Vendors', api: 'getVendorsData', emptyBody: 'No vendors registered yet.' },
+    client: { title: 'Clients', api: 'getClientsData', emptyBody: 'No clients registered yet.' },
+    contractor: { title: 'Contractors', api: 'getContractorsData', emptyBody: 'No contractors registered yet.' }
+  },
+  type: null,
+  items: [],
+  filtered: [],
+  searchTerm: '',
+
+  async open(type) {
+    const cfg = this.CONFIGS[type];
+    if (!cfg) return;
+    this.type = type;
+
+    const titleEl = document.getElementById('directory-title');
+    if (titleEl) titleEl.textContent = cfg.title;
+
+    const listEl = document.getElementById('directory-list');
+    const searchInput = document.getElementById('directory-search');
+    if (searchInput) {
+      searchInput.value = '';
+      searchInput.placeholder = `Search ${cfg.title.toLowerCase()}...`;
+    }
+    this.searchTerm = '';
+    MApp.Util.renderSkeleton(listEl, 5);
+    MApp.Sheet.open('sheet-directory');
+
+    try {
+      const res = await MApp.Api.call(cfg.api);
+      if (!res || !res.success) {
+        MApp.Util.renderError(listEl, res && res.message, () => this.open(type));
+        return;
+      }
+      this.items = this._normalize(type, res.data || []);
+      this.filtered = this.items;
+      this.render();
+    } catch (err) {
+      MApp.Util.renderError(listEl, err && err.message, () => this.open(type));
+    }
+  },
+
+  // Contractors' own records use contractorName, not name (getContractorsData
+  // -- confirmed in Round M3's pickAssignedTo fix). Vendors/Clients already
+  // use name directly. Normalizing here keeps render()/onSearch() identical
+  // across all 3 types, matching source's own "structurally identical" design
+  // intent -- source itself only worked for vendor/client since it read
+  // e.name unconditionally, and would have shown blank contractor names.
+  _normalize(type, records) {
+    if (type !== 'contractor') return records;
+    return records.map(c => ({ ...c, name: c.contractorName }));
+  },
+
+  close() {
+    MApp.Sheet.close('sheet-directory');
+  },
+
+  onSearch(term) {
+    this.searchTerm = String(term || '').trim().toLowerCase();
+    this.filtered = !this.searchTerm ? this.items : this.items.filter(e =>
+      e.name.toLowerCase().includes(this.searchTerm) ||
+      (e.contact || '').toLowerCase().includes(this.searchTerm));
+    this.render();
+  },
+
+  render() {
+    const listEl = document.getElementById('directory-list');
+    if (!listEl) return;
+    const cfg = this.CONFIGS[this.type] || {};
+
+    if (this.filtered.length === 0) {
+      MApp.Util.renderEmpty(listEl, {
+        title: `No ${(cfg.title || 'entries').toLowerCase()} found`,
+        body: this.items.length === 0 ? (cfg.emptyBody || 'None recorded yet.') : 'Try a different search term.'
+      });
+      return;
+    }
+
+    listEl.innerHTML = this.filtered.slice(0, 100).map(e => {
+      const contactHtml = e.contact
+        ? `<a href="tel:${MApp.Util.escapeHtml(e.contact)}" onclick="event.stopPropagation()">${MApp.Util.escapeHtml(e.contact)}</a>`
+        : 'No contact on file';
+      return `
+        <div class="mb-card">
+          <div class="mb-card-title">${MApp.Util.escapeHtml(e.name)}</div>
+          <div class="mb-card-sub">${contactHtml}</div>
+          ${e.address ? `<div class="mb-card-sub" style="margin-top:2px;">${MApp.Util.escapeHtml(e.address)}</div>` : ''}
+        </div>
+      `;
+    }).join('');
+  }
+};
 
 // ================================================================
 // MORE — links out to Returns/Items lookup/desktop UI + About row
