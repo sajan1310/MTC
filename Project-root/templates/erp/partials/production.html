@@ -235,11 +235,25 @@
             <div class="col-md-6" id="productionQtyWrapper">
               <label class="form-label fw-bold">Quantity to Produce *</label>
               <input type="number" name="qty" id="productionQty" class="form-control" placeholder="0" step="any" required oninput="App.Production.refreshPayableHint();App.Production.refreshSuggestedComponentQty();">
+              <button type="button" id="productionAddColorsBtn" class="btn btn-link btn-sm p-0 mt-1" style="display:none;" onclick="App.Production.enableManualColors()">+ Add Colors to this Lot</button>
             </div>
-            <div class="col-md-12" id="productionMultiColorNotice" style="display:none;">
-              <div class="alert alert-warning mb-0">
-                <i class="bi bi-exclamation-triangle-fill me-1"></i>
-                This process has multiple color sub-groups configured. Logging a multi-color lot isn't supported in this interface yet &mdash; that's coming in a future round. Choose a different Process, or use a single-color process for now.
+            <div class="col-md-12" id="productionColorWrapper" style="display:none;">
+              <label class="form-label fw-bold d-flex justify-content-between align-items-center">
+                <span>Colors to Produce *</span>
+                <button type="button" id="productionRevertColorsBtn" class="btn btn-link btn-sm p-0" style="display:none;" onclick="App.Production.revertToSingleQty()">Use a single quantity instead</button>
+              </label>
+              <div id="productionColorChecklist" class="d-flex flex-wrap gap-4 p-2 border rounded bg-white"></div>
+              <div class="d-flex align-items-center gap-2 mt-2">
+                <input type="text" id="productionCustomColorInput" class="form-control form-control-sm" style="max-width:220px;" placeholder="Custom sub-group name">
+                <select id="productionCustomColorGroupSelect" class="form-select form-select-sm" style="max-width:260px; display:none;" title="Which group does this belong to?"></select>
+                <button type="button" class="btn btn-outline-secondary btn-sm" onclick="App.Production.addCustomColorRow()">+ Add Custom Sub-Group</button>
+              </div>
+              <div class="form-text">Check every color being produced in this run and enter each one's own quantity &mdash; this whole batch is saved as a single Production Lot. Not producing a Color Master color? Type a one-off custom sub-group name above.</div>
+              <div id="productionMultiColorNotice" class="mt-2" style="display:none;">
+                <div class="alert alert-warning mb-0">
+                  <i class="bi bi-exclamation-triangle-fill me-1"></i>
+                  This process's color-specific components need the Per-Color Component Matrix, which isn't supported in this interface yet &mdash; that's coming in a future round. Saving is disabled for this Process until then.
+                </div>
               </div>
             </div>
             <div class="col-md-12" id="productionProductTagWrapper" style="display:none;">
@@ -277,6 +291,45 @@
             <button type="button" class="btn btn-outline-dark btn-sm fw-bold" onclick="App.Production.openIssueStockForLot()">
               <i class="bi bi-box-arrow-up me-1"></i>Issue Stock <small class="fw-normal">(not part of this lot's BOM)</small>
             </button>
+          </div>
+
+          <!-- Per-Color Components -- Round 13 scope: manual rows only.
+               Auto-population (recipe rows explicitly tagged per-color)
+               is guarded off at the Process-selection level (see
+               productionMultiColorNotice above); an operator can still
+               manually tag a one-off component to a specific color via
+               "+ Add Per-Color Component". -->
+          <div id="productionColorMatrixWrapper" style="display:none;">
+            <h6 class="text-secondary border-bottom pb-2 mb-3 fw-bold">
+              Per-Color Components <small class="text-muted fw-normal">(one quantity column per color in this batch — leave a cell blank if that item doesn't apply to that color)</small>
+            </h6>
+            <div class="table-responsive mb-2">
+              <table class="table table-bordered bg-white shadow-sm mb-0 prod-color-table">
+                <thead class="table-light">
+                  <tr id="productionColorMatrixHeaderRow">
+                    <th style="width: 22%;">Item / Pool Name</th>
+                    <th style="width: 8%;">Size</th>
+                    <th style="width: 13%;">Source</th>
+                    <th style="width: 3%;" class="text-center">✕</th>
+                  </tr>
+                </thead>
+                <tbody id="productionColorMatrixBody"></tbody>
+              </table>
+            </div>
+            <button type="button" class="btn btn-outline-primary btn-sm fw-bold mb-3" onclick="App.Production.addColorMatrixRow()">+ Add Per-Color Component</button>
+          </div>
+
+          <!-- Per-Process Pool Components -- Round 13 scope: always empty
+               (see production.js's _processNeedsColorMatrix guard); no
+               manual entry point exists for this in source either, it's
+               purely auto-populated. Kept in the DOM so
+               renderPoolColorSplitGroups' real, faithfully-ported logic
+               has somewhere to render if this guard is ever loosened. -->
+          <div id="productionPoolColorGroupsWrapper" style="display:none;">
+            <h6 class="text-secondary border-bottom pb-2 mb-3 fw-bold">
+              Per-Process Pool Components <small class="text-muted fw-normal">(one table per upstream process/output item — only its own colors are shown)</small>
+            </h6>
+            <div id="productionPoolColorGroupsContainer"></div>
           </div>
 
           <h6 class="text-secondary border-bottom pb-2 mb-3 fw-bold">Assignment & Workflow</h6>

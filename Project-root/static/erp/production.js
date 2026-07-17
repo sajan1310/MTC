@@ -6,34 +6,41 @@
 // print, the Colorwise Summary report, and the "All Activity" combined
 // feed.
 //
-// Round 12 scope (this round): the Create/Edit Lot modal -- but ONLY
-// for the single-Qty (no color sub-groups) path. Source's own Create/
-// Edit modal orchestration (Script_Production.html lines ~627-3921,
-// ~3300 lines on its own -- more than the entire rest of this app's
-// largest single prior round) turned out to itself need splitting
-// further once actually read in full: the multi-axis Color Checklist
-// system alone is ~1050 lines, the Per-Color Component Matrix +
-// Per-Process Warehouse Pool Color Group Matrix systems together are
-// another ~1350 lines, each with its own subtle, incident-documented
-// edge cases (see source's own comments re: axis collisions, Select2
-// re-entrant change events, etc). Porting all of that faithfully in one
-// pass would be too large to verify with confidence, so this round
-// covers: the full modal shell (cascading Size->Model->Process
-// Type->Process dropdowns, Lot Number/Output Item readouts, optional
-// Product tag), the Components Consumed table (recipe-prefilled,
-// editable, Item/Pool source toggle, availability hints), Assignment &
-// Workflow (contractor Select2 + live payable hint, Status, Remarks),
-// and full create/edit/save/delete for any lot whose Process has NO
-// configured color sub-groups (the common case for many processes).
+// Round 12 scope (shipped): the Create/Edit Lot modal shell -- cascading
+// Size->Model->Process Type->Process dropdowns, the Components Consumed
+// table, Assignment & Workflow -- plus full create/edit/save/delete for
+// any lot whose Process has NO configured color sub-groups.
 //
-// A Process that DOES have color sub-groups (detected via the same real
-// getProcessColorGroups call source makes) is guarded, not silently
-// mishandled: the form shows a dismissable notice and blocks Save,
-// exactly the "guard now, activate later" pattern used everywhere else
-// in this port. Editing an existing lot that already carries a saved
-// colorBreakdown is guarded the same way before the modal even opens.
-// Both guards lift automatically the moment the still-to-come Color
-// Checklist / Per-Color Matrix round lands -- no changes needed here.
+// Round 13 scope (this round): the multi-axis Color Checklist system --
+// checking off which colors a lot produces, per-color quantities, axis
+// grouping (a process with 2+ independent Color Axes, e.g. Frame color
+// + Rim color), primary-axis selection, custom one-off colors, and
+// "+ Add Colors to this Lot" for a process with no auto-detected groups
+// at all. This unlocks real multi-color lot creation -- but ONLY for a
+// process whose color-configured components don't ALSO need the Per-
+// Color Component Matrix or Per-Process Warehouse Pool Color Group
+// Matrix to represent correctly (see _processNeedsColorMatrix below).
+// Reading the full Create/Edit modal source (Script_Production.html
+// lines ~1013-3407, ~2400 lines) confirmed those two matrix systems are
+// each independently complex (axis-scoped column sync, merged vs.
+// manual rows, composite delimiter-joined pool colors) and are correctly
+// deferred to their own round rather than guessed at here.
+//
+// The guard is computed from the SAME data
+// (getProcessComponentsData + getPoolColorAwareItemNames) the real
+// matrix-population functions below would use, so it's provably
+// accurate: a process that passes the guard has ZERO components that
+// would ever populate the Matrix or Pool Color Group tables, which is
+// exactly why this round can safely include those tables' scaffolding
+// (manual "+ Add Per-Color Component" row, serialization) without
+// implementing their auto-population -- for a guard-passing process,
+// auto-population is provably a no-op, ported faithfully or not.
+// A process that fails the guard shows a dismissable notice and blocks
+// Save, same pattern as Round 12. Editing an existing lot is guarded
+// the same way: a saved colorBreakdown with any non-COMMON
+// componentsConsumed row (i.e. it used the Matrix) is blocked; a
+// colorBreakdown with only COMMON rows (created by this round, or a
+// legacy lot that happens to have none) is fully editable.
 //
 // Adaptations from source (documented, not silent):
 // - deleteProduction/deleteProductionBulk/updateProductionStatus/
@@ -58,9 +65,54 @@
 //   drill-down activates with zero changes to dashboard.js.
 // - viewProductionSheet (the lot-completion Production Sheet modal)
 //   stays a stub -- its own later round, unaffected by this one.
+// - Bug fix (verified empirically against the real saveProduction RPC,
+//   not just read from source): source's enableManualColors calls
+//   renderColorChecklistRows(colors) with no isCustom flag. Server-side,
+//   saveProduction only honors a submitted colorBreakdown when the
+//   process has configured color groups (enableManualColors exists
+//   precisely for a process that has NONE) or has_custom_breakdown is
+//   true -- with neither true, it silently fell back to reading the
+//   plain qty field, which the submit handler had already deleted,
+//   and always failed with "Production Quantity cannot be zero." Every
+//   "Add Colors to this Lot" submission in the original app would have
+//   hit this. Fixed here (and in openEditModal's matching restoration
+//   path) by passing isCustom=true -- these rows genuinely are
+//   process-undefined custom colors, exactly what that flag means.
 
 App.Production = {
   STATUS_OPTIONS: ['Pending', 'In Progress', 'Completed', 'Cancelled'],
+
+  // Shared with .prod-color-table CSS -- every place below that sets a
+  // pool-color-group/matrix table's inline min-width uses these.
+  PROD_COLOR_TABLE_FIXED_RESERVE_PX: 378,
+  PROD_COLOR_TABLE_COLOR_COL_PX: 88,
+
+  // Per-load cache for getProcessComponentsData/getWarehousePoolData,
+  // reset every time _compLoadSeq is bumped -- collapses what would
+  // otherwise be several redundant round trips per Process selection
+  // into one fetch per sheet.
+  _procDataCache: null,
+
+  _resetProcDataCache() {
+    this._procDataCache = { components: new Map(), pool: null };
+  },
+
+  _fetchProcessComponents(processId) {
+    if (!this._procDataCache) this._resetProcDataCache();
+    const key = processId || '';
+    if (!this._procDataCache.components.has(key)) {
+      this._procDataCache.components.set(key, Api.call('getProcessComponentsData', processId));
+    }
+    return this._procDataCache.components.get(key);
+  },
+
+  _fetchWarehousePoolData() {
+    if (!this._procDataCache) this._resetProcDataCache();
+    if (!this._procDataCache.pool) {
+      this._procDataCache.pool = Api.call('getWarehousePoolData');
+    }
+    return this._procDataCache.pool;
+  },
 
   // Maps a status value to the inline background/text color of its row
   // select, mirroring the badge colors the status used to render as.
@@ -827,17 +879,13 @@ App.Production = {
   },
 
   // Fired when Process changes: populates Output Item Name / Product tag
-  // visibility, then loads the recipe into the Components Consumed table.
-  //
-  // Adaptation from source: source branches here into the multi-axis
-  // Color Checklist when getProcessColorGroups returns any colors (see
-  // this file's module header). That system isn't ported yet, so this
-  // round instead shows a blocking notice and leaves the simple
-  // single-Qty table empty -- once the Color Checklist round lands, this
-  // function's `else` branch is exactly where it plugs back in.
+  // visibility, then branches into the multi-axis Color Checklist (see
+  // populateColorChecklist) when this process has configured color
+  // sub-groups, or the plain single-Qty Components table otherwise.
   async handleProcessChange(processId) {
     if (this._suppressCascade) return;
     const seq = ++this._compLoadSeq;
+    this._resetProcDataCache();
 
     const tagWrapper = document.getElementById('productionProductTagWrapper');
     const outputEl = document.getElementById('productionOutputItemName');
@@ -852,54 +900,71 @@ App.Production = {
       this.handleProductChange('');
     }
 
-    this._setMultiColorNotice(false);
-    this.clearComponentsTable();
-
-    if (!processId) return;
-
-    let colors = [];
-    try {
-      const res = await Api.call('getProcessColorGroups', processId);
-      colors = res.success ? (res.data || []) : [];
-    } catch (err) {
-      colors = [];
-    }
+    const colors = await this.populateColorChecklist(processId, seq);
     if (seq !== this._compLoadSeq) return;
 
-    if (colors.length > 0) {
-      this._setMultiColorNotice(true);
-      return;
+    const addColorsBtn = document.getElementById('productionAddColorsBtn');
+    const revertColorsBtn = document.getElementById('productionRevertColorsBtn');
+    if (revertColorsBtn) revertColorsBtn.style.display = 'none';
+    if (colors.length === 0) {
+      await this.populateComponentsFromProcess(processId, '', seq);
+      if (seq !== this._compLoadSeq) return;
+      if (addColorsBtn) addColorsBtn.style.display = processId ? '' : 'none';
+    } else {
+      this.clearComponentsTable();
+      this.clearColorMatrix();
+      await this.populateCommonComponentsFromProcess(processId, seq);
+      if (seq !== this._compLoadSeq) return;
+      if (addColorsBtn) addColorsBtn.style.display = 'none';
     }
-
-    await this.populateComponentsFromProcess(processId, seq);
-    if (seq !== this._compLoadSeq) return;
     this.refreshPayableHint();
   },
 
-  // Shows/hides the "this process needs the not-yet-ported Color
-  // Checklist" notice and disables Save while it's up, instead of
-  // letting the operator submit a form the simple single-Qty path can't
-  // correctly represent.
+  // Detects whether a process's color-configured components need the
+  // not-yet-ported Per-Color Component Matrix or Per-Process Warehouse
+  // Pool Color Group Matrix to represent correctly -- see this file's
+  // module header for why this is provably accurate rather than a guess:
+  // it's computed from the exact same components + pool-color data
+  // populateCommonComponentsFromProcess itself uses, so "needs nothing"
+  // here really does mean nothing would ever populate those tables.
+  //   - explicitColorComps: any component row explicitly tagged with a
+  //     real colorGroup (not blank/COMMON) -- these are exactly what
+  //     populateColorMatrixForColors routes into Matrix rows.
+  //   - poolColorSplit: any COMMON, POOL-sourced component whose item
+  //     currently has 2+ colors live in the Warehouse Pool -- exactly
+  //     what renderPoolColorSplitGroups routes into its own tables.
+  async _processNeedsColorMatrix(processId) {
+    const [compRes, poolColorMap] = await Promise.all([
+      this._fetchProcessComponents(processId),
+      this.getPoolColorAwareItemNames(processId)
+    ]);
+    const all = compRes.success ? (compRes.data || []) : [];
+    const explicitColorComps = all.filter(c => c.colorGroup && c.colorGroup !== 'COMMON');
+    const commonComps = all.filter(c => !c.colorGroup || c.colorGroup === 'COMMON');
+    const poolColorSplit = commonComps.filter(c =>
+      c.sourceType === 'POOL' && (poolColorMap.get((c.itemName || '').trim().toLowerCase()) || []).length > 1
+    );
+    return explicitColorComps.length > 0 || poolColorSplit.length > 0;
+  },
+
+  // Shows/hides the "this process's color-specific components need the
+  // not-yet-ported Matrix" notice and disables Save while it's up.
   _setMultiColorNotice(show) {
     const notice = document.getElementById('productionMultiColorNotice');
     if (notice) notice.style.display = show ? '' : 'none';
-    const qtyWrapper = document.getElementById('productionQtyWrapper');
-    if (qtyWrapper) qtyWrapper.style.display = show ? 'none' : '';
-    const qtyInput = document.getElementById('productionQty');
-    if (qtyInput) qtyInput.required = !show;
     const submitBtn = document.getElementById('productionSubmitBtn');
     if (submitBtn) submitBtn.disabled = show;
   },
 
-  async populateComponentsFromProcess(processId, seq) {
+  async populateComponentsFromProcess(processId, colorGroup, seq) {
     this.clearComponentsTable();
     if (!processId) return;
 
     try {
-      const res = await Api.call('getProcessComponentsData', processId);
+      const res = await this._fetchProcessComponents(processId);
       if (seq !== undefined && seq !== this._compLoadSeq) return;
       const all = res.success ? (res.data || []) : [];
-      const components = all.filter(c => !c.colorGroup || c.colorGroup === 'COMMON');
+      const components = all.filter(c => !c.colorGroup || c.colorGroup === 'COMMON' || App.Utils.sameText(c.colorGroup, colorGroup || ''));
       const lotQty = toNumber(document.getElementById('productionQty')?.value) || 0;
       components.forEach(c => this.addComponentRow({
         itemName: c.itemName,
@@ -913,6 +978,1347 @@ App.Production = {
     } catch (err) {
       if (seq === undefined || seq === this._compLoadSeq) App.Utils.showToast(err.message || 'Failed to load process recipe', true);
     }
+  },
+
+  // ── Colors to Produce checklist ──────────────────────────────────────
+  // Ported from Script_Production.html's own Color Checklist system.
+  // Round 13 adaptation: when this process's color-specific components
+  // need the Matrix (_processNeedsColorMatrix), the checklist still
+  // renders (so the operator can see what's configured) but Save is
+  // blocked via _setMultiColorNotice -- source has no such guard since
+  // its Matrix system is fully implemented.
+
+  // Populates the interactive Colors-to-Produce checklist with this
+  // process's configured color sub-groups. Shows the checklist + Per-
+  // Color matrix (hiding the single Qty field) only when at least one
+  // color exists. Returns the list of colors.
+  async populateColorChecklist(processId, seq) {
+    const wrapper = document.getElementById('productionColorWrapper');
+    const checklistEl = document.getElementById('productionColorChecklist');
+    const qtyWrapper = document.getElementById('productionQtyWrapper');
+    const qtyInput = document.getElementById('productionQty');
+    const sectionLabel = document.getElementById('productionComponentsSectionLabel');
+    if (!wrapper || !checklistEl) return [];
+
+    checklistEl.innerHTML = '';
+    this._customColorGroupOptions = [];
+    this._setMultiColorNotice(false);
+
+    let colors = [];
+    if (processId) {
+      try {
+        const res = await Api.call('getProcessColorGroups', processId);
+        colors = res.success ? (res.data || []) : [];
+      } catch (err) {
+        colors = [];
+      }
+    }
+    if (seq !== undefined && seq !== this._compLoadSeq) return colors;
+
+    if (colors.length === 0) {
+      wrapper.style.display = 'none';
+      if (qtyWrapper) qtyWrapper.style.display = '';
+      if (qtyInput) qtyInput.required = true;
+      if (sectionLabel) sectionLabel.innerText = 'Components Consumed';
+      this.hideColorMatrix();
+      this._refreshCustomColorGroupSelect();
+      return [];
+    }
+
+    const needsMatrix = await this._processNeedsColorMatrix(processId);
+    if (seq !== undefined && seq !== this._compLoadSeq) return colors;
+    this._setMultiColorNotice(needsMatrix);
+
+    if (qtyWrapper) qtyWrapper.style.display = 'none';
+    if (qtyInput) { qtyInput.required = false; qtyInput.value = ''; }
+    wrapper.style.display = '';
+    if (sectionLabel) sectionLabel.innerText = 'Common Components';
+    this.showColorMatrix();
+
+    await this.renderGroupedColorChecklist(processId, colors, seq);
+    if (seq === undefined || seq === this._compLoadSeq) this._refreshCustomColorGroupSelect();
+
+    return colors;
+  },
+
+  _refreshCustomColorGroupSelect() {
+    const sel = document.getElementById('productionCustomColorGroupSelect');
+    if (!sel) return;
+    const options = this._customColorGroupOptions || [];
+    if (options.length < 2) {
+      sel.style.display = 'none';
+      sel.innerHTML = '';
+      return;
+    }
+    sel.style.display = '';
+    sel.innerHTML = '<option value="">Independent extra color (adds to lot total)</option>'
+      + options.map(o => `<option value="${escapeHtml(o.key)}">${escapeHtml(o.label)}${o.isPrimary ? ' (Primary)' : ''}</option>`).join('');
+  },
+
+  _colorRowHtml(color, groupKey, isCustom, isPrimary) {
+    const groupAttr = groupKey ? ` data-group="${escapeHtml(groupKey)}"` : '';
+    const customAttr = isCustom ? ' data-custom="true"' : '';
+    const primaryAttr = isPrimary === undefined ? '' : ` data-primary="${isPrimary ? 'true' : 'false'}"`;
+    return `
+      <div class="form-check d-flex align-items-center gap-2 production-color-row" data-color="${escapeHtml(color)}"${groupAttr}${customAttr}${primaryAttr}>
+        <input class="form-check-input production-color-check" type="checkbox" onchange="App.Production.handleColorCheckToggle(this)">
+        <label class="form-check-label fw-bold mb-0">${escapeHtml(color)}</label>
+        <input type="number" class="form-control form-control-sm production-color-qty" style="width:100px;" step="any" placeholder="Qty" disabled oninput="App.Production.onColorQtyChanged(this.closest('.production-color-row'))">
+      </div>`;
+  },
+
+  renderColorChecklistRows(colors, groupKey, isCustom, isPrimary) {
+    const checklistEl = document.getElementById('productionColorChecklist');
+    if (!checklistEl) return;
+    colors.forEach(color => {
+      checklistEl.insertAdjacentHTML('beforeend', this._colorRowHtml(color, groupKey, isCustom, isPrimary));
+    });
+  },
+
+  _primaryColorAxisTotal() {
+    return $$('#productionColorChecklist .production-color-row[data-primary="true"]')
+      .filter(row => row.querySelector('.production-color-check')?.checked)
+      .reduce((sum, row) => sum + (toNumber(row.querySelector('.production-color-qty')?.value) || 0), 0);
+  },
+
+  _colorNamesMatch(a, b) {
+    const x = String(a || '').trim().toLowerCase();
+    const y = String(b || '').trim().toLowerCase();
+    if (!x || !y) return false;
+    if (x === y) return true;
+    const shorter = x.length <= y.length ? x : y;
+    const longer = x.length <= y.length ? y : x;
+    const escaped = shorter.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+    return new RegExp(`(^|[-/\\s])${escaped}($|[-/\\s])`).test(longer);
+  },
+
+  _matchingPrimaryColorQty(nonPrimaryColor) {
+    const target = String(nonPrimaryColor || '').trim();
+    if (!target) return null;
+    const primaryRows = $$('#productionColorChecklist .production-color-row[data-primary="true"]')
+      .filter(row => row.querySelector('.production-color-check')?.checked);
+    for (const row of primaryRows) {
+      if (this._colorNamesMatch(row.dataset.color, target)) {
+        return toNumber(row.querySelector('.production-color-qty')?.value) || 0;
+      }
+    }
+    return null;
+  },
+
+  // Lets the operator tack on a one-off custom-named color/sub-group at
+  // production-record time. Auto-checked so the operator only has to
+  // fill in its quantity. When this process has 2+ real groups, the
+  // operator must also say which one it belongs to.
+  addCustomColorRow() {
+    const input = document.getElementById('productionCustomColorInput');
+    const name = (input?.value || '').trim();
+    if (!name) return;
+
+    const checklistEl = document.getElementById('productionColorChecklist');
+    if (!checklistEl) return;
+
+    const exists = $$('#productionColorChecklist .production-color-row')
+      .some(row => (row.dataset.color || '').toLowerCase() === name.toLowerCase());
+    if (exists) {
+      App.Utils.showToast(`"${name}" is already in this lot's checklist.`, true);
+      return;
+    }
+
+    const groupSelect = document.getElementById('productionCustomColorGroupSelect');
+    const selectedKey = (groupSelect && groupSelect.style.display !== 'none') ? groupSelect.value : '';
+    let targetGroup = selectedKey ? (this._customColorGroupOptions || []).find(o => o.key === selectedKey) : null;
+
+    if (!targetGroup && (this._customColorGroupOptions || []).length === 1) {
+      targetGroup = this._customColorGroupOptions[0];
+    }
+
+    let groupKey;
+    if (targetGroup) {
+      groupKey = targetGroup.key;
+      const groupRows = $$('#productionColorChecklist .production-color-row')
+        .filter(r => r.dataset.group === groupKey);
+      const anchor = groupRows[groupRows.length - 1];
+      const html = this._colorRowHtml(name, groupKey, true, targetGroup.isPrimary);
+      if (anchor) anchor.insertAdjacentHTML('afterend', html);
+      else checklistEl.insertAdjacentHTML('beforeend', html);
+    } else {
+      groupKey = 'custom';
+      if (!checklistEl.querySelector('[data-group-master="custom"]')) {
+        checklistEl.insertAdjacentHTML('beforeend', this._buildColorGroupHeader('custom', 'Custom'));
+      }
+      this.renderColorChecklistRows([name], 'custom', true);
+    }
+    if (input) input.value = '';
+    if (groupSelect) groupSelect.value = '';
+
+    const row = $$('#productionColorChecklist .production-color-row')
+      .find(r => r.dataset.group === groupKey && r.dataset.color === name);
+    const checkbox = row?.querySelector('.production-color-check');
+    if (checkbox) {
+      checkbox.checked = true;
+      this.handleColorCheckToggle(checkbox);
+    }
+    this._syncColorGroupMasterCheckbox(groupKey);
+  },
+
+  // Fired by a group's "Select all" checkbox -- checks/unchecks every
+  // not-already-matching color row tagged with this groupKey.
+  async toggleColorGroup(checkboxEl, groupKey) {
+    const seq = this._compLoadSeq;
+    const checked = checkboxEl.checked;
+    const rows = $$('#productionColorChecklist .production-color-row').filter(row => row.dataset.group === groupKey);
+    const toggledColors = [];
+    const toggledPrimaryColors = [];
+
+    rows.forEach(row => {
+      const chk = row.querySelector('.production-color-check');
+      if (!chk || chk.checked === checked) return;
+      chk.checked = checked;
+      const qtyInput = row.querySelector('.production-color-qty');
+      if (qtyInput) {
+        qtyInput.disabled = !checked;
+        if (!checked) {
+          qtyInput.value = '';
+          delete row.dataset.autoSynced;
+        } else if (row.dataset.primary === 'false') {
+          const matched = this._matchingPrimaryColorQty(row.dataset.color);
+          const fillQty = matched !== null ? matched : this._primaryColorAxisTotal();
+          if (fillQty > 0) qtyInput.value = this.formatQty(fillQty);
+          row.dataset.autoSynced = 'true';
+        }
+      }
+      toggledColors.push(row.dataset.color);
+      if (row.dataset.primary === 'true') toggledPrimaryColors.push(row.dataset.color);
+    });
+
+    if (toggledColors.length === 0) return;
+
+    const processId = document.getElementById('productionProcessId')?.value;
+    if (checked) {
+      toggledColors.forEach(color => this.addMatrixColorColumn(color));
+      this.syncPoolColorGroupColumns();
+      if (processId) await this.populateColorMatrixForColors(processId, toggledColors, seq, groupKey);
+    } else {
+      toggledColors.forEach(color => {
+        this.removeMatrixColorColumn(color);
+        this.refreshPoolColorGroupCells(color, 0, groupKey);
+      });
+      this.syncPoolColorGroupColumns();
+    }
+
+    this.refreshCommonSuggestedQty();
+    this.refreshPayableHint();
+    checkboxEl.indeterminate = false;
+
+    for (const primaryColor of toggledPrimaryColors) {
+      await this._syncMatchingNonPrimaryRows(primaryColor, checked);
+    }
+    if (toggledPrimaryColors.length > 0) this._refreshAutoSyncedFallbackRows();
+
+    await this.refreshPoolAvailability();
+  },
+
+  // Splits the Colors to Produce checklist into sub-groups: one per Color
+  // Axis when this process has 2+ (see getProcessColorAxes), else one per
+  // multi-color pool item set, with any leftover in a final "Other" block.
+  async renderGroupedColorChecklist(processId, colors, seq) {
+    const checklistEl = document.getElementById('productionColorChecklist');
+    if (!checklistEl) return;
+
+    try {
+      const axesRes = await Api.call('getProcessColorAxes', processId);
+      if (seq !== undefined && seq !== this._compLoadSeq) return;
+      const axes = (axesRes.success && axesRes.data && Array.isArray(axesRes.data.axes)) ? axesRes.data.axes : [];
+      if (axes.length >= 2) {
+        checklistEl.innerHTML = '';
+        const primaryAxisKey = axesRes.data.primaryAxisKey || '';
+        axes.forEach(axis => {
+          const isPrimary = !!primaryAxisKey && axis.key === primaryAxisKey;
+          checklistEl.insertAdjacentHTML('beforeend', this._buildColorAxisGroupHeader(axis, isPrimary));
+          this.renderColorChecklistRows(axis.colors, axis.key, false, isPrimary);
+          this._customColorGroupOptions.push({ key: axis.key, label: axis.label, isPrimary, source: axis.source });
+        });
+        if (!primaryAxisKey) {
+          checklistEl.insertAdjacentHTML('afterbegin',
+            '<div class="alert alert-warning py-1 px-2 small mb-2" style="flex: 1 0 100%;" id="productionPrimaryAxisWarning">' +
+            'Pick which group below is <b>Primary</b> — its checked quantities become this lot\'s total. The others are recorded per-color but won\'t add to it.</div>');
+        }
+        return;
+      }
+    } catch (err) {
+      if (seq !== undefined && seq !== this._compLoadSeq) return;
+    }
+
+    let comps = [];
+    let poolColorMap = new Map();
+    try {
+      const [compRes, pcm] = await Promise.all([
+        this._fetchProcessComponents(processId),
+        this.getPoolColorAwareItemNames(processId)
+      ]);
+      if (seq !== undefined && seq !== this._compLoadSeq) return;
+      comps = compRes.success ? (compRes.data || []) : [];
+      poolColorMap = pcm;
+    } catch (err) {
+      if (seq !== undefined && seq !== this._compLoadSeq) return;
+      checklistEl.innerHTML = '';
+      this.renderColorChecklistRows(colors);
+      return;
+    }
+
+    checklistEl.innerHTML = '';
+
+    const multiColorItems = comps.filter(c => c.sourceType === 'POOL' && (!c.colorGroup || c.colorGroup === 'COMMON')
+      && (poolColorMap.get((c.itemName || '').trim().toLowerCase()) || []).length > 1);
+
+    const groups = new Map();
+    multiColorItems.forEach(c => {
+      const itemColors = poolColorMap.get((c.itemName || '').trim().toLowerCase()) || [];
+      const signature = itemColors.slice().sort((a, b) => a.localeCompare(b)).join('|').toLowerCase();
+      if (!groups.has(signature)) groups.set(signature, { colorSet: new Set(itemColors.map(x => x.toLowerCase())), itemNames: [] });
+      groups.get(signature).itemNames.push(c.itemName);
+    });
+
+    if (groups.size === 0) {
+      this.renderColorChecklistRows(colors);
+      return;
+    }
+
+    const usedColors = new Set();
+    let groupIdx = 0;
+    groups.forEach(({ colorSet, itemNames }) => {
+      const matching = colors.filter(col => colorSet.has(col.toLowerCase()) && !usedColors.has(col.toLowerCase()));
+      if (matching.length === 0) return;
+      matching.forEach(c => usedColors.add(c.toLowerCase()));
+      groupIdx++;
+      const groupKey = `group_${groupIdx}`;
+      checklistEl.insertAdjacentHTML('beforeend', this._buildColorGroupHeader(groupKey, itemNames.join(', ')));
+      this.renderColorChecklistRows(matching, groupKey, false, true);
+      this._customColorGroupOptions.push({ key: groupKey, label: itemNames.join(', '), isPrimary: true, source: 'pool' });
+    });
+
+    const remaining = colors.filter(c => !usedColors.has(c.toLowerCase()));
+    if (remaining.length > 0) {
+      checklistEl.insertAdjacentHTML('beforeend', this._buildColorGroupHeader('other', 'Other'));
+      this.renderColorChecklistRows(remaining, 'other', false, false);
+    }
+  },
+
+  _buildColorGroupHeader(groupKey, label) {
+    return `
+      <div class="d-flex align-items-center gap-2 mt-2 mb-1" style="flex: 1 0 100%;">
+        <input type="checkbox" class="form-check-input" data-group-master="${escapeHtml(groupKey)}" onchange="App.Production.toggleColorGroup(this, '${escapeHtml(groupKey)}')" title="Select all colors in this group">
+        <span class="text-muted small fw-bold">${escapeHtml(label)}</span>
+      </div>`;
+  },
+
+  _buildColorAxisGroupHeader(axis, isPrimary) {
+    return `
+      <div class="d-flex align-items-center gap-2 mt-2 mb-1" style="flex: 1 0 100%;">
+        <input type="checkbox" class="form-check-input" data-group-master="${escapeHtml(axis.key)}" onchange="App.Production.toggleColorGroup(this, '${escapeHtml(axis.key)}')" title="Select all colors in this group">
+        <span class="text-muted small fw-bold axis-group-label" data-axis-label="${escapeHtml(axis.label)}">${escapeHtml(axis.label)}${isPrimary ? ' (Primary)' : ''}</span>
+        <label class="form-check form-check-inline mb-0 ms-2 small text-muted" title="This group's checked quantities become the lot's total output quantity">
+          <input type="radio" class="form-check-input" name="productionPrimaryAxisPick" value="${escapeHtml(axis.key)}" data-axis-label="${escapeHtml(axis.label)}"
+            ${isPrimary ? 'checked' : ''} onchange="App.Production.setPrimaryColorAxisChoice(this)">
+          Primary
+        </label>
+      </div>`;
+  },
+
+  setPrimaryColorAxisChoice(radioEl) {
+    const axisKey = radioEl.value;
+    $$('#productionColorChecklist .production-color-row[data-group]').forEach(row => {
+      row.dataset.primary = row.dataset.group === axisKey ? 'true' : 'false';
+    });
+    document.querySelectorAll('#productionColorChecklist .axis-group-label').forEach(labelEl => {
+      const ownRadio = labelEl.closest('div')?.querySelector('input[name="productionPrimaryAxisPick"]');
+      const label = labelEl.dataset.axisLabel || labelEl.textContent;
+      labelEl.textContent = label + (ownRadio?.checked ? ' (Primary)' : '');
+    });
+    const warning = document.getElementById('productionPrimaryAxisWarning');
+    if (warning) warning.remove();
+    this.refreshCommonSuggestedQty();
+    this.refreshPayableHint();
+  },
+
+  _syncColorGroupMasterCheckbox(groupKey) {
+    if (!groupKey) return;
+    const master = $$('#productionColorChecklist [data-group-master]').find(el => el.dataset.groupMaster === groupKey);
+    if (!master) return;
+    const rows = $$('#productionColorChecklist .production-color-row').filter(row => row.dataset.group === groupKey);
+    const checkedCount = rows.filter(row => row.querySelector('.production-color-check')?.checked).length;
+    master.checked = rows.length > 0 && checkedCount === rows.length;
+    master.indeterminate = checkedCount > 0 && checkedCount < rows.length;
+  },
+
+  // Lets the operator manually switch a process with no auto-detected
+  // color sub-groups over to the multi-color checklist for just this one
+  // lot, using the full Color Master list.
+  async enableManualColors() {
+    const processId = document.getElementById('productionProcessId').value;
+    if (!processId) return;
+    const seq = ++this._compLoadSeq;
+    this._resetProcDataCache();
+
+    await App.Color.ensureLoaded();
+    const colors = (App.State.globalColors || []).map(c => c.name).filter(Boolean);
+    if (colors.length === 0) {
+      App.Utils.showToast('No colors configured yet — add one via Manage Color Master first.', true);
+      return;
+    }
+
+    const wrapper = document.getElementById('productionColorWrapper');
+    const checklistEl = document.getElementById('productionColorChecklist');
+    const qtyWrapper = document.getElementById('productionQtyWrapper');
+    const qtyInput = document.getElementById('productionQty');
+    const sectionLabel = document.getElementById('productionComponentsSectionLabel');
+    if (!wrapper || !checklistEl) return;
+
+    checklistEl.innerHTML = '';
+    // Adaptation from source (a confirmed bug, verified empirically
+    // against the real saveProduction RPC): source's own
+    // enableManualColors calls renderColorChecklistRows(colors) with no
+    // isCustom flag, so a lot logged this way would submit a
+    // colorBreakdown with every entry's isCustom false. Server-side,
+    // saveProduction only honors colorBreakdown when this process has
+    // configured color groups (it has none here -- that's the whole
+    // point of "Add Colors to this Lot") OR has_custom_breakdown is true
+    // -- with neither true, it fell back to reading the (by then
+    // deleted) plain qty field and always failed with "Production
+    // Quantity cannot be zero." Passing isCustom=true here is the fix:
+    // every one of these rows genuinely IS a custom, not-process-defined
+    // color choice, exactly what the isCustom flag exists to mark.
+    this.renderColorChecklistRows(colors, undefined, true);
+
+    if (qtyWrapper) qtyWrapper.style.display = 'none';
+    if (qtyInput) { qtyInput.required = false; qtyInput.value = ''; }
+    wrapper.style.display = '';
+    if (sectionLabel) sectionLabel.innerText = 'Common Components';
+    this.showColorMatrix();
+    this._setMultiColorNotice(false);
+
+    this.clearComponentsTable();
+    this.clearColorMatrix();
+    await this.populateCommonComponentsFromProcess(processId, seq);
+    if (seq !== this._compLoadSeq) return;
+
+    const addBtn = document.getElementById('productionAddColorsBtn');
+    if (addBtn) addBtn.style.display = 'none';
+    const revertBtn = document.getElementById('productionRevertColorsBtn');
+    if (revertBtn) revertBtn.style.display = '';
+  },
+
+  // Undoes enableManualColors() for this lot, restoring the plain Qty
+  // field and that process's default (non-color-scoped) recipe.
+  async revertToSingleQty() {
+    const processId = document.getElementById('productionProcessId').value;
+    const seq = ++this._compLoadSeq;
+    this._resetProcDataCache();
+
+    const wrapper = document.getElementById('productionColorWrapper');
+    const checklistEl = document.getElementById('productionColorChecklist');
+    if (checklistEl) checklistEl.innerHTML = '';
+    if (wrapper) wrapper.style.display = 'none';
+    this.hideColorMatrix();
+    this._setMultiColorNotice(false);
+
+    const qtyWrapper = document.getElementById('productionQtyWrapper');
+    const qtyInput = document.getElementById('productionQty');
+    if (qtyWrapper) qtyWrapper.style.display = '';
+    if (qtyInput) qtyInput.required = true;
+
+    const sectionLabel = document.getElementById('productionComponentsSectionLabel');
+    if (sectionLabel) sectionLabel.innerText = 'Components Consumed';
+
+    await this.populateComponentsFromProcess(processId, '', seq);
+    if (seq !== this._compLoadSeq) return;
+
+    const addBtn = document.getElementById('productionAddColorsBtn');
+    if (addBtn) addBtn.style.display = processId ? '' : 'none';
+    const revertBtn = document.getElementById('productionRevertColorsBtn');
+    if (revertBtn) revertBtn.style.display = 'none';
+  },
+
+  async handleColorCheckToggle(checkboxEl, refreshAvailability = true) {
+    const seq = this._compLoadSeq;
+    const row = checkboxEl.closest('.production-color-row');
+    const color = row?.dataset.color;
+    const qtyInput = row?.querySelector('.production-color-qty');
+    if (qtyInput) {
+      qtyInput.disabled = !checkboxEl.checked;
+      if (!checkboxEl.checked) {
+        qtyInput.value = '';
+        if (row) delete row.dataset.autoSynced;
+      } else if (row?.dataset.primary === 'false') {
+        const matched = this._matchingPrimaryColorQty(row.dataset.color);
+        const fillQty = matched !== null ? matched : this._primaryColorAxisTotal();
+        if (fillQty > 0) qtyInput.value = this.formatQty(fillQty);
+        row.dataset.autoSynced = 'true';
+      }
+    }
+    this._syncColorGroupMasterCheckbox(row?.dataset.group);
+    if (!color) return;
+
+    const processId = document.getElementById('productionProcessId')?.value;
+    if (checkboxEl.checked) {
+      this.addMatrixColorColumn(color);
+      if (processId) await this.populateColorMatrixForColors(processId, [color], seq, row?.dataset.group);
+    } else {
+      this.removeMatrixColorColumn(color);
+      this.refreshPoolColorGroupCells(color, 0, row?.dataset.group);
+    }
+    this.syncPoolColorGroupColumns();
+    this.refreshCommonSuggestedQty();
+    this.refreshPayableHint();
+
+    if (row?.dataset.primary === 'true') {
+      await this._syncMatchingNonPrimaryRows(color, checkboxEl.checked);
+      this._refreshAutoSyncedFallbackRows();
+    }
+
+    if (refreshAvailability) await this.refreshPoolAvailability();
+  },
+
+  _refreshAutoSyncedFallbackRows() {
+    const total = this._primaryColorAxisTotal();
+    $$('#productionColorChecklist .production-color-row[data-primary="false"]')
+      .filter(r => r.dataset.autoSynced === 'true' && r.querySelector('.production-color-check')?.checked)
+      .forEach(r => {
+        if (this._matchingPrimaryColorQty(r.dataset.color) !== null) return;
+        const qi = r.querySelector('.production-color-qty');
+        if (qi) qi.value = total > 0 ? this.formatQty(total) : '';
+      });
+  },
+
+  async _syncMatchingNonPrimaryRows(primaryColor, checked) {
+    const target = String(primaryColor || '').trim();
+    if (!target) return;
+    const matches = $$('#productionColorChecklist .production-color-row[data-primary="false"]')
+      .filter(row => this._colorNamesMatch(row.dataset.color, target));
+
+    for (const row of matches) {
+      const chk = row.querySelector('.production-color-check');
+      if (!chk || chk.checked === checked) continue;
+      chk.checked = checked;
+      if (checked) row.dataset.autoSynced = 'true'; else delete row.dataset.autoSynced;
+      await this.handleColorCheckToggle(chk, false);
+    }
+  },
+
+  onColorQtyChanged(row, isUserEdit = true) {
+    this.refreshCommonSuggestedQty();
+    this.refreshPayableHint();
+    if (!row) return;
+    const color = row.dataset.color;
+
+    if (isUserEdit && row.dataset.primary === 'false') {
+      delete row.dataset.autoSynced;
+    }
+
+    const qty = toNumber(row.querySelector('.production-color-qty')?.value) || 0;
+    this.syncPoolColorGroupColumns();
+    this.refreshPoolColorGroupCells(color, qty, row.dataset.group);
+
+    const colIndex = this.getMatrixColumnIndex(color);
+    if (colIndex !== -1 && !this._isColorCheckedUnderMultipleAxes(color)) {
+      document.querySelectorAll('#productionColorMatrixBody tr').forEach(matrixRow => {
+        const cell = matrixRow.children[colIndex];
+        const input = cell?.querySelector('.matrix-qty');
+        const qtyPerUnit = input?.dataset.qtyPerUnit;
+        if (input && qtyPerUnit !== undefined && qtyPerUnit !== '') {
+          input.value = this.formatQty(qty * toNumber(qtyPerUnit));
+        }
+      });
+    }
+
+    if (row.dataset.primary === 'true') {
+      $$('#productionColorChecklist .production-color-row[data-primary="false"]')
+        .filter(r => r.dataset.autoSynced === 'true' && r.querySelector('.production-color-check')?.checked)
+        .forEach(r => {
+          const matched = this._matchingPrimaryColorQty(r.dataset.color);
+          const fillQty = matched !== null ? matched : this._primaryColorAxisTotal();
+          const qi = r.querySelector('.production-color-qty');
+          if (qi) qi.value = fillQty > 0 ? this.formatQty(fillQty) : '';
+          this.onColorQtyChanged(r, false);
+        });
+    }
+  },
+
+  // { color, qty, isCustom, countsTowardTotal, axisKey } for every
+  // checked color with a numeric quantity entered.
+  getCheckedColorQtys() {
+    return $$('#productionColorChecklist .production-color-row')
+      .filter(row => row.querySelector('.production-color-check')?.checked)
+      .map(row => {
+        const isNonPrimary = row.dataset.primary === 'false';
+        const isUnmatchedOther = isNonPrimary && row.dataset.group === 'other'
+          && this._matchingPrimaryColorQty(row.dataset.color) === null;
+        return {
+          color: row.dataset.color,
+          qty: toNumber(row.querySelector('.production-color-qty')?.value) || 0,
+          isCustom: row.dataset.custom === 'true',
+          countsTowardTotal: !isNonPrimary || isUnmatchedOther,
+          axisKey: row.dataset.group || ''
+        };
+      });
+  },
+
+  _currentLotTotalQty() {
+    return this.getCheckedColorQtys()
+      .filter(c => c.countsTowardTotal)
+      .reduce((sum, c) => sum + c.qty, 0);
+  },
+
+  // Map<itemNameLower, string[]> of live Warehouse Pool colors for every
+  // COMMON POOL-sourced recipe component of this process.
+  async getPoolColorAwareItemNames(processId) {
+    try {
+      const [compRes, poolRes] = await Promise.all([
+        this._fetchProcessComponents(processId),
+        this._fetchWarehousePoolData()
+      ]);
+      const comps = compRes.success ? (compRes.data || []) : [];
+      const poolRows = poolRes.success ? (poolRes.data || []) : [];
+
+      const commonPoolItems = new Set(
+        comps
+          .filter(c => c.sourceType === 'POOL' && (!c.colorGroup || c.colorGroup === 'COMMON'))
+          .map(c => (c.itemName || '').trim().toLowerCase())
+      );
+
+      const colorSets = new Map();
+      poolRows.forEach(r => {
+        const key = (r.outputItemName || '').trim().toLowerCase();
+        if (!r.color || !commonPoolItems.has(key)) return;
+        if (!colorSets.has(key)) colorSets.set(key, new Set());
+        colorSets.get(key).add(r.color);
+      });
+
+      const result = new Map();
+      colorSets.forEach((set, key) => result.set(key, Array.from(set).sort()));
+      return result;
+    } catch (err) {
+      return new Map();
+    }
+  },
+
+  // Populates the COMMON rows of the recipe into the Common Components
+  // table, suggested at qtyPerUnit x total quantity across every checked
+  // color. See _processNeedsColorMatrix: a component that would need the
+  // Matrix or Pool Color Split table never reaches this path in Round 13
+  // (the guard blocks Save before this function's own routing logic --
+  // ported faithfully below -- would ever need to actually split
+  // anything off into those still-scaffolded-only tables).
+  async populateCommonComponentsFromProcess(processId, seq) {
+    this.clearComponentsTable();
+    if (!processId) return;
+
+    try {
+      const [res, poolColorMap] = await Promise.all([
+        this._fetchProcessComponents(processId),
+        this.getPoolColorAwareItemNames(processId)
+      ]);
+      if (seq !== undefined && seq !== this._compLoadSeq) return;
+      const all = res.success ? (res.data || []) : [];
+      const commonComps = all.filter(c => !c.colorGroup || c.colorGroup === 'COMMON');
+      const totalQty = this._currentLotTotalQty();
+
+      const poolColorsFor = c => poolColorMap.get((c.itemName || '').trim().toLowerCase()) || [];
+      const isMultiColorPoolAware = c => c.sourceType === 'POOL' && poolColorsFor(c).length > 1;
+      const colorOverrideComps = this._getCommonItemsWithColorOverride(all);
+      const trueCommon = commonComps.filter(c => !isMultiColorPoolAware(c) && !colorOverrideComps.includes(c));
+      const poolColorSplit = commonComps.filter(isMultiColorPoolAware);
+
+      trueCommon.forEach(c => {
+        const poolColors = poolColorsFor(c);
+        const singleColor = c.sourceType === 'POOL' && poolColors.length === 1 ? poolColors[0] : '';
+        this.addComponentRow({
+          itemName: c.itemName,
+          size: c.size,
+          sourceType: c.sourceType,
+          color: singleColor,
+          colorScope: singleColor || undefined,
+          qty: totalQty > 0 ? totalQty * c.qtyPerUnit : c.qtyPerUnit,
+          qtyPerUnit: c.qtyPerUnit,
+          unit: c.unit
+        });
+      });
+
+      this.renderPoolColorSplitGroups(poolColorSplit, poolColorMap);
+
+      await this.refreshPoolAvailability();
+    } catch (err) {
+      App.Utils.showToast(err.message || 'Failed to load process recipe', true);
+    }
+  },
+
+  // A Common-tagged (ITEM-sourced) component "collides" with an explicit
+  // per-color sibling when its own name matches that sibling's name once
+  // the sibling's own color word is stripped -- e.g. "Chain Cover"
+  // (Common) and "Chain Cover Green" (colorGroup Green). Pool-sourced
+  // items are excluded -- they have their own multi-color handling.
+  _getCommonItemsWithColorOverride(components) {
+    const overrideKeys = new Set((components || [])
+      .filter(c => c.colorGroup && c.colorGroup !== 'COMMON' && c.sourceType !== 'POOL')
+      .map(c => this._itemSlotKey(this._stripColorSubstring(c.itemName || '', c.colorGroup), c.size))
+    );
+    return (components || []).filter(c =>
+      (!c.colorGroup || c.colorGroup === 'COMMON') &&
+      c.sourceType !== 'POOL' &&
+      overrideKeys.has(this._itemSlotKey(c.itemName, c.size))
+    );
+  },
+
+  _stripColorSubstring(itemName, color) {
+    if (!color || !itemName) return itemName;
+    const lowerName = itemName.toLowerCase();
+    const candidates = [color, ...color.split(/[\s\-_]+/)].filter(Boolean);
+
+    for (const candidate of candidates) {
+      const idx = lowerName.indexOf(candidate.toLowerCase());
+      if (idx === -1) continue;
+      const stripped = (itemName.slice(0, idx) + itemName.slice(idx + candidate.length))
+        .replace(/[\s\-_]+/g, ' ')
+        .trim();
+      return stripped || itemName;
+    }
+    return itemName;
+  },
+
+  _itemSlotKey(name, size) {
+    return `${(name || '').trim().toLowerCase()}|${(size || '').trim().toLowerCase()}`;
+  },
+
+  // Renders one small table per distinct pool-color signature among
+  // pool-color-aware components. See _processNeedsColorMatrix's module
+  // header comment: `poolColorSplit` is always empty for any process
+  // that passes Round 13's guard, so this always safely no-ops (hides
+  // the wrapper) in every reachable Round 13 flow -- ported faithfully
+  // (not stubbed) since it costs nothing extra and matches source
+  // exactly for the day this guard lifts.
+  renderPoolColorSplitGroups(poolColorSplit, poolColorMap) {
+    const wrapper = document.getElementById('productionPoolColorGroupsWrapper');
+    const container = document.getElementById('productionPoolColorGroupsContainer');
+    if (!container) return;
+
+    container.querySelectorAll('tr').forEach(row => this.destroyComponentItemSelect2(row));
+    container.innerHTML = '';
+    this._poolColorGroupDefs = [];
+
+    if (!poolColorSplit || poolColorSplit.length === 0) {
+      if (wrapper) wrapper.style.display = 'none';
+      return;
+    }
+    if (wrapper) wrapper.style.display = '';
+
+    const groups = new Map();
+    poolColorSplit.forEach(c => {
+      const colors = poolColorMap.get((c.itemName || '').trim().toLowerCase()) || [];
+      const signature = colors.slice().sort((a, b) => a.localeCompare(b)).join('|').toLowerCase();
+      if (!groups.has(signature)) groups.set(signature, { colors, comps: [] });
+      groups.get(signature).comps.push(c);
+    });
+
+    let groupIdx = 0;
+    groups.forEach(({ colors, comps }) => {
+      groupIdx++;
+      const tableId = `productionPoolColorGroup_${groupIdx}`;
+      const axisKey = this._axisKeyForPoolItemNames(comps.map(c => c.itemName));
+      this._poolColorGroupDefs.push({ tableId, colors, rows: comps, mode: 'create', axisKey });
+      const visibleColors = this._checkedPoolGroupColors(colors, axisKey);
+      container.insertAdjacentHTML('beforeend', this._buildPoolColorGroupTable(tableId, colors, visibleColors, comps, 'create', axisKey));
+      document.querySelectorAll(`#${tableId} tbody tr`).forEach(row => this.initComponentItemSelect2(row));
+    });
+  },
+
+  _axisKeyForPoolItemNames(itemNames) {
+    const namesLower = (itemNames || []).map(n => String(n || '').trim().toLowerCase()).filter(Boolean);
+    if (namesLower.length === 0) return '';
+    const opt = (this._customColorGroupOptions || []).find(o => o.source === 'pool' &&
+      o.label.split(',').map(s => s.trim().toLowerCase()).some(l => namesLower.includes(l)));
+    return opt ? opt.key : '';
+  },
+
+  _axisScopedCheckedColorQtys(axisKey) {
+    const all = this.getCheckedColorQtys();
+    return axisKey ? all.filter(cc => cc.axisKey === axisKey) : all;
+  },
+
+  _checkedColorTokensLower(axisKey) {
+    const tokens = new Set();
+    this._axisScopedCheckedColorQtys(axisKey).filter(cc => cc.qty > 0).forEach(cc => {
+      (cc.color || '').split(' / ').forEach(t => {
+        const trimmed = t.trim().toLowerCase();
+        if (trimmed) tokens.add(trimmed);
+      });
+    });
+    return tokens;
+  },
+
+  _checkedPoolGroupColors(colors, axisKey) {
+    const tokensLower = this._checkedColorTokensLower(axisKey);
+    return colors.filter(c => tokensLower.has(c.toLowerCase()));
+  },
+
+  _poolGroupCellValue(mode, row, color, axisKey) {
+    if (mode === 'edit') {
+      return row.colorsQty ? row.colorsQty[color.toLowerCase()] : undefined;
+    }
+    const colorLower = color.toLowerCase();
+    const total = this._axisScopedCheckedColorQtys(axisKey).reduce((sum, cc) => {
+      const tokens = (cc.color || '').split(' / ').map(t => t.trim().toLowerCase());
+      return tokens.includes(colorLower) ? sum + cc.qty : sum;
+    }, 0);
+    return total > 0 ? total * row.qtyPerUnit : undefined;
+  },
+
+  _buildPoolColorGroupTable(tableId, colors, visibleColors, rows, mode, axisKey) {
+    const headHtml = visibleColors.map(col => `<th class="text-end" data-color="${escapeHtml(col)}">${escapeHtml(col)}</th>`).join('');
+    const rowsHtml = rows.map((r, rowIdx) => {
+      const rowId = 'prod_pool_group_row_' + Date.now() + '_' + Math.floor(Math.random() * 1000);
+      const preSelectedOption = this._buildItemPreselectOption(r.itemName, r.size || '', r.sourceType);
+      const qtyPerUnitAttr = (mode === 'create' && r.qtyPerUnit !== undefined) ? ` data-qty-per-unit="${r.qtyPerUnit}"` : '';
+      const cellsHtml = visibleColors.map(col => {
+        const qty = this._poolGroupCellValue(mode, r, col, axisKey);
+        const display = (qty !== undefined && qty !== null) ? this.formatQty(qty) : '';
+        return `<td><input type="number" class="form-control text-end matrix-qty pool-group-qty" data-color="${escapeHtml(col)}"${qtyPerUnitAttr} min="0" step="any" value="${display}"></td>`;
+      }).join('');
+      return `
+        <tr id="${rowId}" data-row-idx="${rowIdx}">
+          <td>
+            <select class="form-select prod-comp-item-select" required>
+              <option value=""></option>
+              ${preSelectedOption}
+            </select>
+          </td>
+          <td><input type="text" class="form-control prod-comp-size" value="${escapeHtml(r.size || '')}" placeholder="-" readonly></td>
+          <td>
+            <select class="form-select prod-comp-source" disabled>
+              <option value="POOL" selected>Pool (Warehouse)</option>
+            </select>
+          </td>
+          ${cellsHtml}
+          <td class="text-center"><button type="button" class="btn btn-outline-danger btn-sm" onclick="App.Production.removePoolColorGroupRow('${rowId}')">✕</button></td>
+        </tr>`;
+    }).join('');
+
+    const minWidthPx = this.PROD_COLOR_TABLE_FIXED_RESERVE_PX + visibleColors.length * this.PROD_COLOR_TABLE_COLOR_COL_PX;
+    const hidden = visibleColors.length === 0;
+
+    return `
+      <div class="mb-3" id="${tableId}_wrapper"${hidden ? ' style="display:none;"' : ''}>
+        <div class="table-responsive">
+          <table class="table table-bordered bg-white shadow-sm mb-0 prod-color-table" id="${tableId}" data-all-colors="${escapeHtml(colors.join('|'))}" data-axis-key="${escapeHtml(axisKey || '')}" style="min-width: ${minWidthPx}px;">
+            <thead class="table-light">
+              <tr>
+                <th style="width: 22%;">Item / Pool Name</th>
+                <th style="width: 8%;">Size</th>
+                <th style="width: 13%;">Source</th>
+                ${headHtml}
+                <th style="width: 3%;" class="text-center">✕</th>
+              </tr>
+            </thead>
+            <tbody>${rowsHtml}</tbody>
+          </table>
+        </div>
+      </div>`;
+  },
+
+  syncPoolColorGroupColumns() {
+    (this._poolColorGroupDefs || []).forEach(def => {
+      const table = document.getElementById(def.tableId);
+      if (!table) return;
+      const headerRow = table.querySelector('thead tr');
+      if (!headerRow) return;
+
+      const tokensLower = this._checkedColorTokensLower(def.axisKey);
+      const wantLower = new Set(def.colors.filter(c => tokensLower.has(c.toLowerCase())).map(c => c.toLowerCase()));
+
+      Array.from(headerRow.querySelectorAll('th[data-color]')).forEach(th => {
+        if (wantLower.has(th.dataset.color.toLowerCase())) return;
+        const idx = Array.from(headerRow.children).indexOf(th);
+        th.remove();
+        table.querySelectorAll('tbody tr').forEach(tr => {
+          const td = tr.children[idx];
+          if (td) td.remove();
+        });
+      });
+
+      def.colors.forEach(matchColor => {
+        const colorLower = matchColor.toLowerCase();
+        if (!wantLower.has(colorLower)) return;
+        if (Array.from(headerRow.querySelectorAll('th[data-color]')).some(th => th.dataset.color.toLowerCase() === colorLower)) return;
+
+        const fullIdx = def.colors.indexOf(matchColor);
+        const colorThs = Array.from(headerRow.querySelectorAll('th[data-color]'));
+        let insertBeforeEl = colorThs.find(th => def.colors.indexOf(th.dataset.color) > fullIdx) || null;
+        if (!insertBeforeEl) insertBeforeEl = headerRow.lastElementChild;
+
+        const insertIdx = Array.from(headerRow.children).indexOf(insertBeforeEl);
+
+        const th = document.createElement('th');
+        th.className = 'text-end';
+        th.dataset.color = matchColor;
+        th.textContent = matchColor;
+        headerRow.insertBefore(th, insertBeforeEl);
+
+        table.querySelectorAll('tbody tr').forEach(tr => {
+          const rowObj = def.rows[Number(tr.dataset.rowIdx)];
+          const qty = rowObj ? this._poolGroupCellValue(def.mode, rowObj, matchColor, def.axisKey) : undefined;
+          const display = (qty !== undefined && qty !== null) ? this.formatQty(qty) : '';
+          const qtyPerUnitAttr = (def.mode === 'create' && rowObj && rowObj.qtyPerUnit !== undefined) ? ` data-qty-per-unit="${rowObj.qtyPerUnit}"` : '';
+          const td = document.createElement('td');
+          td.innerHTML = `<input type="number" class="form-control text-end matrix-qty pool-group-qty" data-color="${escapeHtml(matchColor)}"${qtyPerUnitAttr} min="0" step="any" value="${display}">`;
+          tr.insertBefore(td, tr.children[insertIdx] || null);
+        });
+      });
+
+      this._syncPoolGroupTableMinWidth(table);
+    });
+  },
+
+  _syncPoolGroupTableMinWidth(table) {
+    const colorCount = table.querySelectorAll('thead th[data-color]').length;
+    table.style.minWidth = (this.PROD_COLOR_TABLE_FIXED_RESERVE_PX + colorCount * this.PROD_COLOR_TABLE_COLOR_COL_PX) + 'px';
+    const wrapper = document.getElementById(table.id + '_wrapper');
+    if (wrapper) wrapper.style.display = colorCount === 0 ? 'none' : '';
+  },
+
+  removePoolColorGroupRow(rowId) {
+    const row = document.getElementById(rowId);
+    if (!row) return;
+    const table = row.closest('table');
+    this.destroyComponentItemSelect2(row);
+    row.remove();
+    if (table && !table.querySelector('tbody tr')) {
+      table.closest('.mb-3')?.remove();
+    }
+  },
+
+  refreshCommonSuggestedQty() {
+    this._applyQtyPerUnit('#productionComponentsBody tr', this._currentLotTotalQty());
+  },
+
+  _applyQtyPerUnit(rowSelector, multiplier) {
+    document.querySelectorAll(rowSelector).forEach(row => {
+      const qtyPerUnit = row.dataset.qtyPerUnit;
+      if (qtyPerUnit === undefined || qtyPerUnit === '') return;
+      const qtyInput = row.querySelector('.prod-comp-qty');
+      if (qtyInput) qtyInput.value = this.formatQty(multiplier * toNumber(qtyPerUnit));
+    });
+  },
+
+  // ── Per-Color Components matrix (manual rows only) ───────────────────
+  // Auto-population (populateColorMatrixForColors, called from
+  // handleColorCheckToggle/toggleColorGroup below) always finds zero
+  // matching components for any process that passes Round 13's guard
+  // (_processNeedsColorMatrix) -- see that function's comment. What
+  // remains real and useful here is the manual "+ Add Per-Color
+  // Component" row an operator can add by hand for a one-off case.
+
+  showColorMatrix() {
+    const el = document.getElementById('productionColorMatrixWrapper');
+    if (el) el.style.display = '';
+  },
+
+  hideColorMatrix() {
+    const el = document.getElementById('productionColorMatrixWrapper');
+    if (el) el.style.display = 'none';
+    const groupsEl = document.getElementById('productionPoolColorGroupsWrapper');
+    if (groupsEl) groupsEl.style.display = 'none';
+    this.clearColorMatrix();
+  },
+
+  clearColorMatrix() {
+    const tbody = document.getElementById('productionColorMatrixBody');
+    if (tbody) {
+      tbody.querySelectorAll('tr').forEach(row => this.destroyComponentItemSelect2(row));
+      tbody.innerHTML = '';
+    }
+    const groupsContainer = document.getElementById('productionPoolColorGroupsContainer');
+    if (groupsContainer) {
+      groupsContainer.querySelectorAll('tr').forEach(row => this.destroyComponentItemSelect2(row));
+      groupsContainer.innerHTML = '';
+    }
+    const headerRow = document.getElementById('productionColorMatrixHeaderRow');
+    if (headerRow) {
+      Array.from(headerRow.querySelectorAll('th[data-color]')).forEach(th => th.remove());
+    }
+    this._syncMatrixTableMinWidth();
+  },
+
+  _syncMatrixTableMinWidth() {
+    const headerRow = document.getElementById('productionColorMatrixHeaderRow');
+    const table = headerRow?.closest('table');
+    if (!table) return;
+    const colorCount = headerRow.querySelectorAll('th[data-color]').length;
+    table.style.minWidth = (this.PROD_COLOR_TABLE_FIXED_RESERVE_PX + colorCount * this.PROD_COLOR_TABLE_COLOR_COL_PX) + 'px';
+  },
+
+  getMatrixColors() {
+    const headerRow = document.getElementById('productionColorMatrixHeaderRow');
+    if (!headerRow) return [];
+    return Array.from(headerRow.children)
+      .map((th, index) => ({ color: th.dataset.color, index }))
+      .filter(c => c.color);
+  },
+
+  getMatrixColumnIndex(color) {
+    const headerRow = document.getElementById('productionColorMatrixHeaderRow');
+    if (!headerRow) return -1;
+    return Array.from(headerRow.children).findIndex(th => th.dataset.color === color);
+  },
+
+  _isColorCheckedUnderMultipleAxes(color) {
+    const colorLower = String(color || '').toLowerCase();
+    const axisKeys = new Set();
+    this.getCheckedColorQtys().forEach(cc => {
+      if ((cc.color || '').toLowerCase() === colorLower) axisKeys.add(cc.axisKey || '');
+    });
+    return axisKeys.size > 1;
+  },
+
+  _buildMatrixColorCell(isMerged) {
+    const td = document.createElement('td');
+    if (isMerged) {
+      td.innerHTML = '<select class="form-select form-select-sm prod-comp-item-select mb-1"><option value=""></option></select>'
+        + '<input type="number" class="form-control form-control-sm text-end matrix-qty" min="0" step="any" value="">';
+    } else {
+      const input = document.createElement('input');
+      input.type = 'number';
+      input.className = 'form-control text-end matrix-qty';
+      input.min = '0';
+      input.step = '0.0001';
+      td.appendChild(input);
+    }
+    return td;
+  },
+
+  addMatrixColorColumn(color) {
+    if (this.getMatrixColumnIndex(color) !== -1) return;
+    const headerRow = document.getElementById('productionColorMatrixHeaderRow');
+    if (!headerRow) return;
+
+    const th = document.createElement('th');
+    th.dataset.color = color;
+    th.style.textAlign = 'right';
+    th.textContent = color;
+    headerRow.insertBefore(th, headerRow.lastElementChild);
+
+    document.querySelectorAll('#productionColorMatrixBody tr').forEach(row => {
+      const isMerged = row.dataset.merged === 'true';
+      const td = this._buildMatrixColorCell(isMerged);
+      row.insertBefore(td, row.lastElementChild);
+      if (isMerged) this.initMergedCellItemSelect2(td.querySelector('.prod-comp-item-select'));
+    });
+    this._syncMatrixTableMinWidth();
+  },
+
+  removeMatrixColorColumn(color) {
+    const colorLower = String(color || '').toLowerCase();
+    const stillCheckedElsewhere = this.getCheckedColorQtys().some(cc => (cc.color || '').toLowerCase() === colorLower);
+    if (stillCheckedElsewhere) return;
+
+    const idx = this.getMatrixColumnIndex(color);
+    if (idx === -1) return;
+    const headerRow = document.getElementById('productionColorMatrixHeaderRow');
+    if (headerRow?.children[idx]) headerRow.children[idx].remove();
+    document.querySelectorAll('#productionColorMatrixBody tr').forEach(row => {
+      const cell = row.children[idx];
+      if (!cell) return;
+      const selectEl = cell.querySelector('.prod-comp-item-select');
+      if (selectEl && window.jQuery?.fn?.select2 && window.jQuery(selectEl).data('select2')) {
+        window.jQuery(selectEl).select2('destroy');
+      }
+      cell.remove();
+    });
+    this._syncMatrixTableMinWidth();
+  },
+
+  findMatrixRowByDisplayName(displayName, size) {
+    const key = `${displayName}|${size || ''}`.toLowerCase();
+    return $$('#productionColorMatrixBody tr').find(row => {
+      if (row.dataset.merged !== 'true') return false;
+      const rowName = row.querySelector('.prod-comp-display-name')?.value.trim() || '';
+      const rowSize = row.querySelector('.prod-comp-size')?.value.trim() || '';
+      return `${rowName}|${rowSize}`.toLowerCase() === key;
+    });
+  },
+
+  addMergedMatrixRow(comp = null) {
+    const tbody = document.getElementById('productionColorMatrixBody');
+    if (!tbody) return null;
+
+    const rowId = 'prod_matrix_row_' + Date.now() + '_' + Math.floor(Math.random() * 1000);
+    const itemName = (comp && comp.itemName) || '';
+    const size = (comp && comp.size) || '';
+    const sourceType = (comp && comp.sourceType === 'POOL') ? 'POOL' : 'ITEM';
+    const colors = this.getMatrixColors();
+
+    const colorCellsHtml = colors
+      .map(() => '<td><select class="form-select form-select-sm prod-comp-item-select mb-1"><option value=""></option></select>'
+        + '<input type="number" class="form-control form-control-sm text-end matrix-qty" min="0" step="any" value=""></td>')
+      .join('');
+
+    const rowHtml = `
+      <tr id="${rowId}" data-merged="true">
+        <td><input type="text" class="form-control prod-comp-display-name" value="${escapeHtml(itemName)}" readonly title="Merged across colors — each color cell below has its own item picker"></td>
+        <td><input type="text" class="form-control prod-comp-size" value="${escapeHtml(size)}" placeholder="-"></td>
+        <td>
+          <select class="form-select prod-comp-source" onchange="App.Production.handleMergedSourceChange(this)">
+            <option value="ITEM" ${sourceType === 'ITEM' ? 'selected' : ''}>Item (Stock)</option>
+            <option value="POOL" ${sourceType === 'POOL' ? 'selected' : ''}>Pool (Warehouse)</option>
+          </select>
+        </td>
+        ${colorCellsHtml}
+        <td class="text-center"><button type="button" class="btn btn-outline-danger btn-sm" onclick="App.Production.removeMatrixRow('${rowId}')">✕</button></td>
+      </tr>
+    `;
+    tbody.insertAdjacentHTML('beforeend', rowHtml);
+    const rowEl = document.getElementById(rowId);
+    colors.forEach(({ index }) => {
+      this.initMergedCellItemSelect2(rowEl.children[index]?.querySelector('.prod-comp-item-select'));
+    });
+    return rowEl;
+  },
+
+  _setMergedCellItem(cell, itemComp, qty, qtyPerUnit) {
+    if (!cell) return;
+    const selectEl = cell.querySelector('.prod-comp-item-select');
+    const qtyInput = cell.querySelector('.matrix-qty');
+
+    if (selectEl) {
+      const sourceType = (itemComp.sourceType === 'POOL') ? 'POOL' : 'ITEM';
+      const option = this._buildItemPreselectOption(itemComp.itemName || '', itemComp.size || '', sourceType);
+      selectEl.innerHTML = `<option value=""></option>${option}`;
+      if (window.jQuery?.fn?.select2 && window.jQuery(selectEl).data('select2')) {
+        window.jQuery(selectEl).trigger('change.select2');
+      }
+    }
+    if (qtyInput) {
+      if (qtyPerUnit !== undefined) qtyInput.dataset.qtyPerUnit = qtyPerUnit;
+      qtyInput.value = qty !== undefined ? this.formatQty(qty) : '';
+    }
+  },
+
+  handleMergedSourceChange(selectEl) {
+    const row = selectEl.closest('tr');
+    row?.querySelectorAll('.prod-comp-item-select').forEach(sel => {
+      if (window.jQuery?.fn?.select2) window.jQuery(sel).val(null).trigger('change');
+    });
+    const sizeInput = row?.querySelector('.prod-comp-size');
+    if (sizeInput) sizeInput.value = '';
+  },
+
+  addColorMatrixRow() {
+    this.addMatrixItemRow();
+  },
+
+  addMatrixItemRow(comp = null) {
+    const tbody = document.getElementById('productionColorMatrixBody');
+    if (!tbody) return null;
+
+    const rowId = 'prod_matrix_row_' + Date.now() + '_' + Math.floor(Math.random() * 1000);
+    const itemName = (comp && comp.itemName) || '';
+    const size = (comp && comp.size) || '';
+    const sourceType = (comp && comp.sourceType === 'POOL') ? 'POOL' : 'ITEM';
+    const preSelectedOption = this._buildItemPreselectOption(itemName, size, sourceType);
+
+    const colorCellsHtml = this.getMatrixColors()
+      .map(() => `<td><input type="number" class="form-control text-end matrix-qty" min="0" step="any" value=""></td>`)
+      .join('');
+
+    const rowHtml = `
+      <tr id="${rowId}">
+        <td>
+          <select class="form-select prod-comp-item-select" required>
+            <option value=""></option>
+            ${preSelectedOption}
+          </select>
+        </td>
+        <td><input type="text" class="form-control prod-comp-size" value="${escapeHtml(size)}" placeholder="-"></td>
+        <td>
+          <select class="form-select prod-comp-source" onchange="App.Production.handleMatrixSourceChange(this)">
+            <option value="ITEM" ${sourceType === 'ITEM' ? 'selected' : ''}>Item (Stock)</option>
+            <option value="POOL" ${sourceType === 'POOL' ? 'selected' : ''}>Pool (Warehouse)</option>
+          </select>
+        </td>
+        ${colorCellsHtml}
+        <td class="text-center"><button type="button" class="btn btn-outline-danger btn-sm" onclick="App.Production.removeMatrixRow('${rowId}')">✕</button></td>
+      </tr>
+    `;
+    tbody.insertAdjacentHTML('beforeend', rowHtml);
+    const rowEl = document.getElementById(rowId);
+    this.initComponentItemSelect2(rowEl);
+    return rowEl;
+  },
+
+  removeMatrixRow(rowId) {
+    const row = document.getElementById(rowId);
+    if (row) {
+      this.destroyComponentItemSelect2(row);
+      row.remove();
+    }
+  },
+
+  handleMatrixSourceChange(selectEl) {
+    const row = selectEl.closest('tr');
+    const itemSelect = row?.querySelector('.prod-comp-item-select');
+    if (itemSelect && window.jQuery?.fn?.select2) {
+      window.jQuery(itemSelect).val(null).trigger('change');
+    }
+    const sizeInput = row?.querySelector('.prod-comp-size');
+    if (sizeInput) sizeInput.value = '';
+  },
+
+  findMatrixItemRowByName(itemName, size) {
+    const key = `${(itemName || '').trim()}|${(size || '').trim()}`.toLowerCase();
+    return $$('#productionColorMatrixBody tr').find(row => {
+      if (row.dataset.merged === 'true') return false;
+      const itemSelect = row.querySelector('.prod-comp-item-select');
+      if (!itemSelect || itemSelect.value === '') return false;
+      const opt = itemSelect.options[itemSelect.selectedIndex];
+      const rowItemName = (opt.dataset.name || opt.textContent || '').trim();
+      const rowSize = row.querySelector('.prod-comp-size')?.value.trim() || '';
+      return `${rowItemName}|${rowSize}`.toLowerCase() === key;
+    });
+  },
+
+  _setItemRowColorQty(row, colIndex, qty, qtyPerUnit) {
+    const input = row?.children[colIndex]?.querySelector('.matrix-qty');
+    if (!input) return;
+    if (qtyPerUnit !== undefined) input.dataset.qtyPerUnit = qtyPerUnit;
+    input.value = qty !== undefined ? this.formatQty(qty) : '';
+  },
+
+  async populateColorMatrixForColor(color, seq, axisKey) {
+    const processId = document.getElementById('productionProcessId')?.value;
+    if (!processId) return;
+    await this.populateColorMatrixForColors(processId, [color], seq, axisKey);
+    if (seq !== undefined && seq !== this._compLoadSeq) return;
+    await this.refreshPoolAvailability();
+  },
+
+  async populateColorMatrixForColors(processId, colors, seq, axisKey) {
+    if (!processId || !colors || colors.length === 0) return;
+
+    try {
+      const res = await this._fetchProcessComponents(processId);
+      if (seq !== undefined && seq !== this._compLoadSeq) return;
+      const all = res.success ? (res.data || []) : [];
+      const commonOverrideComps = this._getCommonItemsWithColorOverride(all);
+
+      colors.forEach(color => {
+        const colIndex = this.getMatrixColumnIndex(color);
+        const thisColorQty = (this._axisScopedCheckedColorQtys(axisKey).find(c => c.color === color) || {}).qty || 0;
+
+        if (colIndex !== -1) {
+          const colorComps = all.filter(c => App.Utils.sameText(c.colorGroup, color))
+            .map(c => ({ ...c, displayName: this._stripColorSubstring(c.itemName || '', color) }));
+
+          colorComps.forEach(c => {
+            let row = this.findMatrixRowByDisplayName(c.displayName, c.size || '');
+            if (!row) row = this.addMergedMatrixRow({ itemName: c.displayName, size: c.size, sourceType: c.sourceType });
+            const cell = row.children[colIndex];
+            const qty = thisColorQty > 0 ? thisColorQty * c.qtyPerUnit : c.qtyPerUnit;
+            this._setMergedCellItem(cell, { itemName: c.itemName, size: c.size, sourceType: c.sourceType }, qty, c.qtyPerUnit);
+          });
+
+          const overriddenKeys = new Set(colorComps.map(c => this._itemSlotKey(c.displayName, c.size)));
+          commonOverrideComps.forEach(c => {
+            if (overriddenKeys.has(this._itemSlotKey(c.itemName, c.size))) return;
+            let row = this.findMatrixRowByDisplayName(c.itemName, c.size || '');
+            if (!row) row = this.addMergedMatrixRow({ itemName: c.itemName, size: c.size, sourceType: c.sourceType });
+            const cell = row.children[colIndex];
+            const qty = thisColorQty > 0 ? thisColorQty * c.qtyPerUnit : c.qtyPerUnit;
+            this._setMergedCellItem(cell, { itemName: c.itemName, size: c.size, sourceType: c.sourceType }, qty, c.qtyPerUnit);
+          });
+        }
+
+        this.refreshPoolColorGroupCells(color, thisColorQty, axisKey);
+      });
+    } catch (err) {
+      App.Utils.showToast(err.message || 'Failed to load process recipe', true);
+    }
+  },
+
+  refreshPoolColorGroupCells(color, colorQty, axisKey) {
+    const container = document.getElementById('productionPoolColorGroupsContainer');
+    if (!container) return;
+    const tokensLower = (color || '').split(' / ').map(t => t.trim().toLowerCase()).filter(Boolean);
+    container.querySelectorAll('table.prod-color-table').forEach(table => {
+      const tableAxisKey = table.dataset.axisKey || '';
+      if (axisKey && tableAxisKey && axisKey !== tableAxisKey) return;
+      const checkedColorQtys = this._axisScopedCheckedColorQtys(tableAxisKey);
+      table.querySelectorAll('.pool-group-qty').forEach(input => {
+        const inputColorLower = (input.dataset.color || '').toLowerCase();
+        if (!tokensLower.includes(inputColorLower)) return;
+        const qtyPerUnit = input.dataset.qtyPerUnit;
+        if (qtyPerUnit === undefined || qtyPerUnit === '') return;
+        const total = checkedColorQtys.reduce((sum, cc) => {
+          const ccTokens = (cc.color || '').split(' / ').map(t => t.trim().toLowerCase()).filter(Boolean);
+          return ccTokens.includes(inputColorLower) ? sum + cc.qty : sum;
+        }, 0);
+        input.value = total > 0 ? this.formatQty(total * toNumber(qtyPerUnit)) : '';
+      });
+    });
+  },
+
+  serializeColorMatrix() {
+    const components = [];
+    const headerColors = this.getMatrixColors();
+    document.querySelectorAll('#productionColorMatrixBody tr').forEach(row => {
+      const isMerged = row.dataset.merged === 'true';
+      const size = row.querySelector('.prod-comp-size')?.value.trim() || '';
+      const sourceType = row.querySelector('.prod-comp-source')?.value === 'POOL' ? 'POOL' : 'ITEM';
+
+      let rowItemName = '';
+      if (!isMerged) {
+        const itemSelect = row.querySelector('.prod-comp-item-select');
+        if (!itemSelect || itemSelect.value === '') return;
+        const itemOpt = itemSelect.options[itemSelect.selectedIndex];
+        rowItemName = (itemOpt.dataset.name || itemOpt.textContent || '').trim();
+        if (!rowItemName) return;
+      }
+
+      headerColors.forEach(({ color, index }) => {
+        const cell = row.children[index];
+        const qty = toNumber(cell?.querySelector('.matrix-qty')?.value);
+        if (qty <= 0) return;
+
+        let itemName = rowItemName;
+        if (isMerged) {
+          const cellSelect = cell?.querySelector('.prod-comp-item-select');
+          if (!cellSelect || cellSelect.value === '') return;
+          const cellOpt = cellSelect.options[cellSelect.selectedIndex];
+          itemName = (cellOpt.dataset.name || cellOpt.textContent || '').trim();
+        }
+        if (!itemName) return;
+        components.push({ itemName, size, color: '', sourceType, qty, colorGroup: color });
+      });
+    });
+    return components;
+  },
+
+  serializePoolColorGroups() {
+    const components = [];
+    document.querySelectorAll('#productionPoolColorGroupsContainer tbody tr').forEach(row => {
+      const itemSelect = row.querySelector('.prod-comp-item-select');
+      if (!itemSelect || itemSelect.value === '') return;
+      const itemOpt = itemSelect.options[itemSelect.selectedIndex];
+      const itemName = (itemOpt.dataset.name || itemOpt.textContent || '').trim();
+      if (!itemName) return;
+      const size = row.querySelector('.prod-comp-size')?.value.trim() || '';
+
+      row.querySelectorAll('.pool-group-qty').forEach(input => {
+        const qty = toNumber(input.value);
+        if (qty <= 0) return;
+        const color = input.dataset.color || '';
+        if (!color) return;
+        components.push({ itemName, size, color: '', sourceType: 'POOL', qty, colorGroup: color });
+      });
+    });
+    return components;
   },
 
   refreshSuggestedComponentQty() {
@@ -1228,7 +2634,15 @@ App.Production = {
 
   async resetCreateForm() {
     ++this._compLoadSeq;
+    this._resetProcDataCache();
     this.clearComponentsTable();
+    this.hideColorMatrix();
+    const checklistEl = document.getElementById('productionColorChecklist');
+    if (checklistEl) checklistEl.innerHTML = '';
+    const colorWrapper = document.getElementById('productionColorWrapper');
+    if (colorWrapper) colorWrapper.style.display = 'none';
+    const revertColorsBtn = document.getElementById('productionRevertColorsBtn');
+    if (revertColorsBtn) revertColorsBtn.style.display = 'none';
     this._setMultiColorNotice(false);
 
     const form = document.getElementById('productionForm');
@@ -1272,21 +2686,25 @@ App.Production = {
     }
   },
 
-  // Adaptation from source: a lot whose saved colorBreakdown is non-empty
-  // needs the not-yet-ported Color Checklist/Matrix system to edit
-  // correctly (source's own openEditModal reconstructs that whole UI
-  // from the saved breakdown) -- guarded here with a toast instead of
-  // opening a form that would silently drop that data on re-save.
+  // Adaptation from source: a lot whose SAVED Components Consumed
+  // contains any non-COMMON colorGroup row was recorded via the
+  // Per-Color Matrix -- editing it correctly needs that not-yet-ported
+  // system (source's own populateComponentsConsumedDirect), so it's
+  // guarded here instead of silently dropping that data on re-save. A
+  // lot with a colorBreakdown but only COMMON components (created by
+  // this round, via the Color Checklist alone) is fully editable.
   async openEditModal(idx) {
     const p = App.State.globalProduction[idx];
     if (!p) return;
 
-    if (p.colorBreakdown && p.colorBreakdown.length > 0) {
-      App.Utils.notPortedYet('Editing a multi-color Production Lot');
+    const usesMatrixComponents = (p.componentsConsumed || []).some(c => c.colorGroup && c.colorGroup !== 'COMMON');
+    if (usesMatrixComponents) {
+      App.Utils.notPortedYet('Editing this multi-color Production Lot (it uses Per-Color Components, not yet supported here)');
       return;
     }
 
     const seq = ++this._compLoadSeq;
+    this._resetProcDataCache();
 
     const form = document.getElementById('productionForm');
     if (form) form.reset();
@@ -1362,14 +2780,104 @@ App.Production = {
     const tagWrapper = document.getElementById('productionProductTagWrapper');
     if (tagWrapper) tagWrapper.style.display = (p.productId || (editProcess && editProcess.isFinalStage)) ? '' : 'none';
 
-    this._setMultiColorNotice(false);
-    document.getElementById('productionQty').value = p.qty;
-    if (p.componentsConsumed && p.componentsConsumed.length > 0) {
+    let colors = await this.populateColorChecklist(p.processId, seq);
+    if (seq !== this._compLoadSeq) return;
+
+    const addColorsBtn = document.getElementById('productionAddColorsBtn');
+    if (addColorsBtn) addColorsBtn.style.display = 'none';
+    const revertColorsBtn = document.getElementById('productionRevertColorsBtn');
+    if (revertColorsBtn) revertColorsBtn.style.display = 'none';
+
+    // This process has no auto-detected color sub-groups, but the saved
+    // lot still carries a colorBreakdown -- it must have been recorded
+    // via "Add Colors to this Lot" (enableManualColors). Rebuild the
+    // checklist from the full Color Master list so those saved colors
+    // have a row to check/restore against.
+    if (colors.length === 0 && p.colorBreakdown && p.colorBreakdown.length > 0) {
+      await App.Color.ensureLoaded();
+      const breakdownColors = p.colorBreakdown.map(c => c.color).filter(Boolean);
+      const allColors = Array.from(new Set([
+        ...(App.State.globalColors || []).map(c => c.name),
+        ...breakdownColors
+      ]));
+
+      const wrapper = document.getElementById('productionColorWrapper');
+      const checklistEl = document.getElementById('productionColorChecklist');
+      checklistEl.innerHTML = '';
+      // isCustom=true here for the same reason as enableManualColors --
+      // this process has zero configured color groups, so these rows'
+      // colorBreakdown entries need isCustom to survive a re-save.
+      this.renderColorChecklistRows(allColors, undefined, true);
+
+      document.getElementById('productionQtyWrapper').style.display = 'none';
+      document.getElementById('productionQty').required = false;
+      wrapper.style.display = '';
+      document.getElementById('productionComponentsSectionLabel').innerText = 'Common Components';
+      this.showColorMatrix();
+      this._setMultiColorNotice(false);
+
+      colors = allColors;
+    }
+
+    if (colors.length > 0) {
+      // A saved multi-color batch (colorBreakdown) drives the checklist;
+      // a legacy single-color lot (just p.color/p.qty, no breakdown) is
+      // treated as a one-color breakdown so it upgrades to the new model
+      // as soon as it's saved again.
+      const breakdown = (p.colorBreakdown && p.colorBreakdown.length > 0)
+        ? p.colorBreakdown
+        : (p.color ? [{ color: p.color, qty: p.qty }] : []);
+
+      const claimedRows = new Set();
+      const findChecklistRow = (color, axisKey) => {
+        const rows = $$('#productionColorChecklist .production-color-row').filter(r => !claimedRows.has(r));
+        let row = axisKey ? rows.find(r => r.dataset.group === axisKey && r.dataset.color === color) : null;
+        if (!row) row = rows.find(r => r.dataset.color === color);
+        return row || null;
+      };
+
+      breakdown.forEach(entry => {
+        const color = entry.color;
+        const qty = entry.qty;
+        let colorRow = findChecklistRow(color, entry.axisKey);
+
+        if (!colorRow) {
+          const checklistEl = document.getElementById('productionColorChecklist');
+          if (checklistEl) {
+            if (!checklistEl.querySelector('[data-group-master="custom"]')) {
+              checklistEl.insertAdjacentHTML('beforeend', this._buildColorGroupHeader('custom', 'Custom'));
+            }
+            const isPrimaryFlag = entry.countsTowardTotal !== false;
+            checklistEl.insertAdjacentHTML('beforeend', this._colorRowHtml(color, 'custom', true, isPrimaryFlag));
+            colorRow = $$('#productionColorChecklist .production-color-row')
+              .find(r => r.dataset.group === 'custom' && r.dataset.color === color && !claimedRows.has(r));
+          }
+        }
+
+        if (colorRow) claimedRows.add(colorRow);
+        const chk = colorRow?.querySelector('.production-color-check');
+        const qtyInput = colorRow?.querySelector('.production-color-qty');
+        if (chk) chk.checked = true;
+        if (qtyInput) { qtyInput.disabled = false; qtyInput.value = qty; }
+      });
+      this._syncColorGroupMasterCheckbox('custom');
+
+      // Round 13 adaptation: source repopulates the Per-Color Matrix here
+      // from saved componentsConsumed (populateComponentsConsumedDirect).
+      // This lot is guarded (usesMatrixComponents, above) to have none,
+      // so only the flat Common Components table needs restoring.
       this.clearComponentsTable();
-      p.componentsConsumed.forEach(c => this.addComponentRow(c));
+      (p.componentsConsumed || []).forEach(c => this.addComponentRow(c));
       await this.refreshPoolAvailability();
     } else {
-      await this.populateComponentsFromProcess(p.processId, seq);
+      document.getElementById('productionQty').value = p.qty;
+      if (p.componentsConsumed && p.componentsConsumed.length > 0) {
+        this.clearComponentsTable();
+        p.componentsConsumed.forEach(c => this.addComponentRow(c));
+        await this.refreshPoolAvailability();
+      } else {
+        await this.populateComponentsFromProcess(p.processId, p.color || '', seq);
+      }
     }
     if (seq !== this._compLoadSeq) return;
 
@@ -1388,15 +2896,36 @@ App.Production = {
 };
 
 // Wire up Production form submission -- mirrors source's own
-// DOMContentLoaded-bound prodForm.onsubmit, adapted to this round's
-// single-Qty-only scope (no colorBreakdown/color-matrix serialization;
-// that lands with the Color Checklist round).
+// DOMContentLoaded-bound prodForm.onsubmit. componentsConsumed combines
+// the flat Common table with the (Round 13: always-empty for a
+// guard-passing process) Per-Color Matrix and Pool Color Group tables,
+// same shape source submits.
 document.addEventListener('DOMContentLoaded', function () {
   const prodForm = document.getElementById('productionForm');
   if (!prodForm) return;
 
   prodForm.onsubmit = async function (e) {
     e.preventDefault();
+
+    const colorWrapper = document.getElementById('productionColorWrapper');
+    const isMultiColor = !!colorWrapper && colorWrapper.style.display !== 'none';
+
+    if (isMultiColor) {
+      const colorQtys = App.Production.getCheckedColorQtys();
+      if (colorQtys.length === 0) {
+        App.Utils.showToast('Check at least one Color and enter its quantity.', true);
+        return;
+      }
+      if (colorQtys.some(c => c.qty === 0)) {
+        App.Utils.showToast('Every checked Color needs a non-zero quantity.', true);
+        return;
+      }
+      if (document.querySelector('#productionColorChecklist input[name="productionPrimaryAxisPick"]') &&
+          !document.querySelector('#productionColorChecklist input[name="productionPrimaryAxisPick"]:checked')) {
+        App.Utils.showToast('Pick which group is Primary (its quantities become this lot\'s total) before saving.', true);
+        return;
+      }
+    }
 
     const processSelect = document.getElementById('productionProcessId');
     const processWasDisabled = processSelect?.disabled ?? false;
@@ -1407,7 +2936,19 @@ document.addEventListener('DOMContentLoaded', function () {
 
     if (processWasDisabled && processSelect) processSelect.disabled = true;
 
-    formData.componentsConsumed = JSON.stringify(App.Production.serializeComponentsConsumed());
+    if (isMultiColor) {
+      formData.colorBreakdown = JSON.stringify(App.Production.getCheckedColorQtys());
+      delete formData.qty;
+      const primaryAxisRadio = document.querySelector('#productionColorChecklist input[name="productionPrimaryAxisPick"]:checked');
+      if (primaryAxisRadio) formData.primaryColorAxis = primaryAxisRadio.dataset.axisLabel || '';
+      formData.componentsConsumed = JSON.stringify([
+        ...App.Production.serializeComponentsConsumed(),
+        ...App.Production.serializeColorMatrix(),
+        ...App.Production.serializePoolColorGroups()
+      ]);
+    } else {
+      formData.componentsConsumed = JSON.stringify(App.Production.serializeComponentsConsumed());
+    }
 
     const submitBtn = document.getElementById('productionSubmitBtn');
     if (submitBtn) submitBtn.disabled = true;
