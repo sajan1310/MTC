@@ -1,30 +1,54 @@
 'use strict';
 // production.js -- App.Production, ported from Apps_Script/Script_Production.html.
 //
-// Scope this round: the Production Log list/report side only -- viewing,
-// searching, sorting, inline status changes, delete, bulk print, the
-// Colorwise Summary report, and the "All Activity" combined feed. This is
-// deliberately split from the Create/Edit Lot modal (the multi-axis
-// color checklist, per-color component matrix, and per-process
-// Warehouse Pool color group tables) and the Production Sheet (lot
-// completion) modal, both of which are large, separately interconnected
-// features and their own later rounds -- Script_Production.html is
-// 4,608 lines and 130+ methods, more than double Process Master (the
-// previous largest single round). openCreateModal/openEditModal/
-// viewProductionSheet are stubbed to a "not ported yet" toast so their
-// buttons don't throw; everything else on this page is fully real.
+// Round 11 scope (shipped): the Production Log list/report side --
+// viewing, searching, sorting, inline status changes, delete, bulk
+// print, the Colorwise Summary report, and the "All Activity" combined
+// feed.
+//
+// Round 12 scope (this round): the Create/Edit Lot modal -- but ONLY
+// for the single-Qty (no color sub-groups) path. Source's own Create/
+// Edit modal orchestration (Script_Production.html lines ~627-3921,
+// ~3300 lines on its own -- more than the entire rest of this app's
+// largest single prior round) turned out to itself need splitting
+// further once actually read in full: the multi-axis Color Checklist
+// system alone is ~1050 lines, the Per-Color Component Matrix +
+// Per-Process Warehouse Pool Color Group Matrix systems together are
+// another ~1350 lines, each with its own subtle, incident-documented
+// edge cases (see source's own comments re: axis collisions, Select2
+// re-entrant change events, etc). Porting all of that faithfully in one
+// pass would be too large to verify with confidence, so this round
+// covers: the full modal shell (cascading Size->Model->Process
+// Type->Process dropdowns, Lot Number/Output Item readouts, optional
+// Product tag), the Components Consumed table (recipe-prefilled,
+// editable, Item/Pool source toggle, availability hints), Assignment &
+// Workflow (contractor Select2 + live payable hint, Status, Remarks),
+// and full create/edit/save/delete for any lot whose Process has NO
+// configured color sub-groups (the common case for many processes).
+//
+// A Process that DOES have color sub-groups (detected via the same real
+// getProcessColorGroups call source makes) is guarded, not silently
+// mishandled: the form shows a dismissable notice and blocks Save,
+// exactly the "guard now, activate later" pattern used everywhere else
+// in this port. Editing an existing lot that already carries a saved
+// colorBreakdown is guarded the same way before the modal even opens.
+// Both guards lift automatically the moment the still-to-come Color
+// Checklist / Per-Color Matrix round lands -- no changes needed here.
 //
 // Adaptations from source (documented, not silent):
-// - deleteProduction/deleteProductionBulk/updateProductionStatus all use
-//   Api.mutate (not Api.call): every one is mutation=True on the backend.
-// - "Issue Stock" buttons (App.Issue.openIssueModal) and the Issued Stock
-//   sub-tab's own content are guarded/placeholder'd at the template level
-//   -- App.Issue is a whole separate module (lives in Script_Return.html
-//   alongside Return/Wastage, not this file) that hasn't been ported at
-//   all yet, unlike Production which exists but is missing specific
-//   methods. openIssueStockForLot() (only meaningful from inside the
-//   not-yet-ported Create/Edit modal) isn't ported this round either --
-//   it'll land with that modal.
+// - deleteProduction/deleteProductionBulk/updateProductionStatus/
+//   saveProduction all use Api.mutate (not Api.call): every one is
+//   mutation=True on the backend.
+// - initContractorSelect2's Select2 `data` reads `c.contractorName`, not
+//   source's `c.name` -- see contractor.js's module header for the full
+//   story of this backend field-name deviation (getContractorsData
+//   returns contractorName, not name).
+// - "Issue Stock" buttons (App.Issue.openIssueModal) and the Issued
+//   Stock sub-tab's own content are guarded/placeholder'd at the
+//   template level -- App.Issue is a whole separate module (lives in
+//   Script_Return.html alongside Return/Wastage, not this file) that
+//   hasn't been ported at all yet. openIssueStockForLot() (the modal's
+//   own "Issue Stock (not part of BOM)" button) is guarded the same way.
 // - bulkPrint is guarded behind App.Print not existing yet; its builder
 //   (buildProductionSheetPrintPageHtml) stays as ported dead code.
 // - openColorwiseSummaryModal is exactly what Dashboard's
@@ -32,6 +56,8 @@
 //   guarded behind `typeof App.Production !== 'undefined' &&
 //   App.Production.openColorwiseSummaryModal` -- the pipeline
 //   drill-down activates with zero changes to dashboard.js.
+// - viewProductionSheet (the lot-completion Production Sheet modal)
+//   stays a stub -- its own later round, unaffected by this one.
 
 App.Production = {
   STATUS_OPTIONS: ['Pending', 'In Progress', 'Completed', 'Cancelled'],
@@ -586,19 +612,830 @@ App.Production = {
     return Number(n.toFixed(4)).toString();
   },
 
-  // ── Stubs for the Create/Edit Lot modal and Production Sheet modal --
-  // both are their own later rounds (see module header comment). Kept
-  // as real methods (not a missing-function error) so the row/toolbar
-  // buttons that call them degrade to a toast instead of throwing.
-  openCreateModal() {
-    App.Utils.notPortedYet('Logging a new Production Lot');
+  // ── Create/Edit Lot modal: cascading Size->Model->Process Type->Process ──
+  // Mirrors Process/BOM's own cascading-dropdown pattern (see process.js).
+
+  _suppressCascade: false,
+  _compLoadSeq: 0,
+
+  populateProductSelect() {
+    const select = document.getElementById('productionProductId');
+    if (!select) return;
+
+    const currentValue = select.value;
+    let html = '<option value="">— Untagged (stays in Warehouse Pool only) —</option>';
+    (App.State.globalBOMs || []).forEach(bom => {
+      html += `<option value="${escapeHtml(bom.productId)}">${escapeHtml(bom.productId)} (${escapeHtml(bom.productName)})</option>`;
+    });
+    select.innerHTML = html;
+    select.value = currentValue;
   },
 
-  openEditModal() {
-    App.Utils.notPortedYet('Editing a Production Lot');
+  handleProductChange(productId) {
+    const nameHiddenInput = document.getElementById('productionProductNameHidden');
+    const idHiddenInput = document.getElementById('productionProductIdHidden');
+    if (!productId) {
+      if (nameHiddenInput) nameHiddenInput.value = '';
+      if (idHiddenInput) idHiddenInput.value = '';
+      return;
+    }
+    const matchedBOM = (App.State.globalBOMs || []).find(b => b.productId === productId);
+    if (idHiddenInput) idHiddenInput.value = productId;
+    if (nameHiddenInput) nameHiddenInput.value = matchedBOM ? matchedBOM.productName : '';
+  },
+
+  populateSizeSelect() {
+    const select = document.getElementById('productionSize');
+    if (!select) return;
+    if (window.jQuery?.fn?.select2 && window.jQuery(select).data('select2')) window.jQuery(select).select2('destroy');
+
+    const currentValue = select.value;
+    const sizesPresent = new Set(
+      (App.State.globalProcesses || []).filter(p => p.active).map(p => App.Utils.getSizeFromOutputItemName(p.outputItemName))
+    );
+    const ordered = App.Utils.PROCESS_SIZE_LIST.filter(s => sizesPresent.has(s));
+    if (sizesPresent.has('General')) ordered.push('General');
+
+    let html = '<option value="">Choose a Size...</option>';
+    ordered.forEach(s => { html += `<option value="${escapeHtml(s)}">${escapeHtml(s)}</option>`; });
+    select.innerHTML = html;
+    select.value = currentValue;
+    App.Utils.autoSelectOnlyOption(select);
+
+    if (window.jQuery?.fn?.select2) {
+      const $s = window.jQuery(select);
+      const $modal = $s.closest('.modal');
+      $s.select2({ placeholder: 'Choose a Size...', width: '100%', matcher: App.Utils.select2Matcher, dropdownParent: $modal.length ? $modal : window.jQuery(document.body) });
+    }
+  },
+
+  handleSizeChange(size) {
+    if (this._suppressCascade) return;
+    this.populateModelSelect(size);
+
+    const modelSelect = document.getElementById('productionModel');
+    if (modelSelect) {
+      this._suppressCascade = true;
+      try {
+        modelSelect.disabled = !size;
+        modelSelect.value = '';
+        if (window.jQuery?.fn?.select2 && window.jQuery(modelSelect).data('select2')) window.jQuery(modelSelect).trigger('change.select2');
+        if (size) App.Utils.autoSelectOnlyOption(modelSelect);
+      } finally {
+        this._suppressCascade = false;
+      }
+    }
+    return this.handleModelChange(modelSelect ? modelSelect.value : '');
+  },
+
+  populateModelSelect(sizeFilter) {
+    const select = document.getElementById('productionModel');
+    if (!select) return;
+    if (window.jQuery?.fn?.select2 && window.jQuery(select).data('select2')) window.jQuery(select).select2('destroy');
+
+    const currentValue = select.value;
+    const matches = (App.State.globalProcesses || []).filter(p => p.active)
+      .filter(p => !sizeFilter || App.Utils.getSizeFromOutputItemName(p.outputItemName) === sizeFilter);
+
+    const modelsPresent = new Set(matches.map(p => App.Utils.getModelFromOutputItemName(p.outputItemName)));
+    const modelNames = (App.State.globalModels || []).map(m => m.name);
+    const ordered = modelNames.filter(m => modelsPresent.has(m));
+    if (modelsPresent.has('General')) ordered.push('General');
+
+    let html = sizeFilter ? '<option value="">Choose a Model...</option>' : '<option value="">Choose a Size first...</option>';
+    ordered.forEach(m => { html += `<option value="${escapeHtml(m)}">${escapeHtml(m)}</option>`; });
+    select.innerHTML = html;
+    select.value = currentValue;
+    App.Utils.autoSelectOnlyOption(select);
+
+    if (window.jQuery?.fn?.select2) {
+      const $s = window.jQuery(select);
+      const $modal = $s.closest('.modal');
+      $s.select2({ placeholder: sizeFilter ? 'Choose a Model...' : 'Choose a Size first...', width: '100%', matcher: App.Utils.select2Matcher, dropdownParent: $modal.length ? $modal : window.jQuery(document.body) });
+    }
+  },
+
+  handleModelChange(model) {
+    if (this._suppressCascade) return;
+    const size = document.getElementById('productionSize')?.value || '';
+    this.populateProcessTypeSelect(size, model);
+
+    const typeSelect = document.getElementById('productionProcessType');
+    if (typeSelect) {
+      this._suppressCascade = true;
+      try {
+        typeSelect.disabled = !model;
+        typeSelect.value = '';
+        if (window.jQuery?.fn?.select2 && window.jQuery(typeSelect).data('select2')) window.jQuery(typeSelect).trigger('change.select2');
+        if (model) App.Utils.autoSelectOnlyOption(typeSelect);
+      } finally {
+        this._suppressCascade = false;
+      }
+    }
+    return this.handleProcessTypeChange(typeSelect ? typeSelect.value : '');
+  },
+
+  populateProcessTypeSelect(sizeFilter, modelFilter) {
+    const select = document.getElementById('productionProcessType');
+    if (!select) return;
+    if (window.jQuery?.fn?.select2 && window.jQuery(select).data('select2')) window.jQuery(select).select2('destroy');
+
+    const currentValue = select.value;
+    const matches = (App.State.globalProcesses || []).filter(p => p.active)
+      .filter(p => !sizeFilter || App.Utils.getSizeFromOutputItemName(p.outputItemName) === sizeFilter)
+      .filter(p => !modelFilter || App.Utils.getModelFromOutputItemName(p.outputItemName) === modelFilter);
+
+    const typesPresent = new Set(matches.map(p => String(p.processType || 'General').trim().toLowerCase()));
+    const typeNames = (App.State.globalProcessTypes || []).map(t => t.name);
+    const ordered = typeNames.filter(t => typesPresent.has(t.trim().toLowerCase()));
+    if (typesPresent.has('general')) ordered.push('General');
+
+    let html = modelFilter ? '<option value="">Choose a Process Type...</option>' : '<option value="">Choose a Model first...</option>';
+    ordered.forEach(t => { html += `<option value="${escapeHtml(t)}">${escapeHtml(t)}</option>`; });
+    select.innerHTML = html;
+    select.value = currentValue;
+    App.Utils.autoSelectOnlyOption(select);
+
+    if (window.jQuery?.fn?.select2) {
+      const $s = window.jQuery(select);
+      const $modal = $s.closest('.modal');
+      $s.select2({ placeholder: modelFilter ? 'Choose a Process Type...' : 'Choose a Model first...', width: '100%', matcher: App.Utils.select2Matcher, dropdownParent: $modal.length ? $modal : window.jQuery(document.body) });
+    }
+  },
+
+  handleProcessTypeChange(type) {
+    if (this._suppressCascade) return;
+    const size = document.getElementById('productionSize')?.value || '';
+    const model = document.getElementById('productionModel')?.value || '';
+
+    const processSelect = document.getElementById('productionProcessId');
+    this._suppressCascade = true;
+    try {
+      this.populateProcessSelect(size, type, model);
+      if (processSelect) {
+        processSelect.disabled = !type;
+        processSelect.value = '';
+        if (type) App.Utils.autoSelectOnlyOption(processSelect);
+      }
+      this.initProcessSelect2();
+    } finally {
+      this._suppressCascade = false;
+    }
+
+    return this.handleProcessChange(processSelect ? processSelect.value : '');
+  },
+
+  populateProcessSelect(sizeFilter, typeFilter, modelFilter) {
+    const select = document.getElementById('productionProcessId');
+    if (!select) return;
+
+    const currentValue = select.value;
+    const matches = (App.State.globalProcesses || []).filter(p => p.active)
+      .filter(p => !sizeFilter || App.Utils.getSizeFromOutputItemName(p.outputItemName) === sizeFilter)
+      .filter(p => !modelFilter || App.Utils.getModelFromOutputItemName(p.outputItemName) === modelFilter)
+      .filter(p => !typeFilter || App.Utils.sameText(p.processType || 'General', typeFilter));
+
+    let html = typeFilter ? '<option value="">Choose a Process...</option>' : '<option value="">Choose a Process Type first...</option>';
+
+    if (typeFilter) {
+      const byStage = new Map();
+      matches.forEach(p => {
+        if (!byStage.has(p.sequence)) byStage.set(p.sequence, []);
+        byStage.get(p.sequence).push(p);
+      });
+      [...byStage.keys()].sort((a, b) => a - b).forEach(seq => {
+        html += `<optgroup label="Stage ${escapeHtml(String(seq))}">`;
+        byStage.get(seq).forEach(p => { html += `<option value="${escapeHtml(p.processId)}">${escapeHtml(p.processName)}</option>`; });
+        html += '</optgroup>';
+      });
+    } else {
+      matches.forEach(p => { html += `<option value="${escapeHtml(p.processId)}">${escapeHtml(p.processName)} (Seq ${escapeHtml(String(p.sequence))})</option>`; });
+    }
+
+    select.innerHTML = html;
+    select.value = currentValue;
+    App.Utils.autoSelectOnlyOption(select);
+  },
+
+  initProcessSelect2() {
+    const selectEl = document.getElementById('productionProcessId');
+    if (!selectEl || !window.jQuery?.fn?.select2) return;
+    const $select = window.jQuery(selectEl);
+    if ($select.data('select2')) $select.select2('destroy');
+    const $parentModal = $select.closest('.modal');
+    $select.select2({ placeholder: 'Choose a Process...', width: '100%', matcher: App.Utils.select2Matcher, dropdownParent: $parentModal.length ? $parentModal : window.jQuery(document.body) });
+  },
+
+  // Fired when Process changes: populates Output Item Name / Product tag
+  // visibility, then loads the recipe into the Components Consumed table.
+  //
+  // Adaptation from source: source branches here into the multi-axis
+  // Color Checklist when getProcessColorGroups returns any colors (see
+  // this file's module header). That system isn't ported yet, so this
+  // round instead shows a blocking notice and leaves the simple
+  // single-Qty table empty -- once the Color Checklist round lands, this
+  // function's `else` branch is exactly where it plugs back in.
+  async handleProcessChange(processId) {
+    if (this._suppressCascade) return;
+    const seq = ++this._compLoadSeq;
+
+    const tagWrapper = document.getElementById('productionProductTagWrapper');
+    const outputEl = document.getElementById('productionOutputItemName');
+    const process = (App.State.globalProcesses || []).find(p => p.processId === processId);
+
+    if (outputEl) outputEl.value = process ? (process.outputItemName || '') : '';
+
+    if (tagWrapper) tagWrapper.style.display = (process && process.isFinalStage) ? '' : 'none';
+    if (!process || !process.isFinalStage) {
+      const select = document.getElementById('productionProductId');
+      if (select) select.value = '';
+      this.handleProductChange('');
+    }
+
+    this._setMultiColorNotice(false);
+    this.clearComponentsTable();
+
+    if (!processId) return;
+
+    let colors = [];
+    try {
+      const res = await Api.call('getProcessColorGroups', processId);
+      colors = res.success ? (res.data || []) : [];
+    } catch (err) {
+      colors = [];
+    }
+    if (seq !== this._compLoadSeq) return;
+
+    if (colors.length > 0) {
+      this._setMultiColorNotice(true);
+      return;
+    }
+
+    await this.populateComponentsFromProcess(processId, seq);
+    if (seq !== this._compLoadSeq) return;
+    this.refreshPayableHint();
+  },
+
+  // Shows/hides the "this process needs the not-yet-ported Color
+  // Checklist" notice and disables Save while it's up, instead of
+  // letting the operator submit a form the simple single-Qty path can't
+  // correctly represent.
+  _setMultiColorNotice(show) {
+    const notice = document.getElementById('productionMultiColorNotice');
+    if (notice) notice.style.display = show ? '' : 'none';
+    const qtyWrapper = document.getElementById('productionQtyWrapper');
+    if (qtyWrapper) qtyWrapper.style.display = show ? 'none' : '';
+    const qtyInput = document.getElementById('productionQty');
+    if (qtyInput) qtyInput.required = !show;
+    const submitBtn = document.getElementById('productionSubmitBtn');
+    if (submitBtn) submitBtn.disabled = show;
+  },
+
+  async populateComponentsFromProcess(processId, seq) {
+    this.clearComponentsTable();
+    if (!processId) return;
+
+    try {
+      const res = await Api.call('getProcessComponentsData', processId);
+      if (seq !== undefined && seq !== this._compLoadSeq) return;
+      const all = res.success ? (res.data || []) : [];
+      const components = all.filter(c => !c.colorGroup || c.colorGroup === 'COMMON');
+      const lotQty = toNumber(document.getElementById('productionQty')?.value) || 0;
+      components.forEach(c => this.addComponentRow({
+        itemName: c.itemName,
+        size: c.size,
+        sourceType: c.sourceType,
+        qty: lotQty > 0 ? lotQty * c.qtyPerUnit : c.qtyPerUnit,
+        qtyPerUnit: c.qtyPerUnit,
+        unit: c.unit
+      }));
+      await this.refreshPoolAvailability();
+    } catch (err) {
+      if (seq === undefined || seq === this._compLoadSeq) App.Utils.showToast(err.message || 'Failed to load process recipe', true);
+    }
+  },
+
+  refreshSuggestedComponentQty() {
+    const lotQty = toNumber(document.getElementById('productionQty')?.value) || 0;
+    document.querySelectorAll('#productionComponentsBody tr').forEach(row => {
+      const qtyPerUnit = row.dataset.qtyPerUnit;
+      if (qtyPerUnit === undefined || qtyPerUnit === '') return;
+      const qtyInput = row.querySelector('.prod-comp-qty');
+      if (qtyInput) qtyInput.value = this.formatQty(lotQty * toNumber(qtyPerUnit));
+    });
+  },
+
+  clearComponentsTable() {
+    const tbody = document.getElementById('productionComponentsBody');
+    if (!tbody) return;
+    tbody.querySelectorAll('tr').forEach(row => this.destroyComponentItemSelect2(row));
+    tbody.innerHTML = '';
+  },
+
+  _buildItemPreselectOption(itemName, size, sourceType) {
+    if (!itemName) return '';
+    if (sourceType === 'POOL') {
+      return `<option value="pool:${escapeHtml(itemName)}" selected data-name="${escapeHtml(itemName)}">${escapeHtml(itemName)}</option>`;
+    }
+    const items = App.State.globalItems || [];
+    const matchIdx = items.findIndex(item =>
+      App.Utils.sameText(item.name, itemName) && (App.Utils.sameText(size || '', item.size || '') || (!size && !item.size))
+    );
+    if (matchIdx >= 0) {
+      const item = items[matchIdx];
+      const label = `${item.name}${item.size ? ` [${item.size}]` : ''}`;
+      return `<option value="${matchIdx}" selected data-name="${escapeHtml(item.name)}">${escapeHtml(label)}</option>`;
+    }
+    const label = `${itemName}${size ? ` [${size}]` : ''}`;
+    return `<option value="custom:${escapeHtml(itemName)}" selected data-name="${escapeHtml(itemName)}">${escapeHtml(label)}</option>`;
+  },
+
+  addComponentRow(comp = null) {
+    const tbody = document.getElementById('productionComponentsBody');
+    if (!tbody) return;
+
+    const rowId = 'prod_comp_row_' + Date.now() + '_' + Math.floor(Math.random() * 1000);
+    const itemName = (comp && comp.itemName) || '';
+    const size = (comp && comp.size) || '';
+    const sourceType = (comp && comp.sourceType === 'POOL') ? 'POOL' : 'ITEM';
+    const color = (comp && comp.color) || '';
+    const qty = comp && comp.qty !== undefined ? this.formatQty(comp.qty) : '';
+    const qtyPerUnitAttr = (comp && comp.qtyPerUnit !== undefined) ? `data-qty-per-unit="${comp.qtyPerUnit}"` : '';
+    const unitAttr = (comp && comp.unit) ? ` data-unit="${escapeHtml(comp.unit)}"` : '';
+    const preSelectedOption = this._buildItemPreselectOption(itemName, size, sourceType);
+
+    const rowHtml = `
+      <tr id="${rowId}" ${qtyPerUnitAttr}${unitAttr}>
+        <td>
+          <select class="form-select prod-comp-item-select" required>
+            <option value=""></option>
+            ${preSelectedOption}
+          </select>
+        </td>
+        <td><input type="text" class="form-control prod-comp-size" value="${escapeHtml(size)}" placeholder="-" onchange="App.Production.refreshPoolAvailability()"></td>
+        <td><input type="text" class="form-control prod-comp-color" list="colorList" value="${escapeHtml(color)}" placeholder="All colors"></td>
+        <td>
+          <select class="form-select prod-comp-source" onchange="App.Production.handleSourceChange(this)">
+            <option value="ITEM" ${sourceType === 'ITEM' ? 'selected' : ''}>Item (Stock)</option>
+            <option value="POOL" ${sourceType === 'POOL' ? 'selected' : ''}>Pool (Warehouse)</option>
+          </select>
+        </td>
+        <td><input type="number" class="form-control text-end prod-comp-qty" min="0" step="any" value="${qty}" required></td>
+        <td class="prod-comp-available text-muted small">-</td>
+        <td class="text-center"><button type="button" class="btn btn-outline-danger btn-sm" onclick="App.Production.removeComponentRow('${rowId}')">✕</button></td>
+      </tr>
+    `;
+    tbody.insertAdjacentHTML('beforeend', rowHtml);
+    this.initComponentItemSelect2(document.getElementById(rowId));
+  },
+
+  removeComponentRow(rowId) {
+    const row = document.getElementById(rowId);
+    if (row) {
+      this.destroyComponentItemSelect2(row);
+      row.remove();
+    }
+  },
+
+  handleSourceChange(selectEl) {
+    const row = selectEl.closest('tr');
+    const itemSelect = row?.querySelector('.prod-comp-item-select');
+    if (itemSelect && window.jQuery?.fn?.select2) window.jQuery(itemSelect).val(null).trigger('change');
+    const sizeInput = row?.querySelector('.prod-comp-size');
+    if (sizeInput) sizeInput.value = '';
+    this.refreshPoolAvailability();
+  },
+
+  initComponentItemSelect2(rowEl) {
+    this._wireItemSelect2(rowEl?.querySelector('.prod-comp-item-select'));
+  },
+
+  _wireItemSelect2(selectEl) {
+    if (!selectEl || !window.jQuery?.fn?.select2) return;
+
+    const $select = window.jQuery(selectEl);
+    const PAGE_SIZE = 40;
+    const $parentModal = $select.closest('.modal');
+
+    $select.select2({
+      placeholder: 'Search or type an item/pool name...',
+      width: '100%',
+      tags: true,
+      dropdownParent: $parentModal.length ? $parentModal : window.jQuery(document.body),
+      ajax: {
+        delay: 150,
+        data(params) { return { q: params.term || '', page: params.page || 1 }; },
+        transport(params, success) {
+          const q = (params.data.q || '').trim();
+          const page = params.data.page || 1;
+          const isPool = selectEl.closest('tr')?.querySelector('.prod-comp-source')?.value === 'POOL';
+          const items = isPool
+            ? App.Process.getDistinctOutputItemNames().map(name => ({ name, size: '' }))
+            : (App.State.globalItems || []);
+          const start = (page - 1) * PAGE_SIZE;
+
+          const pool = q
+            ? items.map((item, idx) => ({ idx, item })).filter(({ item }) => App.Utils.matchesKeywords(`${item.name} ${item.size || ''}`, q))
+            : items.map((item, idx) => ({ idx, item }));
+
+          const pageItems = pool.slice(start, start + PAGE_SIZE);
+          success({
+            results: pageItems.map(({ idx, item }) => ({
+              id: (isPool ? 'pool:' : 'item:') + idx,
+              text: `${item.name}${item.size ? ` [${item.size}]` : ''}`,
+              _itemName: item.name, _size: item.size || ''
+            })),
+            pagination: { more: (start + PAGE_SIZE) < pool.length }
+          });
+        },
+        processResults(data) { return data; }
+      },
+      createTag(params) {
+        const term = (params.term || '').trim();
+        if (!term) return null;
+        const isPool = selectEl.closest('tr')?.querySelector('.prod-comp-source')?.value === 'POOL';
+        const items = isPool
+          ? App.Process.getDistinctOutputItemNames().map(name => ({ name, size: '' }))
+          : (App.State.globalItems || []);
+        const existing = items.find(it => App.Utils.sameText(it.name, term));
+        if (existing) {
+          return { id: (isPool ? 'pool:' : 'item:') + existing.name, text: `${existing.name}${existing.size ? ` [${existing.size}]` : ''}`, _itemName: existing.name, _size: existing.size || '' };
+        }
+        return { id: 'custom:' + term, text: term, newTag: true, _itemName: term, _size: '' };
+      }
+    });
+
+    $select.on('select2:select', function (e) {
+      const data = e.params.data;
+      const opt = selectEl.options[selectEl.selectedIndex];
+      if (opt) opt.dataset.name = data._itemName || data.text;
+
+      const row = selectEl.closest('tr');
+      const sizeInput = row?.querySelector('.prod-comp-size');
+      if (sizeInput && !sizeInput.value) sizeInput.value = data._size || '';
+      App.Production.refreshPoolAvailability();
+    });
+  },
+
+  destroyComponentItemSelect2(rowEl) {
+    if (!rowEl || !window.jQuery?.fn?.select2) return;
+    rowEl.querySelectorAll('.prod-comp-item-select').forEach(selectEl => {
+      const $select = window.jQuery(selectEl);
+      if ($select.data('select2')) $select.select2('destroy');
+    });
+  },
+
+  async refreshPoolAvailability() {
+    const processId = document.getElementById('productionProcessId')?.value;
+
+    try {
+      const [wipRes, stockRes] = await Promise.all([
+        processId ? Api.call('getProcessWipData', processId) : Promise.resolve({ success: true, data: [] }),
+        Api.call('getStockData')
+      ]);
+      const wip = wipRes.success ? (wipRes.data || []) : [];
+      const stock = stockRes.success ? (stockRes.data || []) : [];
+      if (stockRes.success) {
+        App.State.globalStock = stock;
+        App.State.filteredStock = [...stock];
+      }
+
+      document.querySelectorAll('#productionComponentsBody tr').forEach(row => {
+        const sourceSel = row.querySelector('.prod-comp-source');
+        const availEl = row.querySelector('.prod-comp-available');
+        if (!sourceSel || !availEl) return;
+
+        const itemSelect = row.querySelector('.prod-comp-item-select');
+        const itemOpt = itemSelect ? itemSelect.options[itemSelect.selectedIndex] : null;
+        const itemName = (itemOpt?.dataset.name || itemOpt?.textContent || '').trim().toLowerCase();
+        const size = row.querySelector('.prod-comp-size')?.value.trim().toLowerCase();
+
+        if (sourceSel.value === 'POOL') {
+          const entry = wip.find(w => w.outputItemName.toLowerCase() === itemName);
+          availEl.innerText = entry ? `${this.formatQty(entry.availableQty)} avail. (Pool)` : '0 avail. (Pool)';
+        } else {
+          const entry = stock.find(s => s.name.toLowerCase() === itemName && (!size || (s.size || '').toLowerCase() === size));
+          availEl.innerText = entry ? `${this.formatQty(entry.currentStock)} avail.` : '0 avail.';
+        }
+      });
+    } catch (err) {
+      // Ignored -- availability hints are advisory, not blocking.
+    }
+  },
+
+  _readProdComponentRow(row) {
+    const itemSelect = row.querySelector('.prod-comp-item-select');
+    if (!itemSelect || itemSelect.value === '') return null;
+    const itemOpt = itemSelect.options[itemSelect.selectedIndex];
+    const itemName = (itemOpt.dataset.name || itemOpt.textContent || '').trim();
+    if (!itemName) return null;
+
+    return {
+      itemName,
+      size: row.querySelector('.prod-comp-size')?.value.trim() || '',
+      color: row.querySelector('.prod-comp-color')?.value.trim() || '',
+      sourceType: row.querySelector('.prod-comp-source')?.value === 'POOL' ? 'POOL' : 'ITEM',
+      qty: toNumber(row.querySelector('.prod-comp-qty')?.value),
+      colorGroup: row.dataset.colorScope || 'COMMON',
+      unit: row.dataset.unit || ''
+    };
+  },
+
+  serializeComponentsConsumed() {
+    const components = [];
+    document.querySelectorAll('#productionComponentsBody tr').forEach(row => {
+      const comp = this._readProdComponentRow(row);
+      if (comp) components.push(comp);
+    });
+    return components;
+  },
+
+  // Adaptation: reads c.contractorName, not source's c.name -- see this
+  // file's module header / contractor.js's own header for the full story.
+  initContractorSelect2(currentValue) {
+    const selectEl = document.getElementById('productionAssignedTo');
+    if (!selectEl || !window.jQuery?.fn?.select2) return;
+
+    const $select = window.jQuery(selectEl);
+    if ($select.data('select2')) $select.select2('destroy');
+    selectEl.innerHTML = '';
+
+    if (currentValue) selectEl.add(new Option(currentValue, currentValue, true, true));
+
+    const $parentModal = $select.closest('.modal');
+
+    $select.select2({
+      placeholder: 'Search or type a contractor/staff name...',
+      width: '100%',
+      tags: true,
+      allowClear: true,
+      matcher: App.Utils.select2Matcher,
+      dropdownParent: $parentModal.length ? $parentModal : window.jQuery(document.body),
+      data: (App.State.globalContractors || []).map(c => ({ id: c.contractorName, text: c.contractorName })),
+      createTag(params) {
+        const term = (params.term || '').trim();
+        if (!term) return null;
+        const existing = (App.State.globalContractors || []).find(c => App.Utils.sameText(c.contractorName, term));
+        if (existing) return { id: existing.contractorName, text: existing.contractorName };
+        return { id: term, text: term, newTag: true };
+      }
+    });
+
+    let handlingChange = false;
+    $select.off('change.prodAssignedTo').on('change.prodAssignedTo', () => {
+      if (handlingChange) return;
+      handlingChange = true;
+      Promise.resolve().then(() => { handlingChange = false; });
+      this.refreshPayableHint();
+    });
+  },
+
+  refreshPayableHint() {
+    clearTimeout(this._payableHintDebounceTimer);
+    this._payableHintDebounceTimer = setTimeout(() => this._refreshPayableHintNow(), 300);
+  },
+
+  async _refreshPayableHintNow() {
+    const hintEl = document.getElementById('productionPayableHint');
+    if (!hintEl) return;
+
+    const contractorName = document.getElementById('productionAssignedTo')?.value;
+    const processId = document.getElementById('productionProcessId')?.value;
+    const qty = toNumber(document.getElementById('productionQty')?.value);
+    const process = (App.State.globalProcesses || []).find(p => p.processId === processId);
+
+    if (!contractorName || !process || !qty) {
+      hintEl.innerText = '';
+      return;
+    }
+
+    try {
+      const res = await Api.call('getContractorRateForProcess', contractorName, process.processName);
+      const rate = res.success ? toNumber(res.data?.ratePerUnit) : 0;
+      if (!rate) {
+        hintEl.innerText = `No rate card entry for "${contractorName}" / ${process.processName} — Payable will be 0.`;
+        return;
+      }
+      hintEl.innerText = `Payable: ${formatCurrency(qty * rate)} (${qty} x ${rate}/unit)`;
+    } catch (err) {
+      hintEl.innerText = '';
+    }
+  },
+
+  openIssueStockForLot() {
+    App.Utils.notPortedYet('Issue Stock');
+  },
+
+  async resetCreateForm() {
+    ++this._compLoadSeq;
+    this.clearComponentsTable();
+    this._setMultiColorNotice(false);
+
+    const form = document.getElementById('productionForm');
+    if (form) form.reset();
+
+    await Promise.all([App.Process.ensureLoaded(), App.Contractor.ensureLoaded(), App.ProcessType.ensureLoaded(), App.Model.ensureLoaded()]);
+
+    document.getElementById('productionRowIdx').value = '';
+    document.getElementById('productionDate').value = todayIso();
+
+    this.populateProductSelect();
+    document.getElementById('productionProductTagWrapper').style.display = 'none';
+    document.getElementById('productionProductIdHidden').value = '';
+    document.getElementById('productionProductNameHidden').value = '';
+
+    this.initContractorSelect2('');
+    document.getElementById('productionPayableHint').innerText = '';
+
+    this.populateSizeSelect();
+    const sizeSelect = document.getElementById('productionSize');
+    if (sizeSelect) {
+      sizeSelect.value = '';
+      if (window.jQuery?.fn?.select2 && window.jQuery(sizeSelect).data('select2')) window.jQuery(sizeSelect).trigger('change.select2');
+      App.Utils.autoSelectOnlyOption(sizeSelect);
+    }
+    await this.handleSizeChange(sizeSelect ? sizeSelect.value : '');
+    document.getElementById('productionLotNumber').value = '';
+
+    document.getElementById('productionFormTitle').innerText = 'Log Production Lot';
+    document.getElementById('productionSubmitBtn').innerText = 'Record Production Run';
+  },
+
+  async openCreateModal() {
+    await this.resetCreateForm();
+
+    const modalEl = document.getElementById('editProductionModal');
+    if (modalEl && typeof bootstrap !== 'undefined') {
+      const processSelect = document.getElementById('productionProcessId');
+      if (processSelect) processSelect.disabled = false;
+      bootstrap.Modal.getOrCreateInstance(modalEl).show();
+    }
+  },
+
+  // Adaptation from source: a lot whose saved colorBreakdown is non-empty
+  // needs the not-yet-ported Color Checklist/Matrix system to edit
+  // correctly (source's own openEditModal reconstructs that whole UI
+  // from the saved breakdown) -- guarded here with a toast instead of
+  // opening a form that would silently drop that data on re-save.
+  async openEditModal(idx) {
+    const p = App.State.globalProduction[idx];
+    if (!p) return;
+
+    if (p.colorBreakdown && p.colorBreakdown.length > 0) {
+      App.Utils.notPortedYet('Editing a multi-color Production Lot');
+      return;
+    }
+
+    const seq = ++this._compLoadSeq;
+
+    const form = document.getElementById('productionForm');
+    if (form) form.reset();
+
+    await Promise.all([App.Process.ensureLoaded(), App.Contractor.ensureLoaded(), App.ProcessType.ensureLoaded(), App.Model.ensureLoaded()]);
+
+    document.getElementById('productionRowIdx').value = p.rowIdx;
+
+    let inputDateStr = todayIso();
+    if (p.date && p.date.includes('/')) {
+      const [day, month, year] = p.date.split('/');
+      inputDateStr = `${year}-${month.padStart(2, '0')}-${day.padStart(2, '0')}`;
+    } else if (p.dateRaw) {
+      inputDateStr = p.dateRaw.split('T')[0];
+    }
+    document.getElementById('productionDate').value = inputDateStr;
+
+    document.getElementById('productionAssignedBy').value = p.assignedBy;
+    this.initContractorSelect2(p.assignedTo);
+    document.getElementById('productionStatus').value = p.status;
+    document.getElementById('productionRemarks').value = p.remarks;
+
+    const editProcess = (App.State.globalProcesses || []).find(pr => pr.processId === p.processId);
+    const editSize = App.Utils.getSizeFromOutputItemName(editProcess ? editProcess.outputItemName : '');
+    const editModel = App.Utils.getModelFromOutputItemName(editProcess ? editProcess.outputItemName : '');
+    const editType = editProcess ? (editProcess.processType || 'General') : '';
+
+    this._suppressCascade = true;
+    try {
+      this.populateSizeSelect();
+      const sizeSelect = document.getElementById('productionSize');
+      if (sizeSelect) {
+        sizeSelect.value = editSize;
+        sizeSelect.disabled = true;
+        if (window.jQuery?.fn?.select2 && window.jQuery(sizeSelect).data('select2')) window.jQuery(sizeSelect).trigger('change.select2');
+      }
+
+      this.populateModelSelect(editSize);
+      const modelSelect = document.getElementById('productionModel');
+      if (modelSelect) {
+        modelSelect.value = editModel;
+        modelSelect.disabled = true;
+        if (window.jQuery?.fn?.select2 && window.jQuery(modelSelect).data('select2')) window.jQuery(modelSelect).trigger('change.select2');
+      }
+
+      this.populateProcessTypeSelect(editSize, editModel);
+      const typeSelect = document.getElementById('productionProcessType');
+      if (typeSelect) {
+        typeSelect.value = editType;
+        typeSelect.disabled = true;
+        if (window.jQuery?.fn?.select2 && window.jQuery(typeSelect).data('select2')) window.jQuery(typeSelect).trigger('change.select2');
+      }
+
+      this.populateProcessSelect(editSize, editType, editModel);
+      const processSelect = document.getElementById('productionProcessId');
+      if (processSelect) {
+        processSelect.value = p.processId;
+        processSelect.disabled = true;
+      }
+      this.initProcessSelect2();
+    } finally {
+      this._suppressCascade = false;
+    }
+
+    document.getElementById('productionLotNumber').value = p.lotNumber || '';
+
+    this.populateProductSelect();
+    document.getElementById('productionProductId').value = p.productId || '';
+    document.getElementById('productionProductIdHidden').value = p.productId || '';
+    document.getElementById('productionProductNameHidden').value = p.productName || '';
+
+    document.getElementById('productionOutputItemName').value = editProcess ? (editProcess.outputItemName || '') : '';
+    const tagWrapper = document.getElementById('productionProductTagWrapper');
+    if (tagWrapper) tagWrapper.style.display = (p.productId || (editProcess && editProcess.isFinalStage)) ? '' : 'none';
+
+    this._setMultiColorNotice(false);
+    document.getElementById('productionQty').value = p.qty;
+    if (p.componentsConsumed && p.componentsConsumed.length > 0) {
+      this.clearComponentsTable();
+      p.componentsConsumed.forEach(c => this.addComponentRow(c));
+      await this.refreshPoolAvailability();
+    } else {
+      await this.populateComponentsFromProcess(p.processId, seq);
+    }
+    if (seq !== this._compLoadSeq) return;
+
+    document.getElementById('productionFormTitle').innerText = `Edit Production Lot: Row #${p.rowIdx}`;
+    document.getElementById('productionSubmitBtn').innerText = 'Update Production Lot';
+
+    const modalEl = document.getElementById('editProductionModal');
+    if (modalEl && typeof bootstrap !== 'undefined') {
+      bootstrap.Modal.getOrCreateInstance(modalEl).show();
+    }
   },
 
   viewProductionSheet() {
     App.Utils.notPortedYet('Production Sheet');
   }
 };
+
+// Wire up Production form submission -- mirrors source's own
+// DOMContentLoaded-bound prodForm.onsubmit, adapted to this round's
+// single-Qty-only scope (no colorBreakdown/color-matrix serialization;
+// that lands with the Color Checklist round).
+document.addEventListener('DOMContentLoaded', function () {
+  const prodForm = document.getElementById('productionForm');
+  if (!prodForm) return;
+
+  prodForm.onsubmit = async function (e) {
+    e.preventDefault();
+
+    const processSelect = document.getElementById('productionProcessId');
+    const processWasDisabled = processSelect?.disabled ?? false;
+    if (processWasDisabled && processSelect) processSelect.disabled = false;
+
+    const form = document.getElementById('productionForm');
+    const formData = Object.fromEntries(new FormData(form));
+
+    if (processWasDisabled && processSelect) processSelect.disabled = true;
+
+    formData.componentsConsumed = JSON.stringify(App.Production.serializeComponentsConsumed());
+
+    const submitBtn = document.getElementById('productionSubmitBtn');
+    if (submitBtn) submitBtn.disabled = true;
+
+    try {
+      const response = await Api.mutate('saveProduction', formData);
+      if (response.success) {
+        const isNewLot = !document.getElementById('productionRowIdx')?.value;
+        if (isNewLot) {
+          const fieldset = document.getElementById('productionFormFieldset');
+          if (fieldset) fieldset.disabled = true;
+          try {
+            await App.Production.resetCreateForm();
+          } finally {
+            if (fieldset) fieldset.disabled = false;
+          }
+          document.getElementById('productionSize')?.focus();
+        } else {
+          const modalEl = document.getElementById('editProductionModal');
+          if (modalEl) bootstrap.Modal.getOrCreateInstance(modalEl).hide();
+        }
+        await App.Production.loadData();
+      }
+      App.Utils.showToast(response.message, !response.success);
+    } catch (err) {
+      App.Utils.showToast(err.message || 'Failed to save production log', true);
+    } finally {
+      if (submitBtn) submitBtn.disabled = false;
+    }
+  };
+});
