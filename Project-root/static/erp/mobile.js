@@ -2127,7 +2127,380 @@ MApp.Returns = {
     }
   }
 };
-MApp.PO = { openLedgerSheet() { MApp.Toast.error('PO Ledger is coming soon.'); } };
+// ================================================================
+// PO LEDGER — getPOData already returns po.status and per-line
+// receivedQty/pendingQty (see module_po.js#_attachPoStatus), so the list
+// is a straight read + status-chip + pending-line surface, no new server
+// work needed. Print reuses the SAME #print-po-container markup from
+// print.html the desktop PO Ledger populates (see po.js's own
+// populatePrintData) -- always includes rates/totals (no toggle, unlike
+// desktop's printWithRates/printWithTotal checkboxes) to keep the first
+// mobile pass simple.
+//
+// "New PO" (openNewSheet/save) is the one write action here, calling the
+// SAME savePO used by desktop, unchanged. Like MApp.Returns, it logs
+// exactly one item per PO instead of desktop's multi-line form -- fast
+// field entry; a PO with several distinct items should still be raised
+// on desktop. Editing/deleting an existing PO is intentionally NOT built
+// here, matching every other mobile write flow (Production/Dispatch/
+// Returns): mobile only ever creates new records.
+// ================================================================
+MApp.PO = {
+  pos: [],
+  filtered: [],
+  statusFilter: 'all',
+  searchTerm: '',
+  vendors: [],
+  items: [],
+  selection: { vendor: '', contact: '', itemName: '', itemSize: '', unit: 'Pcs' },
+
+  async openLedgerSheet() {
+    const listEl = document.getElementById('po-ledger-list');
+    const searchInput = document.getElementById('po-ledger-search');
+    if (searchInput) searchInput.value = '';
+    this.searchTerm = '';
+    this.statusFilter = 'all';
+    this._updateFilterChips();
+    MApp.Util.renderSkeleton(listEl, 5);
+    MApp.Sheet.open('sheet-po-ledger');
+
+    try {
+      const res = await MApp.Api.call('getPOData');
+      if (!res || !res.success) {
+        MApp.Util.renderError(listEl, res && res.message, () => this.openLedgerSheet());
+        return;
+      }
+      this.pos = res.data || [];
+      this._applyFilters();
+    } catch (err) {
+      MApp.Util.renderError(listEl, err && err.message, () => this.openLedgerSheet());
+    }
+  },
+
+  closeLedgerSheet() {
+    MApp.Sheet.close('sheet-po-ledger');
+  },
+
+  onSearch(term) {
+    this.searchTerm = String(term || '').trim().toLowerCase();
+    this._applyFilters();
+  },
+
+  filterByStatus(status) {
+    this.statusFilter = status;
+    this._updateFilterChips();
+    this._applyFilters();
+  },
+
+  _updateFilterChips() {
+    document.querySelectorAll('#po-ledger-status-bar .mb-filter-chip').forEach(chip => {
+      chip.classList.toggle('active', chip.dataset.status === this.statusFilter);
+    });
+  },
+
+  _applyFilters() {
+    let list = this.pos;
+    if (this.statusFilter !== 'all') {
+      list = list.filter(po => po.status === this.statusFilter);
+    }
+    if (this.searchTerm) {
+      const term = this.searchTerm;
+      list = list.filter(po =>
+        String(po.poNumber || '').toLowerCase().includes(term) ||
+        String(po.vendor || '').toLowerCase().includes(term));
+    }
+    this.filtered = list;
+    this.render();
+  },
+
+  render() {
+    const listEl = document.getElementById('po-ledger-list');
+    if (!listEl) return;
+
+    if (this.filtered.length === 0) {
+      MApp.Util.renderEmpty(listEl, {
+        title: 'No purchase orders found',
+        body: this.pos.length === 0 ? 'No POs recorded yet.' : 'Try a different search or filter.'
+      });
+      return;
+    }
+
+    listEl.innerHTML = this.filtered.slice(0, 100).map(po => {
+      const idx = this.pos.indexOf(po);
+      const pendingLines = (po.items || [])
+        .filter(item => (item.pendingQty || 0) > 0.0001)
+        .map(item => `${MApp.Util.escapeHtml(item.name)}: ${MApp.Util.formatQty(item.pendingQty)} ${MApp.Util.escapeHtml(item.unit || '')} pending`)
+        .join('<br>');
+
+      return `
+      <div class="mb-card">
+        <div class="mb-card-row" style="justify-content:space-between;align-items:flex-start;">
+          <div>
+            <div class="mb-card-title">${MApp.Util.escapeHtml(po.poNumber)}</div>
+            <div class="mb-card-sub">${MApp.Util.escapeHtml(po.vendor || '')} · ${MApp.Util.escapeHtml(po.poDate || '')}</div>
+          </div>
+          <div style="display:flex;align-items:center;gap:6px;">
+            <span class="mb-chip ${MApp.Util.statusChipClass(po.status)}">${MApp.Util.escapeHtml(po.status || '')}</span>
+            <button type="button" class="mapp-topbar-btn" aria-label="Print PO ${MApp.Util.escapeHtml(po.poNumber)}" onclick="MApp.PO.print(${idx})">
+              <svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M6 9V2h12v7"/><path d="M6 18H4a2 2 0 0 1-2-2v-5a2 2 0 0 1 2-2h16a2 2 0 0 1 2 2v5a2 2 0 0 1-2 2h-2"/><path d="M6 14h12v8H6z"/></svg>
+            </button>
+          </div>
+        </div>
+        <div class="mb-card-sub" style="margin-top:4px;">Qty: ${MApp.Util.formatQty(po.totalQty)} · Total: ${MApp.Util.formatCurrency(po.grandTotal)}</div>
+        ${pendingLines ? `<div class="mb-card-sub" style="margin-top:4px;color:var(--mb-enamel-amber);">${pendingLines}</div>` : ''}
+      </div>`;
+    }).join('');
+  },
+
+  print(index) {
+    const po = this.pos[index];
+    if (!po) return;
+    this._populatePrintData(po);
+    const title = `PO_${po.poNumber}_${String(po.vendor || '').replace(/[^a-zA-Z0-9 \-]/g, '').trim().replace(/\s+/g, '_')}`;
+    MApp.Print.trigger('print-po-container', title);
+  },
+
+  // Mirrors desktop po.js's populatePrintData() -- same #print-po-container
+  // field IDs (shared markup from print.html) -- but always includes
+  // rates/totals, no printWithRates/printWithTotal checkboxes like desktop has.
+  _populatePrintData(po) {
+    const setText = (id, val) => {
+      const el = document.getElementById(id);
+      if (el) el.innerText = val ?? '';
+    };
+    setText('print-vendor', po.vendor || '');
+    setText('print-contact', po.contact || '');
+    setText('print-supp-rem', po.supplierRemarks || '');
+    setText('print-ponum', po.poNumber || '');
+    setText('print-date', po.poDate || '');
+    setText('print-desc', po.poDescription || '');
+    setText('print-remarks', po.poRemarks || '');
+
+    const BRAND = '#C0392B';
+    const thBase = `padding:8px 6px;background-color:${BRAND};color:#fff;font-weight:700;font-size:11px;text-transform:uppercase;letter-spacing:0.5px;border:1px solid ${BRAND};-webkit-print-color-adjust:exact;print-color-adjust:exact;`;
+    const tdBase = 'padding:7px 6px;border:1px solid #e5e5e5;word-break:break-word;overflow-wrap:break-word;font-size:12px;';
+
+    const head = document.getElementById('print-table-head');
+    if (head) {
+      head.innerHTML = `<tr>
+        <th style="${thBase}width:5%;text-align:center">#</th>
+        <th style="${thBase}width:20%;text-align:left">Item Name</th>
+        <th style="${thBase}width:17%;text-align:left">Narration</th>
+        <th style="${thBase}width:12%;text-align:left">Size</th>
+        <th style="${thBase}width:14%;text-align:center">Qty</th>
+        <th style="${thBase}width:14%;text-align:right">Rate</th>
+        <th style="${thBase}width:18%;text-align:right">Total</th>
+      </tr>`;
+    }
+
+    let grandTotal = 0;
+    const bodyHtml = (po.items || []).map((item, idx) => {
+      const qty = MApp.Util.toNumber(item.qty);
+      const price = MApp.Util.toNumber(item.price);
+      const lineTotal = qty * price;
+      grandTotal += lineTotal;
+      const rowBg = idx % 2 === 0 ? '#ffffff' : '#FFF5F5';
+      return `<tr style="background-color:${rowBg};-webkit-print-color-adjust:exact;print-color-adjust:exact;page-break-inside:avoid;break-inside:avoid;">
+        <td style="${tdBase}text-align:center;color:#999;font-weight:600;">${idx + 1}</td>
+        <td style="${tdBase}text-align:left;font-weight:600;">${MApp.Util.escapeHtml(item.name || '')}</td>
+        <td style="${tdBase}text-align:left;color:#555;">${MApp.Util.escapeHtml(item.narration || '')}</td>
+        <td style="${tdBase}text-align:left;">${MApp.Util.escapeHtml(item.size || '')}</td>
+        <td style="${tdBase}text-align:center;font-weight:600;">${MApp.Util.escapeHtml(String(qty))} ${MApp.Util.escapeHtml(item.unit || 'Pcs')}</td>
+        <td style="${tdBase}text-align:right;">${MApp.Util.formatCurrency(price)}</td>
+        <td style="${tdBase}text-align:right;font-weight:700;color:${BRAND};-webkit-print-color-adjust:exact;print-color-adjust:exact;">${MApp.Util.formatCurrency(lineTotal)}</td>
+      </tr>`;
+    }).join('');
+
+    const tblBody = document.getElementById('print-items-body');
+    if (tblBody) tblBody.innerHTML = bodyHtml;
+
+    const totalContainer = document.getElementById('print-grand-total-container');
+    setText('print-grand-total', grandTotal.toFixed(2));
+    if (totalContainer) totalContainer.style.display = 'block';
+  },
+
+  // ── New PO sheet ─────────────────────────────────────────────────────
+  async openNewSheet() {
+    this.selection = { vendor: '', contact: '', itemName: '', itemSize: '', unit: 'Pcs' };
+
+    document.getElementById('new-po-body').innerHTML = `
+      <div class="mb-skel mb-skel-card" style="height:56px;"></div>
+      <div class="mb-skel mb-skel-card" style="height:56px;"></div>
+      <div class="mb-skel mb-skel-card" style="height:56px;"></div>`;
+    MApp.Sheet.open('sheet-new-po');
+
+    const saveBtn = document.getElementById('new-po-save-btn');
+    if (saveBtn) saveBtn.disabled = true;
+
+    try {
+      await this._ensureNewPoRefData();
+      document.getElementById('new-po-body').innerHTML = this._newPoFormHtml();
+    } catch (err) {
+      MApp.Toast.error('Could not load PO reference data: ' + (err.message || ''));
+      this.closeNewSheet();
+      return;
+    } finally {
+      if (saveBtn) saveBtn.disabled = false;
+    }
+  },
+
+  closeNewSheet() {
+    MApp.Sheet.close('sheet-new-po');
+  },
+
+  async _ensureNewPoRefData() {
+    const [vendorsRes, itemsRes] = await Promise.all([
+      MApp.Api.call('getVendorsData'),
+      MApp.Api.call('getItemsData')
+    ]);
+    this.vendors = (vendorsRes && vendorsRes.success) ? (vendorsRes.data || []) : [];
+    this.items = (itemsRes && itemsRes.success) ? (itemsRes.data || []) : [];
+  },
+
+  _newPoFormHtml() {
+    return `
+      <div class="mb-field">
+        <label for="new-po-date">Date</label>
+        <input type="date" id="new-po-date" value="${MApp.Util.todayInputValue()}">
+      </div>
+
+      <div class="mb-field">
+        <label>Vendor</label>
+        <button type="button" class="mb-picker-field mb-placeholder" id="new-po-vendor-field" onclick="MApp.PO.pickVendor()">Choose a vendor...</button>
+      </div>
+
+      <div class="mb-field">
+        <label for="new-po-contact">Contact / dispatch address (optional)</label>
+        <input type="text" id="new-po-contact" maxlength="100">
+      </div>
+
+      <div class="mb-field">
+        <label>Item</label>
+        <button type="button" class="mb-picker-field mb-placeholder" id="new-po-item-field" onclick="MApp.PO.pickItem()">Choose an item...</button>
+      </div>
+
+      <div class="mb-field">
+        <label for="new-po-qty">Quantity</label>
+        <input type="number" id="new-po-qty" inputmode="decimal" min="0" step="1" placeholder="0">
+      </div>
+
+      <div class="mb-field">
+        <label for="new-po-price">Rate (per unit)</label>
+        <input type="number" id="new-po-price" inputmode="decimal" min="0" step="0.01" placeholder="0.00">
+      </div>
+
+      <div class="mb-field">
+        <label for="new-po-remarks">Remarks (optional)</label>
+        <textarea id="new-po-remarks" rows="3" placeholder="Shown in the printed PO document..."></textarea>
+      </div>
+    `;
+  },
+
+  async pickVendor() {
+    const items = (this.vendors || []).map(v => ({ value: v.name, label: v.name }));
+    const picked = await MApp.Picker.open({ title: 'Choose a vendor', items, selectedValue: this.selection.vendor, allowCustom: true });
+    if (!picked) return;
+    this.selection.vendor = picked.value;
+    const el = document.getElementById('new-po-vendor-field');
+    if (el) { el.textContent = picked.label; el.classList.remove('mb-placeholder'); }
+
+    // Mirrors desktop's App.Utils.updateVendorContact -- auto-fill the
+    // contact field from this vendor's last known contact, if any.
+    const match = (this.vendors || []).find(v => v.name === picked.value);
+    if (match && match.contact) {
+      this.selection.contact = match.contact;
+      const contactInput = document.getElementById('new-po-contact');
+      if (contactInput) contactInput.value = match.contact;
+    }
+  },
+
+  async pickItem() {
+    const items = (this.items || []).map(it => ({
+      value: it.name + '||' + it.size, label: it.name, sublabel: it.size ? `Size: ${it.size}` : ''
+    }));
+    const picked = await MApp.Picker.open({
+      title: 'Choose an item', items, selectedValue: this.selection.itemName + '||' + this.selection.itemSize
+    });
+    if (!picked) return;
+
+    const match = (this.items || []).find(it => (it.name + '||' + it.size) === picked.value);
+    this.selection.itemName = match ? match.name : picked.label;
+    this.selection.itemSize = match ? match.size : '';
+    this.selection.unit = match ? match.baseUnit : 'Pcs';
+
+    const el = document.getElementById('new-po-item-field');
+    if (el) {
+      el.textContent = picked.label + (this.selection.itemSize ? ` (${this.selection.itemSize})` : '');
+      el.classList.remove('mb-placeholder');
+    }
+  },
+
+  // Note: source's own single-verb _apiCall handled both reads and
+  // writes -- savePO is mutation=True server-side (registry.py), so
+  // this call uses MApp.Api.mutate, not .call, unlike source.
+  async save() {
+    if (!this.selection.vendor) {
+      MApp.Toast.error('Choose a vendor first.');
+      return;
+    }
+    if (!this.selection.itemName) {
+      MApp.Toast.error('Choose an item first.');
+      return;
+    }
+    const qty = MApp.Util.toNumber(document.getElementById('new-po-qty')?.value);
+    if (!qty || qty <= 0) {
+      MApp.Toast.error('Enter a quantity greater than zero.');
+      return;
+    }
+
+    const formData = {
+      poDate: document.getElementById('new-po-date')?.value || MApp.Util.todayInputValue(),
+      vendor: this.selection.vendor,
+      contact: (document.getElementById('new-po-contact')?.value || '').trim(),
+      poRemarks: (document.getElementById('new-po-remarks')?.value || '').trim(),
+      items: JSON.stringify([{
+        name: this.selection.itemName,
+        size: this.selection.itemSize,
+        narration: '',
+        unit: this.selection.unit || 'Pcs',
+        qty: qty,
+        price: MApp.Util.toNumber(document.getElementById('new-po-price')?.value)
+      }])
+    };
+
+    MApp.Util.setSheetBusy('new-po-body', 'new-po-save-btn', true, 'Saving…');
+    try {
+      const res = await MApp.Api.mutate('savePO', formData);
+      if (!res || !res.success) {
+        MApp.Toast.error((res && res.message) || 'Could not save this PO.');
+        MApp.Util.setSheetBusy('new-po-body', 'new-po-save-btn', false, null, 'Save PO');
+        return;
+      }
+      MApp.Toast.success(`PO saved${res.data && res.data.poNumber ? ' — ' + res.data.poNumber : ''}.`);
+      this.closeNewSheet();
+      MApp.Util.setSheetBusy('new-po-body', 'new-po-save-btn', false, null, 'Save PO');
+      this._refreshLedger();
+    } catch (err) {
+      MApp.Toast.error(err.message || 'Could not save this PO. Check your connection and try again.');
+      MApp.Util.setSheetBusy('new-po-body', 'new-po-save-btn', false, null, 'Save PO');
+    }
+  },
+
+  // Best-effort refresh of the ledger list behind the New PO sheet -- a
+  // failure here must not surface as an error toast; the PO itself
+  // already saved successfully by this point (see save() above).
+  async _refreshLedger() {
+    try {
+      const res = await MApp.Api.call('getPOData');
+      if (res && res.success) {
+        this.pos = res.data || [];
+        this._applyFilters();
+      }
+    } catch (err) {
+      // Non-critical -- next manual open of the ledger will show it.
+    }
+  }
+};
 MApp.Bill = { openLedgerSheet() { MApp.Toast.error('Bill Ledger is coming soon.'); } };
 MApp.Items = { openLookupSheet() { MApp.Toast.error('Items lookup is coming soon.'); } };
 MApp.Directory = { open() { MApp.Toast.error('Directory is coming soon.'); } };
