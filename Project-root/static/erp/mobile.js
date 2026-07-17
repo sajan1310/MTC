@@ -945,17 +945,23 @@ MApp.Production = {
     const listEl = document.getElementById('production-list');
     MApp.Util.renderSkeleton(listEl, 4);
 
-    try {
-      const [lotsRes, procRes] = await Promise.all([
-        MApp.Api.call('getProductionData'),
-        MApp.Api.call('getProcessData')
-      ]);
+    // getProcessData here is supplementary (display-name lookup for
+    // processById, plus the Log Lot cascade's own reference data) --
+    // best-effort, caught independently so it can never block
+    // Production's own offline-cached list render, same pattern as
+    // Round 1's Stock fix. On failure the list still renders (falling
+    // back to raw processId instead of a friendly name) and opening
+    // Log Lot still degrades exactly as it already did offline.
+    const procPromise = MApp.Api.call('getProcessData').catch(() => null);
 
+    try {
+      const lotsRes = await MApp.Api.callCached('getProductionData');
       if (!lotsRes || !lotsRes.success) {
         MApp.Util.renderError(listEl, lotsRes && lotsRes.message, () => this.load());
         return;
       }
 
+      const procRes = await procPromise;
       this.lots = lotsRes.data || [];
       this.allProcesses = (procRes && procRes.success) ? (procRes.data || []) : [];
       this.activeProcesses = this.allProcesses.filter(p => p.active);
@@ -964,6 +970,7 @@ MApp.Production = {
 
       this._pendingOnly = MApp.State.productionFilter === 'pending';
       MApp.State.productionFilter = '';
+      this._offlineCachedAt = lotsRes._offlineCachedAt || null;
 
       this.render();
     } catch (err) {
@@ -976,12 +983,14 @@ MApp.Production = {
     if (!listEl) return;
 
     let lots = this.lots;
-    const banner = this._pendingOnly
+    const offlineBanner = this._offlineCachedAt ? MApp.Util.offlineBannerHtml(this._offlineCachedAt) : '';
+    const pendingBanner = this._pendingOnly
       ? `<div class="mb-offline-banner" style="background:var(--mb-safety-faint);color:var(--mb-ink);margin-bottom:var(--mb-sp-3);">
            <span>Showing pending &amp; in-progress lots only</span>
            <button type="button" class="mb-btn-text" style="padding:0;min-height:auto;" data-clear-filter>Clear</button>
          </div>`
       : '';
+    const banner = offlineBanner + pendingBanner;
     if (this._pendingOnly) {
       lots = lots.filter(l => l.status === 'Pending' || l.status === 'In Progress');
     }
@@ -1663,22 +1672,27 @@ MApp.Dispatch = {
     const listEl = document.getElementById('dispatch-list');
     MApp.Util.renderSkeleton(listEl, 4);
 
-    try {
-      const [dispatchRes, clientsRes] = await Promise.all([
-        MApp.Api.call('getDispatchData'),
-        MApp.Api.call('getClientsData')
-      ]);
+    // getClientsData here is supplementary (client address/gstin lookup
+    // for print(), plus the New Dispatch sheet's own reference data) --
+    // best-effort, caught independently so it can never block Dispatch's
+    // own offline-cached list render, same pattern as Round 1's Stock fix
+    // and this round's Production fix.
+    const clientsPromise = MApp.Api.call('getClientsData').catch(() => null);
 
+    try {
+      const dispatchRes = await MApp.Api.callCached('getDispatchData');
       if (!dispatchRes || !dispatchRes.success) {
         MApp.Util.renderError(listEl, dispatchRes && dispatchRes.message, () => this.load());
         return;
       }
 
+      const clientsRes = await clientsPromise;
       this.dispatches = dispatchRes.data || [];
       this.clients = (clientsRes && clientsRes.success) ? (clientsRes.data || []) : [];
 
       this._todayOnly = MApp.State.dispatchFilter === 'today';
       MApp.State.dispatchFilter = '';
+      this._offlineCachedAt = dispatchRes._offlineCachedAt || null;
 
       this.render();
     } catch (err) {
@@ -1691,12 +1705,14 @@ MApp.Dispatch = {
     if (!listEl) return;
 
     let list = this.dispatches;
-    const banner = this._todayOnly
+    const offlineBanner = this._offlineCachedAt ? MApp.Util.offlineBannerHtml(this._offlineCachedAt) : '';
+    const todayBanner = this._todayOnly
       ? `<div class="mb-offline-banner" style="background:var(--mb-safety-faint);color:var(--mb-ink);margin-bottom:var(--mb-sp-3);">
            <span>Showing today's dispatches only</span>
            <button type="button" class="mb-btn-text" style="padding:0;min-height:auto;" data-clear-filter>Clear</button>
          </div>`
       : '';
+    const banner = offlineBanner + todayBanner;
     if (this._todayOnly) {
       list = list.filter(d => MApp.Util.isToday(d.dateRaw));
     }
