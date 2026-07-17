@@ -1903,11 +1903,283 @@ MApp.Dispatch = {
     }
   }
 };
-MApp.Returns = { openNewReturnSheet() { MApp.Toast.error('Log Return is coming soon.'); } };
+// ================================================================
+// RETURNS — card list (recent only, quick field glance) + "Log Return"
+// sheet. Logs one item per return, unlike desktop's multi-item form —
+// a deliberate scope narrowing for fast field entry (saveReturn accepts
+// a multi-item array; the mobile client just always sends a length-1 one).
+// ================================================================
+MApp.Returns = {
+  returns: [],
+  vendors: [],
+  items: [],
+  selection: { vendor: '', itemName: '', itemSize: '', unit: 'Pcs' },
+
+  mount() {
+    this.load();
+  },
+
+  async load() {
+    const listEl = document.getElementById('more-returns-list');
+    if (!listEl) return;
+    MApp.Util.renderSkeleton(listEl, 2);
+
+    try {
+      const res = await MApp.Api.call('getReturnData');
+      if (!res || !res.success) {
+        MApp.Util.renderError(listEl, res && res.message, () => this.load());
+        return;
+      }
+      this.returns = (res.data || []).slice(0, 8);
+      this.render();
+    } catch (err) {
+      MApp.Util.renderError(listEl, err && err.message, () => this.load());
+    }
+  },
+
+  render() {
+    const listEl = document.getElementById('more-returns-list');
+    if (!listEl) return;
+
+    if (this.returns.length === 0) {
+      MApp.Util.renderEmpty(listEl, { title: 'No returns logged', body: 'Tap "Log Return" to record the first one.' });
+      return;
+    }
+
+    listEl.innerHTML = this.returns.map(r => `
+      <div class="mb-card">
+        <div class="mb-card-row">
+          <div>
+            <div class="mb-card-title">${MApp.Util.escapeHtml(r.returnNumber)}</div>
+            <div class="mb-card-sub">${MApp.Util.escapeHtml(r.vendor)}</div>
+          </div>
+          <div style="text-align:right;">
+            <div class="mb-card-number">${r.totalQty}</div>
+            <div class="mb-card-sub">${MApp.Util.escapeHtml(r.returnDate || '')}</div>
+          </div>
+        </div>
+      </div>
+    `).join('');
+  },
+
+  async openNewReturnSheet() {
+    this.selection = { vendor: '', itemName: '', itemSize: '', unit: 'Pcs' };
+
+    document.getElementById('log-return-body').innerHTML = `
+      <div class="mb-skel mb-skel-card" style="height:56px;"></div>
+      <div class="mb-skel mb-skel-card" style="height:56px;"></div>
+      <div class="mb-skel mb-skel-card" style="height:56px;"></div>`;
+    MApp.Sheet.open('sheet-log-return');
+
+    const saveBtn = document.getElementById('log-return-save-btn');
+    if (saveBtn) saveBtn.disabled = true;
+
+    try {
+      await this._ensureRefData();
+      document.getElementById('log-return-body').innerHTML = this._formHtml();
+    } catch (err) {
+      MApp.Toast.error('Could not load return reference data: ' + (err.message || ''));
+      this.closeNewReturnSheet();
+      return;
+    } finally {
+      if (saveBtn) saveBtn.disabled = false;
+    }
+  },
+
+  closeNewReturnSheet() {
+    MApp.Sheet.close('sheet-log-return');
+  },
+
+  async _ensureRefData() {
+    const [vendorsRes, itemsRes] = await Promise.all([
+      MApp.Api.call('getVendorsData'),
+      MApp.Api.call('getItemsData')
+    ]);
+    this.vendors = (vendorsRes && vendorsRes.success) ? (vendorsRes.data || []) : [];
+    this.items = (itemsRes && itemsRes.success) ? (itemsRes.data || []) : [];
+  },
+
+  _formHtml() {
+    return `
+      <div class="mb-field">
+        <label for="return-date">Date</label>
+        <input type="date" id="return-date" value="${MApp.Util.todayInputValue()}">
+      </div>
+
+      <div class="mb-field">
+        <label>Vendor</label>
+        <button type="button" class="mb-picker-field mb-placeholder" id="return-vendor-field" onclick="MApp.Returns.pickVendor()">Choose a vendor...</button>
+      </div>
+
+      <div class="mb-field">
+        <label>Item</label>
+        <button type="button" class="mb-picker-field mb-placeholder" id="return-item-field" onclick="MApp.Returns.pickItem()">Choose an item...</button>
+      </div>
+
+      <div class="mb-field">
+        <label for="return-qty">Quantity</label>
+        <input type="number" id="return-qty" inputmode="decimal" min="0" step="1" placeholder="0">
+      </div>
+
+      <div class="mb-field">
+        <label for="return-price">Rate (per unit)</label>
+        <input type="number" id="return-price" inputmode="decimal" min="0" step="0.01" placeholder="0.00">
+      </div>
+
+      <div class="mb-field">
+        <label for="return-reason">Reason</label>
+        <input type="text" id="return-reason" placeholder="e.g. Defective, Excess, Wrong item">
+      </div>
+
+      <div class="mb-field">
+        <label for="return-remarks">Remarks (optional)</label>
+        <textarea id="return-remarks" rows="3"></textarea>
+      </div>
+    `;
+  },
+
+  async pickVendor() {
+    const items = (this.vendors || []).map(v => ({ value: v.name, label: v.name }));
+    const picked = await MApp.Picker.open({ title: 'Choose a vendor', items, selectedValue: this.selection.vendor, allowCustom: true });
+    if (!picked) return;
+    this.selection.vendor = picked.value;
+    const el = document.getElementById('return-vendor-field');
+    if (el) { el.textContent = picked.label; el.classList.remove('mb-placeholder'); }
+  },
+
+  async pickItem() {
+    const items = (this.items || []).map(it => ({
+      value: it.name + '||' + it.size, label: it.name, sublabel: it.size ? `Size: ${it.size}` : ''
+    }));
+    const picked = await MApp.Picker.open({
+      title: 'Choose an item', items, selectedValue: this.selection.itemName + '||' + this.selection.itemSize
+    });
+    if (!picked) return;
+
+    const match = (this.items || []).find(it => (it.name + '||' + it.size) === picked.value);
+    this.selection.itemName = match ? match.name : picked.label;
+    this.selection.itemSize = match ? match.size : '';
+    this.selection.unit = match ? match.baseUnit : 'Pcs';
+
+    const el = document.getElementById('return-item-field');
+    if (el) {
+      el.textContent = picked.label + (this.selection.itemSize ? ` (${this.selection.itemSize})` : '');
+      el.classList.remove('mb-placeholder');
+    }
+  },
+
+  // Note: source's own single-verb _apiCall handled both reads and
+  // writes -- saveReturn is mutation=True server-side (registry.py),
+  // so this call uses MApp.Api.mutate, not .call, unlike source.
+  async save() {
+    if (!this.selection.vendor) {
+      MApp.Toast.error('Choose a vendor first.');
+      return;
+    }
+    if (!this.selection.itemName) {
+      MApp.Toast.error('Choose an item first.');
+      return;
+    }
+    const qty = MApp.Util.toNumber(document.getElementById('return-qty')?.value);
+    if (!qty || qty <= 0) {
+      MApp.Toast.error('Enter a quantity greater than zero.');
+      return;
+    }
+    const reason = (document.getElementById('return-reason')?.value || '').trim();
+    if (!reason) {
+      MApp.Toast.error('Enter a reason for the return.');
+      return;
+    }
+
+    const formData = {
+      returnDate: document.getElementById('return-date')?.value || MApp.Util.todayInputValue(),
+      vendor: this.selection.vendor,
+      contact: '',
+      remarks: (document.getElementById('return-remarks')?.value || '').trim(),
+      items: JSON.stringify([{
+        name: this.selection.itemName,
+        size: this.selection.itemSize,
+        narration: '',
+        unit: this.selection.unit || 'Pcs',
+        qty: qty,
+        price: MApp.Util.toNumber(document.getElementById('return-price')?.value),
+        reason: reason
+      }])
+    };
+
+    MApp.Util.setSheetBusy('log-return-body', 'log-return-save-btn', true, 'Saving…');
+    try {
+      const res = await MApp.Api.mutate('saveReturn', formData);
+      if (!res || !res.success) {
+        MApp.Toast.error((res && res.message) || 'Could not log this return.');
+        MApp.Util.setSheetBusy('log-return-body', 'log-return-save-btn', false, null, 'Log Return');
+        return;
+      }
+      MApp.Toast.success(`Return logged${res.data && res.data.returnNumber ? ' — ' + res.data.returnNumber : ''}.`);
+      this.selection = { vendor: '', itemName: '', itemSize: '', unit: 'Pcs' };
+      document.getElementById('log-return-body').innerHTML = this._formHtml();
+      const saveBtn = document.getElementById('log-return-save-btn');
+      if (saveBtn) { saveBtn.disabled = false; saveBtn.textContent = 'Log Return'; }
+      this.load();
+    } catch (err) {
+      MApp.Toast.error(err.message || 'Could not log this return. Check your connection and try again.');
+      MApp.Util.setSheetBusy('log-return-body', 'log-return-save-btn', false, null, 'Log Return');
+    }
+  }
+};
 MApp.PO = { openLedgerSheet() { MApp.Toast.error('PO Ledger is coming soon.'); } };
 MApp.Bill = { openLedgerSheet() { MApp.Toast.error('Bill Ledger is coming soon.'); } };
 MApp.Items = { openLookupSheet() { MApp.Toast.error('Items lookup is coming soon.'); } };
 MApp.Directory = { open() { MApp.Toast.error('Directory is coming soon.'); } };
+
+// ================================================================
+// MORE — links out to Returns/Items lookup/desktop UI + About row
+// ================================================================
+MApp.More = {
+  mount() {
+    this._wireDesktopLink();
+    this.loadAbout();
+    MApp.Returns.mount();
+  },
+
+  // Adaptation from source: Mobile_Index.html's own doGet() served both
+  // shells from the SAME path, differentiated only by a `ui=mobile` query
+  // param -- so source strips that param and reuses window.location.pathname
+  // to link back to the desktop shell. This Flask app instead routes them
+  // as two distinct paths (/erp vs /erp/mobile -- see app/erp/pages.py),
+  // so window.location.pathname here would just point back at /erp/mobile
+  // itself. Links directly to /erp instead.
+  _wireDesktopLink() {
+    const link = document.getElementById('more-desktop-link');
+    if (!link) return;
+    link.href = '/erp';
+  },
+
+  async loadAbout() {
+    if (MApp.State.lastDashboard) {
+      this._renderAbout(MApp.State.lastDashboard);
+      return;
+    }
+    try {
+      const res = await MApp.Api.call('getMobileDashboard');
+      if (res && res.success) {
+        MApp.State.lastDashboard = res.data;
+        this._renderAbout(res.data);
+      }
+    } catch (err) {
+      // Non-critical — the About row just keeps its default text.
+    }
+  },
+
+  _renderAbout(data) {
+    const el = document.getElementById('more-about-line');
+    if (!el) return;
+    const version = data.appVersion || '1.0.0';
+    const email = data.userEmail || 'unknown user';
+    // .textContent (not innerHTML) — no HTML-escaping needed or wanted here.
+    el.textContent = `Maharaja Bikes ERP — Mobile v${version} — Signed in as ${email}`;
+  }
+};
 
 // ================================================================
 // BOOT
