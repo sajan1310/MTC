@@ -166,13 +166,19 @@ const App = {
     warehousePoolGroupOrder: ['size', 'type', 'model'],
     selectedWarehousePool: [],
 
-    // Forward-declared for the Warehouse Pool Ledger, which reads
-    // Dispatch debits against a bucket -- Dispatch itself isn't ported
-    // yet, but the real getDispatchData RPC already exists server-side
-    // (Phase 4 backend), so this is a plain data cache, not a dependency
-    // on an App.Dispatch module. Same "forward declare now, real module
-    // fills it in later" shape used throughout this port.
-    globalDispatch: [],
+    // globalDispatch was forward-declared in Round 17 for the Warehouse
+    // Pool Ledger (a plain data cache read via the real getDispatchData
+    // RPC, no dependency on this module). Its own pagination/filter/
+    // selection/sort state for the Dispatched Goods sub-tab, plus
+    // globalReadyToDispatch/filteredReadyToDispatch for the Ready to
+    // Dispatch sub-tab, land here now that App.Dispatch itself exists.
+    globalReadyToDispatch: [],
+    filteredReadyToDispatch: [],
+    filteredDispatch: [],
+    dispatchCurrentPage: 1,
+    dispatchRowsPerPage: 15,
+    dispatchSortBy: 'dateDesc',
+    selectedDispatch: [],
 
     // Clients / PI-Estimates (Script_Clients.html's App.Client) -- its
     // own pagination/filter/selection state for both sub-tabs, plus the
@@ -630,6 +636,7 @@ const App = {
       if (id === 'contractorsTab' && typeof App.Contractor !== 'undefined') App.Contractor.loadData();
       if (id === 'productionTab' && typeof App.Production !== 'undefined') App.Production.loadData();
       if (id === 'clientsTab' && typeof App.Client !== 'undefined') App.Client.enterTab();
+      if (id === 'dispatchTab' && typeof App.Dispatch !== 'undefined') App.Dispatch.enterTab();
       // Every other module's own `if (id === '<tab>') App.<Module>.loadData();`
       // line lands here in that module's own round -- same guarded pattern
       // Navigation.showTab already used in source for not-yet-loaded modules.
@@ -799,6 +806,9 @@ function bindGlobalEvents() {
         break;
       case 'order-page':
         App.Client.changeOrdersPage(toNumber(btn.dataset.page, 1));
+        break;
+      case 'dispatch-page':
+        App.Dispatch.changeDispatchPage(toNumber(btn.dataset.page, 1));
         break;
     }
   });

@@ -226,17 +226,7 @@
         {% include "erp/partials/contractors.html" %}
         {% include "erp/partials/production.html" %}
         {% include "erp/partials/clients.html" %}
-
-        {% for tab_id, label in [
-          ('dispatchTab', 'Dispatch'),
-        ] %}
-        <div id="{{ tab_id }}" class="tab-content" role="tabpanel" aria-labelledby="btn-{{ tab_id }}">
-          <div class="dash-section text-center text-muted py-5">
-            <i class="bi bi-cone-striped fs-1 d-block mb-2"></i>
-            {{ label }} isn't wired up yet — the backend is ready, this screen lands in a later round.
-          </div>
-        </div>
-        {% endfor %}
+        {% include "erp/partials/dispatch.html" %}
 
       </div>
     </div>
@@ -265,6 +255,7 @@
   <script src="{{ url_for('static', filename='erp/production.js') }}"></script>
   <script src="{{ url_for('static', filename='erp/issue.js') }}"></script>
   <script src="{{ url_for('static', filename='erp/client.js') }}"></script>
+  <script src="{{ url_for('static', filename='erp/dispatch.js') }}"></script>
 
 </body>
 </html>
