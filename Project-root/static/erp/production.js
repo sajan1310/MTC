@@ -11,36 +11,43 @@
 // table, Assignment & Workflow -- plus full create/edit/save/delete for
 // any lot whose Process has NO configured color sub-groups.
 //
-// Round 13 scope (this round): the multi-axis Color Checklist system --
+// Round 13 scope (shipped): the multi-axis Color Checklist system --
 // checking off which colors a lot produces, per-color quantities, axis
 // grouping (a process with 2+ independent Color Axes, e.g. Frame color
 // + Rim color), primary-axis selection, custom one-off colors, and
 // "+ Add Colors to this Lot" for a process with no auto-detected groups
-// at all. This unlocks real multi-color lot creation -- but ONLY for a
-// process whose color-configured components don't ALSO need the Per-
-// Color Component Matrix or Per-Process Warehouse Pool Color Group
-// Matrix to represent correctly (see _processNeedsColorMatrix below).
-// Reading the full Create/Edit modal source (Script_Production.html
-// lines ~1013-3407, ~2400 lines) confirmed those two matrix systems are
-// each independently complex (axis-scoped column sync, merged vs.
-// manual rows, composite delimiter-joined pool colors) and are correctly
-// deferred to their own round rather than guessed at here.
+// at all. Shipped with a guard: a process whose color-configured
+// components also needed the Per-Color Component Matrix or Per-Process
+// Warehouse Pool Color Group Matrix showed a blocking notice instead,
+// since those two systems (each independently complex -- axis-scoped
+// column sync, merged vs. manual rows, composite delimiter-joined pool
+// colors) hadn't been wired up to real data yet.
 //
-// The guard is computed from the SAME data
-// (getProcessComponentsData + getPoolColorAwareItemNames) the real
-// matrix-population functions below would use, so it's provably
-// accurate: a process that passes the guard has ZERO components that
-// would ever populate the Matrix or Pool Color Group tables, which is
-// exactly why this round can safely include those tables' scaffolding
-// (manual "+ Add Per-Color Component" row, serialization) without
-// implementing their auto-population -- for a guard-passing process,
-// auto-population is provably a no-op, ported faithfully or not.
-// A process that fails the guard shows a dismissable notice and blocks
-// Save, same pattern as Round 12. Editing an existing lot is guarded
-// the same way: a saved colorBreakdown with any non-COMMON
-// componentsConsumed row (i.e. it used the Matrix) is blocked; a
-// colorBreakdown with only COMMON rows (created by this round, or a
-// legacy lot that happens to have none) is fully editable.
+// Round 14 scope (this round): lifts that guard. Turned out most of the
+// Matrix/Pool-split machinery was already fully, faithfully ported in
+// Round 13 as scaffolding (populateCommonComponentsFromProcess,
+// renderPoolColorSplitGroups, populateColorMatrixForColors, and every
+// column/row helper) -- it simply never received real data while the
+// guard stood. What Round 14 actually adds:
+//   - addComponentRow's `colorScope` handling (a readonly, locked Color
+//     field + data-color-scope attribute) -- Round 12's own simplified
+//     version silently dropped this, which only mattered once a
+//     single-pool-color item (e.g. "Fitted Rim" always Black) could
+//     reach that code path via the now-unguarded
+//     populateCommonComponentsFromProcess.
+//   - _poolDefForCustomColor -- lets a custom color assigned to a
+//     pool-sourced group extend that group's own Per-Process Pool
+//     Components table, now that _poolColorGroupDefs is genuinely
+//     populated instead of always empty.
+//   - populateComponentsConsumedDirect + renderPoolColorGroupsFromAccum
+//     -- restores a saved lot's actual Matrix/Pool-split components when
+//     editing, including the "legacy lot upgrade" path (a combined qty
+//     saved before an item was recognized as multi-color gets split
+//     evenly across colors as a starting point, with a toast telling
+//     the operator to adjust and re-save).
+//   - Removed the now-obsolete guard (_processNeedsColorMatrix /
+//     _setMultiColorNotice / productionMultiColorNotice) entirely,
+//     rather than leaving dead code behind.
 //
 // Adaptations from source (documented, not silent):
 // - deleteProduction/deleteProductionBulk/updateProductionStatus/
@@ -920,42 +927,6 @@ App.Production = {
     this.refreshPayableHint();
   },
 
-  // Detects whether a process's color-configured components need the
-  // not-yet-ported Per-Color Component Matrix or Per-Process Warehouse
-  // Pool Color Group Matrix to represent correctly -- see this file's
-  // module header for why this is provably accurate rather than a guess:
-  // it's computed from the exact same components + pool-color data
-  // populateCommonComponentsFromProcess itself uses, so "needs nothing"
-  // here really does mean nothing would ever populate those tables.
-  //   - explicitColorComps: any component row explicitly tagged with a
-  //     real colorGroup (not blank/COMMON) -- these are exactly what
-  //     populateColorMatrixForColors routes into Matrix rows.
-  //   - poolColorSplit: any COMMON, POOL-sourced component whose item
-  //     currently has 2+ colors live in the Warehouse Pool -- exactly
-  //     what renderPoolColorSplitGroups routes into its own tables.
-  async _processNeedsColorMatrix(processId) {
-    const [compRes, poolColorMap] = await Promise.all([
-      this._fetchProcessComponents(processId),
-      this.getPoolColorAwareItemNames(processId)
-    ]);
-    const all = compRes.success ? (compRes.data || []) : [];
-    const explicitColorComps = all.filter(c => c.colorGroup && c.colorGroup !== 'COMMON');
-    const commonComps = all.filter(c => !c.colorGroup || c.colorGroup === 'COMMON');
-    const poolColorSplit = commonComps.filter(c =>
-      c.sourceType === 'POOL' && (poolColorMap.get((c.itemName || '').trim().toLowerCase()) || []).length > 1
-    );
-    return explicitColorComps.length > 0 || poolColorSplit.length > 0;
-  },
-
-  // Shows/hides the "this process's color-specific components need the
-  // not-yet-ported Matrix" notice and disables Save while it's up.
-  _setMultiColorNotice(show) {
-    const notice = document.getElementById('productionMultiColorNotice');
-    if (notice) notice.style.display = show ? '' : 'none';
-    const submitBtn = document.getElementById('productionSubmitBtn');
-    if (submitBtn) submitBtn.disabled = show;
-  },
-
   async populateComponentsFromProcess(processId, colorGroup, seq) {
     this.clearComponentsTable();
     if (!processId) return;
@@ -982,11 +953,6 @@ App.Production = {
 
   // ── Colors to Produce checklist ──────────────────────────────────────
   // Ported from Script_Production.html's own Color Checklist system.
-  // Round 13 adaptation: when this process's color-specific components
-  // need the Matrix (_processNeedsColorMatrix), the checklist still
-  // renders (so the operator can see what's configured) but Save is
-  // blocked via _setMultiColorNotice -- source has no such guard since
-  // its Matrix system is fully implemented.
 
   // Populates the interactive Colors-to-Produce checklist with this
   // process's configured color sub-groups. Shows the checklist + Per-
@@ -1002,7 +968,6 @@ App.Production = {
 
     checklistEl.innerHTML = '';
     this._customColorGroupOptions = [];
-    this._setMultiColorNotice(false);
 
     let colors = [];
     if (processId) {
@@ -1024,10 +989,6 @@ App.Production = {
       this._refreshCustomColorGroupSelect();
       return [];
     }
-
-    const needsMatrix = await this._processNeedsColorMatrix(processId);
-    if (seq !== undefined && seq !== this._compLoadSeq) return colors;
-    this._setMultiColorNotice(needsMatrix);
 
     if (qtyWrapper) qtyWrapper.style.display = 'none';
     if (qtyInput) { qtyInput.required = false; qtyInput.value = ''; }
@@ -1105,6 +1066,29 @@ App.Production = {
     return null;
   },
 
+  // Finds which Per-Process Pool Components table def (see
+  // renderPoolColorSplitGroups/renderPoolColorGroupsFromAccum), if any, a
+  // custom color's chosen checklist group corresponds to -- so
+  // addCustomColorRow can extend that table's own recognized colors.
+  //   - No group picked (0 or 1 pool group at all): unambiguous, use
+  //     that one pool def if it's the only one.
+  //   - A pool-sourced group explicitly picked: match by item name --
+  //     a pool axis's own label is built server-side as
+  //     itemNames.join(', '), so splitting on the same separator
+  //     recovers the real item name(s) to match against each def's rows.
+  //   - A tag-based axis, or "Independent" picked among 2+ groups where
+  //     more than one pool def exists: not pool-related, no def to
+  //     extend.
+  _poolDefForCustomColor(targetGroup) {
+    const defs = this._poolColorGroupDefs || [];
+    if (!targetGroup) {
+      return defs.length === 1 ? defs[0] : null;
+    }
+    if (targetGroup.source !== 'pool') return null;
+    const itemNames = targetGroup.label.split(',').map(s => s.trim().toLowerCase());
+    return defs.find(def => (def.rows || []).some(r => itemNames.includes((r.itemName || '').trim().toLowerCase()))) || null;
+  },
+
   // Lets the operator tack on a one-off custom-named color/sub-group at
   // production-record time. Auto-checked so the operator only has to
   // fill in its quantity. When this process has 2+ real groups, the
@@ -1130,6 +1114,19 @@ App.Production = {
 
     if (!targetGroup && (this._customColorGroupOptions || []).length === 1) {
       targetGroup = this._customColorGroupOptions[0];
+    }
+
+    // A custom color assigned to (or defaulting to, when there's only
+    // one group so the picker never showed at all) a POOL-sourced group
+    // is additional output of that SAME real pool item -- extend that
+    // item's own Per-Process Pool Components table with this new color
+    // so the operator has somewhere to record its actual consumption
+    // (see syncPoolColorGroupColumns, which picks up the new entry
+    // itself once this color's checkbox is checked below).
+    const poolDef = this._poolDefForCustomColor(targetGroup);
+    if (poolDef && !poolDef.colors.some(c => c.toLowerCase() === name.toLowerCase())) {
+      poolDef.colors.push(name);
+      poolDef.colors.sort((a, b) => a.localeCompare(b));
     }
 
     let groupKey;
@@ -1395,7 +1392,6 @@ App.Production = {
     wrapper.style.display = '';
     if (sectionLabel) sectionLabel.innerText = 'Common Components';
     this.showColorMatrix();
-    this._setMultiColorNotice(false);
 
     this.clearComponentsTable();
     this.clearColorMatrix();
@@ -1420,7 +1416,6 @@ App.Production = {
     if (checklistEl) checklistEl.innerHTML = '';
     if (wrapper) wrapper.style.display = 'none';
     this.hideColorMatrix();
-    this._setMultiColorNotice(false);
 
     const qtyWrapper = document.getElementById('productionQtyWrapper');
     const qtyInput = document.getElementById('productionQty');
@@ -1604,11 +1599,11 @@ App.Production = {
 
   // Populates the COMMON rows of the recipe into the Common Components
   // table, suggested at qtyPerUnit x total quantity across every checked
-  // color. See _processNeedsColorMatrix: a component that would need the
-  // Matrix or Pool Color Split table never reaches this path in Round 13
-  // (the guard blocks Save before this function's own routing logic --
-  // ported faithfully below -- would ever need to actually split
-  // anything off into those still-scaffolded-only tables).
+  // color. A POOL-sourced component that's genuinely multi-color in the
+  // Warehouse Pool is routed into its own Per-Process Pool Components
+  // table instead (see renderPoolColorSplitGroups); one with just ONE
+  // pool color (e.g. "Fitted Rim" is always Black) stays here as a
+  // normal row with its colorGroup locked to that one color.
   async populateCommonComponentsFromProcess(processId, seq) {
     this.clearComponentsTable();
     if (!processId) return;
@@ -1689,13 +1684,15 @@ App.Production = {
     return `${(name || '').trim().toLowerCase()}|${(size || '').trim().toLowerCase()}`;
   },
 
-  // Renders one small table per distinct pool-color signature among
-  // pool-color-aware components. See _processNeedsColorMatrix's module
-  // header comment: `poolColorSplit` is always empty for any process
-  // that passes Round 13's guard, so this always safely no-ops (hides
-  // the wrapper) in every reachable Round 13 flow -- ported faithfully
-  // (not stubbed) since it costs nothing extra and matches source
-  // exactly for the day this guard lifts.
+  // Renders one small table per distinct "color signature" among
+  // pool-color-aware components -- items that come from the same
+  // upstream process/output item and carry the exact same set of pool
+  // colors share one table (e.g. Painted Frame's 11 colors); an item
+  // with a different color set gets its own table instead of forcing
+  // every item onto one shared, mostly-blank column set. Only the
+  // colors actually CHECKED right now in the checklist are rendered as
+  // columns -- addMatrixColorColumn/syncPoolColorGroupColumns keep
+  // these columns live as the operator checks/unchecks colors.
   renderPoolColorSplitGroups(poolColorSplit, poolColorMap) {
     const wrapper = document.getElementById('productionPoolColorGroupsWrapper');
     const container = document.getElementById('productionPoolColorGroupsContainer');
@@ -1908,13 +1905,13 @@ App.Production = {
     });
   },
 
-  // ── Per-Color Components matrix (manual rows only) ───────────────────
-  // Auto-population (populateColorMatrixForColors, called from
-  // handleColorCheckToggle/toggleColorGroup below) always finds zero
-  // matching components for any process that passes Round 13's guard
-  // (_processNeedsColorMatrix) -- see that function's comment. What
-  // remains real and useful here is the manual "+ Add Per-Color
-  // Component" row an operator can add by hand for a one-off case.
+  // ── Per-Color Components matrix ───────────────────────────────────────
+  // Auto-populated by populateColorMatrixForColors (recipe rows tagged
+  // with a real colorGroup, or a Common item merged with an explicit
+  // per-color sibling elsewhere in the recipe -- see
+  // _getCommonItemsWithColorOverride), and extendable by hand via
+  // "+ Add Per-Color Component" for a one-off case the recipe doesn't
+  // define.
 
   showColorMatrix() {
     const el = document.getElementById('productionColorMatrixWrapper');
@@ -2321,6 +2318,168 @@ App.Production = {
     return components;
   },
 
+  // ── Edit-mode restoration for a lot whose saved Components Consumed
+  // used the Matrix/Pool Color Group tables ─────────────────────────────
+  // Populates the Common table + Per-Color matrix + Per-Process Pool
+  // tables directly from a saved lot's actual recorded Components
+  // Consumed (not recipe defaults) -- used when editing an existing
+  // multi-color batch. A legacy lot saved before this item was
+  // recognized as pool-color-aware (one combined Common-tagged row) is
+  // upgraded on the fly: its quantity is split evenly across this lot's
+  // colors as a starting point, with a toast telling the operator to
+  // adjust and re-save.
+  async populateComponentsConsumedDirect(components, colors) {
+    this.clearComponentsTable();
+    this.clearColorMatrix();
+    colors.forEach(c => this.addMatrixColorColumn(c));
+
+    const processId = document.getElementById('productionProcessId')?.value;
+    const poolColorMap = processId ? await this.getPoolColorAwareItemNames(processId) : new Map();
+    let upgradedAny = false;
+    let upgradedCommonOverride = false;
+    const poolGroupAccum = new Map();
+
+    const commonOverrideComps = this._getCommonItemsWithColorOverride(components || []);
+
+    (components || []).forEach(c => {
+      const colorGroup = c.colorGroup || 'COMMON';
+      const isPoolColorAware = c.sourceType === 'POOL'
+        && (poolColorMap.get((c.itemName || '').trim().toLowerCase()) || []).length > 1;
+
+      if (isPoolColorAware) {
+        const key = `${(c.itemName || '').toLowerCase()}|${(c.size || '').toLowerCase()}`;
+        let entry = poolGroupAccum.get(key);
+        if (!entry) {
+          entry = { itemName: c.itemName, size: c.size, sourceType: c.sourceType, colorsQty: {} };
+          poolGroupAccum.set(key, entry);
+        }
+
+        if (colorGroup === 'COMMON') {
+          upgradedAny = true;
+          const perColorQty = colors.length > 0 ? c.qty / colors.length : c.qty;
+          colors.forEach(color => { entry.colorsQty[color.toLowerCase()] = perColorQty; });
+        } else {
+          entry.colorsQty[colorGroup.toLowerCase()] = c.qty;
+        }
+        return;
+      }
+
+      if (commonOverrideComps.includes(c)) {
+        upgradedCommonOverride = true;
+        const overriddenColors = new Set(
+          (components || [])
+            .filter(o => o.colorGroup && o.colorGroup !== 'COMMON' &&
+              this._itemSlotKey(this._stripColorSubstring(o.itemName || '', o.colorGroup), o.size) === this._itemSlotKey(c.itemName, c.size))
+            .map(o => o.colorGroup)
+        );
+        const fallbackColors = colors.filter(col => !overriddenColors.has(col));
+        const perColorQty = fallbackColors.length > 0 ? c.qty / fallbackColors.length : c.qty;
+        let row = this.findMatrixRowByDisplayName(c.itemName, c.size || '');
+        if (!row) row = this.addMergedMatrixRow({ itemName: c.itemName, size: c.size, sourceType: c.sourceType });
+        fallbackColors.forEach(col => {
+          const colIndex = this.getMatrixColumnIndex(col);
+          if (colIndex === -1) return;
+          const cell = row.children[colIndex];
+          this._setMergedCellItem(cell, { itemName: c.itemName, size: c.size, sourceType: c.sourceType }, perColorQty);
+        });
+        return;
+      }
+
+      if (colorGroup === 'COMMON' || !colors.includes(colorGroup)) {
+        const isLockedPoolColor = c.sourceType === 'POOL' && colorGroup !== 'COMMON';
+        this.addComponentRow({
+          itemName: c.itemName,
+          size: c.size,
+          sourceType: c.sourceType,
+          qty: c.qty,
+          color: isLockedPoolColor ? colorGroup : c.color,
+          colorScope: isLockedPoolColor ? colorGroup : undefined,
+          unit: c.unit
+        });
+        return;
+      }
+      const displayName = this._stripColorSubstring(c.itemName || '', colorGroup);
+      let row = this.findMatrixRowByDisplayName(displayName, c.size || '');
+      if (!row) row = this.addMergedMatrixRow({ itemName: displayName, size: c.size, sourceType: c.sourceType });
+      const colIndex = this.getMatrixColumnIndex(colorGroup);
+      const cell = row.children[colIndex];
+      this._setMergedCellItem(cell, { itemName: c.itemName, size: c.size, sourceType: c.sourceType }, c.qty);
+    });
+
+    // Seed a table for EVERY pool-color-aware recipe item, not just ones
+    // this saved lot happened to use before -- otherwise checking a
+    // color belonging to an axis/item this lot never used previously
+    // has no table to land in at all.
+    if (processId) {
+      const recipeRes = await this._fetchProcessComponents(processId);
+      const recipeComps = recipeRes.success ? (recipeRes.data || []) : [];
+      recipeComps
+        .filter(c => c.sourceType === 'POOL' && (!c.colorGroup || c.colorGroup === 'COMMON'))
+        .forEach(c => {
+          const itemColors = poolColorMap.get((c.itemName || '').trim().toLowerCase()) || [];
+          if (itemColors.length <= 1) return;
+          const key = `${(c.itemName || '').toLowerCase()}|${(c.size || '').toLowerCase()}`;
+          if (!poolGroupAccum.has(key)) {
+            poolGroupAccum.set(key, { itemName: c.itemName, size: c.size, sourceType: c.sourceType, colorsQty: {} });
+          }
+        });
+    }
+
+    this.renderPoolColorGroupsFromAccum(Array.from(poolGroupAccum.values()), poolColorMap);
+
+    if (upgradedAny && upgradedCommonOverride) {
+      App.Utils.showToast('This lot had a pool item and a Common item now tracked per-color, both split evenly across colors as a starting point — adjust each color\'s quantity to match what was actually used, then save.', false);
+    } else if (upgradedAny) {
+      App.Utils.showToast('This lot had a pool item now tracked per-color split evenly across colors as a starting point — adjust each color\'s quantity to match what was actually used, then save.', false);
+    } else if (upgradedCommonOverride) {
+      App.Utils.showToast('This lot had a Common item that\'s really the same part as one of its per-color siblings — merged into one row, split evenly across colors as a starting point; adjust each color\'s quantity to match what was actually used, then save.', false);
+    }
+  },
+
+  // Same grouping/rendering as renderPoolColorSplitGroups, but for the
+  // Edit Lot path: cells show this lot's actual saved qty per
+  // (item, color) instead of a recipe-suggested estimate. `entries` is
+  // [{ itemName, size, sourceType, colorsQty: { colorLower: qty } }],
+  // built by populateComponentsConsumedDirect from the saved
+  // Components Consumed array.
+  renderPoolColorGroupsFromAccum(entries, poolColorMap) {
+    const wrapper = document.getElementById('productionPoolColorGroupsWrapper');
+    const container = document.getElementById('productionPoolColorGroupsContainer');
+    if (!container) return;
+
+    container.querySelectorAll('tr').forEach(row => this.destroyComponentItemSelect2(row));
+    container.innerHTML = '';
+    this._poolColorGroupDefs = [];
+
+    if (!entries || entries.length === 0) {
+      if (wrapper) wrapper.style.display = 'none';
+      return;
+    }
+    if (wrapper) wrapper.style.display = '';
+
+    const groups = new Map();
+    entries.forEach(entry => {
+      const itemColors = poolColorMap.get((entry.itemName || '').trim().toLowerCase()) || [];
+      const signature = itemColors.slice().sort((a, b) => a.localeCompare(b)).join('|').toLowerCase();
+      if (!groups.has(signature)) groups.set(signature, { colors: itemColors, entries: [] });
+      groups.get(signature).entries.push(entry);
+    });
+
+    let groupIdx = 0;
+    groups.forEach(({ colors: groupColors, entries: groupEntries }) => {
+      groupIdx++;
+      const tableId = `productionPoolColorGroup_${groupIdx}`;
+      const axisKey = this._axisKeyForPoolItemNames(groupEntries.map(e => e.itemName));
+      this._poolColorGroupDefs.push({ tableId, colors: groupColors, rows: groupEntries, mode: 'edit', axisKey });
+      const checkedLower = this._checkedColorTokensLower(axisKey);
+      const savedLower = new Set();
+      groupEntries.forEach(e => Object.keys(e.colorsQty || {}).forEach(c => savedLower.add(c)));
+      const visibleColors = groupColors.filter(c => checkedLower.has(c.toLowerCase()) || savedLower.has(c.toLowerCase()));
+      container.insertAdjacentHTML('beforeend', this._buildPoolColorGroupTable(tableId, groupColors, visibleColors, groupEntries, 'edit', axisKey));
+      document.querySelectorAll(`#${tableId} tbody tr`).forEach(row => this.initComponentItemSelect2(row));
+    });
+  },
+
   refreshSuggestedComponentQty() {
     const lotQty = toNumber(document.getElementById('productionQty')?.value) || 0;
     document.querySelectorAll('#productionComponentsBody tr').forEach(row => {
@@ -2356,6 +2515,11 @@ App.Production = {
     return `<option value="custom:${escapeHtml(itemName)}" selected data-name="${escapeHtml(itemName)}">${escapeHtml(label)}</option>`;
   },
 
+  // `comp.colorScope`, when set, locks this row's Color field to a
+  // single real Color Master name (e.g. a Pool-sourced item that only
+  // ever exists in one color, like "Fitted Rim" -> "Black") so the row
+  // debits that exact Warehouse Pool bucket instead of the blank/COMMON
+  // one -- see _readProdComponentRow, which reads it via dataset.colorScope.
   addComponentRow(comp = null) {
     const tbody = document.getElementById('productionComponentsBody');
     if (!tbody) return;
@@ -2365,13 +2529,16 @@ App.Production = {
     const size = (comp && comp.size) || '';
     const sourceType = (comp && comp.sourceType === 'POOL') ? 'POOL' : 'ITEM';
     const color = (comp && comp.color) || '';
+    const colorScope = (comp && comp.colorScope) || '';
     const qty = comp && comp.qty !== undefined ? this.formatQty(comp.qty) : '';
     const qtyPerUnitAttr = (comp && comp.qtyPerUnit !== undefined) ? `data-qty-per-unit="${comp.qtyPerUnit}"` : '';
     const unitAttr = (comp && comp.unit) ? ` data-unit="${escapeHtml(comp.unit)}"` : '';
+    const colorScopeAttr = colorScope ? ` data-color-scope="${escapeHtml(colorScope)}"` : '';
     const preSelectedOption = this._buildItemPreselectOption(itemName, size, sourceType);
+    const colorReadonlyAttrs = colorScope ? ' readonly title="This item only exists in this one Warehouse Pool color — fixed automatically"' : '';
 
     const rowHtml = `
-      <tr id="${rowId}" ${qtyPerUnitAttr}${unitAttr}>
+      <tr id="${rowId}" ${qtyPerUnitAttr}${unitAttr}${colorScopeAttr}>
         <td>
           <select class="form-select prod-comp-item-select" required>
             <option value=""></option>
@@ -2379,7 +2546,7 @@ App.Production = {
           </select>
         </td>
         <td><input type="text" class="form-control prod-comp-size" value="${escapeHtml(size)}" placeholder="-" onchange="App.Production.refreshPoolAvailability()"></td>
-        <td><input type="text" class="form-control prod-comp-color" list="colorList" value="${escapeHtml(color)}" placeholder="All colors"></td>
+        <td><input type="text" class="form-control prod-comp-color" list="colorList" value="${escapeHtml(color)}" placeholder="All colors"${colorReadonlyAttrs}></td>
         <td>
           <select class="form-select prod-comp-source" onchange="App.Production.handleSourceChange(this)">
             <option value="ITEM" ${sourceType === 'ITEM' ? 'selected' : ''}>Item (Stock)</option>
@@ -2643,7 +2810,6 @@ App.Production = {
     if (colorWrapper) colorWrapper.style.display = 'none';
     const revertColorsBtn = document.getElementById('productionRevertColorsBtn');
     if (revertColorsBtn) revertColorsBtn.style.display = 'none';
-    this._setMultiColorNotice(false);
 
     const form = document.getElementById('productionForm');
     if (form) form.reset();
@@ -2686,22 +2852,9 @@ App.Production = {
     }
   },
 
-  // Adaptation from source: a lot whose SAVED Components Consumed
-  // contains any non-COMMON colorGroup row was recorded via the
-  // Per-Color Matrix -- editing it correctly needs that not-yet-ported
-  // system (source's own populateComponentsConsumedDirect), so it's
-  // guarded here instead of silently dropping that data on re-save. A
-  // lot with a colorBreakdown but only COMMON components (created by
-  // this round, via the Color Checklist alone) is fully editable.
   async openEditModal(idx) {
     const p = App.State.globalProduction[idx];
     if (!p) return;
-
-    const usesMatrixComponents = (p.componentsConsumed || []).some(c => c.colorGroup && c.colorGroup !== 'COMMON');
-    if (usesMatrixComponents) {
-      App.Utils.notPortedYet('Editing this multi-color Production Lot (it uses Per-Color Components, not yet supported here)');
-      return;
-    }
 
     const seq = ++this._compLoadSeq;
     this._resetProcDataCache();
@@ -2814,7 +2967,6 @@ App.Production = {
       wrapper.style.display = '';
       document.getElementById('productionComponentsSectionLabel').innerText = 'Common Components';
       this.showColorMatrix();
-      this._setMultiColorNotice(false);
 
       colors = allColors;
     }
@@ -2862,12 +3014,19 @@ App.Production = {
       });
       this._syncColorGroupMasterCheckbox('custom');
 
-      // Round 13 adaptation: source repopulates the Per-Color Matrix here
-      // from saved componentsConsumed (populateComponentsConsumedDirect).
-      // This lot is guarded (usesMatrixComponents, above) to have none,
-      // so only the flat Common Components table needs restoring.
-      this.clearComponentsTable();
-      (p.componentsConsumed || []).forEach(c => this.addComponentRow(c));
+      if (p.componentsConsumed && p.componentsConsumed.length > 0) {
+        await this.populateComponentsConsumedDirect(p.componentsConsumed, breakdown.map(b => b.color));
+      } else {
+        // No saved consumption recorded (shouldn't normally happen) --
+        // fall back to recipe defaults for the saved colors.
+        this.clearComponentsTable();
+        this.clearColorMatrix();
+        for (const { color, axisKey } of breakdown) {
+          this.addMatrixColorColumn(color);
+          await this.populateColorMatrixForColor(color, seq, axisKey);
+        }
+        await this.populateCommonComponentsFromProcess(p.processId, seq);
+      }
       await this.refreshPoolAvailability();
     } else {
       document.getElementById('productionQty').value = p.qty;

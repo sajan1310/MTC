@@ -176,12 +176,9 @@
 </div>
 
 <!-- Edit / Create Production Modal -- ported from View_Production.html.
-     Round 12 scope: single-Qty (no color sub-groups) lots only -- see
-     production.js's module header. The Color Checklist / Per-Color
-     Matrix / Per-Process Pool Color Group wrapper elements from source
-     are NOT included this round (they don't exist as functioning UI
-     yet); a process needing them instead shows productionMultiColorNotice
-     below and blocks Save. -->
+     Full Color Checklist, Per-Color Component Matrix, and Per-Process
+     Warehouse Pool Color Group Matrix support (see production.js's
+     module header for the Round 12/13/14 history). -->
 <div class="modal fade" id="editProductionModal" data-bs-backdrop="static" tabindex="-1" aria-hidden="true">
   <div class="modal-dialog modal-xl modal-fullscreen-sm-down">
     <div class="modal-content shadow-lg">
@@ -249,12 +246,6 @@
                 <button type="button" class="btn btn-outline-secondary btn-sm" onclick="App.Production.addCustomColorRow()">+ Add Custom Sub-Group</button>
               </div>
               <div class="form-text">Check every color being produced in this run and enter each one's own quantity &mdash; this whole batch is saved as a single Production Lot. Not producing a Color Master color? Type a one-off custom sub-group name above.</div>
-              <div id="productionMultiColorNotice" class="mt-2" style="display:none;">
-                <div class="alert alert-warning mb-0">
-                  <i class="bi bi-exclamation-triangle-fill me-1"></i>
-                  This process's color-specific components need the Per-Color Component Matrix, which isn't supported in this interface yet &mdash; that's coming in a future round. Saving is disabled for this Process until then.
-                </div>
-              </div>
             </div>
             <div class="col-md-12" id="productionProductTagWrapper" style="display:none;">
               <label class="form-label fw-bold">Product (optional — tags this packed lot so Dispatch can find it)</label>
@@ -293,11 +284,9 @@
             </button>
           </div>
 
-          <!-- Per-Color Components -- Round 13 scope: manual rows only.
-               Auto-population (recipe rows explicitly tagged per-color)
-               is guarded off at the Process-selection level (see
-               productionMultiColorNotice above); an operator can still
-               manually tag a one-off component to a specific color via
+          <!-- Per-Color Components -- auto-populated from the process
+               recipe's explicit per-color rows; an operator can also
+               manually tag a one-off component via
                "+ Add Per-Color Component". -->
           <div id="productionColorMatrixWrapper" style="display:none;">
             <h6 class="text-secondary border-bottom pb-2 mb-3 fw-bold">
@@ -319,12 +308,10 @@
             <button type="button" class="btn btn-outline-primary btn-sm fw-bold mb-3" onclick="App.Production.addColorMatrixRow()">+ Add Per-Color Component</button>
           </div>
 
-          <!-- Per-Process Pool Components -- Round 13 scope: always empty
-               (see production.js's _processNeedsColorMatrix guard); no
-               manual entry point exists for this in source either, it's
-               purely auto-populated. Kept in the DOM so
-               renderPoolColorSplitGroups' real, faithfully-ported logic
-               has somewhere to render if this guard is ever loosened. -->
+          <!-- Per-Process Pool Components -- one table per upstream
+               process/output item that has 2+ colors live in the
+               Warehouse Pool. Purely auto-populated (no manual entry
+               point in source either). -->
           <div id="productionPoolColorGroupsWrapper" style="display:none;">
             <h6 class="text-secondary border-bottom pb-2 mb-3 fw-bold">
               Per-Process Pool Components <small class="text-muted fw-normal">(one table per upstream process/output item — only its own colors are shown)</small>
