@@ -174,6 +174,23 @@ const App = {
     // fills it in later" shape used throughout this port.
     globalDispatch: [],
 
+    // Clients / PI-Estimates (Script_Clients.html's App.Client) -- its
+    // own pagination/filter/selection state for both sub-tabs, plus the
+    // Global Pending Orders modal's own list (allPendingOrders --
+    // distinct from PO Ledger's unrelated allPendingPOs).
+    globalClients: [],
+    filteredClients: [],
+    clientCurrentPage: 1,
+    clientRowsPerPage: 15,
+    selectedClients: [],
+    globalOrders: [],
+    filteredOrders: [],
+    orderCurrentPage: 1,
+    orderRowsPerPage: 15,
+    selectedOrders: [],
+    allPendingOrders: [],
+    filteredPendingOrders: [],
+
     // Small header-shortcut masters (Unit/Color/Model/Process Type),
     // deferred since Round 1 -- ported this round alongside Stock since
     // Script_Stock.html bundles them together and Item Master's Base/
@@ -612,6 +629,7 @@ const App = {
       if (id === 'productsTab' && typeof App.Products !== 'undefined') App.Products.enterTab();
       if (id === 'contractorsTab' && typeof App.Contractor !== 'undefined') App.Contractor.loadData();
       if (id === 'productionTab' && typeof App.Production !== 'undefined') App.Production.loadData();
+      if (id === 'clientsTab' && typeof App.Client !== 'undefined') App.Client.enterTab();
       // Every other module's own `if (id === '<tab>') App.<Module>.loadData();`
       // line lands here in that module's own round -- same guarded pattern
       // Navigation.showTab already used in source for not-yet-loaded modules.
@@ -775,6 +793,12 @@ function bindGlobalEvents() {
         break;
       case 'issue-page':
         App.Issue.changePage(toNumber(btn.dataset.page, 1));
+        break;
+      case 'client-page':
+        App.Client.changeClientsPage(toNumber(btn.dataset.page, 1));
+        break;
+      case 'order-page':
+        App.Client.changeOrdersPage(toNumber(btn.dataset.page, 1));
         break;
     }
   });

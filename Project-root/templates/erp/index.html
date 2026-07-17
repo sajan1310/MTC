@@ -225,10 +225,10 @@
         {% include "erp/partials/products_processes.html" %}
         {% include "erp/partials/contractors.html" %}
         {% include "erp/partials/production.html" %}
+        {% include "erp/partials/clients.html" %}
 
         {% for tab_id, label in [
           ('dispatchTab', 'Dispatch'),
-          ('clientsTab', 'Clients'),
         ] %}
         <div id="{{ tab_id }}" class="tab-content" role="tabpanel" aria-labelledby="btn-{{ tab_id }}">
           <div class="dash-section text-center text-muted py-5">
@@ -264,6 +264,7 @@
   <script src="{{ url_for('static', filename='erp/contractor.js') }}"></script>
   <script src="{{ url_for('static', filename='erp/production.js') }}"></script>
   <script src="{{ url_for('static', filename='erp/issue.js') }}"></script>
+  <script src="{{ url_for('static', filename='erp/client.js') }}"></script>
 
 </body>
 </html>
