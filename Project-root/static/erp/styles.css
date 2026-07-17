@@ -2110,13 +2110,26 @@
       visibility: hidden !important;
     }
 
-    /* Hide all print containers by default during printing */
+    /* Hide all print containers by default during printing.
+       Extended from source's own 6-container list (Client Ledger, Bill,
+       BOM, Dispatch, and Bulk Print templates were added to View_Print.html
+       after this @media print block was last touched in Styles.html --
+       harmless there since JS already toggles container.style.display
+       inline, but this block's OWN later rules (page-break-avoid, thead
+       repeat, cell borders) were silently never applying to those 5
+       templates. Round 20 (Print) fixes that by listing all 11 containers
+       everywhere the original 6 appear below. */
     #print-po-container,
     #print-item-ledger-container,
     #print-vendor-ledger-container,
+    #print-client-ledger-container,
     #print-contractor-ledger-container,
     #print-production-sheet-container,
-    #print-low-stock-container {
+    #print-low-stock-container,
+    #print-bill-container,
+    #print-bom-container,
+    #print-dispatch-container,
+    #print-bulk-container {
       display: none !important;
     }
 
@@ -2124,9 +2137,14 @@
     #print-po-container.active-print,
     #print-item-ledger-container.active-print,
     #print-vendor-ledger-container.active-print,
+    #print-client-ledger-container.active-print,
     #print-contractor-ledger-container.active-print,
     #print-production-sheet-container.active-print,
-    #print-low-stock-container.active-print {
+    #print-low-stock-container.active-print,
+    #print-bill-container.active-print,
+    #print-bom-container.active-print,
+    #print-dispatch-container.active-print,
+    #print-bulk-container.active-print {
       display: block !important;
       visibility: visible !important;
       width: 100% !important;
@@ -2138,9 +2156,14 @@
     #print-po-container *,
     #print-item-ledger-container *,
     #print-vendor-ledger-container *,
+    #print-client-ledger-container *,
     #print-contractor-ledger-container *,
     #print-production-sheet-container *,
-    #print-low-stock-container * {
+    #print-low-stock-container *,
+    #print-bill-container *,
+    #print-bom-container *,
+    #print-dispatch-container *,
+    #print-bulk-container * {
       -webkit-print-color-adjust: exact !important;
       print-color-adjust: exact !important;
     }
@@ -2148,8 +2171,13 @@
     /* Style copied table cells inside print templates to ensure proper borders and padding */
     #print-item-ledger-container td,
     #print-vendor-ledger-container td,
+    #print-client-ledger-container td,
     #print-contractor-ledger-container td,
-    #print-production-sheet-container td {
+    #print-production-sheet-container td,
+    #print-bill-container td,
+    #print-bom-container td,
+    #print-dispatch-container td,
+    #print-bulk-container td {
       border: 1px solid #999 !important;
       padding: 6px 8px !important;
       font-size: 11px !important;
@@ -2163,27 +2191,42 @@
     #print-po-container thead,
     #print-item-ledger-container thead,
     #print-vendor-ledger-container thead,
+    #print-client-ledger-container thead,
     #print-contractor-ledger-container thead,
     #print-production-sheet-container thead,
-    #print-low-stock-container thead {
+    #print-low-stock-container thead,
+    #print-bill-container thead,
+    #print-bom-container thead,
+    #print-dispatch-container thead,
+    #print-bulk-container thead {
       display: table-header-group;
     }
 
     #print-po-container tfoot,
     #print-item-ledger-container tfoot,
     #print-vendor-ledger-container tfoot,
+    #print-client-ledger-container tfoot,
     #print-contractor-ledger-container tfoot,
     #print-production-sheet-container tfoot,
-    #print-low-stock-container tfoot {
+    #print-low-stock-container tfoot,
+    #print-bill-container tfoot,
+    #print-bom-container tfoot,
+    #print-dispatch-container tfoot,
+    #print-bulk-container tfoot {
       display: table-footer-group;
     }
 
     #print-po-container tr,
     #print-item-ledger-container tr,
     #print-vendor-ledger-container tr,
+    #print-client-ledger-container tr,
     #print-contractor-ledger-container tr,
     #print-production-sheet-container tr,
-    #print-low-stock-container tr {
+    #print-low-stock-container tr,
+    #print-bill-container tr,
+    #print-bom-container tr,
+    #print-dispatch-container tr,
+    #print-bulk-container tr {
       page-break-inside: avoid;
       break-inside: avoid;
     }

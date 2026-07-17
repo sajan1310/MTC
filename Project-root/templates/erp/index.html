@@ -228,6 +228,8 @@
         {% include "erp/partials/clients.html" %}
         {% include "erp/partials/dispatch.html" %}
 
+        {% include "erp/partials/print.html" %}
+
       </div>
     </div>
   </div>
@@ -242,6 +244,7 @@
   <!-- App scripts -- order matters, api.js/core.js define shared globals every later file extends -->
   <script src="{{ url_for('static', filename='erp/api.js') }}"></script>
   <script src="{{ url_for('static', filename='erp/core.js') }}"></script>
+  <script src="{{ url_for('static', filename='erp/print.js') }}"></script>
   <script src="{{ url_for('static', filename='erp/dashboard.js') }}"></script>
   <script src="{{ url_for('static', filename='erp/vendors.js') }}"></script>
   <script src="{{ url_for('static', filename='erp/items.js') }}"></script>
