@@ -839,7 +839,756 @@ MApp.Stock = {
   }
 };
 
-MApp.Production = { openLogLotSheet() { MApp.Toast.error('Log Lot is coming soon.'); } };
+// ================================================================
+// PRODUCTION — card list + the "Log Lot" full-screen sheet, the primary
+// action screen. The Size/Model/Process Type/Process cascade is pure
+// client-side array filtering over one already-loaded process list (no
+// per-level fetch, so no suppress-flags/sequence counters are needed —
+// see _applyCascadeEnabledStates, which always re-derives each picker's
+// enabled state from current selection instead of tracking it separately).
+// The one real fetch in this flow is loading a chosen process's color
+// groups/axes/recipe (_setCascadeBusy brackets it); saving disables the
+// whole sheet via MApp.Util.setSheetBusy.
+//
+// Color checklist scope note: when a process has 2+ independent color
+// axes (e.g. Frame + Mudguard), the mobile form treats the PRIMARY axis
+// as the real per-color chip+stepper checklist (drives lot qty, exactly
+// like desktop), and every OTHER axis as a single "pick one color for
+// this whole batch" choice applied to the full lot qty. Desktop instead
+// lets different primary colors within the same lot pair with different
+// secondary colors (auto-matched via Process Color Links) — a genuinely
+// complex feature intentionally simplified here for one-handed field
+// logging. A lot that needs mixed secondary colors within one batch
+// should still be logged on desktop.
+// ================================================================
+MApp.Production = {
+  PROCESS_SIZE_LIST: ['12 inch', '14 inch', '16 inch', '20 inch', '24 inch', '26 inch'],
+
+  lots: [],
+  allProcesses: [],
+  activeProcesses: [],
+  processById: {},
+  models: [],
+  processTypes: [],
+  contractors: [],
+  bomProducts: null,
+  _pendingOnly: false,
+
+  selection: { size: '', model: '', type: '', processId: '', process: null, productId: '', productName: '' },
+  flatColors: [],
+  axes: [],
+  primaryAxisKey: '',
+  recipeComponents: [],
+  colorQtyByColor: {},
+  secondaryChoice: {},
+  selectedStatus: 'Pending',
+  selectedAssignedTo: '',
+
+  mount() {
+    this.bomProducts = null;
+    this.load();
+  },
+
+  async load() {
+    const listEl = document.getElementById('production-list');
+    MApp.Util.renderSkeleton(listEl, 4);
+
+    try {
+      const [lotsRes, procRes] = await Promise.all([
+        MApp.Api.call('getProductionData'),
+        MApp.Api.call('getProcessData')
+      ]);
+
+      if (!lotsRes || !lotsRes.success) {
+        MApp.Util.renderError(listEl, lotsRes && lotsRes.message, () => this.load());
+        return;
+      }
+
+      this.lots = lotsRes.data || [];
+      this.allProcesses = (procRes && procRes.success) ? (procRes.data || []) : [];
+      this.activeProcesses = this.allProcesses.filter(p => p.active);
+      this.processById = {};
+      this.allProcesses.forEach(p => { this.processById[p.processId] = p; });
+
+      this._pendingOnly = MApp.State.productionFilter === 'pending';
+      MApp.State.productionFilter = '';
+
+      this.render();
+    } catch (err) {
+      MApp.Util.renderError(listEl, err && err.message, () => this.load());
+    }
+  },
+
+  render() {
+    const listEl = document.getElementById('production-list');
+    if (!listEl) return;
+
+    let lots = this.lots;
+    const banner = this._pendingOnly
+      ? `<div class="mb-offline-banner" style="background:var(--mb-safety-faint);color:var(--mb-ink);margin-bottom:var(--mb-sp-3);">
+           <span>Showing pending &amp; in-progress lots only</span>
+           <button type="button" class="mb-btn-text" style="padding:0;min-height:auto;" data-clear-filter>Clear</button>
+         </div>`
+      : '';
+    if (this._pendingOnly) {
+      lots = lots.filter(l => l.status === 'Pending' || l.status === 'In Progress');
+    }
+
+    if (lots.length === 0) {
+      listEl.innerHTML = banner;
+      const empty = document.createElement('div');
+      listEl.appendChild(empty);
+      MApp.Util.renderEmpty(empty, { title: 'No lots logged today', body: 'Tap + to log the first lot.' });
+    } else {
+      listEl.innerHTML = banner + lots.slice(0, 50).map(l => {
+        const process = this.processById[l.processId];
+        const processName = process ? process.processName : l.processId;
+        return `
+          <div class="mb-card">
+            <div class="mb-card-row">
+              <div>
+                <div class="mb-card-title">${MApp.Util.escapeHtml(l.lotNumber)}</div>
+                <div class="mb-card-sub">${MApp.Util.escapeHtml(processName)}</div>
+              </div>
+              <div style="text-align:right;">
+                <div class="mb-card-number">${l.qty}</div>
+                <div class="mb-card-sub">${MApp.Util.escapeHtml(l.assignedTo || '—')}</div>
+              </div>
+            </div>
+            <div class="mb-mt-2"><span class="mb-chip ${MApp.Util.statusChipClass(l.status)}">${MApp.Util.escapeHtml(l.status || 'Pending')}</span></div>
+          </div>`;
+      }).join('');
+    }
+
+    const clearBtn = listEl.querySelector('[data-clear-filter]');
+    if (clearBtn) clearBtn.addEventListener('click', () => { this._pendingOnly = false; this.render(); });
+  },
+
+  // ── Size/Model/Process Type helpers (mirror desktop's App.Utils, kept
+  // local since the mobile bundle shares nothing with desktop Script.html) ──
+  getSizeFromOutputItemName(text) {
+    const lower = String(text || '').toLowerCase();
+    return this.PROCESS_SIZE_LIST.find(s => lower.includes(s)) || 'General';
+  },
+
+  getModelFromOutputItemName(text) {
+    const lower = String(text || '').toLowerCase();
+    const models = [...(this.models || [])].sort((a, b) => String(b.name || '').length - String(a.name || '').length);
+    const match = models.find(m => m.name && lower.includes(String(m.name).toLowerCase()));
+    return match ? match.name : 'General';
+  },
+
+  // ── Log Lot sheet ──────────────────────────────────────────────────
+  async openLogLotSheet() {
+    this.selection = { size: '', model: '', type: '', processId: '', process: null, productId: '', productName: '' };
+    this.flatColors = [];
+    this.axes = [];
+    this.primaryAxisKey = '';
+    this.recipeComponents = [];
+    this.colorQtyByColor = {};
+    this.secondaryChoice = {};
+    this.selectedStatus = 'Pending';
+    this.selectedAssignedTo = '';
+
+    document.getElementById('log-lot-body').innerHTML = this._skeletonFormHtml();
+    MApp.Sheet.open('sheet-log-lot');
+
+    const saveBtn = document.getElementById('log-lot-save-btn');
+    if (saveBtn) saveBtn.disabled = true;
+
+    try {
+      await this._ensureRefData();
+      document.getElementById('log-lot-body').innerHTML = this._formHtml();
+    } catch (err) {
+      MApp.Toast.error('Could not load production reference data: ' + (err.message || ''));
+      this.closeLogLotSheet();
+      return;
+    } finally {
+      if (saveBtn) saveBtn.disabled = false;
+    }
+  },
+
+  closeLogLotSheet() {
+    MApp.Sheet.close('sheet-log-lot');
+  },
+
+  async _ensureRefData() {
+    if (this.allProcesses.length === 0) await this.load();
+
+    const [modelsRes, typesRes, contractorsRes] = await Promise.all([
+      MApp.Api.call('getModels'),
+      MApp.Api.call('getProcessTypes'),
+      MApp.Api.call('getContractorsData')
+    ]);
+    this.models = (modelsRes && modelsRes.success) ? (modelsRes.data || []) : [];
+    this.processTypes = (typesRes && typesRes.success) ? (typesRes.data || []) : [];
+    this.contractors = (contractorsRes && contractorsRes.success) ? (contractorsRes.data || []) : [];
+  },
+
+  _skeletonFormHtml() {
+    return `
+      <div class="mb-skel mb-skel-card" style="height:56px;"></div>
+      <div class="mb-skel mb-skel-card" style="height:56px;"></div>
+      <div class="mb-skel mb-skel-card" style="height:56px;"></div>
+    `;
+  },
+
+  _formHtml() {
+    const statusOptions = ['Pending', 'In Progress', 'Completed', 'Cancelled'];
+    return `
+      <div class="mb-field">
+        <label for="lot-date">Date</label>
+        <input type="date" id="lot-date" value="${MApp.Util.todayInputValue()}">
+      </div>
+
+      <div class="mb-field">
+        <label>Size</label>
+        <button type="button" class="mb-picker-field mb-placeholder" id="lot-size-field" onclick="MApp.Production.pickSize()">Choose a size...</button>
+      </div>
+
+      <div class="mb-field">
+        <label>Model</label>
+        <button type="button" class="mb-picker-field mb-placeholder" id="lot-model-field" disabled onclick="MApp.Production.pickModel()">Choose a size first...</button>
+      </div>
+
+      <div class="mb-field">
+        <label>Process type</label>
+        <button type="button" class="mb-picker-field mb-placeholder" id="lot-type-field" disabled onclick="MApp.Production.pickProcessType()">Choose a model first...</button>
+      </div>
+
+      <div class="mb-field">
+        <label>Process</label>
+        <button type="button" class="mb-picker-field mb-placeholder" id="lot-process-field" disabled onclick="MApp.Production.pickProcess()">Choose a process type first...</button>
+      </div>
+
+      <div class="mb-field mb-hidden" id="lot-product-tag-wrap">
+        <label>Product tag (optional)</label>
+        <button type="button" class="mb-picker-field mb-placeholder" id="lot-product-field" onclick="MApp.Production.pickProductTag()">Choose a product...</button>
+        <div class="mb-field-hint">Only needed so Dispatch can find this lot's stock — leave blank for an intermediate stage.</div>
+      </div>
+
+      <div class="mb-field mb-hidden" id="lot-qty-wrap">
+        <label for="lot-qty">Quantity</label>
+        <input type="number" id="lot-qty" inputmode="decimal" min="0" step="1" placeholder="0">
+      </div>
+
+      <div id="lot-color-wrap" class="mb-hidden mb-mb-4"></div>
+
+      <div class="mb-field">
+        <label>Assigned to</label>
+        <button type="button" class="mb-picker-field mb-placeholder" id="lot-assignedto-field" onclick="MApp.Production.pickAssignedTo()">Choose or add a name...</button>
+      </div>
+
+      <div class="mb-field">
+        <label for="lot-assignedby">Assigned by (optional)</label>
+        <input type="text" id="lot-assignedby" placeholder="Supervisor name">
+      </div>
+
+      <div class="mb-field">
+        <label>Status</label>
+        <div class="mb-color-chip-list" id="lot-status-row">
+          ${statusOptions.map(s => `<button type="button" class="mb-color-chip${s === 'Pending' ? ' checked' : ''}" style="min-width:auto;padding:10px 16px;" data-status="${s}" onclick="MApp.Production.setStatus('${s}')">${s}</button>`).join('')}
+        </div>
+      </div>
+
+      <div class="mb-field">
+        <label for="lot-remarks">Remarks (optional)</label>
+        <textarea id="lot-remarks" rows="3" placeholder="Notes for this lot..."></textarea>
+      </div>
+    `;
+  },
+
+  _updateFieldLabel(id, label) {
+    const el = document.getElementById(id);
+    if (!el) return;
+    el.textContent = label;
+    el.classList.remove('mb-placeholder');
+  },
+
+  _resetDownstreamFieldLabels(levels) {
+    const placeholders = { model: 'Choose a model...', type: 'Choose a process type...', process: 'Choose a process...' };
+    levels.forEach(level => {
+      const el = document.getElementById('lot-' + level + '-field');
+      if (!el) return;
+      el.textContent = placeholders[level];
+      el.classList.add('mb-placeholder');
+    });
+  },
+
+  _hideProcessDependentSections() {
+    const tagWrap = document.getElementById('lot-product-tag-wrap');
+    if (tagWrap) tagWrap.classList.add('mb-hidden');
+
+    const qtyWrap = document.getElementById('lot-qty-wrap');
+    if (qtyWrap) {
+      qtyWrap.classList.add('mb-hidden');
+      const q = document.getElementById('lot-qty');
+      if (q) q.value = '';
+    }
+
+    const colorWrap = document.getElementById('lot-color-wrap');
+    if (colorWrap) {
+      colorWrap.classList.add('mb-hidden');
+      colorWrap.innerHTML = '';
+    }
+
+    this.flatColors = [];
+    this.axes = [];
+    this.primaryAxisKey = '';
+    this.recipeComponents = [];
+    this.colorQtyByColor = {};
+    this.secondaryChoice = {};
+    this.selection.productId = '';
+    this.selection.productName = '';
+
+    this._updateFieldLabel('lot-product-field', 'Choose a product...');
+    document.getElementById('lot-product-field')?.classList.add('mb-placeholder');
+  },
+
+  _applyCascadeEnabledStates() {
+    const modelBtn = document.getElementById('lot-model-field');
+    const typeBtn = document.getElementById('lot-type-field');
+    const processBtn = document.getElementById('lot-process-field');
+    if (modelBtn) modelBtn.disabled = !this.selection.size;
+    if (typeBtn) typeBtn.disabled = !this.selection.model;
+    if (processBtn) processBtn.disabled = !this.selection.type;
+  },
+
+  // Disables every cascade picker + Save while a process-dependent fetch
+  // (color groups/axes/recipe) is in flight, then re-derives each
+  // picker's correct enabled state from current selection afterwards —
+  // no remembered "previous" state to restore, so nothing can go stale.
+  _setCascadeBusy(isBusy) {
+    ['lot-size-field', 'lot-model-field', 'lot-type-field', 'lot-process-field', 'lot-product-field'].forEach(id => {
+      const el = document.getElementById(id);
+      if (el) el.disabled = isBusy;
+    });
+    const saveBtn = document.getElementById('log-lot-save-btn');
+    if (saveBtn) saveBtn.disabled = isBusy;
+    if (!isBusy) this._applyCascadeEnabledStates();
+  },
+
+  async pickSize() {
+    const sizesPresent = new Set(this.activeProcesses.map(p => this.getSizeFromOutputItemName(p.outputItemName)));
+    const ordered = this.PROCESS_SIZE_LIST.filter(s => sizesPresent.has(s));
+    if (sizesPresent.has('General')) ordered.push('General');
+    const items = ordered.map(s => ({ value: s, label: s }));
+
+    const picked = await MApp.Picker.open({ title: 'Choose a size', items, selectedValue: this.selection.size, searchable: false });
+    if (!picked) return;
+
+    this.selection.size = picked.value;
+    this.selection.model = '';
+    this.selection.type = '';
+    this.selection.processId = '';
+    this.selection.process = null;
+    this._updateFieldLabel('lot-size-field', picked.label);
+    this._resetDownstreamFieldLabels(['model', 'type', 'process']);
+    this._hideProcessDependentSections();
+    this._applyCascadeEnabledStates();
+  },
+
+  async pickModel() {
+    if (!this.selection.size) return;
+    const matches = this.activeProcesses.filter(p => this.getSizeFromOutputItemName(p.outputItemName) === this.selection.size);
+    const modelsPresent = new Set(matches.map(p => this.getModelFromOutputItemName(p.outputItemName)));
+    const masterNames = (this.models || []).map(m => m.name);
+    const ordered = masterNames.filter(n => modelsPresent.has(n));
+    if (modelsPresent.has('General')) ordered.push('General');
+    const items = ordered.map(m => ({ value: m, label: m }));
+
+    const picked = await MApp.Picker.open({ title: 'Choose a model', items, selectedValue: this.selection.model });
+    if (!picked) return;
+
+    this.selection.model = picked.value;
+    this.selection.type = '';
+    this.selection.processId = '';
+    this.selection.process = null;
+    this._updateFieldLabel('lot-model-field', picked.label);
+    this._resetDownstreamFieldLabels(['type', 'process']);
+    this._hideProcessDependentSections();
+    this._applyCascadeEnabledStates();
+  },
+
+  async pickProcessType() {
+    if (!this.selection.model) return;
+    const matches = this.activeProcesses
+      .filter(p => this.getSizeFromOutputItemName(p.outputItemName) === this.selection.size)
+      .filter(p => this.getModelFromOutputItemName(p.outputItemName) === this.selection.model);
+    const typesPresent = new Set(matches.map(p => p.processType || 'General'));
+    const masterNames = (this.processTypes || []).map(t => t.name);
+    const ordered = masterNames.filter(t => typesPresent.has(t));
+    if (typesPresent.has('General')) ordered.push('General');
+    const items = ordered.map(t => ({ value: t, label: t }));
+
+    const picked = await MApp.Picker.open({ title: 'Choose a process type', items, selectedValue: this.selection.type });
+    if (!picked) return;
+
+    this.selection.type = picked.value;
+    this.selection.processId = '';
+    this.selection.process = null;
+    this._updateFieldLabel('lot-type-field', picked.label);
+    this._resetDownstreamFieldLabels(['process']);
+    this._hideProcessDependentSections();
+    this._applyCascadeEnabledStates();
+  },
+
+  async pickProcess() {
+    if (!this.selection.type) return;
+    const matches = this.activeProcesses
+      .filter(p => this.getSizeFromOutputItemName(p.outputItemName) === this.selection.size)
+      .filter(p => this.getModelFromOutputItemName(p.outputItemName) === this.selection.model)
+      .filter(p => (p.processType || 'General') === this.selection.type)
+      .sort((a, b) => a.sequence - b.sequence);
+    const items = matches.map(p => ({ value: p.processId, label: p.processName, sublabel: 'Stage ' + p.sequence }));
+
+    const picked = await MApp.Picker.open({ title: 'Choose a process', items, selectedValue: this.selection.processId });
+    if (!picked) return;
+
+    this._updateFieldLabel('lot-process-field', picked.label);
+    await this.onProcessSelected(picked.value);
+  },
+
+  async onProcessSelected(processId) {
+    const process = this.activeProcesses.find(p => p.processId === processId);
+    if (!process) return;
+
+    this.selection.processId = processId;
+    this.selection.process = process;
+    this.selection.productId = '';
+    this.selection.productName = '';
+    this._updateFieldLabel('lot-product-field', 'Choose a product...');
+    document.getElementById('lot-product-field')?.classList.add('mb-placeholder');
+
+    this._setCascadeBusy(true);
+    try {
+      const [groupsRes, axesRes, compRes] = await Promise.all([
+        MApp.Api.call('getProcessColorGroups', processId),
+        MApp.Api.call('getProcessColorAxes', processId),
+        MApp.Api.call('getProcessComponentsData', processId)
+      ]);
+
+      this.flatColors = (groupsRes && groupsRes.success) ? (groupsRes.data || []) : [];
+      const axesData = (axesRes && axesRes.success) ? (axesRes.data || {}) : {};
+      this.axes = axesData.axes || [];
+      this.primaryAxisKey = axesData.primaryAxisKey || (this.axes[0] && this.axes[0].key) || '';
+      this.recipeComponents = (compRes && compRes.success) ? (compRes.data || []) : [];
+      this.colorQtyByColor = {};
+      this.secondaryChoice = {};
+
+      const tagWrap = document.getElementById('lot-product-tag-wrap');
+      if (tagWrap) tagWrap.classList.toggle('mb-hidden', !process.isFinalStage);
+
+      if (process.isFinalStage && this.bomProducts === null) {
+        const bomRes = await MApp.Api.call('getBOMProductionData');
+        this.bomProducts = (bomRes && bomRes.success) ? (bomRes.data || []) : [];
+      }
+
+      this._renderQtyOrColorSection();
+    } catch (err) {
+      MApp.Toast.error('Could not load this process: ' + (err.message || ''));
+    } finally {
+      this._setCascadeBusy(false);
+    }
+  },
+
+  async pickProductTag() {
+    if (this.bomProducts === null) return;
+    const items = this.bomProducts.map(p => ({ value: p.productId, label: p.productName, sublabel: p.productId }));
+    const picked = await MApp.Picker.open({ title: 'Choose a product', items, selectedValue: this.selection.productId });
+    if (!picked) return;
+    this.selection.productId = picked.value;
+    this.selection.productName = picked.label;
+    this._updateFieldLabel('lot-product-field', picked.label);
+  },
+
+  // Fixed from source's own c.name -- getContractorsData returns
+  // contractorName (verified via Round M2's ledger-source reads and
+  // desktop's own Round 10/19 fix for the same field), not name.
+  async pickAssignedTo() {
+    const items = (this.contractors || []).map(c => ({ value: c.contractorName, label: c.contractorName }));
+    const picked = await MApp.Picker.open({
+      title: 'Assigned to', items, selectedValue: this.selectedAssignedTo, allowCustom: true
+    });
+    if (!picked) return;
+    this.selectedAssignedTo = picked.value;
+    this._updateFieldLabel('lot-assignedto-field', picked.label);
+  },
+
+  setStatus(status) {
+    this.selectedStatus = status;
+    document.querySelectorAll('#lot-status-row [data-status]').forEach(btn => {
+      btn.classList.toggle('checked', btn.dataset.status === status);
+    });
+  },
+
+  // ── Color checklist (chips + stepper) ───────────────────────────────
+  _renderQtyOrColorSection() {
+    const qtyWrap = document.getElementById('lot-qty-wrap');
+    const colorWrap = document.getElementById('lot-color-wrap');
+    if (!qtyWrap || !colorWrap) return;
+
+    if (!this.flatColors || this.flatColors.length === 0) {
+      colorWrap.classList.add('mb-hidden');
+      colorWrap.innerHTML = '';
+      qtyWrap.classList.remove('mb-hidden');
+      return;
+    }
+
+    qtyWrap.classList.add('mb-hidden');
+    colorWrap.classList.remove('mb-hidden');
+
+    const isMultiAxis = this.axes.length >= 2;
+    const primaryAxis = isMultiAxis ? (this.axes.find(a => a.key === this.primaryAxisKey) || this.axes[0]) : null;
+    const primaryColors = isMultiAxis ? primaryAxis.colors : this.flatColors;
+    const secondaryAxes = isMultiAxis ? this.axes.filter(a => a !== primaryAxis) : [];
+    const total = this.currentTotalQty();
+
+    let html = `<div class="mapp-section-label">${MApp.Util.escapeHtml(isMultiAxis ? primaryAxis.label : 'Colors produced')}</div>`;
+    html += `<div class="mb-color-chip-list" id="lot-primary-chips">`;
+    primaryColors.forEach(color => { html += this._colorChipHtml(color); });
+    html += `</div><div class="mb-text-sm mb-text-steel mb-mt-2" id="lot-total-qty-display">Total: ${total} unit(s)</div>`;
+
+    secondaryAxes.forEach(axis => {
+      html += `<div class="mapp-section-label mb-mt-4">${MApp.Util.escapeHtml(axis.label)}</div><div class="mb-color-chip-list">`;
+      axis.colors.forEach(color => { html += this._secondaryChipHtml(axis.key, color); });
+      html += '</div>';
+    });
+
+    colorWrap.innerHTML = html;
+    this._wireColorSectionEvents();
+  },
+
+  _wireColorSectionEvents() {
+    const colorWrap = document.getElementById('lot-color-wrap');
+    if (!colorWrap) return;
+
+    colorWrap.querySelectorAll('[data-chip-color]').forEach(el => {
+      const color = el.dataset.chipColor;
+      const toggleBtn = el.querySelector('[data-chip-toggle]');
+      if (toggleBtn) toggleBtn.addEventListener('click', () => this.toggleColorChip(color));
+      const minus = el.querySelector('[data-step="-1"]');
+      const plus = el.querySelector('[data-step="1"]');
+      if (minus) minus.addEventListener('click', () => this.stepColor(color, -1));
+      if (plus) plus.addEventListener('click', () => this.stepColor(color, 1));
+    });
+
+    colorWrap.querySelectorAll('[data-secondary-chip]').forEach(el => {
+      el.addEventListener('click', () => this.pickSecondaryColor(el.dataset.axisKey, el.dataset.color));
+    });
+  },
+
+  _colorChipHtml(color) {
+    const qty = this.colorQtyByColor[color] || 0;
+    const checked = qty > 0;
+    return `
+      <div class="mb-color-chip${checked ? ' checked' : ''}" data-chip-color="${MApp.Util.escapeHtml(color)}">
+        <button type="button" class="mb-color-chip-toggle" data-chip-toggle>
+          <span class="mb-flex-row"><span class="mb-color-chip-swatch" style="background:${this._swatchColor(color)};"></span>${MApp.Util.escapeHtml(color)}</span>
+        </button>
+        ${checked ? `
+          <div class="mb-stepper">
+            <button type="button" class="mb-stepper-btn" data-step="-1">−</button>
+            <span class="mb-stepper-value">${qty}</span>
+            <button type="button" class="mb-stepper-btn" data-step="1">+</button>
+          </div>` : ''}
+      </div>`;
+  },
+
+  _secondaryChipHtml(axisKey, color) {
+    const selected = this.secondaryChoice[axisKey] === color;
+    return `
+      <button type="button" class="mb-color-chip${selected ? ' checked' : ''}" style="min-width:auto;padding:10px 16px;" data-secondary-chip data-axis-key="${MApp.Util.escapeHtml(axisKey)}" data-color="${MApp.Util.escapeHtml(color)}">
+        <span class="mb-flex-row"><span class="mb-color-chip-swatch" style="background:${this._swatchColor(color)};"></span>${MApp.Util.escapeHtml(color)}</span>
+      </button>`;
+  },
+
+  // Best-effort CSS swatch for a Color Master name — recognizes common
+  // color words, else a deterministic hash-based hue so unrecognized
+  // names still get a distinct, stable dot.
+  _swatchColor(name) {
+    const known = {
+      blue: '#1d5fa8', red: '#c81e3a', green: '#1e8a5f', orange: '#ff6a13',
+      black: '#14181c', white: '#f3f5f6', yellow: '#e8a400', pink: '#e0669b',
+      purple: '#7b4fa6', grey: '#8a97a0', gray: '#8a97a0', silver: '#b7c0c6',
+      gold: '#c9a227', maroon: '#7a2030', navy: '#1b3a63', teal: '#1f7a7a', brown: '#7a5230'
+    };
+    const lower = String(name || '').toLowerCase();
+    for (const key in known) {
+      if (lower.includes(key)) return known[key];
+    }
+    let hash = 0;
+    for (let i = 0; i < lower.length; i++) hash = (hash * 31 + lower.charCodeAt(i)) >>> 0;
+    return `hsl(${hash % 360}, 55%, 45%)`;
+  },
+
+  toggleColorChip(color) {
+    const current = this.colorQtyByColor[color] || 0;
+    this.colorQtyByColor[color] = current > 0 ? 0 : 1;
+    this._renderQtyOrColorSection();
+  },
+
+  stepColor(color, delta) {
+    const next = Math.max(0, (this.colorQtyByColor[color] || 0) + delta);
+    this.colorQtyByColor[color] = next;
+    this._renderQtyOrColorSection();
+  },
+
+  pickSecondaryColor(axisKey, color) {
+    this.secondaryChoice[axisKey] = color;
+    this._renderQtyOrColorSection();
+  },
+
+  currentTotalQty() {
+    if (!this.flatColors || this.flatColors.length === 0) {
+      return MApp.Util.toNumber(document.getElementById('lot-qty')?.value);
+    }
+    return Object.values(this.colorQtyByColor).reduce((s, q) => s + (q || 0), 0);
+  },
+
+  // Scales this process's recipe (qtyPerUnit) by the lot's total qty for
+  // COMMON components, or by that color's own qty for color-scoped ones —
+  // the recipe's qtyPerUnit is defined as exactly this ("qty needed per
+  // unit of process output"), so this is the recipe's own default, not a
+  // guess. Desktop additionally lets an operator hand-override individual
+  // component quantities on a per-lot basis; that power-user editing step
+  // is out of scope for the mobile "log it and move on" flow.
+  buildComponentsConsumed(totalQty, colorBreakdown) {
+    const components = [];
+    (this.recipeComponents || []).forEach(r => {
+      if (!r.itemName) return;
+      const isCommon = !r.colorGroup || r.colorGroup.toUpperCase() === 'COMMON';
+      let qty;
+      let color = '';
+
+      if (isCommon) {
+        qty = r.qtyPerUnit * totalQty;
+      } else if (colorBreakdown && colorBreakdown.length) {
+        const match = colorBreakdown.find(c => c.color.toLowerCase() === r.colorGroup.toLowerCase());
+        if (!match) return;
+        qty = r.qtyPerUnit * match.qty;
+        color = match.color;
+      } else {
+        return;
+      }
+
+      if (qty <= 0) return;
+      components.push({
+        itemName: r.itemName,
+        size: r.size || '',
+        color: color,
+        sourceType: r.sourceType,
+        qty: Math.round(qty * 1000) / 1000,
+        colorGroup: isCommon ? 'COMMON' : r.colorGroup
+      });
+    });
+    return components;
+  },
+
+  // Note: source's own single-verb _apiCall handled both reads and
+  // writes -- saveProduction is mutation=True server-side (registry.py),
+  // so this call uses MApp.Api.mutate, not .call, unlike source.
+  async saveLot() {
+    if (!this.selection.process) {
+      MApp.Toast.error('Choose a process first.');
+      return;
+    }
+    if (!this.selectedAssignedTo) {
+      MApp.Toast.error('Choose or add who this lot is assigned to.');
+      return;
+    }
+
+    const totalQty = this.currentTotalQty();
+    if (!totalQty || totalQty <= 0) {
+      MApp.Toast.error(this.flatColors.length > 0
+        ? 'Select at least one color and set its quantity.'
+        : 'Enter a quantity greater than zero.');
+      return;
+    }
+
+    let colorBreakdown = null;
+    if (this.flatColors.length > 0) {
+      colorBreakdown = [];
+      Object.keys(this.colorQtyByColor).forEach(color => {
+        const qty = this.colorQtyByColor[color];
+        if (qty > 0) colorBreakdown.push({ color, qty, isCustom: false, countsTowardTotal: true, axisKey: this.primaryAxisKey || '' });
+      });
+      Object.keys(this.secondaryChoice).forEach(axisKey => {
+        const color = this.secondaryChoice[axisKey];
+        if (color) colorBreakdown.push({ color, qty: totalQty, isCustom: false, countsTowardTotal: false, axisKey });
+      });
+    }
+
+    const componentsConsumed = this.buildComponentsConsumed(totalQty, colorBreakdown);
+    if (componentsConsumed.length === 0) {
+      MApp.Toast.error('This process has no recipe configured yet — add its components on the desktop Products & Processes tab first.');
+      return;
+    }
+
+    const formData = {
+      date: document.getElementById('lot-date')?.value || MApp.Util.todayInputValue(),
+      processId: this.selection.process.processId,
+      assignedBy: (document.getElementById('lot-assignedby')?.value || '').trim(),
+      assignedTo: this.selectedAssignedTo,
+      status: this.selectedStatus || 'Pending',
+      remarks: (document.getElementById('lot-remarks')?.value || '').trim(),
+      componentsConsumed: JSON.stringify(componentsConsumed)
+    };
+
+    if (!colorBreakdown) {
+      formData.qty = totalQty;
+    } else {
+      formData.colorBreakdown = JSON.stringify(colorBreakdown);
+      if (this.axes.length >= 2) {
+        const primaryAxis = this.axes.find(a => a.key === this.primaryAxisKey);
+        if (primaryAxis) formData.primaryColorAxis = primaryAxis.label;
+      }
+    }
+
+    if (this.selection.process.isFinalStage && this.selection.productId) {
+      formData.productId = this.selection.productId;
+      formData.productName = this.selection.productName;
+    }
+
+    // Note: re-enabling after this point is NOT a single blanket
+    // setSheetBusy(false) in a finally block — on success, resetLogLotForm()
+    // replaces the body with fresh HTML that already bakes in the correct
+    // "nothing chosen yet" disabled states (Model/Type/Process locked
+    // again); a blanket re-enable afterwards would incorrectly unlock them.
+    // Only the failure path restores the still-populated form via
+    // setSheetBusy, since nothing was reset there.
+    MApp.Util.setSheetBusy('log-lot-body', 'log-lot-save-btn', true, 'Logging…');
+    try {
+      const res = await MApp.Api.mutate('saveProduction', formData);
+      if (!res || !res.success) {
+        MApp.Toast.error((res && res.message) || 'Could not log this lot.');
+        MApp.Util.setSheetBusy('log-lot-body', 'log-lot-save-btn', false, null, 'Log Lot');
+        return;
+      }
+      MApp.Toast.success(`Lot logged${res.data && res.data.lotNumber ? ' — ' + res.data.lotNumber : ''}.`);
+      await this.resetLogLotForm();
+      const saveBtn = document.getElementById('log-lot-save-btn');
+      if (saveBtn) { saveBtn.disabled = false; saveBtn.textContent = 'Log Lot'; }
+      this.load();
+    } catch (err) {
+      MApp.Toast.error(err.message || 'Could not log this lot. Check your connection and try again.');
+      MApp.Util.setSheetBusy('log-lot-body', 'log-lot-save-btn', false, null, 'Log Lot');
+    }
+  },
+
+  async resetLogLotForm() {
+    this.selection = { size: '', model: '', type: '', processId: '', process: null, productId: '', productName: '' };
+    this.flatColors = [];
+    this.axes = [];
+    this.primaryAxisKey = '';
+    this.recipeComponents = [];
+    this.colorQtyByColor = {};
+    this.secondaryChoice = {};
+    this.selectedStatus = 'Pending';
+    this.selectedAssignedTo = '';
+    document.getElementById('log-lot-body').innerHTML = this._formHtml();
+  }
+};
 MApp.Dispatch = { openNewDispatchSheet() { MApp.Toast.error('New Dispatch is coming soon.'); } };
 MApp.Returns = { openNewReturnSheet() { MApp.Toast.error('Log Return is coming soon.'); } };
 MApp.PO = { openLedgerSheet() { MApp.Toast.error('PO Ledger is coming soon.'); } };
