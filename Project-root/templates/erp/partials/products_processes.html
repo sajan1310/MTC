@@ -1,8 +1,7 @@
-<!-- Ported from Apps_Script/View_Products.html -- Processes sub-tab only
-     this round (see process.js's module header). The Products (BOM)
-     sub-tab is a placeholder; App.Products.switchSubTab already guards
-     its bomTab branch behind `typeof App.BOM !== 'undefined'`, so this is
-     just the missing UI, not a functional gap in the ported JS. -->
+<!-- Ported from Apps_Script/View_Products.html -- both sub-tabs: Processes
+     (Round 8) and Products/BOM (this round, see bom.js's module header),
+     plus the editBomModal/bomAccessModal/bomDriftModal sections of
+     Modals.html. -->
 
 <div id="productsTab" class="tab-content table-container" role="tabpanel" aria-labelledby="btn-productsTab">
 
@@ -67,12 +66,198 @@
     </div>
   </div>
 
-  <!-- PRODUCTS (BOM) SUB-TAB -- placeholder this round, see module header
-       comment in static/erp/process.js -->
+  <!-- PRODUCTS (BOM) SUB-TAB -->
   <div id="bomTab" class="products-sub-tab" style="display: none;">
-    <div class="dash-section text-center text-muted py-5">
-      <i class="bi bi-cone-striped fs-1 d-block mb-2"></i>
-      Products (BOM) isn't wired up yet — the backend is ready, this screen lands in a later round.
+    <div class="d-flex justify-content-between flex-wrap gap-2 mb-3">
+      <div class="d-flex w-50 align-items-center">
+        <input type="text" id="searchBOM" class="form-control me-2" placeholder="Search Product ID, Name, or Components..." autocomplete="off" onkeyup="App.BOM.filterData(this.value)">
+      </div>
+      <div class="d-flex gap-2 flex-wrap justify-content-end">
+        <button class="btn btn-outline-dark fw-bold shadow-sm d-none" id="btnBulkPrintBOMs" type="button" onclick="App.BOM.bulkPrint()" style="white-space: nowrap;">
+          <i class="bi bi-printer"></i> Print Selected
+        </button>
+        <button class="btn btn-danger fw-bold shadow-sm d-none" id="btnBulkDeleteBOMs" type="button" onclick="App.BOM.bulkDelete()" style="white-space: nowrap;">
+          <i class="bi bi-trash"></i> Delete Selected
+        </button>
+        <button class="btn btn-outline-secondary fw-bold shadow-sm" type="button" title="Compares each product's BOM costing quantities against its final-stage process's own recipe quantities for the same items — informational only, never changes anything" onclick="App.BOM.checkRecipeDrift()">
+          <i class="bi bi-clipboard-check"></i> Check Recipe Drift
+        </button>
+        <button class="btn btn-primary fw-bold shadow-sm" onclick="App.BOM.openCreateModal()">+ Create Product</button>
+      </div>
+    </div>
+
+    <div class="table-responsive">
+      <table class="table table-hover table-bordered align-middle mb-0">
+        <thead class="table-dark">
+          <tr>
+            <th style="width: 3%;"></th>
+            <th style="width: 4%; text-align: center;"><input type="checkbox" id="selectAllBOMs" class="form-check-input" onclick="App.BOM.toggleSelectAll(this)"></th>
+            <th style="width: 13%;">Product ID</th>
+            <th style="width: 23%;">Product Name</th>
+            <th style="width: 27%;">Component Items Preview</th>
+            <th style="width: 14%; text-align: right;">Total Cost (Est.)</th>
+            <th style="width: 19%; text-align: center;">Actions</th>
+          </tr>
+        </thead>
+        <tbody id="bomTableBody">
+          <tr>
+            <td colspan="7" class="text-center p-4">Loading Products...</td>
+          </tr>
+        </tbody>
+      </table>
+    </div>
+    <div id="bomEmptyState" class="text-center p-5 border rounded-3 bg-white shadow-sm mt-3" style="display: none;">
+      <i class="bi bi-journal-x fs-1 text-muted d-block mb-3"></i>
+      <h5 class="fw-bold text-dark">No Products Found</h5>
+      <p class="text-muted mb-0">A Product is a collection of Processes (each with its own components + cost) plus additional costs. Create one with the button above.</p>
+    </div>
+
+    <!-- Pagination -->
+    <div id="bomPagination" class="d-flex justify-content-between align-items-center mt-3 pt-3 border-top"></div>
+  </div>
+</div>
+
+<!-- Edit / Create Product Modal -->
+<div class="modal fade" id="editBomModal" data-bs-backdrop="static" tabindex="-1" aria-hidden="true">
+  <div class="modal-dialog modal-xl modal-fullscreen-sm-down">
+    <div class="modal-content shadow-lg">
+      <div class="modal-header bg-dark text-white">
+        <h5 class="modal-title fw-bold" id="bomFormTitle" style="font-family: 'Outfit', sans-serif;">Create Product</h5>
+        <button type="button" class="btn-close btn-close-white" data-bs-dismiss="modal"></button>
+      </div>
+      <div class="modal-body bg-light">
+        <form id="bomForm" autocomplete="off">
+          <input type="hidden" id="bomProductId" name="productId">
+
+          <div class="card p-3 mb-4 border-0 shadow-sm">
+            <h6 class="text-secondary border-bottom pb-2 mb-3 fw-bold">
+              Product Information
+              <a href="#" class="float-end small" onclick="App.Model.openModal(); return false;">Manage Model Master &#8599;</a>
+            </h6>
+            <div class="row g-3">
+              <div class="col-md-4">
+                <label class="form-label fw-bold">Product ID</label>
+                <input type="text" id="bomVisibleProductId" class="form-control bg-light" readonly placeholder="Auto-generated ID">
+              </div>
+              <div class="col-md-8">
+                <label class="form-label fw-bold">Product Name / Model *</label>
+                <input type="text" name="productName" id="bomProductName" class="form-control" list="modelList" placeholder="e.g. Maharaja Super Cruiser 24 Speed" required maxlength="100">
+              </div>
+              <div class="col-12">
+                <label class="form-label fw-bold">Remarks</label>
+                <textarea name="remarks" id="bomRemarks" class="form-control" rows="2" placeholder="Any additional details or notes about this Product..." maxlength="500"></textarea>
+              </div>
+            </div>
+          </div>
+
+          <div class="card p-3 border-0 shadow-sm">
+            <h6 class="text-secondary border-bottom pb-2 mb-3 fw-bold">Product Structure (Processes)</h6>
+            <p class="text-muted small mb-3">A Product is a collection of Processes — each group below is tied to a real Process Master entry and lists the components + qty that process contributes, plus its own subtotal.</p>
+
+            <div id="bomGroupsContainer">
+              <!-- Process group cards appended dynamically -->
+            </div>
+
+            <div class="d-flex justify-content-between align-items-center flex-wrap gap-2 mt-2">
+              <div class="d-flex align-items-center gap-2">
+                <button type="button" class="btn btn-outline-secondary btn-sm fw-bold" onclick="App.BOM.addGroup()">+ Add Process Group</button>
+                <select id="bomImportProcessSelect" class="form-select form-select-sm" style="width:auto; max-width:220px;">
+                  <option value="">Import from Process...</option>
+                </select>
+                <button type="button" id="btnImportProcess" class="btn btn-outline-primary btn-sm fw-bold" onclick="App.BOM.importProcess()">+ Import Process</button>
+              </div>
+              <div class="fs-5 fw-bold text-end">
+                Estimated Material Cost: <span id="bomEstimatedCost" class="text-success">₹0.00</span>
+              </div>
+            </div>
+          </div>
+
+          <div class="card p-3 mt-4 border-0 shadow-sm">
+            <h6 class="text-secondary border-bottom pb-2 mb-3 fw-bold">Additional / Dynamic Costs (Labor, Paint, Fitting, Overheads, etc.)</h6>
+            <div class="table-responsive">
+              <table class="table table-bordered align-middle bg-white shadow-sm mb-3">
+                <thead class="table-light">
+                  <tr>
+                    <th style="width: 28%;">Cost Description</th>
+                    <th style="width: 18%;">Process</th>
+                    <th style="width: 20%;">Contractor</th>
+                    <th style="width: 17%;">Rate (₹)</th>
+                    <th style="width: 17%; text-align: center;">✕</th>
+                  </tr>
+                </thead>
+                <tbody id="bomCostsBody">
+                  <!-- Rows appended dynamically -->
+                </tbody>
+              </table>
+            </div>
+
+            <div class="d-flex justify-content-between align-items-center">
+              <button type="button" class="btn btn-outline-primary btn-sm fw-bold" onclick="App.BOM.addCostRow()">+ Add Cost Line</button>
+              <div class="fs-5 fw-bold text-end">
+                Estimated Additional Cost: <span id="bomAdditionalCost" class="text-success">₹0.00</span>
+              </div>
+            </div>
+          </div>
+
+          <div class="text-end mt-3 fs-4 fw-bold" style="font-family: 'Outfit', sans-serif;">
+            Total Estimated Cost: <span id="bomGrandTotal" class="text-primary">₹0.00</span>
+          </div>
+
+          <div class="text-end mt-4">
+            <button type="button" class="btn btn-secondary me-2" data-bs-dismiss="modal">Cancel</button>
+            <button type="submit" id="bomSubmitBtn" class="btn btn-success px-5 fw-bold shadow-sm">Save Product</button>
+          </div>
+        </form>
+      </div>
+    </div>
+  </div>
+</div>
+
+<datalist id="bomCostCategoryList">
+  <option value="Labor - Fitting">
+  <option value="Rim Fitting">
+  <option value="Paint Cost">
+  <option value="General Office Expenses">
+</datalist>
+
+<!-- BOM Access Password Modal -->
+<div class="modal fade" id="bomAccessModal" data-bs-backdrop="static" tabindex="-1" aria-hidden="true" style="z-index: 1075;">
+  <div class="modal-dialog modal-dialog-centered">
+    <div class="modal-content">
+      <div class="modal-header bg-dark text-white">
+        <h5 class="modal-title"><i class="bi bi-lock-fill me-2"></i>BOM Access Restricted</h5>
+        <button type="button" class="btn-close btn-close-white" data-bs-dismiss="modal" aria-label="Close"></button>
+      </div>
+      <div class="modal-body">
+        <p class="text-muted mb-3">The Bill of Materials contains confidential cost and pricing data. Enter the password to continue.</p>
+        <form id="bomAccessForm" autocomplete="off" onsubmit="event.preventDefault(); App.BOM.submitAccessPassword();">
+          <label class="form-label fw-bold">Password</label>
+          <input type="password" id="bomAccessPassword" class="form-control" autocomplete="off" required>
+          <div id="bomAccessError" class="text-danger small mt-2" style="display: none;"></div>
+        </form>
+      </div>
+      <div class="modal-footer">
+        <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Cancel</button>
+        <button type="button" class="btn btn-primary fw-bold" id="bomAccessSubmitBtn" onclick="App.BOM.submitAccessPassword()">Unlock</button>
+      </div>
+    </div>
+  </div>
+</div>
+
+<!-- BOM vs Process Recipe Drift Modal (read-only diagnostic, App.BOM.checkRecipeDrift) -->
+<div class="modal fade" id="bomDriftModal" tabindex="-1" aria-hidden="true">
+  <div class="modal-dialog modal-lg modal-fullscreen-sm-down">
+    <div class="modal-content shadow-lg">
+      <div class="modal-header bg-secondary text-white">
+        <h5 class="modal-title fw-bold" style="font-family: 'Outfit', sans-serif;">
+          <i class="bi bi-clipboard-check me-2"></i>BOM / Recipe Drift
+        </h5>
+        <button type="button" class="btn-close btn-close-white" data-bs-dismiss="modal"></button>
+      </div>
+      <div class="modal-body bg-light" id="bomDriftModalBody"></div>
+      <div class="modal-footer">
+        <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Close</button>
+      </div>
     </div>
   </div>
 </div>

@@ -173,7 +173,14 @@ const App = {
     // declared so Process's contractor-rate mini-table select2 degrades to
     // an empty (but still typeable, tags:true) picker until then.
     globalContractors: [],
-    currentProcessContractorRates: { processName: '', rates: [] }
+    currentProcessContractorRates: { processName: '', rates: [] },
+
+    // Product BOM's own state (Script_Items.html's App.BOM).
+    globalBOMs: [],
+    filteredBOMs: [],
+    selectedBOMs: [],
+    bomCurrentPage: 1,
+    bomRowsPerPage: 10
   },
 
   // ── Bulk Selection Helpers ────────────────────────────────────────────
@@ -451,6 +458,23 @@ const App = {
       const models = [...(App.State.globalModels || [])].sort((a, b) => String(b.name || '').length - String(a.name || '').length);
       const match = models.find(m => m.name && lower.includes(String(m.name).toLowerCase()));
       return match ? match.name : 'General';
+    },
+
+    // Auto-selects a <select>'s only remaining real option (any option
+    // besides a blank-value placeholder) once filtering/cascading has
+    // narrowed it down to exactly one choice. Never overrides a value the
+    // select already holds, and intentionally does NOT dispatch a
+    // 'change' event -- callers that need to cascade into a dependent
+    // dropdown read select.value right after calling this and pass it
+    // along themselves. Returns true if it changed the value.
+    autoSelectOnlyOption(selectEl) {
+      if (!selectEl || selectEl.value) return false;
+      const realOptions = Array.from(selectEl.options).filter(o => o.value !== '');
+      if (realOptions.length !== 1) return false;
+      selectEl.value = realOptions[0].value;
+      if (window.jQuery?.fn?.select2 && window.jQuery(selectEl).data('select2'))
+        window.jQuery(selectEl).trigger('change.select2');
+      return true;
     },
 
     // Clamps a requested page number to a valid range for the given item count.
