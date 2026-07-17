@@ -75,12 +75,12 @@
 //   source's `c.name` -- see contractor.js's module header for the full
 //   story of this backend field-name deviation (getContractorsData
 //   returns contractorName, not name).
-// - "Issue Stock" buttons (App.Issue.openIssueModal) and the Issued
-//   Stock sub-tab's own content are guarded/placeholder'd at the
-//   template level -- App.Issue is a whole separate module (lives in
-//   Script_Return.html alongside Return/Wastage, not this file) that
-//   hasn't been ported at all yet. openIssueStockForLot() (the modal's
-//   own "Issue Stock (not part of BOM)" button) is guarded the same way.
+// - App.Issue (Issued Stock -- lives in Script_Return.html alongside
+//   Return/Wastage, not this file, despite its UI living in Production's
+//   own Issued Stock sub-tab) is now real -- see issue.js. The `typeof
+//   App.Issue !== 'undefined'` guards in switchSubTab/buildAllActivityRows
+//   activated with zero changes needed here, same "guard now, activate
+//   later" shape used throughout this port.
 // - bulkPrint is guarded behind App.Print not existing yet; its builder
 //   (buildProductionSheetPrintPageHtml) stays as ported dead code.
 // - openColorwiseSummaryModal is exactly what Dashboard's
@@ -226,9 +226,7 @@ App.Production = {
 
   // Normalizes Production Log lots + Issued Stock entries into one shape
   // so the "All Activity" sub-tab can list both chronologically, each
-  // tagged with its own sub-group badge. App.State.globalIssues stays
-  // empty (forward-declared since Round 1) until App.Issue's own round,
-  // so this already degrades correctly -- Production rows only, for now.
+  // tagged with its own sub-group badge.
   buildAllActivityRows() {
     const prodRows = (App.State.globalProduction || []).map(p => ({
       dateRaw: p.dateRaw,
@@ -2813,8 +2811,14 @@ App.Production = {
     }
   },
 
+  // Opens the generic Issue Stock modal from inside the Production form,
+  // pre-filling Reference with the current lot's number (falling back to
+  // its Output Item Name for a still-unsaved lot). Purely informational
+  // -- never touches this lot's own Components Consumed.
   openIssueStockForLot() {
-    App.Utils.notPortedYet('Issue Stock');
+    const lotNumber = document.getElementById('productionLotNumber')?.value?.trim();
+    const outputItem = document.getElementById('productionOutputItemName')?.value?.trim();
+    App.Issue.openIssueModal(lotNumber || outputItem || '');
   },
 
   async resetCreateForm() {

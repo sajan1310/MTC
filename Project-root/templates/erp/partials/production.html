@@ -1,8 +1,9 @@
-<!-- Ported from Apps_Script/View_Production.html -- Production Log +
-     All Activity sub-tabs are real; Issued Stock (App.Issue, a whole
-     separate not-yet-ported module) is a placeholder. editProductionModal
-     and productionSheetModal (from Modals.html) are both fully real --
-     see production.js's module header for the Round 11-15 history. -->
+<!-- Ported from Apps_Script/View_Production.html -- all 3 sub-tabs
+     (Production Log, Issued Stock, All Activity) are real.
+     editProductionModal and productionSheetModal (from Modals.html) are
+     both fully real -- see production.js's module header for the Round
+     11-15 history. issueStockModal (also from Modals.html) is App.Issue's
+     own modal -- see issue.js. -->
 
 <div id="productionTab" class="tab-content table-container" role="tabpanel" aria-labelledby="btn-productionTab">
 
@@ -44,7 +45,7 @@
         <button class="btn btn-outline-dark fw-bold shadow-sm" type="button" onclick="App.Production.openColorwiseSummaryModal()" style="white-space: nowrap;">
           <i class="bi bi-palette"></i> Colorwise Summary
         </button>
-        <button class="btn btn-dark fw-bold shadow-sm" type="button" data-action="not-ported-yet" data-feature="Issue Stock" style="white-space: nowrap;">
+        <button class="btn btn-dark fw-bold shadow-sm" type="button" onclick="App.Issue.openIssueModal()" style="white-space: nowrap;">
           <i class="bi bi-box-arrow-up"></i> Issue Stock
         </button>
         <button class="btn btn-success fw-bold shadow-sm" onclick="App.Production.openCreateModal()">+ Log Production Lot</button>
@@ -84,13 +85,55 @@
     <div id="productionPagination" class="d-flex justify-content-between align-items-center mt-3 pt-3 border-top"></div>
   </div>
 
-  <!-- ISSUED STOCK SUB-TAB -- placeholder this round; App.Issue is a
-       whole separate not-yet-ported module (Script_Return.html). -->
+  <!-- ISSUED STOCK SUB-TAB -- App.Issue (issue.js), ad-hoc item
+       issuance outside any Process's own recipe/BOM; debits Stock
+       directly. -->
   <div id="issuedStockSubTab" class="production-sub-tab" style="display:none;">
-    <div class="dash-section text-center text-muted py-5">
-      <i class="bi bi-cone-striped fs-1 d-block mb-2"></i>
-      Issued Stock isn't wired up yet — the backend is ready, this screen lands in a later round.
+    <div class="d-flex justify-content-between flex-wrap gap-2 mb-3">
+      <div class="d-flex flex-wrap gap-2 align-items-center" style="max-width: 900px;">
+        <input type="text" id="searchIssue" class="form-control" style="min-width:220px;" placeholder="Search by Issue #, Issued To, Reference, or item…" autocomplete="off" onkeyup="App.Issue.filterData(this.value)">
+        <input type="date" id="issueDateFilter" class="form-control" style="min-width:150px;" onchange="App.Issue.filterByDate(this.value)">
+      </div>
+      <div class="d-flex gap-2 flex-wrap justify-content-end">
+        <button class="btn btn-outline-dark fw-bold shadow-sm d-none" id="btnBulkPrintIssue" type="button" onclick="App.Issue.bulkPrint()" style="white-space: nowrap;">
+          <i class="bi bi-printer"></i> Print Selected
+        </button>
+        <button class="btn btn-danger fw-bold shadow-sm d-none" id="btnBulkDeleteIssue" type="button" onclick="App.Issue.bulkDelete()" style="white-space: nowrap;">
+          <i class="bi bi-trash"></i> Delete Selected
+        </button>
+        <button class="btn btn-dark fw-bold shadow-sm" type="button" onclick="App.Issue.openIssueModal()">
+          <i class="bi bi-box-arrow-up me-1"></i>Issue Stock
+        </button>
+      </div>
     </div>
+
+    <div class="table-responsive">
+      <table class="table table-hover table-bordered align-middle mb-0">
+        <thead class="table-dark">
+          <tr>
+            <th style="width: 4%; text-align: center;"><input type="checkbox" id="selectAllIssue" class="form-check-input" onclick="App.Issue.toggleSelectAll(this)"></th>
+            <th style="width: 14%;">Issue #</th>
+            <th style="width: 10%;">Date</th>
+            <th style="width: 16%;">Issued To</th>
+            <th style="width: 12%;">Reference</th>
+            <th style="width: 28%;">Items Issued</th>
+            <th style="width: 8%; text-align: center;">Total Qty</th>
+            <th style="width: 8%; text-align: center;">Actions</th>
+          </tr>
+        </thead>
+        <tbody id="issueTableBody">
+          <tr><td colspan="8" class="text-center p-4">Loading Issued Stock…</td></tr>
+        </tbody>
+      </table>
+    </div>
+    <div id="issueEmptyState" class="text-center p-5 border rounded-3 bg-white shadow-sm mt-3" style="display: none;">
+      <i class="bi bi-box-arrow-up fs-1 text-muted d-block mb-3"></i>
+      <h5 class="fw-bold text-dark">No Issued Stock Records</h5>
+      <p class="text-muted mb-0">Issue items not covered by a Process's own recipe using the button above — it debits Stock automatically.</p>
+    </div>
+
+    <!-- Pagination -->
+    <div id="issuePagination" class="d-flex justify-content-between align-items-center mt-3 pt-3 border-top"></div>
   </div>
 
   <!-- ALL ACTIVITY SUB-TAB -->
@@ -431,6 +474,74 @@
           <label class="form-label fw-bold" for="productionSheetRemarks">Remarks</label>
           <textarea id="productionSheetRemarks" class="form-control" rows="2" placeholder="What was changed, and why or for whom? (e.g. customer-requested substitution)" maxlength="500"></textarea>
         </div>
+      </div>
+    </div>
+  </div>
+</div>
+
+<!-- Issue Stock Modal -- ported from Modals.html. App.Issue's own
+     create-only form; debits Stock directly, stays out of any
+     Production lot's Components Consumed list. -->
+<div class="modal fade" id="issueStockModal" data-bs-backdrop="static" tabindex="-1" aria-hidden="true">
+  <div class="modal-dialog modal-xl modal-fullscreen-sm-down">
+    <div class="modal-content shadow-lg">
+      <div class="modal-header bg-dark text-white">
+        <h5 class="modal-title fw-bold"><i class="bi bi-box-arrow-up me-2"></i>Issue Stock</h5>
+        <button type="button" class="btn-close btn-close-white" data-bs-dismiss="modal"></button>
+      </div>
+      <div class="modal-body bg-light">
+        <div class="alert alert-secondary py-2 mb-3" role="alert" style="font-size: 13px;">
+          <i class="bi bi-info-circle-fill me-2"></i>For items not covered by a Process's own recipe (BOM). This debits Stock directly and stays out of any Production lot's Components Consumed list.
+        </div>
+        <form id="issueStockForm" autocomplete="off">
+          <input type="hidden" id="issueSavedId">
+          <div class="row g-3 mb-4">
+            <div class="col-md-3">
+              <label class="form-label fw-bold">Issue Date *</label>
+              <input type="date" name="date" id="issueDateInput" class="form-control" required>
+            </div>
+            <div class="col-md-4">
+              <label class="form-label fw-bold">Issued To / Purpose *</label>
+              <input type="text" name="issuedTo" id="issueIssuedTo" class="form-control" list="vendorList" placeholder="Contractor name, department, or select a vendor…" required maxlength="200">
+            </div>
+            <div class="col-md-2">
+              <label class="form-label">Reference <span class="text-muted fw-normal">(optional)</span></label>
+              <input type="text" name="reference" id="issueReferenceInput" class="form-control" placeholder="e.g. Lot #" maxlength="100">
+            </div>
+            <div class="col-md-3">
+              <label class="form-label">Remarks <span class="text-muted fw-normal">(optional)</span></label>
+              <input type="text" name="remarks" class="form-control" placeholder="Optional notes…" maxlength="500">
+            </div>
+          </div>
+
+          <h6 class="text-secondary border-bottom pb-1 fw-bold">Items Issued</h6>
+          <div class="table-responsive">
+            <table class="table table-bordered bg-white shadow-sm">
+              <thead class="table-light">
+                <tr>
+                  <th>Item Name *</th>
+                  <th style="width:12%;">Size</th>
+                  <th style="width:10%;">Qty *</th>
+                  <th style="width:10%;">Unit</th>
+                  <th style="width:12%;">Rate <span class="text-muted fw-normal">(optional)</span></th>
+                  <th style="width:5%;"></th>
+                </tr>
+              </thead>
+              <tbody id="issueItemsBody"></tbody>
+            </table>
+          </div>
+
+          <button type="button" class="btn btn-outline-dark btn-sm mb-3 fw-bold" onclick="App.Issue.addRow()">+ Add Item</button>
+
+          <div class="text-end mt-2">
+            <button type="button" class="btn btn-secondary me-2" data-bs-dismiss="modal">Cancel</button>
+            <button type="button" id="issueStockPrintBtn" class="btn btn-outline-dark me-2" style="display:none;" onclick="App.Issue.printCurrent()"><i class="bi bi-printer"></i> Print</button>
+            <button type="button" id="issueStockDoneBtn" class="btn btn-success px-4 fw-bold shadow-sm" style="display:none;" onclick="App.Issue.done()"><i class="bi bi-check2"></i> Done</button>
+            <button type="submit" id="issueStockSubmitBtn" class="btn btn-dark px-5 fw-bold shadow-sm">
+              <i class="bi bi-box-arrow-up me-1"></i>Issue Stock
+            </button>
+          </div>
+        </form>
       </div>
     </div>
   </div>

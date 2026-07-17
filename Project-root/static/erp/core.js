@@ -203,7 +203,17 @@ const App = {
     productionRowsPerPage: 15,
     productionSortBy: 'dateDesc',
     productionAllSearchTerm: '',
-    currentProductionSheet: null
+    currentProductionSheet: null,
+
+    // Issued Stock Log (Script_Return.html's App.Issue, despite living
+    // in Production's own Issued Stock sub-tab) -- globalIssues was
+    // already forward-declared in Round 1.
+    filteredIssues: [],
+    selectedIssues: [],
+    issueCurrentPage: 1,
+    issueRowsPerPage: 15,
+    issueSearchTerm: '',
+    issueDateFilter: ''
   },
 
   // ── Bulk Selection Helpers ────────────────────────────────────────────
@@ -742,6 +752,9 @@ function bindGlobalEvents() {
         break;
       case 'production-page':
         App.Production.changePage(toNumber(btn.dataset.page, 1));
+        break;
+      case 'issue-page':
+        App.Issue.changePage(toNumber(btn.dataset.page, 1));
         break;
     }
   });
