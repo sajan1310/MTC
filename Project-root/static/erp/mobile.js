@@ -1589,7 +1589,320 @@ MApp.Production = {
     document.getElementById('log-lot-body').innerHTML = this._formHtml();
   }
 };
-MApp.Dispatch = { openNewDispatchSheet() { MApp.Toast.error('New Dispatch is coming soon.'); } };
+// ================================================================
+// DISPATCH — card list + "New Dispatch" sheet + Print Challan, which
+// reuses print.html's #print-dispatch-container verbatim (that
+// template is dedicated to dispatch challans only — confirmed not
+// shared with PO/other print types) via MApp.Print.trigger.
+// ================================================================
+MApp.Dispatch = {
+  dispatches: [],
+  clients: [],
+  readyToDispatch: [],
+  contractors: [],
+  _todayOnly: false,
+  selection: { clientName: '', productId: '', productName: '', logisticsContractor: '' },
+
+  mount() {
+    this.load();
+  },
+
+  async load() {
+    const listEl = document.getElementById('dispatch-list');
+    MApp.Util.renderSkeleton(listEl, 4);
+
+    try {
+      const [dispatchRes, clientsRes] = await Promise.all([
+        MApp.Api.call('getDispatchData'),
+        MApp.Api.call('getClientsData')
+      ]);
+
+      if (!dispatchRes || !dispatchRes.success) {
+        MApp.Util.renderError(listEl, dispatchRes && dispatchRes.message, () => this.load());
+        return;
+      }
+
+      this.dispatches = dispatchRes.data || [];
+      this.clients = (clientsRes && clientsRes.success) ? (clientsRes.data || []) : [];
+
+      this._todayOnly = MApp.State.dispatchFilter === 'today';
+      MApp.State.dispatchFilter = '';
+
+      this.render();
+    } catch (err) {
+      MApp.Util.renderError(listEl, err && err.message, () => this.load());
+    }
+  },
+
+  render() {
+    const listEl = document.getElementById('dispatch-list');
+    if (!listEl) return;
+
+    let list = this.dispatches;
+    const banner = this._todayOnly
+      ? `<div class="mb-offline-banner" style="background:var(--mb-safety-faint);color:var(--mb-ink);margin-bottom:var(--mb-sp-3);">
+           <span>Showing today's dispatches only</span>
+           <button type="button" class="mb-btn-text" style="padding:0;min-height:auto;" data-clear-filter>Clear</button>
+         </div>`
+      : '';
+    if (this._todayOnly) {
+      list = list.filter(d => MApp.Util.isToday(d.dateRaw));
+    }
+
+    if (list.length === 0) {
+      listEl.innerHTML = banner;
+      const empty = document.createElement('div');
+      listEl.appendChild(empty);
+      MApp.Util.renderEmpty(empty, { title: 'No dispatches yet', body: 'Tap + to record the first dispatch.' });
+    } else {
+      listEl.innerHTML = banner + list.slice(0, 50).map((d, idx) => `
+        <div class="mb-card">
+          <div class="mb-card-row">
+            <div>
+              <div class="mb-card-title">${MApp.Util.escapeHtml(d.dispatchNumber)}</div>
+              <div class="mb-card-sub">${MApp.Util.escapeHtml(d.clientName || 'Direct supply')}</div>
+            </div>
+            <div style="text-align:right;">
+              <div class="mb-card-number">${d.qty}</div>
+              <div class="mb-card-sub">${MApp.Util.formatDateDisplay(d.dateRaw)}</div>
+            </div>
+          </div>
+          <div class="mb-card-sub mb-mt-2">${MApp.Util.escapeHtml(d.productName)}</div>
+          <button type="button" class="mb-btn mb-btn-secondary mb-mt-2" style="min-height:40px;" data-print-idx="${idx}">Print Challan</button>
+        </div>
+      `).join('');
+    }
+
+    const clearBtn = listEl.querySelector('[data-clear-filter]');
+    if (clearBtn) clearBtn.addEventListener('click', () => { this._todayOnly = false; this.render(); });
+
+    listEl.querySelectorAll('[data-print-idx]').forEach(btn => {
+      btn.addEventListener('click', () => this.print(parseInt(btn.dataset.printIdx, 10), list));
+    });
+  },
+
+  print(idx, listRef) {
+    const d = (listRef || this.dispatches)[idx];
+    if (!d) return;
+
+    const client = (this.clients || []).find(c => c.name === d.clientName);
+    const setText = (id, val) => {
+      const el = document.getElementById(id);
+      if (el) el.textContent = val || '';
+    };
+
+    setText('print-dispatch-number', d.dispatchNumber);
+    setText('print-dispatch-date', d.dispatchDate);
+    setText('print-dispatch-client', d.clientName || 'Direct Supply');
+    setText('print-dispatch-client-address', client ? client.address : '');
+    setText('print-dispatch-client-gstin', client && client.gstin ? 'GSTIN: ' + client.gstin : '');
+    setText('print-dispatch-transport', d.transport);
+    setText('print-dispatch-order-ref', d.orderNumber);
+    setText('print-dispatch-gr-ref', d.grNumber || d.invoiceNumber || '');
+    setText('print-dispatch-remarks', d.remarks);
+
+    const body = document.getElementById('print-dispatch-items-body');
+    if (body) {
+      body.innerHTML = `
+        <tr>
+          <td style="padding:8px 6px;border:1px solid #ccc;">1</td>
+          <td style="padding:8px 6px;border:1px solid #ccc;text-align:left;">${MApp.Util.escapeHtml(d.productName)} (${MApp.Util.escapeHtml(d.productId)})</td>
+          <td style="padding:8px 6px;border:1px solid #ccc;"></td>
+          <td style="padding:8px 6px;border:1px solid #ccc;">${d.qty}</td>
+          <td style="padding:8px 6px;border:1px solid #ccc;">Pcs</td>
+        </tr>`;
+    }
+
+    MApp.Print.trigger('print-dispatch-container', `Challan ${d.dispatchNumber}`);
+  },
+
+  // ── New Dispatch sheet ──────────────────────────────────────────────
+  async openNewDispatchSheet() {
+    this.selection = { clientName: '', productId: '', productName: '', logisticsContractor: '' };
+
+    document.getElementById('new-dispatch-body').innerHTML = `
+      <div class="mb-skel mb-skel-card" style="height:56px;"></div>
+      <div class="mb-skel mb-skel-card" style="height:56px;"></div>
+      <div class="mb-skel mb-skel-card" style="height:56px;"></div>`;
+    MApp.Sheet.open('sheet-new-dispatch');
+
+    const saveBtn = document.getElementById('new-dispatch-save-btn');
+    if (saveBtn) saveBtn.disabled = true;
+
+    try {
+      await this._ensureRefData();
+      document.getElementById('new-dispatch-body').innerHTML = this._formHtml();
+    } catch (err) {
+      MApp.Toast.error('Could not load dispatch reference data: ' + (err.message || ''));
+      this.closeNewDispatchSheet();
+      return;
+    } finally {
+      if (saveBtn) saveBtn.disabled = false;
+    }
+  },
+
+  closeNewDispatchSheet() {
+    MApp.Sheet.close('sheet-new-dispatch');
+  },
+
+  async _ensureRefData() {
+    if (this.clients.length === 0) await this.load();
+
+    const [readyRes, contractorsRes] = await Promise.all([
+      MApp.Api.call('getReadyToDispatchData'),
+      MApp.Api.call('getContractorsData')
+    ]);
+    this.readyToDispatch = (readyRes && readyRes.success) ? (readyRes.data || []) : [];
+    this.contractors = (contractorsRes && contractorsRes.success) ? (contractorsRes.data || []) : [];
+  },
+
+  _formHtml() {
+    return `
+      <div class="mb-field">
+        <label for="dispatch-date">Date</label>
+        <input type="date" id="dispatch-date" value="${MApp.Util.todayInputValue()}">
+      </div>
+
+      <div class="mb-field">
+        <label>Client</label>
+        <button type="button" class="mb-picker-field mb-placeholder" id="dispatch-client-field" onclick="MApp.Dispatch.pickClient()">Choose a client (optional)...</button>
+      </div>
+
+      <div class="mb-field">
+        <label>Product</label>
+        <button type="button" class="mb-picker-field mb-placeholder" id="dispatch-product-field" onclick="MApp.Dispatch.pickProduct()">Choose a product...</button>
+        <div class="mb-field-hint" id="dispatch-ready-hint"></div>
+      </div>
+
+      <div class="mb-field">
+        <label for="dispatch-qty">Quantity</label>
+        <input type="number" id="dispatch-qty" inputmode="decimal" min="0" step="1" placeholder="0">
+      </div>
+
+      <div class="mb-field">
+        <label for="dispatch-transport">Transport / vehicle</label>
+        <input type="text" id="dispatch-transport" placeholder="e.g. Truck no. PB-10-1234">
+      </div>
+
+      <div class="mb-field">
+        <label>Logistics contractor (optional)</label>
+        <button type="button" class="mb-picker-field mb-placeholder" id="dispatch-logistics-field" onclick="MApp.Dispatch.pickLogistics()">Choose or add...</button>
+      </div>
+
+      <div class="mb-field">
+        <label for="dispatch-order-number">PI / Estimate reference (optional)</label>
+        <input type="text" id="dispatch-order-number" placeholder="e.g. ORD-1042">
+      </div>
+
+      <div class="mb-field">
+        <label for="dispatch-invoice-number">Invoice number (optional)</label>
+        <input type="text" id="dispatch-invoice-number">
+      </div>
+
+      <div class="mb-field">
+        <label for="dispatch-private-mark">Private mark (optional)</label>
+        <input type="text" id="dispatch-private-mark">
+      </div>
+
+      <div class="mb-field">
+        <label for="dispatch-gr-number">GR number (optional)</label>
+        <input type="text" id="dispatch-gr-number">
+      </div>
+
+      <div class="mb-field">
+        <label for="dispatch-remarks">Remarks (optional)</label>
+        <textarea id="dispatch-remarks" rows="3" placeholder="Notes for this dispatch..."></textarea>
+      </div>
+    `;
+  },
+
+  async pickClient() {
+    const items = (this.clients || []).map(c => ({ value: c.name, label: c.name }));
+    const picked = await MApp.Picker.open({ title: 'Choose a client', items, selectedValue: this.selection.clientName, allowCustom: true });
+    if (!picked) return;
+    this.selection.clientName = picked.value;
+    const el = document.getElementById('dispatch-client-field');
+    if (el) { el.textContent = picked.label; el.classList.remove('mb-placeholder'); }
+  },
+
+  async pickProduct() {
+    const items = (this.readyToDispatch || []).map(p => ({
+      value: p.productId, label: p.productName, sublabel: `Ready: ${p.readyQty}`
+    }));
+    const picked = await MApp.Picker.open({ title: 'Choose a product', items, selectedValue: this.selection.productId });
+    if (!picked) return;
+
+    const match = (this.readyToDispatch || []).find(p => p.productId === picked.value);
+    this.selection.productId = picked.value;
+    this.selection.productName = picked.label;
+
+    const el = document.getElementById('dispatch-product-field');
+    if (el) { el.textContent = picked.label; el.classList.remove('mb-placeholder'); }
+
+    const hint = document.getElementById('dispatch-ready-hint');
+    if (hint) hint.textContent = match ? `${match.readyQty} unit(s) ready to dispatch` : '';
+  },
+
+  // Fixed from source's own c.name -- getContractorsData returns
+  // contractorName, not name (same fix as Production's pickAssignedTo).
+  async pickLogistics() {
+    const items = (this.contractors || []).map(c => ({ value: c.contractorName, label: c.contractorName }));
+    const picked = await MApp.Picker.open({ title: 'Logistics contractor', items, selectedValue: this.selection.logisticsContractor, allowCustom: true });
+    if (!picked) return;
+    this.selection.logisticsContractor = picked.value;
+    const el = document.getElementById('dispatch-logistics-field');
+    if (el) { el.textContent = picked.label; el.classList.remove('mb-placeholder'); }
+  },
+
+  // Note: source's own single-verb _apiCall handled both reads and
+  // writes -- saveDispatch is mutation=True server-side (registry.py),
+  // so this call uses MApp.Api.mutate, not .call, unlike source.
+  async save() {
+    if (!this.selection.productId) {
+      MApp.Toast.error('Choose a product first.');
+      return;
+    }
+    const qty = MApp.Util.toNumber(document.getElementById('dispatch-qty')?.value);
+    if (!qty || qty <= 0) {
+      MApp.Toast.error('Enter a quantity greater than zero.');
+      return;
+    }
+
+    const formData = {
+      dispatchDate: document.getElementById('dispatch-date')?.value || MApp.Util.todayInputValue(),
+      clientName: this.selection.clientName || '',
+      productId: this.selection.productId,
+      productName: this.selection.productName,
+      qty: qty,
+      transport: (document.getElementById('dispatch-transport')?.value || '').trim(),
+      logisticsContractor: this.selection.logisticsContractor || '',
+      orderNumber: (document.getElementById('dispatch-order-number')?.value || '').trim(),
+      invoiceNumber: (document.getElementById('dispatch-invoice-number')?.value || '').trim(),
+      privateMark: (document.getElementById('dispatch-private-mark')?.value || '').trim(),
+      grNumber: (document.getElementById('dispatch-gr-number')?.value || '').trim(),
+      remarks: (document.getElementById('dispatch-remarks')?.value || '').trim()
+    };
+
+    MApp.Util.setSheetBusy('new-dispatch-body', 'new-dispatch-save-btn', true, 'Saving…');
+    try {
+      const res = await MApp.Api.mutate('saveDispatch', formData);
+      if (!res || !res.success) {
+        MApp.Toast.error((res && res.message) || 'Could not save this dispatch.');
+        MApp.Util.setSheetBusy('new-dispatch-body', 'new-dispatch-save-btn', false, null, 'Save Dispatch');
+        return;
+      }
+      MApp.Toast.success(`Dispatch saved${res.data && res.data.dispatchNumber ? ' — ' + res.data.dispatchNumber : ''}.`);
+      this.selection = { clientName: '', productId: '', productName: '', logisticsContractor: '' };
+      document.getElementById('new-dispatch-body').innerHTML = this._formHtml();
+      const saveBtn = document.getElementById('new-dispatch-save-btn');
+      if (saveBtn) { saveBtn.disabled = false; saveBtn.textContent = 'Save Dispatch'; }
+      this.load();
+    } catch (err) {
+      MApp.Toast.error(err.message || 'Could not save this dispatch. Check your connection and try again.');
+      MApp.Util.setSheetBusy('new-dispatch-body', 'new-dispatch-save-btn', false, null, 'Save Dispatch');
+    }
+  }
+};
 MApp.Returns = { openNewReturnSheet() { MApp.Toast.error('Log Return is coming soon.'); } };
 MApp.PO = { openLedgerSheet() { MApp.Toast.error('PO Ledger is coming soon.'); } };
 MApp.Bill = { openLedgerSheet() { MApp.Toast.error('Bill Ledger is coming soon.'); } };
