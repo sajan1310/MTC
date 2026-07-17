@@ -1,9 +1,8 @@
 <!-- Ported from Apps_Script/View_Production.html -- Production Log +
-     All Activity sub-tabs are real this round; Issued Stock (App.Issue,
-     a whole separate not-yet-ported module) is a placeholder, and the
-     Create/Edit Lot + Production Sheet modals are deferred to their own
-     later rounds (see production.js's module header). Only the
-     colorwiseSummaryModal section of Modals.html is included here. -->
+     All Activity sub-tabs are real; Issued Stock (App.Issue, a whole
+     separate not-yet-ported module) is a placeholder. editProductionModal
+     and productionSheetModal (from Modals.html) are both fully real --
+     see production.js's module header for the Round 11-15 history. -->
 
 <div id="productionTab" class="tab-content table-container" role="tabpanel" aria-labelledby="btn-productionTab">
 
@@ -351,6 +350,87 @@
             <button type="submit" id="productionSubmitBtn" class="btn btn-success px-5 fw-bold shadow-sm">Save Production Record</button>
           </div>
         </form>
+      </div>
+    </div>
+  </div>
+</div>
+
+<!-- Production Sheet Modal -- ported from Modals.html. A fully editable,
+     printable customization of a lot's already-recorded Components
+     Consumed (e.g. a customer-requested substitution); never touches the
+     lot's real saved consumption record, only its own
+     customComponents/sheetRemarks fields. -->
+<div class="modal fade" id="productionSheetModal" tabindex="-1" aria-hidden="true">
+  <div class="modal-dialog modal-fullscreen-sm-down" style="max-width: 95vw;">
+    <div class="modal-content shadow-lg">
+      <div class="modal-header bg-success text-white">
+        <h5 class="modal-title fw-bold" id="productionSheetTitle" style="font-family: 'Outfit', sans-serif;">Production Sheet</h5>
+        <div class="d-flex align-items-center">
+          <button class="btn btn-outline-light btn-sm fw-bold me-2" id="prodSheetSaveBtn" onclick="App.Production.saveProductionSheet()" title="Save these component changes and remarks with this production lot"><i class="bi bi-save me-1"></i> Save Customization</button>
+          <button class="btn btn-outline-light btn-sm fw-bold me-2" onclick="App.Production.resetProductionSheetQuantities()" title="Discard customizations and restore this lot's originally recorded components"><i class="bi bi-arrow-counterclockwise me-1"></i> Reset to Recorded Components</button>
+          <button class="btn btn-dark btn-sm fw-bold me-2" onclick="App.Production.printProductionSheet()"><i class="bi bi-printer me-1"></i> Print Sheet</button>
+          <button type="button" class="btn-close btn-close-white" data-bs-dismiss="modal" style="margin-top: 1px;"></button>
+        </div>
+      </div>
+      <div class="modal-body bg-light">
+        <div class="card mb-3 border-0 shadow-sm">
+          <div class="card-body py-3">
+            <div class="row g-2">
+              <div class="col-md-3"><span class="text-muted small text-uppercase">Date</span><div class="fw-bold" id="prodSheetDate"></div></div>
+              <div class="col-md-3"><span class="text-muted small text-uppercase">Lot #</span><div class="fw-bold" id="prodSheetProductId"></div></div>
+              <div class="col-md-3"><span class="text-muted small text-uppercase">Output Item</span><div class="fw-bold" id="prodSheetProductName"></div></div>
+              <div class="col-md-3"><span class="text-muted small text-uppercase">Lot Qty</span><div class="fw-bold" id="prodSheetLotQty"></div></div>
+            </div>
+          </div>
+        </div>
+
+        <div class="alert alert-info py-2 mb-3" role="alert" style="font-size: 13px;">
+          <i class="bi bi-info-circle-fill me-2"></i>This entire table is editable &mdash; change item names, sizes, narrations, vendors, or quantities, and add/remove rows to match the customer's requirement. Click <strong>Save Customization</strong> to keep these changes with this lot.
+        </div>
+
+        <div class="card border-0 shadow-sm mb-3">
+          <div class="card-header bg-dark text-white fw-bold" style="font-family: 'Outfit', sans-serif;">
+            Common Components <small class="fw-normal">(applies regardless of color &mdash; Qty per Unit &times; Lot Qty, from the Process recipe)</small>
+          </div>
+          <div class="card-body p-0">
+            <div class="table-responsive">
+              <table class="table table-hover table-striped align-middle mb-0">
+                <thead class="table-light">
+                  <tr>
+                    <th>Item Name</th>
+                    <th>Size</th>
+                    <th>Narration</th>
+                    <th class="text-end">Required Qty</th>
+                    <th class="text-center">✕</th>
+                  </tr>
+                </thead>
+                <tbody id="productionSheetCommonBody"></tbody>
+              </table>
+            </div>
+          </div>
+          <div class="card-body border-top">
+            <button type="button" class="btn btn-outline-primary btn-sm fw-bold" onclick="App.Production.addCommonSheetRow()">+ Add Common Component</button>
+          </div>
+        </div>
+
+        <div class="card border-0 shadow-sm" id="productionSheetMatrixCard">
+          <div class="card-header bg-dark text-white fw-bold" style="font-family: 'Outfit', sans-serif;">
+            Per-Color Components <small class="fw-normal">(grouped into one table per set of colors actually used &mdash; same item across colors is shown as a single row)</small>
+          </div>
+          <!-- Populated by App.Production.renderProductionSheetTable as one
+               <table> per distinct color-signature group, instead of a
+               single shared table with every color in the lot as a column. -->
+          <div class="card-body p-0" id="productionSheetMatrixTables"></div>
+          <div class="card-body border-top">
+            <button type="button" class="btn btn-outline-primary btn-sm fw-bold me-2" onclick="App.Production.addMatrixSheetRow()">+ Add Per-Color Component</button>
+            <button type="button" class="btn btn-outline-secondary btn-sm fw-bold" onclick="App.Production.addProductionSheetColor()">+ Add Color Column</button>
+          </div>
+        </div>
+
+        <div class="mt-3">
+          <label class="form-label fw-bold" for="productionSheetRemarks">Remarks</label>
+          <textarea id="productionSheetRemarks" class="form-control" rows="2" placeholder="What was changed, and why or for whom? (e.g. customer-requested substitution)" maxlength="500"></textarea>
+        </div>
       </div>
     </div>
   </div>

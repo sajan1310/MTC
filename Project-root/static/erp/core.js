@@ -193,16 +193,17 @@ const App = {
 
     // Production Lot's own list/report state (Script_Production.html's
     // App.Production) -- globalProduction was already forward-declared
-    // in Round 1. This round covers the list/report side only (Create/
-    // Edit Lot's color-matrix/pool-group system is its own later round,
-    // per the module's size); productionAllSearchTerm backs the "All
-    // Activity" sub-tab's search box.
+    // in Round 1. productionAllSearchTerm backs the "All Activity"
+    // sub-tab's search box. currentProductionSheet remembers which lot
+    // + color columns are in play while the Production Sheet modal is
+    // open (Save/Reset/Add-row/Add-color actions all read it).
     filteredProduction: [],
     selectedProduction: [],
     productionCurrentPage: 1,
     productionRowsPerPage: 15,
     productionSortBy: 'dateDesc',
-    productionAllSearchTerm: ''
+    productionAllSearchTerm: '',
+    currentProductionSheet: null
   },
 
   // ── Bulk Selection Helpers ────────────────────────────────────────────

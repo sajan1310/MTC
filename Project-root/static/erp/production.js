@@ -23,12 +23,12 @@
 // column sync, merged vs. manual rows, composite delimiter-joined pool
 // colors) hadn't been wired up to real data yet.
 //
-// Round 14 scope (this round): lifts that guard. Turned out most of the
+// Round 14 scope (shipped): lifts that guard. Turned out most of the
 // Matrix/Pool-split machinery was already fully, faithfully ported in
 // Round 13 as scaffolding (populateCommonComponentsFromProcess,
 // renderPoolColorSplitGroups, populateColorMatrixForColors, and every
 // column/row helper) -- it simply never received real data while the
-// guard stood. What Round 14 actually adds:
+// guard stood. What Round 14 actually added:
 //   - addComponentRow's `colorScope` handling (a readonly, locked Color
 //     field + data-color-scope attribute) -- Round 12's own simplified
 //     version silently dropped this, which only mattered once a
@@ -49,10 +49,28 @@
 //     _setMultiColorNotice / productionMultiColorNotice) entirely,
 //     rather than leaving dead code behind.
 //
+// This completes the entire Create/Edit Production Lot modal.
+//
+// Round 15 scope (this round): the Production Sheet (lot-completion)
+// modal -- viewProductionSheet and its full supporting cast
+// (groupComponentsForSheet, the Common/Per-Color table renderers,
+// add-row/add-color-column, reset-to-recorded, save, print). A fully
+// editable, printable customization of a lot's already-recorded
+// Components Consumed (e.g. a customer-requested substitution) that
+// never touches the lot's real saved consumption record -- persisted
+// separately via saveProductionSheet into customComponents/sheetRemarks.
+// printProductionSheet is guarded behind App.Print not existing yet,
+// same pattern as every other print entry point in this app; its
+// builder logic stays ported (not stubbed) since it's pure DOM
+// transcription with zero dependency on App.Print itself until the
+// final App.Print.trigger(...) call. serializeProductionSheet's own
+// module comment documents a confirmed field-name mismatch found and
+// fixed this round (colorGroup vs. color).
+//
 // Adaptations from source (documented, not silent):
 // - deleteProduction/deleteProductionBulk/updateProductionStatus/
-//   saveProduction all use Api.mutate (not Api.call): every one is
-//   mutation=True on the backend.
+//   saveProduction/saveProductionSheet all use Api.mutate (not
+//   Api.call): every one is mutation=True on the backend.
 // - initContractorSelect2's Select2 `data` reads `c.contractorName`, not
 //   source's `c.name` -- see contractor.js's module header for the full
 //   story of this backend field-name deviation (getContractorsData
@@ -3049,8 +3067,482 @@ App.Production = {
     }
   },
 
-  viewProductionSheet() {
-    App.Utils.notPortedYet('Production Sheet');
+  // ── Production Sheet (lot-completion) modal ──────────────────────────
+  // A fully editable, printable customization of a lot's already-recorded
+  // Components Consumed -- lets the operator hand-tailor item names,
+  // sizes, narrations, and quantities to match a customer's actual
+  // requirement (e.g. a substitution), without touching the lot's real
+  // saved consumption record.
+
+  viewProductionSheet(idx) {
+    const p = App.State.globalProduction[idx];
+    if (!p) return;
+
+    // This lot's own recorded consumption (set when it was logged) is
+    // the source of truth -- production lots are tied to a Process
+    // recipe, not a Product BOM, so there is no BOM to fall back to.
+    const defaultComponents = p.componentsConsumed || [];
+    const components = (p.customComponents && p.customComponents.length > 0)
+      ? p.customComponents
+      : defaultComponents;
+
+    // p.colorBreakdown is this lot's authoritative color list -- a color
+    // with no component explicitly tagged to it (entirely covered by a
+    // Common fallback, see _getCommonItemsWithColorOverride) still needs
+    // to be known here, or that fallback item's qty has nowhere to be
+    // split into for that color.
+    const knownColors = (p.colorBreakdown || []).map(c => c.color).filter(Boolean);
+    const { common, matrixSlots, colors } = this.groupComponentsForSheet(components, knownColors);
+
+    App.State.currentProductionSheet = { idx, lotQty: p.qty, defaultComponents, colors, lotColor: p.color || '' };
+
+    const label = p.productName || p.outputItemName || p.processId;
+    const tag = p.productId || p.lotNumber;
+    document.getElementById('productionSheetTitle').innerText = `Production Sheet: ${label} (${tag})`;
+    document.getElementById('prodSheetDate').innerText = p.date;
+    document.getElementById('prodSheetProductId').innerText = tag;
+    document.getElementById('prodSheetProductName').innerText = label;
+    document.getElementById('prodSheetLotQty').innerText = this.formatQty(p.qty);
+
+    this.renderProductionSheetTable(common, matrixSlots, colors);
+
+    document.getElementById('productionSheetRemarks').value = p.sheetRemarks || '';
+
+    const modalEl = document.getElementById('productionSheetModal');
+    if (modalEl && typeof bootstrap !== 'undefined') {
+      bootstrap.Modal.getOrCreateInstance(modalEl).show();
+    }
+  },
+
+  // Splits a lot's components into the Common table (no color, shown
+  // once) and the Per-Color matrix (one row per de-duplicated item, one
+  // quantity column per color) -- mirroring the Create/Edit Lot form's
+  // layout. Each color-specific component has its color's name substring
+  // stripped from its item name before being used as the matrix row key,
+  // so e.g. "Red Fabric" (colorGroup Red) and "Blue Fabric" (colorGroup
+  // Blue) collapse into a single "Fabric" row with separate Red/Blue
+  // columns instead of two unrelated-looking flat rows.
+  groupComponentsForSheet(components, knownColors) {
+    const common = [];
+    const matrixIndex = new Map();
+    const matrixSlots = [];
+    const colors = new Set(knownColors || []);
+
+    const commonOverrideComps = this._getCommonItemsWithColorOverride(components || []);
+    const pendingCommonOverrides = [];
+
+    (components || []).forEach(comp => {
+      const colorKey = this._resolveSheetColorKey(comp);
+      const qty = comp.requiredQty !== undefined ? toNumber(comp.requiredQty) : toNumber(comp.qty);
+
+      if (!colorKey) {
+        if (commonOverrideComps.includes(comp)) {
+          const overriddenColors = new Set(
+            (components || [])
+              .filter(o => o !== comp && this._resolveSheetColorKey(o) &&
+                this._itemSlotKey(this._stripColorSubstring(o.itemName || '', this._resolveSheetColorKey(o)), o.size) === this._itemSlotKey(comp.itemName, comp.size))
+              .map(o => this._resolveSheetColorKey(o))
+          );
+          pendingCommonOverrides.push({ comp, qty, overriddenColors });
+          return;
+        }
+        common.push({ itemName: comp.itemName || '', size: comp.size || '', narration: comp.narration || '', qty });
+        return;
+      }
+
+      colors.add(colorKey);
+      const displayName = this._stripColorSubstring(comp.itemName || '', colorKey);
+      const slotKey = [displayName, comp.size || '', comp.narration || ''].join('|').toLowerCase();
+      let slot = matrixIndex.get(slotKey);
+      if (!slot) {
+        slot = { itemName: displayName, size: comp.size || '', narration: comp.narration || '', colors: {} };
+        matrixIndex.set(slotKey, slot);
+        matrixSlots.push(slot);
+      }
+      slot.colors[colorKey] = (slot.colors[colorKey] || 0) + qty;
+    });
+
+    const allColors = Array.from(colors);
+    pendingCommonOverrides.forEach(({ comp, qty, overriddenColors }) => {
+      const fallbackColors = allColors.filter(c => !overriddenColors.has(c));
+      if (fallbackColors.length === 0) return;
+      const perColorQty = qty / fallbackColors.length;
+      const displayName = comp.itemName || '';
+      const slotKey = [displayName, comp.size || '', comp.narration || ''].join('|').toLowerCase();
+      let slot = matrixIndex.get(slotKey);
+      if (!slot) {
+        slot = { itemName: displayName, size: comp.size || '', narration: comp.narration || '', colors: {} };
+        matrixIndex.set(slotKey, slot);
+        matrixSlots.push(slot);
+      }
+      fallbackColors.forEach(c => { slot.colors[c] = (slot.colors[c] || 0) + perColorQty; });
+    });
+
+    return { common, matrixSlots, colors: allColors.sort((a, b) => a.localeCompare(b)) };
+  },
+
+  // Renders the Common table + the Per-Color matrix for the given
+  // grouped data. The matrix is split into one table per distinct set
+  // of colors its rows actually carry a value for (see
+  // _groupMatrixSlotsForSheet), instead of one shared table with every
+  // color in the lot as a column. A perpetual "manual" table (full color
+  // list) is always rendered too, as the target for "+ Add Per-Color
+  // Component" / "+ Add Color Column". Hides the matrix card entirely
+  // when this lot has no color-specific components at all.
+  renderProductionSheetTable(common, matrixSlots, colors) {
+    const commonBody = document.getElementById('productionSheetCommonBody');
+    if (commonBody) {
+      commonBody.innerHTML = (common && common.length > 0)
+        ? common.map(row => this.renderCommonSheetRow(row)).join('')
+        : `<tr><td colspan="5" class="text-center text-muted p-3">No common components recorded.</td></tr>`;
+    }
+
+    const matrixCard = document.getElementById('productionSheetMatrixCard');
+    if (matrixCard) matrixCard.style.display = colors.length > 0 ? '' : 'none';
+
+    const tablesContainer = document.getElementById('productionSheetMatrixTables');
+    if (!tablesContainer) return;
+    tablesContainer.innerHTML = '';
+
+    const { autoGroups, manualSlots } = this._groupMatrixSlotsForSheet(matrixSlots);
+    autoGroups.forEach((group, idx) => {
+      tablesContainer.insertAdjacentHTML('beforeend', this._buildSheetMatrixTable(`group_${idx}`, group.colors, group.slots));
+    });
+    tablesContainer.insertAdjacentHTML('beforeend', this._buildSheetMatrixTable('manual', colors, manualSlots));
+  },
+
+  // Splits matrixSlots into signature-based auto groups (rows that
+  // already carry real saved/customized values, grouped by exactly
+  // which colors those are) plus a `manualSlots` leftover list. The
+  // manual/catch-all table rendered alongside these always shows the
+  // FULL color list regardless of this grouping, since it's the
+  // perpetual target for ad-hoc additions.
+  _groupMatrixSlotsForSheet(matrixSlots) {
+    const groups = new Map();
+    const manualSlots = [];
+    (matrixSlots || []).forEach(slot => {
+      const slotColors = Object.keys(slot.colors || {});
+      if (slotColors.length === 0) { manualSlots.push(slot); return; }
+      const sortedColors = slotColors.slice().sort((a, b) => a.localeCompare(b));
+      const signature = sortedColors.join('|').toLowerCase();
+      if (!groups.has(signature)) groups.set(signature, { colors: sortedColors, slots: [] });
+      groups.get(signature).slots.push(slot);
+    });
+    return { autoGroups: Array.from(groups.values()), manualSlots };
+  },
+
+  // Builds one Per-Color table block: a header with this group's own
+  // colors, and a tbody tagged with data-matrix-group so
+  // addMatrixSheetRow/addProductionSheetColor/serializeProductionSheet
+  // can target the right table (or read across all of them).
+  _buildSheetMatrixTable(groupKey, colors, slots) {
+    const headHtml = colors.map(c => `<th class="text-end" style="min-width:70px;" data-color="${escapeHtml(c)}">${escapeHtml(c)}</th>`).join('');
+    const bodyHtml = slots.map(slot => this.renderMatrixSheetRow(slot, colors)).join('');
+    return `
+      <div class="table-responsive mb-3" data-matrix-group="${escapeHtml(groupKey)}">
+        <table class="table table-sm table-hover table-striped align-middle mb-0">
+          <thead class="table-light">
+            <tr>
+              <th style="width:18%;">Item Name</th><th style="width:8%;">Size</th><th style="width:14%;">Narration</th>
+              ${headHtml}
+              <th class="text-center" style="width:30px;">✕</th>
+            </tr>
+          </thead>
+          <tbody class="prod-sheet-matrix-tbody" data-matrix-group="${escapeHtml(groupKey)}">${bodyHtml}</tbody>
+        </table>
+      </div>`;
+  },
+
+  // Builds one editable Common-table <tr>: item/size/narration + a single Required Qty input.
+  renderCommonSheetRow(row) {
+    const display = row.qty !== undefined ? this.formatQty(row.qty) : '';
+    return `<tr>
+      <td><input type="text" class="form-control form-control-sm prod-sheet-item-name" value="${escapeHtml(row.itemName || '')}" placeholder="Item name"></td>
+      <td><input type="text" class="form-control form-control-sm prod-sheet-size" value="${escapeHtml(row.size || '')}" placeholder="-"></td>
+      <td><input type="text" class="form-control form-control-sm prod-sheet-narration" value="${escapeHtml(row.narration || '')}" placeholder="-"></td>
+      <td><input type="number" class="form-control form-control-sm text-end prod-sheet-qty" value="${display}" step="any" min="0" placeholder="-"></td>
+      <td class="text-center"><button type="button" class="btn btn-outline-danger btn-sm" onclick="this.closest('tr').remove()">✕</button></td>
+    </tr>`;
+  },
+
+  // Builds one editable matrix <tr>: item/size/narration text inputs, plus
+  // one Required Qty number input per color column (blank = not
+  // applicable to that color, rather than a misleading 0).
+  renderMatrixSheetRow(slot, colors) {
+    const qtyCell = (color) => {
+      const val = slot.colors ? slot.colors[color] : undefined;
+      const display = (val === undefined) ? '' : this.formatQty(val);
+      return `<td><input type="number" class="form-control form-control-sm text-end prod-sheet-color-qty" data-color="${escapeHtml(color)}" value="${display}" step="any" min="0" placeholder="-"></td>`;
+    };
+
+    let html = `<tr>
+      <td><input type="text" class="form-control form-control-sm prod-sheet-item-name" value="${escapeHtml(slot.itemName || '')}" placeholder="Item name"></td>
+      <td><input type="text" class="form-control form-control-sm prod-sheet-size" value="${escapeHtml(slot.size || '')}" placeholder="-"></td>
+      <td><input type="text" class="form-control form-control-sm prod-sheet-narration" value="${escapeHtml(slot.narration || '')}" placeholder="-"></td>`;
+    (colors || []).forEach(c => { html += qtyCell(c); });
+    html += `<td class="text-center"><button type="button" class="btn btn-outline-danger btn-sm" onclick="this.closest('tr').remove()">✕</button></td>
+    </tr>`;
+    return html;
+  },
+
+  addCommonSheetRow() {
+    const tbody = document.getElementById('productionSheetCommonBody');
+    if (!tbody) return;
+    if (tbody.querySelector('td[colspan]')) tbody.innerHTML = '';
+    tbody.insertAdjacentHTML('beforeend', this.renderCommonSheetRow({ itemName: '', size: '', narration: '', qty: undefined }));
+  },
+
+  // Appends a blank editable matrix row, with one empty Required Qty
+  // cell per color column currently shown -- always lands in the
+  // perpetual "manual" table (full color list), never one of the
+  // narrower auto-derived groups, since a brand-new row has no colors
+  // of its own yet for the grouping to key off.
+  addMatrixSheetRow() {
+    const tbody = document.querySelector('#productionSheetMatrixTables tbody[data-matrix-group="manual"]');
+    if (!tbody) return;
+    const colors = App.State.currentProductionSheet?.colors || [];
+    tbody.insertAdjacentHTML('beforeend', this.renderMatrixSheetRow({ itemName: '', size: '', narration: '', colors: {} }, colors));
+  },
+
+  // Adds a new color column to the perpetual "manual" table only
+  // (preserving whatever has already been typed into it) -- the
+  // auto-derived tables reflect real saved/customized data signatures,
+  // so a brand-new, still-empty column has no natural home there.
+  addProductionSheetColor() {
+    const name = (prompt('New color name (e.g. Red, Blue):') || '').trim();
+    if (!name) return;
+
+    const state = App.State.currentProductionSheet;
+    if (!state) return;
+
+    state.colors = state.colors || [];
+    if (state.colors.some(c => c.toLowerCase() === name.toLowerCase())) {
+      App.Utils.showToast('That color column already exists.', true);
+      return;
+    }
+    state.colors.push(name);
+    state.colors.sort((a, b) => a.localeCompare(b));
+
+    const manualTable = document.querySelector('#productionSheetMatrixTables [data-matrix-group="manual"]');
+    if (manualTable) {
+      const headerRow = manualTable.querySelector('thead tr');
+      if (headerRow) {
+        const th = document.createElement('th');
+        th.className = 'text-end';
+        th.style.minWidth = '70px';
+        th.dataset.color = name;
+        th.textContent = name;
+        headerRow.insertBefore(th, headerRow.lastElementChild);
+      }
+      manualTable.querySelectorAll('tbody tr').forEach(row => {
+        const td = document.createElement('td');
+        td.innerHTML = `<input type="number" class="form-control form-control-sm text-end prod-sheet-color-qty" data-color="${escapeHtml(name)}" step="any" min="0" placeholder="-">`;
+        row.insertBefore(td, row.lastElementChild);
+      });
+    }
+
+    const matrixCard = document.getElementById('productionSheetMatrixCard');
+    if (matrixCard) matrixCard.style.display = '';
+  },
+
+  // Discards customizations and re-renders both tables from this lot's originally recorded components.
+  resetProductionSheetQuantities() {
+    const state = App.State.currentProductionSheet;
+    if (!state) return;
+
+    const { common, matrixSlots, colors } = this.groupComponentsForSheet(state.defaultComponents || []);
+    state.colors = colors;
+    this.renderProductionSheetTable(common, matrixSlots, colors);
+  },
+
+  // Reads the Common table + Per-Color matrix + remarks into a plain
+  // object -- components are tagged with `color` (blank for Common, a
+  // real color name for a matrix cell) so a re-opened sheet can group
+  // them back into the same two tables via _resolveSheetColorKey.
+  //
+  // Adaptation from source (a confirmed field-name mismatch, verified
+  // empirically against the real saveProductionSheet RPC): source's own
+  // serializeProductionSheet tags every component with `colorGroup`, but
+  // this backend's save_production_sheet only ever reads `comp.color` --
+  // every saved customization's color silently came back blank. Sending
+  // `color` here instead (blank for Common, matching _resolveSheetColorKey's
+  // own read-side fallback for a customComponents row, which never carries
+  // a colorGroup key at all) is the fix.
+  serializeProductionSheet() {
+    const components = [];
+
+    $$('#productionSheetCommonBody tr').forEach(row => {
+      const nameInput = row.querySelector('.prod-sheet-item-name');
+      if (!nameInput) return;
+      const itemName = nameInput.value.trim();
+      if (!itemName) return;
+
+      const qty = toNumber(row.querySelector('.prod-sheet-qty')?.value);
+      if (qty <= 0) return;
+
+      components.push({
+        itemName,
+        size: row.querySelector('.prod-sheet-size')?.value.trim() || '',
+        narration: row.querySelector('.prod-sheet-narration')?.value.trim() || '',
+        color: '',
+        requiredQty: qty
+      });
+    });
+
+    $$('#productionSheetMatrixTables .prod-sheet-matrix-tbody tr').forEach(row => {
+      const nameInput = row.querySelector('.prod-sheet-item-name');
+      if (!nameInput) return;
+      const itemName = nameInput.value.trim();
+      if (!itemName) return;
+
+      const size = row.querySelector('.prod-sheet-size')?.value.trim() || '';
+      const narration = row.querySelector('.prod-sheet-narration')?.value.trim() || '';
+
+      row.querySelectorAll('.prod-sheet-color-qty').forEach(input => {
+        if (input.value === '') return;
+        components.push({
+          itemName,
+          size,
+          narration,
+          color: input.dataset.color || '',
+          requiredQty: toNumber(input.value)
+        });
+      });
+    });
+
+    const remarks = document.getElementById('productionSheetRemarks')?.value.trim() || '';
+    return { components, remarks };
+  },
+
+  // Persists the customized component list + remarks with this production lot.
+  async saveProductionSheet() {
+    const state = App.State.currentProductionSheet;
+    const p = state ? App.State.globalProduction[state.idx] : null;
+    if (!p) return;
+
+    const { components, remarks } = this.serializeProductionSheet();
+
+    const btn = document.getElementById('prodSheetSaveBtn');
+    if (btn) btn.disabled = true;
+
+    try {
+      const res = await Api.mutate('saveProductionSheet', p.rowIdx, p.productId, p.qty, JSON.stringify(components), remarks);
+      App.Utils.showToast(res.message, !res.success);
+      if (res.success) {
+        p.customComponents = components;
+        p.sheetRemarks = remarks;
+      }
+    } catch (err) {
+      App.Utils.showToast(err.message || 'Failed to save production sheet', true);
+    } finally {
+      if (btn) btn.disabled = false;
+    }
+  },
+
+  printProductionSheet() {
+    if (typeof App.Print === 'undefined') {
+      App.Utils.notPortedYet('Printing');
+      return;
+    }
+
+    const setText = (id, text) => {
+      const el = document.getElementById(id);
+      if (el) el.innerText = text;
+    };
+
+    setText('print-prod-date', document.getElementById('prodSheetDate')?.innerText || '');
+    setText('print-prod-id', document.getElementById('prodSheetProductId')?.innerText || '');
+    setText('print-prod-name', document.getElementById('prodSheetProductName')?.innerText || '');
+    setText('print-prod-qty', document.getElementById('prodSheetLotQty')?.innerText || '');
+
+    const lotColor = App.State.currentProductionSheet?.lotColor || '';
+    const colorWrapper = document.getElementById('print-prod-color-wrapper');
+    if (colorWrapper) colorWrapper.style.display = lotColor ? '' : 'none';
+    setText('print-prod-color', lotColor);
+
+    const colors = App.State.currentProductionSheet?.colors || [];
+    const get = (row, sel) => escapeHtml(row.querySelector(sel)?.value.trim() || '');
+
+    const commonBodyDest = document.getElementById('print-production-sheet-common-body');
+    const commonSection = document.getElementById('print-prod-common-section');
+    const commonRows = $$('#productionSheetCommonBody tr').filter(row => row.querySelector('.prod-sheet-item-name'));
+    if (commonSection) commonSection.style.display = commonRows.length > 0 ? '' : 'none';
+    if (commonBodyDest) {
+      commonBodyDest.innerHTML = commonRows.map(row => {
+        const qty = row.querySelector('.prod-sheet-qty')?.value || '';
+        return `<tr>
+          <td style="padding:6px;border:1px solid #ddd;text-align:left;">${get(row, '.prod-sheet-item-name')}</td>
+          <td style="padding:6px;border:1px solid #ddd;">${get(row, '.prod-sheet-size') || '-'}</td>
+          <td style="padding:6px;border:1px solid #ddd;">${get(row, '.prod-sheet-narration') || '-'}</td>
+          <td style="padding:6px;border:1px solid #ddd;text-align:right;font-weight:700;">${qty ? escapeHtml(this.formatQty(qty)) : '-'}</td>
+        </tr>`;
+      }).join('');
+    }
+
+    const matrixSection = document.getElementById('print-prod-matrix-section');
+    const tablesDest = document.getElementById('print-production-sheet-matrix-tables');
+    const matrixRows = $$('#productionSheetMatrixTables .prod-sheet-matrix-tbody tr').filter(row => row.querySelector('.prod-sheet-item-name'));
+
+    if (matrixSection) matrixSection.style.display = (colors.length > 0 && matrixRows.length > 0) ? '' : 'none';
+
+    if (tablesDest) {
+      tablesDest.innerHTML = '';
+
+      const groups = new Map();
+      matrixRows.forEach(row => {
+        const activeColors = colors.filter(c => {
+          const input = $$('.prod-sheet-color-qty', row).find(el => el.dataset.color === c);
+          return toNumber(input?.value) > 0;
+        });
+        const signature = activeColors.join('|').toLowerCase();
+        if (!groups.has(signature)) groups.set(signature, { activeColors, rows: [] });
+        groups.get(signature).rows.push(row);
+      });
+
+      groups.forEach(({ activeColors, rows }) => {
+        const groupColors = activeColors.length > 0 ? activeColors : colors;
+        let headHtml = '<th style="padding:6px;border:1px solid #bbb;text-align:left;width:26%;">Item Name</th>'
+          + '<th style="padding:6px;border:1px solid #bbb;width:10%;">Size</th>'
+          + '<th style="padding:6px;border:1px solid #bbb;width:12%;">Narration</th>';
+        groupColors.forEach(c => {
+          headHtml += `<th style="padding:6px;border:1px solid #bbb;text-align:right;">${escapeHtml(c)}</th>`;
+        });
+
+        const bodyHtml = rows.map(row => {
+          const qtyCellHtml = (color) => {
+            const input = $$('.prod-sheet-color-qty', row).find(el => el.dataset.color === color);
+            const val = input?.value || '';
+            return `<td style="padding:6px;border:1px solid #ddd;text-align:right;font-weight:700;">${val ? escapeHtml(this.formatQty(val)) : '-'}</td>`;
+          };
+          let rowHtml = `<tr>
+          <td style="padding:6px;border:1px solid #ddd;text-align:left;">${get(row, '.prod-sheet-item-name')}</td>
+          <td style="padding:6px;border:1px solid #ddd;">${get(row, '.prod-sheet-size') || '-'}</td>
+          <td style="padding:6px;border:1px solid #ddd;">${get(row, '.prod-sheet-narration') || '-'}</td>`;
+          groupColors.forEach(c => { rowHtml += qtyCellHtml(c); });
+          rowHtml += '</tr>';
+          return rowHtml;
+        }).join('');
+
+        tablesDest.insertAdjacentHTML('beforeend', `
+          <table style="width:100%;border-collapse:collapse;margin-bottom:14px;font-size:12px;">
+            <thead style="background-color:#fff;color:#000;text-align:center;font-weight:700;
+                          -webkit-print-color-adjust:exact;print-color-adjust:exact;">
+              <tr>${headHtml}</tr>
+            </thead>
+            <tbody style="color:#1a1a1a;text-align:center;">${bodyHtml}</tbody>
+          </table>`);
+      });
+    }
+
+    const remarksSection = document.getElementById('print-prod-remarks-section');
+    const remarksText = document.getElementById('productionSheetRemarks')?.value.trim() || '';
+    if (remarksSection) {
+      remarksSection.style.display = remarksText ? '' : 'none';
+      setText('print-prod-remarks-text', remarksText);
+    }
+
+    const productId = document.getElementById('prodSheetProductId')?.innerText || 'Production';
+    App.Print.trigger('print-production-sheet-container', `Production_Sheet_${productId.replace(/[^a-zA-Z0-9_-]/g, '_')}`);
   }
 };
 
