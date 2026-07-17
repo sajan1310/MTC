@@ -45,6 +45,32 @@ const MApp = {};
 // ================================================================
 MApp.Api = { call: Api.call, mutate: Api.mutate };
 
+// ── OFFLINE READ CACHE (Phase 6 Round 1) ────────────────────────────
+// callCached(method) is for the small, deliberately short list of
+// read-only, zero-argument calls a field worker is likely to want a
+// glance at even with no signal (see offline-cache.js's own header for
+// why this is a plain "last known good" cache, not a true delta-sync
+// system). It is NOT a replacement for MApp.Api.call -- most calls
+// should still use .call directly; only Home/Stock's own load paths use
+// this. A network-level failure (the fetch itself rejecting) falls back
+// to the last cached response, tagged with _offlineCachedAt so the
+// caller can show a staleness banner; a normal {success:false} business
+// response is returned as-is and never triggers the cache fallback,
+// since that's a real answer from a reachable server, not an outage.
+MApp.Api.callCached = async function (method) {
+  try {
+    const res = await Api.call(method);
+    OfflineCache.put(method, res); // fire-and-forget
+    return res;
+  } catch (err) {
+    const cached = await OfflineCache.get(method);
+    if (cached) {
+      return { ...cached.response, _offlineCachedAt: cached.cachedAt };
+    }
+    throw err;
+  }
+};
+
 // ================================================================
 // TOAST
 // ================================================================
@@ -195,6 +221,29 @@ MApp.Util = {
   // Mirrors formatCurrency() on desktop.
   formatCurrency(value) {
     return `₹${this.toNumber(value).toFixed(2)}`;
+  },
+
+  // Phase 6 Round 1 -- the "you're looking at cached data" banner shown
+  // when MApp.Api.callCached() fell back to IndexedDB. Reuses the
+  // .mb-offline-banner class (already styled, previously only used for
+  // the "low-stock filter active" notice). grid-column:1/-1 is a no-op
+  // outside a CSS grid parent (Stock's list is plain block flow) and
+  // makes it span full-width as the first item inside Home's .mb-stat-grid.
+  offlineBannerHtml(cachedAtMs) {
+    return `
+      <div class="mb-offline-banner" style="grid-column:1 / -1;">
+        <span>Showing data from ${this.relativeTime(cachedAtMs)} — you're offline</span>
+      </div>`;
+  },
+
+  relativeTime(ms) {
+    const diffSec = Math.max(0, Math.round((Date.now() - ms) / 1000));
+    if (diffSec < 60) return 'just now';
+    const diffMin = Math.round(diffSec / 60);
+    if (diffMin < 60) return `${diffMin}m ago`;
+    const diffHr = Math.round(diffMin / 60);
+    if (diffHr < 24) return `${diffHr}h ago`;
+    return `${Math.round(diffHr / 24)}d ago`;
   }
 };
 
@@ -430,25 +479,26 @@ MApp.Home = {
     const activityEl = document.getElementById('home-activity');
 
     try {
-      const res = await MApp.Api.call('getMobileDashboard');
+      const res = await MApp.Api.callCached('getMobileDashboard');
       if (!res || !res.success) {
         MApp.Util.renderError(statsEl, res && res.message, () => this.mount());
         if (activityEl) activityEl.innerHTML = '';
         return;
       }
       MApp.State.lastDashboard = res.data || {};
-      this.render(res.data || {});
+      this.render(res.data || {}, res._offlineCachedAt);
     } catch (err) {
       MApp.Util.renderError(statsEl, err && err.message, () => this.mount());
       if (activityEl) activityEl.innerHTML = '';
     }
   },
 
-  render(data) {
+  render(data, offlineCachedAt) {
     const statsEl = document.getElementById('home-stats');
     if (statsEl) {
       const lowStock = data.lowStockCount || 0;
-      statsEl.innerHTML = `
+      const banner = offlineCachedAt ? MApp.Util.offlineBannerHtml(offlineCachedAt) : '';
+      statsEl.innerHTML = banner + `
         <button type="button" class="mb-stat-tile" onclick="MApp.Home.goTo('production')">
           <div class="mb-stat-tile-label">Pending production</div>
           <div class="mb-stat-tile-value">${data.pendingProductionCount || 0}</div>
@@ -494,12 +544,6 @@ MApp.Home = {
 };
 
 // ================================================================
-// NOT-YET-PORTED STUBS — see this file's header comment. Each is exactly
-// the one method the static mobile_views.html markup calls directly
-// (FABs / More-tab action rows), nothing more. Deleted (not extended)
-// the round its real module ships.
-// ================================================================
-// ================================================================
 // STOCK — search-first item list. "Searches as you type" is a pure
 // client-side filter over the already-loaded list (no per-keystroke API
 // call). Tapping a card expands recent movements, merged client-side
@@ -527,17 +571,22 @@ MApp.Stock = {
     const listEl = document.getElementById('stock-list');
     MApp.Util.renderSkeleton(listEl, 5);
 
-    try {
-      const [stockRes, itemsRes] = await Promise.all([
-        MApp.Api.call('getStockData'),
-        MApp.Api.call('getItemsData')
-      ]);
+    // getItemsData is supplementary here (unit lookup only, already has a
+    // 'Pcs' fallback below) -- best-effort, caught independently so it
+    // can never block Stock's own offline-cached render when it fails
+    // (e.g. genuinely offline, and getItemsData itself isn't cached this
+    // round). Kicked off alongside getStockData to keep them parallel,
+    // same as before.
+    const itemsPromise = MApp.Api.call('getItemsData').catch(() => null);
 
+    try {
+      const stockRes = await MApp.Api.callCached('getStockData');
       if (!stockRes || !stockRes.success) {
         MApp.Util.renderError(listEl, stockRes && stockRes.message, () => this.load());
         return;
       }
 
+      const itemsRes = await itemsPromise;
       const unitByKey = {};
       if (itemsRes && itemsRes.success) {
         (itemsRes.data || []).forEach(it => {
@@ -553,6 +602,7 @@ MApp.Stock = {
       const lowStockOnly = MApp.State.stockFilter === 'lowstock';
       MApp.State.stockFilter = '';
       this._lowStockOnly = lowStockOnly;
+      this._offlineCachedAt = stockRes._offlineCachedAt || null;
       this.filtered = lowStockOnly ? this.all.filter(s => s.isLowStock) : this.all;
 
       this.render();
@@ -585,12 +635,14 @@ MApp.Stock = {
     const listEl = document.getElementById('stock-list');
     if (!listEl) return;
 
-    const banner = this._lowStockOnly
+    const lowStockBanner = this._lowStockOnly
       ? `<div class="mb-offline-banner" style="background:var(--mb-safety-faint);color:var(--mb-ink);margin-bottom:var(--mb-sp-3);">
            <span>Showing low-stock items only</span>
            <button type="button" class="mb-btn-text" style="padding:0;min-height:auto;" onclick="MApp.Stock.clearLowStockFilter()">Clear</button>
          </div>`
       : '';
+    const offlineBanner = this._offlineCachedAt ? MApp.Util.offlineBannerHtml(this._offlineCachedAt) : '';
+    const banner = offlineBanner + lowStockBanner;
 
     if (this.filtered.length === 0) {
       listEl.innerHTML = banner;

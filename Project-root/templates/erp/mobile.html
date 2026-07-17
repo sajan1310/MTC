@@ -86,6 +86,10 @@
   <!-- Shared google.script.run-equivalent wrapper (same as desktop's Api.call) -->
   <script src="{{ url_for('static', filename='erp/api.js') }}"></script>
 
+  <!-- Offline read cache (Phase 6 Round 1) -- loaded before mobile.js since
+       MApp.Api.callCached references OfflineCache directly. -->
+  <script src="{{ url_for('static', filename='erp/offline-cache.js') }}"></script>
+
   <!-- Mobile app logic -->
   <script src="{{ url_for('static', filename='erp/mobile.js') }}"></script>
 </body>

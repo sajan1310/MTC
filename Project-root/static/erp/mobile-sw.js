@@ -9,11 +9,12 @@
 // mobile shell never loads. Same narrow Phase-5-installability scope as
 // the desktop worker: not the offline-with-sync system (Phase 6).
 
-const CACHE_NAME = 'erp-mobile-shell-v1';
+const CACHE_NAME = 'erp-mobile-shell-v2';
 
 const PRECACHE_URLS = [
   '/erp/mobile/offline.html',
   '/static/erp/api.js',
+  '/static/erp/offline-cache.js',
   '/static/erp/mobile.js',
   '/static/erp/mobile_styles.css',
   '/static/erp/icons/icon-192.png',
