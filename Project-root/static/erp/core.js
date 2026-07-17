@@ -906,4 +906,15 @@ document.addEventListener('DOMContentLoaded', async () => {
 
   bindGlobalEvents();
   await App.Init();
+
+  // Register the shell service worker (Phase 5: PWA installability).
+  // Scoped to /erp/sw.js, not /static/erp/sw.js, so its default scope
+  // naturally covers /erp/* -- see app/erp/pages.py's service_worker
+  // route for why. Registration failures (e.g. sandboxed iframe, browser
+  // without SW support) are non-fatal -- the app works identically
+  // without it, just without install/offline-shell support.
+  if ('serviceWorker' in navigator) {
+    navigator.serviceWorker.register('/erp/sw.js', { scope: '/erp' })
+      .catch(err => console.warn('[PWA] Service worker registration failed:', err));
+  }
 });

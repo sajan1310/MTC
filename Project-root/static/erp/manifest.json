@@ -1,0 +1,26 @@
+{
+  "id": "/erp",
+  "name": "Maharaja Bikes ERP",
+  "short_name": "MB ERP",
+  "description": "Maharaja Bikes internal ERP -- procurement, inventory, production, dispatch, and client management.",
+  "start_url": "/erp",
+  "scope": "/erp",
+  "display": "standalone",
+  "orientation": "any",
+  "background_color": "#f4f7f6",
+  "theme_color": "#0f172a",
+  "icons": [
+    {
+      "src": "icons/icon-192.png",
+      "sizes": "192x192",
+      "type": "image/png",
+      "purpose": "any maskable"
+    },
+    {
+      "src": "icons/icon-512.png",
+      "sizes": "512x512",
+      "type": "image/png",
+      "purpose": "any maskable"
+    }
+  ]
+}

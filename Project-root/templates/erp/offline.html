@@ -1,0 +1,63 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Offline — Maharaja Bikes ERP</title>
+  <link rel="icon" href="{{ url_for('static', filename='erp/icons/favicon.ico') }}">
+  <style>
+    body {
+      font-family: 'Segoe UI', Arial, sans-serif;
+      background-color: #f4f7f6;
+      color: #0f172a;
+      margin: 0;
+      min-height: 100vh;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      text-align: center;
+      padding: 24px;
+      box-sizing: border-box;
+    }
+    .offline-card {
+      max-width: 420px;
+    }
+    .offline-icon {
+      font-size: 48px;
+      margin-bottom: 16px;
+    }
+    h1 {
+      font-size: 22px;
+      font-weight: 700;
+      margin: 0 0 8px 0;
+    }
+    p {
+      color: #555;
+      font-size: 14px;
+      line-height: 1.6;
+      margin: 0 0 20px 0;
+    }
+    button {
+      background-color: #0f172a;
+      color: #fff;
+      border: none;
+      border-radius: 6px;
+      padding: 10px 24px;
+      font-size: 14px;
+      font-weight: 600;
+      cursor: pointer;
+    }
+    button:hover {
+      background-color: #1e293b;
+    }
+  </style>
+</head>
+<body>
+  <div class="offline-card">
+    <div class="offline-icon">📡</div>
+    <h1>You're offline</h1>
+    <p>Maharaja Bikes ERP couldn't reach the server. Check your connection and try again -- any page you had already opened will keep working once you're back online.</p>
+    <button onclick="window.location.reload()">Retry</button>
+  </div>
+</body>
+</html>
