@@ -169,9 +169,9 @@ const App = {
     selectedProcesses: [],
     collapsedProcessGroups: new Set(),
     processGroupOrder: ['size', 'type', 'model'],
-    // Populated from the Contractors module (not ported yet) -- forward-
-    // declared so Process's contractor-rate mini-table select2 degrades to
-    // an empty (but still typeable, tags:true) picker until then.
+    // Forward-declared in Round 8 so Process's contractor-rate mini-table
+    // select2 degraded gracefully before Contractors existed -- now
+    // populated for real by App.Contractor.loadData()/ensureLoaded().
     globalContractors: [],
     currentProcessContractorRates: { processName: '', rates: [] },
 
@@ -180,7 +180,16 @@ const App = {
     filteredBOMs: [],
     selectedBOMs: [],
     bomCurrentPage: 1,
-    bomRowsPerPage: 10
+    bomRowsPerPage: 10,
+
+    // Contractors & Rate Card's own state (Script_Contractors.html's
+    // App.Contractor).
+    filteredContractors: [],
+    globalContractorLedger: [],
+    selectedContractors: [],
+    currentContractorRates: { contractorName: '', rates: [] },
+    currentAccountLedgerContractor: '',
+    currentAccountLedgerData: null
   },
 
   // ── Bulk Selection Helpers ────────────────────────────────────────────
@@ -557,6 +566,7 @@ const App = {
       if (id === 'returnLedger' && typeof App.Return !== 'undefined') App.Return.loadData();
       if (id === 'stockTab' && typeof App.Stock !== 'undefined') App.Stock.loadData();
       if (id === 'productsTab' && typeof App.Products !== 'undefined') App.Products.enterTab();
+      if (id === 'contractorsTab' && typeof App.Contractor !== 'undefined') App.Contractor.loadData();
       // Every other module's own `if (id === '<tab>') App.<Module>.loadData();`
       // line lands here in that module's own round -- same guarded pattern
       // Navigation.showTab already used in source for not-yet-loaded modules.

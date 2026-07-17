@@ -1285,12 +1285,12 @@ App.BOM = {
       allowClear: true,
       matcher: App.Utils.select2Matcher,
       dropdownParent: $parentModal.length ? $parentModal : window.jQuery(document.body),
-      data: (App.State.globalContractors || []).map(c => ({ id: c.name, text: c.name })),
+      data: (App.State.globalContractors || []).map(c => ({ id: c.contractorName, text: c.contractorName })),
       createTag(params) {
         const term = (params.term || '').trim();
         if (!term) return null;
-        const existing = (App.State.globalContractors || []).find(c => App.Utils.sameText(c.name, term));
-        if (existing) return { id: existing.name, text: existing.name };
+        const existing = (App.State.globalContractors || []).find(c => App.Utils.sameText(c.contractorName, term));
+        if (existing) return { id: existing.contractorName, text: existing.contractorName };
         return { id: term, text: term, newTag: true };
       }
     });
