@@ -2893,4 +2893,15 @@ MApp.More = {
 // ================================================================
 document.addEventListener('DOMContentLoaded', () => {
   MApp.Shell.init();
+
+  // Register the mobile shell's own service worker (Phase 5: PWA
+  // installability). Scoped to /erp/mobile/sw.js, not /static/erp/
+  // mobile-sw.js, so its default scope naturally covers /erp/mobile/*
+  // -- see app/erp/pages.py's mobile_service_worker route for why.
+  // Registration failures are non-fatal -- the app works identically
+  // without it, just without install/offline-shell support.
+  if ('serviceWorker' in navigator) {
+    navigator.serviceWorker.register('/erp/mobile/sw.js', { scope: '/erp/mobile' })
+      .catch(err => console.warn('[PWA] Mobile service worker registration failed:', err));
+  }
 });

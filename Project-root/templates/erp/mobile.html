@@ -7,6 +7,12 @@
   <meta name="csrf-token" content="{{ csrf_token() }}">
   <title>Maharaja Bikes — Mobile</title>
 
+  <!-- PWA installability (Phase 5) -->
+  <link rel="manifest" href="{{ url_for('static', filename='erp/manifest-mobile.json') }}">
+  <meta name="theme-color" content="#14181c">
+  <link rel="icon" href="{{ url_for('static', filename='erp/icons/favicon.ico') }}">
+  <link rel="apple-touch-icon" href="{{ url_for('static', filename='erp/icons/apple-touch-icon.png') }}">
+
   <!-- Google Fonts: Oswald (display/titles/big numbers) & Inter (body) -->
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>

@@ -1,0 +1,44 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Offline — Maharaja Bikes Mobile</title>
+  <link rel="icon" href="{{ url_for('static', filename='erp/icons/favicon.ico') }}">
+  <link rel="stylesheet" href="{{ url_for('static', filename='erp/mobile_styles.css') }}">
+  <style>
+    body {
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      text-align: center;
+      padding: var(--mb-sp-6);
+    }
+    .offline-card {
+      max-width: 360px;
+    }
+    .offline-icon {
+      font-size: 48px;
+      margin-bottom: var(--mb-sp-4);
+    }
+    h1 {
+      font-size: 22px;
+      margin-bottom: var(--mb-sp-2);
+    }
+    p {
+      color: var(--mb-steel);
+      font-size: 14px;
+      line-height: 1.6;
+      margin: 0 0 var(--mb-sp-5);
+    }
+  </style>
+</head>
+<body>
+  <div class="offline-card">
+    <div class="offline-icon">📡</div>
+    <h1>You're offline</h1>
+    <p>Maharaja Bikes Mobile couldn't reach the server. Check your connection and try again -- any screen you had already opened will keep working once you're back online.</p>
+    <button type="button" class="mb-btn mb-btn-primary" onclick="window.location.reload()">Retry</button>
+  </div>
+</body>
+</html>

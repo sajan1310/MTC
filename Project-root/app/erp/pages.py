@@ -62,3 +62,34 @@ def offline():
     render for a session that expired while the device was offline.
     """
     return render_template("erp/offline.html")
+
+
+@erp_bp.route("/erp/mobile/sw.js")
+def mobile_service_worker():
+    """Service worker for the mobile shell -- a separate, smaller script
+    from /erp/sw.js (its own precache list: only mobile.js/mobile_styles.css/
+    icons, never desktop's module bundle) since the mobile PWA is installed
+    independently via manifest-mobile.json's own start_url (/erp/mobile).
+    Same routing rationale as /erp/sw.js: served at /erp/mobile/sw.js (not
+    /static/erp/mobile-sw.js) so its default scope covers /erp/mobile/*.
+    """
+    static_dir = os.path.join(current_app.static_folder, "erp")
+    resp = send_from_directory(static_dir, "mobile-sw.js", mimetype="application/javascript")
+    resp.headers["Cache-Control"] = "no-cache"
+    # Same reasoning as /erp/sw.js's Service-Worker-Allowed -- without it,
+    # a SW at /erp/mobile/sw.js could only register scopes starting with
+    # "/erp/mobile/" (its own script directory), excluding the bare
+    # "/erp/mobile" URL (no trailing slash) that /erp/mobile's own route
+    # actually uses.
+    resp.headers["Service-Worker-Allowed"] = "/erp/mobile"
+    return resp
+
+
+@erp_bp.route("/erp/mobile/offline.html")
+def mobile_offline():
+    """Offline fallback page for the mobile shell, styled with the mobile
+    design system (mobile_styles.css's workshop-floor palette) rather than
+    reusing /erp/offline.html's desktop styling -- the installed mobile PWA
+    should look like itself even when showing an error state.
+    """
+    return render_template("erp/mobile_offline.html")

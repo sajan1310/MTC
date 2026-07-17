@@ -1,0 +1,26 @@
+{
+  "id": "/erp/mobile",
+  "name": "Maharaja Bikes Mobile",
+  "short_name": "MB Mobile",
+  "description": "Maharaja Bikes field app -- log production lots, dispatches, returns, and stock checks from the shop floor.",
+  "start_url": "/erp/mobile",
+  "scope": "/erp/mobile",
+  "display": "standalone",
+  "orientation": "portrait",
+  "background_color": "#f3f5f6",
+  "theme_color": "#14181c",
+  "icons": [
+    {
+      "src": "icons/icon-192.png",
+      "sizes": "192x192",
+      "type": "image/png",
+      "purpose": "any maskable"
+    },
+    {
+      "src": "icons/icon-512.png",
+      "sizes": "512x512",
+      "type": "image/png",
+      "purpose": "any maskable"
+    }
+  ]
+}
