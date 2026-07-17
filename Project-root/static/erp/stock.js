@@ -2,23 +2,31 @@
 // stock.js -- App.Unit, App.Color, App.Model, App.ProcessType, App.Stock,
 // ported from Apps_Script/Script_Stock.html.
 //
-// Scope this round: the 4 small header-shortcut masters (Unit/Color/Model/
-// Process Type -- deferred since Round 1's "Master-data-shortcut buttons"
-// note) plus App.Stock's Items Stock sub-tab (the raw-material stock
-// ledger). App.Stock's Warehouse Pool sub-tab is OUT of scope: it's
-// fundamentally tied to App.Process/BOM data (Process picker, product-tag/
-// color grouping, opening-stock entry against a Process) that doesn't
-// exist yet -- that's the Products & Processes round's job. The sub-tab
-// pill navigation itself is ported (switchSubTab) so the UI shape is
-// visible, but switching to it shows a "not ported yet" placeholder
-// instead of throwing on the missing App.Process dependency.
+// Round 7 scope (shipped): the 4 small header-shortcut masters (Unit/
+// Color/Model/Process Type) plus App.Stock's Items Stock sub-tab (the
+// raw-material stock ledger). Warehouse Pool was deferred: it's
+// fundamentally tied to App.Process/BOM data (Process picker, product-
+// tag/color grouping, opening-stock entry against a Process) that
+// didn't exist yet at the time.
+//
+// Round 17 scope (this round): App.Stock's Warehouse Pool sub-tab, now
+// that App.Process/BOM/Production all exist. Grouped by Process using
+// the SAME 3-tier Size/Process Type/Model picker as the Processes
+// sub-tab (App.Process.GROUP_DIMENSIONS/buildRankMaps, reused not
+// duplicated); one row per Process summing every Color/Product-Tag
+// bucket's totals, with a per-Process breakdown modal for editing each
+// combination's Available Qty inline, opening-stock seeding, and a
+// per-bucket transaction ledger (Production credits/consumption,
+// Dispatch debits, Opening Stock, manual corrections).
 //
 // Adaptations from source (documented, not silent):
 // - All mutating RPCs (saveUnit/deleteUnit/saveColor/deleteColor/
 //   saveModel/deleteModel/saveProcessType/deleteProcessType/
-//   updateThreshold/updateDeadStock/adjustStockManually/importStockData)
-//   use Api.mutate (not Api.call): every one is mutation=True on the
-//   backend, so rpc.py requires a fresh X-Mutation-Id per call.
+//   updateThreshold/updateDeadStock/adjustStockManually/importStockData/
+//   adjustWarehousePoolManually/saveWarehousePoolOpening/
+//   deleteWarehousePoolOpening) use Api.mutate (not Api.call): every one
+//   is mutation=True on the backend, so rpc.py requires a fresh
+//   X-Mutation-Id per call.
 // - extractColorsFromItemMaster (App.Color.autoExtract) and
 //   importProcessTypesFromProcessNames (App.ProcessType.importFromProcessNames)
 //   are left wired to their real (backend-missing) RPC calls -- confirmed
@@ -26,16 +34,17 @@
 //   "deferred to the phases that add them" (Process Master, in this case)
 //   -- each already has its own try/catch showing an error toast, so a
 //   404 degrades the same honest way as any other missing endpoint.
-// - printLowStockReport/printFullStockList/bulkPrint are guarded behind
-//   App.Print not existing yet; printStockPivot (their shared builder,
-//   which writes into a static #print-low-stock-container this round's
-//   partial doesn't include) stays as ported dead code, unreachable
-//   until both App.Print and that container exist.
-// - App.Stock.loadData()'s "refresh Warehouse Pool if its sub-tab is
-//   showing" branch and switchSubTab's "entering Warehouse Pool" branch
-//   are both guarded against App.Process / this.loadWarehousePoolData
-//   not existing yet, showing App.Utils.notPortedYet('Warehouse Pool')
-//   instead of throwing.
+// - printLowStockReport/printFullStockList/bulkPrint/bulkPrintWarehousePool
+//   are guarded behind App.Print not existing yet; printStockPivot
+//   (their shared builder, which writes into a static
+//   #print-low-stock-container this round's partial doesn't include)
+//   stays as ported dead code, unreachable until both App.Print and that
+//   container exist.
+// - The Warehouse Pool Ledger's Dispatch-debit rows read
+//   App.State.globalDispatch, forward-declared empty in core.js -- a
+//   plain data cache filled by the real (already-existing server-side)
+//   getDispatchData RPC, not a dependency on an App.Dispatch module, so
+//   this needed no guard at all, just the forward declaration.
 
 // ==========================================
 // UNIT MASTER NAMESPACE
@@ -655,11 +664,13 @@ App.Stock = {
       this.renderTable();
 
       // If the Warehouse Pool sub-tab is the one currently showing,
-      // refresh it too -- guarded since loadWarehousePoolData isn't
-      // ported yet (Warehouse Pool is deferred to the Products &
-      // Processes round; see module header comment).
+      // refresh it too -- otherwise returning to this tab after an
+      // action elsewhere (e.g. completing a Production lot that
+      // consumes/produces against a pool bucket) leaves its Available
+      // Qty numbers stale, which then makes correct-to-0 edits fail as
+      // "already this value" against the server's fresher truth.
       const poolTab = document.getElementById('warehousePoolSubTab');
-      if (poolTab && poolTab.style.display !== 'none' && typeof this.loadWarehousePoolData === 'function') {
+      if (poolTab && poolTab.style.display !== 'none') {
         this.loadWarehousePoolData();
       }
     } catch (err) {
@@ -676,12 +687,880 @@ App.Stock = {
     document.getElementById('btn-' + id)?.classList.add('active');
 
     if (id === 'warehousePoolSubTab') {
-      if (typeof App.Process === 'undefined' || typeof this.loadWarehousePoolData !== 'function') {
-        App.Utils.notPortedYet('Warehouse Pool');
-        return;
-      }
       App.Process.ensureLoaded().then(() => this.loadWarehousePoolData());
     }
+  },
+
+  // ── Warehouse Pool (intermediate/finished process outputs) ─────────
+  // Table is grouped by Process -- every Process the user has created,
+  // even ones with zero stock yet -- using the same Size/Process Type/
+  // Model "Group by" tiers as the Processes sub-tab (see
+  // App.Process.GROUP_DIMENSIONS, reused here rather than duplicated).
+  // Each Process is a single row showing its Total Available Qty summed
+  // across every Warehouse Pool bucket (one per Color/Product-Tag
+  // combination) it has; a Process with no bucket yet still gets a
+  // single zero-qty placeholder so it shows up with a Total of 0.
+  // Clicking a Process row opens openWarehousePoolProcessModal(), which
+  // lists every one of those combinations with an editable Available Qty.
+  initGroupDropdowns() {
+    let saved = null;
+    try {
+      const raw = localStorage.getItem('warehousePoolGroupOrder');
+      if (raw) saved = JSON.parse(raw);
+    } catch (e) {
+      // Ignored -- falls back to the default order below.
+    }
+    if (Array.isArray(saved) && saved.length === 3) App.State.warehousePoolGroupOrder = saved;
+
+    const order = App.State.warehousePoolGroupOrder;
+    for (let i = 0; i < 3; i++) {
+      const select = document.getElementById(`warehousePoolGroupTier${i + 1}`);
+      if (!select) continue;
+      const usedElsewhere = order.filter((dim, idx) => idx !== i && dim);
+      let optionsHtml = '<option value="">None</option>';
+      Object.keys(App.Process.GROUP_DIMENSIONS).forEach(dim => {
+        if (usedElsewhere.includes(dim)) return;
+        optionsHtml += `<option value="${dim}">${escapeHtml(App.Process.GROUP_DIMENSIONS[dim].label)}</option>`;
+      });
+      select.innerHTML = optionsHtml;
+      select.value = order[i] || '';
+    }
+  },
+
+  onGroupOrderChange() {
+    const order = [1, 2, 3].map(i => document.getElementById(`warehousePoolGroupTier${i}`).value);
+    App.State.warehousePoolGroupOrder = order;
+    try {
+      localStorage.setItem('warehousePoolGroupOrder', JSON.stringify(order));
+    } catch (e) {
+      // Ignored -- the order just won't persist across reloads.
+    }
+    this.initGroupDropdowns();
+    this.renderWarehousePoolTable();
+  },
+
+  async loadWarehousePoolData() {
+    this.initGroupDropdowns();
+    const tbody = document.getElementById('warehousePoolTableBody');
+    if (tbody) tbody.innerHTML = '<tr><td colspan="11" class="text-center p-4">Loading Warehouse Pool...</td></tr>';
+
+    try {
+      const [poolRes, colorsRes] = await Promise.all([
+        Api.call('getWarehousePoolData'),
+        Api.call('getAllProcessColorGroups')
+      ]);
+      if (!poolRes?.success) {
+        App.Utils.showToast(poolRes?.message || 'Failed to load Warehouse Pool data.', true);
+        return;
+      }
+      App.State.globalWarehousePool = Array.isArray(poolRes.data) ? poolRes.data : [];
+      App.State.warehousePoolColorsByProcess = colorsRes?.success ? (colorsRes.data || {}) : {};
+      App.State.selectedWarehousePool = [];
+      this.renderWarehousePoolTable();
+    } catch (err) {
+      App.Utils.showToast(err.message || 'Failed to load Warehouse Pool data.', true);
+    }
+  },
+
+  filterWarehousePool(searchTerm) {
+    App.State.warehousePoolSearchTerm = (searchTerm || '').toLowerCase().trim();
+    this.renderWarehousePoolTable();
+  },
+
+  toggleSelectAllWarehousePool(masterChk) {
+    App.Selection.toggleAll(App.State.selectedWarehousePool, 'warehousepool-select-chk', masterChk);
+    this.updateWarehousePoolBulkButtons();
+  },
+
+  // Selects (or, if every currently-filtered Process is already selected,
+  // deselects) every Process matching the active search -- mirrors
+  // selectAllFiltered() for the Items Stock table above.
+  selectAllFilteredWarehousePool() {
+    const term = App.State.warehousePoolSearchTerm || '';
+    const keys = (App.State.globalProcesses || [])
+      .filter(p => this.computeLeafRowsForProcess(p, term).length > 0)
+      .map(p => p.processId);
+    const allSelected = keys.length > 0 &&
+      keys.every(key => App.Selection.isSelected(App.State.selectedWarehousePool, key));
+    App.State.selectedWarehousePool = allSelected ? [] : keys;
+    this.renderWarehousePoolTable();
+    this.updateWarehousePoolBulkButtons();
+  },
+
+  onWarehousePoolRowSelectChange() {
+    App.Selection.syncFromRows(App.State.selectedWarehousePool, 'warehousepool-select-chk', 'selectAllWarehousePool');
+    this.updateWarehousePoolBulkButtons();
+  },
+
+  updateWarehousePoolBulkButtons() {
+    const count = App.State.selectedWarehousePool.length;
+    App.Selection.updateButton('btnBulkPrintWarehousePool', count, '<i class="bi bi-printer"></i> Print Selected');
+  },
+
+  // Prints every leaf bucket (Color/Product-Tag combination) belonging to
+  // the checked Process rows, as the same pivot table (one row per item/
+  // color/tag, one column per size) printFullStockList() uses -- but
+  // scoped to just the selected Processes instead of the whole pool.
+  bulkPrintWarehousePool() {
+    if (typeof App.Print === 'undefined') {
+      App.Utils.notPortedYet('Printing');
+      return;
+    }
+
+    const selected = App.State.selectedWarehousePool;
+    if (selected.length === 0) return;
+
+    const poolItems = (App.State.globalWarehousePool || [])
+      .filter(r => App.Selection.isSelected(selected, r.processId));
+    if (poolItems.length === 0) return;
+
+    const term = App.State.warehousePoolSearchTerm;
+    this.printStockPivot([], poolItems, {
+      subtitle: 'Selected Warehouse Pool Register',
+      reportType: term
+        ? `Selected Warehouse Pool — Search: "${term}"`
+        : 'Selected Warehouse Pool (Available Qty by Size)',
+      fileNamePrefix: term
+        ? `Warehouse_Pool_Selected_${term.replace(/[^a-zA-Z0-9_-]+/g, '_')}`
+        : 'Warehouse_Pool_Selected',
+      emptyMessage: 'No Warehouse Pool buckets selected.'
+    });
+  },
+
+  // Returns the bucket rows to render under one Process: every existing
+  // bucket, plus a zero-qty placeholder row for any color variant the
+  // Process is known to produce (per getAllProcessColorGroups) that
+  // doesn't have a bucket yet -- so every variant is visible and its
+  // Available Qty can be set inline to seed initial stock. If the
+  // Process has no buckets and no known color variants, falls back to
+  // one untagged placeholder. A search term then filters this combined
+  // list down (or passes it through whole if the Process itself
+  // matches).
+  computeLeafRowsForProcess(process, term) {
+    const buckets = (App.State.globalWarehousePool || []).filter(r => r.processId === process.processId);
+    const knownColors = (App.State.warehousePoolColorsByProcess || {})[process.processId] || [];
+    // Case-insensitive: knownColors is derived server-side from recipe/
+    // pool color strings that may have been typed with different casing
+    // than an existing bucket's own `color` (e.g. "Red" bucket vs a
+    // "red" entry in knownColors) -- a raw Set.has() would then show
+    // BOTH the real bucket and a spurious zero-qty placeholder for what
+    // is really the same color.
+    const existingColors = new Set(buckets.map(r => String(r.color || '').trim().toLowerCase()));
+    const missingColorRows = knownColors
+      .filter(c => !existingColors.has(String(c || '').trim().toLowerCase()))
+      .map(c => this._placeholderBucket(process, c));
+    const rows = buckets.concat(missingColorRows)
+      .sort((a, b) => a.color.localeCompare(b.color) || a.productTag.localeCompare(b.productTag));
+    if (!rows.length) rows.push(this._placeholderBucket(process));
+
+    if (!term) return rows;
+    const processMatches = App.Utils.matchesKeywords([process.processName, process.outputItemName].join(' '), term);
+    if (processMatches) return rows;
+    return rows.filter(r => App.Utils.matchesKeywords([r.outputItemName, r.productTag, r.color].join(' '), term));
+  },
+
+  _placeholderBucket(process, color) {
+    return {
+      outputItemName: process.outputItemName || '',
+      processId: process.processId,
+      productTag: '',
+      color: color || '',
+      producedQty: 0,
+      consumedQty: 0,
+      availableQty: 0,
+      isPlaceholder: true
+    };
+  },
+
+  renderWarehousePoolTable() {
+    const tbody = document.getElementById('warehousePoolTableBody');
+    if (!tbody) return;
+    const emptyState = document.getElementById('warehousePoolEmptyState');
+
+    const term = App.State.warehousePoolSearchTerm || '';
+    const entries = (App.State.globalProcesses || [])
+      .map(p => ({ process: p, leafRows: this.computeLeafRowsForProcess(p, term) }))
+      .filter(e => e.leafRows.length > 0);
+
+    if (entries.length === 0) {
+      tbody.innerHTML = '';
+      if (emptyState) emptyState.style.display = 'block';
+      this.updateWarehousePoolBulkButtons();
+      return;
+    }
+    if (emptyState) emptyState.style.display = 'none';
+
+    const tiers = (App.State.warehousePoolGroupOrder || []).filter(dim => dim && App.Process.GROUP_DIMENSIONS[dim]);
+    this.renderWarehousePoolHeader(tiers);
+
+    const selectAllChk = document.getElementById('selectAllWarehousePool');
+    if (selectAllChk) {
+      selectAllChk.checked = entries.length > 0 &&
+        entries.every(e => App.Selection.isSelected(App.State.selectedWarehousePool, e.process.processId));
+    }
+
+    // See App.Process.renderTable -- rank lookups are precomputed once per
+    // tier (Map) and once per row (Schwartzian transform) instead of the
+    // rank() closure rebuilding its names array + indexOf() on every
+    // pairwise comparison.
+    const rankMaps = App.Process.buildRankMaps(tiers);
+    const keyedEntries = entries.map(e => ({
+      row: e,
+      keys: tiers.map((dim, idx) => {
+        const value = App.Process.GROUP_DIMENSIONS[dim].getValue(e.process);
+        const rm = rankMaps[idx];
+        return { value, rank: rm.map.has(value) ? rm.map.get(value) : rm.fallback };
+      })
+    }));
+    keyedEntries.sort((a, b) => {
+      for (let i = 0; i < tiers.length; i++) {
+        const ka = a.keys[i], kb = b.keys[i];
+        if (ka.value !== kb.value) {
+          // See the matching comment in App.Process.renderTable -- two
+          // different values can tie on rank, and returning "equal" here
+          // would make the comparator non-transitive and scatter same-
+          // value rows apart. Tie-break on the raw value.
+          const rankDiff = ka.rank - kb.rank;
+          if (rankDiff !== 0) return rankDiff;
+          return ka.value < kb.value ? -1 : 1;
+        }
+      }
+      return a.row.process.sequence - b.row.process.sequence;
+    });
+    const sorted = keyedEntries.map(k => k.row);
+
+    // One row per Process: tier dimensions (Size/Process Type/Model, per
+    // the Group-by pickers) plus the Process itself, with its Total
+    // Produced/Consumed/Available summed across every leaf row (Color/
+    // Product-Tag combination) computed above. The row opens
+    // openWarehousePoolProcessModal() for the per-combination breakdown.
+    let html = '';
+    sorted.forEach(entry => {
+      const p = entry.process;
+      const tierValues = tiers.map(dim => App.Process.GROUP_DIMENSIONS[dim].getValue(p));
+      const outputBadge = p.outputItemName
+        ? `<span class="badge bg-secondary ms-2">${escapeHtml(p.outputItemName)}</span>`
+        : '<span class="badge bg-warning text-dark ms-2">No Output Item configured</span>';
+      const statusBadge = p.active ? '' : ' <span class="badge bg-danger ms-2">Inactive</span>';
+      const tierCells = tierValues.map(v => `<td class="align-middle fw-semibold text-secondary bg-light">${escapeHtml(v)}</td>`).join('');
+      const processCell = `<td class="align-middle fw-bold">${escapeHtml(p.processName)}${outputBadge}${statusBadge}</td>`;
+
+      const totals = entry.leafRows.reduce((acc, r) => {
+        acc.produced += r.producedQty || 0;
+        acc.consumed += r.consumedQty || 0;
+        acc.available += r.availableQty || 0;
+        return acc;
+      }, { produced: 0, consumed: 0, available: 0 });
+
+      const encProcessId = encodeURIComponent(p.processId);
+      const comboLabel = entry.leafRows.length === 1 ? '1 combination' : `${entry.leafRows.length} combinations`;
+      const checked = App.Selection.isSelected(App.State.selectedWarehousePool, p.processId) ? 'checked' : '';
+
+      html += `<tr class="pool-process-row" style="cursor:pointer;" onclick="App.Stock.openWarehousePoolProcessModal('${encProcessId}')">
+        <td class="text-center" onclick="event.stopPropagation();">
+          <input type="checkbox" class="form-check-input warehousepool-select-chk" data-key="${escapeHtml(p.processId)}" ${checked} onchange="App.Stock.onWarehousePoolRowSelectChange()">
+        </td>
+        ${tierCells}
+        ${processCell}
+        <td class="text-center">${App.Production.formatQty(totals.produced)}</td>
+        <td class="text-center">${App.Production.formatQty(totals.consumed)}</td>
+        <td class="text-center fw-bold">${App.Production.formatQty(totals.available)}</td>
+        <td class="text-center">
+          <button type="button" class="btn btn-outline-primary btn-sm" title="View / Edit Breakdown">
+            <i class="bi bi-list-ul me-1"></i>${comboLabel}
+          </button>
+        </td>
+      </tr>`;
+    });
+
+    tbody.innerHTML = html;
+    this.updateWarehousePoolBulkButtons();
+  },
+
+  // Builds the dynamic <thead> row: one column per active Group-by tier
+  // (label from App.Process.GROUP_DIMENSIONS), then the fixed columns.
+  renderWarehousePoolHeader(tiers) {
+    const headerRow = document.getElementById('warehousePoolTableHeaderRow');
+    if (!headerRow) return;
+    const tierHeaders = tiers.map(dim => `<th>${escapeHtml(App.Process.GROUP_DIMENSIONS[dim].label)}</th>`).join('');
+    headerRow.innerHTML = `
+      <th class="text-center" style="width: 4%;"><input type="checkbox" id="selectAllWarehousePool" class="form-check-input" onclick="App.Stock.toggleSelectAllWarehousePool(this)"></th>
+      ${tierHeaders}
+      <th>Process</th>
+      <th class="text-center">Total Produced</th>
+      <th class="text-center">Total Consumed</th>
+      <th class="text-center">Total Available</th>
+      <th class="text-center">Actions</th>`;
+  },
+
+  // Opens the per-Process breakdown dialog: every known Color/Product-Tag
+  // combination for this process (including zero-qty placeholders for
+  // variants that haven't been stocked yet -- same rows
+  // renderWarehousePoolTable() summed into the Total columns), each with
+  // the same click-to-edit Available Qty cell the old flat table had.
+  // Always computed with no search term so the full breakdown is visible
+  // even if the main table is currently filtered.
+  openWarehousePoolProcessModal(encProcessId) {
+    const processId = decodeURIComponent(encProcessId || '');
+    const process = (App.State.globalProcesses || []).find(p => p.processId === processId);
+    if (!process) return;
+
+    const leafRows = this.computeLeafRowsForProcess(process, '');
+
+    const titleEl = document.getElementById('warehousePoolProcessModalTitle');
+    if (titleEl) {
+      const outputBadge = process.outputItemName
+        ? ` <span class="badge bg-secondary ms-2">${escapeHtml(process.outputItemName)}</span>`
+        : '';
+      titleEl.innerHTML = `<i class="bi bi-boxes me-2"></i>Warehouse Pool: ${escapeHtml(process.processName)}${outputBadge}`;
+    }
+
+    const body = document.getElementById('warehousePoolProcessModalBody');
+    if (body) {
+      body.innerHTML = leafRows.length
+        ? leafRows.map(r => `<tr>${this.renderWarehousePoolLeafCells(process, r)}</tr>`).join('')
+        : '<tr><td colspan="6" class="text-center text-muted p-4">No Warehouse Pool buckets found for this process.</td></tr>';
+    }
+
+    safeModalShow('warehousePoolProcessModal');
+  },
+
+  renderWarehousePoolLeafCells(process, r) {
+    const encName = encodeURIComponent(r.outputItemName || '');
+    const encTag = encodeURIComponent(r.productTag || '');
+    const encColor = encodeURIComponent(r.color || '');
+    const encProcessId = encodeURIComponent(r.processId || process.processId || '');
+    const availableCell = r.outputItemName
+      ? `<span class="pool-stock-display" data-qty="${r.availableQty}" style="cursor:text;border-bottom:1px dashed #999;" title="Click to edit"
+          onclick="App.Stock.editPoolStockCell(this, '${encName}', '${encProcessId}', '${encTag}', '${encColor}')">${App.Production.formatQty(r.availableQty)}</span>`
+      : '<span class="text-muted">—</span>';
+
+    return `
+    <td>${r.productTag ? `<span class="badge bg-dark">${escapeHtml(r.productTag)}</span>` : '<span class="text-muted">—</span>'}</td>
+    <td class="text-center" data-pool-field="produced">${App.Production.formatQty(r.producedQty)}</td>
+    <td class="text-center">${App.Production.formatQty(r.consumedQty)}</td>
+    <td>${r.color ? `<span class="badge bg-info text-dark">${escapeHtml(r.color)}</span>` : '<span class="text-muted">—</span>'}</td>
+    <td class="text-center fw-bold">${availableCell}</td>
+    <td class="text-center">
+      <button type="button" class="btn btn-outline-info btn-sm" title="View Ledger"
+              onclick="App.Stock.openPoolLedgerModal('${encName}', '${encTag}', '${encColor}')">
+        <i class="bi bi-journal-text"></i>
+      </button>
+    </td>`;
+  },
+
+  // Click-to-edit Available Qty cell. Saves by SETTING the bucket's
+  // Available Qty to the typed value (adjustWarehousePoolManually --
+  // same overwrite semantics as the old per-row correction modal this
+  // replaces), using a fixed reason since there's no separate field for
+  // one in this inline flow; use "Add Opening Stock" instead when a
+  // specific dated remark needs to be recorded.
+  editPoolStockCell(spanEl, encName, encProcessId, encTag, encColor) {
+    const td = spanEl.closest('td');
+    if (!td) return;
+    const tr = td.closest('tr');
+    const oldQty = parseFloat(spanEl.dataset.qty) || 0;
+
+    // This cell lives inside the per-Process breakdown modal (see
+    // openWarehousePoolProcessModal), not the main table, so "revert"
+    // and "commit" both act on this td directly rather than re-rendering
+    // the whole Warehouse Pool table (which wouldn't touch the modal).
+    const renderSpan = (qty) => `<span class="pool-stock-display" data-qty="${qty}" style="cursor:text;border-bottom:1px dashed #999;" title="Click to edit"
+      onclick="App.Stock.editPoolStockCell(this, '${encName}', '${encProcessId}', '${encTag}', '${encColor}')">${App.Production.formatQty(qty)}</span>`;
+    const revert = () => { td.innerHTML = renderSpan(oldQty); };
+
+    const input = document.createElement('input');
+    input.type = 'number';
+    input.className = 'form-control form-control-sm text-center d-inline-block';
+    input.style.width = '110px';
+    input.step = 'any';
+    input.value = oldQty;
+    td.innerHTML = '';
+    td.appendChild(input);
+    input.focus();
+    input.select();
+
+    let settled = false;
+    const finish = async () => {
+      if (settled) return;
+      settled = true;
+
+      const newQty = parseFloat(input.value);
+      if (isNaN(newQty)) {
+        App.Utils.showToast('Available Qty must be a valid number.', true);
+        revert();
+        return;
+      }
+      if (newQty === oldQty) {
+        revert();
+        return;
+      }
+
+      const outputItemName = decodeURIComponent(encName || '');
+      const processId = decodeURIComponent(encProcessId || '');
+      const productTag = decodeURIComponent(encTag || '');
+      const color = decodeURIComponent(encColor || '');
+      try {
+        const res = await Api.mutate('adjustWarehousePoolManually', outputItemName, processId, productTag, color, newQty, 'Inline edit via Warehouse Pool table');
+        if (!res?.success) {
+          App.Utils.showToast(res?.message || 'Failed to update stock.', true);
+          // The server's "nothing to adjust" rejection means its fresh
+          // read of Available Qty already equals newQty -- i.e. our
+          // on-screen oldQty was stale (e.g. another user's change
+          // landed after this table last loaded). Reconcile the display
+          // to that authoritative value instead of reverting to the
+          // stale one, or the cell would keep showing a wrong number
+          // and every retry of the same edit would fail the same way.
+          const serverQty = res?.data?.oldAvailableQty;
+          if (typeof serverQty === 'number' && !isNaN(serverQty) && serverQty !== oldQty) {
+            if (!App.State.globalWarehousePool) App.State.globalWarehousePool = [];
+            let staleBucket = App.State.globalWarehousePool.find(b =>
+              App.Utils.sameText(b.outputItemName, outputItemName) && b.processId === processId &&
+              App.Utils.sameText(b.productTag || '', productTag || '') && App.Utils.sameText(b.color || '', color || ''));
+            if (staleBucket) staleBucket.availableQty = serverQty;
+            td.innerHTML = renderSpan(serverQty);
+          } else {
+            revert();
+          }
+          return;
+        }
+        App.State.globalWarehousePoolAdjustments = [];
+
+        // Patch this one bucket locally instead of re-fetching --
+        // recalculateWarehousePool only ever touches the single bucket
+        // we just adjusted (it adds the delta to producedQty;
+        // consumedQty is untouched), so the server's returned newQty is
+        // authoritative for this bucket alone.
+        if (!App.State.globalWarehousePool) App.State.globalWarehousePool = [];
+        let bucket = App.State.globalWarehousePool.find(b =>
+          App.Utils.sameText(b.outputItemName, outputItemName) && b.processId === processId &&
+          App.Utils.sameText(b.productTag || '', productTag || '') && App.Utils.sameText(b.color || '', color || ''));
+        if (bucket) {
+          bucket.producedQty = (bucket.producedQty || 0) + (newQty - oldQty);
+          bucket.availableQty = newQty;
+        } else {
+          bucket = { outputItemName, processId, productTag, color, producedQty: newQty, consumedQty: 0, availableQty: newQty };
+          App.State.globalWarehousePool.push(bucket);
+        }
+
+        if (tr) {
+          const producedCell = tr.querySelector('[data-pool-field="produced"]');
+          if (producedCell) producedCell.textContent = App.Production.formatQty(bucket.producedQty);
+        }
+        td.innerHTML = renderSpan(bucket.availableQty);
+
+        // Refresh the Process row's totals in the main table underneath
+        // the modal so they stay in sync with this bucket's new qty.
+        this.renderWarehousePoolTable();
+      } catch (err) {
+        App.Utils.showToast(err.message || 'Failed to update stock.', true);
+        revert();
+      }
+    };
+
+    input.addEventListener('blur', finish);
+    input.addEventListener('keydown', (e) => {
+      if (e.key === 'Enter') {
+        e.preventDefault();
+        input.blur();
+      } else if (e.key === 'Escape') {
+        settled = true;
+        revert();
+      }
+    });
+  },
+
+  // ── Warehouse Pool Opening Stock ────────────────────────────
+  // Seeds stock that already existed before this app went live (or a
+  // one-off correction) into a Warehouse Pool bucket, via the same
+  // Process/Product-tag/Color shape a Production lot uses.
+  async openWarehouseOpeningModal() {
+    await App.Process.ensureLoaded();
+    if (!App.State.globalBOMs || !App.State.globalBOMs.length) {
+      try {
+        const res = await Api.call('getBOMProductionData');
+        if (res.success) App.State.globalBOMs = res.data;
+      } catch (err) { /* Ignored -- Product dropdown stays empty until BOMs load elsewhere. */ }
+    }
+
+    const form = document.getElementById('warehouseOpeningForm');
+    if (form) form.reset();
+    document.getElementById('woOutputItemName').value = '';
+    document.getElementById('woProductTagWrapper').style.display = 'none';
+    document.getElementById('woColorWrapper').style.display = 'none';
+    document.getElementById('woDate').value = todayIso();
+
+    this.populateWarehouseOpeningProcessSelect();
+    const processSelect = document.getElementById('woProcessId');
+    if (processSelect) App.Utils.autoSelectOnlyOption(processSelect);
+    await this.handleWarehouseOpeningProcessChange(processSelect ? processSelect.value : '');
+    await this.loadWarehouseOpeningData();
+
+    safeModalShow('warehouseOpeningModal');
+  },
+
+  populateWarehouseOpeningProcessSelect() {
+    const select = document.getElementById('woProcessId');
+    if (!select) return;
+
+    let html = '<option value="">Choose a Process...</option>';
+    (App.State.globalProcesses || [])
+      .filter(p => p.active)
+      .forEach(p => {
+        html += `<option value="${escapeHtml(p.processId)}">${escapeHtml(p.processName)} (Seq ${escapeHtml(String(p.sequence))})</option>`;
+      });
+    select.innerHTML = html;
+  },
+
+  // Mirrors App.Production.handleProcessChange's Product-tag and
+  // multi-color handling, minus the components/quantity UI this form
+  // doesn't need.
+  async handleWarehouseOpeningProcessChange(processId) {
+    const process = (App.State.globalProcesses || []).find(p => p.processId === processId);
+    document.getElementById('woOutputItemName').value = process ? (process.outputItemName || '') : '';
+
+    const tagWrapper = document.getElementById('woProductTagWrapper');
+    if (tagWrapper) tagWrapper.style.display = (process && process.isFinalStage) ? '' : 'none';
+    if (process && process.isFinalStage) {
+      this.populateWarehouseOpeningProductSelect();
+    } else {
+      const tagSelect = document.getElementById('woProductTag');
+      if (tagSelect) tagSelect.value = '';
+    }
+
+    const colorWrapper = document.getElementById('woColorWrapper');
+    const colorSelect = document.getElementById('woColor');
+    let colors = [];
+    if (processId) {
+      try {
+        const res = await Api.call('getProcessColorGroups', processId);
+        colors = res.success ? (res.data || []) : [];
+      } catch (err) {
+        colors = [];
+      }
+    }
+    if (colorSelect) {
+      // "— No Color —" is a deliberate, valid final choice here (e.g. a
+      // non-color-specific opening balance) even when real colors exist
+      // -- unlike "Choose a Process..." it's never just an unfilled
+      // placeholder, so it must NOT be auto-selected away from.
+      let html = '<option value="">— No Color —</option>';
+      colors.forEach(c => { html += `<option value="${escapeHtml(c)}">${escapeHtml(c)}</option>`; });
+      colorSelect.innerHTML = html;
+    }
+    if (colorWrapper) colorWrapper.style.display = colors.length > 0 ? '' : 'none';
+  },
+
+  populateWarehouseOpeningProductSelect() {
+    const select = document.getElementById('woProductTag');
+    if (!select) return;
+
+    const currentValue = select.value;
+    let html = '<option value="">— Untagged (stays in Warehouse Pool only) —</option>';
+    (App.State.globalBOMs || []).forEach(bom => {
+      html += `<option value="${escapeHtml(bom.productId)}">${escapeHtml(bom.productId)} (${escapeHtml(bom.productName)})</option>`;
+    });
+    select.innerHTML = html;
+    select.value = currentValue;
+  },
+
+  async handleWarehouseOpeningSubmit(e) {
+    e.preventDefault();
+
+    const processId = document.getElementById('woProcessId').value;
+    if (!processId) {
+      App.Utils.showToast('Please choose a Process.', true);
+      return;
+    }
+
+    const formData = {
+      processId: processId,
+      productTag: document.getElementById('woProductTag')?.value || '',
+      color: document.getElementById('woColor')?.value || '',
+      qty: document.getElementById('woQty').value,
+      date: document.getElementById('woDate').value,
+      remarks: document.getElementById('woRemarks').value
+    };
+
+    const submitBtn = document.getElementById('warehouseOpeningSubmitBtn');
+    try {
+      if (submitBtn) { submitBtn.disabled = true; submitBtn.innerText = 'Saving...'; }
+      const res = await Api.mutate('saveWarehousePoolOpening', formData);
+      App.Utils.showToast(res?.message, !res?.success);
+      if (res?.success) {
+        document.getElementById('warehouseOpeningForm').reset();
+        document.getElementById('woOutputItemName').value = '';
+        document.getElementById('woProductTagWrapper').style.display = 'none';
+        document.getElementById('woColorWrapper').style.display = 'none';
+        document.getElementById('woDate').value = todayIso();
+        await this.loadWarehouseOpeningData();
+        await this.loadWarehousePoolData();
+      }
+    } catch (err) {
+      App.Utils.showToast(err.message || 'Failed to record opening stock.', true);
+    } finally {
+      if (submitBtn) { submitBtn.disabled = false; submitBtn.innerText = '+ Record Opening Stock'; }
+    }
+  },
+
+  async loadWarehouseOpeningData() {
+    const tbody = document.getElementById('warehouseOpeningTableBody');
+    if (tbody) tbody.innerHTML = '<tr><td colspan="8" class="text-center p-3">Loading...</td></tr>';
+
+    try {
+      const res = await Api.call('getWarehousePoolOpeningData');
+      App.State.globalWarehousePoolOpening = res?.success ? (res.data || []) : [];
+      this.renderWarehouseOpeningTable();
+    } catch (err) {
+      if (tbody) tbody.innerHTML = '<tr><td colspan="8" class="text-center p-3 text-danger">Failed to load opening stock.</td></tr>';
+    }
+  },
+
+  renderWarehouseOpeningTable() {
+    const tbody = document.getElementById('warehouseOpeningTableBody');
+    if (!tbody) return;
+
+    const rows = App.State.globalWarehousePoolOpening || [];
+    if (rows.length === 0) {
+      tbody.innerHTML = '<tr><td colspan="8" class="text-center text-muted p-3">No opening stock recorded yet.</td></tr>';
+      return;
+    }
+
+    tbody.innerHTML = rows.map(r => `<tr>
+    <td>${escapeHtml(r.date)}</td>
+    <td><strong>${escapeHtml(r.outputItemName)}</strong></td>
+    <td>${escapeHtml(r.processName)}</td>
+    <td>${r.productTag ? escapeHtml(r.productTag) : '<span class="text-muted">—</span>'}</td>
+    <td>${r.color ? escapeHtml(r.color) : '<span class="text-muted">—</span>'}</td>
+    <td class="text-end fw-bold">${App.Production.formatQty(r.qty)}</td>
+    <td><small>${escapeHtml(r.remarks || '-')}</small></td>
+    <td class="text-center">
+      <button type="button" class="btn btn-sm btn-outline-danger" onclick="App.Stock.deleteWarehouseOpeningEntry(${r.rowIdx})"><i class="bi bi-trash"></i></button>
+    </td>
+  </tr>`).join('');
+  },
+
+  deleteWarehouseOpeningEntry(rowIdx) {
+    const entry = (App.State.globalWarehousePoolOpening || []).find(r => r.rowIdx === rowIdx);
+    const label = entry
+      ? `${entry.outputItemName}${entry.color ? ` (${entry.color})` : ''} — Qty ${App.Production.formatQty(entry.qty)} dated ${entry.date}`
+      : 'this opening stock entry';
+
+    App.Utils.confirmAction(
+      `Delete ${label}? This will reduce the Warehouse Pool bucket by that quantity.`,
+      async () => {
+        try {
+          const res = await Api.mutate('deleteWarehousePoolOpening', rowIdx, entry?.outputItemName, entry?.qty);
+          App.Utils.showToast(res?.message, !res?.success);
+          if (res?.success) {
+            await this.loadWarehouseOpeningData();
+            await this.loadWarehousePoolData();
+          }
+        } catch (err) {
+          App.Utils.showToast(err.message || 'Failed to delete opening stock entry.', true);
+        }
+      }
+    );
+  },
+
+  // ── Warehouse Pool Ledger ───────────────────────────────────
+  // Builds a transaction history (Production credits/debits, Dispatch
+  // debits, Opening Stock seeds, and manual corrections) for one
+  // specific bucket (Output Item Name + Product Tag + Color), mirroring
+  // the Item Ledger's "Transaction Ledger History" for raw-material Stock.
+  async ensurePoolLedgerSourceDataLoaded() {
+    const fetches = [];
+    if (!App.State.globalProduction.length) {
+      fetches.push(Api.call('getProductionData').then(res => {
+        if (res?.success) App.State.globalProduction = Array.isArray(res.data) ? res.data : [];
+      }));
+    }
+    if (!App.State.globalDispatch.length) {
+      fetches.push(Api.call('getDispatchData').then(res => {
+        if (res?.success) App.State.globalDispatch = Array.isArray(res.data) ? res.data : [];
+      }));
+    }
+    if (!App.State.globalWarehousePoolOpening.length) {
+      fetches.push(Api.call('getWarehousePoolOpeningData').then(res => {
+        if (res?.success) App.State.globalWarehousePoolOpening = Array.isArray(res.data) ? res.data : [];
+      }));
+    }
+    if (!App.State.globalWarehousePoolAdjustments.length) {
+      fetches.push(Api.call('getWarehousePoolAdjustmentHistory').then(res => {
+        if (res?.success) App.State.globalWarehousePoolAdjustments = Array.isArray(res.data) ? res.data : [];
+      }));
+    }
+    if (fetches.length) await Promise.all(fetches);
+  },
+
+  buildPoolLedgerRows(outputItemName, productTag, color) {
+    const nameLower = (outputItemName || '').toLowerCase();
+    const tagLower = (productTag || '').toLowerCase();
+    const colorLower = (color || '').toLowerCase();
+    const entries = [];
+
+    // Opening Stock seeds (credits)
+    (App.State.globalWarehousePoolOpening || []).forEach(o => {
+      if ((o.outputItemName || '').toLowerCase() !== nameLower) return;
+      if ((o.productTag || '').toLowerCase() !== tagLower) return;
+      if ((o.color || '').toLowerCase() !== colorLower) return;
+      entries.push({
+        dateObj: o.dateRaw ? new Date(o.dateRaw) : new Date(0),
+        dateStr: o.date,
+        type: 'Opening Stock',
+        badgeClass: 'bg-info',
+        ref: '-',
+        remarks: o.remarks || '-',
+        inQty: o.qty,
+        outQty: 0
+      });
+    });
+
+    // Production lots: credit this bucket's own output, debit POOL-sourced
+    // consumption of an untagged/uncolored upstream bucket sharing this name.
+    (App.State.globalProduction || []).forEach(lot => {
+      if (String(lot.status || '').trim().toLowerCase() !== 'completed') return;
+
+      if ((lot.outputItemName || '').toLowerCase() === nameLower && (lot.productId || '').toLowerCase() === tagLower) {
+        let credited = false;
+        (lot.colorBreakdown || []).forEach(entry => {
+          if ((entry.color || '').toLowerCase() !== colorLower) return;
+          const qty = Number(entry.qty) || 0;
+          if (qty <= 0) return;
+          credited = true;
+          entries.push({
+            dateObj: lot.dateRaw ? new Date(lot.dateRaw) : new Date(0),
+            dateStr: lot.date,
+            type: 'Production Credit',
+            badgeClass: 'bg-success',
+            ref: lot.lotNumber || '-',
+            remarks: lot.remarks || '-',
+            inQty: qty,
+            outQty: 0
+          });
+        });
+        if (!credited && !colorLower && !(lot.colorBreakdown || []).length) {
+          entries.push({
+            dateObj: lot.dateRaw ? new Date(lot.dateRaw) : new Date(0),
+            dateStr: lot.date,
+            type: 'Production Credit',
+            badgeClass: 'bg-success',
+            ref: lot.lotNumber || '-',
+            remarks: lot.remarks || '-',
+            inQty: Number(lot.qty) || 0,
+            outQty: 0
+          });
+        }
+      }
+
+      if (!tagLower) {
+        (lot.componentsConsumed || []).forEach(comp => {
+          if (String(comp.sourceType || '').trim().toUpperCase() !== 'POOL') return;
+          if ((comp.itemName || '').toLowerCase() !== nameLower) return;
+          const colorGroup = String(comp.colorGroup || '').trim();
+          const compColor = colorGroup && colorGroup.toUpperCase() !== 'COMMON' ? colorGroup.toLowerCase() : '';
+          if (compColor !== colorLower) return;
+          const qty = Number(comp.qty) || 0;
+          if (qty <= 0) return;
+          entries.push({
+            dateObj: lot.dateRaw ? new Date(lot.dateRaw) : new Date(0),
+            dateStr: lot.date,
+            type: 'Production Consumption',
+            badgeClass: 'bg-danger',
+            ref: lot.lotNumber || '-',
+            remarks: lot.remarks || '-',
+            inQty: 0,
+            outQty: qty
+          });
+        });
+      }
+    });
+
+    // Dispatch debits (final-stage tagged or untagged buckets only)
+    const process = (App.State.globalProcesses || []).find(p =>
+      (p.outputItemName || '').toLowerCase() === nameLower && p.isFinalStage
+    );
+    const dispatchKey = tagLower || (process ? nameLower : null);
+    if (dispatchKey) {
+      (App.State.globalDispatch || []).forEach(d => {
+        if ((d.productId || '').toLowerCase() !== dispatchKey) return;
+        const qty = Number(d.qty) || 0;
+        if (qty <= 0) return;
+        entries.push({
+          dateObj: d.dateRaw ? new Date(d.dateRaw) : new Date(0),
+          dateStr: d.dispatchDate,
+          type: 'Dispatch',
+          badgeClass: 'bg-danger',
+          ref: d.dispatchNumber || '-',
+          remarks: d.clientName || '-',
+          inQty: 0,
+          outQty: qty
+        });
+      });
+    }
+
+    // Manual corrections
+    (App.State.globalWarehousePoolAdjustments || []).forEach(adj => {
+      if ((adj.outputItemName || '').toLowerCase() !== nameLower) return;
+      if ((adj.productTag || '').toLowerCase() !== tagLower) return;
+      if ((adj.color || '').toLowerCase() !== colorLower) return;
+      const delta = adj.newValue - adj.oldValue;
+      entries.push({
+        dateObj: new Date(adj.date),
+        dateStr: new Date(adj.date).toLocaleDateString('en-GB'),
+        type: 'Manual Correction',
+        badgeClass: 'bg-warning text-dark',
+        ref: '-',
+        remarks: adj.reason || '-',
+        inQty: delta > 0 ? delta : 0,
+        outQty: delta < 0 ? -delta : 0
+      });
+    });
+
+    entries.sort((a, b) => a.dateObj - b.dateObj);
+
+    let balance = 0;
+    entries.forEach(e => {
+      balance += (e.inQty || 0) - (e.outQty || 0);
+      e.balance = balance;
+    });
+
+    entries.reverse();
+    return entries;
+  },
+
+  async openPoolLedgerModal(encName, encTag, encColor) {
+    const outputItemName = decodeURIComponent(encName || '');
+    const productTag = decodeURIComponent(encTag || '');
+    const color = decodeURIComponent(encColor || '');
+
+    const titleEl = document.getElementById('poolLedgerTitle');
+    if (titleEl) {
+      let label = outputItemName;
+      if (productTag) label += ` (Tag: ${productTag})`;
+      if (color) label += ` [${color}]`;
+      titleEl.innerHTML = `<i class="bi bi-journal-text me-2"></i>Warehouse Pool Ledger: ${escapeHtml(label)}`;
+    }
+
+    await this.ensurePoolLedgerSourceDataLoaded();
+    const entries = this.buildPoolLedgerRows(outputItemName, productTag, color);
+
+    const body = document.getElementById('poolLedgerBody');
+    if (body) {
+      body.innerHTML = entries.length
+        ? entries.map(e => `<tr>
+          <td>${escapeHtml(e.dateStr || '-')}</td>
+          <td><span class="badge ${e.badgeClass}">${e.type}</span></td>
+          <td><strong class="text-dark">${escapeHtml(e.ref)}</strong></td>
+          <td><small class="text-muted">${escapeHtml(e.remarks)}</small></td>
+          <td class="text-center text-success fw-bold">${e.inQty ? App.Production.formatQty(e.inQty) : '-'}</td>
+          <td class="text-center text-danger fw-bold">${e.outQty ? App.Production.formatQty(e.outQty) : '-'}</td>
+          <td class="text-center fw-bold">${App.Production.formatQty(e.balance)}</td>
+        </tr>`).join('')
+        : '<tr><td colspan="7" class="text-center text-muted p-4">No transaction history found for this bucket.</td></tr>';
+    }
+
+    safeModalShow('poolLedgerModal');
   },
 
   setDeadSortMode(mode) {

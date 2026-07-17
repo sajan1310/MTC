@@ -154,6 +154,26 @@ const App = {
     stockDeadSortMode: 'default',
     selectedStock: [],
 
+    // Warehouse Pool sub-tab's own state (Script_Stock.html's App.Stock,
+    // "Warehouse Pool" section) -- intermediate/finished process outputs
+    // (painted frames, fitted rims, packed products...), grouped by
+    // Process using the same 3-tier picker as the Processes sub-tab.
+    globalWarehousePool: [],
+    globalWarehousePoolOpening: [],
+    globalWarehousePoolAdjustments: [],
+    warehousePoolColorsByProcess: {},
+    warehousePoolSearchTerm: '',
+    warehousePoolGroupOrder: ['size', 'type', 'model'],
+    selectedWarehousePool: [],
+
+    // Forward-declared for the Warehouse Pool Ledger, which reads
+    // Dispatch debits against a bucket -- Dispatch itself isn't ported
+    // yet, but the real getDispatchData RPC already exists server-side
+    // (Phase 4 backend), so this is a plain data cache, not a dependency
+    // on an App.Dispatch module. Same "forward declare now, real module
+    // fills it in later" shape used throughout this port.
+    globalDispatch: [],
+
     // Small header-shortcut masters (Unit/Color/Model/Process Type),
     // deferred since Round 1 -- ported this round alongside Stock since
     // Script_Stock.html bundles them together and Item Master's Base/
