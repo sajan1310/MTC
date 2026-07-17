@@ -224,9 +224,9 @@
         {% include "erp/partials/stock.html" %}
         {% include "erp/partials/products_processes.html" %}
         {% include "erp/partials/contractors.html" %}
+        {% include "erp/partials/production.html" %}
 
         {% for tab_id, label in [
-          ('productionTab', 'Production'),
           ('dispatchTab', 'Dispatch'),
           ('clientsTab', 'Clients'),
         ] %}
@@ -262,6 +262,7 @@
   <script src="{{ url_for('static', filename='erp/process.js') }}"></script>
   <script src="{{ url_for('static', filename='erp/bom.js') }}"></script>
   <script src="{{ url_for('static', filename='erp/contractor.js') }}"></script>
+  <script src="{{ url_for('static', filename='erp/production.js') }}"></script>
 
 </body>
 </html>

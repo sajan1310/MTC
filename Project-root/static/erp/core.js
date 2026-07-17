@@ -189,7 +189,20 @@ const App = {
     selectedContractors: [],
     currentContractorRates: { contractorName: '', rates: [] },
     currentAccountLedgerContractor: '',
-    currentAccountLedgerData: null
+    currentAccountLedgerData: null,
+
+    // Production Lot's own list/report state (Script_Production.html's
+    // App.Production) -- globalProduction was already forward-declared
+    // in Round 1. This round covers the list/report side only (Create/
+    // Edit Lot's color-matrix/pool-group system is its own later round,
+    // per the module's size); productionAllSearchTerm backs the "All
+    // Activity" sub-tab's search box.
+    filteredProduction: [],
+    selectedProduction: [],
+    productionCurrentPage: 1,
+    productionRowsPerPage: 15,
+    productionSortBy: 'dateDesc',
+    productionAllSearchTerm: ''
   },
 
   // ── Bulk Selection Helpers ────────────────────────────────────────────
@@ -567,6 +580,7 @@ const App = {
       if (id === 'stockTab' && typeof App.Stock !== 'undefined') App.Stock.loadData();
       if (id === 'productsTab' && typeof App.Products !== 'undefined') App.Products.enterTab();
       if (id === 'contractorsTab' && typeof App.Contractor !== 'undefined') App.Contractor.loadData();
+      if (id === 'productionTab' && typeof App.Production !== 'undefined') App.Production.loadData();
       // Every other module's own `if (id === '<tab>') App.<Module>.loadData();`
       // line lands here in that module's own round -- same guarded pattern
       // Navigation.showTab already used in source for not-yet-loaded modules.
@@ -724,6 +738,9 @@ function bindGlobalEvents() {
         break;
       case 'stock-page':
         App.Stock.changePage(toNumber(btn.dataset.page, 1));
+        break;
+      case 'production-page':
+        App.Production.changePage(toNumber(btn.dataset.page, 1));
         break;
     }
   });
