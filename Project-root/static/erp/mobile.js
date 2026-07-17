@@ -499,12 +499,346 @@ MApp.Home = {
 // (FABs / More-tab action rows), nothing more. Deleted (not extended)
 // the round its real module ships.
 // ================================================================
-// MApp.Stock has no mount(), so showTab('stock') safely stops at its
-// static skeleton for every part of the screen except the search input --
-// that renders immediately as part of the skeleton (not injected by a
-// mount() call), so it's reachable the instant a user taps the Stock tab.
-// A silent no-op (not a toast) avoids spamming one toast per keystroke.
-MApp.Stock = { onSearch() {} };
+// ================================================================
+// STOCK — search-first item list. "Searches as you type" is a pure
+// client-side filter over the already-loaded list (no per-keystroke API
+// call). Tapping a card expands recent movements, merged client-side
+// from Bill/Return/Wastage/Issue/Production/Stock-adjustment history —
+// there is no dedicated "item ledger" server endpoint (confirmed: the
+// desktop Item Ledger tab derives it the same way from already-loaded
+// data), and adding one isn't in scope (getMobileDashboard was the only
+// new server function this app needed, and it already exists).
+// ================================================================
+MApp.Stock = {
+  all: [],
+  filtered: [],
+  expandedKey: null,
+  ledgerSources: null, // lazy-loaded on first expand; cached after that
+
+  mount() {
+    this.expandedKey = null;
+    this.ledgerSources = null;
+    const searchInput = document.getElementById('stock-search');
+    if (searchInput) searchInput.value = '';
+    this.load();
+  },
+
+  async load() {
+    const listEl = document.getElementById('stock-list');
+    MApp.Util.renderSkeleton(listEl, 5);
+
+    try {
+      const [stockRes, itemsRes] = await Promise.all([
+        MApp.Api.call('getStockData'),
+        MApp.Api.call('getItemsData')
+      ]);
+
+      if (!stockRes || !stockRes.success) {
+        MApp.Util.renderError(listEl, stockRes && stockRes.message, () => this.load());
+        return;
+      }
+
+      const unitByKey = {};
+      if (itemsRes && itemsRes.success) {
+        (itemsRes.data || []).forEach(it => {
+          unitByKey[this._key(it.name, it.size)] = it.baseUnit || 'Pcs';
+        });
+      }
+
+      this.all = (stockRes.data || []).map(s => ({
+        ...s,
+        unit: unitByKey[this._key(s.name, s.size)] || 'Pcs'
+      }));
+
+      const lowStockOnly = MApp.State.stockFilter === 'lowstock';
+      MApp.State.stockFilter = '';
+      this._lowStockOnly = lowStockOnly;
+      this.filtered = lowStockOnly ? this.all.filter(s => s.isLowStock) : this.all;
+
+      this.render();
+    } catch (err) {
+      MApp.Util.renderError(listEl, err && err.message, () => this.load());
+    }
+  },
+
+  _key(name, size) {
+    return String(name || '').trim().toLowerCase() + '||' + String(size || '').trim().toLowerCase();
+  },
+
+  onSearch(term) {
+    const lower = String(term || '').toLowerCase();
+    const base = this._lowStockOnly ? this.all.filter(s => s.isLowStock) : this.all;
+    this.filtered = !lower ? base : base.filter(s =>
+      s.name.toLowerCase().includes(lower) || s.size.toLowerCase().includes(lower));
+    this.render();
+  },
+
+  clearLowStockFilter() {
+    this._lowStockOnly = false;
+    this.filtered = this.all;
+    const searchInput = document.getElementById('stock-search');
+    if (searchInput) searchInput.value = '';
+    this.render();
+  },
+
+  render() {
+    const listEl = document.getElementById('stock-list');
+    if (!listEl) return;
+
+    const banner = this._lowStockOnly
+      ? `<div class="mb-offline-banner" style="background:var(--mb-safety-faint);color:var(--mb-ink);margin-bottom:var(--mb-sp-3);">
+           <span>Showing low-stock items only</span>
+           <button type="button" class="mb-btn-text" style="padding:0;min-height:auto;" onclick="MApp.Stock.clearLowStockFilter()">Clear</button>
+         </div>`
+      : '';
+
+    if (this.filtered.length === 0) {
+      listEl.innerHTML = banner;
+      const empty = document.createElement('div');
+      listEl.appendChild(empty);
+      MApp.Util.renderEmpty(empty, {
+        title: 'No items found',
+        body: this._lowStockOnly ? 'Nothing is currently below its threshold.' : 'Try a different search term.'
+      });
+      return;
+    }
+
+    // data-idx (a plain array index) drives the toggle instead of
+    // interpolating the item's name/size into an inline onclick string —
+    // item names come from sheet data and may contain quote characters
+    // that would otherwise break out of an inline handler's string literal.
+    listEl.innerHTML = banner + this.filtered.map((item, idx) => {
+      const key = this._key(item.name, item.size);
+      const isOpen = this.expandedKey === key;
+      return `
+        <button type="button" class="mb-card mb-card-tappable" style="border:none;width:100%;" data-stock-toggle data-idx="${idx}">
+          <div class="mb-card-row">
+            <div>
+              <div class="mb-card-title">${MApp.Util.escapeHtml(item.name)}</div>
+              <div class="mb-card-sub">${MApp.Util.escapeHtml(item.size || 'No size')}</div>
+            </div>
+            <div style="text-align:right;">
+              <div class="mb-card-number${item.isLowStock ? ' mb-alert' : ''}">${item.currentStock}</div>
+              <div class="mb-card-sub">${MApp.Util.escapeHtml(item.unit)}</div>
+            </div>
+          </div>
+          ${item.isLowStock ? '<div class="mb-mt-2"><span class="mb-chip mb-chip-lowstock">Low stock</span></div>' : ''}
+        </button>
+        <div id="stock-expand-${idx}" class="${isOpen ? '' : 'mb-hidden'}" style="margin:-8px 0 12px;padding:0 var(--mb-sp-2);"></div>
+      `;
+    }).join('');
+
+    listEl.querySelectorAll('[data-stock-toggle]').forEach(btn => {
+      btn.addEventListener('click', () => this.toggleExpand(parseInt(btn.dataset.idx, 10)));
+    });
+
+    if (this.expandedKey) {
+      const idx = this.filtered.findIndex(i => this._key(i.name, i.size) === this.expandedKey);
+      if (idx !== -1) this._renderMovements(idx, this.filtered[idx]);
+    }
+  },
+
+  async toggleExpand(idx) {
+    const item = this.filtered[idx];
+    if (!item) return;
+    const key = this._key(item.name, item.size);
+    const panel = document.getElementById('stock-expand-' + idx);
+    if (!panel) return;
+
+    if (this.expandedKey === key) {
+      this.expandedKey = null;
+      panel.classList.add('mb-hidden');
+      panel.innerHTML = '';
+      return;
+    }
+
+    // Collapse any previously open panel
+    document.querySelectorAll('[id^="stock-expand-"]').forEach(el => {
+      el.classList.add('mb-hidden');
+      el.innerHTML = '';
+    });
+
+    this.expandedKey = key;
+    panel.classList.remove('mb-hidden');
+    await this._renderMovements(idx, item);
+  },
+
+  async _renderMovements(idx, item) {
+    const panel = document.getElementById('stock-expand-' + idx);
+    if (!panel) return;
+    panel.innerHTML = '<div class="mb-skel mb-skel-line" style="width:60%;"></div><div class="mb-skel mb-skel-line" style="width:40%;"></div>';
+
+    const adjustBtn = `<button type="button" class="mb-btn-text" style="padding:8px 0;" onclick="MApp.Stock.openAdjustSheet(${idx})">Adjust stock</button>`;
+
+    try {
+      await this._ensureLedgerSources();
+      const movements = this._computeMovements(item.name, item.size);
+
+      if (movements.length === 0) {
+        panel.innerHTML = adjustBtn + '<div class="mb-text-sm mb-text-steel" style="padding:var(--mb-sp-2) 0;">No recorded movements for this item yet.</div>';
+        return;
+      }
+
+      panel.innerHTML = adjustBtn + movements.slice(0, 6).map(m => `
+        <div class="mb-flex-row" style="justify-content:space-between;padding:6px 0;border-bottom:1px solid var(--mb-steel-faint);">
+          <div>
+            <div class="mb-text-sm" style="font-weight:600;color:var(--mb-ink);">${MApp.Util.escapeHtml(m.label)}</div>
+            <div class="mb-text-sm mb-text-steel">${MApp.Util.formatDateDisplay(m.dateRaw)}</div>
+          </div>
+          <div class="mb-text-sm" style="font-weight:700;color:${m.qtyDelta > 0 ? 'var(--mb-enamel-green)' : 'var(--mb-enamel-red)'};white-space:nowrap;">
+            ${m.qtyDelta > 0 ? '+' : ''}${m.qtyDelta}
+          </div>
+        </div>
+      `).join('');
+    } catch (err) {
+      panel.innerHTML = adjustBtn + `<div class="mb-text-sm" style="color:var(--mb-enamel-red);">Couldn't load movement history: ${MApp.Util.escapeHtml(err.message || '')}</div>`;
+    }
+  },
+
+  // ── MANUAL STOCK ADJUSTMENT — mirrors desktop's App.Stock.handleAdjustSubmit
+  // (module_stock.js#adjustStockManually unchanged server-side). Negative
+  // corrected values are intentionally allowed here (same exception as
+  // desktop) so field operations aren't blocked; the user can fix the
+  // number later once the real cause is investigated.
+  openAdjustSheet(idx) {
+    const item = this.filtered[idx];
+    if (!item) return;
+    this._adjustItem = item;
+
+    const label = document.getElementById('stock-adjust-item-label');
+    if (label) label.value = `${item.name} (${item.size || 'GENERAL'})`;
+    const oldVal = document.getElementById('stock-adjust-old-value');
+    if (oldVal) oldVal.value = item.currentStock;
+    const newVal = document.getElementById('stock-adjust-new-value');
+    if (newVal) newVal.value = item.currentStock;
+    const reason = document.getElementById('stock-adjust-reason');
+    if (reason) reason.value = '';
+
+    MApp.Sheet.open('sheet-stock-adjust');
+  },
+
+  closeAdjustSheet() {
+    MApp.Sheet.close('sheet-stock-adjust');
+  },
+
+  // Note: source's own _apiCall handled both reads and writes with one
+  // verb (no CSRF/mutation-id needed under google.script.run) -- this
+  // Flask backend's adjustStockManually is mutation=True (registry.py),
+  // so this call uses MApp.Api.mutate, not .call, unlike source.
+  async submitAdjust() {
+    const item = this._adjustItem;
+    if (!item) return;
+
+    const newValue = parseFloat(document.getElementById('stock-adjust-new-value')?.value);
+    const reason = (document.getElementById('stock-adjust-reason')?.value || '').trim();
+
+    if (isNaN(newValue)) {
+      MApp.Toast.error('Corrected stock must be a valid number.');
+      return;
+    }
+    if (!reason) {
+      MApp.Toast.error('Please provide a reason for this adjustment.');
+      return;
+    }
+
+    MApp.Util.setSheetBusy('stock-adjust-body', 'stock-adjust-save-btn', true, 'Saving…');
+    try {
+      const res = await MApp.Api.mutate('adjustStockManually', item.name, item.size, newValue, reason);
+      if (!res || !res.success) {
+        MApp.Toast.error((res && res.message) || 'Could not adjust stock.');
+        MApp.Util.setSheetBusy('stock-adjust-body', 'stock-adjust-save-btn', false, null, 'Save Correction');
+        return;
+      }
+      MApp.Toast.success(res.message || 'Stock adjusted.');
+      this.closeAdjustSheet();
+      MApp.Util.setSheetBusy('stock-adjust-body', 'stock-adjust-save-btn', false, null, 'Save Correction');
+      this.load();
+    } catch (err) {
+      MApp.Toast.error(err.message || 'Could not adjust stock. Check your connection and try again.');
+      MApp.Util.setSheetBusy('stock-adjust-body', 'stock-adjust-save-btn', false, null, 'Save Correction');
+    }
+  },
+
+  async _ensureLedgerSources() {
+    if (this.ledgerSources) return this.ledgerSources;
+
+    const [billsRes, returnsRes, wastageRes, issueRes, productionRes, adjustRes] = await Promise.all([
+      MApp.Api.call('getBillData'),
+      MApp.Api.call('getReturnData'),
+      MApp.Api.call('getWastageData'),
+      MApp.Api.call('getIssueData'),
+      MApp.Api.call('getProductionData'),
+      MApp.Api.call('getStockAdjustmentHistory')
+    ]);
+
+    this.ledgerSources = {
+      bills: (billsRes && billsRes.success) ? billsRes.data || [] : [],
+      returns: (returnsRes && returnsRes.success) ? returnsRes.data || [] : [],
+      wastage: (wastageRes && wastageRes.success) ? wastageRes.data || [] : [],
+      issues: (issueRes && issueRes.success) ? issueRes.data || [] : [],
+      production: (productionRes && productionRes.success) ? productionRes.data || [] : [],
+      adjustments: (adjustRes && adjustRes.success) ? adjustRes.data || [] : []
+    };
+    return this.ledgerSources;
+  },
+
+  _computeMovements(name, size) {
+    const matches = (n, s) => String(n || '').trim().toLowerCase() === String(name || '').trim().toLowerCase() &&
+      String(s || '').trim().toLowerCase() === String(size || '').trim().toLowerCase();
+    const src = this.ledgerSources;
+    const out = [];
+
+    src.bills.forEach(bill => {
+      (bill.items || []).forEach(it => {
+        if (!matches(it.name, it.size)) return;
+        out.push({ dateRaw: bill.billDateRaw || bill.billDate, label: `Bill ${bill.billNumber} — ${bill.vendor}`, qtyDelta: it.qty });
+      });
+    });
+
+    src.returns.forEach(ret => {
+      (ret.items || []).forEach(it => {
+        if (!matches(it.name, it.size)) return;
+        out.push({ dateRaw: ret.returnDateRaw, label: `Return ${ret.returnNumber} — ${ret.vendor}`, qtyDelta: -it.qty });
+      });
+    });
+
+    src.wastage.forEach(w => {
+      (w.items || []).forEach(it => {
+        if (!matches(it.name, it.size)) return;
+        out.push({ dateRaw: w.dateRaw, label: `Wastage — ${it.reason || 'unspecified'}`, qtyDelta: -it.qty });
+      });
+    });
+
+    src.issues.forEach(iss => {
+      (iss.items || []).forEach(it => {
+        if (!matches(it.name, it.size)) return;
+        out.push({ dateRaw: iss.dateRaw, label: `Issued to ${iss.issuedTo}`, qtyDelta: -it.qty });
+      });
+    });
+
+    src.production.forEach(lot => {
+      if (lot.status !== 'Completed') return;
+      (lot.componentsConsumed || []).forEach(c => {
+        if (String(c.sourceType || '').toUpperCase() === 'POOL') return;
+        if (!matches(c.itemName, c.size)) return;
+        out.push({ dateRaw: lot.dateRaw, label: `Production lot ${lot.lotNumber}`, qtyDelta: -(Number(c.qty) || 0) });
+      });
+    });
+
+    src.adjustments.forEach(adj => {
+      if (!matches(adj.itemName, adj.size)) return;
+      out.push({
+        dateRaw: adj.date,
+        label: `Manual adjustment${adj.reason ? ' — ' + adj.reason : ''}`,
+        qtyDelta: Math.round(((adj.newValue || 0) - (adj.oldValue || 0)) * 100) / 100
+      });
+    });
+
+    out.sort((a, b) => new Date(b.dateRaw || 0) - new Date(a.dateRaw || 0));
+    return out;
+  }
+};
+
 MApp.Production = { openLogLotSheet() { MApp.Toast.error('Log Lot is coming soon.'); } };
 MApp.Dispatch = { openNewDispatchSheet() { MApp.Toast.error('New Dispatch is coming soon.'); } };
 MApp.Returns = { openNewReturnSheet() { MApp.Toast.error('Log Return is coming soon.'); } };
