@@ -2599,6 +2599,13 @@ App.Production = {
     this._wireItemSelect2(rowEl?.querySelector('.prod-comp-item-select'));
   },
 
+  // Searchable Select2 for ONE color cell's item picker inside a merged
+  // matrix row (see addMergedMatrixRow) -- every color column gets its own
+  // picker since each color secretly uses a different real item.
+  initMergedCellItemSelect2(selectEl) {
+    this._wireItemSelect2(selectEl);
+  },
+
   _wireItemSelect2(selectEl) {
     if (!selectEl || !window.jQuery?.fn?.select2) return;
 
@@ -3116,6 +3123,17 @@ App.Production = {
     if (modalEl && typeof bootstrap !== 'undefined') {
       bootstrap.Modal.getOrCreateInstance(modalEl).show();
     }
+  },
+
+  // Which color bucket a Production Sheet component belongs to: its
+  // structured colorGroup (set on every lot created by the Create/Edit Lot
+  // form -- 'COMMON' or a specific Color Master name) if present, else its
+  // legacy free-text Color field (older customized sheets, predating
+  // colorGroup). '' means Common.
+  _resolveSheetColorKey(comp) {
+    const colorGroup = String(comp.colorGroup || '').trim();
+    if (colorGroup && colorGroup.toUpperCase() !== 'COMMON') return colorGroup;
+    return String(comp.color || '').trim();
   },
 
   // Splits a lot's components into the Common table (no color, shown
