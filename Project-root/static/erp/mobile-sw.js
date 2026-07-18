@@ -6,8 +6,17 @@
 // precaches only the mobile-specific static assets (mobile.js/
 // mobile_styles.css/icons + api.js, shared with desktop), never
 // desktop's module bundle (po.js/bill.js/stock.js/...), which the
-// mobile shell never loads. Same narrow Phase-5-installability scope as
-// the desktop worker: not the offline-with-sync system (Phase 6).
+// mobile shell never loads.
+//
+// Phase 6 Item 4 (Background Sync): also imports offline-cache.js and
+// api.js (both already precached above, and both plain classic scripts
+// with no `document` dependency at load time -- api.js only touches
+// `document` lazily, inside _csrfToken(), guarded for exactly this
+// context) so a 'sync' event can replay the outbox without any page
+// open. This does NOT import mobile.js itself -- that file is full of
+// DOM/UI code that assumes a live page and would throw immediately in
+// a worker.
+importScripts('/static/erp/offline-cache.js', '/static/erp/api.js');
 
 const CACHE_NAME = 'erp-mobile-shell-v2';
 
@@ -76,3 +85,62 @@ self.addEventListener('fetch', event => {
   // Everything else (RPC endpoints, third-party CDN assets, other app
   // routes) -- let the browser handle it normally, untouched.
 });
+
+// ── Background Sync (Phase 6 Item 4) ──────────────────────────────────
+// The page hands over its CSRF token (it has a `document` to read the
+// meta tag from; this worker doesn't) right after registering/activating
+// this worker -- see mobile.js's MApp.Outbox._sendCsrfToken(). Stored via
+// Api.setCsrfToken so _request() in the imported api.js picks it up on
+// every call this worker makes.
+self.addEventListener('message', event => {
+  if (event.data && event.data.type === 'csrf-token') {
+    Api.setCsrfToken(event.data.token);
+  }
+});
+
+// Fires once connectivity is back, possibly long after the page that
+// queued the outbox entry has closed (mobile.js's
+// MApp.Outbox.requestSync() arms this tag every time something is
+// enqueued). Mirrors MApp.Outbox.flush()'s own loop -- same
+// network-vs-HTTP error classification, same "one bad entry doesn't
+// block the rest" behavior -- but reimplemented here rather than shared,
+// since flush() also does DOM/toast work (MApp.Toast, MApp.Shell.current)
+// that has no meaning in a worker with no page open.
+self.addEventListener('sync', event => {
+  if (event.tag === 'outbox-flush') {
+    event.waitUntil(flushOutboxInBackground());
+  }
+});
+
+async function flushOutboxInBackground() {
+  const pending = await OfflineCache.outbox.listPending();
+  for (const entry of pending) {
+    let res;
+    try {
+      res = await Api.mutateWithId(entry.method, entry.mutationId, ...entry.args);
+    } catch (err) {
+      if (err && err.isNetworkError) {
+        // Still offline -- stop here, leave the rest pending for the
+        // next sync event (the browser will retry with backoff).
+        return;
+      }
+      // A real HTTP-level failure (e.g. a CSRF token that went stale
+      // while this page was closed) -- not safe to retry blindly.
+      await OfflineCache.outbox.markFailed(entry.id, err.message);
+      continue;
+    }
+
+    if (res && res.success) {
+      await OfflineCache.outbox.markDone(entry.id);
+    } else {
+      await OfflineCache.outbox.markFailed(entry.id, res && res.message);
+    }
+  }
+
+  // Let any open page(s) know, so an on-screen badge/list reflects this
+  // background replay immediately instead of only on next visit/reload.
+  const clientsList = await self.clients.matchAll({ type: 'window' });
+  for (const client of clientsList) {
+    client.postMessage({ type: 'outbox-flushed' });
+  }
+}

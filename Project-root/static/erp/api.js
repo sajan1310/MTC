@@ -17,9 +17,20 @@
 // 6 Round 3) exist for the mobile offline outbox: it needs the exact same
 // mutation-id on both a live attempt and any later replay of that same user
 // action, which .mutate()'s always-fresh-UUID behavior can't provide.
+//
+// Phase 6 (Background Sync): this file is also loaded inside the mobile
+// service worker (mobile-sw.js's importScripts) so a background sync event
+// can replay the outbox without the page being open. A service worker has
+// no `document` -- _csrfToken() below falls back to an explicit override
+// (Api.setCsrfToken, called by the page via a postMessage the SW forwards
+// to itself) instead of the meta-tag read that only works in page context.
 
 const Api = (() => {
+  let _csrfOverride = null;
+
   function _csrfToken() {
+    if (_csrfOverride) return _csrfOverride;
+    if (typeof document === 'undefined') return ''; // service worker context, no override set yet
     return document.querySelector('meta[name="csrf-token"]')?.getAttribute('content') || '';
   }
 
@@ -27,20 +38,40 @@ const Api = (() => {
     const headers = { 'Content-Type': 'application/json', 'X-CSRFToken': _csrfToken() };
     if (mutationId) headers['X-Mutation-Id'] = mutationId;
 
-    const res = await fetch(`/api/erp/rpc/${method}`, {
-      method: 'POST',
-      headers,
-      credentials: 'same-origin',
-      body: JSON.stringify({ args: args || [] })
-    });
+    let res;
+    try {
+      res = await fetch(`/api/erp/rpc/${method}`, {
+        method: 'POST',
+        headers,
+        credentials: 'same-origin',
+        body: JSON.stringify({ args: args || [] })
+      });
+    } catch (networkErr) {
+      // The fetch itself never completed -- DNS failure, no connection,
+      // CORS, a dropped connection before any response arrived. This is
+      // the ONLY case that means "still offline, retry later"; see
+      // isNetworkError below.
+      const err = new Error(networkErr && networkErr.message || 'Network request failed.');
+      err.isNetworkError = true;
+      throw err;
+    }
 
     if (!res.ok && res.status !== 200) {
+      // The server WAS reached and responded -- a real HTTP-level failure
+      // (a CSRF token that expired since this page loaded, a 500, rate
+      // limiting, ...). Distinct from isNetworkError: retrying this
+      // blindly forever would never succeed on its own, unlike a genuine
+      // outage. Callers (the offline outbox) must mark this failed, not
+      // silently requeue it -- see mobile.js's MApp.Outbox.flush().
       let message = `Backend method "${method}" failed (HTTP ${res.status}).`;
       try {
         const body = await res.json();
         if (body && body.message) message = body.message;
       } catch (e) { /* non-JSON error body -- keep the generic message */ }
-      throw new Error(message);
+      const err = new Error(message);
+      err.isHttpError = true;
+      err.status = res.status;
+      throw err;
     }
 
     return res.json();
@@ -74,6 +105,14 @@ const Api = (() => {
 
     mutateWithId(method, mutationId, ...args) {
       return _request(method, args, mutationId);
+    },
+
+    // Phase 6 (Background Sync) -- lets the service worker (which has no
+    // meta-tag to read) use a CSRF token the page handed it via
+    // postMessage. Page contexts never need to call this; the meta-tag
+    // read in _csrfToken() already works there.
+    setCsrfToken(token) {
+      _csrfOverride = token || null;
     }
   };
 })();

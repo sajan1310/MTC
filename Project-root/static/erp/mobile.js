@@ -98,10 +98,21 @@ MApp.Outbox = {
         let res;
         try {
           res = await Api.mutateWithId(entry.method, entry.mutationId, ...entry.args);
-        } catch (networkErr) {
-          // Still offline (or reconnected only briefly) -- stop here,
-          // leave this and every remaining entry pending for next time.
-          break;
+        } catch (err) {
+          if (err && err.isNetworkError) {
+            // Still offline (or reconnected only briefly) -- stop here,
+            // leave this and every remaining entry pending for next time.
+            break;
+          }
+          // A real HTTP-level failure (e.g. a CSRF token that expired
+          // since this was queued -- a real risk for a replay that could
+          // happen hours or days later via Background Sync, not just a
+          // quick reconnect). Not safe to retry blindly forever: mark it
+          // failed (visible in Sync Issues, retryable there with a fresh
+          // token once the page is open again) and move on to the rest
+          // of the queue, same as an ordinary {success:false} below.
+          await OfflineCache.outbox.markFailed(entry.id, err.message);
+          continue;
         }
 
         if (res && res.success) {
@@ -148,8 +159,73 @@ MApp.Outbox = {
     const mod = MApp[moduleName];
     if (mod && typeof mod.load === 'function') mod.load();
     else if (mod && typeof mod.mount === 'function') mod.mount();
+  },
+
+  // ── Background Sync (Phase 6 Item 4) ──────────────────────────────
+  // Everything above already works with no browser support for this --
+  // the 'online' listener and the boot-time flush() call are the
+  // fallback and always run first while the app is open. This is
+  // strictly additive: it lets a queued mutation replay even after the
+  // tab is closed, once the browser decides connectivity is back.
+  _registration: null,
+
+  async initBackgroundSync() {
+    if (!('serviceWorker' in navigator)) return;
+    try {
+      // navigator.serviceWorker.ready resolves once a worker is ACTIVE
+      // for this scope, regardless of whether this specific register()
+      // call installed it (e.g. a second tab reusing an existing
+      // registration) -- the right thing to wait on either way, since
+      // mobile-sw.js calls skipWaiting()/clients.claim() itself.
+      const registration = await navigator.serviceWorker.ready;
+      this._registration = registration;
+      this._sendCsrfToken(registration);
+      this.requestSync();
+    } catch (e) {
+      // Non-fatal -- the foreground online/boot flush still works.
+    }
+  },
+
+  // A service worker has no `document` to read the CSRF meta tag from
+  // (see api.js's _csrfToken()) -- hand it the page's own token instead.
+  // This is necessarily a point-in-time snapshot: if the page has been
+  // open for over an hour (Flask-WTF's default WTF_CSRF_TIME_LIMIT),
+  // this token may itself already be stale. That's fine -- a stale
+  // token now surfaces as an ordinary isHttpError failure (markFailed,
+  // visible in Sync Issues, retryable once the page is reloaded and a
+  // fresh token is sent) instead of looping forever, which is exactly
+  // the failure mode the error-classification fix above exists for.
+  _sendCsrfToken(registration) {
+    if (!registration.active) return;
+    const meta = document.querySelector('meta[name="csrf-token"]');
+    registration.active.postMessage({ type: 'csrf-token', token: meta ? meta.getAttribute('content') : '' });
+  },
+
+  // Arms a one-shot Background Sync event for the SW to pick up the
+  // outbox next time the browser regains connectivity, even if this tab
+  // has since closed. Best-effort and silently a no-op where
+  // unsupported (Safari, Firefox as of writing) -- those browsers rely
+  // entirely on the foreground 'online'/boot flush() above.
+  requestSync() {
+    const registration = this._registration;
+    if (!registration || !('sync' in registration)) return;
+    registration.sync.register('outbox-flush').catch(() => {});
   }
 };
+
+// The service worker notifies open pages after it replays the outbox in
+// the background (see mobile-sw.js's 'sync' handler) so this tab's badge
+// and any visible list reflect it immediately instead of only on next
+// visit/reload.
+if ('serviceWorker' in navigator) {
+  navigator.serviceWorker.addEventListener('message', event => {
+    if (event.data && event.data.type === 'outbox-flushed') {
+      MApp.Outbox.updateBadge();
+      if (typeof MApp.SyncIssues !== 'undefined') MApp.SyncIssues.updateSummary();
+      MApp.Outbox._refreshCurrentTab();
+    }
+  });
+}
 
 // ================================================================
 // TOAST
@@ -922,14 +998,23 @@ MApp.Stock = {
       MApp.Util.setSheetBusy('stock-adjust-body', 'stock-adjust-save-btn', false, null, 'Save Correction');
       this.load();
     } catch (err) {
-      // Network-level failure (the fetch itself rejected) -- queue it
-      // under the same mutationId instead of failing outright.
-      await OfflineCache.outbox.enqueue(mutationId, 'adjustStockManually', args);
-      MApp.Outbox.updateBadge();
-      MApp.Toast.success('Saved — will sync when back online.');
-      this.closeAdjustSheet();
+      if (err && err.isNetworkError) {
+        // The fetch itself never reached the server -- queue it under the
+        // same mutationId instead of failing outright.
+        await OfflineCache.outbox.enqueue(mutationId, 'adjustStockManually', args);
+        MApp.Outbox.updateBadge();
+        MApp.Outbox.requestSync();
+        MApp.Toast.success('Saved — will sync when back online.');
+        this.closeAdjustSheet();
+        MApp.Util.setSheetBusy('stock-adjust-body', 'stock-adjust-save-btn', false, null, 'Save Correction');
+        this.load();
+        return;
+      }
+      // Reached the server but got a real HTTP-level failure (e.g. a CSRF
+      // token that expired since this page loaded) -- not safe to queue
+      // for blind retry, unlike a genuine outage.
+      MApp.Toast.error(err.message || 'Could not adjust stock. Please try again.');
       MApp.Util.setSheetBusy('stock-adjust-body', 'stock-adjust-save-btn', false, null, 'Save Correction');
-      this.load();
     }
   },
 
@@ -1759,15 +1844,24 @@ MApp.Production = {
       }
       await this._onLotSaved(`Lot logged${res.data && res.data.lotNumber ? ' — ' + res.data.lotNumber : ''}.`);
     } catch (err) {
-      // Network-level failure -- queue under the same mutationId instead
-      // of failing outright. A stale processId/productId reference (the
-      // process was deleted/deactivated by replay time) isn't a gap here:
-      // it just surfaces as an ordinary {success:false} on replay, which
-      // MApp.Outbox.flush() already handles (marks this one entry failed
-      // with the real server message, doesn't block the rest of the queue).
-      await OfflineCache.outbox.enqueue(mutationId, 'saveProduction', [formData]);
-      MApp.Outbox.updateBadge();
-      await this._onLotSaved('Saved — will sync when back online.');
+      if (err && err.isNetworkError) {
+        // The fetch itself never reached the server -- queue under the
+        // same mutationId. A stale processId/productId reference (the
+        // process was deleted/deactivated by replay time) isn't a gap
+        // here: it just surfaces as an ordinary {success:false} on
+        // replay, which MApp.Outbox.flush() already handles (marks this
+        // one entry failed with the real server message, doesn't block
+        // the rest of the queue).
+        await OfflineCache.outbox.enqueue(mutationId, 'saveProduction', [formData]);
+        MApp.Outbox.updateBadge();
+        MApp.Outbox.requestSync();
+        await this._onLotSaved('Saved — will sync when back online.');
+        return;
+      }
+      // Reached the server but got a real HTTP-level failure -- not safe
+      // to queue for blind retry.
+      MApp.Toast.error(err.message || 'Could not log this lot. Please try again.');
+      MApp.Util.setSheetBusy('log-lot-body', 'log-lot-save-btn', false, null, 'Log Lot');
     }
   },
 
@@ -2109,13 +2203,21 @@ MApp.Dispatch = {
       }
       this._onDispatchSaved(`Dispatch saved${res.data && res.data.dispatchNumber ? ' — ' + res.data.dispatchNumber : ''}.`);
     } catch (err) {
-      // Network-level failure -- queue under the same mutationId. A
-      // stale Ready-to-Dispatch reference by replay time isn't a gap:
-      // it surfaces as an ordinary {success:false}, already handled by
-      // MApp.Outbox.flush()'s markFailed branch.
-      await OfflineCache.outbox.enqueue(mutationId, 'saveDispatch', [formData]);
-      MApp.Outbox.updateBadge();
-      this._onDispatchSaved('Saved — will sync when back online.');
+      if (err && err.isNetworkError) {
+        // The fetch itself never reached the server -- queue under the
+        // same mutationId. A stale Ready-to-Dispatch reference by replay
+        // time isn't a gap: it surfaces as an ordinary {success:false},
+        // already handled by MApp.Outbox.flush()'s markFailed branch.
+        await OfflineCache.outbox.enqueue(mutationId, 'saveDispatch', [formData]);
+        MApp.Outbox.updateBadge();
+        MApp.Outbox.requestSync();
+        this._onDispatchSaved('Saved — will sync when back online.');
+        return;
+      }
+      // Reached the server but got a real HTTP-level failure -- not safe
+      // to queue for blind retry.
+      MApp.Toast.error(err.message || 'Could not save this dispatch. Please try again.');
+      MApp.Util.setSheetBusy('new-dispatch-body', 'new-dispatch-save-btn', false, null, 'Save Dispatch');
     }
   },
 
@@ -2352,12 +2454,20 @@ MApp.Returns = {
       }
       this._onReturnSaved(`Return logged${res.data && res.data.returnNumber ? ' — ' + res.data.returnNumber : ''}.`);
     } catch (err) {
-      // Network-level failure -- queue under the same mutationId. Vendor/
-      // item are matched by name (not an opaque row ID), same low
-      // staleness risk as adjustStockManually.
-      await OfflineCache.outbox.enqueue(mutationId, 'saveReturn', [formData]);
-      MApp.Outbox.updateBadge();
-      this._onReturnSaved('Saved — will sync when back online.');
+      if (err && err.isNetworkError) {
+        // The fetch itself never reached the server -- queue under the
+        // same mutationId. Vendor/item are matched by name (not an
+        // opaque row ID), same low staleness risk as adjustStockManually.
+        await OfflineCache.outbox.enqueue(mutationId, 'saveReturn', [formData]);
+        MApp.Outbox.updateBadge();
+        MApp.Outbox.requestSync();
+        this._onReturnSaved('Saved — will sync when back online.');
+        return;
+      }
+      // Reached the server but got a real HTTP-level failure -- not safe
+      // to queue for blind retry.
+      MApp.Toast.error(err.message || 'Could not log this return. Please try again.');
+      MApp.Util.setSheetBusy('log-return-body', 'log-return-save-btn', false, null, 'Log Return');
     }
   },
 
@@ -2731,12 +2841,20 @@ MApp.PO = {
       }
       this._onPoSaved(`PO saved${res.data && res.data.poNumber ? ' — ' + res.data.poNumber : ''}.`);
     } catch (err) {
-      // Network-level failure -- queue under the same mutationId. Vendor/
-      // item are matched by name (not an opaque row ID), same low
-      // staleness risk as adjustStockManually.
-      await OfflineCache.outbox.enqueue(mutationId, 'savePO', [formData]);
-      MApp.Outbox.updateBadge();
-      this._onPoSaved('Saved — will sync when back online.');
+      if (err && err.isNetworkError) {
+        // The fetch itself never reached the server -- queue under the
+        // same mutationId. Vendor/item are matched by name (not an
+        // opaque row ID), same low staleness risk as adjustStockManually.
+        await OfflineCache.outbox.enqueue(mutationId, 'savePO', [formData]);
+        MApp.Outbox.updateBadge();
+        MApp.Outbox.requestSync();
+        this._onPoSaved('Saved — will sync when back online.');
+        return;
+      }
+      // Reached the server but got a real HTTP-level failure -- not safe
+      // to queue for blind retry.
+      MApp.Toast.error(err.message || 'Could not save this PO. Please try again.');
+      MApp.Util.setSheetBusy('new-po-body', 'new-po-save-btn', false, null, 'Save PO');
     }
   },
 
@@ -3179,6 +3297,7 @@ MApp.SyncIssues = {
     MApp.Outbox.updateBadge();
     MApp.Toast.success('Will retry now.');
     MApp.Outbox.flush(); // attempt immediately rather than waiting for the next online/boot trigger
+    MApp.Outbox.requestSync(); // also arm Background Sync in case this immediate attempt fails too
   },
 
   // Native confirm() rather than building a custom confirm-sheet
@@ -3270,8 +3389,13 @@ document.addEventListener('DOMContentLoaded', () => {
 
   // Phase 6 Round 3 -- replay any outbox entries queued in a previous
   // session (app was closed/reloaded while offline), and again whenever
-  // the browser regains connectivity. Background Sync (replaying even
-  // when the app isn't open) is a later round.
+  // the browser regains connectivity.
   MApp.Outbox.flush();
   window.addEventListener('online', () => MApp.Outbox.flush());
+
+  // Phase 6 Item 4 -- arms Background Sync so the outbox can also replay
+  // while the app isn't open at all. Independent of whether the
+  // register() call above resolved this load (navigator.serviceWorker.ready
+  // covers both cases); purely additive on top of the flush() calls above.
+  MApp.Outbox.initBackgroundSync();
 });
