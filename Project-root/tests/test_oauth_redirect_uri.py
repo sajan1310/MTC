@@ -114,7 +114,7 @@ def test_config_has_oauth_credentials(app):
 
 def test_login_route_exists(client):
     """Test that the login route exists and shows email/password fields."""
-    response = client.get("/login")
+    response = client.get("/auth/login")
     assert (
         response.status_code == 200
     ), f"Login route should return 200, got: {response.status_code}"

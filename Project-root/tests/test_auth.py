@@ -5,7 +5,7 @@ from app.models import User
 
 def test_login_page(client):
     """Test that the login page loads correctly with email/password form."""
-    response = client.get("/login")
+    response = client.get("/auth/login")
     assert response.status_code == 200
     # Check for core elements of the new login page
     assert b"Welcome back" in response.data or b"Login" in response.data
@@ -14,13 +14,13 @@ def test_login_page(client):
 
 
 def test_signup_page(client):
-    response = client.get("/signup")
+    response = client.get("/auth/signup")
     assert response.status_code == 200
     assert b"Create your account" in response.data or b"Create account" in response.data
 
 
 def test_forgot_password_page(client):
-    response = client.get("/forgot-password")
+    response = client.get("/auth/forgot-password")
     assert response.status_code == 200
     assert b"Reset your password" in response.data
 
@@ -67,7 +67,7 @@ def test_google_login(
 
     response = client.get("/auth/google/callback?code=test_code", follow_redirects=True)
     assert response.status_code == 200
-    assert b"Dashboard" in response.data
+    assert b"Maharaja Bikes" in response.data
 
 
 def test_api_login_demo_credentials(client, app):
@@ -76,7 +76,7 @@ def test_api_login_demo_credentials(client, app):
         "email": app.config.get("DEMO_USER_EMAIL", "demo@example.com"),
         "password": app.config.get("DEMO_USER_PASSWORD", "Demo@1234"),
     }
-    response = client.post("/api/login", json=payload)
+    response = client.post("/auth/api/login", json=payload)
     assert response.status_code == 200
     data = response.get_json()
     assert data.get("success") is True

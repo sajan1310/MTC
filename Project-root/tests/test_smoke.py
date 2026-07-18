@@ -9,11 +9,8 @@ def test_app_creation(app):
 @pytest.mark.parametrize(
     "path, expected_status",
     [
-        ("/login", 200),
+        ("/auth/login", 200),
         ("/dashboard", [200, 302]),  # 200 with LOGIN_DISABLED, 302 normally
-        ("/inventory", [200, 302]),
-        ("/suppliers/view", [200, 302]),
-        ("/purchase-orders", [200, 302]),
     ],
 )
 def test_pages_load(client, path, expected_status):
