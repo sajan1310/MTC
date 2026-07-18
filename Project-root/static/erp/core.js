@@ -643,7 +643,105 @@ const App = {
     }
   },
 
+  // ── Logo Management ──────────────────────────────────────────────────
+  Logo: {
+    async load() {
+      try {
+        const res = await Api.call('getLogo');
+        if (res?.success && res.data) {
+          App.companyLogo = res.data;
+          App.Print.injectLogo();
+          this._updateHeaderUI(res.data);
+        }
+      } catch (e) {
+        console.warn('[Logo] Failed to load saved logo:', e);
+      }
+    },
+
+    upload(file) {
+      if (!file || !file.type.startsWith('image/')) {
+        App.Utils.showToast('Please select an image file.', true);
+        return;
+      }
+      const reader = new FileReader();
+      reader.onload = (e) => {
+        const img = new Image();
+        img.onload = () => {
+          // Compress to max 300px wide, JPEG 0.75 to keep chunks small
+          const MAX_W = 300;
+          const scale = Math.min(1, MAX_W / img.width);
+          const canvas = document.createElement('canvas');
+          canvas.width = Math.round(img.width * scale);
+          canvas.height = Math.round(img.height * scale);
+          canvas.getContext('2d').drawImage(img, 0, 0, canvas.width, canvas.height);
+          const dataUrl = canvas.toDataURL('image/png');
+
+          // Source split this into 8000-char chunks to stay under Apps
+          // Script's ~9KB PropertiesService value limit -- kept here only
+          // as the wire shape saveLogo's args expect (an array), not
+          // because Postgres has any such limit (see
+          // company_settings_service.py, which just joins them back).
+          const CHUNK = 8000;
+          const chunks = [];
+          for (let i = 0; i < dataUrl.length; i += CHUNK) chunks.push(dataUrl.slice(i, i + CHUNK));
+
+          Api.mutate('saveLogo', chunks)
+            .then(res => {
+              if (res?.success) {
+                App.companyLogo = dataUrl;
+                App.Print.injectLogo();
+                this._updateHeaderUI(dataUrl);
+                App.Utils.showToast('Logo saved — all print templates updated.');
+              } else {
+                App.Utils.showToast(res?.message || 'Failed to save logo.', true);
+              }
+            })
+            .catch(err => App.Utils.showToast(err.message || 'Failed to save logo.', true));
+        };
+        img.src = e.target.result;
+      };
+      reader.readAsDataURL(file);
+    },
+
+    clear() {
+      Api.mutate('clearLogo')
+        .then(res => {
+          if (res?.success) {
+            App.companyLogo = null;
+            App.Print.injectLogo();
+            this._updateHeaderUI(null);
+            App.Utils.showToast('Logo removed.');
+          } else {
+            App.Utils.showToast(res?.message || 'Failed to remove logo.', true);
+          }
+        })
+        .catch(err => App.Utils.showToast(err.message || 'Failed to remove logo.', true));
+    },
+
+    _updateHeaderUI(dataUrl) {
+      const container = document.getElementById('brand-icon-container');
+      const svg = document.getElementById('brand-icon-svg');
+      const logoImg = document.getElementById('brand-icon-logo');
+      const clearBtn = document.getElementById('logo-clear-btn');
+
+      if (dataUrl) {
+        if (svg) svg.style.display = 'none';
+        if (logoImg) { logoImg.src = dataUrl; logoImg.style.display = 'block'; }
+        if (container) container.style.background = 'transparent';
+      } else {
+        if (svg) svg.style.display = '';
+        if (logoImg) { logoImg.src = ''; logoImg.style.display = 'none'; }
+        if (container) container.style.background = 'linear-gradient(135deg, var(--primary-color) 0%, var(--primary-light) 100%)';
+      }
+
+      if (clearBtn) clearBtn.style.display = dataUrl ? 'inline-flex' : 'none';
+    }
+  },
+
   async Init() {
+    // Load persisted company logo (non-blocking, best-effort).
+    this.Logo.load();
+
     const labels = [];
     const promises = [];
 
@@ -705,6 +803,16 @@ const App = {
 window.App = App;
 
 function bindGlobalEvents() {
+  const logoInput = document.getElementById('logo-upload-input');
+  if (logoInput) {
+    logoInput.addEventListener('change', function () {
+      if (this.files?.[0]) {
+        App.Logo.upload(this.files[0]);
+        this.value = ''; // reset so the same file can be re-selected
+      }
+    });
+  }
+
   document.getElementById('confirmActionBtn')?.addEventListener('click', () => {
     safeModalHide('confirmModal');
     const cb = App.State.confirmCallback;
