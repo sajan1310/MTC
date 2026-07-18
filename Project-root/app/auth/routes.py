@@ -25,6 +25,24 @@ from ..models import User
 
 auth_bp = Blueprint("auth", __name__)
 
+# Sentinel id for the dev/test demo account -- never a real row in `users`,
+# so load_user() below must special-case it rather than querying the DB.
+DEMO_USER_ID = -1
+
+
+def build_demo_user() -> User:
+    return User(
+        {
+            "user_id": DEMO_USER_ID,
+            "name": "Demo User",
+            "email": current_app.config.get("DEMO_USER_EMAIL", "demo@example.com"),
+            "role": "admin",
+            "profile_picture": None,
+            "company": None,
+            "mobile": None,
+        }
+    )
+
 # Lazy OAuth client
 
 
@@ -103,16 +121,7 @@ def api_login():
         demo_user = current_app.config.get("DEMO_USER_EMAIL", "demo@example.com")
         demo_pass = current_app.config.get("DEMO_USER_PASSWORD", "Demo@1234")
         if email == demo_user and password == demo_pass:
-            demo_row = {
-                "user_id": -1,
-                "name": "Demo User",
-                "email": demo_user,
-                "role": "admin",
-                "profile_picture": None,
-                "company": None,
-                "mobile": None,
-            }
-            user_obj = User(demo_row)
+            user_obj = build_demo_user()
             login_user(user_obj, remember=remember)
             session.permanent = bool(remember)
             return jsonify({"success": True, "redirect_url": url_for("main.home")})

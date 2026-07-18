@@ -81,3 +81,31 @@ def test_api_login_demo_credentials(client, app):
     data = response.get_json()
     assert data.get("success") is True
     assert "redirect_url" in data
+
+
+def test_load_user_reconstructs_demo_account(app):
+    # Regression test: the demo user (id -1, from api_login()'s dev/test
+    # fallback) has no row in `users`. load_user() must special-case that
+    # id and reconstruct it directly rather than querying the DB -- a DB
+    # lookup for id -1 always misses, so the session would silently drop
+    # the demo user on the very next request after a successful login.
+    # (Flask's test client preserves app context across sequential
+    # requests on the same client under TESTING=True, which masks this bug
+    # if tested via client.post() + client.get() -- calling the callback
+    # directly is what actually exercises the fixed code path.)
+    from app.auth.routes import DEMO_USER_ID
+
+    with app.app_context():
+        user = app.login_manager._user_callback(str(DEMO_USER_ID))
+
+    assert user is not None
+    assert user.get_id() == str(DEMO_USER_ID)
+    assert user.email == app.config.get("DEMO_USER_EMAIL", "demo@example.com")
+
+
+def test_zzz_debug_no_login(app):
+    app.config["LOGIN_DISABLED"] = False
+    print("ZZZDEBUG CONFIG LOGIN_DISABLED:", app.config.get("LOGIN_DISABLED"))
+    with app.test_client() as client:
+        r = client.get("/erp")
+        print("ZZZDEBUG no-login /erp status:", r.status_code, "location:", r.headers.get("Location"))

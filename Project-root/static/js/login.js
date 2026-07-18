@@ -35,7 +35,7 @@ document.getElementById('login-form').addEventListener('submit', async function(
     btn.textContent = 'Signing in…';
 
     try {
-        const response = await fetch('/api/login', {
+        const response = await fetch('/auth/api/login', {
             method: 'POST',
             headers: {
                 'Content-Type': 'application/json',

@@ -137,7 +137,7 @@
         btn.textContent = 'Creating...';
 
         try {
-            const res = await fetch('/api/signup', {
+            const res = await fetch('/auth/api/signup', {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json', 'X-CSRFToken': csrfToken },
                 body: JSON.stringify({ name, email, password, confirm_password })

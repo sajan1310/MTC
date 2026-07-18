@@ -402,9 +402,15 @@ def create_app(config_name: str | None = None) -> Flask:
     # User loader (keep import at module-level where possible for performance)
     import psycopg2.extras  # noqa: E402
     from .models import User  # noqa: E402
+    from .auth.routes import DEMO_USER_ID, build_demo_user  # noqa: E402
 
     @login_manager.user_loader
     def load_user(user_id: str):
+        # The demo account (api_login()'s dev/test fallback) has no row in
+        # `users` -- it must be reconstructed here rather than queried, or
+        # the session silently drops it on every request after login.
+        if (app.debug or app.config.get("TESTING")) and user_id == str(DEMO_USER_ID):
+            return build_demo_user()
         try:
             with database.get_conn(cursor_factory=psycopg2.extras.DictCursor) as (conn, cur):
                 cur.execute("SELECT * FROM users WHERE user_id = %s", (user_id,))
