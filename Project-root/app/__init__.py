@@ -473,6 +473,13 @@ def create_app(config_name: str | None = None) -> Flask:
 
         app.logger.info("Universal Process Framework API blueprints registered and CSRF exemptions applied where configured")
 
+    # Internal ledger-reconciliation audit (Apps_Script/module_audit.js) --
+    # unattended, hourly, not wired into the UI. No-ops under TESTING/the
+    # outer reloader process -- see start_ledger_audit_scheduler()'s guards.
+    from .erp.services import ledger_audit_service
+
+    ledger_audit_service.start_ledger_audit_scheduler(app)
+
     # If specific view function names need exemption but are only available
     # after registration, we try to exempt them but log missing keys.
     # Only exempt explicit endpoints that require CSRF exemption:
