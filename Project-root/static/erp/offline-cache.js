@@ -135,6 +135,25 @@ const OfflineCache = (() => {
     });
   }
 
+  // Phase 6 (sync-issues tray): every entry regardless of status, for a
+  // screen that lets a user actually see what's queued/stuck, not just a
+  // count. Sorted by id (insertion order) same as listPending().
+  async function outboxListAll() {
+    const db = await open();
+    if (!db) return [];
+
+    return new Promise(resolve => {
+      try {
+        const tx = db.transaction(OUTBOX_STORE_NAME, 'readonly');
+        const req = tx.objectStore(OUTBOX_STORE_NAME).getAll();
+        req.onsuccess = () => resolve(req.result || []);
+        req.onerror = () => resolve([]);
+      } catch (err) {
+        resolve([]);
+      }
+    });
+  }
+
   async function outboxMarkDone(id) {
     const db = await open();
     if (!db) return;
@@ -145,6 +164,39 @@ const OfflineCache = (() => {
     } catch (err) {
       // Best-effort.
     }
+  }
+
+  // Phase 6 (sync-issues tray): a user-initiated "try this one again" --
+  // resets a failed entry back to pending (clearing lastError) so the
+  // next flush() picks it back up. The mutationId is untouched (still
+  // the same one from when it was first queued), preserving the
+  // idempotency guarantee across this manual retry too.
+  async function outboxRetry(id) {
+    const db = await open();
+    if (!db) return;
+
+    try {
+      const tx = db.transaction(OUTBOX_STORE_NAME, 'readwrite');
+      const store = tx.objectStore(OUTBOX_STORE_NAME);
+      const req = store.get(id);
+      req.onsuccess = () => {
+        const row = req.result;
+        if (!row) return;
+        row.status = 'pending';
+        row.lastError = null;
+        store.put(row);
+      };
+    } catch (err) {
+      // Best-effort.
+    }
+  }
+
+  // Phase 6 (sync-issues tray): a user-initiated "give up on this one" --
+  // permanently discards a queued/failed entry. Same underlying delete
+  // as markDone; a distinct name at the call site so it's clear this is
+  // a deliberate user choice, not a successful replay.
+  async function outboxDiscard(id) {
+    return outboxMarkDone(id);
   }
 
   async function outboxMarkFailed(id, message) {
@@ -216,8 +268,11 @@ const OfflineCache = (() => {
     outbox: {
       enqueue: outboxEnqueue,
       listPending: outboxListPending,
+      listAll: outboxListAll,
       markDone: outboxMarkDone,
       markFailed: outboxMarkFailed,
+      retry: outboxRetry,
+      discard: outboxDiscard,
       countPendingAndFailed: outboxCountPendingAndFailed,
       countPendingForMethod: outboxCountPendingForMethod
     }

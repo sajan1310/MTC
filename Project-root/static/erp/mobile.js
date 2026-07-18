@@ -116,6 +116,7 @@ MApp.Outbox = {
     } finally {
       this._flushing = false;
       this.updateBadge();
+      if (typeof MApp.SyncIssues !== 'undefined') MApp.SyncIssues.updateSummary();
       this._refreshCurrentTab();
     }
   },
@@ -3100,6 +3101,107 @@ MApp.Directory = {
 };
 
 // ================================================================
+// SYNC ISSUES (More tab, Phase 6) -- every offline-queued mutation,
+// pending or failed, in one place, with per-item Retry/Discard. The
+// count banners on each individual screen (Round 2's
+// pendingSyncBannerHtml) tell you SOMETHING is queued; this is where
+// you go to actually see what, and do something about a stuck one.
+// ================================================================
+MApp.SyncIssues = {
+  entries: [],
+
+  // Human-readable labels for the 5 queueable RPC methods -- the outbox
+  // itself only knows raw method names.
+  METHOD_LABELS: {
+    adjustStockManually: 'Stock Adjustment',
+    saveProduction: 'Log Lot',
+    saveDispatch: 'New Dispatch',
+    saveReturn: 'Log Return',
+    savePO: 'New PO'
+  },
+
+  async open() {
+    const listEl = document.getElementById('sync-issues-list');
+    MApp.Util.renderSkeleton(listEl, 3);
+    MApp.Sheet.open('sheet-sync-issues');
+    await this.load();
+  },
+
+  close() {
+    MApp.Sheet.close('sheet-sync-issues');
+  },
+
+  async load() {
+    this.entries = await OfflineCache.outbox.listAll();
+    this.render();
+  },
+
+  render() {
+    const listEl = document.getElementById('sync-issues-list');
+    if (!listEl) return;
+
+    if (this.entries.length === 0) {
+      MApp.Util.renderEmpty(listEl, { title: 'All synced', body: 'Nothing is waiting to sync.' });
+      return;
+    }
+
+    listEl.innerHTML = this.entries.map(entry => {
+      const label = this.METHOD_LABELS[entry.method] || entry.method;
+      const isFailed = entry.status === 'failed';
+      return `
+        <div class="mb-card">
+          <div class="mb-card-row">
+            <div>
+              <div class="mb-card-title">${MApp.Util.escapeHtml(label)}</div>
+              <div class="mb-card-sub">Queued ${MApp.Util.relativeTime(entry.queuedAt)}</div>
+            </div>
+            <span class="mb-chip ${isFailed ? 'mb-chip-cancelled' : 'mb-chip-pending'}">${isFailed ? 'Failed' : 'Waiting'}</span>
+          </div>
+          ${isFailed && entry.lastError ? `<div class="mb-card-sub mb-mt-2" style="color:var(--mb-enamel-red);">${MApp.Util.escapeHtml(entry.lastError)}</div>` : ''}
+          <div class="mb-flex-row mb-mt-2" style="gap:var(--mb-sp-3);">
+            ${isFailed ? `<button type="button" class="mb-btn-text" style="padding:0;min-height:auto;" data-retry="${entry.id}">Retry</button>` : ''}
+            <button type="button" class="mb-btn-text" style="padding:0;min-height:auto;color:var(--mb-enamel-red);" data-discard="${entry.id}">Discard</button>
+          </div>
+        </div>`;
+    }).join('');
+
+    listEl.querySelectorAll('[data-retry]').forEach(btn => {
+      btn.addEventListener('click', () => this.retry(parseInt(btn.dataset.retry, 10)));
+    });
+    listEl.querySelectorAll('[data-discard]').forEach(btn => {
+      btn.addEventListener('click', () => this.discard(parseInt(btn.dataset.discard, 10)));
+    });
+  },
+
+  async retry(id) {
+    await OfflineCache.outbox.retry(id);
+    await this.load();
+    MApp.Outbox.updateBadge();
+    MApp.Toast.success('Will retry now.');
+    MApp.Outbox.flush(); // attempt immediately rather than waiting for the next online/boot trigger
+  },
+
+  // Native confirm() rather than building a custom confirm-sheet
+  // component for this one destructive, infrequent action -- discarding
+  // permanently loses the queued data, so SOME friction is appropriate.
+  async discard(id) {
+    if (!window.confirm('Discard this queued item? It will not be saved.')) return;
+    await OfflineCache.outbox.discard(id);
+    await this.load();
+    MApp.Outbox.updateBadge();
+    this.updateSummary();
+    MApp.Toast.success('Discarded.');
+  },
+
+  async updateSummary() {
+    const el = document.getElementById('sync-issues-summary');
+    if (!el) return;
+    const count = await OfflineCache.outbox.countPendingAndFailed();
+    el.textContent = count > 0 ? `${count} item(s) need attention` : 'All synced';
+  }
+};
+
+// ================================================================
 // MORE — links out to Returns/Items lookup/desktop UI + About row
 // ================================================================
 MApp.More = {
@@ -3107,6 +3209,7 @@ MApp.More = {
     this._wireDesktopLink();
     this.loadAbout();
     MApp.Returns.mount();
+    MApp.SyncIssues.updateSummary();
   },
 
   // Adaptation from source: Mobile_Index.html's own doGet() served both
