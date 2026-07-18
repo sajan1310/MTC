@@ -71,6 +71,49 @@ MApp.Api.callCached = async function (method) {
   }
 };
 
+// ── OFFLINE OUTBOX + REPLAY (Phase 6 Round 3) ───────────────────────
+// Scoped to exactly one mutation this round -- adjustStockManually (see
+// MApp.Stock.submitAdjust) -- the only one of the app's 5 mutating calls
+// whose payload is plain strings/numbers rather than a server row ID
+// that could go stale by replay time. Extending to the other 4 is a
+// later round (see the plan file's own roadmap).
+MApp.Outbox = {
+  _flushing: false,
+
+  async flush() {
+    if (this._flushing) return;
+    this._flushing = true;
+
+    try {
+      const pending = await OfflineCache.outbox.listPending();
+      for (const entry of pending) {
+        let res;
+        try {
+          res = await Api.mutateWithId(entry.method, entry.mutationId, ...entry.args);
+        } catch (networkErr) {
+          // Still offline (or reconnected only briefly) -- stop here,
+          // leave this and every remaining entry pending for next time.
+          break;
+        }
+
+        if (res && res.success) {
+          await OfflineCache.outbox.markDone(entry.id);
+        } else {
+          // A real, reachable-server rejection (e.g. a stale reference) --
+          // stop retrying this one, but don't let it block the rest of
+          // the queue.
+          await OfflineCache.outbox.markFailed(entry.id, res && res.message);
+        }
+      }
+    } finally {
+      this._flushing = false;
+      if (typeof MApp.Stock !== 'undefined' && MApp.Stock.updateOutboxBadge) {
+        MApp.Stock.updateOutboxBadge();
+      }
+    }
+  }
+};
+
 // ================================================================
 // TOAST
 // ================================================================
@@ -775,8 +818,15 @@ MApp.Stock = {
 
   // Note: source's own _apiCall handled both reads and writes with one
   // verb (no CSRF/mutation-id needed under google.script.run) -- this
-  // Flask backend's adjustStockManually is mutation=True (registry.py),
-  // so this call uses MApp.Api.mutate, not .call, unlike source.
+  // Flask backend's adjustStockManually is mutation=True (registry.py).
+  //
+  // Phase 6 Round 3: the mutation-id is generated ONCE, up front, and
+  // reused for both this live attempt and any later outbox replay (via
+  // Api.mutateWithId, not Api.mutate, which would generate a fresh one
+  // per call) -- so if this request actually reaches the server but its
+  // response is lost (a connection drop mid-response, not mid-request),
+  // a later replay under the SAME id is recognized as a duplicate and
+  // returns the cached result instead of adjusting stock twice.
   async submitAdjust() {
     const item = this._adjustItem;
     if (!item) return;
@@ -793,10 +843,15 @@ MApp.Stock = {
       return;
     }
 
+    const mutationId = Api.newMutationId();
+    const args = [item.name, item.size, newValue, reason];
+
     MApp.Util.setSheetBusy('stock-adjust-body', 'stock-adjust-save-btn', true, 'Saving…');
     try {
-      const res = await MApp.Api.mutate('adjustStockManually', item.name, item.size, newValue, reason);
+      const res = await Api.mutateWithId('adjustStockManually', mutationId, ...args);
       if (!res || !res.success) {
+        // Reached the server -- a real rejection, not an outage. Unchanged
+        // from before this round: no outbox fallback for a business error.
         MApp.Toast.error((res && res.message) || 'Could not adjust stock.');
         MApp.Util.setSheetBusy('stock-adjust-body', 'stock-adjust-save-btn', false, null, 'Save Correction');
         return;
@@ -806,8 +861,26 @@ MApp.Stock = {
       MApp.Util.setSheetBusy('stock-adjust-body', 'stock-adjust-save-btn', false, null, 'Save Correction');
       this.load();
     } catch (err) {
-      MApp.Toast.error(err.message || 'Could not adjust stock. Check your connection and try again.');
+      // Network-level failure (the fetch itself rejected) -- queue it
+      // under the same mutationId instead of failing outright.
+      await OfflineCache.outbox.enqueue(mutationId, 'adjustStockManually', args);
+      this.updateOutboxBadge();
+      MApp.Toast.success('Saved — will sync when back online.');
+      this.closeAdjustSheet();
       MApp.Util.setSheetBusy('stock-adjust-body', 'stock-adjust-save-btn', false, null, 'Save Correction');
+      this.load();
+    }
+  },
+
+  async updateOutboxBadge() {
+    const badge = document.getElementById('mapp-tab-stock-badge');
+    if (!badge) return;
+    const count = await OfflineCache.outbox.countPendingAndFailed();
+    if (count > 0) {
+      badge.textContent = count > 9 ? '9+' : String(count);
+      badge.classList.remove('mb-hidden');
+    } else {
+      badge.classList.add('mb-hidden');
     }
   },
 
@@ -2972,4 +3045,11 @@ document.addEventListener('DOMContentLoaded', () => {
     navigator.serviceWorker.register('/erp/mobile/sw.js', { scope: '/erp/mobile' })
       .catch(err => console.warn('[PWA] Mobile service worker registration failed:', err));
   }
+
+  // Phase 6 Round 3 -- replay any outbox entries queued in a previous
+  // session (app was closed/reloaded while offline), and again whenever
+  // the browser regains connectivity. Background Sync (replaying even
+  // when the app isn't open) is a later round.
+  MApp.Outbox.flush();
+  window.addEventListener('online', () => MApp.Outbox.flush());
 });

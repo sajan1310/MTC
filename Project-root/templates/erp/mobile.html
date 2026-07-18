@@ -53,6 +53,9 @@
       <button type="button" class="mapp-tab" id="mapp-tab-stock" role="tab" aria-selected="false" onclick="MApp.Shell.showTab('stock')">
         <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 8l-9-5-9 5 9 5 9-5z"/><path d="M3 8v8l9 5 9-5V8"/><path d="M12 13v8"/></svg>
         <span>Stock</span>
+        <!-- Outbox pending/failed count (Phase 6 Round 3) -- shown/hidden
+             by MApp.Stock.updateOutboxBadge() -->
+        <span class="mapp-tab-badge mb-hidden" id="mapp-tab-stock-badge"></span>
       </button>
       <button type="button" class="mapp-tab" id="mapp-tab-production" role="tab" aria-selected="false" onclick="MApp.Shell.showTab('production')">
         <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="9"/><path d="M10 8.5v7l6-3.5-6-3.5z"/></svg>

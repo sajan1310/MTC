@@ -205,6 +205,7 @@ textarea:focus-visible,
 }
 
 .mapp-tab {
+  position: relative;
   flex: 1;
   min-height: var(--mb-tabbar-h);
   display: flex;
@@ -224,6 +225,24 @@ textarea:focus-visible,
 .mapp-tab svg { width: 24px; height: 24px; }
 .mapp-tab.active { color: var(--mb-safety); }
 .mapp-tab:active { background: var(--mb-workshop); }
+
+/* Outbox pending/failed count (Phase 6 Round 3) -- same enamel-red as
+   .mb-chip-lowstock, positioned over the tab's own icon. */
+.mapp-tab-badge {
+  position: absolute;
+  top: 4px;
+  right: calc(50% - 22px);
+  min-width: 16px;
+  height: 16px;
+  padding: 0 4px;
+  border-radius: var(--mb-radius-pill);
+  background: var(--mb-enamel-red);
+  color: #fff;
+  font-size: 10px;
+  font-weight: 700;
+  line-height: 16px;
+  text-align: center;
+}
 
 /* ── Section headings & screen title ────────────────────────────────── */
 .mapp-screen-title {

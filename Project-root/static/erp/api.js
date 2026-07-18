@@ -12,6 +12,11 @@
 // is for mutating ones -- callers must pick the right one; there is no way to
 // ask the server which a method is without an extra round trip, and every
 // ported view already knows which of its own calls are saves/deletes.
+//
+// Api.mutateWithId(method, mutationId, ...args) + Api.newMutationId() (Phase
+// 6 Round 3) exist for the mobile offline outbox: it needs the exact same
+// mutation-id on both a live attempt and any later replay of that same user
+// action, which .mutate()'s always-fresh-UUID behavior can't provide.
 
 const Api = (() => {
   function _csrfToken() {
@@ -41,18 +46,33 @@ const Api = (() => {
     return res.json();
   }
 
+  function _newMutationId() {
+    return (typeof crypto !== 'undefined' && crypto.randomUUID)
+      ? crypto.randomUUID()
+      : 'xxxxxxxx-xxxx-4xxx-yxxx-xxxxxxxxxxxx'.replace(/[xy]/g, c => {
+          const r = (Math.random() * 16) | 0;
+          return (c === 'x' ? r : (r & 0x3) | 0x8).toString(16);
+        });
+  }
+
   return {
     call(method, ...args) {
       return _request(method, args, null);
     },
 
     mutate(method, ...args) {
-      const mutationId = (typeof crypto !== 'undefined' && crypto.randomUUID)
-        ? crypto.randomUUID()
-        : 'xxxxxxxx-xxxx-4xxx-yxxx-xxxxxxxxxxxx'.replace(/[xy]/g, c => {
-            const r = (Math.random() * 16) | 0;
-            return (c === 'x' ? r : (r & 0x3) | 0x8).toString(16);
-          });
+      return _request(method, args, _newMutationId());
+    },
+
+    // Phase 6 Round 3 -- for callers (the offline outbox) that need the
+    // SAME mutation-id across a live attempt and a later replay, so a
+    // request that reached the server but lost its response on the way
+    // back doesn't execute twice when retried. Ordinary callers should
+    // keep using .mutate(), which generates a fresh id per call same as
+    // before.
+    newMutationId: _newMutationId,
+
+    mutateWithId(method, mutationId, ...args) {
       return _request(method, args, mutationId);
     }
   };
