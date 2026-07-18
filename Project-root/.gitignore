@@ -23,6 +23,9 @@ build/
 *.swp
 *.swo
 
+# Node (frontend Jest tooling -- package.json/package-lock.json are tracked)
+node_modules/
+
 # Uploads
 static/uploads/*
 !static/uploads/.gitkeep

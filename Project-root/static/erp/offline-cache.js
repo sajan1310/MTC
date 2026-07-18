@@ -168,10 +168,20 @@ const OfflineCache = (() => {
 
   // Phase 6 (sync-issues tray): a user-initiated "try this one again" --
   // resets a failed entry back to pending (clearing lastError) so the
-  // next flush() picks it back up. The mutationId is untouched (still
-  // the same one from when it was first queued), preserving the
-  // idempotency guarantee across this manual retry too.
-  async function outboxRetry(id) {
+  // next flush() picks it back up.
+  //
+  // Unlike the automatic replay path (flush(), which reuses the SAME
+  // mutationId for a still-`pending` entry because it genuinely doesn't
+  // know whether that request already reached the server), a `failed`
+  // entry got a DEFINITIVE response -- rpc.py's call() caches whatever
+  // spec.func produced under the mutation_id unconditionally, a business
+  // rejection just as permanently as a success (see
+  // tests/erp/test_offline_sync.py). Retrying under the same id would
+  // therefore just replay the original failure forever, even after
+  // whatever caused it (a missing reason, a deleted process) is fixed.
+  // The caller (MApp.SyncIssues.retry()) mints a fresh one for exactly
+  // this reason.
+  async function outboxRetry(id, newMutationId) {
     const db = await open();
     if (!db) return;
 
@@ -184,6 +194,7 @@ const OfflineCache = (() => {
         if (!row) return;
         row.status = 'pending';
         row.lastError = null;
+        if (newMutationId) row.mutationId = newMutationId;
         store.put(row);
       };
     } catch (err) {

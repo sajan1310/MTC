@@ -3292,7 +3292,12 @@ MApp.SyncIssues = {
   },
 
   async retry(id) {
-    await OfflineCache.outbox.retry(id);
+    // A fresh mutation_id, not the original one -- see offline-cache.js's
+    // outboxRetry() comment: the entry already got a definitive server
+    // response once (that's why it's `failed`, not still `pending`), and
+    // the server caches that response under its mutation_id forever, so
+    // reusing it here would just replay the same stale rejection.
+    await OfflineCache.outbox.retry(id, Api.newMutationId());
     await this.load();
     MApp.Outbox.updateBadge();
     MApp.Toast.success('Will retry now.');
