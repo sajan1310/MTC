@@ -3,13 +3,6 @@
 // Talks to the already-shipped getDashboardData RPC (app/erp/services/
 // dashboard_service.py) -- no backend changes needed, the response shape
 // matches this renderer's expectations exactly.
-//
-// Two adaptations from source, both because this is the first frontend
-// round and Production/Dispatch aren't ported yet: openPipelineStage and
-// the Ready-to-Dispatch row's "Dispatch" button would otherwise call
-// App.Production/App.Dispatch methods that don't exist -- both guarded to
-// fall back to a "not ported yet" toast instead of throwing. Everything
-// else (KPIs, tables, charts, auto-refresh) is an unmodified port.
 
 App.Dashboard = {
   charts: { status: null, trend: null },
@@ -203,17 +196,10 @@ App.Dashboard = {
     `).join('');
   },
 
-  // Adapted: Production isn't ported yet this round, so drilling into its
-  // Colorwise Production Summary modal falls back to a "not ported yet"
-  // toast instead of throwing on App.Production being undefined.
   async openPipelineStage(processId) {
     App.Navigation.showTab('productionTab');
-    if (typeof App.Production !== 'undefined' && App.Production.openColorwiseSummaryModal) {
-      await App.Production.loadData();
-      App.Production.openColorwiseSummaryModal(processId);
-    } else {
-      App.Utils.notPortedYet('Production');
-    }
+    await App.Production.loadData();
+    App.Production.openColorwiseSummaryModal(processId);
   },
 
   renderLowStock(items, totalCount) {
@@ -255,15 +241,9 @@ App.Dashboard = {
     this.renderTableFooter('dashReadyToDispatchFooter', items.length, totalCount, 'dispatchTab');
   },
 
-  // Adapted: Dispatch isn't ported yet this round -- same fallback as
-  // openPipelineStage above.
   openDispatchFor(productId) {
     App.Navigation.showTab('dispatchTab');
-    if (typeof App.Dispatch !== 'undefined' && App.Dispatch.enterTab) {
-      App.Dispatch.enterTab().then(() => App.Dispatch.openCreateDispatchModal(productId));
-    } else {
-      App.Utils.notPortedYet('Dispatch');
-    }
+    App.Dispatch.enterTab().then(() => App.Dispatch.openCreateDispatchModal(productId));
   },
 
   renderContractorPayables(rows, totalCount) {

@@ -1,11 +1,5 @@
 <!--
   Dashboard tab, transcribed from Apps_Script/View_Dashboard.html.
-
-  Quick Actions buttons that would call into a not-yet-ported module
-  (App.PO.openCreateModal(), etc.) use data-action="not-ported-yet"
-  instead of the source's literal onclick -- App.Utils.notPortedYet
-  (core.js) shows a toast instead of throwing. Un-comment / restore the
-  real onclick as each module's own frontend round lands.
 -->
 
 <div id="dashboardTab" class="tab-content active" role="tabpanel" aria-labelledby="btn-dashboardTab">
@@ -108,6 +102,43 @@
         <div class="dash-kpi-sub" id="kpiWastageMonthSub">&nbsp;</div>
       </div>
     </div>
+    <!-- Nav-only shortcut tiles: no live aggregate backs these, just navigation -->
+    <div class="col">
+      <div class="dash-kpi-card" data-action="show-tab" data-tab="itemMaster" role="button" tabindex="0">
+        <div class="dash-kpi-goto"><i class="bi bi-chevron-right"></i></div>
+        <div class="dash-kpi-top">
+          <div class="dash-kpi-icon bg-primary"><i class="bi bi-box-seam"></i></div>
+          <div class="dash-kpi-label">Items Master</div>
+        </div>
+      </div>
+    </div>
+    <div class="col">
+      <div class="dash-kpi-card" data-action="show-tab" data-tab="vendorMaster" role="button" tabindex="0">
+        <div class="dash-kpi-goto"><i class="bi bi-chevron-right"></i></div>
+        <div class="dash-kpi-top">
+          <div class="dash-kpi-icon bg-success"><i class="bi bi-people"></i></div>
+          <div class="dash-kpi-label">Vendors</div>
+        </div>
+      </div>
+    </div>
+    <div class="col">
+      <div class="dash-kpi-card" data-action="show-tab" data-tab="productsTab" role="button" tabindex="0">
+        <div class="dash-kpi-goto"><i class="bi bi-chevron-right"></i></div>
+        <div class="dash-kpi-top">
+          <div class="dash-kpi-icon bg-info"><i class="bi bi-diagram-3"></i></div>
+          <div class="dash-kpi-label">Products &amp; Processes</div>
+        </div>
+      </div>
+    </div>
+    <div class="col">
+      <div class="dash-kpi-card" data-action="show-tab" data-tab="clientsTab" role="button" tabindex="0">
+        <div class="dash-kpi-goto"><i class="bi bi-chevron-right"></i></div>
+        <div class="dash-kpi-top">
+          <div class="dash-kpi-icon bg-secondary"><i class="bi bi-person-lines-fill"></i></div>
+          <div class="dash-kpi-label">Clients</div>
+        </div>
+      </div>
+    </div>
   </div>
 
   <!-- Quick Actions -->
@@ -115,17 +146,17 @@
     <div class="dash-section-title">Quick Actions</div>
     <div class="row row-cols-2 row-cols-sm-3 row-cols-lg-6 g-2">
       <div class="col">
-        <button class="btn btn-success dash-action-tile w-100 h-100" data-action="not-ported-yet" data-feature="Create PO">
+        <button class="btn btn-success dash-action-tile w-100 h-100" onclick="App.PO.openCreateModal()">
           <i class="bi bi-plus-circle"></i><span>Create PO</span>
         </button>
       </div>
       <div class="col">
-        <button class="btn btn-primary dash-action-tile w-100 h-100" data-action="not-ported-yet" data-feature="Receive Bill">
+        <button class="btn btn-primary dash-action-tile w-100 h-100" onclick="App.Bill.openReceiveModal()">
           <i class="bi bi-receipt"></i><span>Receive Bill</span>
         </button>
       </div>
       <div class="col">
-        <button class="btn btn-dark dash-action-tile w-100 h-100" data-action="not-ported-yet" data-feature="Log Production">
+        <button class="btn btn-dark dash-action-tile w-100 h-100" onclick="App.Production.openCreateModal()">
           <i class="bi bi-play-circle"></i><span>Log Production</span>
         </button>
       </div>
@@ -135,29 +166,29 @@
         </button>
       </div>
       <div class="col">
-        <button class="btn btn-secondary dash-action-tile w-100 h-100" data-action="not-ported-yet" data-feature="Log Wastage">
+        <button class="btn btn-secondary dash-action-tile w-100 h-100" onclick="App.Wastage.openWastageModal()">
           <i class="bi bi-trash3"></i><span>Log Wastage</span>
         </button>
       </div>
       <div class="col">
-        <button class="btn btn-outline-danger dash-action-tile w-100 h-100" data-action="not-ported-yet" data-feature="Return Goods">
+        <button class="btn btn-outline-danger dash-action-tile w-100 h-100" onclick="App.Return.openReturnModal()">
           <i class="bi bi-arrow-return-left"></i><span>Return Goods</span>
         </button>
       </div>
     </div>
     <div class="d-flex flex-wrap justify-content-between align-items-center gap-2 dash-quick-secondary">
-      <button class="btn btn-outline-danger btn-sm fw-semibold" data-action="not-ported-yet" data-feature="Print Low Stock Report">
+      <button class="btn btn-outline-danger btn-sm fw-semibold" onclick="App.Stock.printLowStockReport()">
         <i class="bi bi-printer me-1"></i>Print Low Stock Report
       </button>
       <div class="d-flex flex-wrap align-items-center gap-2">
         <span class="dash-setup-label">Setup</span>
-        <button class="btn btn-outline-secondary btn-sm" data-action="not-ported-yet" data-feature="Item setup">
+        <button class="btn btn-outline-secondary btn-sm" onclick="App.Item.openCreateModal()">
           <i class="bi bi-box-seam me-1"></i>Item
         </button>
-        <button class="btn btn-outline-secondary btn-sm" data-action="not-ported-yet" data-feature="Process setup">
+        <button class="btn btn-outline-secondary btn-sm" onclick="App.Process.openCreateModal()">
           <i class="bi bi-diagram-3 me-1"></i>Process
         </button>
-        <button class="btn btn-outline-secondary btn-sm" data-action="not-ported-yet" data-feature="Vendor setup">
+        <button class="btn btn-outline-secondary btn-sm" onclick="App.Vendor.openCreateModal()">
           <i class="bi bi-people me-1"></i>Vendor
         </button>
       </div>
