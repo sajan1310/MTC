@@ -10,16 +10,11 @@
   "jest": {
     "testEnvironment": "jsdom",
     "testMatch": [
-      "**/static/js/tests/**/*.test.js",
       "**/static/erp/tests/**/*.test.js"
     ],
     "collectCoverageFrom": [
-      "static/js/**/*.js",
       "static/erp/**/*.js",
-      "!static/js/tests/**",
-      "!static/erp/tests/**",
-      "!static/js/vendor/**",
-      "!static/js/lib/**"
+      "!static/erp/tests/**"
     ],
     "coverageDirectory": "coverage",
     "coverageReporters": [
