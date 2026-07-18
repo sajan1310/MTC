@@ -72,11 +72,19 @@ MApp.Api.callCached = async function (method) {
 };
 
 // ── OFFLINE OUTBOX + REPLAY (Phase 6 Round 3) ───────────────────────
-// Scoped to exactly one mutation this round -- adjustStockManually (see
-// MApp.Stock.submitAdjust) -- the only one of the app's 5 mutating calls
-// whose payload is plain strings/numbers rather than a server row ID
-// that could go stale by replay time. Extending to the other 4 is a
-// later round (see the plan file's own roadmap).
+// Round 3 scoped this to exactly one mutation (adjustStockManually) --
+// the one whose payload is plain strings/numbers, not a server row ID
+// that could go stale by replay time. Now extended to all 5: a stale
+// reference (a deleted process, a product no longer ready to dispatch)
+// was never actually a correctness gap in this design -- it just
+// surfaces as an ordinary {success:false} business rejection on replay,
+// which the markFailed branch below already handles fine (keeps the
+// entry, records the real server message, stops retrying it, and lets
+// the rest of the queue continue). No mutation needed special-casing.
+//
+// The badge lives on the More tab (not per-mutation-type) since outbox
+// entries can now come from 5 different screens -- one place to check
+// "is anything unsynced" beats duplicating badge logic 4-5 times.
 MApp.Outbox = {
   _flushing: false,
 
@@ -107,9 +115,19 @@ MApp.Outbox = {
       }
     } finally {
       this._flushing = false;
-      if (typeof MApp.Stock !== 'undefined' && MApp.Stock.updateOutboxBadge) {
-        MApp.Stock.updateOutboxBadge();
-      }
+      this.updateBadge();
+    }
+  },
+
+  async updateBadge() {
+    const badge = document.getElementById('mapp-tab-more-badge');
+    if (!badge) return;
+    const count = await OfflineCache.outbox.countPendingAndFailed();
+    if (count > 0) {
+      badge.textContent = count > 9 ? '9+' : String(count);
+      badge.classList.remove('mb-hidden');
+    } else {
+      badge.classList.add('mb-hidden');
     }
   }
 };
@@ -864,23 +882,11 @@ MApp.Stock = {
       // Network-level failure (the fetch itself rejected) -- queue it
       // under the same mutationId instead of failing outright.
       await OfflineCache.outbox.enqueue(mutationId, 'adjustStockManually', args);
-      this.updateOutboxBadge();
+      MApp.Outbox.updateBadge();
       MApp.Toast.success('Saved — will sync when back online.');
       this.closeAdjustSheet();
       MApp.Util.setSheetBusy('stock-adjust-body', 'stock-adjust-save-btn', false, null, 'Save Correction');
       this.load();
-    }
-  },
-
-  async updateOutboxBadge() {
-    const badge = document.getElementById('mapp-tab-stock-badge');
-    if (!badge) return;
-    const count = await OfflineCache.outbox.countPendingAndFailed();
-    if (count > 0) {
-      badge.textContent = count > 9 ? '9+' : String(count);
-      badge.classList.remove('mb-hidden');
-    } else {
-      badge.classList.add('mb-hidden');
     }
   },
 
@@ -1621,7 +1627,7 @@ MApp.Production = {
 
   // Note: source's own single-verb _apiCall handled both reads and
   // writes -- saveProduction is mutation=True server-side (registry.py),
-  // so this call uses MApp.Api.mutate, not .call, unlike source.
+  // so this call uses Api.mutateWithId, not .call, unlike source.
   async saveLot() {
     if (!this.selection.process) {
       MApp.Toast.error('Choose a process first.');
@@ -1691,23 +1697,39 @@ MApp.Production = {
     // again); a blanket re-enable afterwards would incorrectly unlock them.
     // Only the failure path restores the still-populated form via
     // setSheetBusy, since nothing was reset there.
+    // Phase 6: mutation-id generated once, reused for both this live
+    // attempt and any later outbox replay (see MApp.Stock.submitAdjust's
+    // own comment for why -- same reasoning applies to every mutation).
+    const mutationId = Api.newMutationId();
+
     MApp.Util.setSheetBusy('log-lot-body', 'log-lot-save-btn', true, 'Logging…');
     try {
-      const res = await MApp.Api.mutate('saveProduction', formData);
+      const res = await Api.mutateWithId('saveProduction', mutationId, formData);
       if (!res || !res.success) {
         MApp.Toast.error((res && res.message) || 'Could not log this lot.');
         MApp.Util.setSheetBusy('log-lot-body', 'log-lot-save-btn', false, null, 'Log Lot');
         return;
       }
-      MApp.Toast.success(`Lot logged${res.data && res.data.lotNumber ? ' — ' + res.data.lotNumber : ''}.`);
-      await this.resetLogLotForm();
-      const saveBtn = document.getElementById('log-lot-save-btn');
-      if (saveBtn) { saveBtn.disabled = false; saveBtn.textContent = 'Log Lot'; }
-      this.load();
+      await this._onLotSaved(`Lot logged${res.data && res.data.lotNumber ? ' — ' + res.data.lotNumber : ''}.`);
     } catch (err) {
-      MApp.Toast.error(err.message || 'Could not log this lot. Check your connection and try again.');
-      MApp.Util.setSheetBusy('log-lot-body', 'log-lot-save-btn', false, null, 'Log Lot');
+      // Network-level failure -- queue under the same mutationId instead
+      // of failing outright. A stale processId/productId reference (the
+      // process was deleted/deactivated by replay time) isn't a gap here:
+      // it just surfaces as an ordinary {success:false} on replay, which
+      // MApp.Outbox.flush() already handles (marks this one entry failed
+      // with the real server message, doesn't block the rest of the queue).
+      await OfflineCache.outbox.enqueue(mutationId, 'saveProduction', [formData]);
+      MApp.Outbox.updateBadge();
+      await this._onLotSaved('Saved — will sync when back online.');
     }
+  },
+
+  async _onLotSaved(message) {
+    MApp.Toast.success(message);
+    await this.resetLogLotForm();
+    const saveBtn = document.getElementById('log-lot-save-btn');
+    if (saveBtn) { saveBtn.disabled = false; saveBtn.textContent = 'Log Lot'; }
+    this.load();
   },
 
   async resetLogLotForm() {
@@ -1997,7 +2019,7 @@ MApp.Dispatch = {
 
   // Note: source's own single-verb _apiCall handled both reads and
   // writes -- saveDispatch is mutation=True server-side (registry.py),
-  // so this call uses MApp.Api.mutate, not .call, unlike source.
+  // so this call uses Api.mutateWithId, not .call, unlike source.
   async save() {
     if (!this.selection.productId) {
       MApp.Toast.error('Choose a product first.');
@@ -2024,24 +2046,35 @@ MApp.Dispatch = {
       remarks: (document.getElementById('dispatch-remarks')?.value || '').trim()
     };
 
+    const mutationId = Api.newMutationId();
+
     MApp.Util.setSheetBusy('new-dispatch-body', 'new-dispatch-save-btn', true, 'Saving…');
     try {
-      const res = await MApp.Api.mutate('saveDispatch', formData);
+      const res = await Api.mutateWithId('saveDispatch', mutationId, formData);
       if (!res || !res.success) {
         MApp.Toast.error((res && res.message) || 'Could not save this dispatch.');
         MApp.Util.setSheetBusy('new-dispatch-body', 'new-dispatch-save-btn', false, null, 'Save Dispatch');
         return;
       }
-      MApp.Toast.success(`Dispatch saved${res.data && res.data.dispatchNumber ? ' — ' + res.data.dispatchNumber : ''}.`);
-      this.selection = { clientName: '', productId: '', productName: '', logisticsContractor: '' };
-      document.getElementById('new-dispatch-body').innerHTML = this._formHtml();
-      const saveBtn = document.getElementById('new-dispatch-save-btn');
-      if (saveBtn) { saveBtn.disabled = false; saveBtn.textContent = 'Save Dispatch'; }
-      this.load();
+      this._onDispatchSaved(`Dispatch saved${res.data && res.data.dispatchNumber ? ' — ' + res.data.dispatchNumber : ''}.`);
     } catch (err) {
-      MApp.Toast.error(err.message || 'Could not save this dispatch. Check your connection and try again.');
-      MApp.Util.setSheetBusy('new-dispatch-body', 'new-dispatch-save-btn', false, null, 'Save Dispatch');
+      // Network-level failure -- queue under the same mutationId. A
+      // stale Ready-to-Dispatch reference by replay time isn't a gap:
+      // it surfaces as an ordinary {success:false}, already handled by
+      // MApp.Outbox.flush()'s markFailed branch.
+      await OfflineCache.outbox.enqueue(mutationId, 'saveDispatch', [formData]);
+      MApp.Outbox.updateBadge();
+      this._onDispatchSaved('Saved — will sync when back online.');
     }
+  },
+
+  _onDispatchSaved(message) {
+    MApp.Toast.success(message);
+    this.selection = { clientName: '', productId: '', productName: '', logisticsContractor: '' };
+    document.getElementById('new-dispatch-body').innerHTML = this._formHtml();
+    const saveBtn = document.getElementById('new-dispatch-save-btn');
+    if (saveBtn) { saveBtn.disabled = false; saveBtn.textContent = 'Save Dispatch'; }
+    this.load();
   }
 };
 // ================================================================
@@ -2211,7 +2244,7 @@ MApp.Returns = {
 
   // Note: source's own single-verb _apiCall handled both reads and
   // writes -- saveReturn is mutation=True server-side (registry.py),
-  // so this call uses MApp.Api.mutate, not .call, unlike source.
+  // so this call uses Api.mutateWithId, not .call, unlike source.
   async save() {
     if (!this.selection.vendor) {
       MApp.Toast.error('Choose a vendor first.');
@@ -2248,24 +2281,34 @@ MApp.Returns = {
       }])
     };
 
+    const mutationId = Api.newMutationId();
+
     MApp.Util.setSheetBusy('log-return-body', 'log-return-save-btn', true, 'Saving…');
     try {
-      const res = await MApp.Api.mutate('saveReturn', formData);
+      const res = await Api.mutateWithId('saveReturn', mutationId, formData);
       if (!res || !res.success) {
         MApp.Toast.error((res && res.message) || 'Could not log this return.');
         MApp.Util.setSheetBusy('log-return-body', 'log-return-save-btn', false, null, 'Log Return');
         return;
       }
-      MApp.Toast.success(`Return logged${res.data && res.data.returnNumber ? ' — ' + res.data.returnNumber : ''}.`);
-      this.selection = { vendor: '', itemName: '', itemSize: '', unit: 'Pcs' };
-      document.getElementById('log-return-body').innerHTML = this._formHtml();
-      const saveBtn = document.getElementById('log-return-save-btn');
-      if (saveBtn) { saveBtn.disabled = false; saveBtn.textContent = 'Log Return'; }
-      this.load();
+      this._onReturnSaved(`Return logged${res.data && res.data.returnNumber ? ' — ' + res.data.returnNumber : ''}.`);
     } catch (err) {
-      MApp.Toast.error(err.message || 'Could not log this return. Check your connection and try again.');
-      MApp.Util.setSheetBusy('log-return-body', 'log-return-save-btn', false, null, 'Log Return');
+      // Network-level failure -- queue under the same mutationId. Vendor/
+      // item are matched by name (not an opaque row ID), same low
+      // staleness risk as adjustStockManually.
+      await OfflineCache.outbox.enqueue(mutationId, 'saveReturn', [formData]);
+      MApp.Outbox.updateBadge();
+      this._onReturnSaved('Saved — will sync when back online.');
     }
+  },
+
+  _onReturnSaved(message) {
+    MApp.Toast.success(message);
+    this.selection = { vendor: '', itemName: '', itemSize: '', unit: 'Pcs' };
+    document.getElementById('log-return-body').innerHTML = this._formHtml();
+    const saveBtn = document.getElementById('log-return-save-btn');
+    if (saveBtn) { saveBtn.disabled = false; saveBtn.textContent = 'Log Return'; }
+    this.load();
   }
 };
 // ================================================================
@@ -2578,7 +2621,7 @@ MApp.PO = {
 
   // Note: source's own single-verb _apiCall handled both reads and
   // writes -- savePO is mutation=True server-side (registry.py), so
-  // this call uses MApp.Api.mutate, not .call, unlike source.
+  // this call uses Api.mutateWithId, not .call, unlike source.
   async save() {
     if (!this.selection.vendor) {
       MApp.Toast.error('Choose a vendor first.');
@@ -2609,22 +2652,32 @@ MApp.PO = {
       }])
     };
 
+    const mutationId = Api.newMutationId();
+
     MApp.Util.setSheetBusy('new-po-body', 'new-po-save-btn', true, 'Saving…');
     try {
-      const res = await MApp.Api.mutate('savePO', formData);
+      const res = await Api.mutateWithId('savePO', mutationId, formData);
       if (!res || !res.success) {
         MApp.Toast.error((res && res.message) || 'Could not save this PO.');
         MApp.Util.setSheetBusy('new-po-body', 'new-po-save-btn', false, null, 'Save PO');
         return;
       }
-      MApp.Toast.success(`PO saved${res.data && res.data.poNumber ? ' — ' + res.data.poNumber : ''}.`);
-      this.closeNewSheet();
-      MApp.Util.setSheetBusy('new-po-body', 'new-po-save-btn', false, null, 'Save PO');
-      this._refreshLedger();
+      this._onPoSaved(`PO saved${res.data && res.data.poNumber ? ' — ' + res.data.poNumber : ''}.`);
     } catch (err) {
-      MApp.Toast.error(err.message || 'Could not save this PO. Check your connection and try again.');
-      MApp.Util.setSheetBusy('new-po-body', 'new-po-save-btn', false, null, 'Save PO');
+      // Network-level failure -- queue under the same mutationId. Vendor/
+      // item are matched by name (not an opaque row ID), same low
+      // staleness risk as adjustStockManually.
+      await OfflineCache.outbox.enqueue(mutationId, 'savePO', [formData]);
+      MApp.Outbox.updateBadge();
+      this._onPoSaved('Saved — will sync when back online.');
     }
+  },
+
+  _onPoSaved(message) {
+    MApp.Toast.success(message);
+    this.closeNewSheet();
+    MApp.Util.setSheetBusy('new-po-body', 'new-po-save-btn', false, null, 'Save PO');
+    this._refreshLedger();
   },
 
   // Best-effort refresh of the ledger list behind the New PO sheet -- a
