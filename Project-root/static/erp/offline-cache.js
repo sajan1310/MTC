@@ -186,6 +186,31 @@ const OfflineCache = (() => {
     });
   }
 
+  // Phase 6 (provisional-ID reconciliation): a lightweight "N still
+  // waiting to sync" count scoped to one RPC method, so each screen can
+  // show its own queued-item banner without needing to fabricate a fake
+  // list card for every queued record. Pending only (not failed) --
+  // a failed entry is a real, already-seen rejection, not something
+  // still "waiting."
+  async function outboxCountPendingForMethod(method) {
+    const db = await open();
+    if (!db) return 0;
+
+    return new Promise(resolve => {
+      try {
+        const tx = db.transaction(OUTBOX_STORE_NAME, 'readonly');
+        const req = tx.objectStore(OUTBOX_STORE_NAME).getAll();
+        req.onsuccess = () => {
+          const rows = req.result || [];
+          resolve(rows.filter(e => e.status === 'pending' && e.method === method).length);
+        };
+        req.onerror = () => resolve(0);
+      } catch (err) {
+        resolve(0);
+      }
+    });
+  }
+
   return {
     open, get, put,
     outbox: {
@@ -193,7 +218,8 @@ const OfflineCache = (() => {
       listPending: outboxListPending,
       markDone: outboxMarkDone,
       markFailed: outboxMarkFailed,
-      countPendingAndFailed: outboxCountPendingAndFailed
+      countPendingAndFailed: outboxCountPendingAndFailed,
+      countPendingForMethod: outboxCountPendingForMethod
     }
   };
 })();

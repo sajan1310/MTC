@@ -116,6 +116,7 @@ MApp.Outbox = {
     } finally {
       this._flushing = false;
       this.updateBadge();
+      this._refreshCurrentTab();
     }
   },
 
@@ -129,6 +130,23 @@ MApp.Outbox = {
     } else {
       badge.classList.add('mb-hidden');
     }
+  },
+
+  // Provisional-ID reconciliation: once a flush pass finishes, whatever
+  // tab the user currently has open should stop showing its "N waiting
+  // to sync" banner for anything that just replayed. Only refreshes the
+  // CURRENTLY VISIBLE tab (via MApp.Shell.current, the same module-name
+  // derivation MApp.Shell.showTab itself uses) -- a tab the user isn't
+  // looking at will pick up the accurate count next time they visit it
+  // (mount()/openLedgerSheet() re-checks), so there's no need to eagerly
+  // refresh screens off-screen.
+  _refreshCurrentTab() {
+    const tab = MApp.Shell.current;
+    if (!tab) return;
+    const moduleName = tab.charAt(0).toUpperCase() + tab.slice(1);
+    const mod = MApp[moduleName];
+    if (mod && typeof mod.load === 'function') mod.load();
+    else if (mod && typeof mod.mount === 'function') mod.mount();
   }
 };
 
@@ -305,6 +323,26 @@ MApp.Util = {
     const diffHr = Math.round(diffMin / 60);
     if (diffHr < 24) return `${diffHr}h ago`;
     return `${Math.round(diffHr / 24)}d ago`;
+  },
+
+  // Phase 6 (provisional-ID reconciliation, lightweight version) -- "N
+  // still waiting to sync" banner, shown by each of the 5 screens with a
+  // queueable action when OfflineCache.outbox.countPendingForMethod(...)
+  // is > 0. Reuses .mb-offline-banner's shape but overrides to the
+  // enamel-blue "in progress" tone (not red) -- this isn't a problem,
+  // it's a normal queued-and-will-sync state, same distinction the app
+  // already draws between statusChipClass's blue "In Progress" and red
+  // "Cancelled". Deliberately a count banner, not a fabricated list
+  // card per queued record -- rendering a fully realistic optimistic
+  // card in 5 differently-shaped lists (and reconciling each one away
+  // individually once synced) is a larger, riskier undertaking than the
+  // actual ask here: don't let a queued save go invisible.
+  pendingSyncBannerHtml(count, singular, plural) {
+    const noun = count === 1 ? singular : (plural || `${singular}s`);
+    return `
+      <div class="mb-offline-banner" style="background:var(--mb-enamel-blue-bg);color:var(--mb-enamel-blue);grid-column:1 / -1;">
+        <span>${count} ${noun} waiting to sync</span>
+      </div>`;
   }
 };
 
@@ -664,6 +702,7 @@ MApp.Stock = {
       MApp.State.stockFilter = '';
       this._lowStockOnly = lowStockOnly;
       this._offlineCachedAt = stockRes._offlineCachedAt || null;
+      this._pendingSyncCount = await OfflineCache.outbox.countPendingForMethod('adjustStockManually');
       this.filtered = lowStockOnly ? this.all.filter(s => s.isLowStock) : this.all;
 
       this.render();
@@ -703,7 +742,10 @@ MApp.Stock = {
          </div>`
       : '';
     const offlineBanner = this._offlineCachedAt ? MApp.Util.offlineBannerHtml(this._offlineCachedAt) : '';
-    const banner = offlineBanner + lowStockBanner;
+    const pendingBanner = this._pendingSyncCount > 0
+      ? MApp.Util.pendingSyncBannerHtml(this._pendingSyncCount, 'correction')
+      : '';
+    const banner = offlineBanner + pendingBanner + lowStockBanner;
 
     if (this.filtered.length === 0) {
       listEl.innerHTML = banner;
@@ -1050,6 +1092,7 @@ MApp.Production = {
       this._pendingOnly = MApp.State.productionFilter === 'pending';
       MApp.State.productionFilter = '';
       this._offlineCachedAt = lotsRes._offlineCachedAt || null;
+      this._pendingSyncCount = await OfflineCache.outbox.countPendingForMethod('saveProduction');
 
       this.render();
     } catch (err) {
@@ -1063,13 +1106,16 @@ MApp.Production = {
 
     let lots = this.lots;
     const offlineBanner = this._offlineCachedAt ? MApp.Util.offlineBannerHtml(this._offlineCachedAt) : '';
-    const pendingBanner = this._pendingOnly
+    const pendingSyncBanner = this._pendingSyncCount > 0
+      ? MApp.Util.pendingSyncBannerHtml(this._pendingSyncCount, 'lot')
+      : '';
+    const pendingOnlyBanner = this._pendingOnly
       ? `<div class="mb-offline-banner" style="background:var(--mb-safety-faint);color:var(--mb-ink);margin-bottom:var(--mb-sp-3);">
            <span>Showing pending &amp; in-progress lots only</span>
            <button type="button" class="mb-btn-text" style="padding:0;min-height:auto;" data-clear-filter>Clear</button>
          </div>`
       : '';
-    const banner = offlineBanner + pendingBanner;
+    const banner = offlineBanner + pendingSyncBanner + pendingOnlyBanner;
     if (this._pendingOnly) {
       lots = lots.filter(l => l.status === 'Pending' || l.status === 'In Progress');
     }
@@ -1788,6 +1834,7 @@ MApp.Dispatch = {
       this._todayOnly = MApp.State.dispatchFilter === 'today';
       MApp.State.dispatchFilter = '';
       this._offlineCachedAt = dispatchRes._offlineCachedAt || null;
+      this._pendingSyncCount = await OfflineCache.outbox.countPendingForMethod('saveDispatch');
 
       this.render();
     } catch (err) {
@@ -1801,13 +1848,16 @@ MApp.Dispatch = {
 
     let list = this.dispatches;
     const offlineBanner = this._offlineCachedAt ? MApp.Util.offlineBannerHtml(this._offlineCachedAt) : '';
+    const pendingSyncBanner = this._pendingSyncCount > 0
+      ? MApp.Util.pendingSyncBannerHtml(this._pendingSyncCount, 'dispatch', 'dispatches')
+      : '';
     const todayBanner = this._todayOnly
       ? `<div class="mb-offline-banner" style="background:var(--mb-safety-faint);color:var(--mb-ink);margin-bottom:var(--mb-sp-3);">
            <span>Showing today's dispatches only</span>
            <button type="button" class="mb-btn-text" style="padding:0;min-height:auto;" data-clear-filter>Clear</button>
          </div>`
       : '';
-    const banner = offlineBanner + todayBanner;
+    const banner = offlineBanner + pendingSyncBanner + todayBanner;
     if (this._todayOnly) {
       list = list.filter(d => MApp.Util.isToday(d.dateRaw));
     }
@@ -2105,6 +2155,7 @@ MApp.Returns = {
         return;
       }
       this.returns = (res.data || []).slice(0, 8);
+      this._pendingSyncCount = await OfflineCache.outbox.countPendingForMethod('saveReturn');
       this.render();
     } catch (err) {
       MApp.Util.renderError(listEl, err && err.message, () => this.load());
@@ -2115,12 +2166,19 @@ MApp.Returns = {
     const listEl = document.getElementById('more-returns-list');
     if (!listEl) return;
 
+    const pendingSyncBanner = this._pendingSyncCount > 0
+      ? MApp.Util.pendingSyncBannerHtml(this._pendingSyncCount, 'return')
+      : '';
+
     if (this.returns.length === 0) {
-      MApp.Util.renderEmpty(listEl, { title: 'No returns logged', body: 'Tap "Log Return" to record the first one.' });
+      listEl.innerHTML = pendingSyncBanner;
+      const empty = document.createElement('div');
+      listEl.appendChild(empty);
+      MApp.Util.renderEmpty(empty, { title: 'No returns logged', body: 'Tap "Log Return" to record the first one.' });
       return;
     }
 
-    listEl.innerHTML = this.returns.map(r => `
+    listEl.innerHTML = pendingSyncBanner + this.returns.map(r => `
       <div class="mb-card">
         <div class="mb-card-row">
           <div>
@@ -2355,6 +2413,7 @@ MApp.PO = {
         return;
       }
       this.pos = res.data || [];
+      this._pendingSyncCount = await OfflineCache.outbox.countPendingForMethod('savePO');
       this._applyFilters();
     } catch (err) {
       MApp.Util.renderError(listEl, err && err.message, () => this.openLedgerSheet());
@@ -2401,15 +2460,22 @@ MApp.PO = {
     const listEl = document.getElementById('po-ledger-list');
     if (!listEl) return;
 
+    const pendingSyncBanner = this._pendingSyncCount > 0
+      ? MApp.Util.pendingSyncBannerHtml(this._pendingSyncCount, 'PO', 'POs')
+      : '';
+
     if (this.filtered.length === 0) {
-      MApp.Util.renderEmpty(listEl, {
+      listEl.innerHTML = pendingSyncBanner;
+      const empty = document.createElement('div');
+      listEl.appendChild(empty);
+      MApp.Util.renderEmpty(empty, {
         title: 'No purchase orders found',
         body: this.pos.length === 0 ? 'No POs recorded yet.' : 'Try a different search or filter.'
       });
       return;
     }
 
-    listEl.innerHTML = this.filtered.slice(0, 100).map(po => {
+    listEl.innerHTML = pendingSyncBanner + this.filtered.slice(0, 100).map(po => {
       const idx = this.pos.indexOf(po);
       const pendingLines = (po.items || [])
         .filter(item => (item.pendingQty || 0) > 0.0001)
