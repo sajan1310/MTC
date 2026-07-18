@@ -186,6 +186,54 @@ def test_save_production_color_breakdown_custom_subgroup_exempt(erp_client):
     assert resp.get_json()["success"] is True
 
 
+def test_color_rename_cascades_into_production_and_warehouse_pool(erp_client):
+    """tags_service._rename_color_everywhere's Production/Warehouse Pool
+    targets: a real gap found by an Apps-Script-parity audit (deferred
+    since Phase 1a's own comment said "Production/Warehouse Pool don't
+    exist yet" -- both now do). Proves the rename reaches production's
+    color (comma-joined display string) and color_breakdown (the
+    authoritative JSON array), and that it also triggers an immediate
+    Warehouse Pool recalculation rather than leaving the bucket keyed on
+    the old name until some unrelated write happens to rebuild it.
+    """
+    old_color = _unique_name("OldProdColor")
+    new_color = _unique_name("NewProdColor")
+    _rpc(erp_client, "saveColor", [{"name": old_color}], mutation=True)
+
+    payload, process_id = _save_process(erp_client)
+    _seed_pool(erp_client, process_id, 10, color=old_color)
+
+    resp = _rpc(
+        erp_client,
+        "saveProduction",
+        [
+            {
+                "processId": process_id,
+                "assignedTo": "Worker A",
+                "colorBreakdown": [{"color": old_color, "qty": 5, "isCustom": True}],
+                "componentsConsumed": [_item_component()],
+            }
+        ],
+        mutation=True,
+    )
+    body = resp.get_json()
+    assert body["success"] is True, body["message"]
+    lot_number = body["data"]["lotNumber"]
+
+    rename = _rpc(erp_client, "saveColor", [{"name": new_color, "originalName": old_color}], mutation=True)
+    assert rename.get_json()["success"] is True
+
+    listed = _rpc(erp_client, "getProductionData").get_json()["data"]
+    match = next(r for r in listed if r["lotNumber"] == lot_number)
+    assert match["color"] == new_color
+    assert match["colorBreakdown"][0]["color"] == new_color
+
+    pool = _rpc(erp_client, "getWarehousePoolData").get_json()["data"]
+    own_buckets = [b for b in pool if b["outputItemName"] == payload["outputItemName"]]
+    assert not any(b["color"] == old_color for b in own_buckets)  # old key gone, not left stale
+    assert any(b["color"] == new_color for b in own_buckets)  # recalculated immediately under the new key
+
+
 def test_save_production_primary_axis_qty_summation_excludes_other_axis(erp_client):
     frame_payload, frame_id = _save_process(erp_client)
     _seed_pool(erp_client, frame_id, 10, color="Black")

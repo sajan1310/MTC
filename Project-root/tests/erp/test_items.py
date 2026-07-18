@@ -47,6 +47,38 @@ def test_save_item_creates_with_vendors_and_lists_it(erp_client):
     assert match["vendors"] == [{"vendor": "Acme Co", "rate": 12.5, "ratePerBaseUnit": 12.5}]
 
 
+def test_get_items_data_hides_zero_rate_vendors(erp_client):
+    """module_items.js's MIN_VENDOR_RATE (0.01) -- a vendor pair with no
+    real rate entered (0, or saved as blank and coerced to 0) is stored
+    (saveItem's own validation only rejects negative/non-numeric rates,
+    matching the source), but must not show up in getItemsData as if it
+    were a real quoted price. A real rate for a different vendor on the
+    same item is unaffected.
+    """
+    name = _unique_name("MixedRateItem")
+    resp = _rpc(
+        erp_client,
+        "saveItem",
+        [
+            {
+                "itemName": name,
+                "itemSize": "",
+                "itemBaseUnit": "Pcs",
+                "vendors": [
+                    {"vendor": "Empty Slot Vendor", "rate": 0},
+                    {"vendor": "Real Vendor", "rate": 8},
+                ],
+            }
+        ],
+        mutation=True,
+    )
+    assert resp.get_json()["success"] is True
+
+    listed = _rpc(erp_client, "getItemsData").get_json()["data"]
+    match = next(i for i in listed if i["name"] == name and i["size"] == "")
+    assert match["vendors"] == [{"vendor": "Real Vendor", "rate": 8, "ratePerBaseUnit": 8}]
+
+
 def test_save_item_vendor_rate_converted_to_base_unit(erp_client):
     """Purchase Unit 'Gross' (factor 144, Count family) -> Base Unit 'Pcs'
     (factor 1) should divide the rate by 144, exercising the real

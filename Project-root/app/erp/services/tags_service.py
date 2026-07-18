@@ -16,6 +16,7 @@ import psycopg2.extras
 
 import database
 from . import rename_utils
+from . import warehouse_service
 from .current_user import get_current_user_id
 from .. import config_maps
 from ..envelope import build_response
@@ -127,10 +128,10 @@ def _delete_tag(conn, cur, sheet_key: str, label: str, name):
 # Rename cascades. Written against every target table up front, guarded via
 # config_maps.TABLE_NAMES -- rename_utils skips silently via to_regclass()
 # for any table not yet registered, so each target starts working with no
-# further changes needed the moment its own phase lands. PROCESS_COMPONENTS/
-# PROCESS_COLOR_LINKS/PROCESS_MASTER (Phase 3a) and BOM_LINES (Phase 3c) are
-# real now; WAREHOUSE_POOL_OPENING and Production's COLOR/COLOR_BREAKDOWN
-# (structured, not a plain column rename -- see below) still aren't.
+# further changes needed the moment its own phase lands. All targets below
+# (PROCESS_COMPONENTS/PROCESS_COLOR_LINKS/PROCESS_MASTER from Phase 3a,
+# BOM_LINES from Phase 3c, WAREHOUSE_POOL_OPENING from Phase 3e, Production
+# and Warehouse Pool's own recalc from Phase 3g) are real now.
 # ─────────────────────────────────────────────────────────────────────────
 
 
@@ -154,14 +155,52 @@ def _rename_color_everywhere(cur, old_name: str, new_name: str) -> None:
             cur, table, config_maps.to_snake_case("colorA"), config_maps.to_snake_case("colorB"), old, new
         )
 
-    # Production's COLOR (comma-joined display string) and COLOR_BREAKDOWN
-    # (JSON [{color, qty}, ...]) both need structured rewriting, not a
-    # whole-cell string match -- dedicated logic lands with Production
-    # itself in Phase 3, not a generic rename_in_column call.
+    # Production's COLOR (comma-joined display string, e.g. "Red (Small),
+    # Blue") and COLOR_BREAKDOWN (JSON [{color, size, qty, ...}, ...], the
+    # authoritative structured data COLOR is derived from) both need
+    # structured rewriting, not a whole-cell/whole-column string match --
+    # ported from module_tags.js's _renameColorEverywhere verbatim,
+    # including its one real quirk: COLOR's per-segment comparison is a
+    # WHOLE-SEGMENT match, so a segment with a size suffix ("Red (Small)")
+    # never equals the bare old color name and is left unrenamed in that
+    # display string. COLOR_BREAKDOWN -- what every other read actually
+    # uses (see production_service.py's getProductionData) -- is
+    # unaffected by this and always renamed correctly either way.
+    if (table := config_maps.TABLE_NAMES.get("PRODUCTION")) and rename_utils._table_exists(cur, table):
+        old_lower = old.lower()
+        cur.execute(f"SELECT id, color, color_breakdown FROM {table} WHERE deleted_at IS NULL")
+        for row in cur.fetchall():
+            new_color = row["color"]
+            color_changed = False
+            if new_color:
+                parts = [p.strip() for p in new_color.split(",")]
+                renamed_parts = [new if p.lower() == old_lower else p for p in parts]
+                rejoined = ", ".join(renamed_parts)
+                if rejoined != new_color:
+                    new_color = rejoined
+                    color_changed = True
 
-    # Warehouse Pool bucket colors are DERIVED from the sheets renamed above
-    # (recalculateWarehousePool()) -- Warehouse Pool doesn't exist until
-    # Phase 3 either, so there's nothing to recalculate yet.
+            breakdown = row["color_breakdown"]
+            breakdown_changed = False
+            if breakdown:
+                for entry in breakdown:
+                    if entry and str(entry.get("color") or "").strip().lower() == old_lower:
+                        entry["color"] = new
+                        breakdown_changed = True
+
+            if color_changed or breakdown_changed:
+                cur.execute(
+                    f"UPDATE {table} SET color = %s, color_breakdown = %s WHERE id = %s",
+                    (new_color, psycopg2.extras.Json(breakdown) if breakdown is not None else None, row["id"]),
+                )
+
+    # Warehouse Pool bucket colors are always DERIVED (rebuilt from scratch
+    # by _recalculate_warehouse_pool) from the sheets just renamed above --
+    # recalc now so the bucket keys pick up the new name immediately,
+    # instead of silently staying on the old name until some unrelated
+    # write triggers it.
+    if config_maps.TABLE_NAMES.get("WAREHOUSE_POOL"):
+        warehouse_service._recalculate_warehouse_pool(cur)
 
 
 def _rename_process_type_everywhere(cur, old_name: str, new_name: str) -> None:

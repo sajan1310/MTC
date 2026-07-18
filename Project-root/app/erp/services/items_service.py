@@ -48,6 +48,11 @@ from .. import config_maps
 from ..envelope import build_response
 from ..registry import rpc_method
 
+# Minimum vendor rate to surface -- prevents an empty/zero rate (a vendor
+# pair slot with no real rate entered) from showing up as if it were a
+# real quoted price. Matches module_items.js's own MIN_VENDOR_RATE exactly.
+MIN_VENDOR_RATE = 0.01
+
 
 # ─────────────────────────────────────────────────────────────────────────
 # Validators (module_items.js's _validate*)
@@ -127,7 +132,10 @@ def _item_name_size_still_exists(cur, name: str, size: str) -> bool:
 
 
 def _count_vendors(cur, item_id) -> int:
-    cur.execute("SELECT COUNT(*) AS n FROM erp.item_vendors WHERE item_id = %s", (item_id,))
+    cur.execute(
+        "SELECT COUNT(*) AS n FROM erp.item_vendors WHERE item_id = %s AND rate >= %s",
+        (item_id, MIN_VENDOR_RATE),
+    )
     return cur.fetchone()["n"]
 
 
@@ -286,6 +294,8 @@ def get_items_data():
         vendors = []
         for v in vendors_by_item.get(row["id"], []):
             rate = float(v["rate"])
+            if rate < MIN_VENDOR_RATE:
+                continue
             try:
                 rate_per_base_unit = units_service.convert_rate_to_base_unit(
                     rate, purchase_unit, item_for_conversion, units_map
