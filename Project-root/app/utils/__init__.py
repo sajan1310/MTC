@@ -1,7 +1,6 @@
 # utils package - centralized utility exports
 import os
 import importlib.util
-from .file_validation import validate_upload
 
 # Get the parent app directory
 app_dir = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
@@ -19,7 +18,6 @@ get_or_create_master_id = utils_module.get_or_create_master_id
 get_or_create_item_master_id = utils_module.get_or_create_item_master_id
 
 __all__ = [
-    "validate_upload",
     "get_or_create_user",
     "role_required",
     "get_or_create_master_id",

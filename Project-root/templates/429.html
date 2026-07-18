@@ -1,22 +1,23 @@
-{% extends "base.html" %}
-
-{% block title %}Too Many Requests{% endblock %}
-
-{% block content %}
-<div class="container mt-5">
-    <div class="row justify-content-center">
-        <div class="col-md-8 text-center">
-            <div class="card">
-                <div class="card-header bg-danger text-white">
-                    <h1 class="h3">Rate Limit Exceeded</h1>
-                </div>
-                <div class="card-body">
-                    <p class="lead">You have made too many requests in a short period of time.</p>
-                    <p>Please wait a while before trying again.</p>
-                    <a href="{{ url_for('home') }}" class="btn btn-primary mt-3">Go to Homepage</a>
-                </div>
-            </div>
-        </div>
-    </div>
-</div>
-{% endblock %}
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Too Many Requests</title>
+  <style>
+    body { font-family: 'Inter', Arial, sans-serif; background: #f4f7f6; color: #0f172a; display: flex; align-items: center; justify-content: center; min-height: 100vh; margin: 0; }
+    .error-card { text-align: center; padding: 40px; max-width: 480px; background: #fff; border-radius: 12px; box-shadow: 0 4px 20px rgba(0,0,0,0.06); }
+    h1 { font-size: 22px; margin-bottom: 8px; color: #b91c1c; }
+    p { color: #475569; margin: 8px 0; }
+    a.btn { display: inline-block; margin-top: 16px; background: #0f172a; color: #fff; text-decoration: none; padding: 10px 20px; border-radius: 8px; font-weight: 600; }
+  </style>
+</head>
+<body>
+  <div class="error-card">
+    <h1>Rate Limit Exceeded</h1>
+    <p>You have made too many requests in a short period of time.</p>
+    <p>Please wait a while before trying again.</p>
+    <a class="btn" href="{{ url_for('home') }}">Go to Homepage</a>
+  </div>
+</body>
+</html>

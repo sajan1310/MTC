@@ -1,11 +1,22 @@
-{% extends "base.html" %}
-
-{% block title %}Internal Server Error{% endblock %}
-
-{% block content %}
-<div class="container text-center mt-5">
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>500 - Internal Server Error</title>
+  <style>
+    body { font-family: 'Inter', Arial, sans-serif; background: #f4f7f6; color: #0f172a; display: flex; align-items: center; justify-content: center; min-height: 100vh; margin: 0; }
+    .error-card { text-align: center; padding: 40px; }
+    h1 { font-size: 28px; margin-bottom: 8px; }
+    p { color: #475569; margin-bottom: 24px; }
+    a.btn { display: inline-block; background: #0f172a; color: #fff; text-decoration: none; padding: 10px 20px; border-radius: 8px; font-weight: 600; }
+  </style>
+</head>
+<body>
+  <div class="error-card">
     <h1>500 - Internal Server Error</h1>
     <p>Something went wrong on our end. We are working to fix it.</p>
-    <a href="{{ url_for('main.dashboard') }}" class="btn btn-primary">Go to Dashboard</a>
-</div>
-{% endblock %}
+    <a class="btn" href="{{ url_for('main.dashboard') }}">Go to Dashboard</a>
+  </div>
+</body>
+</html>

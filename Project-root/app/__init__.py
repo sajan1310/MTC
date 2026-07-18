@@ -416,16 +416,7 @@ def create_app(config_name: str | None = None) -> Flask:
         return None
 
     # Blueprints: import first so we can apply CSRF exemptions before register
-    from .api import api_bp
-    from .api.file_routes import files_bp
-    from .api.process_management import process_api_bp
-    from .api.reports import reports_api_bp
-    from .api.production_lot import production_api_bp
-    from .api.subprocess_management import subprocess_api_bp
-    from .api.variant_management import variant_api_bp
-    from .api.inventory_alerts import inventory_alerts_bp
     from .auth.routes import auth_bp
-    from .main.routes import main_bp
     from .erp import erp_bp, erp_rpc_bp
 
     # PHASE 1: Re-enable CSRF protection by removing blanket blueprint exemptions.
@@ -433,45 +424,28 @@ def create_app(config_name: str | None = None) -> Flask:
     # JSON API endpoints are protected via CORS + origin validation in production.
     # No blueprints are exempt; individual view functions are exempted as needed below.
 
-    # Now register blueprints
-    erp_only = bool(app.config.get("ERP_ONLY"))
+    # ERP is the only UI this app serves; "/" and "/dashboard" redirect into it.
+    app.register_blueprint(auth_bp, url_prefix="/auth")
+    app.register_blueprint(erp_bp)
+    app.register_blueprint(erp_rpc_bp, url_prefix="/api/erp")
+    limiter.exempt(erp_rpc_bp)
 
-    if erp_only:
-        # ERP-only deployment: skip main/api/UPF/files entirely; "/" serves the ERP.
-        app.register_blueprint(auth_bp, url_prefix="/auth")
-        app.register_blueprint(erp_bp)
-        app.register_blueprint(erp_rpc_bp, url_prefix="/api/erp")
-        limiter.exempt(erp_rpc_bp)
+    def _erp_home_redirect():
+        return redirect(url_for("erp.index"))
 
-        def _erp_home_redirect():
-            return redirect(url_for("erp.index"))
+    # auth's post-login redirects and the error-page templates reference
+    # these endpoint names directly, so they stay registered even though
+    # main_bp itself no longer exists.
+    app.add_url_rule("/", endpoint="main.home", view_func=_erp_home_redirect)
+    app.add_url_rule(
+        "/dashboard", endpoint="main.dashboard", view_func=_erp_home_redirect
+    )
+    app.add_url_rule("/", endpoint="home", view_func=_erp_home_redirect)
+    app.add_url_rule(
+        "/dashboard", endpoint="dashboard", view_func=_erp_home_redirect
+    )
 
-        # main_bp isn't registered in this mode, but auth's post-login redirects
-        # and templates still reference main.home/main.dashboard by endpoint name.
-        app.add_url_rule("/", endpoint="main.home", view_func=_erp_home_redirect)
-        app.add_url_rule(
-            "/dashboard", endpoint="main.dashboard", view_func=_erp_home_redirect
-        )
-
-        app.logger.info("ERP_ONLY mode: registered auth_bp + erp_bp + erp_rpc_bp only")
-    else:
-        app.register_blueprint(auth_bp, url_prefix="/auth")
-        app.register_blueprint(api_bp)
-        app.register_blueprint(files_bp)
-        app.register_blueprint(main_bp)
-
-        app.register_blueprint(process_api_bp, url_prefix="/api/upf")
-        app.register_blueprint(reports_api_bp, url_prefix="/api/upf")
-        app.register_blueprint(variant_api_bp, url_prefix="/api/upf")
-        app.register_blueprint(production_api_bp, url_prefix="/api/upf")
-        app.register_blueprint(subprocess_api_bp, url_prefix="/api/upf")
-        app.register_blueprint(inventory_alerts_bp, url_prefix="/api/upf")
-
-        app.register_blueprint(erp_bp)
-        app.register_blueprint(erp_rpc_bp, url_prefix="/api/erp")
-        limiter.exempt(erp_rpc_bp)
-
-        app.logger.info("Universal Process Framework API blueprints registered and CSRF exemptions applied where configured")
+    app.logger.info("Registered auth_bp + erp_bp + erp_rpc_bp only")
 
     # Internal ledger-reconciliation audit (Apps_Script/module_audit.js) --
     # unattended, hourly, not wired into the UI. No-ops under TESTING/the
@@ -485,8 +459,7 @@ def create_app(config_name: str | None = None) -> Flask:
     # Only exempt explicit endpoints that require CSRF exemption:
     # - JSON login/signup/forgot-password endpoints (for API clients without session)
     # - External webhook endpoints (if any exist)
-    for view_name in ("auth.api_login", "auth.api_signup", "auth.api_forgot_password",
-                      "main.compat_api_login", "main.compat_api_signup", "main.compat_api_forgot_password"):
+    for view_name in ("auth.api_login", "auth.api_signup", "auth.api_forgot_password"):
         try:
             func = app.view_functions.get(view_name)
             if func:
@@ -494,34 +467,6 @@ def create_app(config_name: str | None = None) -> Flask:
                 app.logger.debug("CSRF exemption applied to view: %s (authenticated API endpoint)", view_name)
         except Exception as e:
             app.logger.debug("Failed to exempt view %s from CSRF: %s", view_name, e)
-
-    # Compatibility aliases: add URL rules but log any failures for debugging
-    alias_map = {
-        "home": "main.home",
-        "dashboard": "main.dashboard",
-        "inventory": "main.inventory",
-        "suppliers": "main.suppliers",
-        "purchase_orders": "main.purchase_orders",
-        "stock_ledger": "main.stock_ledger",
-        "master_data": "main.master_data",
-        "profile": "main.profile",
-        "user_management": "main.user_management",
-    }
-    for alias, target in alias_map.items():
-        if alias in app.view_functions:
-            continue
-        target_func = app.view_functions.get(target)
-        if not target_func:
-            continue
-        target_rule = next((r for r in app.url_map.iter_rules() if r.endpoint == target), None)
-        if not target_rule:
-            continue
-        methods = (sorted(list((target_rule.methods or set()) - {"HEAD", "OPTIONS"})) or None)
-        try:
-            app.add_url_rule(target_rule.rule, endpoint=alias, view_func=target_func, methods=methods)
-        except Exception as e:
-            # Log failure reason for easier debugging rather than failing silently
-            app.logger.debug("Failed to add alias %s -> %s: %s", alias, target, e)
 
     # Route registry debug (optional)
     if app.debug:
@@ -625,13 +570,11 @@ def create_app(config_name: str | None = None) -> Flask:
 
 # Backwards-compatible exports
 from .utils import get_or_create_user  # re-export for backward compatibility in tests  # noqa: E402
-from .utils.response import APIResponse  # ensure response utility is imported and available  # noqa: E402
 
 __all__ = [
     "create_app",
     "validate_password",
     "get_or_create_user",
-    "APIResponse",
     "csrf",
     "login_manager",
     "limiter",

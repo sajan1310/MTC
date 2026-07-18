@@ -36,10 +36,8 @@ class Config:
     )
     # Example: 'redis://:password@localhost:6379/0?max_connections=50&decode_responses=True'
 
-    # File Upload
+    # Request body size limit
     MAX_CONTENT_LENGTH = 16 * 1024 * 1024  # 16MB
-    UPLOAD_FOLDER = "static/uploads"
-    ALLOWED_EXTENSIONS = {"png", "jpg", "jpeg", "gif", "webp"}
 
     # URL generation and base
     BASE_URL = os.getenv("BASE_URL", "http://127.0.0.1:5000")
@@ -49,10 +47,6 @@ class Config:
 
     # Session lifetime
     PERMANENT_SESSION_LIFETIME = int(os.getenv("PERMANENT_SESSION_LIFETIME", 86400))
-
-    # ERP module: when true, create_app() registers only auth_bp + the ERP
-    # blueprints (skips main/api/UPF/files) and "/" serves the ERP shell.
-    ERP_ONLY = os.getenv("ERP_ONLY", "false").lower() in ("1", "true", "yes")
 
     # Database
     DATABASE_URL = os.getenv("DATABASE_URL")
