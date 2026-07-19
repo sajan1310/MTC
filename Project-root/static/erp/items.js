@@ -3,20 +3,13 @@
 // 6-1432 -- that file also holds App.Products/App.BOM, which belong to
 // the merged "Products & Processes" tab's own future round, not this one).
 //
-// Talks to the 5 already-shipped items_service.py RPCs: getItemsData/
-// saveItem/deleteItem/deleteItemsBulk/importItemsFromStock. Form field
-// names already match saveItem's expected keys. updateThreshold (called
-// separately after a successful save, matching source exactly) is also
-// real -- stock_service.py, ported in Phase 1c.
-//
-// Several buttons call RPCs that were never implemented on the backend
-// (mergeItemEdit, mergeSelectedItems, runScheduledItemCleanup,
-// keepOrphanItem, keepOrphanItemsBulk -- confirmed absent from
-// items_service.py's RPC list). Left wired to the real Api.mutate calls
-// rather than stubbed: each already has its own try/catch showing an
-// error toast (source's own error handling, not something added here),
-// so a 404 "Unknown method" degrades exactly the same honest way as
-// syncVendorsFromPOHistory did for Vendors -- no special-casing needed.
+// Talks to items_service.py's RPCs: getItemsData/saveItem/deleteItem/
+// deleteItemsBulk/importItemsFromStock plus the data-hygiene tooling
+// (keepOrphanItem/keepOrphanItemsBulk/mergeItemEdit/mergeSelectedItems/
+// runScheduledItemCleanup), all real now. Form field names already match
+// saveItem's expected keys. updateThreshold (called separately after a
+// successful save, matching source exactly) is also real -- stock_service.py,
+// ported in Phase 1c.
 //
 // The Item Ledger's ensureLedgerSourceDataLoaded fetches getPOData/
 // getBillData/getReturnData/getProductionData/getStockAdjustmentHistory

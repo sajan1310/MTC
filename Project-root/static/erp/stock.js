@@ -282,9 +282,10 @@ App.Color = {
     });
   },
 
-  // Scans Item Name/Narration/Specification on Items Master for
-  // hyphen-joined combinations of existing Color Master colors (e.g.
-  // "Red-White") not yet in Color Master, then asks before adding them.
+  // Scans Item Name/Narration/Specification on Items Master (via
+  // tags_service.extract_colors_from_item_master) for hyphen-joined
+  // combinations of existing Color Master colors (e.g. "Red-White") not
+  // yet in Color Master, then asks before adding them.
   async autoExtract() {
     try {
       const res = await Api.call('extractColorsFromItemMaster');
@@ -585,9 +586,7 @@ App.ProcessType = {
   },
 
   // Re-matches every Process Master row's Process Type against this
-  // master's names. Backend RPC doesn't exist yet (Process Master isn't
-  // ported) -- left wired to the real (currently 404ing) call, same as
-  // App.Color.autoExtract.
+  // master's names (tags_service.import_process_types_from_process_names).
   importFromProcessNames() {
     App.Utils.confirmAction(
       'This re-matches every Process\'s Process Type against the names defined here (whichever is a substring of its Process Name), overwriting the current value — including clearing it to "General" if nothing matches. No new types are created. Continue?',

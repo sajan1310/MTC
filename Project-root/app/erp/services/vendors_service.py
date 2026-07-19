@@ -3,11 +3,18 @@
 getVendorsData/saveVendor/deleteVendor/deleteVendorsBulk are the RPC-exposed
 CRUD surface -- same shape as Phase 1a's Units/Tags masters.
 
-Deferred: syncVendorsFromPOHistory and autoExtractFromPoOrBill (+ their
-_ensureRateHistoryColumns/_appendRateHistoryRows helpers) -- both are
-entirely PO/Bill-history-driven and need PO/Bill to exist to be meaningful,
-not just to run. Their own round, alongside PO/Bill (that's also when Rate
-History's schema gets designed).
+autoExtractFromPoOrBill itself isn't a standalone RPC method -- its two
+halves (ensure_vendor here, items_service._auto_extract_item) already run
+unconditionally on every PO/Bill save (po_service._auto_extract_from_po,
+bill_service's own save path), matching the source's "not optional/bonus
+behavior" design. syncVendorsFromPOHistory below is the explicit,
+user-triggered backfill of that same pairing across *existing* PO history
+(e.g. for rows that predate this auto-extraction, or were bulk-imported
+directly into the DB) -- it intentionally skips the Rate History insert
+that a live PO save also does, since re-running that per historical row
+would duplicate Rate History entries that already exist from the original
+save; ensure_vendor/_auto_extract_item are both idempotent upserts, so
+re-running just those two is safe to call repeatedly.
 
 Deliberately not ported: LockService/CacheService, same reasoning as every
 prior master (Phase 1a) -- Postgres transactions + unique indexes are
@@ -20,6 +27,7 @@ from __future__ import annotations
 import psycopg2.extras
 
 import database
+from . import items_service
 from . import rename_utils
 from .current_user import get_current_user_id
 from .. import config_maps
@@ -214,3 +222,41 @@ def delete_vendors_bulk(conn, cur, vendor_names):
     rows_deleted = cur.rowcount
 
     return build_response(True, None, f"Deleted {rows_deleted} vendor(s) from master.")
+
+
+@rpc_method("syncVendorsFromPOHistory", mutation=True)
+@database.transactional
+def sync_vendors_from_po_history(conn, cur):
+    """Backfills Vendor Master + item-vendor rates from every existing PO
+    line -- see the module docstring for why this only replays
+    ensure_vendor/_auto_extract_item (both idempotent) and not the Rate
+    History insert a live PO save also does.
+    """
+    cur.execute(
+        """
+        SELECT h.vendor, h.contact, l.item_name, l.size, l.narration, l.unit, l.base_rate
+        FROM erp.po_headers h
+        JOIN erp.po_lines l ON l.header_id = h.id
+        WHERE h.deleted_at IS NULL
+        """
+    )
+    rows = cur.fetchall()
+
+    synced_vendors = set()
+    items_synced = 0
+    for row in rows:
+        vendor_name = (row["vendor"] or "").strip()
+        if not vendor_name:
+            continue
+        if vendor_name.lower() not in synced_vendors:
+            ensure_vendor(cur, vendor_name, row["contact"] or "")
+            synced_vendors.add(vendor_name.lower())
+
+        item_name = (row["item_name"] or "").strip()
+        rate = row["base_rate"]
+        if item_name and rate is not None and float(rate) >= items_service.MIN_VENDOR_RATE:
+            items_service._auto_extract_item(cur, item_name, row["size"], row["narration"], row["unit"], vendor_name, rate)
+            items_synced += 1
+
+    message = f"Synced {len(synced_vendors)} vendor(s) and {items_synced} item-vendor rate(s) from PO history."
+    return build_response(True, {"vendors": len(synced_vendors), "items": items_synced}, message)

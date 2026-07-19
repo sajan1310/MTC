@@ -4,6 +4,8 @@ from __future__ import annotations
 
 import uuid
 
+import database
+
 
 def _rpc(client, method, args=None, mutation=False):
     headers = {"X-Mutation-Id": str(uuid.uuid4())} if mutation else {}
@@ -131,3 +133,75 @@ def test_vendor_rename_cascades_into_item_vendors(erp_client):
     match = next(i for i in items if i["name"] == item_name)
     assert match["vendors"][0]["vendor"] == new_vendor
     assert match["vendors"][0]["rate"] == 42
+
+
+def test_sync_vendors_from_po_history_backfills_vendor_and_item_rate(erp_client):
+    """Simulates a PO row that predates auto-extraction (or was bulk-
+    imported directly into the DB) by inserting straight into
+    erp.po_headers/po_lines, bypassing savePO's own auto-extraction --
+    otherwise the vendor/item-vendor-rate would already exist and the sync
+    would have nothing left to prove.
+    """
+    vendor = _unique_name("HistoryVendor")
+    item_name = _unique_name("HistoryItem")
+
+    with database.get_conn() as (_conn, cur):
+        cur.execute(
+            "INSERT INTO erp.po_headers (po_number, po_date, vendor, contact) VALUES (%s, CURRENT_DATE, %s, %s) RETURNING id",
+            (_unique_name("PO"), vendor, "9876543210"),
+        )
+        header_id = cur.fetchone()[0]
+        cur.execute(
+            """
+            INSERT INTO erp.po_lines (header_id, item_name, narration, size, qty, unit, price, base_qty, base_rate)
+            VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s)
+            """,
+            (header_id, item_name, "", "Std", 10, "Pcs", 25, 10, 25),
+        )
+
+    vendors_before = _rpc(erp_client, "getVendorsData").get_json()["data"]
+    assert not any(v["name"] == vendor for v in vendors_before)
+
+    resp = _rpc(erp_client, "syncVendorsFromPOHistory", [], mutation=True)
+    body = resp.get_json()
+    assert body["success"] is True
+    assert body["data"]["vendors"] >= 1
+    assert body["data"]["items"] >= 1
+
+    vendors_after = _rpc(erp_client, "getVendorsData").get_json()["data"]
+    vendor_match = next(v for v in vendors_after if v["name"] == vendor)
+    assert vendor_match["contact"] == "9876543210"
+
+    items = _rpc(erp_client, "getItemsData").get_json()["data"]
+    item_match = next(i for i in items if i["name"] == item_name and i["size"] == "Std")
+    assert any(v["vendor"] == vendor and v["rate"] == 25 for v in item_match["vendors"])
+
+
+def test_sync_vendors_from_po_history_skips_below_min_rate(erp_client):
+    vendor = _unique_name("LowRateVendor")
+    item_name = _unique_name("LowRateItem")
+
+    with database.get_conn() as (_conn, cur):
+        cur.execute(
+            "INSERT INTO erp.po_headers (po_number, po_date, vendor, contact) VALUES (%s, CURRENT_DATE, %s, %s) RETURNING id",
+            (_unique_name("PO"), vendor, ""),
+        )
+        header_id = cur.fetchone()[0]
+        cur.execute(
+            """
+            INSERT INTO erp.po_lines (header_id, item_name, narration, size, qty, unit, price, base_qty, base_rate)
+            VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s)
+            """,
+            (header_id, item_name, "", "", 1, "Pcs", 0, 1, 0),
+        )
+
+    resp = _rpc(erp_client, "syncVendorsFromPOHistory", [], mutation=True)
+    assert resp.get_json()["success"] is True
+
+    # The vendor itself is still backfilled (vendor sync isn't rate-gated) --
+    # only the item-vendor rate link is skipped below MIN_VENDOR_RATE.
+    vendors_after = _rpc(erp_client, "getVendorsData").get_json()["data"]
+    assert any(v["name"] == vendor for v in vendors_after)
+
+    items = _rpc(erp_client, "getItemsData").get_json()["data"]
+    assert not any(i["name"] == item_name for i in items)

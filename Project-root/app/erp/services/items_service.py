@@ -20,10 +20,12 @@ Postgres text column, which is never evaluated as a formula. Plain
 str().strip() is used instead; all values are still sent through
 parameterized queries, so there's no SQL-injection concern either.
 
-Deferred: mergeItemEdit, mergeSelectedItems, keepOrphanItem(sBulk),
-autoMergeDuplicateItems, autoFixTruncatedDuplicateItems,
-runScheduledItemCleanup -- data hygiene tooling, not core CRUD; their own
-round later. importItemsFromStock (module_items.js:1928) is ported below,
+mergeItemEdit, mergeSelectedItems, keepOrphanItem(sBulk), and
+runScheduledItemCleanup (data hygiene tooling) are ported below too.
+autoMergeDuplicateItems/autoFixTruncatedDuplicateItems aren't their own RPC
+methods -- nothing on the frontend calls them directly, only
+runScheduledItemCleanup, which folds both phases into itself as private
+helpers. importItemsFromStock (module_items.js:1928) is ported below,
 now that erp.stock is real (Phase 1c). _propagateItemIdentityChange
 (module_items.js:1125) is ported below too, now that erp.po_lines is real
 (Phase 2b) -- guarded per target table exactly like every other rename
@@ -633,5 +635,303 @@ def _auto_extract_item(cur, name: str, size: str, narration: str, unit: str, ven
             )
         else:
             cur.execute("UPDATE erp.item_vendors SET rate = %s WHERE id = %s", (rate, vendor_row["id"]))
+
+
+# ─────────────────────────────────────────────────────────────────────────
+# Data hygiene: orphan Stock rows + duplicate/merge tooling
+# ─────────────────────────────────────────────────────────────────────────
+
+
+def _add_vendors_skip_existing(cur, item_id, vendors: list) -> None:
+    """Adds each of `vendors` ({"vendor", "rate"}) to `item_id`, skipping any
+    vendor name already present (case-insensitive) -- shared by every merge
+    path below so a merge never clobbers an existing vendor's rate with an
+    incoming one.
+    """
+    cur.execute("SELECT vendor FROM erp.item_vendors WHERE item_id = %s", (item_id,))
+    existing = {(row["vendor"] or "").strip().lower() for row in cur.fetchall()}
+    for v in vendors or []:
+        v = v or {}
+        vendor_name = str(v.get("vendor") or "").strip()
+        if not vendor_name or vendor_name.lower() in existing:
+            continue
+        rate = _validate_vendor_rate(v.get("rate") or 0)
+        cur.execute(
+            "INSERT INTO erp.item_vendors (item_id, vendor, rate) VALUES (%s, %s, %s)",
+            (item_id, vendor_name, rate),
+        )
+        existing.add(vendor_name.lower())
+
+
+def _merge_stock_and_delete(cur, keep_name: str, keep_size: str, remove_name: str, remove_size: str, remove_id) -> None:
+    """The tail every merge shares once vendors/text fields are settled:
+    combine Stock (stock_rows' own "merge" action), re-point PO/Bill/BOM/
+    Process Component references via the same cascade saveItem's own
+    identity-change path uses, then soft-delete the losing item row.
+    """
+    stock_rows.sync_stock_for_item(
+        cur, "merge",
+        {"oldName": remove_name, "oldSize": remove_size, "newName": keep_name, "newSize": keep_size},
+    )
+    _propagate_item_identity_change(cur, remove_name, remove_size, keep_name, keep_size)
+    cur.execute(
+        "UPDATE erp.items SET deleted_at = NOW(), updated_by = %s WHERE id = %s",
+        (get_current_user_id(), remove_id),
+    )
+
+
+def _merge_item_records(
+    cur, keep_id, keep_name: str, keep_size: str, remove_id, remove_name: str, remove_size: str,
+    *, merge_text_fields: bool,
+) -> None:
+    """Folds `remove` into `keep`: optionally fills any of keep's blank
+    remarks/narration/specification from remove's, merges vendors, merges
+    Stock, re-points references, then soft-deletes `remove`.
+    """
+    if merge_text_fields:
+        cur.execute("SELECT remarks, narration, specification FROM erp.items WHERE id = %s", (keep_id,))
+        keep_row = cur.fetchone()
+        cur.execute("SELECT remarks, narration, specification FROM erp.items WHERE id = %s", (remove_id,))
+        remove_row = cur.fetchone()
+        cur.execute(
+            """
+            UPDATE erp.items SET remarks = %s, narration = %s, specification = %s, updated_by = %s
+            WHERE id = %s
+            """,
+            (
+                (keep_row["remarks"] or "").strip() or (remove_row["remarks"] or "").strip(),
+                (keep_row["narration"] or "").strip() or (remove_row["narration"] or "").strip(),
+                (keep_row["specification"] or "").strip() or (remove_row["specification"] or "").strip(),
+                get_current_user_id(),
+                keep_id,
+            ),
+        )
+
+    cur.execute("SELECT vendor, rate FROM erp.item_vendors WHERE item_id = %s", (remove_id,))
+    _add_vendors_skip_existing(cur, keep_id, cur.fetchall())
+
+    _merge_stock_and_delete(cur, keep_name, keep_size, remove_name, remove_size, remove_id)
+
+
+@rpc_method("keepOrphanItem", mutation=True)
+@database.transactional
+def keep_orphan_item(conn, cur, name, size="", initial_stock=0):
+    """An orphan is an Item Master row with no matching Stock row (by Name +
+    Size) -- "Keep" just backfills that missing Stock row via the same
+    stock_rows "ensure" action saveItem itself uses for a plain edit.
+    """
+    valid_name = _validate_item_name(name)
+    valid_size = str(size or "").strip()
+    if _find_item(cur, valid_name, valid_size) is None:
+        raise ValueError(f'Item "{valid_name}" (size: "{valid_size}") not found in Item Master.')
+
+    stock_rows.sync_stock_for_item(
+        cur, "ensure",
+        {"name": valid_name, "size": valid_size, "initialStock": _validate_initial_stock(initial_stock)},
+    )
+    return build_response(True, None, f'Stock row created for "{valid_name}".')
+
+
+@rpc_method("keepOrphanItemsBulk", mutation=True)
+@database.transactional
+def keep_orphan_items_bulk(conn, cur, rows):
+    requested = [
+        {
+            "name": str((r or {}).get("name") or "").strip(),
+            "size": str((r or {}).get("size") or "").strip(),
+            "initialStock": _validate_initial_stock((r or {}).get("initialStock")),
+        }
+        for r in (rows or [])
+    ]
+    requested = [r for r in requested if r["name"]]
+    if not requested:
+        return build_response(True, None, "No items to keep.")
+
+    created = 0
+    for r in requested:
+        if _find_item(cur, r["name"], r["size"]) is None:
+            continue
+        stock_rows.sync_stock_for_item(cur, "ensure", r)
+        created += 1
+
+    return build_response(True, {"created": created}, f"Created {created} Stock row(s).")
+
+
+@rpc_method("mergeSelectedItems", mutation=True)
+@database.transactional
+def merge_selected_items(conn, cur, selected):
+    """selected = [keep, remove] (exactly 2, in that order -- matches the
+    frontend's own `const [keep, remove] = selected`). `keep` survives with
+    combined Stock/vendors/remarks/narration/spec; `remove` is deleted and
+    any PO/Bill/BOM rows referencing it are re-pointed to `keep`.
+    """
+    selected = selected or []
+    if len(selected) != 2:
+        raise ValueError("Exactly 2 items must be selected to merge.")
+
+    keep_in, remove_in = selected[0] or {}, selected[1] or {}
+    keep_name = _validate_item_name(keep_in.get("name"))
+    keep_size = str(keep_in.get("size") or "").strip()
+    remove_name = _validate_item_name(remove_in.get("name"))
+    remove_size = str(remove_in.get("size") or "").strip()
+
+    keep_id = _find_item(cur, keep_name, keep_size)
+    remove_id = _find_item(cur, remove_name, remove_size)
+    if keep_id is None:
+        raise ValueError(f'Item "{keep_name}" (size: "{keep_size}") not found.')
+    if remove_id is None:
+        raise ValueError(f'Item "{remove_name}" (size: "{remove_size}") not found.')
+    if keep_id == remove_id:
+        raise ValueError("Cannot merge an item into itself.")
+
+    _merge_item_records(cur, keep_id, keep_name, keep_size, remove_id, remove_name, remove_size, merge_text_fields=True)
+
+    return build_response(True, {"name": keep_name, "size": keep_size}, f'Merged "{remove_name}" into "{keep_name}".')
+
+
+@rpc_method("mergeItemEdit", mutation=True)
+@database.transactional
+def merge_item_edit(conn, cur, form_data):
+    """Called after saveItem rejects an edit as a duplicate (its `mergeable`
+    response) -- the item being edited (originalName/originalSize) is merged
+    into the pre-existing target it collided with (itemName/itemSize). Only
+    "this edit's vendors" (the submitted form's list, not the original's own
+    stored vendors) are added to the target, matching the confirm dialog's
+    exact promise; Stock is combined and references are re-pointed the same
+    way every other merge here does it.
+    """
+    form_data = form_data or {}
+
+    vendors_raw = form_data.get("vendors")
+    if isinstance(vendors_raw, str):
+        try:
+            vendors = json.loads(vendors_raw) if vendors_raw else []
+        except ValueError:
+            raise ValueError("Invalid vendors data: could not parse JSON.")
+    else:
+        vendors = vendors_raw or []
+    if not isinstance(vendors, list):
+        vendors = []
+
+    target_name = _validate_item_name(form_data.get("itemName"))
+    target_size = str(form_data.get("itemSize") or "").strip()
+    original_name = _validate_item_name(form_data.get("originalName"))
+    original_size = str(form_data.get("originalSize") or "").strip()
+
+    target_id = _find_item(cur, target_name, target_size)
+    if target_id is None:
+        raise ValueError(f'Item "{target_name}" (size: "{target_size}") not found.')
+
+    original_id = _find_item(cur, original_name, original_size)
+    if original_id is None:
+        raise ValueError(f'Item "{original_name}" (size: "{original_size}") not found.')
+    if original_id == target_id:
+        raise ValueError("Cannot merge an item into itself.")
+
+    _add_vendors_skip_existing(cur, target_id, vendors)
+    _merge_stock_and_delete(cur, target_name, target_size, original_name, original_size, original_id)
+
+    return build_response(True, {"name": target_name, "size": target_size}, f'Merged into "{target_name}".')
+
+
+# Truncated/typo auto-fix only folds a shorter name into a longer one when
+# the pairing can't be confused with anything else in the same size group --
+# no source spec exists for this tool's exact matching rule (the Apps
+# Script reference isn't checked out here), so this stays deliberately
+# conservative (small length gap, exactly one candidate on each side)
+# rather than risk silently merging two genuinely different items that
+# happen to share a text prefix (e.g. "Screw" / "Screwdriver").
+_TRUNCATION_MAX_LENGTH_GAP = 4
+_TRUNCATION_MIN_PREFIX_LENGTH = 3
+
+
+def _find_unambiguous_truncated_pairs(cur) -> list:
+    """[(shorter_row, longer_row), ...] for every (name, size) pair in the
+    same size group where the shorter name is a case-insensitive prefix of
+    the longer one, the length gap is small, and neither row participates
+    in any other such pairing.
+    """
+    cur.execute(
+        "SELECT id, item_name, size FROM erp.items WHERE deleted_at IS NULL ORDER BY lower(size), length(item_name)"
+    )
+    by_size: dict = {}
+    for row in cur.fetchall():
+        by_size.setdefault((row["size"] or "").strip().lower(), []).append(row)
+
+    pairs = []
+    for rows in by_size.values():
+        if len(rows) < 2:
+            continue
+        shorter_matches: dict = {}
+        longer_matches: dict = {}
+        for a in rows:
+            name_a = (a["item_name"] or "").strip()
+            if len(name_a) < _TRUNCATION_MIN_PREFIX_LENGTH:
+                continue
+            for b in rows:
+                if a["id"] == b["id"]:
+                    continue
+                name_b = (b["item_name"] or "").strip()
+                if len(name_b) <= len(name_a) or len(name_b) - len(name_a) > _TRUNCATION_MAX_LENGTH_GAP:
+                    continue
+                if not name_b.lower().startswith(name_a.lower()):
+                    continue
+                shorter_matches.setdefault(a["id"], []).append(b)
+                longer_matches.setdefault(b["id"], []).append(a)
+
+        for short_id, candidates in shorter_matches.items():
+            if len(candidates) != 1:
+                continue
+            long_row = candidates[0]
+            if len(longer_matches.get(long_row["id"], [])) != 1:
+                continue
+            pairs.append((next(r for r in rows if r["id"] == short_id), long_row))
+
+    return pairs
+
+
+@rpc_method("runScheduledItemCleanup", mutation=True)
+@database.transactional
+def run_scheduled_item_cleanup(conn, cur):
+    """(1) auto-fixes unambiguous truncated/typo-prefix duplicates (see
+    _find_unambiguous_truncated_pairs), then (2) merges any rows left
+    sharing the exact same Name + Size -- matches the confirm dialog's own
+    two-phase description exactly.
+    """
+    fixed = 0
+    for short_row, long_row in _find_unambiguous_truncated_pairs(cur):
+        short_name = (short_row["item_name"] or "").strip()
+        long_name = (long_row["item_name"] or "").strip()
+        size = (long_row["size"] or "").strip()
+        _merge_item_records(cur, long_row["id"], long_name, size, short_row["id"], short_name, size, merge_text_fields=True)
+        fixed += 1
+
+    # Ordered by id (creation order), not name -- a whitespace-padded
+    # duplicate (e.g. " Foo " vs "Foo", both invisible to the DB's own
+    # untrimmed unique index but the same item once app-level .strip() is
+    # applied) must never win survivorship over the clean original just
+    # because leading whitespace sorts first alphabetically.
+    cur.execute("SELECT id, item_name, size FROM erp.items WHERE deleted_at IS NULL ORDER BY id")
+    merged = 0
+    seen: dict = {}
+    for row in cur.fetchall():
+        key = f'{(row["item_name"] or "").strip().lower()}|{(row["size"] or "").strip().lower()}'
+        if key not in seen:
+            seen[key] = row
+            continue
+        keep = seen[key]
+        _merge_item_records(
+            cur, keep["id"], keep["item_name"], keep["size"] or "",
+            row["id"], row["item_name"], row["size"] or "",
+            merge_text_fields=True,
+        )
+        merged += 1
+
+    if fixed == 0 and merged == 0:
+        message = "No duplicates found. Item Master is already clean."
+    else:
+        message = f"Auto-fixed {fixed} truncated/typo duplicate(s) and merged {merged} exact duplicate(s)."
+
+    return build_response(True, {"autoFixed": fixed, "merged": merged}, message)
 
     return item_id

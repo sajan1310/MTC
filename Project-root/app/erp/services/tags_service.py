@@ -5,12 +5,13 @@ All three share one generic name+remarks CRUD implementation
 mirrors the source's own _getTagData/_saveTag/_deleteTag(sheetKey, label, ...)
 shape exactly.
 
-extractColorsFromItemMaster and importProcessTypesFromProcessNames both scan
-tables that don't exist yet (Items Master, Process Master) -- deferred to the
-phases that add them, not stubbed here.
+extractColorsFromItemMaster and importProcessTypesFromProcessNames are ported
+below too, now that Items Master and Process Master are both real.
 """
 
 from __future__ import annotations
+
+import re
 
 import psycopg2.extras
 
@@ -267,3 +268,91 @@ def delete_model(conn, cur, name):
 @database.transactional
 def delete_process_type(conn, cur, name):
     return _delete_tag(conn, cur, "PROCESS_TYPE_MASTER", "Process Type Master", name)
+
+
+# ─────────────────────────────────────────────────────────────────────────
+# Cross-master scans (frontend's App.Color.autoExtract /
+# App.ProcessType.importFromProcessNames)
+# ─────────────────────────────────────────────────────────────────────────
+
+# Matches a run of 2+ hyphen-joined tokens, e.g. "Red-White" -- any
+# non-space, non-hyphen character is allowed in a token (color names
+# aren't guaranteed to be letters-only) but only 2-part combos are
+# resolved below (no source spec exists for how a 3+ part chain like
+# "Red-White-Blue" should be handled).
+_HYPHEN_COMBO_RE = re.compile(r"[^\s-]+(?:-[^\s-]+)+")
+
+
+@rpc_method("extractColorsFromItemMaster")
+def extract_colors_from_item_master():
+    """Scans Item Name/Narration/Specification for hyphen-joined pairs of
+    *already-registered* Color Master names (e.g. "Red-White") that aren't
+    themselves a Color Master entry yet -- matches App.Color.autoExtract's
+    own doc comment exactly. Read-only: the frontend confirms and calls
+    saveColor itself for each accepted suggestion.
+    """
+    with database.get_conn(cursor_factory=psycopg2.extras.RealDictCursor) as (_conn, cur):
+        cur.execute("SELECT name FROM erp.color_master WHERE deleted_at IS NULL")
+        colors_by_lower = {(row["name"] or "").strip().lower(): (row["name"] or "").strip() for row in cur.fetchall()}
+        colors_by_lower.pop("", None)
+
+        cur.execute("SELECT item_name, narration, specification FROM erp.items WHERE deleted_at IS NULL")
+        item_rows = cur.fetchall()
+
+    new_combos: dict = {}
+    for row in item_rows:
+        text = " ".join(str(row.get(field) or "") for field in ("item_name", "narration", "specification"))
+        for token in _HYPHEN_COMBO_RE.findall(text):
+            parts = token.split("-")
+            if len(parts) != 2:
+                continue
+            canonical = [colors_by_lower.get(p.strip().lower()) for p in parts]
+            if not all(canonical):
+                continue  # every segment must already be a known color
+            combo = "-".join(canonical)
+            combo_lower = combo.lower()
+            if combo_lower in colors_by_lower or combo_lower in new_combos:
+                continue
+            new_combos[combo_lower] = combo
+
+    new_colors = sorted(new_combos.values())
+    scanned_count = len(item_rows)
+    message = (
+        f"Scanned {scanned_count} item(s) — found {len(new_colors)} new color combination(s)."
+        if new_colors
+        else f"Scanned {scanned_count} item(s) — no new color combinations found."
+    )
+    return build_response(True, {"newColors": new_colors, "scannedCount": scanned_count}, message)
+
+
+@rpc_method("importProcessTypesFromProcessNames", mutation=True)
+@database.transactional
+def import_process_types_from_process_names(conn, cur):
+    """Re-matches every Process Master row's Process Type against Process
+    Type Master's names (whichever is a substring of the Process Name),
+    overwriting the current value -- clearing it to "General" if nothing
+    matches. No new Process Type Master entries are created. Matches
+    App.ProcessType.importFromProcessNames's confirm-dialog copy exactly.
+    """
+    cur.execute("SELECT name FROM erp.process_type_master WHERE deleted_at IS NULL")
+    type_names = [(row["name"] or "").strip() for row in cur.fetchall() if (row["name"] or "").strip()]
+
+    cur.execute("SELECT id, process_name, process_type FROM erp.process_master WHERE deleted_at IS NULL")
+    process_rows = cur.fetchall()
+
+    updated = 0
+    for row in process_rows:
+        process_name_lower = (row["process_name"] or "").lower()
+        matches = [t for t in type_names if t.lower() in process_name_lower]
+        if matches:
+            longest = max(len(t) for t in matches)
+            new_type = sorted(t for t in matches if len(t) == longest)[0]
+        else:
+            new_type = "General"
+
+        if new_type != (row["process_type"] or ""):
+            cur.execute("UPDATE erp.process_master SET process_type = %s WHERE id = %s", (new_type, row["id"]))
+            updated += 1
+
+    message = f"Updated Process Type on {updated} of {len(process_rows)} process(es)."
+    return build_response(True, {"updated": updated, "total": len(process_rows)}, message)

@@ -82,3 +82,84 @@ def test_color_rename_cascade_is_a_noop_when_target_tables_dont_exist_yet(erp_cl
     body = edited.get_json()
     assert body["success"] is True
     assert body["data"]["name"] == renamed
+
+
+def _unique_word(prefix: str) -> str:
+    """Like _unique_name but with no hyphen in the result -- needed for
+    color-combo tests, since a hyphen inside a single color's own name
+    would itself get parsed as a combo separator.
+    """
+    return f"{prefix}{uuid.uuid4().hex[:8]}"
+
+
+def test_extract_colors_from_item_master_finds_new_hyphen_combo(erp_client):
+    color_a = _unique_word("ExtractRed")
+    color_b = _unique_word("ExtractWhite")
+    _rpc(erp_client, "saveColor", [{"name": color_a}], mutation=True)
+    _rpc(erp_client, "saveColor", [{"name": color_b}], mutation=True)
+
+    item_name = _unique_name("ComboItem")
+    _rpc(
+        erp_client, "saveItem",
+        [{"itemName": item_name, "itemNarration": f"Frame {color_a}-{color_b} finish"}],
+        mutation=True,
+    )
+
+    resp = _rpc(erp_client, "extractColorsFromItemMaster")
+    body = resp.get_json()
+    assert body["success"] is True
+    assert f"{color_a}-{color_b}" in body["data"]["newColors"]
+
+
+def test_extract_colors_from_item_master_skips_combo_already_registered(erp_client):
+    color_a = _unique_word("SkipRed")
+    color_b = _unique_word("SkipWhite")
+    combo = f"{color_a}-{color_b}"
+    _rpc(erp_client, "saveColor", [{"name": color_a}], mutation=True)
+    _rpc(erp_client, "saveColor", [{"name": color_b}], mutation=True)
+    _rpc(erp_client, "saveColor", [{"name": combo}], mutation=True)
+
+    item_name = _unique_name("AlreadyComboItem")
+    _rpc(erp_client, "saveItem", [{"itemName": item_name, "itemNarration": combo}], mutation=True)
+
+    resp = _rpc(erp_client, "extractColorsFromItemMaster")
+    assert combo not in resp.get_json()["data"]["newColors"]
+
+
+def test_import_process_types_from_process_names_matches_substring(erp_client):
+    from tests.erp.test_process import _base_process_payload
+
+    type_name = _unique_name("PaintType")
+    _rpc(erp_client, "saveProcessType", [{"name": type_name}], mutation=True)
+
+    process_name = f"{type_name} - Line 1"
+    payload = _base_process_payload(processName=process_name, processType="")
+    saved = _rpc(erp_client, "saveProcess", [payload], mutation=True).get_json()
+    assert saved["success"] is True
+    process_id = saved["data"]["processId"]
+
+    resp = _rpc(erp_client, "importProcessTypesFromProcessNames", [], mutation=True)
+    body = resp.get_json()
+    assert body["success"] is True
+    assert body["data"]["updated"] >= 1
+
+    listed = _rpc(erp_client, "getProcessData").get_json()["data"]
+    match = next(p for p in listed if p["processId"] == process_id)
+    assert match["processType"] == type_name
+
+
+def test_import_process_types_defaults_to_general_when_no_match(erp_client):
+    from tests.erp.test_process import _base_process_payload
+
+    process_name = _unique_name("NoTypeMatchProcess")
+    payload = _base_process_payload(processName=process_name, processType=_unique_name("StaleType"))
+    saved = _rpc(erp_client, "saveProcess", [payload], mutation=True).get_json()
+    assert saved["success"] is True
+    process_id = saved["data"]["processId"]
+
+    resp = _rpc(erp_client, "importProcessTypesFromProcessNames", [], mutation=True)
+    assert resp.get_json()["success"] is True
+
+    listed = _rpc(erp_client, "getProcessData").get_json()["data"]
+    match = next(p for p in listed if p["processId"] == process_id)
+    assert match["processType"] == "General"

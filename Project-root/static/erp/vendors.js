@@ -5,14 +5,8 @@
 // changes needed, form field names match saveVendor's expected keys
 // exactly (vendorName/contact/address/gstin/remarks/originalVendorName).
 //
-// syncFromPOHistory calls syncVendorsFromPOHistory, which was explicitly
-// deferred on the backend (see vendors_service.py's own module docstring
-// -- "Their own round, alongside PO/Bill"). Left wired to the real
-// Api.call rather than stubbed: the RPC bridge 404s with "Unknown
-// method", Api.call turns that into a rejected promise, and the existing
-// catch block surfaces it as an honest error toast -- the same natural
-// degradation every other not-yet-ported backend method gets, no special
-// case needed here.
+// syncFromPOHistory calls syncVendorsFromPOHistory (vendors_service.py),
+// now real -- backfills Vendor Master + item-vendor rates from PO history.
 //
 // The Ledger/Pending Orders/Rates tabs inside the profile modal read
 // App.State.globalPOs/globalBills/globalItems -- all still empty arrays
