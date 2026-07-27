@@ -4,13 +4,18 @@ Records component-wise material wastage/losses. Vendor is optional.
 BASE_QTY debits Stock the same way vendor Returns do -- see
 stock_service._get_billed_and_consumed_qty_maps's WASTAGE term.
 
-Create-only: the source's saveWastage has no edit/update path, only create
-+ bulk delete -- there's no singular deleteWastage either.
+saveWastage's `existingWastageId` folds in the source's separate
+updateWastage(wastageId, formData) (module_wastage.js) -- same convention
+already used for PO/Bill/Return's edit paths in this port: one save_* RPC
+with an optional existing-id field, rather than a second registered RPC
+method. wastageId itself never changes on edit (source has no override
+field on either create or update). Still no singular deleteWastage -- only
+deleteWastageBulk, same as source.
 
-wastageId is always auto-generated (WST-YYYYMMDD-HHMMSS, second precision,
-no override field accepted -- unlike Return's returnNumber). The source
-never checks for a same-second collision on it either; ported with zero
-deviation there (no unique index -- see migrations/erp/011_wastage_and_issue.sql).
+wastageId is always auto-generated on create (WST-YYYYMMDD-HHMMSS, second
+precision, no override field accepted -- unlike Return's returnNumber). The
+source never checks for a same-second collision on it either; ported with
+zero deviation there (no unique index -- see migrations/erp/011_wastage_and_issue.sql).
 
 A blank item name is silently dropped rather than stored: the source never
 validates item.name's presence (only qty is strictly validated via
@@ -24,7 +29,7 @@ ends up blank, the whole save is rejected rather than committing an empty
 header.
 
 Not ported: initWastageSheet (GAS sheet-bootstrap, no Postgres equivalent
-needed). recalculateStock() calls at the end of saveWastage/
+needed). recalculateStock() calls at the end of saveWastage/updateWastage/
 deleteWastageBulk are no-ops here -- Stock is computed live (Phase 1c
 architecture), nothing to recalculate.
 """
@@ -134,6 +139,20 @@ def save_wastage(conn, cur, form_data):
     if not isinstance(items, list) or len(items) == 0:
         raise ValueError("Cannot save wastage with zero items. Add at least one item.")
 
+    existing_wastage_id = str(form_data.get("existingWastageId") or "").strip()
+    is_edit = bool(existing_wastage_id)
+
+    header_id = None
+    if is_edit:
+        cur.execute(
+            "SELECT id FROM erp.wastage_headers WHERE lower(wastage_id) = lower(%s) AND deleted_at IS NULL",
+            (existing_wastage_id,),
+        )
+        existing = cur.fetchone()
+        if existing is None:
+            raise ValueError(f"Original wastage record {existing_wastage_id} not found. Edit aborted.")
+        header_id = existing["id"]
+
     wastage_date = date_utils.to_safe_date(form_data.get("date"))
     if not wastage_date:
         raise ValueError("Invalid wastage date. Accepted formats: DD/MM/YYYY or YYYY-MM-DD.")
@@ -165,20 +184,32 @@ def save_wastage(conn, cur, form_data):
     if not normalized:
         raise ValueError("Cannot save wastage with zero items. Add at least one item.")
 
-    now = datetime.now()
-    wastage_id = f"WST-{now.strftime('%Y%m%d')}-{now.strftime('%H%M%S')}"
     vendor_id = _find_vendor_id(cur, vendor) if vendor else None
     user_id = get_current_user_id()
 
-    cur.execute(
-        """
-        INSERT INTO erp.wastage_headers (wastage_id, wastage_date, vendor, vendor_id, remarks, updated_by)
-        VALUES (%s, %s, %s, %s, %s, %s)
-        RETURNING id
-        """,
-        (wastage_id, wastage_date, vendor, vendor_id, remarks, user_id),
-    )
-    header_id = cur.fetchone()["id"]
+    if is_edit:
+        wastage_id = existing_wastage_id
+        cur.execute(
+            """
+            UPDATE erp.wastage_headers
+            SET wastage_date = %s, vendor = %s, vendor_id = %s, remarks = %s, updated_by = %s
+            WHERE id = %s
+            """,
+            (wastage_date, vendor, vendor_id, remarks, user_id, header_id),
+        )
+        cur.execute("DELETE FROM erp.wastage_lines WHERE header_id = %s", (header_id,))
+    else:
+        now = datetime.now()
+        wastage_id = f"WST-{now.strftime('%Y%m%d')}-{now.strftime('%H%M%S')}"
+        cur.execute(
+            """
+            INSERT INTO erp.wastage_headers (wastage_id, wastage_date, vendor, vendor_id, remarks, updated_by)
+            VALUES (%s, %s, %s, %s, %s, %s)
+            RETURNING id
+            """,
+            (wastage_id, wastage_date, vendor, vendor_id, remarks, user_id),
+        )
+        header_id = cur.fetchone()["id"]
 
     for n in normalized:
         item_id = _find_item_id(cur, n["name"], n["size"])
@@ -190,7 +221,8 @@ def save_wastage(conn, cur, form_data):
             (header_id, n["name"], n["size"], n["qty"], n["unit"], n["reason"], n["baseQty"], item_id),
         )
 
-    return build_response(True, {"wastageId": wastage_id}, f"Wastage {wastage_id} logged successfully.")
+    message = f"Wastage {wastage_id} updated successfully." if is_edit else f"Wastage {wastage_id} logged successfully."
+    return build_response(True, {"wastageId": wastage_id}, message)
 
 
 @rpc_method("deleteWastageBulk", mutation=True)

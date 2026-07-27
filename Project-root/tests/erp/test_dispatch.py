@@ -183,6 +183,31 @@ def test_save_dispatch_debits_warehouse_pool(erp_app, erp_client):
     assert match["readyQty"] == 6
 
 
+def test_save_dispatch_debits_warehouse_pool_for_untagged_output(erp_client):
+    """Regression: untagged final-stage output is credited in
+    _compute_ready_to_dispatch_map under an '__output__'-prefixed key (see
+    that function and test_ready_to_dispatch_untagged_final_stage_surfaces_
+    under_output_name above), but saveDispatch's own capacity check must
+    fall back to that same prefixed key -- module_dispatch.js's saveDispatch
+    does this explicitly (`readyMap[productIdKey] || readyMap['__output__'
+    + productIdKey]`). Without the fallback this always looks up 0 Ready
+    to Dispatch and rejects every dispatch of untagged output, even though
+    getReadyToDispatchData correctly lists it as available.
+    """
+    payload, process_id = _save_process(erp_client, isFinalStage=True)
+    _complete_production_lot(erp_client, process_id, "", 10)
+
+    output_name = payload["outputItemName"]
+    resp = _rpc(erp_client, "saveDispatch", [{"productId": output_name, "productName": output_name, "qty": 4}], mutation=True)
+    body = resp.get_json()
+    assert body["success"] is True, body["message"]
+
+    listed = _rpc(erp_client, "getReadyToDispatchData").get_json()["data"]
+    match = next(r for r in listed if r["productId"] == output_name)
+    assert match["dispatchedQty"] == 4
+    assert match["readyQty"] == 6
+
+
 def test_save_dispatch_edit_product_id_mismatch(erp_app, erp_client):
     token = _get_bom_token(erp_app, erp_client)
     product_name_a, product_id_a = _save_bom_product(erp_client, token)

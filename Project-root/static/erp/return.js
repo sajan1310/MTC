@@ -26,6 +26,10 @@
 //   App.Wastage.printSelected() needs NO such guard -- it opens its own
 //   window and writes self-contained HTML directly, no App.Print
 //   dependency, so it's ported in full and reachable immediately.
+// - App.Wastage.openEditModal/print(wastageId) round out GAS's own
+//   updateWastage(wastageId, formData) (module_wastage.js), which source
+//   has but this port previously lacked; save/enter-saved-mode UX mirrors
+//   App.Issue's identical pattern in issue.js.
 
 App.Return = {
   async loadData() {
@@ -694,6 +698,8 @@ App.Wastage = {
         <td><small class="text-muted">${itemsPreview}</small></td>
         <td class="text-center fw-bold">${escapeHtml(String(w.totalQty ?? 0))}</td>
         <td>
+          <button class="btn btn-sm btn-outline-primary w-100 mb-1"
+                  onclick="App.Wastage.openEditModal('${escapeHtml(key)}')">Edit</button>
           <button class="btn btn-sm btn-danger w-100"
                   onclick="App.Wastage.deleteSingle('${escapeHtml(key)}')">Delete</button>
         </td>
@@ -727,10 +733,39 @@ App.Wastage = {
 
   openWastageModal() {
     document.getElementById('wastageForm')?.reset();
+    this.resetToCreateMode();
     const dateInput = document.getElementById('wastageDateInput');
     if (dateInput) dateInput.value = todayIso();
     const tbody = document.getElementById('wastageItemsBody');
     if (tbody) tbody.innerHTML = this.getRowHtml();
+    safeModalShow('logWastageModal');
+  },
+
+  // Edits an existing wastage record in place, mirroring GAS's
+  // updateWastage(wastageId, formData) (module_wastage.js) -- the item
+  // rows are fully replaced, wastageId itself never changes.
+  openEditModal(wastageId) {
+    const w = App.State.globalWastage.find(rec => String(rec.wastageId) === String(wastageId));
+    if (!w) return;
+
+    document.getElementById('wastageForm')?.reset();
+    this.resetToCreateMode();
+
+    document.getElementById('wastageExistingId').value = w.wastageId;
+    document.getElementById('wastageDateInput').value = dateToInputValue(w.dateRaw, w.date);
+    document.getElementById('wastageVendor').value = w.vendor || '';
+    document.querySelector('#wastageForm [name="remarks"]').value = w.remarks || '';
+
+    const tbody = document.getElementById('wastageItemsBody');
+    if (tbody) {
+      tbody.innerHTML = (w.items || []).map(item => this.getRowHtml(item)).join('') || this.getRowHtml();
+    }
+
+    const title = document.getElementById('wastageModalTitle');
+    if (title) title.innerHTML = `<i class="bi bi-pencil-square me-2"></i>Edit Wastage ${escapeHtml(w.wastageId)}`;
+    const submitBtn = document.getElementById('wastageSubmitBtn');
+    if (submitBtn) submitBtn.innerHTML = '<i class="bi bi-check2 me-1"></i>Update Wastage';
+
     safeModalShow('logWastageModal');
   },
 
@@ -757,6 +792,7 @@ App.Wastage = {
   serializeForm() {
     const form = document.getElementById('wastageForm');
     const formData = Object.fromEntries(new FormData(form));
+    formData.existingWastageId = document.getElementById('wastageExistingId')?.value || '';
     const items = [];
     $$('#wastageItemsBody tr').forEach(row => {
       const name = $('.w-item-name', row)?.value?.trim();
@@ -788,6 +824,7 @@ App.Wastage = {
       return;
     }
 
+    const isEdit = !!formData.existingWastageId;
     const submitBtn = document.getElementById('wastageSubmitBtn');
     if (submitBtn) { submitBtn.disabled = true; submitBtn.textContent = 'Saving…'; }
 
@@ -795,14 +832,70 @@ App.Wastage = {
       const res = await Api.mutate('saveWastage', formData);
       App.Utils.showToast(res?.message || 'Wastage logged.', !res?.success);
       if (res?.success) {
-        safeModalHide('logWastageModal');
         await this.loadData();
+        this.enterSavedMode(res.data.wastageId);
       }
     } catch (err) {
       App.Utils.showToast(err.message || 'Failed to log wastage.', true);
     } finally {
-      if (submitBtn) { submitBtn.disabled = false; submitBtn.innerHTML = '<i class="bi bi-exclamation-triangle me-1"></i>Log Wastage'; }
+      if (submitBtn) {
+        submitBtn.disabled = false;
+        submitBtn.innerHTML = isEdit
+          ? '<i class="bi bi-check2 me-1"></i>Update Wastage'
+          : '<i class="bi bi-exclamation-triangle me-1"></i>Log Wastage';
+      }
     }
+  },
+
+  // Post-save state: form locks read-only, submit button swaps for
+  // Print + Done so the just-saved record can be printed without leaving
+  // the modal (mirrors Issue's identical enterSavedMode).
+  enterSavedMode(wastageId) {
+    document.getElementById('wastageSavedId').value = wastageId;
+    this.setFormReadOnly(true);
+    document.getElementById('wastageSubmitBtn').style.display = 'none';
+    document.getElementById('wastagePrintBtn').style.display = '';
+    document.getElementById('wastageDoneBtn').style.display = '';
+  },
+
+  setFormReadOnly(disabled) {
+    const form = document.getElementById('wastageForm');
+    if (!form) return;
+    form.querySelectorAll('input, select, textarea').forEach(el => { el.disabled = disabled; });
+    const addBtn = form.querySelector('button[onclick="App.Wastage.addRow()"]');
+    if (addBtn) addBtn.disabled = disabled;
+    form.querySelectorAll('#wastageItemsBody button[data-action="remove-row"]').forEach(el => {
+      el.disabled = disabled;
+    });
+  },
+
+  printCurrent() {
+    const wastageId = document.getElementById('wastageSavedId')?.value;
+    if (wastageId) this.print(wastageId);
+  },
+
+  done() {
+    bootstrap.Modal.getInstance(document.getElementById('logWastageModal'))?.hide();
+    this.resetToCreateMode();
+  },
+
+  resetToCreateMode() {
+    const savedId = document.getElementById('wastageSavedId');
+    if (savedId) savedId.value = '';
+    const existingId = document.getElementById('wastageExistingId');
+    if (existingId) existingId.value = '';
+    this.setFormReadOnly(false);
+    const title = document.getElementById('wastageModalTitle');
+    if (title) title.innerHTML = '<i class="bi bi-exclamation-triangle me-2"></i>Log Component Wastage';
+    const submitBtn = document.getElementById('wastageSubmitBtn');
+    if (submitBtn) {
+      submitBtn.style.display = '';
+      submitBtn.innerHTML = '<i class="bi bi-exclamation-triangle me-1"></i>Log Wastage';
+    }
+    const printBtn = document.getElementById('wastagePrintBtn');
+    if (printBtn) printBtn.style.display = 'none';
+    const doneBtn = document.getElementById('wastageDoneBtn');
+    if (doneBtn) doneBtn.style.display = 'none';
   },
 
   async deleteSingle(wastageId) {
@@ -850,30 +943,20 @@ App.Wastage = {
     );
   },
 
-  // Opens its own popup window and writes self-contained print HTML
-  // directly -- no App.Print dependency, unlike every other module's
-  // print/bulkPrint. Ported in full, reachable immediately.
-  printSelected() {
-    const selected = App.State.selectedWastage;
-    const records = App.State.globalWastage.filter(w => App.Selection.isSelected(selected, String(w.wastageId)));
-
-    if (!records.length) {
-      App.Utils.showToast('No wastage records selected to print.', true);
-      return;
-    }
-
-    const rows = records.map(w => {
-      const itemRows = (w.items || []).map(it => `
+  // Per-record HTML block, shared by printSelected() and the single-record
+  // print(wastageId) used by the post-save Print button (enterSavedMode).
+  buildWastageEntryHtml(w) {
+    const itemRows = (w.items || []).map(it => `
         <tr>
-          <td>${escapeHtml(it.name || '')}${it.size ? ` <em>(${escapeHtml(it.size)})</em>` : ''}</td>
-          <td>${escapeHtml(String(it.qty || ''))} ${escapeHtml(it.unit || '')}</td>
-          <td>${escapeHtml(it.reason || '—')}</td>
+          <td style="padding:6px 8px; border:1px solid #dee2e6;">${escapeHtml(it.name || '')}${it.size ? ` <em>(${escapeHtml(it.size)})</em>` : ''}</td>
+          <td style="padding:6px 8px; border:1px solid #dee2e6;">${escapeHtml(String(it.qty || ''))} ${escapeHtml(it.unit || '')}</td>
+          <td style="padding:6px 8px; border:1px solid #dee2e6;">${escapeHtml(it.reason || '—')}</td>
         </tr>`).join('');
 
-      const vendorLine = w.vendor ? `<br><small><strong>Vendor:</strong> ${escapeHtml(w.vendor)}</small>` : '';
-      const remarksLine = w.remarks ? `<br><small><strong>Remarks:</strong> ${escapeHtml(w.remarks)}</small>` : '';
+    const vendorLine = w.vendor ? `<br><small><strong>Vendor:</strong> ${escapeHtml(w.vendor)}</small>` : '';
+    const remarksLine = w.remarks ? `<br><small><strong>Remarks:</strong> ${escapeHtml(w.remarks)}</small>` : '';
 
-      return `
+    return `
       <div class="wastage-entry" style="page-break-inside:avoid; margin-bottom:24px; border:1px solid #dee2e6; border-radius:6px; padding:16px;">
         <div style="display:flex; justify-content:space-between; margin-bottom:10px;">
           <div>
@@ -894,16 +977,18 @@ App.Wastage = {
             </tr>
           </thead>
           <tbody>
-            ${itemRows.replace(/<td>/g, '<td style="padding:6px 8px; border:1px solid #dee2e6;">')}
+            ${itemRows}
           </tbody>
         </table>
         <div style="margin-top:8px; font-size:12px; color:#666;">
           Total Qty: <strong>${escapeHtml(String(w.totalQty ?? 0))}</strong>
         </div>
       </div>`;
-    }).join('');
+  },
 
-    const printHtml = `<!DOCTYPE html>
+  buildWastagePrintPageHtml(records) {
+    const rows = records.map(w => this.buildWastageEntryHtml(w)).join('');
+    return `<!DOCTYPE html>
 <html>
 <head>
   <meta charset="utf-8">
@@ -922,14 +1007,40 @@ App.Wastage = {
   <script>window.onload = function(){ window.print(); }<\/script>
 </body>
 </html>`;
+  },
 
+  openPrintWindow(html) {
     const win = window.open('', '_blank');
     if (win) {
-      win.document.write(printHtml);
+      win.document.write(html);
       win.document.close();
     } else {
       App.Utils.showToast('Pop-up blocked. Please allow pop-ups for this site to print.', true);
     }
+  },
+
+  // Opens its own popup window and writes self-contained print HTML
+  // directly -- no App.Print dependency, unlike every other module's
+  // print/bulkPrint. Ported in full, reachable immediately.
+  printSelected() {
+    const selected = App.State.selectedWastage;
+    const records = App.State.globalWastage.filter(w => App.Selection.isSelected(selected, String(w.wastageId)));
+
+    if (!records.length) {
+      App.Utils.showToast('No wastage records selected to print.', true);
+      return;
+    }
+
+    this.openPrintWindow(this.buildWastagePrintPageHtml(records));
+  },
+
+  // Single-record print, used by both each row's own Print action and the
+  // post-save modal's Print button (printCurrent) -- a PWA-only addition,
+  // no GAS equivalent (source has no per-row print for Wastage).
+  print(wastageId) {
+    const w = App.State.globalWastage.find(rec => String(rec.wastageId) === String(wastageId));
+    if (!w) return;
+    this.openPrintWindow(this.buildWastagePrintPageHtml([w]));
   }
 };
 

@@ -321,7 +321,12 @@ def save_dispatch(conn, cur, form_data):
         original_qty = float(existing["qty"] or 0)
 
     ready_map = _compute_ready_to_dispatch_map(cur)
-    entry = ready_map.get(product_id.lower())
+    # Untagged final-stage output is credited under an '__output__'-prefixed
+    # key (see _compute_ready_to_dispatch_map) to avoid colliding with an
+    # unrelated Product Tag of the same text -- module_dispatch.js's
+    # saveDispatch falls back to it explicitly, and so must this check.
+    key = product_id.lower()
+    entry = ready_map.get(key) or ready_map.get(f"__output__{key}")
     current_ready_qty = (entry["producedQty"] - entry["dispatchedQty"]) if entry else 0.0
     available_qty = current_ready_qty + original_qty
 

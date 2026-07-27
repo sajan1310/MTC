@@ -17,22 +17,12 @@
 // MApp.Directory / MApp.More are one module per tab/feature, each with a
 // mount() called by MApp.Shell.showTab().
 //
-// Round M1 (Shell + Home) ships only MApp.Home for real. Every other
-// screen's <template id="tpl-*"> and sheet markup already shipped in full
-// (templates/erp/partials/mobile_views.html) -- MApp.Shell.showTab()'s own
-// `mod && typeof mod.mount === 'function'` guard already makes tapping an
-// unported tab safely show its static skeleton and stop there, exactly
-// mirroring desktop's `typeof App.X !== 'undefined'` guard. The one gap
-// that guard doesn't cover: a handful of onclick handlers baked directly
-// into that markup (Production/Dispatch's FABs, the More tab's Returns/PO
-// Ledger/Bill Ledger/Items lookup/Directory action rows) call straight
-// into a not-yet-ported module's method, bypassing showTab entirely. The
-// small stub objects at the bottom of this file are exactly those methods
-// -- nothing more -- each showing a "coming soon" toast instead of
-// throwing. Each stub is deleted (not extended) the round its real module
-// ships, same "guard now, activate later" spirit as desktop's
-// notPortedYet(), applied per-module here since MApp has no central
-// Navigation.showTab guard table.
+// All ten modules (Home, Stock, Production, Dispatch, Returns, Items, PO,
+// Bill, Directory, More) are now shipped for real -- MApp.Shell.showTab()'s
+// `mod && typeof mod.mount === 'function'` guard remains in place purely
+// as a defensive mirror of desktop's `typeof App.X !== 'undefined'` guard,
+// same "guard now, activate later" spirit as desktop's notPortedYet(), in
+// case a module is ever pulled during a future round.
 const MApp = {};
 
 // ================================================================

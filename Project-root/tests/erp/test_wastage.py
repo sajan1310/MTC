@@ -246,6 +246,84 @@ def test_unit_rename_cascades_into_wastage_lines(erp_client):
     assert match["items"][0]["unit"] == new_unit
 
 
+def test_save_wastage_edits_existing_record_in_place(erp_client):
+    """Ports GAS's separate updateWastage(wastageId, formData)
+    (module_wastage.js) via saveWastage's existingWastageId, matching the
+    convention already used for PO/Bill/Return/Issue's edit paths.
+    wastageId must not change on edit; header fields and item lines do.
+    """
+    _settle()
+    original_item = _unique_name("EditWastageOriginal")
+    updated_item = _unique_name("EditWastageUpdated")
+    old_vendor = _unique_name("EditWastageVendorOld")
+    new_vendor = _unique_name("EditWastageVendorNew")
+
+    created = _rpc(
+        erp_client,
+        "saveWastage",
+        [
+            {
+                "date": "01/01/2026",
+                "vendor": old_vendor,
+                "items": [{"name": original_item, "qty": 2, "unit": "Pcs", "reason": "Damaged"}],
+            }
+        ],
+        mutation=True,
+    )
+    body = created.get_json()
+    assert body["success"] is True
+    wastage_id = body["data"]["wastageId"]
+
+    edited = _rpc(
+        erp_client,
+        "saveWastage",
+        [
+            {
+                "existingWastageId": wastage_id,
+                "date": "02/01/2026",
+                "vendor": new_vendor,
+                "remarks": "Corrected",
+                "items": [{"name": updated_item, "qty": 5, "unit": "Pcs", "reason": "Expired"}],
+            }
+        ],
+        mutation=True,
+    )
+    edited_body = edited.get_json()
+    assert edited_body["success"] is True
+    assert edited_body["data"]["wastageId"] == wastage_id
+    assert "updated" in edited_body["message"].lower()
+
+    listed = _rpc(erp_client, "getWastageData").get_json()["data"]
+    matches = [w for w in listed if w["wastageId"] == wastage_id]
+    assert len(matches) == 1
+    match = matches[0]
+    assert match["dateRaw"] == "2026-01-02"
+    assert match["vendor"] == new_vendor
+    assert match["remarks"] == "Corrected"
+    assert len(match["items"]) == 1
+    assert match["items"][0]["name"] == updated_item
+    assert match["items"][0]["qty"] == 5
+    assert match["items"][0]["reason"] == "Expired"
+
+
+def test_save_wastage_edit_rejects_unknown_wastage_id(erp_client):
+    resp = _rpc(
+        erp_client,
+        "saveWastage",
+        [
+            {
+                "existingWastageId": "WST-00000000-000000",
+                "date": "01/01/2026",
+                "items": [{"name": "X", "qty": 1, "unit": "Pcs", "reason": "R"}],
+            }
+        ],
+        mutation=True,
+    )
+    body = resp.get_json()
+    assert body["success"] is False
+    assert "not found" in body["message"].lower()
+
+
 def test_wastage_subtracts_from_current_stock(erp_client):
     _settle()
     name = _unique_name("WastageStockItem")
