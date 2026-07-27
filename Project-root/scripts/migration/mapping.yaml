@@ -1,0 +1,639 @@
+# Sheets -> Postgres migration mapping.
+#
+# Source of truth for sheet/column names & 1-based column positions:
+# app/erp/config_maps.py (SHEETS, *_COL_NAMES, DATA_START_ROW, TABLE_NAMES),
+# itself transcribed from the read-only Apps_Script/config.js reference.
+# Source of truth for DB columns/types: migrations/erp/*.sql. Every entry
+# below was cross-checked by hand against both -- see per-entry `notes` for
+# anything that isn't a straight 1:1 copy.
+#
+# Columns are read POSITIONALLY (by `col`, the 1-based sheet column index),
+# not by matching header text -- config_maps.py doesn't record the literal
+# display header strings, only field-name -> index, so positional reading
+# is what stays correct regardless of the actual header wording. Every
+# column in a sheet's row (including ones we intentionally drop) is listed
+# under `columns` or `skip_columns` so the index sequence has no gaps --
+# double check against a live row before running if a sheet was edited to
+# add/remove/reorder columns since config_maps.py was last verified.
+#
+# status: ready        -> mapping verified against both the Apps Script
+#                          column map and the live DB schema; safe to
+#                          dry-run once spreadsheet id(s) are filled in.
+# status: needs_review  -> best-effort inference from the DB schema alone
+#                          (no Apps_Script/module_*.js source is checked
+#                          into this repo to verify column semantics
+#                          against), and involves a judgment call (JSON
+#                          parsing, FK resolution, or a sheet column with
+#                          no obvious DB home). Get a second pair of eyes
+#                          before --execute, even after a clean dry-run.
+#
+# Fill in `spreadsheet_id` per sheet, or set default_spreadsheet_id once if
+# every tab lives in a single spreadsheet (the common case). A sheet left
+# without any spreadsheet id is skipped with a warning, not a hard failure.
+
+default_spreadsheet_id: ""
+
+sheets:
+
+  # ── Simple masters (flat table, upsert by natural key) ──────────────────
+
+  - key: UNITS
+    sheet_name: "Unit Master"
+    data_start_row: 2
+    status: ready
+    table: erp.units
+    unique_on: [unit_name]
+    columns:
+      - {col: 1, sheet: unitName, db: unit_name, type: text, required: true}
+      - {col: 2, sheet: family, db: family, type: text, required: true}
+      - {col: 3, sheet: factorToBase, db: factor_to_base, type: numeric, required: true}
+      - {col: 4, sheet: remarks, db: remarks, type: text}
+
+  - key: COLOR_MASTER
+    sheet_name: "Color Master"
+    data_start_row: 2
+    status: ready
+    table: erp.color_master
+    unique_on: [name]
+    columns:
+      - {col: 1, sheet: name, db: name, type: text, required: true}
+      - {col: 2, sheet: remarks, db: remarks, type: text}
+
+  - key: MODEL_MASTER
+    sheet_name: "Model Master"
+    data_start_row: 2
+    status: ready
+    table: erp.model_master
+    unique_on: [name]
+    columns:
+      - {col: 1, sheet: name, db: name, type: text, required: true}
+      - {col: 2, sheet: remarks, db: remarks, type: text}
+
+  - key: PROCESS_TYPE_MASTER
+    sheet_name: "Process Type Master"
+    data_start_row: 2
+    status: ready
+    table: erp.process_type_master
+    unique_on: [name]
+    columns:
+      - {col: 1, sheet: name, db: name, type: text, required: true}
+      - {col: 2, sheet: remarks, db: remarks, type: text}
+
+  - key: VENDORS
+    sheet_name: "Vendors"
+    data_start_row: 2
+    status: ready
+    table: erp.vendors
+    unique_on: [vendor_name]
+    columns:
+      - {col: 1, sheet: vendor, db: vendor_name, type: text, required: true}
+      - {col: 2, sheet: contact, db: contact, type: text}
+      - {col: 3, sheet: address, db: address, type: text}
+      - {col: 4, sheet: gstNumber, db: gstin, type: text}
+      - {col: 5, sheet: remarks, db: remarks, type: text}
+
+  - key: CONTRACTORS
+    sheet_name: "Contractors"
+    data_start_row: 2
+    status: ready
+    table: erp.contractors
+    unique_on: [contractor_name]
+    columns:
+      - {col: 1, sheet: contractorName, db: contractor_name, type: text, required: true}
+      - {col: 2, sheet: contact, db: contact, type: text}
+      - {col: 3, sheet: address, db: address, type: text}
+      - {col: 4, sheet: gstPan, db: gst_pan, type: text}
+      - {col: 5, sheet: remarks, db: remarks, type: text}
+
+  - key: CONTRACTOR_RATES
+    sheet_name: "Contractor Rates"
+    data_start_row: 2
+    status: ready
+    table: erp.contractor_rates
+    unique_on: [contractor_name, process_name]
+    columns:
+      - {col: 1, sheet: contractorName, db: contractor_name, type: text, required: true}
+      - {col: 2, sheet: processName, db: process_name, type: text, required: true}
+      - {col: 3, sheet: ratePerUnit, db: rate_per_unit, type: numeric}
+      - {col: 4, sheet: remarks, db: remarks, type: text}
+    fk_resolve:
+      - {db_column: contractor_id, source_field: contractorName, lookup_table: erp.contractors, lookup_key: contractor_name, required: false}
+
+  - key: CONTRACTOR_PAYMENTS
+    sheet_name: "Contractor Payments"
+    data_start_row: 2
+    status: ready
+    table: erp.contractor_payments
+    columns:
+      - {col: 1, sheet: date, db: payment_date, type: date, required: true}
+      - {col: 2, sheet: contractorName, db: contractor_name, type: text, required: true}
+      - {col: 3, sheet: amount, db: amount, type: numeric, required: true}
+      - {col: 4, sheet: modeReference, db: mode_reference, type: text}
+      - {col: 5, sheet: remarks, db: remarks, type: text}
+    fk_resolve:
+      - {db_column: contractor_id, source_field: contractorName, lookup_table: erp.contractors, lookup_key: contractor_name, required: false}
+    notes: "Append-only ledger, no natural unique key in the sheet -- rerunning a load already verified will duplicate rows. Load once."
+
+  - key: CLIENTS
+    sheet_name: "Clients"
+    data_start_row: 2
+    status: ready
+    table: erp.clients
+    columns:
+      - {col: 1, sheet: clientName, db: client_name, type: text, required: true}
+      - {col: 2, sheet: contact, db: contact, type: text}
+      - {col: 3, sheet: address, db: address, type: text}
+      - {col: 4, sheet: gstNumber, db: gstin, type: text}
+      - {col: 5, sheet: remarks, db: remarks, type: text}
+
+  - key: ITEMS
+    sheet_name: "Items Master"
+    data_start_row: 2
+    status: ready
+    table: erp.items
+    unique_on: [item_name, size]
+    columns:
+      - {col: 1, sheet: name, db: item_name, type: text, required: true}
+      - {col: 2, sheet: size, db: size, type: text, default: ""}
+      - {col: 3, sheet: remarks, db: remarks, type: text}
+      - {col: 4, sheet: narration, db: narration, type: text}
+      - {col: 5, sheet: specification, db: specification, type: text}
+      - {col: 6, sheet: baseUnit, db: base_unit, type: text, default: "Pcs"}
+      - {col: 7, sheet: purchaseUnit, db: purchase_unit, type: text}
+      - {col: 8, sheet: weightPerBaseUnit, db: weight_per_base_unit, type: numeric, default: 0}
+    skip_columns:
+      - {col: 9, sheet: vendors, reason: "Not a flat column -- see `child` below."}
+    child:
+      # Col 9 is a per-item list of {vendor, rate} pairs in one cell -> many
+      # erp.item_vendors rows. Format (JSON array vs delimited string) is
+      # not verified against module_items.js in this repo.
+      col: 9
+      sheet_field: vendors
+      table: erp.item_vendors
+      parent_fk: item_id
+      status: needs_review
+      notes: "Assumed JSON array of {vendor, rate} objects per cell. Verify against a live sheet cell before running."
+
+  - key: STOCK
+    sheet_name: "Stock"
+    data_start_row: 2
+    status: ready
+    table: erp.stock
+    unique_on: [item_name, size]
+    columns:
+      - {col: 1, sheet: itemName, db: item_name, type: text, required: true}
+      - {col: 2, sheet: size, db: size, type: text, default: ""}
+      - {col: 3, sheet: initialStock, db: initial_stock, type: numeric, default: 0}
+      - {col: 5, sheet: threshold, db: threshold, type: numeric, default: 0}
+      - {col: 6, sheet: deadStock, db: dead_stock, type: boolean, default: false}
+    skip_columns:
+      - {col: 4, sheet: currentStock, reason: "Not stored -- computed live from bills/returns/wastage/issue/production at read time (stock_service). Never insert."}
+
+  - key: RATE_HISTORY
+    sheet_name: "Rate History"
+    data_start_row: 2
+    status: ready
+    table: erp.rate_history
+    columns:
+      - {col: 1, sheet: date, db: rate_date, type: date, required: true}
+      - {col: 2, sheet: itemName, db: item_name, type: text, required: true}
+      - {col: 3, sheet: size, db: size, type: text, default: ""}
+      - {col: 4, sheet: narration, db: narration, type: text}
+      - {col: 5, sheet: vendorName, db: vendor_name, type: text, required: true}
+      - {col: 6, sheet: rate, db: rate, type: numeric, required: true}
+      - {col: 7, sheet: poNumber, db: po_number, type: text}
+      - {col: 8, sheet: billNumber, db: bill_number, type: text}
+    notes: "Append-only audit trail, no unique key -- load once."
+
+  # ── Process Master + its two child sheets ────────────────────────────────
+
+  - key: PROCESS_MASTER
+    sheet_name: "Process Master"
+    data_start_row: 2
+    status: ready
+    table: erp.process_master
+    unique_on: [process_id]
+    columns:
+      - {col: 1, sheet: processId, db: process_id, type: text, required: true}
+      - {col: 2, sheet: processName, db: process_name, type: text, required: true}
+      - {col: 3, sheet: sequence, db: sequence, type: integer, default: 0}
+      - {col: 4, sheet: lotPrefix, db: lot_prefix, type: text, required: true}
+      - {col: 5, sheet: isFinalStage, db: is_final_stage, type: boolean, default: false}
+      - {col: 6, sheet: active, db: active, type: boolean, default: true}
+      - {col: 7, sheet: remarks, db: remarks, type: text}
+      - {col: 8, sheet: outputItemName, db: output_item_name, type: text, required: true}
+      - {col: 9, sheet: processType, db: process_type, type: text}
+      - {col: 10, sheet: primaryColorAxis, db: primary_color_axis, type: text}
+    notes: >
+      erp.process_id_seq starts at 1001 for new process IDs generated going
+      forward -- after loading historical rows, advance it past the max
+      imported numeric suffix (see README "Post-load: advance sequences").
+
+  - key: PROCESS_COMPONENTS
+    sheet_name: "Process Components"
+    data_start_row: 2
+    status: ready
+    table: erp.process_components
+    external_parent:
+      col: 1
+      sheet_field: processId
+      lookup_table: erp.process_master
+      lookup_key: process_id
+      target_column: master_id
+    columns:
+      - {col: 2, sheet: itemName, db: item_name, type: text, required: true}
+      - {col: 3, sheet: size, db: size, type: text, default: ""}
+      - {col: 4, sheet: narration, db: narration, type: text}
+      - {col: 5, sheet: qtyPerUnit, db: qty_per_unit, type: numeric, default: 1}
+      - {col: 6, sheet: remarks, db: remarks, type: text}
+      - {col: 7, sheet: sourceType, db: source_type, type: text, default: "ITEM"}
+      - {col: 8, sheet: colorGroup, db: color_group, type: text, default: "COMMON"}
+      - {col: 9, sheet: colorAxis, db: color_axis, type: text}
+      - {col: 10, sheet: unit, db: unit, type: text}
+    fk_resolve:
+      - {db_column: item_id, source_field: [itemName, size], lookup_table: erp.items, lookup_key: [item_name, size], required: false}
+
+  - key: PROCESS_COLOR_LINKS
+    sheet_name: "Process Color Links"
+    data_start_row: 2
+    status: needs_review
+    table: erp.process_color_links
+    columns:
+      - {col: 2, sheet: colorA, db: color_a, type: text, required: true}
+      - {col: 4, sheet: colorB, db: color_b, type: text, required: true}
+    key_columns:
+      - {col: 1, sheet: processAId}
+      - {col: 3, sheet: processBId}
+    fk_resolve:
+      - {db_column: process_a_id, source_field: processAId, lookup_table: erp.process_master, lookup_key: process_id, required: true}
+      - {db_column: process_b_id, source_field: processBId, lookup_table: erp.process_master, lookup_key: process_id, required: true}
+    notes: >
+      axis_a_key/axis_b_key (added in migrations/erp/020, default '') are
+      not in the transcribed 4-column Apps Script map -- if the live sheet
+      has extra trailing columns for these, add them here (col 5/6) before
+      running, or they'll default to ''.
+
+  # ── Warehouse Pool: only the Opening Balances sheet is bulk-importable.
+  #    erp.warehouse_pool itself is a materialized cache, fully rewritten by
+  #    warehouse_service._recalculate_warehouse_pool() -- never insert into
+  #    it directly. Load this + PRODUCTION + DISPATCH, then trigger a
+  #    recompute (see README). ────────────────────────────────────────────
+
+  - key: WAREHOUSE_POOL_OPENING
+    sheet_name: "Warehouse Pool Opening"
+    data_start_row: 2
+    status: ready
+    table: erp.warehouse_pool_opening
+    columns:
+      - {col: 1, sheet: outputItemName, db: output_item_name, type: text, required: true}
+      - {col: 2, sheet: processId, db: process_id, type: text, required: true}
+      - {col: 3, sheet: productTag, db: product_tag, type: text}
+      - {col: 4, sheet: color, db: color, type: text}
+      - {col: 5, sheet: qty, db: qty, type: numeric, required: true}
+      - {col: 6, sheet: date, db: opening_date, type: date, required: true}
+      - {col: 7, sheet: remarks, db: remarks, type: text}
+    fk_resolve:
+      - {db_column: process_master_id, source_field: processId, lookup_table: erp.process_master, lookup_key: process_id, required: false}
+
+  # ── Header + lines ledgers (denormalized sheet -> header/lines table pair) ─
+
+  - key: PO
+    sheet_name: "PO Tracker"
+    data_start_row: 3
+    status: ready
+    split:
+      group_by: [poNumber]
+      header:
+        table: erp.po_headers
+        unique_on: [po_number]
+        columns:
+          - {col: 1, sheet: poNumber, db: po_number, type: text, required: true}
+          - {col: 2, sheet: poDate, db: po_date, type: date}
+          - {col: 3, sheet: vendor, db: vendor, type: text, required: true}
+          - {col: 4, sheet: contact, db: contact, type: text}
+          - {col: 10, sheet: poDescription, db: po_description, type: text}
+          - {col: 11, sheet: poRemarks, db: po_remarks, type: text}
+          - {col: 15, sheet: supplierRemarks, db: supplier_remarks, type: text}
+      lines:
+        table: erp.po_lines
+        parent_fk: header_id
+        columns:
+          - {col: 5, sheet: itemName, db: item_name, type: text, required: true}
+          - {col: 6, sheet: narration, db: narration, type: text}
+          - {col: 7, sheet: size, db: size, type: text, default: ""}
+          - {col: 8, sheet: qty, db: qty, type: numeric, default: 0}
+          - {col: 9, sheet: unit, db: unit, type: text, default: "Pcs"}
+          - {col: 12, sheet: price, db: price, type: numeric, default: 0}
+          - {col: 16, sheet: baseQty, db: base_qty, type: numeric, default: 0}
+          - {col: 17, sheet: baseRate, db: base_rate, type: numeric, default: 0}
+    skip_columns:
+      - {col: 13, sheet: total, reason: "Computed (qty * price), not stored on po_lines."}
+      - {col: 14, sheet: totalQty, reason: "Computed/derived, not stored on po_lines."}
+    fk_resolve:
+      - {db_column: vendor_id, source_field: vendor, lookup_table: erp.vendors, lookup_key: vendor_name, scope: header, required: false}
+      - {db_column: item_id, source_field: [itemName, size], lookup_table: erp.items, lookup_key: [item_name, size], scope: lines, required: false}
+    notes: >
+      DATA_START_ROW is 3 (2-row header block in the sheet) -- confirm row 2
+      is the literal column-header row before pointing this at a live sheet.
+      erp.po_number_seq starts at 1001 -- advance after load, see README.
+
+  - key: BILL
+    sheet_name: "Bill Ledger"
+    data_start_row: 2
+    status: ready
+    split:
+      # Identity key is (vendor, billNumber), not billNumber alone -- the
+      # same bill number can legitimately recur across different vendors.
+      group_by: [billNumber, vendor]
+      header:
+        table: erp.bill_headers
+        unique_on: [vendor, bill_number]
+        columns:
+          - {col: 2, sheet: billNumber, db: bill_number, type: text, required: true}
+          - {col: 4, sheet: vendor, db: vendor, type: text, required: true}
+          - {col: 5, sheet: contact, db: contact, type: text}
+          - {col: 3, sheet: billDate, db: bill_date, type: date, required: true}
+          - {col: 14, sheet: remarks, db: remarks, type: text}
+      lines:
+        table: erp.bill_lines
+        parent_fk: header_id
+        columns:
+          - {col: 1, sheet: poNumber, db: po_number, type: text}
+          - {col: 6, sheet: itemName, db: item_name, type: text, required: true}
+          - {col: 7, sheet: size, db: size, type: text, default: ""}
+          - {col: 8, sheet: narration, db: narration, type: text}
+          - {col: 9, sheet: qty, db: qty, type: numeric, default: 0}
+          - {col: 10, sheet: unit, db: unit, type: text, default: "Pcs"}
+          - {col: 11, sheet: price, db: price, type: numeric, default: 0}
+          - {col: 12, sheet: gst, db: gst_rate_pct, type: numeric, default: 18}
+          - {col: 15, sheet: baseQty, db: base_qty, type: numeric, default: 0}
+          - {col: 16, sheet: baseRate, db: base_rate, type: numeric, default: 0}
+          - {col: 17, sheet: affectsStock, db: affects_stock, type: boolean, default: true}
+    skip_columns:
+      - {col: 13, sheet: total, reason: "Computed (qty * price * (1 + gst/100)), not stored on bill_lines."}
+    fk_resolve:
+      - {db_column: vendor_id, source_field: vendor, lookup_table: erp.vendors, lookup_key: vendor_name, scope: header, required: false}
+      - {db_column: item_id, source_field: [itemName, size], lookup_table: erp.items, lookup_key: [item_name, size], scope: lines, required: false}
+
+  - key: RETURN
+    sheet_name: "Return Ledger"
+    data_start_row: 2
+    status: ready
+    split:
+      group_by: [returnNumber]
+      header:
+        table: erp.return_headers
+        unique_on: [return_number]
+        columns:
+          - {col: 1, sheet: returnNumber, db: return_number, type: text, required: true}
+          - {col: 2, sheet: returnDate, db: return_date, type: date, required: true}
+          - {col: 3, sheet: vendor, db: vendor, type: text, required: true}
+          - {col: 4, sheet: contact, db: contact, type: text}
+          - {col: 5, sheet: billNumber, db: bill_number, type: text}
+          - {col: 14, sheet: remarks, db: remarks, type: text}
+      lines:
+        table: erp.return_lines
+        parent_fk: header_id
+        columns:
+          - {col: 6, sheet: itemName, db: item_name, type: text, required: true}
+          - {col: 7, sheet: size, db: size, type: text, default: ""}
+          - {col: 8, sheet: narration, db: narration, type: text}
+          - {col: 9, sheet: qty, db: qty, type: numeric, default: 0}
+          - {col: 10, sheet: unit, db: unit, type: text, default: "Pcs"}
+          - {col: 11, sheet: price, db: price, type: numeric, default: 0}
+          - {col: 13, sheet: reason, db: reason, type: text}
+          - {col: 15, sheet: baseQty, db: base_qty, type: numeric, default: 0}
+          - {col: 16, sheet: baseRate, db: base_rate, type: numeric, default: 0}
+    skip_columns:
+      - {col: 12, sheet: total, reason: "Computed, not stored on return_lines."}
+    fk_resolve:
+      - {db_column: vendor_id, source_field: vendor, lookup_table: erp.vendors, lookup_key: vendor_name, scope: header, required: false}
+      - {db_column: item_id, source_field: [itemName, size], lookup_table: erp.items, lookup_key: [item_name, size], scope: lines, required: false}
+
+  - key: WASTAGE
+    sheet_name: "Wastage Log"
+    data_start_row: 2
+    status: ready
+    split:
+      group_by: [wastageId]
+      header:
+        table: erp.wastage_headers
+        columns:
+          - {col: 1, sheet: wastageId, db: wastage_id, type: text, required: true}
+          - {col: 2, sheet: date, db: wastage_date, type: date, required: true}
+          - {col: 3, sheet: vendor, db: vendor, type: text}
+          - {col: 9, sheet: remarks, db: remarks, type: text}
+      lines:
+        table: erp.wastage_lines
+        parent_fk: header_id
+        columns:
+          - {col: 4, sheet: itemName, db: item_name, type: text, required: true}
+          - {col: 5, sheet: size, db: size, type: text, default: ""}
+          - {col: 6, sheet: qty, db: qty, type: numeric, default: 0}
+          - {col: 7, sheet: unit, db: unit, type: text, default: "Pcs"}
+          - {col: 8, sheet: reason, db: reason, type: text}
+          - {col: 10, sheet: baseQty, db: base_qty, type: numeric, default: 0}
+    fk_resolve:
+      - {db_column: vendor_id, source_field: vendor, lookup_table: erp.vendors, lookup_key: vendor_name, scope: header, required: false}
+      - {db_column: item_id, source_field: [itemName, size], lookup_table: erp.items, lookup_key: [item_name, size], scope: lines, required: false}
+    notes: >
+      No unique index on wastage_id in the DB either (matches source, which
+      never checked for collisions on its generated WST-YYYYMMDD-HHMMSS
+      ID) -- group_by is best-effort dedup, not a DB-enforced key.
+
+  - key: ISSUE
+    sheet_name: "Issued Stock Log"
+    data_start_row: 2
+    status: ready
+    split:
+      group_by: [issueId]
+      header:
+        table: erp.issue_headers
+        columns:
+          - {col: 1, sheet: issueId, db: issue_id, type: text, required: true}
+          - {col: 2, sheet: date, db: issue_date, type: date, required: true}
+          - {col: 3, sheet: issuedTo, db: issued_to, type: text, required: true}
+          - {col: 4, sheet: reference, db: reference, type: text}
+          - {col: 12, sheet: vendor, db: vendor, type: text}
+          - {col: 9, sheet: remarks, db: remarks, type: text}
+      lines:
+        table: erp.issue_lines
+        parent_fk: header_id
+        columns:
+          - {col: 5, sheet: itemName, db: item_name, type: text, required: true}
+          - {col: 6, sheet: size, db: size, type: text, default: ""}
+          - {col: 7, sheet: qty, db: qty, type: numeric, default: 0}
+          - {col: 8, sheet: unit, db: unit, type: text, default: "Pcs"}
+          - {col: 10, sheet: baseQty, db: base_qty, type: numeric, default: 0}
+          - {col: 11, sheet: rate, db: rate, type: numeric, default: 0}
+    fk_resolve:
+      - {db_column: vendor_id, source_field: vendor, lookup_table: erp.vendors, lookup_key: vendor_name, scope: header, required: false}
+      - {db_column: item_id, source_field: [itemName, size], lookup_table: erp.items, lookup_key: [item_name, size], scope: lines, required: false}
+    notes: "Same no-unique-index caveat as WASTAGE."
+
+  - key: BOM
+    sheet_name: "BOM"
+    data_start_row: 2
+    status: needs_review
+    split:
+      group_by: [productId]
+      header:
+        table: erp.bom_products
+        unique_on: [product_id]
+        columns:
+          - {col: 1, sheet: productId, db: product_id, type: text, required: true}
+          - {col: 2, sheet: productName, db: product_name, type: text, required: true}
+          - {col: 9, sheet: remarks, db: remarks, type: text}
+          - {col: 12, sheet: sequence, db: sequence, type: integer, default: 0}
+      lines:
+        table: erp.bom_lines
+        parent_fk: header_id
+        columns:
+          - {col: 3, sheet: itemName, db: item_name, type: text, required: true}
+          - {col: 4, sheet: size, db: size, type: text, default: ""}
+          - {col: 5, sheet: narration, db: narration, type: text}
+          - {col: 6, sheet: rate, db: rate, type: numeric, default: 0}
+          - {col: 7, sheet: vendor, db: vendor, type: text}
+          - {col: 8, sheet: qtyPerProduct, db: qty_per_product, type: numeric, default: 0}
+          - {col: 10, sheet: processGroup, db: process_group, type: text}
+          - {col: 11, sheet: color, db: color, type: text}
+    fk_resolve:
+      - {db_column: vendor_id, source_field: vendor, lookup_table: erp.vendors, lookup_key: vendor_name, scope: lines, required: false}
+      - {db_column: item_id, source_field: [itemName, size], lookup_table: erp.items, lookup_key: [item_name, size], scope: lines, required: false}
+      - {db_column: process_master_id, source_field: processGroup, lookup_table: erp.process_master, lookup_key: process_id, scope: lines, required: false}
+    notes: >
+      remarks (col 9) and sequence (col 12) are header-level despite sitting
+      among item-level columns in the sheet (bom_lines has no remarks/
+      sequence column) -- double-check against a live row before trusting.
+      erp.product_id_seq starts at 1001, advance after load.
+
+  - key: BOM_COSTS
+    sheet_name: "BOM Additional Costs"
+    data_start_row: 2
+    status: needs_review
+    table: erp.bom_additional_costs
+    external_parent:
+      col: 1
+      sheet_field: productId
+      lookup_table: erp.bom_products
+      lookup_key: product_id
+      target_column: header_id
+    columns:
+      - {col: 2, sheet: description, db: description, type: text, required: true}
+      - {col: 3, sheet: rate, db: rate, type: numeric, default: 0}
+      - {col: 4, sheet: processName, db: process_name, type: text}
+      - {col: 5, sheet: contractorName, db: contractor_name, type: text}
+    notes: "Load BOM before BOM_COSTS -- external_parent lookup requires bom_products to already exist."
+
+  - key: CLIENT_ORDERS
+    sheet_name: "Client Orders"
+    data_start_row: 2
+    status: needs_review
+    split:
+      group_by: [orderNumber]
+      header:
+        table: erp.client_orders_headers
+        columns:
+          - {col: 1, sheet: orderNumber, db: order_number, type: text, required: true}
+          - {col: 2, sheet: orderDate, db: order_date, type: date, required: true}
+          - {col: 3, sheet: clientName, db: client_name, type: text, required: true}
+          - {col: 7, sheet: status, db: status, type: text, default: "Estimate"}
+          - {col: 8, sheet: orderRemarks, db: order_remarks, type: text}
+      lines:
+        table: erp.client_orders_lines
+        parent_fk: header_id
+        columns:
+          - {col: 4, sheet: productId, db: product_id, type: text, required: true}
+          - {col: 5, sheet: productName, db: product_name, type: text, required: true}
+          - {col: 6, sheet: qty, db: qty, type: numeric, required: true}
+          - {col: 9, sheet: lineRemarks, db: line_remarks, type: text}
+          - {col: 10, sheet: productionPushed, db: production_pushed, type: text, default: ""}
+    fk_resolve:
+      - {db_column: bom_product_id, source_field: productId, lookup_table: erp.bom_products, lookup_key: product_id, scope: lines, required: false}
+    notes: >
+      production_pushed is VARCHAR in the DB (not boolean) -- pass the sheet
+      value through as text as-is, don't coerce to true/false. Load BOM
+      before this sheet.
+
+  - key: DISPATCH
+    sheet_name: "Dispatch"
+    data_start_row: 2
+    status: needs_review
+    table: erp.dispatch
+    unique_on: [dispatch_number]
+    columns:
+      - {col: 1, sheet: dispatchNumber, db: dispatch_number, type: text, required: true}
+      - {col: 2, sheet: dispatchDate, db: dispatch_date, type: date, required: true}
+      - {col: 3, sheet: orderNumber, db: order_number, type: text}
+      - {col: 4, sheet: clientName, db: client_name, type: text}
+      - {col: 5, sheet: productId, db: product_id, type: text, required: true}
+      - {col: 6, sheet: productName, db: product_name, type: text, required: true}
+      - {col: 7, sheet: qty, db: qty, type: numeric, required: true}
+      - {col: 8, sheet: transport, db: transport, type: text}
+      - {col: 9, sheet: remarks, db: remarks, type: text}
+      - {col: 10, sheet: invoiceNumber, db: invoice_number, type: text}
+      - {col: 11, sheet: privateMark, db: private_mark, type: text}
+      - {col: 12, sheet: grNumber, db: gr_number, type: text}
+      - {col: 13, sheet: logisticsContractor, db: logistics_contractor, type: text}
+      - {col: 14, sheet: logisticsRate, db: logistics_rate, type: numeric, default: 0}
+      - {col: 15, sheet: logisticsCost, db: logistics_cost, type: numeric, default: 0}
+    fk_resolve:
+      - {db_column: bom_product_id, source_field: productId, lookup_table: erp.bom_products, lookup_key: product_id, required: false}
+      - {db_column: contractor_id, source_field: logisticsContractor, lookup_table: erp.contractors, lookup_key: contractor_name, required: false}
+    notes: >
+      Flat table (not header+lines) -- confirmed against
+      migrations/erp/016_dispatch.sql. erp.dispatch_number_seq starts at
+      1001, advance after load. Load BOM + Contractors before this sheet.
+
+  - key: PRODUCTION
+    sheet_name: "Production"
+    data_start_row: 2
+    status: needs_review
+    table: erp.production
+    columns:
+      - {col: 1, sheet: date, db: production_date, type: date, required: true}
+      - {col: 2, sheet: productId, db: product_id, type: text}
+      - {col: 3, sheet: productName, db: product_name, type: text}
+      - {col: 4, sheet: qty, db: qty, type: numeric, required: true}
+      - {col: 5, sheet: assignedBy, db: assigned_by, type: text}
+      - {col: 6, sheet: assignedTo, db: assigned_to, type: text, required: true}
+      - {col: 7, sheet: status, db: status, type: text, default: "Pending"}
+      - {col: 8, sheet: remarks, db: remarks, type: text}
+      - {col: 9, sheet: customComponents, db: custom_components, type: json}
+      - {col: 10, sheet: sheetRemarks, db: sheet_remarks, type: text}
+      - {col: 11, sheet: processId, db: process_id, type: text, required: true}
+      - {col: 12, sheet: lotNumber, db: lot_number, type: text, required: true}
+      - {col: 14, sheet: contractorRate, db: contractor_rate, type: numeric, default: 0}
+      - {col: 15, sheet: contractorPayable, db: contractor_payable, type: numeric, default: 0}
+      - {col: 16, sheet: outputItemName, db: output_item_name, type: text}
+      - {col: 17, sheet: componentsConsumed, db: components_consumed, type: json}
+      - {col: 18, sheet: color, db: color, type: text}
+      - {col: 19, sheet: colorBreakdown, db: color_breakdown, type: json}
+      - {col: 20, sheet: orderNumber, db: order_number, type: text}
+    skip_columns:
+      - {col: 13, sheet: consumedFromProcessQty, reason: "No matching column on erp.production -- not verified where (if anywhere) this landed in the port. Confirm against production_service.py before assuming it's safe to drop."}
+    fk_resolve:
+      - {db_column: bom_product_id, source_field: productId, lookup_table: erp.bom_products, lookup_key: product_id, required: false}
+      - {db_column: process_master_id, source_field: processId, lookup_table: erp.process_master, lookup_key: process_id, required: false}
+    notes: >
+      customComponents/componentsConsumed/colorBreakdown assumed to already
+      be JSON-encoded strings in their sheet cells (matching JSONB target
+      columns) -- verify against a live cell. contractor_id has no direct
+      sheet source column here and is left NULL; resolve manually if
+      needed. Load BOM + Process Master before this sheet.
+
+  # ── Explicitly NOT sheet-migrated (documented, not an oversight) ────────
+  # LOGS               -> Superseded by dedicated tables (erp.stock_adjustments,
+  #                        erp.warehouse_pool_adjustments, erp.ledger_audit_log),
+  #                        each with its own real schema. The generic Logs
+  #                        sheet was a workaround the Postgres port doesn't need.
+  # erp.warehouse_pool  -> Materialized cache, rewritten wholesale by
+  #                        warehouse_service._recalculate_warehouse_pool() on
+  #                        every mutating call. Never bulk-insert into it --
+  #                        load WAREHOUSE_POOL_OPENING + PRODUCTION + DISPATCH,
+  #                        then trigger a recompute (see README).
+  # erp.stock_adjustments, erp.warehouse_pool_adjustments -> Audit trails with
+  #                        no dedicated source sheet (previously folded into
+  #                        the generic Logs sheet); nothing to bulk-import.
+  # erp.company_settings, erp.ledger_audit_log, erp.bom_access_tokens ->
+  #                        App-generated/runtime state, not sheet-backed.

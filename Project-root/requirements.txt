@@ -19,6 +19,10 @@ google-auth-oauthlib==1.2.0
 # Environment Management
 python-dotenv==1.0.1
 
+# Sheets<->Postgres migration & nightly backup scripts (scripts/migration/)
+google-api-python-client==2.126.0
+PyYAML==6.0.1
+
 
 # Security Enhancements
 Flask-Limiter==3.5.0
