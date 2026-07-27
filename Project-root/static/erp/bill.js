@@ -180,21 +180,29 @@ App.Bill = {
         pageItems.every(bill => App.Selection.isSelected(App.State.selectedBills, this.billKey(bill)));
     }
 
-    tbody.innerHTML = pageItems.map(bill => {
-      const index = App.State.globalBills.indexOf(bill);
-      const poNums = bill.poNumbers?.length ? bill.poNumbers : (bill.poNumber ? [bill.poNumber] : []);
-      const poBadge = poNums.map(p =>
-        p === 'DIRECT'
-          ? '<span class="badge bg-secondary shadow-sm">Direct</span>'
-          : `<span class="badge bg-primary bg-opacity-10 text-primary border border-primary-subtle shadow-sm">PO-${escapeHtml(String(p))}</span>`
-      ).join(' ') || '<span class="badge bg-secondary">—</span>';
+    tbody.innerHTML = pageItems.map(bill => this.rowHtml(bill)).join('');
 
-      const itemsPreview = formatItemsPreview(bill.items);
-      const key = this.billKey(bill);
-      const checkedAttr = App.Selection.isSelected(App.State.selectedBills, key) ? 'checked' : '';
+    App.Utils.renderPagination('billPagination', filteredBills.length, cur, rpp, 'bill-page', 'Bills');
+    this.updateBulkButtons();
+  },
 
-      return `
-      <tr>
+  // Renders one <tr> for a bill. Shared by renderTable's full rebuild and
+  // patchRowInPlace's single-row swap below.
+  rowHtml(bill) {
+    const index = App.State.globalBills.indexOf(bill);
+    const poNums = bill.poNumbers?.length ? bill.poNumbers : (bill.poNumber ? [bill.poNumber] : []);
+    const poBadge = poNums.map(p =>
+      p === 'DIRECT'
+        ? '<span class="badge bg-secondary shadow-sm">Direct</span>'
+        : `<span class="badge bg-primary bg-opacity-10 text-primary border border-primary-subtle shadow-sm">PO-${escapeHtml(String(p))}</span>`
+    ).join(' ') || '<span class="badge bg-secondary">—</span>';
+
+    const itemsPreview = formatItemsPreview(bill.items);
+    const key = this.billKey(bill);
+    const checkedAttr = App.Selection.isSelected(App.State.selectedBills, key) ? 'checked' : '';
+
+    return `
+      <tr data-bill-key="${escapeHtml(key)}">
         <td class="text-center">
           <input type="checkbox" class="form-check-input bill-select-chk" data-key="${escapeHtml(key)}" ${checkedAttr} onchange="App.Bill.onRowSelectChange()">
         </td>
@@ -218,10 +226,26 @@ App.Bill = {
                   data-billnumber="${escapeHtml(bill.billNumber || '')}">Delete</button>
         </td>
       </tr>`;
-    }).join('');
+  },
 
-    App.Utils.renderPagination('billPagination', filteredBills.length, cur, rpp, 'bill-page', 'Bills');
-    this.updateBulkButtons();
+  // Patches one already-loaded bill's data + its rendered <tr> after an
+  // edit save, instead of a full loadData() reload -- keyed by the
+  // PRE-edit (vendor, billNumber), since that's how the row is currently
+  // indexed in globalBills/the DOM; this then updates the object (and its
+  // rendered key) to the post-save values. Returns false -- caller should
+  // fall back to loadData() -- if the bill isn't currently loaded or isn't
+  // on the displayed page.
+  patchRowInPlace(freshBill, oldKey) {
+    const existing = App.State.globalBills.find(b => this.billKey(b) === oldKey);
+    if (!existing) return false;
+
+    Object.assign(existing, freshBill);
+
+    const tr = document.querySelector(`#billTableBody tr[data-bill-key="${CSS.escape(oldKey)}"]`);
+    if (!tr) return false;
+
+    tr.outerHTML = this.rowHtml(existing);
+    return true;
   },
 
   // Builds a stable string key for a bill row (Vendor + Bill Number) --
@@ -547,6 +571,8 @@ App.Bill = {
     const printBtn = document.getElementById('billModalPrintBtn');
     if (printBtn) printBtn.style.display = 'none';
 
+    App.Utils.setFormButtonsForMode('billCancelBtn', 'billExitBtn', 'billSubmitBtn', false, 'Record Itemized Bill');
+    App.Nav.clear('receiveBillModal');
     safeModalShow('receiveBillModal');
   },
 
@@ -633,6 +659,16 @@ App.Bill = {
 
     this.refreshRowSizeLists();
     this.refreshRowNarrationLists();
+    App.Utils.setFormButtonsForMode('billCancelBtn', 'billExitBtn', 'billSubmitBtn', true, 'Update Bill');
+    App.Nav.register(
+      'receiveBillModal',
+      (App.State.filteredBills || []).map(b => this.billKey(b)),
+      this.billKey(bill),
+      (key) => {
+        const idx = App.State.globalBills.findIndex(b => this.billKey(b) === key);
+        if (idx !== -1) this.openEditModal(idx);
+      }
+    );
     safeModalShow('receiveBillModal');
   },
 
@@ -1198,11 +1234,36 @@ document.addEventListener('DOMContentLoaded', () => {
         setDisabled('billSubmitBtn', true);
         try {
           const res = await Api.mutate('saveBill', formData);
-          if (res?.success) {
-            await App.Bill.loadData();
-          }
           if (res?.success && !isEdit) {
+            // A brand-new bill's sorted/paginated position can't be
+            // determined cheaply on the client -- full reload here (an
+            // edit doesn't need to, see App.Bill.patchRowInPlace).
+            await App.Bill.loadData();
             App.Bill.openReceiveModal();
+          } else if (res?.success && isEdit) {
+            // Save (edit mode): patch just this one bill's data + <tr> in
+            // place instead of a full loadData() reload -- keyed by the
+            // PRE-edit (vendor, billNumber). Falls back to a full reload
+            // if the bill can't be patched.
+            const oldKey = App.Bill.billKey({ vendor: String(formData.existingVendor || '').trim(), billNumber: formData.existingBillNumber });
+            const patched = res.data && res.data.bill
+              ? App.Bill.patchRowInPlace(res.data.bill, oldKey)
+              : false;
+            if (!patched) await App.Bill.loadData();
+
+            // Stay open on the SAME bill instead of closing -- Exit
+            // (App.Nav.exit) is the only way to close from here now.
+            // Re-derive the fresh index by (vendor, billNumber) -- the NEW
+            // values just saved -- since either half of billKey may have
+            // just changed; billNumber comes back from the server
+            // (res.data), trusting that over the raw formData value.
+            const key = App.Bill.billKey({ vendor: String(formData.vendor || '').trim(), billNumber: res.data?.billNumber || formData.billNumber });
+            const freshIndex = App.State.globalBills.findIndex(b => App.Bill.billKey(b) === key);
+            if (freshIndex !== -1) {
+              App.Bill.openEditModal(freshIndex);
+            } else {
+              safeModalHide('receiveBillModal');
+            }
           } else {
             safeModalHide('receiveBillModal');
           }

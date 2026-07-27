@@ -214,44 +214,53 @@ def get_ready_to_dispatch_data():
     return build_response(True, records)
 
 
+def _row_to_dispatch_record(row) -> dict:
+    return {
+        "rowIdx": row["id"],
+        "dispatchNumber": row["dispatch_number"] or "",
+        "dispatchDate": date_utils.to_display_string(row["dispatch_date"]) or "",
+        "dateRaw": date_utils.to_iso_string(row["dispatch_date"]) or "",
+        "orderNumber": row["order_number"] or "",
+        "clientName": row["client_name"] or "",
+        "productId": row["product_id"] or "",
+        "productName": row["product_name"] or "",
+        "qty": float(row["qty"]),
+        "transport": row["transport"] or "",
+        "remarks": row["remarks"] or "",
+        "invoiceNumber": row["invoice_number"] or "",
+        "privateMark": row["private_mark"] or "",
+        "grNumber": row["gr_number"] or "",
+        "logisticsContractor": row["logistics_contractor"] or "",
+        "logisticsRate": float(row["logistics_rate"]),
+        "logisticsCost": float(row["logistics_cost"]),
+    }
+
+
+_DISPATCH_SELECT_COLS = """
+    id, dispatch_number, dispatch_date, order_number, client_name, product_id, product_name,
+    qty, transport, remarks, invoice_number, private_mark, gr_number,
+    logistics_contractor, logistics_rate, logistics_cost
+"""
+
+
 @rpc_method("getDispatchData")
 def get_dispatch_data():
     with database.get_conn(cursor_factory=psycopg2.extras.RealDictCursor) as (_conn, cur):
-        cur.execute(
-            """
-            SELECT id, dispatch_number, dispatch_date, order_number, client_name, product_id, product_name,
-                   qty, transport, remarks, invoice_number, private_mark, gr_number,
-                   logistics_contractor, logistics_rate, logistics_cost
-            FROM erp.dispatch
-            WHERE deleted_at IS NULL
-            """
-        )
+        cur.execute(f"SELECT {_DISPATCH_SELECT_COLS} FROM erp.dispatch WHERE deleted_at IS NULL")
         rows = cur.fetchall()
 
-    records = [
-        {
-            "rowIdx": row["id"],
-            "dispatchNumber": row["dispatch_number"] or "",
-            "dispatchDate": date_utils.to_display_string(row["dispatch_date"]) or "",
-            "dateRaw": date_utils.to_iso_string(row["dispatch_date"]) or "",
-            "orderNumber": row["order_number"] or "",
-            "clientName": row["client_name"] or "",
-            "productId": row["product_id"] or "",
-            "productName": row["product_name"] or "",
-            "qty": float(row["qty"]),
-            "transport": row["transport"] or "",
-            "remarks": row["remarks"] or "",
-            "invoiceNumber": row["invoice_number"] or "",
-            "privateMark": row["private_mark"] or "",
-            "grNumber": row["gr_number"] or "",
-            "logisticsContractor": row["logistics_contractor"] or "",
-            "logisticsRate": float(row["logistics_rate"]),
-            "logisticsCost": float(row["logistics_cost"]),
-        }
-        for row in rows
-    ]
+    records = [_row_to_dispatch_record(row) for row in rows]
     records.sort(key=lambda r: (r["dateRaw"] or "", r["rowIdx"]), reverse=True)
     return build_response(True, records)
+
+
+def _fetch_dispatch_record(cur, dispatch_id):
+    """Reads one freshly-written dispatch row back by id, so save_dispatch
+    can hand it to the client for an in-place row-patch instead of a full
+    reload."""
+    cur.execute(f"SELECT {_DISPATCH_SELECT_COLS} FROM erp.dispatch WHERE id = %s", (dispatch_id,))
+    row = cur.fetchone()
+    return _row_to_dispatch_record(row) if row else None
 
 
 @rpc_method("getNextDispatchNumber")
@@ -365,6 +374,7 @@ def save_dispatch(conn, cur, form_data):
                 existing["id"],
             ),
         )
+        new_id = existing["id"]
     else:
         cur.execute(
             """
@@ -373,6 +383,7 @@ def save_dispatch(conn, cur, form_data):
                  product_name, qty, transport, remarks, invoice_number, private_mark, gr_number,
                  logistics_contractor, contractor_id, logistics_rate, logistics_cost, updated_by)
             VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+            RETURNING id
             """,
             (
                 dispatch_number, dispatch_date, order_number, client_name, product_id, resolved_bom_product_id,
@@ -380,6 +391,7 @@ def save_dispatch(conn, cur, form_data):
                 logistics_contractor, resolved_contractor_id, logistics_rate, logistics_cost, user_id,
             ),
         )
+        new_id = cur.fetchone()["id"]
 
     warehouse_service._recalculate_warehouse_pool(cur)
 
@@ -387,7 +399,12 @@ def save_dispatch(conn, cur, form_data):
     if order_number and order_line_qty is None:
         message += f' Note: PI / Estimate "{order_number}" has no line for "{product_name}" (it may have been edited or removed).'
 
-    return build_response(True, {"dispatchNumber": dispatch_number}, message)
+    # Read this dispatch's own just-written row back so the client can
+    # patch it into an already-loaded list in place instead of a full
+    # reload.
+    fresh_row = _fetch_dispatch_record(cur, new_id)
+
+    return build_response(True, {"dispatchNumber": dispatch_number, "row": fresh_row}, message)
 
 
 @rpc_method("deleteDispatch", mutation=True)

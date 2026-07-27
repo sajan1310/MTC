@@ -81,15 +81,23 @@ App.PO = {
         pageItems.every(po => App.Selection.isSelected(App.State.selectedPOs, String(po.poNumber)));
     }
 
-    tbody.innerHTML = pageItems.map(po => {
-      const index = App.State.globalPOs.indexOf(po);
-      const itemsPreview = formatItemsPreview(po.items);
-      const key = String(po.poNumber);
-      const checkedAttr = App.Selection.isSelected(App.State.selectedPOs, key) ? 'checked' : '';
-      const statusInfo = this.getStatusBadge(po.status);
+    tbody.innerHTML = pageItems.map(po => this.rowHtml(po)).join('');
 
-      return `
-      <tr>
+    App.Utils.renderPagination('poPagination', filteredPOs.length, cur, rpp, 'po-page', 'Purchase Orders');
+    this.updateBulkButtons();
+  },
+
+  // Renders one <tr> for a PO. Shared by renderTable's full rebuild and
+  // patchRowInPlace's single-row swap below.
+  rowHtml(po) {
+    const index = App.State.globalPOs.indexOf(po);
+    const itemsPreview = formatItemsPreview(po.items);
+    const key = String(po.poNumber);
+    const checkedAttr = App.Selection.isSelected(App.State.selectedPOs, key) ? 'checked' : '';
+    const statusInfo = this.getStatusBadge(po.status);
+
+    return `
+      <tr data-po-key="${escapeHtml(key)}">
         <td class="text-center">
           <input type="checkbox" class="form-check-input po-select-chk" data-key="${escapeHtml(key)}" ${checkedAttr} onchange="App.PO.onRowSelectChange()">
         </td>
@@ -107,10 +115,30 @@ App.PO = {
           <button class="btn btn-sm btn-danger           btn-action w-100"      data-action="po-delete" data-ponumber="${escapeHtml(po.poNumber)}">Delete</button>
         </td>
       </tr>`;
-    }).join('');
+  },
 
-    App.Utils.renderPagination('poPagination', filteredPOs.length, cur, rpp, 'po-page', 'Purchase Orders');
-    this.updateBulkButtons();
+  // Patches one already-loaded PO's data + its rendered <tr> after an edit
+  // save, instead of a full loadData() reload. Mutates the SAME PO object
+  // already in globalPOs (and therefore filteredPOs too, since it's built
+  // via [...globalPOs]/.filter() -- same object references, not copies).
+  // Returns false -- caller should fall back to loadData() -- if the PO
+  // isn't currently loaded or isn't on the displayed page.
+  patchRowInPlace(freshPo) {
+    const key = String(freshPo.poNumber);
+    const existing = App.State.globalPOs.find(p => String(p.poNumber) === key);
+    if (!existing) return false;
+
+    Object.assign(existing, freshPo);
+    // status is server-derived from billing and can shift on an edit
+    // (date/qty changes affect which bills match it) -- keep the
+    // status-count bar in sync the same way loadData() does.
+    this.updateStatusBar();
+
+    const tr = document.querySelector(`#poTableBody tr[data-po-key="${key}"]`);
+    if (!tr) return false;
+
+    tr.outerHTML = this.rowHtml(existing);
+    return true;
   },
 
   toggleSelectAll(masterChk) {
@@ -472,6 +500,8 @@ App.PO = {
 
     this.refreshRowSizeLists();
     this.refreshRowNarrationLists();
+    App.Utils.setFormButtonsForMode('poCancelBtn', 'poExitBtn', 'poSubmitBtn', false, 'Generate Purchase Order');
+    App.Nav.clear('editPoModal');
     safeModalShow('editPoModal');
   },
 
@@ -604,6 +634,16 @@ App.PO = {
 
     this.refreshRowSizeLists();
     this.refreshRowNarrationLists();
+    App.Utils.setFormButtonsForMode('poCancelBtn', 'poExitBtn', 'poSubmitBtn', true, 'Update Database');
+    App.Nav.register(
+      'editPoModal',
+      (App.State.filteredPOs || []).map(p => p.poNumber),
+      po.poNumber,
+      (poNumber) => {
+        const idx = App.State.globalPOs.findIndex(p => String(p.poNumber) === String(poNumber));
+        if (idx !== -1) this.openEditModal(idx);
+      }
+    );
     safeModalShow('editPoModal');
   },
 
@@ -1105,8 +1145,10 @@ App.PO = {
     document.body.style.overflow = 'visible';
     document.documentElement.style.overflow = 'visible';
 
+    // 749px ~= 198mm at 96 dpi = A4 minus 2x6mm margins, so the canvas
+    // maps 1:1 to the jsPDF content area.
     element.style.display = 'block';
-    element.style.width = '718px';
+    element.style.width = '749px';
     element.style.maxWidth = 'none';
 
     await new Promise(r => requestAnimationFrame(r));
@@ -1114,7 +1156,7 @@ App.PO = {
     try {
       await window.html2pdf()
         .set({
-          margin: [10, 10, 10, 10],
+          margin: [6, 6, 6, 6],
           filename: `PO_${safePoNumber}_${safeVendorName}.pdf`,
           image: { type: 'jpeg', quality: 0.98 },
           html2canvas: {
@@ -1256,9 +1298,31 @@ document.addEventListener('DOMContentLoaded', () => {
     setDisabled('poSubmitBtn', true);
     try {
       const res = await Api.mutate('savePO', formData);
-      if (res?.success) await App.PO.loadData();
       if (res?.success && !isEdit) {
+        // A brand-new PO's sorted/paginated position can't be determined
+        // cheaply on the client -- full reload here (an edit doesn't need
+        // to, see App.PO.patchRowInPlace).
+        await App.PO.loadData();
         App.PO.openCreateModal();
+      } else if (res?.success && isEdit) {
+        // Save (edit mode): patch just this one PO's data + <tr> in place
+        // instead of a full loadData() reload -- falls back to a full
+        // reload if the PO can't be patched.
+        const patched = res.data && res.data.po
+          ? App.PO.patchRowInPlace(res.data.po)
+          : false;
+        if (!patched) await App.PO.loadData();
+
+        // Stay open on the SAME PO instead of closing -- Exit (App.Nav.exit)
+        // is the only way to close from here now. poNumber is server-
+        // assigned and never user-editable, so it's a safe stable key to
+        // re-find this record by.
+        const freshIndex = App.State.globalPOs.findIndex(p => String(p.poNumber) === String(formData.existingPoNumber));
+        if (freshIndex !== -1) {
+          App.PO.openEditModal(freshIndex);
+        } else {
+          safeModalHide('editPoModal');
+        }
       } else {
         safeModalHide('editPoModal');
       }

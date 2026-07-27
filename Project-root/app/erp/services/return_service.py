@@ -61,22 +61,29 @@ def _find_item_id(cur, name: str, size: str):
     return row["id"] if row else None
 
 
-@rpc_method("getReturnData")
-def get_return_data():
-    with database.get_conn(cursor_factory=psycopg2.extras.RealDictCursor) as (_conn, cur):
-        cur.execute(
-            """
-            SELECT h.id AS header_id, h.return_number, h.return_date, h.vendor, h.contact,
-                   h.bill_number, h.remarks,
-                   l.item_name, l.size, l.narration, l.unit, l.qty, l.price, l.reason,
-                   l.base_qty, l.base_rate
-            FROM erp.return_headers h
-            JOIN erp.return_lines l ON l.header_id = h.id
-            WHERE h.deleted_at IS NULL
-            ORDER BY h.id, l.id
-            """
-        )
-        rows = cur.fetchall()
+def _load_return_list(cur, only_header_id=None) -> list:
+    """Core of getReturnData: query + group, optionally scoped to one
+    header. Shared by get_return_data() (full list) and save_return()
+    (only_header_id, to read back just its own freshly-written return for
+    the client's in-place row-patch response).
+    """
+    query = """
+        SELECT h.id AS header_id, h.return_number, h.return_date, h.vendor, h.contact,
+               h.bill_number, h.remarks,
+               l.item_name, l.size, l.narration, l.unit, l.qty, l.price, l.reason,
+               l.base_qty, l.base_rate
+        FROM erp.return_headers h
+        JOIN erp.return_lines l ON l.header_id = h.id
+        WHERE h.deleted_at IS NULL
+        """
+    params: list = []
+    if only_header_id is not None:
+        query += " AND h.id = %s"
+        params.append(only_header_id)
+    query += " ORDER BY h.id, l.id"
+
+    cur.execute(query, params)
+    rows = cur.fetchall()
 
     return_map: dict = {}
     for row in rows:
@@ -124,6 +131,13 @@ def get_return_data():
     for r in returns:
         del r["_headerId"]
 
+    return returns
+
+
+@rpc_method("getReturnData")
+def get_return_data():
+    with database.get_conn(cursor_factory=psycopg2.extras.RealDictCursor) as (_conn, cur):
+        returns = _load_return_list(cur)
     return build_response(True, returns)
 
 
@@ -250,7 +264,14 @@ def save_return(conn, cur, form_data):
         )
 
     message = f"Return #{return_number} updated successfully." if is_edit else f"Return #{return_number} recorded successfully."
-    return build_response(True, {"returnNumber": return_number}, message)
+
+    # Read this return's own just-written rows back so the client can patch
+    # it into an already-loaded Return Ledger in place instead of a full
+    # reload.
+    fresh_list = _load_return_list(cur, only_header_id=header_id)
+    fresh_return = fresh_list[0] if fresh_list else None
+
+    return build_response(True, {"returnNumber": return_number, "ret": fresh_return}, message)
 
 
 @rpc_method("deleteReturn", mutation=True)

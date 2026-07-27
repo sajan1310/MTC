@@ -101,21 +101,94 @@ def _find_item_id(cur, name: str, size: str):
     return row["id"] if row else None
 
 
-@rpc_method("getBillData")
-def get_bill_data():
-    with database.get_conn(cursor_factory=psycopg2.extras.RealDictCursor) as (_conn, cur):
-        cur.execute(
-            """
-            SELECT h.id AS header_id, h.bill_number, h.vendor, h.contact, h.bill_date, h.remarks,
-                   l.po_number, l.item_name, l.size, l.narration, l.unit, l.qty, l.price,
-                   l.gst_rate_pct, l.base_qty, l.base_rate, l.affects_stock
-            FROM erp.bill_headers h
-            JOIN erp.bill_lines l ON l.header_id = h.id
-            WHERE h.deleted_at IS NULL
-            ORDER BY h.id, l.id
-            """
-        )
-        rows = cur.fetchall()
+def _compute_bill_overage_warnings(cur, items: list) -> list[str]:
+    """Advisory, non-blocking check run after a bill has been saved: for
+    every bill line linked to a real PO (not "DIRECT"/blank), re-aggregates
+    the Bill Ledger fresh (on the same cursor/transaction, so it reflects
+    this save's own effect) and flags any PO line whose cumulative billed
+    base qty now exceeds what was ordered. Bills are intentionally allowed
+    to exceed a PO line (freight corrections, renegotiated quantities,
+    etc.) -- this only surfaces the overage in the save's response message
+    rather than leaving it invisible (see po_service._attach_po_status,
+    which no longer clamps pendingQty to 0). `items` is the same list
+    save_bill just wrote, each already carrying poNumber/baseQty.
+
+    Local import to avoid a circular top-level import: po_service already
+    imports bill_service (for _aggregate_billed_base_qty_by_po).
+    """
+    from . import po_service
+
+    try:
+        po_numbers = {
+            str(it.get("poNumber") or "").strip()
+            for it in items or []
+            if str(it.get("poNumber") or "").strip().upper() not in ("", "DIRECT")
+        }
+        if not po_numbers:
+            return []
+
+        billed_map = _aggregate_billed_base_qty_by_po(cur)
+        pos_by_number = {po["poNumber"]: po for po in po_service._load_po_list(cur, billed_map)}
+
+        warnings = []
+        seen_keys = set()
+        for it in items or []:
+            po_num = str(it.get("poNumber") or "").strip()
+            if not po_num or po_num.upper() == "DIRECT":
+                continue
+
+            key = _build_po_line_key(po_num, it.get("name"), it.get("size") or "", it.get("narration") or "")
+            if key in seen_keys:
+                continue
+            seen_keys.add(key)
+
+            po = pos_by_number.get(po_num)
+            if po is None:
+                continue
+
+            po_item = next(
+                (pi for pi in po["items"] if _build_po_line_key(po_num, pi["name"], pi["size"], pi["narration"]) == key),
+                None,
+            )
+            if po_item is None:
+                continue
+
+            billed_base_qty = billed_map.get(key, 0)
+            ordered_base_qty = po_item.get("baseQty") or 0
+            if billed_base_qty > ordered_base_qty + 0.0001:
+                over_by = billed_base_qty - ordered_base_qty
+                warnings.append(
+                    f'"{it.get("name")}" on PO {po_num} is now billed {billed_base_qty:.2f} vs '
+                    f'ordered {ordered_base_qty:.2f} ({over_by:.2f} over).'
+                )
+        return warnings
+    except Exception:
+        # Advisory only -- never let this check block or fail a bill save.
+        return []
+
+
+def _load_bill_list(cur, only_header_id=None) -> list:
+    """Core of getBillData: query + group, optionally scoped to one header.
+    Shared by get_bill_data() (full list) and save_bill() (only_header_id,
+    to read back just its own freshly-written bill for the client's
+    in-place row-patch response, without re-reading the whole ledger).
+    """
+    query = """
+        SELECT h.id AS header_id, h.bill_number, h.vendor, h.contact, h.bill_date, h.remarks,
+               l.po_number, l.item_name, l.size, l.narration, l.unit, l.qty, l.price,
+               l.gst_rate_pct, l.base_qty, l.base_rate, l.affects_stock
+        FROM erp.bill_headers h
+        JOIN erp.bill_lines l ON l.header_id = h.id
+        WHERE h.deleted_at IS NULL
+        """
+    params: list = []
+    if only_header_id is not None:
+        query += " AND h.id = %s"
+        params.append(only_header_id)
+    query += " ORDER BY h.id, l.id"
+
+    cur.execute(query, params)
+    rows = cur.fetchall()
 
     bill_map: dict = {}
     for row in rows:
@@ -171,6 +244,13 @@ def get_bill_data():
     for b in bills:
         del b["_headerId"]
 
+    return bills
+
+
+@rpc_method("getBillData")
+def get_bill_data():
+    with database.get_conn(cursor_factory=psycopg2.extras.RealDictCursor) as (_conn, cur):
+        bills = _load_bill_list(cur)
     return build_response(True, bills)
 
 
@@ -384,7 +464,17 @@ def save_bill(conn, cur, form_data):
         )
 
     message = f"Bill #{bill_number} updated successfully." if is_edit else f"Bill #{bill_number} recorded successfully."
-    return build_response(True, {"billNumber": bill_number}, message)
+
+    overage_warnings = _compute_bill_overage_warnings(cur, extraction_items)
+    if overage_warnings:
+        message += " Warning: " + " ".join(overage_warnings)
+
+    # Read this bill's own just-written rows back so the client can patch it
+    # into an already-loaded Bill Ledger in place instead of a full reload.
+    fresh_list = _load_bill_list(cur, only_header_id=header_id)
+    fresh_bill = fresh_list[0] if fresh_list else None
+
+    return build_response(True, {"billNumber": bill_number, "bill": fresh_bill}, message)
 
 
 @rpc_method("deleteBill", mutation=True)

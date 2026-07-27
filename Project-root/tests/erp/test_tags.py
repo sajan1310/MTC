@@ -84,6 +84,49 @@ def test_color_rename_cascade_is_a_noop_when_target_tables_dont_exist_yet(erp_cl
     assert body["data"]["name"] == renamed
 
 
+def test_color_rename_updates_one_token_in_a_composite_process_component(erp_client):
+    """A color cell isn't always a single literal name -- a composite
+    value joins 2+ independent axes with config_maps.COLOR_COMBO_DELIMITER
+    (e.g. "Red / Blue"). Renaming just one of those colors must update
+    that ONE token and rejoin, not require a whole-cell exact match (which
+    would silently leave a composite cell stale).
+    """
+    old_color = _unique_name("ComboOld")
+    new_color = _unique_name("ComboNew")
+    other_color = _unique_name("ComboOther")
+    _rpc(erp_client, "saveColor", [{"name": old_color}], mutation=True)
+    _rpc(erp_client, "saveColor", [{"name": other_color}], mutation=True)
+
+    process_payload = {
+        "processName": _unique_name("ComboProcess"),
+        "lotPrefix": uuid.uuid4().hex[:5].upper(),
+        "outputItemName": _unique_name("ComboOutput"),
+        "sequence": 1,
+        "isFinalStage": False,
+        "active": True,
+        "remarks": "",
+        "processType": "",
+        "primaryColorAxis": "",
+        "components": [
+            {
+                "itemName": _unique_name("ComboItem"),
+                "qtyPerUnit": 1,
+                "sourceType": "ITEM",
+                "colorGroup": f"{old_color} / {other_color}",
+            }
+        ],
+        "colorLinks": [],
+    }
+    create = _rpc(erp_client, "saveProcess", [process_payload], mutation=True)
+    process_id = create.get_json()["data"]["processId"]
+
+    rename = _rpc(erp_client, "saveColor", [{"name": new_color, "originalName": old_color}], mutation=True)
+    assert rename.get_json()["success"] is True
+
+    components = _rpc(erp_client, "getProcessComponentsData", [process_id]).get_json()["data"]
+    assert components[0]["colorGroup"] == f"{new_color} / {other_color}"
+
+
 def _unique_word(prefix: str) -> str:
     """Like _unique_name but with no hyphen in the result -- needed for
     color-combo tests, since a hyphen inside a single color's own name

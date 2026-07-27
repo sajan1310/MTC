@@ -330,7 +330,15 @@ def _save_process_color_links_for_process(cur, master_id: int, process_id: str, 
     """Replaces every color-link row touching one process -- delete-then-
     append, mirrors _save_process_components_for_process. This process is
     always re-written as Process A regardless of which side originally
-    created the row (matches _saveProcessColorLinksForProcess exactly).
+    created the row.
+
+    A same-process link (other_process_id == process_id, pairing two of
+    this process's OWN axes -- e.g. tag-based Rim Color <-> Mudguard
+    Color) is only accepted when BOTH axis keys are given and differ; a
+    same-process row with a blank/matching axis key is meaningless (there
+    is no "this process's own pool axis, paired with itself") and is
+    dropped, matching the original behavior from before axis keys existed
+    (self-links were rejected unconditionally).
     """
     cur.execute("DELETE FROM erp.process_color_links WHERE process_a_id = %s OR process_b_id = %s", (master_id, master_id))
 
@@ -340,17 +348,28 @@ def _save_process_color_links_for_process(cur, master_id: int, process_id: str, 
         other_process_id = str(link.get("otherProcessId") or "").strip()
         my_color = str(link.get("myColor") or "").strip()
         their_color = str(link.get("theirColor") or "").strip()
+        my_axis_key = str(link.get("myAxisKey") or "").strip()
+        their_axis_key = str(link.get("theirAxisKey") or "").strip()
         if not (other_process_id and my_color and their_color):
             continue
-        if other_process_id.lower() == self_lower:
-            continue
-        other = process_lookup.get(other_process_id.lower())
-        if not other:
-            continue
+
+        is_self = other_process_id.lower() == self_lower
+        if is_self:
+            if not (my_axis_key and their_axis_key and my_axis_key.lower() != their_axis_key.lower()):
+                continue
+            other_id = master_id
+        else:
+            other = process_lookup.get(other_process_id.lower())
+            if not other:
+                continue
+            other_id = other["id"]
 
         cur.execute(
-            "INSERT INTO erp.process_color_links (process_a_id, color_a, process_b_id, color_b) VALUES (%s, %s, %s, %s)",
-            (master_id, my_color, other["id"], their_color),
+            """
+            INSERT INTO erp.process_color_links (process_a_id, color_a, process_b_id, color_b, axis_a_key, axis_b_key)
+            VALUES (%s, %s, %s, %s, %s, %s)
+            """,
+            (master_id, my_color, other_id, their_color, my_axis_key, their_axis_key),
         )
 
 
@@ -542,7 +561,15 @@ def save_process(conn, cur, form_data):
     else:
         message = "Process created successfully."
 
-    return build_response(True, {"processId": result_process_id}, message)
+    # Read this process's own just-written row back so the client can
+    # patch it into an already-loaded list in place instead of a full
+    # reload.
+    fresh_process = next(
+        (p for p in _get_all_processes(cur) if p["processId"].lower() == result_process_id.lower()),
+        None,
+    )
+
+    return build_response(True, {"processId": result_process_id, "process": fresh_process}, message)
 
 
 @rpc_method("deleteProcess", mutation=True)
@@ -682,6 +709,296 @@ def get_process_components_data(process_id=""):
 
 
 # ─────────────────────────────────────────────────────────────────────────
+# Item <-> Process mapping ("Used in Processes" panel on Item Master)
+# ─────────────────────────────────────────────────────────────────────────
+#
+# The item-side view of the very same Process Components rows the
+# Products & Processes tab edits -- there is deliberately no separate
+# item->process mapping store: Process Components IS the mapping, this
+# just indexes it by item instead of by process, so the two views can
+# never drift.
+#
+# Two identity rules this must not get wrong:
+#  1. SOURCE_TYPE 'POOL' rows are skipped entirely. A POOL row's item_name
+#     is an upstream process's Output Item Name (a Warehouse Pool
+#     identity), NOT an Items Master item.
+#  2. COMMON vs color rows are reported separately. Only the COMMON row is
+#     the process-wide recipe entry this view can edit; color sub-group
+#     rows are per-color overrides shown read-only (editable only on the
+#     process side, where the axis UI lives).
+
+
+def _load_processes_for_item(cur, item_name: str, size: str) -> list:
+    """Core of getProcessesForItem, taking an existing cursor so
+    save_item_process_mappings can read back its own just-written rows
+    within the SAME transaction (a fresh database.get_conn() call would
+    open a separate connection that can't see uncommitted writes)."""
+    target_name = str(item_name or "").strip().lower()
+    target_size = str(size or "").strip().lower()
+
+    processes = _get_all_processes(cur)
+
+    cur.execute(
+        """
+        SELECT pm.process_id, pc.color_group, pc.color_axis, pc.qty_per_unit, pc.unit, pc.remarks
+        FROM erp.process_components pc
+        JOIN erp.process_master pm ON pm.id = pc.master_id
+        WHERE pm.deleted_at IS NULL
+          AND lower(pc.item_name) = %s AND lower(pc.size) = %s
+          AND upper(pc.source_type) != 'POOL'
+        """,
+        (target_name, target_size),
+    )
+    rows = cur.fetchall()
+
+    common_by_process: dict = {}
+    colors_by_process: dict = {}
+    for row in rows:
+        pid = (row["process_id"] or "").strip().lower()
+        if not pid:
+            continue
+        color_group = (row["color_group"] or "").strip() or _COLOR_GROUP_COMMON
+        if color_group.lower() == _COLOR_GROUP_COMMON.lower():
+            common_by_process[pid] = row
+        else:
+            colors_by_process.setdefault(pid, []).append(
+                {
+                    "colorGroup": color_group,
+                    "colorAxis": row["color_axis"] or "",
+                    "qtyPerUnit": float(row["qty_per_unit"]),
+                    "unit": row["unit"] or "",
+                }
+            )
+
+    records = []
+    for proc in processes:
+        pid = (proc["processId"] or "").strip().lower()
+        common = common_by_process.get(pid)
+        color_variants = sorted(colors_by_process.get(pid, []), key=lambda c: c["colorGroup"].lower())
+        records.append(
+            {
+                "processId": proc["processId"],
+                "processName": proc["processName"],
+                "sequence": proc["sequence"],
+                "active": proc["active"],
+                "processType": proc["processType"],
+                "inRecipe": common is not None,
+                "qtyPerUnit": float(common["qty_per_unit"]) if common else None,
+                "unit": (common["unit"] or "").strip() if common else "",
+                "remarks": (common["remarks"] or "").strip() if common else "",
+                "colorVariants": color_variants,
+            }
+        )
+
+    records.sort(key=lambda r: (r["sequence"], r["processName"].lower()))
+    return records
+
+
+@rpc_method("getProcessesForItem")
+def get_processes_for_item(item_name, size=""):
+    target_name = str(item_name or "").strip()
+    if not target_name:
+        return build_response(False, None, "Item name is required.")
+
+    with database.get_conn(cursor_factory=psycopg2.extras.RealDictCursor) as (_conn, cur):
+        records = _load_processes_for_item(cur, target_name, size)
+    return build_response(True, records)
+
+
+def _get_process_id_keys_with_production_lots(cur, process_id_keys: set) -> set:
+    """Lower-cased process IDs (from `process_id_keys`) that already have at
+    least one Production lot logged against them. Used to warn -- not
+    block -- when a mapping save removes an item from a process's recipe:
+    past lots keep their own snapshotted Components Consumed, so the
+    removal only ever changes FUTURE lots, but the operator should still be
+    told the process is live."""
+    if not process_id_keys:
+        return set()
+    cur.execute(
+        "SELECT DISTINCT lower(process_id) AS pid FROM erp.production WHERE deleted_at IS NULL AND lower(process_id) = ANY(%s)",
+        (list(process_id_keys),),
+    )
+    return {row["pid"] for row in cur.fetchall()}
+
+
+@rpc_method("saveItemProcessMappings", mutation=True)
+@database.transactional
+def save_item_process_mappings(conn, cur, item_name, size="", mappings=None):
+    """The write half of Item Master's "Used in Processes" section: adds,
+    updates and removes ONE item's process-wide recipe entries across many
+    processes in a single pass -- patches individual Process Components
+    rows rather than reusing _save_process_components_for_process (which
+    delete-and-rewrites a process's ENTIRE component list; driving that
+    from the item side would destroy every other item's rows in each
+    process it touched).
+
+    Scope is strictly the COMMON, SOURCE_TYPE 'ITEM' row for this item+size
+    in each process. Never reads or writes color sub-group rows or
+    SOURCE_TYPE 'POOL' rows (see _load_processes_for_item's docstring).
+    """
+    clean_name = str(item_name or "").strip()
+    if not clean_name:
+        raise ValueError("Item name is required.")
+    clean_size = str(size or "").strip()
+
+    item_id = items_service._find_item(cur, clean_name, clean_size)
+    if item_id is None:
+        size_suffix = f' ({clean_size})' if clean_size else ""
+        raise ValueError(f'"{clean_name}"{size_suffix} is not in the Items Master.')
+
+    if isinstance(mappings, str):
+        try:
+            mapping_list = json.loads(mappings) if mappings else []
+        except ValueError:
+            raise ValueError("Invalid process mapping data format.")
+    else:
+        mapping_list = mappings or []
+    if not isinstance(mapping_list, list) or not mapping_list:
+        raise ValueError("No process changes were submitted.")
+
+    # ── Validate EVERYTHING before writing anything ──────────────────
+    # A half-applied bulk update across N processes is far worse than a
+    # rejected one, so every mapping is checked up front.
+    process_lookup = _process_lookup_by_id(cur)
+
+    cleaned = []
+    seen_keys = set()
+    for m in mapping_list:
+        m = m or {}
+        pid = str(m.get("processId") or "").strip()
+        pid_key = pid.lower()
+        if not pid:
+            raise ValueError("A submitted row is missing its Process ID.")
+
+        proc = process_lookup.get(pid_key)
+        if not proc:
+            raise ValueError(f'Process "{pid}" no longer exists. Reopen the item and try again.')
+        if pid_key in seen_keys:
+            raise ValueError(f'Process "{proc["processName"]}" was submitted twice.')
+        seen_keys.add(pid_key)
+
+        in_recipe = bool(m.get("inRecipe"))
+        qty_per_unit = 0.0
+        if in_recipe:
+            qty_per_unit = _validate_number(m.get("qtyPerUnit"), 0.0001, 1000000)
+            if not qty_per_unit:
+                raise ValueError(
+                    f'Qty per Unit for "{proc["processName"]}" must be a number greater than 0 '
+                    "(untick the process to remove the item)."
+                )
+
+        cleaned.append(
+            {
+                "processId": pid,
+                "processIdKey": pid_key,
+                "masterId": proc["id"],
+                "processName": proc["processName"],
+                "inRecipe": in_recipe,
+                "qtyPerUnit": qty_per_unit,
+                "unit": str(m.get("unit") or "").strip(),
+                "remarks": str(m.get("remarks") or "").strip()[:500],
+            }
+        )
+
+    # ── Index the existing rows for this item, across just the submitted
+    # processes ──────────────────────────────────────────────────────
+    master_ids = [c["masterId"] for c in cleaned]
+    cur.execute(
+        """
+        SELECT id, master_id, source_type
+        FROM erp.process_components
+        WHERE lower(item_name) = %s AND lower(size) = %s
+          AND upper(color_group) = %s
+          AND master_id = ANY(%s)
+        """,
+        (clean_name.lower(), clean_size.lower(), _COLOR_GROUP_COMMON.upper(), master_ids),
+    )
+    existing_row_by_master_id: dict = {}
+    pool_master_ids: set = set()
+    for row in cur.fetchall():
+        if (row["source_type"] or "").strip().upper() == "POOL":
+            pool_master_ids.add(row["master_id"])
+        else:
+            existing_row_by_master_id[row["master_id"]] = row["id"]
+
+    # Adding an ITEM row where a POOL row already holds the same
+    # name+size+COMMON would produce a process the process-side editor can
+    # no longer save: _find_duplicate_component keys on item+size+colorGroup
+    # WITHOUT sourceType, so it would reject the pair as a duplicate.
+    for m in cleaned:
+        if m["inRecipe"] and m["masterId"] not in existing_row_by_master_id and m["masterId"] in pool_master_ids:
+            raise ValueError(
+                f'"{clean_name}" already exists in "{m["processName"]}" as a Warehouse Pool component. '
+                "Add it from the Products & Processes tab instead, so the pool/item choice stays explicit."
+            )
+
+    # ── Apply ────────────────────────────────────────────────────────
+    added = updated = removed = 0
+    rows_to_delete = []
+    removed_process_ids = []
+
+    for m in cleaned:
+        existing_id = existing_row_by_master_id.get(m["masterId"])
+        if m["inRecipe"] and existing_id:
+            cur.execute(
+                "UPDATE erp.process_components SET qty_per_unit = %s, remarks = %s, unit = %s WHERE id = %s",
+                (m["qtyPerUnit"], m["remarks"], m["unit"], existing_id),
+            )
+            updated += 1
+        elif m["inRecipe"] and not existing_id:
+            cur.execute(
+                """
+                INSERT INTO erp.process_components
+                    (master_id, item_name, size, narration, qty_per_unit, remarks, source_type, color_group, color_axis, unit, item_id)
+                VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+                """,
+                (m["masterId"], clean_name, clean_size, "", m["qtyPerUnit"], m["remarks"], "ITEM", _COLOR_GROUP_COMMON, "", m["unit"], item_id),
+            )
+            added += 1
+        elif not m["inRecipe"] and existing_id:
+            rows_to_delete.append(existing_id)
+            removed_process_ids.append(m["processId"])
+            removed += 1
+
+    if rows_to_delete:
+        cur.execute("DELETE FROM erp.process_components WHERE id = ANY(%s)", (rows_to_delete,))
+
+    if added == 0 and updated == 0 and removed == 0:
+        fresh = _load_processes_for_item(cur, clean_name, clean_size)
+        return build_response(True, {"added": 0, "updated": 0, "removed": 0, "warnings": [], "processes": fresh}, "No changes to save.")
+
+    # Removing an item from a process that has already produced lots is
+    # allowed -- those lots keep their own snapshotted consumption -- but
+    # the operator should know the recipe they just changed is live.
+    warnings = []
+    if removed_process_ids:
+        live_keys = _get_process_id_keys_with_production_lots(cur, {pid.lower() for pid in removed_process_ids})
+        live_names = [m["processName"] for m in cleaned if not m["inRecipe"] and m["processIdKey"] in live_keys and m["processId"] in removed_process_ids]
+        if live_names:
+            warnings.append(
+                f"Removed from {', '.join(live_names)}, which already "
+                f"{'has' if len(live_names) == 1 else 'have'} production lots. "
+                "Existing lots keep the components they recorded; only new lots change."
+            )
+
+    parts = []
+    if added:
+        parts.append(f"{added} added")
+    if updated:
+        parts.append(f"{updated} updated")
+    if removed:
+        parts.append(f"{removed} removed")
+    message = f"Process recipes updated ({', '.join(parts)})."
+
+    fresh = _load_processes_for_item(cur, clean_name, clean_size)
+    return build_response(
+        True,
+        {"added": added, "updated": updated, "removed": removed, "warnings": warnings, "processes": fresh},
+        message,
+    )
+
+
+# ─────────────────────────────────────────────────────────────────────────
 # Process Color Links
 # ─────────────────────────────────────────────────────────────────────────
 
@@ -700,7 +1017,10 @@ def get_process_color_links_data(process_id):
         records = []
         if target_id is not None:
             cur.execute(
-                "SELECT process_a_id, color_a, process_b_id, color_b FROM erp.process_color_links WHERE process_a_id = %s OR process_b_id = %s",
+                """
+                SELECT process_a_id, color_a, process_b_id, color_b, axis_a_key, axis_b_key
+                FROM erp.process_color_links WHERE process_a_id = %s OR process_b_id = %s
+                """,
                 (target_id, target_id),
             )
             for link in cur.fetchall():
@@ -722,6 +1042,8 @@ def get_process_color_links_data(process_id):
                             "otherProcessName": other["process_name"],
                             "myColor": link["color_a"],
                             "theirColor": link["color_b"],
+                            "myAxisKey": link["axis_a_key"] or "",
+                            "theirAxisKey": link["axis_b_key"] or "",
                         }
                     )
                 else:
@@ -734,6 +1056,8 @@ def get_process_color_links_data(process_id):
                             "otherProcessName": other["process_name"],
                             "myColor": link["color_b"],
                             "theirColor": link["color_a"],
+                            "myAxisKey": link["axis_b_key"] or "",
+                            "theirAxisKey": link["axis_a_key"] or "",
                         }
                     )
 
@@ -770,11 +1094,13 @@ def _get_all_process_color_links(cur) -> list:
     on, matching every Warehouse Pool row's own processId field. Distinct
     from get_process_color_links_data (the public, per-process-normalized
     RPC view) -- this returns the raw {processAId, colorA, processBId,
-    colorB} shape the source's own _getAllProcessColorLinks() does.
+    colorB, axisAKey, axisBKey} shape the source's own
+    _getAllProcessColorLinks() does.
     """
     cur.execute(
         """
-        SELECT pa.process_id AS process_a_id, l.color_a, pb.process_id AS process_b_id, l.color_b
+        SELECT pa.process_id AS process_a_id, l.color_a, pb.process_id AS process_b_id, l.color_b,
+               l.axis_a_key, l.axis_b_key
         FROM erp.process_color_links l
         JOIN erp.process_master pa ON pa.id = l.process_a_id
         JOIN erp.process_master pb ON pb.id = l.process_b_id
@@ -787,6 +1113,8 @@ def _get_all_process_color_links(cur) -> list:
             "colorA": row["color_a"],
             "processBId": row["process_b_id"],
             "colorB": row["color_b"],
+            "axisAKey": row["axis_a_key"] or "",
+            "axisBKey": row["axis_b_key"] or "",
         }
         for row in cur.fetchall()
     ]
@@ -810,21 +1138,42 @@ def _get_all_warehouse_pool_rows_for_color_axes(cur) -> list:
     ]
 
 
-def _resolve_linked_color(from_pid: str, from_color: str, to_pid: str, adjacency: dict):
-    """Resolves the color on `to_pid` corresponding to `from_color` on
-    `from_pid`, composing multiple Process Color Link edges when the two
-    processes aren't directly linked but are connected through an
-    intermediate process (e.g. B-D-A). Returns None if no chain of
-    explicit mappings connects them for this specific color value.
+def _axis_link_ref(process_id: str, axis_key: str = "") -> str:
+    """Stable node identity for one axis-linking endpoint: an axis
+    contributed by exactly one process, optionally disambiguated by an
+    axis key. A blank axis_key reduces to the bare process_id -- the
+    ORIGINAL Process Color Links identity, before axis_a_key/axis_b_key
+    existed -- so every link saved before same-process/tag-axis pairing
+    existed (blank axis key on both sides) keeps resolving byte-for-byte
+    as before. A non-blank axis_key (e.g. "tag:mudguard color") scopes the
+    identity to one specific axis, which is what makes a SAME process_id
+    meaningful on both sides of a link (pairing two of one process's own
+    axes) instead of colliding with itself. Returns "" when process_id is
+    blank (never matches anything).
     """
-    visited = {from_pid}
-    queue = [(from_pid, from_color)]
+    pid = str(process_id or "").strip()
+    if not pid:
+        return ""
+    key = str(axis_key or "").strip().lower()
+    return f"{pid}::{key}" if key else pid
+
+
+def _resolve_linked_color(from_ref: str, from_color: str, to_ref: str, adjacency: dict):
+    """Resolves the color on `to_ref` corresponding to `from_color` on
+    `from_ref` (both axis references -- see _axis_link_ref), composing
+    multiple Process Color Link edges when the two axes aren't directly
+    linked but are connected through an intermediate one (e.g. B-D-A).
+    Returns None if no chain of explicit mappings connects them for this
+    specific color value.
+    """
+    visited = {from_ref}
+    queue = [(from_ref, from_color)]
     while queue:
-        pid, color = queue.pop(0)
-        if pid == to_pid:
+        ref, color = queue.pop(0)
+        if ref == to_ref:
             return color
-        for edge in adjacency.get(pid, []):
-            other = edge["otherProcessId"]
+        for edge in adjacency.get(ref, []):
+            other = edge["otherAxisRef"]
             if other in visited:
                 continue
             next_color = edge["map"].get(str(color or "").strip().lower())
@@ -836,69 +1185,80 @@ def _resolve_linked_color(from_pid: str, from_color: str, to_pid: str, adjacency
 
 
 def _merge_linked_axes(axes: list, color_links: list) -> list:
-    """Merges axes belonging to explicitly-linked processes into single
-    paired axes instead of leaving them to be cross-multiplied. Only axes
-    contributed by exactly one process are link-eligible. Chained links
-    (B-D, D-A) group 3+ processes transitively via BFS with no dedicated
-    N-way data structure.
+    """Merges axes belonging to explicitly-linked axis references (see
+    Process Color Links and _axis_link_ref) into single paired axes
+    instead of leaving them to be cross-multiplied. Only axes contributed
+    by exactly one process are link-eligible (an axis already collapsed
+    from 2+ processes by identical-signature matching has no single
+    process to key the graph on, and is left untouched). Chained links
+    (B-D, D-A) group 3+ axes transitively via BFS with no dedicated N-way
+    data structure. Works identically whether the linked axes come from
+    different processes (the original cross-process pool-axis case) or
+    the very same process (same-process axis pairing, e.g. a tag-based
+    Rim Color <-> Mudguard Color) -- _axis_link_ref is the only thing
+    either case is keyed on.
     """
     adjacency: dict = {}
 
-    def add_edge(p_from, color_from, p_to, color_to) -> None:
-        if not p_from or not p_to:
+    def add_edge(ref_from, color_from, ref_to, color_to) -> None:
+        if not ref_from or not ref_to:
             return
-        entries = adjacency.setdefault(p_from, [])
-        entry = next((e for e in entries if e["otherProcessId"] == p_to), None)
+        entries = adjacency.setdefault(ref_from, [])
+        entry = next((e for e in entries if e["otherAxisRef"] == ref_to), None)
         if entry is None:
-            entry = {"otherProcessId": p_to, "map": {}}
+            entry = {"otherAxisRef": ref_to, "map": {}}
             entries.append(entry)
         entry["map"][str(color_from or "").strip().lower()] = color_to
 
     for link in color_links:
-        add_edge(link["processAId"], link["colorA"], link["processBId"], link["colorB"])
-        add_edge(link["processBId"], link["colorB"], link["processAId"], link["colorA"])
+        ref_a = _axis_link_ref(link["processAId"], link.get("axisAKey"))
+        ref_b = _axis_link_ref(link["processBId"], link.get("axisBKey"))
+        add_edge(ref_a, link["colorA"], ref_b, link["colorB"])
+        add_edge(ref_b, link["colorB"], ref_a, link["colorA"])
 
     # Only axes contributed by exactly one process can be placed on the graph.
-    axis_index_by_process_id: dict = {}
+    axis_index_by_ref: dict = {}
     for idx, axis in enumerate(axes):
         if len(axis["processIds"]) == 1:
-            axis_index_by_process_id[next(iter(axis["processIds"]))] = idx
+            ref = _axis_link_ref(next(iter(axis["processIds"])), axis.get("axisKey"))
+            if ref:
+                axis_index_by_ref[ref] = idx
 
     visited: set = set()
     merged_axes = []
     used_axis_idx: set = set()
 
-    for pid, _idx in list(axis_index_by_process_id.items()):
-        if pid in visited:
+    for ref in list(axis_index_by_ref.keys()):
+        if ref in visited:
             continue
 
-        queue = [pid]
-        visited.add(pid)
-        component_process_ids = [pid]
+        queue = [ref]
+        visited.add(ref)
+        component_refs = [ref]
         while queue:
-            cur_pid = queue.pop(0)
-            for edge in adjacency.get(cur_pid, []):
-                other = edge["otherProcessId"]
-                if other in axis_index_by_process_id and other not in visited:
+            cur_ref = queue.pop(0)
+            for edge in adjacency.get(cur_ref, []):
+                other = edge["otherAxisRef"]
+                if other in axis_index_by_ref and other not in visited:
                     visited.add(other)
                     queue.append(other)
-                    component_process_ids.append(other)
+                    component_refs.append(other)
 
-        if len(component_process_ids) <= 1:
+        if len(component_refs) <= 1:
             continue  # no link partner present in this recipe -- leave axis as-is
 
-        anchor_pid = component_process_ids[0]
-        for p in component_process_ids:
-            if len(axes[axis_index_by_process_id[p]]["colors"]) > len(axes[axis_index_by_process_id[anchor_pid]]["colors"]):
-                anchor_pid = p
-        other_pids = [p for p in component_process_ids if p != anchor_pid]
+        anchor_ref = component_refs[0]
+        for r in component_refs:
+            if len(axes[axis_index_by_ref[r]]["colors"]) > len(axes[axis_index_by_ref[anchor_ref]]["colors"]):
+                anchor_ref = r
+        other_refs = [r for r in component_refs if r != anchor_ref]
 
         merged_colors = []
-        for anchor_color in axes[axis_index_by_process_id[anchor_pid]]["colors"]:
+        for anchor_color in axes[axis_index_by_ref[anchor_ref]]["colors"]:
             parts = [anchor_color]
             unresolved = False
-            for other_pid in other_pids:
-                resolved = _resolve_linked_color(anchor_pid, anchor_color, other_pid, adjacency)
+            for other_ref in other_refs:
+                resolved = _resolve_linked_color(anchor_ref, anchor_color, other_ref, adjacency)
                 if resolved is None:
                     unresolved = True
                     break
@@ -907,10 +1267,22 @@ def _merge_linked_axes(axes: list, color_links: list) -> list:
                 continue
             merged_colors.append(_COLOR_COMBO_DELIMITER.join(parts))
 
+        # A descriptive label for the merge, built from whichever
+        # constituent axes carry one of their own (every tag axis does; a
+        # plain pool axis gets one too now via its own itemNames join).
+        label_parts = [axes[axis_index_by_ref[r]].get("label") for r in component_refs if axes[axis_index_by_ref[r]].get("label")]
+
         if merged_colors:
-            merged_axes.append({"colors": merged_colors})
-        for p in component_process_ids:
-            used_axis_idx.add(axis_index_by_process_id[p])
+            merged_axes.append(
+                {
+                    "colors": merged_colors,
+                    "label": ", ".join(label_parts) if label_parts else None,
+                    "source": "merged",
+                    "processIds": set(),
+                }
+            )
+        for r in component_refs:
+            used_axis_idx.add(axis_index_by_ref[r])
 
     result = [axis for idx, axis in enumerate(axes) if idx not in used_axis_idx]
     return result + merged_axes
@@ -973,15 +1345,30 @@ def _legacy_color_group_list(components: list, pool_rows: list, color_links: lis
     return sorted(colors.values(), key=lambda x: x.lower())
 
 
-def _compute_color_axes_for_process(components: list, pool_rows: list, color_links: list) -> list:
+def _compute_color_axes_for_process(process_id: str, components: list, pool_rows: list, color_links: list) -> list:
     """The independent "Color Axes" breakdown for a process -- one entry
-    per contributing axis, NEVER cross-multiplied. Two sources: Warehouse
-    Pool axes (auto-detected from live pool color history of this
-    recipe's POOL-sourced components, labeled by the pool item name(s)
-    driving them) and explicitly-tagged axes (a recipe row carrying both
-    a colorGroup AND a colorAxis label).
+    per contributing axis, NEVER cross-multiplied into composite strings.
+    Two independent sources feed this: Warehouse Pool axes (auto-detected
+    from live pool color history of this recipe's POOL-sourced
+    components, labeled by the pool item name(s) driving them) and
+    explicitly-tagged axes (a recipe row carrying both a colorGroup AND a
+    colorAxis label -- rows with a colorGroup but no colorAxis label are
+    left out of this breakdown entirely, only the legacy flat list sees
+    them).
+
+    Both sources are merged through ONE _merge_linked_axes pass -- a
+    Process Color Link can pair two pool axes (from different upstream
+    processes, the original use case), a pool axis with one of THIS
+    process's own tag axes, or two of this process's own tag axes with
+    each other (same process_id, different axis keys -- see
+    _axis_link_ref). With no link touching a given axis, this is a no-op
+    and that axis passes through unchanged.
+
+    `process_id` is this process's own ID -- every tag axis belongs to it
+    directly (there is no separate "producing process" the way a pool
+    axis has one), so it's needed to make a tag axis link-eligible at all.
     """
-    axes = []
+    raw_axes = []
 
     pool_item_names = {c["itemName"].lower() for c in components if c["sourceType"] == "POOL"}
     if pool_item_names:
@@ -1020,18 +1407,29 @@ def _compute_color_axes_for_process(components: list, pool_rows: list, color_lin
             if item_name:
                 entry["itemNames"].add(item_name)
 
-        pool_axes = list(axes_by_signature.values())
-        if len(pool_axes) > 1 and color_links:
-            pool_axes = _merge_linked_axes(pool_axes, color_links)
-
-        for idx, axis in enumerate(pool_axes):
-            item_names = sorted(axis.get("itemNames") or [], key=lambda x: x.lower())
-            label = ", ".join(item_names) if item_names else f"Color Group {idx + 1}"
-            axes.append({"key": f"pool:{label.lower()}", "label": label, "colors": axis["colors"], "source": "pool"})
+        for axis in axes_by_signature.values():
+            # label mirrors the exact text a single, unmerged pool axis
+            # would get -- set here, before merge, both so a merged axis
+            # can inherit a real label from it instead of a generic
+            # ordinal fallback, and so a merged pool axis can still be
+            # resolved by its constituent item names.
+            item_names = sorted(axis["itemNames"], key=lambda x: x.lower())
+            raw_axes.append(
+                {
+                    "colors": axis["colors"],
+                    "processIds": axis["processIds"],
+                    "label": ", ".join(item_names) if item_names else None,
+                    "source": "pool",
+                }
+            )
 
     # Keyed by the axis label's lowercase form so "Mudguard Color" and
     # "mudguard color" (typed on different recipe rows) collapse into one
-    # real axis instead of two.
+    # real axis instead of two. Each tag axis belongs to THIS process
+    # directly and carries its own axis key ("tag:" + label) up front --
+    # unlike a pool axis, there's no separate "producing process" to
+    # derive an identity from, so without process_id a tag axis could
+    # never be link-eligible at all.
     raw_tag_groups: dict = {}
     for c in components:
         if not c["colorGroup"] or c["colorGroup"] == _COLOR_GROUP_COMMON:
@@ -1044,25 +1442,43 @@ def _compute_color_axes_for_process(components: list, pool_rows: list, color_lin
         _add_unique_case_insensitive(group["colors"], c["colorGroup"])
 
     for group in raw_tag_groups.values():
-        axes.append(
+        raw_axes.append(
             {
-                "key": f"tag:{group['label'].lower()}",
-                "label": group["label"],
                 "colors": sorted(group["colors"].values(), key=lambda x: x.lower()),
+                "processIds": {process_id} if process_id else set(),
+                "axisKey": f"tag:{group['label'].lower()}",
+                "label": group["label"],
                 "source": "tag",
             }
         )
 
-    return axes
+    # One merge pass covers every combination: pool<->pool (the original
+    # cross-process case), pool<->tag, and tag<->tag (same process,
+    # different axis key) -- an axis with no link touching it passes
+    # through completely unchanged.
+    merged_axes = _merge_linked_axes(raw_axes, color_links) if len(raw_axes) > 1 and color_links else raw_axes
+
+    result = []
+    pool_axis_counter = 0
+    for axis in merged_axes:
+        if axis.get("source") == "tag":
+            result.append({"key": f"tag:{axis['label'].lower()}", "label": axis["label"], "colors": axis["colors"], "source": "tag"})
+            continue
+        pool_axis_counter += 1
+        label = axis.get("label") or f"Color Group {pool_axis_counter}"
+        key_prefix = "merged:" if axis.get("source") == "merged" else "pool:"
+        result.append({"key": f"{key_prefix}{label.lower()}", "label": label, "colors": axis["colors"], "source": axis.get("source", "pool")})
+
+    return result
 
 
-def _compute_color_groups_for_process(components: list, pool_rows: list, color_links: list) -> list:
+def _compute_color_groups_for_process(process_id: str, components: list, pool_rows: list, color_links: list) -> list:
     """A process with 2+ independent color axes still gets the exact
     original _legacy_color_group_list behavior when fewer than 2 axes
     resolve -- colors explicitly tagged on recipe rows plus any single
     pool axis's own colors, unchanged.
     """
-    axes = _compute_color_axes_for_process(components, pool_rows, color_links)
+    axes = _compute_color_axes_for_process(process_id, components, pool_rows, color_links)
     if len(axes) < 2:
         return _legacy_color_group_list(components, pool_rows, color_links)
 
@@ -1072,14 +1488,176 @@ def _compute_color_groups_for_process(components: list, pool_rows: list, color_l
     return sorted(colors, key=lambda x: x.lower())
 
 
+def _get_color_master_names(cur) -> list:
+    """Every Color Master name, for widening a color-enabled process's
+    checklist (see _compute_color_groups_with_overrides_for_process)
+    beyond whatever this specific recipe/pool history has actually
+    touched. A local query instead of importing tags_service here (which
+    itself imports warehouse_service, which imports this module) --
+    avoids a circular import, matching this codebase's established
+    "small local duplication over cross-import" precedent (see
+    _get_all_warehouse_pool_rows_for_color_axes).
+    """
+    cur.execute("SELECT name FROM erp.color_master WHERE deleted_at IS NULL")
+    return [row["name"] for row in cur.fetchall() if row["name"]]
+
+
+def _compute_color_groups_with_overrides_for_process(
+    process_id: str, components: list, pool_rows: list, color_links: list, color_master_names: list = None, overrides: dict = None
+) -> list:
+    """The validation-time "available color groups" for a process --
+    baseColors (_compute_color_groups_for_process) widened to the full
+    Color Master once this process is ALREADY color-enabled via its own
+    recipe/pool detection, plus INCLUDE overrides, minus EXCLUDE
+    overrides. Used by save_production to check a submitted color against
+    "is this valid to type/pick", NOT by the checklist-display endpoints
+    (see _compute_known_colors_for_process for that, a differently-scoped
+    definition using logged colors instead of the whole Color Master).
+
+    An INCLUDE override can turn on color mode for an otherwise-plain
+    process (baseColors empty) -- a deliberate escape hatch for "Add
+    Combination" to pre-seed a color no recipe/pool/Color Master signal
+    would ever produce on its own. EXCLUDE always wins, applied last,
+    after the Color Master union.
+    """
+    base_colors = _compute_color_groups_for_process(process_id, components, pool_rows, color_links)
+    included_overrides = list((overrides or {}).get("included", {}).values())
+    if not base_colors and not included_overrides:
+        return base_colors
+
+    colors: dict = {}
+    for c in base_colors:
+        _add_unique_case_insensitive(colors, c)
+    # Widen to the full Color Master ONLY once this process is ALREADY
+    # color-enabled -- "there's a color to show" and "this process is
+    # color-enabled" are different questions, and only the second one
+    # gates widening.
+    if base_colors:
+        for c in color_master_names if color_master_names is not None else []:
+            _add_unique_case_insensitive(colors, c)
+    for c in included_overrides:
+        _add_unique_case_insensitive(colors, c)
+
+    excluded = (overrides or {}).get("excluded") or set()
+    if excluded:
+        for key in list(colors.keys()):
+            if key in excluded:
+                del colors[key]
+
+    return sorted(colors.values(), key=lambda x: x.lower())
+
+
+def _get_production_logged_colors_by_process(cur) -> dict:
+    """processIdLower -> set of colors this process's own Production
+    history has actually logged. Every logged status counts (not just
+    Completed) -- even a Pending/Cancelled lot's color choice is real
+    evidence the combination is practically relevant, though only a
+    Completed lot's colors ever get real Warehouse Pool bucket history,
+    which is what ultimately protects a color from removal regardless of
+    this list. Distinct from pool-detected colors (see
+    _compute_color_axes_for_process), which reflects colors of UPSTREAM
+    items this recipe CONSUMES -- this is about colors THIS process's own
+    output has actually been logged under.
+    """
+    result: dict = {}
+    table = config_maps.TABLE_NAMES.get("PRODUCTION")
+    if not table:
+        return result
+    cur.execute(f"SELECT process_id, color, color_breakdown FROM {table} WHERE deleted_at IS NULL")
+    for row in cur.fetchall():
+        process_id = str(row["process_id"] or "").strip()
+        if not process_id:
+            continue
+        colors = result.setdefault(process_id.lower(), set())
+        breakdown = row["color_breakdown"] or []
+        if breakdown:
+            for entry in breakdown:
+                c = str((entry or {}).get("color") or "").strip()
+                if c:
+                    colors.add(c)
+        else:
+            # Comma-joined display string (see save_production's `color =
+            # ", ".join(...)`) -- split back into individual color names,
+            # stripping any "(Size)" qualifier suffix it may carry.
+            color_cell = str(row["color"] or "").strip()
+            if color_cell:
+                for part in color_cell.split(","):
+                    c = re.sub(r"\s*\([^)]*\)\s*$", "", part).strip()
+                    if c:
+                        colors.add(c)
+    return result
+
+
+def _get_all_process_color_overrides(cur) -> dict:
+    """Every Process Color Overrides row, grouped by process -- read once
+    and shared across a single computation (see get_all_process_color_groups)
+    rather than re-reading the table per process, same discipline as
+    color_links/pool_rows.
+    Returns processIdLower -> {"included": {colorLower: color}, "excluded": {colorLower}}.
+    """
+    cur.execute("SELECT process_id, color, action FROM erp.process_color_overrides")
+    result: dict = {}
+    for row in cur.fetchall():
+        process_id = str(row["process_id"] or "").strip()
+        color = str(row["color"] or "").strip()
+        action = str(row["action"] or "").strip().upper()
+        if not process_id or not color:
+            continue
+        entry = result.setdefault(process_id.lower(), {"included": {}, "excluded": set()})
+        color_lower = color.lower()
+        if action == "EXCLUDE":
+            entry["excluded"].add(color_lower)
+            entry["included"].pop(color_lower, None)
+        else:
+            entry["included"][color_lower] = color
+            entry["excluded"].discard(color_lower)
+    return result
+
+
+def _compute_known_colors_for_process(
+    process_id: str, components: list, pool_rows: list, color_links: list, logged_colors: list, overrides: dict = None
+) -> dict:
+    """Shared core of get_process_color_groups (singular) and
+    get_all_process_color_groups (bulk) -- the one definition of "known
+    colors" for a process, deliberately scoped to THAT process only,
+    never the global Color Master list: recipe-tagged + pool-detected
+    colors (baseColors) UNION colors this process's own Production
+    history has actually logged UNION INCLUDE overrides, MINUS EXCLUDE
+    overrides. This is what stops a color from "reflecting" across two
+    unrelated processes just because it exists somewhere in Color Master.
+    Returns {"colors": [...], "baseColors": [...]} -- baseColors is
+    exposed so callers can derive their own "removable" (NOT in
+    baseColors) set.
+    """
+    base_colors = _compute_color_groups_for_process(process_id, components, pool_rows, color_links)
+
+    color_map: dict = {}
+    for c in base_colors:
+        _add_unique_case_insensitive(color_map, c)
+    for c in logged_colors or []:
+        _add_unique_case_insensitive(color_map, c)
+    if overrides and overrides.get("included"):
+        for c in overrides["included"].values():
+            _add_unique_case_insensitive(color_map, c)
+    excluded = (overrides or {}).get("excluded") or set()
+    if excluded:
+        for key in list(color_map.keys()):
+            if key in excluded:
+                del color_map[key]
+
+    return {"colors": sorted(color_map.values(), key=lambda x: x.lower()), "baseColors": base_colors}
+
+
 @rpc_method("getProcessColorGroups")
 def get_process_color_groups(process_id):
     components = get_process_components_data(process_id)["data"]
     with database.get_conn(cursor_factory=psycopg2.extras.RealDictCursor) as (_conn, cur):
         pool_rows = _get_all_warehouse_pool_rows_for_color_axes(cur)
         color_links = _get_all_process_color_links(cur)
-    groups = _compute_color_groups_for_process(components, pool_rows, color_links)
-    return build_response(True, groups)
+        overrides = _get_all_process_color_overrides(cur).get(str(process_id or "").strip().lower())
+        logged_colors = list(_get_production_logged_colors_by_process(cur).get(str(process_id or "").strip().lower(), []))
+    known = _compute_known_colors_for_process(process_id, components, pool_rows, color_links, logged_colors, overrides)
+    return build_response(True, known["colors"])
 
 
 @rpc_method("getProcessColorAxes")
@@ -1094,7 +1672,7 @@ def get_process_color_axes(process_id):
         )
 
     primary_color_axis = str((process or {}).get("primaryColorAxis") or "").strip()
-    axes = _compute_color_axes_for_process(components, pool_rows, color_links)
+    axes = _compute_color_axes_for_process(process_id, components, pool_rows, color_links)
 
     primary_axis_key = ""
     if primary_color_axis:
@@ -1107,12 +1685,21 @@ def get_process_color_axes(process_id):
 
 @rpc_method("getAllProcessColorGroups")
 def get_all_process_color_groups():
+    """Returns every process's color groups in one call, keyed by Process
+    ID, as {colors, removable}. `removable` is the subset of `colors` NOT
+    configured on the process's own recipe/pool detection (i.e. safe to
+    pass to excludeWarehousePoolColors) -- the Warehouse Pool breakdown
+    dialog uses it to decide which zero-qty placeholder rows get an
+    enabled delete action versus a protected/disabled one.
+    """
     all_components = get_process_components_data()["data"]
 
     with database.get_conn(cursor_factory=psycopg2.extras.RealDictCursor) as (_conn, cur):
         processes = _get_all_processes(cur)
         pool_rows = _get_all_warehouse_pool_rows_for_color_axes(cur)
         color_links = _get_all_process_color_links(cur)
+        overrides_by_process = _get_all_process_color_overrides(cur)
+        logged_colors_by_process = _get_production_logged_colors_by_process(cur)
 
     components_by_process: dict = {}
     for c in all_components:
@@ -1121,6 +1708,124 @@ def get_all_process_color_groups():
     result = {}
     for p in processes:
         components = components_by_process.get(p["processId"], [])
-        result[p["processId"]] = _compute_color_groups_for_process(components, pool_rows, color_links)
+        overrides = overrides_by_process.get(p["processId"].lower())
+        logged_colors = list(logged_colors_by_process.get(p["processId"].lower(), []))
+        known = _compute_known_colors_for_process(p["processId"], components, pool_rows, color_links, logged_colors, overrides)
+        base_lower = {c.lower() for c in known["baseColors"]}
+        result[p["processId"]] = {
+            "colors": known["colors"],
+            "removable": [c for c in known["colors"] if c.lower() not in base_lower],
+        }
 
     return build_response(True, result)
+
+
+@rpc_method("excludeWarehousePoolColors", mutation=True)
+@database.transactional
+def exclude_warehouse_pool_colors(conn, cur, process_id, colors):
+    """Removes one or more Color/Product-Tag combinations from a process's
+    known list -- the Warehouse Pool breakdown dialog's per-row and bulk
+    "X" delete actions. Only ever removes a zero-data PLACEHOLDER
+    combination: any color actually configured on the process's own
+    recipe (protected) or carrying real Warehouse Pool production/
+    consumption history is rejected and reported back individually, never
+    silently skipped. Real history can't be removed here even if we
+    wanted to -- _recalculate_warehouse_pool rebuilds every bucket from
+    that same history the next time it runs, so "deleting" it would look
+    like it worked and then silently reappear.
+    """
+    pid = str(process_id or "").strip()
+    if not pid:
+        raise ValueError("Process ID is required.")
+    color_list = [str(c or "").strip() for c in (colors if isinstance(colors, list) else [colors])]
+    color_list = [c for c in color_list if c]
+    if not color_list:
+        raise ValueError("No colors specified.")
+
+    components = get_process_components_data(pid)["data"]
+    pool_rows = _get_all_warehouse_pool_rows_for_color_axes(cur)
+    color_links = _get_all_process_color_links(cur)
+    base_colors = {c.lower() for c in _compute_color_groups_for_process(pid, components, pool_rows, color_links)}
+
+    pid_lower = pid.lower()
+    cur.execute(
+        "SELECT color, produced_qty, consumed_qty FROM erp.warehouse_pool WHERE lower(process_id) = %s",
+        (pid_lower,),
+    )
+    bucket_has_history = {
+        row["color"].strip().lower()
+        for row in cur.fetchall()
+        if row["color"] and (float(row["produced_qty"] or 0) != 0 or float(row["consumed_qty"] or 0) != 0)
+    }
+
+    removed = []
+    blocked = []
+    for c in color_list:
+        c_lower = c.lower()
+        if c_lower in base_colors:
+            blocked.append(f"{c} (configured on this process's recipe)")
+        elif c_lower in bucket_has_history:
+            blocked.append(f"{c} (has real production/consumption history)")
+        else:
+            removed.append(c)
+
+    user_id = get_current_user_id()
+    for c in removed:
+        cur.execute(
+            """
+            INSERT INTO erp.process_color_overrides (process_id, color, action, updated_by)
+            VALUES (%s, %s, 'EXCLUDE', %s)
+            ON CONFLICT (lower(process_id), lower(color))
+            DO UPDATE SET action = 'EXCLUDE', updated_at = NOW(), updated_by = EXCLUDED.updated_by
+            """,
+            (pid, c, user_id),
+        )
+
+    if not blocked:
+        message = f"Removed {len(removed)} combination(s)."
+    elif removed:
+        message = f"Removed {len(removed)} combination(s). {len(blocked)} skipped (can't be removed): {'; '.join(blocked)}."
+    else:
+        message = f"Nothing removed -- can't be removed: {'; '.join(blocked)}."
+
+    return build_response(bool(removed) or not blocked, {"removed": removed, "blocked": blocked}, message)
+
+
+@rpc_method("includeWarehousePoolColor", mutation=True)
+@database.transactional
+def include_warehouse_pool_color(conn, cur, process_id, color):
+    """Force-adds one color as a known combination for a process -- the
+    Warehouse Pool breakdown dialog's "Add Combination" button. Also how
+    a prior exclusion gets undone: re-adding the same color overwrites
+    its EXCLUDE row with INCLUDE.
+    """
+    pid = str(process_id or "").strip()
+    c = str(color or "").strip()
+    if not pid:
+        raise ValueError("Process ID is required.")
+    if not c:
+        raise ValueError("Color name is required.")
+
+    if not any(p["processId"].strip().lower() == pid.lower() for p in _get_all_processes(cur)):
+        raise ValueError(f'Process "{pid}" was not found.')
+
+    cur.execute(
+        "SELECT action FROM erp.process_color_overrides WHERE lower(process_id) = %s AND lower(color) = %s",
+        (pid.lower(), c.lower()),
+    )
+    existing = cur.fetchone()
+    if existing and existing["action"] == "INCLUDE":
+        raise ValueError(f'"{c}" is already a known combination for this process.')
+
+    user_id = get_current_user_id()
+    cur.execute(
+        """
+        INSERT INTO erp.process_color_overrides (process_id, color, action, updated_by)
+        VALUES (%s, %s, 'INCLUDE', %s)
+        ON CONFLICT (lower(process_id), lower(color))
+        DO UPDATE SET action = 'INCLUDE', updated_at = NOW(), updated_by = EXCLUDED.updated_by
+        """,
+        (pid, c, user_id),
+    )
+
+    return build_response(True, {"color": c}, f'"{c}" added as a known combination for this process.')

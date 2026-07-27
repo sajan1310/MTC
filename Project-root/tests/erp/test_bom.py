@@ -152,6 +152,112 @@ def test_save_bom_creates_with_components_and_additional_costs(erp_app, erp_clie
     assert match["grandTotal"] == 250
 
 
+def test_save_bom_returns_fresh_row_for_in_place_patch(erp_app, erp_client):
+    token = _get_bom_token(erp_app, erp_client)
+    _proc_payload, process_id = _save_process(erp_client, isFinalStage=True)
+
+    item1 = _unique_name("BomItem1")
+    item2 = _unique_name("BomItem2")
+    product_name = _unique_name("BomProduct")
+
+    create = _rpc(
+        erp_client,
+        "saveBOM",
+        [
+            {
+                "productName": product_name,
+                "components": [{"itemName": item1, "qtyPerProduct": 1, "rate": 10, "processId": process_id}],
+            },
+            token,
+        ],
+        mutation=True,
+    ).get_json()
+    product_id = create["data"]["productId"]
+    assert create["data"]["product"]["productId"] == product_id
+    assert create["data"]["product"]["components"][0]["itemName"] == item1
+
+    edit = _rpc(
+        erp_client,
+        "saveBOM",
+        [
+            {
+                "productId": product_id,
+                "productName": product_name,
+                "components": [{"itemName": item2, "qtyPerProduct": 3, "rate": 20, "processId": process_id}],
+            },
+            token,
+        ],
+        mutation=True,
+    ).get_json()
+    fresh_product = edit["data"]["product"]
+    assert fresh_product["productId"] == product_id
+    assert len(fresh_product["components"]) == 1
+    assert fresh_product["components"][0]["itemName"] == item2
+
+
+def test_bom_multi_color_cost_is_not_additive_across_colors(erp_app, erp_client):
+    """A blank-Color row is common to every color; a colored row is an
+    alternative exclusive to that color -- the headline totalCost/grandTotal
+    must be common + the first color's own rows, not the sum of every color.
+    """
+    token = _get_bom_token(erp_app, erp_client)
+    proc_payload, process_id = _save_process(erp_client, isFinalStage=True)
+
+    common_item = _unique_name("BomCommonItem")
+    red_item = _unique_name("BomRedItem")
+    blue_item = _unique_name("BomBlueItem")
+    product_name = _unique_name("BomMultiColorProduct")
+
+    resp = _rpc(
+        erp_client,
+        "saveBOM",
+        [
+            {
+                "productName": product_name,
+                "components": [
+                    {
+                        "itemName": common_item,
+                        "rate": 10,
+                        "qtyPerProduct": 1,
+                        "processId": process_id,
+                        "color": "",
+                    },
+                    {
+                        "itemName": red_item,
+                        "rate": 100,
+                        "qtyPerProduct": 1,
+                        "processId": process_id,
+                        "color": "Red",
+                    },
+                    {
+                        "itemName": blue_item,
+                        "rate": 100,
+                        "qtyPerProduct": 1,
+                        "processId": process_id,
+                        "color": "Blue",
+                    },
+                ],
+            },
+            token,
+        ],
+        mutation=True,
+    )
+    body = resp.get_json()
+    assert body["success"] is True, body["message"]
+    product_id = body["data"]["productId"]
+
+    listed = _rpc(erp_client, "getBOMData", [token]).get_json()["data"]
+    match = next(p for p in listed if p["productId"] == product_id)
+
+    # Common (10) + first color's own row (100) = 110, NOT 10 + 100 + 100 = 210.
+    assert match["totalCost"] == 110
+    assert match["grandTotal"] == 110
+    assert match["colorCosts"] == [
+        {"color": "Red", "totalCost": 110, "totalQty": 2},
+        {"color": "Blue", "totalCost": 110, "totalQty": 2},
+    ]
+
+
 def test_save_bom_rejects_zero_components(erp_app, erp_client):
     token = _get_bom_token(erp_app, erp_client)
     resp = _rpc(erp_client, "saveBOM", [{"productName": "X", "components": []}, token], mutation=True)

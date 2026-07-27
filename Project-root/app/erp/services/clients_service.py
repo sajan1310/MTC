@@ -238,7 +238,12 @@ def save_client(conn, cur, form_data):
         )
 
     message = "Client profile updated successfully." if is_edit else "New client registered."
-    return build_response(True, {"name": new_name}, message)
+
+    # The client can patch this into an already-loaded list in place
+    # instead of a full reload.
+    fresh_client = {"name": new_name, "contact": contact, "address": address, "gstin": gstin, "remarks": remarks}
+
+    return build_response(True, {"name": new_name, "client": fresh_client}, message)
 
 
 @rpc_method("deleteClient", mutation=True)
@@ -573,7 +578,19 @@ def save_client_order(conn, cur, form_data):
             "(BOM doesn't unambiguously map to one final-stage Process, or it's multi-color)."
         )
 
-    return build_response(True, {"orderNumber": order_number}, message)
+    # The client can patch this into an already-loaded list in place
+    # instead of a full reload.
+    fresh_order = {
+        "orderNumber": order_number,
+        "orderDate": date_utils.to_display_string(order_date) or "",
+        "dateRaw": date_utils.to_iso_string(order_date) or "",
+        "clientName": client_name,
+        "status": status,
+        "orderRemarks": order_remarks,
+        "lines": clean_lines,
+    }
+
+    return build_response(True, {"orderNumber": order_number, "order": fresh_order}, message)
 
 
 @rpc_method("deleteClientOrder", mutation=True)

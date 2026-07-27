@@ -234,43 +234,50 @@ App.BOM = {
         pageItems.every(bom => App.Selection.isSelected(App.State.selectedBOMs, bom.productId));
     }
 
-    let html = '';
-    pageItems.forEach(bom => {
-      const idx = App.State.globalBOMs.indexOf(bom);
-      const key = String(bom.productId);
-      const checked = App.Selection.isSelected(App.State.selectedBOMs, key) ? 'checked' : '';
+    tbody.innerHTML = pageItems.map(bom => this.rowHtml(bom, dragEnabled)).join('');
 
-      const groupOrder = [];
-      const groupMap = {};
-      bom.components.forEach(c => {
-        const groupName = c.processGroup || 'General';
-        if (!groupMap[groupName]) { groupMap[groupName] = []; groupOrder.push(groupName); }
-        groupMap[groupName].push(c);
-      });
+    App.Utils.renderPagination('bomPagination', filteredBOMs.length, cur, rpp, 'bom-page', 'Products');
+    this.updateBulkButtons();
+  },
 
-      const multiGroup = groupOrder.length > 1;
-      const componentLines = bom.components.map(c => {
-        const groupBadge = multiGroup
-          ? `<span class="badge bg-secondary me-1" style="font-size:0.65em;vertical-align:middle;">${escapeHtml(c.processGroup || 'General')}</span>`
-          : '';
-        const colorBadge = c.color
-          ? `<span class="badge bg-info text-dark me-1" style="font-size:0.65em;vertical-align:middle;">${escapeHtml(c.color)}</span>`
-          : '';
-        return `${groupBadge}${colorBadge}• ${escapeHtml(c.itemName)} [${escapeHtml(c.size || '-')}] (${escapeHtml(String(c.qtyPerProduct))} qty @ ${formatCurrency(c.rate)} from ${escapeHtml(c.vendor || 'Custom')})`;
-      });
+  // Renders one <tr> for a BOM product. Shared by renderTable's full
+  // rebuild and patchRowInPlace's single-row swap below.
+  rowHtml(bom, dragEnabled) {
+    const idx = App.State.globalBOMs.indexOf(bom);
+    const key = String(bom.productId);
+    const checked = App.Selection.isSelected(App.State.selectedBOMs, key) ? 'checked' : '';
 
-      const PREVIEW_LIMIT = 3;
-      const needsToggle = componentLines.length > PREVIEW_LIMIT;
-      const previewId = `bom_cpreview_${key}`;
+    const groupOrder = [];
+    const groupMap = {};
+    bom.components.forEach(c => {
+      const groupName = c.processGroup || 'General';
+      if (!groupMap[groupName]) { groupMap[groupName] = []; groupOrder.push(groupName); }
+      groupMap[groupName].push(c);
+    });
 
-      let componentsCell;
-      if (!needsToggle) {
-        componentsCell = componentLines.join('<br>');
-      } else {
-        const visibleHtml = componentLines.slice(0, PREVIEW_LIMIT).join('<br>');
-        const allHtml = componentLines.join('<br>');
-        const remaining = componentLines.length - PREVIEW_LIMIT;
-        componentsCell = `
+    const multiGroup = groupOrder.length > 1;
+    const componentLines = bom.components.map(c => {
+      const groupBadge = multiGroup
+        ? `<span class="badge bg-secondary me-1" style="font-size:0.65em;vertical-align:middle;">${escapeHtml(c.processGroup || 'General')}</span>`
+        : '';
+      const colorBadge = c.color
+        ? `<span class="badge bg-info text-dark me-1" style="font-size:0.65em;vertical-align:middle;">${escapeHtml(c.color)}</span>`
+        : '';
+      return `${groupBadge}${colorBadge}• ${escapeHtml(c.itemName)} [${escapeHtml(c.size || '-')}] (${escapeHtml(String(c.qtyPerProduct))} qty @ ${formatCurrency(c.rate)} from ${escapeHtml(c.vendor || 'Custom')})`;
+    });
+
+    const PREVIEW_LIMIT = 3;
+    const needsToggle = componentLines.length > PREVIEW_LIMIT;
+    const previewId = `bom_cpreview_${key}`;
+
+    let componentsCell;
+    if (!needsToggle) {
+      componentsCell = componentLines.join('<br>');
+    } else {
+      const visibleHtml = componentLines.slice(0, PREVIEW_LIMIT).join('<br>');
+      const allHtml = componentLines.join('<br>');
+      const remaining = componentLines.length - PREVIEW_LIMIT;
+      componentsCell = `
       <div class="bom-preview-collapsed">
         ${visibleHtml}
         <br><a href="#" class="text-primary small fw-bold mt-1 d-inline-block" onclick="event.preventDefault();App.BOM.toggleComponents('${key}',true)">&#9660; Show ${remaining} more</a>
@@ -279,34 +286,53 @@ App.BOM = {
         ${allHtml}
         <br><a href="#" class="text-muted small fw-bold mt-1 d-inline-block" onclick="event.preventDefault();App.BOM.toggleComponents('${key}',false)">&#9650; Show less</a>
       </div>`;
-      }
+    }
 
-      const rowAttrs = dragEnabled
-        ? `draggable="true" ondragstart="App.BOM.onDragStart(event,'${escapeHtml(bom.productId)}')" ondragover="App.BOM.onDragOver(event)" ondrop="App.BOM.onDrop(event,'${escapeHtml(bom.productId)}')" ondragend="App.BOM.onDragEnd(event)"`
-        : '';
-      const handleCell = dragEnabled
-        ? '<td class="text-center text-muted" style="cursor:grab;"><i class="bi bi-grip-vertical"></i></td>'
-        : '<td></td>';
+    const rowAttrs = dragEnabled
+      ? `draggable="true" ondragstart="App.BOM.onDragStart(event,'${escapeHtml(bom.productId)}')" ondragover="App.BOM.onDragOver(event)" ondrop="App.BOM.onDrop(event,'${escapeHtml(bom.productId)}')" ondragend="App.BOM.onDragEnd(event)"`
+      : '';
+    const handleCell = dragEnabled
+      ? '<td class="text-center text-muted" style="cursor:grab;"><i class="bi bi-grip-vertical"></i></td>'
+      : '<td></td>';
 
-      html += `<tr ${rowAttrs}>
+    return `<tr ${rowAttrs} data-bom-key="${escapeHtml(key)}">
     ${handleCell}
     <td class="text-center"><input type="checkbox" class="form-check-input bom-select-chk" data-key="${escapeHtml(key)}" ${checked} onchange="App.BOM.onRowSelectChange()"></td>
     <td><span class="badge bg-dark fs-6 shadow-sm">${escapeHtml(bom.productId)}</span></td>
     <td><strong class="text-primary">${escapeHtml(bom.productName)}</strong></td>
     <td id="${previewId}"><small class="text-muted" style="line-height: 1.6;">${componentsCell}</small></td>
-    <td class="text-end fw-bold text-success">${formatCurrency(bom.grandTotal ?? bom.totalCost)}</td>
+    <td class="text-end fw-bold text-success"${
+      (bom.colorCosts || []).length > 1
+        ? ` title="Cost by color — ${escapeHtml((bom.colorCosts || []).map(c => `${c.color}: ${formatCurrency(c.totalCost)}`).join(', '))} (headline total shown is for ${escapeHtml(bom.colorCosts[0].color)})"`
+        : ''
+    }>${formatCurrency(bom.grandTotal ?? bom.totalCost)}</td>
     <td class="text-center">
       <button class="btn btn-sm btn-outline-primary btn-action w-100 mb-1" onclick="App.BOM.openEditModal('${idx}')">Edit BOM</button>
       <button class="btn btn-sm btn-outline-dark btn-action w-100 mb-1" onclick="App.BOM.openDuplicateModal('${idx}')">Duplicate BOM</button>
       <button class="btn btn-sm btn-danger btn-action w-100" onclick="App.BOM.delete('${escapeHtml(bom.productId)}')">Delete</button>
     </td>
   </tr>`;
-    });
+  },
 
-    tbody.innerHTML = html;
+  // Patches one already-loaded product's data + its rendered <tr> after an
+  // edit save, instead of a full loadData() reload. productId is
+  // server-assigned and never user-editable, so this is a safe stable
+  // key. Returns false -- caller should fall back to loadData() -- if the
+  // product isn't currently loaded or isn't on the displayed page.
+  patchRowInPlace(freshProduct) {
+    const key = String(freshProduct.productId);
+    const existing = App.State.globalBOMs.find(b => String(b.productId) === key);
+    if (!existing) return false;
 
-    App.Utils.renderPagination('bomPagination', filteredBOMs.length, cur, rpp, 'bom-page', 'Products');
-    this.updateBulkButtons();
+    Object.assign(existing, freshProduct);
+
+    const tr = document.querySelector(`#bomTableBody tr[data-bom-key="${key}"]`);
+    if (!tr) return false;
+
+    const searchEl = document.getElementById('searchBOM');
+    const dragEnabled = !(searchEl && searchEl.value.trim());
+    tr.outerHTML = this.rowHtml(existing, dragEnabled);
+    return true;
   },
 
   // Drag-and-drop manual reorder (default unfiltered view only).
@@ -525,6 +551,11 @@ App.BOM = {
     <span style="font-size:15px;font-weight:800;color:${BRAND};-webkit-print-color-adjust:exact;print-color-adjust:exact;">
       ${formatCurrency(bom.grandTotal ?? bom.totalCost)}
     </span>
+    ${(bom.colorCosts || []).length > 1 ? `
+    <div style="font-size:10px;color:#777;margin-top:2px;">
+      Color rows are alternatives, not additive &mdash; cost above is for <strong>${escapeHtml(bom.colorCosts[0].color)}</strong> only.
+      By color: ${bom.colorCosts.map(c => `${escapeHtml(c.color)} ${formatCurrency(c.totalCost + bom.totalAdditionalCost)}`).join(' &nbsp;|&nbsp; ')}
+    </div>` : ''}
   </div>
   ${remarksHtml}
 </div>`;
@@ -779,6 +810,9 @@ App.BOM = {
     document.getElementById('bomFormTitle').innerText = 'Create Product BOM';
     document.getElementById('bomSubmitBtn').innerText = 'Save Product BOM';
 
+    App.Utils.setFormButtonsForMode('bomCancelBtn', 'bomExitBtn', 'bomSubmitBtn', false, 'Save Product BOM');
+    App.Nav.clear('editBomModal');
+
     this.clearGroupsContainer();
     this.addGroup('General');
     this.populateCostRows();
@@ -820,6 +854,17 @@ App.BOM = {
     this.populateImportProcessSelect();
     this.calculateCost();
 
+    App.Utils.setFormButtonsForMode('bomCancelBtn', 'bomExitBtn', 'bomSubmitBtn', true, 'Update Product BOM');
+    App.Nav.register(
+      'editBomModal',
+      (App.State.filteredBOMs || []).map(b => b.productId),
+      bom.productId,
+      (productId) => {
+        const targetIdx = App.State.globalBOMs.findIndex(b => b.productId === productId);
+        if (targetIdx !== -1) this.openEditModal(targetIdx);
+      }
+    );
+
     const modalEl = document.getElementById('editBomModal');
     if (modalEl && typeof bootstrap !== 'undefined') {
       bootstrap.Modal.getOrCreateInstance(modalEl).show();
@@ -841,6 +886,9 @@ App.BOM = {
     document.getElementById('bomRemarks').value = bom.remarks || '';
     document.getElementById('bomFormTitle').innerText = `Duplicate Product BOM (from ${bom.productId})`;
     document.getElementById('bomSubmitBtn').innerText = 'Save Product BOM';
+
+    App.Utils.setFormButtonsForMode('bomCancelBtn', 'bomExitBtn', 'bomSubmitBtn', false, 'Save Product BOM');
+    App.Nav.clear('editBomModal');
 
     this.clearGroupsContainer();
     this.renderGroupedComponents(bom.components);
@@ -1530,13 +1578,35 @@ document.addEventListener('DOMContentLoaded', function () {
       try {
         const response = await Api.mutate('saveBOM', formData, App.BOM.getToken());
         if (response.success) {
-          await App.BOM.loadData();
           if (isEdit) {
-            const modalEl = document.getElementById('editBomModal');
-            if (modalEl) {
-              bootstrap.Modal.getOrCreateInstance(modalEl).hide();
+            // Save (edit mode): patch just this one product's data + <tr>
+            // in place instead of a full loadData() reload -- falls back
+            // to a full reload if the product can't be patched.
+            const patched = response.data && response.data.product
+              ? App.BOM.patchRowInPlace(response.data.product)
+              : false;
+            if (!patched) await App.BOM.loadData();
+            if (App.Production && App.Production.populateProductSelect) {
+              App.Production.populateProductSelect();
+            }
+
+            // Stay open on the SAME BOM instead of closing -- Exit
+            // (App.Nav.exit) is the only way to close from here now.
+            // productId is server-assigned and never user-editable, so
+            // it's a safe stable key to re-find this record by.
+            const freshIdx = App.State.globalBOMs.findIndex(b => b.productId === formData.productId);
+            if (freshIdx !== -1) {
+              App.BOM.openEditModal(freshIdx);
+            } else {
+              const modalEl = document.getElementById('editBomModal');
+              if (modalEl) bootstrap.Modal.getOrCreateInstance(modalEl).hide();
             }
           } else {
+            // A brand-new product's manual drag-and-drop display order
+            // position can't be determined cheaply on the client -- full
+            // reload here (an edit doesn't need to, see
+            // App.BOM.patchRowInPlace).
+            await App.BOM.loadData();
             await App.BOM.openCreateModal();
           }
         }

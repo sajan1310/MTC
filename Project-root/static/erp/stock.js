@@ -837,7 +837,9 @@ App.Stock = {
   // matches).
   computeLeafRowsForProcess(process, term) {
     const buckets = (App.State.globalWarehousePool || []).filter(r => r.processId === process.processId);
-    const knownColors = (App.State.warehousePoolColorsByProcess || {})[process.processId] || [];
+    const knownColorGroups = (App.State.warehousePoolColorsByProcess || {})[process.processId] || {};
+    const knownColors = knownColorGroups.colors || [];
+    const removableLower = new Set((knownColorGroups.removable || []).map(c => String(c || '').trim().toLowerCase()));
     // Case-insensitive: knownColors is derived server-side from recipe/
     // pool color strings that may have been typed with different casing
     // than an existing bucket's own `color` (e.g. "Red" bucket vs a
@@ -847,7 +849,7 @@ App.Stock = {
     const existingColors = new Set(buckets.map(r => String(r.color || '').trim().toLowerCase()));
     const missingColorRows = knownColors
       .filter(c => !existingColors.has(String(c || '').trim().toLowerCase()))
-      .map(c => this._placeholderBucket(process, c));
+      .map(c => this._placeholderBucket(process, c, removableLower.has(String(c || '').trim().toLowerCase())));
     const rows = buckets.concat(missingColorRows)
       .sort((a, b) => a.color.localeCompare(b.color) || a.productTag.localeCompare(b.productTag));
     if (!rows.length) rows.push(this._placeholderBucket(process));
@@ -858,7 +860,7 @@ App.Stock = {
     return rows.filter(r => App.Utils.matchesKeywords([r.outputItemName, r.productTag, r.color].join(' '), term));
   },
 
-  _placeholderBucket(process, color) {
+  _placeholderBucket(process, color, removable) {
     return {
       outputItemName: process.outputItemName || '',
       processId: process.processId,
@@ -867,7 +869,12 @@ App.Stock = {
       producedQty: 0,
       consumedQty: 0,
       availableQty: 0,
-      isPlaceholder: true
+      isPlaceholder: true,
+      // Only a placeholder seeded from an override/logged-color signal
+      // (not the process's own configured recipe/pool detection) is
+      // safe to pass to excludeWarehousePoolColors -- see
+      // getAllProcessColorGroups' `removable`.
+      removable: !!removable
     };
   },
 
@@ -1004,6 +1011,12 @@ App.Stock = {
     const process = (App.State.globalProcesses || []).find(p => p.processId === processId);
     if (!process) return;
 
+    App.State.warehousePoolModalProcessId = processId;
+    this.renderWarehousePoolProcessModalBody(process);
+    safeModalShow('warehousePoolProcessModal');
+  },
+
+  renderWarehousePoolProcessModalBody(process) {
     const leafRows = this.computeLeafRowsForProcess(process, '');
 
     const titleEl = document.getElementById('warehousePoolProcessModalTitle');
@@ -1020,8 +1033,55 @@ App.Stock = {
         ? leafRows.map(r => `<tr>${this.renderWarehousePoolLeafCells(process, r)}</tr>`).join('')
         : '<tr><td colspan="6" class="text-center text-muted p-4">No Warehouse Pool buckets found for this process.</td></tr>';
     }
+  },
 
-    safeModalShow('warehousePoolProcessModal');
+  // "+ Add Combination" -- force-adds one color as a known combination
+  // for this process even though nothing else (recipe, pool history,
+  // Color Master) would produce it. Also how a prior removal gets undone.
+  async addWarehousePoolCombination() {
+    const processId = App.State.warehousePoolModalProcessId;
+    const input = document.getElementById('warehousePoolAddCombinationInput');
+    const color = (input?.value || '').trim();
+    if (!processId || !color) return;
+
+    try {
+      const res = await Api.mutate('includeWarehousePoolColor', [processId, color]);
+      App.Utils.showToast(res?.message || 'Combination added.', !res?.success);
+      if (res?.success) {
+        if (input) input.value = '';
+        await this.loadWarehousePoolData();
+        const process = (App.State.globalProcesses || []).find(p => p.processId === processId);
+        if (process) this.renderWarehousePoolProcessModalBody(process);
+      }
+    } catch (err) {
+      App.Utils.showToast(err.message || 'Failed to add combination.', true);
+    }
+  },
+
+  // Removes a zero-data placeholder Color/Product-Tag combination. Only
+  // ever removes a zero-data PLACEHOLDER -- a color actually configured
+  // on the process's own recipe or carrying real Warehouse Pool history
+  // is rejected server-side and reported back, never silently skipped.
+  async removeWarehousePoolCombination(color) {
+    const processId = App.State.warehousePoolModalProcessId;
+    if (!processId || !color) return;
+
+    App.Utils.confirmAction(
+      `Remove "${color}" from the known combinations for this process?`,
+      async () => {
+        try {
+          const res = await Api.mutate('excludeWarehousePoolColors', [processId, [color]]);
+          App.Utils.showToast(res?.message || 'Combination removed.', !res?.success);
+          if (res?.success) {
+            await this.loadWarehousePoolData();
+            const process = (App.State.globalProcesses || []).find(p => p.processId === processId);
+            if (process) this.renderWarehousePoolProcessModalBody(process);
+          }
+        } catch (err) {
+          App.Utils.showToast(err.message || 'Failed to remove combination.', true);
+        }
+      }
+    );
   },
 
   renderWarehousePoolLeafCells(process, r) {
@@ -1034,17 +1094,40 @@ App.Stock = {
           onclick="App.Stock.editPoolStockCell(this, '${encName}', '${encProcessId}', '${encTag}', '${encColor}')">${App.Production.formatQty(r.availableQty)}</span>`
       : '<span class="text-muted">—</span>';
 
+    // Negative bucket flagging: the total for this process can net to
+    // zero/positive while an individual Color/Product-Tag bucket
+    // underneath is itself negative (over-dispatched/over-consumed
+    // beyond what was ever credited) -- flag it so that doesn't go
+    // unnoticed just because the process-level summary looks fine.
+    const negativeWarning = r.availableQty < 0
+      ? ` <i class="bi bi-exclamation-triangle-fill text-danger" title="Negative available quantity"></i>`
+      : '';
+
+    // Only a placeholder seeded from an override/logged-color signal
+    // (not the process's own configured recipe/pool detection) shows an
+    // enabled delete action -- see getAllProcessColorGroups' `removable`.
+    // A real (non-placeholder) bucket is always attempted server-side,
+    // which independently rejects anything with real history.
+    const deleteBtn = r.color
+      ? `<button type="button" class="btn btn-outline-danger btn-sm" title="Remove combination"
+                ${r.isPlaceholder && !r.removable ? 'disabled' : ''}
+                onclick="App.Stock.removeWarehousePoolCombination('${escapeHtml(r.color).replace(/'/g, "\\'")}')">
+          <i class="bi bi-x-lg"></i>
+        </button>`
+      : '';
+
     return `
     <td>${r.productTag ? `<span class="badge bg-dark">${escapeHtml(r.productTag)}</span>` : '<span class="text-muted">—</span>'}</td>
     <td class="text-center" data-pool-field="produced">${App.Production.formatQty(r.producedQty)}</td>
     <td class="text-center">${App.Production.formatQty(r.consumedQty)}</td>
     <td>${r.color ? `<span class="badge bg-info text-dark">${escapeHtml(r.color)}</span>` : '<span class="text-muted">—</span>'}</td>
-    <td class="text-center fw-bold">${availableCell}</td>
-    <td class="text-center">
+    <td class="text-center fw-bold">${availableCell}${negativeWarning}</td>
+    <td class="text-center d-flex gap-1 justify-content-center">
       <button type="button" class="btn btn-outline-info btn-sm" title="View Ledger"
               onclick="App.Stock.openPoolLedgerModal('${encName}', '${encTag}', '${encColor}')">
         <i class="bi bi-journal-text"></i>
       </button>
+      ${deleteBtn}
     </td>`;
   },
 
@@ -1425,7 +1508,13 @@ App.Stock = {
         (lot.colorBreakdown || []).forEach(entry => {
           if ((entry.color || '').toLowerCase() !== colorLower) return;
           const qty = Number(entry.qty) || 0;
-          if (qty <= 0) return;
+          // A negative colorBreakdown qty is a legitimate correction/
+          // reversal lot (already folded into the real Total Available by
+          // warehouse_service._recalculate_warehouse_pool) -- only an
+          // exact zero is dropped here. Split by sign instead of always
+          // crediting inQty, so a reversal shows as an Out like the Manual
+          // Correction rows below instead of a negative "Incoming Qty".
+          if (qty === 0) return;
           credited = true;
           entries.push({
             dateObj: lot.dateRaw ? new Date(lot.dateRaw) : new Date(0),
@@ -1434,11 +1523,12 @@ App.Stock = {
             badgeClass: 'bg-success',
             ref: lot.lotNumber || '-',
             remarks: lot.remarks || '-',
-            inQty: qty,
-            outQty: 0
+            inQty: qty > 0 ? qty : 0,
+            outQty: qty < 0 ? -qty : 0
           });
         });
         if (!credited && !colorLower && !(lot.colorBreakdown || []).length) {
+          const flatQty = Number(lot.qty) || 0;
           entries.push({
             dateObj: lot.dateRaw ? new Date(lot.dateRaw) : new Date(0),
             dateStr: lot.date,
@@ -1446,8 +1536,8 @@ App.Stock = {
             badgeClass: 'bg-success',
             ref: lot.lotNumber || '-',
             remarks: lot.remarks || '-',
-            inQty: Number(lot.qty) || 0,
-            outQty: 0
+            inQty: flatQty > 0 ? flatQty : 0,
+            outQty: flatQty < 0 ? -flatQty : 0
           });
         }
       }
@@ -1460,7 +1550,12 @@ App.Stock = {
           const compColor = colorGroup && colorGroup.toUpperCase() !== 'COMMON' ? colorGroup.toLowerCase() : '';
           if (compColor !== colorLower) return;
           const qty = Number(comp.qty) || 0;
-          if (qty <= 0) return;
+          // A negative consumption qty is a correction that credits the
+          // pool back (already summed into the real total by
+          // stock_service._get_billed_and_consumed_qty_maps and
+          // warehouse_service._recalculate_warehouse_pool) -- split by
+          // sign so it shows as an In here, not a negative Out.
+          if (qty === 0) return;
           entries.push({
             dateObj: lot.dateRaw ? new Date(lot.dateRaw) : new Date(0),
             dateStr: lot.date,
@@ -1468,8 +1563,8 @@ App.Stock = {
             badgeClass: 'bg-danger',
             ref: lot.lotNumber || '-',
             remarks: lot.remarks || '-',
-            inQty: 0,
-            outQty: qty
+            inQty: qty < 0 ? -qty : 0,
+            outQty: qty > 0 ? qty : 0
           });
         });
       }

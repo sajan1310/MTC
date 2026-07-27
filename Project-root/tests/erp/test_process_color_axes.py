@@ -157,6 +157,83 @@ def test_explicit_color_link_merges_two_axes_into_one(erp_client):
     assert set(groups) == {"Black / Red", "Blue / Green"}
 
 
+def test_same_process_axis_key_link_merges_two_tag_axes(erp_client):
+    """A Process Color Link with otherProcessId == the process's own ID is
+    only accepted when BOTH axis keys are given and differ -- pairing two
+    of one process's OWN axes (e.g. a tag-based Rim Color <-> Mudguard
+    Color) instead of colliding with itself. See process_service._axis_link_ref.
+    """
+    payload, process_id = _save_process(
+        erp_client,
+        components=[
+            {"itemName": "RimPart", "qtyPerUnit": 1, "sourceType": "ITEM", "colorGroup": "Red", "colorAxis": "Rim Color"},
+            {"itemName": "RimPart", "qtyPerUnit": 1, "sourceType": "ITEM", "colorGroup": "Blue", "colorAxis": "Rim Color"},
+            {"itemName": "MudguardPart", "qtyPerUnit": 1, "sourceType": "ITEM", "colorGroup": "X", "colorAxis": "Mudguard Color"},
+            {"itemName": "MudguardPart", "qtyPerUnit": 1, "sourceType": "ITEM", "colorGroup": "Y", "colorAxis": "Mudguard Color"},
+        ],
+    )
+
+    # Before linking: two independent tag axes, cross-multiplied in the
+    # flat group list, kept separate in the axis breakdown.
+    axes_before = _rpc(erp_client, "getProcessColorAxes", [process_id]).get_json()["data"]["axes"]
+    assert len(axes_before) == 2
+
+    _edit_process(
+        erp_client,
+        payload,
+        process_id,
+        colorLinks=[
+            {
+                "otherProcessId": process_id,
+                "myColor": "Red",
+                "theirColor": "X",
+                "myAxisKey": "tag:rim color",
+                "theirAxisKey": "tag:mudguard color",
+            },
+            {
+                "otherProcessId": process_id,
+                "myColor": "Blue",
+                "theirColor": "Y",
+                "myAxisKey": "tag:rim color",
+                "theirAxisKey": "tag:mudguard color",
+            },
+        ],
+    )
+
+    axes_after = _rpc(erp_client, "getProcessColorAxes", [process_id]).get_json()["data"]["axes"]
+    assert len(axes_after) == 1
+    assert set(axes_after[0]["colors"]) == {"Red / X", "Blue / Y"}
+
+    links = _rpc(erp_client, "getProcessColorLinksData", [process_id]).get_json()["data"]
+    assert len(links) == 2
+    assert all(link["myAxisKey"] == "tag:rim color" and link["theirAxisKey"] == "tag:mudguard color" for link in links)
+
+
+def test_same_process_link_dropped_without_distinct_axis_keys(erp_client):
+    """A same-process link with a blank or matching axis key is meaningless
+    (there is no "this process's own pool axis, paired with itself") and
+    is silently dropped, matching the original behavior from before axis
+    keys existed (self-links rejected unconditionally).
+    """
+    payload, process_id = _save_process(
+        erp_client,
+        components=[
+            {"itemName": "RimPart2", "qtyPerUnit": 1, "sourceType": "ITEM", "colorGroup": "Red", "colorAxis": "Rim Color"},
+            {"itemName": "RimPart2", "qtyPerUnit": 1, "sourceType": "ITEM", "colorGroup": "Blue", "colorAxis": "Rim Color"},
+        ],
+    )
+
+    _edit_process(
+        erp_client,
+        payload,
+        process_id,
+        colorLinks=[{"otherProcessId": process_id, "myColor": "Red", "theirColor": "Blue"}],
+    )
+
+    links = _rpc(erp_client, "getProcessColorLinksData", [process_id]).get_json()["data"]
+    assert links == []
+
+
 def test_transitive_link_chain_merges_three_processes(erp_client):
     b_payload, b_id = _save_process(erp_client)
     _seed_pool(erp_client, b_id, 10, color="X1")
@@ -277,7 +354,80 @@ def test_primary_axis_key_resolves_from_process_own_field(erp_client):
     assert data["primaryAxisKey"] == expected_key
 
 
+def test_include_warehouse_pool_color_force_adds_a_known_combination(erp_client):
+    """includeWarehousePoolColor force-adds one color as a known
+    combination even though nothing else (recipe, pool history, Color
+    Master) would produce it -- the Warehouse Pool breakdown dialog's
+    "Add Combination" escape hatch.
+    """
+    payload, process_id = _save_process(
+        erp_client,
+        components=[{"itemName": "OverrideItem", "qtyPerUnit": 1, "sourceType": "ITEM", "colorGroup": "BaseColor"}],
+    )
+
+    before = _rpc(erp_client, "getProcessColorGroups", [process_id]).get_json()["data"]
+    assert "Extra" not in before
+
+    resp = _rpc(erp_client, "includeWarehousePoolColor", [process_id, "Extra"], mutation=True)
+    assert resp.get_json()["success"] is True
+
+    after = _rpc(erp_client, "getProcessColorGroups", [process_id]).get_json()["data"]
+    assert "Extra" in after
+    assert "BaseColor" in after
+
+    dupe = _rpc(erp_client, "includeWarehousePoolColor", [process_id, "Extra"], mutation=True)
+    assert dupe.get_json()["success"] is False
+    assert "already a known combination" in dupe.get_json()["message"]
+
+
+def test_exclude_warehouse_pool_colors_hides_only_zero_data_placeholder(erp_client):
+    """excludeWarehousePoolColors only ever removes a zero-data PLACEHOLDER
+    combination: a color actually configured on the process's own recipe
+    is protected and reported back individually, never silently skipped.
+    """
+    payload, process_id = _save_process(
+        erp_client,
+        components=[{"itemName": "ProtectedItem", "qtyPerUnit": 1, "sourceType": "ITEM", "colorGroup": "BaseColor"}],
+    )
+    _rpc(erp_client, "includeWarehousePoolColor", [process_id, "RemovableExtra"], mutation=True)
+
+    resp = _rpc(erp_client, "excludeWarehousePoolColors", [process_id, ["BaseColor", "RemovableExtra"]], mutation=True)
+    body = resp.get_json()
+    assert body["data"]["removed"] == ["RemovableExtra"]
+    assert len(body["data"]["blocked"]) == 1
+    assert "configured on this process's recipe" in body["data"]["blocked"][0]
+
+    after = _rpc(erp_client, "getProcessColorGroups", [process_id]).get_json()["data"]
+    assert "RemovableExtra" not in after
+    assert "BaseColor" in after  # protected, still present
+
+
+def test_exclude_then_include_undoes_the_exclusion(erp_client):
+    """Re-adding a previously-excluded color overwrites its EXCLUDE row
+    with INCLUDE -- one row per (process, color), always the current
+    state, never a growing log.
+    """
+    payload, process_id = _save_process(erp_client)
+    _rpc(erp_client, "includeWarehousePoolColor", [process_id, "Toggled"], mutation=True)
+    _rpc(erp_client, "excludeWarehousePoolColors", [process_id, ["Toggled"]], mutation=True)
+
+    excluded = _rpc(erp_client, "getProcessColorGroups", [process_id]).get_json()["data"]
+    assert "Toggled" not in excluded
+
+    resp = _rpc(erp_client, "includeWarehousePoolColor", [process_id, "Toggled"], mutation=True)
+    assert resp.get_json()["success"] is True
+
+    included = _rpc(erp_client, "getProcessColorGroups", [process_id]).get_json()["data"]
+    assert "Toggled" in included
+
+
 def test_get_all_process_color_groups_bulk_shape(erp_client):
+    """getAllProcessColorGroups returns {colors, removable} per process --
+    `removable` is the subset of `colors` NOT configured on the process's
+    own recipe/pool detection (i.e. safe to pass to
+    excludeWarehousePoolColors). Both of downstream's colors here are pool
+    -detected (its own baseColors), so neither is removable.
+    """
     upstream_payload, upstream_id = _save_process(erp_client)
     _seed_pool(erp_client, upstream_id, 5, color="Black")
     _seed_pool(erp_client, upstream_id, 5, color="Blue")
@@ -290,5 +440,7 @@ def test_get_all_process_color_groups_bulk_shape(erp_client):
     )
 
     result = _rpc(erp_client, "getAllProcessColorGroups").get_json()["data"]
-    assert result[downstream_id] == ["Black", "Blue"]
-    assert result[upstream_id] == []
+    assert result[downstream_id]["colors"] == ["Black", "Blue"]
+    assert result[downstream_id]["removable"] == []
+    assert result[upstream_id]["colors"] == []
+    assert result[upstream_id]["removable"] == []

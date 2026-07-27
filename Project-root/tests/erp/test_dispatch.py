@@ -235,6 +235,32 @@ def test_save_dispatch_edit_adds_back_own_qty(erp_app, erp_client):
     assert edit.get_json()["success"] is True
 
 
+def test_save_dispatch_returns_fresh_row_for_in_place_patch(erp_app, erp_client):
+    token = _get_bom_token(erp_app, erp_client)
+    product_name, product_id = _save_bom_product(erp_client, token)
+
+    _payload, process_id = _save_process(erp_client, isFinalStage=True)
+    _complete_production_lot(erp_client, process_id, product_id, 10)
+
+    create = _rpc(
+        erp_client, "saveDispatch", [{"productId": product_id, "productName": product_name, "qty": 4}], mutation=True
+    ).get_json()
+    assert create["data"]["row"]["productId"] == product_id
+    assert create["data"]["row"]["qty"] == 4
+    row_idx = create["data"]["row"]["rowIdx"]
+
+    edit = _rpc(
+        erp_client,
+        "saveDispatch",
+        [{"rowIdx": row_idx, "productId": product_id, "productName": product_name, "qty": 6, "transport": "By Road"}],
+        mutation=True,
+    ).get_json()
+    fresh_row = edit["data"]["row"]
+    assert fresh_row["rowIdx"] == row_idx
+    assert fresh_row["qty"] == 6
+    assert fresh_row["transport"] == "By Road"
+
+
 def test_save_dispatch_order_number_note_when_no_client_orders(erp_app, erp_client):
     token = _get_bom_token(erp_app, erp_client)
     product_name, product_id = _save_bom_product(erp_client, token)

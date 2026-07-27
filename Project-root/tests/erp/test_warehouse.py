@@ -283,6 +283,176 @@ def test_process_output_item_name_rename_cascades_into_warehouse_pool_opening(er
     assert not any(o["outputItemName"] == old_output_name for o in listed)
 
 
+def test_composite_bucket_credit_combines_two_independent_axes(erp_client):
+    """A lot with exactly one primary-axis entry and at most one
+    independent non-primary entry credits ONE combined bucket
+    ("PrimaryColor / OtherColor"), not two separate single-color buckets
+    -- see warehouse_service._recalculate_warehouse_pool Pass 1.
+    """
+    frame_payload, frame_id = _save_process(erp_client)
+    _rpc(erp_client, "saveWarehousePoolOpening", [{"processId": frame_id, "qty": 10, "color": "Black"}], mutation=True)
+    _rpc(erp_client, "saveWarehousePoolOpening", [{"processId": frame_id, "qty": 10, "color": "Blue"}], mutation=True)
+
+    rim_payload, rim_id = _save_process(erp_client)
+    _rpc(erp_client, "saveWarehousePoolOpening", [{"processId": rim_id, "qty": 10, "color": "Red"}], mutation=True)
+    _rpc(erp_client, "saveWarehousePoolOpening", [{"processId": rim_id, "qty": 10, "color": "Green"}], mutation=True)
+
+    down_payload, down_id = _save_process(
+        erp_client,
+        components=[
+            {"itemName": frame_payload["outputItemName"], "qtyPerUnit": 1, "sourceType": "POOL", "colorGroup": "COMMON"},
+            {"itemName": rim_payload["outputItemName"], "qtyPerUnit": 1, "sourceType": "POOL", "colorGroup": "COMMON"},
+        ],
+    )
+
+    resp = _rpc(
+        erp_client,
+        "saveProduction",
+        [
+            {
+                "processId": down_id,
+                "assignedTo": "Worker A",
+                "primaryColorAxis": frame_payload["outputItemName"],
+                "status": "Completed",
+                "colorBreakdown": [
+                    {"color": "Black", "qty": 10, "countsTowardTotal": True},
+                    {"color": "Red", "qty": 10, "countsTowardTotal": False},
+                ],
+                "componentsConsumed": [{"itemName": "RawMat", "qty": 1, "sourceType": "ITEM"}],
+            }
+        ],
+        mutation=True,
+    )
+    body = resp.get_json()
+    assert body["success"] is True, body["message"]
+
+    pool = _rpc(erp_client, "getWarehousePoolData").get_json()["data"]
+    own_buckets = [b for b in pool if b["outputItemName"] == down_payload["outputItemName"]]
+    combined = [b for b in own_buckets if b["color"] == "Black / Red"]
+    assert len(combined) == 1
+    assert combined[0]["producedQty"] == 10
+    assert not any(b["color"] == "Black" for b in own_buckets)
+    assert not any(b["color"] == "Red" for b in own_buckets)
+
+
+def test_composite_bucket_debit_resolves_single_token_to_composite(erp_client):
+    """A manually-configured single-token Color Sub-Group (e.g. "Black")
+    on a downstream recipe resolves to the one composite bucket
+    containing that token ("Black / Red"), rather than debiting a
+    phantom single-token bucket that was never credited -- see
+    warehouse_service._resolve_composite_color_token.
+    """
+    frame_payload, frame_id = _save_process(erp_client)
+    _rpc(erp_client, "saveWarehousePoolOpening", [{"processId": frame_id, "qty": 10, "color": "Black"}], mutation=True)
+    _rpc(erp_client, "saveWarehousePoolOpening", [{"processId": frame_id, "qty": 10, "color": "Blue"}], mutation=True)
+
+    rim_payload, rim_id = _save_process(erp_client)
+    _rpc(erp_client, "saveWarehousePoolOpening", [{"processId": rim_id, "qty": 10, "color": "Red"}], mutation=True)
+    _rpc(erp_client, "saveWarehousePoolOpening", [{"processId": rim_id, "qty": 10, "color": "Green"}], mutation=True)
+
+    combo_payload, combo_id = _save_process(
+        erp_client,
+        components=[
+            {"itemName": frame_payload["outputItemName"], "qtyPerUnit": 1, "sourceType": "POOL", "colorGroup": "COMMON"},
+            {"itemName": rim_payload["outputItemName"], "qtyPerUnit": 1, "sourceType": "POOL", "colorGroup": "COMMON"},
+        ],
+    )
+    _rpc(
+        erp_client,
+        "saveProduction",
+        [
+            {
+                "processId": combo_id,
+                "assignedTo": "Worker A",
+                "primaryColorAxis": frame_payload["outputItemName"],
+                "status": "Completed",
+                "colorBreakdown": [
+                    {"color": "Black", "qty": 10, "countsTowardTotal": True},
+                    {"color": "Red", "qty": 10, "countsTowardTotal": False},
+                ],
+                "componentsConsumed": [{"itemName": "RawMat", "qty": 1, "sourceType": "ITEM"}],
+            }
+        ],
+        mutation=True,
+    )
+
+    # Downstream recipe scopes a component to just the "Black" token, not
+    # the full composite "Black / Red" string.
+    _final_payload, final_id = _save_process(
+        erp_client,
+        components=[
+            {"itemName": combo_payload["outputItemName"], "qtyPerUnit": 1, "sourceType": "POOL", "colorGroup": "Black"},
+        ],
+    )
+    resp = _rpc(
+        erp_client,
+        "saveProduction",
+        [
+            {
+                "processId": final_id,
+                "assignedTo": "Worker A",
+                "status": "Completed",
+                "colorBreakdown": [{"color": "Black", "qty": 4}],
+                "componentsConsumed": [
+                    {"itemName": combo_payload["outputItemName"], "qty": 4, "sourceType": "POOL", "colorGroup": "Black"}
+                ],
+            }
+        ],
+        mutation=True,
+    )
+    body = resp.get_json()
+    assert body["success"] is True, body["message"]
+
+    pool = _rpc(erp_client, "getWarehousePoolData").get_json()["data"]
+    combo_buckets = [b for b in pool if b["outputItemName"] == combo_payload["outputItemName"]]
+    assert len(combo_buckets) == 1
+    assert combo_buckets[0]["color"] == "Black / Red"
+    assert combo_buckets[0]["consumedQty"] == 4
+    assert combo_buckets[0]["availableQty"] == 6
+    # No phantom single-token "Black" bucket was created.
+    assert not any(b["color"] == "Black" for b in combo_buckets)
+
+
+def test_pool_debit_converts_component_unit_before_debiting(erp_client):
+    """A POOL-sourced component with a non-blank Unit is converted to the
+    item's Base Unit before debiting (blank unit means "already in Base
+    Unit") -- previously a Dozen-unit row would silently debit as if it
+    were 1 Pcs.
+    """
+    dozen = _unique_name("PoolDozenUnit")
+    _rpc(erp_client, "saveUnit", [{"unitName": dozen, "family": "Count", "factorToBase": 12}], mutation=True)
+
+    upstream_payload, upstream_id = _save_process(erp_client)
+    _rpc(erp_client, "saveWarehousePoolOpening", [{"processId": upstream_id, "qty": 100}], mutation=True)
+
+    down_payload, down_id = _save_process(
+        erp_client,
+        components=[{"itemName": upstream_payload["outputItemName"], "qtyPerUnit": 1, "sourceType": "POOL", "colorGroup": "COMMON", "unit": dozen}],
+    )
+    resp = _rpc(
+        erp_client,
+        "saveProduction",
+        [
+            {
+                "processId": down_id,
+                "assignedTo": "Worker A",
+                "qty": 5,
+                "status": "Completed",
+                "componentsConsumed": [
+                    {"itemName": upstream_payload["outputItemName"], "qty": 2, "sourceType": "POOL", "colorGroup": "COMMON", "unit": dozen}
+                ],
+            }
+        ],
+        mutation=True,
+    )
+    body = resp.get_json()
+    assert body["success"] is True, body["message"]
+
+    pool = _rpc(erp_client, "getWarehousePoolData").get_json()["data"]
+    upstream_bucket = next(b for b in pool if b["outputItemName"] == upstream_payload["outputItemName"] and not b["color"])
+    assert upstream_bucket["consumedQty"] == 24  # 2 Dozen -> 24 Pcs, not 2
+
+
 def test_process_delete_blocked_by_warehouse_pool_opening_reference(erp_client):
     payload, process_id = _save_process(erp_client)
     _rpc(erp_client, "saveWarehousePoolOpening", [{"processId": process_id, "qty": 3}], mutation=True)

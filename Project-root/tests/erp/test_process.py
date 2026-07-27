@@ -154,6 +154,10 @@ def test_save_process_creates_with_components_and_color_links(erp_client):
     body = resp.get_json()
     assert body["success"] is True
     id_a = body["data"]["processId"]
+    # data.process is the freshly-written row, for the client's in-place
+    # row-patch instead of a full reload.
+    assert body["data"]["process"]["processId"] == id_a
+    assert body["data"]["process"]["processName"] == payload_a["processName"]
 
     listed = _rpc(erp_client, "getProcessData").get_json()["data"]
     match = next(p for p in listed if p["processId"] == id_a)
@@ -168,14 +172,28 @@ def test_save_process_creates_with_components_and_color_links(erp_client):
 
     links_a = _rpc(erp_client, "getProcessColorLinksData", [id_a]).get_json()["data"]
     assert len(links_a) == 1
-    assert links_a[0] == {"otherProcessId": id_b, "otherProcessName": _payload_b["processName"], "myColor": "Red", "theirColor": "Blue"}
+    assert links_a[0] == {
+        "otherProcessId": id_b,
+        "otherProcessName": _payload_b["processName"],
+        "myColor": "Red",
+        "theirColor": "Blue",
+        "myAxisKey": "",
+        "theirAxisKey": "",
+    }
 
     # Normalized from the OTHER side too -- process B never wrote a row
     # itself (this process is always saved as Process A on save), but
     # reading from B's perspective still surfaces it with colors swapped.
     links_b = _rpc(erp_client, "getProcessColorLinksData", [id_b]).get_json()["data"]
     assert len(links_b) == 1
-    assert links_b[0] == {"otherProcessId": id_a, "otherProcessName": payload_a["processName"], "myColor": "Blue", "theirColor": "Red"}
+    assert links_b[0] == {
+        "otherProcessId": id_a,
+        "otherProcessName": payload_a["processName"],
+        "myColor": "Blue",
+        "theirColor": "Red",
+        "myAxisKey": "",
+        "theirAxisKey": "",
+    }
 
 
 def test_save_process_edit_replaces_components_and_links_wholesale(erp_client):
@@ -365,3 +383,239 @@ def test_item_rename_cascades_into_item_sourced_but_not_pool_sourced_component(e
     pool_sourced = next(c for c in components if c["sourceType"] == "POOL")
     assert item_sourced["itemName"] == new_item
     assert pool_sourced["itemName"] == old_item
+
+
+# ─────────────────────────────────────────────────────────────────────────
+# Item <-> Process mapping ("Used in Processes" panel), ported behavior
+# from module_process.js's getProcessesForItem/saveItemProcessMappings.
+# ─────────────────────────────────────────────────────────────────────────
+
+
+def test_get_processes_for_item_requires_item_name(erp_client):
+    resp = _rpc(erp_client, "getProcessesForItem", ["", ""])
+    body = resp.get_json()
+    assert body["success"] is False
+    assert "required" in body["message"]
+
+
+def test_get_processes_for_item_starts_out_of_every_recipe(erp_client):
+    item = _unique_name("MapItem")
+    _rpc(erp_client, "saveItem", [{"itemName": item}], mutation=True)
+    _payload, process_id = _save_process(erp_client)
+
+    listed = _rpc(erp_client, "getProcessesForItem", [item, ""]).get_json()["data"]
+    match = next(r for r in listed if r["processId"] == process_id)
+    assert match["inRecipe"] is False
+    assert match["qtyPerUnit"] is None
+    assert match["colorVariants"] == []
+
+
+def test_get_processes_for_item_skips_pool_sourced_rows(erp_client):
+    """A POOL row's itemName is an upstream process's Output Item Name, a
+    different identity space than Items Master -- an item that happens to
+    share that name must never show that pool recipe as its own.
+    """
+    shared_name = _unique_name("SharedName")
+    _rpc(erp_client, "saveItem", [{"itemName": shared_name}], mutation=True)
+    _payload, process_id = _save_process(
+        erp_client,
+        components=[{"itemName": shared_name, "qtyPerUnit": 2, "sourceType": "POOL", "colorGroup": "COMMON"}],
+    )
+
+    listed = _rpc(erp_client, "getProcessesForItem", [shared_name, ""]).get_json()["data"]
+    match = next(r for r in listed if r["processId"] == process_id)
+    assert match["inRecipe"] is False
+
+
+def test_get_processes_for_item_reports_color_variants_readonly(erp_client):
+    item = _unique_name("ColorMapItem")
+    _rpc(erp_client, "saveItem", [{"itemName": item}], mutation=True)
+    _payload, process_id = _save_process(
+        erp_client,
+        components=[{"itemName": item, "qtyPerUnit": 3, "sourceType": "ITEM", "colorGroup": "Red", "colorAxis": "Body"}],
+    )
+
+    listed = _rpc(erp_client, "getProcessesForItem", [item, ""]).get_json()["data"]
+    match = next(r for r in listed if r["processId"] == process_id)
+    # No COMMON row exists -- only a color sub-group one -- so this process
+    # doesn't count as "in the common recipe", but the variant still
+    # surfaces for read-only display.
+    assert match["inRecipe"] is False
+    assert len(match["colorVariants"]) == 1
+    assert match["colorVariants"][0]["colorGroup"] == "Red"
+    assert match["colorVariants"][0]["colorAxis"] == "Body"
+    assert match["colorVariants"][0]["qtyPerUnit"] == 3
+
+
+def test_save_item_process_mappings_rejects_item_not_in_master(erp_client):
+    _payload, process_id = _save_process(erp_client)
+    resp = _rpc(
+        erp_client,
+        "saveItemProcessMappings",
+        ["NoSuchItem", "", [{"processId": process_id, "inRecipe": True, "qtyPerUnit": 1}]],
+        mutation=True,
+    )
+    body = resp.get_json()
+    assert body["success"] is False
+    assert "Items Master" in body["message"]
+
+
+def test_save_item_process_mappings_rejects_unknown_process_id(erp_client):
+    item = _unique_name("MapItem")
+    _rpc(erp_client, "saveItem", [{"itemName": item}], mutation=True)
+    resp = _rpc(
+        erp_client,
+        "saveItemProcessMappings",
+        [item, "", [{"processId": "PRC-NOPE", "inRecipe": True, "qtyPerUnit": 1}]],
+        mutation=True,
+    )
+    body = resp.get_json()
+    assert body["success"] is False
+    assert "no longer exists" in body["message"]
+
+
+def test_save_item_process_mappings_rejects_duplicate_process_in_payload(erp_client):
+    item = _unique_name("MapItem")
+    _rpc(erp_client, "saveItem", [{"itemName": item}], mutation=True)
+    _payload, process_id = _save_process(erp_client)
+
+    resp = _rpc(
+        erp_client,
+        "saveItemProcessMappings",
+        [item, "", [
+            {"processId": process_id, "inRecipe": True, "qtyPerUnit": 1},
+            {"processId": process_id, "inRecipe": True, "qtyPerUnit": 2},
+        ]],
+        mutation=True,
+    )
+    body = resp.get_json()
+    assert body["success"] is False
+    assert "submitted twice" in body["message"]
+
+
+def test_save_item_process_mappings_rejects_zero_qty_when_in_recipe(erp_client):
+    item = _unique_name("MapItem")
+    _rpc(erp_client, "saveItem", [{"itemName": item}], mutation=True)
+    _payload, process_id = _save_process(erp_client)
+
+    resp = _rpc(
+        erp_client,
+        "saveItemProcessMappings",
+        [item, "", [{"processId": process_id, "inRecipe": True, "qtyPerUnit": 0}]],
+        mutation=True,
+    )
+    body = resp.get_json()
+    assert body["success"] is False
+    assert "greater than 0" in body["message"]
+
+
+def test_save_item_process_mappings_no_changes_returns_zero_counts(erp_client):
+    item = _unique_name("MapItem")
+    _rpc(erp_client, "saveItem", [{"itemName": item}], mutation=True)
+    _payload, process_id = _save_process(erp_client)
+
+    resp = _rpc(
+        erp_client,
+        "saveItemProcessMappings",
+        [item, "", [{"processId": process_id, "inRecipe": False}]],
+        mutation=True,
+    )
+    body = resp.get_json()
+    assert body["success"] is True
+    assert body["data"] == {"added": 0, "updated": 0, "removed": 0, "warnings": [], "processes": body["data"]["processes"]}
+
+
+def test_save_item_process_mappings_adds_updates_and_removes_in_one_call(erp_client):
+    item = _unique_name("MapItem")
+    _rpc(erp_client, "saveItem", [{"itemName": item}], mutation=True)
+
+    _payload_a, process_a = _save_process(erp_client)
+    # Process B already has this item in its recipe -- the save should
+    # UPDATE its qty, not duplicate the row.
+    _payload_b, process_b = _save_process(
+        erp_client, components=[{"itemName": item, "qtyPerUnit": 1, "sourceType": "ITEM", "colorGroup": "COMMON"}]
+    )
+    _payload_c, process_c = _save_process(
+        erp_client, components=[{"itemName": item, "qtyPerUnit": 5, "sourceType": "ITEM", "colorGroup": "COMMON"}]
+    )
+
+    resp = _rpc(
+        erp_client,
+        "saveItemProcessMappings",
+        [item, "", [
+            {"processId": process_a, "inRecipe": True, "qtyPerUnit": 2, "unit": "Kg", "remarks": "new"},
+            {"processId": process_b, "inRecipe": True, "qtyPerUnit": 9},
+            {"processId": process_c, "inRecipe": False},
+        ]],
+        mutation=True,
+    )
+    body = resp.get_json()
+    assert body["success"] is True, body["message"]
+    assert body["data"]["added"] == 1
+    assert body["data"]["updated"] == 1
+    assert body["data"]["removed"] == 1
+
+    fresh = {r["processId"]: r for r in body["data"]["processes"]}
+    assert fresh[process_a]["inRecipe"] is True
+    assert fresh[process_a]["qtyPerUnit"] == 2
+    assert fresh[process_a]["unit"] == "Kg"
+    assert fresh[process_a]["remarks"] == "new"
+    assert fresh[process_b]["inRecipe"] is True
+    assert fresh[process_b]["qtyPerUnit"] == 9
+    assert fresh[process_c]["inRecipe"] is False
+
+    # getProcessComponentsData for process C confirms the row is truly
+    # gone, not just hidden.
+    components_c = _rpc(erp_client, "getProcessComponentsData", [process_c]).get_json()["data"]
+    assert not any(c["itemName"] == item for c in components_c)
+
+
+def test_save_item_process_mappings_blocks_when_pool_row_already_present(erp_client):
+    """Adding an ITEM row where a POOL row already holds the same
+    name+size+COMMON would produce a process the process-side editor can
+    no longer save (duplicate-component check keys on item+size+colorGroup
+    without sourceType) -- must be rejected up front instead.
+    """
+    shared_name = _unique_name("SharedName")
+    _rpc(erp_client, "saveItem", [{"itemName": shared_name}], mutation=True)
+    _payload, process_id = _save_process(
+        erp_client,
+        components=[{"itemName": shared_name, "qtyPerUnit": 1, "sourceType": "POOL", "colorGroup": "COMMON"}],
+    )
+
+    resp = _rpc(
+        erp_client,
+        "saveItemProcessMappings",
+        [shared_name, "", [{"processId": process_id, "inRecipe": True, "qtyPerUnit": 1}]],
+        mutation=True,
+    )
+    body = resp.get_json()
+    assert body["success"] is False
+    assert "Warehouse Pool component" in body["message"]
+
+
+def test_save_item_process_mappings_warns_when_removing_from_process_with_production_lots(erp_client):
+    item = _unique_name("MapItem")
+    _rpc(erp_client, "saveItem", [{"itemName": item}], mutation=True)
+    _payload, process_id = _save_process(
+        erp_client, components=[{"itemName": item, "qtyPerUnit": 1, "sourceType": "ITEM", "colorGroup": "COMMON"}]
+    )
+
+    lot = _rpc(
+        erp_client,
+        "saveProduction",
+        [{"processId": process_id, "assignedTo": "Worker A", "qty": 1, "componentsConsumed": [{"itemName": item, "qty": 1, "sourceType": "ITEM"}]}],
+        mutation=True,
+    )
+    assert lot.get_json()["success"] is True
+
+    resp = _rpc(
+        erp_client,
+        "saveItemProcessMappings",
+        [item, "", [{"processId": process_id, "inRecipe": False}]],
+        mutation=True,
+    )
+    body = resp.get_json()
+    assert body["success"] is True
+    assert body["data"]["removed"] == 1
+    assert any("production lots" in w for w in body["data"]["warnings"])

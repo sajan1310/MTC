@@ -198,6 +198,108 @@ def test_delete_issue_bulk(erp_client):
     assert b_id not in ids
 
 
+def test_save_issue_stock_edits_existing_record_in_place(erp_client):
+    """Editing is a PWA-only addition -- module_issue.js has no edit path.
+    issueId must not change on edit; header fields and item lines do.
+    """
+    _settle()
+    original_item = _unique_name("EditIssueOriginal")
+    updated_item = _unique_name("EditIssueUpdated")
+
+    created = _rpc(
+        erp_client,
+        "saveIssueStock",
+        [
+            {
+                "date": "01/01/2026",
+                "issuedTo": "Contractor A",
+                "reference": "Lot #1",
+                "items": [{"name": original_item, "qty": 2, "unit": "Pcs"}],
+            }
+        ],
+        mutation=True,
+    )
+    body = created.get_json()
+    assert body["success"] is True
+    issue_id = body["data"]["issueId"]
+
+    edited = _rpc(
+        erp_client,
+        "saveIssueStock",
+        [
+            {
+                "existingIssueId": issue_id,
+                "date": "02/01/2026",
+                "issuedTo": "Contractor B",
+                "reference": "Lot #2",
+                "remarks": "Corrected",
+                "items": [{"name": updated_item, "qty": 5, "unit": "Pcs"}],
+            }
+        ],
+        mutation=True,
+    )
+    edited_body = edited.get_json()
+    assert edited_body["success"] is True
+    assert edited_body["data"]["issueId"] == issue_id
+    assert "updated" in edited_body["message"].lower()
+
+    listed = _rpc(erp_client, "getIssueData").get_json()["data"]
+    matches = [r for r in listed if r["issueId"] == issue_id]
+    assert len(matches) == 1
+    match = matches[0]
+    assert match["issuedTo"] == "Contractor B"
+    assert match["reference"] == "Lot #2"
+    assert match["remarks"] == "Corrected"
+    assert len(match["items"]) == 1
+    assert match["items"][0]["name"] == updated_item
+    assert match["items"][0]["qty"] == 5
+
+
+def test_save_issue_stock_edit_rejects_unknown_issue_id(erp_client):
+    resp = _rpc(
+        erp_client,
+        "saveIssueStock",
+        [
+            {
+                "existingIssueId": "ISS-00000000-000000",
+                "date": "01/01/2026",
+                "issuedTo": "Contractor A",
+                "items": [{"name": "X", "qty": 1, "unit": "Pcs"}],
+            }
+        ],
+        mutation=True,
+    )
+    body = resp.get_json()
+    assert body["success"] is False
+    assert "not found" in body["message"].lower()
+
+
+def test_item_rename_cascades_into_issue_lines(erp_client):
+    _settle()
+    old_item = _unique_name("OldIssueItem")
+    new_item = _unique_name("NewIssueItem")
+    _rpc(erp_client, "saveItem", [{"itemName": old_item, "itemSize": "S"}], mutation=True)
+
+    save = _rpc(
+        erp_client,
+        "saveIssueStock",
+        [{"date": "01/01/2026", "issuedTo": "Contractor A", "items": [{"name": old_item, "size": "S", "qty": 1, "unit": "Pcs"}]}],
+        mutation=True,
+    )
+    issue_id = save.get_json()["data"]["issueId"]
+
+    rename = _rpc(
+        erp_client, "saveItem",
+        [{"itemName": new_item, "itemSize": "S", "originalName": old_item, "originalSize": "S"}],
+        mutation=True,
+    )
+    assert rename.get_json()["success"] is True
+
+    listed = _rpc(erp_client, "getIssueData").get_json()["data"]
+    match = next(r for r in listed if r["issueId"] == issue_id)
+    assert match["items"][0]["name"] == new_item
+
+
 def test_unit_rename_cascades_into_issue_lines(erp_client):
     _settle()
     old_unit = _unique_name("OldIssueUnit")

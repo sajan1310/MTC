@@ -136,6 +136,62 @@ def _delete_tag(conn, cur, sheet_key: str, label: str, name):
 # ─────────────────────────────────────────────────────────────────────────
 
 
+def _rename_color_token(value, old_lower: str, new: str) -> str:
+    """A color cell isn't always a single literal name --
+    process_service's color-axis computation can produce (and an
+    operator can hand-enter, e.g. a Color Sub-Group's colorGroup or a
+    Warehouse Pool Opening entry matching an existing merged bucket) a
+    COMPOSITE value joining 2+ independent axes with
+    config_maps.COLOR_COMBO_DELIMITER (e.g. "BCP / Blue-White"). A plain
+    whole-cell compare only ever matches a single-token cell; this
+    renames whichever ONE token matches and rejoins, so a composite cell
+    containing the renamed color as just one of its parts still gets
+    updated instead of silently going stale. A plain (non-composite)
+    value is unaffected -- same exact-match behavior as before.
+    """
+    s = str(value or "")
+    delimiter = config_maps.COLOR_COMBO_DELIMITER
+    if delimiter not in s:
+        return new if s.strip().lower() == old_lower else s
+    token_changed = False
+    renamed_tokens = []
+    for t in s.split(delimiter):
+        if t.strip().lower() == old_lower:
+            token_changed = True
+            renamed_tokens.append(new)
+        else:
+            renamed_tokens.append(t)
+    return delimiter.join(renamed_tokens) if token_changed else s
+
+
+def _rename_color_token_in_column(cur, table: str, column: str, old: str, new: str) -> None:
+    if not rename_utils._table_exists(cur, table):
+        return
+    old_lower = old.lower()
+    where_extra = " AND deleted_at IS NULL" if rename_utils._has_deleted_at(cur, table) else ""
+    cur.execute(f"SELECT id, {column} AS value FROM {table} WHERE {column} IS NOT NULL AND {column} != ''{where_extra}")
+    for row in cur.fetchall():
+        renamed = _rename_color_token(row["value"], old_lower, new)
+        if renamed != row["value"]:
+            cur.execute(f"UPDATE {table} SET {column} = %s WHERE id = %s", (renamed, row["id"]))
+
+
+def _rename_color_token_in_either_column(cur, table: str, column_a: str, column_b: str, old: str, new: str) -> None:
+    if not rename_utils._table_exists(cur, table):
+        return
+    old_lower = old.lower()
+    where_extra = " AND deleted_at IS NULL" if rename_utils._has_deleted_at(cur, table) else ""
+    cur.execute(
+        f"SELECT id, {column_a} AS a, {column_b} AS b FROM {table} "
+        f"WHERE ({column_a} IS NOT NULL AND {column_a} != '') OR ({column_b} IS NOT NULL AND {column_b} != ''){where_extra}"
+    )
+    for row in cur.fetchall():
+        renamed_a = _rename_color_token(row["a"], old_lower, new)
+        renamed_b = _rename_color_token(row["b"], old_lower, new)
+        if renamed_a != row["a"] or renamed_b != row["b"]:
+            cur.execute(f"UPDATE {table} SET {column_a} = %s, {column_b} = %s WHERE id = %s", (renamed_a, renamed_b, row["id"]))
+
+
 def _rename_color_everywhere(cur, old_name: str, new_name: str) -> None:
     old = (old_name or "").strip()
     new = (new_name or "").strip()
@@ -143,30 +199,28 @@ def _rename_color_everywhere(cur, old_name: str, new_name: str) -> None:
         return
 
     if table := config_maps.TABLE_NAMES.get("PROCESS_COMPONENTS"):
-        rename_utils.rename_in_column(cur, table, config_maps.to_snake_case("colorGroup"), old, new)
+        _rename_color_token_in_column(cur, table, config_maps.to_snake_case("colorGroup"), old, new)
 
     if table := config_maps.TABLE_NAMES.get("BOM_LINES"):
-        rename_utils.rename_in_column(cur, table, "color", old, new)
+        _rename_color_token_in_column(cur, table, "color", old, new)
 
     if table := config_maps.TABLE_NAMES.get("WAREHOUSE_POOL_OPENING"):
-        rename_utils.rename_in_column(cur, table, "color", old, new)
+        _rename_color_token_in_column(cur, table, "color", old, new)
 
     if table := config_maps.TABLE_NAMES.get("PROCESS_COLOR_LINKS"):
-        rename_utils.rename_in_either_column(
+        _rename_color_token_in_either_column(
             cur, table, config_maps.to_snake_case("colorA"), config_maps.to_snake_case("colorB"), old, new
         )
 
-    # Production's COLOR (comma-joined display string, e.g. "Red (Small),
-    # Blue") and COLOR_BREAKDOWN (JSON [{color, size, qty, ...}, ...], the
+    # Production's COLOR (comma-joined display string, one segment per
+    # colorBreakdown entry -- see save_production's `", ".join(...)`) and
+    # COLOR_BREAKDOWN (JSON [{color, size, qty, ...}, ...], the
     # authoritative structured data COLOR is derived from) both need
-    # structured rewriting, not a whole-cell/whole-column string match --
-    # ported from module_tags.js's _renameColorEverywhere verbatim,
-    # including its one real quirk: COLOR's per-segment comparison is a
-    # WHOLE-SEGMENT match, so a segment with a size suffix ("Red (Small)")
-    # never equals the bare old color name and is left unrenamed in that
-    # display string. COLOR_BREAKDOWN -- what every other read actually
-    # uses (see production_service.py's getProductionData) -- is
-    # unaffected by this and always renamed correctly either way.
+    # structured rewriting, not a whole-cell/whole-column string match.
+    # Each comma-split entry (and each color_breakdown entry's own color)
+    # is renamed via _rename_color_token, not a whole-segment exact
+    # match -- a plain per-entry exact match would miss a renamed color
+    # that's only one axis of a composite entry like "BCP / Blue-White".
     if (table := config_maps.TABLE_NAMES.get("PRODUCTION")) and rename_utils._table_exists(cur, table):
         old_lower = old.lower()
         cur.execute(f"SELECT id, color, color_breakdown FROM {table} WHERE deleted_at IS NULL")
@@ -175,7 +229,7 @@ def _rename_color_everywhere(cur, old_name: str, new_name: str) -> None:
             color_changed = False
             if new_color:
                 parts = [p.strip() for p in new_color.split(",")]
-                renamed_parts = [new if p.lower() == old_lower else p for p in parts]
+                renamed_parts = [_rename_color_token(p, old_lower, new) for p in parts]
                 rejoined = ", ".join(renamed_parts)
                 if rejoined != new_color:
                     new_color = rejoined
@@ -185,8 +239,11 @@ def _rename_color_everywhere(cur, old_name: str, new_name: str) -> None:
             breakdown_changed = False
             if breakdown:
                 for entry in breakdown:
-                    if entry and str(entry.get("color") or "").strip().lower() == old_lower:
-                        entry["color"] = new
+                    if not entry or not entry.get("color"):
+                        continue
+                    renamed = _rename_color_token(entry["color"], old_lower, new)
+                    if renamed != entry["color"]:
+                        entry["color"] = renamed
                         breakdown_changed = True
 
             if color_changed or breakdown_changed:
@@ -212,6 +269,43 @@ def _rename_process_type_everywhere(cur, old_name: str, new_name: str) -> None:
 
     if table := config_maps.TABLE_NAMES.get("PROCESS_MASTER"):
         rename_utils.rename_in_column(cur, table, config_maps.to_snake_case("processType"), old, new)
+
+
+def ensure_color_master_entries(cur, color_names: list) -> list:
+    """Auto-registers any brand-new color name into Color Master (called
+    from production_service.save_production when the operator types a
+    custom sub-group color via "+ Add Custom Sub-Group"), so it's
+    available everywhere else Color Master feeds a picker instead of
+    staying invisible outside that one process's own logged history.
+    Already-known names are a safe no-op (case-insensitive dedup); never
+    lets a registration hiccup block the Production save that triggered
+    it -- the lot's own colorBreakdown already has the color regardless
+    of whether Color Master picks it up too.
+    """
+    names = [str(c or "").strip() for c in (color_names or [])]
+    names = [n for n in names if n]
+    if not names:
+        return []
+
+    try:
+        cur.execute("SELECT name FROM erp.color_master WHERE deleted_at IS NULL")
+        existing_lower = {row["name"].strip().lower() for row in cur.fetchall() if row["name"]}
+
+        seen_lower: set = set()
+        to_add = []
+        for name in names:
+            lower = name.lower()
+            if lower in existing_lower or lower in seen_lower:
+                continue
+            seen_lower.add(lower)
+            to_add.append(name)
+
+        for name in to_add:
+            cur.execute("INSERT INTO erp.color_master (name, remarks) VALUES (%s, %s)", (name, ""))
+
+        return to_add
+    except Exception:
+        return []
 
 
 # ─────────────────────────────────────────────────────────────────────────

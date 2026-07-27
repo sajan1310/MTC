@@ -217,13 +217,20 @@ App.Dispatch = {
         pageItems.every(d => App.Selection.isSelected(App.State.selectedDispatch, String(d.rowIdx)));
     }
 
-    let html = '';
-    pageItems.forEach(d => {
-      const idx = App.State.globalDispatch.indexOf(d);
-      const key = String(d.rowIdx);
-      const checked = App.Selection.isSelected(App.State.selectedDispatch, key) ? 'checked' : '';
+    tbody.innerHTML = pageItems.map(d => this.rowHtml(d)).join('');
 
-      html += `<tr>
+    App.Utils.renderPagination('dispatchPagination', filteredDispatch.length, cur, rpp, 'dispatch-page', 'Dispatch Records');
+    this.updateDispatchBulkButtons();
+  },
+
+  // Renders one <tr> for a dispatch record. Shared by renderDispatchTable's
+  // full rebuild and patchRowInPlace's single-row swap below.
+  rowHtml(d) {
+    const idx = App.State.globalDispatch.indexOf(d);
+    const key = String(d.rowIdx);
+    const checked = App.Selection.isSelected(App.State.selectedDispatch, key) ? 'checked' : '';
+
+    return `<tr data-row-key="${escapeHtml(key)}">
         <td class="text-center">
           <input type="checkbox" class="form-check-input dispatch-select-chk" data-key="${escapeHtml(key)}" ${checked} onchange="App.Dispatch.onDispatchRowSelectChange()">
         </td>
@@ -242,12 +249,26 @@ App.Dispatch = {
           <button class="btn btn-sm btn-danger btn-action w-100" onclick="App.Dispatch.delete('${d.rowIdx}', '${escapeHtml(d.dispatchNumber)}', '${d.qty}')">Delete</button>
         </td>
       </tr>`;
-    });
+  },
 
-    tbody.innerHTML = html;
+  // Patches one already-loaded dispatch record's data + its rendered <tr>
+  // after an edit save, instead of a full loadDispatchData() reload.
+  // rowIdx (the physical row id) is stable across an in-place edit, so
+  // it's a safe key. Returns false -- caller should fall back to
+  // loadDispatchData() -- if the record isn't currently loaded or isn't on
+  // the displayed page.
+  patchRowInPlace(freshRow) {
+    const key = String(freshRow.rowIdx);
+    const existing = App.State.globalDispatch.find(d => String(d.rowIdx) === key);
+    if (!existing) return false;
 
-    App.Utils.renderPagination('dispatchPagination', filteredDispatch.length, cur, rpp, 'dispatch-page', 'Dispatch Records');
-    this.updateDispatchBulkButtons();
+    Object.assign(existing, freshRow);
+
+    const tr = document.querySelector(`#dispatchTableBody tr[data-row-key="${key}"]`);
+    if (!tr) return false;
+
+    tr.outerHTML = this.rowHtml(existing);
+    return true;
   },
 
   toggleSelectAllDispatch(masterChk) {
@@ -682,6 +703,8 @@ App.Dispatch = {
     document.getElementById('dispatchFormTitle').innerText = 'New Dispatch';
     document.getElementById('dispatchSubmitBtn').innerText = 'Save Dispatch';
 
+    App.Utils.setFormButtonsForMode('dispatchCancelBtn', 'dispatchExitBtn', 'dispatchSubmitBtn', false, 'Save Dispatch');
+    App.Nav.clear('dispatchModal');
     safeModalShow('dispatchModal');
   },
 
@@ -819,6 +842,16 @@ App.Dispatch = {
     document.getElementById('dispatchFormTitle').innerText = `Edit Dispatch: ${d.dispatchNumber}`;
     document.getElementById('dispatchSubmitBtn').innerText = 'Update Dispatch';
 
+    App.Utils.setFormButtonsForMode('dispatchCancelBtn', 'dispatchExitBtn', 'dispatchSubmitBtn', true, 'Update Dispatch');
+    App.Nav.register(
+      'dispatchModal',
+      (App.State.filteredDispatch || []).map(x => x.dispatchNumber),
+      d.dispatchNumber,
+      (dispatchNumber) => {
+        const targetIdx = App.State.globalDispatch.findIndex(x => String(x.dispatchNumber) === String(dispatchNumber));
+        if (targetIdx !== -1) this.openEditDispatchModal(targetIdx);
+      }
+    );
     safeModalShow('dispatchModal');
   }
 };
@@ -838,11 +871,31 @@ document.addEventListener('DOMContentLoaded', function () {
       try {
         const res = await Api.mutate('saveDispatch', formData);
         if (res.success) {
-          await App.Dispatch.loadDispatchData();
           await App.Dispatch.loadReadyData();
+
           if (isEdit) {
-            safeModalHide('dispatchModal');
+            // Save (edit mode): patch just this one record's data + <tr>
+            // in place instead of a full loadDispatchData() reload --
+            // falls back to a full reload if the record can't be patched.
+            const patched = res.data && res.data.row
+              ? App.Dispatch.patchRowInPlace(res.data.row)
+              : false;
+            if (!patched) await App.Dispatch.loadDispatchData();
+
+            // Stay open on the SAME dispatch instead of closing -- Exit
+            // (App.Nav.exit) is the only way to close from here now.
+            // rowIdx is the row id, stable across an in-place edit.
+            const freshIdx = App.State.globalDispatch.findIndex(d => String(d.rowIdx) === String(formData.rowIdx));
+            if (freshIdx !== -1) {
+              App.Dispatch.openEditDispatchModal(freshIdx);
+            } else {
+              safeModalHide('dispatchModal');
+            }
           } else {
+            // A brand-new record's sorted/paginated position can't be
+            // determined cheaply on the client -- full reload here (an
+            // edit doesn't need to, see App.Dispatch.patchRowInPlace).
+            await App.Dispatch.loadDispatchData();
             App.Dispatch.openCreateDispatchModal('');
           }
         }

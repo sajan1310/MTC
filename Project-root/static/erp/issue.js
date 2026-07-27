@@ -6,10 +6,12 @@
 // Records ad-hoc issuance of Stock items -- components a contractor needs
 // beyond what a Process's own recipe (BOM) calls for. Separate from
 // Production's Components Consumed list: issuing an item here never touches
-// a lot's BOM/costing, it only debits Stock directly. Create-only, same as
-// Wastage: no edit/update path, and no singular delete -- only bulk delete
-// (which a single row's own Delete button also calls, with a one-element
-// array).
+// a lot's BOM/costing, it only debits Stock directly. Create-only in the
+// source (module_issue.js has no edit path); openEditModal/saveIssueStock's
+// existingIssueId are a deliberate PWA-only addition -- issueId itself
+// never changes on edit, matching how it has no override field on create
+// either. No singular delete -- only bulk delete (which a single row's own
+// Delete button also calls, with a one-element array).
 //
 // Adaptations from source (documented, not silent):
 // - saveIssueStock/deleteIssueBulk use Api.mutate (not Api.call): both are
@@ -136,6 +138,8 @@ App.Issue = {
         <td><small class="text-muted">${itemsPreview}</small></td>
         <td class="text-center fw-bold">${escapeHtml(String(iss.totalQty ?? 0))}</td>
         <td class="text-center">
+          <button class="btn btn-sm btn-outline-primary w-100 mb-1"
+                  onclick="App.Issue.openEditModal('${escapeHtml(key)}')">Edit</button>
           <button class="btn btn-sm btn-outline-dark w-100 mb-1"
                   onclick="App.Issue.print('${escapeHtml(key)}')">Print</button>
           <button class="btn btn-sm btn-danger w-100"
@@ -311,6 +315,35 @@ App.Issue = {
     safeModalShow('issueStockModal');
   },
 
+  // Editing is a PWA-only addition -- module_issue.js has no edit path
+  // (create-only, same as Wastage). issueId itself never changes; only
+  // the header fields and item lines can be updated.
+  openEditModal(issueId) {
+    const iss = App.State.globalIssues.find(i => String(i.issueId) === String(issueId));
+    if (!iss) return;
+
+    document.getElementById('issueStockForm')?.reset();
+    this.resetToCreateMode();
+
+    document.getElementById('issueExistingId').value = iss.issueId;
+    document.getElementById('issueDateInput').value = dateToInputValue(iss.dateRaw, iss.date);
+    document.getElementById('issueIssuedTo').value = iss.issuedTo || '';
+    document.getElementById('issueReferenceInput').value = iss.reference || '';
+    document.getElementById('issueRemarksInput').value = iss.remarks || '';
+
+    const tbody = document.getElementById('issueItemsBody');
+    if (tbody) {
+      tbody.innerHTML = (iss.items || []).map(item => this.getRowHtml(item)).join('') || this.getRowHtml();
+    }
+
+    const title = document.getElementById('issueModalTitle');
+    if (title) title.innerHTML = `<i class="bi bi-pencil-square me-2"></i>Edit Issue ${escapeHtml(iss.issueId)}`;
+    const submitBtn = document.getElementById('issueStockSubmitBtn');
+    if (submitBtn) submitBtn.innerHTML = '<i class="bi bi-check2 me-1"></i>Update Issue';
+
+    safeModalShow('issueStockModal');
+  },
+
   addRow() {
     const tbody = document.getElementById('issueItemsBody');
     if (!tbody) return;
@@ -334,6 +367,7 @@ App.Issue = {
   serializeForm() {
     const form = document.getElementById('issueStockForm');
     const formData = Object.fromEntries(new FormData(form));
+    formData.existingIssueId = document.getElementById('issueExistingId')?.value || '';
     const items = [];
     $$('#issueItemsBody tr').forEach(row => {
       const name = $('.i-item-name', row)?.value?.trim();
@@ -360,6 +394,7 @@ App.Issue = {
       return;
     }
 
+    const isEdit = !!formData.existingIssueId;
     const submitBtn = document.getElementById('issueStockSubmitBtn');
     if (submitBtn) { submitBtn.disabled = true; submitBtn.textContent = 'Saving…'; }
 
@@ -374,7 +409,12 @@ App.Issue = {
     } catch (err) {
       App.Utils.showToast(err.message || 'Failed to issue stock.', true);
     } finally {
-      if (submitBtn) { submitBtn.disabled = false; submitBtn.innerHTML = '<i class="bi bi-box-arrow-up me-1"></i>Issue Stock'; }
+      if (submitBtn) {
+        submitBtn.disabled = false;
+        submitBtn.innerHTML = isEdit
+          ? '<i class="bi bi-check2 me-1"></i>Update Issue'
+          : '<i class="bi bi-box-arrow-up me-1"></i>Issue Stock';
+      }
     }
   },
 
@@ -416,9 +456,16 @@ App.Issue = {
   resetToCreateMode() {
     const savedId = document.getElementById('issueSavedId');
     if (savedId) savedId.value = '';
+    const existingId = document.getElementById('issueExistingId');
+    if (existingId) existingId.value = '';
     this.setFormReadOnly(false);
+    const title = document.getElementById('issueModalTitle');
+    if (title) title.innerHTML = '<i class="bi bi-box-arrow-up me-2"></i>Issue Stock';
     const submitBtn = document.getElementById('issueStockSubmitBtn');
-    if (submitBtn) submitBtn.style.display = '';
+    if (submitBtn) {
+      submitBtn.style.display = '';
+      submitBtn.innerHTML = '<i class="bi bi-box-arrow-up me-1"></i>Issue Stock';
+    }
     const printBtn = document.getElementById('issueStockPrintBtn');
     if (printBtn) printBtn.style.display = 'none';
     const doneBtn = document.getElementById('issueStockDoneBtn');

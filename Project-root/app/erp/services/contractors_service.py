@@ -588,11 +588,13 @@ def get_contractor_ledger_data():
             status_col = config_maps.to_snake_case("status")
             assigned_col = config_maps.to_snake_case("assignedTo")
             payable_col = config_maps.to_snake_case("contractorPayable")
+            rate_col = config_maps.to_snake_case("contractorRate")
             qty_col = config_maps.to_snake_case("qty")
             process_id_col = config_maps.to_snake_case("processId")
             cur.execute(
                 f"SELECT {status_col} AS status, {assigned_col} AS assigned_to, {payable_col} AS payable, "
-                f"{qty_col} AS qty, {process_id_col} AS process_id FROM {table} WHERE deleted_at IS NULL"
+                f"{rate_col} AS contractor_rate, {qty_col} AS qty, {process_id_col} AS process_id "
+                f"FROM {table} WHERE deleted_at IS NULL"
             )
             for row in cur.fetchall():
                 if str(row["status"] or "").strip().lower() != "completed":
@@ -600,9 +602,13 @@ def get_contractor_ledger_data():
                 contractor_name = str(row["assigned_to"] or "").strip()
                 if not contractor_name:
                     continue
-                payable = float(row["payable"] or 0)
-                if payable <= 0:
+                # Gate on whether a rate card applies, not on the payable's
+                # sign -- Production allows negative qty for corrections, and
+                # a real rate against a negative qty is a legitimate negative
+                # payable that must still be summed, not dropped.
+                if float(row["contractor_rate"] or 0) == 0:
                     continue
+                payable = float(row["payable"] or 0)
                 qty = float(row["qty"] or 0)
                 process_id = str(row["process_id"] or "").strip().lower()
                 process_name = process_name_by_id.get(process_id, "Uncategorized")
@@ -680,23 +686,26 @@ def get_contractor_account_ledger(contractor_name):
             status_col = config_maps.to_snake_case("status")
             assigned_col = config_maps.to_snake_case("assignedTo")
             payable_col = config_maps.to_snake_case("contractorPayable")
+            rate_col = config_maps.to_snake_case("contractorRate")
             date_col = config_maps.to_snake_case("productionDate")
             process_id_col = config_maps.to_snake_case("processId")
             product_col = config_maps.to_snake_case("productName")
             lot_col = config_maps.to_snake_case("lotNumber")
             cur.execute(
                 f"SELECT {status_col} AS status, {assigned_col} AS assigned_to, {payable_col} AS payable, "
-                f"{date_col} AS prod_date, {process_id_col} AS process_id, {product_col} AS product_name, "
-                f"{lot_col} AS lot_number FROM {table} WHERE deleted_at IS NULL"
+                f"{rate_col} AS contractor_rate, {date_col} AS prod_date, {process_id_col} AS process_id, "
+                f"{product_col} AS product_name, {lot_col} AS lot_number FROM {table} WHERE deleted_at IS NULL"
             )
             for row in cur.fetchall():
                 if str(row["status"] or "").strip().lower() != "completed":
                     continue
                 if str(row["assigned_to"] or "").strip().lower() != name.lower():
                     continue
-                payable = float(row["payable"] or 0)
-                if payable <= 0:
+                # Gate on whether a rate card applies, not on the payable's
+                # sign -- see get_contractor_ledger_data's identical comment.
+                if float(row["contractor_rate"] or 0) == 0:
                     continue
+                payable = float(row["payable"] or 0)
                 process_id = str(row["process_id"] or "").strip().lower()
                 process_name = process_name_by_id.get(process_id, "Uncategorized")
                 entries.append(

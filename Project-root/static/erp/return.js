@@ -111,18 +111,26 @@ App.Return = {
         pageItems.every(ret => App.Selection.isSelected(App.State.selectedReturns, String(ret.returnNumber)));
     }
 
-    tbody.innerHTML = pageItems.map(ret => {
-      const index = App.State.globalReturns.indexOf(ret);
-      const billBadge = ret.billNumber
-        ? `<span class="badge bg-primary bg-opacity-10 text-primary border border-primary-subtle shadow-sm">${escapeHtml(ret.billNumber)}</span>`
-        : '<span class="badge bg-secondary">—</span>';
+    tbody.innerHTML = pageItems.map(ret => this.rowHtml(ret)).join('');
 
-      const itemsPreview = formatItemsPreview(ret.items);
-      const key = String(ret.returnNumber);
-      const checkedAttr = App.Selection.isSelected(App.State.selectedReturns, key) ? 'checked' : '';
+    App.Utils.renderPagination('returnPagination', filteredReturns.length, cur, rpp, 'return-page', 'Returns');
+    this.updateBulkButtons();
+  },
 
-      return `
-      <tr>
+  // Renders one <tr> for a return. Shared by renderTable's full rebuild
+  // and patchRowInPlace's single-row swap below.
+  rowHtml(ret) {
+    const index = App.State.globalReturns.indexOf(ret);
+    const billBadge = ret.billNumber
+      ? `<span class="badge bg-primary bg-opacity-10 text-primary border border-primary-subtle shadow-sm">${escapeHtml(ret.billNumber)}</span>`
+      : '<span class="badge bg-secondary">—</span>';
+
+    const itemsPreview = formatItemsPreview(ret.items);
+    const key = String(ret.returnNumber);
+    const checkedAttr = App.Selection.isSelected(App.State.selectedReturns, key) ? 'checked' : '';
+
+    return `
+      <tr data-return-key="${escapeHtml(key)}">
         <td class="text-center">
           <input type="checkbox" class="form-check-input return-select-chk" data-key="${escapeHtml(key)}" ${checkedAttr} onchange="App.Return.onRowSelectChange()">
         </td>
@@ -145,10 +153,26 @@ App.Return = {
                   data-returnnumber="${escapeHtml(ret.returnNumber || '')}">Delete</button>
         </td>
       </tr>`;
-    }).join('');
+  },
 
-    App.Utils.renderPagination('returnPagination', filteredReturns.length, cur, rpp, 'return-page', 'Returns');
-    this.updateBulkButtons();
+  // Patches one already-loaded return's data + its rendered <tr> after an
+  // edit save, instead of a full loadData() reload -- keyed by the
+  // PRE-edit returnNumber (existingReturnNumber), since that's how the row
+  // is currently indexed in globalReturns/the DOM. Returns false -- caller
+  // should fall back to loadData() -- if the return isn't currently loaded
+  // or isn't on the displayed page.
+  patchRowInPlace(freshReturn, oldReturnNumber) {
+    const oldKey = String(oldReturnNumber);
+    const existing = App.State.globalReturns.find(r => String(r.returnNumber) === oldKey);
+    if (!existing) return false;
+
+    Object.assign(existing, freshReturn);
+
+    const tr = document.querySelector(`#returnTableBody tr[data-return-key="${CSS.escape(oldKey)}"]`);
+    if (!tr) return false;
+
+    tr.outerHTML = this.rowHtml(existing);
+    return true;
   },
 
   toggleSelectAll(masterChk) {
@@ -374,6 +398,8 @@ App.Return = {
     const printBtn = document.getElementById('returnModalPrintBtn');
     if (printBtn) printBtn.style.display = 'none';
 
+    App.Utils.setFormButtonsForMode('returnCancelBtn', 'returnExitBtn', 'returnSubmitBtn', false, 'Return Goods');
+    App.Nav.clear('returnGoodsModal');
     safeModalShow('returnGoodsModal');
   },
 
@@ -453,6 +479,16 @@ App.Return = {
     const printBtn = document.getElementById('returnModalPrintBtn');
     if (printBtn) printBtn.style.display = '';
 
+    App.Utils.setFormButtonsForMode('returnCancelBtn', 'returnExitBtn', 'returnSubmitBtn', true, 'Update Return');
+    App.Nav.register(
+      'returnGoodsModal',
+      (App.State.filteredReturns || []).map(r => r.returnNumber),
+      ret.returnNumber,
+      (returnNumber) => {
+        const idx = App.State.globalReturns.findIndex(r => String(r.returnNumber) === String(returnNumber));
+        if (idx !== -1) this.openEditModal(idx);
+      }
+    );
     safeModalShow('returnGoodsModal');
   },
 
@@ -921,11 +957,34 @@ document.addEventListener('DOMContentLoaded', () => {
         setDisabled('returnSubmitBtn', true);
         try {
           const res = await Api.mutate('saveReturn', formData);
-          if (res?.success) {
-            await App.Return.loadData();
-          }
           if (res?.success && !isEdit) {
+            // A brand-new return's sorted/paginated position can't be
+            // determined cheaply on the client -- full reload here (an
+            // edit doesn't need to, see App.Return.patchRowInPlace).
+            await App.Return.loadData();
             App.Return.openReturnModal();
+          } else if (res?.success && isEdit) {
+            // Save (edit mode): patch just this one return's data + <tr>
+            // in place instead of a full loadData() reload -- keyed by the
+            // PRE-edit returnNumber (existingReturnNumber). Falls back to
+            // a full reload if the return can't be patched.
+            const patched = res.data && res.data.ret
+              ? App.Return.patchRowInPlace(res.data.ret, formData.existingReturnNumber)
+              : false;
+            if (!patched) await App.Return.loadData();
+
+            // Stay open on the SAME return instead of closing -- Exit
+            // (App.Nav.exit) is the only way to close from here now.
+            // returnNumber is user-editable (and auto-generated when
+            // blank), so trust the server's own returned value (res.data)
+            // to re-find this record.
+            const returnNumber = res.data?.returnNumber;
+            const freshIndex = App.State.globalReturns.findIndex(r => String(r.returnNumber) === String(returnNumber));
+            if (freshIndex !== -1) {
+              App.Return.openEditModal(freshIndex);
+            } else {
+              safeModalHide('returnGoodsModal');
+            }
           } else {
             safeModalHide('returnGoodsModal');
           }

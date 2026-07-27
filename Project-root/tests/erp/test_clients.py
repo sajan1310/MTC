@@ -177,6 +177,20 @@ def test_save_client_rename_via_original_name(erp_client):
     assert original not in names
 
 
+def test_save_client_returns_fresh_row_for_in_place_patch(erp_client):
+    payload, name = _save_client(erp_client)
+    edit = _rpc(
+        erp_client,
+        "saveClient",
+        [{"clientName": name, "originalClientName": name, "contact": "New Contact", "gstin": payload["gstin"]}],
+        mutation=True,
+    )
+    body = edit.get_json()
+    fresh_client = body["data"]["client"]
+    assert fresh_client["name"] == name
+    assert fresh_client["contact"] == "New Contact"
+
+
 def test_delete_client_success_and_not_found(erp_client):
     _payload, name = _save_client(erp_client)
     deleted = _rpc(erp_client, "deleteClient", [name], mutation=True)
@@ -347,6 +361,24 @@ def test_save_client_order_creates_and_lists_grouped(erp_app, erp_client):
     assert match["lines"][0]["qty"] == 5
     assert match["lines"][0]["lineRemarks"] == "note"
     assert match["lines"][0]["productionPushed"] is False
+
+
+def test_save_client_order_returns_fresh_row_for_in_place_patch(erp_app, erp_client):
+    token = _get_bom_token(erp_app, erp_client)
+    product_name, product_id = _save_bom_product(erp_client, token)
+    _payload, name = _save_client(erp_client)
+
+    create = _save_client_order(erp_client, name, [{"productId": product_id, "qty": 5}])
+    order_number = create["data"]["orderNumber"]
+    fresh_order = create["data"]["order"]
+    assert fresh_order["orderNumber"] == order_number
+    assert fresh_order["clientName"] == name
+    assert fresh_order["lines"][0]["productId"] == product_id
+
+    edit = _save_client_order(erp_client, name, [{"productId": product_id, "qty": 9}], orderNumber=order_number)
+    fresh_order = edit["data"]["order"]
+    assert fresh_order["orderNumber"] == order_number
+    assert fresh_order["lines"][0]["qty"] == 9
 
 
 def test_save_client_order_edit_preserves_pushed_count_per_product(erp_app, erp_client):

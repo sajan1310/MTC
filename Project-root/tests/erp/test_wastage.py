@@ -174,6 +174,32 @@ def test_delete_wastage_bulk(erp_client):
     assert b_id not in ids
 
 
+def test_item_rename_cascades_into_wastage_lines(erp_client):
+    _settle()
+    old_item = _unique_name("OldWastageItem")
+    new_item = _unique_name("NewWastageItem")
+    _rpc(erp_client, "saveItem", [{"itemName": old_item, "itemSize": "L"}], mutation=True)
+
+    save = _rpc(
+        erp_client,
+        "saveWastage",
+        [{"date": "01/01/2026", "items": [{"name": old_item, "size": "L", "qty": 1, "unit": "Pcs", "reason": "R"}]}],
+        mutation=True,
+    )
+    wastage_id = save.get_json()["data"]["wastageId"]
+
+    rename = _rpc(
+        erp_client, "saveItem",
+        [{"itemName": new_item, "itemSize": "L", "originalName": old_item, "originalSize": "L"}],
+        mutation=True,
+    )
+    assert rename.get_json()["success"] is True
+
+    listed = _rpc(erp_client, "getWastageData").get_json()["data"]
+    match = next(w for w in listed if w["wastageId"] == wastage_id)
+    assert match["items"][0]["name"] == new_item
+
+
 def test_vendor_rename_cascades_into_wastage_headers(erp_client):
     _settle()
     old_vendor = _unique_name("OldWastageVendor")

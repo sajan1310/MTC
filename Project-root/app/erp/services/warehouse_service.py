@@ -49,12 +49,15 @@ equivalent needed).
 from __future__ import annotations
 
 import math
+import re
 from datetime import date
 
 import psycopg2.extras
 
 import database
+from . import items_service
 from . import process_service
+from . import units_service
 from .current_user import get_current_user_id
 from .. import config_maps
 from .. import date_utils
@@ -93,6 +96,50 @@ def _find_process_record(process_id_str: str, all_processes: list):
     return None
 
 
+def _color_names_match(a, b) -> bool:
+    """Same hyphen/slash/whitespace-segment substring heuristic as
+    production.js's client-side _colorNamesMatch ("Red" matches
+    "Red-White") -- used to decide whether a lot's non-primary
+    colorBreakdown entry (e.g. a Mudguard Color) is redundant with its
+    primary entry (e.g. Rim Color) when combining Pass 1's pool credit.
+    """
+    x = str(a or "").strip().lower()
+    y = str(b or "").strip().lower()
+    if not x or not y:
+        return False
+    if x == y:
+        return True
+    shorter, longer = (x, y) if len(x) <= len(y) else (y, x)
+    escaped = re.escape(shorter)
+    return re.search(rf"(^|[-/\s]){escaped}($|[-/\s])", longer) is not None
+
+
+def _resolve_composite_color_token(candidate_colors: list, token_lower: str) -> str | None:
+    """Resolves a single-axis-token colorGroup (e.g. "BCP") against a set of
+    live bucket color strings for the same item, one of which may be a
+    composite of 2+ independent pool axes (e.g. "BCP / Blue-White" -- see
+    config_maps.COLOR_COMBO_DELIMITER). A Process Component recipe row's
+    Color Sub-Group is configured manually from Color Master, independently
+    of whatever string the upstream item's own credits actually landed
+    under, so an exact-string bucket match alone can miss a composite
+    bucket that legitimately contains this token.
+
+    Only resolves when EXACTLY ONE candidate composite color contains the
+    token as one of its parts -- a token shared by 2+ composite buckets is
+    genuinely ambiguous and is deliberately left unresolved rather than
+    guessed. `candidate_colors` are already lowercased/trimmed.
+    """
+    if not token_lower or token_lower in candidate_colors:
+        return None
+    delimiter = config_maps.COLOR_COMBO_DELIMITER
+    matches = {
+        c
+        for c in candidate_colors
+        if delimiter in c and any(part.strip() == token_lower for part in c.split(delimiter))
+    }
+    return next(iter(matches)) if len(matches) == 1 else None
+
+
 def _get_warehouse_pool_opening_rows(cur) -> list:
     cur.execute("SELECT output_item_name, process_id, product_tag, color, qty FROM erp.warehouse_pool_opening")
     rows = []
@@ -121,8 +168,9 @@ def _get_warehouse_pool_opening_rows(cur) -> list:
 def _recalculate_warehouse_pool(cur) -> None:
     """Full rebuild of erp.warehouse_pool from source data -- mirrors
     recalculateStock()'s "always rebuild from source data" approach.
-    Passes 1-2 are guarded via TABLE_NAMES.get("PRODUCTION") (real as of
-    Phase 3g); Pass 3 (Dispatch debit) stays guarded/deferred.
+    Passes 1-2 are guarded via TABLE_NAMES.get("PRODUCTION"); Pass 3
+    (Dispatch debit) via TABLE_NAMES.get("DISPATCH") -- both real and live,
+    not deferred.
     """
     buckets: dict = {}
 
@@ -153,9 +201,20 @@ def _recalculate_warehouse_pool(cur) -> None:
 
     if table := config_maps.TABLE_NAMES.get("PRODUCTION"):
         # Pass 1: credit every Completed lot's own output to its pool
-        # bucket(s). A multi-color lot's color_breakdown is split into one
-        # bucket per color; a color-agnostic lot credits the single
-        # blank-color bucket by its flat qty.
+        # bucket(s). A color-agnostic lot credits the single blank-color
+        # bucket. A multi-color lot's colorBreakdown entries are combined
+        # into ONE bucket whenever the pairing is unambiguous: exactly one
+        # entry counts toward the lot's total (countsTowardTotal !== false
+        # -- the primary axis, or the only entry on a single-axis/legacy
+        # lot) AND at most one OTHER entry is a genuinely independent axis
+        # (its color doesn't _color_names_match the primary's). A redundant
+        # axis (whose checked value DOES name-match the primary -- the same
+        # batch described a second way) is folded into that one combined
+        # bucket instead of getting a separate credit of its own -- this is
+        # what turns two independent credits (10 under "Red-White", 10
+        # under "Black") into one real "Red-White / Black" bucket.
+        # Anything less clean-cut falls back to crediting every entry
+        # under its own single color.
         cur.execute(
             f"""
             SELECT process_id, output_item_name, product_id, color_breakdown, qty
@@ -172,13 +231,38 @@ def _recalculate_warehouse_pool(cur) -> None:
             color_breakdown = row["color_breakdown"] or []
 
             if color_breakdown:
-                for entry in color_breakdown:
-                    entry = entry or {}
-                    color = str(entry.get("color") or "").strip()
-                    qty = float(entry.get("qty") or 0)
-                    if not color or qty <= 0:
-                        continue
-                    get_bucket(output_item_name, process_id, product_tag, color)["producedQty"] += qty
+                # Zero/negative kept -- a negative per-color qty is a
+                # correction/reversal lot that credits this bucket back
+                # down, mirroring the flat (non-color) path below which
+                # never filtered by sign either.
+                def credit_color(color, qty):
+                    color = str(color or "").strip()
+                    if not color:
+                        return
+                    get_bucket(output_item_name, process_id, product_tag, color)["producedQty"] += float(qty or 0)
+
+                primary_entries = [
+                    e for e in color_breakdown if e and e.get("countsTowardTotal") is not False and str(e.get("color") or "").strip()
+                ]
+                other_entries = [
+                    e for e in color_breakdown if e and e.get("countsTowardTotal") is False and str(e.get("color") or "").strip()
+                ]
+
+                combined = False
+                if len(primary_entries) == 1:
+                    primary_color = str(primary_entries[0]["color"]).strip()
+                    independent = [e for e in other_entries if not _color_names_match(primary_color, e.get("color"))]
+                    if len(independent) <= 1:
+                        parts = [primary_color]
+                        if len(independent) == 1:
+                            parts.append(str(independent[0]["color"]).strip())
+                        credit_color(config_maps.COLOR_COMBO_DELIMITER.join(parts), primary_entries[0]["qty"])
+                        combined = True
+
+                if not combined:
+                    for entry in color_breakdown:
+                        entry = entry or {}
+                        credit_color(entry.get("color"), entry.get("qty"))
             else:
                 qty = float(row["qty"] or 0)
                 get_bucket(output_item_name, process_id, product_tag, "")["producedQty"] += qty
@@ -187,10 +271,18 @@ def _recalculate_warehouse_pool(cur) -> None:
         # from the (untagged, intermediate) bucket of the upstream item. A
         # component scoped to a specific color (colorGroup other than
         # COMMON) debits that color's bucket; a COMMON component debits the
-        # blank-color bucket.
+        # blank-color bucket. A component with a non-blank Unit is
+        # converted to the item's Base Unit first (blank unit means
+        # "already in Base Unit"), matching stock_service's identical
+        # handling for ITEM-sourced components -- a POOL row's Unit was
+        # previously silently ignored, understating pool consumption by
+        # whatever that row's conversion factor is (e.g. a Dozen row
+        # debiting as if it were 1 Pcs).
         cur.execute(
             f"SELECT components_consumed FROM {table} WHERE deleted_at IS NULL AND lower(status) = 'completed'"
         )
+        pool_item_unit_map = None
+        pool_units_map = None
         for row in cur.fetchall():
             for comp in row["components_consumed"] or []:
                 comp = comp or {}
@@ -200,8 +292,43 @@ def _recalculate_warehouse_pool(cur) -> None:
                 if not item_name:
                     continue
                 qty = float(comp.get("qty") or 0)
+
+                unit = str(comp.get("unit") or "").strip()
+                if unit:
+                    if pool_item_unit_map is None:
+                        pool_item_unit_map = items_service.get_item_unit_info_map(cur)
+                    if pool_units_map is None:
+                        pool_units_map = units_service.get_units_map()
+                    unit_info = items_service.lookup_item_unit_info(pool_item_unit_map, item_name, "")
+                    try:
+                        qty = units_service.convert_qty_to_base_unit(qty, unit, unit_info, pool_units_map)
+                    except ValueError:
+                        # Unconvertible (e.g. no Weight-per-Base-Unit set
+                        # yet) -- fall back to the as-entered qty rather
+                        # than blocking the whole recalculation over one
+                        # bad recipe row.
+                        pass
+
                 color_group = str(comp.get("colorGroup") or "").strip()
                 color = color_group if color_group and color_group.upper() != _COLOR_GROUP_COMMON else ""
+
+                # See _resolve_composite_color_token -- a manually
+                # -configured single-token Color Sub-Group can legitimately
+                # refer to one part of a composite bucket credited under
+                # Pass 1 above; resolve it to that bucket's real key when
+                # unambiguous, rather than debiting a phantom single-token
+                # bucket that was never credited.
+                if color and (item_name.lower(), "", color.lower()) not in buckets:
+                    item_name_lower = item_name.lower()
+                    candidate_colors = [
+                        b["color"].lower()
+                        for b in buckets.values()
+                        if b["outputItemName"].lower() == item_name_lower and not b["productTag"]
+                    ]
+                    resolved = _resolve_composite_color_token(candidate_colors, color.lower())
+                    if resolved:
+                        color = resolved
+
                 get_bucket(item_name, "", "", color)["consumedQty"] += qty
 
     if table := config_maps.TABLE_NAMES.get("DISPATCH"):

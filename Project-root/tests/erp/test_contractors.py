@@ -298,6 +298,51 @@ def test_delete_contractor_payment_without_expected_values_skips_check(erp_clien
     assert resp.get_json()["success"] is True
 
 
+def test_get_contractor_ledger_data_includes_negative_payable_correction_lot(erp_client):
+    """Production allows negative qty for corrections; a real rate against a
+    negative qty is a legitimate negative payable that must still be summed
+    in, not dropped by a stale `payable <= 0` guard.
+    """
+    contractor = _unique_name("NegativePayableContractor")
+    payload, process_id = _save_process(erp_client)
+
+    _rpc(
+        erp_client,
+        "saveContractorRate",
+        [{"contractorName": contractor, "processName": payload["processName"], "ratePerUnit": 10}],
+        mutation=True,
+    )
+
+    resp = _rpc(
+        erp_client,
+        "saveProduction",
+        [
+            {
+                "processId": process_id,
+                "assignedTo": contractor,
+                "qty": -5,
+                "status": "Completed",
+                "componentsConsumed": [{"itemName": _unique_name("CorrectionItem"), "qty": 1, "sourceType": "ITEM"}],
+            }
+        ],
+        mutation=True,
+    )
+    body = resp.get_json()
+    assert body["success"] is True, body["message"]
+
+    listed = _rpc(erp_client, "getContractorLedgerData").get_json()["data"]
+    match = next(c for c in listed if c["contractorName"] == contractor)
+    assert match["lotCount"] == 1
+    assert match["totalPayable"] == -50  # rate 10 * qty -5
+    assert match["balanceDue"] == -50
+
+    account = _rpc(erp_client, "getContractorAccountLedger", [contractor]).get_json()["data"]
+    assert account["totalPayable"] == -50
+    assert account["balanceDue"] == -50
+    payable_entries = [e for e in account["entries"] if e["amount"] == -50]
+    assert len(payable_entries) == 1
+
+
 def test_get_contractor_ledger_data_payments_only_contractor(erp_client):
     contractor = _unique_name("LedgerPaymentsOnlyContractor")
     _rpc(

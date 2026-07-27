@@ -547,27 +547,38 @@ App.Item = {
     const pendingMap = App.Utils.getPendingByItem();
     const stockMap = this._getStockMap();
 
-    tbody.innerHTML = pageItems
-      .map(item => {
-        const vendorsHtml = (item.vendors || [])
-          .map(v => `
+    tbody.innerHTML = pageItems.map(item => this.rowHtml(item, pendingMap, stockMap)).join('');
+
+    App.Utils.renderPagination('itemPagination', filteredItems.length, cur, rpp, 'item-page', 'Items');
+  },
+
+  // Renders one <tr> for an item. Shared by renderTable's full rebuild and
+  // patchRowInPlace's single-row swap below. pendingMap/stockMap are
+  // optional -- patchRowInPlace recomputes them itself so a single-row
+  // patch doesn't need the caller to pass them.
+  rowHtml(item, pendingMap, stockMap) {
+    pendingMap = pendingMap || App.Utils.getPendingByItem();
+    stockMap = stockMap || this._getStockMap();
+
+    const vendorsHtml = (item.vendors || [])
+      .map(v => `
         <span class="badge border border-secondary text-dark me-1 mb-1 fs-6 fw-normal">
           <i class="text-secondary">${escapeHtml(v.vendor)}:</i>
           <strong>${formatCurrency(v.rate)}</strong>
         </span>`)
-          .join('');
+      .join('');
 
-        const { parts: metaParts } = this.getMetaInfo(item, pendingMap, stockMap);
+    const { parts: metaParts } = this.getMetaInfo(item, pendingMap, stockMap);
 
-        const encodedName = encodeURIComponent(item.name || '');
-        const encodedSize = encodeURIComponent(item.size || '');
-        const key = this.itemKey(item);
+    const encodedName = encodeURIComponent(item.name || '');
+    const encodedSize = encodeURIComponent(item.size || '');
+    const key = this.itemKey(item);
 
-        const isSelected = App.Selection.isSelected(App.State.selectedItems, key);
-        const checkedAttr = isSelected ? 'checked' : '';
+    const isSelected = App.Selection.isSelected(App.State.selectedItems, key);
+    const checkedAttr = isSelected ? 'checked' : '';
 
-        return `
-        <tr class="item-row-clickable" style="cursor:pointer;" data-row-name="${encodedName}" data-row-size="${encodedSize}" title="Click to view Item Ledger">
+    return `
+        <tr class="item-row-clickable" data-item-key="${escapeHtml(key)}" style="cursor:pointer;" data-row-name="${encodedName}" data-row-size="${encodedSize}" title="Click to view Item Ledger">
           <td class="text-center">
             <input type="checkbox" class="form-check-input item-select-chk"
                    data-key="${escapeHtml(key)}"
@@ -590,10 +601,27 @@ App.Item = {
                     data-name="${encodedName}" data-size="${encodedSize}">Delete</button>
           </td>
         </tr>`;
-      })
-      .join('');
+  },
 
-    App.Utils.renderPagination('itemPagination', filteredItems.length, cur, rpp, 'item-page', 'Items');
+  // Patches one already-loaded item's data + its rendered <tr> after a
+  // plain edit save (name/size unchanged), instead of a full loadData()
+  // reload. A rename/resize touches Stock's own key (and cascades into
+  // BOM/Process recipe references), so the caller only invokes this for a
+  // plain edit -- see the submit handler's isPlainEdit check. Returns
+  // false -- caller should fall back to loadData() -- if the item isn't
+  // currently loaded or isn't on the displayed page.
+  patchRowInPlace(freshItem, oldName, oldSize) {
+    const oldKey = this.itemKey({ name: oldName, size: oldSize });
+    const existing = App.State.globalItems.find(i => this.itemKey(i) === oldKey);
+    if (!existing) return false;
+
+    Object.assign(existing, freshItem);
+
+    const tr = document.querySelector(`#itemTableBody tr[data-item-key="${CSS.escape(oldKey)}"]`);
+    if (!tr) return false;
+
+    tr.outerHTML = this.rowHtml(existing);
+    return true;
   },
 
   changePage(pageNumber) {
@@ -967,6 +995,21 @@ App.Item = {
     const thresholdInput = document.getElementById('formItemThreshold');
     if (thresholdInput) thresholdInput.value = '';
 
+    App.Utils.setFormButtonsForMode('itemCancelBtn', 'itemExitBtn', 'itemSubmitBtn', false, 'Save Item Record');
+    App.Nav.clear('itemModal');
+
+    // A brand-new item is in no recipe yet, and an in-flight load from a
+    // previously-edited item must not paint into this form.
+    this._processesSeq++;
+    this._processesItem = null;
+    this._processesBaseline = {};
+    this._processesMeta = {};
+    this.destroyAddProcessSelect2();
+    const processSection = document.getElementById('itemProcessesSection');
+    if (processSection) processSection.style.display = 'none';
+    const processBody = document.getElementById('itemProcessesBody');
+    if (processBody) processBody.innerHTML = '';
+
     safeModalShow('itemModal');
   },
 
@@ -1008,7 +1051,953 @@ App.Item = {
       tbody.innerHTML = (item.vendors || []).length ? item.vendors.map(v => this.getVendorRowHtml(v)).join('') : this.getVendorRowHtml();
     }
 
+    App.Utils.setFormButtonsForMode('itemCancelBtn', 'itemExitBtn', 'itemSubmitBtn', true, 'Update Item Record');
+    App.Nav.register(
+      'itemModal',
+      (App.State.filteredItems || []).map(i => this.itemKey(i)),
+      this.itemKey(item),
+      (key) => {
+        const [n, s] = key.split('|');
+        this.openEditModal(n, s || '');
+      },
+      // The recipe table is rendered async from class-keyed inputs, so
+      // Nav's own snapshot can't see it -- report its unsaved state here
+      // or Exit/Prev/Next would silently discard it.
+      () => this._collectProcessRows().length > 0
+    );
+
     safeModalShow('itemModal');
+
+    // Fire-and-forget -- the modal opens immediately and the section
+    // fills in when the recipe read returns.
+    this.loadProcessesForItem(item.name || '', item.size || '');
+  },
+
+  // ── Used in Processes ────────────────────────────────────────
+  // The item-side view of the same Process Components rows the
+  // Products & Processes tab edits. There is no separate mapping
+  // store -- see getProcessesForItem in process_service.py.
+  //
+  // Scope: only each process's COMMON (process-wide) entry for this
+  // item. Color sub-group rows are shown read-only and are editable
+  // only on the process side, where the color-axis UI lives.
+  //
+  // This section saves independently of the item form's own Save --
+  // its inputs deliberately carry NO name attribute, so serializeForm's
+  // `new FormData(form)` can't pick them up as item fields.
+
+  // Guards against a stale response painting over a newer item. The
+  // item modal is reusable in place via App.Nav prev/next, so two
+  // loads can easily overlap.
+  _processesSeq: 0,
+
+  // Identity the loaded section belongs to. Captured at load time so
+  // a mapping save can't be misdirected by an unsaved edit to the
+  // Item Name / Size fields above it.
+  _processesItem: null,
+
+  // Server state as last loaded, keyed by processId -- the baseline the
+  // save diffs against, so only genuinely changed processes are sent.
+  _processesBaseline: {},
+
+  // Per-process display data that isn't in the rendered inputs
+  // (name, sequence, active, colour variants), keyed by processId.
+  _processesMeta: {},
+
+  async loadProcessesForItem(name, size) {
+    const section = document.getElementById('itemProcessesSection');
+    const body = document.getElementById('itemProcessesBody');
+    if (!section || !body) return;
+
+    section.style.display = '';
+    this._processesItem = { name: name || '', size: size || '' };
+    body.innerHTML =
+      '<div class="text-muted small py-2">' +
+      '<span class="spinner-border spinner-border-sm me-2"></span>Loading process recipes…</div>';
+
+    const seq = ++this._processesSeq;
+    try {
+      const res = await Api.call('getProcessesForItem', name, size);
+      if (seq !== this._processesSeq) return;
+      if (!res?.success) {
+        body.innerHTML =
+          `<div class="alert alert-warning py-2 mb-0 small">${escapeHtml(res?.message || 'Failed to load process recipes.')}</div>`;
+        return;
+      }
+      this.renderProcessesSection(res.data || []);
+    } catch (err) {
+      if (seq !== this._processesSeq) return;
+      body.innerHTML =
+        `<div class="alert alert-warning py-2 mb-0 small">${escapeHtml(err.message || 'Failed to load process recipes.')}</div>`;
+    }
+  },
+
+  renderProcessesSection(records) {
+    const body = document.getElementById('itemProcessesBody');
+    if (!body) return;
+
+    this.destroyAddProcessSelect2();
+
+    this._processesBaseline = {};
+    this._processesMeta = {};
+    (records || []).forEach(r => {
+      this._processesBaseline[r.processId] = {
+        inRecipe: !!r.inRecipe,
+        qtyPerUnit: r.inRecipe ? r.qtyPerUnit : '',
+        unit: r.unit || '',
+        remarks: r.remarks || ''
+      };
+      // Everything a freshly-added or re-enabled row needs that isn't
+      // in the rendered inputs -- also doubles as the pool the "Add a
+      // process" picker searches (see _refreshAddProcessPicker).
+      this._processesMeta[r.processId] = {
+        processName: r.processName,
+        sequence: r.sequence,
+        active: r.active,
+        processType: r.processType,
+        colorVariants: r.colorVariants || []
+      };
+    });
+
+    if (!records.length) {
+      body.innerHTML =
+        '<div class="text-muted small py-2">No processes are defined yet. ' +
+        '<a href="#" onclick="App.Item.goToProcesses(); return false;">Create one in the Products &amp; Processes tab &#8599;</a></div>';
+      return;
+    }
+
+    // Only processes this item is ACTUALLY used in -- browsing every
+    // process in the system to spot the handful that matter was
+    // exactly the "mindless scrolling" this view existed to save. A
+    // process wired to consume this item on the Process tab reappears
+    // here automatically next load (getProcessesForItem always
+    // recomputes live from Process Components), and one that stops
+    // using it silently drops off the same way -- nothing here needs
+    // to track that transition itself.
+    const used = records
+      .filter(r => r.inRecipe || (r.colorVariants || []).length)
+      .sort((a, b) => (a.sequence - b.sequence) || a.processName.localeCompare(b.processName));
+
+    const rows = used.length
+      ? used.map(r => this._processRowHtml(r)).join('')
+      : `<tr id="itemProcEmptyRow"><td colspan="6" class="text-muted small text-center py-3">Not yet used in any process — search below to add one.</td></tr>`;
+
+    body.innerHTML = `
+      <div class="small text-muted mb-2">
+        Currently in <strong id="itemProcCount"></strong>.
+        Qty is per unit of process output. Changes apply to <strong>new lots only</strong> —
+        completed lots keep the components they recorded.
+      </div>
+      <div class="mb-2">
+        <input type="text" class="form-control form-control-sm item-proc-search"
+               placeholder="Search processes by name, ID, or type..."
+               oninput="App.Item.filterProcessRows(this.value)">
+        <span id="itemProcSearchNote" class="small text-muted"></span>
+      </div>
+      <div class="table-responsive">
+        <table class="table table-sm table-bordered bg-white shadow-sm mb-0">
+          <thead class="table-light">
+            <tr>
+              <th style="width:4%;" class="text-center">
+                <input type="checkbox" class="form-check-input" id="itemProcSelectAll"
+                       onclick="App.Item.toggleSelectAllProcessRows(this)"
+                       title="Select all currently visible processes">
+              </th>
+              <th>Process</th>
+              <th style="width:15%;">Qty / Unit</th>
+              <th style="width:14%;">Unit</th>
+              <th style="width:21%;">Remarks</th>
+              <th style="width:8%;"></th>
+            </tr>
+          </thead>
+          <tbody id="itemProcessesTableBody">${rows}</tbody>
+        </table>
+      </div>
+      <!-- Hidden until at least one row is checked (see updateProcessBulkBar)
+           -- bulk-acts on whatever's selected, which subsumes "apply to
+           everything" as the special case of selecting all of them. -->
+      <div id="itemProcBulkBar" class="d-flex flex-wrap align-items-center gap-2 mt-2 p-2 bg-light border rounded d-none">
+        <span id="itemProcBulkCount" class="small fw-bold"></span>
+        <input type="number" class="form-control form-control-sm item-proc-bulk-qty" step="any" min="0.0001"
+               style="width:110px;" placeholder="Qty">
+        <button type="button" class="btn btn-outline-secondary btn-sm" onclick="App.Item.applyBulkProcessQty()">Set Qty</button>
+        <button type="button" class="btn btn-outline-danger btn-sm" onclick="App.Item.removeSelectedProcessRows()">Remove Selected</button>
+      </div>
+      <div class="d-flex flex-wrap align-items-end gap-2 mt-2">
+        <div style="min-width:220px;">
+          <label class="form-label small mb-1">Add a process</label>
+          <select id="itemProcAddSelect" class="form-select form-select-sm"></select>
+        </div>
+        <div class="ms-auto text-end">
+          <span id="itemProcDirtyHint" class="small text-warning fw-bold me-2" style="display:none;">Unsaved recipe changes</span>
+          <button type="button" id="itemProcSaveBtn" class="btn btn-outline-info text-dark btn-sm fw-bold border-2"
+                  onclick="App.Item.saveProcessMappings()" disabled>Save Process Recipes</button>
+        </div>
+      </div>`;
+
+    this._refreshAddProcessPicker();
+    this._updateProcessCount();
+    this.updateProcessBulkBar();
+  },
+
+  // "Currently in N processes" -- N is the number of process rows the
+  // table is actually showing (each row = one process the item is used
+  // in, whether via a common-recipe entry or colour-only rows), so the
+  // headline count and the visible list can never disagree. Called after
+  // render and after every add/remove/downgrade (via markProcessesDirty).
+  _updateProcessCount() {
+    const el = document.getElementById('itemProcCount');
+    if (!el) return;
+    const n = $$('#itemProcessesTableBody tr[data-process-id]').length;
+    el.textContent = `${n} process${n === 1 ? '' : 'es'}`;
+  },
+
+  // Builds one process's <tr> (+ its color-variant info <tr>, if any).
+  // Shared by the initial render and _addProcessRow so both produce
+  // byte-identical markup for the editable cells.
+  _processRowHtml(r) {
+    const inactiveBadge = r.active
+      ? ''
+      : ' <span class="badge bg-secondary ms-1" title="This process is marked inactive in Process Master">Inactive</span>';
+
+    const commonCellsHtml = this._commonCellsHtml(r.inRecipe, {
+      qty: r.inRecipe ? String(r.qtyPerUnit) : '',
+      unit: r.unit || '',
+      remarks: r.remarks || ''
+    });
+
+    const variantRow = (r.colorVariants || []).length
+      ? `<tr class="table-light" data-variant-for="${escapeHtml(r.processId)}">
+           <td></td>
+           <td></td>
+           <td colspan="4" class="small text-muted py-1">
+             <i class="bi bi-palette me-1"></i>Colour-specific (edit in the Process tab):
+             ${r.colorVariants.map(v =>
+               `${escapeHtml(v.colorGroup)}${v.colorAxis ? ` <span class="opacity-75">(${escapeHtml(v.colorAxis)})</span>` : ''} &rarr; ${escapeHtml(String(v.qtyPerUnit))}${v.unit ? ' ' + escapeHtml(v.unit) : ''}`
+             ).join(' &nbsp;·&nbsp; ')}
+           </td>
+         </tr>`
+      : '';
+
+    return `<tr data-process-id="${escapeHtml(r.processId)}">
+        <td class="text-center align-middle">
+          <input type="checkbox" class="form-check-input item-proc-select-chk"
+                 onchange="App.Item.updateProcessBulkBar()"
+                 aria-label="Select ${escapeHtml(r.processName)} for bulk actions">
+        </td>
+        <td class="align-middle">
+          ${escapeHtml(r.processName)}${inactiveBadge}
+          <div class="small text-muted">${escapeHtml(r.processId)}${r.processType ? ' · ' + escapeHtml(r.processType) : ''}</div>
+        </td>
+        ${commonCellsHtml}
+      </tr>${variantRow}`;
+  },
+
+  // The qty/unit/remarks/action <td>s for one row, in either state.
+  // Pulled out so adding a row, removing a row, and downgrading a row
+  // to "colour-only" all produce the exact same markup as a fresh load.
+  _commonCellsHtml(inRecipe, { qty = '', unit = '', remarks = '' } = {}) {
+    if (inRecipe) {
+      return `
+        <td class="item-proc-qty-cell">
+          <input type="number" class="form-control form-control-sm item-proc-qty" step="any" min="0.0001"
+                 value="${escapeHtml(qty)}" placeholder="0" onchange="App.Item.markProcessesDirty()">
+        </td>
+        <td class="item-proc-unit-cell">
+          <input type="text" class="form-control form-control-sm item-proc-unit" list="unitList"
+                 value="${escapeHtml(unit)}" placeholder="Base Unit" onchange="App.Item.markProcessesDirty()"
+                 title="Leave blank to use the item's own Base Unit">
+        </td>
+        <td class="item-proc-remarks-cell">
+          <input type="text" class="form-control form-control-sm item-proc-remarks" maxlength="500"
+                 value="${escapeHtml(remarks)}" onchange="App.Item.markProcessesDirty()">
+        </td>
+        <td class="text-center align-middle item-proc-action-cell">
+          <button type="button" class="btn btn-outline-danger btn-sm" onclick="App.Item.removeProcessRow(this)" title="Remove from this process">&#10005;</button>
+        </td>`;
+    }
+    return `
+      <td class="item-proc-qty-cell"><span class="text-muted small">&mdash;</span></td>
+      <td class="item-proc-unit-cell"><span class="text-muted small">&mdash;</span></td>
+      <td class="item-proc-remarks-cell"><span class="text-muted small">Not in the common recipe</span></td>
+      <td class="text-center align-middle item-proc-action-cell">
+        <button type="button" class="btn btn-outline-info btn-sm" onclick="App.Item.addCommonToProcessRow(this)" title="Add to this process's common recipe">+ Add</button>
+      </td>`;
+  },
+
+  // Flips one already-rendered row between "in the common recipe"
+  // (editable qty/unit/remarks + remove button) and "colour-only"
+  // (dashes + an Add button) without touching its color-variant
+  // sibling row or any other row in the table.
+  _setRowCommonState(row, inRecipe, opts = {}) {
+    // Preserve the leading checkbox + process-name cells (the first
+    // 2 <td>s) -- only the qty/unit/remarks/action cells past them
+    // are state-dependent and get rebuilt.
+    const keepCells = Array.from(row.querySelectorAll('td')).slice(0, 2);
+    row.innerHTML = '';
+    keepCells.forEach(td => row.appendChild(td));
+    row.insertAdjacentHTML('beforeend', this._commonCellsHtml(inRecipe, opts));
+    if (inRecipe) row.querySelector('.item-proc-qty')?.focus();
+  },
+
+  // "+ Add" on a colour-only row: this process already has a row
+  // (because it has colour-specific entries) but no process-wide
+  // (COMMON) one yet -- this creates that COMMON entry in place,
+  // leaving the colour rows exactly as they are.
+  addCommonToProcessRow(btn) {
+    const row = btn.closest('tr[data-process-id]');
+    if (!row) return;
+    // Same default the process side falls back to on save -- right far
+    // more often than a blank the user must then fill in themselves.
+    this._setRowCommonState(row, true, { qty: '1' });
+    this.markProcessesDirty();
+    this._reapplyProcessSearch();
+  },
+
+  // "✕" on a row: if it has colour-specific entries to preserve,
+  // downgrade it to the colour-only display instead of deleting it
+  // outright -- deleting it here and having it reappear after Save
+  // (colour rows alone still count as "used") would be confusing.
+  // A row with no colour rows is removed entirely and freed back up
+  // in the "Add a process" picker. Shared with removeSelectedProcessRows
+  // (the bulk version) via _removeOneProcessRow.
+  removeProcessRow(btn) {
+    const row = btn.closest('tr[data-process-id]');
+    if (!row) return;
+    this._removeOneProcessRow(row);
+    this.markProcessesDirty();
+    this._refreshAddProcessPicker();
+    this._reapplyProcessSearch();
+  },
+
+  _removeOneProcessRow(row) {
+    const pid = row.dataset.processId;
+    const variantRow = row.nextElementSibling;
+    const hasVariant = variantRow && variantRow.dataset.variantFor === pid;
+
+    if (hasVariant) {
+      this._setRowCommonState(row, false);
+    } else {
+      row.remove();
+      this._maybeShowEmptyProcessMessage();
+    }
+  },
+
+  _maybeShowEmptyProcessMessage() {
+    const tbody = document.getElementById('itemProcessesTableBody');
+    if (tbody && !tbody.querySelector('tr[data-process-id]')) {
+      tbody.innerHTML =
+        '<tr id="itemProcEmptyRow"><td colspan="6" class="text-muted small text-center py-3">Not yet used in any process — search below to add one.</td></tr>';
+    }
+  },
+
+  // ── Search (filter the visible list) and bulk selection ──────────
+  // With items commonly used in 50+ processes, browsing needs two
+  // more tools beyond "only show used ones": a way to jump straight to
+  // a row by name, and a way to act on many rows at once instead of
+  // one ✕ at a time.
+
+  // Filters the rendered rows by keyword match against process name/
+  // ID/type -- display:none, not removal, so _collectProcessRows (which
+  // reads every tr[data-process-id] regardless of visibility) still
+  // sees every row's true state when Save runs. A row hidden by a new
+  // search term is also unchecked, so a bulk action can never silently
+  // act on something the user can no longer see.
+  filterProcessRows(term) {
+    const q = String(term || '').trim();
+    const tbody = document.getElementById('itemProcessesTableBody');
+    if (!tbody) return;
+
+    const allRows = $$('tr[data-process-id]', tbody);
+    let visibleCount = 0;
+
+    allRows.forEach(row => {
+      const meta = this._processesMeta[row.dataset.processId] || {};
+      const haystack = `${meta.processName || ''} ${row.dataset.processId || ''} ${meta.processType || ''}`;
+      const match = !q || App.Utils.matchesKeywords(haystack, q);
+      row.style.display = match ? '' : 'none';
+
+      const variantRow = row.nextElementSibling;
+      if (variantRow && variantRow.dataset.variantFor === row.dataset.processId) {
+        variantRow.style.display = match ? '' : 'none';
+      }
+
+      if (match) {
+        visibleCount++;
+      } else {
+        const chk = $('.item-proc-select-chk', row);
+        if (chk) chk.checked = false;
+      }
+    });
+
+    const note = document.getElementById('itemProcSearchNote');
+    if (note) note.textContent = q ? ` Showing ${visibleCount} of ${allRows.length}.` : '';
+
+    this.updateProcessBulkBar();
+  },
+
+  // Re-runs whatever search term is currently in the box, so
+  // visibility/selection/bulk-bar/select-all stay correct after a row
+  // is added, removed, or downgraded -- without touching the term
+  // itself. NOT used right after _addProcessRow: a stale filter could
+  // hide the row the user just deliberately added, so that path clears
+  // the term instead (see _addProcessRow).
+  _reapplyProcessSearch() {
+    const input = $('#itemProcessesBody .item-proc-search');
+    this.filterProcessRows(input ? input.value : '');
+  },
+
+  toggleSelectAllProcessRows(masterChk) {
+    const checked = masterChk.checked;
+    $$('#itemProcessesTableBody tr[data-process-id]').forEach(row => {
+      if (row.style.display === 'none') return;   // leave filtered-out rows alone
+      const chk = $('.item-proc-select-chk', row);
+      if (chk) chk.checked = checked;
+    });
+    this.updateProcessBulkBar();
+  },
+
+  // Keeps the header checkbox's checked/indeterminate state honest
+  // against only the currently VISIBLE rows -- a row hidden by a search
+  // term shouldn't count toward "are all of them selected".
+  _updateProcessSelectAllState() {
+    const master = document.getElementById('itemProcSelectAll');
+    if (!master) return;
+    const visibleChecks = $$('#itemProcessesTableBody tr[data-process-id]')
+      .filter(row => row.style.display !== 'none')
+      .map(row => $('.item-proc-select-chk', row))
+      .filter(Boolean);
+    const checkedCount = visibleChecks.filter(c => c.checked).length;
+    master.checked = visibleChecks.length > 0 && checkedCount === visibleChecks.length;
+    master.indeterminate = checkedCount > 0 && checkedCount < visibleChecks.length;
+  },
+
+  // Shows/hides the bulk-action bar and keeps its count + the header
+  // checkbox in sync -- called on every row checkbox change, and after
+  // any mutation that can change what's selected or visible.
+  updateProcessBulkBar() {
+    this._updateProcessSelectAllState();
+    const count = $$('#itemProcessesTableBody .item-proc-select-chk:checked').length;
+    const bar = document.getElementById('itemProcBulkBar');
+    const label = document.getElementById('itemProcBulkCount');
+    if (label) label.textContent = `${count} selected`;
+    if (bar) bar.classList.toggle('d-none', count === 0);
+  },
+
+  _getSelectedProcessRows() {
+    return $$('#itemProcessesTableBody .item-proc-select-chk:checked')
+      .map(chk => chk.closest('tr[data-process-id]'))
+      .filter(Boolean);
+  },
+
+  removeSelectedProcessRows() {
+    const rows = this._getSelectedProcessRows();
+    if (!rows.length) return;
+    const names = rows.map(row => this._processesMeta?.[row.dataset.processId]?.processName || row.dataset.processId);
+
+    App.Utils.confirmAction(
+      `Remove the item from ${rows.length} selected process${rows.length === 1 ? '' : 'es'} (${names.join(', ')})? ` +
+      `This isn't saved until you click "Save Process Recipes" — completed lots keep the components they already recorded.`,
+      () => {
+        rows.forEach(row => this._removeOneProcessRow(row));
+        this.markProcessesDirty();
+        this._refreshAddProcessPicker();
+        this._reapplyProcessSearch();
+      }
+    );
+  },
+
+  // Adds a brand-new row for a process the item wasn't in at all
+  // (picked from the "Add a process" search) -- qty defaults to 1, the
+  // same fallback the process side uses. Reuses _processRowHtml so an
+  // added row is byte-identical to a freshly-loaded one; the picker
+  // only ever offers processes with no row present, and any process
+  // carrying colour variants is always already present, so
+  // colorVariants is [] here in practice.
+  _addProcessRow(processId) {
+    const meta = this._processesMeta[processId];
+    const tbody = document.getElementById('itemProcessesTableBody');
+    if (!meta || !tbody) return;
+
+    document.getElementById('itemProcEmptyRow')?.remove();
+
+    tbody.insertAdjacentHTML('beforeend', this._processRowHtml({
+      processId,
+      processName: meta.processName,
+      processType: meta.processType,
+      active: meta.active,
+      inRecipe: true,
+      qtyPerUnit: 1,
+      unit: '',
+      remarks: '',
+      colorVariants: meta.colorVariants || []
+    }));
+
+    tbody.querySelector(`tr[data-process-id="${CSS.escape(processId)}"] .item-proc-qty`)?.focus();
+    this.markProcessesDirty();
+
+    // Clear (not reapply) any active filter term -- a stale search
+    // could otherwise hide the row the user just deliberately added.
+    const searchInput = $('#itemProcessesBody .item-proc-search');
+    if (searchInput) searchInput.value = '';
+    this.filterProcessRows('');
+  },
+
+  // Rebuilds the "Add a process" Select2 from whichever active
+  // processes DON'T currently have a row in the table -- called after
+  // every render, add and remove so the pool never offers a process
+  // that's already listed above it.
+  _refreshAddProcessPicker() {
+    const selectEl = document.getElementById('itemProcAddSelect');
+    if (!selectEl || !window.jQuery?.fn?.select2) return;
+
+    const $select = window.jQuery(selectEl);
+    if ($select.data('select2')) $select.select2('destroy');
+    // A single-select using `placeholder` needs an empty <option> present
+    // in the underlying <select> BEFORE Select2 initializes -- without it,
+    // Select2 4.1's placeholder/allowClear handling can leave the native
+    // <select>'s value out of sync with what's visibly chosen.
+    selectEl.innerHTML = '<option></option>';
+
+    const present = new Set(
+      $$('#itemProcessesTableBody tr[data-process-id]').map(tr => tr.dataset.processId)
+    );
+    const options = Object.keys(this._processesMeta)
+      .filter(pid => !present.has(pid) && this._processesMeta[pid].active)
+      .map(pid => ({ id: pid, text: this._processesMeta[pid].processName }))
+      .sort((a, b) => a.text.localeCompare(b.text));
+
+    const $modal = $select.closest('.modal');
+    $select.select2({
+      placeholder: options.length ? 'Search to add a process…' : 'Every active process is already listed',
+      width: '100%',
+      allowClear: true,
+      matcher: App.Utils.select2Matcher,
+      dropdownParent: $modal.length ? $modal : window.jQuery(document.body),
+      data: options
+    });
+
+    // Namespaced so repeated destroy/rebuild cycles never stack
+    // duplicate handlers onto the same underlying <select>.
+    $select.off('select2:select.itemProcAdd').on('select2:select.itemProcAdd', (e) => {
+      const pid = e.params.data.id;
+      this._addProcessRow(pid);
+      $select.val(null).trigger('change');
+      this._refreshAddProcessPicker();
+    });
+  },
+
+  destroyAddProcessSelect2() {
+    const selectEl = document.getElementById('itemProcAddSelect');
+    if (!selectEl || !window.jQuery?.fn?.select2) return;
+    const $select = window.jQuery(selectEl);
+    if ($select.data('select2')) $select.select2('destroy');
+  },
+
+  // Bulk-set qty for whatever's currently checked (see the
+  // itemProcBulkBar toolbar) -- "apply to everything" is just the
+  // special case of ticking the header select-all first, so there's
+  // no separate "apply to all" control to keep in sync with this one.
+  // A selected row that's currently colour-only (no common entry yet)
+  // is promoted into the common recipe with this qty rather than
+  // silently skipped, matching what "+ Add" already does for one row.
+  applyBulkProcessQty() {
+    const input = $('#itemProcBulkBar .item-proc-bulk-qty');
+    const raw = input?.value?.trim();
+    const qty = toNumber(raw);
+    if (!raw || !(qty > 0)) {
+      App.Utils.showToast('Enter a qty greater than 0 to apply.', true);
+      input?.focus();
+      return;
+    }
+
+    const rows = this._getSelectedProcessRows();
+    if (!rows.length) {
+      App.Utils.showToast('No processes are selected.', true);
+      return;
+    }
+
+    rows.forEach(row => {
+      const qtyInput = $('.item-proc-qty', row);
+      if (qtyInput) {
+        qtyInput.value = raw;
+      } else {
+        this._setRowCommonState(row, true, { qty: raw });
+      }
+    });
+
+    if (input) input.value = '';
+    this.markProcessesDirty();
+    this._reapplyProcessSearch();
+    App.Utils.showToast(`Qty ${raw} applied to ${rows.length} selected process${rows.length === 1 ? '' : 'es'}. Not saved yet.`);
+  },
+
+  markProcessesDirty() {
+    const btn = document.getElementById('itemProcSaveBtn');
+    if (btn) btn.disabled = false;
+    const hint = document.getElementById('itemProcDirtyHint');
+    if (hint) hint.style.display = '';
+    this._updateProcessCount();
+  },
+
+  // Reads the rendered rows back into mapping objects. A row's
+  // presence with an editable qty input = inRecipe true; a row still
+  // present but downgraded to "colour-only" (dashes) = inRecipe
+  // false; a row removed entirely also resolves to inRecipe false via
+  // the baseline sweep below. A process with no row at all is simply
+  // absent -- saveItemProcessMappings leaves any process not in the
+  // submitted list completely untouched.
+  _collectProcessRows({ includeUnchanged = false } = {}) {
+    const present = {};
+    $$('#itemProcessesTableBody tr[data-process-id]').forEach(row => {
+      const processId = row.dataset.processId;
+      const qtyInput = $('.item-proc-qty', row);
+      const inRecipe = !!qtyInput;
+      present[processId] = {
+        processId,
+        inRecipe,
+        qtyPerUnit: inRecipe ? toNumber(qtyInput.value) : '',
+        unit: inRecipe ? ($('.item-proc-unit', row)?.value?.trim() || '') : '',
+        remarks: inRecipe ? ($('.item-proc-remarks', row)?.value?.trim() || '') : ''
+      };
+    });
+
+    const out = [];
+    Object.values(present).forEach(entry => {
+      if (includeUnchanged || this._processRowChanged(entry)) out.push(entry);
+    });
+    // A process removed (or downgraded) so completely that it no
+    // longer has a row at all still needs its removal reported.
+    Object.keys(this._processesBaseline).forEach(pid => {
+      const base = this._processesBaseline[pid];
+      if (base.inRecipe && !present[pid]) {
+        out.push({ processId: pid, inRecipe: false, qtyPerUnit: '', unit: '', remarks: '' });
+      }
+    });
+    return out;
+  },
+
+  _processRowChanged(entry) {
+    const base = this._processesBaseline[entry.processId];
+    if (!base) return entry.inRecipe;
+    if (base.inRecipe !== entry.inRecipe) return true;
+    if (!entry.inRecipe) return false;   // both off -- nothing else matters
+    return toNumber(base.qtyPerUnit) !== toNumber(entry.qtyPerUnit) ||
+           (base.unit || '') !== (entry.unit || '') ||
+           (base.remarks || '') !== (entry.remarks || '');
+  },
+
+  async saveProcessMappings() {
+    const item = this._processesItem;
+    if (!item) return;
+
+    const changed = this._collectProcessRows();
+    if (!changed.length) {
+      App.Utils.showToast('No recipe changes to save.');
+      return;
+    }
+
+    const invalid = changed.find(r => r.inRecipe && !(toNumber(r.qtyPerUnit) > 0));
+    if (invalid) {
+      App.Utils.showToast('Every ticked process needs a Qty per Unit greater than 0. Untick a process to remove the item from it.', true);
+      return;
+    }
+
+    const removals = changed.filter(r => !r.inRecipe);
+    const apply = async () => {
+      const btn = document.getElementById('itemProcSaveBtn');
+      const originalHtml = btn?.innerHTML;
+      if (btn) { btn.disabled = true; btn.innerHTML = 'Saving…'; }
+      try {
+        const res = await Api.mutate('saveItemProcessMappings', item.name, item.size, JSON.stringify(changed));
+        if (!res?.success) {
+          App.Utils.showToast(res?.message || 'Failed to update process recipes.', true);
+          if (btn) { btn.disabled = false; btn.innerHTML = originalHtml; }
+          return;
+        }
+
+        // Repaint from the server's fresh state, not from what we
+        // assumed we wrote.
+        this.renderProcessesSection(res.data?.processes || []);
+        App.Utils.showToast(res.message || 'Process recipes updated.');
+        (res.data?.warnings || []).forEach(w => App.Utils.showToast(w, true));
+      } catch (err) {
+        App.Utils.showToast(err.message || 'Failed to update process recipes.', true);
+        if (btn) { btn.disabled = false; btn.innerHTML = originalHtml; }
+      }
+    };
+
+    if (removals.length) {
+      const names = removals.map(r => this._processesMeta?.[r.processId]?.processName || r.processId);
+      App.Utils.confirmAction(
+        `Remove "${item.name}" from ${names.length} process recipe${names.length === 1 ? '' : 's'} (${names.join(', ')})? ` +
+        `Completed lots keep the components they already recorded — only new lots change.`,
+        apply
+      );
+      return;
+    }
+
+    await apply();
+  },
+
+  goToProcesses() {
+    safeModalHide('itemModal');
+    App.Navigation.showTab('productsTab');
+  },
+
+  // ── Check Reference Integrity ─────────────────────────────────────
+  // Groups raw getItemIdentityDriftReport() findings (one per
+  // referencing row) into one entry per distinct stale (name, size) --
+  // the Fix action operates on the whole identity at once (every table
+  // that names it), not row-by-row.
+  _groupDriftFindings(drift) {
+    const groups = new Map();
+    drift.forEach(d => {
+      const key = d.itemName.toLowerCase() + '|' + (d.size || '').toLowerCase();
+      if (!groups.has(key)) {
+        groups.set(key, { itemName: d.itemName, size: d.size || '', sheets: new Map() });
+      }
+      const group = groups.get(key);
+      const contexts = group.sheets.get(d.sheet) || [];
+      contexts.push(d.context);
+      group.sheets.set(d.sheet, contexts);
+    });
+    return Array.from(groups.values());
+  },
+
+  // Deduped, sorted current-Items-Master list shared by every drift
+  // group's "repoint to" picker, cached on `this._driftTargetItems`
+  // (indexed by array position -- fixDriftReference looks the chosen
+  // option back up by that index). Just builds the cache; rendering is
+  // done lazily per-dropdown by _initDriftTargetSelects's ajax
+  // transport, NOT by dumping every item as a static <option> into
+  // every select -- with hundreds/thousands of items and several stale
+  // groups open at once, that would duplicate the full list N times
+  // over and make Select2 render its entire unfiltered results list on
+  // every open.
+  _buildDriftTargetItems() {
+    const seen = new Set();
+    this._driftTargetItems = (App.State.globalItems || [])
+      .filter(it => {
+        const key = (it.name || '').toLowerCase() + '|' + (it.size || '').toLowerCase();
+        if (seen.has(key)) return false;
+        seen.add(key);
+        return true;
+      })
+      .sort((a, b) => a.name.localeCompare(b.name) || a.size.localeCompare(b.size));
+  },
+
+  // Destroys any Select2 instances currently attached to
+  // ".drift-target-select" elements before the modal body markup gets
+  // thrown away and rebuilt -- skipping this would leave Select2's own
+  // document-level listeners attached to detached DOM nodes on every
+  // checkReferenceIntegrity() re-render, which piles up across a
+  // realistic session of "open -> fix a few -> re-check" cycles.
+  _destroyDriftTargetSelects() {
+    if (!window.jQuery?.fn?.select2) return;
+    document.querySelectorAll('.drift-target-select').forEach(el => {
+      const $el = window.jQuery(el);
+      if ($el.data('select2')) $el.select2('destroy');
+    });
+  },
+
+  // Turns every rendered ".drift-target-select" into a searchable,
+  // paginated Select2 -- same ajax/local-transport pattern as other
+  // item pickers in this file, so opening the dropdown only ever
+  // renders one page (PAGE_SIZE) of results regardless of how large
+  // Items Master is, instead of the whole list at once.
+  //
+  // dropdownParent is the modal root (#itemDriftModal), NOT
+  // document.body -- Bootstrap's modal focus trap (tabindex="-1")
+  // steals focus from any element outside the modal, which would make
+  // Select2's search input uneditable if parented to body. The modal
+  // root is not itself scrollable (only .modal-body scrolls), so
+  // Select2's position math stays reliable.
+  _initDriftTargetSelects() {
+    if (!window.jQuery?.fn?.select2) return;
+    const PAGE_SIZE = 40;
+    const items = this._driftTargetItems || [];
+    const $modalRoot = window.jQuery('#itemDriftModal');
+
+    document.querySelectorAll('.drift-target-select').forEach(el => {
+      const $el = window.jQuery(el);
+      $el.select2({
+        placeholder: 'Repoint to…',
+        width: '100%',
+        dropdownParent: $modalRoot,
+        ajax: {
+          delay: 150,
+          data(params) {
+            return { q: params.term || '', page: params.page || 1 };
+          },
+          transport(params, success) {
+            const q = (params.data.q || '').trim();
+            const page = params.data.page || 1;
+            const start = (page - 1) * PAGE_SIZE;
+
+            const pool = q
+              ? items.map((it, idx) => ({ idx, it })).filter(({ it }) => App.Utils.matchesKeywords(`${it.name} ${it.size || ''}`, q))
+              : items.map((it, idx) => ({ idx, it }));
+
+            const pageSlice = pool.slice(start, start + PAGE_SIZE);
+            success({
+              results: pageSlice.map(({ idx, it }) => ({
+                id: String(idx),
+                text: `${it.name}${it.size ? ' (' + it.size + ')' : ''}`
+              })),
+              pagination: { more: (start + PAGE_SIZE) < pool.length }
+            });
+          },
+          processResults(data) { return data; }
+        }
+      }).on('change', function () {
+        const fixBtn = this.closest('tr')?.querySelector('.drift-fix-btn');
+        if (fixBtn) fixBtn.disabled = !this.value;
+      });
+    });
+  },
+
+  // Read-only diagnostic (getItemIdentityDriftReport) -- verifies that
+  // every Item Name/Size reference in Bill/PO/BOM/Process Components/
+  // Return/Wastage/Issue/Production still resolves to a current Items
+  // Master row, so a rename/merge cascade gap (past or newly
+  // introduced) surfaces instead of silently corrupting Stock math.
+  // Each distinct stale identity gets a "repoint to" picker and a Fix
+  // button (see fixDriftReference) -- nothing is changed just by
+  // running the check itself.
+  async checkReferenceIntegrity() {
+    const btn = document.getElementById('btnCheckItemRefIntegrity');
+    const originalBtnHtml = btn?.innerHTML;
+    try {
+      if (btn) { btn.disabled = true; btn.innerHTML = '<i class="bi bi-clipboard-check"></i> Checking…'; }
+      const res = await Api.call('getItemIdentityDriftReport');
+      if (!res?.success) {
+        App.Utils.showToast(res?.message || 'Failed to check reference integrity.', true);
+        return;
+      }
+      const drift = res.data || [];
+      this._destroyDriftTargetSelects();
+      if (drift.length === 0) {
+        App.Utils.showToast(res.message || 'No drift found — every reference resolves to a current Items Master row.');
+        safeModalHide('itemDriftModal');
+        return;
+      }
+
+      const groups = this._groupDriftFindings(drift);
+      this._buildDriftTargetItems();
+      this._driftGroups = groups;
+
+      const rowsHtml = groups.map((g, i) => {
+        const sheetsHtml = Array.from(g.sheets.entries())
+          .map(([sheet, contexts]) => `<div><strong>${escapeHtml(sheet)}</strong> (${contexts.length}): <span class="text-muted">${escapeHtml(contexts.slice(0, 3).join(', '))}${contexts.length > 3 ? ', …' : ''}</span></div>`)
+          .join('');
+        return `
+          <tr>
+            <td>${escapeHtml(g.itemName)}${g.size ? ' <small class="text-muted">(' + escapeHtml(g.size) + ')</small>' : ''}</td>
+            <td>${sheetsHtml}</td>
+            <td style="min-width: 220px;">
+              <select class="form-select form-select-sm drift-target-select" id="driftTarget_${i}"></select>
+            </td>
+            <td>
+              <button type="button" class="btn btn-sm btn-warning fw-bold drift-fix-btn" disabled onclick="App.Item.fixDriftReference(${i})">Fix</button>
+            </td>
+          </tr>`;
+      }).join('');
+
+      const body = document.getElementById('itemDriftModalBody');
+      if (body) {
+        body.innerHTML = `
+          <p class="text-muted small" id="itemDriftSummary">These ${groups.length} distinct item identit${groups.length === 1 ? 'y' : 'ies'} (${drift.length} reference${drift.length === 1 ? '' : 's'} total) name an Item Name/Size that no longer exists in Items Master — most likely left behind by a rename or merge from before this check existed. Pick the item it should now resolve to and click Fix to repoint every reference to it at once. Nothing changes until you click Fix.</p>
+          <div class="table-responsive">
+            <table class="table table-sm table-bordered align-middle">
+              <thead class="table-light">
+                <tr>
+                  <th style="width: 20%;">Stale Item Referenced</th>
+                  <th style="width: 40%;">Used In</th>
+                  <th style="width: 30%;">Repoint To</th>
+                  <th style="width: 10%;"></th>
+                </tr>
+              </thead>
+              <tbody>${rowsHtml}</tbody>
+            </table>
+          </div>`;
+      }
+      // Select2 measures its container's width/position at init time --
+      // doing that while the modal is still `display:none` (before
+      // Bootstrap's fade-in finishes) reads bogus zero/stale layout
+      // values and can leave a dropdown mispositioned or unable to
+      // open correctly the first time. Wait for the modal to actually
+      // be shown (laid out, fully visible) before initializing.
+      // Guard: remove any stale listener from a previous
+      // checkReferenceIntegrity() call that hasn't fired yet (user
+      // re-ran the check before the modal finished opening).
+      const driftModal = document.getElementById('itemDriftModal');
+      if (driftModal) {
+        if (this._driftShownHandler) driftModal.removeEventListener('shown.bs.modal', this._driftShownHandler);
+        this._driftShownHandler = () => this._initDriftTargetSelects();
+        driftModal.addEventListener('shown.bs.modal', this._driftShownHandler, { once: true });
+      }
+      safeModalShow('itemDriftModal');
+    } catch (err) {
+      App.Utils.showToast(err.message || 'Failed to check reference integrity.', true);
+    } finally {
+      if (btn) { btn.disabled = false; if (originalBtnHtml) btn.innerHTML = originalBtnHtml; }
+    }
+  },
+
+  // Repoints one drift group (see checkReferenceIntegrity) to the
+  // Items Master row the user picked in its "Repoint to" dropdown.
+  // Removes just that row from the already-open modal on success
+  // instead of re-running the whole check -- a full re-fetch +
+  // re-render would rebuild every OTHER row's Select2 too (discarding
+  // any in-progress picks) just to reflect one row disappearing, which
+  // is unnecessary: fixing (staleName, staleSize) deterministically
+  // repoints every reference to it, so the group cannot reappear.
+  async fixDriftReference(groupIndex) {
+    const group = this._driftGroups?.[groupIndex];
+    const select = document.getElementById(`driftTarget_${groupIndex}`);
+    const picked = select?.value;
+    const target = (picked !== undefined && picked !== '') ? this._driftTargetItems?.[Number(picked)] : null;
+    if (!group || !target) {
+      App.Utils.showToast('Pick an item to repoint to first.', true);
+      return;
+    }
+
+    const btn = select?.closest('tr')?.querySelector('.drift-fix-btn');
+    try {
+      if (btn) { btn.disabled = true; btn.textContent = 'Fixing…'; }
+      const res = await Api.mutate('fixItemIdentityDriftReference', group.itemName, group.size, target.name, target.size || '');
+      App.Utils.showToast(res?.message || (res?.success ? 'Fixed.' : 'Failed to fix reference.'), !res?.success);
+      if (res?.success) {
+        this._removeDriftRow(groupIndex);
+      }
+    } catch (err) {
+      App.Utils.showToast(err.message || 'Failed to fix reference.', true);
+    } finally {
+      if (btn) { btn.disabled = false; btn.textContent = 'Fix'; }
+    }
+  },
+
+  // Removes one fixed group's row from the still-open drift modal
+  // without touching any other row's Select2 instance, and updates the
+  // remaining-count summary. Closes the modal once nothing is left.
+  _removeDriftRow(groupIndex) {
+    const select = document.getElementById(`driftTarget_${groupIndex}`);
+    if (window.jQuery?.fn?.select2 && select && window.jQuery(select).data('select2')) {
+      window.jQuery(select).select2('destroy');
+    }
+    select?.closest('tr')?.remove();
+    if (this._driftGroups) this._driftGroups[groupIndex] = null;
+
+    const remaining = document.querySelectorAll('#itemDriftModalBody tbody tr').length;
+    if (remaining === 0) {
+      safeModalHide('itemDriftModal');
+      return;
+    }
+    const summary = document.getElementById('itemDriftSummary');
+    if (summary) {
+      summary.textContent = `${remaining} distinct item identit${remaining === 1 ? 'y' : 'ies'} remaining. Pick the item each should now resolve to and click Fix to repoint every reference to it at once.`;
+    }
   },
 
   async delete(name, size) {
@@ -1246,21 +2235,46 @@ document.addEventListener('DOMContentLoaded', () => {
         }
 
         const isEdit = !!formData.originalName;
+        const savedName = formData.itemName?.trim() || '';
+        const savedSize = formData.itemSize?.trim() || '';
+
+        // A plain edit (name/size unchanged) can patch its one row in
+        // place -- a rename/resize touches Stock's own key (and cascades
+        // into BOM/Process recipe references), so it still needs the full
+        // reload below to pick up everything that moved with it. The Meta
+        // Data column (stock/pending/threshold) can stay stale here until
+        // Stock next reloads naturally, same class of staleness as every
+        // other module's patch path.
+        const isPlainEdit = isEdit &&
+          savedName.toLowerCase() === String(formData.originalName || '').trim().toLowerCase() &&
+          savedSize.toLowerCase() === String(formData.originalSize || '').trim().toLowerCase();
+
         if (res?.success) {
           const thresholdInput = document.getElementById('formItemThreshold');
           const thresholdVal = thresholdInput ? parseInt(thresholdInput.value, 10) : NaN;
           if (!isNaN(thresholdVal) && thresholdVal >= 0) {
-            const savedName = formData.itemName?.trim() || '';
-            const savedSize = formData.itemSize?.trim() || '';
             try {
               await Api.mutate('updateThreshold', savedName, savedSize, thresholdVal);
             } catch (_) { /* best-effort, matches source */ }
           }
-          App.State.globalStock = [];
-          await App.Item.loadData();
+
+          const patched = isPlainEdit && res.data && res.data.item
+            ? App.Item.patchRowInPlace(res.data.item, formData.originalName, formData.originalSize)
+            : false;
+          if (!patched) {
+            App.State.globalStock = [];
+            await App.Item.loadData();
+          }
         }
         if (res?.success && !isEdit) {
           App.Item.openCreateModal();
+        } else if (res?.success && isEdit) {
+          // Save (edit mode): stay open on the SAME item instead of
+          // closing -- Exit (App.Nav.exit) is the only way to close from
+          // here now. Item identity is (name, size) -- both editable --
+          // so re-open with the NEW values just saved, not the pre-edit
+          // originalName/originalSize.
+          App.Item.openEditModal(savedName, savedSize);
         } else {
           safeModalHide('itemModal');
         }
@@ -1272,4 +2286,14 @@ document.addEventListener('DOMContentLoaded', () => {
       }
     });
   }
+
+  // The "Used in Processes" add-a-process picker is a Select2 parented
+  // to this modal (see _refreshAddProcessPicker) so its dropdown keeps
+  // rendering correctly regardless of .modal-body scroll -- but that
+  // also means it survives the modal closing unless explicitly torn
+  // down here, leaking a detached dropdown element every time the item
+  // modal is opened and closed.
+  document.getElementById('itemModal')?.addEventListener('hidden.bs.modal', () => {
+    App.Item.destroyAddProcessSelect2();
+  });
 });

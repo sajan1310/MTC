@@ -22,6 +22,45 @@ def test_get_bill_data_returns_success_envelope(erp_client):
     assert isinstance(body["data"], list)
 
 
+def test_save_bill_returns_fresh_row_for_in_place_patch(erp_client):
+    vendor = _unique_name("Vendor")
+    bill_number = _unique_name("INV")
+    item1 = _unique_name("Item1")
+    item2 = _unique_name("Item2")
+
+    create = _rpc(
+        erp_client,
+        "saveBill",
+        [{"vendor": vendor, "billNumber": bill_number, "billDate": "01/01/2026", "items": [{"name": item1, "qty": 5, "price": 2}]}],
+        mutation=True,
+    )
+    create_body = create.get_json()
+    assert create_body["data"]["bill"]["billNumber"] == bill_number
+    assert create_body["data"]["bill"]["items"][0]["name"] == item1
+
+    edit = _rpc(
+        erp_client,
+        "saveBill",
+        [
+            {
+                "existingVendor": vendor,
+                "existingBillNumber": bill_number,
+                "vendor": vendor,
+                "billNumber": bill_number,
+                "billDate": "01/01/2026",
+                "items": [{"name": item2, "qty": 3, "price": 4}],
+            }
+        ],
+        mutation=True,
+    )
+    edit_body = edit.get_json()
+    fresh_bill = edit_body["data"]["bill"]
+    assert fresh_bill["billNumber"] == bill_number
+    assert fresh_bill["vendor"] == vendor
+    assert len(fresh_bill["items"]) == 1
+    assert fresh_bill["items"][0]["name"] == item2
+
+
 def test_save_bill_rejects_zero_items(erp_client):
     resp = _rpc(erp_client, "saveBill", [{"vendor": "V", "billNumber": "B1", "billDate": "01/01/2026", "items": []}], mutation=True)
     body = resp.get_json()
@@ -215,6 +254,58 @@ def test_save_bill_auto_extracts_vendor_item_and_rate_history(erp_client):
     items = _rpc(erp_client, "getItemsData").get_json()["data"]
     imatch = next(i for i in items if i["name"] == item)
     assert any(v["vendor"] == vendor and v["rate"] == 30 for v in imatch["vendors"])
+
+
+def test_save_bill_warns_when_billed_beyond_po_line(erp_client):
+    """_compute_bill_overage_warnings: an advisory, non-blocking warning
+    appended to the save message when a line's cumulative billed base qty
+    now exceeds what was ordered -- bills are allowed to exceed a PO
+    (freight corrections, renegotiated quantities), this only surfaces it.
+    """
+    vendor = _unique_name("OverageVendor")
+    item = _unique_name("OverageItem")
+
+    create = _rpc(
+        erp_client,
+        "savePO",
+        [{"vendor": vendor, "items": [{"name": item, "size": "", "qty": 5, "unit": "Pcs", "price": 1}]}],
+        mutation=True,
+    )
+    po_number = create.get_json()["data"]["poNumber"]
+
+    within = _rpc(
+        erp_client,
+        "saveBill",
+        [
+            {
+                "vendor": vendor,
+                "billNumber": _unique_name("WithinBill"),
+                "billDate": "01/01/2026",
+                "items": [{"name": item, "size": "", "qty": 3, "price": 1, "po": po_number}],
+            }
+        ],
+        mutation=True,
+    )
+    assert "warning" not in within.get_json()["message"].lower()
+
+    over = _rpc(
+        erp_client,
+        "saveBill",
+        [
+            {
+                "vendor": vendor,
+                "billNumber": _unique_name("OverBill"),
+                "billDate": "02/01/2026",
+                "items": [{"name": item, "size": "", "qty": 4, "price": 1, "po": po_number}],
+            }
+        ],
+        mutation=True,
+    )
+    over_body = over.get_json()
+    assert over_body["success"] is True
+    assert "Warning" in over_body["message"]
+    assert po_number in over_body["message"]
+    assert "2.00 over" in over_body["message"]  # 3 + 4 = 7 billed vs 5 ordered
 
 
 def test_delete_bill_success_and_not_found(erp_client):

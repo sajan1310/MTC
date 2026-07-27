@@ -145,7 +145,12 @@ def _attach_po_status(po: dict, billed_map: dict) -> None:
 
         ratio = (item["qty"] / effective_base_qty) if effective_base_qty > 0 else 1
         item["receivedQty"] = billed_base_qty * ratio
-        item["pendingQty"] = max(0, item["qty"] - item["receivedQty"])
+        # Not clamped to 0 -- a negative value means this line has been
+        # billed beyond what was ordered (see save_bill's advisory
+        # over-billing warning). Every current reader of pendingQty already
+        # filters to > 0.0001 before display, so this stays invisible in
+        # "pending" lists but is now available to surface the overage.
+        item["pendingQty"] = item["qty"] - item["receivedQty"]
 
         if billed_base_qty > 0.0001:
             any_billed = True
@@ -220,25 +225,31 @@ def _auto_extract_from_po(cur, vendor_name: str, contact: str, items: list, po_n
 # ─────────────────────────────────────────────────────────────────────────
 
 
-def _load_po_list(cur, billed_map: dict) -> list:
+def _load_po_list(cur, billed_map: dict, only_po_number: str | None = None) -> list:
     """Core of getPOData: query + group + status-attach, given an
     already-computed billed_map. Shared cursor, no envelope -- reused by
-    get_po_data() (which computes its own billed_map) and
+    get_po_data() (which computes its own billed_map),
     suggest_po_allocations() (which reuses one already computed, avoiding a
     second full Bill Ledger read -- matches the source's own
-    getPOData(preloadedBilledMap) optimization).
+    getPOData(preloadedBilledMap) optimization), and save_po() (which passes
+    only_po_number to read back just its own freshly-written PO for the
+    client's in-place row-patch response).
     """
-    cur.execute(
-        """
+    query = """
         SELECT h.po_number, h.po_date, h.vendor, h.contact, h.po_description,
                h.po_remarks, h.supplier_remarks,
                l.item_name, l.narration, l.size, l.qty, l.unit, l.price, l.base_qty, l.base_rate
         FROM erp.po_headers h
         JOIN erp.po_lines l ON l.header_id = h.id
         WHERE h.deleted_at IS NULL
-        ORDER BY h.id, l.id
         """
-    )
+    params: list = []
+    if only_po_number is not None:
+        query += " AND lower(h.po_number) = lower(%s)"
+        params.append(only_po_number)
+    query += " ORDER BY h.id, l.id"
+
+    cur.execute(query, params)
     rows = cur.fetchall()
 
     po_map: dict = {}
@@ -407,7 +418,14 @@ def save_po(conn, cur, form_data):
     _auto_extract_from_po(cur, vendor, contact, items, po_number, po_date)
 
     message = f"PO updated successfully to #{po_number}." if is_edit else f"PO #{po_number} created successfully."
-    return build_response(True, {"poNumber": po_number}, message)
+
+    # Read this PO's own just-written rows back so the client can patch it
+    # into an already-loaded list in place instead of a full reload.
+    fresh_billed_map = bill_service._aggregate_billed_base_qty_by_po(cur)
+    fresh_list = _load_po_list(cur, fresh_billed_map, only_po_number=po_number)
+    fresh_po = fresh_list[0] if fresh_list else None
+
+    return build_response(True, {"poNumber": po_number, "po": fresh_po}, message)
 
 
 @rpc_method("deletePO", mutation=True)

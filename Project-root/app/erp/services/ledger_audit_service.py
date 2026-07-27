@@ -61,9 +61,11 @@ def compute_internal_ledger_audit_findings() -> dict:
 
     Checks performed (each independent):
     1. over_billed_po_line -- a PO line's total billed qty exceeds what was
-       ordered. getPOData()'s own status math clamps this at 0 internally
-       (pendingQty = max(0, ...)) so it never surfaces anywhere else --
-       this reads the same unclamped item["receivedQty"] instead.
+       ordered. getPOData() surfaces this too (pendingQty goes negative,
+       and save_bill appends an inline advisory on the very save that
+       causes it), but neither is proactive -- this check catches an
+       overage that's already sitting in the ledgers regardless of when
+       or how it got there, reading the same item["receivedQty"] directly.
     2. orphaned_return_bill_ref -- a Return names a Bill Number that
        doesn't exist for that vendor (free-text, never validated at entry).
     3. return_item_not_on_bill -- a Return names a real Bill, but has an

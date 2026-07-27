@@ -79,13 +79,36 @@ def sync_stock_for_item(cur, action: str, payload: dict) -> None:
                 (new_name, new_size, old_id),
             )
         else:
+            cur.execute("SELECT initial_stock FROM erp.stock WHERE id = %s", (old_id,))
+            old_initial = float(cur.fetchone()["initial_stock"] or 0)
+
+            # initial_stock is tracked in each item's own Base Unit -- if the
+            # old and new identities were set up with different Base Units
+            # (a data-entry inconsistency merge is meant to fix), adding the
+            # raw numbers together would silently corrupt it. Convert the
+            # old row's figure into the target's Base Unit first. Local
+            # imports: items_service imports this module, so importing it
+            # back at module level here would be circular.
+            from . import items_service
+            from . import units_service
+
+            unit_info_map = items_service.get_item_unit_info_map(cur)
+            old_info = items_service.lookup_item_unit_info(unit_info_map, old_name, old_size)
+            new_info = items_service.lookup_item_unit_info(unit_info_map, new_name, new_size)
+            if old_info["baseUnit"] != new_info["baseUnit"]:
+                try:
+                    old_initial = units_service.convert_qty_to_base_unit(
+                        old_initial, old_info["baseUnit"], new_info, units_service.get_units_map()
+                    )
+                except ValueError:
+                    # Unconvertible (e.g. no Weight-per-Base-Unit set) --
+                    # fall back to adding the as-entered figure rather than
+                    # blocking the merge.
+                    pass
+
             cur.execute(
-                """
-                UPDATE erp.stock SET initial_stock = initial_stock + (
-                    SELECT initial_stock FROM erp.stock WHERE id = %s
-                ) WHERE id = %s
-                """,
-                (old_id, new_id),
+                "UPDATE erp.stock SET initial_stock = initial_stock + %s WHERE id = %s",
+                (old_initial, new_id),
             )
             # Tombstone, not a hard DELETE -- a hard delete wouldn't fire the
             # row_version trigger and would leave no tombstone for offline

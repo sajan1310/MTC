@@ -284,15 +284,27 @@ App.Process = {
         if (collapsed.has(keyPrefix.slice(0, -1))) hiddenByCollapse = true;
       }
       if (hiddenByCollapse) return;
-      const idx = App.State.globalProcesses.indexOf(p);
-      const checked = App.Selection.isSelected(App.State.selectedProcesses, p.processId) ? 'checked' : '';
-      const rowAttrs = dragEnabled
-        ? `draggable="true" ondragstart="App.Process.onDragStart(event,'${escapeHtml(p.processId)}')" ondragover="App.Process.onDragOver(event)" ondrop="App.Process.onDrop(event,'${escapeHtml(p.processId)}')" ondragend="App.Process.onDragEnd(event)"`
-        : '';
-      const handleCell = dragEnabled
-        ? '<td class="text-center text-muted" style="cursor:grab;"><i class="bi bi-grip-vertical"></i></td>'
-        : '<td></td>';
-      html += `<tr ${rowAttrs}>
+      html += this.rowHtml(p, dragEnabled);
+    });
+
+    tbody.innerHTML = html;
+    this.updateBulkButtons();
+  },
+
+  // Renders one <tr> for a process (no group headers -- those are built
+  // inline in renderTable, which is the only caller that needs them).
+  // Shared by renderTable's full rebuild and patchRowInPlace's single-row
+  // swap below.
+  rowHtml(p, dragEnabled) {
+    const idx = App.State.globalProcesses.indexOf(p);
+    const checked = App.Selection.isSelected(App.State.selectedProcesses, p.processId) ? 'checked' : '';
+    const rowAttrs = dragEnabled
+      ? `draggable="true" ondragstart="App.Process.onDragStart(event,'${escapeHtml(p.processId)}')" ondragover="App.Process.onDragOver(event)" ondrop="App.Process.onDrop(event,'${escapeHtml(p.processId)}')" ondragend="App.Process.onDragEnd(event)"`
+      : '';
+    const handleCell = dragEnabled
+      ? '<td class="text-center text-muted" style="cursor:grab;"><i class="bi bi-grip-vertical"></i></td>'
+      : '<td></td>';
+    return `<tr ${rowAttrs} data-process-key="${escapeHtml(p.processId)}">
     ${handleCell}
     <td class="text-center"><input type="checkbox" class="form-check-input process-select-chk" data-key="${escapeHtml(p.processId)}" ${checked} onchange="App.Process.onRowSelectChange()"></td>
     <td><span class="badge bg-dark fs-6 shadow-sm">${escapeHtml(p.processId)}</span></td>
@@ -309,10 +321,47 @@ App.Process = {
       <button class="btn btn-sm btn-danger btn-action" onclick="App.Process.delete('${escapeHtml(p.processId)}')">Delete</button>
     </td>
   </tr>`;
-    });
+  },
 
-    tbody.innerHTML = html;
-    this.updateBulkButtons();
+  // Patches one already-loaded process's data + its rendered <tr> after an
+  // edit save, instead of a full loadData() reload. processId is
+  // server-assigned and never user-editable, so this is a safe stable
+  // key.
+  //
+  // Only swaps the single <tr> in place when the table is in its flat,
+  // ungrouped, unfiltered view -- group headers (see renderTable's tiers/
+  // lastValues walk) are inline with data rows and depend on each row's
+  // position relative to its neighbors, so a change to whatever field the
+  // active "Group by" dimensions key off of could move this row to a
+  // different group entirely. In that case (or search-filtered), this
+  // still mutates the in-memory record and does a full renderTable() -- a
+  // client-side re-render from already-correct data, NOT a server reload
+  // -- so the group/search UI stays consistent.
+  //
+  // Returns false only when the process isn't currently loaded at all
+  // (caller falls back to loadData()); a grouped/filtered re-render is
+  // reported as a successful patch since it never hit the network.
+  patchRowInPlace(freshProcess) {
+    const key = String(freshProcess.processId);
+    const existing = App.State.globalProcesses.find(p => String(p.processId) === key);
+    if (!existing) return false;
+
+    Object.assign(existing, freshProcess);
+
+    const tiers = App.State.processGroupOrder.filter(dim => dim && App.Process.GROUP_DIMENSIONS[dim]);
+    const searchEl = document.getElementById('searchProcess');
+    const isSearchFiltered = !!(searchEl && searchEl.value.trim());
+
+    if (tiers.length > 0 || isSearchFiltered) {
+      this.renderTable();
+      return true;
+    }
+
+    const tr = document.querySelector(`#processTableBody tr[data-process-key="${key}"]`);
+    if (!tr) return false;
+
+    tr.outerHTML = this.rowHtml(existing, true);
+    return true;
   },
 
   // Drag-and-drop manual reorder (flat/ungrouped view only -- see
@@ -584,6 +633,9 @@ App.Process = {
     document.getElementById('processSubmitBtn').innerText = 'Save Process';
     this.toggleImportBar(true);
 
+    App.Utils.setFormButtonsForMode('processCancelBtn', 'processExitBtn', 'processSubmitBtn', false, 'Save Process');
+    App.Nav.clear('editProcessModal');
+
     const modalEl = document.getElementById('editProcessModal');
     if (modalEl && typeof bootstrap !== 'undefined') {
       bootstrap.Modal.getOrCreateInstance(modalEl).show();
@@ -649,6 +701,17 @@ App.Process = {
     document.getElementById('processSubmitBtn').innerText = 'Update Process';
     this.toggleImportBar(false);
 
+    App.Utils.setFormButtonsForMode('processCancelBtn', 'processExitBtn', 'processSubmitBtn', true, 'Update Process');
+    App.Nav.register(
+      'editProcessModal',
+      (App.State.filteredProcesses || []).map(x => x.processId),
+      p.processId,
+      (processId) => {
+        const targetIdx = App.State.globalProcesses.findIndex(x => x.processId === processId);
+        if (targetIdx !== -1) this.openEditModal(targetIdx);
+      }
+    );
+
     const modalEl = document.getElementById('editProcessModal');
     if (modalEl && typeof bootstrap !== 'undefined') {
       bootstrap.Modal.getOrCreateInstance(modalEl).show();
@@ -664,6 +727,10 @@ App.Process = {
 
     const form = document.getElementById('processForm');
     if (form) form.reset();
+
+    App.Utils.setFormButtonsForMode('processCancelBtn', 'processExitBtn', 'processSubmitBtn', false, 'Save Process');
+    App.Nav.clear('editProcessModal');
+    this.toggleImportBar(false);
 
     const modalEl = document.getElementById('editProcessModal');
     if (modalEl && typeof bootstrap !== 'undefined') {
@@ -1346,7 +1413,12 @@ App.Process = {
 
   // ── Color Sub-Groups ─────────────────────────────────────────────────
 
-  addColorGroup(initialColorName = '', components = [], initialAxis = '') {
+  // prevColorHint seeds the "what color did this card used to represent"
+  // baseline (data-prev-color) that _retargetRowColor matches against --
+  // normally that's just initialColorName, but duplicateColorGroup passes
+  // the SOURCE card's color instead, since the copied rows still literally
+  // carry the source's name until the operator picks this card's own color.
+  addColorGroup(initialColorName = '', components = [], initialAxis = '', prevColorHint = '') {
     const container = document.getElementById('processColorGroupsContainer');
     if (!container) return;
 
@@ -1365,7 +1437,7 @@ App.Process = {
   <div class="card border-secondary-subtle shadow-sm mb-3 proc-colorgroup-card" id="${groupId}">
     <div class="card-header bg-white d-flex align-items-center gap-2 flex-wrap">
       <label class="fw-bold mb-0 text-secondary">Color / Sub-Group:</label>
-      <select class="form-select form-select-sm proc-colorgroup-select" style="max-width:220px;">
+      <select class="form-select form-select-sm proc-colorgroup-select" style="max-width:220px;" data-prev-color="${escapeHtml(prevColorHint || initialColorName)}">
         <option value="">Choose or type a name...</option>
         ${colorOptionsHtml}
       </select>
@@ -1424,9 +1496,17 @@ App.Process = {
       if (comp) components.push(comp);
     });
 
+    // The duplicate is another value on the SAME axis (e.g. Red vs Blue
+    // mudguard) -- carry the Group label over so it lands in the same
+    // checkbox group instead of the operator having to retype it.
     const axisValue = (sourceCard.querySelector('.proc-colorgroup-axis')?.value || '').trim();
+    // The copied rows still literally carry the SOURCE color's name (e.g.
+    // "SEAT---RED-WHITE") until the operator picks this new card's own
+    // color -- seed the retarget baseline with it so that first pick
+    // correctly swaps the copied rows instead of finding nothing to match.
+    const sourceColor = (sourceCard.querySelector('.proc-colorgroup-select')?.value || '').trim();
 
-    this.addColorGroup('', components, axisValue);
+    this.addColorGroup('', components, axisValue, sourceColor);
   },
 
   removeColorGroup(groupId) {
@@ -1465,37 +1545,49 @@ App.Process = {
     $select.on('change', () => this.handleColorGroupChange(card));
   },
 
-  // Fired when a color sub-group's Color picker changes -- each row's item
-  // is checked for a Color Master name embedded in it and, if a
-  // same-named item exists under the new color (same size), re-pointed
-  // at it.
+  // Fired when a color sub-group's Color picker changes. Each row's item
+  // is checked for THIS CARD'S OWN previous color embedded in it (e.g.
+  // "Frame Decal - Red") and, if a same-named item exists under the new
+  // color (same size), re-pointed at it. Rows with no recognizable color
+  // token, or no matching variant, are left exactly as they are.
   handleColorGroupChange(card) {
     const tbody = card?.querySelector('.proc-colorgroup-body');
     const colorSelect = card?.querySelector('.proc-colorgroup-select');
     if (!tbody || !colorSelect || !colorSelect.value) return;
 
     const newColor = colorSelect.value;
-    const colorNames = (App.State.globalColors || []).map(c => c.name).filter(Boolean);
-    if (!colorNames.length) return;
+    const oldColor = (colorSelect.dataset.prevColor || '').trim();
+    colorSelect.dataset.prevColor = newColor;
+    if (!oldColor || App.Utils.sameText(oldColor, newColor)) return;
 
-    Array.from(tbody.querySelectorAll('tr')).forEach(row => this._retargetRowColor(row, newColor, colorNames, tbody));
+    Array.from(tbody.querySelectorAll('tr')).forEach(row => this._retargetRowColor(row, oldColor, newColor, tbody));
   },
 
   // Swaps a single row's item for the same-named item under newColor,
-  // when one exists in Item Master at the same size.
-  _retargetRowColor(row, newColor, colorNames, tbody) {
+  // when one exists in Item Master at the same size. No-ops (leaves the
+  // row untouched) for Pool-sourced rows, rows with no item picked, or
+  // rows whose item name doesn't literally contain oldColor, or when no
+  // matching variant exists.
+  _retargetRowColor(row, oldColor, newColor, tbody) {
     if (row.querySelector('.proc-comp-source')?.value === 'POOL') return;
 
     const itemSelect = row.querySelector('.proc-comp-item-select');
     const currentName = itemSelect?.options[itemSelect.selectedIndex]?.dataset.name;
     if (!currentName) return;
 
-    const foundColor = colorNames
-      .filter(c => c.toLowerCase() !== newColor.toLowerCase() && new RegExp(`\\b${this._escapeRegExp(c)}\\b`, 'i').test(currentName))
-      .sort((a, b) => b.length - a.length)[0];
-    if (!foundColor) return;
+    // Match the card's OWN previous color specifically, not "whichever
+    // registered Color Master name happens to appear anywhere in the
+    // name" -- a compound item name like "SEAT---RED-WHITE" also
+    // whole-word-matches the unrelated "White" entry (a fixed secondary
+    // color, not part of this axis), and a longest-match tie-break used
+    // to pick that instead, replacing the wrong half and mangling the
+    // candidate into something that never exists in Item Master (so the
+    // swap silently no-op'd). Knowing exactly which token this card WAS
+    // makes the match unambiguous.
+    const re = new RegExp(`\\b${this._escapeRegExp(oldColor)}\\b`, 'i');
+    if (!re.test(currentName)) return;
 
-    const candidateName = currentName.replace(new RegExp(`\\b${this._escapeRegExp(foundColor)}\\b`, 'i'), newColor);
+    const candidateName = currentName.replace(re, newColor);
     if (candidateName === currentName) return;
 
     const size = row.querySelector('.proc-comp-size')?.value || '';
@@ -1771,11 +1863,34 @@ document.addEventListener('DOMContentLoaded', function () {
       try {
         const response = await Api.mutate('saveProcess', formData);
         if (response.success) {
-          await App.Process.loadData();
           if (isEdit) {
-            const modalEl = document.getElementById('editProcessModal');
-            if (modalEl) bootstrap.Modal.getOrCreateInstance(modalEl).hide();
+            // Save (edit mode): patch just this one process's data + <tr>
+            // in place instead of a full loadData() reload -- see
+            // App.Process.patchRowInPlace's doc comment for how it
+            // handles the grouped/filtered table views. Falls back to a
+            // full reload if the process can't be patched.
+            const patched = response.data && response.data.process
+              ? App.Process.patchRowInPlace(response.data.process)
+              : false;
+            if (!patched) await App.Process.loadData();
+
+            // Stay open on the SAME process instead of closing -- Exit
+            // (App.Nav.exit) is the only way to close from here now.
+            // processId is server-assigned and never user-editable, so
+            // it's a safe stable key to re-find this record by.
+            const freshIdx = App.State.globalProcesses.findIndex(p => p.processId === formData.processId);
+            if (freshIdx !== -1) {
+              App.Process.openEditModal(freshIdx);
+            } else {
+              const modalEl = document.getElementById('editProcessModal');
+              if (modalEl) bootstrap.Modal.getOrCreateInstance(modalEl).hide();
+            }
           } else {
+            // A brand-new process's manual drag-and-drop display order
+            // position can't be determined cheaply on the client -- full
+            // reload here (an edit doesn't need to, see
+            // App.Process.patchRowInPlace).
+            await App.Process.loadData();
             await App.Process.openCreateModal();
           }
         }

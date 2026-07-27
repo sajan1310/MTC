@@ -59,6 +59,7 @@ import psycopg2.extras
 import database
 from . import contractors_service
 from . import process_service
+from . import tags_service
 from . import warehouse_service
 from .current_user import get_current_user_id
 from .. import config_maps
@@ -172,49 +173,106 @@ def _validate_pool_availability(cur, pool_needed: dict, already_consumed: dict =
     return None
 
 
+def backfill_production_consumed_item_refs(cur, old_name: str, old_size: str, new_name: str, new_size: str) -> None:
+    """Repoints an Items Master rename/merge into every lot's saved
+    components_consumed/custom_components JSON -- called from
+    items_service._propagate_item_identity_change. Ports
+    backfillProductionConsumedItemRefs (module_production.js).
+
+    components_consumed entries with sourceType 'POOL' are a different
+    identity space (a Warehouse Pool bucket's Output Item Name, not an
+    Items Master item) and must never be touched here, same rule as
+    Process Components' ITEM-vs-POOL distinction. custom_components (the
+    Production Sheet print customization list) has no sourceType marker at
+    all -- every entry there is renamed unconditionally, matching source.
+    """
+
+    def _repoint(components, match_source_type: bool):
+        if not components:
+            return None
+        changed = False
+        for comp in components:
+            if match_source_type and str(comp.get("sourceType") or "").strip().upper() == "POOL":
+                continue
+            row_name = str(comp.get("itemName") or "").strip().lower()
+            row_size = str(comp.get("size") or "").strip().lower()
+            if row_name == old_name.strip().lower() and row_size == old_size.strip().lower():
+                comp["itemName"] = new_name
+                comp["size"] = new_size
+                changed = True
+        return components if changed else None
+
+    cur.execute("SELECT id, components_consumed, custom_components FROM erp.production WHERE deleted_at IS NULL")
+    rows = cur.fetchall()
+    for row in rows:
+        rewritten_consumed = _repoint(row["components_consumed"] or [], match_source_type=True)
+        rewritten_custom = _repoint(row["custom_components"] or [], match_source_type=False)
+        if rewritten_consumed is None and rewritten_custom is None:
+            continue
+        cur.execute(
+            """
+            UPDATE erp.production
+            SET components_consumed = COALESCE(%s, components_consumed),
+                custom_components = COALESCE(%s, custom_components)
+            WHERE id = %s
+            """,
+            (
+                json.dumps(rewritten_consumed) if rewritten_consumed is not None else None,
+                json.dumps(rewritten_custom) if rewritten_custom is not None else None,
+                row["id"],
+            ),
+        )
+
+
+_PRODUCTION_SELECT_COLS = """
+    id, production_date, product_id, product_name, qty, assigned_by, assigned_to,
+    status, remarks, custom_components, sheet_remarks, process_id, lot_number,
+    contractor_payable, output_item_name, components_consumed, color, color_breakdown
+"""
+
+
+def _row_to_production_record(row) -> dict:
+    return {
+        "rowIdx": row["id"],
+        "date": date_utils.to_display_string(row["production_date"]) or "",
+        "dateRaw": date_utils.to_iso_string(row["production_date"]) or "",
+        "productId": row["product_id"] or "",
+        "productName": row["product_name"] or "",
+        "qty": float(row["qty"]),
+        "assignedBy": row["assigned_by"] or "",
+        "assignedTo": row["assigned_to"] or "",
+        "status": row["status"] or "",
+        "remarks": row["remarks"] or "",
+        "customComponents": row["custom_components"] or [],
+        "sheetRemarks": row["sheet_remarks"] or "",
+        "processId": row["process_id"] or "",
+        "lotNumber": row["lot_number"] or "",
+        "contractorPayable": float(row["contractor_payable"]),
+        "outputItemName": row["output_item_name"] or "",
+        "componentsConsumed": row["components_consumed"] or [],
+        "color": row["color"] or "",
+        "colorBreakdown": row["color_breakdown"] or [],
+    }
+
+
 @rpc_method("getProductionData")
 def get_production_data():
     with database.get_conn(cursor_factory=psycopg2.extras.RealDictCursor) as (_conn, cur):
-        cur.execute(
-            """
-            SELECT id, production_date, product_id, product_name, qty, assigned_by, assigned_to,
-                   status, remarks, custom_components, sheet_remarks, process_id, lot_number,
-                   contractor_payable, output_item_name, components_consumed, color, color_breakdown
-            FROM erp.production
-            WHERE deleted_at IS NULL
-            """
-        )
+        cur.execute(f"SELECT {_PRODUCTION_SELECT_COLS} FROM erp.production WHERE deleted_at IS NULL")
         rows = cur.fetchall()
 
-    records = []
-    for row in rows:
-        process_id = row["process_id"] or ""
-        records.append(
-            {
-                "rowIdx": row["id"],
-                "date": date_utils.to_display_string(row["production_date"]) or "",
-                "dateRaw": date_utils.to_iso_string(row["production_date"]) or "",
-                "productId": row["product_id"] or "",
-                "productName": row["product_name"] or "",
-                "qty": float(row["qty"]),
-                "assignedBy": row["assigned_by"] or "",
-                "assignedTo": row["assigned_to"] or "",
-                "status": row["status"] or "",
-                "remarks": row["remarks"] or "",
-                "customComponents": row["custom_components"] or [],
-                "sheetRemarks": row["sheet_remarks"] or "",
-                "processId": process_id,
-                "lotNumber": row["lot_number"] or "",
-                "contractorPayable": float(row["contractor_payable"]),
-                "outputItemName": row["output_item_name"] or "",
-                "componentsConsumed": row["components_consumed"] or [],
-                "color": row["color"] or "",
-                "colorBreakdown": row["color_breakdown"] or [],
-            }
-        )
-
+    records = [_row_to_production_record(row) for row in rows]
     records.sort(key=lambda r: (r["dateRaw"] or "", r["rowIdx"]), reverse=True)
     return build_response(True, records)
+
+
+def _fetch_production_record(cur, row_idx):
+    """Reads one freshly-written production row back by id, so
+    save_production can hand it to the client for an in-place row-patch
+    instead of a full reload."""
+    cur.execute(f"SELECT {_PRODUCTION_SELECT_COLS} FROM erp.production WHERE id = %s", (row_idx,))
+    row = cur.fetchone()
+    return _row_to_production_record(row) if row else None
 
 
 @rpc_method("getProcessWipData")
@@ -264,7 +322,11 @@ def save_production(conn, cur, form_data):
     color_components = process_service.get_process_components_data(process_id)["data"]
     pool_rows = process_service._get_all_warehouse_pool_rows_for_color_axes(cur)
     color_links = process_service._get_all_process_color_links(cur)
-    available_color_groups = process_service._compute_color_groups_for_process(color_components, pool_rows, color_links)
+    color_master_names = process_service._get_color_master_names(cur)
+    color_overrides = process_service._get_all_process_color_overrides(cur).get(process_id.lower())
+    available_color_groups = process_service._compute_color_groups_with_overrides_for_process(
+        process_id, color_components, pool_rows, color_links, color_master_names, color_overrides
+    )
 
     raw_breakdown = form_data.get("colorBreakdown")
     if isinstance(raw_breakdown, str):
@@ -292,12 +354,12 @@ def save_production(conn, cur, form_data):
                 "countsTowardTotal": c.get("countsTowardTotal") is not False,
                 "axisKey": str(c.get("axisKey") or "").strip(),
             }
-            if entry["color"] and entry["qty"] != 0:
+            if entry["color"]:
                 color_breakdown.append(entry)
 
         if not color_breakdown:
             raise ValueError(
-                "At least one Color with a non-zero quantity is required for this lot "
+                "At least one Color is required for this lot "
                 "(this process has color-specific components)."
             )
 
@@ -315,6 +377,14 @@ def save_production(conn, cur, form_data):
                 "It may have been removed -- refresh and re-select."
             )
 
+        # Auto-register any genuinely new color the operator typed via
+        # "+ Add Custom Sub-Group" into Color Master, so it's available
+        # everywhere else Color Master feeds a picker instead of staying
+        # invisible outside this one process's own logged history.
+        custom_color_names = [c["color"] for c in color_breakdown if c["isCustom"]]
+        if custom_color_names:
+            tags_service.ensure_color_master_entries(cur, custom_color_names)
+
         color = ", ".join(f'{c["color"]} ({c["size"]})' if c["size"] else c["color"] for c in color_breakdown)
 
         submitted_primary_color_axis = str(form_data.get("primaryColorAxis") or "").strip()
@@ -322,31 +392,33 @@ def save_production(conn, cur, form_data):
         primary_axis_colors_lower = None
         primary_axis_key_lower = None
         if primary_color_axis:
-            axes = process_service._compute_color_axes_for_process(color_components, pool_rows, color_links)
+            axes = process_service._compute_color_axes_for_process(process_id, color_components, pool_rows, color_links)
             primary_axis = next((a for a in axes if a["label"].lower() == primary_color_axis.lower()), None)
             if primary_axis:
                 primary_axis_colors_lower = {c.lower() for c in primary_axis["colors"]}
                 primary_axis_key_lower = primary_axis["key"].lower()
 
         if primary_axis_colors_lower is not None:
-            qty = 0.0
-            for c in color_breakdown:
+            def _is_primary_axis_row(c):
                 is_known_primary_color = (
                     (c["axisKey"].lower() == primary_axis_key_lower) if c["axisKey"] else (c["color"].lower() in primary_axis_colors_lower)
                 )
                 counts_as_custom = c["isCustom"] and c["countsTowardTotal"]
-                if is_known_primary_color or counts_as_custom:
-                    qty += c["qty"]
+                return is_known_primary_color or counts_as_custom
+
+            qty = sum(c["qty"] for c in color_breakdown if _is_primary_axis_row(c))
+
+            # The total itself may legitimately be zero or negative (a
+            # correction/reversal lot, or an explicit zero-output record).
+            # What's still rejected is a Primary-Axis-configured process
+            # where NO checked row actually belongs to the primary group at
+            # all (e.g. only a non-primary "Mudguard Color" row was checked)
+            # -- that's an operator forgetting to address the primary axis,
+            # not a deliberate zero.
+            if not any(_is_primary_axis_row(c) for c in color_breakdown):
+                raise ValueError(f'At least one "{primary_color_axis}" color is required for this lot.')
         else:
             qty = sum(c["qty"] for c in color_breakdown if c["countsTowardTotal"])
-
-        if qty == 0:
-            if primary_color_axis:
-                raise ValueError(f'At least one "{primary_color_axis}" color with a non-zero quantity is required for this lot.')
-            raise ValueError(
-                "At least one Color with a non-zero quantity is required for this lot "
-                "(this process has color-specific components)."
-            )
 
         if (
             submitted_primary_color_axis
@@ -355,9 +427,11 @@ def save_production(conn, cur, form_data):
         ):
             process_service._set_process_primary_color_axis(cur, process_id, submitted_primary_color_axis)
     else:
+        # Zero and negative quantities are both allowed -- a lot can be
+        # logged as a correction/reversal (e.g. a prior over-count) without
+        # editing history, mirroring adjust_stock_manually/
+        # adjust_warehouse_pool_manually.
         qty = _validate_number(form_data.get("qty"), -10000000, 10000000)
-        if qty == 0:
-            raise ValueError("Production Quantity cannot be zero.")
 
     raw_components = form_data.get("componentsConsumed")
     if isinstance(raw_components, str):
@@ -372,8 +446,11 @@ def save_production(conn, cur, form_data):
     for c in raw_components:
         c = c or {}
         item_name = str(c.get("itemName") or "").strip()
-        qty_c = _validate_number(c.get("qty"), 0, 10000000)
-        if item_name and qty_c > 0:
+        # Zero and negative consumption are both allowed -- e.g. a
+        # correction/reversal lot that credits stock/pool back, mirroring
+        # the output qty's own zero/negative handling above.
+        qty_c = _validate_number(c.get("qty"), -10000000, 10000000)
+        if item_name:
             clean_components.append(
                 {
                     "itemName": item_name,
@@ -448,7 +525,15 @@ def save_production(conn, cur, form_data):
                 key = _poolneed_key(item_name_lower, color_group)
                 original_pool_consumed[key] = original_pool_consumed.get(key, 0) + float(c.get("qty") or 0)
 
-    pool_warning = _validate_pool_availability(cur, pool_needed, original_pool_consumed)
+    # Only run the pool-availability check when this save will leave the
+    # lot Completed -- a Pending save never touches the pool, so checking
+    # availability against it here would produce a misleading "pool will
+    # go negative" warning on a lot that isn't finished yet.
+    pool_warning = (
+        _validate_pool_availability(cur, pool_needed, original_pool_consumed)
+        if status.lower() == "completed"
+        else None
+    )
 
     contractor_rate = contractors_service._get_contractor_rate(cur, assigned_to, process["processName"])
     contractor_payable = contractor_rate * qty
@@ -480,6 +565,7 @@ def save_production(conn, cur, form_data):
                 existing["id"],
             ),
         )
+        new_row_idx = existing["id"]
     else:
         cur.execute(
             """
@@ -489,6 +575,7 @@ def save_production(conn, cur, form_data):
                  contractor_rate, contractor_payable, output_item_name, components_consumed, color,
                  color_breakdown, updated_by)
             VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+            RETURNING id
             """,
             (
                 production_date, product_id, product_name, resolved_bom_product_id, qty, assigned_by, assigned_to,
@@ -497,6 +584,7 @@ def save_production(conn, cur, form_data):
                 color_breakdown_json, user_id,
             ),
         )
+        new_row_idx = cur.fetchone()["id"]
 
     warehouse_service._recalculate_warehouse_pool(cur)
 
@@ -504,7 +592,11 @@ def save_production(conn, cur, form_data):
     if pool_warning:
         message = f"{message} Warning: {pool_warning} Warehouse Pool stock will now show negative for this item."
 
-    return build_response(True, {"lotNumber": lot_number}, message)
+    # Read this lot's own just-written row back so the client can patch it
+    # into an already-loaded list in place instead of a full reload.
+    fresh_row = _fetch_production_record(cur, new_row_idx)
+
+    return build_response(True, {"lotNumber": lot_number, "row": fresh_row}, message)
 
 
 @rpc_method("deleteProduction", mutation=True)

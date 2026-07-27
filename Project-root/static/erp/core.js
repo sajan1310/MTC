@@ -63,7 +63,7 @@ function setDisabled(id, state) {
 // scroll-lock to reality every time any modal finishes hiding, instead of
 // trusting Bootstrap's per-instance bookkeeping (which strips the lock as
 // soon as ANY modal closes, even if another is still open underneath it).
-document.addEventListener('hidden.bs.modal', () => {
+document.addEventListener('hidden.bs.modal', (e) => {
   const stillOpen = document.querySelectorAll('.modal.show').length;
   if (stillOpen === 0) {
     document.body.classList.remove('modal-open');
@@ -73,6 +73,36 @@ document.addEventListener('hidden.bs.modal', () => {
   } else {
     document.body.classList.add('modal-open');
   }
+  // Prev/Next context (App.Nav) is only meaningful while the modal it was
+  // opened for is still showing -- drop it as soon as that modal closes so
+  // a later unrelated open of the same modal never inherits a stale
+  // record list or nav bar.
+  if (e.target?.id) App.Nav.clear(e.target.id);
+});
+
+// Keyboard shortcut for App.Nav: N/P or the Left/Right arrows step to the
+// next/previous record in whichever edit modal currently has focus.
+// Deliberately ignores every text-entry control (input/textarea/select,
+// incl. Select2's hidden search input) -- "N"/"P" are ordinary letters
+// that appear constantly in Narration/Remarks/Item Name fields, and the
+// arrows already have a native job there, so firing on those would
+// hijack normal typing instead of navigating.
+document.addEventListener('keydown', (e) => {
+  const key = e.key.toLowerCase();
+  const delta = (key === 'n' || key === 'arrowright') ? 1
+    : (key === 'p' || key === 'arrowleft') ? -1
+    : null;
+  if (delta === null) return;
+  if (e.ctrlKey || e.metaKey || e.altKey || e.shiftKey) return;
+
+  const target = e.target;
+  if (target.matches?.('input, textarea, select') || target.isContentEditable) return;
+
+  const modalEl = target.closest?.('.modal.show');
+  if (!modalEl || !App.Nav._ctx[modalEl.id]) return;
+
+  e.preventDefault();
+  App.Nav.go(modalEl.id, delta);
 });
 
 const App = {
@@ -306,9 +336,410 @@ const App = {
     }
   },
 
+  // ── Prev/Next record navigation + unsaved-changes guard ──────────────
+  // Generic across every edit modal in the app: a module calls
+  // App.Nav.register(modalId, ids, currentId, openFn) when it opens an
+  // edit modal, and this builds its own Prev/Next bar (inserted at the
+  // top of the modal's own submit-button container, no per-modal HTML
+  // needed) plus wires N/P and arrow-key shortcuts and an Exit action
+  // that warns before discarding unsaved edits. A module with no matching
+  // HTML support (no submit button found) is a silent no-op -- this must
+  // never be a hard dependency for a modal to open at all.
+  Nav: {
+    _ctx: {},
+
+    // `extraDirtyFn` (optional) lets a module report unsaved state that
+    // _serialize can't see -- e.g. a dynamically-rendered sub-table with
+    // no id/name-bearing inputs at snapshot time.
+    register(modalId, ids, currentId, openFn, extraDirtyFn) {
+      this._ctx[modalId] = { ids: (ids || []).slice(), currentId, openFn, extraDirtyFn };
+      this._ensureBar(modalId);
+      this._snapshot(modalId);
+      this._updateBar(modalId);
+    },
+
+    clear(modalId) {
+      delete this._ctx[modalId];
+      const bar = document.getElementById(modalId)?.querySelector('.app-modal-nav');
+      if (bar) bar.style.display = 'none';
+    },
+
+    go(modalId, delta) {
+      const ctx = this._ctx[modalId];
+      if (!ctx) return;
+      const idx = this._indexOf(ctx.ids, ctx.currentId);
+      const targetIdx = idx + delta;
+      if (targetIdx < 0 || targetIdx >= ctx.ids.length) return;
+      const targetId = ctx.ids[targetIdx];
+      const proceed = () => ctx.openFn(targetId);
+
+      if (this.isDirty(modalId)) {
+        App.Utils.confirmAction('You have unsaved changes in this form. Discard them and continue?', proceed);
+      } else {
+        proceed();
+      }
+    },
+
+    isDirty(modalId) {
+      const ctx = this._ctx[modalId];
+      const modalEl = document.getElementById(modalId);
+      if (!ctx || !modalEl) return false;
+      if (this._serialize(modalEl) !== ctx.snapshot) return true;
+      try {
+        return !!(ctx.extraDirtyFn && ctx.extraDirtyFn());
+      } catch (e) {
+        // A broken hook must never wedge Exit/Prev/Next.
+        return false;
+      }
+    },
+
+    // The Exit button (edit-mode-only -- each module's openEditModal swaps
+    // Cancel for Exit) closes the modal WITHOUT saving, exactly like
+    // Cancel always has, but first warns if the form has unsaved edits.
+    // Saving-and-staying-open is the Save button's own job; Exit never
+    // touches the server.
+    exit(modalId) {
+      const modalEl = document.getElementById(modalId);
+      const proceed = () => {
+        if (modalEl && typeof bootstrap !== 'undefined') {
+          bootstrap.Modal.getInstance(modalEl)?.hide();
+        }
+      };
+      if (this.isDirty(modalId)) {
+        App.Utils.confirmAction('You have unsaved changes in this form. Discard them and continue?', proceed);
+      } else {
+        proceed();
+      }
+    },
+
+    _indexOf(ids, id) {
+      const key = JSON.stringify(id);
+      return ids.findIndex(x => JSON.stringify(x) === key);
+    },
+
+    _serialize(modalEl) {
+      const data = {};
+      modalEl.querySelectorAll('input, select, textarea').forEach(el => {
+        const key = el.id || el.name;
+        if (!key) return;
+        data[key] = (el.type === 'checkbox' || el.type === 'radio') ? el.checked : el.value;
+      });
+      return JSON.stringify(data);
+    },
+
+    _snapshot(modalId) {
+      const ctx = this._ctx[modalId];
+      const modalEl = document.getElementById(modalId);
+      if (ctx && modalEl) ctx.snapshot = this._serialize(modalEl);
+    },
+
+    _ensureBar(modalId) {
+      const modalEl = document.getElementById(modalId);
+      if (!modalEl) return;
+
+      // Every edit modal in this app puts Cancel/Save inside .modal-body
+      // (a "text-end" div), not a real Bootstrap .modal-footer -- anchor
+      // off the submit button's own parent instead so this works without
+      // depending on a footer element none of them actually have.
+      let bar = modalEl.querySelector('.app-modal-nav');
+      if (!bar) {
+        const submitBtn = modalEl.querySelector('button[type="submit"]');
+        const container = modalEl.querySelector('.modal-footer') || submitBtn?.parentElement;
+        if (!container) return;
+
+        bar = document.createElement('div');
+        bar.className = 'app-modal-nav d-flex align-items-center mb-2';
+        bar.innerHTML =
+          '<button type="button" class="btn btn-sm btn-outline-secondary app-modal-nav-prev" title="Previous record (P or &larr;)"><i class="bi bi-chevron-left"></i> Prev</button>' +
+          '<span class="mx-2 small text-muted app-modal-nav-pos"></span>' +
+          '<button type="button" class="btn btn-sm btn-outline-secondary app-modal-nav-next" title="Next record (N or &rarr;)">Next <i class="bi bi-chevron-right"></i></button>';
+        container.insertBefore(bar, container.firstChild);
+        bar.querySelector('.app-modal-nav-prev').addEventListener('click', () => App.Nav.go(modalId, -1));
+        bar.querySelector('.app-modal-nav-next').addEventListener('click', () => App.Nav.go(modalId, 1));
+      }
+      bar.style.display = '';
+    },
+
+    _updateBar(modalId) {
+      const ctx = this._ctx[modalId];
+      const modalEl = document.getElementById(modalId);
+      const bar = modalEl?.querySelector('.app-modal-nav');
+      if (!ctx || !bar) return;
+
+      const idx = this._indexOf(ctx.ids, ctx.currentId);
+      const pos = bar.querySelector('.app-modal-nav-pos');
+      if (pos) pos.textContent = idx >= 0 ? `${idx + 1} of ${ctx.ids.length}` : '';
+      bar.querySelector('.app-modal-nav-prev').disabled = idx <= 0;
+      bar.querySelector('.app-modal-nav-next').disabled = idx < 0 || idx >= ctx.ids.length - 1;
+    }
+  },
+
+  // ── Notification History & Panel ─────────────────────────────────────
+  // The bell shows a panel of past toast notifications, since the toast
+  // itself now auto-dismisses after 3s (see Modals/toast-container's
+  // data-bs-delay). Persisted in localStorage so history survives a
+  // reload; capped at 50 entries.
+  Notify: {
+    STORAGE_KEY: 'maharaja-erp-notifications',
+    items: [],
+    unreadCount: 0,
+    isOpen: false,
+    _listenersBound: false,
+
+    load() {
+      try {
+        const raw = localStorage.getItem(this.STORAGE_KEY);
+        if (raw) {
+          const parsed = JSON.parse(raw);
+          if (Array.isArray(parsed?.items)) {
+            this.items = parsed.items.map(item => ({
+              ...item,
+              timestamp: item.timestamp ? new Date(item.timestamp) : new Date()
+            }));
+            this.unreadCount = Number(parsed.unreadCount) || 0;
+            this.updateBadge();
+          }
+        }
+      } catch (e) {
+        console.warn('[Notify] Failed to load persisted notifications:', e);
+      }
+    },
+
+    save() {
+      try {
+        localStorage.setItem(this.STORAGE_KEY, JSON.stringify({
+          items: this.items.slice(0, 50),
+          unreadCount: this.unreadCount
+        }));
+      } catch (e) {
+        console.warn('[Notify] Storage access denied:', e);
+      }
+    },
+
+    add(message, isError = false) {
+      if (!message) return;
+      const notif = {
+        id: Date.now() + '-' + Math.random().toString(36).substring(2, 5),
+        message: String(message),
+        isError: !!isError,
+        timestamp: new Date(),
+        unread: true
+      };
+      this.items.unshift(notif);
+      if (this.items.length > 50) this.items.pop();
+      this.unreadCount++;
+      this.save();
+      this.updateBadge();
+      if (this.isOpen) {
+        this.render();
+      }
+    },
+
+    remove(id, event) {
+      if (event && typeof event.stopPropagation === 'function') {
+        event.stopPropagation();
+      }
+      const idx = this.items.findIndex(item => item.id === id);
+      if (idx !== -1) {
+        if (this.items[idx].unread && this.unreadCount > 0) {
+          this.unreadCount--;
+        }
+        this.items.splice(idx, 1);
+        this.save();
+        this.updateBadge();
+        this.render();
+      }
+    },
+
+    toggle() {
+      if (this.isOpen) {
+        this.close();
+      } else {
+        this.open();
+      }
+    },
+
+    open() {
+      const panel = document.getElementById('notif-panel');
+      const btn = document.getElementById('notif-bell-btn');
+      if (!panel) return;
+
+      this.isOpen = true;
+      panel.style.display = 'flex';
+      if (btn) btn.setAttribute('aria-expanded', 'true');
+
+      this.unreadCount = 0;
+      this.items.forEach(item => { item.unread = false; });
+      this.save();
+      this.updateBadge();
+      this.render();
+
+      this._bindOutsideListeners();
+    },
+
+    close() {
+      const panel = document.getElementById('notif-panel');
+      const btn = document.getElementById('notif-bell-btn');
+      if (panel) panel.style.display = 'none';
+      if (btn) btn.setAttribute('aria-expanded', 'false');
+      this.isOpen = false;
+
+      this._unbindOutsideListeners();
+    },
+
+    clear() {
+      this.items = [];
+      this.unreadCount = 0;
+      this.save();
+      this.updateBadge();
+      this.render();
+    },
+
+    updateBadge() {
+      const badge = document.getElementById('notif-badge');
+      if (!badge) return;
+      if (this.unreadCount > 0) {
+        badge.textContent = this.unreadCount > 99 ? '99+' : String(this.unreadCount);
+        badge.style.display = 'inline-flex';
+      } else {
+        badge.style.display = 'none';
+      }
+    },
+
+    formatTime(date) {
+      if (!(date instanceof Date) || isNaN(date.getTime())) return '';
+      const diffMs = Date.now() - date.getTime();
+      const diffSec = Math.floor(diffMs / 1000);
+      if (diffSec < 10) return 'Just now';
+      if (diffSec < 60) return `${diffSec}s ago`;
+      const diffMin = Math.floor(diffSec / 60);
+      if (diffMin < 60) return `${diffMin}m ago`;
+      const diffHours = Math.floor(diffMin / 60);
+      if (diffHours < 24) return `${diffHours}h ago`;
+      const diffDays = Math.floor(diffHours / 24);
+      if (diffDays < 7) return `${diffDays}d ago`;
+      return date.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+    },
+
+    render() {
+      const listEl = document.getElementById('notif-list');
+      const clearBtn = document.getElementById('notif-clear-btn');
+      if (clearBtn) {
+        clearBtn.disabled = this.items.length === 0;
+      }
+      if (!listEl) return;
+
+      if (this.items.length === 0) {
+        listEl.innerHTML = '<div class="notif-empty">No notifications yet.</div>';
+        return;
+      }
+
+      const html = this.items.map(item => {
+        const errorClass = item.isError ? ' notif-error' : '';
+        const timeStr = this.formatTime(item.timestamp);
+        return `
+              <div class="notif-item${errorClass}">
+                <div class="notif-item-dot"></div>
+                <div class="notif-item-body">
+                  <div class="notif-item-msg">${escapeHtml(item.message)}</div>
+                  <div class="notif-item-time">${timeStr}</div>
+                </div>
+                <button type="button" class="notif-item-remove" title="Dismiss notification" onclick="App.Notify.remove('${escapeHtml(item.id)}', event)">&times;</button>
+              </div>
+            `;
+      }).join('');
+
+      listEl.innerHTML = html;
+    },
+
+    _handleOutsideClick(e) {
+      const wrap = document.querySelector('.notif-wrap');
+      if (wrap && !wrap.contains(e.target)) {
+        App.Notify.close();
+      }
+    },
+
+    _handleKeyDown(e) {
+      if (e.key === 'Escape') {
+        App.Notify.close();
+        const btn = document.getElementById('notif-bell-btn');
+        if (btn) btn.focus();
+      }
+    },
+
+    _bindOutsideListeners() {
+      if (this._listenersBound) return;
+      this._listenersBound = true;
+      this._onOutsideClick = this._handleOutsideClick.bind(this);
+      this._onKeyDown = this._handleKeyDown.bind(this);
+      setTimeout(() => {
+        if (this.isOpen) {
+          document.addEventListener('click', this._onOutsideClick);
+          document.addEventListener('keydown', this._onKeyDown);
+        }
+      }, 0);
+    },
+
+    _unbindOutsideListeners() {
+      if (!this._listenersBound) return;
+      this._listenersBound = false;
+      if (this._onOutsideClick) document.removeEventListener('click', this._onOutsideClick);
+      if (this._onKeyDown) document.removeEventListener('keydown', this._onKeyDown);
+    },
+
+    async checkSmartAlerts() {
+      if (!this._alertKeys) this._alertKeys = new Set();
+
+      // Fetch stock data if state is empty
+      if ((!App.State?.globalStock || App.State.globalStock.length === 0) && typeof Api !== 'undefined') {
+        try {
+          const res = await Api.call('getStockData');
+          if (res?.success && Array.isArray(res.data)) {
+            App.State.globalStock = res.data;
+          }
+        } catch (e) { /* ignore best effort */ }
+      }
+
+      // 1. Low Stock Smart Alert
+      const stockItems = App.State?.globalStock || [];
+      const lowStock = stockItems.filter(i => (i.isLowStock || (Number(i.threshold) > 0 && Number(i.currentStock) <= Number(i.threshold))));
+      if (lowStock.length > 0) {
+        const key = `lowstock-${lowStock.length}-${lowStock.slice(0, 3).map(i => i.name + i.size).join('|')}`;
+        if (!this._alertKeys.has(key)) {
+          this._alertKeys.add(key);
+          const preview = lowStock.slice(0, 2).map(i => `${i.name}${i.size ? ` [${i.size}]` : ''} (${i.currentStock} left)`).join(', ');
+          const extra = lowStock.length > 2 ? ` and ${lowStock.length - 2} more` : '';
+          this.add(`⚠️ Smart Alert: ${lowStock.length} item(s) below threshold (${preview}${extra}).`, true);
+        }
+      }
+
+      // 2. Overdue Pending Purchase Orders Alert (pending > 7 days)
+      const pos = App.State?.globalPOs || [];
+      const now = new Date();
+      const SEVEN_DAYS_MS = 7 * 24 * 60 * 60 * 1000;
+      const overduePOs = pos.filter(po => {
+        if (!po || po.status === PO_STATUS.COMPLETED) return false;
+        const poDate = parseRecordDate(po.poDateRaw, po.poDate);
+        return !isNaN(poDate.getTime()) && (now - poDate) > SEVEN_DAYS_MS;
+      });
+      if (overduePOs.length > 0) {
+        const key = `overduepo-${overduePOs.length}-${overduePOs.slice(0, 3).map(p => p.poNumber).join('|')}`;
+        if (!this._alertKeys.has(key)) {
+          this._alertKeys.add(key);
+          const nums = overduePOs.slice(0, 3).map(p => `#${p.poNumber}`).join(', ');
+          const extra = overduePOs.length > 3 ? ` and ${overduePOs.length - 3} more` : '';
+          this.add(`📋 Smart Alert: ${overduePOs.length} purchase order(s) pending >7 days (${nums}${extra}).`, false);
+        }
+      }
+    }
+  },
+
   // ── Shared UX primitives ─────────────────────────────────────────────
   Utils: {
     showToast(message, isError = false) {
+      if (App.Notify && typeof App.Notify.add === 'function') {
+        App.Notify.add(message, isError);
+      }
       const toastEl = document.getElementById('systemToast');
       const msgEl = document.getElementById('toastMessage');
       if (msgEl) msgEl.innerText = message || '';
@@ -354,6 +785,26 @@ const App = {
         const el = document.getElementById(id);
         if (el) el.value = val;
       });
+    },
+
+    // Toggles an edit modal's footer between its two states, shared by
+    // every module's openCreateModal (isEditMode=false) and
+    // openEditModal (isEditMode=true) pair:
+    //   - Add New: Cancel (discard, close) + a Save/Create-labeled submit
+    //     button.
+    //   - Edit: Exit (App.Nav.exit -- warns before discarding unsaved
+    //     edits) + a submit button labeled per submitLabel. Exit is the
+    //     intended close path from edit mode so Prev/Next keeps working
+    //     without the operator losing their place.
+    // Centralized so this toggle doesn't drift into slightly different
+    // shapes across every modal that uses it.
+    setFormButtonsForMode(cancelBtnId, exitBtnId, submitBtnId, isEditMode, submitLabel) {
+      const cancelBtn = document.getElementById(cancelBtnId);
+      const exitBtn = document.getElementById(exitBtnId);
+      const submitBtn = document.getElementById(submitBtnId);
+      if (cancelBtn) cancelBtn.style.display = isEditMode ? 'none' : '';
+      if (exitBtn) exitBtn.style.display = isEditMode ? '' : 'none';
+      if (submitBtn && submitLabel !== undefined) submitBtn.innerText = submitLabel;
     },
 
     // Removes the closest <tr> a button lives in, unless it's the last
@@ -739,8 +1190,10 @@ const App = {
   },
 
   async Init() {
-    // Load persisted company logo (non-blocking, best-effort).
+    // Load persisted company logo and notification history (non-blocking,
+    // best-effort).
     this.Logo.load();
+    if (this.Notify) this.Notify.load();
 
     const labels = [];
     const promises = [];
@@ -796,6 +1249,12 @@ const App = {
     });
     if (failedLabels.length > 0) {
       this.Utils.showToast(`Failed to load: ${failedLabels.join(', ')}. Check your connection and retry.`, true);
+    }
+
+    // Trigger smart notifications (low stock, pending POs) -- best-effort,
+    // never blocks init.
+    if (this.Notify) {
+      this.Notify.checkSmartAlerts().catch(e => console.error('[Init] checkSmartAlerts failed:', e));
     }
   }
 };

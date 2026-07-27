@@ -81,6 +81,37 @@ def test_save_po_edit_replaces_lines_and_preserves_date_when_omitted(erp_client)
     assert match["poDateRaw"] == "2026-01-01"  # preserved, not overwritten to today
 
 
+def test_save_po_returns_fresh_row_for_in_place_patch(erp_client):
+    vendor = _unique_name("Vendor")
+    item1 = _unique_name("Item1")
+    item2 = _unique_name("Item2")
+
+    create = _rpc(
+        erp_client,
+        "savePO",
+        [{"vendor": vendor, "items": [{"name": item1, "qty": 5, "price": 2}]}],
+        mutation=True,
+    )
+    create_body = create.get_json()
+    po_number = create_body["data"]["poNumber"]
+    assert create_body["data"]["po"]["poNumber"] == po_number
+    assert create_body["data"]["po"]["items"][0]["name"] == item1
+
+    edit = _rpc(
+        erp_client,
+        "savePO",
+        [{"existingPoNumber": po_number, "vendor": vendor, "items": [{"name": item2, "qty": 3, "price": 4}]}],
+        mutation=True,
+    )
+    edit_body = edit.get_json()
+    fresh_po = edit_body["data"]["po"]
+    assert fresh_po["poNumber"] == po_number
+    assert fresh_po["vendor"] == vendor
+    assert len(fresh_po["items"]) == 1
+    assert fresh_po["items"][0]["name"] == item2
+    assert fresh_po["status"] == "PO Issued"
+
+
 def test_save_po_renumber_collision_is_rejected(erp_client):
     vendor = _unique_name("Vendor")
     first = _rpc(erp_client, "savePO", [{"vendor": vendor, "items": [{"name": "A", "qty": 1, "price": 1}]}], mutation=True)
@@ -281,6 +312,43 @@ def test_bill_against_po_line_flips_status(erp_client):
     match = next(po for po in listed if po["poNumber"] == po_number)
     assert match["status"] == "Completed"
     assert match["items"][0]["pendingQty"] == 0
+
+
+def test_pending_qty_goes_negative_when_billed_beyond_ordered(erp_client):
+    """pendingQty is no longer clamped to 0 -- a line billed beyond what
+    was ordered must surface as a negative value, not silently read as
+    "fully pending is 0" (see save_bill's advisory overage warning, which
+    depends on this staying unclamped).
+    """
+    vendor = _unique_name("OverbillVendor")
+    item = _unique_name("OverbillItem")
+
+    create = _rpc(
+        erp_client,
+        "savePO",
+        [{"vendor": vendor, "items": [{"name": item, "size": "", "qty": 5, "unit": "Pcs", "price": 1}]}],
+        mutation=True,
+    )
+    po_number = create.get_json()["data"]["poNumber"]
+
+    _rpc(
+        erp_client,
+        "saveBill",
+        [
+            {
+                "vendor": vendor,
+                "billNumber": _unique_name("OverBill"),
+                "billDate": "01/01/2026",
+                "items": [{"name": item, "size": "", "qty": 8, "price": 1, "po": po_number}],
+            }
+        ],
+        mutation=True,
+    )
+
+    listed = _rpc(erp_client, "getPOData").get_json()["data"]
+    match = next(po for po in listed if po["poNumber"] == po_number)
+    assert match["items"][0]["receivedQty"] == 8
+    assert match["items"][0]["pendingQty"] == -3
 
 
 # ─────────────────────────────────────────────────────────────────────────

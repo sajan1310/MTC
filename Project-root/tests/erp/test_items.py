@@ -41,7 +41,12 @@ def test_save_item_creates_with_vendors_and_lists_it(erp_client):
     )
     body = resp.get_json()
     assert body["success"] is True
-    assert body["data"] == {"name": name, "size": "Standard"}
+    assert body["data"]["name"] == name
+    assert body["data"]["size"] == "Standard"
+    # data.item is the freshly-written row, for the client's in-place
+    # row-patch instead of a full reload.
+    assert body["data"]["item"]["baseUnit"] == "Pcs"
+    assert body["data"]["item"]["vendors"] == [{"vendor": "Acme Co", "rate": 12.5, "ratePerBaseUnit": 12.5}]
 
     listed = _rpc(erp_client, "getItemsData").get_json()["data"]
     match = next(i for i in listed if i["name"] == name and i["size"] == "Standard")
@@ -140,7 +145,8 @@ def test_save_item_rename_moves_paired_stock_row(erp_client):
     )
     body = edit.get_json()
     assert body["success"] is True
-    assert body["data"] == {"name": renamed, "size": ""}
+    assert body["data"]["name"] == renamed
+    assert body["data"]["size"] == ""
 
     listed = _rpc(erp_client, "getItemsData").get_json()["data"]
     names = [i["name"] for i in listed]
@@ -322,6 +328,81 @@ def test_merge_selected_items_combines_stock_vendors_and_deletes_loser(erp_clien
     assert stock_match["initialStock"] == 14
 
 
+def test_merge_selected_items_converts_vendor_rate_across_purchase_units(erp_client):
+    """A vendor rate is quoted per the item's own Purchase Unit -- merging an
+    item purchased by the Dozen into one purchased by the Pcs must convert
+    the rate (120/Dozen -> 10/Pcs), not carry the raw number across.
+    """
+    dozen = _unique_name("Dozen")
+    _rpc(erp_client, "saveUnit", [{"unitName": dozen, "family": "Count", "factorToBase": 12}], mutation=True)
+
+    keep = _unique_name("KeepPcsItem")
+    remove = _unique_name("RemoveDozenItem")
+    _rpc(
+        erp_client, "saveItem",
+        [{"itemName": keep, "itemBaseUnit": "Pcs", "itemPurchaseUnit": "Pcs"}],
+        mutation=True,
+    )
+    _rpc(
+        erp_client, "saveItem",
+        [
+            {
+                "itemName": remove,
+                "itemBaseUnit": "Pcs",
+                "itemPurchaseUnit": dozen,
+                "vendors": [{"vendor": "Dozen Vendor", "rate": 120}],
+            }
+        ],
+        mutation=True,
+    )
+
+    resp = _rpc(
+        erp_client, "mergeSelectedItems",
+        [[{"name": keep, "size": ""}, {"name": remove, "size": ""}]],
+        mutation=True,
+    )
+    assert resp.get_json()["success"] is True
+
+    listed = _rpc(erp_client, "getItemsData").get_json()["data"]
+    match = next(i for i in listed if i["name"] == keep)
+    dozen_vendor = next(v for v in match["vendors"] if v["vendor"] == "Dozen Vendor")
+    assert dozen_vendor["rate"] == 10
+
+
+def test_merge_selected_items_converts_stock_across_purchase_units(erp_client):
+    """initial_stock is tracked in each item's own Base Unit -- merging an
+    item base-tracked in Dozen into one base-tracked in Pcs must convert
+    the old row's stock (2 Dozen = 24 Pcs) before summing, not add the raw
+    numbers together.
+    """
+    dozen = _unique_name("StockDozen")
+    _rpc(erp_client, "saveUnit", [{"unitName": dozen, "family": "Count", "factorToBase": 12}], mutation=True)
+
+    keep = _unique_name("KeepPcsStockItem")
+    remove = _unique_name("RemoveDozenStockItem")
+    _rpc(
+        erp_client, "saveItem",
+        [{"itemName": keep, "itemBaseUnit": "Pcs", "itemInitialStock": 10}],
+        mutation=True,
+    )
+    _rpc(
+        erp_client, "saveItem",
+        [{"itemName": remove, "itemBaseUnit": dozen, "itemInitialStock": 2}],
+        mutation=True,
+    )
+
+    resp = _rpc(
+        erp_client, "mergeSelectedItems",
+        [[{"name": keep, "size": ""}, {"name": remove, "size": ""}]],
+        mutation=True,
+    )
+    assert resp.get_json()["success"] is True
+
+    stock = _rpc(erp_client, "getStockData").get_json()["data"]
+    stock_match = next(s for s in stock if s["name"] == keep)
+    assert stock_match["initialStock"] == 34  # 10 Pcs + (2 Dozen -> 24 Pcs)
+
+
 def test_merge_selected_items_rejects_wrong_count(erp_client):
     only_one = _unique_name("Solo")
     _rpc(erp_client, "saveItem", [{"itemName": only_one}], mutation=True)
@@ -413,3 +494,188 @@ def test_run_scheduled_item_cleanup_autofixes_unambiguous_truncated_pair(erp_cli
     names_at_size = [i["name"] for i in listed if i["size"] == size]
     assert long_name in names_at_size
     assert short_name not in names_at_size
+
+
+# ─────────────────────────────────────────────────────────────────────────
+# Item identity drift diagnostic ("Check Reference Integrity"), ported
+# behavior from module_items.js's getItemIdentityDriftReport /
+# fixItemIdentityDriftReference.
+# ─────────────────────────────────────────────────────────────────────────
+
+
+def test_get_item_identity_drift_report_no_drift_on_clean_state(erp_client):
+    resp = _rpc(erp_client, "getItemIdentityDriftReport")
+    body = resp.get_json()
+    assert body["success"] is True
+    assert isinstance(body["data"], list)
+    # Not asserting an empty list -- other tests in a full run may leave
+    # their own items in place -- just that the RPC itself behaves.
+    assert "message" in body
+
+
+def test_get_item_identity_drift_report_finds_stale_bill_reference(erp_client):
+    vendor = _unique_name("DriftVendor")
+    bill_number = _unique_name("INV")
+    item = _unique_name("DriftBillItem")
+
+    _rpc(
+        erp_client,
+        "saveBill",
+        [{"vendor": vendor, "billNumber": bill_number, "billDate": "01/01/2026", "items": [{"name": item, "qty": 1, "price": 10}]}],
+        mutation=True,
+    )
+    # Auto-extraction creates the item in Items Master on save -- delete it
+    # (not blocked: delete_item's in-use guard only covers BOM/Process
+    # Components, not Bill/PO/Return/Wastage/Issue/Production) to
+    # manufacture a genuine stale reference.
+    delete_resp = _rpc(erp_client, "deleteItem", [item, ""], mutation=True)
+    assert delete_resp.get_json()["success"] is True
+
+    drift = _rpc(erp_client, "getItemIdentityDriftReport").get_json()["data"]
+    match = next(d for d in drift if d["itemName"] == item)
+    assert match["sheet"] == "Bill Ledger"
+    assert bill_number in match["context"]
+
+
+def test_get_item_identity_drift_report_finds_stale_po_reference(erp_client):
+    vendor = _unique_name("DriftVendor")
+    item = _unique_name("DriftPoItem")
+
+    create = _rpc(
+        erp_client, "savePO", [{"vendor": vendor, "items": [{"name": item, "qty": 1, "price": 10}]}], mutation=True
+    ).get_json()
+    po_number = create["data"]["poNumber"]
+
+    _rpc(erp_client, "deleteItem", [item, ""], mutation=True)
+
+    drift = _rpc(erp_client, "getItemIdentityDriftReport").get_json()["data"]
+    match = next(d for d in drift if d["itemName"] == item)
+    assert match["sheet"] == "PO Tracker"
+    assert po_number in match["context"]
+
+
+def test_get_item_identity_drift_report_finds_return_wastage_and_issue_references(erp_client):
+    """Return/Wastage/Issue never auto-extract into Items Master (a genuine
+    behavioral difference from PO/Bill -- see return_service.py's module
+    docstring), so an item name that was never registered at all drifts
+    immediately, no delete required.
+    """
+    return_item = _unique_name("DriftReturnItem")
+    wastage_item = _unique_name("DriftWastageItem")
+    issue_item = _unique_name("DriftIssueItem")
+
+    _rpc(
+        erp_client,
+        "saveReturn",
+        [{"vendor": "V", "returnDate": "01/01/2026", "items": [{"name": return_item, "qty": 1, "price": 1, "reason": "Defective"}]}],
+        mutation=True,
+    )
+    _rpc(
+        erp_client,
+        "saveWastage",
+        [{"date": "01/01/2026", "items": [{"name": wastage_item, "qty": 1, "unit": "Pcs", "reason": "Damaged"}]}],
+        mutation=True,
+    )
+    _rpc(
+        erp_client,
+        "saveIssueStock",
+        [{"date": "01/01/2026", "issuedTo": "Contractor A", "items": [{"name": issue_item, "qty": 1, "unit": "Pcs"}]}],
+        mutation=True,
+    )
+
+    drift = _rpc(erp_client, "getItemIdentityDriftReport").get_json()["data"]
+    sheets_by_item = {d["itemName"]: d["sheet"] for d in drift}
+    assert sheets_by_item.get(return_item) == "Return Ledger"
+    assert sheets_by_item.get(wastage_item) == "Wastage Log"
+    assert sheets_by_item.get(issue_item) == "Issued Stock Log"
+
+
+def test_get_item_identity_drift_report_finds_production_components_consumed_but_skips_pool(erp_client):
+    item_drift = _unique_name("DriftProdItem")
+    pool_shared_name = _unique_name("DriftPoolOutput")
+
+    process_payload = {
+        "processName": _unique_name("Process"),
+        "lotPrefix": uuid.uuid4().hex[:5].upper(),
+        "outputItemName": _unique_name("Output"),
+        "sequence": 1,
+        "isFinalStage": False,
+        "active": True,
+        "remarks": "",
+        "processType": "",
+        "primaryColorAxis": "",
+        "components": [],
+        "colorLinks": [],
+    }
+    process_resp = _rpc(erp_client, "saveProcess", [process_payload], mutation=True).get_json()
+    assert process_resp["success"] is True, process_resp["message"]
+    process_id = process_resp["data"]["processId"]
+
+    lot = _rpc(
+        erp_client,
+        "saveProduction",
+        [
+            {
+                "processId": process_id,
+                "assignedTo": "Worker A",
+                "qty": 1,
+                "componentsConsumed": [
+                    {"itemName": item_drift, "qty": 1, "sourceType": "ITEM"},
+                    {"itemName": pool_shared_name, "qty": 1, "sourceType": "POOL"},
+                ],
+            }
+        ],
+        mutation=True,
+    ).get_json()
+    assert lot["success"] is True
+
+    drift = _rpc(erp_client, "getItemIdentityDriftReport").get_json()["data"]
+    items_flagged = {d["itemName"] for d in drift}
+    assert item_drift in items_flagged
+    # The POOL row's itemName is an upstream process's Output Item Name
+    # (Warehouse Pool identity), not an Items Master reference -- must
+    # never be flagged just because it also isn't in Items Master.
+    assert pool_shared_name not in items_flagged
+
+
+def test_fix_item_identity_drift_reference_repoints_bill_ledger_row(erp_client):
+    vendor = _unique_name("DriftVendor")
+    bill_number = _unique_name("INV")
+    stale_item = _unique_name("StaleItem")
+    target_item = _unique_name("TargetItem")
+
+    _rpc(
+        erp_client,
+        "saveBill",
+        [{"vendor": vendor, "billNumber": bill_number, "billDate": "01/01/2026", "items": [{"name": stale_item, "qty": 1, "price": 10}]}],
+        mutation=True,
+    )
+    _rpc(erp_client, "deleteItem", [stale_item, ""], mutation=True)
+    _rpc(erp_client, "saveItem", [{"itemName": target_item}], mutation=True)
+
+    fix = _rpc(erp_client, "fixItemIdentityDriftReference", [stale_item, "", target_item, ""], mutation=True)
+    body = fix.get_json()
+    assert body["success"] is True
+    assert stale_item in body["message"]
+    assert target_item in body["message"]
+
+    bills = _rpc(erp_client, "getBillData").get_json()["data"]
+    match = next(b for b in bills if b["billNumber"] == bill_number)
+    assert match["items"][0]["name"] == target_item
+
+    drift = _rpc(erp_client, "getItemIdentityDriftReport").get_json()["data"]
+    assert not any(d["itemName"] == stale_item for d in drift)
+
+
+def test_fix_item_identity_drift_reference_rejects_unknown_target(erp_client):
+    resp = _rpc(erp_client, "fixItemIdentityDriftReference", ["SomeStaleItem", "", "NoSuchTarget", ""], mutation=True)
+    body = resp.get_json()
+    assert body["success"] is False
+    assert "not found in Items Master" in body["message"]
+
+
+def test_fix_item_identity_drift_reference_requires_stale_name(erp_client):
+    resp = _rpc(erp_client, "fixItemIdentityDriftReference", ["", "", "AnyTarget", ""], mutation=True)
+    body = resp.get_json()
+    assert body["success"] is False
+    assert "required" in body["message"]

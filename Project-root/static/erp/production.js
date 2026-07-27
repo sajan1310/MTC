@@ -484,21 +484,35 @@ App.Production = {
     let html = '';
     pageItems.forEach(p => {
       const idx = App.State.globalProduction.indexOf(p);
-      const key = String(p.rowIdx);
-      const checked = App.Selection.isSelected(App.State.selectedProduction, key) ? 'checked' : '';
+      html += this.rowHtml(p, idx);
+    });
 
-      const process = (App.State.globalProcesses || []).find(pr => pr.processId === p.processId);
-      const processLabel = process ? process.processName : (p.processId || 'Uncategorized');
+    tbody.innerHTML = html;
 
-      const statusOptions = this.STATUS_OPTIONS
-        .map(s => `<option value="${s}" ${s === p.status ? 'selected' : ''}>${s}</option>`)
-        .join('');
+    App.Utils.renderPagination('productionPagination', filteredProduction.length, cur, rpp, 'production-page', 'Production Lots');
+    this.updateBulkButtons();
+  },
 
-      const colorBadges = (p.colorBreakdown && p.colorBreakdown.length > 0)
-        ? p.colorBreakdown.map(c => `<span class="badge bg-info text-dark me-1">${escapeHtml(c.color)}${c.size ? ` (${escapeHtml(c.size)})` : ''}: ${this.formatQty(c.qty)}</span>`).join('')
-        : (p.color ? `<span class="badge bg-info text-dark">${escapeHtml(p.color)}</span>` : '');
+  // Renders one <tr> for a Production Log record. Shared by renderTable's
+  // full rebuild and patchRowInPlace's single-row swap below -- keeping
+  // them on one code path means an in-place patch can never drift from
+  // what a full reload would have rendered for that same row.
+  rowHtml(p, idx) {
+    const key = String(p.rowIdx);
+    const checked = App.Selection.isSelected(App.State.selectedProduction, key) ? 'checked' : '';
 
-      html += `<tr>
+    const process = (App.State.globalProcesses || []).find(pr => pr.processId === p.processId);
+    const processLabel = process ? process.processName : (p.processId || 'Uncategorized');
+
+    const statusOptions = this.STATUS_OPTIONS
+      .map(s => `<option value="${s}" ${s === p.status ? 'selected' : ''}>${s}</option>`)
+      .join('');
+
+    const colorBadges = (p.colorBreakdown && p.colorBreakdown.length > 0)
+      ? p.colorBreakdown.map(c => `<span class="badge bg-info text-dark me-1">${escapeHtml(c.color)}${c.size ? ` (${escapeHtml(c.size)})` : ''}: ${this.formatQty(c.qty)}</span>`).join('')
+      : (p.color ? `<span class="badge bg-info text-dark">${escapeHtml(p.color)}</span>` : '');
+
+    return `<tr data-row-key="${escapeHtml(key)}">
     <td class="text-center"><input type="checkbox" class="form-check-input production-select-chk" data-key="${escapeHtml(key)}" ${checked} onchange="App.Production.onRowSelectChange()"></td>
     <td>${escapeHtml(p.date)}</td>
     <td><strong>${escapeHtml(processLabel)}</strong><br><span class="badge bg-secondary">${escapeHtml(p.lotNumber || '-')}</span></td>
@@ -516,12 +530,41 @@ App.Production = {
       <button class="btn btn-sm btn-danger btn-action w-100" onclick="App.Production.delete('${p.rowIdx}', '${escapeHtml(p.productId)}', '${p.qty}')">Delete</button>
     </td>
   </tr>`;
-    });
+  },
 
-    tbody.innerHTML = html;
+  // Patches one already-loaded row's data + its rendered <tr> after an
+  // Edit Lot save, instead of a full loadData() reload (a full
+  // getProductionData round-trip + rebuilding every row's HTML), which
+  // flashes "Loading Production Logs..." over the whole table and resets
+  // scroll position on every single-row edit.
+  //
+  // Mutates the SAME row object already sitting in globalProduction (and
+  // therefore filteredProduction too -- filterData() derives it via
+  // .filter(), which holds the same object references, not copies) so
+  // nothing else needs re-pointing; mirrors the in-place mutation
+  // updateStatus() already does for the status field alone.
+  //
+  // Trade-off accepted for this: no re-sort/re-filter happens here, so if
+  // the edit changed a value the active Sort/Search depends on (e.g. its
+  // Date under "Sort by Date"), the row keeps its old position/visibility
+  // until the next natural full reload (tab switch, filter, refresh).
+  //
+  // Returns false -- so the caller can fall back to loadData() -- when the
+  // row isn't currently loaded (stale local state) or isn't on the
+  // currently displayed page (nothing in the DOM to patch).
+  patchRowInPlace(freshRow) {
+    const key = String(freshRow.rowIdx);
+    const existing = App.State.globalProduction.find(r => String(r.rowIdx) === key);
+    if (!existing) return false;
 
-    App.Utils.renderPagination('productionPagination', filteredProduction.length, cur, rpp, 'production-page', 'Production Lots');
-    this.updateBulkButtons();
+    Object.assign(existing, freshRow);
+
+    const tr = document.querySelector(`#productionTableBody tr[data-row-key="${key}"]`);
+    if (!tr) return false;
+
+    const idx = App.State.globalProduction.indexOf(existing);
+    tr.outerHTML = this.rowHtml(existing, idx);
+    return true;
   },
 
   toggleSelectAll(masterChk) {
@@ -1003,6 +1046,7 @@ App.Production = {
       if (sectionLabel) sectionLabel.innerText = 'Components Consumed';
       this.hideColorMatrix();
       this._refreshCustomColorGroupSelect();
+      this.initCustomColorInputSelect2();
       return [];
     }
 
@@ -1013,9 +1057,52 @@ App.Production = {
     this.showColorMatrix();
 
     await this.renderGroupedColorChecklist(processId, colors, seq);
-    if (seq === undefined || seq === this._compLoadSeq) this._refreshCustomColorGroupSelect();
+    if (seq === undefined || seq === this._compLoadSeq) {
+      this._refreshCustomColorGroupSelect();
+      this.initCustomColorInputSelect2();
+    }
 
     return colors;
+  },
+
+  // Searchable Select2 for the "Custom Sub-Group" color input, sourced
+  // from Color Master with free-text tags allowed (createTag) -- lets the
+  // operator pick an existing Color Master name or type a genuinely new
+  // one, instead of a plain text box with no autocomplete/dedup help.
+  // Torn down and re-initialized each time the checklist reloads (see
+  // populateColorChecklist) so it never leaks a stale instance across a
+  // process switch.
+  initCustomColorInputSelect2() {
+    const selectEl = document.getElementById('productionCustomColorInput');
+    if (!selectEl || !window.jQuery?.fn?.select2) return;
+
+    const $select = window.jQuery(selectEl);
+    if ($select.data('select2')) $select.select2('destroy');
+    selectEl.innerHTML = '';
+
+    const $modal = $select.closest('.modal');
+    $select.select2({
+      placeholder: 'Custom sub-group name…',
+      width: '100%',
+      tags: true,
+      matcher: App.Utils.select2Matcher,
+      dropdownParent: $modal.length ? $modal : window.jQuery(document.body),
+      createTag(params) {
+        const term = (params.term || '').trim();
+        if (!term) return null;
+        const existing = (App.State.globalColors || []).find(c => App.Utils.sameText(c.name, term));
+        if (existing) return { id: existing.name, text: existing.name };
+        return { id: term, text: term, newTag: true };
+      }
+    });
+  },
+
+  destroyCustomColorInputSelect2() {
+    const selectEl = document.getElementById('productionCustomColorInput');
+    if (selectEl && window.jQuery?.fn?.select2) {
+      const $select = window.jQuery(selectEl);
+      if ($select.data('select2')) $select.select2('destroy');
+    }
   },
 
   _refreshCustomColorGroupSelect() {
@@ -1161,7 +1248,13 @@ App.Production = {
       }
       this.renderColorChecklistRows([name], 'custom', true);
     }
-    if (input) input.value = '';
+    if (input) {
+      if (window.jQuery?.fn?.select2 && window.jQuery(input).data('select2')) {
+        window.jQuery(input).val(null).trigger('change');
+      } else {
+        input.value = '';
+      }
+    }
     if (groupSelect) groupSelect.value = '';
 
     const row = $$('#productionColorChecklist .production-color-row')
@@ -2868,6 +2961,9 @@ App.Production = {
 
     document.getElementById('productionFormTitle').innerText = 'Log Production Lot';
     document.getElementById('productionSubmitBtn').innerText = 'Record Production Run';
+
+    App.Utils.setFormButtonsForMode('productionCancelBtn', 'productionExitBtn', 'productionSubmitBtn', false, 'Record Production Run');
+    App.Nav.clear('editProductionModal');
   },
 
   async openCreateModal() {
@@ -3071,6 +3167,17 @@ App.Production = {
 
     document.getElementById('productionFormTitle').innerText = `Edit Production Lot: Row #${p.rowIdx}`;
     document.getElementById('productionSubmitBtn').innerText = 'Update Production Lot';
+
+    App.Utils.setFormButtonsForMode('productionCancelBtn', 'productionExitBtn', 'productionSubmitBtn', true, 'Update Production Lot');
+    App.Nav.register(
+      'editProductionModal',
+      (App.State.filteredProduction || []).map(x => x.rowIdx),
+      p.rowIdx,
+      (rowIdx) => {
+        const targetIdx = App.State.globalProduction.findIndex(x => String(x.rowIdx) === String(rowIdx));
+        if (targetIdx !== -1) this.openEditModal(targetIdx);
+      }
+    );
 
     const modalEl = document.getElementById('editProductionModal');
     if (modalEl && typeof bootstrap !== 'undefined') {
@@ -3484,76 +3591,181 @@ App.Production = {
 
     const colors = App.State.currentProductionSheet?.colors || [];
     const get = (row, sel) => escapeHtml(row.querySelector(sel)?.value.trim() || '');
+    const getRaw = (row, sel) => row.querySelector(sel)?.value.trim() || '';
 
-    const commonBodyDest = document.getElementById('print-production-sheet-common-body');
-    const commonSection = document.getElementById('print-prod-common-section');
     const commonRows = $$('#productionSheetCommonBody tr').filter(row => row.querySelector('.prod-sheet-item-name'));
-    if (commonSection) commonSection.style.display = commonRows.length > 0 ? '' : 'none';
-    if (commonBodyDest) {
-      commonBodyDest.innerHTML = commonRows.map(row => {
-        const qty = row.querySelector('.prod-sheet-qty')?.value || '';
-        return `<tr>
-          <td style="padding:6px;border:1px solid #ddd;text-align:left;">${get(row, '.prod-sheet-item-name')}</td>
-          <td style="padding:6px;border:1px solid #ddd;">${get(row, '.prod-sheet-size') || '-'}</td>
-          <td style="padding:6px;border:1px solid #ddd;">${get(row, '.prod-sheet-narration') || '-'}</td>
-          <td style="padding:6px;border:1px solid #ddd;text-align:right;font-weight:700;">${qty ? escapeHtml(this.formatQty(qty)) : '-'}</td>
-        </tr>`;
-      }).join('');
-    }
-
-    const matrixSection = document.getElementById('print-prod-matrix-section');
-    const tablesDest = document.getElementById('print-production-sheet-matrix-tables');
     const matrixRows = $$('#productionSheetMatrixTables .prod-sheet-matrix-tbody tr').filter(row => row.querySelector('.prod-sheet-item-name'));
 
+    const commonSection = document.getElementById('print-prod-common-section');
+    if (commonSection) commonSection.style.display = commonRows.length > 0 ? '' : 'none';
+    const matrixSection = document.getElementById('print-prod-matrix-section');
     if (matrixSection) matrixSection.style.display = (colors.length > 0 && matrixRows.length > 0) ? '' : 'none';
 
-    if (tablesDest) {
-      tablesDest.innerHTML = '';
+    // A Size column that's "GENERAL"/blank on every row carries no
+    // information -- it's the one column the fit loop below is allowed
+    // to drop under space pressure. Narration is never dropped.
+    const isGenericSize = s => !s || s.toUpperCase() === 'GENERAL';
+    const commonSizeDroppable = commonRows.length > 0 && commonRows.every(row => isGenericSize(getRaw(row, '.prod-sheet-size')));
+    const matrixSizeDroppable = matrixRows.length > 0 && matrixRows.every(row => isGenericSize(getRaw(row, '.prod-sheet-size')));
 
-      const groups = new Map();
-      matrixRows.forEach(row => {
-        const activeColors = colors.filter(c => {
-          const input = $$('.prod-sheet-color-qty', row).find(el => el.dataset.color === c);
-          return toNumber(input?.value) > 0;
+    const commonData = commonRows.map(row => ({
+      name: get(row, '.prod-sheet-item-name'),
+      size: get(row, '.prod-sheet-size'),
+      narration: get(row, '.prod-sheet-narration'),
+      qty: row.querySelector('.prod-sheet-qty')?.value || ''
+    }));
+
+    // One row per item, one column per lot color -- replaces the old
+    // per-color-signature grouping (which spawned a separate mini-table,
+    // each repeating its own header, whenever items used different
+    // subsets of colors). Unused colors just render a dash.
+    const matrixData = matrixRows.map(row => ({
+      name: get(row, '.prod-sheet-item-name'),
+      size: get(row, '.prod-sheet-size'),
+      narration: get(row, '.prod-sheet-narration'),
+      colorQty: colors.map(c => {
+        const input = $$('.prod-sheet-color-qty', row).find(el => el.dataset.color === c);
+        return input?.value || '';
+      })
+    }));
+
+    // Density tiers the fit loop steps through, tightest last: shrink
+    // padding, then font (Item Name + Qty held a step larger and bold --
+    // the data a worker actually reads off the sheet -- never below a
+    // legible floor), then -- only where Size is droppable -- drop it.
+    // If even the tightest tier still overflows, it's kept anyway (still
+    // the smallest/cleanest option) and the sheet spills to a page 2,
+    // which already gets repeating headers from styles.css's print CSS.
+    const FIT_TIERS = [
+      { pad: '6px 8px', font: 12, emphasisFont: 14.5, tableGap: 12, hideSize: false },
+      { pad: '4px 7px', font: 11, emphasisFont: 13.5, tableGap: 9, hideSize: false },
+      { pad: '2.5px 6px', font: 10, emphasisFont: 12.5, tableGap: 7, hideSize: false },
+      { pad: '2px 5px', font: 9.5, emphasisFont: 11, tableGap: 5, hideSize: true }
+    ];
+    const HEAD_BG = '#e8f5e9', HEAD_INK = '#146c43', ZEBRA = '#f6f8f6', RULE = '#cfd6d1';
+
+    const headCell = (label, tier, opts = {}) => {
+      const width = opts.width ? `width:${opts.width};` : '';
+      return `<th style="padding:${tier.pad};border:1px solid ${RULE};background:${HEAD_BG};color:${HEAD_INK};
+                font-weight:700;text-align:${opts.align || 'center'};font-size:${Math.max(tier.font - 1, 9)}px;${width}
+                -webkit-print-color-adjust:exact;print-color-adjust:exact;">${label}</th>`;
+    };
+    const bodyCell = (content, tier, opts = {}) => {
+      const bg = opts.zebra ? `background:${ZEBRA};` : '';
+      const weight = opts.bold ? 'font-weight:700;' : '';
+      const fs = opts.emphasis ? tier.emphasisFont : tier.font;
+      return `<td style="padding:${tier.pad};border:1px solid ${RULE};text-align:${opts.align || 'left'};
+                font-size:${fs}px;${weight}${bg}">${content}</td>`;
+    };
+
+    const buildCommonTable = (rows, tier, hideSize) => {
+      if (rows.length === 0) return '';
+      let head = headCell('Item Name', tier, { align: 'left', width: hideSize ? '46%' : '38%' });
+      if (!hideSize) head += headCell('Size', tier, { width: '16%' });
+      head += headCell('Narration', tier, { width: hideSize ? '30%' : '22%' });
+      head += headCell('Required Qty', tier, { align: 'right', width: '18%' });
+
+      const body = rows.map((r, i) => {
+        const zebra = i % 2 === 1;
+        let row = bodyCell(r.name, tier, { zebra, bold: true, emphasis: true });
+        if (!hideSize) row += bodyCell(r.size || '&#8211;', tier, { align: 'center', zebra });
+        row += bodyCell(r.narration || '&#8211;', tier, { align: 'center', zebra });
+        row += bodyCell(r.qty ? escapeHtml(this.formatQty(r.qty)) : '&#8211;', tier, { align: 'right', bold: !!r.qty, zebra, emphasis: true });
+        return `<tr>${row}</tr>`;
+      }).join('');
+
+      return `<table style="width:100%;border-collapse:collapse;margin-bottom:${tier.tableGap}px;">
+        <thead><tr>${head}</tr></thead><tbody>${body}</tbody></table>`;
+    };
+
+    const buildMatrixTable = (rows, tier, hideSize) => {
+      if (rows.length === 0 || colors.length === 0) return '';
+      let head = headCell('Item Name', tier, { align: 'left', width: hideSize ? '30%' : '24%' });
+      if (!hideSize) head += headCell('Size', tier, { width: '9%' });
+      head += headCell('Narration', tier, { width: hideSize ? '16%' : '11%' });
+      colors.forEach(c => { head += headCell(escapeHtml(c), tier, { align: 'right' }); });
+
+      const body = rows.map((r, i) => {
+        const zebra = i % 2 === 1;
+        let row = bodyCell(r.name, tier, { zebra, bold: true, emphasis: true });
+        if (!hideSize) row += bodyCell(r.size || '&#8211;', tier, { align: 'center', zebra });
+        row += bodyCell(r.narration || '&#8211;', tier, { align: 'center', zebra });
+        r.colorQty.forEach(val => {
+          row += bodyCell(val ? escapeHtml(this.formatQty(val)) : '&#8211;', tier, { align: 'right', bold: !!val, zebra, emphasis: true });
         });
-        const signature = activeColors.join('|').toLowerCase();
-        if (!groups.has(signature)) groups.set(signature, { activeColors, rows: [] });
-        groups.get(signature).rows.push(row);
-      });
+        return `<tr>${row}</tr>`;
+      }).join('');
 
-      groups.forEach(({ activeColors, rows }) => {
-        const groupColors = activeColors.length > 0 ? activeColors : colors;
-        let headHtml = '<th style="padding:6px;border:1px solid #bbb;text-align:left;width:26%;">Item Name</th>'
-          + '<th style="padding:6px;border:1px solid #bbb;width:10%;">Size</th>'
-          + '<th style="padding:6px;border:1px solid #bbb;width:12%;">Narration</th>';
-        groupColors.forEach(c => {
-          headHtml += `<th style="padding:6px;border:1px solid #bbb;text-align:right;">${escapeHtml(c)}</th>`;
-        });
+      return `<table style="width:100%;border-collapse:collapse;margin-bottom:${tier.tableGap}px;">
+        <thead><tr>${head}</tr></thead><tbody>${body}</tbody></table>`;
+    };
 
-        const bodyHtml = rows.map(row => {
-          const qtyCellHtml = (color) => {
-            const input = $$('.prod-sheet-color-qty', row).find(el => el.dataset.color === color);
-            const val = input?.value || '';
-            return `<td style="padding:6px;border:1px solid #ddd;text-align:right;font-weight:700;">${val ? escapeHtml(this.formatQty(val)) : '-'}</td>`;
-          };
-          let rowHtml = `<tr>
-          <td style="padding:6px;border:1px solid #ddd;text-align:left;">${get(row, '.prod-sheet-item-name')}</td>
-          <td style="padding:6px;border:1px solid #ddd;">${get(row, '.prod-sheet-size') || '-'}</td>
-          <td style="padding:6px;border:1px solid #ddd;">${get(row, '.prod-sheet-narration') || '-'}</td>`;
-          groupColors.forEach(c => { rowHtml += qtyCellHtml(c); });
-          rowHtml += '</tr>';
-          return rowHtml;
-        }).join('');
+    // Common Components reads as a tall narrow list; past a handful of
+    // rows it's cheaper on vertical space split into two side-by-side
+    // tables than left as one column with the page's right half empty.
+    const COMMON_TWO_COL_THRESHOLD = 8;
 
-        tablesDest.insertAdjacentHTML('beforeend', `
-          <table style="width:100%;border-collapse:collapse;margin-bottom:14px;font-size:12px;">
-            <thead style="background-color:#fff;color:#000;text-align:center;font-weight:700;
-                          -webkit-print-color-adjust:exact;print-color-adjust:exact;">
-              <tr>${headHtml}</tr>
-            </thead>
-            <tbody style="color:#1a1a1a;text-align:center;">${bodyHtml}</tbody>
-          </table>`);
-      });
+    const commonDest = document.getElementById('print-production-sheet-common-tables');
+    const matrixDest = document.getElementById('print-production-sheet-matrix-tables');
+
+    const render = tier => {
+      if (commonDest) {
+        const hideSize = tier.hideSize && commonSizeDroppable;
+        if (commonData.length > COMMON_TWO_COL_THRESHOLD) {
+          const mid = Math.ceil(commonData.length / 2);
+          const left = buildCommonTable(commonData.slice(0, mid), tier, hideSize);
+          const right = buildCommonTable(commonData.slice(mid), tier, hideSize);
+          commonDest.innerHTML = `<div style="display:grid;grid-template-columns:1fr 1fr;gap:12px;">${left}${right}</div>`;
+        } else {
+          commonDest.innerHTML = buildCommonTable(commonData, tier, hideSize);
+        }
+      }
+      if (matrixDest) {
+        const hideSize = tier.hideSize && matrixSizeDroppable;
+        matrixDest.innerHTML = buildMatrixTable(matrixData, tier, hideSize);
+      }
+    };
+
+    // Measure-and-compress: lay the container out offscreen at the real
+    // A4 printable width (matches the @page margin geometry in
+    // styles.css -- keep PAGE_MARGIN_MM in sync with that file's @page
+    // rule and mobile_styles.css's copy of it), try each density tier,
+    // and stop at the first one that fits a single page -- so nothing
+    // shrinks or drops a column unless the sheet actually needs it to.
+    const container = document.getElementById('print-production-sheet-container');
+    const MM_TO_PX = 96 / 25.4;
+    const PAGE_MARGIN_MM = 6;
+    const PAGE_WIDTH_PX = Math.round((210 - 2 * PAGE_MARGIN_MM) * MM_TO_PX);
+    const PAGE_HEIGHT_PX = Math.round((297 - 2 * PAGE_MARGIN_MM) * MM_TO_PX);
+
+    if (container) {
+      const prevDisplay = container.style.display;
+      const prevPosition = container.style.position;
+      const prevVisibility = container.style.visibility;
+      const prevWidth = container.style.width;
+      const prevLeft = container.style.left;
+      const prevTop = container.style.top;
+
+      container.style.position = 'fixed';
+      container.style.left = '-10000px';
+      container.style.top = '0';
+      container.style.visibility = 'hidden';
+      container.style.display = 'block';
+      container.style.width = PAGE_WIDTH_PX + 'px';
+
+      for (const tier of FIT_TIERS) {
+        render(tier);
+        if (container.scrollHeight <= PAGE_HEIGHT_PX) break;
+      }
+
+      container.style.display = prevDisplay;
+      container.style.position = prevPosition;
+      container.style.visibility = prevVisibility;
+      container.style.width = prevWidth;
+      container.style.left = prevLeft;
+      container.style.top = prevTop;
+    } else {
+      render(FIT_TIERS[0]);
     }
 
     const remarksSection = document.getElementById('print-prod-remarks-section');
@@ -3626,11 +3838,20 @@ document.addEventListener('DOMContentLoaded', function () {
     const submitBtn = document.getElementById('productionSubmitBtn');
     if (submitBtn) submitBtn.disabled = true;
 
+    const isNewLot = !document.getElementById('productionRowIdx')?.value;
+    const savedRowIdx = document.getElementById('productionRowIdx')?.value || '';
+
     try {
       const response = await Api.mutate('saveProduction', formData);
       if (response.success) {
-        const isNewLot = !document.getElementById('productionRowIdx')?.value;
         if (isNewLot) {
+          // A brand-new lot's sorted/paginated position can't be
+          // determined cheaply on the client, so still do a full reload
+          // here (an edit doesn't need to, see App.Production.patchRowInPlace).
+          await App.Production.loadData();
+
+          // Stay open and re-arm for the next lot instead of closing --
+          // operators log many lots back-to-back.
           const fieldset = document.getElementById('productionFormFieldset');
           if (fieldset) fieldset.disabled = true;
           try {
@@ -3640,10 +3861,30 @@ document.addEventListener('DOMContentLoaded', function () {
           }
           document.getElementById('productionSize')?.focus();
         } else {
-          const modalEl = document.getElementById('editProductionModal');
-          if (modalEl) bootstrap.Modal.getOrCreateInstance(modalEl).hide();
+          // Edit mode "Save": patch just this one row's data + <tr> in
+          // place (see patchRowInPlace) instead of a full loadData()
+          // reload -- falls back to a full reload if the row can't be
+          // patched.
+          const patched = response.data && response.data.row
+            ? App.Production.patchRowInPlace(response.data.row)
+            : false;
+          if (!patched) await App.Production.loadData();
+
+          // Stay open (Exit -- App.Nav.exit -- is the only way to close
+          // from here now) and re-run this SAME record through
+          // openEditModal instead of just leaving the form as-is, so
+          // every derived/computed bit of state (Lot Number, color
+          // matrix, Nav's dirty-snapshot and N-of-M position) reflects
+          // what was just saved. Re-derived by rowIdx (stable) rather
+          // than reusing the old positional idx.
+          const freshIdx = App.State.globalProduction.findIndex(r => String(r.rowIdx) === savedRowIdx);
+          if (freshIdx !== -1) {
+            await App.Production.openEditModal(freshIdx);
+          } else {
+            const modalEl = document.getElementById('editProductionModal');
+            if (modalEl) bootstrap.Modal.getOrCreateInstance(modalEl).hide();
+          }
         }
-        await App.Production.loadData();
       }
       App.Utils.showToast(response.message, !response.success);
     } catch (err) {

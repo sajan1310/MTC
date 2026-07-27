@@ -8,8 +8,11 @@ as Wastage -- see stock_service._get_billed_and_consumed_qty_maps's ISSUE
 term). Reference (e.g. a Production Lot #) is optional and purely
 informational.
 
-Create-only, same as Wastage: no edit/update path, and no singular
-deleteIssue -- only deleteIssueBulk.
+Create-only in the source, same as Wastage -- no singular deleteIssue, only
+deleteIssueBulk. The port additionally supports editing an existing record
+(saveIssueStock's `existingIssueId`), a deliberate PWA-only addition with no
+GAS equivalent; issueId itself never changes on edit, matching how it has
+no override field on create either.
 
 Issued To is required and is matched case-insensitively against Vendor
 Master to auto-populate a Vendor snapshot for Vendor Ledger purposes --
@@ -137,6 +140,12 @@ def get_issue_data():
 @rpc_method("saveIssueStock", mutation=True)
 @database.transactional
 def save_issue_stock(conn, cur, form_data):
+    """Create-only in the source; the port additionally supports editing an
+    existing record when `existingIssueId` is provided (issueId itself never
+    changes on edit -- it has no override field, same as on create). Not a
+    ported behavior: nothing in module_issue.js offers an edit path, this is
+    a deliberate PWA-only addition.
+    """
     form_data = form_data or {}
 
     items_raw = form_data.get("items")
@@ -149,6 +158,20 @@ def save_issue_stock(conn, cur, form_data):
         items = items_raw or []
     if not isinstance(items, list) or len(items) == 0:
         raise ValueError("Cannot issue stock with zero items. Add at least one item.")
+
+    existing_issue_id = str(form_data.get("existingIssueId") or "").strip()
+    is_edit = bool(existing_issue_id)
+
+    header_id = None
+    if is_edit:
+        cur.execute(
+            "SELECT id FROM erp.issue_headers WHERE lower(issue_id) = lower(%s) AND deleted_at IS NULL",
+            (existing_issue_id,),
+        )
+        existing = cur.fetchone()
+        if existing is None:
+            raise ValueError(f"Original issue {existing_issue_id} not found. Edit aborted to prevent data corruption.")
+        header_id = existing["id"]
 
     issued_to = str(form_data.get("issuedTo") or "").strip()
     if not issued_to:
@@ -191,20 +214,31 @@ def save_issue_stock(conn, cur, form_data):
 
     vendor = _match_vendor_name(cur, issued_to)
     vendor_id = _find_vendor_id(cur, vendor) if vendor else None
-
-    now = datetime.now()
-    issue_id = f"ISS-{now.strftime('%Y%m%d')}-{now.strftime('%H%M%S')}"
     user_id = get_current_user_id()
 
-    cur.execute(
-        """
-        INSERT INTO erp.issue_headers (issue_id, issue_date, issued_to, reference, vendor, vendor_id, remarks, updated_by)
-        VALUES (%s, %s, %s, %s, %s, %s, %s, %s)
-        RETURNING id
-        """,
-        (issue_id, issue_date, issued_to, reference, vendor, vendor_id, remarks, user_id),
-    )
-    header_id = cur.fetchone()["id"]
+    if is_edit:
+        issue_id = existing_issue_id
+        cur.execute(
+            """
+            UPDATE erp.issue_headers
+            SET issue_date = %s, issued_to = %s, reference = %s, vendor = %s, vendor_id = %s, remarks = %s, updated_by = %s
+            WHERE id = %s
+            """,
+            (issue_date, issued_to, reference, vendor, vendor_id, remarks, user_id, header_id),
+        )
+        cur.execute("DELETE FROM erp.issue_lines WHERE header_id = %s", (header_id,))
+    else:
+        now = datetime.now()
+        issue_id = f"ISS-{now.strftime('%Y%m%d')}-{now.strftime('%H%M%S')}"
+        cur.execute(
+            """
+            INSERT INTO erp.issue_headers (issue_id, issue_date, issued_to, reference, vendor, vendor_id, remarks, updated_by)
+            VALUES (%s, %s, %s, %s, %s, %s, %s, %s)
+            RETURNING id
+            """,
+            (issue_id, issue_date, issued_to, reference, vendor, vendor_id, remarks, user_id),
+        )
+        header_id = cur.fetchone()["id"]
 
     for n in normalized:
         item_id = _find_item_id(cur, n["name"], n["size"])
@@ -216,7 +250,8 @@ def save_issue_stock(conn, cur, form_data):
             (header_id, n["name"], n["size"], n["qty"], n["unit"], n["baseQty"], n["rate"], item_id),
         )
 
-    return build_response(True, {"issueId": issue_id}, f"Stock issue {issue_id} logged successfully.")
+    message = f"Issue {issue_id} updated successfully." if is_edit else f"Stock issue {issue_id} logged successfully."
+    return build_response(True, {"issueId": issue_id}, message)
 
 
 @rpc_method("deleteIssueBulk", mutation=True)

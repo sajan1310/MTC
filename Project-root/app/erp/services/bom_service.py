@@ -270,89 +270,138 @@ def verify_bom_access(conn, cur, password):
 # ─────────────────────────────────────────────────────────────────────────
 
 
-@rpc_method("getBOMData")
-def get_bom_data(token=None):
-    with database.get_conn(cursor_factory=psycopg2.extras.RealDictCursor) as (_conn, cur):
-        _require_bom_access(cur, token)
+def _finalize_bom_product_costs(product: dict) -> None:
+    """Aggregate a product's components into per-color costs, then derive
+    totalCost/totalQty/grandTotal from the primary (first-seen) color.
 
-        process_name_by_id = _process_name_by_id_lower(cur)
+    A blank-Color component row is common to every color; a non-blank one is
+    an alternative exclusive to that color, not additive across colors. A
+    product's headline totalCost/totalQty is the first color's total (common
+    + that color's own rows) so a 3-color product isn't reported as 3x its
+    real per-unit cost. Mutates ``product`` in place.
+    """
+    common_cost = 0.0
+    common_qty = 0.0
+    per_color: dict = {}
+    for component in product["components"]:
+        color = component["color"]
+        if not color:
+            common_cost += component["lineCost"]
+            common_qty += component["qtyPerProduct"]
+            continue
+        key = color.lower()
+        bucket = per_color.setdefault(key, {"cost": 0.0, "qty": 0.0})
+        bucket["cost"] += component["lineCost"]
+        bucket["qty"] += component["qtyPerProduct"]
 
-        cur.execute(
-            """
-            SELECT bp.product_id, bp.product_name, bp.remarks, bp.sequence,
-                   bl.item_name, bl.size, bl.narration, bl.rate, bl.vendor,
-                   bl.qty_per_product, bl.process_group, bl.color
-            FROM erp.bom_products bp
-            JOIN erp.bom_lines bl ON bl.header_id = bp.id
-            WHERE bp.deleted_at IS NULL
-            ORDER BY bp.id, bl.id
-            """
+    color_costs = []
+    for color in product["colors"]:
+        bucket = per_color.get(color.lower(), {"cost": 0.0, "qty": 0.0})
+        color_costs.append(
+            {
+                "color": color,
+                "totalCost": common_cost + bucket["cost"],
+                "totalQty": common_qty + bucket["qty"],
+            }
         )
-        rows = cur.fetchall()
+    product["colorCosts"] = color_costs
 
-        product_map: dict = {}
-        colors_seen: dict = {}
-        for row in rows:
-            product_id = row["product_id"]
-            product_name = row["product_name"]
-            item_name = row["item_name"]
-            if not product_id or not product_name or not item_name:
-                continue
+    primary = color_costs[0] if color_costs else None
+    product["totalCost"] = primary["totalCost"] if primary else common_cost
+    product["totalQty"] = primary["totalQty"] if primary else common_qty
+    product["grandTotal"] = product["totalCost"] + product["totalAdditionalCost"]
 
-            product = product_map.get(product_id)
-            if product is None:
-                product = {
-                    "productId": product_id,
-                    "productName": product_name,
-                    "components": [],
-                    "colors": [],
-                    "totalCost": 0.0,
-                    "totalQty": 0.0,
-                    "additionalCosts": [],
-                    "totalAdditionalCost": 0.0,
-                    "remarks": row["remarks"] or "",
-                    "sequence": row["sequence"] or 0,
-                }
-                product_map[product_id] = product
-                colors_seen[product_id] = set()
 
-            rate = float(row["rate"] or 0)
-            qty = float(row["qty_per_product"] or 0)
-            line_cost = rate * qty
-            process_id = (row["process_group"] or "").strip()
-            color = (row["color"] or "").strip()
+def _load_bom_list(cur, only_product_id=None) -> list:
+    """Core of getBOMData: query + group + cost-finalize, optionally scoped
+    to one product. Shared by get_bom_data() (full list) and save_bom()
+    (only_product_id, to read back just its own freshly-written product
+    for the client's in-place row-patch response).
+    """
+    process_name_by_id = _process_name_by_id_lower(cur)
 
-            product["components"].append(
-                {
-                    "itemName": item_name,
-                    "size": row["size"] or "",
-                    "narration": row["narration"] or "",
-                    "rate": rate,
-                    "vendor": row["vendor"] or "",
-                    "qtyPerProduct": qty,
-                    "lineCost": line_cost,
-                    "processId": process_id,
-                    "processGroup": _resolve_process_group_label(process_name_by_id, process_id),
-                    "color": color,
-                }
-            )
+    query = """
+        SELECT bp.product_id, bp.product_name, bp.remarks, bp.sequence,
+               bl.item_name, bl.size, bl.narration, bl.rate, bl.vendor,
+               bl.qty_per_product, bl.process_group, bl.color
+        FROM erp.bom_products bp
+        JOIN erp.bom_lines bl ON bl.header_id = bp.id
+        WHERE bp.deleted_at IS NULL
+        """
+    params: list = []
+    if only_product_id is not None:
+        query += " AND lower(bp.product_id) = lower(%s)"
+        params.append(only_product_id)
+    query += " ORDER BY bp.id, bl.id"
 
-            if color and color not in colors_seen[product_id]:
-                colors_seen[product_id].add(color)
-                product["colors"].append(color)
+    cur.execute(query, params)
+    rows = cur.fetchall()
 
-            product["totalCost"] += line_cost
-            product["totalQty"] += qty
+    product_map: dict = {}
+    colors_seen: dict = {}
+    for row in rows:
+        product_id = row["product_id"]
+        product_name = row["product_name"]
+        item_name = row["item_name"]
+        if not product_id or not product_name or not item_name:
+            continue
 
-        cur.execute(
-            """
+        product = product_map.get(product_id)
+        if product is None:
+            product = {
+                "productId": product_id,
+                "productName": product_name,
+                "components": [],
+                "colors": [],
+                "totalCost": 0.0,
+                "totalQty": 0.0,
+                "additionalCosts": [],
+                "totalAdditionalCost": 0.0,
+                "remarks": row["remarks"] or "",
+                "sequence": row["sequence"] or 0,
+            }
+            product_map[product_id] = product
+            colors_seen[product_id] = set()
+
+        rate = float(row["rate"] or 0)
+        qty = float(row["qty_per_product"] or 0)
+        line_cost = rate * qty
+        process_id = (row["process_group"] or "").strip()
+        color = (row["color"] or "").strip()
+
+        product["components"].append(
+            {
+                "itemName": item_name,
+                "size": row["size"] or "",
+                "narration": row["narration"] or "",
+                "rate": rate,
+                "vendor": row["vendor"] or "",
+                "qtyPerProduct": qty,
+                "lineCost": line_cost,
+                "processId": process_id,
+                "processGroup": _resolve_process_group_label(process_name_by_id, process_id),
+                "color": color,
+            }
+        )
+
+        if color and color not in colors_seen[product_id]:
+            colors_seen[product_id].add(color)
+            product["colors"].append(color)
+
+    if product_map:
+        cost_query = """
             SELECT bp.product_id, bc.description, bc.rate, bc.process_name, bc.contractor_name
             FROM erp.bom_additional_costs bc
             JOIN erp.bom_products bp ON bp.id = bc.header_id
             WHERE bp.deleted_at IS NULL
-            ORDER BY bc.id
             """
-        )
+        cost_params: list = []
+        if only_product_id is not None:
+            cost_query += " AND lower(bp.product_id) = lower(%s)"
+            cost_params.append(only_product_id)
+        cost_query += " ORDER BY bc.id"
+
+        cur.execute(cost_query, cost_params)
         for row in cur.fetchall():
             product = product_map.get(row["product_id"])
             description = row["description"]
@@ -371,9 +420,17 @@ def get_bom_data(token=None):
 
     products = list(product_map.values())
     for p in products:
-        p["grandTotal"] = p["totalCost"] + p["totalAdditionalCost"]
+        _finalize_bom_product_costs(p)
     products.sort(key=lambda p: p["sequence"])
 
+    return products
+
+
+@rpc_method("getBOMData")
+def get_bom_data(token=None):
+    with database.get_conn(cursor_factory=psycopg2.extras.RealDictCursor) as (_conn, cur):
+        _require_bom_access(cur, token)
+        products = _load_bom_list(cur)
     return build_response(True, products)
 
 
@@ -565,7 +622,14 @@ def save_bom(conn, cur, form_data, token=None):
         )
 
     message = "BOM updated successfully." if is_edit else "Product BOM saved successfully."
-    return build_response(True, {"productId": product_id, "productName": product_name}, message)
+
+    # Read this product's own just-written rows back so the client can
+    # patch it into an already-loaded list in place instead of a full
+    # reload.
+    fresh_list = _load_bom_list(cur, only_product_id=product_id)
+    fresh_product = fresh_list[0] if fresh_list else None
+
+    return build_response(True, {"productId": product_id, "productName": product_name, "product": fresh_product}, message)
 
 
 @rpc_method("deleteBOM", mutation=True)

@@ -26,6 +26,9 @@
       <button id="btnMergeDuplicates" class="btn btn-outline-warning fw-bold shadow-sm" onclick="App.Item.mergeDuplicates()" title="Fix truncated-name duplicates and merge any rows that share the same Name + Size">
         <i class="bi bi-magic"></i> Merge Duplicates
       </button>
+      <button id="btnCheckItemRefIntegrity" class="btn btn-outline-secondary fw-bold shadow-sm" type="button" title="Verifies every Item Name/Size reference in Bill, PO, BOM, Process Components, Return, Wastage, Issue, and Production still resolves to a current Items Master row — catches anything a rename/merge left behind. Informational only, never changes anything." onclick="App.Item.checkReferenceIntegrity()">
+        <i class="bi bi-clipboard-check"></i> Check Reference Integrity
+      </button>
       <button class="btn btn-info fw-bold text-white shadow-sm" onclick="App.Item.openCreateModal()">+ Register New Item</button>
     </div>
   </div>
@@ -109,6 +112,17 @@
             </div>
           </div>
 
+          <!-- Item-side view of the Process Components rows the Process tab
+               edits. Hidden entirely in Create mode (a brand-new item is in
+               no recipe yet) -- see App.Item.openCreateModal. -->
+          <div id="itemProcessesSection" style="display:none;">
+            <h6 class="text-secondary border-bottom pb-1 fw-bold">
+              Used in Processes
+              <a href="#" class="float-end small" onclick="App.Item.goToProcesses(); return false;">Manage in Process tab &#8599;</a>
+            </h6>
+            <div id="itemProcessesBody" class="mb-4"></div>
+          </div>
+
           <h6 class="text-secondary border-bottom pb-1 fw-bold">Approved Vendors & Rates</h6>
           <div class="table-responsive">
             <table class="table table-bordered bg-white shadow-sm">
@@ -126,7 +140,8 @@
           <button type="button" class="btn btn-outline-info text-dark btn-sm mb-3 fw-bold border-2" onclick="App.Item.addVendorRow()">+ Add Vendor & Rate</button>
 
           <div class="text-end mt-2">
-            <button type="button" class="btn btn-secondary me-2" data-bs-dismiss="modal">Cancel</button>
+            <button type="button" id="itemCancelBtn" class="btn btn-secondary me-2" data-bs-dismiss="modal">Cancel</button>
+            <button type="button" id="itemExitBtn" class="btn btn-secondary me-2" style="display:none;" onclick="App.Nav.exit('itemModal')">Exit</button>
             <button type="submit" id="itemSubmitBtn" class="btn btn-info fw-bold px-5 shadow-sm text-dark">Save Item Record</button>
           </div>
         </form>
@@ -251,6 +266,24 @@
             <tbody id="syncReviewBody"></tbody>
           </table>
         </div>
+      </div>
+    </div>
+  </div>
+</div>
+
+<!-- Item Identity Reference Integrity Modal (read-only diagnostic, App.Item.checkReferenceIntegrity) -->
+<div class="modal fade" id="itemDriftModal" tabindex="-1" aria-hidden="true">
+  <div class="modal-dialog modal-fullscreen-sm-down" style="max-width: 95vw;">
+    <div class="modal-content shadow-lg">
+      <div class="modal-header bg-secondary text-white">
+        <h5 class="modal-title fw-bold" style="font-family: 'Outfit', sans-serif;">
+          <i class="bi bi-clipboard-check me-2"></i>Item Reference Integrity
+        </h5>
+        <button type="button" class="btn-close btn-close-white" data-bs-dismiss="modal"></button>
+      </div>
+      <div class="modal-body bg-light" id="itemDriftModalBody"></div>
+      <div class="modal-footer">
+        <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Close</button>
       </div>
     </div>
   </div>

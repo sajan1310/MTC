@@ -202,7 +202,8 @@
           <div class="alert alert-info py-2 shadow-sm" id="rateComparison" style="display: none;"></div>
 
           <div class="text-end mt-2">
-            <button type="button" class="btn btn-secondary me-2" data-bs-dismiss="modal">Cancel</button>
+            <button type="button" id="poCancelBtn" class="btn btn-secondary me-2" data-bs-dismiss="modal">Cancel</button>
+            <button type="button" id="poExitBtn" class="btn btn-secondary me-2" style="display:none;" onclick="App.Nav.exit('editPoModal')">Exit</button>
             <button type="button" id="poModalPrintBtn" class="btn btn-outline-dark me-2" style="display:none;" onclick="App.PO.printCurrent()"><i class="bi bi-printer"></i> Print</button>
             <button type="submit" id="poSubmitBtn" class="btn btn-success px-5 fw-bold shadow-sm">Save Purchase Order</button>
           </div>

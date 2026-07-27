@@ -43,6 +43,44 @@ def test_save_return_auto_generates_return_number(erp_client):
     assert re.match(r"^RET-\d{8}-\d{6}$", body["data"]["returnNumber"])
 
 
+def test_save_return_returns_fresh_row_for_in_place_patch(erp_client):
+    vendor = _unique_name("Vendor")
+    return_number = _unique_name("RET")
+    item1 = _unique_name("Item1")
+    item2 = _unique_name("Item2")
+
+    create = _rpc(
+        erp_client,
+        "saveReturn",
+        [{"vendor": vendor, "returnNumber": return_number, "returnDate": "01/01/2026", "items": [{"name": item1, "qty": 5, "price": 2}]}],
+        mutation=True,
+    )
+    create_body = create.get_json()
+    assert create_body["data"]["ret"]["returnNumber"] == return_number
+    assert create_body["data"]["ret"]["items"][0]["name"] == item1
+
+    edit = _rpc(
+        erp_client,
+        "saveReturn",
+        [
+            {
+                "existingReturnNumber": return_number,
+                "returnNumber": return_number,
+                "vendor": vendor,
+                "returnDate": "01/01/2026",
+                "items": [{"name": item2, "qty": 3, "price": 4}],
+            }
+        ],
+        mutation=True,
+    )
+    edit_body = edit.get_json()
+    fresh_return = edit_body["data"]["ret"]
+    assert fresh_return["returnNumber"] == return_number
+    assert fresh_return["vendor"] == vendor
+    assert len(fresh_return["items"]) == 1
+    assert fresh_return["items"][0]["name"] == item2
+
+
 def test_save_return_with_explicit_number_and_computes_totals(erp_client):
     vendor = _unique_name("ExplicitReturnVendor")
     return_number = _unique_name("RET")
@@ -169,6 +207,39 @@ def test_delete_returns_bulk(erp_client):
     numbers = [r["returnNumber"] for r in listed]
     assert a not in numbers
     assert b not in numbers
+
+
+def test_item_rename_cascades_into_return_lines(erp_client):
+    old_item = _unique_name("OldReturnItem")
+    new_item = _unique_name("NewReturnItem")
+    vendor = _unique_name("ItemCascadeReturnVendor")
+    _rpc(erp_client, "saveItem", [{"itemName": old_item, "itemSize": "M"}], mutation=True)
+
+    return_number = _unique_name("ItemCascadeReturn")
+    _rpc(
+        erp_client,
+        "saveReturn",
+        [
+            {
+                "vendor": vendor,
+                "returnNumber": return_number,
+                "returnDate": "01/01/2026",
+                "items": [{"name": old_item, "size": "M", "qty": 1, "price": 1}],
+            }
+        ],
+        mutation=True,
+    )
+
+    rename = _rpc(
+        erp_client, "saveItem",
+        [{"itemName": new_item, "itemSize": "M", "originalName": old_item, "originalSize": "M"}],
+        mutation=True,
+    )
+    assert rename.get_json()["success"] is True
+
+    listed = _rpc(erp_client, "getReturnData").get_json()["data"]
+    match = next(r for r in listed if r["returnNumber"] == return_number)
+    assert match["items"][0]["name"] == new_item
 
 
 def test_vendor_rename_cascades_into_return_headers(erp_client):

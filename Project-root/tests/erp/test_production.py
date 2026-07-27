@@ -119,7 +119,11 @@ def test_save_production_no_color_process_requires_component(erp_client):
     assert "At least one component consumed" in body["message"]
 
 
-def test_save_production_no_color_process_rejects_zero_qty(erp_client):
+def test_save_production_no_color_process_allows_zero_qty(erp_client):
+    """Zero and negative quantities are both allowed -- a lot can be logged
+    as a correction/reversal (e.g. a prior over-count) without editing
+    history, mirroring adjust_stock_manually/adjust_warehouse_pool_manually.
+    """
     _payload, process_id = _save_process(erp_client)
     resp = _rpc(
         erp_client,
@@ -128,8 +132,11 @@ def test_save_production_no_color_process_rejects_zero_qty(erp_client):
         mutation=True,
     )
     body = resp.get_json()
-    assert body["success"] is False
-    assert "cannot be zero" in body["message"]
+    assert body["success"] is True, body["message"]
+
+    listed = _rpc(erp_client, "getProductionData").get_json()["data"]
+    match = next(r for r in listed if r["lotNumber"] == body["data"]["lotNumber"])
+    assert match["qty"] == 0
 
 
 def test_save_production_no_color_process_allows_negative_qty(erp_client):
@@ -186,6 +193,92 @@ def test_save_production_color_breakdown_custom_subgroup_exempt(erp_client):
     assert resp.get_json()["success"] is True
 
 
+def test_save_production_custom_color_auto_registers_into_color_master(erp_client):
+    """A brand-new color the operator types via "+ Add Custom Sub-Group"
+    is auto-registered into Color Master, so it's available everywhere
+    else Color Master feeds a picker instead of staying invisible outside
+    this one process's own logged history.
+    """
+    *_ignored, down_id = _make_color_process(erp_client)
+    custom_color = _unique_name("AutoRegisteredColor")
+
+    colors_before = _rpc(erp_client, "getColors").get_json()["data"]
+    assert not any(c["name"] == custom_color for c in colors_before)
+
+    resp = _rpc(
+        erp_client,
+        "saveProduction",
+        [
+            {
+                "processId": down_id,
+                "assignedTo": "Worker A",
+                "colorBreakdown": [{"color": custom_color, "qty": 5, "isCustom": True}],
+                "componentsConsumed": [_item_component()],
+            }
+        ],
+        mutation=True,
+    )
+    assert resp.get_json()["success"] is True
+
+    colors_after = _rpc(erp_client, "getColors").get_json()["data"]
+    assert any(c["name"] == custom_color for c in colors_after)
+
+
+def test_save_production_color_breakdown_allows_zero_qty(erp_client):
+    """A color-breakdown lot's total may legitimately be zero (an explicit
+    zero-output record, or a correction) -- only a checklist with no color
+    rows at all is rejected, not a zero total.
+    """
+    *_ignored, down_id = _make_color_process(erp_client)
+    resp = _rpc(
+        erp_client,
+        "saveProduction",
+        [
+            {
+                "processId": down_id,
+                "assignedTo": "Worker A",
+                "colorBreakdown": [{"color": "SpecialBatch", "qty": 0, "isCustom": True}],
+                "componentsConsumed": [_item_component()],
+            }
+        ],
+        mutation=True,
+    )
+    body = resp.get_json()
+    assert body["success"] is True, body["message"]
+
+    listed = _rpc(erp_client, "getProductionData").get_json()["data"]
+    match = next(r for r in listed if r["lotNumber"] == body["data"]["lotNumber"])
+    assert match["qty"] == 0
+
+
+def test_save_production_allows_zero_and_negative_component_consumption(erp_client):
+    """Zero and negative consumption are both allowed -- e.g. a correction/
+    reversal lot that credits stock/pool back, mirroring the output qty's
+    own zero/negative handling.
+    """
+    _payload, process_id = _save_process(erp_client)
+    reversal_item = _unique_name("ReversalComponent")
+    resp = _rpc(
+        erp_client,
+        "saveProduction",
+        [
+            {
+                "processId": process_id,
+                "assignedTo": "Worker A",
+                "qty": 5,
+                "componentsConsumed": [{"itemName": reversal_item, "qty": -2, "sourceType": "ITEM"}],
+            }
+        ],
+        mutation=True,
+    )
+    body = resp.get_json()
+    assert body["success"] is True, body["message"]
+
+    listed = _rpc(erp_client, "getProductionData").get_json()["data"]
+    match = next(r for r in listed if r["lotNumber"] == body["data"]["lotNumber"])
+    assert match["componentsConsumed"][0]["qty"] == -2
+
+
 def test_color_rename_cascades_into_production_and_warehouse_pool(erp_client):
     """tags_service._rename_color_everywhere's Production/Warehouse Pool
     targets: a real gap found by an Apps-Script-parity audit (deferred
@@ -232,6 +325,74 @@ def test_color_rename_cascades_into_production_and_warehouse_pool(erp_client):
     own_buckets = [b for b in pool if b["outputItemName"] == payload["outputItemName"]]
     assert not any(b["color"] == old_color for b in own_buckets)  # old key gone, not left stale
     assert any(b["color"] == new_color for b in own_buckets)  # recalculated immediately under the new key
+
+
+def test_item_rename_cascades_into_production_components_consumed(erp_client):
+    """items_service._propagate_item_identity_change's Production target
+    (backfill_production_consumed_item_refs): an ITEM-sourced component row
+    referencing a renamed Item Master row must repoint, matching
+    module_production.js's backfillProductionConsumedItemRefs.
+    """
+    old_item = _unique_name("OldProdItem")
+    new_item = _unique_name("NewProdItem")
+    _rpc(erp_client, "saveItem", [{"itemName": old_item}], mutation=True)
+
+    _payload, process_id = _save_process(erp_client)
+    resp = _rpc(
+        erp_client,
+        "saveProduction",
+        [{"processId": process_id, "assignedTo": "Worker A", "qty": 5, "componentsConsumed": [_item_component(item_name=old_item)]}],
+        mutation=True,
+    )
+    body = resp.get_json()
+    assert body["success"] is True, body["message"]
+    lot_number = body["data"]["lotNumber"]
+
+    rename = _rpc(erp_client, "saveItem", [{"itemName": new_item, "originalName": old_item, "originalSize": ""}], mutation=True)
+    assert rename.get_json()["success"] is True
+
+    listed = _rpc(erp_client, "getProductionData").get_json()["data"]
+    match = next(r for r in listed if r["lotNumber"] == lot_number)
+    assert match["componentsConsumed"][0]["itemName"] == new_item
+
+
+def test_item_rename_does_not_touch_pool_sourced_production_component(erp_client):
+    """A POOL-sourced component's itemName is a different identity space
+    (an upstream process's Output Item Name), not an Items Master item --
+    must never repoint even on a coincidental name+size match, matching
+    module_production.js's sourceType guard.
+    """
+    upstream_payload, upstream_id, downstream_payload, downstream_id = _make_color_process(erp_client)
+    pool_item_name = upstream_payload["outputItemName"]
+
+    # An unrelated Items Master row that happens to share the pool's output
+    # item name -- renaming *this* must not touch the POOL component below.
+    _rpc(erp_client, "saveItem", [{"itemName": pool_item_name}], mutation=True)
+
+    resp = _rpc(
+        erp_client,
+        "saveProduction",
+        [
+            {
+                "processId": downstream_id,
+                "assignedTo": "Worker A",
+                "colorBreakdown": [{"color": "Black", "qty": 5, "isCustom": True}],
+                "componentsConsumed": [{"itemName": pool_item_name, "qty": 1, "sourceType": "POOL", "colorGroup": "COMMON"}],
+            }
+        ],
+        mutation=True,
+    )
+    body = resp.get_json()
+    assert body["success"] is True, body["message"]
+    lot_number = body["data"]["lotNumber"]
+
+    renamed_item = _unique_name("RenamedUnrelatedItem")
+    rename = _rpc(erp_client, "saveItem", [{"itemName": renamed_item, "originalName": pool_item_name, "originalSize": ""}], mutation=True)
+    assert rename.get_json()["success"] is True
+
+    listed = _rpc(erp_client, "getProductionData").get_json()["data"]
+    match = next(r for r in listed if r["lotNumber"] == lot_number)
+    assert match["componentsConsumed"][0]["itemName"] == pool_item_name
 
 
 def test_save_production_primary_axis_qty_summation_excludes_other_axis(erp_client):
@@ -335,6 +496,41 @@ def test_save_production_lot_number_scoped_per_prefix(erp_client):
     assert first["data"]["lotNumber"] != second["data"]["lotNumber"]
 
 
+def test_save_production_returns_fresh_row_for_in_place_patch(erp_client):
+    payload, process_id = _save_process(erp_client)
+
+    create = _rpc(
+        erp_client,
+        "saveProduction",
+        [{"processId": process_id, "assignedTo": "Worker A", "qty": 5, "componentsConsumed": [_item_component()]}],
+        mutation=True,
+    ).get_json()
+    assert create["success"] is True
+    fresh_row = create["data"]["row"]
+    assert fresh_row["lotNumber"] == create["data"]["lotNumber"]
+    assert fresh_row["processId"] == process_id
+    assert fresh_row["qty"] == 5
+
+    edit = _rpc(
+        erp_client,
+        "saveProduction",
+        [
+            {
+                "rowIdx": fresh_row["rowIdx"],
+                "processId": process_id,
+                "assignedTo": "Worker B",
+                "qty": 9,
+                "componentsConsumed": [_item_component()],
+            }
+        ],
+        mutation=True,
+    ).get_json()
+    edited_row = edit["data"]["row"]
+    assert edited_row["rowIdx"] == fresh_row["rowIdx"]
+    assert edited_row["qty"] == 9
+    assert edited_row["assignedTo"] == "Worker B"
+
+
 def test_save_production_contractor_payable_computed_from_rate(erp_client):
     payload, process_id = _save_process(erp_client)
     contractor = _unique_name("RateWorker")
@@ -388,6 +584,7 @@ def test_save_production_warns_non_blocking_on_insufficient_pool(erp_client):
                 "processId": down_id,
                 "assignedTo": "Worker A",
                 "qty": 5,
+                "status": "Completed",
                 "componentsConsumed": [
                     {"itemName": upstream_payload["outputItemName"], "qty": 3, "sourceType": "POOL", "colorGroup": "COMMON"}
                 ],
@@ -399,6 +596,38 @@ def test_save_production_warns_non_blocking_on_insufficient_pool(erp_client):
     assert body["success"] is True  # non-blocking
     assert "Warning" in body["message"]
     assert "Warehouse Pool" in body["message"]
+
+
+def test_save_production_pending_lot_skips_pool_availability_check(erp_client):
+    """The pool-availability check only runs when this save will leave the
+    lot Completed -- a Pending save must never produce a misleading "pool
+    will go negative" warning for a lot that isn't finished yet.
+    """
+    upstream_payload, upstream_id = _save_process(erp_client)
+    _downstream_payload, down_id = _save_process(
+        erp_client,
+        components=[{"itemName": upstream_payload["outputItemName"], "qtyPerUnit": 1, "sourceType": "POOL", "colorGroup": "COMMON"}],
+    )
+
+    resp = _rpc(
+        erp_client,
+        "saveProduction",
+        [
+            {
+                "processId": down_id,
+                "assignedTo": "Worker A",
+                "qty": 5,
+                "status": "Pending",
+                "componentsConsumed": [
+                    {"itemName": upstream_payload["outputItemName"], "qty": 3, "sourceType": "POOL", "colorGroup": "COMMON"}
+                ],
+            }
+        ],
+        mutation=True,
+    )
+    body = resp.get_json()
+    assert body["success"] is True
+    assert "Warning" not in body["message"]
 
 
 def test_completed_lot_credits_pool_and_debits_stock(erp_client):
