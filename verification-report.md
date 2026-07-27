@@ -125,7 +125,7 @@ No `POST /api/files/upload` or `POST /api/stock/import` (multipart) route exists
 
 `tests/erp/` (the suite that actually covers this migration): **380 tests, 380 passing** after this pass's two fixes + three new regression tests (377 passing before this pass's fixes, +3 new tests). Two pre-existing tests outside this pass's scope (`test_clients.py::test_delete_client_orders_bulk_skip_and_report`, `test_warehouse.py::test_get_warehouse_pool_adjustment_history`) failed once during a full-suite run but passed cleanly in isolation — consistent with test-order/shared-DB-state flakiness, not a real regression; not touched by this pass's changes.
 
-A broader `pytest tests/` run (the full repo tree, including non-ERP/legacy UPF suites) was also kicked off during this pass as a supplementary check; it had not completed after a long run (the `tests/erp/` subset alone takes ~20 minutes against a real Postgres DB, and the full tree is larger). It is **not** re-run or waited on further in this report, for two reasons: (a) it covers legacy/UPF functionality that predates and is unrelated to this Apps-Script migration, and (b) the prior `AUDIT_REPORT_2026-07-12.md` (M5) already documented that the full repo-root test tree has a broken collection target (`tests/test_auditor_core.py` imports a module that isn't in the repo) and two conflicting `pytest.ini` files depending on invocation directory — a pre-existing, separate concern, not something introduced by or in scope for this migration verification.
+A broader `pytest tests/` run from `Project-root` (its full `pytest.ini`-scoped suite — `tests/erp/` plus `test_app.py`/`test_auth.py`/`test_integration_flows.py`/`test_oauth_redirect_uri.py`/`test_smoke.py`, i.e. everything this project's own test config considers in-scope) was also run as a supplementary check: **405 passed, 2 failed, 407 total, in 19m41s**. Both failures (`test_process.py::test_save_process_lot_prefix_uniqueness_blocks_even_inactive_process`, `test_process_color_axes.py::test_get_all_process_color_groups_bulk_shape`) are unrelated to any change in this pass (neither touches Wastage or Dispatch) and both **passed cleanly when re-run in isolation** — consistent with the same shared-test-DB state/timing flakiness already observed and documented for two other tests earlier in this same verification pass, not a real regression. (Note: this is distinct from the separate repo-root `tests/` tree and its own `pytest.ini`, which the prior `AUDIT_REPORT_2026-07-12.md` (M5) documented as having a broken collection target — that tree was not exercised by this run and remains a separate, pre-existing concern outside this migration's scope.)
 
 CI: `.github/workflows/ci.yml` defines 4 jobs (lint via Ruff, security via pip-audit, build validation, test matrix on Python 3.10/3.11/3.12 against a real Postgres service container) — inspected directly, not simulated locally in this pass; I do not have GitHub CLI credentials in this environment to pull the latest actual run status, so **CI configuration is confirmed present and well-formed; the latest live run's pass/fail is not independently confirmed by this report** (repo owner should check the Actions tab).
 
@@ -191,6 +191,12 @@ tests/erp/  (the ERP migration's own suite)
   380 tests total (377 pre-existing + 3 new from this pass)
   380 passed, 0 failed  (2 known-flaky pre-existing tests confirmed to pass in isolation;
                           both are lot-prefix/timing collisions unrelated to this pass's changes)
+
+Project-root/tests/  (full pytest.ini-scoped suite: tests/erp/ + test_app.py/
+test_auth.py/test_integration_flows.py/test_oauth_redirect_uri.py/test_smoke.py)
+  407 tests total, 19m41s
+  405 passed, 2 failed -- both confirmed to pass in isolation (same shared-DB
+                          flakiness pattern as above; unrelated to this pass's changes)
 ```
 
 New tests added this pass:
