@@ -100,17 +100,27 @@ def _load_config(app: Flask, config_name: str) -> None:
     else:
         app.config.from_object(cfg_cls)
 
-    # Allow overriding a small set of critical keys from environment
+    # Allow overriding a small set of critical keys from environment.
+    # DATABASE_URL is deliberately excluded under "testing": TestingConfig
+    # above sets DATABASE_URL=None specifically so its own DB_HOST/DB_NAME/
+    # DB_USER/DB_PASS (test DB) win in database.py's connection logic --
+    # reapplying os.environ["DATABASE_URL"] here would silently clobber
+    # that back to whatever DATABASE_URL resolves to in the environment
+    # (typically the real database via .env), which is exactly how a full
+    # test run ended up writing ~180 test-fixture rows into production.
+    override_keys = {
+        "SECRET_KEY",
+        "DATABASE_URL",
+        "GOOGLE_CLIENT_ID",
+        "GOOGLE_CLIENT_SECRET",
+        "RATELIMIT_STORAGE_URL",
+        "BASE_URL",
+        "SERVER_NAME",
+    }
+    if config_name == "testing":
+        override_keys.discard("DATABASE_URL")
     app.config.update(
-        {k: v for k, v in os.environ.items() if k in {
-            "SECRET_KEY",
-            "DATABASE_URL",
-            "GOOGLE_CLIENT_ID",
-            "GOOGLE_CLIENT_SECRET",
-            "RATELIMIT_STORAGE_URL",
-            "BASE_URL",
-            "SERVER_NAME",
-        }}
+        {k: v for k, v in os.environ.items() if k in override_keys}
     )
 
     app.config.setdefault("RATELIMIT_STORAGE_URL", "redis://localhost:6379/0")

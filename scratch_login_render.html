@@ -6,36 +6,28 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>Login - MTC App</title>
     <!-- CSRF token for secure POSTs -->
-    <meta name="csrf-token" content="{{ csrf_token() }}">
-    <link rel="icon" href="{{ url_for('static', filename='erp/icons/favicon.ico') }}">
-    <link rel="apple-touch-icon" href="{{ url_for('static', filename='erp/icons/apple-touch-icon.png') }}">
-    <link rel="stylesheet" href="{{ url_for('static', filename='styles.css') }}?v={{ config.VERSION }}">
-    <link rel="stylesheet" href="{{ url_for('static', filename='css/login.css') }}?v={{ config.VERSION }}">
+    <meta name="csrf-token" content="dummy">
+    <link rel="icon" href="/erp/icons/favicon.ico">
+    <link rel="apple-touch-icon" href="/erp/icons/apple-touch-icon.png">
+    <link rel="stylesheet" href="/styles.css?v=1">
+    <link rel="stylesheet" href="/css/login.css?v=1">
 </head>
 
 <body class="login-page login-page--split">
     <script>(function () { if (localStorage.getItem('theme') === 'dark') document.body.classList.add('dark-mode'); })()</script>
     <div class="login-shell">
         <div class="login-brand-panel">
-            <svg class="brand-bike-art" viewBox="0 0 600 400" preserveAspectRatio="xMidYMid slice" aria-hidden="true"
-                focusable="false">
-                <circle cx="150" cy="290" r="88" />
-                <circle cx="450" cy="290" r="88" />
-                <path
-                    d="M150,290 L275,290 M275,290 L235,145 M235,145 L150,290 M235,145 L385,115 M275,290 L385,115 M385,115 L450,290" />
-                <ellipse cx="222" cy="138" rx="15" ry="6" transform="rotate(-15 222 138)" />
-                <path d="M385,115 L385,88 M358,88 L412,88 M358,88 L349,102 M412,88 L421,102" />
-            </svg>
             <div class="login-brand-content">
                 <span class="logo-badge">
-                    <img src="{{ url_for('static', filename='img/Final_Logo.png') }}" alt="Maharaja Bikes Logo" class="logo-img">
+                    <img src="/img/Final_Logo.png" alt="Maharaja Bikes Logo" class="logo-img">
                 </span>
+                <h2 class="brand-title">Maharaja Bikes</h2>
                 <p class="brand-tagline">Manage inventory, orders, and your entire bike business from one place.</p>
             </div>
         </div>
         <div class="login-mobile-bar">
             <span class="logo-badge">
-                <img src="{{ url_for('static', filename='img/Final_Logo.png') }}" alt="Maharaja Bikes Logo" class="logo-img">
+                <img src="/img/Final_Logo.png" alt="Maharaja Bikes Logo" class="logo-img">
             </span>
             <span class="login-mobile-bar-title">Maharaja Bikes</span>
         </div>
@@ -68,7 +60,7 @@
                             <input type="checkbox" id="remember" name="remember">
                             <span>Remember me</span>
                         </label>
-                        <a href="{{ url_for('auth.forgot_password') }}"
+                        <a href="/auth.forgot_password"
                             style="color: var(--primary-color); font-size: 0.9375rem; text-decoration: none; font-weight: 500;">Forgot
                             password?</a>
                     </div>
@@ -87,7 +79,7 @@
 
                 <div style="text-align: center; margin-top: 1.125rem; color: var(--text-muted); font-size: 0.9375rem;">
                     Don't have an account?
-                    <a href="{{ url_for('auth.signup') }}"
+                    <a href="/auth.signup"
                         style="color: var(--primary-color); font-weight: 500; text-decoration: none;">Create account</a>
                 </div>
 
@@ -95,7 +87,7 @@
 
                 <!-- Google Sign-In button -->
                 <div class="oauth-buttons">
-                    <a class="btn google" href="{{ url_for('auth.auth_google') }}" aria-label="Sign in with Google">
+                    <a class="btn google" href="/auth.auth_google" aria-label="Sign in with Google">
                         <svg xmlns="http://www.w3.org/2000/svg" width="18" height="18" viewBox="0 0 48 48" aria-hidden="true">
                             <path fill="#FFC107"
                                 d="M43.6 20.5H42V20H24v8h11.3C33.8 32.9 29.3 36 24 36c-6.6 0-12-5.4-12-12s5.4-12 12-12c3 0 5.7 1.1 7.8 3l5.7-5.7C34.6 6.1 29.6 4 24 4 12.9 4 4 12.9 4 24s8.9 20 20 20 20-8.9 20-20c0-1.3-.1-2.2-.4-3.5z" />
@@ -113,7 +105,7 @@
         </div>
     </div>
 
-    <script src="{{ url_for('static', filename='js/auth.js') }}?v={{ config.VERSION }}"></script>
+    <script src="/js/auth.js?v=1"></script>
 </body>
 
 </html>

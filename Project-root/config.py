@@ -12,8 +12,10 @@ from urllib.parse import urlparse
 
 from dotenv import load_dotenv
 
-# Load .env if present
-load_dotenv()
+# Load .env if present. override=True ensures the repo's .env is
+# authoritative for local dev even if a stale value lingers in the OS
+# environment (e.g. a leftover `setx` from an old credential).
+load_dotenv(override=True)
 
 
 class Config:
@@ -121,18 +123,39 @@ class TestingConfig(Config):
     DB_HOST = os.getenv("TEST_DB_HOST", os.getenv("DB_HOST", "127.0.0.1"))
     DB_USER = os.getenv("TEST_DB_USER", os.getenv("DB_USER", "postgres"))
     DB_PASS = os.getenv("TEST_DB_PASS", os.getenv("DB_PASS", "testpass"))
+    # CRITICAL: must override Config.DATABASE_URL (which reads DATABASE_URL
+    # from the environment -- typically pointing at the real production DB
+    # via .env) rather than inherit it. database.py's init_app() prefers
+    # DATABASE_URL over DB_HOST/DB_NAME/DB_USER/DB_PASS whenever it's set,
+    # so leaving this inherited silently sent every test run's actual
+    # mutating RPC traffic (savePO, saveItem, etc. -- not just this class's
+    # own tests/erp/conftest.py schema-migration connection) at the real
+    # database instead of DB_NAME above, regardless of TEST_DB_NAME being
+    # set correctly. Confirmed live: this wrote ~180 test-fixture rows
+    # (vendors/items/POs with names like "LowRateVendor-<hex>") directly
+    # into the production database during a full-suite run.
+    DATABASE_URL = None
 
     def __init__(self):
         """PHASE 1C: Prevent test config using production DB.
-        
+
         Raises RuntimeError if TEST_DB_NAME equals production DB_NAME.
         This ensures tests cannot accidentally run against production data.
+
+        DATABASE_URL is a separate risk this doesn't need to re-check here:
+        DATABASE_URL = None above (a class attribute, not environment-read)
+        plus _load_config()'s override_keys excluding "DATABASE_URL" under
+        "testing" together guarantee database.py never sees a DATABASE_URL
+        for this config, regardless of what's in the environment -- no
+        unsetting required. An additional check here that inspected
+        os.getenv("DATABASE_URL") directly would fire on every normal test
+        run (since .env always sets it) without adding real protection.
         """
         super().__init__()
         # Get the production database name for comparison
         prod_db = os.getenv("DB_NAME", "MTC")  # production default
         test_db = self.DB_NAME
-        
+
         if test_db == prod_db and test_db != "testdb":
             raise RuntimeError(
                 f"FATAL: TestingConfig is configured to use production database '{test_db}'. "

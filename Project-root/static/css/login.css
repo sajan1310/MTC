@@ -11,33 +11,50 @@
     align-items: center;
     justify-content: center;
     background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
-    padding: 2rem;
+    padding: 1.25rem;
 }
 
 .login-container.card {
     width: 100%;
     max-width: 440px;
+    max-height: calc(100vh - 2.5rem);
+    overflow-y: auto;
     background: var(--card-bg);
     border: 1px solid var(--border-color);
     border-radius: var(--border-radius-xl);
     box-shadow: var(--shadow-2xl);
-    padding: 2.5rem;
+    padding: 1.75rem 2rem;
 }
 
 .login-header {
     text-align: center;
-    margin-bottom: 2rem;
+    margin-bottom: 1.25rem;
+}
+
+/* Black badge behind the (transparent-background) logo mark so it reads
+   clearly on both the light card and dark mode alike, instead of floating
+   on whatever the card background happens to be. */
+.login-header .logo-badge {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    background: #000;
+    border-radius: var(--border-radius-lg);
+    padding: 0.625rem 1rem;
+    margin-bottom: 0.75rem;
 }
 
 .login-header .logo-img {
-    margin-bottom: 1rem;
+    display: block;
+    height: 44px;
+    width: auto;
 }
 
 .login-title {
-    font-size: 1.75rem;
+    font-size: 1.5rem;
     font-weight: 700;
     color: var(--text-color);
-    margin-bottom: 0.5rem;
+    margin-bottom: 0.375rem;
 }
 
 .login-subtitle {
@@ -46,7 +63,7 @@
 }
 
 .login-form .form-group {
-    margin-bottom: 1.25rem;
+    margin-bottom: 1rem;
 }
 
 /* Password field + show/hide toggle */
@@ -56,25 +73,36 @@
 
 .password-row .toggle-password {
     position: absolute;
-    right: 12px;
-    top: 38px;
+    right: 10px;
+    top: 34px;
+    width: 28px;
+    height: 28px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
     background: none;
     border: none;
-    color: var(--primary-color);
+    border-radius: var(--border-radius-sm);
+    color: var(--text-muted);
     cursor: pointer;
-    font-size: 0.875rem;
-    font-weight: 500;
+    transition: all var(--transition-fast);
+}
+
+.password-row .toggle-password svg {
+    width: 18px;
+    height: 18px;
 }
 
 .password-row .toggle-password:hover {
-    text-decoration: underline;
+    color: var(--primary-color);
+    background: var(--bg-secondary);
 }
 
 /* "or" divider between email/password form and OAuth buttons */
 .divider {
     display: flex;
     align-items: center;
-    margin: 1.5rem 0;
+    margin: 1.125rem 0;
     color: var(--text-muted);
     font-size: 0.875rem;
 }
@@ -174,6 +202,213 @@ body.dark-mode .btn.google {
 @media (max-width: 480px) {
     .login-container.card {
         margin: 16px;
+        padding: 1.5rem 1.25rem;
+    }
+}
+
+/* ---- Full-screen split layout (login page only) ----
+   Desktop: branding fills the left half, the form fills the right half,
+   so the page uses the whole viewport instead of a small card floating
+   on empty gradient. Below 960px it collapses to a compact top banner
+   + form, since there's no room for a side-by-side split. */
+body.login-page.login-page--split {
+    padding: 0;
+    align-items: stretch;
+    background: var(--bg-color);
+}
+
+.login-shell {
+    display: flex;
+    width: 100%;
+    min-height: 100vh;
+}
+
+.login-brand-panel {
+    position: relative;
+    flex: 1 1 52%;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    overflow: hidden;
+    background: radial-gradient(circle at 28% 22%, #221c30 0%, #120f18 45%, #0a0910 100%);
+    padding: 3rem 2.5rem;
+}
+
+/* single soft glow, bleeding off the top-right corner, for depth without
+   clutter -- kept to one element to stay minimal. */
+.login-brand-panel::before {
+    content: '';
+    position: absolute;
+    top: -160px;
+    right: -160px;
+    width: 480px;
+    height: 480px;
+    border-radius: 50%;
+    background: radial-gradient(circle, rgba(242, 99, 107, 0.28) 0%, rgba(242, 99, 107, 0) 70%);
+    pointer-events: none;
+}
+
+/* Large, quiet line-art bicycle filling the panel behind the logo --
+   simple wheels + frame only, no spokes/pedals, so it reads as an
+   ambient motif rather than a busy illustration. */
+.brand-bike-art {
+    position: absolute;
+    inset: 0;
+    width: 100%;
+    height: 100%;
+    z-index: 0;
+}
+
+.brand-bike-art circle,
+.brand-bike-art path,
+.brand-bike-art ellipse {
+    fill: none;
+    stroke: rgba(242, 99, 107, 0.4);
+    stroke-width: 7;
+    stroke-linecap: round;
+    stroke-linejoin: round;
+}
+
+.login-brand-content {
+    position: relative;
+    z-index: 1;
+    max-width: 340px;
+    text-align: center;
+    color: #fff;
+}
+
+.login-brand-panel .logo-badge {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    background: #000;
+    border-radius: var(--border-radius-lg);
+    padding: 1.125rem 1.75rem;
+    margin-bottom: 1.75rem;
+    box-shadow: 0 20px 40px rgba(0, 0, 0, 0.35);
+}
+
+/* height-driven, width auto: the source mark is a wide (~2.7:1) lockup,
+   so forcing a square box (the old behavior) squashed it. */
+.login-brand-panel .logo-img {
+    display: block;
+    height: 96px;
+    width: auto;
+}
+
+.login-brand-panel .brand-tagline {
+    font-size: 1.0625rem;
+    line-height: 1.6;
+    color: rgba(255, 255, 255, 0.75);
+}
+
+.login-form-panel {
+    flex: 1 1 48%;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    background: var(--bg-color);
+    padding: 2.5rem;
+    overflow-y: auto;
+}
+
+.login-page--split .login-container.card {
+    box-shadow: none;
+    border: none;
+    background: transparent;
+    max-height: none;
+    width: 100%;
+    max-width: 400px;
+    padding: 0;
+}
+
+/* Compact horizontal brand bar shown only below 960px, in place of the
+   large vertical brand panel (which has no room to sit beside the form
+   once the layout stacks). Hidden on desktop. */
+.login-mobile-bar {
+    display: none;
+    align-items: center;
+    justify-content: center;
+    gap: 0.625rem;
+    background: radial-gradient(circle at 30% 20%, #221c30 0%, #120f18 60%, #0a0910 100%);
+    padding: 0.875rem 1.25rem;
+}
+
+.login-mobile-bar .logo-badge {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    background: #000;
+    border-radius: var(--border-radius-md);
+    padding: 0.375rem 0.625rem;
+}
+
+.login-mobile-bar .logo-img {
+    display: block;
+    height: 26px;
+    width: auto;
+}
+
+.login-mobile-bar-title {
+    color: #fff;
+    font-weight: 700;
+    font-size: 1.0625rem;
+    letter-spacing: 0.01em;
+}
+
+@media (max-width: 960px) {
+    .login-shell {
+        flex-direction: column;
+        min-height: 100vh;
+    }
+
+    .login-brand-panel {
+        display: none;
+    }
+
+    .login-mobile-bar {
+        display: flex;
+        flex: 0 0 auto;
+    }
+
+    .login-form-panel {
+        flex: 1 1 auto;
+        padding: 1.75rem 1.25rem 2.5rem;
+    }
+
+    /* On mobile the form is a distinct card resting on the page
+       background rather than filling a whole panel, so bring the card
+       chrome (border/shadow) back for a native, purpose-built feel. */
+    .login-page--split .login-container.card {
+        max-width: 440px;
+        margin: 0 auto;
+        background: var(--card-bg);
+        border: 1px solid var(--border-color);
+        border-radius: var(--border-radius-xl);
+        box-shadow: var(--shadow-lg);
+        padding: 1.75rem 1.5rem;
+    }
+}
+
+@media (max-width: 480px) {
+    .login-mobile-bar {
+        padding: 0.75rem 1rem;
+    }
+
+    .login-mobile-bar .logo-img {
+        height: 22px;
+    }
+
+    .login-mobile-bar-title {
+        font-size: 0.9375rem;
+    }
+
+    .login-form-panel {
+        padding: 1.25rem 1rem 2rem;
+    }
+
+    .login-page--split .login-container.card {
         padding: 1.5rem 1.25rem;
     }
 }
