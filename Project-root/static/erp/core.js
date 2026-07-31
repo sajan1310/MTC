@@ -481,10 +481,124 @@ const App = {
   // reload; capped at 50 entries.
   Notify: {
     STORAGE_KEY: 'maharaja-erp-notifications',
+    SEEN_LOGS_KEY: 'maharaja-erp-seen-logs',
     items: [],
     unreadCount: 0,
     isOpen: false,
     _listenersBound: false,
+
+    // Click-to-navigate target for a notification whose `link` names one of
+    // these keys — {tab, goto(value)}. `goto` resolves the live array index
+    // and opens that record's edit modal; a link of {type:'tab', tab:'...'}
+    // (no resolver) just switches tabs, used when a notification covers
+    // multiple records or the exact one can't be pinpointed server-side.
+    NAV: {
+      po: {
+        tab: 'poLedger',
+        async goto(value) {
+          await App.PO.loadData();
+          const idx = App.State.globalPOs.findIndex(p => String(p.poNumber) === String(value));
+          if (idx > -1) App.PO.openEditModal(idx);
+        }
+      },
+      bill: {
+        tab: 'billLedger',
+        async goto(value) {
+          await App.Bill.loadData();
+          // Bill identity is (vendor, billNumber) -- see billKey -- since
+          // cross-vendor duplicate bill numbers are allowed.
+          const [vendor, billNumber] = String(value).split('␟');
+          const key = App.Bill.billKey({ vendor, billNumber });
+          const idx = App.State.globalBills.findIndex(b => App.Bill.billKey(b) === key);
+          if (idx > -1) App.Bill.openEditModal(idx);
+        }
+      },
+      return: {
+        tab: 'returnLedger',
+        async goto(value) {
+          await App.Return.loadData();
+          const idx = App.State.globalReturns.findIndex(r => String(r.returnNumber) === String(value));
+          if (idx > -1) App.Return.openEditModal(idx);
+        }
+      },
+      item: {
+        tab: 'itemMaster',
+        async goto(value) {
+          await App.Item.loadData();
+          const [name, size] = String(value).split('␟');
+          if (name) App.Item.openEditModal(name, size || '');
+        }
+      },
+      bom: {
+        tab: 'productsTab',
+        async goto(value) {
+          App.Products.switchSubTab('bomTab');
+          await App.BOM.loadData();
+          const idx = App.State.globalBOMs.findIndex(b => String(b.productId) === String(value));
+          if (idx > -1) App.BOM.openEditModal(idx);
+        }
+      },
+      process: {
+        tab: 'productsTab',
+        async goto(value) {
+          App.Products.switchSubTab('processTab');
+          await App.Process.loadData();
+          const idx = App.State.globalProcesses.findIndex(p => String(p.processId) === String(value));
+          if (idx > -1) App.Process.openEditModal(idx);
+        }
+      },
+      production: {
+        tab: 'productionTab',
+        async goto(value) {
+          await App.Production.loadData();
+          const idx = App.State.globalProduction.findIndex(p => String(p.rowIdx) === String(value));
+          if (idx > -1) App.Production.openEditModal(idx);
+        }
+      },
+      dispatch: {
+        tab: 'dispatchTab',
+        async goto(value) {
+          await App.Dispatch.enterTab();
+          App.Dispatch.switchSubTab('dispatchedGoodsSubTab');
+          App.Dispatch.openEditDispatchModal(String(value));
+        }
+      },
+      client: {
+        tab: 'clientsTab',
+        async goto(value) {
+          await App.Client.enterTab();
+          App.Client.switchSubTab('clientsListSubTab');
+          App.Client.openEditClientModal(value);
+        }
+      },
+      clientOrder: {
+        tab: 'clientsTab',
+        async goto(value) {
+          await App.Client.enterTab();
+          App.Client.switchSubTab('clientOrdersSubTab');
+          const idx = App.State.globalOrders.findIndex(o => String(o.orderNumber) === String(value));
+          if (idx > -1) App.Client.openEditOrderModal(idx);
+        }
+      },
+      contractor: {
+        tab: 'contractorsTab',
+        async goto(value) {
+          await App.Contractor.loadData();
+          App.Contractor.openProfileModal(value);
+        }
+      },
+      vendor: {
+        tab: 'vendorMaster',
+        async goto(value) {
+          await App.Vendor.loadData();
+          App.Vendor.openProfileModal(value);
+        }
+      },
+      stock: {
+        tab: 'stockTab',
+        async goto() { await App.Stock.loadData(); }
+      }
+    },
 
     load() {
       try {
@@ -516,14 +630,21 @@ const App = {
       }
     },
 
-    add(message, isError = false) {
+    // `options.link` -- {type, value?} per NAV above -- makes the
+    // notification clickable-to-navigate. `options.detail` is the full
+    // explanation shown in the detail modal when there's no link (e.g. a
+    // plain error); when omitted, the detail modal falls back to `message`
+    // itself.
+    add(message, isError = false, options = {}) {
       if (!message) return;
       const notif = {
         id: Date.now() + '-' + Math.random().toString(36).substring(2, 5),
         message: String(message),
         isError: !!isError,
         timestamp: new Date(),
-        unread: true
+        unread: true,
+        link: options.link || null,
+        detail: options.detail || null
       };
       this.items.unshift(notif);
       if (this.items.length > 50) this.items.pop();
@@ -533,6 +654,7 @@ const App = {
       if (this.isOpen) {
         this.render();
       }
+      this._renderAllModalIfOpen();
     },
 
     remove(id, event) {
@@ -548,7 +670,78 @@ const App = {
         this.save();
         this.updateBadge();
         this.render();
+        this._renderAllModalIfOpen();
       }
+    },
+
+    // Click handler for a notification row (not its dismiss button).
+    // Navigates to the linked record/tab when possible, otherwise shows the
+    // full message in the detail modal -- the "error explanation" fallback
+    // for notifications with no resolvable destination.
+    async openItem(id) {
+      const notif = this.items.find(n => n.id === id);
+      if (!notif) return;
+
+      if (notif.unread) {
+        notif.unread = false;
+        this.unreadCount = Math.max(0, this.unreadCount - 1);
+        this.save();
+        this.updateBadge();
+      }
+      this.close();
+      safeModalHide('notifAllModal');
+
+      const link = notif.link;
+      if (link && link.type === 'tab' && link.tab) {
+        App.Navigation.showTab(link.tab);
+        return;
+      }
+      const nav = link && this.NAV[link.type];
+      if (nav) {
+        App.Navigation.showTab(nav.tab);
+        try {
+          await nav.goto(link.value);
+        } catch (e) {
+          App.Utils.showToast('Could not open the related record — it may have been deleted or changed since.', true);
+        }
+        return;
+      }
+      this.showDetail(id);
+    },
+
+    showDetail(id) {
+      const notif = this.items.find(n => n.id === id);
+      if (!notif) return;
+      const titleEl = document.getElementById('notifDetailTitle');
+      const bodyEl = document.getElementById('notifDetailBody');
+      const timeEl = document.getElementById('notifDetailTime');
+      if (titleEl) titleEl.textContent = notif.isError ? 'Error Details' : 'Notification Details';
+      if (bodyEl) bodyEl.textContent = notif.detail || notif.message;
+      if (timeEl) timeEl.textContent = notif.timestamp instanceof Date && !isNaN(notif.timestamp.getTime())
+        ? notif.timestamp.toLocaleString()
+        : '';
+      safeModalShow('notifDetailModal');
+    },
+
+    viewAll() {
+      this.close();
+      this.renderAllModal();
+      safeModalShow('notifAllModal');
+    },
+
+    renderAllModal() {
+      const listEl = document.getElementById('notif-all-list');
+      if (!listEl) return;
+      if (this.items.length === 0) {
+        listEl.innerHTML = '<div class="notif-empty">No notifications yet.</div>';
+        return;
+      }
+      listEl.innerHTML = this.items.map(item => this._rowHtml(item)).join('');
+    },
+
+    _renderAllModalIfOpen() {
+      const modalEl = document.getElementById('notifAllModal');
+      if (modalEl && modalEl.classList.contains('show')) this.renderAllModal();
     },
 
     toggle() {
@@ -593,6 +786,7 @@ const App = {
       this.save();
       this.updateBadge();
       this.render();
+      this._renderAllModalIfOpen();
     },
 
     updateBadge() {
@@ -634,22 +828,31 @@ const App = {
         return;
       }
 
-      const html = this.items.map(item => {
-        const errorClass = item.isError ? ' notif-error' : '';
-        const timeStr = this.formatTime(item.timestamp);
-        return `
-              <div class="notif-item${errorClass}">
-                <div class="notif-item-dot"></div>
-                <div class="notif-item-body">
-                  <div class="notif-item-msg">${escapeHtml(item.message)}</div>
-                  <div class="notif-item-time">${timeStr}</div>
-                </div>
-                <button type="button" class="notif-item-remove" title="Dismiss notification" onclick="App.Notify.remove('${escapeHtml(item.id)}', event)">&times;</button>
-              </div>
-            `;
-      }).join('');
+      // The dropdown panel is a quick-glance list -- only the most recent
+      // handful; "View all" (notifAllModal) shows every item.
+      listEl.innerHTML = this.items.slice(0, 8).map(item => this._rowHtml(item)).join('');
+    },
 
-      listEl.innerHTML = html;
+    // Shared row markup for both the dropdown panel and the "View all"
+    // modal, so the two stay visually/behaviorally identical.
+    _rowHtml(item) {
+      const errorClass = item.isError ? ' notif-error' : '';
+      const unreadClass = item.unread ? ' notif-unread' : '';
+      const timeStr = this.formatTime(item.timestamp);
+      const goHint = item.link
+        ? '<i class="bi bi-box-arrow-up-right notif-item-go" title="Go to record"></i>'
+        : (item.isError ? '<i class="bi bi-info-circle notif-item-go" title="View details"></i>' : '');
+      return `
+            <div class="notif-item notif-item-clickable${errorClass}${unreadClass}" onclick="App.Notify.openItem('${escapeHtml(item.id)}')" role="button" tabindex="0">
+              <div class="notif-item-dot"></div>
+              <div class="notif-item-body">
+                <div class="notif-item-msg">${escapeHtml(item.message)}</div>
+                <div class="notif-item-time">${timeStr}</div>
+              </div>
+              ${goHint}
+              <button type="button" class="notif-item-remove" title="Dismiss notification" onclick="App.Notify.remove('${escapeHtml(item.id)}', event)">&times;</button>
+            </div>
+          `;
     },
 
     _handleOutsideClick(e) {
@@ -709,7 +912,7 @@ const App = {
           this._alertKeys.add(key);
           const preview = lowStock.slice(0, 2).map(i => `${i.name}${i.size ? ` [${i.size}]` : ''} (${i.currentStock} left)`).join(', ');
           const extra = lowStock.length > 2 ? ` and ${lowStock.length - 2} more` : '';
-          this.add(`⚠️ Smart Alert: ${lowStock.length} item(s) below threshold (${preview}${extra}).`, true);
+          this.add(`⚠️ Smart Alert: ${lowStock.length} item(s) below threshold (${preview}${extra}).`, true, { link: { type: 'stock' } });
         }
       }
 
@@ -728,9 +931,86 @@ const App = {
           this._alertKeys.add(key);
           const nums = overduePOs.slice(0, 3).map(p => `#${p.poNumber}`).join(', ');
           const extra = overduePOs.length > 3 ? ` and ${overduePOs.length - 3} more` : '';
-          this.add(`📋 Smart Alert: ${overduePOs.length} purchase order(s) pending >7 days (${nums}${extra}).`, false);
+          this.add(`📋 Smart Alert: ${overduePOs.length} purchase order(s) pending >7 days (${nums}${extra}).`, false, { link: { type: 'tab', tab: 'poLedger' } });
         }
       }
+    },
+
+    // Surfaces backend-detected problems -- Internal Ledger Audit findings
+    // (module_audit.js's port, erp.ledger_audit_log via
+    // getRecentNotificationLogs) -- into the same notification feed, so
+    // findings from a scheduler run nobody was watching still show up here.
+    // Dedupes against a persisted "seen" set (unlike _alertKeys, which is
+    // in-memory only) so the same log row isn't re-notified on every page
+    // reload. See ledger_audit_service.get_recent_notification_logs's own
+    // docstring for why this covers ledger-audit findings only, not
+    // arbitrary backend errors (source's Logs-sheet script-error half has
+    // no equivalent table here).
+    async checkBackendAlerts() {
+      if (typeof Api === 'undefined') return;
+
+      let seen;
+      try {
+        seen = new Set(JSON.parse(localStorage.getItem(this.SEEN_LOGS_KEY) || '[]'));
+      } catch (e) {
+        seen = new Set();
+      }
+
+      let res;
+      try {
+        res = await Api.call('getRecentNotificationLogs');
+      } catch (e) {
+        return; // best-effort -- a failure here must never block startup
+      }
+      if (!res?.success || !Array.isArray(res.data)) return;
+
+      let sawNew = false;
+      res.data.forEach(log => {
+        if (!log?.key || seen.has(log.key)) return;
+        seen.add(log.key);
+        sawNew = true;
+
+        const link = this._guessBackendLink(log);
+        if (log.action === 'LEDGER_AUDIT_FINDING') {
+          this.add(`📒 Ledger Audit: ${log.details}`, true, { link, detail: log.details });
+        } else {
+          this.add(`⚙️ Backend error in ${log.source || 'a background process'}: ${log.details}`, true, {
+            link,
+            detail: `${log.action}${log.source ? ' — ' + log.source : ''}\n${log.details}`
+          });
+        }
+      });
+
+      if (sawNew) {
+        try {
+          localStorage.setItem(this.SEEN_LOGS_KEY, JSON.stringify(Array.from(seen).slice(-300)));
+        } catch (e) { /* storage denied -- dedupe just won't persist */ }
+      }
+    },
+
+    // Best-effort {type, value|tab} guess for a ledger-audit log row --
+    // never throws, returns null when nothing can be inferred (falls back
+    // to the detail modal, which is always correct even with no link).
+    _guessBackendLink(log) {
+      if (log.action === 'LEDGER_AUDIT_FINDING') {
+        const findingType = String(log.details || '').split(':')[0].trim();
+        if (findingType === 'over_billed_po_line') return { type: 'po', value: log.recordId };
+        if (findingType === 'orphaned_return_bill_ref' || findingType === 'return_item_not_on_bill') {
+          return { type: 'return', value: log.recordId };
+        }
+        return null;
+      }
+      // Regular script errors log the failing function's name in `source`
+      // -- not a stable record id, so only guess which TAB it likely
+      // relates to, never a specific record.
+      const fn = String(log.source || '');
+      const guesses = [
+        ['PO', 'po'], ['Bill', 'bill'], ['Return', 'return'], ['Dispatch', 'dispatch'],
+        ['Production', 'production'], ['Process', 'process'], ['Contractor', 'contractor'],
+        ['Vendor', 'vendor'], ['Client', 'client'], ['BOM', 'bom'], ['Item', 'item'], ['Stock', 'stock']
+      ];
+      const hit = guesses.find(([token]) => fn.includes(token));
+      return hit ? { type: 'tab', tab: this.NAV[hit[1]]?.tab } : null;
     }
   },
 
@@ -1251,10 +1531,12 @@ const App = {
       this.Utils.showToast(`Failed to load: ${failedLabels.join(', ')}. Check your connection and retry.`, true);
     }
 
-    // Trigger smart notifications (low stock, pending POs) -- best-effort,
-    // never blocks init.
+    // Trigger smart notifications (low stock, pending POs) and surface any
+    // backend-logged ledger-audit findings since the last visit --
+    // best-effort, never blocks init.
     if (this.Notify) {
       this.Notify.checkSmartAlerts().catch(e => console.error('[Init] checkSmartAlerts failed:', e));
+      this.Notify.checkBackendAlerts().catch(e => console.error('[Init] checkBackendAlerts failed:', e));
     }
   }
 };

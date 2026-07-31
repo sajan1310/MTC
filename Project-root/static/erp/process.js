@@ -54,6 +54,8 @@ App.Products = {
 // ==========================================
 // PROCESS MASTER NAMESPACE
 // ==========================================
+App.State.processColumnFilters = { processType: [], outputItem: [], finalStage: [], active: [] };
+
 App.Process = {
   GROUP_ORDER_STORAGE_KEY: 'processGroupOrder',
 
@@ -172,9 +174,9 @@ App.Process = {
         return;
       }
       App.State.globalProcesses = response.data;
-      App.State.filteredProcesses = response.data;
       App.State.selectedProcesses = [];
-      this.renderTable();
+      this.updateColumnFilterIcons();
+      this.filterData(App.State.processSearchTerm || '');
     } catch (err) {
       App.Utils.showToast(err.message || 'Failed to load processes', true);
     }
@@ -194,16 +196,175 @@ App.Process = {
   },
 
   filterData(searchTerm) {
-    const term = searchTerm.toLowerCase().trim();
-    if (!term) {
-      App.State.filteredProcesses = App.State.globalProcesses;
-    } else {
-      App.State.filteredProcesses = App.State.globalProcesses.filter(p => {
+    App.State.processSearchTerm = searchTerm || '';
+    const term = String(searchTerm || '').toLowerCase().trim();
+    const base = term
+      ? App.State.globalProcesses.filter(p => {
         const haystack = [p.processId, p.processName, p.lotPrefix, p.remarks].join(' ');
         return App.Utils.matchesKeywords(haystack, term);
+      })
+      : App.State.globalProcesses;
+    App.State.filteredProcesses = this.applyColumnFilters(base);
+    this.renderTable();
+  },
+
+  // Computes the value list for a column's filter dropdown. Final
+  // Stage/Active use fixed Yes/No / Active/Inactive option pairs (so both
+  // always appear regardless of what's currently loaded); Process Type
+  // and Output Item Name are derived from whatever's actually loaded,
+  // matching rowHtml's own raw display text so an option can never drift
+  // from what the row shows.
+  getColumnFilterOptions(key) {
+    if (key === 'finalStage') return [{ value: 'Yes', label: 'Yes' }, { value: 'No', label: 'No' }];
+    if (key === 'active') return [{ value: 'Active', label: 'Active' }, { value: 'Inactive', label: 'Inactive' }];
+
+    const values = new Set();
+    (App.State.globalProcesses || []).forEach(p => {
+      if (key === 'processType') {
+        if (p.processType) values.add(p.processType);
+      } else if (key === 'outputItem') {
+        if (p.outputItemName) values.add(p.outputItemName);
+      }
+    });
+
+    return [...values]
+      .sort((a, b) => a.localeCompare(b))
+      .map(v => ({ value: v, label: v }));
+  },
+
+  // Updates the funnel icon's active state in each header cell to reflect
+  // whether that column currently has a filter applied. Scoped to the
+  // Processes sub-tab so it never touches Item Master's/Production Log's
+  // own same-named .th-filter-btn buttons.
+  updateColumnFilterIcons() {
+    document.querySelectorAll('#processTab .th-filter-btn').forEach(btn => {
+      const key = btn.dataset.filterKey;
+      const active = (App.State.processColumnFilters[key] || []).length > 0;
+      btn.classList.toggle('active', active);
+    });
+  },
+
+  // Opens (or closes, if already open for this column) the Excel-style
+  // checklist dropdown anchored under the clicked header's funnel icon.
+  toggleColumnFilter(evt, key) {
+    evt.stopPropagation();
+    let panel = document.getElementById('processColFilterPanel');
+
+    if (panel && panel.dataset.key === key) {
+      panel.remove();
+      return;
+    }
+    if (panel) panel.remove();
+
+    const btn = evt.currentTarget;
+    panel = document.createElement('div');
+    panel.id = 'processColFilterPanel';
+    panel.className = 'col-filter-panel';
+    panel.dataset.key = key;
+    panel.innerHTML = `
+      <div class="po-ms-search-wrap">
+        <input type="text" class="form-control form-control-sm" placeholder="Search...">
+      </div>
+      <div class="col-filter-actions">
+        <button type="button" data-action="select-all">Select All</button>
+        <button type="button" data-action="clear">Clear</button>
+      </div>
+      <ul class="po-ms-options"></ul>`;
+    document.body.appendChild(panel);
+
+    const rect = btn.getBoundingClientRect();
+    panel.style.top = `${rect.bottom + window.scrollY + 4}px`;
+    panel.style.left = `${Math.min(rect.left + window.scrollX, window.scrollX + document.documentElement.clientWidth - 250)}px`;
+
+    const searchInput = panel.querySelector('input');
+    const optionsList = panel.querySelector('.po-ms-options');
+
+    const renderOptions = (term) => {
+      const allOptions = this.getColumnFilterOptions(key);
+      const selected = App.State.processColumnFilters[key] || [];
+      const t = (term || '').toLowerCase().trim();
+      const visible = allOptions.filter(o => !t || o.label.toLowerCase().includes(t));
+
+      optionsList.innerHTML = visible.map(o => {
+        const on = selected.includes(o.value);
+        return `<li class="po-ms-option${on ? ' checked' : ''}" data-value="${escapeHtml(o.value)}">
+          <span class="po-ms-check">${on ? '✓' : ''}</span>
+          <span>${escapeHtml(o.label)}</span>
+        </li>`;
+      }).join('') || '<li class="po-ms-empty">No values found</li>';
+    };
+
+    searchInput.addEventListener('input', () => renderOptions(searchInput.value));
+    searchInput.addEventListener('click', e => e.stopPropagation());
+    panel.addEventListener('click', e => e.stopPropagation());
+
+    panel.querySelector('[data-action="select-all"]').addEventListener('click', () => {
+      const t = searchInput.value;
+      const visibleValues = this.getColumnFilterOptions(key)
+        .filter(o => !t.trim() || o.label.toLowerCase().includes(t.toLowerCase()))
+        .map(o => o.value);
+      App.State.processColumnFilters[key] = [...new Set([...(App.State.processColumnFilters[key] || []), ...visibleValues])];
+      this.onColumnFilterChange(key);
+      renderOptions(t);
+    });
+
+    panel.querySelector('[data-action="clear"]').addEventListener('click', () => {
+      App.State.processColumnFilters[key] = [];
+      this.onColumnFilterChange(key);
+      renderOptions(searchInput.value);
+    });
+
+    optionsList.addEventListener('click', e => {
+      const li = e.target.closest('.po-ms-option');
+      if (!li) return;
+      const val = li.dataset.value;
+      const sel = App.State.processColumnFilters[key] || (App.State.processColumnFilters[key] = []);
+      const idx = sel.indexOf(val);
+      if (idx === -1) sel.push(val);
+      else sel.splice(idx, 1);
+      this.onColumnFilterChange(key);
+      renderOptions(searchInput.value);
+    });
+
+    renderOptions('');
+    requestAnimationFrame(() => searchInput.focus());
+
+    if (!document.body.dataset.processColFilterOutsideClickBound) {
+      document.body.dataset.processColFilterOutsideClickBound = '1';
+      document.addEventListener('click', e => {
+        const openPanel = document.getElementById('processColFilterPanel');
+        if (openPanel && !openPanel.contains(e.target) && !e.target.closest('.th-filter-btn')) {
+          openPanel.remove();
+        }
       });
     }
-    this.renderTable();
+  },
+
+  onColumnFilterChange(key) {
+    this.updateColumnFilterIcons();
+    this.filterData(App.State.processSearchTerm || '');
+  },
+
+  clearColumnFilters() {
+    App.State.processColumnFilters = { processType: [], outputItem: [], finalStage: [], active: [] };
+    document.getElementById('processColFilterPanel')?.remove();
+    this.updateColumnFilterIcons();
+    this.filterData(App.State.processSearchTerm || '');
+  },
+
+  // Narrows a base list down to rows matching every active per-column
+  // filter (AND across columns, OR within a column's checked values).
+  applyColumnFilters(items) {
+    const { processType, outputItem, finalStage, active } = App.State.processColumnFilters;
+    if (!processType.length && !outputItem.length && !finalStage.length && !active.length) return items;
+
+    return items.filter(p => {
+      if (processType.length && !processType.includes(p.processType || '')) return false;
+      if (outputItem.length && !outputItem.includes(p.outputItemName || '')) return false;
+      if (finalStage.length && !finalStage.includes(p.isFinalStage ? 'Yes' : 'No')) return false;
+      if (active.length && !active.includes(p.active ? 'Active' : 'Inactive')) return false;
+      return true;
+    });
   },
 
   renderTable() {
@@ -431,6 +592,7 @@ App.Process = {
     const count = App.State.selectedProcesses.length;
     App.Selection.updateButton('btnBulkDeleteProcesses', count, '<i class="bi bi-trash"></i> Delete Selected');
     App.Selection.updateButton('btnBulkPrintProcesses', count, '<i class="bi bi-printer"></i> Print Selected');
+    App.Selection.updateButton('btnBulkDownloadPdfProcesses', count, '<i class="bi bi-file-earmark-pdf"></i> Download PDFs');
   },
 
   async bulkDelete() {
@@ -474,6 +636,27 @@ App.Process = {
       App.Print.triggerBulk(withComponents, p => this.buildProcessPrintPageHtml(p), 'Process_Sheets_Selected');
     } catch (err) {
       App.Utils.showToast(err.message || 'Failed to prepare processes for printing', true);
+    }
+  },
+
+  async bulkDownloadPDF() {
+    const selected = App.State.selectedProcesses;
+    if (selected.length === 0) return;
+
+    const processes = App.State.globalProcesses.filter(p => App.Selection.isSelected(selected, p.processId));
+    if (processes.length === 0) return;
+
+    try {
+      const withComponents = await Promise.all(processes.map(async p => {
+        const res = await Api.call('getProcessComponentsData', p.processId);
+        return Object.assign({}, p, { components: res.success ? res.data : [] });
+      }));
+      App.Print.renderBulkPages(withComponents, p => this.buildProcessPrintPageHtml(p));
+      const filename = App.Print.bulkPdfFilename('Process_Sheets', withComponents.length);
+      const ok = await App.Print.downloadElementAsPDF('print-bulk-container', filename);
+      if (ok) App.Utils.showToast(`${withComponents.length} process sheet(s) exported to PDF!`, false);
+    } catch (err) {
+      App.Utils.showToast(err.message || 'Failed to prepare processes for export', true);
     }
   },
 
@@ -614,6 +797,7 @@ App.Process = {
 
     this.clearComponentsTable();
     this.clearColorGroups();
+    this._presetDispatchDifferentiator = '';
     this.loadPoolColorAxisLabels('');
     this.clearColorLinks();
     this.toggleColorLinksAvailability(false);
@@ -684,6 +868,7 @@ App.Process = {
       if (seq !== this._modalLoadSeq) return;
       this.renderComponentsGrouped(compRes.success ? compRes.data : []);
       this.renderColorLinksData(linksRes.success ? linksRes.data : []);
+      this._presetDispatchDifferentiator = p.dispatchDifferentiator || '';
       await this.loadPoolColorAxisLabels(p.processId, p.primaryColorAxis || '');
     } catch (err) {
       App.Utils.showToast(err.message || 'Failed to load process components', true);
@@ -787,9 +972,15 @@ App.Process = {
     this.clearContractorRatesTable();
 
     this._poolAxisLabels = [];
+    this._presetDispatchDifferentiator = '';
     this.refreshColorAxisOptions();
     const primaryPicker = document.getElementById('processPrimaryColorAxis');
     if (primaryPicker) primaryPicker.value = p.primaryColorAxis && this.collectColorAxisLabels().includes(p.primaryColorAxis) ? p.primaryColorAxis : '';
+    // A duplicate keeps the source's differentiator only if that axis label
+    // survives on the copied recipe -- the pool-detected labels belong to the
+    // original's saved history, which the copy doesn't have yet.
+    const dupDiffPicker = document.getElementById('processDispatchDifferentiator');
+    if (dupDiffPicker) dupDiffPicker.value = p.dispatchDifferentiator && this.collectColorAxisLabels().includes(p.dispatchDifferentiator) ? p.dispatchDifferentiator : '';
 
     document.getElementById('processFormTitle').innerText = `Duplicate Process (from ${p.processId})`;
     document.getElementById('processSubmitBtn').innerText = 'Save Process';
@@ -1374,6 +1565,30 @@ App.Process = {
       picker.value = labels.includes(current) ? current : '';
     }
     if (wrapper) wrapper.style.display = labels.length >= 2 ? '' : 'none';
+
+    this.refreshDispatchDifferentiatorOptions(labels);
+  },
+
+  // Companion to the Primary Axis picker: which single axis identifies this
+  // process's output on Ready to Dispatch (see migration 021). Offered from
+  // the same label list, but shown only for a FINAL-STAGE process -- that is
+  // the only stage whose output reaches Dispatch at all -- and only once
+  // there is at least one axis to pick. Unlike Primary Axis, a single axis is
+  // still worth differentiating by, so the threshold is 1, not 2.
+  refreshDispatchDifferentiatorOptions(labels) {
+    const picker = document.getElementById('processDispatchDifferentiator');
+    const wrapper = document.getElementById('processDispatchDifferentiatorWrapper');
+    if (!picker || !wrapper) return;
+
+    const all = labels || Array.from(new Set([...(this._poolAxisLabels || []), ...this.collectColorAxisLabels()]))
+      .sort((a, b) => a.localeCompare(b));
+    const current = picker.value;
+    picker.innerHTML = '<option value="">— None (one row per output item) —</option>'
+      + all.map(l => `<option value="${escapeHtml(l)}">${escapeHtml(l)}</option>`).join('');
+    picker.value = all.includes(current) ? current : '';
+
+    const isFinal = !!document.getElementById('processFormIsFinalStage')?.checked;
+    wrapper.style.display = (isFinal && all.length >= 1) ? '' : 'none';
   },
 
   // Fetches this (already-saved) process's auto-detected Warehouse Pool
@@ -1393,6 +1608,12 @@ App.Process = {
     this.refreshColorAxisOptions();
     const picker = document.getElementById('processPrimaryColorAxis');
     if (picker && presetPrimary) picker.value = presetPrimary;
+    // Set after refreshColorAxisOptions, which rebuilds (and would otherwise
+    // clear) the differentiator's own <option> list.
+    const diffPicker = document.getElementById('processDispatchDifferentiator');
+    if (diffPicker && this._presetDispatchDifferentiator) {
+      diffPicker.value = this._presetDispatchDifferentiator;
+    }
   },
 
   // Uniqueness = Item Name + Size + Color Group (Common counts as its own

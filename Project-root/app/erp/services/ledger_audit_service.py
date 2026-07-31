@@ -7,15 +7,27 @@ their own instead of silently compounding. Read-only, never blocks a
 save, never auto-fixes anything -- a human reviews and corrects from the
 relevant ledger.
 
-This is deliberately NOT wired into the web app UI (matches source's own
-comment) -- no @rpc_method here. It runs unattended on an hourly schedule
-(see start_ledger_audit_scheduler(), called once from create_app()) and
-writes findings to erp.ledger_audit_log (migration 019) -- this port's
-stand-in for source's "Logs sheet" (via logAction()), which was never
-carried over anywhere else in this port as a general-purpose facility
-(every other mutation instead relies on its own table's updated_at/
-updated_by columns) -- scoped to just this one job, not a reintroduction
-of that whole concept.
+The audit itself runs unattended on an hourly schedule (see
+start_ledger_audit_scheduler(), called once from create_app()) and writes
+findings to erp.ledger_audit_log (migration 019) -- this port's stand-in
+for source's "Logs sheet" (via logAction()), which was never carried over
+anywhere else in this port as a general-purpose facility (every other
+mutation instead relies on its own table's updated_at/updated_by columns)
+-- scoped to just this one job, not a reintroduction of that whole
+concept.
+
+get_recent_notification_logs (below) is the one @rpc_method here -- ported
+from config.js's getRecentNotificationLogs (GAS e57fd9c), which feeds the
+web app's notification bell so findings that never produced a toast in
+front of anyone (this runs on a background thread, not tied to a request)
+still surface. Source's version also scanned its "Logs sheet" for
+ERROR/WARNING script-error rows from ANY source (not just this audit) --
+that half has no equivalent here: this port logs application errors via
+Python's `logging` module to files/stdout (logging_config.py), not to a
+queryable table the app can read back from itself, and no general-purpose
+"Logs" table was ever introduced (see above). So this endpoint surfaces
+ledger-audit findings only, not arbitrary backend errors -- a real,
+narrower scope than source's, not an oversight.
 
 Runs under gunicorn's --workers 4 (see Procfile), so every worker's own
 scheduler thread wakes up on the same hourly cadence. run_internal_ledger_audit()
@@ -33,12 +45,16 @@ import logging
 import os
 import threading
 
+import psycopg2.extras
+
 import database
 from . import bill_service
 from . import issue_service
 from . import po_service
 from . import return_service
 from . import wastage_service
+from ..envelope import build_response
+from ..registry import rpc_method
 
 logger = logging.getLogger(__name__)
 
@@ -263,6 +279,55 @@ def _log(cur, action: str, record_id: str, details: str, status: str) -> None:
         "INSERT INTO erp.ledger_audit_log (action, record_id, details, status) VALUES (%s, %s, %s, %s)",
         (action, str(record_id)[:255], details, status),
     )
+
+
+_RECENT_LOGS_MAX_RESULTS = 30
+_RECENT_LOGS_MAX_AGE_DAYS = 7
+
+
+@rpc_method("getRecentNotificationLogs")
+def get_recent_notification_logs():
+    """Most recent erp.ledger_audit_log rows from the last
+    _RECENT_LOGS_MAX_AGE_DAYS days, newest first, capped to
+    _RECENT_LOGS_MAX_RESULTS -- feeds the web app's notification bell so
+    findings from a scheduler run nobody was watching still surface. See
+    module docstring for why this covers ledger-audit findings only, not
+    arbitrary backend errors.
+
+    `key` is a stable per-row dedupe key the client persists so the same
+    entry isn't re-notified on every reload -- mirrors source's own
+    `${ts}|${action}|${recordId}` composition exactly.
+    """
+    with database.get_conn(cursor_factory=psycopg2.extras.RealDictCursor) as (_conn, cur):
+        cur.execute(
+            """
+            SELECT logged_at, action, record_id, details, status
+            FROM erp.ledger_audit_log
+            WHERE status IN ('ERROR', 'WARNING')
+              AND logged_at >= NOW() - (%s || ' days')::interval
+            ORDER BY logged_at DESC
+            LIMIT %s
+            """,
+            (_RECENT_LOGS_MAX_AGE_DAYS, _RECENT_LOGS_MAX_RESULTS),
+        )
+        rows = cur.fetchall()
+
+    results = [
+        {
+            "key": f"{row['logged_at'].isoformat()}|{row['action']}|{row['record_id']}",
+            "timestamp": row["logged_at"].isoformat(),
+            "action": row["action"],
+            # No per-ledger "source" column here (source's Logs sheet stored
+            # the sheet name a script error came from); action already names
+            # the audit job (LEDGER_AUDIT_FINDING / LEDGER_AUDIT_SUMMARY).
+            "source": "",
+            "recordId": row["record_id"],
+            "details": row["details"],
+            "status": row["status"],
+        }
+        for row in rows
+    ]
+    return build_response(True, results, f"{len(results)} recent issue(s).")
 
 
 def run_internal_ledger_audit() -> dict:

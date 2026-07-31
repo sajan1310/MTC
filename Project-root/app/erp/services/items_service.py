@@ -182,6 +182,51 @@ def lookup_item_unit_info(unit_map: dict, name: str, size: str) -> dict:
     return unit_map.get(key) or {"baseUnit": "Pcs", "purchaseUnit": "Pcs", "weightPerBaseUnit": 0}
 
 
+def get_item_narration_map(cur) -> dict:
+    """{name_lower|size_lower: narration} for every item with a non-blank
+    narration -- ports _getItemNarrationMap. Only non-blank narrations are
+    included: a blank one carries no information and must never overwrite a
+    note somebody typed by hand into a consumer, so "absent from the map"
+    reads as "keep what you have" everywhere this is used, with no second
+    check needed.
+    """
+    cur.execute("SELECT item_name, size, narration FROM erp.items WHERE deleted_at IS NULL")
+    result = {}
+    for row in cur.fetchall():
+        name = (row["item_name"] or "").strip()
+        narration = (row["narration"] or "").strip()
+        if not name or not narration:
+            continue
+        size = (row["size"] or "").strip()
+        result[f"{name.lower()}|{size.lower()}"] = narration
+    return result
+
+
+def get_item_master_refresh_map(cur) -> dict:
+    """{name_lower|size_lower: {"canonicalName", "narration", "baseUnit"}}
+    for every item -- ports _getItemMasterRefreshMap. Combines the 3 fields
+    production_service.refresh_production_components_from_items_master
+    resyncs onto every already-logged lot's stored components.
+    canonicalName and baseUnit are always included (a blank Base Unit still
+    defaults to 'Pcs', same as get_item_unit_info_map); narration is blank
+    when Items Master has none, same non-blank-wins semantics as
+    get_item_narration_map.
+    """
+    cur.execute("SELECT item_name, size, narration, base_unit FROM erp.items WHERE deleted_at IS NULL")
+    result = {}
+    for row in cur.fetchall():
+        name = (row["item_name"] or "").strip()
+        if not name:
+            continue
+        size = (row["size"] or "").strip()
+        result[f"{name.lower()}|{size.lower()}"] = {
+            "canonicalName": name,
+            "narration": (row["narration"] or "").strip(),
+            "baseUnit": (row["base_unit"] or "").strip() or "Pcs",
+        }
+    return result
+
+
 def _propagate_item_identity_change(cur, old_name: str, old_size: str, new_name: str, new_size: str) -> None:
     for sheet_key in ("PO_LINES", "BILL_LINES", "BOM_LINES", "RETURN_LINES", "WASTAGE_LINES", "ISSUE_LINES"):
         table = config_maps.TABLE_NAMES.get(sheet_key)
@@ -817,9 +862,14 @@ def _auto_extract_item(cur, name: str, size: str, narration: str, unit: str, ven
     - New item: created with `unit` as both Base Unit and Purchase Unit (no
       prior Base Unit to convert against, so this is an identity no-op until
       the user edits it) plus this vendor/rate pair, and a Stock row is
-      ensured for it.
-    - Existing item: blank narration is filled; Purchase Unit is kept synced
-      to whatever unit was actually used on this line; this vendor's rate is
+      ensured for it. `narration` seeds the item's own Narration -- it would
+      otherwise have none at all for Production to resolve against.
+    - Existing item: `narration` overwrites the item's REMARKS (not its
+      Narration), so Remarks always reflects the latest purchase-side
+      description -- Narration is the hand-maintained note Production prints
+      and resolves against, and a vendor's wording overwriting it would
+      change printed production sheets. Purchase Unit is kept synced to
+      whatever unit was actually used on this line; this vendor's rate is
       inserted or updated (existing rates for other vendors are untouched).
 
     Returns the item's id.
@@ -844,10 +894,10 @@ def _auto_extract_item(cur, name: str, size: str, narration: str, unit: str, ven
         item_id = cur.fetchone()["id"]
         stock_rows.sync_stock_for_item(cur, "ensure", {"name": name, "size": size})
     else:
-        cur.execute("SELECT narration, purchase_unit FROM erp.items WHERE id = %s", (item_id,))
+        cur.execute("SELECT remarks, purchase_unit FROM erp.items WHERE id = %s", (item_id,))
         row = cur.fetchone()
-        if narration and not (row["narration"] or "").strip():
-            cur.execute("UPDATE erp.items SET narration = %s WHERE id = %s", (narration, item_id))
+        if narration and narration != (row["remarks"] or "").strip():
+            cur.execute("UPDATE erp.items SET remarks = %s WHERE id = %s", (narration, item_id))
         if unit and unit != (row["purchase_unit"] or ""):
             cur.execute("UPDATE erp.items SET purchase_unit = %s WHERE id = %s", (unit, item_id))
 

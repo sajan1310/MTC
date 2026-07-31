@@ -114,12 +114,24 @@ App.Dispatch = {
     let html = '';
     App.State.filteredReadyToDispatch.forEach(r => {
       const readyClass = r.readyQty > 0 ? 'text-success fw-bold' : 'text-muted';
+      // A row can span several Completed lots logged under different Colors
+      // to Produce combinations. Only worth a button when there's real color
+      // info to show: 2+ distinct entries, or a single one that isn't just
+      // the blank/untagged bucket.
+      const breakdown = r.colorBreakdown || [];
+      const hasColorInfo = breakdown.length > 1 || (breakdown.length === 1 && breakdown[0].color);
+      const colorsCell = hasColorInfo
+        ? `<button type="button" class="btn btn-sm btn-outline-dark" onclick="App.Dispatch.openColorBreakdown('${escapeHtml(r.key || r.productId)}')">
+             <i class="bi bi-palette me-1"></i>${breakdown.length}
+           </button>`
+        : '<span class="text-muted">&#8211;</span>';
       html += `<tr>
         <td><span class="badge bg-dark fs-6 shadow-sm">${escapeHtml(r.productId)}</span></td>
         <td><strong>${escapeHtml(r.productName)}</strong></td>
         <td class="text-center">${App.Production.formatQty(r.producedQty)}</td>
         <td class="text-center">${App.Production.formatQty(r.dispatchedQty)}</td>
         <td class="text-center ${readyClass}">${App.Production.formatQty(r.readyQty)}</td>
+        <td class="text-center">${colorsCell}</td>
         <td class="text-center">
           <button class="btn btn-sm btn-success btn-action" ${r.readyQty > 0 ? '' : 'disabled'} onclick="App.Dispatch.openCreateDispatchModal('${escapeHtml(r.productId)}')">Dispatch</button>
         </td>
@@ -127,6 +139,42 @@ App.Dispatch = {
     });
 
     tbody.innerHTML = html;
+  },
+
+  // Read-only detail popup for one row's own color makeup -- see
+  // getReadyToDispatchData's colorBreakdown. Reads straight from the
+  // already-loaded globalReadyToDispatch (no extra API round trip).
+  // Addressed by the record's `key`, not its productId: a Dispatch
+  // Differentiator splits one output into several rows that all report the
+  // SAME productId, so matching on that would open the first variant's
+  // breakdown no matter which row's button was clicked. Falls back to
+  // productId for an older cached payload with no key.
+  openColorBreakdown(rowKey) {
+    const list = App.State.globalReadyToDispatch || [];
+    const record = list.find(r => (r.key || r.productId) === rowKey);
+    if (!record) return;
+
+    const titleEl = document.getElementById('dispatchColorBreakdownTitle');
+    if (titleEl) titleEl.innerText = `Color Breakdown: ${record.productName} (${record.productId})`;
+
+    const body = document.getElementById('dispatchColorBreakdownBody');
+    if (body) {
+      const rows = (record.colorBreakdown || []).map(c => {
+        const readyClass = c.readyQty > 0 ? 'text-success fw-bold' : 'text-muted';
+        const colorCell = c.color
+          ? `<span class="badge bg-info text-dark">${escapeHtml(c.color)}</span>`
+          : '<span class="text-muted">&#8211; (no color recorded)</span>';
+        return `<tr>
+          <td>${colorCell}</td>
+          <td class="text-center">${App.Production.formatQty(c.producedQty)}</td>
+          <td class="text-center">${App.Production.formatQty(c.dispatchedQty)}</td>
+          <td class="text-center ${readyClass}">${App.Production.formatQty(c.readyQty)}</td>
+        </tr>`;
+      }).join('');
+      body.innerHTML = rows || '<tr><td colspan="4" class="text-center text-muted p-3">No color data recorded for this product.</td></tr>';
+    }
+
+    safeModalShow('dispatchColorBreakdownModal');
   },
 
   // ── Dispatched Goods ───────────────────────────────────────
@@ -285,6 +333,7 @@ App.Dispatch = {
     const count = App.State.selectedDispatch.length;
     App.Selection.updateButton('btnBulkDeleteDispatch', count, '<i class="bi bi-trash"></i> Delete Selected');
     App.Selection.updateButton('btnBulkPrintDispatch', count, '<i class="bi bi-printer"></i> Print Selected');
+    App.Selection.updateButton('btnBulkDownloadPdfDispatch', count, '<i class="bi bi-file-earmark-pdf"></i> Download PDFs');
   },
 
   // Populates #print-dispatch-container's fields from one Dispatch
@@ -364,6 +413,22 @@ App.Dispatch = {
     if (!records.length) return;
 
     App.Print.triggerBulk(records, d => this.buildDispatchPrintPageHtml(d), 'Delivery_Challans_Selected');
+  },
+
+  async bulkDownloadPDF() {
+    const selected = App.State.selectedDispatch;
+    if (!selected.length) {
+      App.Utils.showToast('No dispatch records selected.', true);
+      return;
+    }
+
+    const records = App.State.globalDispatch.filter(d => App.Selection.isSelected(selected, String(d.rowIdx)));
+    if (!records.length) return;
+
+    App.Print.renderBulkPages(records, d => this.buildDispatchPrintPageHtml(d));
+    const filename = App.Print.bulkPdfFilename('Delivery_Challans', records.length);
+    const ok = await App.Print.downloadElementAsPDF('print-bulk-container', filename);
+    if (ok) App.Utils.showToast(`${records.length} delivery challan(s) exported to PDF!`, false);
   },
 
   // Builds a fully self-contained "Delivery Challan" page (mirrors

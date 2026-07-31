@@ -23,6 +23,9 @@
         <button class="btn btn-outline-dark fw-bold shadow-sm d-none" id="btnBulkPrintProcesses" type="button" onclick="App.Process.bulkPrint()" style="white-space: nowrap;">
           <i class="bi bi-printer"></i> Print Selected
         </button>
+        <button class="btn btn-outline-dark fw-bold shadow-sm d-none" id="btnBulkDownloadPdfProcesses" type="button" onclick="App.Process.bulkDownloadPDF()" style="white-space: nowrap;">
+          <i class="bi bi-file-earmark-pdf"></i> Download PDFs
+        </button>
         <button class="btn btn-danger fw-bold shadow-sm d-none" id="btnBulkDeleteProcesses" type="button" onclick="App.Process.bulkDelete()" style="white-space: nowrap;">
           <i class="bi bi-trash"></i> Delete Selected
         </button>
@@ -47,10 +50,10 @@
             <th style="width: 16%;">Process Name</th>
             <th style="width: 7%; text-align: center;">Sequence</th>
             <th style="width: 8%; text-align: center;">Lot Prefix</th>
-            <th style="width: 10%;">Process Type</th>
-            <th style="width: 13%;">Output Item Name</th>
-            <th style="width: 9%; text-align: center;">Final Stage</th>
-            <th style="width: 8%; text-align: center;">Active</th>
+            <th style="width: 10%;">Process Type <button type="button" class="th-filter-btn" data-filter-key="processType" onclick="App.Process.toggleColumnFilter(event, 'processType')"><i class="bi bi-funnel"></i></button></th>
+            <th style="width: 13%;">Output Item Name <button type="button" class="th-filter-btn" data-filter-key="outputItem" onclick="App.Process.toggleColumnFilter(event, 'outputItem')"><i class="bi bi-funnel"></i></button></th>
+            <th style="width: 9%; text-align: center;">Final Stage <button type="button" class="th-filter-btn" data-filter-key="finalStage" onclick="App.Process.toggleColumnFilter(event, 'finalStage')"><i class="bi bi-funnel"></i></button></th>
+            <th style="width: 8%; text-align: center;">Active <button type="button" class="th-filter-btn" data-filter-key="active" onclick="App.Process.toggleColumnFilter(event, 'active')"><i class="bi bi-funnel"></i></button></th>
             <th style="width: 20%; text-align: center;">Actions</th>
           </tr>
         </thead>
@@ -75,6 +78,9 @@
       <div class="d-flex gap-2 flex-wrap justify-content-end">
         <button class="btn btn-outline-dark fw-bold shadow-sm d-none" id="btnBulkPrintBOMs" type="button" onclick="App.BOM.bulkPrint()" style="white-space: nowrap;">
           <i class="bi bi-printer"></i> Print Selected
+        </button>
+        <button class="btn btn-outline-dark fw-bold shadow-sm d-none" id="btnBulkDownloadPdfBOMs" type="button" onclick="App.BOM.bulkDownloadPDF()" style="white-space: nowrap;">
+          <i class="bi bi-file-earmark-pdf"></i> Download PDFs
         </button>
         <button class="btn btn-danger fw-bold shadow-sm d-none" id="btnBulkDeleteBOMs" type="button" onclick="App.BOM.bulkDelete()" style="white-space: nowrap;">
           <i class="bi bi-trash"></i> Delete Selected
@@ -311,7 +317,7 @@
             </div>
             <div class="col-md-6">
               <div class="form-check form-switch mt-1">
-                <input class="form-check-input" type="checkbox" name="isFinalStage" id="processFormIsFinalStage" value="true">
+                <input class="form-check-input" type="checkbox" name="isFinalStage" id="processFormIsFinalStage" value="true" onchange="App.Process.refreshDispatchDifferentiatorOptions()">
                 <label class="form-check-label fw-bold" for="processFormIsFinalStage">Final Stage (feeds Dispatch)</label>
               </div>
             </div>
@@ -363,6 +369,14 @@
               <option value="">— None (legacy: sum every checked color) —</option>
             </select>
             <div class="form-text">This process has more than one independent color choice (e.g. a Base plus a separate Mudguard Color). Pick which one's checked quantities on the Production Lot form should count as the lot's total output — the others are recorded per-color but won't add to the total.</div>
+          </div>
+
+          <div id="processDispatchDifferentiatorWrapper" class="mb-3" style="display:none;">
+            <label class="form-label fw-bold mb-1" for="processDispatchDifferentiator">Dispatch Differentiator</label>
+            <select class="form-select form-select-sm" name="dispatchDifferentiator" id="processDispatchDifferentiator" style="max-width:320px;">
+              <option value="">— None (one row per output item) —</option>
+            </select>
+            <div class="form-text">Final stage only. This stage's output carries the whole chain's color (e.g. <code>Black / Blue-White / Brown</code>). Pick the one axis that identifies the product for dispatch — Ready to Dispatch then shows a separate row per value of it, named <code>Output Item Name / value</code>, so a specific variant can be dispatched directly instead of drilling into a combined row.</div>
           </div>
 
           <h6 class="text-secondary border-bottom pb-2 mb-3 fw-bold">

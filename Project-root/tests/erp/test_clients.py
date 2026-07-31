@@ -29,7 +29,7 @@ def _unique_name(prefix: str) -> str:
 def _save_process(client, **overrides):
     payload = {
         "processName": _unique_name("Process"),
-        "lotPrefix": uuid.uuid4().hex[:5].upper(),
+        "lotPrefix": uuid.uuid4().hex[:6].upper(),
         "outputItemName": _unique_name("Output"),
         "sequence": 1,
         "isFinalStage": False,

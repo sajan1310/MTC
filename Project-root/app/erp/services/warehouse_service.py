@@ -66,6 +66,11 @@ from ..registry import rpc_method
 
 _COLOR_GROUP_COMMON = config_maps.COMPONENT_COLOR_GROUP_COMMON
 
+# Sort position for a color-breakdown entry whose axis the recipe can no
+# longer explain (renamed, removed, or legacy data with no axisKey) -- it
+# sorts after every axis the recipe DOES know. See _compose_lot_color_key.
+_UNORDERED_AXIS_POSITION = float("inf")
+
 
 def _validate_number(value, min_value: float, max_value: float) -> float:
     try:
@@ -94,6 +99,86 @@ def _find_process_record(process_id_str: str, all_processes: list):
         if p["processId"].strip().lower() == target:
             return p
     return None
+
+
+def color_segments(color) -> list:
+    """The individual axis values of a composite bucket color -- "Black /
+    Blue-White / Kraft" -> ["Black", "Blue-White", "Kraft"]. Ported from
+    module_warehouse.js#_colorSegments.
+
+    Public (no leading underscore) because dispatch_service resolves a
+    process's Dispatch Differentiator value by matching these segments
+    against that axis's own colors. Segment POSITION is never meaningful:
+    mirror axes are folded away and unchecked axes contribute nothing, so a
+    composite has no fixed slot per axis.
+    """
+    return [s.strip() for s in str(color or "").split(config_maps.COLOR_COMBO_DELIMITER) if s.strip()]
+
+
+def _color_order_key(color) -> str:
+    """Order-independent identity for a composite color: its segments
+    lowercased and sorted, joined with a delimiter that can't occur in a
+    color name. "Blue-White / Black / Grey" and "Blue-White / Grey / Black"
+    describe the SAME physical unit -- one frame color, one rim color, one
+    mudguard color -- so they must resolve to one bucket.
+
+    Used to catch (and heal) historical rows credited before
+    _compose_lot_color_key imposed a canonical order. Ported from
+    module_warehouse.js#_colorOrderKey.
+    """
+    return "\0".join(sorted(s.lower() for s in color_segments(color)))
+
+
+def _compose_lot_color_key(primary_entry: dict, independent_entries: list, axis_order: dict | None) -> str:
+    """A lot's composite bucket color in a CANONICAL, repeatable segment
+    order, so the same real combination always keys the same bucket. Ported
+    from module_warehouse.js#_composeLotColorKey.
+
+    EVERY axis takes the position THIS PROCESS'S OWN RECIPE gives it -- the
+    primary included (see process_service.get_axis_order_by_process). A POOL
+    recipe row is the association with the upstream process that produces
+    it, so recipe row order is exactly "this process's inputs, in the
+    sequence the operator arranged them", and it is also the order the
+    Production checklist renders. A recipe listing Fitted Rim above Painted
+    Frame credits "Black / Blue-White", and the operator can change that
+    reading by reordering the recipe.
+
+    The primary axis is deliberately NOT anchored first: the quantity-bearing
+    axis is not necessarily the one you name first, so a lot of frames on
+    black rims would otherwise read "Blue-White / Black" no matter where the
+    recipe put the rim.
+
+    Order previously came straight from the Color Breakdown array, i.e. from
+    checklist order, which followed Warehouse Pool row order -- itself
+    rebuilt on every recalculation. Two lots of the very same product could
+    therefore be credited as "Blue-White / Black / Grey" and "Blue-White /
+    Grey / Black" and have their stock split across two buckets. Needs 3+
+    axes (2+ independent ones) to bite.
+
+    A primary color that is itself a composite (inherited from upstream)
+    stays intact as one unit -- only its position among this stage's axes is
+    decided here, never its internal order.
+
+    `axis_order` is {axisKeyLower: position} for this lot's own process. An
+    axis missing from it (renamed, removed, or a legacy entry with no
+    axisKey at all) sorts after every known one, then by axis key and color,
+    so the result is always fully determined even when the recipe can no
+    longer explain an entry.
+    """
+    order = axis_order or {}
+
+    def sort_key(entry):
+        axis_key = str(entry.get("axisKey") or "").strip().lower()
+        position = order.get(axis_key, _UNORDERED_AXIS_POSITION) if axis_key else _UNORDERED_AXIS_POSITION
+        # Same (or absent) axis key -- fall back to the color itself so the
+        # result is still fully determined rather than input-order dependent.
+        return (position, axis_key, str(entry.get("color") or "").strip().lower())
+
+    ordered = sorted(
+        (e for e in [primary_entry, *(independent_entries or [])] if e and str(e.get("color") or "").strip()),
+        key=sort_key,
+    )
+    return config_maps.COLOR_COMBO_DELIMITER.join(str(e["color"]).strip() for e in ordered)
 
 
 def _color_names_match(a, b) -> bool:
@@ -203,18 +288,29 @@ def _recalculate_warehouse_pool(cur) -> None:
         # Pass 1: credit every Completed lot's own output to its pool
         # bucket(s). A color-agnostic lot credits the single blank-color
         # bucket. A multi-color lot's colorBreakdown entries are combined
-        # into ONE bucket whenever the pairing is unambiguous: exactly one
-        # entry counts toward the lot's total (countsTowardTotal !== false
-        # -- the primary axis, or the only entry on a single-axis/legacy
-        # lot) AND at most one OTHER entry is a genuinely independent axis
-        # (its color doesn't _color_names_match the primary's). A redundant
-        # axis (whose checked value DOES name-match the primary -- the same
-        # batch described a second way) is folded into that one combined
-        # bucket instead of getting a separate credit of its own -- this is
-        # what turns two independent credits (10 under "Red-White", 10
-        # under "Black") into one real "Red-White / Black" bucket.
-        # Anything less clean-cut falls back to crediting every entry
-        # under its own single color.
+        # into composite bucket(s) whenever the pairing is unambiguous:
+        # every entry that counts toward the lot's total (countsTowardTotal
+        # is not False -- the primary axis, or the only entry on a
+        # single-axis/legacy lot) becomes its OWN composite bucket carrying
+        # its own qty, paired with the genuinely independent other entries.
+        # A redundant axis (whose checked value _color_names_match-es a
+        # primary -- the same batch described a second way) is folded in
+        # rather than credited separately: this is what turns two
+        # independent credits (10 under "Red-White", 10 under "Black") into
+        # one real "Red-White / Black" bucket.
+        #
+        # "Unambiguous" means no single axis contributes 2+ independent
+        # entries -- see the axis_counts check below. Anything less
+        # clean-cut falls back to crediting every entry under its own
+        # single color.
+        #
+        # Axis order for each process's own recipe, so a composite's segment
+        # order is canonical rather than colorBreakdown array order (which
+        # follows pool row order, itself rebuilt on every recalculation) --
+        # otherwise two lots of the same product credit two
+        # differently-ordered buckets and split its stock.
+        axis_order_by_process = process_service.get_axis_order_by_process(cur)
+
         cur.execute(
             f"""
             SELECT process_id, output_item_name, product_id, color_breakdown, qty
@@ -249,14 +345,63 @@ def _recalculate_warehouse_pool(cur) -> None:
                 ]
 
                 combined = False
-                if len(primary_entries) == 1:
-                    primary_color = str(primary_entries[0]["color"]).strip()
-                    independent = [e for e in other_entries if not _color_names_match(primary_color, e.get("color"))]
-                    if len(independent) <= 1:
-                        parts = [primary_color]
-                        if len(independent) == 1:
-                            parts.append(str(independent[0]["color"]).strip())
-                        credit_color(config_maps.COLOR_COMBO_DELIMITER.join(parts), primary_entries[0]["qty"])
+                if primary_entries:
+                    # A primary color inherited from upstream can itself be a
+                    # composite, and its segments are OTHER processes' axes --
+                    # a downstream axis cannot be a mirror of one of those, it
+                    # just happens to share the name. Such an entry matches a
+                    # whole segment EXACTLY (seat "Black" against a frame
+                    # credited "Black / Blue-White"), whereas a real mirror is
+                    # a variant of the primary color rather than one of its
+                    # segments verbatim ("Blue" against "Blue-White"). Only
+                    # composite primaries get this exception, so a plain
+                    # single-axis primary keeps exactly its old behavior.
+                    primary_colors = [str(e.get("color") or "").strip() for e in primary_entries]
+                    inherited_segments_lower = set()
+                    for primary_color in primary_colors:
+                        segments = color_segments(primary_color)
+                        if len(segments) >= 2:  # a chained/composite primary
+                            inherited_segments_lower.update(s.lower() for s in segments)
+
+                    def _is_independent(entry):
+                        color_lower = str(entry.get("color") or "").strip().lower()
+                        if color_lower in inherited_segments_lower:
+                            return True  # collision, keep as its own axis
+                        return not any(_color_names_match(pc, entry.get("color")) for pc in primary_colors)
+
+                    independent = [e for e in other_entries if _is_independent(e)]
+
+                    # Each distinct axis among the independent entries must
+                    # contribute exactly one. Entries carrying a real axisKey
+                    # are grouped by it, so two DIFFERENT axes (Mudguard +
+                    # Rim) each contributing one combine safely no matter how
+                    # many that adds up to. An entry with NO axisKey at all
+                    # (legacy data, or a free-form color with no real axis
+                    # structure) has no grouping info to disambiguate by, so
+                    # every blank-axisKey entry shares ONE pooled key: a
+                    # single such entry still combines (matching the original
+                    # one-independent-entry case), but 2+ of them collide and
+                    # correctly fall back to per-entry crediting -- the exact
+                    # "no stored cross-axis pairing to tell which goes with
+                    # which" case this whole block is guarding.
+                    axis_counts: dict = {}
+                    for entry in independent:
+                        axis_key = str(entry.get("axisKey") or "").strip().lower() or "__no_axis_key__"
+                        axis_counts[axis_key] = axis_counts.get(axis_key, 0) + 1
+
+                    if not any(count > 1 for count in axis_counts.values()):
+                        # One composite bucket PER primary color, each
+                        # carrying its own primary qty. An independent axis
+                        # holding a single color for the whole lot (Rim =
+                        # Black on all 40 units) pairs with every primary
+                        # color -- which goes with which is not in question
+                        # when that axis only has one.
+                        axis_order = axis_order_by_process.get(process_id.lower())
+                        for primary_entry in primary_entries:
+                            credit_color(
+                                _compose_lot_color_key(primary_entry, independent, axis_order),
+                                primary_entry.get("qty"),
+                            )
                         combined = True
 
                 if not combined:
@@ -320,14 +465,31 @@ def _recalculate_warehouse_pool(cur) -> None:
                 # bucket that was never credited.
                 if color and (item_name.lower(), "", color.lower()) not in buckets:
                     item_name_lower = item_name.lower()
-                    candidate_colors = [
-                        b["color"].lower()
+                    candidates = [
+                        b
                         for b in buckets.values()
                         if b["outputItemName"].lower() == item_name_lower and not b["productTag"]
                     ]
-                    resolved = _resolve_composite_color_token(candidate_colors, color.lower())
-                    if resolved:
-                        color = resolved
+
+                    # A consumption recorded before _compose_lot_color_key
+                    # imposed a canonical segment order names the same
+                    # combination in a different order ("Blue-White / Grey /
+                    # Black" for what is now credited as "Blue-White / Black
+                    # / Grey"). Match on the order-independent identity
+                    # first, so historical rows debit the real bucket instead
+                    # of opening a phantom negative one. Only when exactly
+                    # one bucket carries that segment set -- otherwise there
+                    # is nothing to disambiguate with.
+                    want_order_key = _color_order_key(color)
+                    order_matches = [b for b in candidates if _color_order_key(b["color"]) == want_order_key]
+                    if len(order_matches) == 1:
+                        color = order_matches[0]["color"]
+                    else:
+                        resolved = _resolve_composite_color_token(
+                            [b["color"].lower() for b in candidates], color.lower()
+                        )
+                        if resolved:
+                            color = resolved
 
                 get_bucket(item_name, "", "", color)["consumedQty"] += qty
 

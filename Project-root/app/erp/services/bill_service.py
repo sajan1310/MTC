@@ -25,6 +25,7 @@ import psycopg2.extras
 
 import database
 from . import items_service
+from . import process_service
 from . import units_service
 from . import vendors_service
 from .current_user import get_current_user_id
@@ -175,8 +176,10 @@ def _load_bill_list(cur, only_header_id=None) -> list:
     """
     query = """
         SELECT h.id AS header_id, h.bill_number, h.vendor, h.contact, h.bill_date, h.remarks,
+               h.issuing_party, h.manufacturing_vendor,
                l.po_number, l.item_name, l.size, l.narration, l.unit, l.qty, l.price,
-               l.gst_rate_pct, l.base_qty, l.base_rate, l.affects_stock
+               l.gst_rate_pct, l.base_qty, l.base_rate, l.affects_stock,
+               l.bill_type, l.process_name, l.color
         FROM erp.bill_headers h
         JOIN erp.bill_lines l ON l.header_id = h.id
         WHERE h.deleted_at IS NULL
@@ -204,6 +207,14 @@ def _load_bill_list(cur, only_header_id=None) -> list:
                 "vendor": row["vendor"],
                 "contact": row["contact"] or "",
                 "remarks": row["remarks"] or "",
+                # Labor Job bills only -- optional free text, blank on Goods
+                # bills. Header-level: one value per bill, like vendor/contact.
+                "issuingParty": row["issuing_party"] or "",
+                "manufacturingVendor": row["manufacturing_vendor"] or "",
+                # A bill is a Labor Job bill when its lines are; carried on the
+                # header too so the ledger can badge a row without inspecting
+                # every line. Set from the first line below.
+                "billType": "GOODS",
                 "items": [],
                 "totalQty": 0.0,
                 "totalAmount": 0.0,
@@ -220,6 +231,11 @@ def _load_bill_list(cur, only_header_id=None) -> list:
         gst_rate_pct = float(row["gst_rate_pct"])
         totals = _compute_line_totals(qty, price, gst_rate_pct)
 
+        # Blank (legacy rows predating migration 022) reads as a goods bill.
+        line_bill_type = "LABOR" if str(row["bill_type"] or "").strip().upper() == "LABOR" else "GOODS"
+        if line_bill_type == "LABOR":
+            bill["billType"] = "LABOR"
+
         bill["items"].append(
             {
                 "name": row["item_name"],
@@ -234,6 +250,11 @@ def _load_bill_list(cur, only_header_id=None) -> list:
                 "baseQty": float(row["base_qty"]),
                 "baseRate": float(row["base_rate"]),
                 "affectsStock": bool(row["affects_stock"]),
+                "billType": line_bill_type,
+                # Labor Job lines only -- which Process this line's job-work
+                # was for, and the color processed (both blank on GOODS rows).
+                "processName": row["process_name"] or "",
+                "color": row["color"] or "",
             }
         )
         bill["totalQty"] += qty
@@ -334,6 +355,23 @@ def save_bill(conn, cur, form_data):
     contact = str(form_data.get("contact") or "").strip()
     remarks = str(form_data.get("remarks") or "").strip()
 
+    # Labor Job bills only -- optional free text, blank on Goods bills.
+    # Header-level: one value per bill, like vendor/contact.
+    issuing_party = str(form_data.get("issuingParty") or "").strip()
+    manufacturing_vendor = str(form_data.get("manufacturingVendor") or "").strip()
+
+    bill_type = "LABOR" if str(form_data.get("billType") or "GOODS").strip().upper() == "LABOR" else "GOODS"
+
+    # Labor Job bills carry a Process per line (item_name is then forced to
+    # that process's Output Item Name, not whatever the client sent) -- build
+    # the lookup once, keyed by Process Name, so every line below can
+    # validate/resolve against it instead of trusting client-supplied text.
+    process_by_name = {}
+    if bill_type == "LABOR":
+        for p in process_service._get_all_processes(cur):
+            if p["active"]:
+                process_by_name[p["processName"].strip().lower()] = p
+
     # Items the user chose "Ledger only" for in the checkStockAdjustmentConflicts
     # warning flow -- still saved and shown in the ledger, but excluded from
     # Stock's Billed Qty sum (see stock_service._get_billed_and_consumed_qty_maps).
@@ -358,20 +396,22 @@ def save_bill(conn, cur, form_data):
         cur.execute(
             """
             UPDATE erp.bill_headers
-            SET bill_number = %s, vendor = %s, vendor_id = %s, contact = %s, bill_date = %s, remarks = %s, updated_by = %s
+            SET bill_number = %s, vendor = %s, vendor_id = %s, contact = %s, bill_date = %s, remarks = %s,
+                issuing_party = %s, manufacturing_vendor = %s, updated_by = %s
             WHERE id = %s
             """,
-            (bill_number, vendor, vendor_id, contact, bill_date, remarks, user_id, header_id),
+            (bill_number, vendor, vendor_id, contact, bill_date, remarks, issuing_party, manufacturing_vendor, user_id, header_id),
         )
         cur.execute("DELETE FROM erp.bill_lines WHERE header_id = %s", (header_id,))
     else:
         cur.execute(
             """
-            INSERT INTO erp.bill_headers (bill_number, vendor, vendor_id, contact, bill_date, remarks, updated_by)
-            VALUES (%s, %s, %s, %s, %s, %s, %s)
+            INSERT INTO erp.bill_headers
+                (bill_number, vendor, vendor_id, contact, bill_date, remarks, issuing_party, manufacturing_vendor, updated_by)
+            VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s)
             RETURNING id
             """,
-            (bill_number, vendor, vendor_id, contact, bill_date, remarks, user_id),
+            (bill_number, vendor, vendor_id, contact, bill_date, remarks, issuing_party, manufacturing_vendor, user_id),
         )
         header_id = cur.fetchone()["id"]
 
@@ -379,6 +419,27 @@ def save_bill(conn, cur, form_data):
     for item in items:
         item = item or {}
         name = str(item.get("name") or "").strip()
+
+        # Labor Job rows: resolve the chosen Process against Process Master
+        # (rejecting anything that doesn't match a real, active process) and
+        # force item_name to that process's Output Item Name -- the same
+        # "server owns the canonical value" rule save_production already
+        # applies, so a Labor bill's item name can never drift from what the
+        # process actually produces.
+        line_process_name = ""
+        line_color = ""
+        if bill_type == "LABOR":
+            raw_process_name = str(item.get("processName") or item.get("process") or "").strip()
+            process = process_by_name.get(raw_process_name.lower()) if raw_process_name else None
+            if not process:
+                raise ValueError(
+                    f'"{raw_process_name or "(blank)"}" is not a recognized active Process. '
+                    f"Pick a Process for every Labor Job line."
+                )
+            line_process_name = process["processName"]
+            name = process["outputItemName"]
+            line_color = str(item.get("color") or "").strip()
+
         if not name:
             continue
         size = str(item.get("size") or "").strip()
@@ -424,8 +485,8 @@ def save_bill(conn, cur, form_data):
         cur.execute(
             """
             INSERT INTO erp.bill_lines (header_id, po_number, item_name, size, narration, qty, unit, price,
-                gst_rate_pct, base_qty, base_rate, affects_stock, item_id)
-            VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+                gst_rate_pct, base_qty, base_rate, affects_stock, item_id, bill_type, process_name, color)
+            VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
             """,
             (
                 header_id,
@@ -441,6 +502,9 @@ def save_bill(conn, cur, form_data):
                 base_rate,
                 affects_stock,
                 item_id,
+                bill_type,
+                line_process_name,
+                line_color,
             ),
         )
 

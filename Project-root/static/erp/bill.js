@@ -113,8 +113,8 @@ App.Bill = {
 
       if (term) {
         const poSearch = (bill.poNumbers?.length ? bill.poNumbers : [bill.poNumber || '']).join(' ');
-        const itemsText = (bill.items || []).map(it => `${it.name || ''} ${it.size || ''} ${it.narration || ''}`).join(' ');
-        const haystack = `${bill.billNumber || ''} ${poSearch} ${bill.vendor || ''} ${itemsText}`;
+        const itemsText = (bill.items || []).map(it => `${it.name || ''} ${it.size || ''} ${it.narration || ''} ${it.processName || ''} ${it.color || ''}`).join(' ');
+        const haystack = `${bill.billNumber || ''} ${poSearch} ${bill.vendor || ''} ${bill.billDate || ''} ${bill.billType || ''} ${itemsText}`;
         if (!App.Utils.matchesKeywords(haystack, term)) return false;
       }
       return true;
@@ -200,6 +200,9 @@ App.Bill = {
     const itemsPreview = formatItemsPreview(bill.items);
     const key = this.billKey(bill);
     const checkedAttr = App.Selection.isSelected(App.State.selectedBills, key) ? 'checked' : '';
+    const billTypeBadge = bill.billType === 'LABOR'
+      ? ' <span class="badge bg-info text-dark shadow-sm">Labor</span>'
+      : '';
 
     return `
       <tr data-bill-key="${escapeHtml(key)}">
@@ -207,7 +210,7 @@ App.Bill = {
           <input type="checkbox" class="form-check-input bill-select-chk" data-key="${escapeHtml(key)}" ${checkedAttr} onchange="App.Bill.onRowSelectChange()">
         </td>
         <td>${poBadge}</td>
-        <td><strong class="text-primary">${escapeHtml(bill.billNumber || '')}</strong></td>
+        <td><strong class="text-primary">${escapeHtml(bill.billNumber || '')}</strong>${billTypeBadge}</td>
         <td>${escapeHtml(bill.billDate || '')}</td>
         <td>${escapeHtml(bill.vendor || '')}</td>
         <td><small class="text-muted">${itemsPreview}</small></td>
@@ -269,6 +272,7 @@ App.Bill = {
     const count = App.State.selectedBills.length;
     App.Selection.updateButton('btnBulkDeleteBills', count, '<i class="bi bi-trash"></i> Delete Selected');
     App.Selection.updateButton('btnBulkPrintBills', count, '<i class="bi bi-printer"></i> Print Selected');
+    App.Selection.updateButton('btnBulkDownloadPdfBills', count, '<i class="bi bi-file-earmark-pdf"></i> Download PDFs');
   },
 
   async bulkDelete() {
@@ -321,6 +325,22 @@ App.Bill = {
       bill => this.buildBillPrintPageHtml(bill),
       'Goods_Receipts_Selected'
     );
+  },
+
+  async bulkDownloadPDF() {
+    const selected = App.State.selectedBills;
+    if (!selected.length) {
+      App.Utils.showToast('No bills selected.', true);
+      return;
+    }
+
+    const bills = App.State.globalBills.filter(bill => App.Selection.isSelected(selected, this.billKey(bill)));
+    if (!bills.length) return;
+
+    App.Print.renderBulkPages(bills, bill => this.buildBillPrintPageHtml(bill));
+    const filename = App.Print.bulkPdfFilename('Goods_Receipts', bills.length);
+    const ok = await App.Print.downloadElementAsPDF('print-bulk-container', filename);
+    if (ok) App.Utils.showToast(`${bills.length} bill(s) exported to PDF!`, false);
   },
 
   // ── Print (dead code until App.Print exists) ────────────────────────
@@ -525,8 +545,9 @@ App.Bill = {
     contactInput.value = match?.contact || '';
   },
 
-  openReceiveModal() {
+  async openReceiveModal() {
     document.getElementById('billForm')?.reset();
+    await this.setBillType('GOODS');
 
     const existingBillNumber = document.getElementById('existingBillNumber');
     if (existingBillNumber) existingBillNumber.value = '';
@@ -593,7 +614,7 @@ App.Bill = {
     this.print(index);
   },
 
-  openEditModal(index) {
+  async openEditModal(index) {
     const bill = App.State.globalBills[index];
     if (!bill) {
       App.Utils.showToast('Bill record not found.', true);
@@ -601,6 +622,8 @@ App.Bill = {
     }
 
     document.getElementById('billForm')?.reset();
+    const billType = bill.billType === 'LABOR' ? 'LABOR' : 'GOODS';
+    await this.setBillType(billType);
 
     const existingBillNumber = document.getElementById('existingBillNumber');
     if (existingBillNumber) existingBillNumber.value = bill.billNumber || '';
@@ -646,12 +669,21 @@ App.Bill = {
     const remarksInput = document.querySelector('input[name="remarks"]');
     if (remarksInput) remarksInput.value = bill.remarks || '';
 
+    const issuingPartyInput = document.querySelector('input[name="issuingParty"]');
+    if (issuingPartyInput) issuingPartyInput.value = bill.issuingParty || '';
+
+    const manufacturingVendorInput = document.querySelector('input[name="manufacturingVendor"]');
+    if (manufacturingVendorInput) manufacturingVendorInput.value = bill.manufacturingVendor || '';
+
     const tbody = document.getElementById('billItemsBody');
     if (tbody) {
       tbody.innerHTML =
         (bill.items || []).map(item => this.getRowHtml(item)).join('') ||
         this.getRowHtml({ poNumber: 'DIRECT' });
-      Array.from(tbody.querySelectorAll('tr')).forEach(row => this.refreshPoMatchBadge(row));
+      Array.from(tbody.querySelectorAll('tr')).forEach(row => {
+        this.refreshPoMatchBadge(row);
+        if (billType === 'LABOR') this.initRowProcessSelect2(row);
+      });
     }
 
     const printBtn = document.getElementById('billModalPrintBtn');
@@ -737,16 +769,19 @@ App.Bill = {
     if (!tbody) return;
     tbody.insertAdjacentHTML('beforeend', this.getRowHtml({ poNumber: 'DIRECT' }));
     App.Bill.refreshPoMatchBadge(tbody.lastElementChild);
+    if (this.isLaborMode()) this.initRowProcessSelect2(tbody.lastElementChild);
   },
 
   getRowHtml(item = {}) {
     const rowUid = `bill-${++App.State.rowSeq}`;
     return `
-    <tr data-po="${escapeHtml(String(item.poNumber || ''))}" data-row-uid="${rowUid}" data-auto-matched="${item.autoMatched ? 'auto' : ''}">
-      <td><input type="text"   class="form-control b-item-name"  list="itemList" value="${escapeHtml(item.name || '')}" required>
+    <tr data-po="${escapeHtml(String(item.poNumber || ''))}" data-row-uid="${rowUid}" data-auto-matched="${item.autoMatched ? 'auto' : ''}" data-process-name="${escapeHtml(item.processName || '')}" data-color="${escapeHtml(item.color || '')}">
+      <td class="goods-col"><input type="text"   class="form-control b-item-name"  list="itemList" value="${escapeHtml(item.name || '')}" ${App.Bill.isLaborMode() ? '' : 'required'}>
           <div class="po-match-info small mt-1" data-role="po-match-info"></div></td>
-      <td><input type="text"   class="form-control b-item-size"  list="sizeList-${rowUid}" value="${escapeHtml(item.size || '')}">
+      <td class="goods-col"><input type="text"   class="form-control b-item-size"  list="sizeList-${rowUid}" value="${escapeHtml(item.size || '')}">
           <datalist class="row-size-list" id="sizeList-${rowUid}"></datalist></td>
+      <td class="labor-col"><select class="form-select b-process-select"></select></td>
+      <td class="labor-col"><select class="form-select b-color-select"></select></td>
       <td><input type="text"   class="form-control b-item-narration" list="narrationList-${rowUid}" value="${escapeHtml(item.narration || '')}">
           <datalist class="row-narration-list" id="narrationList-${rowUid}"></datalist></td>
       <td><input type="number" class="form-control b-item-qty"                   value="${escapeHtml(String(item.qty ?? ''))}" required></td>
@@ -756,6 +791,188 @@ App.Bill = {
       <td><input type="number" class="form-control b-item-gst"   step="0.01"     value="${escapeHtml(String(item.gstRatePct ?? 0))}"></td>
       <td><button type="button" class="btn btn-outline-danger btn-sm" data-action="remove-row">✕</button></td>
     </tr>`;
+  },
+
+  isLaborMode() {
+    return document.getElementById('billTypeLabor')?.checked === true;
+  },
+
+  // Toggles the whole Bill form between a Goods bill (free-text Item
+  // Name/Size, Vendor sourced from Vendor Master) and a Labor Job bill
+  // (searchable Process + Color pickers, Vendor field re-sourced from
+  // Contractors). Process/Color rows need Process Master + the process's own
+  // color sub-groups loaded, so this lazily loads them the same way
+  // Production's Process dropdown does (ensureLoaded) instead of requiring
+  // the Process/Contractor tabs to have been visited first.
+  async setBillType(billType) {
+    const isLabor = billType === 'LABOR';
+
+    const goodsRadio = document.getElementById('billTypeGoods');
+    const laborRadio = document.getElementById('billTypeLabor');
+    if (goodsRadio) goodsRadio.checked = !isLabor;
+    if (laborRadio) laborRadio.checked = isLabor;
+
+    const table = document.getElementById('billItemsTable');
+    if (table) table.classList.toggle('labor-mode', isLabor);
+
+    const form = document.getElementById('billForm');
+    if (form) form.classList.toggle('labor-mode', isLabor);
+
+    const title = document.getElementById('billItemsSectionTitle');
+    if (title) title.textContent = isLabor ? 'Labor Job Lines' : 'Items Received';
+
+    $$('#billItemsBody .b-item-name').forEach(el => { el.required = !isLabor; });
+
+    this.updateVendorFieldForBillType(billType);
+
+    if (isLabor) {
+      await Promise.all([
+        App.Process.ensureLoaded ? App.Process.ensureLoaded() : Promise.resolve(),
+        App.Contractor.ensureLoaded ? App.Contractor.ensureLoaded() : Promise.resolve(),
+        App.Color.ensureLoaded ? App.Color.ensureLoaded() : Promise.resolve()
+      ]);
+      $$('#billItemsBody tr').forEach(row => this.initRowProcessSelect2(row));
+    }
+  },
+
+  // Swaps the Vendor field between the Vendor Master list (Goods bills) and
+  // the Contractors list (Labor Job bills) -- both share the same underlying
+  // `vendor` form field/column (Vendor reused as Contractor for Labor Job
+  // bills, per product decision), so only the dropdown's label and option
+  // source change.
+  updateVendorFieldForBillType(billType) {
+    const select = document.getElementById('billVendor');
+    const label = document.getElementById('billVendorLabel');
+    if (!select) return;
+    const isLabor = billType === 'LABOR';
+
+    if (label) label.textContent = isLabor ? 'Contractor Name *' : 'Vendor Name *';
+
+    const currentValue = select.value;
+    const names = isLabor
+      ? [...new Set((App.State.globalContractors || []).map(c => c.contractorName).filter(Boolean))].sort((a, b) => a.localeCompare(b))
+      : [...new Set([
+          ...(App.State.globalPOs || []).map(po => po.vendor).filter(Boolean),
+          ...(App.State.globalVendors || []).map(v => v.name).filter(Boolean)
+        ])].sort((a, b) => a.localeCompare(b));
+
+    const placeholder = isLabor ? 'Select or type new contractor…' : 'Select or type new vendor…';
+    select.innerHTML = `<option value="">${escapeHtml(placeholder)}</option>` +
+      names.map(n => `<option value="${escapeHtml(n)}">${escapeHtml(n)}</option>`).join('');
+    select.value = currentValue;
+
+    if (window.jQuery?.fn?.select2) {
+      const $el = window.jQuery(select);
+      if ($el.data('select2')) $el.select2('destroy');
+      $el.select2({
+        tags: true,
+        placeholder,
+        width: '100%',
+        matcher: App.Utils.select2Matcher,
+        dropdownParent: App.Utils.select2DropdownParent($el)
+      });
+      $el.val(currentValue).trigger('change.select2');
+    }
+  },
+
+  // Searchable Select2 for a Labor Job row's Process picker, scoped to
+  // active processes (no free-typing -- a Labor line must reference a real
+  // Process Master row, same rule Production's own Process dropdown
+  // enforces). Options are LABELED by each process's Output Item Name (what
+  // the operator actually thinks of as "the processed item") rather than the
+  // internal Process Name, but the underlying value is still the processId
+  // -- each <option> carries both the Output Item Name and canonical Process
+  // Name in its dataset so serializeForm() never has to re-look it up.
+  // Output Item Names are unique across active processes (saveProcess
+  // enforces this), so they're safe to use as the visible label.
+  initRowProcessSelect2(row) {
+    const selectEl = row?.querySelector('.b-process-select');
+    if (!selectEl) return;
+
+    const currentProcessName = (row.dataset.processName || '').trim().toLowerCase();
+    const processes = (App.State.globalProcesses || []).filter(p => p.active);
+    let selectedId = '';
+    const optionsHtml = processes.map(p => {
+      const isSelected = currentProcessName && p.processName.trim().toLowerCase() === currentProcessName;
+      if (isSelected) selectedId = p.processId;
+      return `<option value="${escapeHtml(p.processId)}" data-output-item="${escapeHtml(p.outputItemName || '')}" data-process-name="${escapeHtml(p.processName)}">${escapeHtml(p.outputItemName || p.processName)}</option>`;
+    }).join('');
+
+    selectEl.innerHTML = '<option value="">Choose a Processed Item...</option>' + optionsHtml;
+    selectEl.value = selectedId;
+
+    if (window.jQuery?.fn?.select2) {
+      const $select = window.jQuery(selectEl);
+      if ($select.data('select2')) $select.select2('destroy');
+      $select.select2({
+        placeholder: 'Choose a Processed Item...',
+        width: '100%',
+        matcher: App.Utils.select2Matcher,
+        dropdownParent: App.Utils.select2DropdownParent($select)
+      });
+      $select.off('change.rowProcess').on('change.rowProcess', () => this.handleRowProcessChange(row));
+    } else {
+      selectEl.onchange = () => this.handleRowProcessChange(row);
+    }
+
+    // Load this row's color options against whatever process ended up
+    // selected (pre-selected on Edit, or blank on a fresh row).
+    this.populateRowColorSelect(row, selectedId, row.dataset.color || '');
+  },
+
+  handleRowProcessChange(row) {
+    const selectEl = row?.querySelector('.b-process-select');
+    if (!selectEl) return;
+    this.populateRowColorSelect(row, selectEl.value, '');
+  },
+
+  // Searchable, taggable Select2 for a Labor Job row's Color picker --
+  // sourced from that specific Process's color sub-groups
+  // (getProcessColorGroups), the same list Production's own color checklist
+  // uses. tags:true + createTag mirrors App.Process's own color-group
+  // Select2 so a typed color resolves to an existing Color Master entry
+  // instead of minting a case-variant duplicate.
+  async populateRowColorSelect(row, processId, preselectColor) {
+    const selectEl = row?.querySelector('.b-color-select');
+    if (!selectEl) return;
+
+    let colors = [];
+    if (processId) {
+      try {
+        const res = await Api.call('getProcessColorGroups', processId);
+        if (res?.success) colors = res.data || [];
+      } catch (err) {
+        colors = [];
+      }
+    }
+    if (preselectColor && !colors.some(c => App.Utils.sameText(c, preselectColor))) {
+      colors = [...colors, preselectColor];
+    }
+
+    const currentValue = selectEl.value || preselectColor || '';
+    selectEl.innerHTML = '<option value="">No color</option>' +
+      colors.map(c => `<option value="${escapeHtml(c)}">${escapeHtml(c)}</option>`).join('');
+    selectEl.value = currentValue;
+
+    if (window.jQuery?.fn?.select2) {
+      const $select = window.jQuery(selectEl);
+      if ($select.data('select2')) $select.select2('destroy');
+      $select.select2({
+        placeholder: 'No color',
+        width: '100%',
+        tags: true,
+        matcher: App.Utils.select2Matcher,
+        dropdownParent: App.Utils.select2DropdownParent($select),
+        createTag(params) {
+          const term = (params.term || '').trim();
+          if (!term) return null;
+          const existing = (App.State.globalColors || []).find(c => App.Utils.sameText(c.name, term));
+          if (existing) return { id: existing.name, text: existing.name };
+          return { id: term, text: term, newTag: true };
+        }
+      });
+      $select.val(currentValue).trigger('change.select2');
+    }
   },
 
   async delete(vendor, billNumber) {
@@ -913,18 +1130,33 @@ App.Bill = {
 
     if (wasDisabled && billVendor) billVendor.disabled = true;
 
+    const isLabor = formData.billType === 'LABOR';
     const items = [];
     $$('#billItemsBody tr').forEach(row => {
-      const name = $('.b-item-name', row)?.value?.trim();
-      if (!name) return;
+      let name, size = '', processName = '', color = '';
+      if (isLabor) {
+        const processSelect = $('.b-process-select', row);
+        const opt = processSelect?.selectedOptions?.[0];
+        if (!processSelect?.value || !opt) return;
+        name = opt.dataset.outputItem || '';
+        processName = opt.dataset.processName || '';
+        color = $('.b-color-select', row)?.value?.trim() || '';
+        if (!name) return;
+      } else {
+        name = $('.b-item-name', row)?.value?.trim();
+        size = $('.b-item-size', row)?.value?.trim() || '';
+        if (!name) return;
+      }
 
       const base = {
         name,
-        size: $('.b-item-size', row)?.value?.trim() || '',
+        size,
         narration: $('.b-item-narration', row)?.value?.trim() || '',
         unit: $('.item-unit', row)?.value?.trim() || 'Pcs',
         price: toNumber($('.b-item-price', row)?.value),
-        gst: toNumber($('.b-item-gst', row)?.value)
+        gst: toNumber($('.b-item-gst', row)?.value),
+        processName,
+        color
       };
 
       // A row auto-matched across multiple POs stays one line on screen

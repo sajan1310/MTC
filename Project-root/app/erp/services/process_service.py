@@ -117,7 +117,8 @@ def _get_all_processes(cur) -> list:
     cur.execute(
         """
         SELECT process_id, process_name, sequence, lot_prefix, is_final_stage,
-               active, remarks, output_item_name, process_type, primary_color_axis
+               active, remarks, output_item_name, process_type, primary_color_axis,
+               dispatch_differentiator
         FROM erp.process_master
         WHERE deleted_at IS NULL
         """
@@ -134,6 +135,7 @@ def _get_all_processes(cur) -> list:
             "outputItemName": row["output_item_name"] or "",
             "processType": row["process_type"] or "",
             "primaryColorAxis": row["primary_color_axis"] or "",
+            "dispatchDifferentiator": row["dispatch_differentiator"] or "",
         }
         for row in cur.fetchall()
     ]
@@ -430,8 +432,47 @@ def save_process(conn, cur, form_data):
     # legacy behavior client-side rather than blocking save.
     primary_color_axis = str(form_data.get("primaryColorAxis") or "").strip()
 
+    # Same light shape check, and same label-not-key convention, as
+    # primaryColorAxis above: a stale label just means the Ready to Dispatch
+    # list falls back to one aggregate row (see
+    # dispatch_service._compute_ready_to_dispatch_map), never a failed save.
+    dispatch_differentiator = str(form_data.get("dispatchDifferentiator") or "").strip()
+
     components = _parse_json_array(form_data.get("components"), "Invalid component data format.")
     color_links = _parse_json_array(form_data.get("colorLinks"), "Invalid color link data format.")
+
+    # Uses the already-PERSISTED color links (_get_all_process_color_links),
+    # not the just-submitted `color_links` above -- those arrive in a
+    # process-relative client shape ({otherProcessId, myColor, ...}, see
+    # _save_process_color_links_for_process), not the absolute
+    # {processAId, processBId, ...} shape _compute_color_axes_for_process
+    # expects. A link added in this very save therefore isn't reflected in
+    # this one default-label resolution; links only affect axis
+    # merging/labels, and the first-in-recipe-order pick itself is stable
+    # either way, so this is a harmless simplification, not a correctness gap.
+    if not primary_color_axis:
+        pool_rows = _get_all_warehouse_pool_rows_for_color_axes(cur)
+        saved_color_links = _get_all_process_color_links(cur)
+        # _compute_color_axes_for_process indexes itemName/sourceType/
+        # colorGroup directly (no .get() fallback) -- it's normally fed
+        # DB-read rows (_fetch_process_components), which always carry
+        # every key. `components` here is the raw, just-submitted client
+        # array instead, which may omit any of them (e.g. a component with
+        # no sourceType typed yet), so it needs the same normalization
+        # _save_process_components_for_process applies before insert.
+        axis_components = [
+            {
+                "itemName": str((c or {}).get("itemName") or "").strip(),
+                "sourceType": "POOL" if str((c or {}).get("sourceType") or "").strip().upper() == "POOL" else "ITEM",
+                "colorGroup": str((c or {}).get("colorGroup") or "").strip() or _COLOR_GROUP_COMMON,
+                "colorAxis": str((c or {}).get("colorAxis") or "").strip(),
+            }
+            for c in components
+            if str((c or {}).get("itemName") or "").strip()
+        ]
+        primary_color_axis = _default_primary_color_axis_label(
+            str(form_data.get("processId") or "").strip(), axis_components, pool_rows, saved_color_links
+        )
 
     dup = _find_duplicate_component(components)
     if dup:
@@ -510,12 +551,14 @@ def save_process(conn, cur, form_data):
             """
             UPDATE erp.process_master
             SET process_name = %s, sequence = %s, lot_prefix = %s, is_final_stage = %s, active = %s,
-                remarks = %s, output_item_name = %s, process_type = %s, primary_color_axis = %s, updated_by = %s
+                remarks = %s, output_item_name = %s, process_type = %s, primary_color_axis = %s,
+                dispatch_differentiator = %s, updated_by = %s
             WHERE id = %s
             """,
             (
                 process_name, sequence, lot_prefix, is_final_stage, active, remarks,
-                output_item_name, process_type, primary_color_axis, user_id, master_id,
+                output_item_name, process_type, primary_color_axis, dispatch_differentiator,
+                user_id, master_id,
             ),
         )
         result_process_id = process_id_input
@@ -526,13 +569,13 @@ def save_process(conn, cur, form_data):
             """
             INSERT INTO erp.process_master
                 (process_id, process_name, sequence, lot_prefix, is_final_stage, active, remarks,
-                 output_item_name, process_type, primary_color_axis, updated_by)
-            VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+                 output_item_name, process_type, primary_color_axis, dispatch_differentiator, updated_by)
+            VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
             RETURNING id
             """,
             (
                 result_process_id, process_name, sequence, lot_prefix, is_final_stage, active, remarks,
-                output_item_name, process_type, primary_color_axis, user_id,
+                output_item_name, process_type, primary_color_axis, dispatch_differentiator, user_id,
             ),
         )
         master_id = cur.fetchone()["id"]
@@ -668,8 +711,17 @@ def reorder_processes(conn, cur, ordered_process_ids):
 # ─────────────────────────────────────────────────────────────────────────
 
 
-@rpc_method("getProcessComponentsData")
-def get_process_components_data(process_id=""):
+def _fetch_process_components(cur, process_id="") -> list:
+    """Component rows for one process (or every process when process_id is
+    blank), on the CALLER'S cursor.
+
+    Split out of get_process_components_data so callers already inside a
+    transaction -- warehouse_service's Pass 1 via get_axis_order_by_process,
+    dispatch_service's differentiator resolution -- can read components
+    without opening a second pooled connection while holding one. Nesting
+    connections that way both pressures the 2-10 connection pool and reads
+    a snapshot that can't see the outer transaction's own uncommitted rows.
+    """
     target = str(process_id or "").strip().lower()
 
     sql = """
@@ -685,11 +737,8 @@ def get_process_components_data(process_id=""):
         params.append(target)
     sql += " ORDER BY pc.id"
 
-    with database.get_conn(cursor_factory=psycopg2.extras.RealDictCursor) as (_conn, cur):
-        cur.execute(sql, params)
-        rows = cur.fetchall()
-
-    components = [
+    cur.execute(sql, params)
+    return [
         {
             "processId": row["process_id"],
             "itemName": row["item_name"],
@@ -703,9 +752,14 @@ def get_process_components_data(process_id=""):
             # Blank = "already in the item's Base Unit".
             "unit": row["unit"] or "",
         }
-        for row in rows
+        for row in cur.fetchall()
     ]
-    return build_response(True, components)
+
+
+@rpc_method("getProcessComponentsData")
+def get_process_components_data(process_id=""):
+    with database.get_conn(cursor_factory=psycopg2.extras.RealDictCursor) as (_conn, cur):
+        return build_response(True, _fetch_process_components(cur, process_id))
 
 
 # ─────────────────────────────────────────────────────────────────────────
@@ -1648,6 +1702,91 @@ def _compute_known_colors_for_process(
     return {"colors": sorted(color_map.values(), key=lambda x: x.lower()), "baseColors": base_colors}
 
 
+def _default_primary_color_axis_label(process_id: str, components: list, pool_rows: list, color_links: list) -> str:
+    """The Primary Color Axis a process uses when its own cell is still
+    blank: the FIRST axis in that process's canonical recipe order (see
+    _compute_color_axes_for_process). Every process that has at least one
+    detectable Color Axis gets one. Ports module_process.js#
+    _defaultPrimaryColorAxisLabel.
+
+    A blank cell used to mean "legacy: sum every checked color across
+    every axis", which double-counts a multi-axis lot's non-primary rows
+    (the exact bug the Color Axes feature exists to fix) unless the
+    operator noticed the warning and picked a group by hand. Defaulting
+    instead of leaving it blank makes the safe behavior the automatic one;
+    the operator can still override it, per lot on the Production form or
+    permanently in the Process editor.
+
+    Recipe order is the same order the operator sees the axis groups in on
+    the checklist, so the default is always the topmost group rather than
+    an arbitrary one.
+
+    A process with NO axes at all -- no colorAxis-tagged recipe rows and
+    no multi-color POOL input -- has nothing for "primary" to mean, so this
+    returns "" and that process keeps its unchanged single-list behavior.
+    """
+    if not components:
+        return ""
+    axes = _compute_color_axes_for_process(process_id or "", components, pool_rows, color_links)
+    return str(axes[0].get("label") or "").strip() if axes else ""
+
+
+def refresh_process_primary_color_axes(cur) -> dict:
+    """Fills the Primary Color Axis cell of every process that still has a
+    blank one but does have at least one detectable Color Axis (see
+    _default_primary_color_axis_label). save_process/save_production
+    already resolve the same default on the fly, so this changes no
+    behavior -- it just writes the resolved value in one pass, so the
+    column reads as filled-in for processes nobody has re-saved or logged
+    a lot against yet. Ports module_process.js#
+    backfillProcessPrimaryColorAxes.
+
+    Not RPC-exposed -- matches source's own scope (no UI button; run from
+    the Apps Script editor there, this port's equivalent being a one-off
+    call from a Flask shell/migration).
+
+    Safe to re-run: a process that already has a value is never touched,
+    and one with no axes is skipped rather than blanked.
+
+    Returns {"filled": int, "skipped": int, "details": list[str]}.
+    """
+    all_processes = _get_all_processes(cur)
+    if not all_processes:
+        return {"filled": 0, "skipped": 0, "details": []}
+
+    # Read the shared inputs ONCE for every process rather than letting each
+    # process's _default_primary_color_axis_label call re-read the
+    # Warehouse Pool and the Color Links.
+    pool_rows = _get_all_warehouse_pool_rows_for_color_axes(cur)
+    color_links = _get_all_process_color_links(cur)
+    components_by_process: dict = {}
+    for component in _fetch_process_components(cur):
+        pid = str(component.get("processId") or "").strip().lower()
+        if pid:
+            components_by_process.setdefault(pid, []).append(component)
+
+    filled = 0
+    skipped = 0
+    details = []
+    for p in all_processes:
+        if str(p.get("primaryColorAxis") or "").strip():
+            skipped += 1
+            continue
+
+        label = _default_primary_color_axis_label(
+            p["processId"], components_by_process.get(p["processId"].strip().lower(), []), pool_rows, color_links
+        )
+        if not label:
+            skipped += 1
+            continue
+
+        _set_process_primary_color_axis(cur, p["processId"], label)
+        filled += 1
+        details.append(f'{p["processId"]} ({p["processName"]}) -> "{label}"')
+
+    return {"filled": filled, "skipped": skipped, "details": details}
+
+
 @rpc_method("getProcessColorGroups")
 def get_process_color_groups(process_id):
     components = get_process_components_data(process_id)["data"]
@@ -1680,7 +1819,56 @@ def get_process_color_axes(process_id):
         if match:
             primary_axis_key = match["key"]
 
-    return build_response(True, {"axes": axes, "primaryColorAxis": primary_color_axis, "primaryAxisKey": primary_axis_key})
+    # Both pickers on the Process form choose from this same `axes` list, so
+    # the currently-saved Dispatch Differentiator label rides along for
+    # preselection (blank = none configured, or a label that no longer
+    # matches any axis after a rename).
+    return build_response(
+        True,
+        {
+            "axes": axes,
+            "primaryColorAxis": primary_color_axis,
+            "primaryAxisKey": primary_axis_key,
+            "dispatchDifferentiator": str((process or {}).get("dispatchDifferentiator") or "").strip(),
+        },
+    )
+
+
+def get_axis_order_by_process(cur) -> dict:
+    """{processIdLower: {axisKeyLower: position}} -- each process's own axis
+    ordering, taken from its recipe row order via
+    _compute_color_axes_for_process. Ported from
+    module_process.js#getAxisOrderByProcess.
+
+    This is what makes a lot's composite bucket color repeatable: the
+    position an axis holds here is the position its segment takes in the
+    credited color string (see warehouse_service._compose_lot_color_key).
+    Computed for every process in one pass because Warehouse Pool's Pass 1
+    needs it for whichever processes the Completed lots happen to span.
+
+    A process whose axes can't be computed is simply omitted -- its lots
+    then fall back to axis-key/color ordering, which is still deterministic.
+    """
+    all_components = _fetch_process_components(cur)
+    components_by_process: dict = {}
+    for component in all_components:
+        pid = str(component.get("processId") or "").strip()
+        if pid:
+            components_by_process.setdefault(pid, []).append(component)
+
+    pool_rows = _get_all_warehouse_pool_rows_for_color_axes(cur)
+    color_links = _get_all_process_color_links(cur)
+
+    result: dict = {}
+    for pid, components in components_by_process.items():
+        try:
+            axes = _compute_color_axes_for_process(pid, components, pool_rows, color_links) or []
+        except Exception:
+            continue
+        if not axes:
+            continue
+        result[pid.lower()] = {str(a.get("key") or "").lower(): i for i, a in enumerate(axes)}
+    return result
 
 
 @rpc_method("getAllProcessColorGroups")

@@ -9,6 +9,11 @@ from __future__ import annotations
 
 import uuid
 
+import psycopg2.extras
+
+import database
+from app.erp.services import process_service
+
 
 def _rpc(client, method, args=None, mutation=False):
     headers = {"X-Mutation-Id": str(uuid.uuid4())} if mutation else {}
@@ -22,7 +27,7 @@ def _unique_name(prefix: str) -> str:
 def _save_process(client, **overrides):
     payload = {
         "processName": _unique_name("Process"),
-        "lotPrefix": uuid.uuid4().hex[:5].upper(),
+        "lotPrefix": uuid.uuid4().hex[:6].upper(),
         "outputItemName": _unique_name("Output"),
         "sequence": 1,
         "isFinalStage": False,
@@ -444,3 +449,178 @@ def test_get_all_process_color_groups_bulk_shape(erp_client):
     assert result[downstream_id]["removable"] == []
     assert result[upstream_id]["colors"] == []
     assert result[upstream_id]["removable"] == []
+
+
+# ── Primary Color Axis default-when-blank (GAS 6a22f0e) ─────────────────
+# A blank Primary Color Axis used to mean "legacy: sum every checked color
+# across every axis", which double-counts a multi-axis lot's non-primary
+# rows -- the exact bug the Color Axes feature exists to fix. Both
+# saveProcess and saveProduction now default to the process's first axis
+# in recipe order whenever nothing else resolves.
+
+
+def _two_axis_downstream(erp_client, **overrides):
+    """Downstream process consuming two independent pool axes (Frame
+    Black/Blue, Rim Red/Green), in that recipe order. Returns
+    (downstream_payload, downstream_id, frame_output_name, rim_output_name).
+    """
+    frame_payload, frame_id = _save_process(erp_client)
+    _seed_pool(erp_client, frame_id, 10, color="Black")
+    _seed_pool(erp_client, frame_id, 10, color="Blue")
+
+    rim_payload, rim_id = _save_process(erp_client)
+    _seed_pool(erp_client, rim_id, 10, color="Red")
+    _seed_pool(erp_client, rim_id, 10, color="Green")
+
+    downstream_payload, downstream_id = _save_process(
+        erp_client,
+        components=[
+            {"itemName": frame_payload["outputItemName"], "qtyPerUnit": 1, "sourceType": "POOL", "colorGroup": "COMMON"},
+            {"itemName": rim_payload["outputItemName"], "qtyPerUnit": 1, "sourceType": "POOL", "colorGroup": "COMMON"},
+        ],
+        **overrides,
+    )
+    return downstream_payload, downstream_id, frame_payload["outputItemName"], rim_payload["outputItemName"]
+
+
+def test_save_process_defaults_blank_primary_axis_to_first_recipe_axis(erp_client):
+    downstream_payload, downstream_id, frame_output, _rim_output = _two_axis_downstream(erp_client)
+
+    listed = _rpc(erp_client, "getProcessData").get_json()["data"]
+    saved = next(p for p in listed if p["processId"] == downstream_id)
+    # First axis in recipe order -- Frame was listed before Rim.
+    assert saved["primaryColorAxis"] == frame_output
+
+
+def test_save_process_leaves_primary_axis_blank_when_no_axes_exist(erp_client):
+    _payload, process_id = _save_process(erp_client)
+    listed = _rpc(erp_client, "getProcessData").get_json()["data"]
+    saved = next(p for p in listed if p["processId"] == process_id)
+    assert saved["primaryColorAxis"] == ""
+
+
+def test_save_process_does_not_override_an_explicitly_set_primary_axis(erp_client):
+    frame_payload, frame_id = _save_process(erp_client)
+    _seed_pool(erp_client, frame_id, 10, color="Black")
+    _seed_pool(erp_client, frame_id, 10, color="Blue")
+
+    rim_payload, rim_id = _save_process(erp_client)
+    _seed_pool(erp_client, rim_id, 10, color="Red")
+    _seed_pool(erp_client, rim_id, 10, color="Green")
+
+    _downstream_payload, downstream_id = _save_process(
+        erp_client,
+        primaryColorAxis=rim_payload["outputItemName"],
+        components=[
+            {"itemName": frame_payload["outputItemName"], "qtyPerUnit": 1, "sourceType": "POOL", "colorGroup": "COMMON"},
+            {"itemName": rim_payload["outputItemName"], "qtyPerUnit": 1, "sourceType": "POOL", "colorGroup": "COMMON"},
+        ],
+    )
+
+    listed = _rpc(erp_client, "getProcessData").get_json()["data"]
+    saved = next(p for p in listed if p["processId"] == downstream_id)
+    assert saved["primaryColorAxis"] == rim_payload["outputItemName"]
+
+
+def test_save_production_defaults_unconfigured_primary_axis_prevents_double_counting(erp_client):
+    """Regression for the exact bug the Color Axes feature exists to fix:
+    with NO Primary Color Axis configured anywhere (blank on both the
+    process and the submitted form), a multi-axis lot must count only its
+    first-recipe-axis rows, not every checked row across every axis.
+    """
+    downstream_payload, downstream_id, frame_output, rim_output = _two_axis_downstream(erp_client)
+    frame_key = f"pool:{frame_output.lower()}"
+    rim_key = f"pool:{rim_output.lower()}"
+
+    resp = _rpc(
+        erp_client,
+        "saveProduction",
+        [
+            {
+                "processId": downstream_id,
+                "assignedTo": "Worker A",
+                # No primaryColorAxis submitted -- and the process's own
+                # cell is still blank at the time this save resolves it.
+                "colorBreakdown": [
+                    {"color": "Black", "qty": 5, "countsTowardTotal": True, "axisKey": frame_key},
+                    {"color": "Red", "qty": 7, "countsTowardTotal": True, "axisKey": rim_key},
+                ],
+                "componentsConsumed": [{"itemName": "RawMat", "qty": 1, "sourceType": "ITEM"}],
+            }
+        ],
+        mutation=True,
+    )
+    body = resp.get_json()
+    assert body["success"] is True, body["message"]
+
+    listed = _rpc(erp_client, "getProductionData").get_json()["data"]
+    lot = next(r for r in listed if r["lotNumber"] == body["data"]["lotNumber"])
+    # Frame (axes[0], first in recipe order) is primary -- only its 5 units
+    # count, NOT 5+7=12 (the pre-fix double-counted total).
+    assert lot["qty"] == 5
+
+
+def test_save_production_writes_resolved_default_axis_back_onto_process(erp_app, erp_client):
+    """When the process's own Primary Color Axis cell is genuinely blank
+    at production-save time (bypassing saveProcess's own default-on-save,
+    e.g. a process created before this feature existed), saveProduction's
+    resolved default is written back onto the process -- same as
+    configuring it by hand in the Process editor, or via
+    refresh_process_primary_color_axes in bulk -- so later lots and the
+    Process editor's own picker see it filled in without needing a
+    Process-editor save first.
+    """
+    downstream_payload, downstream_id, frame_output, rim_output = _two_axis_downstream(erp_client)
+    with erp_app.app_context(), database.get_conn() as (_conn, cur):
+        cur.execute("UPDATE erp.process_master SET primary_color_axis = '' WHERE lower(process_id) = lower(%s)", (downstream_id,))
+
+    before = _rpc(erp_client, "getProcessData").get_json()["data"]
+    assert next(p for p in before if p["processId"] == downstream_id)["primaryColorAxis"] == ""
+
+    resp = _rpc(
+        erp_client,
+        "saveProduction",
+        [
+            {
+                "processId": downstream_id,
+                "assignedTo": "Worker A",
+                "colorBreakdown": [
+                    {"color": "Black", "qty": 4, "countsTowardTotal": True, "axisKey": f"pool:{frame_output.lower()}"},
+                    {"color": "Red", "qty": 3, "countsTowardTotal": True, "axisKey": f"pool:{rim_output.lower()}"},
+                ],
+                "componentsConsumed": [{"itemName": "RawMat", "qty": 1, "sourceType": "ITEM"}],
+            }
+        ],
+        mutation=True,
+    )
+    assert resp.get_json()["success"] is True, resp.get_json()["message"]
+
+    after = _rpc(erp_client, "getProcessData").get_json()["data"]
+    assert next(p for p in after if p["processId"] == downstream_id)["primaryColorAxis"] == frame_output
+
+
+def test_refresh_process_primary_color_axes_backfills_unconfigured_process(erp_app, erp_client):
+    frame_payload, frame_id = _save_process(erp_client)
+    _seed_pool(erp_client, frame_id, 10, color="Black")
+    _seed_pool(erp_client, frame_id, 10, color="Blue")
+
+    # A process saved with components but not through saveProcess's own
+    # defaulting -- simulate a pre-existing row with a genuinely blank
+    # cell by clearing it directly, the same state a process created
+    # before this feature existed would be in.
+    _downstream_payload, downstream_id = _save_process(
+        erp_client,
+        components=[{"itemName": frame_payload["outputItemName"], "qtyPerUnit": 1, "sourceType": "POOL", "colorGroup": "COMMON"}],
+    )
+    with erp_app.app_context(), database.get_conn() as (_conn, cur):
+        cur.execute("UPDATE erp.process_master SET primary_color_axis = '' WHERE lower(process_id) = lower(%s)", (downstream_id,))
+
+    with erp_app.app_context(), database.get_conn(cursor_factory=psycopg2.extras.RealDictCursor) as (_conn, cur):
+        result = process_service.refresh_process_primary_color_axes(cur)
+
+    assert result["filled"] >= 1
+    assert any(downstream_id in d for d in result["details"])
+
+    listed = _rpc(erp_client, "getProcessData").get_json()["data"]
+    saved = next(p for p in listed if p["processId"] == downstream_id)
+    assert saved["primaryColorAxis"] == frame_payload["outputItemName"]

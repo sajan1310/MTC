@@ -24,7 +24,7 @@ def _unique_name(prefix: str) -> str:
 
 
 def _lot_prefix() -> str:
-    return uuid.uuid4().hex[:5].upper()
+    return uuid.uuid4().hex[:6].upper()
 
 
 def _base_process_payload(**overrides) -> dict:

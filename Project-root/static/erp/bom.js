@@ -394,6 +394,7 @@ App.BOM = {
     const count = App.State.selectedBOMs.length;
     App.Selection.updateButton('btnBulkDeleteBOMs', count, '<i class="bi bi-trash"></i> Delete Selected');
     App.Selection.updateButton('btnBulkPrintBOMs', count, '<i class="bi bi-printer"></i> Print Selected');
+    App.Selection.updateButton('btnBulkDownloadPdfBOMs', count, '<i class="bi bi-file-earmark-pdf"></i> Download PDFs');
   },
 
   async bulkDelete() {
@@ -430,6 +431,19 @@ App.BOM = {
     if (boms.length === 0) return;
 
     App.Print.triggerBulk(boms, bom => this.buildBOMPrintPageHtml(bom), 'BOM_Cost_Sheets_Selected');
+  },
+
+  async bulkDownloadPDF() {
+    const selected = App.State.selectedBOMs;
+    if (selected.length === 0) return;
+
+    const boms = App.State.globalBOMs.filter(b => App.Selection.isSelected(selected, b.productId));
+    if (boms.length === 0) return;
+
+    App.Print.renderBulkPages(boms, bom => this.buildBOMPrintPageHtml(bom));
+    const filename = App.Print.bulkPdfFilename('BOM_Cost_Sheets', boms.length);
+    const ok = await App.Print.downloadElementAsPDF('print-bulk-container', filename);
+    if (ok) App.Utils.showToast(`${boms.length} BOM cost sheet(s) exported to PDF!`, false);
   },
 
   // Builds a fully self-contained "BOM Cost Sheet / Recipe Card" page

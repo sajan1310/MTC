@@ -88,17 +88,82 @@ def _get_bom_product_name_map(cur) -> dict:
     }
 
 
-def _compute_ready_to_dispatch_map(cur) -> dict:
-    final_stage_ids = {
-        p["processId"].strip().lower() for p in process_service._get_all_processes(cur) if p["isFinalStage"]
-    }
+def _build_differentiator_defs(cur, all_processes: list) -> dict:
+    """{processIdLower: {"label": str, "colorsLower": set}} for every
+    final-stage process that names a Dispatch Differentiator axis.
 
-    cur.execute("SELECT output_item_name, process_id, product_tag, produced_qty, consumed_qty FROM erp.warehouse_pool")
+    The axis is stored as a LABEL (see migration 021), so it's resolved
+    against the process's live computed axes. A process whose axis was
+    renamed or removed simply drops out of this map and falls back to one
+    aggregate row -- deliberately not an error.
+    """
+    defs: dict = {}
+    differentiated = [
+        p for p in all_processes
+        if p["isFinalStage"] and str(p.get("dispatchDifferentiator") or "").strip()
+    ]
+    if not differentiated:
+        return defs
+
+    pool_rows = process_service._get_all_warehouse_pool_rows_for_color_axes(cur)
+    color_links = process_service._get_all_process_color_links(cur)
+    # One read for every process, not one per differentiated process.
+    components_by_process: dict = {}
+    for component in process_service._fetch_process_components(cur):
+        pid = str(component.get("processId") or "").strip().lower()
+        if pid:
+            components_by_process.setdefault(pid, []).append(component)
+
+    for p in differentiated:
+        axis_label = str(p["dispatchDifferentiator"]).strip().lower()
+        try:
+            axes = process_service._compute_color_axes_for_process(
+                p["processId"],
+                components_by_process.get(p["processId"].strip().lower(), []),
+                pool_rows,
+                color_links,
+            ) or []
+        except Exception:
+            continue  # leave this process undifferentiated
+        axis = next((a for a in axes if str(a.get("label") or "").strip().lower() == axis_label), None)
+        if not axis:
+            continue
+        defs[p["processId"].strip().lower()] = {
+            "label": axis["label"],
+            "colorsLower": {str(c).strip().lower() for c in (axis.get("colors") or [])},
+        }
+    return defs
+
+
+def _differentiator_value(defs: dict, process_id: str, color: str) -> str:
+    """The segment of `color` belonging to this process's differentiator
+    axis, or "" when the process has none configured or nothing matches.
+
+    Matches by VALUE against the axis's own colors, never by segment
+    position -- see warehouse_service.color_segments.
+    """
+    definition = defs.get(str(process_id or "").strip().lower())
+    if not definition:
+        return ""
+    for segment in warehouse_service.color_segments(color):
+        if segment.lower() in definition["colorsLower"]:
+            return segment
+    return ""
+
+
+def _compute_ready_to_dispatch_map(cur) -> dict:
+    all_processes = process_service._get_all_processes(cur)
+    final_stage_ids = {p["processId"].strip().lower() for p in all_processes if p["isFinalStage"]}
+
+    cur.execute(
+        "SELECT output_item_name, process_id, product_tag, color, produced_qty, consumed_qty FROM erp.warehouse_pool"
+    )
     pool_rows = cur.fetchall()
     if not pool_rows:
         return {}
 
     product_name_by_id = _get_bom_product_name_map(cur)
+    differentiator_defs = _build_differentiator_defs(cur, all_processes)
 
     result: dict = {}
     for r in pool_rows:
@@ -115,20 +180,89 @@ def _compute_ready_to_dispatch_map(cur) -> dict:
             if not known_final_stage:
                 continue
 
-        key = product_tag.lower() if is_tagged else f"__output__{output_item_name.lower()}"
+        # One row per differentiator value when the producing process names
+        # one, so Dispatch acts on a specific variant instead of an aggregate
+        # the operator has to drill into.
+        diff_value = _differentiator_value(differentiator_defs, process_id, r["color"])
+        base_key = product_tag.lower() if is_tagged else f"__output__{output_item_name.lower()}"
+        key = f"{base_key}||{diff_value.lower()}" if diff_value else base_key
+        base_name = (
+            product_name_by_id.get(product_tag.lower(), product_tag) if is_tagged else output_item_name
+        )
         entry = result.setdefault(
             key,
             {
+                # The map key itself, carried onto the record so a client has
+                # something unique per row to address. productId below is NOT
+                # unique once a differentiator splits one output into several
+                # rows -- every variant reports the same bare Product Tag /
+                # Output Item Name, because that is all a Dispatch row can
+                # store (erp.dispatch has no differentiator column, and the
+                # pool debit in _recalculate_warehouse_pool Pass 3 is
+                # deliberately color-blind).
+                "key": key,
+                # The bare key this row's availability actually pools with --
+                # every variant of one output draws from the same buckets.
+                # See _ready_available_qty_for.
+                "baseKey": base_key,
                 "productId": product_tag if is_tagged else output_item_name,
-                "productName": (product_name_by_id.get(product_tag.lower(), product_tag) if is_tagged else output_item_name),
+                "productName": f"{base_name} / {diff_value}" if diff_value else base_name,
+                "differentiator": diff_value,
                 "producedQty": 0.0,
                 "dispatchedQty": 0.0,
+                # One Product Tag can accumulate credits from several
+                # Completed lots logged with different Colors to Produce
+                # combinations. The aggregate above is color-blind by design,
+                # but this keeps each color's own numbers so the operator can
+                # still tell which color batch they're dispatching.
+                "colors": {},
             },
         )
-        entry["producedQty"] += float(r["produced_qty"] or 0)
-        entry["dispatchedQty"] += float(r["consumed_qty"] or 0)
+        produced = float(r["produced_qty"] or 0)
+        consumed = float(r["consumed_qty"] or 0)
+        entry["producedQty"] += produced
+        entry["dispatchedQty"] += consumed
+
+        color_label = str(r["color"] or "").strip()
+        color_entry = entry["colors"].setdefault(color_label, {"producedQty": 0.0, "dispatchedQty": 0.0})
+        color_entry["producedQty"] += produced
+        color_entry["dispatchedQty"] += consumed
 
     return result
+
+
+def _ready_available_qty_for(ready_map: dict, product_id: str) -> float:
+    """Currently-available Ready to Dispatch qty for one `product_id` as the
+    client echoes it back -- i.e. the bare Product Tag or Output Item Name.
+
+    _compute_ready_to_dispatch_map keys an untagged output under
+    '__output__<name>' (so it can't collide with a differently-named Product
+    Tag) and, when the producing final-stage process names a Dispatch
+    Differentiator, splits it further into '<baseKey>||<value>'. A product_id
+    carries neither the prefix nor the value, so a lookup of just those two
+    literal spellings finds nothing for any differentiated product and reads
+    its availability as 0 -- which would reject every dispatch of that
+    product outright.
+
+    Availability is therefore summed across the bare key AND every variant of
+    it. That is not a loosening of the guard -- it's what the ledger actually
+    models: an erp.dispatch row records only the product_id, and
+    _recalculate_warehouse_pool Pass 3 drains whichever color buckets have
+    stock, so per-variant consumption isn't representable in the current
+    schema. The differentiator splits the Ready to Dispatch *list* for the
+    operator's benefit; the quantity guard pools per product, exactly as it
+    did before that column existed.
+    """
+    key = str(product_id or "").strip().lower()
+    if not key:
+        return 0.0
+    wanted = {key, f"__output__{key}"}
+    total = 0.0
+    for k, entry in ready_map.items():
+        base = k.split("||", 1)[0]
+        if base in wanted:
+            total += entry["producedQty"] - entry["dispatchedQty"]
+    return total
 
 
 def _get_client_order_line_qty(cur, order_number: str, product_id: str):
@@ -202,11 +336,31 @@ def get_ready_to_dispatch_data():
 
     records = [
         {
+            # Unique per row even when a Dispatch Differentiator splits one
+            # output into several -- productId does NOT distinguish those, so
+            # anything addressing a single row must key on this.
+            "key": r["key"],
             "productId": r["productId"],
             "productName": r["productName"],
+            # Blank unless the producing final-stage process names a Dispatch
+            # Differentiator; productName already embeds it as
+            # "<output> / <value>".
+            "differentiator": r["differentiator"],
             "producedQty": r["producedQty"],
             "dispatchedQty": r["dispatchedQty"],
             "readyQty": r["producedQty"] - r["dispatchedQty"],
+            "colorBreakdown": sorted(
+                (
+                    {
+                        "color": color,
+                        "producedQty": c["producedQty"],
+                        "dispatchedQty": c["dispatchedQty"],
+                        "readyQty": c["producedQty"] - c["dispatchedQty"],
+                    }
+                    for color, c in r["colors"].items()
+                ),
+                key=lambda c: c["color"],
+            ),
         }
         for r in ready_map.values()
     ]
@@ -321,13 +475,11 @@ def save_dispatch(conn, cur, form_data):
         original_qty = float(existing["qty"] or 0)
 
     ready_map = _compute_ready_to_dispatch_map(cur)
-    # Untagged final-stage output is credited under an '__output__'-prefixed
-    # key (see _compute_ready_to_dispatch_map) to avoid colliding with an
-    # unrelated Product Tag of the same text -- module_dispatch.js's
-    # saveDispatch falls back to it explicitly, and so must this check.
-    key = product_id.lower()
-    entry = ready_map.get(key) or ready_map.get(f"__output__{key}")
-    current_ready_qty = (entry["producedQty"] - entry["dispatchedQty"]) if entry else 0.0
+    # Pools the bare Product Tag, the '__output__'-prefixed untagged key, and
+    # every '||<differentiator>' variant of either -- see
+    # _ready_available_qty_for for why the guard is per-product even though
+    # the list splits per variant.
+    current_ready_qty = _ready_available_qty_for(ready_map, product_id)
     available_qty = current_ready_qty + original_qty
 
     if qty > available_qty + 0.0001:

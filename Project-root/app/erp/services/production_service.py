@@ -58,6 +58,7 @@ import psycopg2.extras
 
 import database
 from . import contractors_service
+from . import items_service
 from . import process_service
 from . import tags_service
 from . import warehouse_service
@@ -132,6 +133,34 @@ def _generate_lot_number(cur, lot_prefix: str) -> str:
 def _poolneed_key(item_name_lower: str, color_group: str) -> str:
     is_color_scoped = bool(color_group) and color_group.upper() != _COLOR_GROUP_COMMON
     return f"{item_name_lower}||{color_group.lower() if is_color_scoped else ''}"
+
+
+def _with_master_narration(cur, components: list) -> list:
+    """Overwrites each component's `narration` with the current Items
+    Master narration for its name+size, leaving it alone when Items Master
+    doesn't know the item or has nothing set (see
+    items_service.get_item_narration_map, which omits blanks for exactly
+    this reason). Ports module_production.js#_withMasterNarration.
+
+    Applied at the two points that WRITE a lot's component JSON --
+    save_production and save_production_sheet -- so the snapshot is always
+    stored fresh rather than persisting whatever the client happened to have
+    on screen. Without this, a lot saved from a form still holding a stale
+    narration (or an Edit Lot reopened long after the item's narration was
+    corrected) would quietly write the stale text back and undo
+    refresh_production_components_from_items_master.
+    """
+    if not components:
+        return components
+    narration_map = items_service.get_item_narration_map(cur)
+    for comp in components:
+        name = str(comp.get("itemName") or "").strip()
+        if not name:
+            continue
+        master = narration_map.get(f'{name.lower()}|{str(comp.get("size") or "").strip().lower()}')
+        if master:
+            comp["narration"] = master
+    return components
 
 
 def _build_pool_needed_map(components: list) -> dict:
@@ -387,24 +416,54 @@ def save_production(conn, cur, form_data):
 
         color = ", ".join(f'{c["color"]} ({c["size"]})' if c["size"] else c["color"] for c in color_breakdown)
 
+        # The operator can pick (or change) the Primary Axis directly on the
+        # Production Lot form -- that choice arrives as
+        # formData.primaryColorAxis and takes precedence over the process's
+        # stored default for THIS lot. Neither picked here nor stored on the
+        # process (and not a stale stored label either): the process still
+        # falls back to its first axis in recipe order rather than to
+        # legacy "sum every axis" summing, so a multi-axis lot can't
+        # double-count just because nobody has been into the Process editor
+        # yet (see process_service._default_primary_color_axis_label, which
+        # resolves the identical default at save and read time). A process
+        # with no axes at all resolves to none of this and keeps the legacy
+        # branch below, unchanged.
         submitted_primary_color_axis = str(form_data.get("primaryColorAxis") or "").strip()
-        primary_color_axis = submitted_primary_color_axis or str(process.get("primaryColorAxis") or "").strip()
+        stored_primary_color_axis = str(process.get("primaryColorAxis") or "").strip()
+        requested_primary_color_axis = submitted_primary_color_axis or stored_primary_color_axis
+        axes = process_service._compute_color_axes_for_process(process_id, color_components, pool_rows, color_links)
+        primary_axis = (
+            next((a for a in axes if a["label"].lower() == requested_primary_color_axis.lower()), None)
+            if requested_primary_color_axis
+            else None
+        ) or (axes[0] if axes else None)
+        primary_color_axis = primary_axis["label"] if primary_axis else ""
+
         primary_axis_colors_lower = None
         primary_axis_key_lower = None
-        if primary_color_axis:
-            axes = process_service._compute_color_axes_for_process(process_id, color_components, pool_rows, color_links)
-            primary_axis = next((a for a in axes if a["label"].lower() == primary_color_axis.lower()), None)
-            if primary_axis:
-                primary_axis_colors_lower = {c.lower() for c in primary_axis["colors"]}
-                primary_axis_key_lower = primary_axis["key"].lower()
+        real_axis_keys_lower = None
+        if primary_axis:
+            primary_axis_colors_lower = {c.lower() for c in primary_axis["colors"]}
+            primary_axis_key_lower = primary_axis["key"].lower()
+            real_axis_keys_lower = {a["key"].lower() for a in axes}
 
         if primary_axis_colors_lower is not None:
+            # A submitted axisKey is only an AXIS identity when it's
+            # actually one of this process's axis keys -- the same field
+            # also carries a legacy pool-signature group id, the "Other
+            # Colors" bucket, or a custom sub-group id. Comparing one of
+            # those straight to the primary axis key would read every such
+            # row as "not primary", zeroing the lot's quantity and then
+            # failing the guard below outright. Those rows fall back to the
+            # flag the client already computed for them instead -- the same
+            # rule the no-primary-axis branch applies to every row.
             def _is_primary_axis_row(c):
-                is_known_primary_color = (
-                    (c["axisKey"].lower() == primary_axis_key_lower) if c["axisKey"] else (c["color"].lower() in primary_axis_colors_lower)
-                )
-                counts_as_custom = c["isCustom"] and c["countsTowardTotal"]
-                return is_known_primary_color or counts_as_custom
+                axis_key_lower = c["axisKey"].lower() if c["axisKey"] else ""
+                if axis_key_lower and axis_key_lower in real_axis_keys_lower:
+                    return axis_key_lower == primary_axis_key_lower
+                if axis_key_lower or c["isCustom"]:
+                    return c["countsTowardTotal"] is not False
+                return c["color"].lower() in primary_axis_colors_lower
 
             qty = sum(c["qty"] for c in color_breakdown if _is_primary_axis_row(c))
 
@@ -420,12 +479,27 @@ def save_production(conn, cur, form_data):
         else:
             qty = sum(c["qty"] for c in color_breakdown if c["countsTowardTotal"])
 
+        # Write the resolved axis back onto the process when it isn't what's
+        # stored, in the two cases where that's this lot's to decide: the
+        # operator explicitly picked/changed it on this form and it resolved
+        # to a real axis (adopt it as the process's default going forward),
+        # or the process's own cell is still blank (fill it with the
+        # default just used, so the column stops being blank without
+        # waiting for a Process-editor save -- see
+        # refresh_process_primary_color_axes for the same fill in bulk). A
+        # stored label that no longer resolves is deliberately NOT
+        # overwritten here: this lot falls back to the default for its own
+        # quantity, but a stale client payload shouldn't silently rewrite a
+        # configured choice.
+        submitted_resolved = bool(submitted_primary_color_axis) and bool(primary_axis) and (
+            submitted_primary_color_axis.lower() == primary_color_axis.lower()
+        )
         if (
-            submitted_primary_color_axis
-            and primary_axis_colors_lower is not None
-            and submitted_primary_color_axis.lower() != str(process.get("primaryColorAxis") or "").strip().lower()
+            primary_axis
+            and primary_color_axis.lower() != stored_primary_color_axis.lower()
+            and (submitted_resolved or not stored_primary_color_axis)
         ):
-            process_service._set_process_primary_color_axis(cur, process_id, submitted_primary_color_axis)
+            process_service._set_process_primary_color_axis(cur, process_id, primary_color_axis)
     else:
         # Zero and negative quantities are both allowed -- a lot can be
         # logged as a correction/reversal (e.g. a prior over-count) without
@@ -455,6 +529,7 @@ def save_production(conn, cur, form_data):
                 {
                     "itemName": item_name,
                     "size": str(c.get("size") or "").strip(),
+                    "narration": str(c.get("narration") or "").strip(),
                     "color": str(c.get("color") or "").strip(),
                     "sourceType": "POOL" if str(c.get("sourceType") or "").strip().upper() == "POOL" else "ITEM",
                     "qty": qty_c,
@@ -462,6 +537,7 @@ def save_production(conn, cur, form_data):
                     "unit": str(c.get("unit") or "").strip(),
                 }
             )
+    clean_components = _with_master_narration(cur, clean_components)
 
     if color_breakdown:
         breakdown_colors_lower = set()
@@ -797,6 +873,7 @@ def save_production_sheet(conn, cur, row_idx, expected_product_id, expected_qty,
                 "requiredQty": _validate_number(comp.get("requiredQty"), 0, 10000000),
             }
         )
+    clean_components = _with_master_narration(cur, clean_components)
 
     remarks = str(sheet_remarks or "").strip()[:500]
 
@@ -806,3 +883,127 @@ def save_production_sheet(conn, cur, row_idx, expected_product_id, expected_qty,
     )
 
     return build_response(True, {"customComponents": clean_components, "sheetRemarks": remarks}, "Production sheet saved successfully.")
+
+
+@rpc_method("refreshProductionComponentsFromItemsMaster", mutation=True)
+@database.transactional
+def refresh_production_components_from_items_master(conn, cur):
+    """Rewrites narration/unit/item-name STORED on every already-logged
+    lot's components_consumed and custom_components to the current Items
+    Master values. Ports module_production.js#
+    refreshProductionComponentsFromItemsMaster.
+
+    Why this is needed at all: narration/unit/name are all metadata the
+    operator maintains in Items Master, but a lot COPIES them into its own
+    JSON snapshot at log time (see save_production/save_production_sheet's
+    _with_master_narration call). A lot logged before an Items Master value
+    was written/corrected, or before an item was renamed/re-cased, carries
+    stale data forever unless explicitly refreshed here -- new and re-saved
+    lots already write narration fresh via _with_master_narration, so in
+    normal use this is a one-off catch-up pass.
+
+    itemName is only ever corrected to the SAME identity's current
+    casing/spelling (matched case-insensitively) -- this never repoints a
+    component to a different item; a real rename to a different name is
+    already handled by the rename cascade
+    (backfill_production_consumed_item_refs).
+
+    unit is synced unconditionally to the item's current Base Unit,
+    including onto components whose stored unit is blank -- a blank
+    nominally already means "this item's Base Unit", but leaving it blank
+    keeps every reader dependent on resolving it live against Items Master.
+    Stamping the real unit in makes the stored snapshot self-describing.
+    This assumes a component's qty was entered in the item's Base Unit at
+    the time -- the common case; if an item's Base Unit was itself later
+    changed to a genuinely different unit, a lot that deliberately recorded
+    consumption in the OLD Base Unit would have its quantity reinterpreted
+    under the new one (confirmed acceptable, matching narration's own
+    philosophy of unconditional sync). Only applied to components_consumed
+    -- custom_components has no `unit` field at all (see
+    save_production_sheet's narrower schema) and must not gain one here.
+
+    sourceType is deliberately NOT filtered -- the lookup is by name+size,
+    and a POOL row whose name happens to be a real Items Master item is the
+    same physical item, which is how the display layer resolves it too
+    (contrast backfill_production_consumed_item_refs, which must skip POOL
+    rows because it rewrites item IDENTITY, not metadata).
+
+    Idempotent and safe to re-run: a component already fully in sync is
+    left untouched, and a row is only written when something in it actually
+    changed.
+    """
+    master_map = items_service.get_item_master_refresh_map(cur)
+    if not master_map:
+        return build_response(
+            True, {"lotsScanned": 0, "lotsUpdated": 0, "fieldsUpdated": 0, "details": []}, "Items Master is empty -- nothing to sync."
+        )
+
+    def _resync(components: list, counter: list, has_unit: bool) -> list | None:
+        if not components:
+            return None
+        changed = False
+        for comp in components:
+            name = str(comp.get("itemName") or "").strip()
+            if not name:
+                continue
+            master = master_map.get(f'{name.lower()}|{str(comp.get("size") or "").strip().lower()}')
+            if not master:
+                continue  # unknown item -- keep stored as-is
+
+            if master["canonicalName"] and comp["itemName"] != master["canonicalName"]:
+                comp["itemName"] = master["canonicalName"]
+                changed = True
+                counter[0] += 1
+            if master["narration"] and str(comp.get("narration") or "").strip() != master["narration"]:
+                comp["narration"] = master["narration"]
+                changed = True
+                counter[0] += 1
+            if has_unit and "unit" in comp and master["baseUnit"] and str(comp.get("unit") or "").strip() != master["baseUnit"]:
+                comp["unit"] = master["baseUnit"]
+                changed = True
+                counter[0] += 1
+        return components if changed else None
+
+    cur.execute(
+        "SELECT id, lot_number, components_consumed, custom_components FROM erp.production WHERE deleted_at IS NULL"
+    )
+    rows = cur.fetchall()
+
+    counter = [0]
+    details = []
+    lots_updated = 0
+
+    for row in rows:
+        rewritten_consumed = _resync(row["components_consumed"] or [], counter, has_unit=True)
+        rewritten_custom = _resync(row["custom_components"] or [], counter, has_unit=False)
+        if rewritten_consumed is None and rewritten_custom is None:
+            continue
+
+        lots_updated += 1
+        lot_label = str(row["lot_number"] or "").strip() or f"row {row['id']}"
+        details.append(f"{lot_label}: fields refreshed")
+
+        cur.execute(
+            """
+            UPDATE erp.production
+            SET components_consumed = COALESCE(%s, components_consumed),
+                custom_components = COALESCE(%s, custom_components)
+            WHERE id = %s
+            """,
+            (
+                json.dumps(rewritten_consumed) if rewritten_consumed is not None else None,
+                json.dumps(rewritten_custom) if rewritten_custom is not None else None,
+                row["id"],
+            ),
+        )
+
+    if counter[0] == 0:
+        message = f"All {len(rows)} production lot(s) already match Items Master -- nothing to change."
+    else:
+        message = f"Refreshed {counter[0]} field(s) (narration/unit/name) across {lots_updated} of {len(rows)} production lot(s)."
+
+    return build_response(
+        True,
+        {"lotsScanned": len(rows), "lotsUpdated": lots_updated, "fieldsUpdated": counter[0], "details": details},
+        message,
+    )

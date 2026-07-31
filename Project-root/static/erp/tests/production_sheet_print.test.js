@@ -6,6 +6,14 @@
  * via a require() of the actual file, same const-rewrite/global-App
  * technique pool_ledger.test.js established.
  *
+ * The Per-Color matrix deliberately stays ONE consolidated table (a real
+ * 6-colour/11-row worst case must not fragment into one table per row
+ * signature/axis, or it spills across pages) -- an earlier "split disjoint
+ * color axes" attempt was reverted upstream in favor of scoping that
+ * clustering to Sub-Group Components only, which this port doesn't have
+ * (no colorGroups/subGroups split -- Flask's Production Sheet only ever
+ * had the flat `colors` axis this file exercises).
+ *
  * jsdom does not do real layout, so container.scrollHeight is always 0 --
  * the auto-fit compression loop's tier-selection (shrinking padding/font,
  * dropping Size) can therefore never be reached here; every call in this

@@ -104,6 +104,8 @@
 //   path) by passing isCustom=true -- these rows genuinely are
 //   process-undefined custom colors, exactly what that flag means.
 
+App.State.productionColumnFilters = { process: [], outputItem: [], productTag: [], assignedBy: [], assignedTo: [], status: [] };
+
 App.Production = {
   STATUS_OPTIONS: ['Pending', 'In Progress', 'Completed', 'Cancelled'],
 
@@ -195,12 +197,11 @@ App.Production = {
         return;
       }
       App.State.globalProduction = response.data;
-      App.State.filteredProduction = response.data;
       App.State.productionCurrentPage = 1;
       App.State.productionSortBy = App.State.productionSortBy || 'dateDesc';
       App.State.selectedProduction = [];
-      this.sortFiltered();
-      this.renderTable();
+      this.updateColumnFilterIcons();
+      this.filterData(App.State.productionSearchTerm || '');
       this.renderAllActivity();
     } catch (err) {
       App.Utils.showToast(err.message || 'Failed to load production logs', true);
@@ -288,18 +289,193 @@ App.Production = {
   },
 
   filterData(searchTerm) {
-    const term = searchTerm.toLowerCase().trim();
-    if (!term) {
-      App.State.filteredProduction = App.State.globalProduction;
-    } else {
-      App.State.filteredProduction = App.State.globalProduction.filter(p => {
+    App.State.productionSearchTerm = searchTerm || '';
+    const term = String(searchTerm || '').toLowerCase().trim();
+    const base = term
+      ? App.State.globalProduction.filter(p => {
         const haystack = [p.date, p.lotNumber, p.outputItemName, p.color, p.productId, p.productName, p.status, p.assignedBy, p.assignedTo, p.remarks].join(' ');
         return App.Utils.matchesKeywords(haystack, term);
-      });
-    }
+      })
+      : App.State.globalProduction;
+    App.State.filteredProduction = this.applyColumnFilters(base);
     this.sortFiltered();
     App.State.productionCurrentPage = 1;
     this.renderTable();
+  },
+
+  // Computes the value list for a column's filter dropdown. Status uses
+  // the fixed STATUS_OPTIONS list (so a status can appear even if no
+  // currently loaded lot has it yet); Process/Output Item/Product
+  // Tag/Assigned By/To are derived from whatever's actually loaded.
+  // Process is looked up through globalProcesses the same way rowHtml
+  // resolves its label, so the filter option and the row's own display
+  // text can never drift apart.
+  getColumnFilterOptions(key) {
+    if (key === 'status') return this.STATUS_OPTIONS.map(s => ({ value: s, label: s }));
+
+    const values = new Set();
+    (App.State.globalProduction || []).forEach(p => {
+      if (key === 'process') {
+        const process = (App.State.globalProcesses || []).find(pr => pr.processId === p.processId);
+        values.add(process ? process.processName : (p.processId || 'Uncategorized'));
+      } else if (key === 'outputItem') {
+        if (p.outputItemName) values.add(p.outputItemName);
+      } else if (key === 'productTag') {
+        if (p.productId) values.add(p.productId);
+      } else if (key === 'assignedBy') {
+        if (p.assignedBy) values.add(p.assignedBy);
+      } else if (key === 'assignedTo') {
+        if (p.assignedTo) values.add(p.assignedTo);
+      }
+    });
+
+    return [...values]
+      .sort((a, b) => a.localeCompare(b))
+      .map(v => ({ value: v, label: v }));
+  },
+
+  // Updates the funnel icon's active state in each header cell to reflect
+  // whether that column currently has a filter applied. Scoped to the
+  // Production Log sub-tab so it never touches another module's
+  // same-named .th-filter-btn buttons (see Item Master's own version,
+  // which is unscoped since it's the only user of that class today).
+  updateColumnFilterIcons() {
+    document.querySelectorAll('#productionLogSubTab .th-filter-btn').forEach(btn => {
+      const key = btn.dataset.filterKey;
+      const active = (App.State.productionColumnFilters[key] || []).length > 0;
+      btn.classList.toggle('active', active);
+    });
+  },
+
+  // Opens (or closes, if already open for this column) the Excel-style
+  // checklist dropdown anchored under the clicked header's funnel icon.
+  toggleColumnFilter(evt, key) {
+    evt.stopPropagation();
+    let panel = document.getElementById('productionColFilterPanel');
+
+    if (panel && panel.dataset.key === key) {
+      panel.remove();
+      return;
+    }
+    if (panel) panel.remove();
+
+    const btn = evt.currentTarget;
+    panel = document.createElement('div');
+    panel.id = 'productionColFilterPanel';
+    panel.className = 'col-filter-panel';
+    panel.dataset.key = key;
+    panel.innerHTML = `
+      <div class="po-ms-search-wrap">
+        <input type="text" class="form-control form-control-sm" placeholder="Search...">
+      </div>
+      <div class="col-filter-actions">
+        <button type="button" data-action="select-all">Select All</button>
+        <button type="button" data-action="clear">Clear</button>
+      </div>
+      <ul class="po-ms-options"></ul>`;
+    document.body.appendChild(panel);
+
+    const rect = btn.getBoundingClientRect();
+    panel.style.top = `${rect.bottom + window.scrollY + 4}px`;
+    panel.style.left = `${Math.min(rect.left + window.scrollX, window.scrollX + document.documentElement.clientWidth - 250)}px`;
+
+    const searchInput = panel.querySelector('input');
+    const optionsList = panel.querySelector('.po-ms-options');
+
+    const renderOptions = (term) => {
+      const allOptions = this.getColumnFilterOptions(key);
+      const selected = App.State.productionColumnFilters[key] || [];
+      const t = (term || '').toLowerCase().trim();
+      const visible = allOptions.filter(o => !t || o.label.toLowerCase().includes(t));
+
+      optionsList.innerHTML = visible.map(o => {
+        const on = selected.includes(o.value);
+        return `<li class="po-ms-option${on ? ' checked' : ''}" data-value="${escapeHtml(o.value)}">
+          <span class="po-ms-check">${on ? '✓' : ''}</span>
+          <span>${escapeHtml(o.label)}</span>
+        </li>`;
+      }).join('') || '<li class="po-ms-empty">No values found</li>';
+    };
+
+    searchInput.addEventListener('input', () => renderOptions(searchInput.value));
+    searchInput.addEventListener('click', e => e.stopPropagation());
+    panel.addEventListener('click', e => e.stopPropagation());
+
+    panel.querySelector('[data-action="select-all"]').addEventListener('click', () => {
+      const t = searchInput.value;
+      const visibleValues = this.getColumnFilterOptions(key)
+        .filter(o => !t.trim() || o.label.toLowerCase().includes(t.toLowerCase()))
+        .map(o => o.value);
+      App.State.productionColumnFilters[key] = [...new Set([...(App.State.productionColumnFilters[key] || []), ...visibleValues])];
+      this.onColumnFilterChange(key);
+      renderOptions(t);
+    });
+
+    panel.querySelector('[data-action="clear"]').addEventListener('click', () => {
+      App.State.productionColumnFilters[key] = [];
+      this.onColumnFilterChange(key);
+      renderOptions(searchInput.value);
+    });
+
+    optionsList.addEventListener('click', e => {
+      const li = e.target.closest('.po-ms-option');
+      if (!li) return;
+      const val = li.dataset.value;
+      const sel = App.State.productionColumnFilters[key] || (App.State.productionColumnFilters[key] = []);
+      const idx = sel.indexOf(val);
+      if (idx === -1) sel.push(val);
+      else sel.splice(idx, 1);
+      this.onColumnFilterChange(key);
+      renderOptions(searchInput.value);
+    });
+
+    renderOptions('');
+    requestAnimationFrame(() => searchInput.focus());
+
+    if (!document.body.dataset.productionColFilterOutsideClickBound) {
+      document.body.dataset.productionColFilterOutsideClickBound = '1';
+      document.addEventListener('click', e => {
+        const openPanel = document.getElementById('productionColFilterPanel');
+        if (openPanel && !openPanel.contains(e.target) && !e.target.closest('.th-filter-btn')) {
+          openPanel.remove();
+        }
+      });
+    }
+  },
+
+  onColumnFilterChange(key) {
+    this.updateColumnFilterIcons();
+    App.State.productionCurrentPage = 1;
+    this.filterData(App.State.productionSearchTerm || '');
+  },
+
+  clearColumnFilters() {
+    App.State.productionColumnFilters = { process: [], outputItem: [], productTag: [], assignedBy: [], assignedTo: [], status: [] };
+    document.getElementById('productionColFilterPanel')?.remove();
+    this.updateColumnFilterIcons();
+    App.State.productionCurrentPage = 1;
+    this.filterData(App.State.productionSearchTerm || '');
+  },
+
+  // Narrows a base list down to rows matching every active per-column
+  // filter (AND across columns, OR within a column's checked values).
+  applyColumnFilters(items) {
+    const { process, outputItem, productTag, assignedBy, assignedTo, status } = App.State.productionColumnFilters;
+    if (!process.length && !outputItem.length && !productTag.length && !assignedBy.length && !assignedTo.length && !status.length) return items;
+
+    return items.filter(p => {
+      if (process.length) {
+        const proc = (App.State.globalProcesses || []).find(pr => pr.processId === p.processId);
+        const label = proc ? proc.processName : (p.processId || 'Uncategorized');
+        if (!process.includes(label)) return false;
+      }
+      if (outputItem.length && !outputItem.includes(p.outputItemName || '')) return false;
+      if (productTag.length && !productTag.includes(p.productId || '')) return false;
+      if (assignedBy.length && !assignedBy.includes(p.assignedBy || '')) return false;
+      if (assignedTo.length && !assignedTo.includes(p.assignedTo || '')) return false;
+      if (status.length && !status.includes(p.status || '')) return false;
+      return true;
+    });
   },
 
   // Field/direction combos selectable via the "Sort by" dropdown
@@ -581,6 +757,7 @@ App.Production = {
     const count = App.State.selectedProduction.length;
     App.Selection.updateButton('btnBulkDeleteProduction', count, '<i class="bi bi-trash"></i> Delete Selected');
     App.Selection.updateButton('btnBulkPrintProduction', count, '<i class="bi bi-printer"></i> Print Selected');
+    App.Selection.updateButton('btnBulkDownloadPdfProduction', count, '<i class="bi bi-file-earmark-pdf"></i> Download PDFs');
   },
 
   async bulkDelete() {
@@ -657,7 +834,7 @@ App.Production = {
       6-B, SHIV SHAKTI ESTATE, VERKA CHOWK, DEHLON ROAD, BHAGWANPURA, 141114 LUDHIANA
     </div>
     <div style="font-size:11px;color:${BRAND};font-weight:700;margin-top:4px;letter-spacing:1px;text-transform:uppercase;">
-      Production Material Requirement Sheet
+      ${escapeHtml(this._requirementSheetTitle(p.processId))}
     </div>
   </div>
   <div style="height:2px;background:${BRAND};margin:0 0 12px 0;-webkit-print-color-adjust:exact;print-color-adjust:exact;"></div>
@@ -720,6 +897,83 @@ App.Production = {
         }
       }
     );
+  },
+
+  // Rewrites the narration/unit/item-name STORED on every already-logged
+  // lot to the current Items Master values
+  // (production_service.refresh_production_components_from_items_master).
+  //
+  // Lots saved from now on write narration fresh anyway
+  // (production_service._with_master_narration), so in normal use this is
+  // a one-off catch-up for lots logged before an Items Master value was
+  // set/corrected, or before an item was renamed/re-cased.
+  //
+  // Confirmed first because it writes across every historical lot at once,
+  // and re-runnable: a lot already in sync is left untouched.
+  refreshFromItemsMaster() {
+    App.Utils.confirmAction(
+      'Refresh every already-logged production lot\'s stored narration, unit, and item name to match Items Master?\n\n' +
+      'Quantities, colours, item identities and status are never changed. Item name is only corrected to fix ' +
+      'casing/spelling drift for the same item — never repointed to a different one. Unit is synced to each ' +
+      'item\'s current Base Unit; if an item\'s Base Unit was itself changed since a lot used it, that lot\'s ' +
+      'quantity will now read under the new unit.\n\n' +
+      'An open Production Sheet is re-rendered with the new values, discarding any edits in it you have not saved.',
+      async () => {
+        const btn = document.getElementById('btnRefreshProductionFromItems');
+        const original = btn?.innerHTML;
+        if (btn) {
+          btn.disabled = true;
+          btn.innerHTML = '<span class="spinner-border spinner-border-sm me-1"></span> Refreshing...';
+        }
+        try {
+          const res = await Api.mutate('refreshProductionComponentsFromItemsMaster');
+          App.Utils.showToast(res.message, !res.success);
+          if (res.success) {
+            // Captured BEFORE the reload -- currentProductionSheet.idx is an
+            // index into globalProduction, which loadData() replaces
+            // wholesale, so the open sheet is re-found by its stable
+            // rowIdx afterwards instead.
+            const openSheetKey = this._openProductionSheetRowKey();
+            if (typeof App.Item !== 'undefined') await App.Item.loadData();
+            await this.loadData();
+            this._rerenderOpenProductionSheet(openSheetKey);
+          }
+        } catch (err) {
+          App.Utils.showToast(err.message || 'Failed to refresh production lots from Items Master', true);
+        } finally {
+          if (btn) {
+            btn.disabled = false;
+            btn.innerHTML = original;
+          }
+        }
+      }
+    );
+  },
+
+  // The stable rowIdx of the lot whose Production Sheet dialog is
+  // currently open, or null if the dialog is closed. Used to re-render
+  // that sheet after a refresh: currentProductionSheet.idx is a position
+  // in globalProduction, which loadData() replaces wholesale, so the
+  // position can point at a different lot (or nothing) afterwards.
+  _openProductionSheetRowKey() {
+    const modalEl = document.getElementById('productionSheetModal');
+    if (!modalEl || !modalEl.classList.contains('show')) return null;
+    const sheet = App.State.currentProductionSheet;
+    if (!sheet || sheet.idx === undefined || sheet.idx === null) return null;
+    const p = App.State.globalProduction[sheet.idx];
+    return p ? String(p.rowIdx) : null;
+  },
+
+  // Repaints an already-open Production Sheet dialog from the freshly
+  // reloaded lot data, so a "Refresh from Items Master" is reflected in
+  // the sheet the operator is looking at instead of only on the next
+  // reopen. No-op when the dialog is closed (it rebuilds from scratch on
+  // every open anyway) or when the lot is no longer present.
+  _rerenderOpenProductionSheet(rowKey) {
+    if (!rowKey) return;
+    const idx = (App.State.globalProduction || []).findIndex(r => String(r.rowIdx) === String(rowKey));
+    if (idx === -1) return;
+    this._populateProductionSheetData(App.State.globalProduction[idx], idx);
   },
 
   // Trims floating-point noise (e.g. 0.1 * 3 = 0.30000000000000004) for
@@ -1773,6 +2027,33 @@ App.Production = {
     );
   },
 
+  // Which part of `color` a recipe row's Color Sub-Group names, or null if
+  // it names none of it. A checked color is often a COMPOSITE of the axes
+  // this lot combines ("Blue-White / BCP"), while a recipe's color-specific
+  // rows are tagged with ONE axis's own color ("Blue-White", or "BCP").
+  // Matching the whole composite string against colorGroup therefore never
+  // hit, so checking a composite color added its column to the Per-Color
+  // Components table and then populated nothing into it -- the table looked
+  // like it emptied itself whenever the colors changed.
+  //
+  // Both tokens of a composite legitimately apply at once: a lot producing
+  // "Blue-White / BCP" consumes the frame-color-specific parts AND the
+  // rim-color-specific parts. This mirrors save_production's own server-side
+  // rule, which already accepts a component scoped to any single axis token
+  // of a breakdown color.
+  //
+  // Returns the matched token rather than a boolean so the caller can strip
+  // THAT token from the item's display name (see _stripColorSubstring)
+  // instead of the full composite, which would never be found inside an item
+  // name like "Frame---Blue-White".
+  _matchedColorToken(colorGroup, color) {
+    const cg = String(colorGroup || '').trim();
+    if (!cg) return null;
+    if (App.Utils.sameText(cg, color)) return String(color || '').trim();
+    const segments = String(color || '').split(' / ').map(x => x.trim()).filter(Boolean);
+    return segments.find(seg => App.Utils.sameText(seg, cg)) || null;
+  },
+
   _stripColorSubstring(itemName, color) {
     if (!color || !itemName) return itemName;
     const lowerName = itemName.toLowerCase();
@@ -1791,6 +2072,34 @@ App.Production = {
 
   _itemSlotKey(name, size) {
     return `${(name || '').trim().toLowerCase()}|${(size || '').trim().toLowerCase()}`;
+  },
+
+  // Detects components that are genuinely ONE shared physical item
+  // referenced under more than one colorGroup (e.g. a sticker sheet
+  // printed with two colors, consumed by both those colors' recipes) --
+  // as opposed to the "same generic component, different literal item per
+  // color" case _stripColorSubstring/_matchedColorToken exist for (e.g.
+  // "Frame---Red" / "Frame---Blue"). Stripping THIS color's token out of
+  // an already-shared item's name is actively harmful: if the color word
+  // happens to appear inside the item's own name (e.g. "Backrest Sticker
+  // Pink/SeaGreen" under colorGroup "SeaGreen"), stripping leaves a
+  // mangled leftover ("...Pink") that no longer matches the OTHER
+  // colorGroup's row -- which, having found nothing of ITS OWN color to
+  // strip, kept the full raw name -- producing two rows for what is
+  // really one item. Shared items are instead matched on their raw,
+  // unstripped name, which is already identical across every colorGroup
+  // that references them.
+  _sharedItemSlotKeys(components) {
+    const groupsByKey = new Map();
+    (components || []).forEach(c => {
+      if (!c.colorGroup || c.colorGroup === 'COMMON' || c.sourceType === 'POOL') return;
+      const key = this._itemSlotKey(c.itemName, c.size);
+      if (!groupsByKey.has(key)) groupsByKey.set(key, new Set());
+      groupsByKey.get(key).add(String(c.colorGroup).trim().toLowerCase());
+    });
+    const shared = new Set();
+    groupsByKey.forEach((groups, key) => { if (groups.size > 1) shared.add(key); });
+    return shared;
   },
 
   // Renders one small table per distinct "color signature" among
@@ -2313,14 +2622,25 @@ App.Production = {
       if (seq !== undefined && seq !== this._compLoadSeq) return;
       const all = res.success ? (res.data || []) : [];
       const commonOverrideComps = this._getCommonItemsWithColorOverride(all);
+      const sharedItemKeys = this._sharedItemSlotKeys(all);
 
       colors.forEach(color => {
         const colIndex = this.getMatrixColumnIndex(color);
         const thisColorQty = (this._axisScopedCheckedColorQtys(axisKey).find(c => c.color === color) || {}).qty || 0;
 
         if (colIndex !== -1) {
-          const colorComps = all.filter(c => App.Utils.sameText(c.colorGroup, color))
-            .map(c => ({ ...c, displayName: this._stripColorSubstring(c.itemName || '', color) }));
+          // Token match, not whole-string: a recipe row scoped to
+          // "Blue-White" is genuinely consumed by a lot producing the
+          // composite "Blue-White / BCP". See _matchedColorToken.
+          const colorComps = all
+            .map(c => ({ comp: c, token: this._matchedColorToken(c.colorGroup, color) }))
+            .filter(x => x.token)
+            .map(({ comp, token }) => ({
+              ...comp,
+              displayName: sharedItemKeys.has(this._itemSlotKey(comp.itemName, comp.size))
+                ? (comp.itemName || '').trim()
+                : this._stripColorSubstring(comp.itemName || '', token)
+            }));
 
           colorComps.forEach(c => {
             let row = this.findMatrixRowByDisplayName(c.displayName, c.size || '');
@@ -2449,6 +2769,7 @@ App.Production = {
     const poolGroupAccum = new Map();
 
     const commonOverrideComps = this._getCommonItemsWithColorOverride(components || []);
+    const sharedItemKeys = this._sharedItemSlotKeys(components || []);
 
     (components || []).forEach(c => {
       const colorGroup = c.colorGroup || 'COMMON';
@@ -2494,7 +2815,22 @@ App.Production = {
         return;
       }
 
-      if (colorGroup === 'COMMON' || !colors.includes(colorGroup)) {
+      // Which of this lot's own (possibly composite) breakdown colors this
+      // component's colorGroup belongs to -- same token-vs-composite
+      // matching populateColorMatrixForColors already uses (see
+      // _matchedColorToken): a lot's checked color is often a COMPOSITE of
+      // the axes it combines ("Blue-White / BCP"), while a saved component
+      // is tagged with just ONE axis's own color ("Blue-White"). Matching
+      // the whole composite string verbatim (colors.includes(colorGroup))
+      // never hits for a composite-color lot, so every one of its per-color
+      // components would silently fall through to the addComponentRow
+      // branch below instead -- reopening such a lot for Edit made the
+      // Per-Color Components table look like it never loaded at all, even
+      // though the same lot's fresh-create path
+      // (populateColorMatrixForColors) rendered it correctly.
+      const matchedColors = colors.filter(col => this._matchedColorToken(colorGroup, col));
+
+      if (colorGroup === 'COMMON' || matchedColors.length === 0) {
         const isLockedPoolColor = c.sourceType === 'POOL' && colorGroup !== 'COMMON';
         this.addComponentRow({
           itemName: c.itemName,
@@ -2507,12 +2843,24 @@ App.Production = {
         });
         return;
       }
-      const displayName = this._stripColorSubstring(c.itemName || '', colorGroup);
+      // Explicitly color-tagged, not pool-color-aware: a genuinely
+      // different literal item per color (e.g. "Frame---Red" /
+      // "Frame---Blue") -- keep on a merged row, one real item picker per
+      // color cell. Both tokens of a composite legitimately apply at once
+      // (mirrors populateColorMatrixForColors and save_production's own
+      // server-side rule), so this fills EVERY composite color it
+      // matches, not just the first.
+      const displayName = sharedItemKeys.has(this._itemSlotKey(c.itemName, c.size))
+        ? (c.itemName || '').trim()
+        : this._stripColorSubstring(c.itemName || '', colorGroup);
       let row = this.findMatrixRowByDisplayName(displayName, c.size || '');
       if (!row) row = this.addMergedMatrixRow({ itemName: displayName, size: c.size, sourceType: c.sourceType });
-      const colIndex = this.getMatrixColumnIndex(colorGroup);
-      const cell = row.children[colIndex];
-      this._setMergedCellItem(cell, { itemName: c.itemName, size: c.size, sourceType: c.sourceType }, c.qty);
+      matchedColors.forEach(col => {
+        const colIndex = this.getMatrixColumnIndex(col);
+        if (colIndex === -1) return;
+        const cell = row.children[colIndex];
+        this._setMergedCellItem(cell, { itemName: c.itemName, size: c.size, sourceType: c.sourceType }, c.qty);
+      });
     });
 
     // Seed a table for EVERY pool-color-aware recipe item, not just ones
@@ -3196,6 +3544,25 @@ App.Production = {
     const p = App.State.globalProduction[idx];
     if (!p) return;
 
+    this._populateProductionSheetData(p, idx);
+
+    const modalEl = document.getElementById('productionSheetModal');
+    if (modalEl && typeof bootstrap !== 'undefined') {
+      bootstrap.Modal.getOrCreateInstance(modalEl).show();
+    }
+  },
+
+  // Populates the Production Sheet dialog's DOM (title/date/Common
+  // table/Per-Color matrix/Remarks) for one lot, WITHOUT opening the
+  // modal -- split out of viewProductionSheet so bulkDownloadPDF can
+  // reuse the exact same rich rendering (Common table + Per-Color matrix,
+  // including Pool-sourced per-color components -- see
+  // groupComponentsForSheet) for every selected lot in turn, without
+  // flashing the modal open/closed once per lot. `idx` is only used to
+  // remember this lot's position for the popup's own Save/Reset/Add
+  // actions (see currentProductionSheet); a bulk-export caller that never
+  // touches those can pass it undefined.
+  _populateProductionSheetData(p, idx) {
     // This lot's own recorded consumption (set when it was logged) is
     // the source of truth -- production lots are tied to a Process
     // recipe, not a Product BOM, so there is no BOM to fall back to.
@@ -3212,7 +3579,21 @@ App.Production = {
     const knownColors = (p.colorBreakdown || []).map(c => c.color).filter(Boolean);
     const { common, matrixSlots, colors } = this.groupComponentsForSheet(components, knownColors);
 
-    App.State.currentProductionSheet = { idx, lotQty: p.qty, defaultComponents, colors, lotColor: p.color || '' };
+    // Size/Model aren't stored on the lot itself -- they're derived from its
+    // Process's Output Item Name the same way the Production form's
+    // Size/Model dropdowns are. Remembered (with date/processName) so
+    // downloadProductionSheetPDF/bulkDownloadPDF can name the file after
+    // this lot.
+    const process = (App.State.globalProcesses || []).find(pr => pr.processId === p.processId);
+    const processName = process ? process.processName : (p.processId || 'Process');
+    const requirementSheetTitle = this._requirementSheetTitle(p.processId);
+    const size = App.Utils.getSizeFromOutputItemName(p.outputItemName);
+    const model = App.Utils.getModelFromOutputItemName(p.outputItemName);
+
+    App.State.currentProductionSheet = {
+      idx, lotQty: p.qty, defaultComponents, colors,
+      lotColor: p.color || '', date: p.date, size, model, processName, requirementSheetTitle
+    };
 
     const label = p.productName || p.outputItemName || p.processId;
     const tag = p.productId || p.lotNumber;
@@ -3225,11 +3606,6 @@ App.Production = {
     this.renderProductionSheetTable(common, matrixSlots, colors);
 
     document.getElementById('productionSheetRemarks').value = p.sheetRemarks || '';
-
-    const modalEl = document.getElementById('productionSheetModal');
-    if (modalEl && typeof bootstrap !== 'undefined') {
-      bootstrap.Modal.getOrCreateInstance(modalEl).show();
-    }
   },
 
   // Which color bucket a Production Sheet component belongs to: its
@@ -3258,6 +3634,7 @@ App.Production = {
     const colors = new Set(knownColors || []);
 
     const commonOverrideComps = this._getCommonItemsWithColorOverride(components || []);
+    const sharedItemKeys = this._sharedItemSlotKeys(components || []);
     const pendingCommonOverrides = [];
 
     (components || []).forEach(comp => {
@@ -3280,7 +3657,9 @@ App.Production = {
       }
 
       colors.add(colorKey);
-      const displayName = this._stripColorSubstring(comp.itemName || '', colorKey);
+      const displayName = sharedItemKeys.has(this._itemSlotKey(comp.itemName, comp.size))
+        ? (comp.itemName || '').trim()
+        : this._stripColorSubstring(comp.itemName || '', colorKey);
       const slotKey = [displayName, comp.size || '', comp.narration || ''].join('|').toLowerCase();
       let slot = matrixIndex.get(slotKey);
       if (!slot) {
@@ -3574,11 +3953,38 @@ App.Production = {
       return;
     }
 
+    this._buildProductionSheetForExport();
+
+    const productId = document.getElementById('prodSheetProductId')?.innerText || 'Production';
+    App.Print.trigger('print-production-sheet-container', `Production_Sheet_${productId.replace(/[^a-zA-Z0-9_-]/g, '_')}`);
+  },
+
+  // The printed sheet's title: "<Process Type> Requirement Sheet" (e.g.
+  // "Packing Requirement Sheet"), falling back to the original generic
+  // "Production Material Requirement Sheet" when the lot's process has no
+  // Process Type set, or the process itself can no longer be found
+  // (deleted/renamed since the lot was logged). Shared by the rich
+  // single-lot template (_buildProductionSheetForExport) and the bulk
+  // print builder (buildProductionSheetPrintPageHtml) so both agree.
+  _requirementSheetTitle(processId) {
+    const process = (App.State.globalProcesses || []).find(pr => pr.processId === processId);
+    const type = String(process?.processType || '').trim();
+    return type ? `${type} Requirement Sheet` : 'Production Material Requirement Sheet';
+  },
+
+  // Populates #print-production-sheet-container's DOM from the currently
+  // open Production Sheet dialog's state -- split out so both
+  // printProductionSheet (browser print) and downloadProductionSheetPDF /
+  // bulkDownloadPDF (PDF capture via App.Print.downloadElementAsPDF) render
+  // an identical sheet, single source of truth for the single-page
+  // auto-fit layout below.
+  _buildProductionSheetForExport() {
     const setText = (id, text) => {
       const el = document.getElementById(id);
       if (el) el.innerText = text;
     };
 
+    setText('print-prod-title', App.State.currentProductionSheet?.requirementSheetTitle || 'Production Material Requirement Sheet');
     setText('print-prod-date', document.getElementById('prodSheetDate')?.innerText || '');
     setText('print-prod-id', document.getElementById('prodSheetProductId')?.innerText || '');
     setText('print-prod-name', document.getElementById('prodSheetProductName')?.innerText || '');
@@ -3599,7 +4005,6 @@ App.Production = {
     const commonSection = document.getElementById('print-prod-common-section');
     if (commonSection) commonSection.style.display = commonRows.length > 0 ? '' : 'none';
     const matrixSection = document.getElementById('print-prod-matrix-section');
-    if (matrixSection) matrixSection.style.display = (colors.length > 0 && matrixRows.length > 0) ? '' : 'none';
 
     // A Size column that's "GENERAL"/blank on every row carries no
     // information -- it's the one column the fit loop below is allowed
@@ -3618,7 +4023,10 @@ App.Production = {
     // One row per item, one column per lot color -- replaces the old
     // per-color-signature grouping (which spawned a separate mini-table,
     // each repeating its own header, whenever items used different
-    // subsets of colors). Unused colors just render a dash.
+    // subsets of colors). Unused colors just render a dash. Deliberately
+    // stays ONE consolidated table regardless of which colors actually
+    // co-occur: a real 6-colour/11-row worst case must not fragment into
+    // one table per row signature/axis, or it spills across pages.
     const matrixData = matrixRows.map(row => ({
       name: get(row, '.prod-sheet-item-name'),
       size: get(row, '.prod-sheet-size'),
@@ -3628,6 +4036,7 @@ App.Production = {
         return input?.value || '';
       })
     }));
+    if (matrixSection) matrixSection.style.display = (colors.length > 0 && matrixData.length > 0) ? '' : 'none';
 
     // Density tiers the fit loop steps through, tightest last: shrink
     // padding, then font (Item Name + Qty held a step larger and bold --
@@ -3678,12 +4087,12 @@ App.Production = {
         <thead><tr>${head}</tr></thead><tbody>${body}</tbody></table>`;
     };
 
-    const buildMatrixTable = (rows, tier, hideSize) => {
-      if (rows.length === 0 || colors.length === 0) return '';
+    const buildMatrixTable = (rows, tier, hideSize, columns) => {
+      if (rows.length === 0 || columns.length === 0) return '';
       let head = headCell('Item Name', tier, { align: 'left', width: hideSize ? '30%' : '24%' });
       if (!hideSize) head += headCell('Size', tier, { width: '9%' });
       head += headCell('Narration', tier, { width: hideSize ? '16%' : '11%' });
-      colors.forEach(c => { head += headCell(escapeHtml(c), tier, { align: 'right' }); });
+      columns.forEach(c => { head += headCell(escapeHtml(c), tier, { align: 'right' }); });
 
       const body = rows.map((r, i) => {
         const zebra = i % 2 === 1;
@@ -3722,7 +4131,7 @@ App.Production = {
       }
       if (matrixDest) {
         const hideSize = tier.hideSize && matrixSizeDroppable;
-        matrixDest.innerHTML = buildMatrixTable(matrixData, tier, hideSize);
+        matrixDest.innerHTML = buildMatrixTable(matrixData, tier, hideSize, colors);
       }
     };
 
@@ -3774,9 +4183,64 @@ App.Production = {
       remarksSection.style.display = remarksText ? '' : 'none';
       setText('print-prod-remarks-text', remarksText);
     }
+  },
 
-    const productId = document.getElementById('prodSheetProductId')?.innerText || 'Production';
-    App.Print.trigger('print-production-sheet-container', `Production_Sheet_${productId.replace(/[^a-zA-Z0-9_-]/g, '_')}`);
+  // Filename: ddmmyy_Size_Model_ProcessName, e.g. 290726_26inch_Eagle_FramePainting
+  _sanitizeFilenamePart(text, fallback) {
+    return String(text || '').replace(/[^a-zA-Z0-9]/g, '') || fallback;
+  },
+
+  _productionSheetFilenameBase(dateStr, size, model, processName) {
+    const [dd = '', mm = '', yyyy = ''] = String(dateStr || '').split('/');
+    const ddmmyy = `${dd}${mm}${yyyy.slice(-2)}` || 'date';
+    return [
+      ddmmyy,
+      this._sanitizeFilenamePart(size, 'Size'),
+      this._sanitizeFilenamePart(model, 'Model'),
+      this._sanitizeFilenamePart(processName, 'Process')
+    ].join('_');
+  },
+
+  async downloadProductionSheetPDF() {
+    const state = App.State.currentProductionSheet;
+    if (!state) return;
+
+    this._buildProductionSheetForExport();
+
+    const filenameBase = this._productionSheetFilenameBase(state.date, state.size, state.model, state.processName);
+    const ok = await App.Print.downloadElementAsPDF('print-production-sheet-container', `${filenameBase}.pdf`);
+    if (ok) App.Utils.showToast('PDF exported successfully!', false);
+  },
+
+  // Bulk "Download PDFs" -- downloads one SEPARATE PDF per selected lot,
+  // each the exact same rich Production Sheet a single "View Sheet" +
+  // "Download PDF" would produce. Lots are processed one at a time,
+  // awaited in sequence rather than in parallel -- every iteration reuses
+  // the SAME #print-production-sheet-container, so overlapping
+  // html2canvas captures would race and corrupt each other's output.
+  async bulkDownloadPDF() {
+    const selected = App.State.selectedProduction;
+    if (!selected || selected.length === 0) return;
+
+    const lots = App.State.globalProduction.filter(p => App.Selection.isSelected(selected, String(p.rowIdx)));
+    if (lots.length === 0) return;
+
+    let successCount = 0;
+    for (const p of lots) {
+      this._populateProductionSheetData(p);
+      this._buildProductionSheetForExport();
+
+      const size = App.Utils.getSizeFromOutputItemName(p.outputItemName);
+      const model = App.Utils.getModelFromOutputItemName(p.outputItemName);
+      const process = (App.State.globalProcesses || []).find(pr => pr.processId === p.processId);
+      const processName = process ? process.processName : (p.processId || 'Process');
+      const filenameBase = this._productionSheetFilenameBase(p.date, size, model, processName);
+      const filename = `${this._sanitizeFilenamePart(p.lotNumber, 'Lot')}_${filenameBase}.pdf`;
+
+      if (await App.Print.downloadElementAsPDF('print-production-sheet-container', filename)) successCount++;
+    }
+
+    App.Utils.showToast(`${successCount} of ${lots.length} production sheet(s) downloaded as separate PDFs.`, successCount < lots.length);
   }
 };
 

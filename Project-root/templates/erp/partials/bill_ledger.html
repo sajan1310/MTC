@@ -50,6 +50,9 @@
       <button class="btn btn-outline-dark fw-bold shadow-sm d-none" id="btnBulkPrintBills" type="button" onclick="App.Bill.bulkPrint()" style="white-space: nowrap;">
         <i class="bi bi-printer"></i> Print Selected
       </button>
+      <button class="btn btn-outline-dark fw-bold shadow-sm d-none" id="btnBulkDownloadPdfBills" type="button" onclick="App.Bill.bulkDownloadPDF()" style="white-space: nowrap;">
+        <i class="bi bi-file-earmark-pdf"></i> Download PDFs
+      </button>
       <button class="btn btn-danger fw-bold shadow-sm d-none" id="btnBulkDeleteBills" type="button" onclick="App.Bill.bulkDelete()" style="white-space: nowrap;">
         <i class="bi bi-trash"></i> Delete Selected
       </button>
@@ -145,25 +148,40 @@
         <form id="billForm" autocomplete="off">
           <input type="hidden" id="existingBillNumber" name="existingBillNumber">
           <input type="hidden" id="existingVendor" name="existingVendor">
+          <div class="row g-3 mb-3">
+            <div class="col-12">
+              <label class="form-label fw-bold d-block">Bill Type</label>
+              <div class="btn-group" role="group" aria-label="Bill Type">
+                <input type="radio" class="btn-check" name="billType" id="billTypeGoods" value="GOODS" checked onchange="App.Bill.setBillType(this.value)">
+                <label class="btn btn-outline-dark" for="billTypeGoods">Goods Bill</label>
+                <input type="radio" class="btn-check" name="billType" id="billTypeLabor" value="LABOR" onchange="App.Bill.setBillType(this.value)">
+                <label class="btn btn-outline-dark" for="billTypeLabor">Labor Job Bill</label>
+              </div>
+            </div>
+          </div>
           <div class="row g-3 mb-4">
             <input type="hidden" name="contact" id="billContact">
             <div class="col-md-4">
-              <label class="form-label fw-bold">Vendor Name *</label>
+              <label class="form-label fw-bold" id="billVendorLabel">Vendor Name *</label>
               <select name="vendor" id="billVendor" class="form-select select2-vendor" required></select>
             </div>
 
             <div class="col-md-4"><label class="form-label fw-bold">Invoice / Bill Number *</label><input type="text" name="billNumber" class="form-control" required maxlength="50"></div>
             <div class="col-md-4"><label class="form-label fw-bold">Invoice Date *</label><input type="date" name="billDate" id="billDateInput" class="form-control" required></div>
+            <div class="col-md-4 labor-only-field"><label class="form-label">Issuing Party</label><input type="text" name="issuingParty" class="form-control" placeholder="Optional" maxlength="200"></div>
+            <div class="col-md-4 labor-only-field"><label class="form-label">Manufacturing Vendor Name</label><input type="text" name="manufacturingVendor" class="form-control" placeholder="Optional" maxlength="200"></div>
             <div class="col-md-8"><label class="form-label">Ledger Remarks</label><input type="text" name="remarks" class="form-control" placeholder="Optional notes for this bill..." maxlength="500"></div>
           </div>
 
-          <h6 class="text-secondary border-bottom pb-1 fw-bold">Items Received</h6>
+          <h6 class="text-secondary border-bottom pb-1 fw-bold" id="billItemsSectionTitle">Items Received</h6>
           <div class="table-responsive">
-            <table class="table table-bordered bg-white shadow-sm">
+            <table class="table table-bordered bg-white shadow-sm" id="billItemsTable">
               <thead class="table-light">
                 <tr>
-                  <th>Item Name *</th>
-                  <th style="width:10%;">Size</th>
+                  <th class="goods-col">Item Name *</th>
+                  <th class="goods-col" style="width:10%;">Size</th>
+                  <th class="labor-col" style="width:18%;">Processed Item *</th>
+                  <th class="labor-col" style="width:16%;">Color</th>
                   <th style="width:15%;">Narration</th>
                   <th style="width:10%;">Recv. Qty *</th>
                   <th style="width:8%;">Unit</th>

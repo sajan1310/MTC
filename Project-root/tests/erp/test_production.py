@@ -27,7 +27,7 @@ def _unique_name(prefix: str) -> str:
 def _save_process(client, **overrides):
     payload = {
         "processName": _unique_name("Process"),
-        "lotPrefix": uuid.uuid4().hex[:5].upper(),
+        "lotPrefix": uuid.uuid4().hex[:6].upper(),
         "outputItemName": _unique_name("Output"),
         "sequence": 1,
         "isFinalStage": False,
@@ -986,3 +986,167 @@ def test_bom_product_delete_blocked_by_production_reference(erp_app, erp_client)
     resp = _rpc(erp_client, "deleteBOM", [product_id, token], mutation=True)
     body = resp.get_json()
     assert body["success"] is False
+
+
+# ── Items Master narration/unit sync (GAS 8e473db) ──────────────────────
+# save_production/save_production_sheet stamp each component's narration
+# fresh from Items Master at every save (_with_master_narration), and
+# refreshProductionComponentsFromItemsMaster catches up every
+# already-logged lot in one pass.
+
+
+def test_save_production_stamps_narration_from_items_master(erp_client):
+    item = _unique_name("NarrationStampItem")
+    _rpc(erp_client, "saveItem", [{"itemName": item, "itemNarration": "Master narration"}], mutation=True)
+
+    _payload, process_id = _save_process(erp_client)
+    resp = _rpc(
+        erp_client,
+        "saveProduction",
+        [{"processId": process_id, "assignedTo": "Worker A", "qty": 5, "componentsConsumed": [_item_component(item_name=item)]}],
+        mutation=True,
+    )
+    body = resp.get_json()
+    assert body["success"] is True, body["message"]
+    lot_number = body["data"]["lotNumber"]
+
+    listed = _rpc(erp_client, "getProductionData").get_json()["data"]
+    match = next(r for r in listed if r["lotNumber"] == lot_number)
+    assert match["componentsConsumed"][0]["narration"] == "Master narration"
+
+
+def test_save_production_leaves_narration_when_items_master_has_none(erp_client):
+    """An item with no Items Master narration (or unknown to Items Master
+    entirely) must not have its component narration touched -- see
+    _with_master_narration's non-blank-wins semantics.
+    """
+    item = _unique_name("NoNarrationItem")
+
+    _payload, process_id = _save_process(erp_client)
+    resp = _rpc(
+        erp_client,
+        "saveProduction",
+        [{"processId": process_id, "assignedTo": "Worker A", "qty": 5, "componentsConsumed": [_item_component(item_name=item)]}],
+        mutation=True,
+    )
+    body = resp.get_json()
+    assert body["success"] is True, body["message"]
+    lot_number = body["data"]["lotNumber"]
+
+    listed = _rpc(erp_client, "getProductionData").get_json()["data"]
+    match = next(r for r in listed if r["lotNumber"] == lot_number)
+    assert match["componentsConsumed"][0]["narration"] == ""
+
+
+def test_refresh_production_components_from_items_master_backfills_stale_lot(erp_client):
+    """A lot logged BEFORE an item's Items Master narration/casing was
+    corrected keeps its stale stored data until explicitly refreshed --
+    this RPC is that one-off catch-up pass.
+    """
+    original_name = _unique_name("stalecaseitem")
+    _rpc(erp_client, "saveItem", [{"itemName": original_name}], mutation=True)
+
+    _payload, process_id = _save_process(erp_client)
+    resp = _rpc(
+        erp_client,
+        "saveProduction",
+        [{"processId": process_id, "assignedTo": "Worker A", "qty": 5, "componentsConsumed": [_item_component(item_name=original_name)]}],
+        mutation=True,
+    )
+    lot_number = resp.get_json()["data"]["lotNumber"]
+
+    # Corrected AFTER the lot was logged -- casing fix + narration added.
+    corrected_name = original_name.upper()
+    _rpc(
+        erp_client,
+        "saveItem",
+        [{"itemName": corrected_name, "itemNarration": "Corrected desc", "originalName": original_name, "originalSize": ""}],
+        mutation=True,
+    )
+
+    # Still stale before the refresh runs.
+    before = next(r for r in _rpc(erp_client, "getProductionData").get_json()["data"] if r["lotNumber"] == lot_number)
+    assert before["componentsConsumed"][0]["narration"] == ""
+
+    refresh = _rpc(erp_client, "refreshProductionComponentsFromItemsMaster", mutation=True)
+    refresh_body = refresh.get_json()
+    assert refresh_body["success"] is True, refresh_body["message"]
+    assert refresh_body["data"]["fieldsUpdated"] > 0
+
+    after = next(r for r in _rpc(erp_client, "getProductionData").get_json()["data"] if r["lotNumber"] == lot_number)
+    assert after["componentsConsumed"][0]["itemName"] == corrected_name
+    assert after["componentsConsumed"][0]["narration"] == "Corrected desc"
+
+
+def test_refresh_production_components_is_idempotent(erp_client):
+    """A second run right after the first, with nothing changed in Items
+    Master in between, must not touch the same lot again -- a component
+    already fully in sync is left untouched.
+
+    Note the first run is NOT expected to be a no-op here: unlike
+    narration (stamped fresh on every save via _with_master_narration),
+    `unit` is only ever stamped by this explicit refresh pass (see 3f34519
+    -- save_production leaves a blank stored unit alone, since blank
+    already means "this item's Base Unit" until refreshed to an explicit
+    value). So a just-saved lot's blank unit legitimately gets touched
+    once; idempotency means the SECOND run finds nothing left to do.
+    """
+    item = _unique_name("IdempotentRefreshItem")
+    _rpc(erp_client, "saveItem", [{"itemName": item, "itemNarration": "Stable desc"}], mutation=True)
+
+    _payload, process_id = _save_process(erp_client)
+    resp = _rpc(
+        erp_client,
+        "saveProduction",
+        [{"processId": process_id, "assignedTo": "Worker A", "qty": 5, "componentsConsumed": [_item_component(item_name=item)]}],
+        mutation=True,
+    )
+    lot_number = resp.get_json()["data"]["lotNumber"]
+
+    first = _rpc(erp_client, "refreshProductionComponentsFromItemsMaster", mutation=True).get_json()
+    assert first["success"] is True
+
+    second = _rpc(erp_client, "refreshProductionComponentsFromItemsMaster", mutation=True).get_json()
+    assert second["success"] is True
+    assert not any(d.startswith(f"{lot_number}:") for d in second["data"]["details"])
+
+
+def test_refresh_production_components_resyncs_pool_row_coincidentally_matching_an_item(erp_client):
+    """Unlike the identity-rewriting rename cascade
+    (backfill_production_consumed_item_refs, which must skip POOL rows
+    since it repoints IDENTITY), this refresh is deliberately NOT
+    sourceType-filtered: it only ever touches metadata (narration/unit/
+    casing) for the SAME name+size, and a POOL row whose name happens to
+    coincide with a real Items Master item is the same physical item --
+    which is how the display layer already resolves it too.
+    """
+    upstream_payload, upstream_id, downstream_payload, downstream_id = _make_color_process(erp_client)
+    pool_item_name = upstream_payload["outputItemName"]
+
+    resp = _rpc(
+        erp_client,
+        "saveProduction",
+        [
+            {
+                "processId": downstream_id,
+                "assignedTo": "Worker A",
+                "colorBreakdown": [{"color": "Black", "qty": 5, "isCustom": True}],
+                "componentsConsumed": [{"itemName": pool_item_name, "qty": 1, "sourceType": "POOL", "colorGroup": "COMMON"}],
+            }
+        ],
+        mutation=True,
+    )
+    lot_number = resp.get_json()["data"]["lotNumber"]
+
+    # An Items Master row registered AFTER the lot, coincidentally sharing
+    # the pool item's exact name+size, with a corrected casing + narration.
+    recased_name = pool_item_name.upper()
+    _rpc(erp_client, "saveItem", [{"itemName": recased_name, "itemNarration": "Pool metadata sync"}], mutation=True)
+
+    refresh = _rpc(erp_client, "refreshProductionComponentsFromItemsMaster", mutation=True)
+    assert refresh.get_json()["success"] is True
+
+    listed = _rpc(erp_client, "getProductionData").get_json()["data"]
+    match = next(r for r in listed if r["lotNumber"] == lot_number)
+    assert match["componentsConsumed"][0]["itemName"] == recased_name
+    assert match["componentsConsumed"][0]["narration"] == "Pool metadata sync"

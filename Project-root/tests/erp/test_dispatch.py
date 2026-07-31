@@ -29,7 +29,7 @@ def _unique_name(prefix: str) -> str:
 def _save_process(client, **overrides):
     payload = {
         "processName": _unique_name("Process"),
-        "lotPrefix": uuid.uuid4().hex[:5].upper(),
+        "lotPrefix": uuid.uuid4().hex[:6].upper(),
         "outputItemName": _unique_name("Output"),
         "sequence": 1,
         "isFinalStage": False,
@@ -507,3 +507,155 @@ def test_bom_product_delete_blocked_by_dispatch_reference(erp_app, erp_client):
     resp = _rpc(erp_client, "deleteBOM", [product_id, token], mutation=True)
     body = resp.get_json()
     assert body["success"] is False
+
+
+# ── Dispatch Differentiator (migration 021) ────────────────────────────
+# A final-stage process names ONE color axis whose value identifies the
+# product on Ready to Dispatch, so the list shows a row per value of it
+# ("<Output Item> / <value>") instead of a single combined row.
+
+
+def _differentiated_setup(erp_app, erp_client, colors=("Black", "Blue")):
+    """Final-stage process whose Dispatch Differentiator is the upstream
+    pool axis, with one Completed lot split across `colors`. Returns
+    (product_name, product_id, axis_label, qty_by_color).
+    """
+    token = _get_bom_token(erp_app, erp_client)
+    product_name, product_id = _save_bom_product(erp_client, token)
+
+    upstream_payload, upstream_id = _save_process(erp_client)
+    for color in colors:
+        _rpc(erp_client, "saveWarehousePoolOpening", [{"processId": upstream_id, "qty": 20, "color": color}], mutation=True)
+
+    # A pool axis is labelled by the pool item name driving it -- see
+    # process_service._compute_color_axes_for_process.
+    axis_label = upstream_payload["outputItemName"]
+    _downstream_payload, downstream_id = _save_process(
+        erp_client,
+        isFinalStage=True,
+        dispatchDifferentiator=axis_label,
+        components=[{"itemName": axis_label, "qtyPerUnit": 1, "sourceType": "POOL", "colorGroup": "COMMON"}],
+    )
+
+    qty_by_color = {color: 3 + i for i, color in enumerate(colors)}
+    lot = _complete_production_lot(
+        erp_client,
+        downstream_id,
+        product_id,
+        qty=0,  # derived from colorBreakdown for a color process
+        colorBreakdown=[{"color": c, "qty": q} for c, q in qty_by_color.items()],
+    )
+    assert lot["success"] is True
+    return product_name, product_id, axis_label, qty_by_color
+
+
+def test_ready_to_dispatch_splits_rows_by_differentiator(erp_app, erp_client):
+    _name, product_id, _axis, qty_by_color = _differentiated_setup(erp_app, erp_client)
+
+    listed = _rpc(erp_client, "getReadyToDispatchData").get_json()["data"]
+    rows = [r for r in listed if r["productId"] == product_id]
+
+    # One row per differentiator value, not one aggregate row.
+    assert len(rows) == len(qty_by_color)
+    assert {r["differentiator"] for r in rows} == set(qty_by_color)
+    # productId is deliberately NOT unique across variants -- `key` is.
+    assert len({r["key"] for r in rows}) == len(rows)
+    for row in rows:
+        assert row["productName"].endswith(f" / {row['differentiator']}")
+        assert row["readyQty"] == qty_by_color[row["differentiator"]]
+
+
+def test_ready_to_dispatch_reports_color_breakdown(erp_app, erp_client):
+    _name, product_id, _axis, qty_by_color = _differentiated_setup(erp_app, erp_client)
+
+    listed = _rpc(erp_client, "getReadyToDispatchData").get_json()["data"]
+    row = next(r for r in listed if r["productId"] == product_id and r["differentiator"] == "Black")
+
+    breakdown = row["colorBreakdown"]
+    assert breakdown, "colorBreakdown must carry each contributing color's own numbers"
+    assert sum(c["readyQty"] for c in breakdown) == qty_by_color["Black"]
+    assert all("Black" in c["color"] for c in breakdown)
+
+
+def test_save_dispatch_allowed_when_differentiator_configured(erp_app, erp_client):
+    """Regression: a differentiator splits the map key into
+    '<baseKey>||<value>', so saveDispatch's literal lookup of the bare
+    Product Tag found nothing and read availability as 0 -- rejecting EVERY
+    dispatch of a differentiated product with "0 units ready" even though
+    Ready to Dispatch listed it as available. _ready_available_qty_for pools
+    the bare key with every variant of it.
+    """
+    product_name, product_id, _axis, qty_by_color = _differentiated_setup(erp_app, erp_client)
+    total_ready = sum(qty_by_color.values())
+
+    resp = _rpc(
+        erp_client,
+        "saveDispatch",
+        [{"productId": product_id, "productName": product_name, "qty": total_ready}],
+        mutation=True,
+    )
+    body = resp.get_json()
+    assert body["success"] is True, body["message"]
+
+
+def test_save_dispatch_guard_still_caps_at_pooled_total(erp_app, erp_client):
+    """The pooled lookup is not a loosening of the guard: one unit beyond
+    the combined availability of every variant is still rejected.
+    """
+    product_name, product_id, _axis, qty_by_color = _differentiated_setup(erp_app, erp_client)
+
+    resp = _rpc(
+        erp_client,
+        "saveDispatch",
+        [{"productId": product_id, "productName": product_name, "qty": sum(qty_by_color.values()) + 1}],
+        mutation=True,
+    )
+    body = resp.get_json()
+    assert body["success"] is False
+    assert "Ready to Dispatch" in body["message"]
+
+
+def test_ready_to_dispatch_stays_aggregate_without_differentiator(erp_app, erp_client):
+    """Blank Dispatch Differentiator (every pre-existing process) keeps the
+    original one-row-per-product behavior.
+    """
+    token = _get_bom_token(erp_app, erp_client)
+    _product_name, product_id = _save_bom_product(erp_client, token)
+
+    upstream_payload, upstream_id = _save_process(erp_client)
+    for color in ("Black", "Blue"):
+        _rpc(erp_client, "saveWarehousePoolOpening", [{"processId": upstream_id, "qty": 20, "color": color}], mutation=True)
+
+    _payload, downstream_id = _save_process(
+        erp_client,
+        isFinalStage=True,
+        components=[{"itemName": upstream_payload["outputItemName"], "qtyPerUnit": 1, "sourceType": "POOL", "colorGroup": "COMMON"}],
+    )
+    _complete_production_lot(
+        erp_client, downstream_id, product_id, qty=0,
+        colorBreakdown=[{"color": "Black", "qty": 3}, {"color": "Blue", "qty": 4}],
+    )
+
+    listed = _rpc(erp_client, "getReadyToDispatchData").get_json()["data"]
+    rows = [r for r in listed if r["productId"] == product_id]
+    assert len(rows) == 1
+    assert rows[0]["differentiator"] == ""
+    assert rows[0]["readyQty"] == 7
+
+
+def test_process_round_trips_dispatch_differentiator(erp_client):
+    payload, process_id = _save_process(erp_client, isFinalStage=True, dispatchDifferentiator="Frame Color")
+
+    listed = _rpc(erp_client, "getProcessData").get_json()["data"]
+    saved = next(p for p in listed if p["processId"] == process_id)
+    assert saved["dispatchDifferentiator"] == "Frame Color"
+
+    # And it survives an edit that doesn't mention it being cleared.
+    _rpc(
+        erp_client,
+        "saveProcess",
+        [{**payload, "processId": process_id, "dispatchDifferentiator": ""}],
+        mutation=True,
+    )
+    listed = _rpc(erp_client, "getProcessData").get_json()["data"]
+    assert next(p for p in listed if p["processId"] == process_id)["dispatchDifferentiator"] == ""

@@ -99,7 +99,7 @@ def test_color_rename_updates_one_token_in_a_composite_process_component(erp_cli
 
     process_payload = {
         "processName": _unique_name("ComboProcess"),
-        "lotPrefix": uuid.uuid4().hex[:5].upper(),
+        "lotPrefix": uuid.uuid4().hex[:6].upper(),
         "outputItemName": _unique_name("ComboOutput"),
         "sequence": 1,
         "isFinalStage": False,

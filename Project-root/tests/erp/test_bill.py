@@ -389,3 +389,204 @@ def test_item_rename_cascades_into_bill_lines(erp_client):
     listed = _rpc(erp_client, "getBillData").get_json()["data"]
     match = next(b for b in listed if b["billNumber"] == bill_number and b["vendor"] == vendor)
     assert match["items"][0]["name"] == new_item
+
+
+# ── Labor Job bills (GAS c63771d / 9eba5a8) ─────────────────────────────
+# billType 'LABOR' lines carry a Process (server-resolved, item_name forced
+# to that process's Output Item Name) and an optional Color, plus
+# header-level Issuing Party / Manufacturing Vendor.
+
+
+def _save_process(client, **overrides):
+    payload = {
+        "processName": _unique_name("Process"),
+        "lotPrefix": uuid.uuid4().hex[:6].upper(),
+        "outputItemName": _unique_name("Output"),
+        "sequence": 1,
+        "isFinalStage": False,
+        "active": True,
+        "remarks": "",
+        "processType": "",
+        "primaryColorAxis": "",
+        "components": [],
+        "colorLinks": [],
+    }
+    payload.update(overrides)
+    resp = _rpc(client, "saveProcess", [payload], mutation=True)
+    body = resp.get_json()
+    assert body["success"] is True, body["message"]
+    return payload, body["data"]["processId"]
+
+
+def test_save_labor_bill_resolves_process_and_forces_output_item_name(erp_client):
+    process_payload, _process_id = _save_process(erp_client)
+    contractor = _unique_name("Contractor")
+    bill_number = _unique_name("LABOR")
+
+    resp = _rpc(
+        erp_client,
+        "saveBill",
+        [
+            {
+                "billType": "LABOR",
+                "vendor": contractor,
+                "billNumber": bill_number,
+                "billDate": "01/01/2026",
+                "issuingParty": "Issuing Co",
+                "manufacturingVendor": "Mfg Co",
+                "items": [{"processName": process_payload["processName"], "color": "Black", "qty": 10, "price": 5}],
+            }
+        ],
+        mutation=True,
+    )
+    body = resp.get_json()
+    assert body["success"] is True, body["message"]
+
+    bill = body["data"]["bill"]
+    assert bill["billType"] == "LABOR"
+    assert bill["issuingParty"] == "Issuing Co"
+    assert bill["manufacturingVendor"] == "Mfg Co"
+    line = bill["items"][0]
+    # item_name is forced to the process's own Output Item Name, never
+    # whatever the client sent -- same "server owns the canonical value"
+    # rule save_production applies.
+    assert line["name"] == process_payload["outputItemName"]
+    assert line["processName"] == process_payload["processName"]
+    assert line["color"] == "Black"
+    assert line["billType"] == "LABOR"
+
+
+def test_save_labor_bill_rejects_unrecognized_process(erp_client):
+    resp = _rpc(
+        erp_client,
+        "saveBill",
+        [
+            {
+                "billType": "LABOR",
+                "vendor": _unique_name("Contractor"),
+                "billNumber": _unique_name("LABOR"),
+                "billDate": "01/01/2026",
+                "items": [{"processName": "Not A Real Process", "qty": 1, "price": 1}],
+            }
+        ],
+        mutation=True,
+    )
+    body = resp.get_json()
+    assert body["success"] is False
+    assert "not a recognized active Process" in body["message"]
+
+
+def test_save_labor_bill_rejects_inactive_process(erp_client):
+    process_payload, _process_id = _save_process(erp_client, active=False)
+    resp = _rpc(
+        erp_client,
+        "saveBill",
+        [
+            {
+                "billType": "LABOR",
+                "vendor": _unique_name("Contractor"),
+                "billNumber": _unique_name("LABOR"),
+                "billDate": "01/01/2026",
+                "items": [{"processName": process_payload["processName"], "qty": 1, "price": 1}],
+            }
+        ],
+        mutation=True,
+    )
+    body = resp.get_json()
+    assert body["success"] is False
+    assert "not a recognized active Process" in body["message"]
+
+
+def test_goods_bill_defaults_stay_unaffected_by_labor_columns(erp_client):
+    vendor = _unique_name("Vendor")
+    bill_number = _unique_name("GOODS")
+    item = _unique_name("Item")
+
+    resp = _rpc(
+        erp_client,
+        "saveBill",
+        [{"vendor": vendor, "billNumber": bill_number, "billDate": "01/01/2026", "items": [{"name": item, "qty": 1, "price": 1}]}],
+        mutation=True,
+    )
+    bill = resp.get_json()["data"]["bill"]
+    assert bill["billType"] == "GOODS"
+    assert bill["issuingParty"] == ""
+    assert bill["manufacturingVendor"] == ""
+    line = bill["items"][0]
+    assert line["billType"] == "GOODS"
+    assert line["processName"] == ""
+    assert line["color"] == ""
+
+
+def test_labor_bill_survives_edit_round_trip(erp_client):
+    process_payload, _process_id = _save_process(erp_client)
+    contractor = _unique_name("Contractor")
+    bill_number = _unique_name("LABOR")
+
+    _rpc(
+        erp_client,
+        "saveBill",
+        [
+            {
+                "billType": "LABOR",
+                "vendor": contractor,
+                "billNumber": bill_number,
+                "billDate": "01/01/2026",
+                "issuingParty": "Original Issuer",
+                "items": [{"processName": process_payload["processName"], "color": "Blue", "qty": 5, "price": 2}],
+            }
+        ],
+        mutation=True,
+    )
+
+    edit = _rpc(
+        erp_client,
+        "saveBill",
+        [
+            {
+                "existingVendor": contractor,
+                "existingBillNumber": bill_number,
+                "billType": "LABOR",
+                "vendor": contractor,
+                "billNumber": bill_number,
+                "billDate": "01/01/2026",
+                "issuingParty": "Updated Issuer",
+                "items": [{"processName": process_payload["processName"], "color": "Red", "qty": 8, "price": 3}],
+            }
+        ],
+        mutation=True,
+    )
+    body = edit.get_json()
+    assert body["success"] is True, body["message"]
+    bill = body["data"]["bill"]
+    assert bill["issuingParty"] == "Updated Issuer"
+    assert bill["items"][0]["color"] == "Red"
+    assert bill["items"][0]["qty"] == 8
+
+
+def test_bill_search_haystack_covers_labor_fields(erp_client):
+    """getBillData's list is what the client search-filters -- process
+    name and color must be retrievable so App.Bill.applyFilters's haystack
+    (which includes them) actually has something to match against.
+    """
+    process_payload, _process_id = _save_process(erp_client)
+    bill_number = _unique_name("LABOR")
+    _rpc(
+        erp_client,
+        "saveBill",
+        [
+            {
+                "billType": "LABOR",
+                "vendor": _unique_name("Contractor"),
+                "billNumber": bill_number,
+                "billDate": "01/01/2026",
+                "items": [{"processName": process_payload["processName"], "color": "Kraft", "qty": 1, "price": 1}],
+            }
+        ],
+        mutation=True,
+    )
+
+    listed = _rpc(erp_client, "getBillData").get_json()["data"]
+    match = next(b for b in listed if b["billNumber"] == bill_number)
+    assert match["items"][0]["processName"] == process_payload["processName"]
+    assert match["items"][0]["color"] == "Kraft"

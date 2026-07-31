@@ -941,16 +941,19 @@ App.Item = {
         <h6 style="color:${BRAND};font-size:11px;font-weight:700;margin:0 0 8px 0;text-transform:uppercase;letter-spacing:0.5px;-webkit-print-color-adjust:exact;print-color-adjust:exact;">Transaction History (POs, Bills &amp; Production Consumption)</h6>
         <table style="width:100%;border-collapse:collapse;font-size:11px;">
           <thead><tr style="background-color:${BRAND};color:#fff;font-weight:700;-webkit-print-color-adjust:exact;print-color-adjust:exact;">
-            <th style="padding:6px;border:1px solid #bbb;text-align:left;width:9%;">Date</th>
-            <th style="padding:6px;border:1px solid #bbb;text-align:left;width:11%;">Type</th>
+            <!-- These 10 must add up to 100%. They summed to 104%, which the
+                 renderer silently rescales, so no column got the share it
+                 declared. Mirrored in print.html's static template. -->
+            <th style="padding:6px;border:1px solid #bbb;text-align:left;width:8%;">Date</th>
+            <th style="padding:6px;border:1px solid #bbb;text-align:left;width:10%;">Type</th>
             <th style="padding:6px;border:1px solid #bbb;text-align:left;width:10%;">Ref #</th>
             <th style="padding:6px;border:1px solid #bbb;text-align:left;width:16%;">Vendor / Source</th>
-            <th style="padding:6px;border:1px solid #bbb;text-align:left;width:9%;">Size</th>
+            <th style="padding:6px;border:1px solid #bbb;text-align:left;width:8%;">Size</th>
             <th style="padding:6px;border:1px solid #bbb;text-align:left;width:13%;">Narration</th>
             <th style="padding:6px;border:1px solid #bbb;text-align:center;width:9%;">Order Qty</th>
             <th style="padding:6px;border:1px solid #bbb;text-align:center;width:9%;">Incoming Qty</th>
             <th style="padding:6px;border:1px solid #bbb;text-align:center;width:9%;">Outgoing Qty</th>
-            <th style="padding:6px;border:1px solid #bbb;text-align:right;width:9%;">Price</th>
+            <th style="padding:6px;border:1px solid #bbb;text-align:right;width:8%;">Price</th>
           </tr></thead>
           <tbody>${histRows}</tbody>
         </table>
@@ -975,6 +978,24 @@ App.Item = {
     const names = [...new Set(items.map(i => i.name))];
 
     App.Print.triggerBulk(names, name => this.buildItemLedgerPrintPageHtml(name), 'Item_Ledgers_Selected');
+  },
+
+  async bulkDownloadPDF() {
+    const selectedKeys = App.State.selectedItems;
+    if (!selectedKeys.length) {
+      App.Utils.showToast('No items selected.', true);
+      return;
+    }
+
+    await this.ensureLedgerSourceDataLoaded();
+
+    const items = App.State.globalItems.filter(i => App.Selection.isSelected(selectedKeys, this.itemKey(i)));
+    const names = [...new Set(items.map(i => i.name))];
+
+    App.Print.renderBulkPages(names, name => this.buildItemLedgerPrintPageHtml(name));
+    const filename = App.Print.bulkPdfFilename('Item_Ledgers', names.length);
+    const ok = await App.Print.downloadElementAsPDF('print-bulk-container', filename);
+    if (ok) App.Utils.showToast(`${names.length} item ledger(s) exported to PDF!`, false);
   },
 
   openCreateModal() {
@@ -2045,6 +2066,7 @@ App.Item = {
     if (mergeBtn) mergeBtn.classList.toggle('d-none', count !== 2);
 
     App.Selection.updateButton('btnBulkPrintItems', count, '<i class="bi bi-printer"></i> Print Selected');
+    App.Selection.updateButton('btnBulkDownloadPdfItems', count, '<i class="bi bi-file-earmark-pdf"></i> Download PDFs');
   },
 
   async mergeSelected() {

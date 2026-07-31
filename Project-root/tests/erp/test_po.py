@@ -566,3 +566,88 @@ def test_suggest_po_allocations_shared_candidate_not_double_allocated(erp_client
     # Only 2 units left after the first row claimed 3 of the 5 available.
     assert second_row["allocations"] == [{"poNumber": po_number, "qty": 2}]
     assert second_row["unmatchedQty"] == 1
+
+
+# ── PO/Bill line narration -> Items Master Remarks redirect (GAS 7da086a) ──
+
+
+def test_po_line_narration_seeds_narration_on_new_item(erp_client):
+    """A brand-new item auto-created by a PO line still seeds its
+    Narration from the line -- it would otherwise have none at all for
+    Production to resolve against.
+    """
+    vendor = _unique_name("NarrationSeedVendor")
+    item = _unique_name("NarrationSeedItem")
+
+    _rpc(
+        erp_client,
+        "savePO",
+        [{"vendor": vendor, "poDate": "01/01/2026", "items": [{"name": item, "narration": "Initial desc", "qty": 5, "price": 5}]}],
+        mutation=True,
+    )
+
+    listed = _rpc(erp_client, "getItemsData").get_json()["data"]
+    match = next(i for i in listed if i["name"] == item)
+    assert match["narration"] == "Initial desc"
+    assert match["remarks"] == ""
+
+
+def test_po_line_narration_overwrites_remarks_not_narration_on_existing_item(erp_client):
+    """A later PO line's narration for an item that already exists
+    overwrites Items Master REMARKS (so Remarks tracks the latest
+    purchase-side description) but leaves NARRATION -- the
+    hand-maintained note Production prints and resolves against --
+    untouched.
+    """
+    vendor = _unique_name("NarrationRedirectVendor")
+    item = _unique_name("NarrationRedirectItem")
+
+    _rpc(
+        erp_client,
+        "savePO",
+        [{"vendor": vendor, "poDate": "01/01/2026", "items": [{"name": item, "narration": "First desc", "qty": 5, "price": 5}]}],
+        mutation=True,
+    )
+    original = next(i for i in _rpc(erp_client, "getItemsData").get_json()["data"] if i["name"] == item)
+    assert original["narration"] == "First desc"
+
+    _rpc(
+        erp_client,
+        "savePO",
+        [{"vendor": vendor, "poDate": "02/01/2026", "items": [{"name": item, "narration": "Updated vendor desc", "qty": 3, "price": 5}]}],
+        mutation=True,
+    )
+
+    updated = next(i for i in _rpc(erp_client, "getItemsData").get_json()["data"] if i["name"] == item)
+    assert updated["remarks"] == "Updated vendor desc"
+    assert updated["narration"] == "First desc", "hand-maintained Narration must survive a later purchase description"
+
+
+def test_bill_line_narration_also_redirects_to_remarks(erp_client):
+    """The redirect applies to Bill lines too -- both PO and Bill share
+    the autoExtractFromPoOrBill hook (items_service._auto_extract_item).
+    """
+    vendor = _unique_name("BillNarrationVendor")
+    item = _unique_name("BillNarrationItem")
+
+    _rpc(
+        erp_client,
+        "saveBill",
+        [{"vendor": vendor, "billNumber": _unique_name("BILL"), "billDate": "01/01/2026", "items": [{"name": item, "narration": "Bill desc", "qty": 2, "price": 5}]}],
+        mutation=True,
+    )
+
+    listed = _rpc(erp_client, "getItemsData").get_json()["data"]
+    match = next(i for i in listed if i["name"] == item)
+    assert match["narration"] == "Bill desc"
+    assert match["remarks"] == ""
+
+    _rpc(
+        erp_client,
+        "saveBill",
+        [{"vendor": vendor, "billNumber": _unique_name("BILL"), "billDate": "02/01/2026", "items": [{"name": item, "narration": "Revised desc", "qty": 2, "price": 5}]}],
+        mutation=True,
+    )
+    updated = next(i for i in _rpc(erp_client, "getItemsData").get_json()["data"] if i["name"] == item)
+    assert updated["remarks"] == "Revised desc"
+    assert updated["narration"] == "Bill desc"

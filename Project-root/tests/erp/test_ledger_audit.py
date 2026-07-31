@@ -1,10 +1,14 @@
 """Internal ledger audit tests, ported behavior from Apps_Script/module_audit.js.
 
-Not RPC-exposed (matches source's "deliberately NOT wired into the web app
-UI" scope) -- compute_internal_ledger_audit_findings()/
-run_internal_ledger_audit() are called directly here, inside erp_app's app
-context, the same way test_production.py calls bom_service.set_bom_password
-directly for its own backend-only setup.
+The audit computation/run itself is not RPC-exposed (matches source's
+"deliberately NOT wired into the web app UI" scope) --
+compute_internal_ledger_audit_findings()/run_internal_ledger_audit() are
+called directly here, inside erp_app's app context, the same way
+test_production.py calls bom_service.set_bom_password directly for its own
+backend-only setup. get_recent_notification_logs (GAS e57fd9c's
+getRecentNotificationLogs) IS RPC-exposed -- it's the read side that feeds
+the web app's notification bell -- and is exercised via _rpc below like any
+other endpoint.
 
 erp_client's underlying database persists across the whole test session (no
 per-test truncation -- see conftest.py), so other tests may have created
@@ -223,3 +227,40 @@ def test_run_internal_ledger_audit_skips_when_lock_already_held(erp_app):
     with erp_app.app_context():
         result = ledger_audit_service.run_internal_ledger_audit()
     assert result.get("skipped") is not True
+
+
+def test_get_recent_notification_logs_returns_success_envelope(erp_client):
+    resp = _rpc(erp_client, "getRecentNotificationLogs")
+    assert resp.status_code == 200
+    body = resp.get_json()
+    assert body["success"] is True
+    assert isinstance(body["data"], list)
+
+
+def test_get_recent_notification_logs_surfaces_a_written_finding(erp_app, erp_client):
+    marker = _unique_name("NotifyMarker")
+    with erp_app.app_context(), database.get_conn() as (_conn, cur):
+        ledger_audit_service._log(cur, "LEDGER_AUDIT_FINDING", marker, f"over_billed_po_line: {marker} test finding", "WARNING")
+
+    listed = _rpc(erp_client, "getRecentNotificationLogs").get_json()["data"]
+    match = next((row for row in listed if row["recordId"] == marker), None)
+    assert match is not None, "just-written finding must appear in the recent-logs feed"
+    assert match["action"] == "LEDGER_AUDIT_FINDING"
+    assert match["status"] == "WARNING"
+    assert marker in match["details"]
+    # `key` is the client's persisted dedupe key -- must be stable and
+    # include the identifying fields, not just an opaque id.
+    assert match["key"] == f"{match['timestamp']}|{match['action']}|{match['recordId']}"
+
+
+def test_get_recent_notification_logs_excludes_success_status(erp_app, erp_client):
+    """Only ERROR/WARNING-equivalent rows are notification-worthy -- a
+    SUCCESS summary row (written by every completed audit run) must not
+    flood the bell.
+    """
+    marker = _unique_name("SuccessMarker")
+    with erp_app.app_context(), database.get_conn() as (_conn, cur):
+        ledger_audit_service._log(cur, "LEDGER_AUDIT_SUMMARY", marker, "all clear", "SUCCESS")
+
+    listed = _rpc(erp_client, "getRecentNotificationLogs").get_json()["data"]
+    assert not any(row["recordId"] == marker for row in listed)
