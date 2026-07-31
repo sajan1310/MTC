@@ -42,6 +42,7 @@ from flask_cors import CORS
 from flask_limiter import Limiter
 from flask_limiter.util import get_remote_address
 from flask_login import LoginManager
+from flask_mail import Mail
 from flask_wtf import CSRFProtect
 from flask_wtf.csrf import CSRFError
 from werkzeug.middleware.proxy_fix import ProxyFix
@@ -49,6 +50,7 @@ from werkzeug.middleware.proxy_fix import ProxyFix
 # Shared extension instances (do not reassign these later)
 csrf = CSRFProtect()
 login_manager = LoginManager()
+mail = Mail()
 # Module-level limiter instance; configure storage and defaults via app.config
 # and call limiter.init_app(app) exactly once in create_app.
 limiter = Limiter(key_func=get_remote_address)
@@ -257,6 +259,7 @@ def create_app(config_name: str | None = None) -> Flask:
     csrf.init_app(app)
     login_manager.init_app(app)
     login_manager.login_view = "auth.login"
+    mail.init_app(app)
 
     # Configure rate limiter via app.config before init_app
     # Keep defaults in a config key so we don't reassign limiter objects
@@ -583,5 +586,6 @@ __all__ = [
     "get_or_create_user",
     "csrf",
     "login_manager",
+    "mail",
     "limiter",
 ]

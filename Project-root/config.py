@@ -36,6 +36,17 @@ class Config:
     )
     # Example: 'redis://:password@localhost:6379/0?max_connections=50&decode_responses=True'
 
+    # Outbound email (password-reset links). MAIL_SERVER unset means "no SMTP
+    # configured" -- app/auth/routes.py falls back to logging the reset link
+    # instead of emailing it (and, in dev/testing only, returning it in the
+    # API response) rather than failing the request.
+    MAIL_SERVER = os.getenv("MAIL_SERVER")
+    MAIL_PORT = int(os.getenv("MAIL_PORT", 587))
+    MAIL_USE_TLS = os.getenv("MAIL_USE_TLS", "true").lower() not in ("false", "0", "")
+    MAIL_USERNAME = os.getenv("MAIL_USERNAME")
+    MAIL_PASSWORD = os.getenv("MAIL_PASSWORD")
+    MAIL_DEFAULT_SENDER = os.getenv("MAIL_DEFAULT_SENDER", MAIL_USERNAME)
+
     # Request body size limit
     MAX_CONTENT_LENGTH = 16 * 1024 * 1024  # 16MB
 

@@ -5,63 +5,8 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>Create Account - MTC App</title>
     <meta name="csrf-token" content="{{ csrf_token() }}">
-    <link rel="stylesheet" href="{{ url_for('static', filename='styles.css') }}">
-    <style>
-        .login-page {
-            min-height: 100vh;
-            display: flex;
-            align-items: center;
-            justify-content: center;
-            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
-            padding: 2rem;
-        }
-        .login-container {
-            width: 100%;
-            max-width: 440px;
-            background: var(--card-bg);
-            border: 1px solid var(--border-color);
-            border-radius: var(--border-radius-xl);
-            box-shadow: var(--shadow-2xl);
-            padding: 2.5rem;
-        }
-        .login-header {
-            text-align: center;
-            margin-bottom: 2rem;
-        }
-        .login-title {
-            font-size: 1.75rem;
-            font-weight: 700;
-            color: var(--text-color);
-            margin-bottom: 0.5rem;
-        }
-        .login-subtitle {
-            color: var(--text-muted);
-            font-size: 0.9375rem;
-        }
-        .error-text {
-            color: var(--danger-color);
-            font-size: 0.875rem;
-            margin-top: 0.5rem;
-            display: none;
-        }
-        .error-text:not(:empty) {
-            display: block;
-        }
-        .back-link {
-            display: inline-flex;
-            align-items: center;
-            gap: 0.5rem;
-            color: var(--primary-color);
-            text-decoration: none;
-            font-size: 0.9375rem;
-            font-weight: 500;
-            margin-bottom: 1rem;
-            transition: all var(--transition-fast);
-        }
-        .back-link:hover {
-            gap: 0.75rem;
-        }
-    </style>
+    <link rel="stylesheet" href="{{ url_for('static', filename='styles.css') }}?v={{ config.VERSION }}">
+    <link rel="stylesheet" href="{{ url_for('static', filename='css/login.css') }}?v={{ config.VERSION }}">
 </head>
 <body class="login-page">
     <script>(function(){if(localStorage.getItem('theme')==='dark')document.body.classList.add('dark-mode');})()</script>
@@ -73,7 +18,7 @@
                 </svg>
                 Back to login
             </a>
-            <img src="{{ url_for('static', filename='img/Final_Logo.png') }}" alt="MTC App Logo" width="64" height="64" style="margin: 1rem 0;">
+            <img src="{{ url_for('static', filename='img/Final_Logo.png') }}" alt="MTC App Logo" class="logo-img" width="64" height="64">
             <h1 class="login-title">Create your account</h1>
             <p class="login-subtitle">Enter your details to get started</p>
         </div>
@@ -87,16 +32,18 @@
                 <label for="email">Email <span style="color: var(--danger-color);">*</span></label>
                 <input type="email" id="email" name="email" class="form-control" placeholder="you@company.com" required>
             </div>
-            <div class="form-group">
+            <div class="form-group password-row">
                 <label for="password">Password <span style="color: var(--danger-color);">*</span></label>
                 <input type="password" id="password" name="password" class="form-control" placeholder="••••••••" required>
-                <small class="form-text" style="display:block; margin-top:0.5rem;">Use at least 8 characters</small>
+                <button type="button" class="toggle-password" data-toggle-password="password" aria-label="Show password">Show</button>
+                <small class="form-text" style="display:block; margin-top:0.5rem;">At least 8 characters, with uppercase, lowercase, a number, and a symbol</small>
             </div>
-            <div class="form-group">
+            <div class="form-group password-row">
                 <label for="confirm_password">Confirm password <span style="color: var(--danger-color);">*</span></label>
                 <input type="password" id="confirm_password" name="confirm_password" class="form-control" placeholder="••••••••" required>
+                <button type="button" class="toggle-password" data-toggle-password="confirm_password" aria-label="Show password">Show</button>
             </div>
-            <button id="signup-btn" type="submit" class="button primary full-width" style="margin-top: 1rem;">
+            <button id="signup-btn" type="submit" class="button primary full" style="margin-top: 1rem;">
                 <svg width="16" height="16" fill="currentColor" viewBox="0 0 16 16" style="margin-right: 0.5rem;">
                     <path d="M8 8a3 3 0 1 0 0-6 3 3 0 0 0 0 6zm2-3a2 2 0 1 1-4 0 2 2 0 0 1 4 0zm4 8c0 1-1 1-1 1H3s-1 0-1-1 1-4 6-4 6 3 6 4zm-1-.004c-.001-.246-.154-.986-.832-1.664C11.516 10.68 10.289 10 8 10c-2.29 0-3.516.68-4.168 1.332-.678.678-.83 1.418-.832 1.664h10z"/>
                 </svg>
@@ -115,46 +62,6 @@
         </div>
     </div>
 
-    <script>
-    const csrfToken = document.querySelector('meta[name="csrf-token"]').getAttribute('content');
-    const form = document.getElementById('signup-form');
-    const btn = document.getElementById('signup-btn');
-    const msg = document.getElementById('signup-error');
-
-    form.addEventListener('submit', async (e) => {
-        e.preventDefault();
-        const name = document.getElementById('name').value.trim();
-        const email = document.getElementById('email').value.trim();
-        const password = document.getElementById('password').value;
-        const confirm_password = document.getElementById('confirm_password').value;
-        msg.textContent = '';
-
-        if (!name || !email || !password || !confirm_password) { msg.textContent = 'All fields are required.'; return; }
-        if (password !== confirm_password) { msg.textContent = 'Passwords do not match.'; return; }
-
-        btn.disabled = true;
-        const original = btn.textContent;
-        btn.textContent = 'Creating...';
-
-        try {
-            const res = await fetch('/auth/api/signup', {
-                method: 'POST',
-                headers: { 'Content-Type': 'application/json', 'X-CSRFToken': csrfToken },
-                body: JSON.stringify({ name, email, password, confirm_password })
-            });
-            const data = await res.json().catch(() => ({}));
-            if (res.ok && data.success) {
-                window.location.href = data.redirect_url || '/';
-            } else {
-                msg.textContent = data.error || 'Failed to create account. Please try again.';
-            }
-        } catch (err) {
-            msg.textContent = 'Failed to create account. Please try again.';
-        } finally {
-            btn.disabled = false;
-            btn.textContent = original;
-        }
-    });
-    </script>
+    <script src="{{ url_for('static', filename='js/auth.js') }}?v={{ config.VERSION }}"></script>
 </body>
 </html>

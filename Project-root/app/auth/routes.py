@@ -18,12 +18,60 @@ from flask import (
     url_for,
 )
 from flask_login import current_user, login_required, login_user, logout_user
+from itsdangerous import BadSignature, SignatureExpired, URLSafeTimedSerializer
 from oauthlib.oauth2 import WebApplicationClient
 from requests.exceptions import HTTPError, RequestException
 
+from .. import limiter, mail
 from ..models import User
 
 auth_bp = Blueprint("auth", __name__)
+
+# Password-reset tokens are signed+timed (itsdangerous), not stored in the
+# DB -- no schema migration needed, and an expired/tampered token fails to
+# verify on its own. salt scopes this serializer's tokens away from any
+# other itsdangerous use elsewhere in the app.
+RESET_TOKEN_SALT = "password-reset"
+RESET_TOKEN_MAX_AGE = 3600  # 1 hour
+
+
+def _reset_serializer() -> URLSafeTimedSerializer:
+    return URLSafeTimedSerializer(current_app.config["SECRET_KEY"])
+
+
+def generate_reset_token(email: str) -> str:
+    return _reset_serializer().dumps(email, salt=RESET_TOKEN_SALT)
+
+
+def verify_reset_token(token: str) -> str | None:
+    """Returns the email the token was issued for, or None if the token is
+    missing, tampered with, or older than RESET_TOKEN_MAX_AGE."""
+    try:
+        return _reset_serializer().loads(token, salt=RESET_TOKEN_SALT, max_age=RESET_TOKEN_MAX_AGE)
+    except (BadSignature, SignatureExpired):
+        return None
+
+
+def send_reset_email(to_email: str, reset_url: str) -> bool:
+    """Returns True on send success, False on failure (never raises -- a
+    broken SMTP config should log loudly, not 500 the request)."""
+    from flask_mail import Message
+
+    try:
+        msg = Message(
+            subject="Reset your MTC password",
+            recipients=[to_email],
+            body=(
+                "Someone (hopefully you) requested a password reset for your MTC account.\n\n"
+                f"Reset your password: {reset_url}\n\n"
+                "This link expires in 1 hour. If you didn't request this, you can ignore this email."
+            ),
+        )
+        mail.send(msg)
+        return True
+    except Exception as e:
+        current_app.logger.error(f"[ForgotPassword] SMTP send failed for {to_email}: {type(e).__name__}: {e}")
+        return False
 
 # Sentinel id for the dev/test demo account -- never a real row in `users`,
 # so load_user() below must special-case it rather than querying the DB.
@@ -80,6 +128,7 @@ def forgot_password():
 
 
 @auth_bp.route("/api/login", methods=["POST"])
+@limiter.limit("10 per minute")
 def api_login():
     data = request.get_json() or {}
     email = (data.get("email") or "").strip()
@@ -130,6 +179,7 @@ def api_login():
 
 
 @auth_bp.route("/api/signup", methods=["POST"])
+@limiter.limit("5 per hour")
 def api_signup():
     data = request.get_json() or {}
     name = (data.get("name") or "").strip()
@@ -184,19 +234,119 @@ def api_signup():
 
 
 @auth_bp.route("/api/forgot-password", methods=["POST"])
+@limiter.limit("5 per hour")
 def api_forgot_password():
     data = request.get_json() or {}
     email = (data.get("email") or "").strip().lower()
+
+    response = {
+        "message": "If an account exists for that email, a reset link will be sent."
+    }
+
     if email:
-        current_app.logger.info(f"[ForgotPassword] Request received for {email}")
-    return (
-        jsonify(
-            {
-                "message": "If an account exists for that email, a reset link will be sent."
-            }
-        ),
-        200,
-    )
+        # Always return the same generic message regardless of whether the
+        # account exists -- only the server log (and, in dev, the response
+        # itself) reveals which branch actually ran, so this endpoint can't
+        # be used to enumerate registered emails.
+        user_exists = False
+        try:
+            with database.get_conn(cursor_factory=psycopg2.extras.DictCursor) as (
+                conn,
+                cur,
+            ):
+                cur.execute(
+                    "SELECT user_id FROM users WHERE email = %s AND password_hash IS NOT NULL",
+                    (email,),
+                )
+                user_exists = cur.fetchone() is not None
+        except Exception as e:
+            current_app.logger.warning(f"[ForgotPassword] DB lookup failed: {e}")
+
+        if user_exists:
+            token = generate_reset_token(email)
+            reset_url = url_for("auth.reset_password", token=token, _external=True)
+            current_app.logger.info(f"[ForgotPassword] Reset link for {email}: {reset_url}")
+
+            if current_app.config.get("MAIL_SERVER"):
+                if not send_reset_email(email, reset_url):
+                    # Sending failed (bad creds, SMTP down, etc.) -- still
+                    # return the generic success message (don't leak
+                    # delivery failures to the caller), but log loudly since
+                    # this means a real user's reset attempt silently failed.
+                    current_app.logger.error(f"[ForgotPassword] Email send FAILED for {email} -- see above")
+            else:
+                # No SMTP configured -- surface the link directly in
+                # dev/test so the flow is testable end to end. NEVER do this
+                # outside dev/testing: it would let anyone who submits an
+                # email harvest a live reset link for it.
+                # Deliberately NOT current_app.debug: `flask run`'s CLI
+                # decides its debugger/reloader banner from FLASK_DEBUG
+                # independently of app.config["DEBUG"], so app.debug can
+                # read False under `flask run` even with
+                # FLASK_ENV=development -- confirmed live, not theoretical.
+                # os.getenv("FLASK_ENV") is what wsgi.py itself already uses
+                # reliably to detect this.
+                if current_app.config.get("TESTING") or os.getenv("FLASK_ENV") == "development":
+                    response["reset_url"] = reset_url
+                else:
+                    current_app.logger.warning(
+                        f"[ForgotPassword] No MAIL_SERVER configured -- {email} cannot receive their reset link."
+                    )
+        else:
+            current_app.logger.info(f"[ForgotPassword] No resettable account for {email}")
+
+    return jsonify(response), 200
+
+
+@auth_bp.route("/reset-password/<token>")
+def reset_password(token):
+    email = verify_reset_token(token)
+    return render_template("reset_password.html", token_valid=email is not None, token=token)
+
+
+@auth_bp.route("/api/reset-password", methods=["POST"])
+@limiter.limit("10 per hour")
+def api_reset_password():
+    data = request.get_json() or {}
+    token = data.get("token") or ""
+    password = data.get("password") or ""
+    confirm = data.get("confirm_password") or ""
+
+    email = verify_reset_token(token)
+    if not email:
+        return jsonify({"error": "This reset link is invalid or has expired. Request a new one."}), 400
+    if not password or not confirm:
+        return jsonify({"error": "Please enter and confirm your new password."}), 400
+    if password != confirm:
+        return jsonify({"error": "Passwords do not match."}), 400
+
+    from .. import validate_password as _validate
+
+    ok, msg = _validate(password)
+    if not ok:
+        return jsonify({"error": msg}), 400
+
+    from werkzeug.security import generate_password_hash
+
+    try:
+        with database.get_conn(cursor_factory=psycopg2.extras.DictCursor) as (conn, cur):
+            cur.execute(
+                "UPDATE users SET password_hash = %s WHERE email = %s RETURNING user_id",
+                (generate_password_hash(password), email),
+            )
+            updated = cur.fetchone()
+    except Exception as e:
+        current_app.logger.error(f"[ResetPassword] DB update failed: {e}")
+        return jsonify({"error": "Failed to reset password. Please try again."}), 500
+
+    if not updated:
+        # Token was valid but the account no longer exists (deleted since
+        # the link was issued) -- same message as an invalid token, no need
+        # to distinguish for the user.
+        return jsonify({"error": "This reset link is invalid or has expired. Request a new one."}), 400
+
+    current_app.logger.info(f"[ResetPassword] Password reset for {email}")
+    return jsonify({"success": True, "redirect_url": url_for("auth.login")})
 
 
 @auth_bp.route("/google")
