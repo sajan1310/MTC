@@ -73,13 +73,22 @@ def parse_row(raw_row: list[str], col_defs: list[dict]) -> tuple[dict, list[str]
     for col_def in col_defs:
         idx = col_def["col"] - 1
         raw = raw_row[idx] if idx < len(raw_row) else None
+        parse_failed = False
         try:
             values[col_def["sheet"]] = transforms.coerce(
-                raw, col_def["type"], default=col_def.get("default")
+                raw,
+                col_def["type"],
+                default=col_def.get("default"),
+                date_style=col_def.get("date_style", "mdy"),
             )
         except ValueError as exc:
             errors.append(f"col {col_def['col']} ({col_def['sheet']}): {exc}")
-        if col_def.get("required") and values.get(col_def["sheet"]) in (None, ""):
+            parse_failed = True
+        if (
+            not parse_failed
+            and col_def.get("required")
+            and values.get(col_def["sheet"]) in (None, "")
+        ):
             errors.append(f"col {col_def['col']} ({col_def['sheet']}) is required but blank")
     return values, errors
 
@@ -109,6 +118,7 @@ class SheetReport:
         self.skipped_blank = 0
         self.errors: list[str] = []
         self.duplicate_keys: list[str] = []
+        self.distinct_groups: int | None = None  # split entries only: distinct header keys
         self.sample_row: dict | None = None
         self.status = "ok"
 
@@ -137,9 +147,20 @@ def all_column_defs(entry: dict) -> list[dict]:
         defs = defs + [{"col": entry["external_parent"]["col"], "sheet": entry["external_parent"]["sheet_field"], "type": "text", "required": True}]
     if "key_columns" in entry:
         defs = defs + [{"col": kc["col"], "sheet": kc["sheet"], "type": "text", "required": True} for kc in entry["key_columns"]]
-    if "child" in entry:
-        defs = defs + [{"col": entry["child"]["col"], "sheet": entry["child"]["sheet_field"], "type": "json"}]
+    if "child" in entry and "pairs" in entry["child"]:
+        for i, pair in enumerate(entry["child"]["pairs"]):
+            defs = defs + [
+                {"col": pair["vendor_col"], "sheet": _pair_field(i, "vendor"), "type": "text"},
+                {"col": pair["rate_col"], "sheet": _pair_field(i, "rate"), "type": "numeric", "default": 0},
+            ]
     return defs
+
+
+def _pair_field(index: int, kind: str) -> str:
+    """Synthetic sheet-field name for a repeating (vendor, rate) column pair
+    (see ITEMS.child.pairs in mapping.yaml) -- never a real Apps Script
+    field name, so this prefix can't collide with one."""
+    return f"__pair{index}_{kind}"
 
 
 # ─────────────────────────────────────────────────────────────────────────
@@ -151,11 +172,15 @@ def dry_run_entry(client, spreadsheet_id: str, entry: dict) -> SheetReport:
     report = SheetReport(entry["key"])
     col_defs = all_column_defs(entry)
     seen_keys = set()
-    unique_on = None
-    if "split" in entry:
-        unique_on = entry["split"]["header"].get("unique_on")
-    elif "table" in entry:
-        unique_on = entry.get("unique_on")
+    group_keys = set()
+
+    # unique_on duplicate detection only makes sense for flat tables and for
+    # a split entry's HEADER identity -- a split entry's group_by key
+    # repeating across sibling rows is the normal multi-line-per-document
+    # shape (many PO lines share one po_number), not a data problem, so it
+    # gets a distinct-group count instead of a "duplicate" warning.
+    unique_on = entry.get("unique_on") if "table" in entry else None
+    group_by = entry["split"]["group_by"] if "split" in entry else None
 
     try:
         for row_number, raw_row in fetch_entry_rows(client, spreadsheet_id, entry, report):
@@ -171,9 +196,14 @@ def dry_run_entry(client, spreadsheet_id: str, entry: dict) -> SheetReport:
                 if key in seen_keys:
                     report.duplicate_keys.append(f"row {row_number}: {key}")
                 seen_keys.add(key)
+            if group_by:
+                group_keys.add(tuple(values.get(f) for f in group_by))
     except Exception as exc:  # sheet not shared, wrong name, API error, etc.
         report.status = "fetch_failed"
         report.errors.append(str(exc))
+
+    if group_by:
+        report.distinct_groups = len(group_keys)
     return report
 
 
@@ -192,6 +222,8 @@ def print_dry_run_report(reports: list[SheetReport]):
     for r in reports:
         print(f"\n[{r.key}] status={r.status}")
         print(f"  raw data rows: {r.raw_row_count}  blank skipped: {r.skipped_blank}  parsed ok: {r.parsed_row_count}")
+        if r.distinct_groups is not None:
+            print(f"  -> {r.distinct_groups} distinct header(s) (e.g. PO/bill/return numbers) across {r.parsed_row_count} line rows")
         if r.duplicate_keys:
             print(f"  DUPLICATE unique_on keys ({len(r.duplicate_keys)}):")
             for d in r.duplicate_keys[:10]:
@@ -221,13 +253,22 @@ def print_dry_run_report(reports: list[SheetReport]):
 
 def truncate_erp_schema(cur):
     """Truncates every table in the `erp` schema ONLY. Never touches public.*
-    (users, sessions, auth) -- that restriction is not configurable."""
+    (users, sessions, auth) -- that restriction is not configurable.
+
+    erp.migrations_applied is deliberately excluded: it's migrations/erp/
+    runner.py's own bookkeeping of which *schema* migrations have run, not
+    business data -- wiping it doesn't undo any CREATE TABLE/TRIGGER, it
+    just makes the runner think the schema needs rebuilding and then fail
+    on the first non-idempotent statement (CREATE TRIGGER has no IF NOT
+    EXISTS) it replays against the schema that's already there. Confirmed
+    live: this exact thing happened and corrupted the tracking table on a
+    real run, though it never touched any actual table data."""
     cur.execute(
         """
         DO $$
         DECLARE r RECORD;
         BEGIN
-            FOR r IN (SELECT tablename FROM pg_tables WHERE schemaname = 'erp') LOOP
+            FOR r IN (SELECT tablename FROM pg_tables WHERE schemaname = 'erp' AND tablename <> 'migrations_applied') LOOP
                 EXECUTE 'TRUNCATE TABLE erp.' || quote_ident(r.tablename) || ' RESTART IDENTITY CASCADE';
             END LOOP;
         END;
@@ -238,6 +279,7 @@ def truncate_erp_schema(cur):
 
 def insert_row(cur, table: str, col_values: dict) -> int:
     from psycopg2 import sql
+    from psycopg2.extras import Json
 
     schema, _, name = table.partition(".")
     cols = list(col_values.keys())
@@ -247,7 +289,10 @@ def insert_row(cur, table: str, col_values: dict) -> int:
         cols=sql.SQL(", ").join(sql.Identifier(c) for c in cols),
         vals=sql.SQL(", ").join(sql.Placeholder() for _ in cols),
     )
-    cur.execute(query, [col_values[c] for c in cols])
+    # transforms.coerce(..., "json") returns a plain dict/list -- psycopg2
+    # can't adapt those on its own for a JSONB column without this wrapper.
+    params = [Json(col_values[c]) if isinstance(col_values[c], (dict, list)) else col_values[c] for c in cols]
+    cur.execute(query, params)
     return cur.fetchone()[0]
 
 
@@ -268,11 +313,12 @@ def load_flat_entry(cur, client, spreadsheet_id: str, entry: dict, counts: dict,
 
         if "external_parent" in entry:
             ep = entry["external_parent"]
-            key = values.get(ep["sheet_field"])
-            parent_id = child_cache.get((key,)) if isinstance(ep["lookup_key"], str) else None
+            raw_key = values.get(ep["sheet_field"])
+            norm_key = (raw_key or "").strip().lower() if isinstance(raw_key, str) else raw_key
+            parent_id = child_cache.get((norm_key,))
             if parent_id is None:
                 report.errors.append(
-                    f"row {row_number}: no {ep['lookup_table']} found for {ep['sheet_field']}={key!r} -- SKIPPED"
+                    f"row {row_number}: no {ep['lookup_table']} found for {ep['sheet_field']}={raw_key!r} -- SKIPPED"
                 )
                 continue
             insert_values[ep["target_column"]] = parent_id
@@ -280,22 +326,20 @@ def load_flat_entry(cur, client, spreadsheet_id: str, entry: dict, counts: dict,
         new_id = insert_row(cur, entry["table"], insert_values)
         counts[entry["table"]] += 1
 
-        if "child" in entry:
-            load_child_rows(cur, entry["child"], values.get(entry["child"]["sheet_field"]), new_id, counts, report, row_number)
+        if "child" in entry and "pairs" in entry["child"]:
+            load_child_pair_rows(cur, entry["child"], values, new_id, counts)
 
 
-def load_child_rows(cur, child_cfg: dict, raw_json, parent_id: int, counts: dict, report: SheetReport, row_number: int):
-    if not raw_json:
-        return
-    if not isinstance(raw_json, list):
-        report.errors.append(f"row {row_number}: {child_cfg['sheet_field']} did not parse to a JSON list -- child rows SKIPPED")
-        return
-    for item in raw_json:
-        try:
-            vendor, rate = item["vendor"], float(item.get("rate", 0))
-        except (KeyError, TypeError, ValueError):
-            report.errors.append(f"row {row_number}: malformed {child_cfg['sheet_field']} entry {item!r} -- SKIPPED")
+def load_child_pair_rows(cur, child_cfg: dict, values: dict, parent_id: int, counts: dict):
+    """Repeating (vendor name, rate) column pairs -> one erp.item_vendors row
+    per populated pair (see ITEMS.child.pairs in mapping.yaml). A pair with
+    a blank vendor name is silently skipped -- that's just an item with
+    fewer than the sheet's max vendor slots filled in, not an error."""
+    for i in range(len(child_cfg["pairs"])):
+        vendor = values.get(_pair_field(i, "vendor"))
+        if not vendor:
             continue
+        rate = values.get(_pair_field(i, "rate")) or 0
         insert_row(cur, child_cfg["table"], {child_cfg["parent_fk"]: parent_id, "vendor": vendor, "rate": rate})
         counts[child_cfg["table"]] += 1
 

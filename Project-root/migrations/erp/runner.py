@@ -31,7 +31,17 @@ def _connect(
     user: str | None = None,
     password: str | None = None,
 ):
-    database_url = database_url or os.getenv("DATABASE_URL")
+    # Explicit connection kwargs (as tests/erp/conftest.py always passes)
+    # must win over DATABASE_URL -- previously DATABASE_URL was checked
+    # first regardless, so a caller explicitly asking for dbname="testdb"
+    # would silently connect to whatever DATABASE_URL happened to resolve
+    # to instead (e.g. via config.py's load_dotenv() repopulating it from
+    # .env the moment `app`/`config` gets imported, even if the caller's own
+    # shell had it unset). Confirmed live: this sent a test run's migration
+    # replay at the real MTC database instead of the disposable test DB.
+    explicit_kwargs_given = any((host, dbname, user, password))
+    if not explicit_kwargs_given:
+        database_url = database_url or os.getenv("DATABASE_URL")
     if database_url:
         parsed = urlparse(database_url)
         return psycopg2.connect(

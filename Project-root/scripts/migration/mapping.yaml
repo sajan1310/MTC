@@ -30,8 +30,24 @@
 # Fill in `spreadsheet_id` per sheet, or set default_spreadsheet_id once if
 # every tab lives in a single spreadsheet (the common case). A sheet left
 # without any spreadsheet id is skipped with a warning, not a hard failure.
+#
+# Date columns: CONFIRMED (2026-07-31, full-column scan of live data, not a
+# sample) that every date column in this spreadsheet is m/d/yyyy (Apps
+# Script/Sheets' own auto-rendered US-locale date string) EXCEPT Warehouse
+# Pool Opening's manually-typed plain dates, which are d/m/yyyy -- that's
+# config_maps.py's documented DD/MM/YYYY *display* convention (what the app
+# shows humans), which turns out NOT to be what's literally stored in most
+# of these cells. transforms.py's date parser therefore defaults to
+# date_style="mdy"; only Warehouse Pool Opening's `date` column overrides it
+# to "dmy". Getting this backwards doesn't raise a parse error -- it
+# silently produces a different valid date whenever both day and month are
+# <=12, which is how 636 rows across Bill Ledger/Rate History/Production/
+# Return Ledger were transposed on the first migration pass before this was
+# caught by a live cross-check. If new date columns are added to this
+# mapping, verify their real convention the same way (scan for day>12
+# evidence) rather than assuming either default.
 
-default_spreadsheet_id: ""
+default_spreadsheet_id: "1r5ny663P8nleDB5__83uv1Yyga9Pb8Thxfw4z4NDfpY"
 
 sheets:
 
@@ -161,18 +177,22 @@ sheets:
       - {col: 6, sheet: baseUnit, db: base_unit, type: text, default: "Pcs"}
       - {col: 7, sheet: purchaseUnit, db: purchase_unit, type: text}
       - {col: 8, sheet: weightPerBaseUnit, db: weight_per_base_unit, type: numeric, default: 0}
-    skip_columns:
-      - {col: 9, sheet: vendors, reason: "Not a flat column -- see `child` below."}
     child:
-      # Col 9 is a per-item list of {vendor, rate} pairs in one cell -> many
-      # erp.item_vendors rows. Format (JSON array vs delimited string) is
-      # not verified against module_items.js in this repo.
-      col: 9
-      sheet_field: vendors
+      # CONFIRMED against a live row (2026-07-31): the real sheet does NOT
+      # match config_maps.py's single "vendors" column (col 9) -- it has
+      # drifted to 5 repeating (vendor name, rate) column pairs, cols 9-18
+      # (header row literally reads "Vendor-Rate 1".."Vendor-Rate 10", one
+      # label per column despite being paired data). Each populated pair ->
+      # one erp.item_vendors row; a pair with a blank vendor name is skipped.
       table: erp.item_vendors
       parent_fk: item_id
-      status: needs_review
-      notes: "Assumed JSON array of {vendor, rate} objects per cell. Verify against a live sheet cell before running."
+      status: ready
+      pairs:
+        - {vendor_col: 9, rate_col: 10}
+        - {vendor_col: 11, rate_col: 12}
+        - {vendor_col: 13, rate_col: 14}
+        - {vendor_col: 15, rate_col: 16}
+        - {vendor_col: 17, rate_col: 18}
 
   - key: STOCK
     sheet_name: "Stock"
@@ -290,10 +310,20 @@ sheets:
       - {col: 3, sheet: productTag, db: product_tag, type: text}
       - {col: 4, sheet: color, db: color, type: text}
       - {col: 5, sheet: qty, db: qty, type: numeric, required: true}
-      - {col: 6, sheet: date, db: opening_date, type: date, required: true}
+      - {col: 6, sheet: date, db: opening_date, type: date, required: true, date_style: dmy}
       - {col: 7, sheet: remarks, db: remarks, type: text}
     fk_resolve:
       - {db_column: process_master_id, source_field: processId, lookup_table: erp.process_master, lookup_key: process_id, required: false}
+    notes: >
+      CONFIRMED against a full-column scan of live data (2026-07-31): col 6
+      mixes two formats -- manually-typed plain dates in d/m/yyyy (35 rows
+      with day>12 prove this, 0 rows prove m/d for the plain-date subset --
+      hence date_style: dmy above) and auto-logged timestamps like
+      "7/8/2026 12:57:20" (m/d/yyyy h:mm:ss, 224 rows, always has a trailing
+      time so it never collides with the plain-date parse attempts).
+      transforms.py handles both regardless of date_style since the m/d
+      timestamp format is still in the fallback list; the timestamp rows
+      are truncated to their date part.
 
   # ── Header + lines ledgers (denormalized sheet -> header/lines table pair) ─
 

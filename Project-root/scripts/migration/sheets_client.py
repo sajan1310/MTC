@@ -49,8 +49,14 @@ def drive_client():
     return build("drive", "v3", credentials=_credentials(WRITE_SCOPES), cache_discovery=False)
 
 
-def with_retry(fn, *, attempts=5, base_delay=1.0):
-    """Retry a Sheets/Drive API call with exponential backoff on quota errors."""
+def with_retry(fn, *, attempts=6, base_delay=1.5):
+    """Retry a Sheets/Drive API call with exponential backoff on quota errors
+    AND on transient network failures (read timeouts, connection resets) --
+    the underlying httplib2/socket layer raises plain TimeoutError/OSError
+    for those, not HttpError, and a flaky connection on a Windows dev
+    machine hits this path in practice, not just in theory."""
+    import socket
+
     from googleapiclient.errors import HttpError
 
     last_exc = None
@@ -61,7 +67,10 @@ def with_retry(fn, *, attempts=5, base_delay=1.0):
             last_exc = exc
             if exc.resp.status not in (429, 500, 503):
                 raise
-            time.sleep(base_delay * (2**attempt))
+        except (TimeoutError, ConnectionError, socket.timeout, OSError) as exc:
+            last_exc = exc
+        time.sleep(base_delay * (2**attempt))
+    assert last_exc is not None
     raise last_exc
 
 
