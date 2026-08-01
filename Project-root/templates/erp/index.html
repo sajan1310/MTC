@@ -310,11 +310,16 @@
         {% include "erp/partials/clients.html" %}
         {% include "erp/partials/dispatch.html" %}
 
-        {% include "erp/partials/print.html" %}
-
       </div>
     </div>
   </div>
+
+  <!-- PRINT CONTAINERS — deliberately placed as a sibling of #app-container,
+       not nested inside it. @media print sets #app-container to display:none
+       to hide the app chrome, and a display:none ancestor can't be overridden
+       by any descendant rule (however !important), so nesting these here
+       would always render a blank page. -->
+  {% include "erp/partials/print.html" %}
 
   <!-- jQuery (Select2 dependency) -->
   <script src="https://code.jquery.com/jquery-3.6.0.min.js"></script>

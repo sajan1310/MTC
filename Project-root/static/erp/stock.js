@@ -1038,12 +1038,36 @@ App.Stock = {
     if (!process) return;
 
     App.State.warehousePoolModalProcessId = processId;
+    // Tracks its own selection state, independent of App.State.selectedWarehousePool
+    // -- that array selects whole Processes on the OUTER table, a completely
+    // different granularity from selecting individual Color combinations
+    // inside one Process's breakdown here.
+    this._poolComboSelected = new Set();
+    this._poolComboSearchTerm = '';
+    const searchInput = document.getElementById('searchWarehousePoolCombo');
+    if (searchInput) searchInput.value = '';
+
     this.renderWarehousePoolProcessModalBody(process);
     safeModalShow('warehousePoolProcessModal');
   },
 
+  // Filters the breakdown dialog's own rows by Color or Product Tag --
+  // independent of, and narrower than, the outer table's own search: this
+  // dialog is already scoped to one Process, so a search inside an
+  // already-open breakdown should always narrow, never widen back out.
+  filterWarehousePoolCombos(term) {
+    this._poolComboSearchTerm = String(term || '').trim();
+    const processId = App.State.warehousePoolModalProcessId;
+    const process = (App.State.globalProcesses || []).find(p => p.processId === processId);
+    if (process) this.renderWarehousePoolProcessModalBody(process);
+  },
+
   renderWarehousePoolProcessModalBody(process) {
-    const leafRows = this.computeLeafRowsForProcess(process, '');
+    let leafRows = this.computeLeafRowsForProcess(process, '');
+    const term = this._poolComboSearchTerm || '';
+    if (term) {
+      leafRows = leafRows.filter(r => App.Utils.matchesKeywords([r.productTag, r.color].join(' '), term));
+    }
 
     const titleEl = document.getElementById('warehousePoolProcessModalTitle');
     if (titleEl) {
@@ -1057,8 +1081,69 @@ App.Stock = {
     if (body) {
       body.innerHTML = leafRows.length
         ? leafRows.map(r => `<tr>${this.renderWarehousePoolLeafCells(process, r)}</tr>`).join('')
-        : '<tr><td colspan="6" class="text-center text-muted p-4">No Warehouse Pool buckets found for this process.</td></tr>';
+        : `<tr><td colspan="7" class="text-center text-muted p-4">${term ? 'No combinations match your search.' : 'No Warehouse Pool buckets found for this process.'}</td></tr>`;
     }
+    this.updatePoolComboBulkButton();
+  },
+
+  toggleSelectAllWarehousePoolCombos(masterChk) {
+    $$('#warehousePoolProcessModalBody .warehousepool-combo-chk').forEach(chk => {
+      chk.checked = masterChk.checked;
+      if (masterChk.checked) this._poolComboSelected.add(chk.dataset.color);
+      else this._poolComboSelected.delete(chk.dataset.color);
+    });
+    this.updatePoolComboBulkButton();
+  },
+
+  onPoolComboCheckChange() {
+    this._poolComboSelected = new Set(
+      $$('#warehousePoolProcessModalBody .warehousepool-combo-chk:checked').map(chk => chk.dataset.color)
+    );
+    const selectAllChk = document.getElementById('selectAllWarehousePoolCombos');
+    if (selectAllChk) {
+      const all = $$('#warehousePoolProcessModalBody .warehousepool-combo-chk');
+      selectAllChk.checked = all.length > 0 && all.every(chk => chk.checked);
+    }
+    this.updatePoolComboBulkButton();
+  },
+
+  updatePoolComboBulkButton() {
+    const btn = document.getElementById('btnBulkDeleteWarehousePoolCombos');
+    if (!btn) return;
+    const count = this._poolComboSelected ? this._poolComboSelected.size : 0;
+    btn.style.display = count > 0 ? '' : 'none';
+    btn.innerHTML = `<i class="bi bi-trash"></i> Delete Selected (${count})`;
+  },
+
+  bulkDeleteWarehousePoolCombinations() {
+    const colors = Array.from(this._poolComboSelected || []);
+    if (colors.length === 0) return;
+    this._runWarehousePoolCombinationDelete(colors);
+  },
+
+  // Shared by the single-row "X" button (removeWarehousePoolCombination)
+  // and the bulk "Delete Selected" button -- both funnel through the same
+  // confirm/API-call/refresh flow so a partial success (some removed, some
+  // blocked by real history) is reported and repainted identically either way.
+  _runWarehousePoolCombinationDelete(colors) {
+    const processId = App.State.warehousePoolModalProcessId;
+    if (!processId || colors.length === 0) return;
+    const label = colors.length === 1 ? `"${colors[0]}"` : `these ${colors.length} combinations`;
+    App.Utils.confirmAction(
+      `Remove ${label} from this process's known Color/Product-Tag list? This only removes empty placeholders — anything with real production history is protected automatically.`,
+      async () => {
+        try {
+          const res = await Api.mutate('excludeWarehousePoolColors', [processId, colors]);
+          App.Utils.showToast(res?.message || 'Combination(s) removed.', !res?.success);
+          await this.loadWarehousePoolData();
+          this._poolComboSelected = new Set();
+          const process = (App.State.globalProcesses || []).find(p => p.processId === processId);
+          if (process) this.renderWarehousePoolProcessModalBody(process);
+        } catch (err) {
+          App.Utils.showToast(err.message || 'Failed to remove combination(s).', true);
+        }
+      }
+    );
   },
 
   // "+ Add Combination" -- force-adds one color as a known combination
@@ -1088,26 +1173,11 @@ App.Stock = {
   // ever removes a zero-data PLACEHOLDER -- a color actually configured
   // on the process's own recipe or carrying real Warehouse Pool history
   // is rejected server-side and reported back, never silently skipped.
-  async removeWarehousePoolCombination(color) {
-    const processId = App.State.warehousePoolModalProcessId;
-    if (!processId || !color) return;
-
-    App.Utils.confirmAction(
-      `Remove "${color}" from the known combinations for this process?`,
-      async () => {
-        try {
-          const res = await Api.mutate('excludeWarehousePoolColors', [processId, [color]]);
-          App.Utils.showToast(res?.message || 'Combination removed.', !res?.success);
-          if (res?.success) {
-            await this.loadWarehousePoolData();
-            const process = (App.State.globalProcesses || []).find(p => p.processId === processId);
-            if (process) this.renderWarehousePoolProcessModalBody(process);
-          }
-        } catch (err) {
-          App.Utils.showToast(err.message || 'Failed to remove combination.', true);
-        }
-      }
-    );
+  // Single-row delete (the per-row "X" button) -- thin wrapper around the
+  // same shared flow bulkDeleteWarehousePoolCombinations uses.
+  removeWarehousePoolCombination(color) {
+    if (!color) return;
+    this._runWarehousePoolCombinationDelete([color]);
   },
 
   renderWarehousePoolLeafCells(process, r) {
@@ -1134,15 +1204,25 @@ App.Stock = {
     // enabled delete action -- see getAllProcessColorGroups' `removable`.
     // A real (non-placeholder) bucket is always attempted server-side,
     // which independently rejects anything with real history.
+    const isLocked = r.isPlaceholder && !r.removable;
     const deleteBtn = r.color
       ? `<button type="button" class="btn btn-outline-danger btn-sm" title="Remove combination"
-                ${r.isPlaceholder && !r.removable ? 'disabled' : ''}
+                ${isLocked ? 'disabled' : ''}
                 onclick="App.Stock.removeWarehousePoolCombination('${escapeHtml(r.color).replace(/'/g, "\\'")}')">
           <i class="bi bi-x-lg"></i>
         </button>`
       : '';
+    // Mirrors deleteBtn's own enabled/disabled state -- a row the server
+    // would reject anyway isn't offered as a bulk-delete candidate either.
+    const checkboxCell = r.color
+      ? `<input type="checkbox" class="form-check-input warehousepool-combo-chk" data-color="${escapeHtml(r.color)}"
+          ${isLocked ? 'disabled' : ''}
+          ${this._poolComboSelected && this._poolComboSelected.has(r.color) ? 'checked' : ''}
+          onchange="App.Stock.onPoolComboCheckChange()">`
+      : '<input type="checkbox" class="form-check-input" disabled>';
 
     return `
+    <td class="text-center">${checkboxCell}</td>
     <td>${r.productTag ? `<span class="badge bg-dark">${escapeHtml(r.productTag)}</span>` : '<span class="text-muted">—</span>'}</td>
     <td class="text-center" data-pool-field="produced">${App.Production.formatQty(r.producedQty)}</td>
     <td class="text-center">${App.Production.formatQty(r.consumedQty)}</td>

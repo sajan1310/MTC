@@ -1223,6 +1223,20 @@ const App = {
       return String(a == null ? '' : a).trim().toLowerCase() === String(b == null ? '' : b).trim().toLowerCase();
     },
 
+    // Same real color, ignoring case/whitespace -- a color name reaches the
+    // browser from several independent places (Color Master, a recipe's
+    // Color Sub-Group, a Warehouse Pool bucket, a saved lot's Color
+    // Breakdown), and "Blue"/"BLUE"/"blue" is one color in every one of them.
+    sameColor(a, b) {
+      return this.sameText(a, b);
+    },
+
+    // True when a component row's Color Sub-Group is the COMMON sentinel
+    // rather than a real color name.
+    isCommonColorGroup(colorGroup) {
+      return String(colorGroup == null ? '' : colorGroup).trim().toUpperCase() === 'COMMON';
+    },
+
     // Keyword search: every whitespace-split keyword must appear somewhere
     // in the haystack, regardless of order.
     matchesKeywords(haystack, term) {

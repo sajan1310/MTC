@@ -109,6 +109,23 @@ App.State.productionColumnFilters = { process: [], outputItem: [], productTag: [
 App.Production = {
   STATUS_OPTIONS: ['Pending', 'In Progress', 'Completed', 'Cancelled'],
 
+  // Print-sheet readability palette. The Item Name cannot use bold (see
+  // bodyCell in _buildProductionSheetForExport), so hierarchy is carried by
+  // size + ink instead: near-black names against deliberately muted grey
+  // Size/Narration, so the eye lands on the item first and the supporting
+  // columns recede. ZEBRA is a real, visible band; RULE is a light hairline
+  // so the banding, not a heavy grid, does the row tracking; GRID_STRONG
+  // outlines the table so columns stay anchored.
+  PRINT_PALETTE: Object.freeze({
+    HEAD_BG: '#cfe8d5',
+    HEAD_INK: '#0b5132',
+    ZEBRA: '#eef4ef',
+    RULE: '#c8d3ca',
+    GRID_STRONG: '#8fae99',
+    INK_PRIMARY: '#111',
+    INK_MUTED: '#5b6b60'
+  }),
+
   // Shared with .prod-color-table CSS -- every place below that sets a
   // pool-color-group/matrix table's inline min-width uses these.
   PROD_COLOR_TABLE_FIXED_RESERVE_PX: 378,
@@ -1314,6 +1331,12 @@ App.Production = {
     if (seq === undefined || seq === this._compLoadSeq) {
       this._refreshCustomColorGroupSelect();
       this.initCustomColorInputSelect2();
+      // Paint the per-color "avail." hints as soon as the rows exist,
+      // rather than waiting for the components tables further down to
+      // finish loading -- this reads only already-cached data, and
+      // refreshPoolAvailability re-runs it afterward once Stock has
+      // landed too.
+      await this.refreshColorChecklistAvailability(processId, seq);
     }
 
     return colors;
@@ -1382,6 +1405,7 @@ App.Production = {
         <input class="form-check-input production-color-check" type="checkbox" onchange="App.Production.handleColorCheckToggle(this)">
         <label class="form-check-label fw-bold mb-0">${escapeHtml(color)}</label>
         <input type="number" class="form-control form-control-sm production-color-qty" style="width:100px;" step="any" placeholder="Qty" disabled oninput="App.Production.onColorQtyChanged(this.closest('.production-color-row'))">
+        <span class="small text-muted production-color-avail"></span>
       </div>`;
   },
 
@@ -1390,6 +1414,194 @@ App.Production = {
     if (!checklistEl) return;
     colors.forEach(color => {
       checklistEl.insertAdjacentHTML('beforeend', this._colorRowHtml(color, groupKey, isCustom, isPrimary));
+    });
+  },
+
+  // Live Warehouse Pool availability, keyed the same way the server's own
+  // pool-availability map is keyed: untagged (intermediate WIP) rows only
+  // -- a tagged bucket is already committed to a packed product and can't
+  // be drawn on by a new lot -- summed per item name, then per color
+  // bucket within it. Map<itemNameLower, Map<colorLower, qty>>.
+  _poolAvailByItemColor(poolRows) {
+    const byItem = new Map();
+    (poolRows || []).forEach(r => {
+      if (r.productTag) return;
+      const item = String(r.outputItemName || '').trim().toLowerCase();
+      if (!item) return;
+      if (!byItem.has(item)) byItem.set(item, new Map());
+      const colors = byItem.get(item);
+      const color = String(r.color || '').trim().toLowerCase();
+      colors.set(color, (colors.get(color) || 0) + (Number(r.availableQty) || 0));
+    });
+    return byItem;
+  },
+
+  // One item's available qty in one color. Exact bucket first; failing
+  // that, every COMPOSITE bucket this color is one token of (a process
+  // drawing on 2+ independent pool inputs at once keys its buckets by the
+  // joined combination, e.g. "BCP / Blue-White"), mirroring the same
+  // single-token -> composite-bucket resolution the server does so this
+  // hint agrees with what a save would actually find. Unlike the server's
+  // "exactly one source" rule, every matching composite is summed here:
+  // those buckets are disjoint physical stock, so their total really is
+  // how much of this color exists. Returns 0 (not null) for an item that
+  // has pool history but no bucket for this color at all -- that's a real
+  // "none available", not an unknown.
+  _poolAvailForColor(colorMap, color) {
+    if (!colorMap) return null;
+    const key = String(color || '').trim().toLowerCase();
+    if (!key) return null;
+    if (colorMap.has(key)) return colorMap.get(key);
+    let total = 0;
+    colorMap.forEach((qty, bucket) => {
+      if (bucket.split(' / ').map(t => t.trim()).includes(key)) total += qty;
+    });
+    return total;
+  },
+
+  // Which real inputs feed one checklist group -- i.e. what actually
+  // limits how much of that group's colors this lot can produce. Two
+  // shapes, matching the two ways a group is built in
+  // renderGroupedColorChecklist: a 'pool'/'merged' axis (and every legacy
+  // pool-item group) is labeled with its own pool item name(s), joined by
+  // ', ' -- so the label resolves straight back to this recipe's
+  // POOL-sourced components; a 'tag' axis is labeled with its COLOR_AXIS
+  // name instead, and is fed by whichever recipe rows carry that axis
+  // label, each color found per-color rather than per-group. The
+  // 'other'/'custom' buckets have no configured source at all and resolve
+  // to nothing -- deliberately blank rather than a misleading "0 avail."
+  _groupInputSources(groupKey, comps) {
+    const opt = (this._customColorGroupOptions || []).find(o => o.key === groupKey);
+    if (!opt) return { poolItems: [], tagComps: [] };
+
+    const labelParts = opt.label.split(',').map(s => s.trim().toLowerCase()).filter(Boolean);
+    const poolItems = comps.filter(c =>
+      c.sourceType === 'POOL' && labelParts.includes(String(c.itemName || '').trim().toLowerCase()));
+
+    const axisLabel = opt.label.trim().toLowerCase();
+    const tagComps = comps.filter(c =>
+      String(c.colorAxis || '').trim().toLowerCase() === axisLabel && axisLabel);
+
+    return { poolItems, tagComps };
+  },
+
+  // The availability hint for ONE checklist row: the smallest available
+  // quantity across every input that color needs, since the scarcest one
+  // is the real ceiling. Returns null when this row's group has no
+  // resolvable input (Other/Custom, or a tag axis whose recipe rows don't
+  // name this color) so the caller can leave the row blank instead of
+  // asserting a zero it can't back up. `parts` carries the per-input
+  // breakdown for the tooltip, which is what makes a multi-input group's
+  // single min number interpretable.
+  _colorRowAvailability(color, groupKey, ctx) {
+    const { poolItems, tagComps } = this._groupInputSources(groupKey, ctx.comps);
+    const parts = [];
+
+    const addPool = (itemName) => {
+      const colorMap = ctx.poolAvail.get(String(itemName || '').trim().toLowerCase());
+      const qty = this._poolAvailForColor(colorMap, color);
+      if (qty !== null) parts.push({ label: itemName, qty });
+    };
+
+    poolItems.forEach(c => addPool(c.itemName));
+
+    tagComps
+      // Token match, not whole-string: a tag row scoped to "Blue-White" is
+      // genuinely consumed by a lot producing the composite "Blue-White /
+      // BCP", so its stock constrains that row's availability. Same rule
+      // the Per-Color Components table and saveProduction use.
+      .filter(c => this._matchedColorToken(c.colorGroup, color))
+      .forEach(c => {
+        if (c.sourceType === 'POOL') {
+          addPool(c.itemName);
+          return;
+        }
+        const name = String(c.itemName || '').trim().toLowerCase();
+        const size = String(c.size || '').trim().toLowerCase();
+        const entry = (ctx.stock || []).find(s =>
+          String(s.name || '').trim().toLowerCase() === name
+          && (!size || String(s.size || '').trim().toLowerCase() === size));
+        if (entry) parts.push({ label: c.itemName, qty: Number(entry.currentStock) || 0 });
+      });
+
+    if (parts.length === 0) return null;
+    return {
+      qty: parts.reduce((min, p) => Math.min(min, p.qty), Infinity),
+      parts
+    };
+  },
+
+  // Shows, next to every color in the Colors to Produce checklist, how
+  // much of that color is actually available to build from right now --
+  // the Warehouse Pool balance of the upstream item(s) that group is
+  // driven by (see _groupInputSources), or plain Stock for an
+  // ITEM-sourced tag-axis input. This is the producible ceiling for that
+  // color, the same question the per-row "avail." hints in the
+  // Components tables answer for their own rows (see
+  // refreshPoolAvailability) -- just surfaced at the point the operator
+  // actually decides which colors and how many to put in the lot, instead
+  // of only after scrolling down to the component tables.
+  //
+  // Purely client-side over the two per-load cached reads the checklist
+  // already made (_fetchProcessComponents/_fetchWarehousePoolData) plus
+  // whatever Stock refreshPoolAvailability last loaded, so this costs no
+  // extra server round trip and is safe to call after any re-render.
+  async refreshColorChecklistAvailability(processId, seq) {
+    const rows = $$('#productionColorChecklist .production-color-row');
+    if (rows.length === 0) return;
+
+    let comps = [];
+    let poolRows = [];
+    try {
+      const [compRes, poolRes] = await Promise.all([
+        this._fetchProcessComponents(processId),
+        this._fetchWarehousePoolData()
+      ]);
+      if (seq !== undefined && seq !== this._compLoadSeq) return;
+      comps = compRes.success ? (compRes.data || []) : [];
+      poolRows = poolRes.success ? (poolRes.data || []) : [];
+    } catch (err) {
+      // Ignored -- availability hints are advisory, not blocking (same
+      // stance as refreshPoolAvailability).
+      return;
+    }
+
+    const ctx = {
+      comps,
+      poolAvail: this._poolAvailByItemColor(poolRows),
+      stock: App.State.globalStock || []
+    };
+
+    // Re-read the rows: the awaits above can only have resolved from cache
+    // or a same-load fetch (seq-guarded), but a custom color row may have
+    // been added in between.
+    $$('#productionColorChecklist .production-color-row').forEach(row => {
+      const availEl = row.querySelector('.production-color-avail');
+      if (!availEl) return;
+      const result = this._colorRowAvailability(row.dataset.color, row.dataset.group, ctx);
+      if (!result) {
+        availEl.innerText = '';
+        availEl.title = '';
+        availEl.classList.remove('text-danger', 'fw-bold');
+        availEl.classList.add('text-muted');
+        return;
+      }
+      availEl.innerText = `${this.formatQty(result.qty)} avail.`;
+      // Only worth spelling out when several inputs feed this color and
+      // the single min number alone doesn't say which one is the binding
+      // constraint.
+      availEl.title = result.parts.length > 1
+        ? result.parts.map(p => `${p.label}: ${this.formatQty(p.qty)}`).join('  •  ')
+        : `${result.parts[0].label}: ${this.formatQty(result.parts[0].qty)} available`;
+      // Nothing (or less than nothing) available is the whole point of
+      // showing this, and is far too easy to miss as plain gray text --
+      // flagged the same way refreshPoolAvailability flags a negative
+      // component balance. Producing it anyway is still allowed -- this
+      // only warns.
+      const empty = result.qty <= 0;
+      availEl.classList.toggle('text-danger', empty);
+      availEl.classList.toggle('fw-bold', empty);
+      availEl.classList.toggle('text-muted', !empty);
     });
   },
 
@@ -2170,7 +2382,32 @@ App.Production = {
     return tokens;
   },
 
+  // Do this table's own columns match a checked color EXACTLY? A pool
+  // item's colors are whatever its upstream process credited, and since
+  // composite crediting those are themselves composites ("Blue-White /
+  // BCP"), identical to the checked color. Token matching must not be
+  // used then: it would light up a legacy plain "Blue-White" column
+  // instead of the real "Blue-White / BCP" one, and the qty would be
+  // saved against a color the lot never produced -- a phantom negative
+  // bucket on the plain name. Token matching is still right for the
+  // ORIGINAL shape, where a pool item carries plain colors and the OUTPUT
+  // color is a composite built by pairing two such axes ("Blue-White"
+  // from the frame table, "BCP" from the rim table). So: exact wins when
+  // it matches anything at all, tokens are the fallback.
+  _poolGroupColumnsMatchExactly(colors, axisKey) {
+    const exact = new Set(this._axisScopedCheckedColorQtys(axisKey)
+      .filter(cc => cc.qty > 0)
+      .map(cc => String(cc.color || '').trim().toLowerCase()));
+    return colors.some(c => exact.has(String(c).trim().toLowerCase()));
+  },
+
   _checkedPoolGroupColors(colors, axisKey) {
+    if (this._poolGroupColumnsMatchExactly(colors, axisKey)) {
+      const exact = new Set(this._axisScopedCheckedColorQtys(axisKey)
+        .filter(cc => cc.qty > 0)
+        .map(cc => String(cc.color || '').trim().toLowerCase()));
+      return colors.filter(c => exact.has(String(c).trim().toLowerCase()));
+    }
     const tokensLower = this._checkedColorTokensLower(axisKey);
     return colors.filter(c => tokensLower.has(c.toLowerCase()));
   },
@@ -2180,7 +2417,13 @@ App.Production = {
       return row.colorsQty ? row.colorsQty[color.toLowerCase()] : undefined;
     }
     const colorLower = color.toLowerCase();
-    const total = this._axisScopedCheckedColorQtys(axisKey).reduce((sum, cc) => {
+    const checked = this._axisScopedCheckedColorQtys(axisKey);
+    // Exact first -- a composite column must draw only from the one
+    // checked color it names, never from every checked color that
+    // happens to share a token with it (see _poolGroupColumnsMatchExactly).
+    const exactTotal = checked.reduce(
+      (sum, cc) => (String(cc.color || '').trim().toLowerCase() === colorLower ? sum + cc.qty : sum), 0);
+    const total = exactTotal > 0 ? exactTotal : checked.reduce((sum, cc) => {
       const tokens = (cc.color || '').split(' / ').map(t => t.trim().toLowerCase());
       return tokens.includes(colorLower) ? sum + cc.qty : sum;
     }, 0);
@@ -2246,8 +2489,17 @@ App.Production = {
       const headerRow = table.querySelector('thead tr');
       if (!headerRow) return;
 
-      const tokensLower = this._checkedColorTokensLower(def.axisKey);
-      const wantLower = new Set(def.colors.filter(c => tokensLower.has(c.toLowerCase())).map(c => c.toLowerCase()));
+      // Must use the SAME exact-wins-then-tokens rule the first render used
+      // (_checkedPoolGroupColors), not raw token matching. Token matching
+      // alone is wrong whenever this pool item's own colors are already
+      // composites ("Blue-White / BCP") -- the checked color IS the column
+      // name, but splitting it yields {"blue-white", "bcp"}, neither of
+      // which equals the full column string, so every real composite
+      // column was dropped here and only a legacy plain column that
+      // happened to equal one token survived. Since this resync runs after
+      // every checkbox toggle, it overwrote the correct initial render.
+      const wantLower = new Set(
+        this._checkedPoolGroupColors(def.colors, def.axisKey).map(c => c.toLowerCase()));
 
       Array.from(headerRow.querySelectorAll('th[data-color]')).forEach(th => {
         if (wantLower.has(th.dataset.color.toLowerCase())) return;
@@ -3158,6 +3410,13 @@ App.Production = {
     } catch (err) {
       // Ignored -- availability hints are advisory, not blocking.
     }
+
+    // Same advisory hint, one level up: the Colors to Produce checklist's
+    // own per-color availability. Kept here (rather than only at render
+    // time) so it stays in step with the component rows' hints, and so a
+    // checklist row backed by a plain ITEM input picks up the Stock this
+    // call just loaded. Never throws -- see its own catch.
+    await this.refreshColorChecklistAvailability(processId);
   },
 
   _readProdComponentRow(row) {
@@ -3590,10 +3849,18 @@ App.Production = {
     const size = App.Utils.getSizeFromOutputItemName(p.outputItemName);
     const model = App.Utils.getModelFromOutputItemName(p.outputItemName);
 
+    // `colors` deliberately stays the FULL group list -- every consumer that
+    // must not lose data (serializeProductionSheet, addProductionSheetColor,
+    // the save path) reads it, and dropping sub-groups from it would drop
+    // their quantities on save. The split below is derived alongside it for
+    // PRESENTATION only: which of those groups are real colors, and which
+    // are packing/variant sub-groups. See _isColorGroupName.
     App.State.currentProductionSheet = {
       idx, lotQty: p.qty, defaultComponents, colors,
       lotColor: p.color || '', date: p.date, size, model, processName, requirementSheetTitle
     };
+    this._refreshSheetGroupSplit(App.State.currentProductionSheet);
+    this.renderProductionSheetPrintOptions();
 
     const label = p.productName || p.outputItemName || p.processId;
     const tag = p.productId || p.lotNumber;
@@ -3615,8 +3882,132 @@ App.Production = {
   // colorGroup). '' means Common.
   _resolveSheetColorKey(comp) {
     const colorGroup = String(comp.colorGroup || '').trim();
-    if (colorGroup && colorGroup.toUpperCase() !== 'COMMON') return colorGroup;
+    if (colorGroup && !App.Utils.isCommonColorGroup(colorGroup)) return colorGroup;
     return String(comp.color || '').trim();
+  },
+
+  // True when `name` is composed entirely of Color Master color names (so it
+  // belongs on the Per-Color matrix), false when it's a packing/variant
+  // bucket like 'KIT BAG 20"' that travels with the lot's colors but isn't
+  // one (so it belongs on the Sub-Group Components table instead). The test
+  // is compositional, not a lookup: "Blue-White" and "B/T Green-Orange"
+  // classify as colors (every segment resolves against Color Master), while
+  // 'SMALL KIT 20"' does not (nothing resolves). Longest match wins, so a
+  // short color can't consume the head of a longer one and strand the
+  // remainder ("Sea Green" losing to "Sea").
+  _isColorGroupName(name) {
+    let rest = String(name || '').trim().toLowerCase();
+    if (!rest) return false;
+    if (App.Utils.isCommonColorGroup(rest)) return false;
+
+    const master = (App.State.globalColors || [])
+      .map(c => String(c.name || '').trim().toLowerCase())
+      .filter(Boolean)
+      .sort((a, b) => b.length - a.length);
+    // With no Color Master loaded there is nothing to judge against; treat
+    // every group as a color so the sheet keeps its old shape rather than
+    // dumping every column into the sub-group table.
+    if (master.length === 0) return true;
+
+    let matchedAny = false;
+    while (rest) {
+      const withoutDelim = rest.replace(/^[-/\s]+/, '');
+      if (withoutDelim !== rest) { rest = withoutDelim; continue; }
+      const hit = master.find(m => rest.startsWith(m));
+      if (!hit) return false;
+      rest = rest.slice(hit.length);
+      matchedAny = true;
+    }
+    return matchedAny;
+  },
+
+  // Items Master lookup by exact name+size, case/whitespace-insensitive.
+  // Returns null for a blank name (caller-distinguishable from undefined --
+  // "named, but Items Master doesn't know it") so _resolveDisplayUnit can
+  // keep rendering nothing at all for a still-empty row rather than
+  // labelling it "Pcs".
+  _lookupSheetItem(itemName, size) {
+    const name = String(itemName || '').trim();
+    if (!name) return null;
+    return (App.State.globalItems || []).find(i =>
+      App.Utils.sameText(i.name, name) && App.Utils.sameText(i.size || '', size || ''));
+  },
+
+  // The physical unit to print alongside a component's Qty (e.g. "Pcs",
+  // "Kg", "Dozen") -- looked up fresh from Items Master by name+size at
+  // export time rather than carried through from componentsConsumed/
+  // customComponents, since a customized-and-resaved sheet's own
+  // serializeProductionSheet schema never retains sourceType or the
+  // recipe's own Unit field in the first place. 'Pcs' is the fallback for a
+  // Warehouse Pool WIP item (no Items Master entry of its own) or any name
+  // Items Master doesn't recognize.
+  _resolveDisplayUnit(itemName, size) {
+    const match = this._lookupSheetItem(itemName, size);
+    if (match === null) return '';
+    return (match && match.baseUnit) || 'Pcs';
+  },
+
+  // The unit to print for one rendered sheet row, read back off the cell the
+  // dialog already shows so the export can never disagree with what the
+  // operator just looked at. That cell is the only place the unit resolved
+  // from a merged row's LITERAL item name survives -- the rendered Item Name
+  // is colour-stripped and would re-resolve to the 'Pcs' fallback (see
+  // groupComponentsForSheet). Falls back to resolving from the rendered name
+  // for a caller that built the sheet DOM without the cell, and maps the
+  // "unknown item" em dash back to no label at all.
+  _sheetRowUnitFromDom(row) {
+    const shown = row?.querySelector('.prod-sheet-unit')?.textContent.trim() || '';
+    if (shown) return shown === '—' ? '' : shown;
+    return this._resolveDisplayUnit(
+      row?.querySelector('.prod-sheet-item-name')?.value.trim() || '',
+      row?.querySelector('.prod-sheet-size')?.value.trim() || ''
+    );
+  },
+
+  // The Base Unit to render for one Common row / matrix slot. Prefers the
+  // unit groupComponentsForSheet already resolved from the component's
+  // LITERAL item name, and only falls back to resolving from the rendered
+  // name for rows that never went through it (a blank row from
+  // addCommonSheetRow/addMatrixSheetRow, filled in on change instead).
+  _sheetRowUnit(row) {
+    if (row && row.unit) return row.unit;
+    return this._resolveDisplayUnit(row?.itemName, row?.size);
+  },
+
+  // Re-resolves a sheet row's Narration and Base Unit after its Item Name or
+  // Size was edited, so both keep matching whatever item the row now names.
+  // Narration is only overwritten when Items Master actually has one for the
+  // new item (see _resolveDisplayNarration), so a hand-typed note on a row
+  // Items Master doesn't know is left alone.
+  handleSheetRowItemChange(input) {
+    const row = input?.closest('tr');
+    if (!row) return;
+
+    const itemName = row.querySelector('.prod-sheet-item-name')?.value.trim() || '';
+    const size = row.querySelector('.prod-sheet-size')?.value.trim() || '';
+
+    const narrationInput = row.querySelector('.prod-sheet-narration');
+    if (narrationInput) {
+      narrationInput.value = this._resolveDisplayNarration(itemName, size, narrationInput.value);
+    }
+
+    const unitCell = row.querySelector('.prod-sheet-unit');
+    if (unitCell) unitCell.textContent = this._resolveDisplayUnit(itemName, size) || '—';
+  },
+
+  // The Narration to show alongside a component, resolved LIVE from Items
+  // Master by name+size rather than read off the value the lot snapshotted
+  // into componentsConsumed when it was logged -- an Items Master correction
+  // then shows up on every lot's Production Sheet, not just ones logged
+  // after the correction. `fallback` (the stored value) is kept when there's
+  // no Items Master entry at all (a Warehouse Pool WIP item, or an ad-hoc
+  // row typed straight into the sheet), or when the matched entry's own
+  // Narration is blank, so nothing is ever silently blanked.
+  _resolveDisplayNarration(itemName, size, fallback) {
+    const stored = String(fallback || '').trim();
+    const match = this._lookupSheetItem(itemName, size);
+    if (!match) return stored;
+    return String(match.narration || '').trim() || stored;
   },
 
   // Splits a lot's components into the Common table (no color, shown
@@ -3640,6 +4031,18 @@ App.Production = {
     (components || []).forEach(comp => {
       const colorKey = this._resolveSheetColorKey(comp);
       const qty = comp.requiredQty !== undefined ? toNumber(comp.requiredQty) : toNumber(comp.qty);
+      // Resolved against this component's OWN literal item name (not the
+      // color-stripped display name used as the matrix row key below) --
+      // that literal name is what Items Master is keyed by.
+      const narration = this._resolveDisplayNarration(comp.itemName, comp.size, comp.narration);
+      // Same reason the unit must be resolved HERE and carried on the row
+      // rather than re-derived later from the rendered Item Name: a merged
+      // per-colour row displays a colour-STRIPPED name ("Frame Sticker" for
+      // the literal "Frame Sticker---Blue"), and that stripped name matches
+      // nothing in Items Master -- resolving from it later would silently
+      // fall through to the 'Pcs' fallback and mislabel every by-weight/
+      // by-set item's quantity on both the dialog and the printed sheet.
+      const unit = this._resolveDisplayUnit(comp.itemName, comp.size);
 
       if (!colorKey) {
         if (commonOverrideComps.includes(comp)) {
@@ -3649,10 +4052,10 @@ App.Production = {
                 this._itemSlotKey(this._stripColorSubstring(o.itemName || '', this._resolveSheetColorKey(o)), o.size) === this._itemSlotKey(comp.itemName, comp.size))
               .map(o => this._resolveSheetColorKey(o))
           );
-          pendingCommonOverrides.push({ comp, qty, overriddenColors });
+          pendingCommonOverrides.push({ comp, qty, narration, unit, overriddenColors });
           return;
         }
-        common.push({ itemName: comp.itemName || '', size: comp.size || '', narration: comp.narration || '', qty });
+        common.push({ itemName: comp.itemName || '', size: comp.size || '', narration, unit, qty });
         return;
       }
 
@@ -3660,29 +4063,34 @@ App.Production = {
       const displayName = sharedItemKeys.has(this._itemSlotKey(comp.itemName, comp.size))
         ? (comp.itemName || '').trim()
         : this._stripColorSubstring(comp.itemName || '', colorKey);
-      const slotKey = [displayName, comp.size || '', comp.narration || ''].join('|').toLowerCase();
+      const slotKey = [displayName, comp.size || '', narration].join('|').toLowerCase();
       let slot = matrixIndex.get(slotKey);
       if (!slot) {
-        slot = { itemName: displayName, size: comp.size || '', narration: comp.narration || '', colors: {} };
+        slot = { itemName: displayName, size: comp.size || '', narration, unit, colors: {} };
         matrixIndex.set(slotKey, slot);
         matrixSlots.push(slot);
       }
+      // Every colour of one merged row is the same physical item, so they
+      // share a Base Unit; first resolvable one wins, so a colour variant
+      // that happens to be missing from Items Master can't blank it.
+      if (!slot.unit) slot.unit = unit;
       slot.colors[colorKey] = (slot.colors[colorKey] || 0) + qty;
     });
 
     const allColors = Array.from(colors);
-    pendingCommonOverrides.forEach(({ comp, qty, overriddenColors }) => {
+    pendingCommonOverrides.forEach(({ comp, qty, narration, unit, overriddenColors }) => {
       const fallbackColors = allColors.filter(c => !overriddenColors.has(c));
       if (fallbackColors.length === 0) return;
       const perColorQty = qty / fallbackColors.length;
       const displayName = comp.itemName || '';
-      const slotKey = [displayName, comp.size || '', comp.narration || ''].join('|').toLowerCase();
+      const slotKey = [displayName, comp.size || '', narration].join('|').toLowerCase();
       let slot = matrixIndex.get(slotKey);
       if (!slot) {
-        slot = { itemName: displayName, size: comp.size || '', narration: comp.narration || '', colors: {} };
+        slot = { itemName: displayName, size: comp.size || '', narration, unit, colors: {} };
         matrixIndex.set(slotKey, slot);
         matrixSlots.push(slot);
       }
+      if (!slot.unit) slot.unit = unit;
       fallbackColors.forEach(c => { slot.colors[c] = (slot.colors[c] || 0) + perColorQty; });
     });
 
@@ -3714,9 +4122,28 @@ App.Production = {
 
     const { autoGroups, manualSlots } = this._groupMatrixSlotsForSheet(matrixSlots);
     autoGroups.forEach((group, idx) => {
-      tablesContainer.insertAdjacentHTML('beforeend', this._buildSheetMatrixTable(`group_${idx}`, group.colors, group.slots));
+      // A signature group is a sub-group table when none of the columns it
+      // was built from is a real color -- the on-screen counterpart of the
+      // print sheet's "Sub-Group Components" split, so a kit/packing bucket
+      // reads as what it is instead of masquerading as a color.
+      const isSub = group.colors.every(c => !this._isColorGroupName(c));
+      tablesContainer.insertAdjacentHTML('beforeend',
+        this._buildSheetMatrixTable(`group_${idx}`, group.colors, group.slots, isSub));
     });
-    tablesContainer.insertAdjacentHTML('beforeend', this._buildSheetMatrixTable('manual', colors, manualSlots));
+
+    // The catch-all for ad-hoc additions is split the same way, so a new row
+    // added under a color is not also handed a set of packing columns (and
+    // vice versa). Only render each when that kind of column actually exists.
+    const colorGroups = App.State.currentProductionSheet?.colorGroups
+      || colors.filter(c => this._isColorGroupName(c));
+    const subGroups = App.State.currentProductionSheet?.subGroups
+      || colors.filter(c => !this._isColorGroupName(c));
+    if (colorGroups.length > 0) {
+      tablesContainer.insertAdjacentHTML('beforeend', this._buildSheetMatrixTable('manual', colorGroups, manualSlots));
+    }
+    if (subGroups.length > 0) {
+      tablesContainer.insertAdjacentHTML('beforeend', this._buildSheetMatrixTable('manual-subgroup', subGroups, [], true));
+    }
   },
 
   // Splits matrixSlots into signature-based auto groups (rows that
@@ -3742,16 +4169,25 @@ App.Production = {
   // Builds one Per-Color table block: a header with this group's own
   // colors, and a tbody tagged with data-matrix-group so
   // addMatrixSheetRow/addProductionSheetColor/serializeProductionSheet
-  // can target the right table (or read across all of them).
-  _buildSheetMatrixTable(groupKey, colors, slots) {
+  // can target the right table (or read across all of them). `isSubGroup`
+  // only changes the caption -- the table itself is identical, and every
+  // tbody keeps the same .prod-sheet-matrix-tbody hook so
+  // serializeProductionSheet still reads colour and sub-group rows together
+  // and nothing is lost on save.
+  _buildSheetMatrixTable(groupKey, colors, slots, isSubGroup = false) {
     const headHtml = colors.map(c => `<th class="text-end" style="min-width:70px;" data-color="${escapeHtml(c)}">${escapeHtml(c)}</th>`).join('');
     const bodyHtml = slots.map(slot => this.renderMatrixSheetRow(slot, colors)).join('');
+    const caption = isSubGroup
+      ? `<div class="small fw-semibold text-secondary mb-1">Sub-Group Components</div>`
+      : '';
     return `
       <div class="table-responsive mb-3" data-matrix-group="${escapeHtml(groupKey)}">
+        ${caption}
         <table class="table table-sm table-hover table-striped align-middle mb-0">
           <thead class="table-light">
             <tr>
               <th style="width:18%;">Item Name</th><th style="width:8%;">Size</th><th style="width:14%;">Narration</th>
+              <th class="text-center" style="width:52px;">Unit</th>
               ${headHtml}
               <th class="text-center" style="width:30px;">✕</th>
             </tr>
@@ -3761,21 +4197,42 @@ App.Production = {
       </div>`;
   },
 
-  // Builds one editable Common-table <tr>: item/size/narration + a single Required Qty input.
+  // Shared by both row renderers -- editing either one re-keys the row's
+  // Items Master lookup, so both re-resolve Narration + Unit for that row
+  // (see handleSheetRowItemChange) -- the sheet is fully editable, and a row
+  // retyped onto a different item would otherwise keep the previous item's
+  // narration and unit label.
+  _SHEET_IDENTITY_HOOK: 'onchange="App.Production.handleSheetRowItemChange(this)"',
+
+  // Builds one editable Common-table <tr>: item/size/narration + a single
+  // Required Qty input, suffixed with the item's Base Unit from Items
+  // Master so a quantity is never read as a bare number ("2" for a
+  // by-weight item means 2 Kg, not 2 pieces). Read-only: the unit belongs
+  // to Items Master, and the printed sheet resolves it there too (see
+  // _resolveDisplayUnit).
   renderCommonSheetRow(row) {
     const display = row.qty !== undefined ? this.formatQty(row.qty) : '';
     return `<tr>
-      <td><input type="text" class="form-control form-control-sm prod-sheet-item-name" value="${escapeHtml(row.itemName || '')}" placeholder="Item name"></td>
-      <td><input type="text" class="form-control form-control-sm prod-sheet-size" value="${escapeHtml(row.size || '')}" placeholder="-"></td>
+      <td><input type="text" class="form-control form-control-sm prod-sheet-item-name" value="${escapeHtml(row.itemName || '')}" placeholder="Item name" ${this._SHEET_IDENTITY_HOOK}></td>
+      <td><input type="text" class="form-control form-control-sm prod-sheet-size" value="${escapeHtml(row.size || '')}" placeholder="-" ${this._SHEET_IDENTITY_HOOK}></td>
       <td><input type="text" class="form-control form-control-sm prod-sheet-narration" value="${escapeHtml(row.narration || '')}" placeholder="-"></td>
-      <td><input type="number" class="form-control form-control-sm text-end prod-sheet-qty" value="${display}" step="any" min="0" placeholder="-"></td>
+      <td>
+        <div class="input-group input-group-sm flex-nowrap">
+          <input type="number" class="form-control form-control-sm text-end prod-sheet-qty" value="${display}" step="any" min="0" placeholder="-">
+          <span class="input-group-text prod-sheet-unit" title="Base Unit from Items Master">${escapeHtml(this._sheetRowUnit(row) || '—')}</span>
+        </div>
+      </td>
       <td class="text-center"><button type="button" class="btn btn-outline-danger btn-sm" onclick="this.closest('tr').remove()">✕</button></td>
     </tr>`;
   },
 
-  // Builds one editable matrix <tr>: item/size/narration text inputs, plus
-  // one Required Qty number input per color column (blank = not
-  // applicable to that color, rather than a misleading 0).
+  // Builds one editable matrix <tr>: item/size/narration text inputs, a
+  // Base Unit cell, plus one Required Qty number input per color column
+  // (blank = not applicable to that color, rather than a misleading 0).
+  // The unit sits in its own cell just ahead of the quantity columns, and
+  // applies to every one of them -- suffixing each colour cell individually
+  // (as the printed sheet does, where width is fixed) would add an addon
+  // per colour and push this already-wide table into horizontal scroll.
   renderMatrixSheetRow(slot, colors) {
     const qtyCell = (color) => {
       const val = slot.colors ? slot.colors[color] : undefined;
@@ -3784,9 +4241,10 @@ App.Production = {
     };
 
     let html = `<tr>
-      <td><input type="text" class="form-control form-control-sm prod-sheet-item-name" value="${escapeHtml(slot.itemName || '')}" placeholder="Item name"></td>
-      <td><input type="text" class="form-control form-control-sm prod-sheet-size" value="${escapeHtml(slot.size || '')}" placeholder="-"></td>
-      <td><input type="text" class="form-control form-control-sm prod-sheet-narration" value="${escapeHtml(slot.narration || '')}" placeholder="-"></td>`;
+      <td><input type="text" class="form-control form-control-sm prod-sheet-item-name" value="${escapeHtml(slot.itemName || '')}" placeholder="Item name" ${this._SHEET_IDENTITY_HOOK}></td>
+      <td><input type="text" class="form-control form-control-sm prod-sheet-size" value="${escapeHtml(slot.size || '')}" placeholder="-" ${this._SHEET_IDENTITY_HOOK}></td>
+      <td><input type="text" class="form-control form-control-sm prod-sheet-narration" value="${escapeHtml(slot.narration || '')}" placeholder="-"></td>
+      <td class="text-center small text-muted prod-sheet-unit" title="Base Unit from Items Master — applies to every quantity in this row">${escapeHtml(this._sheetRowUnit(slot) || '—')}</td>`;
     (colors || []).forEach(c => { html += qtyCell(c); });
     html += `<td class="text-center"><button type="button" class="btn btn-outline-danger btn-sm" onclick="this.closest('tr').remove()">✕</button></td>
     </tr>`;
@@ -3830,8 +4288,13 @@ App.Production = {
     }
     state.colors.push(name);
     state.colors.sort((a, b) => a.localeCompare(b));
+    this._refreshSheetGroupSplit(state);
 
-    const manualTable = document.querySelector('#productionSheetMatrixTables [data-matrix-group="manual"]');
+    // A typed-in name that is not a real color belongs in the sub-group
+    // catch-all, not among the color columns.
+    const targetGroup = this._isColorGroupName(name) ? 'manual' : 'manual-subgroup';
+    const manualTable = document.querySelector(`#productionSheetMatrixTables [data-matrix-group="${targetGroup}"]`)
+      || document.querySelector('#productionSheetMatrixTables [data-matrix-group="manual"]');
     if (manualTable) {
       const headerRow = manualTable.querySelector('thead tr');
       if (headerRow) {
@@ -3860,7 +4323,56 @@ App.Production = {
 
     const { common, matrixSlots, colors } = this.groupComponentsForSheet(state.defaultComponents || []);
     state.colors = colors;
+    this._refreshSheetGroupSplit(state);
     this.renderProductionSheetTable(common, matrixSlots, colors);
+  },
+
+  // Recomputes the presentation-only split of state.colors into real color
+  // groups vs sub-groups. Must be called after ANY mutation of state.colors
+  // (populate / add-column / reset), or the dialog and the print sheet would
+  // keep rendering a stale set of columns.
+  _refreshSheetGroupSplit(state) {
+    if (!state) return;
+    const all = state.colors || [];
+    state.colorGroups = all.filter(c => this._isColorGroupName(c));
+    state.subGroups = all.filter(c => !this._isColorGroupName(c));
+  },
+
+  // ── Print options ────────────────────────────────────────────────
+  // Reads the "Print options" panel. Absent panel / unopened dialog falls
+  // back to "print everything, portrait", so every existing caller
+  // (bulkDownloadPDF included) behaves exactly as it did before.
+  _printOptions() {
+    const boxes = $$('#productionSheetPrintColumns input[type="checkbox"]');
+    const excluded = boxes.filter(b => !b.checked).map(b => b.dataset.group);
+    const landscape = !!document.getElementById('prodSheetOrientLandscape')?.checked;
+    return { excluded, landscape };
+  },
+
+  // Rebuilds the column tick-list for the lot now in the dialog. Colours and
+  // sub-groups are labelled distinctly so it is obvious which is which.
+  renderProductionSheetPrintOptions() {
+    const dest = document.getElementById('productionSheetPrintColumns');
+    if (!dest) return;
+    const state = App.State.currentProductionSheet || {};
+    const colorGroups = state.colorGroups || [];
+    const subGroups = state.subGroups || [];
+
+    const box = (group, kind) => `
+          <div class="form-check">
+            <input class="form-check-input prod-sheet-print-col" type="checkbox"
+                   id="prodPrintCol_${escapeHtml(group).replace(/[^a-zA-Z0-9]/g, '_')}"
+                   data-group="${escapeHtml(group)}" checked>
+            <label class="form-check-label" for="prodPrintCol_${escapeHtml(group).replace(/[^a-zA-Z0-9]/g, '_')}">
+              ${escapeHtml(group)} <span class="badge bg-${kind === 'color' ? 'success' : 'secondary'}-subtle text-${kind === 'color' ? 'success' : 'secondary'} border">${kind === 'color' ? 'colour' : 'sub-group'}</span>
+            </label>
+          </div>`;
+
+    const html = [
+      ...colorGroups.map(c => box(c, 'color')),
+      ...subGroups.map(c => box(c, 'sub'))
+    ].join('');
+    dest.innerHTML = html || '<div class="text-muted small">This lot has no per-colour columns.</div>';
   },
 
   // Reads the Common table + Per-Color matrix + remarks into a plain
@@ -3995,7 +4507,11 @@ App.Production = {
     if (colorWrapper) colorWrapper.style.display = lotColor ? '' : 'none';
     setText('print-prod-color', lotColor);
 
-    const colors = App.State.currentProductionSheet?.colors || [];
+    // Anything unticked in the Print options panel is dropped from the
+    // printed sheet only -- the lot's own data is untouched.
+    const { excluded } = this._printOptions();
+    const kept = g => !excluded.some(e => App.Utils.sameColor(e, g));
+
     const get = (row, sel) => escapeHtml(row.querySelector(sel)?.value.trim() || '');
     const getRaw = (row, sel) => row.querySelector(sel)?.value.trim() || '';
 
@@ -4005,6 +4521,7 @@ App.Production = {
     const commonSection = document.getElementById('print-prod-common-section');
     if (commonSection) commonSection.style.display = commonRows.length > 0 ? '' : 'none';
     const matrixSection = document.getElementById('print-prod-matrix-section');
+    const subGroupSection = document.getElementById('print-prod-subgroup-section');
 
     // A Size column that's "GENERAL"/blank on every row carries no
     // information -- it's the one column the fit loop below is allowed
@@ -4017,26 +4534,77 @@ App.Production = {
       name: get(row, '.prod-sheet-item-name'),
       size: get(row, '.prod-sheet-size'),
       narration: get(row, '.prod-sheet-narration'),
-      qty: row.querySelector('.prod-sheet-qty')?.value || ''
+      qty: row.querySelector('.prod-sheet-qty')?.value || '',
+      unit: this._sheetRowUnitFromDom(row)
     }));
 
-    // One row per item, one column per lot color -- replaces the old
-    // per-color-signature grouping (which spawned a separate mini-table,
-    // each repeating its own header, whenever items used different
-    // subsets of colors). Unused colors just render a dash. Deliberately
-    // stays ONE consolidated table regardless of which colors actually
-    // co-occur: a real 6-colour/11-row worst case must not fragment into
-    // one table per row signature/axis, or it spills across pages.
-    const matrixData = matrixRows.map(row => ({
+    const qtyFor = (row, group) => {
+      const input = $$('.prod-sheet-color-qty', row).find(el => App.Utils.sameColor(el.dataset.color, group));
+      return input?.value || '';
+    };
+    const toMatrixRow = columns => row => ({
       name: get(row, '.prod-sheet-item-name'),
       size: get(row, '.prod-sheet-size'),
       narration: get(row, '.prod-sheet-narration'),
-      colorQty: colors.map(c => {
-        const input = $$('.prod-sheet-color-qty', row).find(el => el.dataset.color === c);
-        return input?.value || '';
-      })
-    }));
-    if (matrixSection) matrixSection.style.display = (colors.length > 0 && matrixData.length > 0) ? '' : 'none';
+      unit: this._sheetRowUnitFromDom(row),
+      colorQty: columns.map(c => qtyFor(row, c))
+    });
+    const sheet = App.State.currentProductionSheet || {};
+    const allGroups = sheet.colors || [];
+    const colors = (sheet.colorGroups || allGroups.filter(c => this._isColorGroupName(c))).filter(kept);
+    const subGroups = (sheet.subGroups || allGroups.filter(c => !this._isColorGroupName(c))).filter(kept);
+
+    // Both the Per-Color matrix and Sub-Group Components split into
+    // connected clusters of columns -- two columns land in the same
+    // printed table only if some row uses BOTH of them together, directly
+    // or transitively through a bridging row (e.g. one item legitimately
+    // offered in every color in the lot ties otherwise-unrelated subsets
+    // into one family, and stays on one table). Columns that are always
+    // used together as one family stay consolidated (the common case: a
+    // real 6-colour/11-row worst case that must NOT fragment into one
+    // table per row signature, or it spills across pages). But two groups
+    // that NEVER co-occur on any row -- e.g. a Painted Mudguard's own
+    // plain Blue/Pink/Purple/Red axis next to the Frame's compound
+    // Blue-White/Black-style axis, or a "KIT BAG 24\"" bucket next to a
+    // "SMALL KIT 24\"" bucket that never shares an item -- get their own
+    // table instead of doubling every row's column count with dashes (and,
+    // for a long component list, needlessly spilling onto extra printed
+    // pages).
+    const clusterMatrixTables = (columns, rows) => {
+      if (columns.length === 0 || rows.length === 0) return [];
+      const parent = new Map(columns.map(c => [c, c]));
+      const find = c => { while (parent.get(c) !== c) c = parent.get(c); return c; };
+      const union = (a, b) => { const ra = find(a), rb = find(b); if (ra !== rb) parent.set(ra, rb); };
+
+      const rowColumns = rows.map(row => columns.filter(c => String(qtyFor(row, c)).trim() !== ''));
+      rowColumns.forEach(set => { for (let i = 1; i < set.length; i++) union(set[0], set[i]); });
+
+      const clusters = new Map(); // root -> { columns: [], rows: [] }
+      columns.forEach(c => {
+        if (!rowColumns.some(set => set.includes(c))) return; // no row ever uses it -- drop
+        const root = find(c);
+        if (!clusters.has(root)) clusters.set(root, { columns: [], rows: [] });
+        clusters.get(root).columns.push(c);
+      });
+      rows.forEach((row, i) => {
+        const set = rowColumns[i];
+        if (set.length === 0) return;
+        clusters.get(find(set[0])).rows.push(row);
+      });
+
+      return Array.from(clusters.values())
+        .filter(g => g.rows.length > 0)
+        .map(g => ({ columns: g.columns, data: g.rows.map(toMatrixRow(g.columns)) }));
+    };
+
+    const matrixGroups = clusterMatrixTables(colors, matrixRows);
+    const subGroupGroups = clusterMatrixTables(subGroups, matrixRows);
+
+    // Each section appears only if it has at least one cluster left after
+    // exclusions/empty filtering, so a lot with no sub-groups looks exactly
+    // as it always did, and a kit-bag-only lot shows no empty color matrix.
+    if (matrixSection) matrixSection.style.display = matrixGroups.length > 0 ? '' : 'none';
+    if (subGroupSection) subGroupSection.style.display = subGroupGroups.length > 0 ? '' : 'none';
 
     // Density tiers the fit loop steps through, tightest last: shrink
     // padding, then font (Item Name + Qty held a step larger and bold --
@@ -4045,67 +4613,151 @@ App.Production = {
     // If even the tightest tier still overflows, it's kept anyway (still
     // the smallest/cleanest option) and the sheet spills to a page 2,
     // which already gets repeating headers from styles.css's print CSS.
+    //
+    // Every font size here MUST stay a whole number, and each tier carries
+    // an explicit integer lineHeight. html2canvas (the "Download PDF" path)
+    // positions each text fragment from its own rounded line-box
+    // arithmetic, so a fractional line box -- e.g. a 14.5px font against
+    // the container's unitless line-height:1.5, giving 21.75px -- drifts
+    // far enough over a few wrapped lines that two of them get painted at
+    // the SAME y, rendering long item names as unreadable overlapping mush
+    // in the downloaded PDF while window.print() looked fine.
     const FIT_TIERS = [
-      { pad: '6px 8px', font: 12, emphasisFont: 14.5, tableGap: 12, hideSize: false },
-      { pad: '4px 7px', font: 11, emphasisFont: 13.5, tableGap: 9, hideSize: false },
-      { pad: '2.5px 6px', font: 10, emphasisFont: 12.5, tableGap: 7, hideSize: false },
-      { pad: '2px 5px', font: 9.5, emphasisFont: 11, tableGap: 5, hideSize: true }
+      { pad: '7px 9px', font: 12, emphasisFont: 15, lineHeight: 20, tableGap: 12, hideSize: false },
+      { pad: '5px 8px', font: 11, emphasisFont: 14, lineHeight: 19, tableGap: 9, hideSize: false },
+      { pad: '4px 7px', font: 11, emphasisFont: 13, lineHeight: 17, tableGap: 7, hideSize: false },
+      { pad: '3px 6px', font: 10, emphasisFont: 12, lineHeight: 16, tableGap: 5, hideSize: true }
     ];
-    const HEAD_BG = '#e8f5e9', HEAD_INK = '#146c43', ZEBRA = '#f6f8f6', RULE = '#cfd6d1';
+    // Readability palette. The Item Name cannot use bold (see bodyCell), so
+    // the hierarchy is carried by size + ink instead: near-black names
+    // against deliberately muted grey Size/Narration, so the eye lands on
+    // the item first and the supporting columns recede. ZEBRA is a real,
+    // visible band and RULE is a light hairline so the banding, not a heavy
+    // grid, does the row tracking. GRID_STRONG outlines the table so
+    // columns stay anchored.
+    const { HEAD_BG, HEAD_INK, ZEBRA, RULE, GRID_STRONG, INK_PRIMARY, INK_MUTED } = this.PRINT_PALETTE;
 
+    // Headers are stepped one size ABOVE the body's own tier.font -- a
+    // column header being smaller than the data it labels reads backwards,
+    // especially on the color-matrix table where getting the wrong
+    // header/column pairing means misreading which color a number belongs
+    // to. Safety valve so an over-long token can never spill outside its
+    // cell border. overflow-wrap:break-word ONLY -- deliberately not
+    // word-break:break-word alongside it, and not overflow-wrap:anywhere;
+    // both of those also shrink the column's min-content width and force a
+    // mid-token break, which html2canvas then paints at the wrong position
+    // as two overlapping lines. vertical-align:top, not the table-cell
+    // default of middle -- with middle, html2canvas has to offset the text
+    // block inside a taller row, and got that offset wrong whenever a
+    // cell's own content height landed exactly on the row height.
+    const CELL_VALIGN = 'vertical-align:top;';
+    const CELL_WRAP = 'overflow-wrap:break-word;';
+
+    // Item names here are hyphen-chained compounds ("BB---CUP---SET",
+    // "CYCLE-CHAIN--110-LINK") that have to wrap somewhere. Adding an
+    // explicit break opportunity after every hyphen run keeps them breaking
+    // at their own separators instead of at whatever fill point the
+    // renderer picks. A zero-width space rather than <wbr>: html2canvas
+    // walks text nodes with its own segmenter and skips the <wbr> ELEMENT
+    // entirely, so the break opportunity never reached it; U+200B is an
+    // ordinary character in the text node, which both engines honour. Each
+    // segment becomes its own block line, so the cell never depends on the
+    // renderer's own wrapping at all -- html2canvas can only mis-paint a
+    // line it had to wrap itself, and there is now nothing left for it to
+    // wrap. Single hyphens stay inside their segment (part of the token,
+    // e.g. "BRUT-BLACK") but still get a zero-width space after them as a
+    // safety valve so an unusually long segment can wrap rather than spill.
+    const withBreakPoints = text => String(text)
+      .split(/-{2,}/)
+      .filter(seg => seg !== '')
+      .map(seg => `<span style="display:block;">${seg.replace(/-/g, '$&​')}</span>`)
+      .join('');
+
+    // Deliberately AUTO layout, not table-layout:fixed. Fixed layout makes
+    // the column percentages binding, which does stop the tables blowing
+    // past their grid track -- but html2canvas then mis-measures the
+    // column and lays each header out on a single unwrapped line, clipping
+    // it mid-word in the PDF. Auto layout is what html2canvas renders
+    // faithfully; the track cap on the Common grid plus CELL_WRAP is what
+    // keeps the width in bounds.
+    const TABLE_STYLE = 'width:100%;border-collapse:collapse;';
+
+    // Item Name is emphasised by SIZE (tier.emphasisFont) and never by
+    // weight. html2canvas lays a line out using NORMAL-weight metrics and
+    // then paints bold glyphs, so any bold text that WRAPS overruns its
+    // measured line and the fragments get painted on top of each other.
+    // Bold is still safe, and still used, on cells that cannot wrap: the
+    // Qty column (short values like "24 Pcs") and the column headers.
+    //
+    // opts.nowrap pins a column whose values are always short single
+    // tokens (Size: "GENERAL", "20 inch"). Without it auto layout squeezed
+    // Size narrow enough to break "GENERAL" into "GEN/ERAL" mid-token.
     const headCell = (label, tier, opts = {}) => {
       const width = opts.width ? `width:${opts.width};` : '';
-      return `<th style="padding:${tier.pad};border:1px solid ${RULE};background:${HEAD_BG};color:${HEAD_INK};
-                font-weight:700;text-align:${opts.align || 'center'};font-size:${Math.max(tier.font - 1, 9)}px;${width}
+      const wrap = CELL_VALIGN + (opts.nowrap ? 'white-space:nowrap;' : CELL_WRAP);
+      return `<th style="padding:${tier.pad};border:1px solid ${GRID_STRONG};background:${HEAD_BG};color:${HEAD_INK};
+                font-weight:700;text-align:${opts.align || 'center'};font-size:${Math.max(tier.font + 1, 10)}px;
+                line-height:${tier.lineHeight}px;${wrap}${width}
                 -webkit-print-color-adjust:exact;print-color-adjust:exact;">${label}</th>`;
     };
     const bodyCell = (content, tier, opts = {}) => {
       const bg = opts.zebra ? `background:${ZEBRA};` : '';
       const weight = opts.bold ? 'font-weight:700;' : '';
       const fs = opts.emphasis ? tier.emphasisFont : tier.font;
+      const wrap = CELL_VALIGN + (opts.nowrap ? 'white-space:nowrap;' : CELL_WRAP);
+      const ink = (opts.emphasis || opts.bold) ? INK_PRIMARY : INK_MUTED;
       return `<td style="padding:${tier.pad};border:1px solid ${RULE};text-align:${opts.align || 'left'};
-                font-size:${fs}px;${weight}${bg}">${content}</td>`;
+                color:${ink};font-size:${fs}px;line-height:${tier.lineHeight}px;${wrap}${weight}${bg}">${content}</td>`;
     };
 
     const buildCommonTable = (rows, tier, hideSize) => {
       if (rows.length === 0) return '';
-      let head = headCell('Item Name', tier, { align: 'left', width: hideSize ? '46%' : '38%' });
-      if (!hideSize) head += headCell('Size', tier, { width: '16%' });
+      // Item Name is deliberately generous: an item name that lands within
+      // a few px of the column edge is where html2canvas's own text
+      // measuring disagrees with the browser's, wraps a token the browser
+      // would have kept whole, and paints the two fragments on top of each
+      // other. Slack here keeps the common names clear of that boundary.
+      let head = headCell('Item Name', tier, { align: 'left', width: hideSize ? '48%' : '40%' });
+      if (!hideSize) head += headCell('Size', tier, { width: '16%', nowrap: true });
       head += headCell('Narration', tier, { width: hideSize ? '30%' : '22%' });
-      head += headCell('Required Qty', tier, { align: 'right', width: '18%' });
+      head += headCell('Required Qty', tier, { align: 'right', width: hideSize ? '22%' : '22%' });
 
       const body = rows.map((r, i) => {
         const zebra = i % 2 === 1;
-        let row = bodyCell(r.name, tier, { zebra, bold: true, emphasis: true });
-        if (!hideSize) row += bodyCell(r.size || '&#8211;', tier, { align: 'center', zebra });
+        let row = bodyCell(withBreakPoints(r.name), tier, { zebra, emphasis: true });
+        if (!hideSize) row += bodyCell(r.size || '&#8211;', tier, { align: 'center', zebra, nowrap: true });
         row += bodyCell(r.narration || '&#8211;', tier, { align: 'center', zebra });
-        row += bodyCell(r.qty ? escapeHtml(this.formatQty(r.qty)) : '&#8211;', tier, { align: 'right', bold: !!r.qty, zebra, emphasis: true });
+        const qtyText = r.qty ? `${escapeHtml(this.formatQty(r.qty))}${r.unit ? ' ' + escapeHtml(r.unit) : ''}` : '&#8211;';
+        row += bodyCell(qtyText, tier, { align: 'right', bold: !!r.qty, zebra, emphasis: true });
         return `<tr>${row}</tr>`;
       }).join('');
 
-      return `<table style="width:100%;border-collapse:collapse;margin-bottom:${tier.tableGap}px;">
+      return `<table style="${TABLE_STYLE}margin-bottom:${tier.tableGap}px;">
         <thead><tr>${head}</tr></thead><tbody>${body}</tbody></table>`;
     };
 
+    // `columns` is passed in rather than closed over, so the same builder
+    // renders both the color matrix and the sub-group table.
     const buildMatrixTable = (rows, tier, hideSize, columns) => {
       if (rows.length === 0 || columns.length === 0) return '';
-      let head = headCell('Item Name', tier, { align: 'left', width: hideSize ? '30%' : '24%' });
-      if (!hideSize) head += headCell('Size', tier, { width: '9%' });
-      head += headCell('Narration', tier, { width: hideSize ? '16%' : '11%' });
+      let head = headCell('Item Name', tier, { align: 'left', width: hideSize ? '30%' : '26%' });
+      if (!hideSize) head += headCell('Size', tier, { width: '12%', nowrap: true });
+      head += headCell('Narration', tier, { width: hideSize ? '16%' : '12%' });
       columns.forEach(c => { head += headCell(escapeHtml(c), tier, { align: 'right' }); });
 
       const body = rows.map((r, i) => {
         const zebra = i % 2 === 1;
-        let row = bodyCell(r.name, tier, { zebra, bold: true, emphasis: true });
-        if (!hideSize) row += bodyCell(r.size || '&#8211;', tier, { align: 'center', zebra });
+        let row = bodyCell(withBreakPoints(r.name), tier, { zebra, emphasis: true });
+        if (!hideSize) row += bodyCell(r.size || '&#8211;', tier, { align: 'center', zebra, nowrap: true });
         row += bodyCell(r.narration || '&#8211;', tier, { align: 'center', zebra });
         r.colorQty.forEach(val => {
-          row += bodyCell(val ? escapeHtml(this.formatQty(val)) : '&#8211;', tier, { align: 'right', bold: !!val, zebra, emphasis: true });
+          const cellText = val ? `${escapeHtml(this.formatQty(val))}${r.unit ? ' ' + escapeHtml(r.unit) : ''}` : '&#8211;';
+          row += bodyCell(cellText, tier, { align: 'right', bold: !!val, zebra, emphasis: true });
         });
         return `<tr>${row}</tr>`;
       }).join('');
 
-      return `<table style="width:100%;border-collapse:collapse;margin-bottom:${tier.tableGap}px;">
+      return `<table style="${TABLE_STYLE}margin-bottom:${tier.tableGap}px;">
         <thead><tr>${head}</tr></thead><tbody>${body}</tbody></table>`;
     };
 
@@ -4116,6 +4768,7 @@ App.Production = {
 
     const commonDest = document.getElementById('print-production-sheet-common-tables');
     const matrixDest = document.getElementById('print-production-sheet-matrix-tables');
+    const subGroupDest = document.getElementById('print-production-sheet-subgroup-tables');
 
     const render = tier => {
       if (commonDest) {
@@ -4124,28 +4777,55 @@ App.Production = {
           const mid = Math.ceil(commonData.length / 2);
           const left = buildCommonTable(commonData.slice(0, mid), tier, hideSize);
           const right = buildCommonTable(commonData.slice(mid), tier, hideSize);
-          commonDest.innerHTML = `<div style="display:grid;grid-template-columns:1fr 1fr;gap:12px;">${left}${right}</div>`;
+          // minmax(0,1fr), not 1fr: a bare 1fr track is minmax(auto,1fr) and
+          // GROWS past its share to fit a wide item's min-content, which
+          // blows the grid wider than the page and pushes the right-hand
+          // table off the edge of the PDF.
+          commonDest.innerHTML = `<div style="display:grid;grid-template-columns:minmax(0,1fr) minmax(0,1fr);gap:12px;">${left}${right}</div>`;
         } else {
           commonDest.innerHTML = buildCommonTable(commonData, tier, hideSize);
         }
       }
       if (matrixDest) {
         const hideSize = tier.hideSize && matrixSizeDroppable;
-        matrixDest.innerHTML = buildMatrixTable(matrixData, tier, hideSize, colors);
+        // Stacked full-width, NOT packed side-by-side like Sub-Group
+        // Components below: a colour-axis cluster routinely carries 4+
+        // columns (a whole colour family), and forcing two of those into a
+        // half-width minmax(0,1fr) track overflows the page. Sub-group
+        // buckets are usually only 1-2 columns, where half-width is
+        // comfortably enough room.
+        matrixDest.innerHTML = matrixGroups.map(g => buildMatrixTable(g.data, tier, hideSize, g.columns)).join('');
+      }
+      if (subGroupDest) {
+        const hideSize = tier.hideSize && matrixSizeDroppable;
+        const tables = subGroupGroups.map(g => buildMatrixTable(g.data, tier, hideSize, g.columns));
+        // Sub-group cluster tables are usually narrow (packing/variant
+        // buckets, often just 1-2 columns) -- stacking them full-width one
+        // after another leaves most of each row empty and burns extra
+        // printed pages for no reason. Same minmax(0,1fr) grid Common
+        // Components uses above packs two per row instead; CSS grid
+        // auto-placement wraps any further tables onto more rows with no
+        // extra layout logic needed.
+        subGroupDest.innerHTML = tables.length > 1
+          ? `<div style="display:grid;grid-template-columns:minmax(0,1fr) minmax(0,1fr);gap:12px;">${tables.join('')}</div>`
+          : tables.join('');
       }
     };
 
     // Measure-and-compress: lay the container out offscreen at the real
     // A4 printable width (matches the @page margin geometry in
     // styles.css -- keep PAGE_MARGIN_MM in sync with that file's @page
-    // rule and mobile_styles.css's copy of it), try each density tier,
-    // and stop at the first one that fits a single page -- so nothing
-    // shrinks or drops a column unless the sheet actually needs it to.
+    // rule and mobile_styles.css's copy of it), try each density tier, and
+    // stop at the first one that fits a single page -- so nothing shrinks
+    // or drops a column unless the sheet actually needs it to.
     const container = document.getElementById('print-production-sheet-container');
-    const MM_TO_PX = 96 / 25.4;
-    const PAGE_MARGIN_MM = 6;
-    const PAGE_WIDTH_PX = Math.round((210 - 2 * PAGE_MARGIN_MM) * MM_TO_PX);
-    const PAGE_HEIGHT_PX = Math.round((297 - 2 * PAGE_MARGIN_MM) * MM_TO_PX);
+    // Geometry comes from App.Print so the sheet is measured at exactly
+    // the width downloadElementAsPDF will capture it at. Landscape swaps
+    // the page box, so the fit loop must measure against the rotated
+    // dimensions or it would compress a sheet that already fits.
+    const landscape = this._printOptions().landscape;
+    const PAGE_WIDTH_PX = landscape ? App.Print.PAGE_HEIGHT_PX : App.Print.PAGE_WIDTH_PX;
+    const PAGE_HEIGHT_PX = landscape ? App.Print.PAGE_WIDTH_PX : App.Print.PAGE_HEIGHT_PX;
 
     if (container) {
       const prevDisplay = container.style.display;
@@ -4162,9 +4842,23 @@ App.Production = {
       container.style.display = 'block';
       container.style.width = PAGE_WIDTH_PX + 'px';
 
+      // A tier only "fits" if it fits BOTH ways. The height test alone let
+      // a sheet that was too WIDE pass as fitting, and it exported with
+      // its right-hand column sliced off -- html2canvas captures only the
+      // element's own box, so anything past it is simply gone. offsetHeight,
+      // not scrollHeight: scrollHeight excludes the container's top/bottom
+      // accent borders, so a sheet sitting right on the boundary measured
+      // shorter than it really printed. A couple px of slack on the width:
+      // a fractional track (two halves of the Common grid) can round up by
+      // a px each, which is not real overflow.
+      const ROUNDING_SLACK_PX = 2;
+      const overflows = () =>
+        container.offsetHeight > PAGE_HEIGHT_PX ||
+        container.scrollWidth > container.clientWidth + ROUNDING_SLACK_PX;
+
       for (const tier of FIT_TIERS) {
         render(tier);
-        if (container.scrollHeight <= PAGE_HEIGHT_PX) break;
+        if (!overflows()) break;
       }
 
       container.style.display = prevDisplay;
@@ -4201,6 +4895,18 @@ App.Production = {
     ].join('_');
   },
 
+  // jsPDF/orientation overrides matching the Print options panel, plus the
+  // capture width that goes with them -- downloadElementAsPDF lays the
+  // element out at App.Print.PAGE_WIDTH_PX by default, which is the
+  // PORTRAIT width and would squeeze a landscape sheet.
+  _pdfOverridesForOptions() {
+    if (!this._printOptions().landscape) return {};
+    return {
+      jsPDF: { unit: 'mm', format: 'a4', orientation: 'landscape' },
+      captureWidthPx: App.Print.PAGE_HEIGHT_PX
+    };
+  },
+
   async downloadProductionSheetPDF() {
     const state = App.State.currentProductionSheet;
     if (!state) return;
@@ -4208,7 +4914,8 @@ App.Production = {
     this._buildProductionSheetForExport();
 
     const filenameBase = this._productionSheetFilenameBase(state.date, state.size, state.model, state.processName);
-    const ok = await App.Print.downloadElementAsPDF('print-production-sheet-container', `${filenameBase}.pdf`);
+    const ok = await App.Print.downloadElementAsPDF(
+      'print-production-sheet-container', `${filenameBase}.pdf`, this._pdfOverridesForOptions());
     if (ok) App.Utils.showToast('PDF exported successfully!', false);
   },
 

@@ -1,26 +1,27 @@
 /**
  * Regression test for App.Production.printProductionSheet (../production.js)
- * -- the consolidated-matrix print redesign (one shared table with every
- * lot color as a column, instead of one table per color-signature group)
- * and the Common Components two-column split. Run against the real source
- * via a require() of the actual file, same const-rewrite/global-App
- * technique pool_ledger.test.js established.
+ * -- the disjoint-cluster Per-Color matrix (columns that never co-occur on
+ * any row get their own printed table instead of one shared matrix with
+ * every lot color as a column and dashes for every non-applicable cell) and
+ * the Common Components two-column split. Run against the real source via a
+ * require() of the actual file, same const-rewrite/global-App technique
+ * pool_ledger.test.js established.
  *
- * The Per-Color matrix deliberately stays ONE consolidated table (a real
- * 6-colour/11-row worst case must not fragment into one table per row
- * signature/axis, or it spills across pages) -- an earlier "split disjoint
- * color axes" attempt was reverted upstream in favor of scoping that
- * clustering to Sub-Group Components only, which this port doesn't have
- * (no colorGroups/subGroups split -- Flask's Production Sheet only ever
- * had the flat `colors` axis this file exercises).
+ * Two colors that never appear together on the same row (e.g. one item only
+ * ever tagged Red, another only ever tagged Blue) land in SEPARATE tables --
+ * see clusterMatrixTables in _buildProductionSheetForExport. Two colors that
+ * DO co-occur (directly, or transitively through a bridging row) stay
+ * consolidated in one table, which is what keeps a real 6-colour/11-row
+ * worst case from fragmenting into one table per row and spilling across
+ * pages.
  *
- * jsdom does not do real layout, so container.scrollHeight is always 0 --
- * the auto-fit compression loop's tier-selection (shrinking padding/font,
- * dropping Size) can therefore never be reached here; every call in this
- * file exercises FIT_TIERS[0] only. That part is intentionally left to
- * manual/visual verification. What IS meaningfully covered without real
- * layout: the consolidated matrix structure, dash-for-missing-color cells,
- * and the two-column Common Components split threshold.
+ * jsdom does not do real layout, so container.offsetHeight/scrollWidth are
+ * always 0 -- the auto-fit compression loop's tier-selection (shrinking
+ * padding/font, dropping Size) can therefore never be reached here; every
+ * call in this file exercises FIT_TIERS[0] only. That part is intentionally
+ * left to manual/visual verification. What IS meaningfully covered without
+ * real layout: the cluster-split structure, dash-for-missing-color cells,
+ * unit suffixes, and the two-column Common Components split threshold.
  */
 
 'use strict';
@@ -58,6 +59,8 @@ function buildPrintContainerDom() {
       <div id="print-production-sheet-common-tables"></div>
       <div id="print-prod-matrix-section"></div>
       <div id="print-production-sheet-matrix-tables"></div>
+      <div id="print-prod-subgroup-section"></div>
+      <div id="print-production-sheet-subgroup-tables"></div>
       <div id="print-prod-remarks-section"></div>
       <div id="print-prod-remarks-text"></div>
     </div>`;
@@ -118,8 +121,13 @@ describe('App.Production.printProductionSheet', () => {
     global.$$ = (sel, root = document) => Array.from(root.querySelectorAll(sel));
 
     global.App = {
-      State: { currentProductionSheet: { colors: [], lotColor: '' } },
-      Utils: { notPortedYet: jest.fn() },
+      State: { currentProductionSheet: { colors: [], lotColor: '' }, globalColors: [], globalItems: [] },
+      Utils: {
+        notPortedYet: jest.fn(),
+        sameText: (a, b) => String(a ?? '').trim().toLowerCase() === String(b ?? '').trim().toLowerCase(),
+        sameColor(a, b) { return this.sameText(a, b); },
+        isCommonColorGroup: g => String(g ?? '').trim().toUpperCase() === 'COMMON',
+      },
     };
     loadProductionAsGlobal();
 
@@ -127,7 +135,7 @@ describe('App.Production.printProductionSheet', () => {
     App.Print = { trigger: triggerSpy };
   });
 
-  test('consolidated matrix: one shared table with every color as a column, dashes for missing values', () => {
+  test('disjoint colors (never used together on any row) split into separate tables', () => {
     App.State.currentProductionSheet = { colors: ['Red', 'Blue'], lotColor: '' };
     addMatrixRow('Frame', 'L', 'Main', { Red: '5', Blue: '' });
     addMatrixRow('Mudguard', 'L', 'Rear', { Red: '', Blue: '3' });
@@ -136,20 +144,50 @@ describe('App.Production.printProductionSheet', () => {
 
     const dest = document.getElementById('print-production-sheet-matrix-tables');
     const tables = dest.querySelectorAll('table');
-    expect(tables.length).toBe(1); // one consolidated table, not one per color-signature
+    expect(tables.length).toBe(2); // Red and Blue never co-occur -- one table each
 
-    const headerText = dest.querySelector('thead').textContent;
+    expect(tables[0].querySelector('thead').textContent).toContain('Red');
+    expect(tables[0].querySelector('thead').textContent).not.toContain('Blue');
+    expect(tables[0].querySelector('tbody tr').textContent).toContain('Frame');
+    expect(tables[0].querySelector('tbody tr').textContent).toContain('5');
+
+    expect(tables[1].querySelector('thead').textContent).toContain('Blue');
+    expect(tables[1].querySelector('thead').textContent).not.toContain('Red');
+    expect(tables[1].querySelector('tbody tr').textContent).toContain('Mudguard');
+    expect(tables[1].querySelector('tbody tr').textContent).toContain('3');
+  });
+
+  test('colors that co-occur on a bridging row stay consolidated in one table', () => {
+    App.State.currentProductionSheet = { colors: ['Red', 'Blue'], lotColor: '' };
+    // Frame is offered in both colors, so it bridges Red and Blue into one
+    // cluster even though Mudguard only ever carries Red.
+    addMatrixRow('Frame', 'L', 'Main', { Red: '5', Blue: '4' });
+    addMatrixRow('Mudguard', 'L', 'Rear', { Red: '2', Blue: '' });
+
+    App.Production.printProductionSheet();
+
+    const dest = document.getElementById('print-production-sheet-matrix-tables');
+    const tables = dest.querySelectorAll('table');
+    expect(tables.length).toBe(1);
+    const headerText = tables[0].querySelector('thead').textContent;
     expect(headerText).toContain('Red');
     expect(headerText).toContain('Blue');
 
-    const rows = dest.querySelectorAll('tbody tr');
+    const rows = tables[0].querySelectorAll('tbody tr');
     expect(rows.length).toBe(2);
-    // Frame: Red=5, Blue dash. Mudguard: Red dash, Blue=3.
-    expect(rows[0].textContent).toContain('Frame');
-    expect(rows[0].textContent).toContain('5');
-    expect(rows[0].textContent).toContain('–'); // &#8211; dash for Blue
     expect(rows[1].textContent).toContain('Mudguard');
-    expect(rows[1].textContent).toContain('3');
+    expect(rows[1].textContent).toContain('–'); // &#8211; dash for Blue
+  });
+
+  test('Required Qty is suffixed with the resolved Base Unit', () => {
+    App.State.globalItems = [{ name: 'Frame', size: 'L', baseUnit: 'Set' }];
+    App.State.currentProductionSheet = { colors: [], lotColor: '' };
+    addCommonRow('Frame', 'L', 'Main', '5');
+
+    App.Production.printProductionSheet();
+
+    const dest = document.getElementById('print-production-sheet-common-tables');
+    expect(dest.querySelector('tbody tr').textContent).toContain('5 Set');
   });
 
   test('matrix section is hidden when there are no colors or no matrix rows', () => {

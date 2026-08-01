@@ -396,14 +396,17 @@
         <div class="alert alert-info py-2" role="alert" style="font-size: 13px;">
           <i class="bi bi-info-circle-fill me-2"></i>Every known Color / Product-Tag combination for this process. Click Available Qty to correct it — corrections are recorded in the audit log.
         </div>
+        <input type="text" id="searchWarehousePoolCombo" class="form-control form-control-sm mb-2" placeholder="Search Color or Product Tag..." autocomplete="off" onkeyup="App.Stock.filterWarehousePoolCombos(this.value)">
         <div class="d-flex gap-2 mb-3">
           <input type="text" id="warehousePoolAddCombinationInput" class="form-control form-control-sm" list="colorList" style="max-width:260px;" placeholder="Add a color combination…">
           <button type="button" class="btn btn-outline-dark btn-sm fw-bold" onclick="App.Stock.addWarehousePoolCombination()">+ Add Combination</button>
+          <button type="button" id="btnBulkDeleteWarehousePoolCombos" class="btn btn-outline-danger btn-sm ms-auto" style="display:none;" onclick="App.Stock.bulkDeleteWarehousePoolCombinations()"><i class="bi bi-trash"></i> Delete Selected</button>
         </div>
         <div class="table-responsive">
           <table class="table table-bordered bg-white shadow-sm table-hover mb-0">
             <thead class="table-dark">
               <tr>
+                <th class="text-center" style="width: 4%;"><input type="checkbox" id="selectAllWarehousePoolCombos" class="form-check-input" onclick="App.Stock.toggleSelectAllWarehousePoolCombos(this)"></th>
                 <th>Product Tag</th>
                 <th class="text-center">Produced</th>
                 <th class="text-center">Consumed</th>

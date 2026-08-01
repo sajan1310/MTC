@@ -216,7 +216,14 @@ App.Print = {
           // page-break-inside:avoid rules cannot do this job: they live in
           // @media print, which html2canvas (a screen-media renderer) never
           // applies.
-          pagebreak: { mode: ['css', 'legacy'], avoid: ['tr'] }
+          // .print-sheet-closing-accent (Production Sheet's own closing bar,
+          // print.html) gets the same protection -- without it a
+          // container's plain border-bottom has no size of its own to
+          // defend against the guillotine, so it could land squeezed flush
+          // against whatever row happened to fall near a slice boundary.
+          // Harmless for every other container: the selector simply matches
+          // nothing there.
+          pagebreak: { mode: ['css', 'legacy'], avoid: ['tr', '.print-sheet-closing-accent'] }
         }, html2pdfOverrides))
         .from(element)
         .save();
