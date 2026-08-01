@@ -1787,6 +1787,7 @@ App.Production = {
     }
     if (toggledPrimaryColors.length > 0) this._refreshAutoSyncedFallbackRows();
 
+    this._pruneRedundantMatrixColumns();
     await this.refreshPoolAvailability();
   },
 
@@ -2046,7 +2047,14 @@ App.Production = {
       this._refreshAutoSyncedFallbackRows();
     }
 
-    if (refreshAvailability) await this.refreshPoolAvailability();
+    // Same top-level-only gate as refreshPoolAvailability: this must see
+    // the FULLY settled cascade (every matched non-primary row checked
+    // and its column populated), so a nested call from
+    // _syncMatchingNonPrimaryRows would judge half-built columns.
+    if (refreshAvailability) {
+      this._pruneRedundantMatrixColumns();
+      await this.refreshPoolAvailability();
+    }
   },
 
   _refreshAutoSyncedFallbackRows() {
@@ -2137,6 +2145,18 @@ App.Production = {
     return this.getCheckedColorQtys()
       .filter(c => c.countsTowardTotal)
       .reduce((sum, c) => sum + c.qty, 0);
+  },
+
+  // The lot-total multiplier currently in effect -- the plain Qty field in
+  // single-color mode, or the running total across checked colors once
+  // the multi-color checklist is active. Used to give a freshly added
+  // manual component row (see addComponentRow) an immediate, correctly-
+  // scaled starting qty instead of leaving it blank until the next
+  // unrelated qty/color edit happens to trigger a recompute.
+  _currentComponentQtyMultiplier() {
+    const wrapper = document.getElementById('productionColorWrapper');
+    const isMultiColor = !!wrapper && wrapper.style.display !== 'none';
+    return isMultiColor ? this._currentLotTotalQty() : (toNumber(document.getElementById('productionQty')?.value) || 0);
   },
 
   // Map<itemNameLower, string[]> of live Warehouse Pool colors for every
@@ -2450,6 +2470,7 @@ App.Production = {
             </select>
           </td>
           <td><input type="text" class="form-control prod-comp-size" value="${escapeHtml(r.size || '')}" placeholder="-" readonly></td>
+          <td><input type="text" class="form-control prod-comp-narration" value="${escapeHtml(r.narration || '')}" placeholder="-" readonly title="From the Process recipe — Warehouse Pool output items have no Item Master entry of their own"></td>
           <td>
             <select class="form-select prod-comp-source" disabled>
               <option value="POOL" selected>Pool (Warehouse)</option>
@@ -2469,9 +2490,10 @@ App.Production = {
           <table class="table table-bordered bg-white shadow-sm mb-0 prod-color-table" id="${tableId}" data-all-colors="${escapeHtml(colors.join('|'))}" data-axis-key="${escapeHtml(axisKey || '')}" style="min-width: ${minWidthPx}px;">
             <thead class="table-light">
               <tr>
-                <th style="width: 22%;">Item / Pool Name</th>
-                <th style="width: 8%;">Size</th>
-                <th style="width: 13%;">Source</th>
+                <th style="width: 18%;">Item / Pool Name</th>
+                <th style="width: 7%;">Size</th>
+                <th style="width: 13%;">Narration</th>
+                <th style="width: 11%;">Source</th>
                 ${headHtml}
                 <th style="width: 3%;" class="text-center">✕</th>
               </tr>
@@ -2564,6 +2586,7 @@ App.Production = {
 
   refreshCommonSuggestedQty() {
     this._applyQtyPerUnit('#productionComponentsBody tr', this._currentLotTotalQty());
+    this._updateColorCombinationPreview();
   },
 
   _applyQtyPerUnit(rowSelector, multiplier) {
@@ -2573,6 +2596,78 @@ App.Production = {
       const qtyInput = row.querySelector('.prod-comp-qty');
       if (qtyInput) qtyInput.value = this.formatQty(multiplier * toNumber(qtyPerUnit));
     });
+  },
+
+  // Live preview of this lot's own combined output identity, mirroring the
+  // same unambiguous-pairing rule the backend's Warehouse Pool crediting
+  // uses to decide the actual saved/credited bucket color -- shown here so
+  // the operator sees "Blue-White / Black / BCP" while still filling in
+  // the form, not just after saving. A redundant axis (its checked value
+  // name-matches the primary, e.g. Mudguard "Red" against Frame
+  // "Red-White") is excluded from the combination the same way the
+  // backend excludes it. Any number of independent axes combine as long
+  // as each contributes exactly one checked color; if some axis has 2+
+  // (no way to tell which pairs with which), this shows each axis's own
+  // colors instead of guessing at one combined string.
+  _updateColorCombinationPreview() {
+    const el = document.getElementById('productionColorCombinationPreview');
+    if (!el) return;
+
+    const checked = this.getCheckedColorQtys().filter(c => c.qty > 0 && c.color);
+    const primaryEntries = checked.filter(c => c.countsTowardTotal !== false);
+    const otherEntries = checked.filter(c => c.countsTowardTotal === false);
+
+    if (primaryEntries.length === 0) {
+      el.style.display = 'none';
+      el.innerText = '';
+      return;
+    }
+
+    const primaryColors = primaryEntries.map(e => e.color);
+    // An entry that exactly equals one segment of a COMPOSITE primary is
+    // an inherited-segment collision, not a mirror -- it belongs to a
+    // different axis that merely shares the name. Everything else that
+    // name-matches a primary color is the same batch described twice.
+    const inheritedSegments = new Set();
+    primaryColors.forEach(pc => {
+      const segs = String(pc || '').split(' / ').map(s => s.trim()).filter(Boolean);
+      if (segs.length < 2) return;
+      segs.forEach(s => inheritedSegments.add(s.toLowerCase()));
+    });
+    const independent = otherEntries.filter(e => {
+      if (inheritedSegments.has(String(e.color || '').trim().toLowerCase())) return true;
+      return !primaryColors.some(pc => this._colorNamesMatch(pc, e.color));
+    });
+
+    const axisCounts = new Map();
+    independent.forEach(e => {
+      const key = String(e.axisKey || '').trim().toLowerCase() || '__no_axis_key__';
+      axisCounts.set(key, (axisCounts.get(key) || 0) + 1);
+    });
+    const ambiguous = Array.from(axisCounts.values()).some(c => c > 1);
+
+    el.style.display = '';
+    if (ambiguous) {
+      el.innerText = `Now producing: ${primaryColors.join(', ')} — plus ${independent.length} other color(s) tracked separately (can't combine unambiguously)`;
+    } else {
+      // One combined identity per primary color, each listing its axes in
+      // the order this process's recipe declares them -- the checklist
+      // renders axes in that same order, so reading the checked rows top
+      // to bottom reproduces exactly what the backend will credit.
+      const axisPos = new Map();
+      $$('#productionColorChecklist .production-color-row').forEach((row, i) => {
+        const k = String(row.dataset.group || '').trim().toLowerCase();
+        if (k && !axisPos.has(k)) axisPos.set(k, i);
+      });
+      const posOf = (e) => {
+        const k = String(e.axisKey || '').trim().toLowerCase();
+        return axisPos.has(k) ? axisPos.get(k) : Number.MAX_SAFE_INTEGER;
+      };
+      const combos = primaryEntries.map(pe =>
+        [pe].concat(independent).sort((a, b) => posOf(a) - posOf(b))
+          .map(e => e.color).join(' / '));
+      el.innerText = `Now producing: ${combos.join(', ')}`;
+    }
   },
 
   // ── Per-Color Components matrix ───────────────────────────────────────
@@ -2678,15 +2773,31 @@ App.Production = {
       row.insertBefore(td, row.lastElementChild);
       if (isMerged) this.initMergedCellItemSelect2(td.querySelector('.prod-comp-item-select'));
     });
+    this._refreshMatrixColumnLabels();
     this._syncMatrixTableMinWidth();
   },
 
   removeMatrixColorColumn(color) {
+    // Another axis's own same-named color may still be checked (two
+    // independent axes can legitimately share a literal color name, e.g.
+    // a Rim axis and a Frame axis both having "Purple") -- this matrix's
+    // column is shared (keyed by color string only, see
+    // getMatrixColumnIndex), so removing it here whenever THIS axis's row
+    // gets unchecked would wipe cells still in use by that other, still-
+    // checked axis. By the time this fires, the row that was just
+    // unchecked no longer shows up in getCheckedColorQtys(), so "still
+    // checked" here can only mean a different row/axis needs it.
     const colorLower = String(color || '').toLowerCase();
     const stillCheckedElsewhere = this.getCheckedColorQtys().some(cc => (cc.color || '').toLowerCase() === colorLower);
     if (stillCheckedElsewhere) return;
 
-    const idx = this.getMatrixColumnIndex(color);
+    this._removeMatrixColumnAt(this.getMatrixColumnIndex(color));
+  },
+
+  // Raw "drop column N" -- no still-checked-elsewhere guard, so callers
+  // that have already decided a column must go (removeMatrixColorColumn
+  // above, _pruneRedundantMatrixColumns below) share one implementation.
+  _removeMatrixColumnAt(idx) {
     if (idx === -1) return;
     const headerRow = document.getElementById('productionColorMatrixHeaderRow');
     if (headerRow?.children[idx]) headerRow.children[idx].remove();
@@ -2699,7 +2810,78 @@ App.Production = {
       }
       cell.remove();
     });
+    this._refreshMatrixColumnLabels();
     this._syncMatrixTableMinWidth();
+  },
+
+  // A non-primary Color Axis row that segment-matches a checked primary
+  // row (e.g. a "Blue" mudguard auto-checked by a "Blue-White / BCP"
+  // frame) describes the SAME physical units as its primary counterpart.
+  // It must not also get its own Per-Color Components column: the
+  // operator is left staring at one duplicate column per matched color,
+  // and anything typed into one debits stock a second time for units the
+  // primary column already accounts for. Their real consumption lives in
+  // that axis's own Per-Process Pool Components table instead. But a
+  // non-primary axis CAN still carry genuinely color-specific non-pool
+  // recipe rows, so this prunes only columns that came back COMPLETELY
+  // empty: no item picked, no quantity in any row. A column the recipe
+  // (or the operator) actually put something in is always left alone.
+  _pruneRedundantMatrixColumns() {
+    const checked = $$('#productionColorChecklist .production-color-row')
+      .filter(row => row.querySelector('.production-color-check')?.checked);
+
+    checked
+      .filter(row => row.dataset.primary === 'false')
+      .map(row => row.dataset.color)
+      // A primary row -- or a flat/legacy row, which carries no
+      // data-primary at all -- owning this same column name means the
+      // column is genuinely that row's, so it stays no matter what this
+      // non-primary row is doing.
+      .filter(color => !checked.some(r =>
+        r.dataset.primary !== 'false' && App.Utils.sameColor(r.dataset.color, color)))
+      .filter(color => this._matchingPrimaryColorQty(color) !== null)
+      .forEach(color => {
+        const idx = this.getMatrixColumnIndex(color);
+        if (idx === -1) return;
+        const used = $$('#productionColorMatrixBody tr').some(row => {
+          const cell = row.children[idx];
+          if (!cell) return false;
+          const qtyEl = cell.querySelector('.matrix-qty');
+          const itemEl = cell.querySelector('.prod-comp-item-select');
+          return !!(qtyEl && String(qtyEl.value).trim()) || !!(itemEl && itemEl.value);
+        });
+        if (!used) this._removeMatrixColumnAt(idx);
+      });
+  },
+
+  // Per-Color Components matrix column headers are shown with whatever
+  // segments differ from the OTHER checked columns, not the full
+  // composite -- e.g. with Blue-White / BCP, Pink-White / BCP, Purple-
+  // White / BCP and Red-White / BCP all checked, "BCP" is shared context,
+  // not identity: the columns read Blue-White, Pink-White, Purple-White,
+  // Red-White, and the full composite stays available on hover. Nothing
+  // is dropped from the data, only from the label. Recomputed on every
+  // add/remove because which segments are shared depends on the whole
+  // checked set. A single column has nothing to differentiate against, so
+  // it keeps its full composite.
+  _refreshMatrixColumnLabels() {
+    const headerRow = document.getElementById('productionColorMatrixHeaderRow');
+    if (!headerRow) return;
+    const ths = Array.from(headerRow.querySelectorAll('th[data-color]'));
+    const segLists = ths.map(th => String(th.dataset.color || '')
+      .split(' / ').map(x => x.trim()).filter(Boolean));
+    const commonLower = new Set();
+    if (segLists.length > 1) {
+      segLists[0].forEach(seg => {
+        const segLower = seg.toLowerCase();
+        if (segLists.every(list => list.some(x => x.toLowerCase() === segLower))) commonLower.add(segLower);
+      });
+    }
+    ths.forEach((th, i) => {
+      const kept = segLists[i].filter(x => !commonLower.has(x.toLowerCase()));
+      th.textContent = kept.length > 0 ? kept.join(' / ') : String(th.dataset.color || '');
+      th.title = String(th.dataset.color || '');
+    });
   },
 
   findMatrixRowByDisplayName(displayName, size) {
@@ -2719,6 +2901,7 @@ App.Production = {
     const rowId = 'prod_matrix_row_' + Date.now() + '_' + Math.floor(Math.random() * 1000);
     const itemName = (comp && comp.itemName) || '';
     const size = (comp && comp.size) || '';
+    const narration = (comp && comp.narration) || '';
     const sourceType = (comp && comp.sourceType === 'POOL') ? 'POOL' : 'ITEM';
     const colors = this.getMatrixColors();
 
@@ -2731,6 +2914,7 @@ App.Production = {
       <tr id="${rowId}" data-merged="true">
         <td><input type="text" class="form-control prod-comp-display-name" value="${escapeHtml(itemName)}" readonly title="Merged across colors — each color cell below has its own item picker"></td>
         <td><input type="text" class="form-control prod-comp-size" value="${escapeHtml(size)}" placeholder="-"></td>
+        <td><input type="text" class="form-control prod-comp-narration" value="${escapeHtml(narration)}" placeholder="-" title="Shared across this row's colors, even though each color cell may secretly use a different literal item"></td>
         <td>
           <select class="form-select prod-comp-source" onchange="App.Production.handleMergedSourceChange(this)">
             <option value="ITEM" ${sourceType === 'ITEM' ? 'selected' : ''}>Item (Stock)</option>
@@ -2788,6 +2972,7 @@ App.Production = {
     const rowId = 'prod_matrix_row_' + Date.now() + '_' + Math.floor(Math.random() * 1000);
     const itemName = (comp && comp.itemName) || '';
     const size = (comp && comp.size) || '';
+    const narration = (comp && comp.narration) || '';
     const sourceType = (comp && comp.sourceType === 'POOL') ? 'POOL' : 'ITEM';
     const preSelectedOption = this._buildItemPreselectOption(itemName, size, sourceType);
 
@@ -2803,7 +2988,8 @@ App.Production = {
             ${preSelectedOption}
           </select>
         </td>
-        <td><input type="text" class="form-control prod-comp-size" value="${escapeHtml(size)}" placeholder="-"></td>
+        <td><input type="text" class="form-control prod-comp-size" value="${escapeHtml(size)}" placeholder="-" onchange="App.Production.handleProdSizeChange(this)"></td>
+        <td><input type="text" class="form-control prod-comp-narration" value="${escapeHtml(narration)}" placeholder="-"></td>
         <td>
           <select class="form-select prod-comp-source" onchange="App.Production.handleMatrixSourceChange(this)">
             <option value="ITEM" ${sourceType === 'ITEM' ? 'selected' : ''}>Item (Stock)</option>
@@ -2896,7 +3082,7 @@ App.Production = {
 
           colorComps.forEach(c => {
             let row = this.findMatrixRowByDisplayName(c.displayName, c.size || '');
-            if (!row) row = this.addMergedMatrixRow({ itemName: c.displayName, size: c.size, sourceType: c.sourceType });
+            if (!row) row = this.addMergedMatrixRow({ itemName: c.displayName, size: c.size, narration: c.narration, sourceType: c.sourceType });
             const cell = row.children[colIndex];
             const qty = thisColorQty > 0 ? thisColorQty * c.qtyPerUnit : c.qtyPerUnit;
             this._setMergedCellItem(cell, { itemName: c.itemName, size: c.size, sourceType: c.sourceType }, qty, c.qtyPerUnit);
@@ -2906,7 +3092,7 @@ App.Production = {
           commonOverrideComps.forEach(c => {
             if (overriddenKeys.has(this._itemSlotKey(c.itemName, c.size))) return;
             let row = this.findMatrixRowByDisplayName(c.itemName, c.size || '');
-            if (!row) row = this.addMergedMatrixRow({ itemName: c.itemName, size: c.size, sourceType: c.sourceType });
+            if (!row) row = this.addMergedMatrixRow({ itemName: c.itemName, size: c.size, narration: c.narration, sourceType: c.sourceType });
             const cell = row.children[colIndex];
             const qty = thisColorQty > 0 ? thisColorQty * c.qtyPerUnit : c.qtyPerUnit;
             this._setMergedCellItem(cell, { itemName: c.itemName, size: c.size, sourceType: c.sourceType }, qty, c.qtyPerUnit);
@@ -2948,6 +3134,10 @@ App.Production = {
     document.querySelectorAll('#productionColorMatrixBody tr').forEach(row => {
       const isMerged = row.dataset.merged === 'true';
       const size = row.querySelector('.prod-comp-size')?.value.trim() || '';
+      // One shared Narration per row, even for a merged row whose color
+      // cells are secretly different literal items -- same simplification
+      // as the row's own read-only display name (see addMergedMatrixRow).
+      const narration = row.querySelector('.prod-comp-narration')?.value.trim() || '';
       const sourceType = row.querySelector('.prod-comp-source')?.value === 'POOL' ? 'POOL' : 'ITEM';
 
       let rowItemName = '';
@@ -2972,7 +3162,7 @@ App.Production = {
           itemName = (cellOpt.dataset.name || cellOpt.textContent || '').trim();
         }
         if (!itemName) return;
-        components.push({ itemName, size, color: '', sourceType, qty, colorGroup: color });
+        components.push({ itemName, size, narration, color: '', sourceType, qty, colorGroup: color });
       });
     });
     return components;
@@ -2987,13 +3177,14 @@ App.Production = {
       const itemName = (itemOpt.dataset.name || itemOpt.textContent || '').trim();
       if (!itemName) return;
       const size = row.querySelector('.prod-comp-size')?.value.trim() || '';
+      const narration = row.querySelector('.prod-comp-narration')?.value.trim() || '';
 
       row.querySelectorAll('.pool-group-qty').forEach(input => {
         const qty = toNumber(input.value);
         if (qty <= 0) return;
         const color = input.dataset.color || '';
         if (!color) return;
-        components.push({ itemName, size, color: '', sourceType: 'POOL', qty, colorGroup: color });
+        components.push({ itemName, size, narration, color: '', sourceType: 'POOL', qty, colorGroup: color });
       });
     });
     return components;
@@ -3032,7 +3223,7 @@ App.Production = {
         const key = `${(c.itemName || '').toLowerCase()}|${(c.size || '').toLowerCase()}`;
         let entry = poolGroupAccum.get(key);
         if (!entry) {
-          entry = { itemName: c.itemName, size: c.size, sourceType: c.sourceType, colorsQty: {} };
+          entry = { itemName: c.itemName, size: c.size, narration: c.narration, sourceType: c.sourceType, colorsQty: {} };
           poolGroupAccum.set(key, entry);
         }
 
@@ -3057,7 +3248,7 @@ App.Production = {
         const fallbackColors = colors.filter(col => !overriddenColors.has(col));
         const perColorQty = fallbackColors.length > 0 ? c.qty / fallbackColors.length : c.qty;
         let row = this.findMatrixRowByDisplayName(c.itemName, c.size || '');
-        if (!row) row = this.addMergedMatrixRow({ itemName: c.itemName, size: c.size, sourceType: c.sourceType });
+        if (!row) row = this.addMergedMatrixRow({ itemName: c.itemName, size: c.size, narration: c.narration, sourceType: c.sourceType });
         fallbackColors.forEach(col => {
           const colIndex = this.getMatrixColumnIndex(col);
           if (colIndex === -1) return;
@@ -3087,6 +3278,7 @@ App.Production = {
         this.addComponentRow({
           itemName: c.itemName,
           size: c.size,
+          narration: c.narration,
           sourceType: c.sourceType,
           qty: c.qty,
           color: isLockedPoolColor ? colorGroup : c.color,
@@ -3106,7 +3298,7 @@ App.Production = {
         ? (c.itemName || '').trim()
         : this._stripColorSubstring(c.itemName || '', colorGroup);
       let row = this.findMatrixRowByDisplayName(displayName, c.size || '');
-      if (!row) row = this.addMergedMatrixRow({ itemName: displayName, size: c.size, sourceType: c.sourceType });
+      if (!row) row = this.addMergedMatrixRow({ itemName: displayName, size: c.size, narration: c.narration, sourceType: c.sourceType });
       matchedColors.forEach(col => {
         const colIndex = this.getMatrixColumnIndex(col);
         if (colIndex === -1) return;
@@ -3129,7 +3321,7 @@ App.Production = {
           if (itemColors.length <= 1) return;
           const key = `${(c.itemName || '').toLowerCase()}|${(c.size || '').toLowerCase()}`;
           if (!poolGroupAccum.has(key)) {
-            poolGroupAccum.set(key, { itemName: c.itemName, size: c.size, sourceType: c.sourceType, colorsQty: {} });
+            poolGroupAccum.set(key, { itemName: c.itemName, size: c.size, narration: c.narration, sourceType: c.sourceType, colorsQty: {} });
           }
         });
     }
@@ -3236,11 +3428,26 @@ App.Production = {
     const rowId = 'prod_comp_row_' + Date.now() + '_' + Math.floor(Math.random() * 1000);
     const itemName = (comp && comp.itemName) || '';
     const size = (comp && comp.size) || '';
+    const narration = (comp && comp.narration) || '';
     const sourceType = (comp && comp.sourceType === 'POOL') ? 'POOL' : 'ITEM';
     const color = (comp && comp.color) || '';
     const colorScope = (comp && comp.colorScope) || '';
-    const qty = comp && comp.qty !== undefined ? this.formatQty(comp.qty) : '';
-    const qtyPerUnitAttr = (comp && comp.qtyPerUnit !== undefined) ? `data-qty-per-unit="${comp.qtyPerUnit}"` : '';
+    // comp === null means a brand-new row from "+ Add Component" -- no
+    // recipe or saved data behind it. Assume it consumes 1 unit of itself
+    // per unit of lot output (same shape as a qtyPerUnit=1 recipe row) so
+    // it starts pre-filled at the current lot qty/color total instead of
+    // blank, and keeps auto-tracking that total afterward via
+    // _applyQtyPerUnit -- same as every recipe-derived row. Any other
+    // caller passing a comp object (even with qtyPerUnit undefined, e.g. a
+    // saved lot's recorded consumption) keeps its exact prior blank/fixed-
+    // qty behavior; that data is real and must not be silently overwritten
+    // by a recompute.
+    const qtyPerUnit = comp === null ? 1 : (comp && comp.qtyPerUnit);
+    const manualMultiplier = comp === null ? this._currentComponentQtyMultiplier() : 0;
+    const qty = comp === null
+      ? this.formatQty(manualMultiplier > 0 ? manualMultiplier * qtyPerUnit : qtyPerUnit)
+      : (comp && comp.qty !== undefined ? this.formatQty(comp.qty) : '');
+    const qtyPerUnitAttr = (qtyPerUnit !== undefined) ? `data-qty-per-unit="${qtyPerUnit}"` : '';
     const unitAttr = (comp && comp.unit) ? ` data-unit="${escapeHtml(comp.unit)}"` : '';
     const colorScopeAttr = colorScope ? ` data-color-scope="${escapeHtml(colorScope)}"` : '';
     const preSelectedOption = this._buildItemPreselectOption(itemName, size, sourceType);
@@ -3254,7 +3461,8 @@ App.Production = {
             ${preSelectedOption}
           </select>
         </td>
-        <td><input type="text" class="form-control prod-comp-size" value="${escapeHtml(size)}" placeholder="-" onchange="App.Production.refreshPoolAvailability()"></td>
+        <td><input type="text" class="form-control prod-comp-size" value="${escapeHtml(size)}" placeholder="-" onchange="App.Production.handleProdSizeChange(this)"></td>
+        <td><input type="text" class="form-control prod-comp-narration" value="${escapeHtml(narration)}" placeholder="-"></td>
         <td><input type="text" class="form-control prod-comp-color" list="colorList" value="${escapeHtml(color)}" placeholder="All colors"${colorReadonlyAttrs}></td>
         <td>
           <select class="form-select prod-comp-source" onchange="App.Production.handleSourceChange(this)">
@@ -3362,6 +3570,13 @@ App.Production = {
       const row = selectEl.closest('tr');
       const sizeInput = row?.querySelector('.prod-comp-size');
       if (sizeInput && !sizeInput.value) sizeInput.value = data._size || '';
+      // Narration is shown/autofilled from Item Master for this exact
+      // item+size, matching what a recipe's own component rows already
+      // get -- see _refillNarrationForRow. No-ops for a Pool row (no Item
+      // Master entry to look up). selectEl (not just the row) is passed
+      // explicitly since a merged row's color cells each have their own
+      // item-select sharing one row-level Narration field.
+      App.Production._refillNarrationForRow(row, selectEl);
       App.Production.refreshPoolAvailability();
     });
   },
@@ -3419,6 +3634,44 @@ App.Production = {
     await this.refreshColorChecklistAvailability(processId);
   },
 
+  // Fired when a component row's Size is typed/changed by hand (the Item
+  // picker itself only carries a name, so Size is this row's own
+  // free-text field, not a per-item dropdown). Re-syncs Narration to Item
+  // Master for this exact item+size, same as picking the item fresh
+  // would, then refreshes the availability hint as before.
+  handleProdSizeChange(input) {
+    this._refillNarrationForRow(input?.closest('tr'));
+    this.refreshPoolAvailability();
+  },
+
+  // Looks up this row's current item+size in Item Master and syncs its
+  // Narration field to match. No-ops for a Pool-sourced row (Warehouse
+  // Pool output items have no Item Master entry/narration of their own)
+  // and for a row with no narration input at all (e.g. a Per-Process Pool
+  // Components row). `itemSelect`, if given, is used instead of the row's
+  // own (first) item-select -- required for a merged matrix row, where
+  // every color cell has its OWN item-select but they all share this one
+  // row-level Narration field; without it, picking the 2nd+ color cell's
+  // item would always re-derive Narration from the 1st cell instead of
+  // the one actually just changed.
+  _refillNarrationForRow(row, itemSelect) {
+    if (!row) return;
+    const narrationInput = row.querySelector('.prod-comp-narration');
+    if (!narrationInput) return;
+    const sourceSel = row.querySelector('.prod-comp-source');
+    if (sourceSel && sourceSel.value === 'POOL') return;
+
+    const selectEl = itemSelect || row.querySelector('.prod-comp-item-select');
+    const itemOpt = selectEl ? selectEl.options[selectEl.selectedIndex] : null;
+    const itemName = (itemOpt?.dataset.name || itemOpt?.textContent || '').trim();
+    if (!itemName) return;
+
+    const size = row.querySelector('.prod-comp-size')?.value.trim() || '';
+    const match = (App.State.globalItems || []).find(it =>
+      App.Utils.sameText(it.name, itemName) && App.Utils.sameText(it.size || '', size));
+    narrationInput.value = (match && match.narration) || '';
+  },
+
   _readProdComponentRow(row) {
     const itemSelect = row.querySelector('.prod-comp-item-select');
     if (!itemSelect || itemSelect.value === '') return null;
@@ -3429,6 +3682,7 @@ App.Production = {
     return {
       itemName,
       size: row.querySelector('.prod-comp-size')?.value.trim() || '',
+      narration: row.querySelector('.prod-comp-narration')?.value.trim() || '',
       color: row.querySelector('.prod-comp-color')?.value.trim() || '',
       sourceType: row.querySelector('.prod-comp-source')?.value === 'POOL' ? 'POOL' : 'ITEM',
       qty: toNumber(row.querySelector('.prod-comp-qty')?.value),
