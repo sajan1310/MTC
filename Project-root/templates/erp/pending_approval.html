@@ -1,0 +1,26 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Awaiting Approval — Maharaja Bikes ERP</title>
+  <style>
+    body { font-family: 'Inter', Arial, sans-serif; background: #f4f7f6; color: #0f172a; display: flex; align-items: center; justify-content: center; min-height: 100vh; margin: 0; padding: 20px; box-sizing: border-box; }
+    .card { text-align: center; padding: 40px; max-width: 480px; background: #fff; border-radius: 12px; box-shadow: 0 4px 20px rgba(0,0,0,0.06); }
+    .icon { font-size: 40px; margin-bottom: 12px; }
+    h1 { font-size: 22px; margin-bottom: 8px; }
+    p { color: #475569; margin: 8px 0; line-height: 1.5; }
+    .email { font-weight: 600; color: #1e293b; }
+    a.btn { display: inline-block; margin-top: 20px; background: #0f172a; color: #fff; text-decoration: none; padding: 10px 20px; border-radius: 8px; font-weight: 600; }
+  </style>
+</head>
+<body>
+  <div class="card">
+    <div class="icon">⏳</div>
+    <h1>Your account is awaiting approval</h1>
+    <p>You're signed in as <span class="email">{{ current_user.email }}</span>, but an admin needs to approve your account before you can use the ERP.</p>
+    <p>You'll be able to sign in normally once that happens — no need to sign up again.</p>
+    <a class="btn" href="{{ url_for('auth.logout') }}">Sign Out</a>
+  </div>
+</body>
+</html>

@@ -346,6 +346,15 @@ def save_production(conn, cur, form_data):
     if process is None:
         raise ValueError(f'Process "{process_id}" was not found. It may have been deleted.')
 
+    # Output Item Name defaults to the process's own -- editable per lot
+    # (e.g. this run actually produced a variant/rework SKU) without
+    # touching the process master, which every *other* lot still inherits.
+    # Warehouse Pool crediting/consumption already keys off this column
+    # per production row (see _recalculate_warehouse_pool), so a custom
+    # name here simply lands in its own pool bucket instead of the
+    # process's usual one -- exactly scoped to this lot.
+    output_item_name = str(form_data.get("outputItemName") or "").strip() or process["outputItemName"]
+
     # Read once, reused for both color-group validation and Primary Axis
     # qty resolution below -- avoids doubling reads on the busiest write path.
     color_components = process_service.get_process_components_data(process_id)["data"]
@@ -646,7 +655,7 @@ def save_production(conn, cur, form_data):
                 production_date, product_id, product_name, resolved_bom_product_id,
                 qty, assigned_by, assigned_to, resolved_contractor_id, status, remarks,
                 process_id, resolved_process_master_id, lot_number,
-                contractor_rate, contractor_payable, process["outputItemName"],
+                contractor_rate, contractor_payable, output_item_name,
                 components_json, color, color_breakdown_json, user_id,
                 existing["id"],
             ),
@@ -666,7 +675,7 @@ def save_production(conn, cur, form_data):
             (
                 production_date, product_id, product_name, resolved_bom_product_id, qty, assigned_by, assigned_to,
                 resolved_contractor_id, status, remarks, process_id, resolved_process_master_id, lot_number,
-                contractor_rate, contractor_payable, process["outputItemName"], components_json, color,
+                contractor_rate, contractor_payable, output_item_name, components_json, color,
                 color_breakdown_json, user_id,
             ),
         )

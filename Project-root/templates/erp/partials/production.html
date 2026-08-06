@@ -68,16 +68,16 @@
       <table class="table table-hover table-bordered align-middle mb-0">
         <thead class="table-dark">
           <tr>
-            <th style="width: 4%; text-align: center;"><input type="checkbox" id="selectAllProduction" class="form-check-input" onclick="App.Production.toggleSelectAll(this)"></th>
-            <th style="width: 8%;">Date</th>
-            <th style="width: 12%;">Process / Lot # <button type="button" class="th-filter-btn" data-filter-key="process" onclick="App.Production.toggleColumnFilter(event, 'process')"><i class="bi bi-funnel"></i></button></th>
-            <th style="width: 14%;">Output Item <button type="button" class="th-filter-btn" data-filter-key="outputItem" onclick="App.Production.toggleColumnFilter(event, 'outputItem')"><i class="bi bi-funnel"></i></button></th>
-            <th style="width: 12%;">Product Tag <button type="button" class="th-filter-btn" data-filter-key="productTag" onclick="App.Production.toggleColumnFilter(event, 'productTag')"><i class="bi bi-funnel"></i></button></th>
-            <th style="width: 7%; text-align: center;">Lot Qty</th>
-            <th style="width: 10%;">Assigned By <button type="button" class="th-filter-btn" data-filter-key="assignedBy" onclick="App.Production.toggleColumnFilter(event, 'assignedBy')"><i class="bi bi-funnel"></i></button></th>
-            <th style="width: 10%;">Assigned To <button type="button" class="th-filter-btn" data-filter-key="assignedTo" onclick="App.Production.toggleColumnFilter(event, 'assignedTo')"><i class="bi bi-funnel"></i></button></th>
-            <th style="width: 8%; text-align: center;">Status <button type="button" class="th-filter-btn" data-filter-key="status" onclick="App.Production.toggleColumnFilter(event, 'status')"><i class="bi bi-funnel"></i></button></th>
-            <th style="width: 15%; text-align: center;">Actions</th>
+            <th scope="col" style="width: 4%; text-align: center;"><input type="checkbox" id="selectAllProduction" class="form-check-input" onclick="App.Production.toggleSelectAll(this)"></th>
+            <th scope="col" style="width: 8%;">Date</th>
+            <th scope="col" style="width: 12%;">Process / Lot # <button type="button" class="th-filter-btn" data-filter-key="process" onclick="App.Production.toggleColumnFilter(event, 'process')"><i class="bi bi-funnel"></i></button></th>
+            <th scope="col" style="width: 14%;">Output Item <button type="button" class="th-filter-btn" data-filter-key="outputItem" onclick="App.Production.toggleColumnFilter(event, 'outputItem')"><i class="bi bi-funnel"></i></button></th>
+            <th scope="col" style="width: 12%;">Product Tag <button type="button" class="th-filter-btn" data-filter-key="productTag" onclick="App.Production.toggleColumnFilter(event, 'productTag')"><i class="bi bi-funnel"></i></button></th>
+            <th scope="col" style="width: 7%; text-align: center;">Lot Qty</th>
+            <th scope="col" style="width: 10%;">Assigned By <button type="button" class="th-filter-btn" data-filter-key="assignedBy" onclick="App.Production.toggleColumnFilter(event, 'assignedBy')"><i class="bi bi-funnel"></i></button></th>
+            <th scope="col" style="width: 10%;">Assigned To <button type="button" class="th-filter-btn" data-filter-key="assignedTo" onclick="App.Production.toggleColumnFilter(event, 'assignedTo')"><i class="bi bi-funnel"></i></button></th>
+            <th scope="col" style="width: 8%; text-align: center;">Status <button type="button" class="th-filter-btn" data-filter-key="status" onclick="App.Production.toggleColumnFilter(event, 'status')"><i class="bi bi-funnel"></i></button></th>
+            <th scope="col" style="width: 15%; text-align: center;">Actions</th>
           </tr>
         </thead>
         <tbody id="productionTableBody">
@@ -126,14 +126,14 @@
       <table class="table table-hover table-bordered align-middle mb-0">
         <thead class="table-dark">
           <tr>
-            <th style="width: 4%; text-align: center;"><input type="checkbox" id="selectAllIssue" class="form-check-input" onclick="App.Issue.toggleSelectAll(this)"></th>
-            <th style="width: 14%;">Issue #</th>
-            <th style="width: 10%;">Date</th>
-            <th style="width: 16%;">Issued To</th>
-            <th style="width: 12%;">Reference</th>
-            <th style="width: 28%;">Items Issued</th>
-            <th style="width: 8%; text-align: center;">Total Qty</th>
-            <th style="width: 8%; text-align: center;">Actions</th>
+            <th scope="col" style="width: 4%; text-align: center;"><input type="checkbox" id="selectAllIssue" class="form-check-input" onclick="App.Issue.toggleSelectAll(this)"></th>
+            <th scope="col" style="width: 14%;">Issue #</th>
+            <th scope="col" style="width: 10%;">Date</th>
+            <th scope="col" style="width: 16%;">Issued To</th>
+            <th scope="col" style="width: 12%;">Reference</th>
+            <th scope="col" style="width: 28%;">Items Issued</th>
+            <th scope="col" style="width: 8%; text-align: center;">Total Qty</th>
+            <th scope="col" style="width: 8%; text-align: center;">Actions</th>
           </tr>
         </thead>
         <tbody id="issueTableBody">
@@ -161,12 +161,12 @@
       <table class="table table-hover table-bordered align-middle mb-0">
         <thead class="table-dark">
           <tr>
-            <th style="width: 10%;">Date</th>
-            <th style="width: 12%;">Type</th>
-            <th style="width: 14%;">ID</th>
-            <th style="width: 34%;">Details</th>
-            <th style="width: 10%; text-align: center;">Qty</th>
-            <th style="width: 20%;">Status / Issued To</th>
+            <th scope="col" style="width: 10%;">Date</th>
+            <th scope="col" style="width: 12%;">Type</th>
+            <th scope="col" style="width: 14%;">ID</th>
+            <th scope="col" style="width: 34%;">Details</th>
+            <th scope="col" style="width: 10%; text-align: center;">Qty</th>
+            <th scope="col" style="width: 20%;">Status / Issued To</th>
           </tr>
         </thead>
         <tbody id="productionAllTableBody">
@@ -214,13 +214,13 @@
           <table class="table table-hover table-bordered bg-white align-middle mb-0">
             <thead class="table-dark">
               <tr>
-                <th>Color</th>
-                <th class="text-center">Lots</th>
-                <th class="text-center">Pending</th>
-                <th class="text-center">In Progress</th>
-                <th class="text-center">Completed</th>
-                <th class="text-center">Cancelled</th>
-                <th class="text-center">Total Qty</th>
+                <th scope="col">Color</th>
+                <th scope="col" class="text-center">Lots</th>
+                <th scope="col" class="text-center">Pending</th>
+                <th scope="col" class="text-center">In Progress</th>
+                <th scope="col" class="text-center">Completed</th>
+                <th scope="col" class="text-center">Cancelled</th>
+                <th scope="col" class="text-center">Total Qty</th>
               </tr>
             </thead>
             <tbody id="colorwiseSummaryBody"></tbody>
@@ -284,7 +284,8 @@
             </div>
             <div class="col-md-6">
               <label class="form-label fw-bold">Output Item Name</label>
-              <input type="text" id="productionOutputItemName" class="form-control bg-light" readonly placeholder="Select a Process to populate">
+              <input type="text" name="outputItemName" id="productionOutputItemName" class="form-control" placeholder="Select a Process to populate" maxlength="150">
+              <div class="form-text">Defaults to the Process's Output Item Name. Editing it only relabels <strong>this lot</strong> (e.g. a rework/variant run) — the Process itself, and every other lot under it, is unaffected. Warehouse Pool stock for this lot is credited under whatever name is saved here.</div>
             </div>
             <div class="col-md-6" id="productionQtyWrapper">
               <label class="form-label fw-bold">Quantity to Produce *</label>
@@ -323,14 +324,14 @@
             <table class="table table-bordered bg-white shadow-sm mb-0">
               <thead class="table-light">
                 <tr>
-                  <th style="width: 24%;">Item / Pool Name</th>
-                  <th style="width: 9%;">Size</th>
-                  <th style="width: 15%;">Narration</th>
-                  <th style="width: 10%;">Color</th>
-                  <th style="width: 12%;">Source</th>
-                  <th style="width: 12%; text-align: right;">Qty</th>
-                  <th style="width: 13%;">Available</th>
-                  <th style="width: 5%; text-align: center;">✕</th>
+                  <th scope="col" style="width: 24%;">Item / Pool Name</th>
+                  <th scope="col" style="width: 9%;">Size</th>
+                  <th scope="col" style="width: 15%;">Narration</th>
+                  <th scope="col" style="width: 10%;">Color</th>
+                  <th scope="col" style="width: 12%;">Source</th>
+                  <th scope="col" style="width: 12%; text-align: right;">Qty</th>
+                  <th scope="col" style="width: 13%;">Available</th>
+                  <th scope="col" style="width: 5%; text-align: center;">✕</th>
                 </tr>
               </thead>
               <tbody id="productionComponentsBody"></tbody>
@@ -355,11 +356,11 @@
               <table class="table table-bordered bg-white shadow-sm mb-0 prod-color-table">
                 <thead class="table-light">
                   <tr id="productionColorMatrixHeaderRow">
-                    <th style="width: 18%;">Item / Pool Name</th>
-                    <th style="width: 7%;">Size</th>
-                    <th style="width: 13%;">Narration</th>
-                    <th style="width: 11%;">Source</th>
-                    <th style="width: 3%;" class="text-center">✕</th>
+                    <th scope="col" style="width: 18%;">Item / Pool Name</th>
+                    <th scope="col" style="width: 7%;">Size</th>
+                    <th scope="col" style="width: 13%;">Narration</th>
+                    <th scope="col" style="width: 11%;">Source</th>
+                    <th scope="col" style="width: 3%;" class="text-center">✕</th>
                   </tr>
                 </thead>
                 <tbody id="productionColorMatrixBody"></tbody>
@@ -460,11 +461,11 @@
               <table class="table table-hover table-striped align-middle mb-0">
                 <thead class="table-light">
                   <tr>
-                    <th>Item Name</th>
-                    <th>Size</th>
-                    <th>Narration</th>
-                    <th class="text-end">Required Qty</th>
-                    <th class="text-center">✕</th>
+                    <th scope="col">Item Name</th>
+                    <th scope="col">Size</th>
+                    <th scope="col">Narration</th>
+                    <th scope="col" class="text-end">Required Qty</th>
+                    <th scope="col" class="text-center">✕</th>
                   </tr>
                 </thead>
                 <tbody id="productionSheetCommonBody"></tbody>
@@ -575,12 +576,12 @@
             <table class="table table-bordered bg-white shadow-sm">
               <thead class="table-light">
                 <tr>
-                  <th>Item Name *</th>
-                  <th style="width:12%;">Size</th>
-                  <th style="width:10%;">Qty *</th>
-                  <th style="width:10%;">Unit</th>
-                  <th style="width:12%;">Rate <span class="text-muted fw-normal">(optional)</span></th>
-                  <th style="width:5%;"></th>
+                  <th scope="col">Item Name *</th>
+                  <th scope="col" style="width:12%;">Size</th>
+                  <th scope="col" style="width:10%;">Qty *</th>
+                  <th scope="col" style="width:10%;">Unit</th>
+                  <th scope="col" style="width:12%;">Rate <span class="text-muted fw-normal">(optional)</span></th>
+                  <th scope="col" style="width:5%;"><span class="visually-hidden">Remove</span></th>
                 </tr>
               </thead>
               <tbody id="issueItemsBody"></tbody>

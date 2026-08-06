@@ -58,6 +58,47 @@ def test_save_item_creates_with_vendors_and_lists_it(erp_client):
     assert match["vendors"] == [{"vendor": "Acme Co", "rate": 12.5, "ratePerBaseUnit": 12.5}]
 
 
+def test_save_item_stores_and_returns_image(erp_client):
+    """Item Master photo upload (migrations/erp/024_items_image.sql):
+    itemImage round-trips through save -> get exactly like any other field.
+    """
+    name = _unique_name("Sprocket")
+    fake_data_url = "data:image/jpeg;base64,/9j/4AAQSkZJRgABAQAAAQABAAD=="
+    resp = _rpc(
+        erp_client,
+        "saveItem",
+        [{"itemName": name, "itemSize": "42T", "itemBaseUnit": "Pcs", "itemImage": fake_data_url}],
+        mutation=True,
+    )
+    body = resp.get_json()
+    assert body["success"] is True
+    assert body["data"]["item"]["image"] == fake_data_url
+
+    listed = _rpc(erp_client, "getItemsData").get_json()["data"]
+    match = next(i for i in listed if i["name"] == name and i["size"] == "42T")
+    assert match["image"] == fake_data_url
+
+
+def test_save_item_without_image_defaults_to_empty_string(erp_client):
+    name = _unique_name("PlainBolt")
+    resp = _rpc(erp_client, "saveItem", [{"itemName": name, "itemBaseUnit": "Pcs"}], mutation=True)
+    assert resp.get_json()["data"]["item"]["image"] == ""
+
+
+def test_save_item_rejects_oversized_image(erp_client):
+    name = _unique_name("HugePhoto")
+    oversized = "x" * 3_000_001
+    resp = _rpc(
+        erp_client,
+        "saveItem",
+        [{"itemName": name, "itemBaseUnit": "Pcs", "itemImage": oversized}],
+        mutation=True,
+    )
+    body = resp.get_json()
+    assert body["success"] is False
+    assert "too large" in body["message"].lower()
+
+
 def test_save_item_update_message_names_item_without_size(erp_client):
     """A sizeless item's toast omits the size parenthetical entirely rather
     than printing an empty "()" -- mirrors the reference's
@@ -483,13 +524,17 @@ def test_merge_item_edit_after_duplicate_rejection(erp_client):
     assert stock_match["initialStock"] == 8
 
 
-def test_run_scheduled_item_cleanup_merges_exact_duplicates(erp_client):
+def test_run_scheduled_item_cleanup_merges_exact_duplicates(erp_admin_client):
     """erp.items' own unique index (ux_erp_items_name_size_ci) is on
     lower(item_name)/lower(size) WITHOUT trimming whitespace, so a
     whitespace-padded name bypasses it at the DB level while still being a
     real duplicate once compared the way the app itself does (.strip()
     everywhere) -- a genuine, reachable case for this cleanup phase to
     catch, unlike a byte-identical insert (which the index would reject).
+
+    runScheduledItemCleanup is admin-gated (see test_rpc.py's
+    test_run_scheduled_item_cleanup_is_admin_only) -- erp_admin_client, not
+    the plain erp_client every other test here uses.
     """
     shared_name = _unique_name("ExactDup")
     with database.get_conn() as (_conn, cur):
@@ -502,18 +547,18 @@ def test_run_scheduled_item_cleanup_merges_exact_duplicates(erp_client):
             (f" {shared_name} ", "L"),
         )
 
-    resp = _rpc(erp_client, "runScheduledItemCleanup", [], mutation=True)
+    resp = _rpc(erp_admin_client, "runScheduledItemCleanup", [], mutation=True)
     body = resp.get_json()
     assert body["success"] is True
     assert body["data"]["merged"] >= 1
 
-    listed = _rpc(erp_client, "getItemsData").get_json()["data"]
+    listed = _rpc(erp_admin_client, "getItemsData").get_json()["data"]
     matches = [i for i in listed if i["name"] == shared_name and i["size"] == "L"]
     assert len(matches) == 1
     assert matches[0]["remarks"] == "first remark"
 
 
-def test_run_scheduled_item_cleanup_autofixes_unambiguous_truncated_pair(erp_client):
+def test_run_scheduled_item_cleanup_autofixes_unambiguous_truncated_pair(erp_admin_client):
     size = _unique_name("CleanupSize")
     short_name = _unique_name("Trunc")
     long_name = short_name + "Full"
@@ -521,12 +566,12 @@ def test_run_scheduled_item_cleanup_autofixes_unambiguous_truncated_pair(erp_cli
         cur.execute("INSERT INTO erp.items (item_name, size) VALUES (%s, %s)", (short_name, size))
         cur.execute("INSERT INTO erp.items (item_name, size) VALUES (%s, %s)", (long_name, size))
 
-    resp = _rpc(erp_client, "runScheduledItemCleanup", [], mutation=True)
+    resp = _rpc(erp_admin_client, "runScheduledItemCleanup", [], mutation=True)
     body = resp.get_json()
     assert body["success"] is True
     assert body["data"]["autoFixed"] >= 1
 
-    listed = _rpc(erp_client, "getItemsData").get_json()["data"]
+    listed = _rpc(erp_admin_client, "getItemsData").get_json()["data"]
     names_at_size = [i["name"] for i in listed if i["size"] == size]
     assert long_name in names_at_size
     assert short_name not in names_at_size

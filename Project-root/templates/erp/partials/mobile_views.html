@@ -196,6 +196,17 @@
     <div class="mb-card-sub">Bills, BOM, vendor ledgers, settings</div>
   </a>
 
+  <div class="mapp-section-label mb-mt-4">Account</div>
+  <div class="mb-card">
+    <div class="mb-card-title" id="more-account-name">{{ current_user.name }}</div>
+    <div class="mb-card-sub">{{ current_user.email }}</div>
+  </div>
+  <a class="mb-card mb-card-tappable" style="border:none;display:block;text-decoration:none;color:var(--mb-enamel-red);" href="{{ url_for('auth.logout') }}">
+    <div class="mb-card-row">
+      <span class="mb-card-title" style="color:inherit;">Sign Out</span>
+    </div>
+  </a>
+
   <div class="mapp-section-label mb-mt-4">About</div>
   <div class="mb-card">
     <div class="mb-card-sub" id="more-about-line">Maharaja Bikes ERP — Mobile</div>

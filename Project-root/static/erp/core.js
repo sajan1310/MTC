@@ -243,6 +243,10 @@ const App = {
     globalColors: [],
     globalModels: [],
     globalProcessTypes: [],
+    selectedUnits: [],
+    selectedColors: [],
+    selectedModels: [],
+    selectedProcessTypes: [],
 
     // Process Master's own state (Script_Process.html's App.Process).
     globalProcesses: [],
@@ -268,6 +272,8 @@ const App = {
     filteredContractors: [],
     globalContractorLedger: [],
     selectedContractors: [],
+    selectedContractorRates: [],
+    selectedContractorPayments: [],
     currentContractorRates: { contractorName: '', rates: [] },
     currentAccountLedgerContractor: '',
     currentAccountLedgerData: null,
@@ -294,7 +300,14 @@ const App = {
     issueCurrentPage: 1,
     issueRowsPerPage: 15,
     issueSearchTerm: '',
-    issueDateFilter: ''
+    issueDateFilter: '',
+
+    // Users tab (admin-only, users.js's App.Users) -- same flat state
+    // shape as every other module here. No pagination: user lists are
+    // small enough that the flag isn't worth adding until it isn't.
+    globalUsers: [],
+    filteredUsers: [],
+    usersSearchTerm: ''
   },
 
   // ── Bulk Selection Helpers ────────────────────────────────────────────
@@ -1384,6 +1397,8 @@ const App = {
 
   // ── Navigation ────────────────────────────────────────────────────────
   Navigation: {
+    LAST_TAB_KEY: 'maharaja-erp-last-tab',
+
     showTab(id) {
       $$('.tab-content').forEach(tab => {
         tab.style.display = tab.id === id ? 'block' : 'none';
@@ -1391,6 +1406,8 @@ const App = {
 
       $$('#mainTabs .nav-link').forEach(btn => btn.classList.remove('active'));
       document.getElementById(`btn-${id}`)?.classList.add('active');
+
+      try { localStorage.setItem(this.LAST_TAB_KEY, id); } catch (e) { /* storage inaccessible */ }
 
       if (typeof App.Dashboard !== 'undefined') App.Dashboard.stopAutoRefresh();
       if (id === 'dashboardTab' && typeof App.Dashboard !== 'undefined') {
@@ -1408,6 +1425,7 @@ const App = {
       if (id === 'productionTab' && typeof App.Production !== 'undefined') App.Production.loadData();
       if (id === 'clientsTab' && typeof App.Client !== 'undefined') App.Client.enterTab();
       if (id === 'dispatchTab' && typeof App.Dispatch !== 'undefined') App.Dispatch.enterTab();
+      if (id === 'usersTab' && typeof App.Users !== 'undefined') App.Users.loadData();
       // Every other module's own `if (id === '<tab>') App.<Module>.loadData();`
       // line lands here in that module's own round -- same guarded pattern
       // Navigation.showTab already used in source for not-yet-loaded modules.
@@ -1795,6 +1813,16 @@ document.addEventListener('DOMContentLoaded', async () => {
 
   bindGlobalEvents();
   await App.Init();
+
+  // Reload/refresh used to always land back on Dashboard because the tab
+  // shown was whatever the static HTML marked active, with nothing to say
+  // otherwise. Restore whatever tab the user was last on -- but only if its
+  // nav button actually exists (role-gated tabs like usersTab disappear for
+  // non-admins, and a stale id from an older build shouldn't crash init).
+  const lastTab = safeGetItem(App.Navigation.LAST_TAB_KEY);
+  if (lastTab && lastTab !== 'dashboardTab' && document.getElementById(`btn-${lastTab}`)) {
+    App.Navigation.showTab(lastTab);
+  }
 
   // Register the shell service worker (Phase 5: PWA installability).
   // Scoped to /erp/sw.js, not /static/erp/sw.js, so its default scope

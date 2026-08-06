@@ -28,6 +28,58 @@
 const Api = (() => {
   let _csrfOverride = null;
 
+  // ── Read cache (stale-while-revalidate-lite) ───────────────────────────
+  // Fixes the "every tab switch re-downloads the whole table" problem
+  // (App.Navigation.showTab in core.js unconditionally calls each module's
+  // loadData(), and no getXData method paginates -- see PERFORMANCE_AUDIT.md
+  // PERF-003). A cache hit resolves instantly with no network round trip; a
+  // miss behaves exactly as before. Concurrent identical calls (two views
+  // asking for the same data at once) share one in-flight request.
+  //
+  // Invalidation is deliberately blunt: ANY successful (or failed, in case a
+  // network error masked a write that actually landed) Api.mutate() clears
+  // the whole cache, rather than trying to map which of the 135 RPC methods'
+  // getters a given mutation affects -- no such mapping exists, and guessing
+  // wrong would show stale data after a save, which is worse than the extra
+  // re-fetches a full clear costs.
+  //
+  // A short denylist bypasses the cache entirely for methods where a stale
+  // answer would be actively wrong, not just annoying: BOM-access and
+  // stock-adjustment-conflict checks must reflect the live server state at
+  // the moment they're asked, and testConnection is a diagnostic that must
+  // always hit the network.
+  const CACHE_TTL_MS = 15_000;
+  const NO_CACHE_METHODS = new Set(['verifyBOMAccess', 'checkStockAdjustmentConflicts', 'testConnection']);
+  const _cache = new Map();    // key -> {value, at}
+  const _inflight = new Map(); // key -> Promise
+
+  function _cacheKey(method, args) {
+    return method + '::' + JSON.stringify(args || []);
+  }
+
+  function _invalidateCache() {
+    _cache.clear();
+    _inflight.clear();
+  }
+
+  async function _cachedRequest(method, args) {
+    if (NO_CACHE_METHODS.has(method)) return _request(method, args, null);
+
+    const key = _cacheKey(method, args);
+    const hit = _cache.get(key);
+    if (hit && (Date.now() - hit.at) < CACHE_TTL_MS) return hit.value;
+
+    const pending = _inflight.get(key);
+    if (pending) return pending;
+
+    const p = _request(method, args, null).then(
+      value => { _cache.set(key, { value, at: Date.now() }); _inflight.delete(key); return value; },
+      err => { _inflight.delete(key); throw err; }
+    );
+    _inflight.set(key, p);
+    return p;
+  }
+
   function _csrfToken() {
     if (_csrfOverride) return _csrfOverride;
     if (typeof document === 'undefined') return ''; // service worker context, no override set yet
@@ -90,11 +142,27 @@ const Api = (() => {
 
   return {
     call(method, ...args) {
+      return _cachedRequest(method, args);
+    },
+
+    // Bypasses the read cache entirely. For the rare caller that must see
+    // live server state even within the 15s window (most callers don't need
+    // this -- the NO_CACHE_METHODS denylist above already excludes the
+    // methods where that's a correctness requirement, not just a preference).
+    callFresh(method, ...args) {
       return _request(method, args, null);
     },
 
+    // Drops every cached read. Exposed mainly for tests and for callers that
+    // know something changed the server didn't tell this tab about (e.g. the
+    // mobile outbox reconciling after a background sync).
+    invalidateCache: _invalidateCache,
+
     mutate(method, ...args) {
-      return _request(method, args, _newMutationId());
+      return _request(method, args, _newMutationId()).then(
+        res => { _invalidateCache(); return res; },
+        err => { _invalidateCache(); throw err; }
+      );
     },
 
     // Phase 6 Round 3 -- for callers (the offline outbox) that need the
@@ -106,7 +174,10 @@ const Api = (() => {
     newMutationId: _newMutationId,
 
     mutateWithId(method, mutationId, ...args) {
-      return _request(method, args, mutationId);
+      return _request(method, args, mutationId).then(
+        res => { _invalidateCache(); return res; },
+        err => { _invalidateCache(); throw err; }
+      );
     },
 
     // Phase 6 (Background Sync) -- lets the service worker (which has no

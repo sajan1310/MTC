@@ -4025,7 +4025,11 @@ App.Production = {
     document.getElementById('productionProductIdHidden').value = p.productId || '';
     document.getElementById('productionProductNameHidden').value = p.productName || '';
 
-    document.getElementById('productionOutputItemName').value = editProcess ? (editProcess.outputItemName || '') : '';
+    // This lot's own saved Output Item Name (which may have been
+    // customized away from the process default) -- not the process's
+    // current default, which would silently discard that customization
+    // every time the lot is reopened for edit.
+    document.getElementById('productionOutputItemName').value = p.outputItemName || (editProcess ? (editProcess.outputItemName || '') : '');
     const tagWrapper = document.getElementById('productionProductTagWrapper');
     if (tagWrapper) tagWrapper.style.display = (p.productId || (editProcess && editProcess.isFinalStage)) ? '' : 'none';
 

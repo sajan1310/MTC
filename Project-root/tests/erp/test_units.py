@@ -89,3 +89,26 @@ def test_delete_unit_soft_deletes(erp_client):
 
     missing = _rpc(erp_client, "deleteUnit", [name], mutation=True)
     assert missing.get_json()["success"] is False
+
+
+def test_delete_units_bulk_soft_deletes_multiple(erp_client):
+    name_a = _unique_name("Roll")
+    name_b = _unique_name("Bundle")
+    _rpc(erp_client, "saveUnit", [{"unitName": name_a, "family": "Count", "factorToBase": 1}], mutation=True)
+    _rpc(erp_client, "saveUnit", [{"unitName": name_b, "family": "Count", "factorToBase": 1}], mutation=True)
+
+    resp = _rpc(erp_client, "deleteUnitsBulk", [[name_a, name_b]], mutation=True)
+    body = resp.get_json()
+    assert body["success"] is True
+    assert "2" in body["message"]
+
+    names = [u["unitName"] for u in _rpc(erp_client, "getUnitsData").get_json()["data"]]
+    assert name_a not in names
+    assert name_b not in names
+
+
+def test_delete_units_bulk_no_selection_is_a_success_noop(erp_client):
+    resp = _rpc(erp_client, "deleteUnitsBulk", [[]], mutation=True)
+    body = resp.get_json()
+    assert body["success"] is True
+    assert "No units selected" in body["message"]

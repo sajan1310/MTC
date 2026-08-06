@@ -78,6 +78,33 @@ def test_save_warehouse_pool_opening_rejects_zero_qty(erp_client):
     assert "cannot be zero" in body["message"]
 
 
+def test_save_warehouse_pool_opening_requires_color_when_process_tracks_colors(erp_client):
+    """A process whose own recipe pulls from a colored upstream Pool (the
+    same pattern test_production.py's _make_color_process uses) has known
+    colors of its own -- an opening balance for it must pick one, same as
+    the form's Color dropdown would require (see the matching client-side
+    `required` toggle in App.Stock.handleWarehouseOpeningProcessChange).
+    """
+    upstream_payload, upstream_id = _save_process(erp_client)
+    _rpc(erp_client, "saveWarehousePoolOpening", [{"processId": upstream_id, "qty": 10, "color": "Black"}], mutation=True)
+    _rpc(erp_client, "saveWarehousePoolOpening", [{"processId": upstream_id, "qty": 10, "color": "Blue"}], mutation=True)
+
+    _downstream_payload, downstream_id = _save_process(
+        erp_client,
+        components=[{"itemName": upstream_payload["outputItemName"], "qtyPerUnit": 1, "sourceType": "POOL", "colorGroup": "COMMON"}],
+    )
+
+    no_color = _rpc(erp_client, "saveWarehousePoolOpening", [{"processId": downstream_id, "qty": 5}], mutation=True)
+    body = no_color.get_json()
+    assert body["success"] is False
+    assert "per-color" in body["message"]
+
+    with_color = _rpc(
+        erp_client, "saveWarehousePoolOpening", [{"processId": downstream_id, "qty": 5, "color": "Black"}], mutation=True
+    )
+    assert with_color.get_json()["success"] is True
+
+
 def test_save_warehouse_pool_opening_credits_pool_bucket(erp_client):
     payload, process_id = _save_process(erp_client)
 

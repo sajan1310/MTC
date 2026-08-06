@@ -539,6 +539,7 @@ def _row_to_item_record(row, vendor_rows, units_map) -> dict:
         "baseUnit": base_unit,
         "purchaseUnit": purchase_unit,
         "weightPerBaseUnit": weight_per_base_unit,
+        "image": row["image"] or "",
         "vendors": vendors,
     }
 
@@ -549,7 +550,7 @@ def get_items_data():
         cur.execute(
             """
             SELECT id, item_name, size, remarks, narration, specification,
-                   base_unit, purchase_unit, weight_per_base_unit
+                   base_unit, purchase_unit, weight_per_base_unit, image
             FROM erp.items
             WHERE deleted_at IS NULL
             ORDER BY lower(item_name)
@@ -578,7 +579,7 @@ def _fetch_item_record(cur, item_id):
     cur.execute(
         """
         SELECT id, item_name, size, remarks, narration, specification,
-               base_unit, purchase_unit, weight_per_base_unit
+               base_unit, purchase_unit, weight_per_base_unit, image
         FROM erp.items WHERE id = %s
         """,
         (item_id,),
@@ -613,6 +614,12 @@ def save_item(conn, cur, form_data):
     remarks = str(form_data.get("itemRemarks") or "").strip()
     narration = str(form_data.get("itemNarration") or "").strip()
     spec = str(form_data.get("itemSpec") or "").strip()
+    image = str(form_data.get("itemImage") or "").strip()
+    if len(image) > 3_000_000:
+        # Client-side resize (items.js, same canvas-resize approach as the
+        # company logo) targets well under this -- a value this large means
+        # something bypassed that resize, not a legitimate photo.
+        raise ValueError("Item photo is too large. Please choose a smaller image.")
     initial_stock = _validate_initial_stock(form_data.get("itemInitialStock"))
     base_unit = _validate_base_unit(form_data.get("itemBaseUnit"))
     purchase_unit = _validate_purchase_unit(form_data.get("itemPurchaseUnit"), base_unit)
@@ -670,21 +677,21 @@ def save_item(conn, cur, form_data):
             """
             UPDATE erp.items
             SET item_name = %s, size = %s, remarks = %s, narration = %s, specification = %s,
-                base_unit = %s, purchase_unit = %s, weight_per_base_unit = %s, updated_by = %s
+                base_unit = %s, purchase_unit = %s, weight_per_base_unit = %s, image = %s, updated_by = %s
             WHERE id = %s
             """,
-            (new_name, new_size, remarks, narration, spec, base_unit, purchase_unit, weight_per_base_unit, user_id, item_id),
+            (new_name, new_size, remarks, narration, spec, base_unit, purchase_unit, weight_per_base_unit, image, user_id, item_id),
         )
         cur.execute("DELETE FROM erp.item_vendors WHERE item_id = %s", (item_id,))
     else:
         cur.execute(
             """
             INSERT INTO erp.items (item_name, size, remarks, narration, specification,
-                base_unit, purchase_unit, weight_per_base_unit, updated_by)
-            VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s)
+                base_unit, purchase_unit, weight_per_base_unit, image, updated_by)
+            VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
             RETURNING id
             """,
-            (new_name, new_size, remarks, narration, spec, base_unit, purchase_unit, weight_per_base_unit, user_id),
+            (new_name, new_size, remarks, narration, spec, base_unit, purchase_unit, weight_per_base_unit, image, user_id),
         )
         item_id = cur.fetchone()["id"]
 
@@ -1213,7 +1220,7 @@ def _find_unambiguous_truncated_pairs(cur) -> list:
     return pairs
 
 
-@rpc_method("runScheduledItemCleanup", mutation=True)
+@rpc_method("runScheduledItemCleanup", mutation=True, roles=frozenset({"admin"}))
 @database.transactional
 def run_scheduled_item_cleanup(conn, cur):
     """(1) auto-fixes unambiguous truncated/typo-prefix duplicates (see

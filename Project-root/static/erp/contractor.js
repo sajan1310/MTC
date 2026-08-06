@@ -194,6 +194,9 @@ App.Contractor = {
     const contractor = App.State.globalContractors.find(c => App.Utils.sameText(c.contractorName, contractorName));
     if (!contractor) return;
 
+    App.State.selectedContractorRates = [];
+    App.State.selectedContractorPayments = [];
+
     const form = document.getElementById('contractorForm');
     if (form) form.reset();
 
@@ -245,9 +248,11 @@ App.Contractor = {
 
       if (!rates.length) {
         tbody.innerHTML = '';
+        this.updateRatesBulkButton();
         return;
       }
       tbody.innerHTML = rates.map(r => this.renderRateRow(r)).join('');
+      this.updateRatesBulkButton();
     } catch (err) {
       App.Utils.showToast(err.message || 'Failed to load rate card', true);
     }
@@ -256,7 +261,15 @@ App.Contractor = {
   renderRateRow(rate) {
     const rowId = 'rate_row_' + Math.floor(Math.random() * 1000000);
     const originalProcess = rate.processName || '';
+    // A freshly-added, not-yet-saved row (originalProcess blank) has
+    // nothing server-side to bulk-delete yet -- no checkbox for it, same
+    // as its own ✕ (deleteRateRow) already just removing the DOM row for
+    // that case instead of calling the API.
+    const checkboxCell = originalProcess
+      ? `<input type="checkbox" class="form-check-input rate-select-chk" data-key="${escapeHtml(originalProcess)}" ${App.Selection.isSelected(App.State.selectedContractorRates, originalProcess) ? 'checked' : ''} onchange="App.Contractor.onRateRowSelectChange()">`
+      : '';
     return `<tr id="${rowId}" data-original-process="${escapeHtml(originalProcess)}">
+  <td class="text-center">${checkboxCell}</td>
   <td><select class="form-select form-select-sm rate-process">${this.buildProcessOptionsHtml(originalProcess)}</select></td>
   <td><input type="number" class="form-control form-control-sm text-end rate-amount" value="${rate.ratePerUnit || 0}" min="0" step="0.01"></td>
   <td><input type="text" class="form-control form-control-sm rate-remarks" value="${escapeHtml(rate.remarks || '')}"></td>
@@ -265,6 +278,42 @@ App.Contractor = {
     <button type="button" class="btn btn-sm btn-outline-danger" onclick="App.Contractor.deleteRateRow('${rowId}')">✕</button>
   </td>
 </tr>`;
+  },
+
+  toggleSelectAllRates(masterChk) {
+    App.Selection.toggleAll(App.State.selectedContractorRates, 'rate-select-chk', masterChk);
+    this.updateRatesBulkButton();
+  },
+
+  onRateRowSelectChange() {
+    App.Selection.syncFromRows(App.State.selectedContractorRates, 'rate-select-chk', 'selectAllContractorRates');
+    this.updateRatesBulkButton();
+  },
+
+  updateRatesBulkButton() {
+    App.Selection.updateButton('btnBulkDeleteContractorRates', App.State.selectedContractorRates.length, '<i class="bi bi-trash"></i> Delete Selected');
+  },
+
+  async bulkDeleteRates() {
+    const selected = App.State.selectedContractorRates;
+    const contractorName = App.State.currentContractorRates?.contractorName;
+    if (!selected.length || !contractorName) return;
+
+    App.Utils.confirmAction(
+      `Delete ${selected.length} selected rate card entr${selected.length === 1 ? 'y' : 'ies'} for "${contractorName}"? This cannot be undone.`,
+      async () => {
+        try {
+          const res = await Api.mutate('deleteContractorRatesBulk', selected.map(processName => ({ contractorName, processName })));
+          App.Utils.showToast(res?.message || 'Delete completed.', !res?.success);
+          if (res?.success) {
+            App.State.selectedContractorRates = [];
+            await this.loadRateCard(contractorName);
+          }
+        } catch (err) {
+          App.Utils.showToast(err.message || 'Failed to delete rates.', true);
+        }
+      }
+    );
   },
 
   addRateRow() {
@@ -366,16 +415,24 @@ App.Contractor = {
 
       if (!tbody) return;
       if (!entries.length) {
-        tbody.innerHTML = '<tr><td colspan="8" class="text-center text-muted p-4">No transactions yet for this contractor.</td></tr>';
+        tbody.innerHTML = '<tr><td colspan="9" class="text-center text-muted p-4">No transactions yet for this contractor.</td></tr>';
+        this.updatePaymentsBulkButton();
         return;
       }
 
       tbody.innerHTML = entries.map(e => {
         const badgeClass = e.type === 'Payable' ? 'bg-warning text-dark' : 'bg-success';
+        // Only a Payment row is a real, individually-deletable record --
+        // a Payable row is computed live from Production/Dispatch, so
+        // it gets neither the checkbox nor the ✕.
+        const checkboxCell = e.type === 'Payment'
+          ? `<input type="checkbox" class="form-check-input payment-select-chk" data-key="${e.rowIdx}" ${App.Selection.isSelected(App.State.selectedContractorPayments, String(e.rowIdx)) ? 'checked' : ''} onchange="App.Contractor.onPaymentRowSelectChange()">`
+          : '';
         const deleteBtn = e.type === 'Payment'
           ? `<button class="btn btn-sm btn-outline-danger" onclick="App.Contractor.deletePayment(${e.rowIdx}, '${escapeHtml(contractorName)}', ${e.rawAmount}, '${escapeHtml(e.date)}')">✕</button>`
           : '';
         return `<tr>
+      <td class="text-center">${checkboxCell}</td>
       <td>${escapeHtml(e.date)}</td>
       <td><span class="badge ${badgeClass}">${escapeHtml(e.type)}</span></td>
       <td>${escapeHtml(e.ref)}</td>
@@ -386,9 +443,47 @@ App.Contractor = {
       <td class="text-center">${deleteBtn}</td>
     </tr>`;
       }).join('');
+      this.updatePaymentsBulkButton();
     } catch (err) {
       App.Utils.showToast(err.message || 'Failed to load account ledger', true);
     }
+  },
+
+  toggleSelectAllPayments(masterChk) {
+    App.Selection.toggleAll(App.State.selectedContractorPayments, 'payment-select-chk', masterChk);
+    this.updatePaymentsBulkButton();
+  },
+
+  onPaymentRowSelectChange() {
+    App.Selection.syncFromRows(App.State.selectedContractorPayments, 'payment-select-chk', 'selectAllContractorPayments');
+    this.updatePaymentsBulkButton();
+  },
+
+  updatePaymentsBulkButton() {
+    App.Selection.updateButton('btnBulkDeleteContractorPayments', App.State.selectedContractorPayments.length, '<i class="bi bi-trash"></i> Delete Selected');
+  },
+
+  async bulkDeletePayments() {
+    const selected = App.State.selectedContractorPayments;
+    const contractorName = App.State.currentAccountLedgerContractor;
+    if (!selected.length || !contractorName) return;
+
+    App.Utils.confirmAction(
+      `Delete ${selected.length} selected payment record(s) for "${contractorName}"? This cannot be undone.`,
+      async () => {
+        try {
+          const res = await Api.mutate('deleteContractorPaymentsBulk', selected);
+          App.Utils.showToast(res?.message || 'Delete completed.', !res?.success);
+          if (res?.success) {
+            App.State.selectedContractorPayments = [];
+            await this.renderLedgerTab(contractorName);
+            await this.loadData();
+          }
+        } catch (err) {
+          App.Utils.showToast(err.message || 'Failed to delete payments.', true);
+        }
+      }
+    );
   },
 
   printLedger() {

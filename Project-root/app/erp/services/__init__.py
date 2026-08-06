@@ -27,6 +27,7 @@ from . import dispatch_service  # noqa: F401
 from . import clients_service  # noqa: F401
 from . import dashboard_service  # noqa: F401
 from . import backup_service  # noqa: F401
+from . import users_service  # noqa: F401
 
 __all__ = [
     "system_service",
@@ -50,5 +51,6 @@ __all__ = [
     "clients_service",
     "dashboard_service",
     "backup_service",
+    "users_service",
 ]
 

@@ -5,15 +5,30 @@ from __future__ import annotations
 import os
 
 from flask import current_app, redirect, render_template, request, send_from_directory, url_for
-from flask_login import login_required
+from flask_login import current_user, login_required
 
 from . import erp_bp
+
+
+def _pending_approval_redirect():
+    """None if the current user may proceed; a redirect response if they're
+    a brand-new OAuth signup awaiting an admin's approval (see rpc.py's
+    matching RPC-level block -- this is the page-level half, so a pending
+    user sees the waiting page instead of the full app shell silently
+    failing every API call it makes).
+    """
+    if getattr(current_user, "role", None) == "pending_approval":
+        return redirect(url_for("erp.pending_approval"))
+    return None
 
 
 @erp_bp.route("/erp")
 @login_required
 def index():
     """Desktop ERP shell, or redirect to the mobile shell via ?ui=mobile."""
+    pending = _pending_approval_redirect()
+    if pending:
+        return pending
     if request.args.get("ui") == "mobile":
         return redirect(url_for("erp.mobile"))
     return render_template("erp/index.html")
@@ -23,7 +38,23 @@ def index():
 @login_required
 def mobile():
     """Mobile ERP shell."""
+    pending = _pending_approval_redirect()
+    if pending:
+        return pending
     return render_template("erp/mobile.html")
+
+
+@erp_bp.route("/erp/pending-approval")
+@login_required
+def pending_approval():
+    """Waiting page for a new OAuth signup that hasn't been approved by an
+    admin yet (app/utils.py's get_or_create_user default role). An already-
+    approved user landing here by URL is bounced straight to the app --
+    this route is a holding pen, not a real destination.
+    """
+    if getattr(current_user, "role", None) != "pending_approval":
+        return redirect(url_for("erp.index"))
+    return render_template("erp/pending_approval.html")
 
 
 @erp_bp.route("/erp/sw.js")

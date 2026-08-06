@@ -32,13 +32,13 @@
     <table class="table table-hover table-bordered align-middle mb-0">
       <thead class="table-dark">
         <tr>
-          <th style="width: 4%; text-align: center;"><input type="checkbox" id="selectAllVendors"
+          <th scope="col" style="width: 4%; text-align: center;"><input type="checkbox" id="selectAllVendors"
               class="form-check-input" onclick="App.Vendor.toggleSelectAll(this)"></th>
-          <th style="width: 23%;">Vendor Name</th>
-          <th style="width: 19%;">Contact Info</th>
-          <th style="width: 18%;">GSTIN</th>
-          <th style="width: 21%;">Pending Items</th>
-          <th style="width: 15%;">Actions</th>
+          <th scope="col" style="width: 23%;">Vendor Name</th>
+          <th scope="col" style="width: 19%;">Contact Info</th>
+          <th scope="col" style="width: 18%;">GSTIN</th>
+          <th scope="col" style="width: 21%;">Pending Items</th>
+          <th scope="col" style="width: 15%;">Actions</th>
         </tr>
       </thead>
       <tbody id="vendorTableBody"></tbody>
@@ -110,11 +110,11 @@
                 <table class="table table-bordered bg-white shadow-sm table-hover mb-0">
                   <thead class="table-dark">
                     <tr>
-                      <th style="width: 30%;">Item Name</th>
-                      <th style="width: 25%;">Narration</th>
-                      <th style="width: 15%;">Size</th>
-                      <th style="width: 15%; text-align: right;">Master Rate</th>
-                      <th style="width: 15%; text-align: right;">Latest PO Rate</th>
+                      <th scope="col" style="width: 30%;">Item Name</th>
+                      <th scope="col" style="width: 25%;">Narration</th>
+                      <th scope="col" style="width: 15%;">Size</th>
+                      <th scope="col" style="width: 15%; text-align: right;">Master Rate</th>
+                      <th scope="col" style="width: 15%; text-align: right;">Latest PO Rate</th>
                     </tr>
                   </thead>
                   <tbody id="vendorRatesBody"></tbody>
@@ -137,14 +137,14 @@
             <table class="table table-bordered bg-white shadow-sm table-hover">
               <thead class="table-dark">
                 <tr>
-                  <th style="width: 11%;">Date</th>
-                  <th style="width: 12%;">Document Type</th>
-                  <th style="width: 12%;">Reference #</th>
-                  <th style="width: 28%;">Items Summary</th>
-                  <th style="width: 11%; text-align: center;">Order Qty</th>
-                  <th style="width: 11%; text-align: center;">Incoming Qty</th>
-                  <th style="width: 11%; text-align: center;">Outgoing Qty</th>
-                  <th style="width: 11%; text-align: right;">Total Value</th>
+                  <th scope="col" style="width: 11%;">Date</th>
+                  <th scope="col" style="width: 12%;">Document Type</th>
+                  <th scope="col" style="width: 12%;">Reference #</th>
+                  <th scope="col" style="width: 28%;">Items Summary</th>
+                  <th scope="col" style="width: 11%; text-align: center;">Order Qty</th>
+                  <th scope="col" style="width: 11%; text-align: center;">Incoming Qty</th>
+                  <th scope="col" style="width: 11%; text-align: center;">Outgoing Qty</th>
+                  <th scope="col" style="width: 11%; text-align: right;">Total Value</th>
                 </tr>
               </thead>
               <tbody id="vendorLedgerBody"></tbody>
@@ -159,11 +159,11 @@
             <table class="table table-bordered bg-white shadow-sm table-hover">
               <thead class="table-dark">
                 <tr>
-                  <th style="width: 40%;">Item Name</th>
-                  <th style="width: 15%;">Size</th>
-                  <th style="width: 15%; text-align: center;">Total Ordered</th>
-                  <th style="width: 15%; text-align: center;">Total Received</th>
-                  <th class="table-warning text-dark fw-bold" style="width: 15%; text-align: center;">Pending Qty</th>
+                  <th scope="col" style="width: 40%;">Item Name</th>
+                  <th scope="col" style="width: 15%;">Size</th>
+                  <th scope="col" style="width: 15%; text-align: center;">Total Ordered</th>
+                  <th scope="col" style="width: 15%; text-align: center;">Total Received</th>
+                  <th scope="col" class="table-warning text-dark fw-bold" style="width: 15%; text-align: center;">Pending Qty</th>
                 </tr>
               </thead>
               <tbody id="vendorPendingBody"></tbody>

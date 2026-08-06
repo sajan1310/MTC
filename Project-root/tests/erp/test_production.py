@@ -155,6 +155,85 @@ def test_save_production_no_color_process_allows_negative_qty(erp_client):
     assert match["qty"] == -3
 
 
+def test_save_production_output_item_name_defaults_to_process(erp_client):
+    """Omitting outputItemName (the pre-existing behavior every other test
+    here relies on) still stamps the process's own Output Item Name."""
+    payload, process_id = _save_process(erp_client)
+    resp = _rpc(
+        erp_client,
+        "saveProduction",
+        [{"processId": process_id, "assignedTo": "Worker A", "qty": 5, "componentsConsumed": [_item_component()]}],
+        mutation=True,
+    )
+    body = resp.get_json()
+    assert body["success"] is True, body["message"]
+    assert body["data"]["row"]["outputItemName"] == payload["outputItemName"]
+
+
+def test_save_production_output_item_name_can_be_customized_per_lot(erp_client):
+    """A lot can be logged under a custom Output Item Name (e.g. a rework
+    or variant run) without touching the process's own default -- see
+    save_production's output_item_name resolution."""
+    payload, process_id = _save_process(erp_client)
+    custom_name = _unique_name("ReworkVariant")
+
+    resp = _rpc(
+        erp_client,
+        "saveProduction",
+        [{
+            "processId": process_id, "assignedTo": "Worker A", "qty": 5,
+            "componentsConsumed": [_item_component()], "outputItemName": custom_name,
+        }],
+        mutation=True,
+    )
+    body = resp.get_json()
+    assert body["success"] is True, body["message"]
+    assert body["data"]["row"]["outputItemName"] == custom_name
+
+    # The process itself is untouched -- a second, un-customized lot still
+    # gets the process's own default.
+    other_resp = _rpc(
+        erp_client,
+        "saveProduction",
+        [{"processId": process_id, "assignedTo": "Worker A", "qty": 3, "componentsConsumed": [_item_component()]}],
+        mutation=True,
+    )
+    assert other_resp.get_json()["data"]["row"]["outputItemName"] == payload["outputItemName"]
+
+    process_after = _rpc(erp_client, "getProcessData").get_json()["data"]
+    match_process = next(p for p in process_after if p["processId"] == process_id)
+    assert match_process["outputItemName"] == payload["outputItemName"]
+
+
+def test_save_production_output_item_name_override_persists_through_edit(erp_client):
+    _payload, process_id = _save_process(erp_client)
+    custom_name = _unique_name("ReworkVariant")
+
+    created = _rpc(
+        erp_client,
+        "saveProduction",
+        [{
+            "processId": process_id, "assignedTo": "Worker A", "qty": 5,
+            "componentsConsumed": [_item_component()], "outputItemName": custom_name,
+        }],
+        mutation=True,
+    ).get_json()
+    row_idx = created["data"]["row"]["rowIdx"]
+
+    edited = _rpc(
+        erp_client,
+        "saveProduction",
+        [{
+            "rowIdx": row_idx, "processId": process_id, "assignedTo": "Worker A", "qty": 6,
+            "componentsConsumed": [_item_component()], "outputItemName": custom_name,
+        }],
+        mutation=True,
+    ).get_json()
+    assert edited["success"] is True, edited["message"]
+    assert edited["data"]["row"]["outputItemName"] == custom_name
+    assert edited["data"]["row"]["qty"] == 6
+
+
 def test_save_production_color_breakdown_rejects_unknown_color(erp_client):
     *_ignored, down_id = _make_color_process(erp_client)
     resp = _rpc(

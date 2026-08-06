@@ -74,31 +74,31 @@
            style="margin-bottom: 0;">
       <thead class="table-dark">
         <tr role="row">
-          <th role="columnheader" style="width: 4%; text-align: center;">
+          <th scope="col" role="columnheader" style="width: 4%; text-align: center;">
             <input type="checkbox" id="selectAllBills" class="form-check-input" onclick="App.Bill.toggleSelectAll(this)">
           </th>
-          <th role="columnheader" style="width: 12%; min-width: 100px;">
+          <th scope="col" role="columnheader" style="width: 12%; min-width: 100px;">
             <i class="bi bi-file-earmark me-2"></i>PO#
           </th>
-          <th role="columnheader" style="width: 15%; min-width: 120px;">
+          <th scope="col" role="columnheader" style="width: 15%; min-width: 120px;">
             <i class="bi bi-receipt me-2"></i>Bill#
           </th>
-          <th role="columnheader" style="width: 12%; min-width: 120px;">
+          <th scope="col" role="columnheader" style="width: 12%; min-width: 120px;">
             <i class="bi bi-calendar me-2"></i>Date
           </th>
-          <th role="columnheader" style="width: 14%; min-width: 130px;">
+          <th scope="col" role="columnheader" style="width: 14%; min-width: 130px;">
             <i class="bi bi-truck me-2"></i>Vendor
           </th>
-          <th role="columnheader" style="width: 28%; min-width: 200px;">
+          <th scope="col" role="columnheader" style="width: 28%; min-width: 200px;">
             <i class="bi bi-box-seam me-2"></i>Items Logged
           </th>
-          <th role="columnheader" style="width: 10%; min-width: 80px; text-align: center;">
+          <th scope="col" role="columnheader" style="width: 10%; min-width: 80px; text-align: center;">
             <i class="bi bi-collection me-2"></i>Qty
           </th>
-          <th role="columnheader" style="width: 14%; min-width: 120px; text-align: right;">
+          <th scope="col" role="columnheader" style="width: 14%; min-width: 120px; text-align: right;">
             <i class="bi bi-currency-rupee me-2"></i>Amount
           </th>
-          <th role="columnheader" style="width: 8%; min-width: 140px;">
+          <th scope="col" role="columnheader" style="width: 8%; min-width: 140px;">
             <i class="bi bi-gear me-2"></i>Actions
           </th>
         </tr>
@@ -178,16 +178,16 @@
             <table class="table table-bordered bg-white shadow-sm" id="billItemsTable">
               <thead class="table-light">
                 <tr>
-                  <th class="goods-col">Item Name *</th>
-                  <th class="goods-col" style="width:10%;">Size</th>
-                  <th class="labor-col" style="width:18%;">Processed Item *</th>
-                  <th class="labor-col" style="width:16%;">Color</th>
-                  <th style="width:15%;">Narration</th>
-                  <th style="width:10%;">Recv. Qty *</th>
-                  <th style="width:8%;">Unit</th>
-                  <th style="width:12%;">Unit Price *</th>
-                  <th style="width:10%;">GST Rate (%)</th>
-                  <th>Actions</th>
+                  <th scope="col" class="goods-col">Item Name *</th>
+                  <th scope="col" class="goods-col" style="width:10%;">Size</th>
+                  <th scope="col" class="labor-col" style="width:18%;">Processed Item *</th>
+                  <th scope="col" class="labor-col" style="width:16%;">Color</th>
+                  <th scope="col" style="width:15%;">Narration</th>
+                  <th scope="col" style="width:10%;">Recv. Qty *</th>
+                  <th scope="col" style="width:8%;">Unit</th>
+                  <th scope="col" style="width:12%;">Unit Price *</th>
+                  <th scope="col" style="width:10%;">GST Rate (%)</th>
+                  <th scope="col">Actions</th>
                 </tr>
               </thead>
               <tbody id="billItemsBody"></tbody>

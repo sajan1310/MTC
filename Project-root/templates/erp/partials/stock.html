@@ -64,15 +64,15 @@
       <table class="table table-hover table-bordered align-middle mb-0">
         <thead class="table-dark">
           <tr>
-            <th style="width: 4%; text-align: center;"><input type="checkbox" id="selectAllStock" class="form-check-input" onclick="App.Stock.toggleSelectAll(this)"></th>
-            <th style="width: 28%;">Item Name</th>
-            <th style="width: 12%;">Size</th>
-            <th style="width: 10%; text-align: center;">Initial Stock</th>
-            <th style="width: 10%; text-align: center;">Current Stock</th>
-            <th style="width: 9%; text-align: center;">Threshold</th>
-            <th style="width: 9%; text-align: center;">Status</th>
-            <th style="width: 10%; text-align: center;">Dead Stock</th>
-            <th style="width: 8%; text-align: center;">Actions</th>
+            <th scope="col" style="width: 4%; text-align: center;"><input type="checkbox" id="selectAllStock" class="form-check-input" onclick="App.Stock.toggleSelectAll(this)"></th>
+            <th scope="col" style="width: 28%;">Item Name</th>
+            <th scope="col" style="width: 12%;">Size</th>
+            <th scope="col" style="width: 10%; text-align: center;">Initial Stock</th>
+            <th scope="col" style="width: 10%; text-align: center;">Current Stock</th>
+            <th scope="col" style="width: 9%; text-align: center;">Threshold</th>
+            <th scope="col" style="width: 9%; text-align: center;">Status</th>
+            <th scope="col" style="width: 10%; text-align: center;">Dead Stock</th>
+            <th scope="col" style="width: 8%; text-align: center;">Actions</th>
           </tr>
         </thead>
         <tbody id="stockTableBody">
@@ -250,14 +250,14 @@
           <table class="table table-bordered bg-white shadow-sm table-hover mb-0">
             <thead class="table-dark">
               <tr>
-                <th style="width: 13%;">Date</th>
-                <th style="width: 22%;">Output Item</th>
-                <th style="width: 16%;">Process</th>
-                <th style="width: 13%;">Product Tag</th>
-                <th style="width: 11%;">Color</th>
-                <th style="width: 10%; text-align: right;">Qty</th>
-                <th style="width: 10%;">Remarks</th>
-                <th style="width: 5%; text-align: center;">✕</th>
+                <th scope="col" style="width: 13%;">Date</th>
+                <th scope="col" style="width: 22%;">Output Item</th>
+                <th scope="col" style="width: 16%;">Process</th>
+                <th scope="col" style="width: 13%;">Product Tag</th>
+                <th scope="col" style="width: 11%;">Color</th>
+                <th scope="col" style="width: 10%; text-align: right;">Qty</th>
+                <th scope="col" style="width: 10%;">Remarks</th>
+                <th scope="col" style="width: 5%; text-align: center;">✕</th>
               </tr>
             </thead>
             <tbody id="warehouseOpeningTableBody"></tbody>
@@ -285,7 +285,7 @@
               </select>
             </div>
             <div class="col-md-6" id="woColorWrapper" style="display:none;">
-              <label class="form-label fw-bold">Color (optional)</label>
+              <label class="form-label fw-bold" id="woColorLabel">Color</label>
               <select id="woColor" class="form-select">
                 <option value="">— No Color —</option>
               </select>
@@ -331,10 +331,10 @@
           <table class="table table-bordered bg-white shadow-sm table-hover mb-0">
             <thead class="table-secondary">
               <tr>
-                <th style="width: 40%;">Item Name</th>
-                <th style="width: 20%;">Size</th>
-                <th style="width: 20%; text-align: center;">Current Stock</th>
-                <th style="width: 20%; text-align: center;">Action</th>
+                <th scope="col" style="width: 40%;">Item Name</th>
+                <th scope="col" style="width: 20%;">Size</th>
+                <th scope="col" style="width: 20%; text-align: center;">Current Stock</th>
+                <th scope="col" style="width: 20%; text-align: center;">Action</th>
               </tr>
             </thead>
             <tbody id="deadStockModalBody">
@@ -365,13 +365,13 @@
           <table class="table table-bordered bg-white shadow-sm table-hover mb-0">
             <thead class="table-dark">
               <tr>
-                <th>Date</th>
-                <th>Type</th>
-                <th>Reference</th>
-                <th>Remarks</th>
-                <th class="text-center">In</th>
-                <th class="text-center">Out</th>
-                <th class="text-center">Balance</th>
+                <th scope="col">Date</th>
+                <th scope="col">Type</th>
+                <th scope="col">Reference</th>
+                <th scope="col">Remarks</th>
+                <th scope="col" class="text-center">In</th>
+                <th scope="col" class="text-center">Out</th>
+                <th scope="col" class="text-center">Balance</th>
               </tr>
             </thead>
             <tbody id="poolLedgerBody"></tbody>
@@ -406,13 +406,13 @@
           <table class="table table-bordered bg-white shadow-sm table-hover mb-0">
             <thead class="table-dark">
               <tr>
-                <th class="text-center" style="width: 4%;"><input type="checkbox" id="selectAllWarehousePoolCombos" class="form-check-input" onclick="App.Stock.toggleSelectAllWarehousePoolCombos(this)"></th>
-                <th>Product Tag</th>
-                <th class="text-center">Produced</th>
-                <th class="text-center">Consumed</th>
-                <th>Color</th>
-                <th class="text-center">Available</th>
-                <th class="text-center">Actions</th>
+                <th scope="col" class="text-center" style="width: 4%;"><input type="checkbox" id="selectAllWarehousePoolCombos" class="form-check-input" onclick="App.Stock.toggleSelectAllWarehousePoolCombos(this)"></th>
+                <th scope="col">Product Tag</th>
+                <th scope="col" class="text-center">Produced</th>
+                <th scope="col" class="text-center">Consumed</th>
+                <th scope="col">Color</th>
+                <th scope="col" class="text-center">Available</th>
+                <th scope="col" class="text-center">Actions</th>
               </tr>
             </thead>
             <tbody id="warehousePoolProcessModalBody"></tbody>
@@ -461,18 +461,22 @@
           </div>
         </form>
 
-        <div class="mb-2">
+        <div class="d-flex justify-content-between align-items-center gap-2 mb-2">
           <input type="text" id="unitMasterSearch" class="form-control" placeholder="Search units..." autocomplete="off" onkeyup="App.Unit.renderTable()">
+          <button type="button" id="btnBulkDeleteUnits" class="btn btn-outline-danger fw-bold d-none" style="white-space:nowrap;" onclick="App.Unit.bulkDelete()">
+            <i class="bi bi-trash"></i> Delete Selected
+          </button>
         </div>
         <div class="table-responsive mb-3">
           <table class="table table-bordered bg-white shadow-sm align-middle">
             <thead class="table-light">
               <tr>
-                <th>Unit Name</th>
-                <th>Family</th>
-                <th style="width:20%;">Factor to Base</th>
-                <th>Remarks</th>
-                <th style="width:10%;">Actions</th>
+                <th scope="col" style="width:4%; text-align:center;"><input type="checkbox" id="selectAllUnits" class="form-check-input" onclick="App.Unit.toggleSelectAll(this)"></th>
+                <th scope="col">Unit Name</th>
+                <th scope="col">Family</th>
+                <th scope="col" style="width:20%;">Factor to Base</th>
+                <th scope="col">Remarks</th>
+                <th scope="col" style="width:10%;">Actions</th>
               </tr>
             </thead>
             <tbody id="unitTableBody"></tbody>
@@ -516,17 +520,21 @@
           </div>
         </form>
 
-        <div class="mb-2">
+        <div class="d-flex justify-content-between align-items-center gap-2 mb-2">
           <input type="text" id="colorMasterSearch" class="form-control" placeholder="Search colors..." autocomplete="off" onkeyup="App.Color.renderTable()">
+          <button type="button" id="btnBulkDeleteColors" class="btn btn-outline-danger fw-bold d-none" style="white-space:nowrap;" onclick="App.Color.bulkDelete()">
+            <i class="bi bi-trash"></i> Delete Selected
+          </button>
         </div>
         <div class="table-responsive mb-3">
           <table class="table table-bordered bg-white shadow-sm align-middle">
             <thead class="table-light">
               <tr>
-                <th style="width:8%;">#</th>
-                <th>Color</th>
-                <th>Remarks</th>
-                <th style="width:10%;">Actions</th>
+                <th scope="col" style="width:4%; text-align:center;"><input type="checkbox" id="selectAllColors" class="form-check-input" onclick="App.Color.toggleSelectAll(this)"></th>
+                <th scope="col" style="width:8%;">#</th>
+                <th scope="col">Color</th>
+                <th scope="col">Remarks</th>
+                <th scope="col" style="width:10%;">Actions</th>
               </tr>
             </thead>
             <tbody id="colorMasterTableBody"></tbody>
@@ -566,16 +574,20 @@
           </div>
         </form>
 
-        <div class="mb-2">
+        <div class="d-flex justify-content-between align-items-center gap-2 mb-2">
           <input type="text" id="modelMasterSearch" class="form-control" placeholder="Search models..." autocomplete="off" onkeyup="App.Model.renderTable()">
+          <button type="button" id="btnBulkDeleteModels" class="btn btn-outline-danger fw-bold d-none" style="white-space:nowrap;" onclick="App.Model.bulkDelete()">
+            <i class="bi bi-trash"></i> Delete Selected
+          </button>
         </div>
         <div class="table-responsive mb-3">
           <table class="table table-bordered bg-white shadow-sm align-middle">
             <thead class="table-light">
               <tr>
-                <th>Model</th>
-                <th>Remarks</th>
-                <th style="width:10%;">Actions</th>
+                <th scope="col" style="width:4%; text-align:center;"><input type="checkbox" id="selectAllModels" class="form-check-input" onclick="App.Model.toggleSelectAll(this)"></th>
+                <th scope="col">Model</th>
+                <th scope="col">Remarks</th>
+                <th scope="col" style="width:10%;">Actions</th>
               </tr>
             </thead>
             <tbody id="modelMasterTableBody"></tbody>
@@ -620,16 +632,20 @@
           </div>
         </form>
 
-        <div class="mb-2">
+        <div class="d-flex justify-content-between align-items-center gap-2 mb-2">
           <input type="text" id="processTypeMasterSearch" class="form-control" placeholder="Search process types..." autocomplete="off" onkeyup="App.ProcessType.renderTable()">
+          <button type="button" id="btnBulkDeleteProcessTypes" class="btn btn-outline-danger fw-bold d-none" style="white-space:nowrap;" onclick="App.ProcessType.bulkDelete()">
+            <i class="bi bi-trash"></i> Delete Selected
+          </button>
         </div>
         <div class="table-responsive mb-3">
           <table class="table table-bordered bg-white shadow-sm align-middle">
             <thead class="table-light">
               <tr>
-                <th>Process Type</th>
-                <th>Remarks</th>
-                <th style="width:10%;">Actions</th>
+                <th scope="col" style="width:4%; text-align:center;"><input type="checkbox" id="selectAllProcessTypes" class="form-check-input" onclick="App.ProcessType.toggleSelectAll(this)"></th>
+                <th scope="col">Process Type</th>
+                <th scope="col">Remarks</th>
+                <th scope="col" style="width:10%;">Actions</th>
               </tr>
             </thead>
             <tbody id="processTypeMasterTableBody"></tbody>

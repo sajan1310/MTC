@@ -92,3 +92,30 @@ def erp_client(erp_app, erp_test_user):
         sess["_user_id"] = str(erp_test_user)
         sess["_fresh"] = True
     return client
+
+
+@pytest.fixture
+def erp_admin_user(erp_app):
+    """Same pattern as erp_test_user, role='admin' -- for RpcSpec.roles-gated
+    methods (users_service.py) that a plain 'user' role must be denied."""
+    with erp_app.app_context():
+        with database.get_conn() as (_conn, cur):
+            cur.execute(
+                """
+                INSERT INTO users (name, email, password_hash, role)
+                VALUES (%s, %s, %s, 'admin')
+                ON CONFLICT (email) DO UPDATE SET name = EXCLUDED.name, role = 'admin'
+                RETURNING user_id
+                """,
+                ("ERP Admin Test User", "erp-admin-test-user@example.invalid", "not-a-real-hash"),
+            )
+            return cur.fetchone()[0]
+
+
+@pytest.fixture
+def erp_admin_client(erp_app, erp_admin_user):
+    client = erp_app.test_client()
+    with client.session_transaction() as sess:
+        sess["_user_id"] = str(erp_admin_user)
+        sess["_fresh"] = True
+    return client

@@ -125,6 +125,23 @@ def _delete_tag(conn, cur, sheet_key: str, label: str, name):
     return build_response(True, None, f'"{name}" deleted from {label}.')
 
 
+def _delete_tags_bulk(conn, cur, sheet_key: str, label: str, names: list):
+    table = _table(sheet_key)
+    targets = {str(n or "").strip().lower() for n in (names or []) if str(n or "").strip()}
+    if not targets:
+        return build_response(True, None, f"No {label} entries selected.")
+
+    cur.execute(
+        f"""
+        UPDATE {table} SET deleted_at = NOW(), updated_by = %s
+        WHERE deleted_at IS NULL AND lower(name) = ANY(%s)
+        """,
+        (get_current_user_id(), list(targets)),
+    )
+    rows_deleted = cur.rowcount
+    return build_response(True, None, f"Deleted {rows_deleted} {label} entr{'y' if rows_deleted == 1 else 'ies'}.")
+
+
 # ─────────────────────────────────────────────────────────────────────────
 # Rename cascades. Written against every target table up front, guarded via
 # config_maps.TABLE_NAMES -- rename_utils skips silently via to_regclass()
@@ -362,6 +379,24 @@ def delete_model(conn, cur, name):
 @database.transactional
 def delete_process_type(conn, cur, name):
     return _delete_tag(conn, cur, "PROCESS_TYPE_MASTER", "Process Type Master", name)
+
+
+@rpc_method("deleteColorsBulk", mutation=True)
+@database.transactional
+def delete_colors_bulk(conn, cur, names):
+    return _delete_tags_bulk(conn, cur, "COLOR_MASTER", "Color Master", names)
+
+
+@rpc_method("deleteModelsBulk", mutation=True)
+@database.transactional
+def delete_models_bulk(conn, cur, names):
+    return _delete_tags_bulk(conn, cur, "MODEL_MASTER", "Model Master", names)
+
+
+@rpc_method("deleteProcessTypesBulk", mutation=True)
+@database.transactional
+def delete_process_types_bulk(conn, cur, names):
+    return _delete_tags_bulk(conn, cur, "PROCESS_TYPE_MASTER", "Process Type Master", names)
 
 
 # ─────────────────────────────────────────────────────────────────────────

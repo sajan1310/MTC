@@ -597,7 +597,12 @@ App.Item = {
                    data-key="${escapeHtml(key)}"
                    ${checkedAttr} onchange="App.Item.onRowSelectChange()">
           </td>
-          <td><strong class="text-primary">${escapeHtml(item.name || '')}</strong></td>
+          <td class="d-flex align-items-center gap-2">
+            ${item.image
+              ? `<img src="${escapeHtml(item.image)}" alt="" class="item-thumb" width="32" height="32">`
+              : `<span class="item-thumb item-thumb-placeholder" aria-hidden="true"><i class="bi bi-image"></i></span>`}
+            <strong class="text-primary">${escapeHtml(item.name || '')}</strong>
+          </td>
           <td>${escapeHtml(item.size || '-')}</td>
           <td>${escapeHtml(item.narration || '-')}</td>
           <td><small class="text-muted">${metaParts.join('<br>') || 'No metadata'}</small></td>
@@ -1015,6 +1020,7 @@ App.Item = {
     document.getElementById('itemForm')?.reset();
     document.getElementById('originalItemName').value = '';
     document.getElementById('originalItemSize').value = '';
+    this.setPhotoPreview('');
     document.getElementById('itemFormTitle').innerText = 'Register New Master Item';
     document.getElementById('itemSubmitBtn').innerText = 'Save Item Record';
 
@@ -1057,6 +1063,7 @@ App.Item = {
     document.getElementById('itemForm')?.reset();
     document.getElementById('originalItemName').value = item.name || '';
     document.getElementById('originalItemSize').value = item.size || '';
+    this.setPhotoPreview(item.image || '');
     document.getElementById('itemFormTitle').innerText = 'Edit Master Item';
     document.getElementById('itemSubmitBtn').innerText = 'Update Item Record';
 
@@ -2218,6 +2225,51 @@ App.Item = {
     formData.originalName = document.getElementById('originalItemName')?.value || '';
     formData.originalSize = document.getElementById('originalItemSize')?.value || '';
     return { formData, vendors };
+  },
+
+  // ── Item photo (Item Master) ──────────────────────────────────────────
+  // Same client-side resize approach as App.Logo.upload (core.js), minus
+  // the chunking (that was an Apps Script PropertiesService-size workaround,
+  // not relevant here -- see company_settings_service.py's own comment).
+  // Unlike the logo, this does NOT save immediately on file pick: it just
+  // populates the hidden itemImage field + preview, and travels with the
+  // rest of the form on submit like every other item field.
+  setPhotoPreview(dataUrl) {
+    const img = document.getElementById('itemPhotoPreviewImg');
+    const placeholder = document.getElementById('itemPhotoPreviewPlaceholder');
+    const hidden = document.getElementById('formItemImage');
+    const removeBtn = document.getElementById('itemPhotoRemoveBtn');
+    if (hidden) hidden.value = dataUrl || '';
+    if (img) {
+      img.src = dataUrl || '';
+      img.style.display = dataUrl ? '' : 'none';
+    }
+    if (placeholder) placeholder.style.display = dataUrl ? 'none' : '';
+    if (removeBtn) removeBtn.style.display = dataUrl ? '' : 'none';
+  },
+
+  handlePhotoFile(file) {
+    if (!file) return;
+    if (!file.type.startsWith('image/')) {
+      App.Utils.showToast('Please select an image file.', true);
+      return;
+    }
+    const reader = new FileReader();
+    reader.onload = e => {
+      const img = new Image();
+      img.onload = () => {
+        const MAX_W = 480;
+        const scale = Math.min(1, MAX_W / img.width);
+        const canvas = document.createElement('canvas');
+        canvas.width = Math.round(img.width * scale);
+        canvas.height = Math.round(img.height * scale);
+        canvas.getContext('2d').drawImage(img, 0, 0, canvas.width, canvas.height);
+        App.Item.setPhotoPreview(canvas.toDataURL('image/jpeg', 0.8));
+      };
+      img.onerror = () => App.Utils.showToast('Could not read that image file.', true);
+      img.src = e.target.result;
+    };
+    reader.readAsDataURL(file);
   }
 };
 
@@ -2231,6 +2283,14 @@ document.addEventListener('DOMContentLoaded', () => {
       decodeURIComponent(row.dataset.rowName || ''),
       decodeURIComponent(row.dataset.rowSize || '')
     );
+  });
+
+  document.getElementById('itemPhotoFileInput')?.addEventListener('change', e => {
+    App.Item.handlePhotoFile(e.target.files?.[0]);
+    e.target.value = ''; // allow re-selecting the same file after Remove
+  });
+  document.getElementById('itemPhotoRemoveBtn')?.addEventListener('click', () => {
+    App.Item.setPhotoPreview('');
   });
 
   const itemForm = document.getElementById('itemForm');

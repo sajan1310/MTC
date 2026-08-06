@@ -106,31 +106,31 @@
     <table class="table table-hover table-bordered align-middle mb-0" role="table" style="margin-bottom: 0;">
       <thead class="table-dark">
         <tr role="row">
-          <th role="columnheader" style="width: 4%; text-align: center;">
+          <th scope="col" role="columnheader" style="width: 4%; text-align: center;">
             <input type="checkbox" id="selectAllPOs" class="form-check-input" onclick="App.PO.toggleSelectAll(this)">
           </th>
-          <th role="columnheader" style="width: 10%; min-width: 100px;">
+          <th scope="col" role="columnheader" style="width: 10%; min-width: 100px;">
             <i class="bi bi-file-earmark-text me-2"></i>PO#
           </th>
-          <th role="columnheader" style="width: 12%; min-width: 120px;">
+          <th scope="col" role="columnheader" style="width: 12%; min-width: 120px;">
             <i class="bi bi-calendar me-2"></i>Date
           </th>
-          <th role="columnheader" style="width: 18%; min-width: 140px;">
+          <th scope="col" role="columnheader" style="width: 18%; min-width: 140px;">
             <i class="bi bi-building me-2"></i>Vendor
           </th>
-          <th role="columnheader" style="width: 18%; min-width: 180px;">
+          <th scope="col" role="columnheader" style="width: 18%; min-width: 180px;">
             <i class="bi bi-box-seam me-2"></i>Items Summary
           </th>
-          <th role="columnheader" style="width: 10%; min-width: 80px; text-align: center;">
+          <th scope="col" role="columnheader" style="width: 10%; min-width: 80px; text-align: center;">
             <i class="bi bi-collection me-2"></i>Qty
           </th>
-          <th role="columnheader" style="width: 12%; min-width: 100px; text-align: right;">
+          <th scope="col" role="columnheader" style="width: 12%; min-width: 100px; text-align: right;">
             <i class="bi bi-currency-rupee me-2"></i>Value
           </th>
-          <th role="columnheader" style="width: 10%; min-width: 140px; text-align: center;">
+          <th scope="col" role="columnheader" style="width: 10%; min-width: 140px; text-align: center;">
             <i class="bi bi-flag me-2"></i>Status
           </th>
-          <th role="columnheader" style="width: 10%; min-width: 180px;">
+          <th scope="col" role="columnheader" style="width: 10%; min-width: 180px;">
             <i class="bi bi-gear me-2"></i>Actions
           </th>
         </tr>
@@ -193,7 +193,7 @@
           <div class="table-responsive">
             <table class="table table-bordered bg-white shadow-sm">
               <thead class="table-light">
-                <tr><th>Name *</th><th>Narration</th><th style="width:10%;">Size</th><th style="width:12%;">Qty *</th><th>Unit</th><th style="width:12%;">Unit Price *</th><th>Actions</th></tr>
+                <tr><th scope="col">Name *</th><th scope="col">Narration</th><th scope="col" style="width:10%;">Size</th><th scope="col" style="width:12%;">Qty *</th><th scope="col">Unit</th><th scope="col" style="width:12%;">Unit Price *</th><th scope="col">Actions</th></tr>
               </thead>
               <tbody id="itemsBody"></tbody>
             </table>
@@ -232,14 +232,14 @@
           <table class="table table-bordered bg-white shadow-sm table-hover mb-0">
             <thead class="table-dark">
               <tr>
-                <th style="width: 10%;">PO#</th>
-                <th style="width: 8%;">Date</th>
-                <th style="width: 15%;">Vendor</th>
-                <th style="width: 27%;">Item</th>
-                <th style="width: 10%; text-align: center;">Ordered Qty</th>
-                <th style="width: 10%; text-align: center;">Received Qty</th>
-                <th style="width: 10%; text-align: center;">Pending Qty</th>
-                <th style="width: 10%; text-align: center;">Status</th>
+                <th scope="col" style="width: 10%;">PO#</th>
+                <th scope="col" style="width: 8%;">Date</th>
+                <th scope="col" style="width: 15%;">Vendor</th>
+                <th scope="col" style="width: 27%;">Item</th>
+                <th scope="col" style="width: 10%; text-align: center;">Ordered Qty</th>
+                <th scope="col" style="width: 10%; text-align: center;">Received Qty</th>
+                <th scope="col" style="width: 10%; text-align: center;">Pending Qty</th>
+                <th scope="col" style="width: 10%; text-align: center;">Status</th>
               </tr>
             </thead>
             <tbody id="pendingPOsTableBody"></tbody>
@@ -272,12 +272,12 @@
           <table class="table table-sm table-bordered table-hover">
             <thead class="table-dark sticky-top">
               <tr>
-                <th>Item Name</th>
-                <th>Size</th>
-                <th>Narration</th>
-                <th>Vendor</th>
-                <th class="text-end">Rate</th>
-                <th>Last Purchase Date</th>
+                <th scope="col">Item Name</th>
+                <th scope="col">Size</th>
+                <th scope="col">Narration</th>
+                <th scope="col">Vendor</th>
+                <th scope="col" class="text-end">Rate</th>
+                <th scope="col">Last Purchase Date</th>
               </tr>
             </thead>
             <tbody id="vendorCatalogBody"></tbody>

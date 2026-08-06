@@ -221,6 +221,39 @@ def test_delete_contractor_rate_not_found_and_success(erp_client):
     assert listed == []
 
 
+def test_delete_contractor_rates_bulk_removes_selected_only(erp_client):
+    contractor = _unique_name("BulkRateContractor")
+    process_a = _unique_name("BulkRateProcessA")
+    process_b = _unique_name("BulkRateProcessB")
+    process_keep = _unique_name("BulkRateProcessKeep")
+    for p in (process_a, process_b, process_keep):
+        _rpc(
+            erp_client, "saveContractorRate",
+            [{"contractorName": contractor, "processName": p, "ratePerUnit": 5}], mutation=True,
+        )
+
+    resp = _rpc(
+        erp_client, "deleteContractorRatesBulk",
+        [[{"contractorName": contractor, "processName": process_a}, {"contractorName": contractor, "processName": process_b}]],
+        mutation=True,
+    )
+    body = resp.get_json()
+    assert body["success"] is True
+    assert "2" in body["message"]
+
+    remaining = [r["processName"] for r in _rpc(erp_client, "getContractorRatesData", [contractor]).get_json()["data"]]
+    assert process_a not in remaining
+    assert process_b not in remaining
+    assert process_keep in remaining
+
+
+def test_delete_contractor_rates_bulk_no_selection_is_a_success_noop(erp_client):
+    resp = _rpc(erp_client, "deleteContractorRatesBulk", [[]], mutation=True)
+    body = resp.get_json()
+    assert body["success"] is True
+    assert "No rates selected" in body["message"]
+
+
 def test_get_contractor_rate_for_process_returns_zero_for_no_match(erp_client):
     resp = _rpc(erp_client, "getContractorRateForProcess", ["NoSuchContractor", "NoSuchProcess"])
     body = resp.get_json()
@@ -296,6 +329,34 @@ def test_delete_contractor_payment_without_expected_values_skips_check(erp_clien
 
     resp = _rpc(erp_client, "deleteContractorPayment", [payment["rowIdx"]], mutation=True)
     assert resp.get_json()["success"] is True
+
+
+def test_delete_contractor_payments_bulk_removes_selected_only(erp_client):
+    contractor = _unique_name("BulkPaymentContractor")
+    for amount in (100, 200, 300):
+        _rpc(
+            erp_client, "recordContractorPayment",
+            [{"contractorName": contractor, "amount": amount, "date": "01/01/2026"}], mutation=True,
+        )
+    payments = _rpc(erp_client, "getContractorPaymentsData", [contractor]).get_json()["data"]
+    assert len(payments) == 3
+    to_delete = [p["rowIdx"] for p in payments if p["amount"] in (100, 200)]
+
+    resp = _rpc(erp_client, "deleteContractorPaymentsBulk", [to_delete], mutation=True)
+    body = resp.get_json()
+    assert body["success"] is True
+    assert "2" in body["message"]
+
+    remaining = _rpc(erp_client, "getContractorPaymentsData", [contractor]).get_json()["data"]
+    assert len(remaining) == 1
+    assert remaining[0]["amount"] == 300
+
+
+def test_delete_contractor_payments_bulk_no_selection_is_a_success_noop(erp_client):
+    resp = _rpc(erp_client, "deleteContractorPaymentsBulk", [[]], mutation=True)
+    body = resp.get_json()
+    assert body["success"] is True
+    assert "No payment records selected" in body["message"]
 
 
 def test_get_contractor_ledger_data_includes_negative_payable_correction_lot(erp_client):

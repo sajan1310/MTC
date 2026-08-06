@@ -44,17 +44,17 @@
       <table class="table table-hover table-bordered align-middle mb-0">
         <thead class="table-dark">
           <tr>
-            <th style="width: 3%;"></th>
-            <th style="width: 4%; text-align: center;"><input type="checkbox" id="selectAllProcesses" class="form-check-input" onclick="App.Process.toggleSelectAll(this)"></th>
-            <th style="width: 10%;">Process ID</th>
-            <th style="width: 16%;">Process Name</th>
-            <th style="width: 7%; text-align: center;">Sequence</th>
-            <th style="width: 8%; text-align: center;">Lot Prefix</th>
-            <th style="width: 10%;">Process Type <button type="button" class="th-filter-btn" data-filter-key="processType" onclick="App.Process.toggleColumnFilter(event, 'processType')"><i class="bi bi-funnel"></i></button></th>
-            <th style="width: 13%;">Output Item Name <button type="button" class="th-filter-btn" data-filter-key="outputItem" onclick="App.Process.toggleColumnFilter(event, 'outputItem')"><i class="bi bi-funnel"></i></button></th>
-            <th style="width: 9%; text-align: center;">Final Stage <button type="button" class="th-filter-btn" data-filter-key="finalStage" onclick="App.Process.toggleColumnFilter(event, 'finalStage')"><i class="bi bi-funnel"></i></button></th>
-            <th style="width: 8%; text-align: center;">Active <button type="button" class="th-filter-btn" data-filter-key="active" onclick="App.Process.toggleColumnFilter(event, 'active')"><i class="bi bi-funnel"></i></button></th>
-            <th style="width: 20%; text-align: center;">Actions</th>
+            <th scope="col" style="width: 3%;"><span class="visually-hidden">Reorder</span></th>
+            <th scope="col" style="width: 4%; text-align: center;"><input type="checkbox" id="selectAllProcesses" class="form-check-input" onclick="App.Process.toggleSelectAll(this)"></th>
+            <th scope="col" style="width: 10%;">Process ID</th>
+            <th scope="col" style="width: 16%;">Process Name</th>
+            <th scope="col" style="width: 7%; text-align: center;">Sequence</th>
+            <th scope="col" style="width: 8%; text-align: center;">Lot Prefix</th>
+            <th scope="col" style="width: 10%;">Process Type <button type="button" class="th-filter-btn" data-filter-key="processType" onclick="App.Process.toggleColumnFilter(event, 'processType')"><i class="bi bi-funnel"></i></button></th>
+            <th scope="col" style="width: 13%;">Output Item Name <button type="button" class="th-filter-btn" data-filter-key="outputItem" onclick="App.Process.toggleColumnFilter(event, 'outputItem')"><i class="bi bi-funnel"></i></button></th>
+            <th scope="col" style="width: 9%; text-align: center;">Final Stage <button type="button" class="th-filter-btn" data-filter-key="finalStage" onclick="App.Process.toggleColumnFilter(event, 'finalStage')"><i class="bi bi-funnel"></i></button></th>
+            <th scope="col" style="width: 8%; text-align: center;">Active <button type="button" class="th-filter-btn" data-filter-key="active" onclick="App.Process.toggleColumnFilter(event, 'active')"><i class="bi bi-funnel"></i></button></th>
+            <th scope="col" style="width: 20%; text-align: center;">Actions</th>
           </tr>
         </thead>
         <tbody id="processTableBody">
@@ -96,13 +96,13 @@
       <table class="table table-hover table-bordered align-middle mb-0">
         <thead class="table-dark">
           <tr>
-            <th style="width: 3%;"></th>
-            <th style="width: 4%; text-align: center;"><input type="checkbox" id="selectAllBOMs" class="form-check-input" onclick="App.BOM.toggleSelectAll(this)"></th>
-            <th style="width: 13%;">Product ID</th>
-            <th style="width: 23%;">Product Name</th>
-            <th style="width: 27%;">Component Items Preview</th>
-            <th style="width: 14%; text-align: right;">Total Cost (Est.)</th>
-            <th style="width: 19%; text-align: center;">Actions</th>
+            <th scope="col" style="width: 3%;"><span class="visually-hidden">Reorder</span></th>
+            <th scope="col" style="width: 4%; text-align: center;"><input type="checkbox" id="selectAllBOMs" class="form-check-input" onclick="App.BOM.toggleSelectAll(this)"></th>
+            <th scope="col" style="width: 13%;">Product ID</th>
+            <th scope="col" style="width: 23%;">Product Name</th>
+            <th scope="col" style="width: 27%;">Component Items Preview</th>
+            <th scope="col" style="width: 14%; text-align: right;">Total Cost (Est.)</th>
+            <th scope="col" style="width: 19%; text-align: center;">Actions</th>
           </tr>
         </thead>
         <tbody id="bomTableBody">
@@ -184,11 +184,11 @@
               <table class="table table-bordered align-middle bg-white shadow-sm mb-3">
                 <thead class="table-light">
                   <tr>
-                    <th style="width: 28%;">Cost Description</th>
-                    <th style="width: 18%;">Process</th>
-                    <th style="width: 20%;">Contractor</th>
-                    <th style="width: 17%;">Rate (₹)</th>
-                    <th style="width: 17%; text-align: center;">✕</th>
+                    <th scope="col" style="width: 28%;">Cost Description</th>
+                    <th scope="col" style="width: 18%;">Process</th>
+                    <th scope="col" style="width: 20%;">Contractor</th>
+                    <th scope="col" style="width: 17%;">Rate (₹)</th>
+                    <th scope="col" style="width: 17%; text-align: center;">✕</th>
                   </tr>
                 </thead>
                 <tbody id="bomCostsBody">
@@ -340,21 +340,24 @@
             <table class="table table-bordered bg-white shadow-sm mb-0 proc-comp-table">
               <thead class="table-light">
                 <tr>
-                  <th style="width: 32px;"></th>
-                  <th style="min-width: 240px;">Item</th>
-                  <th style="min-width: 130px;">Size</th>
-                  <th style="min-width: 150px;">Narration</th>
-                  <th style="min-width: 150px;">Source</th>
-                  <th style="min-width: 110px; text-align: right;">Qty / Unit</th>
-                  <th style="min-width: 100px;" title="Leave blank if Qty/Unit is already in this item's own Base Unit">Unit</th>
-                  <th style="min-width: 180px;">Remarks</th>
-                  <th style="width: 48px; text-align: center;">✕</th>
+                  <th scope="col" style="width: 32px;"><span class="visually-hidden">Remove</span></th>
+                  <th scope="col" style="min-width: 240px;">Item</th>
+                  <th scope="col" style="min-width: 130px;">Size</th>
+                  <th scope="col" style="min-width: 150px;">Narration</th>
+                  <th scope="col" style="min-width: 150px;">Source</th>
+                  <th scope="col" style="min-width: 110px; text-align: right;">Qty / Unit</th>
+                  <th scope="col" style="min-width: 100px;" title="Leave blank if Qty/Unit is already in this item's own Base Unit">Unit</th>
+                  <th scope="col" style="min-width: 180px;">Remarks</th>
+                  <th scope="col" style="width: 48px; text-align: center;">✕</th>
                 </tr>
               </thead>
               <tbody id="processComponentsBody"></tbody>
             </table>
           </div>
           <button type="button" class="btn btn-outline-primary btn-sm fw-bold mb-3" onclick="App.Process.addComponentRow(null, null)">+ Add Common Component</button>
+          <button type="button" id="btnRefreshProcessNarrations" class="btn btn-outline-secondary btn-sm fw-bold mb-3 ms-2" onclick="App.Process.refreshAllNarrations()" title="Pull each component's current Narration from Items Master, in case it changed there since this recipe was last saved">
+            <i class="bi bi-arrow-repeat me-1"></i>Refresh Narrations from Items Master
+          </button>
 
           <h6 class="text-secondary border-bottom pb-2 mb-3 fw-bold">
             Color Sub-Groups <small class="text-muted fw-normal">(components that only apply to one color variant of this process — e.g. a Red frame's paint vs. a Blue frame's paint. Logging a Production lot for a given color pulls in Common + that color's group only. The name doesn't have to be a Color Master entry — type any custom sub-group name instead.)</small>
@@ -393,10 +396,10 @@
             <table class="table table-bordered bg-white shadow-sm mb-0">
               <thead class="table-light">
                 <tr>
-                  <th style="width: 40%;">Contractor</th>
-                  <th style="width: 20%; text-align: right;">Rate / Unit</th>
-                  <th style="width: 25%;">Remarks</th>
-                  <th style="width: 15%; text-align: center;">Actions</th>
+                  <th scope="col" style="width: 40%;">Contractor</th>
+                  <th scope="col" style="width: 20%; text-align: right;">Rate / Unit</th>
+                  <th scope="col" style="width: 25%;">Remarks</th>
+                  <th scope="col" style="width: 15%; text-align: center;">Actions</th>
                 </tr>
               </thead>
               <tbody id="processContractorRatesBody"></tbody>

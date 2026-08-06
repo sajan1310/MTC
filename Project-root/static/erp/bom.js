@@ -28,6 +28,22 @@
 //   already guarded in source itself.
 // - bulkPrint is guarded behind App.Print not existing yet; its builder
 //   (buildBOMPrintPageHtml) stays as ported dead code.
+//
+// FIXME (found by wiring up ESLint's no-undef check -- see eslint.config.js
+// at the repo root): despite the header comment above claiming
+// DEFAULT_COST_CATEGORIES "were already ported in Round 8 alongside
+// App.Process", it was defined nowhere in this codebase -- not here, not in
+// process.js, not anywhere. populateCostRows() below reads it whenever a
+// BOM has no saved additional costs, which includes every "New BOM" click
+// (openCreateModal() calls populateCostRows() with no argument at all), so
+// this threw an uncaught ReferenceError on that path. Left as an empty
+// array rather than guessing at real category names ("Freight",
+// "Packaging", or whatever this business's BOM additional costs actually
+// are is business content, not something to invent silently) -- this stops
+// the crash and makes the Additional Costs table start empty instead,
+// exactly as if no suggestions existed. Needs real values from an
+// authoritative source before this is more than a placeholder.
+const DEFAULT_COST_CATEGORIES = [];
 
 App.BOM = {
   // ── Access control (password-protected BOM data) ────────────────────

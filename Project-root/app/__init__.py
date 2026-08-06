@@ -506,7 +506,11 @@ def create_app(config_name: str | None = None) -> Flask:
             return build_demo_user()
         try:
             with database.get_conn(cursor_factory=psycopg2.extras.DictCursor) as (conn, cur):
-                cur.execute("SELECT * FROM users WHERE user_id = %s", (user_id,))
+                # deleted_at IS NULL: a deactivated user (users_service.py's
+                # deactivateUser) must not keep an existing session alive --
+                # otherwise "deactivate" only blocked future logins, not the
+                # session already in the browser.
+                cur.execute("SELECT * FROM users WHERE user_id = %s AND deleted_at IS NULL", (user_id,))
                 row = cur.fetchone()
                 if row:
                     return User(row)

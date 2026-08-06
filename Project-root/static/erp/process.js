@@ -1479,6 +1479,49 @@ App.Process = {
     narrationInput.value = (match && match.narration) || '';
   },
 
+  // Narration is copied onto each component row when it's picked (see
+  // handleComponentSizeChange above), so an edit made afterward in Items
+  // Master never reaches a process that already has that item on its
+  // recipe. Pulls the current Item Master data and re-copies Narration
+  // onto every component row across Common + every Color Sub-Group table
+  // in the open modal, leaving item/size/qty/source/remarks untouched.
+  async refreshAllNarrations() {
+    const btn = document.getElementById('btnRefreshProcessNarrations');
+    if (btn) { btn.disabled = true; }
+    try {
+      await App.Item.loadData();
+      const rows = document.querySelectorAll('#editProcessModal .proc-comp-item-select');
+      let updated = 0;
+      let unresolved = 0;
+      rows.forEach(selectEl => {
+        const row = selectEl.closest('tr');
+        const narrationInput = row?.querySelector('.proc-comp-narration');
+        const opt = selectEl.options[selectEl.selectedIndex];
+        const itemName = opt?.dataset.name;
+        const sizeSelect = row?.querySelector('.proc-comp-size');
+        const isPool = row?.querySelector('.proc-comp-source')?.value === 'POOL';
+        if (!itemName || !narrationInput || isPool) return;
+
+        const match = (App.State.globalItems || []).find(it =>
+          App.Utils.sameText(it.name, itemName) && App.Utils.sameText(it.size || '', sizeSelect?.value || ''));
+        if (match) {
+          const fresh = match.narration || '';
+          if (narrationInput.value !== fresh) updated++;
+          narrationInput.value = fresh;
+        } else {
+          unresolved++;
+        }
+      });
+      App.Utils.showToast(
+        unresolved > 0
+          ? `Refreshed ${updated} narration(s) from Items Master. ${unresolved} component(s) reference an item that could not be found (Pool outputs skipped).`
+          : `Refreshed ${updated} narration(s) from Items Master.`
+      );
+    } finally {
+      if (btn) { btn.disabled = false; }
+    }
+  },
+
   destroyComponentItemSelect2(rowEl) {
     const selectEl = rowEl?.querySelector('.proc-comp-item-select');
     if (!selectEl || !window.jQuery?.fn?.select2) return;

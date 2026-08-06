@@ -421,15 +421,19 @@ MApp.Util = {
 MApp.Shell = {
   TABS: ['home', 'stock', 'production', 'dispatch', 'more'],
   TITLES: { home: 'Home', stock: 'Stock', production: 'Production', dispatch: 'Dispatch', more: 'More' },
+  LAST_TAB_KEY: 'maharaja-erp-mobile-last-tab',
   current: null,
 
   init() {
-    this.showTab('home');
+    let lastTab = null;
+    try { lastTab = localStorage.getItem(this.LAST_TAB_KEY); } catch (e) { /* storage inaccessible */ }
+    this.showTab(this.TABS.indexOf(lastTab) > -1 ? lastTab : 'home');
   },
 
   showTab(tab) {
     if (this.TABS.indexOf(tab) === -1) return;
     this.current = tab;
+    try { localStorage.setItem(this.LAST_TAB_KEY, tab); } catch (e) { /* storage inaccessible */ }
 
     const titleEl = document.getElementById('mapp-topbar-title');
     if (titleEl) titleEl.textContent = this.TITLES[tab];

@@ -768,6 +768,25 @@ def save_warehouse_pool_opening(conn, cur, form_data):
     product_tag = str(form_data.get("productTag") or "").strip() if process["isFinalStage"] else ""
     color = str(form_data.get("color") or "").strip()
 
+    # A process with known colors (from its own component recipe, linked
+    # processes, or colors already seen in Production/Warehouse Pool) tracks
+    # stock per-color -- an opening balance logged without one would land in
+    # an untagged bucket a color-aware Production/Dispatch lot never looks
+    # at. Mirrors the same _compute_known_colors_for_process call the form's
+    # own Color dropdown (getProcessColorGroups) is populated from, so
+    # "the dropdown showed choices" and "a color is required" always agree.
+    if not color:
+        components = process_service.get_process_components_data(process_id)["data"]
+        pool_rows_for_axes = process_service._get_all_warehouse_pool_rows_for_color_axes(cur)
+        color_links = process_service._get_all_process_color_links(cur)
+        overrides = process_service._get_all_process_color_overrides(cur).get(process_id.lower())
+        logged_colors = list(process_service._get_production_logged_colors_by_process(cur).get(process_id.lower(), []))
+        known = process_service._compute_known_colors_for_process(
+            process_id, components, pool_rows_for_axes, color_links, logged_colors, overrides
+        )
+        if known["colors"]:
+            raise ValueError(f'Process "{process["processName"]}" tracks stock per-color -- choose a Color for this opening balance.')
+
     qty = _validate_number(form_data.get("qty"), -10000000, 10000000)
     if qty == 0:
         raise ValueError("Opening Quantity cannot be zero.")

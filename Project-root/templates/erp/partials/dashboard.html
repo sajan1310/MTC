@@ -13,9 +13,13 @@
     </div>
     <div class="d-flex align-items-center gap-2">
       <span id="dashboardLastUpdated" class="small text-muted">&nbsp;</span>
+      {% if current_user.role == 'admin' %}
+      <!-- triggerBackup is admin-gated server-side (backup_service.py) --
+           hidden here to match, not as the actual enforcement. -->
       <button id="dashboardBackupBtn" class="btn btn-sm btn-outline-primary fw-500 shadow-sm" onclick="App.Dashboard.triggerBackup()" title="Create Database Backup & Upload to Google Sheets">
         <i class="bi bi-cloud-arrow-up me-1"></i> Backup to Sheets
       </button>
+      {% endif %}
       <button id="dashboardRefreshBtn" class="btn btn-sm btn-outline-secondary" onclick="App.Dashboard.loadData()" title="Refresh dashboard">
         <i class="bi bi-arrow-clockwise"></i>
       </button>
@@ -247,7 +251,7 @@
         <div class="table-responsive">
           <table class="table table-sm align-middle mb-0">
             <thead>
-              <tr><th>Item</th><th>Size</th><th class="text-end">Current</th><th class="text-end">Threshold</th></tr>
+              <tr><th scope="col">Item</th><th scope="col">Size</th><th scope="col" class="text-end">Current</th><th scope="col" class="text-end">Threshold</th></tr>
             </thead>
             <tbody id="dashLowStockBody">
               <tr><td colspan="4" class="text-muted text-center">Loading…</td></tr>
@@ -263,7 +267,7 @@
         <div class="table-responsive">
           <table class="table table-sm align-middle mb-0">
             <thead>
-              <tr><th>Product</th><th class="text-end">Ready Qty</th><th></th></tr>
+              <tr><th scope="col">Product</th><th scope="col" class="text-end">Ready Qty</th><th scope="col"><span class="visually-hidden">Actions</span></th></tr>
             </thead>
             <tbody id="dashReadyToDispatchBody">
               <tr><td colspan="3" class="text-muted text-center">Loading…</td></tr>
@@ -279,7 +283,7 @@
         <div class="table-responsive">
           <table class="table table-sm align-middle mb-0">
             <thead>
-              <tr><th>Contractor</th><th class="text-end">Balance Due</th></tr>
+              <tr><th scope="col">Contractor</th><th scope="col" class="text-end">Balance Due</th></tr>
             </thead>
             <tbody id="dashContractorPayablesBody">
               <tr><td colspan="2" class="text-muted text-center">Loading…</td></tr>

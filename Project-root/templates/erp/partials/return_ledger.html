@@ -73,31 +73,31 @@
            style="margin-bottom: 0;">
       <thead class="table-dark">
         <tr role="row">
-          <th role="columnheader" style="width: 4%; text-align: center;">
+          <th scope="col" role="columnheader" style="width: 4%; text-align: center;">
             <input type="checkbox" id="selectAllReturns" class="form-check-input" onclick="App.Return.toggleSelectAll(this)">
           </th>
-          <th role="columnheader" style="width: 14%; min-width: 110px;">
+          <th scope="col" role="columnheader" style="width: 14%; min-width: 110px;">
             <i class="bi bi-arrow-return-left me-2"></i>Return#
           </th>
-          <th role="columnheader" style="width: 12%; min-width: 100px;">
+          <th scope="col" role="columnheader" style="width: 12%; min-width: 100px;">
             <i class="bi bi-receipt me-2"></i>Bill#
           </th>
-          <th role="columnheader" style="width: 12%; min-width: 120px;">
+          <th scope="col" role="columnheader" style="width: 12%; min-width: 120px;">
             <i class="bi bi-calendar me-2"></i>Date
           </th>
-          <th role="columnheader" style="width: 14%; min-width: 130px;">
+          <th scope="col" role="columnheader" style="width: 14%; min-width: 130px;">
             <i class="bi bi-truck me-2"></i>Vendor
           </th>
-          <th role="columnheader" style="width: 26%; min-width: 200px;">
+          <th scope="col" role="columnheader" style="width: 26%; min-width: 200px;">
             <i class="bi bi-box-seam me-2"></i>Items Returned
           </th>
-          <th role="columnheader" style="width: 8%; min-width: 80px; text-align: center;">
+          <th scope="col" role="columnheader" style="width: 8%; min-width: 80px; text-align: center;">
             <i class="bi bi-collection me-2"></i>Qty
           </th>
-          <th role="columnheader" style="width: 10%; min-width: 120px; text-align: right;">
+          <th scope="col" role="columnheader" style="width: 10%; min-width: 120px; text-align: right;">
             <i class="bi bi-currency-rupee me-2"></i>Credit
           </th>
-          <th role="columnheader" style="width: 8%; min-width: 140px;">
+          <th scope="col" role="columnheader" style="width: 8%; min-width: 140px;">
             <i class="bi bi-gear me-2"></i>Actions
           </th>
         </tr>
@@ -159,15 +159,15 @@
       <table class="table table-hover table-bordered align-middle mb-0">
         <thead style="background:#fff3cd;">
           <tr>
-            <th style="width:4%; text-align:center;">
+            <th scope="col" style="width:4%; text-align:center;">
               <input type="checkbox" id="selectAllWastage" class="form-check-input" onclick="App.Wastage.toggleSelectAll(this)">
             </th>
-            <th style="min-width:130px;"><i class="bi bi-hash me-1"></i>Wastage ID</th>
-            <th style="min-width:100px;"><i class="bi bi-calendar me-1"></i>Date</th>
-            <th style="min-width:120px;"><i class="bi bi-truck me-1"></i>Vendor</th>
-            <th style="min-width:200px;"><i class="bi bi-box-seam me-1"></i>Items Wasted</th>
-            <th style="min-width:80px; text-align:center;"><i class="bi bi-collection me-1"></i>Total Qty</th>
-            <th style="min-width:100px;"><i class="bi bi-gear me-1"></i>Actions</th>
+            <th scope="col" style="min-width:130px;"><i class="bi bi-hash me-1"></i>Wastage ID</th>
+            <th scope="col" style="min-width:100px;"><i class="bi bi-calendar me-1"></i>Date</th>
+            <th scope="col" style="min-width:120px;"><i class="bi bi-truck me-1"></i>Vendor</th>
+            <th scope="col" style="min-width:200px;"><i class="bi bi-box-seam me-1"></i>Items Wasted</th>
+            <th scope="col" style="min-width:80px; text-align:center;"><i class="bi bi-collection me-1"></i>Total Qty</th>
+            <th scope="col" style="min-width:100px;"><i class="bi bi-gear me-1"></i>Actions</th>
           </tr>
         </thead>
         <tbody id="wastageTableBody">
@@ -225,14 +225,14 @@
             <table class="table table-bordered bg-white shadow-sm">
               <thead class="table-light">
                 <tr>
-                  <th>Item Name *</th>
-                  <th style="width:10%;">Size</th>
-                  <th style="width:14%;">Narration</th>
-                  <th style="width:9%;">Qty *</th>
-                  <th style="width:8%;">Unit</th>
-                  <th style="width:11%;">Credit Rate</th>
-                  <th style="width:16%;">Reason</th>
-                  <th>Actions</th>
+                  <th scope="col">Item Name *</th>
+                  <th scope="col" style="width:10%;">Size</th>
+                  <th scope="col" style="width:14%;">Narration</th>
+                  <th scope="col" style="width:9%;">Qty *</th>
+                  <th scope="col" style="width:8%;">Unit</th>
+                  <th scope="col" style="width:11%;">Credit Rate</th>
+                  <th scope="col" style="width:16%;">Reason</th>
+                  <th scope="col">Actions</th>
                 </tr>
               </thead>
               <tbody id="returnItemsBody"></tbody>
@@ -285,12 +285,12 @@
             <table class="table table-bordered bg-white shadow-sm">
               <thead class="table-light">
                 <tr>
-                  <th>Item Name *</th>
-                  <th style="width:10%;">Size</th>
-                  <th style="width:9%;">Qty *</th>
-                  <th style="width:8%;">Unit</th>
-                  <th style="width:22%;">Reason for Wastage *</th>
-                  <th style="width:5%;"></th>
+                  <th scope="col">Item Name *</th>
+                  <th scope="col" style="width:10%;">Size</th>
+                  <th scope="col" style="width:9%;">Qty *</th>
+                  <th scope="col" style="width:8%;">Unit</th>
+                  <th scope="col" style="width:22%;">Reason for Wastage *</th>
+                  <th scope="col" style="width:5%;"><span class="visually-hidden">Remove</span></th>
                 </tr>
               </thead>
               <tbody id="wastageItemsBody"></tbody>

@@ -37,16 +37,21 @@
     --brand-dark-brown: #450a0a;
 
     --bg-color: #f8fafc;
-    --bg-light: #ffffff;
+    --bg-light: #fff;
 
-    --success-color: #28a745;
+    /* success/info darkened from #28a745/#17a2b8: both failed WCAG 1.4.3 AA
+       (4.5:1) with white text at 3.13:1 / 3.04:1 -- see ACCESSIBILITY_REPORT.md
+       A11Y-002. warning/danger are unchanged: warning is only ever paired
+       with dark text (8.97:1) in this codebase, never white; danger already
+       passes at 4.53:1. */
+    --success-color: #15803d;
     --warning-color: #ffc107;
     --danger-color: #dc3545;
-    --info-color: #17a2b8;
+    --info-color: #0e7490;
 
-    --shadow-sm: 0 2px 4px rgba(0, 0, 0, 0.04);
-    --shadow-md: 0 4px 12px rgba(0, 0, 0, 0.08);
-    --shadow-lg: 0 8px 24px rgba(0, 0, 0, 0.12);
+    --shadow-sm: 0 2px 4px rgb(0 0 0 / 4%);
+    --shadow-md: 0 4px 12px rgb(0 0 0 / 8%);
+    --shadow-lg: 0 8px 24px rgb(0 0 0 / 12%);
 
     --transition-fast: 150ms ease-in-out;
     --transition-base: 250ms ease-in-out;
@@ -58,7 +63,12 @@
 
     --text-primary: #1e293b;
     --text-secondary: #64748b;
-    --text-muted: #94a3b8;
+    /* was #94a3b8 -- 2.56:1 on --bg-light, failing WCAG 1.4.3 AA (4.5:1) even
+       at large text sizes. #64748b matches --text-secondary at 4.76:1;
+       muted/secondary were visually near-identical anyway, so this collapses
+       two failing greys into one passing one rather than inventing a third
+       shade. See ACCESSIBILITY_REPORT.md A11Y-002. */
+    --text-muted: #64748b;
 
     --bg-muted: #f1f5f9;
 
@@ -84,8 +94,13 @@
 
     --text-primary: #e2e8f0;
     --text-secondary: #94a3b8;
-    --text-muted: #6e8299;
+    /* was #6e8299 -- 4.36:1 on dark --bg-light (#161b27), just under WCAG AA
+       (4.5:1). #8b9cb3 reaches 5.6:1 while staying visually muted relative
+       to --text-secondary. See ACCESSIBILITY_REPORT.md A11Y-002. */
+    --text-muted: #8b9cb3;
 
+    /* Dark-theme success/info were already AA-compliant (8.95:1 / verified
+       high) -- unchanged, only the light-theme values above needed fixing. */
     --success-color: #34d399;
     --warning-color: #fbbf24;
     --danger-color: #f87171;
@@ -94,41 +109,41 @@
     --border-color: #253044;
     --border-light: #1a2438;
 
-    --shadow-sm: 0 2px 4px rgba(0, 0, 0, 0.4);
-    --shadow-md: 0 4px 12px rgba(0, 0, 0, 0.5);
-    --shadow-lg: 0 8px 24px rgba(0, 0, 0, 0.65);
+    --shadow-sm: 0 2px 4px rgb(0 0 0 / 40%);
+    --shadow-md: 0 4px 12px rgb(0 0 0 / 50%);
+    --shadow-lg: 0 8px 24px rgb(0 0 0 / 65%);
   }
 
   [data-theme="dark"] body {
-    background-image: radial-gradient(circle at top right, rgba(79, 70, 229, 0.08), transparent 45%),
-      radial-gradient(circle at bottom left, rgba(99, 102, 241, 0.05), transparent 45%);
+    background-image: radial-gradient(circle at top right, rgb(79 70 229 / 8%), transparent 45%),
+      radial-gradient(circle at bottom left, rgb(99 102 241 / 5%), transparent 45%);
   }
 
   [data-theme="dark"] .app-header {
-    background: rgba(13, 17, 23, 0.95) !important;
-    border-bottom-color: rgba(255, 255, 255, 0.06) !important;
-    box-shadow: 0 4px 20px rgba(0, 0, 0, 0.45) !important;
+    background: rgb(13 17 23 / 95%) !important;
+    border-bottom-color: rgb(255 255 255 / 6%) !important;
+    box-shadow: 0 4px 20px rgb(0 0 0 / 45%) !important;
   }
 
   [data-theme="dark"] .nav-link.active {
-    background-color: rgba(129, 140, 248, 0.15) !important;
+    background-color: rgb(129 140 248 / 15%) !important;
     color: var(--primary-light) !important;
-    box-shadow: inset 0 0 0 1px rgba(129, 140, 248, 0.25) !important;
+    box-shadow: inset 0 0 0 1px rgb(129 140 248 / 25%) !important;
   }
 
   [data-theme="dark"] .nav-link:hover {
-    background-color: rgba(255, 255, 255, 0.05) !important;
+    background-color: rgb(255 255 255 / 5%) !important;
     color: var(--text-primary) !important;
   }
 
   [data-theme="dark"] .table-container {
-    background: rgba(22, 27, 39, 0.95);
-    border-color: rgba(255, 255, 255, 0.05);
+    background: rgb(22 27 39 / 95%);
+    border-color: rgb(255 255 255 / 5%);
   }
 
   [data-theme="dark"] .modal-content {
-    background: rgba(22, 27, 39, 0.99) !important;
-    border-color: rgba(255, 255, 255, 0.08) !important;
+    background: rgb(22 27 39 / 99%) !important;
+    border-color: rgb(255 255 255 / 8%) !important;
   }
 
   [data-theme="dark"] .modal-body {
@@ -154,7 +169,7 @@
   [data-theme="dark"] .po-multiselect-dropdown {
     background: var(--bg-light);
     border-color: var(--border-color);
-    box-shadow: 0 4px 16px rgba(0, 0, 0, 0.4);
+    box-shadow: 0 4px 16px rgb(0 0 0 / 40%);
   }
 
   [data-theme="dark"] .po-ms-search-wrap {
@@ -171,12 +186,12 @@
   }
 
   [data-theme="dark"] .po-ms-option.checked {
-    background: rgba(99, 102, 241, 0.15);
+    background: rgb(99 102 241 / 15%);
     color: var(--secondary-light);
   }
 
   [data-theme="dark"] .po-ms-option.checked:hover {
-    background: rgba(99, 102, 241, 0.25);
+    background: rgb(99 102 241 / 25%);
   }
 
   [data-theme="dark"] .po-ms-empty {
@@ -243,7 +258,7 @@
     background: #fff;
     border: 1px solid var(--border-color);
     border-radius: var(--border-radius-sm);
-    box-shadow: 0 4px 16px rgba(0, 0, 0, 0.18);
+    box-shadow: 0 4px 16px rgb(0 0 0 / 18%);
   }
 
   .col-filter-actions {
@@ -280,18 +295,6 @@
     background-color: var(--bg-light);
     border-color: var(--border-color);
     color: var(--text-primary);
-  }
-
-  [data-theme="dark"] .toast.bg-success {
-    background-color: #064e3b;
-    border-color: #065f46;
-    color: #a7f3d0;
-  }
-
-  [data-theme="dark"] .toast.bg-danger {
-    background-color: #450a0a;
-    border-color: #7f1d1d;
-    color: #fca5a5;
   }
 
   [data-theme="dark"] .page-link {
@@ -379,7 +382,7 @@
 
   [data-theme="dark"] .btn-primary:hover:not(:disabled) {
     background-color: #4338ca;
-    box-shadow: 0 4px 14px rgba(79, 70, 229, 0.45);
+    box-shadow: 0 4px 14px rgb(79 70 229 / 45%);
   }
 
   /* Pagination active: indigo bg with dark text for contrast */
@@ -391,32 +394,32 @@
 
   /* Badges: soft tint style so colored text reads on dark bg */
   [data-theme="dark"] .badge.bg-primary {
-    background-color: rgba(99, 102, 241, 0.22);
+    background-color: rgb(99 102 241 / 22%);
     color: var(--primary-light);
   }
 
   [data-theme="dark"] .badge.bg-secondary {
-    background-color: rgba(167, 139, 250, 0.2);
+    background-color: rgb(167 139 250 / 20%);
     color: var(--secondary-light);
   }
 
   [data-theme="dark"] .badge.bg-info {
-    background-color: rgba(56, 189, 248, 0.18);
+    background-color: rgb(56 189 248 / 18%);
     color: #7dd3fc;
   }
 
   [data-theme="dark"] .badge.bg-success {
-    background-color: rgba(52, 211, 153, 0.18);
+    background-color: rgb(52 211 153 / 18%);
     color: #6ee7b7;
   }
 
   [data-theme="dark"] .badge.bg-danger {
-    background-color: rgba(248, 113, 113, 0.18);
+    background-color: rgb(248 113 113 / 18%);
     color: #fca5a5;
   }
 
   [data-theme="dark"] .badge.bg-warning {
-    background-color: rgba(251, 191, 36, 0.18);
+    background-color: rgb(251 191 36 / 18%);
     color: #fde68a;
   }
 
@@ -428,14 +431,14 @@
 
   /* Toasts: match new semantic colors */
   [data-theme="dark"] .toast.bg-success {
-    background-color: rgba(52, 211, 153, 0.12) !important;
-    border-color: rgba(52, 211, 153, 0.3) !important;
+    background-color: rgb(52 211 153 / 12%) !important;
+    border-color: rgb(52 211 153 / 30%) !important;
     color: #6ee7b7 !important;
   }
 
   [data-theme="dark"] .toast.bg-danger {
-    background-color: rgba(248, 113, 113, 0.12) !important;
-    border-color: rgba(248, 113, 113, 0.3) !important;
+    background-color: rgb(248 113 113 / 12%) !important;
+    border-color: rgb(248 113 113 / 30%) !important;
     color: #fca5a5 !important;
   }
 
@@ -445,7 +448,7 @@
   [data-theme="dark"] select:focus,
   [data-theme="dark"] .form-control:focus {
     border-color: var(--primary-color);
-    box-shadow: 0 0 0 3px rgba(129, 140, 248, 0.22);
+    box-shadow: 0 0 0 3px rgb(129 140 248 / 22%);
   }
 
   /* Multiselect placeholder */
@@ -455,7 +458,7 @@
 
   /* Table row hover: subtle indigo tint instead of flat muted */
   [data-theme="dark"] tbody tr:hover {
-    background-color: rgba(99, 102, 241, 0.07);
+    background-color: rgb(99 102 241 / 7%);
   }
 
   /* Scrollbar: match dark surface */
@@ -490,15 +493,6 @@
     background-color: var(--bg-muted) !important;
   }
 
-  [data-theme="dark"] .text-dark {
-    color: var(--text-primary) !important;
-  }
-
-  /* Navigation Tabs line correction */
-  .nav-tabs {
-    border-bottom: none !important;
-  }
-
   /* Soften general borders */
   [data-theme="dark"] .border,
   [data-theme="dark"] .border-top,
@@ -521,25 +515,27 @@
   [data-theme="dark"] .table-light {
     --bs-table-bg: var(--bg-muted) !important;
     --bs-table-color: var(--text-primary) !important;
+
     border-color: var(--border-color) !important;
   }
 
   [data-theme="dark"] table.table {
     --bs-table-bg: transparent !important;
     --bs-table-color: var(--text-primary) !important;
-    --bs-table-striped-bg: rgba(255, 255, 255, 0.02) !important;
+    --bs-table-striped-bg: rgb(255 255 255 / 2%) !important;
     --bs-table-striped-color: var(--text-primary) !important;
-    --bs-table-active-bg: rgba(255, 255, 255, 0.1) !important;
+    --bs-table-active-bg: rgb(255 255 255 / 10%) !important;
     --bs-table-active-color: var(--text-primary) !important;
-    --bs-table-hover-bg: rgba(255, 255, 255, 0.04) !important;
+    --bs-table-hover-bg: rgb(255 255 255 / 4%) !important;
     --bs-table-hover-color: var(--text-primary) !important;
+
     color: var(--text-primary) !important;
   }
 
   /* Accessible solid button states (avoiding low contrast pastel colors) */
   [data-theme="dark"] .btn-success {
     background-color: #059669 !important;
-    color: #ffffff !important;
+    color: #fff !important;
   }
 
   [data-theme="dark"] .btn-success:hover:not(:disabled) {
@@ -548,7 +544,7 @@
 
   [data-theme="dark"] .btn-danger {
     background-color: #dc2626 !important;
-    color: #ffffff !important;
+    color: #fff !important;
   }
 
   [data-theme="dark"] .btn-danger:hover:not(:disabled) {
@@ -557,7 +553,7 @@
 
   [data-theme="dark"] .btn-warning {
     background-color: #d97706 !important;
-    color: #ffffff !important;
+    color: #fff !important;
   }
 
   [data-theme="dark"] .btn-warning:hover:not(:disabled) {
@@ -566,7 +562,7 @@
 
   [data-theme="dark"] .btn-info {
     background-color: #0284c7 !important;
-    color: #ffffff !important;
+    color: #fff !important;
   }
 
   [data-theme="dark"] .btn-info:hover:not(:disabled) {
@@ -592,28 +588,28 @@
   [data-theme="dark"] .btn-outline-brand:hover:not(:disabled) {
     border-color: var(--secondary-color) !important;
     color: var(--secondary-color) !important;
-    background-color: rgba(99, 102, 241, 0.1) !important;
+    background-color: rgb(99 102 241 / 10%) !important;
   }
 
   /* Premium modal headers with gradients */
   [data-theme="dark"] .modal-header.bg-primary {
     background: linear-gradient(135deg, #4f46e5 0%, #6366f1 100%) !important;
-    color: #ffffff !important;
+    color: #fff !important;
   }
 
   [data-theme="dark"] .modal-header.bg-warning {
     background: linear-gradient(135deg, #d97706 0%, #f59e0b 100%) !important;
-    color: #ffffff !important;
+    color: #fff !important;
   }
 
   [data-theme="dark"] .modal-header.bg-info {
     background: linear-gradient(135deg, #0284c7 0%, #0ea5e9 100%) !important;
-    color: #ffffff !important;
+    color: #fff !important;
   }
 
   [data-theme="dark"] .modal-header.bg-success {
     background: linear-gradient(135deg, #059669 0%, #10b981 100%) !important;
-    color: #ffffff !important;
+    color: #fff !important;
   }
 
   [data-theme="dark"] .modal-header.bg-dark {
@@ -628,26 +624,26 @@
 
   /* Cohesive alert overrides for dark mode readability */
   [data-theme="dark"] .alert-info {
-    background-color: rgba(56, 189, 248, 0.1) !important;
-    border-color: rgba(56, 189, 248, 0.2) !important;
+    background-color: rgb(56 189 248 / 10%) !important;
+    border-color: rgb(56 189 248 / 20%) !important;
     color: #38bdf8 !important;
   }
 
   [data-theme="dark"] .alert-warning {
-    background-color: rgba(251, 191, 36, 0.1) !important;
-    border-color: rgba(251, 191, 36, 0.2) !important;
+    background-color: rgb(251 191 36 / 10%) !important;
+    border-color: rgb(251 191 36 / 20%) !important;
     color: #fbbf24 !important;
   }
 
   [data-theme="dark"] .alert-success {
-    background-color: rgba(52, 211, 153, 0.1) !important;
-    border-color: rgba(52, 211, 153, 0.2) !important;
+    background-color: rgb(52 211 153 / 10%) !important;
+    border-color: rgb(52 211 153 / 20%) !important;
     color: #34d399 !important;
   }
 
   [data-theme="dark"] .alert-danger {
-    background-color: rgba(248, 113, 113, 0.1) !important;
-    border-color: rgba(248, 113, 113, 0.2) !important;
+    background-color: rgb(248 113 113 / 10%) !important;
+    border-color: rgb(248 113 113 / 20%) !important;
     color: #f87171 !important;
   }
 
@@ -693,13 +689,68 @@
   .dark-mode-toggle:hover {
     border-color: var(--secondary-color);
     color: var(--secondary-color);
-    background-color: rgba(99, 102, 241, 0.08);
+    background-color: rgb(99 102 241 / 8%);
     transform: translateY(-1px);
   }
 
   .dark-mode-toggle svg {
     width: 16px;
     height: 16px;
+  }
+
+  /* Account menu (header) -- current user identity + sign out */
+  .account-menu-btn {
+    border: 1px solid var(--border-color);
+    border-radius: 20px;
+    padding: 4px 10px 4px 4px;
+    background: transparent;
+    color: var(--text-primary);
+    transition: all var(--transition-base);
+  }
+
+  .account-menu-btn:hover {
+    border-color: var(--secondary-color);
+    background-color: rgb(99 102 241 / 8%);
+  }
+
+  .account-avatar {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    width: 28px;
+    height: 28px;
+    border-radius: 50%;
+    background: linear-gradient(135deg, var(--secondary-color) 0%, var(--secondary-dark) 100%);
+    color: #fff;
+    font-weight: 600;
+    font-size: 13px;
+    flex-shrink: 0;
+  }
+
+  .account-name {
+    max-width: 140px;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+    font-size: 13px;
+    font-weight: 500;
+  }
+
+  .account-menu {
+    min-width: 220px;
+    padding: 8px;
+    border-radius: var(--border-radius-lg);
+    box-shadow: var(--shadow-lg);
+    border: 1px solid var(--border-color);
+  }
+
+  .account-menu .dropdown-item {
+    border-radius: var(--border-radius-sm);
+    padding: 8px 10px;
+  }
+
+  [data-theme="dark"] .account-menu {
+    background: var(--bg-light);
   }
 
   .notif-wrap {
@@ -726,7 +777,7 @@
   .notif-bell-btn:hover {
     border-color: var(--secondary-color);
     color: var(--secondary-color);
-    background-color: rgba(99, 102, 241, 0.08);
+    background-color: rgb(99 102 241 / 8%);
     transform: translateY(-1px);
   }
 
@@ -758,7 +809,7 @@
     background: #fff;
     border: 1px solid var(--border-color);
     border-radius: var(--border-radius-sm);
-    box-shadow: 0 8px 24px rgba(0, 0, 0, 0.18);
+    box-shadow: 0 8px 24px rgb(0 0 0 / 18%);
     overflow: hidden;
   }
 
@@ -861,7 +912,7 @@
 
   .notif-item-msg {
     color: var(--text-primary);
-    word-break: break-word;
+    overflow-wrap: break-word;
   }
 
   .notif-item-time {
@@ -875,14 +926,22 @@
     transition: background-color 120ms ease;
   }
 
-  .notif-item-clickable:hover,
+  .notif-item-clickable:hover {
+    background-color: var(--bg-hover, rgb(0 0 0 / 4%));
+  }
+
+  /* Was combined with :hover above and set outline: none -- correct for a
+     mouse hover, wrong for :focus-visible, which is specifically the
+     keyboard-focus case and needs a visible indicator (WCAG 2.4.7).
+     See ACCESSIBILITY_REPORT.md A11Y-009. */
   .notif-item-clickable:focus-visible {
-    background-color: var(--bg-hover, rgba(0, 0, 0, 0.04));
-    outline: none;
+    background-color: var(--bg-hover, rgb(0 0 0 / 4%));
+    outline: 2px solid var(--secondary-dark);
+    outline-offset: -2px;
   }
 
   .notif-item.notif-unread {
-    background-color: rgba(13, 110, 253, 0.06);
+    background-color: rgb(13 110 253 / 6%);
   }
 
   .notif-item-go {
@@ -899,7 +958,7 @@
 
   .notif-detail-body {
     white-space: pre-line;
-    word-break: break-word;
+    overflow-wrap: break-word;
     font-size: 14px;
     color: var(--text-primary);
   }
@@ -907,7 +966,7 @@
   [data-theme="dark"] .notif-panel {
     background-color: var(--bg-light);
     border-color: var(--border-color);
-    box-shadow: 0 8px 24px rgba(0, 0, 0, 0.4);
+    box-shadow: 0 8px 24px rgb(0 0 0 / 40%);
   }
 
   [data-theme="dark"] .notif-item {
@@ -916,11 +975,11 @@
 
   [data-theme="dark"] .notif-item-clickable:hover,
   [data-theme="dark"] .notif-item-clickable:focus-visible {
-    background-color: rgba(255, 255, 255, 0.06);
+    background-color: rgb(255 255 255 / 6%);
   }
 
   [data-theme="dark"] .notif-item.notif-unread {
-    background-color: rgba(13, 110, 253, 0.12);
+    background-color: rgb(13 110 253 / 12%);
   }
 
   /* ─────────────────────────────────────────────────────────────────────
@@ -940,10 +999,10 @@
   body {
     padding: 20px;
     background-color: var(--bg-color);
-    background-image: radial-gradient(circle at top right, rgba(99, 102, 241, 0.05), transparent 40%),
-      radial-gradient(circle at bottom left, rgba(16, 185, 129, 0.05), transparent 40%);
+    background-image: radial-gradient(circle at top right, rgb(99 102 241 / 5%), transparent 40%),
+      radial-gradient(circle at bottom left, rgb(16 185 129 / 5%), transparent 40%);
     background-attachment: fixed;
-    font-family: 'Inter', sans-serif;
+    font-family: Inter, sans-serif;
     font-size: 14px;
     line-height: 1.5;
     color: var(--text-primary);
@@ -959,7 +1018,7 @@
   h4,
   h5,
   h6 {
-    font-family: 'Outfit', sans-serif;
+    font-family: Outfit, sans-serif;
     font-weight: 600;
     line-height: 1.3;
     color: var(--primary-color);
@@ -1067,12 +1126,11 @@
     background-color: var(--bg-muted);
     border-radius: var(--border-radius-lg);
     padding: 10px;
-    box-shadow: inset 0 2px 4px rgba(0, 0, 0, 0.02);
+    box-shadow: inset 0 2px 4px rgb(0 0 0 / 2%);
     position: sticky;
     top: 96px;
     max-height: calc(100vh - 116px);
-    overflow-y: auto;
-    overflow-x: hidden;
+    overflow: hidden auto;
     scrollbar-width: thin;
     transition: width var(--transition-base);
   }
@@ -1134,7 +1192,7 @@
     border-radius: var(--border-radius-lg);
     margin-bottom: 24px;
     gap: 4px;
-    box-shadow: inset 0 2px 4px rgba(0, 0, 0, 0.02);
+    box-shadow: inset 0 2px 4px rgb(0 0 0 / 2%);
     overflow-x: auto;
     -webkit-overflow-scrolling: touch;
     scrollbar-width: none;
@@ -1153,7 +1211,7 @@
     color: var(--text-secondary);
     font-size: 14px;
     font-weight: 500;
-    font-family: 'Inter', sans-serif;
+    font-family: Inter, sans-serif;
     cursor: pointer;
     transition: all var(--transition-base);
     white-space: nowrap;
@@ -1162,7 +1220,7 @@
 
   .nav-link:hover {
     color: var(--primary-color);
-    background-color: rgba(0, 0, 0, 0.02);
+    background-color: rgb(0 0 0 / 2%);
   }
 
   .nav-link.active {
@@ -1196,7 +1254,24 @@
   .form-control:focus {
     outline: none;
     border-color: var(--secondary-color);
-    box-shadow: 0 0 0 3px rgba(99, 102, 241, 0.15);
+    box-shadow: 0 0 0 3px rgb(99 102 241 / 15%);
+  }
+
+  /* The box-shadow glow above is a ~1.1:1 contrast change against a white
+     background -- far under WCAG 1.4.11's 3:1 non-text contrast minimum for
+     a focus indicator -- and box-shadow is stripped entirely under
+     forced-colors (Windows High Contrast), where `outline: none` above would
+     then leave keyboard users with NO focus indicator at all. This adds a
+     solid, ≥3:1 outline for keyboard focus specifically (:focus-visible, so
+     a mouse click still gets only the soft glow) using --secondary-dark,
+     already 5.85:1 against white, rather than a new colour.
+     See ACCESSIBILITY_REPORT.md A11Y-009. */
+  input:focus-visible,
+  textarea:focus-visible,
+  select:focus-visible,
+  .form-control:focus-visible {
+    outline: 2px solid var(--secondary-dark);
+    outline-offset: 1px;
   }
 
   input:disabled,
@@ -1248,7 +1323,7 @@
     border-radius: var(--border-radius-sm);
     font-size: 14px;
     font-weight: 500;
-    font-family: 'Inter', sans-serif;
+    font-family: Inter, sans-serif;
     cursor: pointer;
     transition: all var(--transition-base);
     white-space: nowrap;
@@ -1375,14 +1450,14 @@
   .btn-outline-brand:hover:not(:disabled) {
     border-color: var(--secondary-light);
     color: var(--secondary-color);
-    background-color: rgba(99, 102, 241, 0.05);
+    background-color: rgb(99 102 241 / 5%);
   }
 
   .btn-check:checked+.btn-outline-brand {
     background-color: var(--secondary-color) !important;
     border-color: var(--secondary-color) !important;
     color: white !important;
-    box-shadow: 0 4px 10px rgba(99, 102, 241, 0.2);
+    box-shadow: 0 4px 10px rgb(99 102 241 / 20%);
   }
 
 
@@ -1488,8 +1563,54 @@
     flex-shrink: 0;
   }
 
+  /* Dashboard KPI icons pair a white glyph with Bootstrap's default
+     bg-warning (#ffc107) and bg-info (#0dcaf0) fills. Computed contrast:
+     1.63:1 and 1.96:1 -- both fail WCAG 1.4.11 (non-text contrast, 3:1)
+     badly. Every other bg-* variant here (primary/danger/success/secondary/
+     dark) already clears 3:1 with white, so only these two need a dark
+     glyph override. See ACCESSIBILITY_REPORT.md A11Y-002. */
+  .dash-kpi-icon.bg-warning,
+  .dash-kpi-icon.bg-info {
+    color: #1e293b;
+  }
+
+  /* Item Master photo thumbnail (list row + modal preview) */
+  .item-thumb {
+    width: 32px;
+    height: 32px;
+    border-radius: var(--border-radius-sm);
+    object-fit: cover;
+    flex-shrink: 0;
+    border: 1px solid var(--border-color);
+  }
+
+  .item-thumb-placeholder {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    background: var(--bg-muted);
+    color: var(--text-muted);
+    font-size: 14px;
+  }
+
+  .item-photo-preview {
+    width: 96px;
+    height: 96px;
+    border-radius: var(--border-radius);
+    object-fit: cover;
+    border: 1px solid var(--border-color);
+    background: var(--bg-muted);
+  }
+
+  .item-photo-preview-placeholder {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    font-size: 28px;
+  }
+
   .dash-kpi-value {
-    font-family: 'Outfit', sans-serif;
+    font-family: Outfit, sans-serif;
     font-size: 24px;
     font-weight: 700;
     color: var(--text-primary);
@@ -1557,7 +1678,7 @@
   }
 
   .dash-section-title {
-    font-family: 'Outfit', sans-serif;
+    font-family: Outfit, sans-serif;
     font-weight: 700;
     font-size: 14px;
     color: var(--text-primary);
@@ -1587,7 +1708,7 @@
     font-size: 13px;
     color: var(--text-primary);
     font-weight: 700;
-    font-family: 'Outfit', sans-serif;
+    font-family: Outfit, sans-serif;
     text-align: center;
   }
 
@@ -1628,7 +1749,7 @@
   }
 
   .dash-pipeline-group-qty {
-    font-family: 'Outfit', sans-serif;
+    font-family: Outfit, sans-serif;
     font-size: 13px;
     font-weight: 700;
     color: var(--secondary-color);
@@ -1689,12 +1810,12 @@
      TABLE STYLES
      ───────────────────────────────────────────────────────────────────── */
   .table-container {
-    background: rgba(255, 255, 255, 0.85);
+    background: rgb(255 255 255 / 85%);
     backdrop-filter: blur(10px);
     -webkit-backdrop-filter: blur(10px);
     padding: 24px;
     border-radius: var(--border-radius-lg);
-    border: 1px solid rgba(255, 255, 255, 0.5);
+    border: 1px solid rgb(255 255 255 / 50%);
     box-shadow: var(--shadow-lg);
     overflow-x: auto;
   }
@@ -1727,7 +1848,7 @@
     padding: 14px 12px;
     text-align: left;
     font-weight: 600;
-    font-family: 'Outfit', sans-serif;
+    font-family: Outfit, sans-serif;
     color: var(--text-secondary);
     text-transform: uppercase;
     font-size: 12px;
@@ -1854,7 +1975,7 @@
 
   .select2-container.select2-container--focus .select2-selection--single {
     border-color: var(--primary-color);
-    box-shadow: 0 0 0 3px rgba(44, 62, 80, 0.1);
+    box-shadow: 0 0 0 3px rgb(44 62 80 / 10%);
   }
 
   .select2-dropdown {
@@ -1953,7 +2074,15 @@
   .po-multiselect-trigger.open {
     border-color: var(--primary-color);
     outline: none;
-    box-shadow: 0 0 0 3px rgba(44, 62, 80, 0.1);
+    box-shadow: 0 0 0 3px rgb(44 62 80 / 10%);
+  }
+
+  /* Same WCAG 1.4.11/2.4.7 gap as the form-control rule above: the 10%-opacity
+     box-shadow is far under 3:1 and vanishes entirely under forced-colors.
+     See ACCESSIBILITY_REPORT.md A11Y-009. */
+  .po-multiselect-trigger:focus-visible {
+    outline: 2px solid var(--secondary-dark);
+    outline-offset: 1px;
   }
 
   .po-ms-placeholder {
@@ -1979,7 +2108,7 @@
     background: #fff;
     border: 1px solid var(--border-color);
     border-radius: var(--border-radius-sm);
-    box-shadow: 0 4px 16px rgba(0, 0, 0, 0.12);
+    box-shadow: 0 4px 16px rgb(0 0 0 / 12%);
     min-width: 100%;
   }
 
@@ -2055,17 +2184,17 @@
      MODALS
      ───────────────────────────────────────────────────────────────────── */
   .modal-content {
-    border: 1px solid rgba(255, 255, 255, 0.5);
+    border: 1px solid rgb(255 255 255 / 50%);
     border-radius: var(--border-radius-lg);
     box-shadow: var(--shadow-lg);
-    background: rgba(255, 255, 255, 0.95);
+    background: rgb(255 255 255 / 95%);
     backdrop-filter: blur(20px);
     -webkit-backdrop-filter: blur(20px);
   }
 
   .modal-header {
     background: #dc3545 !important;
-    color: #ffffff !important;
+    color: #fff !important;
     border-bottom: none;
     border-radius: var(--border-radius-lg) var(--border-radius-lg) 0 0;
     padding: 20px 24px;
@@ -2079,7 +2208,7 @@
   }
 
   .modal-header * {
-    color: #ffffff !important;
+    color: #fff !important;
   }
 
   .modal-header .btn-close {
@@ -2233,6 +2362,7 @@
     pointer-events: auto;
   }
 
+
   .toast.bg-success {
     background-color: #d4edda;
     border-color: #c3e6cb;
@@ -2245,15 +2375,19 @@
     color: #721c24;
   }
 
+  /* Only slides -- opacity is Bootstrap's own .fade/.show transition to own
+     (0 -> 1 over .15s). This used to also animate opacity in parallel,
+     which fought that transition and stretched the toast's fade-in to
+     ~350ms; for most of that window the toast sat at partial opacity,
+     visibly bleeding through to the header behind it ("transparent
+     notification bar"). */
   @keyframes slideInRight {
     from {
       transform: translateX(400px);
-      opacity: 0;
     }
 
     to {
       transform: translateX(0);
-      opacity: 1;
     }
   }
 
@@ -2498,7 +2632,7 @@
      margin (set in Script.html downloadPDF) so window.print() and the
      downloaded PDF line up identically. */
   @page {
-    size: A4 portrait;
+    size: a4 portrait;
     margin: 6mm;
   }
 
@@ -2602,7 +2736,7 @@
       border: 1px solid #999 !important;
       padding: 6px 8px !important;
       font-size: 11px !important;
-      word-break: break-word !important;
+      overflow-wrap: break-word !important;
     }
 
 
@@ -2648,7 +2782,6 @@
     #print-bom-container tr,
     #print-dispatch-container tr,
     #print-bulk-container tr {
-      page-break-inside: avoid;
       break-inside: avoid;
     }
 
@@ -2728,7 +2861,7 @@
       display: block;
       position: fixed;
       inset: 0;
-      background: rgba(0, 0, 0, 0.45);
+      background: rgb(0 0 0 / 45%);
       z-index: 1090;
     }
 
@@ -2909,5 +3042,25 @@
       animation-iteration-count: 1 !important;
       transition-duration: 0.01ms !important;
       scroll-behavior: auto !important;
+    }
+  }
+
+  /* ─────────────────────────────────────────────────────────────────────
+     @media (forced-colors) — ACCESSIBILITY (WCAG 2.4.7 / 1.4.11)
+
+     Safety net for every focusable element that ISN'T one of the specific
+     :focus-visible rules added above (buttons, links, checkboxes, the
+     dashboard KPI cards' role="button" divs, etc.). Windows High Contrast
+     Mode ignores box-shadow, background-color and most custom colours, so
+     any element relying only on those for its focus indicator becomes
+     completely invisible when focused in that mode. `outline` is one of the
+     few properties forced-colors respects, and `Highlight`/`ButtonText` are
+     system colours guaranteed to be visible against the user's chosen
+     high-contrast palette (not app tokens, which forced-colors overrides
+     anyway). See ACCESSIBILITY_REPORT.md A11Y-009. */
+  @media (forced-colors: active) {
+    :focus-visible {
+      outline: 2px solid Highlight;
+      outline-offset: 2px;
     }
   }

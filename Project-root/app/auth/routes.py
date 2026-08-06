@@ -145,7 +145,9 @@ def api_login():
             conn,
             cur,
         ):
-            cur.execute("SELECT * FROM users WHERE email = %s", (email,))
+            # deleted_at IS NULL: a deactivated user (users_service.py's
+            # deactivateUser) must not be able to sign back in.
+            cur.execute("SELECT * FROM users WHERE email = %s AND deleted_at IS NULL", (email,))
             row = cur.fetchone()
     except Exception as e:
         # In TESTING/DEBUG, continue to demo fallback without returning 500

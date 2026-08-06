@@ -178,6 +178,24 @@ def delete_unit(conn, cur, unit_name):
     return build_response(True, None, f'Unit "{unit_name}" deleted.')
 
 
+@rpc_method("deleteUnitsBulk", mutation=True)
+@database.transactional
+def delete_units_bulk(conn, cur, unit_names):
+    targets = {str(n or "").strip().lower() for n in (unit_names or []) if str(n or "").strip()}
+    if not targets:
+        return build_response(True, None, "No units selected.")
+
+    cur.execute(
+        """
+        UPDATE erp.units SET deleted_at = NOW(), updated_by = %s
+        WHERE deleted_at IS NULL AND lower(unit_name) = ANY(%s)
+        """,
+        (get_current_user_id(), list(targets)),
+    )
+    rows_deleted = cur.rowcount
+    return build_response(True, None, f"Deleted {rows_deleted} unit(s).")
+
+
 # ─────────────────────────────────────────────────────────────────────────
 # Conversion helpers (not RPC methods) -- for module_items.js/module_po.js/
 # module_bill.js's Python ports to import in a later round.

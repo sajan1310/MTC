@@ -25,6 +25,12 @@ TAG_TYPES = [
     ("getProcessTypes", "saveProcessType", "deleteProcessType", "Painting"),
 ]
 
+TAG_BULK_TYPES = [
+    ("getColors", "saveColor", "deleteColorsBulk", "Red"),
+    ("getModels", "saveModel", "deleteModelsBulk", "Roadster"),
+    ("getProcessTypes", "saveProcessType", "deleteProcessTypesBulk", "Painting"),
+]
+
 
 @pytest.mark.parametrize("get_method,save_method,delete_method,prefix", TAG_TYPES)
 def test_tag_create_list_rename_delete(erp_client, get_method, save_method, delete_method, prefix):
@@ -66,6 +72,33 @@ def test_tag_rejects_case_insensitive_duplicate(erp_client, get_method, save_met
     body = dupe.get_json()
     assert body["success"] is False
     assert "already exists" in body["message"]
+
+
+@pytest.mark.parametrize("get_method,save_method,bulk_delete_method,prefix", TAG_BULK_TYPES)
+def test_tag_bulk_delete_removes_selected_only(erp_client, get_method, save_method, bulk_delete_method, prefix):
+    name_a = _unique_name(prefix)
+    name_b = _unique_name(prefix)
+    name_keep = _unique_name(prefix)
+    for n in (name_a, name_b, name_keep):
+        assert _rpc(erp_client, save_method, [{"name": n}], mutation=True).get_json()["success"] is True
+
+    resp = _rpc(erp_client, bulk_delete_method, [[name_a, name_b]], mutation=True)
+    body = resp.get_json()
+    assert body["success"] is True
+    assert "2" in body["message"]
+
+    names = [t["name"] for t in _rpc(erp_client, get_method).get_json()["data"]]
+    assert name_a not in names
+    assert name_b not in names
+    assert name_keep in names
+
+
+@pytest.mark.parametrize("get_method,save_method,bulk_delete_method,prefix", TAG_BULK_TYPES)
+def test_tag_bulk_delete_no_selection_is_a_success_noop(erp_client, get_method, save_method, bulk_delete_method, prefix):
+    resp = _rpc(erp_client, bulk_delete_method, [[]], mutation=True)
+    body = resp.get_json()
+    assert body["success"] is True
+    assert "No" in body["message"] and "selected" in body["message"]
 
 
 def test_color_rename_cascade_is_a_noop_when_target_tables_dont_exist_yet(erp_client):

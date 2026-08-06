@@ -107,9 +107,18 @@ App.Unit = {
       ? units.filter(u => App.Utils.matchesKeywords(`${u.unitName} ${u.family} ${u.remarks || ''}`, term))
       : units;
 
+    const selectAllChk = document.getElementById('selectAllUnits');
+    if (selectAllChk) {
+      selectAllChk.checked = rows.length > 0 && rows.every(u => App.Selection.isSelected(App.State.selectedUnits, u.unitName));
+    }
+
     let html = '';
     rows.forEach(u => {
+      const checkedAttr = App.Selection.isSelected(App.State.selectedUnits, u.unitName) ? 'checked' : '';
       html += `<tr>
+        <td class="text-center">
+          <input type="checkbox" class="form-check-input unit-select-chk" data-key="${escapeHtml(u.unitName)}" ${checkedAttr} onchange="App.Unit.onRowSelectChange()">
+        </td>
         <td><strong>${escapeHtml(u.unitName)}</strong></td>
         <td>${escapeHtml(u.family)}</td>
         <td>${escapeHtml(String(u.factorToBase))}</td>
@@ -120,13 +129,50 @@ App.Unit = {
         </td>
       </tr>`;
     });
-    tbody.innerHTML = html || `<tr><td colspan="5" class="text-center text-muted p-3">${term ? 'No units match your search.' : 'No units defined yet.'}</td></tr>`;
+    tbody.innerHTML = html || `<tr><td colspan="6" class="text-center text-muted p-3">${term ? 'No units match your search.' : 'No units defined yet.'}</td></tr>`;
+    this.updateBulkButtons();
+  },
+
+  toggleSelectAll(masterChk) {
+    App.Selection.toggleAll(App.State.selectedUnits, 'unit-select-chk', masterChk);
+    this.updateBulkButtons();
+  },
+
+  onRowSelectChange() {
+    App.Selection.syncFromRows(App.State.selectedUnits, 'unit-select-chk', 'selectAllUnits');
+    this.updateBulkButtons();
+  },
+
+  updateBulkButtons() {
+    App.Selection.updateButton('btnBulkDeleteUnits', App.State.selectedUnits.length, '<i class="bi bi-trash"></i> Delete Selected');
+  },
+
+  async bulkDelete() {
+    const selected = App.State.selectedUnits;
+    if (!selected.length) return;
+
+    App.Utils.confirmAction(
+      `Delete ${selected.length} selected unit(s)? Items already using one keep the text, but it will no longer appear in suggestions.`,
+      async () => {
+        try {
+          const res = await Api.mutate('deleteUnitsBulk', selected);
+          App.Utils.showToast(res?.message || 'Delete completed.', !res?.success);
+          if (res?.success) {
+            App.State.selectedUnits = [];
+            await this.loadData();
+          }
+        } catch (err) {
+          App.Utils.showToast(err.message || 'Failed to delete units.', true);
+        }
+      }
+    );
   },
 
   openModal() {
     this.resetForm();
     const searchEl = document.getElementById('unitMasterSearch');
     if (searchEl) searchEl.value = '';
+    App.State.selectedUnits = [];
     this.ensureLoaded().then(() => this.renderTable());
     safeModalShow('unitModal');
   },
@@ -231,9 +277,18 @@ App.Color = {
       ? App.State.globalColors.filter(c => App.Utils.matchesKeywords(`${c.name} ${c.remarks || ''}`, term))
       : App.State.globalColors;
 
+    const selectAllChk = document.getElementById('selectAllColors');
+    if (selectAllChk) {
+      selectAllChk.checked = rows.length > 0 && rows.every(c => App.Selection.isSelected(App.State.selectedColors, c.name));
+    }
+
     let html = '';
     rows.forEach((c, i) => {
+      const checkedAttr = App.Selection.isSelected(App.State.selectedColors, c.name) ? 'checked' : '';
       html += `<tr>
+        <td class="text-center">
+          <input type="checkbox" class="form-check-input color-select-chk" data-key="${escapeHtml(c.name)}" ${checkedAttr} onchange="App.Color.onRowSelectChange()">
+        </td>
         <td class="text-muted">${i + 1}</td>
         <td><strong>${escapeHtml(c.name)}</strong></td>
         <td>${escapeHtml(c.remarks || '')}</td>
@@ -243,13 +298,50 @@ App.Color = {
         </td>
       </tr>`;
     });
-    tbody.innerHTML = html || `<tr><td colspan="4" class="text-center text-muted p-3">${term ? 'No colors match your search.' : 'No colors defined yet.'}</td></tr>`;
+    tbody.innerHTML = html || `<tr><td colspan="5" class="text-center text-muted p-3">${term ? 'No colors match your search.' : 'No colors defined yet.'}</td></tr>`;
+    this.updateBulkButtons();
+  },
+
+  toggleSelectAll(masterChk) {
+    App.Selection.toggleAll(App.State.selectedColors, 'color-select-chk', masterChk);
+    this.updateBulkButtons();
+  },
+
+  onRowSelectChange() {
+    App.Selection.syncFromRows(App.State.selectedColors, 'color-select-chk', 'selectAllColors');
+    this.updateBulkButtons();
+  },
+
+  updateBulkButtons() {
+    App.Selection.updateButton('btnBulkDeleteColors', App.State.selectedColors.length, '<i class="bi bi-trash"></i> Delete Selected');
+  },
+
+  async bulkDelete() {
+    const selected = App.State.selectedColors;
+    if (!selected.length) return;
+
+    App.Utils.confirmAction(
+      `Delete ${selected.length} selected color(s)? Components already tagged with one keep the text, but it will no longer appear in suggestions.`,
+      async () => {
+        try {
+          const res = await Api.mutate('deleteColorsBulk', selected);
+          App.Utils.showToast(res?.message || 'Delete completed.', !res?.success);
+          if (res?.success) {
+            App.State.selectedColors = [];
+            await this.loadData();
+          }
+        } catch (err) {
+          App.Utils.showToast(err.message || 'Failed to delete colors.', true);
+        }
+      }
+    );
   },
 
   openModal() {
     this.resetForm();
     const searchEl = document.getElementById('colorMasterSearch');
     if (searchEl) searchEl.value = '';
+    App.State.selectedColors = [];
     this.ensureLoaded().then(() => this.renderTable());
     safeModalShow('colorMasterModal');
   },
@@ -395,9 +487,18 @@ App.Model = {
       ? App.State.globalModels.filter(m => App.Utils.matchesKeywords(`${m.name} ${m.remarks || ''}`, term))
       : App.State.globalModels;
 
+    const selectAllChk = document.getElementById('selectAllModels');
+    if (selectAllChk) {
+      selectAllChk.checked = rows.length > 0 && rows.every(m => App.Selection.isSelected(App.State.selectedModels, m.name));
+    }
+
     let html = '';
     rows.forEach(m => {
+      const checkedAttr = App.Selection.isSelected(App.State.selectedModels, m.name) ? 'checked' : '';
       html += `<tr>
+        <td class="text-center">
+          <input type="checkbox" class="form-check-input model-select-chk" data-key="${escapeHtml(m.name)}" ${checkedAttr} onchange="App.Model.onRowSelectChange()">
+        </td>
         <td><strong>${escapeHtml(m.name)}</strong></td>
         <td>${escapeHtml(m.remarks || '')}</td>
         <td>
@@ -406,13 +507,50 @@ App.Model = {
         </td>
       </tr>`;
     });
-    tbody.innerHTML = html || `<tr><td colspan="3" class="text-center text-muted p-3">${term ? 'No models match your search.' : 'No models defined yet.'}</td></tr>`;
+    tbody.innerHTML = html || `<tr><td colspan="4" class="text-center text-muted p-3">${term ? 'No models match your search.' : 'No models defined yet.'}</td></tr>`;
+    this.updateBulkButtons();
+  },
+
+  toggleSelectAll(masterChk) {
+    App.Selection.toggleAll(App.State.selectedModels, 'model-select-chk', masterChk);
+    this.updateBulkButtons();
+  },
+
+  onRowSelectChange() {
+    App.Selection.syncFromRows(App.State.selectedModels, 'model-select-chk', 'selectAllModels');
+    this.updateBulkButtons();
+  },
+
+  updateBulkButtons() {
+    App.Selection.updateButton('btnBulkDeleteModels', App.State.selectedModels.length, '<i class="bi bi-trash"></i> Delete Selected');
+  },
+
+  async bulkDelete() {
+    const selected = App.State.selectedModels;
+    if (!selected.length) return;
+
+    App.Utils.confirmAction(
+      `Delete ${selected.length} selected model(s)? Products already using one keep the text, but it will no longer appear in suggestions.`,
+      async () => {
+        try {
+          const res = await Api.mutate('deleteModelsBulk', selected);
+          App.Utils.showToast(res?.message || 'Delete completed.', !res?.success);
+          if (res?.success) {
+            App.State.selectedModels = [];
+            await this.loadData();
+          }
+        } catch (err) {
+          App.Utils.showToast(err.message || 'Failed to delete models.', true);
+        }
+      }
+    );
   },
 
   openModal() {
     this.resetForm();
     const searchEl = document.getElementById('modelMasterSearch');
     if (searchEl) searchEl.value = '';
+    App.State.selectedModels = [];
     this.ensureLoaded().then(() => this.renderTable());
     safeModalShow('modelMasterModal');
   },
@@ -535,9 +673,18 @@ App.ProcessType = {
       ? App.State.globalProcessTypes.filter(t => App.Utils.matchesKeywords(`${t.name} ${t.remarks || ''}`, term))
       : App.State.globalProcessTypes;
 
+    const selectAllChk = document.getElementById('selectAllProcessTypes');
+    if (selectAllChk) {
+      selectAllChk.checked = rows.length > 0 && rows.every(t => App.Selection.isSelected(App.State.selectedProcessTypes, t.name));
+    }
+
     let html = '';
     rows.forEach(t => {
+      const checkedAttr = App.Selection.isSelected(App.State.selectedProcessTypes, t.name) ? 'checked' : '';
       html += `<tr>
+        <td class="text-center">
+          <input type="checkbox" class="form-check-input process-type-select-chk" data-key="${escapeHtml(t.name)}" ${checkedAttr} onchange="App.ProcessType.onRowSelectChange()">
+        </td>
         <td><strong>${escapeHtml(t.name)}</strong></td>
         <td>${escapeHtml(t.remarks || '')}</td>
         <td>
@@ -546,13 +693,50 @@ App.ProcessType = {
         </td>
       </tr>`;
     });
-    tbody.innerHTML = html || `<tr><td colspan="3" class="text-center text-muted p-3">${term ? 'No process types match your search.' : 'No process types defined yet.'}</td></tr>`;
+    tbody.innerHTML = html || `<tr><td colspan="4" class="text-center text-muted p-3">${term ? 'No process types match your search.' : 'No process types defined yet.'}</td></tr>`;
+    this.updateBulkButtons();
+  },
+
+  toggleSelectAll(masterChk) {
+    App.Selection.toggleAll(App.State.selectedProcessTypes, 'process-type-select-chk', masterChk);
+    this.updateBulkButtons();
+  },
+
+  onRowSelectChange() {
+    App.Selection.syncFromRows(App.State.selectedProcessTypes, 'process-type-select-chk', 'selectAllProcessTypes');
+    this.updateBulkButtons();
+  },
+
+  updateBulkButtons() {
+    App.Selection.updateButton('btnBulkDeleteProcessTypes', App.State.selectedProcessTypes.length, '<i class="bi bi-trash"></i> Delete Selected');
+  },
+
+  async bulkDelete() {
+    const selected = App.State.selectedProcessTypes;
+    if (!selected.length) return;
+
+    App.Utils.confirmAction(
+      `Delete ${selected.length} selected process type(s)? Processes already using one keep the text, but it will no longer appear in suggestions.`,
+      async () => {
+        try {
+          const res = await Api.mutate('deleteProcessTypesBulk', selected);
+          App.Utils.showToast(res?.message || 'Delete completed.', !res?.success);
+          if (res?.success) {
+            App.State.selectedProcessTypes = [];
+            await this.loadData();
+          }
+        } catch (err) {
+          App.Utils.showToast(err.message || 'Failed to delete process types.', true);
+        }
+      }
+    );
   },
 
   openModal() {
     this.resetForm();
     const searchEl = document.getElementById('processTypeMasterSearch');
     if (searchEl) searchEl.value = '';
+    App.State.selectedProcessTypes = [];
     this.ensureLoaded().then(() => this.renderTable());
     safeModalShow('processTypeMasterModal');
   },
@@ -1437,13 +1621,20 @@ App.Stock = {
       }
     }
     if (colorSelect) {
-      // "— No Color —" is a deliberate, valid final choice here (e.g. a
-      // non-color-specific opening balance) even when real colors exist
-      // -- unlike "Choose a Process..." it's never just an unfilled
-      // placeholder, so it must NOT be auto-selected away from.
-      let html = '<option value="">— No Color —</option>';
+      // A process with known colors tracks stock per-color -- an opening
+      // balance logged without one would land in an untagged bucket a
+      // color-aware Production/Dispatch lot never looks at (see
+      // save_warehouse_pool_opening's matching server-side check), so once
+      // real colors exist the blank option is just an unfilled placeholder,
+      // same as "Choose a Process...". Only a genuinely colorless process
+      // (colors.length === 0, wrapper hidden) has no Color to require.
+      const hasColors = colors.length > 0;
+      let html = hasColors ? '<option value="">Choose a Color...</option>' : '<option value="">— No Color —</option>';
       colors.forEach(c => { html += `<option value="${escapeHtml(c)}">${escapeHtml(c)}</option>`; });
       colorSelect.innerHTML = html;
+      colorSelect.required = hasColors;
+      const colorLabel = document.getElementById('woColorLabel');
+      if (colorLabel) colorLabel.textContent = hasColors ? 'Color *' : 'Color';
     }
     if (colorWrapper) colorWrapper.style.display = colors.length > 0 ? '' : 'none';
   },
@@ -1470,10 +1661,16 @@ App.Stock = {
       return;
     }
 
+    const colorSelect = document.getElementById('woColor');
+    if (colorSelect?.required && !colorSelect.value) {
+      App.Utils.showToast('This Process tracks stock per-color — please choose a Color for this opening balance.', true);
+      return;
+    }
+
     const formData = {
       processId: processId,
       productTag: document.getElementById('woProductTag')?.value || '',
-      color: document.getElementById('woColor')?.value || '',
+      color: colorSelect?.value || '',
       qty: document.getElementById('woQty').value,
       date: document.getElementById('woDate').value,
       remarks: document.getElementById('woRemarks').value

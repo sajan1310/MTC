@@ -482,6 +482,34 @@ def delete_contractor_rate(conn, cur, contractor_name, process_name):
     return build_response(True, None, "Rate deleted successfully.")
 
 
+@rpc_method("deleteContractorRatesBulk", mutation=True)
+@database.transactional
+def delete_contractor_rates_bulk(conn, cur, rates):
+    # No single id column on this table -- identity is the (contractor,
+    # process) pair, same as the single-delete above, so this loops rather
+    # than a single ANY(%s) DELETE (rate cards per contractor are always a
+    # short list, unlike e.g. Production/Dispatch's row counts).
+    pairs = []
+    for r in rates or []:
+        r = r or {}
+        contractor_name = str(r.get("contractorName") or "").strip()
+        process_name = str(r.get("processName") or "").strip()
+        if contractor_name and process_name:
+            pairs.append((contractor_name, process_name))
+
+    if not pairs:
+        return build_response(True, None, "No rates selected.")
+
+    deleted = 0
+    for contractor_name, process_name in pairs:
+        cur.execute(
+            "DELETE FROM erp.contractor_rates WHERE lower(contractor_name) = lower(%s) AND lower(process_name) = lower(%s)",
+            (contractor_name, process_name),
+        )
+        deleted += cur.rowcount
+    return build_response(True, None, f"Deleted {deleted} rate(s).")
+
+
 # ─────────────────────────────────────────────────────────────────────────
 # Contractor Payments
 # ─────────────────────────────────────────────────────────────────────────
@@ -573,6 +601,24 @@ def delete_contractor_payment(conn, cur, row_idx, expected_contractor_name=None,
 
     cur.execute("DELETE FROM erp.contractor_payments WHERE id = %s", (target_id,))
     return build_response(True, None, "Payment record deleted successfully.")
+
+
+@rpc_method("deleteContractorPaymentsBulk", mutation=True)
+@database.transactional
+def delete_contractor_payments_bulk(conn, cur, row_idxs):
+    target_ids = []
+    for r in row_idxs or []:
+        try:
+            target_ids.append(int(r))
+        except (TypeError, ValueError):
+            continue
+
+    if not target_ids:
+        return build_response(True, None, "No payment records selected.")
+
+    cur.execute("DELETE FROM erp.contractor_payments WHERE id = ANY(%s)", (target_ids,))
+    rows_deleted = cur.rowcount
+    return build_response(True, None, f"Deleted {rows_deleted} payment record(s).")
 
 
 # ─────────────────────────────────────────────────────────────────────────

@@ -29,13 +29,13 @@
       <table class="table table-hover table-bordered align-middle mb-0">
         <thead class="table-dark">
           <tr>
-            <th style="width: 14%;">Product ID</th>
-            <th style="width: 30%;">Product Name</th>
-            <th style="width: 13%; text-align: center;">Produced Qty</th>
-            <th style="width: 13%; text-align: center;">Dispatched Qty</th>
-            <th style="width: 11%; text-align: center;">Ready Qty</th>
-            <th style="width: 9%; text-align: center;">Colors</th>
-            <th style="width: 10%; text-align: center;">Action</th>
+            <th scope="col" style="width: 14%;">Product ID</th>
+            <th scope="col" style="width: 30%;">Product Name</th>
+            <th scope="col" style="width: 13%; text-align: center;">Produced Qty</th>
+            <th scope="col" style="width: 13%; text-align: center;">Dispatched Qty</th>
+            <th scope="col" style="width: 11%; text-align: center;">Ready Qty</th>
+            <th scope="col" style="width: 9%; text-align: center;">Colors</th>
+            <th scope="col" style="width: 10%; text-align: center;">Action</th>
           </tr>
         </thead>
         <tbody id="readyToDispatchTableBody">
@@ -86,17 +86,17 @@
       <table class="table table-hover table-bordered align-middle mb-0">
         <thead class="table-dark">
           <tr>
-            <th style="width: 4%; text-align: center;"><input type="checkbox" id="selectAllDispatch" class="form-check-input" onclick="App.Dispatch.toggleSelectAllDispatch(this)"></th>
-            <th style="width: 10%;">Dispatch #</th>
-            <th style="width: 9%;">Date</th>
-            <th style="width: 10%;">Order #</th>
-            <th style="width: 12%;">Client</th>
-            <th style="width: 15%;">Product</th>
-            <th style="width: 6%; text-align: center;">Qty</th>
-            <th style="width: 8%;">Transport</th>
-            <th style="width: 9%;">Invoice / GR #</th>
-            <th style="width: 10%; text-align: right;">Logistics Cost</th>
-            <th style="width: 12%; text-align: center;">Actions</th>
+            <th scope="col" style="width: 4%; text-align: center;"><input type="checkbox" id="selectAllDispatch" class="form-check-input" onclick="App.Dispatch.toggleSelectAllDispatch(this)"></th>
+            <th scope="col" style="width: 10%;">Dispatch #</th>
+            <th scope="col" style="width: 9%;">Date</th>
+            <th scope="col" style="width: 10%;">Order #</th>
+            <th scope="col" style="width: 12%;">Client</th>
+            <th scope="col" style="width: 15%;">Product</th>
+            <th scope="col" style="width: 6%; text-align: center;">Qty</th>
+            <th scope="col" style="width: 8%;">Transport</th>
+            <th scope="col" style="width: 9%;">Invoice / GR #</th>
+            <th scope="col" style="width: 10%; text-align: right;">Logistics Cost</th>
+            <th scope="col" style="width: 12%; text-align: center;">Actions</th>
           </tr>
         </thead>
         <tbody id="dispatchTableBody">
@@ -134,10 +134,10 @@
           <table class="table table-bordered bg-white shadow-sm table-hover mb-0">
             <thead class="table-dark">
               <tr>
-                <th>Color</th>
-                <th class="text-center">Produced</th>
-                <th class="text-center">Dispatched</th>
-                <th class="text-center">Ready</th>
+                <th scope="col">Color</th>
+                <th scope="col" class="text-center">Produced</th>
+                <th scope="col" class="text-center">Dispatched</th>
+                <th scope="col" class="text-center">Ready</th>
               </tr>
             </thead>
             <tbody id="dispatchColorBreakdownBody"></tbody>
@@ -194,11 +194,11 @@
                 <table class="table table-bordered bg-white shadow-sm mb-2">
                   <thead class="table-light">
                     <tr>
-                      <th>Product *</th>
-                      <th style="width:16%;">Qty *</th>
-                      <th style="width:14%;">Rate <small class="text-muted fw-normal">(optional)</small></th>
-                      <th style="width:12%;" class="text-end">Amount</th>
-                      <th style="width:6%;"></th>
+                      <th scope="col">Product *</th>
+                      <th scope="col" style="width:16%;">Qty *</th>
+                      <th scope="col" style="width:14%;">Rate <small class="text-muted fw-normal">(optional)</small></th>
+                      <th scope="col" style="width:12%;" class="text-end">Amount</th>
+                      <th scope="col" style="width:6%;"><span class="visually-hidden">Remove</span></th>
                     </tr>
                   </thead>
                   <tbody id="dispatchLinesBody"></tbody>

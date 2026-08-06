@@ -2,7 +2,7 @@
  * ═════════════════════════════════════════════════════════════════════
  * mobile_styles.css — Maharaja Bikes ERP, Mobile Shell Design System
  * Ported verbatim from Apps_Script/Mobile_Styles.html (was an inline
- * <style> block there; unwrapped into its own stylesheet here).
+ * \3c style> block there; unwrapped into its own stylesheet here).
  *
  * Standalone design system for the mobile field UI. No dependency on
  * desktop styles.css or Bootstrap — every component here is built from
@@ -30,7 +30,7 @@
   --mb-steel-light:    #cbd8de;
   --mb-steel-faint:    #e7edf0;
   --mb-workshop:       #f3f5f6;
-  --mb-surface:        #ffffff;
+  --mb-surface:        #fff;
 
   --mb-safety:         #ff6a13;
   --mb-safety-dark:    #d6540a;
@@ -49,7 +49,7 @@
 
   /* ── Type ────────────────────────────────────────────────────────── */
   --mb-font-display:   'Oswald', 'Arial Narrow', sans-serif;
-  --mb-font-body:      'Inter', -apple-system, BlinkMacSystemFont, sans-serif;
+  --mb-font-body:      'Inter', -apple-system, blinkmacsystemfont, sans-serif;
 
   /* ── Spacing scale ───────────────────────────────────────────────── */
   --mb-sp-1: 4px;
@@ -66,9 +66,9 @@
   --mb-radius-md:   14px;
   --mb-radius-lg:   22px;
   --mb-radius-pill: 999px;
-  --mb-shadow-card: 0 1px 3px rgba(20, 24, 28, 0.08), 0 1px 2px rgba(20, 24, 28, 0.06);
-  --mb-shadow-raised: 0 6px 20px rgba(20, 24, 28, 0.18);
-  --mb-shadow-fab:  0 8px 24px rgba(255, 106, 19, 0.4);
+  --mb-shadow-card: 0 1px 3px rgb(20 24 28 / 8%), 0 1px 2px rgb(20 24 28 / 6%);
+  --mb-shadow-raised: 0 6px 20px rgb(20 24 28 / 18%);
+  --mb-shadow-fab:  0 8px 24px rgb(255 106 19 / 40%);
 
   /* ── Touch targets ───────────────────────────────────────────────── */
   --mb-tap-min:     48px;
@@ -185,7 +185,7 @@ textarea:focus-visible,
   border-radius: var(--mb-radius-sm);
   cursor: pointer;
 }
-.mapp-topbar-btn:active { background: rgba(255,255,255,0.15); }
+.mapp-topbar-btn:active { background: rgb(255 255 255 / 15%); }
 
 .mapp-content {
   flex: 1 1 auto;
@@ -376,6 +376,7 @@ textarea:focus-visible,
   padding-bottom: var(--mb-sp-1);
   margin-bottom: var(--mb-sp-3);
 }
+
 .mb-filter-chip {
   display: inline-flex;
   align-items: center;
@@ -390,6 +391,7 @@ textarea:focus-visible,
   background: var(--mb-surface);
   color: var(--mb-steel);
 }
+
 .mb-filter-chip.active {
   border-color: var(--mb-safety);
   background: var(--mb-safety);
@@ -462,6 +464,7 @@ textarea:focus-visible,
   position: relative;
   margin-bottom: var(--mb-sp-4);
 }
+
 .mb-search input {
   width: 100%;
   min-height: var(--mb-tap-primary);
@@ -471,10 +474,12 @@ textarea:focus-visible,
   padding: 0 var(--mb-sp-4) 0 44px;
   color: var(--mb-ink);
 }
+
 .mb-search input:focus {
   border-color: var(--mb-safety);
   outline: none;
 }
+
 .mb-search svg {
   position: absolute;
   left: var(--mb-sp-4);
@@ -484,6 +489,7 @@ textarea:focus-visible,
   height: 20px;
   color: var(--mb-steel);
 }
+
 .mb-search-sticky {
   position: sticky;
   top: 0;
@@ -518,20 +524,24 @@ textarea:focus-visible,
   padding: 0 var(--mb-sp-4);
   color: var(--mb-ink);
 }
+
 .mb-field textarea {
   min-height: 88px;
   padding: var(--mb-sp-3) var(--mb-sp-4);
   resize: vertical;
 }
+
 .mb-field input:focus, .mb-field select:focus, .mb-field textarea:focus {
   border-color: var(--mb-safety);
   outline: none;
 }
+
 .mb-field input:disabled, .mb-field select:disabled, .mb-field textarea:disabled,
 .mb-field input[readonly] {
   background: var(--mb-steel-faint);
   color: var(--mb-steel);
 }
+
 .mb-field-hint {
   font-size: 12px;
   color: var(--mb-steel);
@@ -565,7 +575,7 @@ textarea:focus-visible,
 .mb-sheet-backdrop {
   position: fixed;
   inset: 0;
-  background: rgba(20, 24, 28, 0.4);
+  background: rgb(20 24 28 / 40%);
   z-index: 100;
   opacity: 0;
   transition: opacity var(--mb-motion-sheet);
@@ -594,6 +604,7 @@ textarea:focus-visible,
   background: var(--mb-ink);
   color: #fff;
 }
+
 .mb-sheet-header h2 {
   flex: 1;
   font-size: 18px;
@@ -622,7 +633,6 @@ textarea:focus-visible,
 .mb-picker-screen .mb-sheet-body { padding: 0; }
 
 .mb-picker-option {
-  display: block;
   width: 100%;
   min-height: var(--mb-tap-primary);
   padding: 0 var(--mb-sp-4);
@@ -654,6 +664,7 @@ textarea:focus-visible,
   padding: var(--mb-sp-3) var(--mb-sp-4);
   min-width: 128px;
 }
+
 .mb-color-chip.checked {
   border-color: var(--mb-safety);
   background: var(--mb-safety-faint);
@@ -673,11 +684,12 @@ textarea:focus-visible,
   cursor: pointer;
   min-height: var(--mb-tap-min);
 }
+
 .mb-color-chip-swatch {
   width: 18px;
   height: 18px;
   border-radius: 50%;
-  border: 1px solid rgba(0,0,0,0.15);
+  border: 1px solid rgb(0 0 0 / 15%);
   flex-shrink: 0;
 }
 
@@ -688,6 +700,7 @@ textarea:focus-visible,
   gap: var(--mb-sp-2);
   margin-top: var(--mb-sp-3);
 }
+
 .mb-stepper-btn {
   width: 44px;
   height: 44px;
@@ -701,6 +714,7 @@ textarea:focus-visible,
 }
 .mb-stepper-btn:active { background: var(--mb-safety); }
 .mb-stepper-btn:disabled { background: var(--mb-steel-light); cursor: not-allowed; }
+
 .mb-stepper-value {
   font-family: var(--mb-font-display);
   font-size: 22px;
@@ -716,13 +730,16 @@ textarea:focus-visible,
   animation: mb-shimmer 1.4s ease infinite;
   border-radius: var(--mb-radius-sm);
 }
+
 @media (prefers-reduced-motion: reduce) {
   .mb-skel { animation: none; background: var(--mb-steel-faint); }
 }
+
 @keyframes mb-shimmer {
   0% { background-position: 100% 50%; }
   100% { background-position: 0 50%; }
 }
+
 .mb-skel-card {
   height: 84px;
   border-radius: var(--mb-radius-md);
@@ -737,12 +754,14 @@ textarea:focus-visible,
   padding: var(--mb-sp-8) var(--mb-sp-5);
   color: var(--mb-steel);
 }
+
 .mb-state svg {
   width: 48px;
   height: 48px;
   color: var(--mb-steel-light);
   margin-bottom: var(--mb-sp-3);
 }
+
 .mb-state-title {
   font-family: var(--mb-font-display);
   font-size: 18px;
@@ -753,6 +772,7 @@ textarea:focus-visible,
 }
 .mb-state-body { font-size: 14px; margin-bottom: var(--mb-sp-4); }
 .mb-state.mb-state-error svg { color: var(--mb-enamel-red); }
+
 .mb-state-retry {
   display: inline-flex;
   min-height: var(--mb-tap-min);
@@ -779,6 +799,7 @@ textarea:focus-visible,
   gap: var(--mb-sp-2);
   pointer-events: none;
 }
+
 .mb-toast {
   background: var(--mb-ink);
   color: #fff;
@@ -791,10 +812,12 @@ textarea:focus-visible,
 }
 .mb-toast.mb-toast-error { background: var(--mb-enamel-red); }
 .mb-toast.mb-toast-success { background: var(--mb-enamel-green); }
+
 @keyframes mb-toast-in {
   from { opacity: 0; transform: translateY(8px); }
   to { opacity: 1; transform: translateY(0); }
 }
+
 @media (prefers-reduced-motion: reduce) {
   .mb-toast { animation: none; }
 }
@@ -831,7 +854,7 @@ textarea:focus-visible,
    styling — this block only handles visibility switching, mirroring
    desktop styles.css's @media print pattern, scoped to the mobile
    shell's own chrome instead of the desktop app-container. */
-@page { size: A4 portrait; margin: 6mm; }
+@page { size: a4 portrait; margin: 6mm; }
 
 @media print {
   body { background: #fff !important; margin: 0 !important; padding: 0 !important; }
@@ -844,6 +867,7 @@ textarea:focus-visible,
   #print-bulk-container {
     display: none !important;
   }
+
   #print-po-container.active-print, #print-dispatch-container.active-print,
   #print-item-ledger-container.active-print, #print-vendor-ledger-container.active-print,
   #print-client-ledger-container.active-print, #print-production-sheet-container.active-print,
