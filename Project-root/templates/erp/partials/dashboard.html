@@ -4,13 +4,24 @@
 
 <div id="dashboardTab" class="tab-content active" role="tabpanel" aria-labelledby="btn-dashboardTab">
 
-  <!-- Refresh bar -->
-  <div class="d-flex justify-content-end align-items-center gap-2 mb-2">
-    <span id="dashboardLastUpdated" class="small text-muted">&nbsp;</span>
-    <button id="dashboardRefreshBtn" class="btn btn-sm btn-outline-secondary" onclick="App.Dashboard.loadData()" title="Refresh dashboard">
-      <i class="bi bi-arrow-clockwise"></i>
-    </button>
+  <!-- Refresh & Backup bar -->
+  <div class="d-flex justify-content-between align-items-center flex-wrap gap-2 mb-3">
+    <div class="d-flex align-items-center gap-2">
+      <span id="dashboardBackupStatus" class="badge bg-light text-secondary border fw-normal" title="Nightly Backup Status">
+        <i class="bi bi-shield-check text-success me-1"></i> Nightly Backup: <span id="backupLastTime">Loading...</span>
+      </span>
+    </div>
+    <div class="d-flex align-items-center gap-2">
+      <span id="dashboardLastUpdated" class="small text-muted">&nbsp;</span>
+      <button id="dashboardBackupBtn" class="btn btn-sm btn-outline-primary fw-500 shadow-sm" onclick="App.Dashboard.triggerBackup()" title="Create Database Backup & Upload to Google Sheets">
+        <i class="bi bi-cloud-arrow-up me-1"></i> Backup to Sheets
+      </button>
+      <button id="dashboardRefreshBtn" class="btn btn-sm btn-outline-secondary" onclick="App.Dashboard.loadData()" title="Refresh dashboard">
+        <i class="bi bi-arrow-clockwise"></i>
+      </button>
+    </div>
   </div>
+
 
   <!-- KPI cards -->
   <div class="row row-cols-2 row-cols-lg-4 g-3 mb-4" id="dashboardKpiRow">
@@ -166,6 +177,11 @@
         </button>
       </div>
       <div class="col">
+        <button class="btn btn-success dash-action-tile w-100 h-100" onclick="App.Navigation.showTab('dispatchTab'); App.Dispatch.enterTab().then(() => App.Dispatch.openCreateDispatchModal())">
+          <i class="bi bi-truck"></i><span>Record New Bill</span>
+        </button>
+      </div>
+      <div class="col">
         <button class="btn btn-secondary dash-action-tile w-100 h-100" onclick="App.Wastage.openWastageModal()">
           <i class="bi bi-trash3"></i><span>Log Wastage</span>
         </button>
@@ -275,4 +291,71 @@
     </div>
   </div>
 
+</div>
+
+<!-- BACKUP PROGRESS MODAL -->
+<div class="modal fade" id="backupProgressModal" data-bs-backdrop="static" data-bs-keyboard="false" tabindex="-1" aria-labelledby="backupProgressModalTitle" aria-hidden="true">
+  <div class="modal-dialog modal-dialog-centered">
+    <div class="modal-content shadow-lg border-0">
+      <div class="modal-header bg-primary text-white border-0 py-3">
+        <h5 class="modal-title fw-bold d-flex align-items-center" id="backupProgressModalTitle">
+          <i class="bi bi-cloud-arrow-up-fill me-2 fs-4"></i> Database & Google Sheets Backup
+        </h5>
+        <button type="button" class="btn-close btn-close-white" id="backupModalCloseBtn" data-bs-dismiss="modal" aria-label="Close" style="display: none;"></button>
+      </div>
+      <div class="modal-body p-4">
+        <!-- Progress View -->
+        <div id="backupProgressState">
+          <div class="text-center mb-3">
+            <div class="spinner-border text-primary mb-2" role="status" style="width: 2.5rem; height: 2.5rem;">
+              <span class="visually-hidden">Backing up...</span>
+            </div>
+            <h6 id="backupProgressStep" class="fw-semibold text-dark mb-1">Initiating Database Backup...</h6>
+            <p id="backupProgressSubtext" class="small text-muted mb-0">Exporting PostgreSQL tables and syncing to Google Sheets...</p>
+          </div>
+
+          <div class="progress mb-3" style="height: 12px; border-radius: 6px; background-color: #e9ecef;">
+            <div id="backupProgressBar" class="progress-bar progress-bar-striped progress-bar-animated bg-primary" role="progressbar" style="width: 15%; transition: width 0.4s ease;" aria-valuenow="15" aria-valuemin="0" aria-valuemax="100"></div>
+          </div>
+
+          <div class="d-flex justify-content-between small text-muted px-1">
+            <span id="backupPercentText">15%</span>
+            <span>Please wait, do not close browser</span>
+          </div>
+        </div>
+
+        <!-- Result View (Success / Partial / Error) -->
+        <div id="backupResultState" style="display: none;">
+          <div class="text-center mb-3">
+            <div id="backupResultIcon" class="mb-2">
+              <i class="bi bi-check-circle-fill text-success" style="font-size: 3rem;"></i>
+            </div>
+            <h5 id="backupResultTitle" class="fw-bold text-dark mb-1">Backup Completed Successfully!</h5>
+            <p id="backupResultMessage" class="small text-muted mb-0"></p>
+          </div>
+
+          <div id="backupDetailsBox" class="p-3 bg-light rounded border mb-3 small">
+            <div class="d-flex justify-content-between py-1 border-bottom">
+              <span class="text-muted">Status:</span>
+              <span id="backupDetailStatus" class="fw-bold text-success">SUCCESS</span>
+            </div>
+            <div class="d-flex justify-content-between py-1 border-bottom">
+              <span class="text-muted">Timestamp:</span>
+              <span id="backupDetailTime" class="fw-medium text-dark">–</span>
+            </div>
+            <div class="d-flex justify-content-between py-1">
+              <span class="text-muted">Local File:</span>
+              <span id="backupDetailFile" class="fw-medium text-dark text-break text-end ms-2">–</span>
+            </div>
+          </div>
+        </div>
+      </div>
+      <div class="modal-footer bg-light border-0 py-2">
+        <a id="backupOpenSheetBtn" href="#" target="_blank" class="btn btn-success fw-bold shadow-sm" style="display: none;">
+          <i class="bi bi-file-earmark-spreadsheet me-1"></i> Open Google Sheet
+        </a>
+        <button id="backupModalDoneBtn" type="button" class="btn btn-secondary fw-500" data-bs-dismiss="modal" style="display: none;">Close</button>
+      </div>
+    </div>
+  </div>
 </div>

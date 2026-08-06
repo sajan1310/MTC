@@ -167,4 +167,22 @@ describe('App.Notify', () => {
     expect(App.Notify.formatTime(new Date(Date.now() - 90 * 1000))).toBe('1m ago');
     expect(App.Notify.formatTime(new Date(Date.now() - 3 * 3600 * 1000))).toBe('3h ago');
   });
+
+  // Regression test: App.Utils.showToast used to silently drop its `link`
+  // argument (App.Notify.add(message, isError) -- no third arg), so every
+  // domain's save-toast passed a {type, value} link that never reached the
+  // stored notification. Clicking the resulting bell entry could therefore
+  // never navigate anywhere even though NAV had a resolver registered for
+  // it -- only App.Notify.add()'s own direct callers (smart alerts) worked.
+  test('showToast forwards its `link` argument through to App.Notify.add', () => {
+    App.Utils.showToast('PO #1001 saved.', false, { type: 'po', value: '1001' });
+
+    expect(App.Notify.items).toHaveLength(1);
+    expect(App.Notify.items[0].link).toEqual({ type: 'po', value: '1001' });
+  });
+
+  test('showToast with no link stores a null link (falls back to detail modal)', () => {
+    App.Utils.showToast('Something happened.');
+    expect(App.Notify.items[0].link).toBeNull();
+  });
 });

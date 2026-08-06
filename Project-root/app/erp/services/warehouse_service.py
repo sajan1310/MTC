@@ -21,7 +21,10 @@ consumption) landed in Phase 3g (Production), extending Phase 3e's Pass-0
 via `TABLE_NAMES.get("PRODUCTION")`. Pass 3 (debit finished-goods buckets
 by Dispatch quantity, including the greedy multi-color-bucket drain for a
 tagged/untagged key that spans more than one color) landed in Phase 4a
-(Dispatch), guarded via `TABLE_NAMES.get("DISPATCH")` the same way.
+(Dispatch), guarded via `TABLE_NAMES.get("DISPATCH_HEADERS"/"DISPATCH_
+LINES")` the same way -- Dispatch itself moved from a flat table to
+header+lines in migration 023, so Pass 3 reads a join now, but the
+aggregation algorithm is unchanged (see the query's own comment).
 
 getPoolAvailableQty is a genuine exception to this port's usual
 {success, data, message} envelope: the source function returns a bare
@@ -250,12 +253,16 @@ def _get_warehouse_pool_opening_rows(cur) -> list:
     return rows
 
 
-def _recalculate_warehouse_pool(cur) -> None:
-    """Full rebuild of erp.warehouse_pool from source data -- mirrors
-    recalculateStock()'s "always rebuild from source data" approach.
+def _build_warehouse_pool_buckets(cur, include_opening: bool = True) -> dict:
+    """Core of _recalculate_warehouse_pool, factored out so
+    _get_real_history_colors_by_process can replay the same Pass 1-3
+    credit/debit logic with include_opening=False -- i.e. everything
+    EXCEPT the manually-recorded Opening Balances (Pass 0) -- to tell
+    "real" Production/Dispatch history apart from a manual entry when
+    deciding whether a Warehouse Pool color combination is safe to delete.
     Passes 1-2 are guarded via TABLE_NAMES.get("PRODUCTION"); Pass 3
-    (Dispatch debit) via TABLE_NAMES.get("DISPATCH") -- both real and live,
-    not deferred.
+    (Dispatch debit) via TABLE_NAMES.get("DISPATCH_HEADERS"/"DISPATCH_
+    LINES") -- both real and live, not deferred.
     """
     buckets: dict = {}
 
@@ -280,9 +287,10 @@ def _recalculate_warehouse_pool(cur) -> None:
 
     # Pass 0: seed buckets from manually-recorded Opening Balances -- the
     # one durable source of "stock that didn't come from a Production lot".
-    for r in _get_warehouse_pool_opening_rows(cur):
-        bucket = get_bucket(r["outputItemName"], r["processId"], r["productTag"], r["color"])
-        bucket["producedQty"] += r["qty"]
+    if include_opening:
+        for r in _get_warehouse_pool_opening_rows(cur):
+            bucket = get_bucket(r["outputItemName"], r["processId"], r["productTag"], r["color"])
+            bucket["producedQty"] += r["qty"]
 
     if table := config_maps.TABLE_NAMES.get("PRODUCTION"):
         # Pass 1: credit every Completed lot's own output to its pool
@@ -493,7 +501,9 @@ def _recalculate_warehouse_pool(cur) -> None:
 
                 get_bucket(item_name, "", "", color)["consumedQty"] += qty
 
-    if table := config_maps.TABLE_NAMES.get("DISPATCH"):
+    if (headers_table := config_maps.TABLE_NAMES.get("DISPATCH_HEADERS")) and (
+        lines_table := config_maps.TABLE_NAMES.get("DISPATCH_LINES")
+    ):
         # Pass 3: debit finished-goods buckets by Dispatch quantity. A
         # Product-tagged bucket is matched by its tag; an untagged
         # final-stage bucket has no tag, so Dispatch's own "Product ID"
@@ -501,8 +511,15 @@ def _recalculate_warehouse_pool(cur) -> None:
         # dispatch_service._compute_ready_to_dispatch_map) -- fall back to
         # matching on that, restricted to final-stage buckets so an
         # untagged intermediate-WIP bucket sharing the same Output Item
-        # Name from a non-final process is never touched.
-        cur.execute(f"SELECT product_id, qty FROM {table} WHERE deleted_at IS NULL")
+        # Name from a non-final process is never touched. Dispatch is
+        # header+lines (migration 023) -- this aggregation already treated
+        # every row as just a (product_id, qty) contribution regardless of
+        # which physical row it came from, so switching the source query to
+        # a join needs no change to the aggregation itself.
+        cur.execute(
+            f"SELECT l.product_id, l.qty FROM {lines_table} l "
+            f"JOIN {headers_table} h ON h.id = l.header_id WHERE h.deleted_at IS NULL"
+        )
         dispatch_qty_by_key: dict = {}
         for row in cur.fetchall():
             product_id = str(row["product_id"] or "").strip()
@@ -549,6 +566,15 @@ def _recalculate_warehouse_pool(cur) -> None:
             if remaining > 0:
                 matching[0]["consumedQty"] += remaining
 
+    return buckets
+
+
+def _recalculate_warehouse_pool(cur) -> None:
+    """Full rebuild of erp.warehouse_pool from source data -- mirrors
+    recalculateStock()'s "always rebuild from source data" approach.
+    """
+    buckets = _build_warehouse_pool_buckets(cur, include_opening=True)
+
     # Rewrite the table from scratch (small dataset -- process count is tiny).
     cur.execute("DELETE FROM erp.warehouse_pool")
     for bucket in buckets.values():
@@ -570,6 +596,30 @@ def _recalculate_warehouse_pool(cur) -> None:
                 bucket["color"],
             ),
         )
+
+
+def _get_real_history_colors_by_process(cur) -> dict:
+    """processIdLower -> set of colorLower with real (non-manual) history:
+    produced via a Completed Production lot (Pass 1) or consumed via a
+    Pool-sourced component / Dispatch (Pass 2-3). Deliberately excludes
+    Pass 0 (Opening Balances and adjustWarehousePoolManually corrections,
+    both recorded in erp.warehouse_pool_opening) so a color whose only
+    warehouse_pool activity is manual can be told apart from one with real
+    production/consumption history -- see exclude_warehouse_pool_colors,
+    which uses this instead of erp.warehouse_pool's own produced/consumed
+    qty (that column includes Pass 0 and so can't make the distinction).
+    """
+    buckets = _build_warehouse_pool_buckets(cur, include_opening=False)
+    result: dict = {}
+    for bucket in buckets.values():
+        process_id = bucket["processId"].strip().lower()
+        color = bucket["color"].strip().lower()
+        if not process_id or not color:
+            continue
+        if bucket["producedQty"] == 0 and bucket["consumedQty"] == 0:
+            continue
+        result.setdefault(process_id, set()).add(color)
+    return result
 
 
 def _get_warehouse_pool_bucket_available_qty(cur, output_item_name: str, product_tag: str, color: str) -> float:

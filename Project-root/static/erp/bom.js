@@ -1624,7 +1624,9 @@ document.addEventListener('DOMContentLoaded', function () {
             await App.BOM.openCreateModal();
           }
         }
-        App.Utils.showToast(response.message, !response.success);
+        App.Utils.showToast(response.message, !response.success, response.success
+          ? { type: 'bom', value: response.data?.product?.productId || formData.productId }
+          : null);
       } catch (err) {
         App.Utils.showToast(err.message || 'Failed to save BOM', true);
       } finally {

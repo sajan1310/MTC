@@ -1027,7 +1027,9 @@ document.addEventListener('DOMContentLoaded', function () {
             App.Client.openCreateClientModal();
           }
         }
-        App.Utils.showToast(res.message, !res.success);
+        App.Utils.showToast(res.message, !res.success, res.success
+          ? { type: 'client', value: formData.clientName }
+          : null);
       } catch (err) {
         App.Utils.showToast(err.message || 'Failed to save client', true);
       } finally {
@@ -1079,7 +1081,9 @@ document.addEventListener('DOMContentLoaded', function () {
             App.Client.openCreateOrderModal();
           }
         }
-        App.Utils.showToast(res.message, !res.success);
+        App.Utils.showToast(res.message, !res.success, res.success
+          ? { type: 'clientOrder', value: res.data?.order?.orderNumber || formData.orderNumber }
+          : null);
       } catch (err) {
         App.Utils.showToast(err.message || 'Failed to save PI / Estimate', true);
       } finally {

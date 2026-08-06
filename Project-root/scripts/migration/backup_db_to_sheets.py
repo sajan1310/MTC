@@ -24,10 +24,20 @@ from __future__ import annotations
 
 import argparse
 import datetime
+import decimal
 import os
 import sys
 
-import sheets_client
+
+_script_dir = os.path.dirname(os.path.abspath(__file__))
+if _script_dir not in sys.path:
+    sys.path.insert(0, _script_dir)
+
+try:
+    import sheets_client  # type: ignore
+except ImportError:
+    from . import sheets_client  # type: ignore
+
 
 # Every erp.* table worth backing up. Deliberately excludes:
 #   - erp.migrations_applied, erp.bom_access_tokens (internal/runtime state)
@@ -70,11 +80,16 @@ def _cell(value):
     if isinstance(value, (dict, list)):
         import json
 
-        return json.dumps(value)
-    return value
+        return json.dumps(value, default=str)
+    if isinstance(value, decimal.Decimal):
+        return float(value)
+    if isinstance(value, (int, float, str, bool)):
+        return value
+    return str(value)
 
 
-def run_backup(database_url: str, drive_folder_id: str | None) -> str:
+
+def run_backup(database_url: str, drive_folder_id: str | None = None, existing_spreadsheet_id: str | None = None) -> str:
     import psycopg2
 
     today = datetime.date.today().isoformat()
@@ -82,30 +97,53 @@ def run_backup(database_url: str, drive_folder_id: str | None) -> str:
 
     sheets = sheets_client.sheets_write_client()
     drive = sheets_client.drive_client()
-    spreadsheet_id = sheets_client.create_spreadsheet(sheets, drive, title, drive_folder_id)
-    print(f"Created backup spreadsheet: {title} ({spreadsheet_id})")
+
+    if existing_spreadsheet_id:
+        spreadsheet_id = existing_spreadsheet_id
+        print(f"Updating existing backup spreadsheet: {spreadsheet_id}")
+    else:
+        spreadsheet_id = sheets_client.create_spreadsheet(sheets, drive, title, drive_folder_id)
+        print(f"Created backup spreadsheet: {title} ({spreadsheet_id})")
 
     conn = psycopg2.connect(database_url)
     try:
         with conn:
             with conn.cursor() as cur:
-                # The spreadsheet is created with one default "Sheet1" tab;
-                # rename it to the first table instead of leaving it empty.
                 first = True
                 for table in TABLES:
                     columns, rows = fetch_table_rows(cur, table)
                     tab_name = table.split(".", 1)[1][:99]  # Sheets tab-name length cap
-                    if first:
-                        _rename_first_tab(sheets, spreadsheet_id, tab_name)
-                        first = False
-                    else:
-                        sheets_client.add_sheet_tab(sheets, spreadsheet_id, tab_name)
-                    sheets_client.write_values(sheets, spreadsheet_id, tab_name, [columns] + rows)
-                    print(f"  {table}: {len(rows)} rows")
+                    actual_tab, is_fresh = _ensure_sheet_tab(sheets, spreadsheet_id, tab_name, first)
+                    first = False
+                    sheets_client.write_values(sheets, spreadsheet_id, actual_tab, [columns] + rows, fresh=is_fresh)
+                    print(f"  {table} -> tab '{actual_tab}': {len(rows)} rows")
     finally:
         conn.close()
 
     return spreadsheet_id
+
+
+def _ensure_sheet_tab(sheets, spreadsheet_id: str, tab_name: str, first: bool) -> tuple[str, bool]:
+    """Returns (actual_tab_name, is_fresh) -- is_fresh is True when the tab was
+    just created/renamed into existence this call, so callers know it's
+    already empty and don't need to clear it before writing."""
+    meta = sheets_client.with_retry(
+        lambda: sheets.spreadsheets().get(spreadsheetId=spreadsheet_id, fields="sheets.properties").execute()
+    )
+    existing_tabs = [s["properties"]["title"] for s in meta.get("sheets", [])]
+    lower_map = {t.lower(): t for t in existing_tabs}
+
+    if tab_name.lower() in lower_map:
+        return lower_map[tab_name.lower()], False
+
+    if first and len(existing_tabs) == 1 and existing_tabs[0].lower().startswith("sheet"):
+        _rename_first_tab(sheets, spreadsheet_id, tab_name)
+        return tab_name, True
+
+    sheets_client.add_sheet_tab(sheets, spreadsheet_id, tab_name)
+    return tab_name, True
+
+
 
 
 def _rename_first_tab(client, spreadsheet_id: str, new_title: str):

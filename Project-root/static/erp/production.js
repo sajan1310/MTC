@@ -204,9 +204,15 @@ App.Production = {
     if (tbody) tbody.innerHTML = '<tr><td colspan="10" class="text-center p-4">Loading Production Logs...</td></tr>';
 
     try {
-      const [, , response] = await Promise.all([
+      // Items Master is needed for more than the item pickers: component
+      // narration and Base Unit are resolved live against globalItems at
+      // render time (_resolveDisplayNarration / _resolveDisplayUnit), so
+      // without it every component falls back to its stored narration and
+      // a blanket 'Pcs' unit.
+      const [, , , response] = await Promise.all([
         App.Process.ensureLoaded(),
         App.Color.ensureLoaded(),
+        App.Item.ensureLoaded(),
         Api.call('getProductionData')
       ]);
       if (!response.success) {
@@ -1033,12 +1039,16 @@ App.Production = {
     if (nameHiddenInput) nameHiddenInput.value = matchedBOM ? matchedBOM.productName : '';
   },
 
-  populateSizeSelect() {
+  populateSizeSelect(isDisabled = false, selectedValue = null) {
     const select = document.getElementById('productionSize');
     if (!select) return;
-    if (window.jQuery?.fn?.select2 && window.jQuery(select).data('select2')) window.jQuery(select).select2('destroy');
 
-    const currentValue = select.value;
+    select.disabled = Boolean(isDisabled);
+
+    if (window.jQuery?.fn?.select2 && window.jQuery(select).data('select2')) {
+      window.jQuery(select).select2('destroy');
+    }
+
     const sizesPresent = new Set(
       (App.State.globalProcesses || []).filter(p => p.active).map(p => App.Utils.getSizeFromOutputItemName(p.outputItemName))
     );
@@ -1048,41 +1058,41 @@ App.Production = {
     let html = '<option value="">Choose a Size...</option>';
     ordered.forEach(s => { html += `<option value="${escapeHtml(s)}">${escapeHtml(s)}</option>`; });
     select.innerHTML = html;
-    select.value = currentValue;
-    App.Utils.autoSelectOnlyOption(select);
+
+    if (selectedValue !== null) {
+      select.value = selectedValue;
+    } else {
+      select.value = '';
+      if (!isDisabled) App.Utils.autoSelectOnlyOption(select);
+    }
 
     if (window.jQuery?.fn?.select2) {
-      const $s = window.jQuery(select);
-      const $modal = $s.closest('.modal');
-      $s.select2({ placeholder: 'Choose a Size...', width: '100%', matcher: App.Utils.select2Matcher, dropdownParent: $modal.length ? $modal : window.jQuery(document.body) });
+      window.jQuery(select).select2({
+        placeholder: 'Choose a Size...',
+        width: '100%',
+        matcher: App.Utils.select2Matcher,
+        dropdownParent: App.Utils.select2DropdownParent(select)
+      });
     }
   },
 
   handleSizeChange(size) {
     if (this._suppressCascade) return;
     this.populateModelSelect(size);
-
     const modelSelect = document.getElementById('productionModel');
-    if (modelSelect) {
-      this._suppressCascade = true;
-      try {
-        modelSelect.disabled = !size;
-        modelSelect.value = '';
-        if (window.jQuery?.fn?.select2 && window.jQuery(modelSelect).data('select2')) window.jQuery(modelSelect).trigger('change.select2');
-        if (size) App.Utils.autoSelectOnlyOption(modelSelect);
-      } finally {
-        this._suppressCascade = false;
-      }
-    }
     return this.handleModelChange(modelSelect ? modelSelect.value : '');
   },
 
-  populateModelSelect(sizeFilter) {
+  populateModelSelect(sizeFilter, isDisabled = !sizeFilter, selectedValue = null) {
     const select = document.getElementById('productionModel');
     if (!select) return;
-    if (window.jQuery?.fn?.select2 && window.jQuery(select).data('select2')) window.jQuery(select).select2('destroy');
 
-    const currentValue = select.value;
+    select.disabled = Boolean(isDisabled);
+
+    if (window.jQuery?.fn?.select2 && window.jQuery(select).data('select2')) {
+      window.jQuery(select).select2('destroy');
+    }
+
     const matches = (App.State.globalProcesses || []).filter(p => p.active)
       .filter(p => !sizeFilter || App.Utils.getSizeFromOutputItemName(p.outputItemName) === sizeFilter);
 
@@ -1094,13 +1104,21 @@ App.Production = {
     let html = sizeFilter ? '<option value="">Choose a Model...</option>' : '<option value="">Choose a Size first...</option>';
     ordered.forEach(m => { html += `<option value="${escapeHtml(m)}">${escapeHtml(m)}</option>`; });
     select.innerHTML = html;
-    select.value = currentValue;
-    App.Utils.autoSelectOnlyOption(select);
+
+    if (selectedValue !== null) {
+      select.value = selectedValue;
+    } else {
+      select.value = '';
+      if (!isDisabled && sizeFilter) App.Utils.autoSelectOnlyOption(select);
+    }
 
     if (window.jQuery?.fn?.select2) {
-      const $s = window.jQuery(select);
-      const $modal = $s.closest('.modal');
-      $s.select2({ placeholder: sizeFilter ? 'Choose a Model...' : 'Choose a Size first...', width: '100%', matcher: App.Utils.select2Matcher, dropdownParent: $modal.length ? $modal : window.jQuery(document.body) });
+      window.jQuery(select).select2({
+        placeholder: sizeFilter ? 'Choose a Model...' : 'Choose a Size first...',
+        width: '100%',
+        matcher: App.Utils.select2Matcher,
+        dropdownParent: App.Utils.select2DropdownParent(select)
+      });
     }
   },
 
@@ -1108,28 +1126,20 @@ App.Production = {
     if (this._suppressCascade) return;
     const size = document.getElementById('productionSize')?.value || '';
     this.populateProcessTypeSelect(size, model);
-
     const typeSelect = document.getElementById('productionProcessType');
-    if (typeSelect) {
-      this._suppressCascade = true;
-      try {
-        typeSelect.disabled = !model;
-        typeSelect.value = '';
-        if (window.jQuery?.fn?.select2 && window.jQuery(typeSelect).data('select2')) window.jQuery(typeSelect).trigger('change.select2');
-        if (model) App.Utils.autoSelectOnlyOption(typeSelect);
-      } finally {
-        this._suppressCascade = false;
-      }
-    }
     return this.handleProcessTypeChange(typeSelect ? typeSelect.value : '');
   },
 
-  populateProcessTypeSelect(sizeFilter, modelFilter) {
+  populateProcessTypeSelect(sizeFilter, modelFilter, isDisabled = !(sizeFilter && modelFilter), selectedValue = null) {
     const select = document.getElementById('productionProcessType');
     if (!select) return;
-    if (window.jQuery?.fn?.select2 && window.jQuery(select).data('select2')) window.jQuery(select).select2('destroy');
 
-    const currentValue = select.value;
+    select.disabled = Boolean(isDisabled);
+
+    if (window.jQuery?.fn?.select2 && window.jQuery(select).data('select2')) {
+      window.jQuery(select).select2('destroy');
+    }
+
     const matches = (App.State.globalProcesses || []).filter(p => p.active)
       .filter(p => !sizeFilter || App.Utils.getSizeFromOutputItemName(p.outputItemName) === sizeFilter)
       .filter(p => !modelFilter || App.Utils.getModelFromOutputItemName(p.outputItemName) === modelFilter);
@@ -1142,13 +1152,21 @@ App.Production = {
     let html = modelFilter ? '<option value="">Choose a Process Type...</option>' : '<option value="">Choose a Model first...</option>';
     ordered.forEach(t => { html += `<option value="${escapeHtml(t)}">${escapeHtml(t)}</option>`; });
     select.innerHTML = html;
-    select.value = currentValue;
-    App.Utils.autoSelectOnlyOption(select);
+
+    if (selectedValue !== null) {
+      select.value = selectedValue;
+    } else {
+      select.value = '';
+      if (!isDisabled && modelFilter) App.Utils.autoSelectOnlyOption(select);
+    }
 
     if (window.jQuery?.fn?.select2) {
-      const $s = window.jQuery(select);
-      const $modal = $s.closest('.modal');
-      $s.select2({ placeholder: modelFilter ? 'Choose a Process Type...' : 'Choose a Model first...', width: '100%', matcher: App.Utils.select2Matcher, dropdownParent: $modal.length ? $modal : window.jQuery(document.body) });
+      window.jQuery(select).select2({
+        placeholder: modelFilter ? 'Choose a Process Type...' : 'Choose a Model first...',
+        width: '100%',
+        matcher: App.Utils.select2Matcher,
+        dropdownParent: App.Utils.select2DropdownParent(select)
+      });
     }
   },
 
@@ -1156,29 +1174,21 @@ App.Production = {
     if (this._suppressCascade) return;
     const size = document.getElementById('productionSize')?.value || '';
     const model = document.getElementById('productionModel')?.value || '';
-
+    this.populateProcessSelect(size, type, model);
     const processSelect = document.getElementById('productionProcessId');
-    this._suppressCascade = true;
-    try {
-      this.populateProcessSelect(size, type, model);
-      if (processSelect) {
-        processSelect.disabled = !type;
-        processSelect.value = '';
-        if (type) App.Utils.autoSelectOnlyOption(processSelect);
-      }
-      this.initProcessSelect2();
-    } finally {
-      this._suppressCascade = false;
-    }
-
     return this.handleProcessChange(processSelect ? processSelect.value : '');
   },
 
-  populateProcessSelect(sizeFilter, typeFilter, modelFilter) {
+  populateProcessSelect(sizeFilter, typeFilter, modelFilter, isDisabled = !(sizeFilter && modelFilter && typeFilter), selectedValue = null) {
     const select = document.getElementById('productionProcessId');
     if (!select) return;
 
-    const currentValue = select.value;
+    select.disabled = Boolean(isDisabled);
+
+    if (window.jQuery?.fn?.select2 && window.jQuery(select).data('select2')) {
+      window.jQuery(select).select2('destroy');
+    }
+
     const matches = (App.State.globalProcesses || []).filter(p => p.active)
       .filter(p => !sizeFilter || App.Utils.getSizeFromOutputItemName(p.outputItemName) === sizeFilter)
       .filter(p => !modelFilter || App.Utils.getModelFromOutputItemName(p.outputItemName) === modelFilter)
@@ -1202,8 +1212,15 @@ App.Production = {
     }
 
     select.innerHTML = html;
-    select.value = currentValue;
-    App.Utils.autoSelectOnlyOption(select);
+
+    if (selectedValue !== null) {
+      select.value = selectedValue;
+    } else {
+      select.value = '';
+      if (!isDisabled && typeFilter) App.Utils.autoSelectOnlyOption(select);
+    }
+
+    this.initProcessSelect2();
   },
 
   initProcessSelect2() {
@@ -1265,11 +1282,14 @@ App.Production = {
       const res = await this._fetchProcessComponents(processId);
       if (seq !== undefined && seq !== this._compLoadSeq) return;
       const all = res.success ? (res.data || []) : [];
-      const components = all.filter(c => !c.colorGroup || c.colorGroup === 'COMMON' || App.Utils.sameText(c.colorGroup, colorGroup || ''));
+      const components = all.filter(c => !c.colorGroup || App.Utils.isCommonColorGroup(c.colorGroup) || App.Utils.sameText(c.colorGroup, colorGroup || ''));
       const lotQty = toNumber(document.getElementById('productionQty')?.value) || 0;
       components.forEach(c => this.addComponentRow({
         itemName: c.itemName,
         size: c.size,
+        // Live from Items Master, not the recipe row's own possibly stale
+        // stored value -- see _resolveDisplayNarration.
+        narration: this._resolveDisplayNarration(c.itemName, c.size, c.narration),
         sourceType: c.sourceType,
         qty: lotQty > 0 ? lotQty * c.qtyPerUnit : c.qtyPerUnit,
         qtyPerUnit: c.qtyPerUnit,
@@ -1724,7 +1744,7 @@ App.Production = {
     if (groupSelect) groupSelect.value = '';
 
     const row = $$('#productionColorChecklist .production-color-row')
-      .find(r => r.dataset.group === groupKey && r.dataset.color === name);
+      .find(r => r.dataset.group === groupKey && App.Utils.sameColor(r.dataset.color, name));
     const checkbox = row?.querySelector('.production-color-check');
     if (checkbox) {
       checkbox.checked = true;
@@ -1841,7 +1861,7 @@ App.Production = {
 
     checklistEl.innerHTML = '';
 
-    const multiColorItems = comps.filter(c => c.sourceType === 'POOL' && (!c.colorGroup || c.colorGroup === 'COMMON')
+    const multiColorItems = comps.filter(c => c.sourceType === 'POOL' && (!c.colorGroup || App.Utils.isCommonColorGroup(c.colorGroup))
       && (poolColorMap.get((c.itemName || '').trim().toLowerCase()) || []).length > 1);
 
     const groups = new Map();
@@ -2083,6 +2103,19 @@ App.Production = {
     }
   },
 
+  // Sums qty across every checked color row matching `color` by literal
+  // name, across all axes -- a matrix column is keyed by literal color name
+  // only (unlike the Pool tables, which are physically partitioned
+  // one-table-per-axis), so two independent Color Axes can legitimately
+  // share a color name (see renderColorwiseSummary). Degrades to "this
+  // row's own qty" whenever the name is unique to one axis.
+  _totalQtyForColorName(color) {
+    const colorLower = String(color || '').trim().toLowerCase();
+    return this.getCheckedColorQtys()
+      .filter(cc => String(cc.color || '').trim().toLowerCase() === colorLower)
+      .reduce((sum, cc) => sum + cc.qty, 0);
+  },
+
   onColorQtyChanged(row, isUserEdit = true) {
     this.refreshCommonSuggestedQty();
     this.refreshPayableHint();
@@ -2098,13 +2131,22 @@ App.Production = {
     this.refreshPoolColorGroupCells(color, qty, row.dataset.group);
 
     const colIndex = this.getMatrixColumnIndex(color);
-    if (colIndex !== -1 && !this._isColorCheckedUnderMultipleAxes(color)) {
+    if (colIndex !== -1) {
+      // A matrix column is keyed by literal color name only (unlike the
+      // Pool tables, which are physically partitioned one-table-per-axis)
+      // -- two independent Color Axes can legitimately share a color name
+      // (see renderColorwiseSummary), so this must SUM every checked row
+      // matching that name across all axes, not just the one that just
+      // changed. Summing degrades to "this row's own qty" whenever the
+      // name is unique to one axis (the common case), so it's a strict
+      // generalization, not a behavior change there.
+      const totalQty = this._totalQtyForColorName(color);
       document.querySelectorAll('#productionColorMatrixBody tr').forEach(matrixRow => {
         const cell = matrixRow.children[colIndex];
         const input = cell?.querySelector('.matrix-qty');
         const qtyPerUnit = input?.dataset.qtyPerUnit;
         if (input && qtyPerUnit !== undefined && qtyPerUnit !== '') {
-          input.value = this.formatQty(qty * toNumber(qtyPerUnit));
+          input.value = this.formatQty(totalQty * toNumber(qtyPerUnit));
         }
       });
     }
@@ -2172,7 +2214,7 @@ App.Production = {
 
       const commonPoolItems = new Set(
         comps
-          .filter(c => c.sourceType === 'POOL' && (!c.colorGroup || c.colorGroup === 'COMMON'))
+          .filter(c => c.sourceType === 'POOL' && (!c.colorGroup || App.Utils.isCommonColorGroup(c.colorGroup)))
           .map(c => (c.itemName || '').trim().toLowerCase())
       );
 
@@ -2210,7 +2252,7 @@ App.Production = {
       ]);
       if (seq !== undefined && seq !== this._compLoadSeq) return;
       const all = res.success ? (res.data || []) : [];
-      const commonComps = all.filter(c => !c.colorGroup || c.colorGroup === 'COMMON');
+      const commonComps = all.filter(c => !c.colorGroup || App.Utils.isCommonColorGroup(c.colorGroup));
       const totalQty = this._currentLotTotalQty();
 
       const poolColorsFor = c => poolColorMap.get((c.itemName || '').trim().toLowerCase()) || [];
@@ -2225,6 +2267,9 @@ App.Production = {
         this.addComponentRow({
           itemName: c.itemName,
           size: c.size,
+          // Live from Items Master, not the recipe row's own possibly stale
+          // stored value -- see _resolveDisplayNarration.
+          narration: this._resolveDisplayNarration(c.itemName, c.size, c.narration),
           sourceType: c.sourceType,
           color: singleColor,
           colorScope: singleColor || undefined,
@@ -2249,11 +2294,11 @@ App.Production = {
   // items are excluded -- they have their own multi-color handling.
   _getCommonItemsWithColorOverride(components) {
     const overrideKeys = new Set((components || [])
-      .filter(c => c.colorGroup && c.colorGroup !== 'COMMON' && c.sourceType !== 'POOL')
+      .filter(c => c.colorGroup && !App.Utils.isCommonColorGroup(c.colorGroup) && c.sourceType !== 'POOL')
       .map(c => this._itemSlotKey(this._stripColorSubstring(c.itemName || '', c.colorGroup), c.size))
     );
     return (components || []).filter(c =>
-      (!c.colorGroup || c.colorGroup === 'COMMON') &&
+      (!c.colorGroup || App.Utils.isCommonColorGroup(c.colorGroup)) &&
       c.sourceType !== 'POOL' &&
       overrideKeys.has(this._itemSlotKey(c.itemName, c.size))
     );
@@ -2324,7 +2369,7 @@ App.Production = {
   _sharedItemSlotKeys(components) {
     const groupsByKey = new Map();
     (components || []).forEach(c => {
-      if (!c.colorGroup || c.colorGroup === 'COMMON' || c.sourceType === 'POOL') return;
+      if (!c.colorGroup || App.Utils.isCommonColorGroup(c.colorGroup) || c.sourceType === 'POOL') return;
       const key = this._itemSlotKey(c.itemName, c.size);
       if (!groupsByKey.has(key)) groupsByKey.set(key, new Set());
       groupsByKey.get(key).add(String(c.colorGroup).trim().toLowerCase());
@@ -2432,6 +2477,29 @@ App.Production = {
     return colors.filter(c => tokensLower.has(c.toLowerCase()));
   },
 
+  // The qty-per-unit basis to stamp on one Per-Process Pool Components
+  // CELL (both the initial render in _buildPoolColorGroupTable and a
+  // later-inserted column in syncPoolColorGroupColumns) so
+  // refreshPoolColorGroupCells can keep recomputing that one cell as the
+  // checklist's Qty changes. Edit mode rows (see
+  // populateComponentsConsumedDirect) carry a PER-COLOR ratio in
+  // colorsQtyPerUnit -- this item may have been consumed at a genuinely
+  // different rate for one color than another (rounding, wastage, partial
+  // batches), and using this color's own derived ratio (rather than
+  // whichever color's ratio happened to populate the row's shared
+  // `qtyPerUnit` first) keeps a later edit to THIS color's qty scaling
+  // correctly instead of borrowing a different color's rate. Falls back to
+  // the row's own shared `qtyPerUnit` (a create-mode row's recipe ratio, or
+  // an edit-mode row's recipe-seeded default for a color this lot never
+  // previously recorded any qty for at all -- see the "seed a table for
+  // EVERY pool-color-aware recipe item" block) when no color-specific
+  // ratio exists yet.
+  _poolCellQtyPerUnit(row, color) {
+    if (!row) return undefined;
+    const perColor = row.colorsQtyPerUnit ? row.colorsQtyPerUnit[String(color || '').toLowerCase()] : undefined;
+    return perColor !== undefined ? perColor : row.qtyPerUnit;
+  },
+
   _poolGroupCellValue(mode, row, color, axisKey) {
     if (mode === 'edit') {
       return row.colorsQty ? row.colorsQty[color.toLowerCase()] : undefined;
@@ -2455,10 +2523,11 @@ App.Production = {
     const rowsHtml = rows.map((r, rowIdx) => {
       const rowId = 'prod_pool_group_row_' + Date.now() + '_' + Math.floor(Math.random() * 1000);
       const preSelectedOption = this._buildItemPreselectOption(r.itemName, r.size || '', r.sourceType);
-      const qtyPerUnitAttr = (mode === 'create' && r.qtyPerUnit !== undefined) ? ` data-qty-per-unit="${r.qtyPerUnit}"` : '';
       const cellsHtml = visibleColors.map(col => {
         const qty = this._poolGroupCellValue(mode, r, col, axisKey);
         const display = (qty !== undefined && qty !== null) ? this.formatQty(qty) : '';
+        const cellQtyPerUnit = this._poolCellQtyPerUnit(r, col);
+        const qtyPerUnitAttr = (cellQtyPerUnit !== undefined) ? ` data-qty-per-unit="${cellQtyPerUnit}"` : '';
         return `<td><input type="number" class="form-control text-end matrix-qty pool-group-qty" data-color="${escapeHtml(col)}"${qtyPerUnitAttr} min="0" step="any" value="${display}"></td>`;
       }).join('');
       return `
@@ -2555,7 +2624,16 @@ App.Production = {
           const rowObj = def.rows[Number(tr.dataset.rowIdx)];
           const qty = rowObj ? this._poolGroupCellValue(def.mode, rowObj, matchColor, def.axisKey) : undefined;
           const display = (qty !== undefined && qty !== null) ? this.formatQty(qty) : '';
-          const qtyPerUnitAttr = (def.mode === 'create' && rowObj && rowObj.qtyPerUnit !== undefined) ? ` data-qty-per-unit="${rowObj.qtyPerUnit}"` : '';
+          // Stamped for BOTH modes (see _poolCellQtyPerUnit) -- an edit-mode
+          // row's own per-color ratio (or its recipe-seeded fallback) lets
+          // refreshPoolColorGroupCells keep recomputing this newly-added
+          // column as the checklist's Qty changes, same as every column
+          // already visible when the table first rendered. Previously gated
+          // to 'create' only, which left a color newly checked mid-edit
+          // permanently stuck blank no matter what qty the operator typed
+          // into the checklist.
+          const cellQtyPerUnit = rowObj ? this._poolCellQtyPerUnit(rowObj, matchColor) : undefined;
+          const qtyPerUnitAttr = (cellQtyPerUnit !== undefined) ? ` data-qty-per-unit="${cellQtyPerUnit}"` : '';
           const td = document.createElement('td');
           td.innerHTML = `<input type="number" class="form-control text-end matrix-qty pool-group-qty" data-color="${escapeHtml(matchColor)}"${qtyPerUnitAttr} min="0" step="any" value="${display}">`;
           tr.insertBefore(td, tr.children[insertIdx] || null);
@@ -2728,16 +2806,7 @@ App.Production = {
   getMatrixColumnIndex(color) {
     const headerRow = document.getElementById('productionColorMatrixHeaderRow');
     if (!headerRow) return -1;
-    return Array.from(headerRow.children).findIndex(th => th.dataset.color === color);
-  },
-
-  _isColorCheckedUnderMultipleAxes(color) {
-    const colorLower = String(color || '').toLowerCase();
-    const axisKeys = new Set();
-    this.getCheckedColorQtys().forEach(cc => {
-      if ((cc.color || '').toLowerCase() === colorLower) axisKeys.add(cc.axisKey || '');
-    });
-    return axisKeys.size > 1;
+    return Array.from(headerRow.children).findIndex(th => App.Utils.sameColor(th.dataset.color, color));
   },
 
   _buildMatrixColorCell(isMerged) {
@@ -3064,7 +3133,11 @@ App.Production = {
 
       colors.forEach(color => {
         const colIndex = this.getMatrixColumnIndex(color);
-        const thisColorQty = (this._axisScopedCheckedColorQtys(axisKey).find(c => c.color === color) || {}).qty || 0;
+        // Summed across every axis sharing this literal color name, not just
+        // `axisKey` -- see _totalQtyForColorName. Toggling one axis's color
+        // must not stomp another axis's already-recorded contribution to
+        // the same shared matrix column.
+        const thisColorQty = this._totalQtyForColorName(color);
 
         if (colIndex !== -1) {
           // Token match, not whole-string: a recipe row scoped to
@@ -3082,7 +3155,10 @@ App.Production = {
 
           colorComps.forEach(c => {
             let row = this.findMatrixRowByDisplayName(c.displayName, c.size || '');
-            if (!row) row = this.addMergedMatrixRow({ itemName: c.displayName, size: c.size, narration: c.narration, sourceType: c.sourceType });
+            // Live from Items Master, looked up against the LITERAL item
+            // name/size (c.itemName), not the color-stripped c.displayName
+            // used as the row's own key -- see _resolveDisplayNarration.
+            if (!row) row = this.addMergedMatrixRow({ itemName: c.displayName, size: c.size, sourceType: c.sourceType, narration: this._resolveDisplayNarration(c.itemName, c.size, c.narration) });
             const cell = row.children[colIndex];
             const qty = thisColorQty > 0 ? thisColorQty * c.qtyPerUnit : c.qtyPerUnit;
             this._setMergedCellItem(cell, { itemName: c.itemName, size: c.size, sourceType: c.sourceType }, qty, c.qtyPerUnit);
@@ -3092,7 +3168,8 @@ App.Production = {
           commonOverrideComps.forEach(c => {
             if (overriddenKeys.has(this._itemSlotKey(c.itemName, c.size))) return;
             let row = this.findMatrixRowByDisplayName(c.itemName, c.size || '');
-            if (!row) row = this.addMergedMatrixRow({ itemName: c.itemName, size: c.size, narration: c.narration, sourceType: c.sourceType });
+            // Live from Items Master -- see _resolveDisplayNarration.
+            if (!row) row = this.addMergedMatrixRow({ itemName: c.itemName, size: c.size, sourceType: c.sourceType, narration: this._resolveDisplayNarration(c.itemName, c.size, c.narration) });
             const cell = row.children[colIndex];
             const qty = thisColorQty > 0 ? thisColorQty * c.qtyPerUnit : c.qtyPerUnit;
             this._setMergedCellItem(cell, { itemName: c.itemName, size: c.size, sourceType: c.sourceType }, qty, c.qtyPerUnit);
@@ -3109,20 +3186,24 @@ App.Production = {
   refreshPoolColorGroupCells(color, colorQty, axisKey) {
     const container = document.getElementById('productionPoolColorGroupsContainer');
     if (!container) return;
-    const tokensLower = (color || '').split(' / ').map(t => t.trim().toLowerCase()).filter(Boolean);
     container.querySelectorAll('table.prod-color-table').forEach(table => {
       const tableAxisKey = table.dataset.axisKey || '';
       if (axisKey && tableAxisKey && axisKey !== tableAxisKey) return;
       const checkedColorQtys = this._axisScopedCheckedColorQtys(tableAxisKey);
       table.querySelectorAll('.pool-group-qty').forEach(input => {
-        const inputColorLower = (input.dataset.color || '').toLowerCase();
-        if (!tokensLower.includes(inputColorLower)) return;
+        const inputColorLower = String(input.dataset.color || '').trim().toLowerCase();
+        if (!inputColorLower) return;
         const qtyPerUnit = input.dataset.qtyPerUnit;
         if (qtyPerUnit === undefined || qtyPerUnit === '') return;
-        const total = checkedColorQtys.reduce((sum, cc) => {
+
+        const exactTotal = checkedColorQtys.reduce(
+          (sum, cc) => (String(cc.color || '').trim().toLowerCase() === inputColorLower ? sum + cc.qty : sum), 0);
+
+        const total = exactTotal > 0 ? exactTotal : checkedColorQtys.reduce((sum, cc) => {
           const ccTokens = (cc.color || '').split(' / ').map(t => t.trim().toLowerCase()).filter(Boolean);
           return ccTokens.includes(inputColorLower) ? sum + cc.qty : sum;
         }, 0);
+
         input.value = total > 0 ? this.formatQty(total * toNumber(qtyPerUnit)) : '';
       });
     });
@@ -3200,7 +3281,19 @@ App.Production = {
   // upgraded on the fly: its quantity is split evenly across this lot's
   // colors as a starting point, with a toast telling the operator to
   // adjust and re-save.
-  async populateComponentsConsumedDirect(components, colors) {
+  async populateComponentsConsumedDirect(components, breakdown) {
+    // `breakdown` is a colorBreakdown array -- {color, qty} objects, NOT
+    // color-name strings. filter(Boolean) because an entry can legitimately
+    // reach here with no color name (the same guard the caller applies when
+    // it builds breakdownColors): such an entry can't be matched by any
+    // component's colorGroup and can't be rendered as a column, so it must
+    // not become an `undefined` matrix column. lotTotalQty deliberately
+    // still counts every entry -- it is the lot's total quantity, and
+    // dropping a malformed entry's qty from it would silently change the
+    // COMMON ratios of an already-suspect lot rather than surface it.
+    const colors = (breakdown || []).map(b => b.color).filter(Boolean);
+    const lotTotalQty = (breakdown || []).reduce((sum, b) => sum + (b.countsTowardTotal !== false ? (b.qty || 0) : 0), 0);
+
     this.clearComponentsTable();
     this.clearColorMatrix();
     colors.forEach(c => this.addMatrixColorColumn(c));
@@ -3216,6 +3309,21 @@ App.Production = {
 
     (components || []).forEach(c => {
       const colorGroup = c.colorGroup || 'COMMON';
+
+      let derivedQtyPerUnit = 1;
+      if (App.Utils.isCommonColorGroup(colorGroup)) {
+        derivedQtyPerUnit = lotTotalQty > 0 ? (c.qty / lotTotalQty) : 0;
+      } else {
+        // sameColor, not raw .toLowerCase() === : that crashed outright on a
+        // breakdown entry with no color (see the filter above), and bypassed
+        // the one place color equality is allowed to be decided. sameColor
+        // is null-safe, so a malformed entry now simply fails to match
+        // instead of taking down the whole Edit-Lot reopen.
+        const b = (breakdown || []).find(entry => App.Utils.sameColor(entry.color, colorGroup));
+        const colorQty = b ? b.qty : 0;
+        derivedQtyPerUnit = colorQty > 0 ? (c.qty / colorQty) : 0;
+      }
+
       const isPoolColorAware = c.sourceType === 'POOL'
         && (poolColorMap.get((c.itemName || '').trim().toLowerCase()) || []).length > 1;
 
@@ -3223,16 +3331,35 @@ App.Production = {
         const key = `${(c.itemName || '').toLowerCase()}|${(c.size || '').toLowerCase()}`;
         let entry = poolGroupAccum.get(key);
         if (!entry) {
-          entry = { itemName: c.itemName, size: c.size, narration: c.narration, sourceType: c.sourceType, colorsQty: {} };
+          // colorsQtyPerUnit holds each color's OWN derived ratio (see
+          // _poolCellQtyPerUnit) -- the shared `qtyPerUnit` alongside it is
+          // only ever a fallback for a color this lot has no history for yet
+          // (a brand-new column checked mid-edit), not the value actually
+          // used to redisplay/recompute any color that DOES have its own
+          // entry below.
+          entry = { itemName: c.itemName, size: c.size, narration: c.narration, sourceType: c.sourceType, colorsQty: {}, colorsQtyPerUnit: {}, qtyPerUnit: derivedQtyPerUnit };
           poolGroupAccum.set(key, entry);
+        } else if (entry.qtyPerUnit === undefined) {
+          entry.qtyPerUnit = derivedQtyPerUnit;
         }
 
-        if (colorGroup === 'COMMON') {
+        if (App.Utils.isCommonColorGroup(colorGroup)) {
           upgradedAny = true;
           const perColorQty = colors.length > 0 ? c.qty / colors.length : c.qty;
-          colors.forEach(color => { entry.colorsQty[color.toLowerCase()] = perColorQty; });
+          colors.forEach(color => {
+            entry.colorsQty[color.toLowerCase()] = perColorQty;
+            entry.colorsQtyPerUnit[color.toLowerCase()] = derivedQtyPerUnit;
+          });
+          entry.qtyPerUnit = derivedQtyPerUnit;
         } else {
           entry.colorsQty[colorGroup.toLowerCase()] = c.qty;
+          // This color's OWN ratio (c.qty / this color's own breakdown qty),
+          // not whichever color happened to create `entry` first -- two
+          // colors of the same pool item can legitimately have been
+          // consumed at different rates (rounding, partial batches), and a
+          // shared row-level ratio previously made editing one color's
+          // checklist Qty silently recompute using a DIFFERENT color's rate.
+          entry.colorsQtyPerUnit[colorGroup.toLowerCase()] = derivedQtyPerUnit;
         }
         return;
       }
@@ -3241,7 +3368,7 @@ App.Production = {
         upgradedCommonOverride = true;
         const overriddenColors = new Set(
           (components || [])
-            .filter(o => o.colorGroup && o.colorGroup !== 'COMMON' &&
+            .filter(o => o.colorGroup && !App.Utils.isCommonColorGroup(o.colorGroup) &&
               this._itemSlotKey(this._stripColorSubstring(o.itemName || '', o.colorGroup), o.size) === this._itemSlotKey(c.itemName, c.size))
             .map(o => o.colorGroup)
         );
@@ -3253,7 +3380,7 @@ App.Production = {
           const colIndex = this.getMatrixColumnIndex(col);
           if (colIndex === -1) return;
           const cell = row.children[colIndex];
-          this._setMergedCellItem(cell, { itemName: c.itemName, size: c.size, sourceType: c.sourceType }, perColorQty);
+          this._setMergedCellItem(cell, { itemName: c.itemName, size: c.size, sourceType: c.sourceType }, perColorQty, derivedQtyPerUnit);
         });
         return;
       }
@@ -3273,14 +3400,15 @@ App.Production = {
       // (populateColorMatrixForColors) rendered it correctly.
       const matchedColors = colors.filter(col => this._matchedColorToken(colorGroup, col));
 
-      if (colorGroup === 'COMMON' || matchedColors.length === 0) {
-        const isLockedPoolColor = c.sourceType === 'POOL' && colorGroup !== 'COMMON';
+      if (App.Utils.isCommonColorGroup(colorGroup) || matchedColors.length === 0) {
+        const isLockedPoolColor = c.sourceType === 'POOL' && !App.Utils.isCommonColorGroup(colorGroup);
         this.addComponentRow({
           itemName: c.itemName,
           size: c.size,
           narration: c.narration,
           sourceType: c.sourceType,
           qty: c.qty,
+          qtyPerUnit: derivedQtyPerUnit,
           color: isLockedPoolColor ? colorGroup : c.color,
           colorScope: isLockedPoolColor ? colorGroup : undefined,
           unit: c.unit
@@ -3303,7 +3431,7 @@ App.Production = {
         const colIndex = this.getMatrixColumnIndex(col);
         if (colIndex === -1) return;
         const cell = row.children[colIndex];
-        this._setMergedCellItem(cell, { itemName: c.itemName, size: c.size, sourceType: c.sourceType }, c.qty);
+        this._setMergedCellItem(cell, { itemName: c.itemName, size: c.size, sourceType: c.sourceType }, c.qty, derivedQtyPerUnit);
       });
     });
 
@@ -3315,13 +3443,19 @@ App.Production = {
       const recipeRes = await this._fetchProcessComponents(processId);
       const recipeComps = recipeRes.success ? (recipeRes.data || []) : [];
       recipeComps
-        .filter(c => c.sourceType === 'POOL' && (!c.colorGroup || c.colorGroup === 'COMMON'))
+        .filter(c => c.sourceType === 'POOL' && (!c.colorGroup || App.Utils.isCommonColorGroup(c.colorGroup)))
         .forEach(c => {
           const itemColors = poolColorMap.get((c.itemName || '').trim().toLowerCase()) || [];
           if (itemColors.length <= 1) return;
           const key = `${(c.itemName || '').toLowerCase()}|${(c.size || '').toLowerCase()}`;
           if (!poolGroupAccum.has(key)) {
-            poolGroupAccum.set(key, { itemName: c.itemName, size: c.size, narration: c.narration, sourceType: c.sourceType, colorsQty: {} });
+            // No qty history at all for this item on this lot yet -- fall
+            // back to the recipe's own qtyPerUnit (same basis Create mode
+            // suggests) so a color checked mid-edit still gets a useful
+            // starting estimate via _poolCellQtyPerUnit's row-level
+            // fallback, instead of staying permanently blank until the
+            // operator types directly into the pool cell.
+            poolGroupAccum.set(key, { itemName: c.itemName, size: c.size, narration: c.narration, sourceType: c.sourceType, colorsQty: {}, colorsQtyPerUnit: {}, qtyPerUnit: c.qtyPerUnit });
           }
         });
     }
@@ -3793,6 +3927,8 @@ App.Production = {
     if (colorWrapper) colorWrapper.style.display = 'none';
     const revertColorsBtn = document.getElementById('productionRevertColorsBtn');
     if (revertColorsBtn) revertColorsBtn.style.display = 'none';
+    const comboPreview = document.getElementById('productionColorCombinationPreview');
+    if (comboPreview) { comboPreview.style.display = 'none'; comboPreview.innerText = ''; }
 
     const form = document.getElementById('productionForm');
     if (form) form.reset();
@@ -3810,13 +3946,8 @@ App.Production = {
     this.initContractorSelect2('');
     document.getElementById('productionPayableHint').innerText = '';
 
-    this.populateSizeSelect();
+    this.populateSizeSelect(false);
     const sizeSelect = document.getElementById('productionSize');
-    if (sizeSelect) {
-      sizeSelect.value = '';
-      if (window.jQuery?.fn?.select2 && window.jQuery(sizeSelect).data('select2')) window.jQuery(sizeSelect).trigger('change.select2');
-      App.Utils.autoSelectOnlyOption(sizeSelect);
-    }
     await this.handleSizeChange(sizeSelect ? sizeSelect.value : '');
     document.getElementById('productionLotNumber').value = '';
 
@@ -3832,8 +3963,6 @@ App.Production = {
 
     const modalEl = document.getElementById('editProductionModal');
     if (modalEl && typeof bootstrap !== 'undefined') {
-      const processSelect = document.getElementById('productionProcessId');
-      if (processSelect) processSelect.disabled = false;
       bootstrap.Modal.getOrCreateInstance(modalEl).show();
     }
   },
@@ -3852,14 +3981,22 @@ App.Production = {
 
     document.getElementById('productionRowIdx').value = p.rowIdx;
 
+    // Normalize date string to local YYYY-MM-DD input value
     let inputDateStr = todayIso();
-    if (p.date && p.date.includes('/')) {
+    if (p.dateRaw) {
+      const d = new Date(p.dateRaw);
+      if (!isNaN(d)) {
+        const localY = d.getFullYear();
+        const localM = String(d.getMonth() + 1).padStart(2, '0');
+        const localD = String(d.getDate()).padStart(2, '0');
+        inputDateStr = `${localY}-${localM}-${localD}`;
+      }
+    } else if (p.date && p.date.includes('/')) {
       const [day, month, year] = p.date.split('/');
       inputDateStr = `${year}-${month.padStart(2, '0')}-${day.padStart(2, '0')}`;
-    } else if (p.dateRaw) {
-      inputDateStr = p.dateRaw.split('T')[0];
     }
     document.getElementById('productionDate').value = inputDateStr;
+    document.getElementById('productionDate').disabled = false;
 
     document.getElementById('productionAssignedBy').value = p.assignedBy;
     this.initContractorSelect2(p.assignedTo);
@@ -3873,37 +4010,10 @@ App.Production = {
 
     this._suppressCascade = true;
     try {
-      this.populateSizeSelect();
-      const sizeSelect = document.getElementById('productionSize');
-      if (sizeSelect) {
-        sizeSelect.value = editSize;
-        sizeSelect.disabled = true;
-        if (window.jQuery?.fn?.select2 && window.jQuery(sizeSelect).data('select2')) window.jQuery(sizeSelect).trigger('change.select2');
-      }
-
-      this.populateModelSelect(editSize);
-      const modelSelect = document.getElementById('productionModel');
-      if (modelSelect) {
-        modelSelect.value = editModel;
-        modelSelect.disabled = true;
-        if (window.jQuery?.fn?.select2 && window.jQuery(modelSelect).data('select2')) window.jQuery(modelSelect).trigger('change.select2');
-      }
-
-      this.populateProcessTypeSelect(editSize, editModel);
-      const typeSelect = document.getElementById('productionProcessType');
-      if (typeSelect) {
-        typeSelect.value = editType;
-        typeSelect.disabled = true;
-        if (window.jQuery?.fn?.select2 && window.jQuery(typeSelect).data('select2')) window.jQuery(typeSelect).trigger('change.select2');
-      }
-
-      this.populateProcessSelect(editSize, editType, editModel);
-      const processSelect = document.getElementById('productionProcessId');
-      if (processSelect) {
-        processSelect.value = p.processId;
-        processSelect.disabled = true;
-      }
-      this.initProcessSelect2();
+      this.populateSizeSelect(true, editSize);
+      this.populateModelSelect(editSize, true, editModel);
+      this.populateProcessTypeSelect(editSize, editModel, true, editType);
+      this.populateProcessSelect(editSize, editType, editModel, true, p.processId);
     } finally {
       this._suppressCascade = false;
     }
@@ -3969,8 +4079,8 @@ App.Production = {
       const claimedRows = new Set();
       const findChecklistRow = (color, axisKey) => {
         const rows = $$('#productionColorChecklist .production-color-row').filter(r => !claimedRows.has(r));
-        let row = axisKey ? rows.find(r => r.dataset.group === axisKey && r.dataset.color === color) : null;
-        if (!row) row = rows.find(r => r.dataset.color === color);
+        let row = axisKey ? rows.find(r => r.dataset.group === axisKey && App.Utils.sameColor(r.dataset.color, color)) : null;
+        if (!row) row = rows.find(r => App.Utils.sameColor(r.dataset.color, color));
         return row || null;
       };
 
@@ -3988,7 +4098,7 @@ App.Production = {
             const isPrimaryFlag = entry.countsTowardTotal !== false;
             checklistEl.insertAdjacentHTML('beforeend', this._colorRowHtml(color, 'custom', true, isPrimaryFlag));
             colorRow = $$('#productionColorChecklist .production-color-row')
-              .find(r => r.dataset.group === 'custom' && r.dataset.color === color && !claimedRows.has(r));
+              .find(r => r.dataset.group === 'custom' && App.Utils.sameColor(r.dataset.color, color) && !claimedRows.has(r));
           }
         }
 
@@ -3999,9 +4109,16 @@ App.Production = {
         if (qtyInput) { qtyInput.disabled = false; qtyInput.value = qty; }
       });
       this._syncColorGroupMasterCheckbox('custom');
+      // The rows above were checked/quantified by setting checkbox.checked
+      // and qtyInput.value directly (not via handleColorCheckToggle/
+      // onColorQtyChanged), so refreshCommonSuggestedQty's own preview
+      // update never fires on this initial load path -- call it directly
+      // so a reopened multi-axis lot shows its combination immediately
+      // instead of only after the operator's first checklist edit.
+      this._updateColorCombinationPreview();
 
       if (p.componentsConsumed && p.componentsConsumed.length > 0) {
-        await this.populateComponentsConsumedDirect(p.componentsConsumed, breakdown.map(b => b.color));
+        await this.populateComponentsConsumedDirect(p.componentsConsumed, breakdown);
       } else {
         // No saved consumption recorded (shouldn't normally happen) --
         // fall back to recipe defaults for the saved colors.
@@ -5277,13 +5394,14 @@ document.addEventListener('DOMContentLoaded', function () {
 
           // Stay open and re-arm for the next lot instead of closing --
           // operators log many lots back-to-back.
+          // NOTE: resetCreateForm must run AFTER the fieldset is re-enabled,
+          // not inside a disabled fieldset — Select2 reads .prop('disabled')
+          // at init time and caches the disabled state. If initialized while
+          // the parent <fieldset> is disabled, Select2 renders disabled and
+          // never recovers when the fieldset is later re-enabled.
           const fieldset = document.getElementById('productionFormFieldset');
-          if (fieldset) fieldset.disabled = true;
-          try {
-            await App.Production.resetCreateForm();
-          } finally {
-            if (fieldset) fieldset.disabled = false;
-          }
+          if (fieldset) fieldset.disabled = false;
+          await App.Production.resetCreateForm();
           document.getElementById('productionSize')?.focus();
         } else {
           // Edit mode "Save": patch just this one row's data + <tr> in
@@ -5311,7 +5429,9 @@ document.addEventListener('DOMContentLoaded', function () {
           }
         }
       }
-      App.Utils.showToast(response.message, !response.success);
+      App.Utils.showToast(response.message, !response.success, response.success
+        ? { type: 'production', value: response.data?.row?.rowIdx || savedRowIdx }
+        : null);
     } catch (err) {
       App.Utils.showToast(err.message || 'Failed to save production log', true);
     } finally {

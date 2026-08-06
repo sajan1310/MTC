@@ -545,8 +545,18 @@ def save_production(conn, cur, form_data):
             breakdown_colors_lower.add(c["color"].lower())
             for token in c["color"].split(_COLOR_COMBO_DELIMITER):
                 breakdown_colors_lower.add(token.strip().lower())
+        # process_service._is_common_color_group, not a bare == _COLOR_GROUP_
+        # COMMON compare: a COMMON component's colorGroup is only guaranteed
+        # to be that exact spelling when this save's own blank-defaulting
+        # (above) set it -- a component whose colorGroup was submitted
+        # non-blank as "Common"/"common" (typed that way on the recipe) is
+        # just as much the sentinel, and a case-sensitive compare would drop
+        # it out of clean_components entirely (a real consumption silently
+        # never written, understating Warehouse Pool Pass 2's debit for it).
+        # Ports GAS e37529e's isCommonColorGroup fix.
         clean_components = [
-            c for c in clean_components if c["colorGroup"] == _COLOR_GROUP_COMMON or c["colorGroup"].lower() in breakdown_colors_lower
+            c for c in clean_components
+            if process_service._is_common_color_group(c["colorGroup"]) or c["colorGroup"].lower() in breakdown_colors_lower
         ]
 
     if not clean_components:

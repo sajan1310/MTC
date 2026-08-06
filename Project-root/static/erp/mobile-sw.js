@@ -18,7 +18,8 @@
 // a worker.
 importScripts('/static/erp/offline-cache.js', '/static/erp/api.js');
 
-const CACHE_NAME = 'erp-mobile-shell-v2';
+const CACHE_NAME = 'erp-mobile-shell-v4';
+
 
 const PRECACHE_URLS = [
   '/erp/mobile/offline.html',

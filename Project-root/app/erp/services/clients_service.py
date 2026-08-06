@@ -137,7 +137,7 @@ def _client_in_use_message(cur, client_name: str):
         if cur.fetchone():
             return f'Cannot delete "{client_name}": referenced by PI/Estimate records.'
 
-    if table := config_maps.TABLE_NAMES.get("DISPATCH"):
+    if table := config_maps.TABLE_NAMES.get("DISPATCH_HEADERS"):
         cur.execute(
             f"SELECT 1 FROM {table} WHERE deleted_at IS NULL AND lower(client_name) = lower(%s) LIMIT 1",
             (name,),
@@ -157,7 +157,7 @@ def _rename_client_everywhere(cur, old_name: str, new_name: str) -> None:
     if headers_table := config_maps.TABLE_NAMES.get("CLIENT_ORDERS_HEADERS"):
         rename_utils.rename_in_column(cur, headers_table, "client_name", old, new)
 
-    if dispatch_table := config_maps.TABLE_NAMES.get("DISPATCH"):
+    if dispatch_table := config_maps.TABLE_NAMES.get("DISPATCH_HEADERS"):
         rename_utils.rename_in_column(cur, dispatch_table, "client_name", old, new)
 
 
@@ -393,7 +393,7 @@ def _push_order_lines_to_production(cur, order_number: str, client_name: str, li
         recipe_components = process_service.get_process_components_data(process["processId"])["data"]
         components_consumed = []
         for c in recipe_components:
-            if c["colorGroup"] != _COLOR_GROUP_COMMON:
+            if not process_service._is_common_color_group(c["colorGroup"]):
                 continue
             item_name = c["itemName"]
             qty = (float(c.get("qtyPerUnit") or 0)) * line["qty"]
@@ -600,7 +600,7 @@ def delete_client_order(conn, cur, order_number):
     if not order_clean:
         raise ValueError("Order number is required.")
 
-    if table := config_maps.TABLE_NAMES.get("DISPATCH"):
+    if table := config_maps.TABLE_NAMES.get("DISPATCH_HEADERS"):
         cur.execute(
             f"SELECT 1 FROM {table} WHERE deleted_at IS NULL AND lower(order_number) = lower(%s) LIMIT 1",
             (order_clean,),
@@ -644,7 +644,7 @@ def delete_client_orders_bulk(conn, cur, order_numbers):
 
     in_use: set = set()
 
-    if table := config_maps.TABLE_NAMES.get("DISPATCH"):
+    if table := config_maps.TABLE_NAMES.get("DISPATCH_HEADERS"):
         cur.execute(f"SELECT DISTINCT order_number FROM {table} WHERE deleted_at IS NULL AND order_number IS NOT NULL AND order_number != ''")
         used = {str(r["order_number"]).strip().lower() for r in cur.fetchall()}
         for o in requested:

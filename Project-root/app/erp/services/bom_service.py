@@ -213,22 +213,25 @@ def _get_product_ids_in_use(cur, product_ids: list) -> set:
 
     col = config_maps.to_snake_case("productId")
 
-    for sheet_key in ("PRODUCTION", "DISPATCH"):
-        table = config_maps.TABLE_NAMES.get(sheet_key)
-        if not table:
-            continue
+    table = config_maps.TABLE_NAMES.get("PRODUCTION")
+    if table:
         cur.execute(f"SELECT DISTINCT {col} AS product_id FROM {table} WHERE deleted_at IS NULL")
         for row in cur.fetchall():
             pid = str(row["product_id"] or "").strip().lower()
             if pid in requested:
                 in_use.add(pid)
 
-    # Client Orders is header+lines split (product_id is a line-level
-    # column) -- a join against the header for deleted_at, not the flat
-    # single-table loop above.
-    lines_table = config_maps.TABLE_NAMES.get("CLIENT_ORDERS_LINES")
-    headers_table = config_maps.TABLE_NAMES.get("CLIENT_ORDERS_HEADERS")
-    if lines_table and headers_table:
+    # Client Orders and Dispatch are both header+lines split (product_id is
+    # a line-level column) -- a join against the header for deleted_at, not
+    # a flat single-table lookup.
+    for lines_key, headers_key in (
+        ("CLIENT_ORDERS_LINES", "CLIENT_ORDERS_HEADERS"),
+        ("DISPATCH_LINES", "DISPATCH_HEADERS"),
+    ):
+        lines_table = config_maps.TABLE_NAMES.get(lines_key)
+        headers_table = config_maps.TABLE_NAMES.get(headers_key)
+        if not (lines_table and headers_table):
+            continue
         cur.execute(
             f"SELECT DISTINCT l.{col} AS product_id FROM {lines_table} l "
             f"JOIN {headers_table} h ON h.id = l.header_id WHERE h.deleted_at IS NULL"
@@ -768,7 +771,7 @@ def get_bom_process_components_drift():
             comps = resp.get("data") or []
             recipe = {}
             for c in comps:
-                if c["sourceType"] != "ITEM" or c["colorGroup"] != config_maps.COMPONENT_COLOR_GROUP_COMMON:
+                if c["sourceType"] != "ITEM" or not process_service._is_common_color_group(c["colorGroup"]):
                     continue
                 recipe[f'{c["itemName"].lower()}|{(c["size"] or "").lower()}'] = c["qtyPerUnit"]
             recipe_cache[key] = recipe

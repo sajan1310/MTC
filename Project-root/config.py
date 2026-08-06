@@ -23,6 +23,7 @@ class Config:
 
     # Security
     SECRET_KEY = os.getenv("SECRET_KEY") or "dev-insecure-key"
+    WTF_CSRF_TIME_LIMIT = None  # Session-lifetime bound CSRF token for SPA/RPC calls
 
     # OAuth
     GOOGLE_CLIENT_ID = os.getenv("GOOGLE_CLIENT_ID")

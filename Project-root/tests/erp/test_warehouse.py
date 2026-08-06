@@ -15,6 +15,8 @@ from __future__ import annotations
 
 import uuid
 
+import database
+
 
 def _rpc(client, method, args=None, mutation=False):
     headers = {"X-Mutation-Id": str(uuid.uuid4())} if mutation else {}
@@ -283,6 +285,93 @@ def test_process_output_item_name_rename_cascades_into_warehouse_pool_opening(er
     assert not any(o["outputItemName"] == old_output_name for o in listed)
 
 
+def test_process_output_item_name_rename_cascades_into_dispatch(erp_client):
+    """An untagged final-stage lot is dispatched under its Output Item
+    Name (see dispatch_service._compute_ready_to_dispatch_map), which
+    _recalculate_warehouse_pool's Pass 3 matches back against
+    bucket["outputItemName"] to debit the pool. A rename that skips
+    erp.dispatch leaves that debit keyed to a name no bucket answers to
+    anymore, so it silently vanishes and every already-shipped unit
+    reappears as Ready to Dispatch. Ports module_process.js's 6a22f0e fix
+    for the Dispatch leg of _renamePoolOutputItemNameEverywhere.
+    """
+    payload, process_id = _save_process(erp_client, isFinalStage=True)
+    old_output_name = payload["outputItemName"]
+    new_output_name = _unique_name("RenamedFinalOutput")
+
+    _rpc(erp_client, "saveWarehousePoolOpening", [{"processId": process_id, "qty": 10}], mutation=True)
+
+    dispatch = _rpc(
+        erp_client,
+        "saveDispatch",
+        [{"lines": [{"productId": old_output_name, "productName": old_output_name, "qty": 4}]}],
+        mutation=True,
+    )
+    assert dispatch.get_json()["success"] is True, dispatch.get_json()["message"]
+
+    pool_before = _rpc(erp_client, "getWarehousePoolData").get_json()["data"]
+    bucket_before = next(b for b in pool_before if b["outputItemName"] == old_output_name)
+    assert bucket_before["consumedQty"] == 4
+    assert bucket_before["availableQty"] == 6
+
+    edit_payload = dict(payload, processId=process_id, outputItemName=new_output_name)
+    rename = _rpc(erp_client, "saveProcess", [edit_payload], mutation=True)
+    assert rename.get_json()["success"] is True
+
+    dispatched = _rpc(erp_client, "getDispatchData").get_json()["data"]
+    renamed_row = next(d for d in dispatched if d["productId"] == new_output_name)
+    assert renamed_row["productName"] == new_output_name
+    assert not any(d["productId"] == old_output_name for d in dispatched)
+
+    pool_after = _rpc(erp_client, "getWarehousePoolData").get_json()["data"]
+    bucket_after = next(b for b in pool_after if b["outputItemName"] == new_output_name)
+    # The dispatch debit is still attributed to this bucket under the new
+    # name -- not silently lost (which would show availableQty == 10, i.e.
+    # the shipped 4 units reappearing as Ready to Dispatch).
+    assert bucket_after["consumedQty"] == 4
+    assert bucket_after["availableQty"] == 6
+    assert not any(b["outputItemName"] == old_output_name for b in pool_after)
+
+
+def test_process_output_item_name_rename_leaves_dispatch_alone_when_also_a_bom_product_id(erp_app, erp_client):
+    """A Dispatch row's Product ID is either a BOM Product ID (a tagged
+    final-stage lot) or an Output Item Name (an untagged one) -- the
+    column doesn't record which. A rename must not rewrite a Dispatch row
+    that is really a Product Tag reference which merely happens to share
+    the renamed string with an unrelated process's Output Item Name.
+    """
+    payload, process_id = _save_process(erp_client, isFinalStage=True)
+    shared_name = payload["outputItemName"]
+    new_output_name = _unique_name("RenamedFinalOutput2")
+
+    _rpc(erp_client, "saveWarehousePoolOpening", [{"processId": process_id, "qty": 10}], mutation=True)
+
+    # A real BOM Product whose Product ID happens to collide with this
+    # process's Output Item Name -- saveBOM auto-generates PRD-N ids, so
+    # this is inserted directly to control the exact colliding string.
+    with erp_app.app_context(), database.get_conn() as (_conn, cur):
+        cur.execute(
+            "INSERT INTO erp.bom_products (product_id, product_name, sequence) VALUES (%s, %s, 1)",
+            (shared_name, "Unrelated BOM Product"),
+        )
+
+    dispatch = _rpc(
+        erp_client,
+        "saveDispatch",
+        [{"lines": [{"productId": shared_name, "productName": "Unrelated BOM Product", "qty": 2}]}],
+        mutation=True,
+    )
+    assert dispatch.get_json()["success"] is True, dispatch.get_json()["message"]
+
+    edit_payload = dict(payload, processId=process_id, outputItemName=new_output_name)
+    rename = _rpc(erp_client, "saveProcess", [edit_payload], mutation=True)
+    assert rename.get_json()["success"] is True
+
+    dispatched = _rpc(erp_client, "getDispatchData").get_json()["data"]
+    untouched = next(d for d in dispatched if d["productName"] == "Unrelated BOM Product")
+    assert untouched["productId"] == shared_name
+
+
 def test_composite_bucket_credit_combines_two_independent_axes(erp_client):
     """A lot with exactly one primary-axis entry and at most one
     independent non-primary entry credits ONE combined bucket
@@ -377,7 +466,15 @@ def test_composite_bucket_debit_resolves_single_token_to_composite(erp_client):
     )
 
     # Downstream recipe scopes a component to just the "Black" token, not
-    # the full composite "Black / Red" string.
+    # the full composite "Black / Red" string. That same POOL row also
+    # makes combo's output a color axis of `final`'s own recipe (GAS
+    # 1288076's _poolItemIsColorAxis: combo has settled into exactly ONE
+    # color so far, but that color is itself a composite, so it still
+    # counts -- excluding it would truncate the chain). `final`'s own lot
+    # color is therefore keyed to that axis's real value, "Black / Red";
+    # the token-vs-composite resolution under test here is entirely on the
+    # componentsConsumed side (colorGroup "Black" resolving against the
+    # live "Black / Red" bucket), not the lot's own colorBreakdown.
     _final_payload, final_id = _save_process(
         erp_client,
         components=[
@@ -392,7 +489,7 @@ def test_composite_bucket_debit_resolves_single_token_to_composite(erp_client):
                 "processId": final_id,
                 "assignedTo": "Worker A",
                 "status": "Completed",
-                "colorBreakdown": [{"color": "Black", "qty": 4}],
+                "colorBreakdown": [{"color": "Black / Red", "qty": 4}],
                 "componentsConsumed": [
                     {"itemName": combo_payload["outputItemName"], "qty": 4, "sourceType": "POOL", "colorGroup": "Black"}
                 ],

@@ -66,7 +66,9 @@ const Api = (() => {
       let message = `Backend method "${method}" failed (HTTP ${res.status}).`;
       try {
         const body = await res.json();
-        if (body && body.message) message = body.message;
+        if (body && (body.message || body.error)) {
+          message = body.message || body.error;
+        }
       } catch (e) { /* non-JSON error body -- keep the generic message */ }
       const err = new Error(message);
       err.isHttpError = true;
@@ -176,6 +178,9 @@ function formatItemsPreview(items) {
     .map(i =>
       typeof i === 'object' && i !== null
         ? `${escapeHtml(i.name)}${i.size ? ` [${escapeHtml(i.size)}]` : ''} (${escapeHtml(i.qty)} ${escapeHtml(i.unit || 'Pcs')})` +
+          // Only Labor Job Bill items carry this field -- undefined for
+          // Goods Bill/PO/Return items, so this is a no-op for them.
+          (i.color ? ` <span class="badge bg-info-subtle text-info-emphasis border border-info-subtle">${escapeHtml(i.color)}</span>` : '') +
           (i.affectsStock === false ? ' <span class="badge bg-warning text-dark">Ledger only</span>' : '')
         : escapeHtml(i)
     )

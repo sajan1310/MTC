@@ -281,7 +281,7 @@ def test_dashboard_dispatch_trend_covers_30_days(erp_app, erp_client):
     product_name, product_id = _save_bom_product(erp_client, token)
     _payload, process_id = _save_process(erp_client, isFinalStage=True)
     _complete_production_lot(erp_client, process_id, product_id, 20)
-    _rpc(erp_client, "saveDispatch", [{"productId": product_id, "productName": product_name, "qty": 3}], mutation=True)
+    _rpc(erp_client, "saveDispatch", [{"lines": [{"productId": product_id, "productName": product_name, "qty": 3}]}], mutation=True)
 
     dash = _rpc(erp_client, "getDashboardData").get_json()["data"]
     trend = dash["dispatchTrend"]
@@ -314,7 +314,7 @@ def test_mobile_dashboard_todays_dispatch_count(erp_app, erp_client):
     product_name, product_id = _save_bom_product(erp_client, token)
     _payload, process_id = _save_process(erp_client, isFinalStage=True)
     _complete_production_lot(erp_client, process_id, product_id, 5)
-    _rpc(erp_client, "saveDispatch", [{"productId": product_id, "productName": product_name, "qty": 2}], mutation=True)
+    _rpc(erp_client, "saveDispatch", [{"lines": [{"productId": product_id, "productName": product_name, "qty": 2}]}], mutation=True)
 
     after = _rpc(erp_client, "getMobileDashboard").get_json()["data"]["todaysDispatchCount"]
     assert after == before + 1

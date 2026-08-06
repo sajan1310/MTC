@@ -85,7 +85,7 @@ def get_or_create_user(user_info):
                 (name, email, "pending_approval", picture),
             )
             new_user_row = cur.fetchone()
-            conn.commit()
+            # Note: get_conn() context manager commits on successful exit
             return User(new_user_row), True
     except Exception as e:
         current_app.logger.error(f"Error in get_or_create_user: {e}")

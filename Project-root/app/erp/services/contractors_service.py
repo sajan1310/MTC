@@ -118,7 +118,7 @@ def _contractor_in_use_message(cur, contractor_name: str):
         if cur.fetchone():
             return f'Cannot delete "{contractor_name}": referenced by Production lots.'
 
-    if table := config_maps.TABLE_NAMES.get("DISPATCH"):
+    if table := config_maps.TABLE_NAMES.get("DISPATCH_HEADERS"):
         col = config_maps.to_snake_case("logisticsContractor")
         cur.execute(f"SELECT 1 FROM {table} WHERE deleted_at IS NULL AND lower({col}) = lower(%s) LIMIT 1", (name,))
         if cur.fetchone():
@@ -149,7 +149,7 @@ def _rename_contractor_everywhere(cur, old_name: str, new_name: str) -> None:
     if table := config_maps.TABLE_NAMES.get("PRODUCTION"):
         rename_utils.rename_in_column(cur, table, config_maps.to_snake_case("assignedTo"), old, new)
 
-    if table := config_maps.TABLE_NAMES.get("DISPATCH"):
+    if table := config_maps.TABLE_NAMES.get("DISPATCH_HEADERS"):
         rename_utils.rename_in_column(cur, table, config_maps.to_snake_case("logisticsContractor"), old, new)
 
     # Display-only "sourced from" snapshot on a Product's Additional Cost
@@ -174,14 +174,17 @@ def _get_contractor_rate(cur, contractor_name: str, process_name: str) -> float:
 
 
 def _get_dispatch_logistics_payable_rows(cur, contractor_name_filter: str = None) -> list:
-    """Dispatch rows with a recorded Logistics Contractor + positive
-    Logistics Cost -- the "Dispatch / Logistics" virtual process category's
-    payable entries. Guarded via TABLE_NAMES: DISPATCH isn't registered
-    yet, so this is a genuine no-op today, activating automatically once
-    it lands.
+    """Dispatch lines with a recorded (header-level) Logistics Contractor +
+    positive (line-level) Logistics Cost -- the "Dispatch / Logistics"
+    virtual process category's payable entries. One row per LINE, same
+    granularity the flat table used to give (each product's own shipment is
+    its own payable entry) -- Logistics Contractor/rate are header-level
+    (one snapshot per bill), Qty/Logistics Cost are line-level (migration
+    023), so this is a join, not a flat single-table lookup.
     """
-    table = config_maps.TABLE_NAMES.get("DISPATCH")
-    if not table:
+    headers_table = config_maps.TABLE_NAMES.get("DISPATCH_HEADERS")
+    lines_table = config_maps.TABLE_NAMES.get("DISPATCH_LINES")
+    if not (headers_table and lines_table):
         return []
 
     contractor_col = config_maps.to_snake_case("logisticsContractor")
@@ -192,15 +195,16 @@ def _get_dispatch_logistics_payable_rows(cur, contractor_name_filter: str = None
     product_col = config_maps.to_snake_case("productName")
 
     sql = (
-        f"SELECT {date_col} AS dispatch_date, {contractor_col} AS contractor_name, {qty_col} AS qty, "
-        f"{cost_col} AS payable, {number_col} AS dispatch_number, {product_col} AS product_name "
-        f"FROM {table} WHERE deleted_at IS NULL AND {contractor_col} IS NOT NULL AND {contractor_col} != '' "
-        f"AND {cost_col} > 0"
+        f"SELECT h.{date_col} AS dispatch_date, h.{contractor_col} AS contractor_name, l.{qty_col} AS qty, "
+        f"l.{cost_col} AS payable, h.{number_col} AS dispatch_number, l.{product_col} AS product_name "
+        f"FROM {lines_table} l JOIN {headers_table} h ON h.id = l.header_id "
+        f"WHERE h.deleted_at IS NULL AND h.{contractor_col} IS NOT NULL AND h.{contractor_col} != '' "
+        f"AND l.{cost_col} > 0"
     )
     params = []
     filter_name = str(contractor_name_filter or "").strip()
     if filter_name:
-        sql += f" AND lower({contractor_col}) = lower(%s)"
+        sql += f" AND lower(h.{contractor_col}) = lower(%s)"
         params.append(filter_name)
 
     cur.execute(sql, params)

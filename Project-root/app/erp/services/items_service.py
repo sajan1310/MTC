@@ -723,7 +723,12 @@ def save_item(conn, cur, form_data):
             cur, "ensure", {"name": new_name, "size": new_size, "initialStock": initial_stock}
         )
 
-    message = "Item updated successfully." if is_edit else "Item added successfully."
+    # Include the item's identity in the toast so the user can tell which row
+    # was affected -- plain "Item updated successfully." was ambiguous on a
+    # page with a freshly-patched list of many items (reference: module_items.js
+    # saveItem, commit e37529e).
+    item_label = f'"{new_name}"' + (f" ({new_size})" if new_size else "")
+    message = f"Item {item_label} updated successfully." if is_edit else f"Item {item_label} added successfully."
 
     # Read this item's own just-written row back so the client can patch it
     # into an already-loaded list in place instead of a full reload.

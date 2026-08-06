@@ -417,7 +417,7 @@ def save_po(conn, cur, form_data):
 
     _auto_extract_from_po(cur, vendor, contact, items, po_number, po_date)
 
-    message = f"PO updated successfully to #{po_number}." if is_edit else f"PO #{po_number} created successfully."
+    message = f"PO #{po_number} ({vendor}) updated successfully." if is_edit else f"PO #{po_number} ({vendor}) created successfully."
 
     # Read this PO's own just-written rows back so the client can patch it
     # into an already-loaded list in place instead of a full reload.

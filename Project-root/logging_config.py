@@ -177,8 +177,12 @@ def log_request_info(app):
 
     @app.after_request
     def after_request(response):
-        # Calculate request duration
-        duration = time.time() - g.start_time
+        # Calculate request duration; guard against missing start_time
+        # (e.g. 404 for an unregistered URL where before_request never fires)
+        start_time = getattr(g, "start_time", None)
+        if start_time is None:
+            return response
+        duration = time.time() - start_time
 
         # Log response details
         app.logger.info(

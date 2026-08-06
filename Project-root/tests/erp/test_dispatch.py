@@ -1,6 +1,13 @@
 """Dispatch RPC tests, ported behavior from Apps_Script/module_dispatch.js
 -- opens Phase 4.
 
+Header+lines (migration 023): saveDispatch now takes a `lines` array
+instead of a single productId/productName/qty, and edit-identity is
+`existingDispatchNumber` (matching PO/Bill's own convention) instead of a
+flat row's `rowIdx`. Delete is header-level, guarded by an item-count +
+total-qty fingerprint of the whole bill (`expectedItemCount`/
+`expectedTotalQty`) instead of a single row's qty.
+
 Also proves the three "activates automatically" cascades/guards that were
 already-shipped guarded stubs before this round: Warehouse Pool's Pass 3
 (finished-goods debit) actually running, a Dispatch logistics payable
@@ -88,6 +95,16 @@ def _complete_production_lot(client, process_id, product_id, qty, contractor="Wo
     return body
 
 
+def _save_dispatch(client, lines, **header_overrides):
+    """Convenience wrapper: `lines` is a list of {productId, productName,
+    qty, [rate]} dicts. Mirrors what dispatch.js's serializeDispatchLines()
+    hands the server.
+    """
+    payload = {"lines": lines}
+    payload.update(header_overrides)
+    return _rpc(client, "saveDispatch", [payload], mutation=True)
+
+
 def test_get_ready_to_dispatch_data_returns_success_envelope(erp_client):
     resp = _rpc(erp_client, "getReadyToDispatchData")
     assert resp.status_code == 200
@@ -135,21 +152,26 @@ def test_ready_to_dispatch_non_final_stage_stays_invisible(erp_client):
     assert not any(r["productId"] == payload["outputItemName"] for r in listed)
 
 
-def test_save_dispatch_requires_product(erp_client):
-    resp = _rpc(erp_client, "saveDispatch", [{"qty": 5}], mutation=True)
+def test_save_dispatch_rejects_zero_lines(erp_client):
+    """An empty (or entirely-invalid, e.g. missing product/qty) `lines`
+    array is rejected as a whole -- matches module_dispatch.js's own
+    line-cleaning: a bad LINE is dropped silently, only a save with ZERO
+    valid lines left is an error.
+    """
+    resp = _save_dispatch(erp_client, [{"qty": 5}])  # no productId/productName -> dropped
     body = resp.get_json()
     assert body["success"] is False
-    assert "Product ID and Product Name are required" in body["message"]
+    assert "at least one valid item" in body["message"]
 
 
 def test_save_dispatch_rejects_zero_qty(erp_app, erp_client):
     token = _get_bom_token(erp_app, erp_client)
     product_name, product_id = _save_bom_product(erp_client, token)
 
-    resp = _rpc(erp_client, "saveDispatch", [{"productId": product_id, "productName": product_name, "qty": 0}], mutation=True)
+    resp = _save_dispatch(erp_client, [{"productId": product_id, "productName": product_name, "qty": 0}])
     body = resp.get_json()
     assert body["success"] is False
-    assert "greater than zero" in body["message"]
+    assert "at least one valid item" in body["message"]
 
 
 def test_save_dispatch_blocks_over_dispatch(erp_app, erp_client):
@@ -159,7 +181,7 @@ def test_save_dispatch_blocks_over_dispatch(erp_app, erp_client):
     _payload, process_id = _save_process(erp_client, isFinalStage=True)
     _complete_production_lot(erp_client, process_id, product_id, 5)
 
-    resp = _rpc(erp_client, "saveDispatch", [{"productId": product_id, "productName": product_name, "qty": 10}], mutation=True)
+    resp = _save_dispatch(erp_client, [{"productId": product_id, "productName": product_name, "qty": 10}])
     body = resp.get_json()
     assert body["success"] is False
     assert "Ready to Dispatch" in body["message"]
@@ -172,7 +194,7 @@ def test_save_dispatch_debits_warehouse_pool(erp_app, erp_client):
     _payload, process_id = _save_process(erp_client, isFinalStage=True)
     _complete_production_lot(erp_client, process_id, product_id, 10)
 
-    resp = _rpc(erp_client, "saveDispatch", [{"productId": product_id, "productName": product_name, "qty": 4}], mutation=True)
+    resp = _save_dispatch(erp_client, [{"productId": product_id, "productName": product_name, "qty": 4}])
     body = resp.get_json()
     assert body["success"] is True
     assert body["data"]["dispatchNumber"].startswith("DSP-")
@@ -188,17 +210,16 @@ def test_save_dispatch_debits_warehouse_pool_for_untagged_output(erp_client):
     _compute_ready_to_dispatch_map under an '__output__'-prefixed key (see
     that function and test_ready_to_dispatch_untagged_final_stage_surfaces_
     under_output_name above), but saveDispatch's own capacity check must
-    fall back to that same prefixed key -- module_dispatch.js's saveDispatch
-    does this explicitly (`readyMap[productIdKey] || readyMap['__output__'
-    + productIdKey]`). Without the fallback this always looks up 0 Ready
-    to Dispatch and rejects every dispatch of untagged output, even though
-    getReadyToDispatchData correctly lists it as available.
+    fall back to that same prefixed key. Without the fallback this always
+    looks up 0 Ready to Dispatch and rejects every dispatch of untagged
+    output, even though getReadyToDispatchData correctly lists it as
+    available.
     """
     payload, process_id = _save_process(erp_client, isFinalStage=True)
     _complete_production_lot(erp_client, process_id, "", 10)
 
     output_name = payload["outputItemName"]
-    resp = _rpc(erp_client, "saveDispatch", [{"productId": output_name, "productName": output_name, "qty": 4}], mutation=True)
+    resp = _save_dispatch(erp_client, [{"productId": output_name, "productName": output_name, "qty": 4}])
     body = resp.get_json()
     assert body["success"] is True, body["message"]
 
@@ -208,30 +229,107 @@ def test_save_dispatch_debits_warehouse_pool_for_untagged_output(erp_client):
     assert match["readyQty"] == 6
 
 
-def test_save_dispatch_edit_product_id_mismatch(erp_app, erp_client):
+def test_save_dispatch_multi_line_bill_debits_each_products_own_pool(erp_app, erp_client):
+    """The core new capability: one bill, two lines, two different
+    products -- each line debits its OWN product's pool independently.
+    """
     token = _get_bom_token(erp_app, erp_client)
-    product_name_a, product_id_a = _save_bom_product(erp_client, token)
-    product_name_b, product_id_b = _save_bom_product(erp_client, token)
+    name_a, id_a = _save_bom_product(erp_client, token)
+    name_b, id_b = _save_bom_product(erp_client, token)
 
     _payload, process_id = _save_process(erp_client, isFinalStage=True)
-    _complete_production_lot(erp_client, process_id, product_id_a, 10)
-    _complete_production_lot(erp_client, process_id, product_id_b, 10)
+    _complete_production_lot(erp_client, process_id, id_a, 10)
+    _complete_production_lot(erp_client, process_id, id_b, 10)
 
-    create = _rpc(
-        erp_client, "saveDispatch", [{"productId": product_id_a, "productName": product_name_a, "qty": 2}], mutation=True
-    ).get_json()
-    listed = _rpc(erp_client, "getDispatchData").get_json()["data"]
-    row = next(r for r in listed if r["dispatchNumber"] == create["data"]["dispatchNumber"])
-
-    edit = _rpc(
+    resp = _save_dispatch(
         erp_client,
-        "saveDispatch",
-        [{"rowIdx": row["rowIdx"], "productId": product_id_b, "productName": product_name_b, "qty": 2}],
-        mutation=True,
+        [
+            {"productId": id_a, "productName": name_a, "qty": 3},
+            {"productId": id_b, "productName": name_b, "qty": 5},
+        ],
+    )
+    body = resp.get_json()
+    assert body["success"] is True, body["message"]
+    assert len(body["data"]["rows"]) == 2
+
+    ready = _rpc(erp_client, "getReadyToDispatchData").get_json()["data"]
+    assert next(r for r in ready if r["productId"] == id_a)["readyQty"] == 7
+    assert next(r for r in ready if r["productId"] == id_b)["readyQty"] == 5
+
+
+def test_save_dispatch_two_lines_same_product_share_cumulative_guard(erp_app, erp_client):
+    """Two lines of the SAME product in one bill both draw down the same
+    pool -- the guard is cumulative across the bill's own lines, not
+    per-line independent.
+    """
+    token = _get_bom_token(erp_app, erp_client)
+    product_name, product_id = _save_bom_product(erp_client, token)
+
+    _payload, process_id = _save_process(erp_client, isFinalStage=True)
+    _complete_production_lot(erp_client, process_id, product_id, 10)
+
+    # 6 + 6 = 12 > 10 available -- rejected even though neither line alone
+    # exceeds availability.
+    resp = _save_dispatch(
+        erp_client,
+        [
+            {"productId": product_id, "productName": product_name, "qty": 6},
+            {"productId": product_id, "productName": product_name, "qty": 6},
+        ],
+    )
+    body = resp.get_json()
+    assert body["success"] is False
+    assert "Ready to Dispatch" in body["message"]
+
+    # 6 + 4 = 10 -- exactly at capacity, succeeds.
+    ok = _save_dispatch(
+        erp_client,
+        [
+            {"productId": product_id, "productName": product_name, "qty": 6},
+            {"productId": product_id, "productName": product_name, "qty": 4},
+        ],
+    )
+    assert ok.get_json()["success"] is True
+
+
+def test_save_dispatch_edit_replaces_lines(erp_app, erp_client):
+    """Editing a bill fully replaces its lines (delete-and-reinsert, same
+    pattern as PO/Bill) -- changing a line's product entirely, adding a
+    line, or removing one are all just "the new lines array", no per-line
+    identity constraint the way the old flat-row model had.
+    """
+    token = _get_bom_token(erp_app, erp_client)
+    name_a, id_a = _save_bom_product(erp_client, token)
+    name_b, id_b = _save_bom_product(erp_client, token)
+
+    _payload, process_id = _save_process(erp_client, isFinalStage=True)
+    _complete_production_lot(erp_client, process_id, id_a, 10)
+    _complete_production_lot(erp_client, process_id, id_b, 10)
+
+    create = _save_dispatch(erp_client, [{"productId": id_a, "productName": name_a, "qty": 2}]).get_json()
+    assert create["success"] is True
+    dispatch_number = create["data"]["dispatchNumber"]
+
+    # Swap the one line for a totally different product+qty, and add a
+    # second line -- would have been rejected outright by the old
+    # "Product ID does not match original row record" guard.
+    edit = _save_dispatch(
+        erp_client,
+        [
+            {"productId": id_b, "productName": name_b, "qty": 3},
+            {"productId": id_a, "productName": name_a, "qty": 1},
+        ],
+        existingDispatchNumber=dispatch_number,
     )
     body = edit.get_json()
-    assert body["success"] is False
-    assert "Data mismatch" in body["message"]
+    assert body["success"] is True, body["message"]
+    assert len(body["data"]["rows"]) == 2
+    assert {r["productId"] for r in body["data"]["rows"]} == {id_a, id_b}
+
+    # product A's pool: 10 - 2 (original) restored, then - 1 (new line) = 9.
+    ready = _rpc(erp_client, "getReadyToDispatchData").get_json()["data"]
+    assert next(r for r in ready if r["productId"] == id_a)["readyQty"] == 9
+    assert next(r for r in ready if r["productId"] == id_b)["readyQty"] == 7
 
 
 def test_save_dispatch_edit_adds_back_own_qty(erp_app, erp_client):
@@ -241,49 +339,46 @@ def test_save_dispatch_edit_adds_back_own_qty(erp_app, erp_client):
     _payload, process_id = _save_process(erp_client, isFinalStage=True)
     _complete_production_lot(erp_client, process_id, product_id, 10)
 
-    create = _rpc(
-        erp_client, "saveDispatch", [{"productId": product_id, "productName": product_name, "qty": 8}], mutation=True
-    ).get_json()
-    listed = _rpc(erp_client, "getDispatchData").get_json()["data"]
-    row = next(r for r in listed if r["dispatchNumber"] == create["data"]["dispatchNumber"])
+    create = _save_dispatch(erp_client, [{"productId": product_id, "productName": product_name, "qty": 8}]).get_json()
+    dispatch_number = create["data"]["dispatchNumber"]
 
     # Only 2 units remain "Ready" (10 - 8), but editing back to the same
-    # qty (8) must succeed -- the row's own original qty is added back
-    # before checking availability, so it's not double-counted against
-    # itself.
-    edit = _rpc(
+    # qty (8) must succeed -- this bill's own original qty for this product
+    # is added back before checking availability, so it's not
+    # double-counted against itself.
+    edit = _save_dispatch(
         erp_client,
-        "saveDispatch",
-        [{"rowIdx": row["rowIdx"], "productId": product_id, "productName": product_name, "qty": 8, "remarks": "updated"}],
-        mutation=True,
+        [{"productId": product_id, "productName": product_name, "qty": 8}],
+        existingDispatchNumber=dispatch_number,
+        remarks="updated",
     )
     assert edit.get_json()["success"] is True
 
 
-def test_save_dispatch_returns_fresh_row_for_in_place_patch(erp_app, erp_client):
+def test_save_dispatch_returns_fresh_rows_for_in_place_patch(erp_app, erp_client):
     token = _get_bom_token(erp_app, erp_client)
     product_name, product_id = _save_bom_product(erp_client, token)
 
     _payload, process_id = _save_process(erp_client, isFinalStage=True)
     _complete_production_lot(erp_client, process_id, product_id, 10)
 
-    create = _rpc(
-        erp_client, "saveDispatch", [{"productId": product_id, "productName": product_name, "qty": 4}], mutation=True
-    ).get_json()
-    assert create["data"]["row"]["productId"] == product_id
-    assert create["data"]["row"]["qty"] == 4
-    row_idx = create["data"]["row"]["rowIdx"]
+    create = _save_dispatch(erp_client, [{"productId": product_id, "productName": product_name, "qty": 4}]).get_json()
+    assert len(create["data"]["rows"]) == 1
+    assert create["data"]["rows"][0]["productId"] == product_id
+    assert create["data"]["rows"][0]["qty"] == 4
+    dispatch_number = create["data"]["dispatchNumber"]
 
-    edit = _rpc(
+    edit = _save_dispatch(
         erp_client,
-        "saveDispatch",
-        [{"rowIdx": row_idx, "productId": product_id, "productName": product_name, "qty": 6, "transport": "By Road"}],
-        mutation=True,
+        [{"productId": product_id, "productName": product_name, "qty": 6}],
+        existingDispatchNumber=dispatch_number,
+        transport="By Road",
     ).get_json()
-    fresh_row = edit["data"]["row"]
-    assert fresh_row["rowIdx"] == row_idx
-    assert fresh_row["qty"] == 6
-    assert fresh_row["transport"] == "By Road"
+    fresh_rows = edit["data"]["rows"]
+    assert len(fresh_rows) == 1
+    assert fresh_rows[0]["dispatchNumber"] == dispatch_number
+    assert fresh_rows[0]["qty"] == 6
+    assert fresh_rows[0]["transport"] == "By Road"
 
 
 def test_save_dispatch_order_number_note_when_no_client_orders(erp_app, erp_client):
@@ -293,11 +388,10 @@ def test_save_dispatch_order_number_note_when_no_client_orders(erp_app, erp_clie
     _payload, process_id = _save_process(erp_client, isFinalStage=True)
     _complete_production_lot(erp_client, process_id, product_id, 10)
 
-    resp = _rpc(
+    resp = _save_dispatch(
         erp_client,
-        "saveDispatch",
-        [{"productId": product_id, "productName": product_name, "qty": 3, "orderNumber": "ORD-9999"}],
-        mutation=True,
+        [{"productId": product_id, "productName": product_name, "qty": 3}],
+        orderNumber="ORD-9999",
     )
     body = resp.get_json()
     assert body["success"] is True
@@ -331,7 +425,7 @@ def test_save_dispatch_greedily_drains_multiple_color_buckets(erp_app, erp_clien
     # Total ready qty is 3+4=7 across two color buckets under the same
     # Product Tag. Dispatch 5 -- more than either single color bucket --
     # forcing the greedy drain to pull from both.
-    dispatch = _rpc(erp_client, "saveDispatch", [{"productId": product_id, "productName": product_name, "qty": 5}], mutation=True)
+    dispatch = _save_dispatch(erp_client, [{"productId": product_id, "productName": product_name, "qty": 5}])
     assert dispatch.get_json()["success"] is True
 
     listed = _rpc(erp_client, "getReadyToDispatchData").get_json()["data"]
@@ -354,11 +448,10 @@ def test_save_dispatch_logistics_payable_from_rate(erp_app, erp_client):
         mutation=True,
     )
 
-    resp = _rpc(
+    resp = _save_dispatch(
         erp_client,
-        "saveDispatch",
-        [{"productId": product_id, "productName": product_name, "qty": 3, "logisticsContractor": contractor}],
-        mutation=True,
+        [{"productId": product_id, "productName": product_name, "qty": 3}],
+        logisticsContractor=contractor,
     )
     body = resp.get_json()
     assert body["success"] is True
@@ -369,6 +462,44 @@ def test_save_dispatch_logistics_payable_from_rate(erp_app, erp_client):
     assert match["logisticsCost"] == 21
 
 
+def test_save_dispatch_logistics_cost_per_line(erp_app, erp_client):
+    """Logistics Rate is one snapshot for the whole bill; Logistics Cost is
+    genuinely per-line (rate * that line's own qty), so two lines of
+    different qty get different logistics costs summing to rate * totalQty.
+    """
+    token = _get_bom_token(erp_app, erp_client)
+    name_a, id_a = _save_bom_product(erp_client, token)
+    name_b, id_b = _save_bom_product(erp_client, token)
+
+    _payload, process_id = _save_process(erp_client, isFinalStage=True)
+    _complete_production_lot(erp_client, process_id, id_a, 10)
+    _complete_production_lot(erp_client, process_id, id_b, 10)
+
+    contractor = _unique_name("PerLineLogisticsContractor")
+    _rpc(
+        erp_client,
+        "saveContractorRate",
+        [{"contractorName": contractor, "processName": "Dispatch / Logistics", "ratePerUnit": 2}],
+        mutation=True,
+    )
+
+    resp = _save_dispatch(
+        erp_client,
+        [
+            {"productId": id_a, "productName": name_a, "qty": 3},
+            {"productId": id_b, "productName": name_b, "qty": 5},
+        ],
+        logisticsContractor=contractor,
+    )
+    body = resp.get_json()
+    assert body["success"] is True, body["message"]
+
+    rows = {r["productId"]: r for r in body["data"]["rows"]}
+    assert rows[id_a]["logisticsRate"] == 2
+    assert rows[id_a]["logisticsCost"] == 6  # 2 * 3
+    assert rows[id_b]["logisticsCost"] == 10  # 2 * 5
+
+
 def test_save_dispatch_logistics_payable_defaults_zero_without_rate(erp_app, erp_client):
     token = _get_bom_token(erp_app, erp_client)
     product_name, product_id = _save_bom_product(erp_client, token)
@@ -376,11 +507,10 @@ def test_save_dispatch_logistics_payable_defaults_zero_without_rate(erp_app, erp
     _payload, process_id = _save_process(erp_client, isFinalStage=True)
     _complete_production_lot(erp_client, process_id, product_id, 10)
 
-    resp = _rpc(
+    resp = _save_dispatch(
         erp_client,
-        "saveDispatch",
-        [{"productId": product_id, "productName": product_name, "qty": 3, "logisticsContractor": _unique_name("NoRateContractor")}],
-        mutation=True,
+        [{"productId": product_id, "productName": product_name, "qty": 3}],
+        logisticsContractor=_unique_name("NoRateContractor"),
     )
     body = resp.get_json()
     listed = _rpc(erp_client, "getDispatchData").get_json()["data"]
@@ -403,26 +533,35 @@ def test_delete_dispatch_optimistic_check_and_reverses_pool_debit(erp_app, erp_c
     _payload, process_id = _save_process(erp_client, isFinalStage=True)
     _complete_production_lot(erp_client, process_id, product_id, 10)
 
-    create = _rpc(
-        erp_client, "saveDispatch", [{"productId": product_id, "productName": product_name, "qty": 4}], mutation=True
-    ).get_json()
-    listed = _rpc(erp_client, "getDispatchData").get_json()["data"]
-    row = next(r for r in listed if r["dispatchNumber"] == create["data"]["dispatchNumber"])
+    create = _save_dispatch(erp_client, [{"productId": product_id, "productName": product_name, "qty": 4}]).get_json()
+    dispatch_number = create["data"]["dispatchNumber"]
 
-    mismatch = _rpc(erp_client, "deleteDispatch", [row["rowIdx"], row["dispatchNumber"], 999], mutation=True)
+    mismatch = _rpc(erp_client, "deleteDispatch", [dispatch_number, 1, 999], mutation=True)
     body = mismatch.get_json()
     assert body["success"] is False
     assert "Data mismatch" in body["message"]
 
-    success = _rpc(erp_client, "deleteDispatch", [row["rowIdx"], row["dispatchNumber"], row["qty"]], mutation=True)
+    # Item-count fingerprint also catches a change even when total qty
+    # coincidentally matches.
+    mismatch_count = _rpc(erp_client, "deleteDispatch", [dispatch_number, 2, 4], mutation=True)
+    assert mismatch_count.get_json()["success"] is False
+
+    success = _rpc(erp_client, "deleteDispatch", [dispatch_number, 1, 4], mutation=True)
     assert success.get_json()["success"] is True
 
     remaining = _rpc(erp_client, "getDispatchData").get_json()["data"]
-    assert not any(r["rowIdx"] == row["rowIdx"] for r in remaining)
+    assert not any(r["dispatchNumber"] == dispatch_number for r in remaining)
 
     ready = _rpc(erp_client, "getReadyToDispatchData").get_json()["data"]
     match = next(r for r in ready if r["productId"] == product_id)
     assert match["dispatchedQty"] == 0
+
+
+def test_delete_dispatch_not_found(erp_client):
+    resp = _rpc(erp_client, "deleteDispatch", ["DSP-DOES-NOT-EXIST"], mutation=True)
+    body = resp.get_json()
+    assert body["success"] is False
+    assert "not found" in body["message"]
 
 
 def test_delete_dispatch_bulk_skip_and_report(erp_app, erp_client):
@@ -432,21 +571,19 @@ def test_delete_dispatch_bulk_skip_and_report(erp_app, erp_client):
     _payload, process_id = _save_process(erp_client, isFinalStage=True)
     _complete_production_lot(erp_client, process_id, product_id, 20)
 
-    a = _rpc(erp_client, "saveDispatch", [{"productId": product_id, "productName": product_name, "qty": 3}], mutation=True).get_json()
-    b = _rpc(erp_client, "saveDispatch", [{"productId": product_id, "productName": product_name, "qty": 4}], mutation=True).get_json()
-
-    listed = _rpc(erp_client, "getDispatchData").get_json()["data"]
-    row_a = next(r for r in listed if r["dispatchNumber"] == a["data"]["dispatchNumber"])
-    row_b = next(r for r in listed if r["dispatchNumber"] == b["data"]["dispatchNumber"])
+    a = _save_dispatch(erp_client, [{"productId": product_id, "productName": product_name, "qty": 3}]).get_json()
+    b = _save_dispatch(erp_client, [{"productId": product_id, "productName": product_name, "qty": 4}]).get_json()
+    number_a = a["data"]["dispatchNumber"]
+    number_b = b["data"]["dispatchNumber"]
 
     resp = _rpc(
         erp_client,
         "deleteDispatchBulk",
         [
-            [row_a["rowIdx"], row_b["rowIdx"]],
+            [number_a, number_b],
             [
-                {"rowIdx": row_a["rowIdx"], "expectedDispatchNumber": row_a["dispatchNumber"], "expectedQty": 999},
-                {"rowIdx": row_b["rowIdx"], "expectedDispatchNumber": row_b["dispatchNumber"], "expectedQty": row_b["qty"]},
+                {"dispatchNumber": number_a, "expectedItemCount": 1, "expectedTotalQty": 999},
+                {"dispatchNumber": number_b, "expectedItemCount": 1, "expectedTotalQty": 4},
             ],
         ],
         mutation=True,
@@ -457,9 +594,9 @@ def test_delete_dispatch_bulk_skip_and_report(erp_app, erp_client):
     assert "Skipped 1" in body["message"]
 
     remaining = _rpc(erp_client, "getDispatchData").get_json()["data"]
-    remaining_ids = {r["rowIdx"] for r in remaining}
-    assert row_a["rowIdx"] in remaining_ids
-    assert row_b["rowIdx"] not in remaining_ids
+    remaining_numbers = {r["dispatchNumber"] for r in remaining}
+    assert number_a in remaining_numbers
+    assert number_b not in remaining_numbers
 
 
 def test_dispatch_logistics_payable_appears_in_contractor_ledger(erp_app, erp_client):
@@ -476,11 +613,10 @@ def test_dispatch_logistics_payable_appears_in_contractor_ledger(erp_app, erp_cl
         [{"contractorName": contractor, "processName": "Dispatch / Logistics", "ratePerUnit": 5}],
         mutation=True,
     )
-    _rpc(
+    _save_dispatch(
         erp_client,
-        "saveDispatch",
-        [{"productId": product_id, "productName": product_name, "qty": 2, "logisticsContractor": contractor}],
-        mutation=True,
+        [{"productId": product_id, "productName": product_name, "qty": 2}],
+        logisticsContractor=contractor,
     )
 
     listed = _rpc(erp_client, "getContractorLedgerData").get_json()["data"]
@@ -496,7 +632,7 @@ def test_bom_product_delete_blocked_by_dispatch_reference(erp_app, erp_client):
 
     _payload, process_id = _save_process(erp_client, isFinalStage=True)
     _complete_production_lot(erp_client, process_id, product_id, 10)
-    _rpc(erp_client, "saveDispatch", [{"productId": product_id, "productName": product_name, "qty": 2}], mutation=True)
+    _save_dispatch(erp_client, [{"productId": product_id, "productName": product_name, "qty": 2}])
 
     # Clear the Production reference so this specifically isolates the
     # Dispatch leg of _get_product_ids_in_use, not Production's own guard.
@@ -588,12 +724,7 @@ def test_save_dispatch_allowed_when_differentiator_configured(erp_app, erp_clien
     product_name, product_id, _axis, qty_by_color = _differentiated_setup(erp_app, erp_client)
     total_ready = sum(qty_by_color.values())
 
-    resp = _rpc(
-        erp_client,
-        "saveDispatch",
-        [{"productId": product_id, "productName": product_name, "qty": total_ready}],
-        mutation=True,
-    )
+    resp = _save_dispatch(erp_client, [{"productId": product_id, "productName": product_name, "qty": total_ready}])
     body = resp.get_json()
     assert body["success"] is True, body["message"]
 
@@ -604,11 +735,9 @@ def test_save_dispatch_guard_still_caps_at_pooled_total(erp_app, erp_client):
     """
     product_name, product_id, _axis, qty_by_color = _differentiated_setup(erp_app, erp_client)
 
-    resp = _rpc(
+    resp = _save_dispatch(
         erp_client,
-        "saveDispatch",
         [{"productId": product_id, "productName": product_name, "qty": sum(qty_by_color.values()) + 1}],
-        mutation=True,
     )
     body = resp.get_json()
     assert body["success"] is False

@@ -158,8 +158,7 @@
       </div>
       <div class="modal-body bg-light">
         <form id="dispatchForm" autocomplete="off">
-          <input type="hidden" id="dispatchRowIdx" name="rowIdx">
-          <input type="hidden" id="dispatchNumberHidden" name="dispatchNumber">
+          <input type="hidden" id="dispatchNumberHidden" name="existingDispatchNumber">
 
           <div class="row g-3 mb-3">
             <div class="col-md-4">
@@ -189,18 +188,23 @@
               </select>
             </div>
 
-            <div class="col-md-8">
-              <label class="form-label fw-bold">Product *</label>
-              <select id="dispatchProductSelect" class="form-select" required onchange="App.Dispatch.handleDispatchProductChange(this.value)">
-                <option value="">Choose a Product...</option>
-              </select>
-              <input type="hidden" name="productId" id="dispatchProductId">
-              <input type="hidden" name="productName" id="dispatchProductName">
-            </div>
-            <div class="col-md-4">
-              <label class="form-label fw-bold">Quantity *</label>
-              <input type="number" name="qty" id="dispatchQty" class="form-control" placeholder="0" min="0.001" step="any" required oninput="App.Dispatch.refreshLogisticsCostHint()">
-              <small class="text-muted" id="dispatchQtyHelp"></small>
+            <div class="col-md-12">
+              <label class="form-label fw-bold mb-1">Items *</label>
+              <div class="table-responsive">
+                <table class="table table-bordered bg-white shadow-sm mb-2">
+                  <thead class="table-light">
+                    <tr>
+                      <th>Product *</th>
+                      <th style="width:16%;">Qty *</th>
+                      <th style="width:14%;">Rate <small class="text-muted fw-normal">(optional)</small></th>
+                      <th style="width:12%;" class="text-end">Amount</th>
+                      <th style="width:6%;"></th>
+                    </tr>
+                  </thead>
+                  <tbody id="dispatchLinesBody"></tbody>
+                </table>
+              </div>
+              <button type="button" id="dispatchAddLineBtn" class="btn btn-outline-primary btn-sm fw-bold">+ Add Item</button>
             </div>
 
             <div class="col-md-8">

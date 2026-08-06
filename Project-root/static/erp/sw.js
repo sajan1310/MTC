@@ -16,7 +16,10 @@
 // network-only and never touched by this worker -- ERP data must never
 // be served stale from a cache.
 
-const CACHE_NAME = 'erp-shell-v2';
+const CACHE_NAME = 'erp-shell-v6';
+
+
+
 
 const PRECACHE_URLS = [
   '/erp/offline.html',

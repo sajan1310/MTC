@@ -1499,7 +1499,9 @@ document.addEventListener('DOMContentLoaded', () => {
           } else {
             safeModalHide('receiveBillModal');
           }
-          App.Utils.showToast(res?.message || 'Bill saved.', !res?.success);
+          App.Utils.showToast(res?.message || 'Bill saved.', !res?.success, res?.success
+            ? { type: 'bill', value: `${String(formData.vendor || '').trim()}␟${res.data?.billNumber || formData.billNumber}` }
+            : null);
         } catch (err) {
           App.Utils.showToast(err.message || 'Failed to save bill.', true);
         } finally {

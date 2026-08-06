@@ -862,10 +862,16 @@ App.Stock = {
   // list down (or passes it through whole if the Process itself
   // matches).
   computeLeafRowsForProcess(process, term) {
-    const buckets = (App.State.globalWarehousePool || []).filter(r => r.processId === process.processId);
     const knownColorGroups = (App.State.warehousePoolColorsByProcess || {})[process.processId] || {};
     const knownColors = knownColorGroups.colors || [];
     const removableLower = new Set((knownColorGroups.removable || []).map(c => String(c || '').trim().toLowerCase()));
+    // removable here only means "not configured on this process's own
+    // recipe" -- renderWarehousePoolLeafCells still ORs it with each row's
+    // own produced/consumed qty, since a bucket with real history is
+    // blocked server-side regardless of this flag.
+    const buckets = (App.State.globalWarehousePool || [])
+      .filter(r => r.processId === process.processId)
+      .map(r => ({ ...r, removable: removableLower.has(String(r.color || '').trim().toLowerCase()) }));
     // Case-insensitive: knownColors is derived server-side from recipe/
     // pool color strings that may have been typed with different casing
     // than an existing bucket's own `color` (e.g. "Red" bucket vs a
@@ -1130,10 +1136,10 @@ App.Stock = {
     if (!processId || colors.length === 0) return;
     const label = colors.length === 1 ? `"${colors[0]}"` : `these ${colors.length} combinations`;
     App.Utils.confirmAction(
-      `Remove ${label} from this process's known Color/Product-Tag list? This only removes empty placeholders — anything with real production history is protected automatically.`,
+      `Remove ${label} from this process's known Color/Product-Tag list? Any manually-entered Opening Stock / corrections for it will be cleared too. Anything with real Production or Dispatch history is protected automatically.`,
       async () => {
         try {
-          const res = await Api.mutate('excludeWarehousePoolColors', [processId, colors]);
+          const res = await Api.mutate('excludeWarehousePoolColors', processId, colors);
           App.Utils.showToast(res?.message || 'Combination(s) removed.', !res?.success);
           await this.loadWarehousePoolData();
           this._poolComboSelected = new Set();
@@ -1156,7 +1162,7 @@ App.Stock = {
     if (!processId || !color) return;
 
     try {
-      const res = await Api.mutate('includeWarehousePoolColor', [processId, color]);
+      const res = await Api.mutate('includeWarehousePoolColor', processId, color);
       App.Utils.showToast(res?.message || 'Combination added.', !res?.success);
       if (res?.success) {
         if (input) input.value = '';
@@ -1169,12 +1175,13 @@ App.Stock = {
     }
   },
 
-  // Removes a zero-data placeholder Color/Product-Tag combination. Only
-  // ever removes a zero-data PLACEHOLDER -- a color actually configured
-  // on the process's own recipe or carrying real Warehouse Pool history
-  // is rejected server-side and reported back, never silently skipped.
-  // Single-row delete (the per-row "X" button) -- thin wrapper around the
-  // same shared flow bulkDeleteWarehousePoolCombinations uses.
+  // Removes a Color/Product-Tag combination -- a zero-data placeholder, or
+  // a real bucket whose only activity is manual (Opening Stock / an inline
+  // correction). A color actually configured on the process's own recipe,
+  // or carrying real Production/Dispatch history, is rejected server-side
+  // and reported back, never silently skipped. Single-row delete (the
+  // per-row "X" button) -- thin wrapper around the same shared flow
+  // bulkDeleteWarehousePoolCombinations uses.
   removeWarehousePoolCombination(color) {
     if (!color) return;
     this._runWarehousePoolCombinationDelete([color]);
@@ -1199,12 +1206,14 @@ App.Stock = {
       ? ` <i class="bi bi-exclamation-triangle-fill text-danger" title="Negative available quantity"></i>`
       : '';
 
-    // Only a placeholder seeded from an override/logged-color signal
-    // (not the process's own configured recipe/pool detection) shows an
-    // enabled delete action -- see getAllProcessColorGroups' `removable`.
-    // A real (non-placeholder) bucket is always attempted server-side,
-    // which independently rejects anything with real history.
-    const isLocked = r.isPlaceholder && !r.removable;
+    // `removable` (see getAllProcessColorGroups) already folds in BOTH of
+    // excludeWarehousePoolColors' server-side rejection reasons -- configured
+    // on this process's own recipe, or carrying real (non-manual)
+    // Production/Dispatch history -- so a nonzero produced/consumed qty here
+    // is no longer disqualifying by itself: a color whose only activity is a
+    // manual Opening Stock / correction entry (produced/consumed still
+    // nonzero) is deletable, and `removable` already reflects that.
+    const isLocked = !r.removable;
     const deleteBtn = r.color
       ? `<button type="button" class="btn btn-outline-danger btn-sm" title="Remove combination"
                 ${isLocked ? 'disabled' : ''}
@@ -1558,22 +1567,22 @@ App.Stock = {
   // the Item Ledger's "Transaction Ledger History" for raw-material Stock.
   async ensurePoolLedgerSourceDataLoaded() {
     const fetches = [];
-    if (!App.State.globalProduction.length) {
+    if (!App.State.globalProduction?.length) {
       fetches.push(Api.call('getProductionData').then(res => {
         if (res?.success) App.State.globalProduction = Array.isArray(res.data) ? res.data : [];
       }));
     }
-    if (!App.State.globalDispatch.length) {
+    if (!App.State.globalDispatch?.length) {
       fetches.push(Api.call('getDispatchData').then(res => {
         if (res?.success) App.State.globalDispatch = Array.isArray(res.data) ? res.data : [];
       }));
     }
-    if (!App.State.globalWarehousePoolOpening.length) {
+    if (!App.State.globalWarehousePoolOpening?.length) {
       fetches.push(Api.call('getWarehousePoolOpeningData').then(res => {
         if (res?.success) App.State.globalWarehousePoolOpening = Array.isArray(res.data) ? res.data : [];
       }));
     }
-    if (!App.State.globalWarehousePoolAdjustments.length) {
+    if (!App.State.globalWarehousePoolAdjustments?.length) {
       fetches.push(Api.call('getWarehousePoolAdjustmentHistory').then(res => {
         if (res?.success) App.State.globalWarehousePoolAdjustments = Array.isArray(res.data) ? res.data : [];
       }));

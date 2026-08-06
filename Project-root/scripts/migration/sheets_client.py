@@ -91,19 +91,34 @@ def fetch_sheet_values(client, spreadsheet_id: str, sheet_name: str) -> list[lis
     return result.get("values", [])
 
 
-def create_spreadsheet(client, drive, title: str, folder_id: str | None) -> str:
-    body = {"properties": {"title": title}}
-    spreadsheet = with_retry(
-        lambda: client.spreadsheets().create(body=body, fields="spreadsheetId").execute()
+def _reparent_into_folder(drive, spreadsheet_id: str, folder_id: str) -> None:
+    with_retry(
+        lambda: drive.files()
+        .update(fileId=spreadsheet_id, addParents=folder_id, fields="id, parents", supportsAllDrives=True)
+        .execute()
     )
-    spreadsheet_id = spreadsheet["spreadsheetId"]
+
+
+def create_spreadsheet(client, drive, title: str, folder_id: str | None) -> str:
+    body = {"name": title, "mimeType": "application/vnd.google-apps.spreadsheet"}
     if folder_id:
-        with_retry(
-            lambda: drive.files()
-            .update(fileId=spreadsheet_id, addParents=folder_id, fields="id, parents")
-            .execute()
+        body["parents"] = [folder_id]
+    try:
+        file_res = with_retry(
+            lambda: drive.files().create(body=body, fields="id", supportsAllDrives=True).execute()
         )
-    return spreadsheet_id
+        return file_res["id"]
+    except Exception:
+        # Fallback to Sheets API create if Drive API fails
+        body_sheets = {"properties": {"title": title}}
+        spreadsheet = with_retry(
+            lambda: client.spreadsheets().create(body=body_sheets, fields="spreadsheetId").execute()
+        )
+        spreadsheet_id = spreadsheet["spreadsheetId"]
+        if folder_id:
+            _reparent_into_folder(drive, spreadsheet_id, folder_id)
+        return spreadsheet_id
+
 
 
 def add_sheet_tab(client, spreadsheet_id: str, title: str):
@@ -115,11 +130,35 @@ def add_sheet_tab(client, spreadsheet_id: str, title: str):
     )
 
 
-def write_values(client, spreadsheet_id: str, sheet_name: str, rows: list[list]):
+def clear_values(client, spreadsheet_id: str, sheet_name: str):
+    """Clear all existing values from a sheet tab so old leftover columns/rows don't linger."""
+    with_retry(
+        lambda: client.spreadsheets()
+        .values()
+        .clear(spreadsheetId=spreadsheet_id, range=f"'{sheet_name}'")
+        .execute()
+    )
+
+
+def write_values(client, spreadsheet_id: str, sheet_name: str, rows: list[list], fresh: bool = False):
     """Overwrite `sheet_name!A1` onward with `rows`. Chunked to stay under the
-    Sheets API's per-request cell-count limits for very large tables."""
+    Sheets API's per-request cell-count limits for very large tables.
+
+    `fresh=True` skips clearing the tab first -- a newly-created tab is
+    already empty, so it saves an API round-trip with no behavior change.
+    """
+    if not rows:
+        return
+
+    required_rows = len(rows)
+    required_cols = max(len(r) for r in rows) if rows else 1
+    ensure_grid_size(client, spreadsheet_id, sheet_name, required_rows, required_cols)
+    if not fresh:
+        clear_values(client, spreadsheet_id, sheet_name)
+
     chunk_size = 5000  # rows per request
-    for start in range(0, len(rows), chunk_size) or [0]:
+
+    for start in range(0, len(rows), chunk_size):
         chunk = rows[start : start + chunk_size]
         if not chunk:
             continue
@@ -135,3 +174,47 @@ def write_values(client, spreadsheet_id: str, sheet_name: str, rows: list[list])
             )
             .execute()
         )
+
+
+def ensure_grid_size(client, spreadsheet_id: str, sheet_name: str, required_rows: int, required_cols: int):
+    meta = with_retry(
+        lambda: client.spreadsheets().get(spreadsheetId=spreadsheet_id, fields="sheets.properties").execute()
+    )
+    for sheet in meta.get("sheets", []):
+        props = sheet.get("properties", {})
+        if props.get("title") == sheet_name:
+            sheet_id = props.get("sheetId")
+            grid_props = props.get("gridProperties", {})
+            current_rows = grid_props.get("rowCount", 1000)
+            current_cols = grid_props.get("columnCount", 26)
+
+            reqs = []
+            if required_rows > current_rows:
+                reqs.append({
+                    "updateSheetProperties": {
+                        "properties": {
+                            "sheetId": sheet_id,
+                            "gridProperties": {"rowCount": required_rows + 500}
+                        },
+                        "fields": "gridProperties.rowCount"
+                    }
+                })
+            if required_cols > current_cols:
+                reqs.append({
+                    "updateSheetProperties": {
+                        "properties": {
+                            "sheetId": sheet_id,
+                            "gridProperties": {"columnCount": required_cols + 5}
+                        },
+                        "fields": "gridProperties.columnCount"
+                    }
+                })
+            if reqs:
+                with_retry(
+                    lambda: client.spreadsheets().batchUpdate(
+                        spreadsheetId=spreadsheet_id,
+                        body={"requests": reqs}
+                    ).execute()
+                )
+            break
+

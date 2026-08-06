@@ -429,6 +429,13 @@ App.PO = {
         .join('');
 
     $$('select.select2-vendor').forEach(el => {
+      // billVendor is re-sourced from Contractors (not Vendor Master) while
+      // the Bill form is in Labor Job mode -- see
+      // App.Bill.updateVendorFieldForBillType. Skip it here so a vendor/PO
+      // list refresh elsewhere doesn't silently overwrite that contractor
+      // list back to the vendor one underneath the user.
+      if (el.id === 'billVendor' && App.Bill.isLaborMode && App.Bill.isLaborMode()) return;
+
       const currentValue = el.value;
       el.innerHTML = optionsHtml;
       el.value = currentValue;
@@ -1346,7 +1353,9 @@ document.addEventListener('DOMContentLoaded', () => {
       } else {
         safeModalHide('editPoModal');
       }
-      App.Utils.showToast(res?.message || 'PO saved.', !res?.success);
+      App.Utils.showToast(res?.message || 'PO saved.', !res?.success, res?.success
+        ? { type: 'po', value: res.data?.po?.poNumber || formData.existingPoNumber || formData.poNumber }
+        : null);
     } catch (err) {
       App.Utils.showToast(err.message || 'Failed to save PO.', true);
     } finally {

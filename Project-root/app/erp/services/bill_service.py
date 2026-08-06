@@ -527,7 +527,7 @@ def save_bill(conn, cur, form_data):
             (bill_date, item["name"], item["size"], item["narration"], vendor, rate, item["poNumber"], bill_number),
         )
 
-    message = f"Bill #{bill_number} updated successfully." if is_edit else f"Bill #{bill_number} recorded successfully."
+    message = f"Bill #{bill_number} ({vendor}) updated successfully." if is_edit else f"Bill #{bill_number} ({vendor}) recorded successfully."
 
     overage_warnings = _compute_bill_overage_warnings(cur, extraction_items)
     if overage_warnings:

@@ -292,6 +292,10 @@ sheets:
       not in the transcribed 4-column Apps Script map -- if the live sheet
       has extra trailing columns for these, add them here (col 5/6) before
       running, or they'll default to ''.
+      REVIEWED 2026-08-01: confirmed against migrations/erp/020 -- both
+      columns really do default to '' in the DB, so leaving them unmapped
+      is safe, not a bug. Only remaining unknown is live: whether the sheet
+      itself has 4 or 6 columns. Check a live row before running.
 
   # ── Warehouse Pool: only the Opening Balances sheet is bulk-importable.
   #    erp.warehouse_pool itself is a materialized cache, fully rewritten by
@@ -536,11 +540,16 @@ sheets:
       among item-level columns in the sheet (bom_lines has no remarks/
       sequence column) -- double-check against a live row before trusting.
       erp.product_id_seq starts at 1001, advance after load.
+      REVIEWED 2026-08-01: confirmed against migrations/erp/012_bom.sql --
+      erp.bom_products has remarks TEXT + sequence INTEGER, erp.bom_lines
+      has neither column, so the header/line placement above is correct.
+      Only remaining risk is the live-row column-position check already
+      noted, not the mapping logic itself.
 
   - key: BOM_COSTS
     sheet_name: "BOM Additional Costs"
     data_start_row: 2
-    status: needs_review
+    status: ready  # REVIEWED 2026-08-01: erp.bom_additional_costs columns confirmed 1:1 against migrations/erp/012_bom.sql.
     table: erp.bom_additional_costs
     external_parent:
       col: 1
@@ -558,7 +567,7 @@ sheets:
   - key: CLIENT_ORDERS
     sheet_name: "Client Orders"
     data_start_row: 2
-    status: needs_review
+    status: ready  # REVIEWED 2026-08-01: erp.client_orders_lines.production_pushed confirmed VARCHAR(10) DEFAULT '' against migrations/erp/017_clients.sql -- text pass-through above is correct.
     split:
       group_by: [orderNumber]
       header:
@@ -588,32 +597,53 @@ sheets:
   - key: DISPATCH
     sheet_name: "Dispatch"
     data_start_row: 2
-    status: needs_review
-    table: erp.dispatch
-    unique_on: [dispatch_number]
-    columns:
-      - {col: 1, sheet: dispatchNumber, db: dispatch_number, type: text, required: true}
-      - {col: 2, sheet: dispatchDate, db: dispatch_date, type: date, required: true}
-      - {col: 3, sheet: orderNumber, db: order_number, type: text}
-      - {col: 4, sheet: clientName, db: client_name, type: text}
-      - {col: 5, sheet: productId, db: product_id, type: text, required: true}
-      - {col: 6, sheet: productName, db: product_name, type: text, required: true}
-      - {col: 7, sheet: qty, db: qty, type: numeric, required: true}
-      - {col: 8, sheet: transport, db: transport, type: text}
-      - {col: 9, sheet: remarks, db: remarks, type: text}
-      - {col: 10, sheet: invoiceNumber, db: invoice_number, type: text}
-      - {col: 11, sheet: privateMark, db: private_mark, type: text}
-      - {col: 12, sheet: grNumber, db: gr_number, type: text}
-      - {col: 13, sheet: logisticsContractor, db: logistics_contractor, type: text}
-      - {col: 14, sheet: logisticsRate, db: logistics_rate, type: numeric, default: 0}
-      - {col: 15, sheet: logisticsCost, db: logistics_cost, type: numeric, default: 0}
+    status: ready  # REVISED 2026-08-01: re-split into header+lines -- see notes.
+    split:
+      group_by: [dispatchNumber]
+      header:
+        table: erp.dispatch_headers
+        unique_on: [dispatch_number]
+        columns:
+          - {col: 1, sheet: dispatchNumber, db: dispatch_number, type: text, required: true}
+          - {col: 2, sheet: dispatchDate, db: dispatch_date, type: date, required: true}
+          - {col: 3, sheet: orderNumber, db: order_number, type: text}
+          - {col: 4, sheet: clientName, db: client_name, type: text}
+          - {col: 8, sheet: transport, db: transport, type: text}
+          - {col: 9, sheet: remarks, db: remarks, type: text}
+          - {col: 10, sheet: invoiceNumber, db: invoice_number, type: text}
+          - {col: 11, sheet: privateMark, db: private_mark, type: text}
+          - {col: 12, sheet: grNumber, db: gr_number, type: text}
+          - {col: 13, sheet: logisticsContractor, db: logistics_contractor, type: text}
+          - {col: 14, sheet: logisticsRate, db: logistics_rate, type: numeric, default: 0}
+      lines:
+        table: erp.dispatch_lines
+        parent_fk: header_id
+        columns:
+          - {col: 5, sheet: productId, db: product_id, type: text, required: true}
+          - {col: 6, sheet: productName, db: product_name, type: text, required: true}
+          - {col: 7, sheet: qty, db: qty, type: numeric, required: true}
+          - {col: 15, sheet: logisticsCost, db: logistics_cost, type: numeric, default: 0}
+          - {col: 16, sheet: rate, db: rate, type: numeric, default: 0}
+          - {col: 17, sheet: amount, db: amount, type: numeric, default: 0}
     fk_resolve:
-      - {db_column: bom_product_id, source_field: productId, lookup_table: erp.bom_products, lookup_key: product_id, required: false}
-      - {db_column: contractor_id, source_field: logisticsContractor, lookup_table: erp.contractors, lookup_key: contractor_name, required: false}
+      - {db_column: contractor_id, source_field: logisticsContractor, lookup_table: erp.contractors, lookup_key: contractor_name, scope: header, required: false}
+      - {db_column: bom_product_id, source_field: productId, lookup_table: erp.bom_products, lookup_key: product_id, scope: lines, required: false}
     notes: >
-      Flat table (not header+lines) -- confirmed against
-      migrations/erp/016_dispatch.sql. erp.dispatch_number_seq starts at
-      1001, advance after load. Load BOM + Contractors before this sheet.
+      REVISED 2026-08-01: this entry was flat (table: erp.dispatch) at the
+      original 2026-08-01 review; the Postgres port itself split Dispatch
+      into header+lines (erp.dispatch_headers/erp.dispatch_lines, migration
+      023) that same day, to match what the reference's own Dispatch sheet
+      actually is -- one Dispatch Number shared by one-or-more line rows,
+      the same header+lines sheet layout PO/Bill/Return already have -- so
+      this mapping was correspondingly re-split rather than left describing
+      a table that no longer exists. logistics_rate is stored ONCE per bill
+      on the header in Postgres even though the source sheet repeats the
+      same value on every line row of one bill -- col 14 is read once per
+      group via the header mapping, not once per line; Rate/Amount (cols
+      16/17) are optional, record-keeping-only per-line fields, matching the
+      source's own documented framing for those two columns.
+      erp.dispatch_number_seq starts at 1001, advance after load. Load BOM +
+      Contractors before this sheet.
 
   - key: PRODUCTION
     sheet_name: "Production"
@@ -641,7 +671,7 @@ sheets:
       - {col: 19, sheet: colorBreakdown, db: color_breakdown, type: json}
       - {col: 20, sheet: orderNumber, db: order_number, type: text}
     skip_columns:
-      - {col: 13, sheet: consumedFromProcessQty, reason: "No matching column on erp.production -- not verified where (if anywhere) this landed in the port. Confirm against production_service.py before assuming it's safe to drop."}
+      - {col: 13, sheet: consumedFromProcessQty, reason: "REVIEWED 2026-08-01: confirmed against migrations/erp/015_production.sql (no such column on erp.production) and a full grep of production_service.py (no reference anywhere) -- this field genuinely has no home in the Postgres port. Safe to drop; historical values for this column are simply not carried over."}
     fk_resolve:
       - {db_column: bom_product_id, source_field: productId, lookup_table: erp.bom_products, lookup_key: product_id, required: false}
       - {db_column: process_master_id, source_field: processId, lookup_table: erp.process_master, lookup_key: process_id, required: false}
@@ -651,6 +681,13 @@ sheets:
       columns) -- verify against a live cell. contractor_id has no direct
       sheet source column here and is left NULL; resolve manually if
       needed. Load BOM + Process Master before this sheet.
+      REVIEWED 2026-08-01: erp.production.contractor_id is a nullable FK
+      (migrations/erp/015_production.sql), so leaving it NULL for every
+      migrated historical row is not a hard failure -- but it does mean
+      every pre-migration production lot will show no contractor
+      attribution going forward. That's a product decision (accept the
+      gap, or hand-map assignedTo -> contractor_id separately before
+      --execute), not a script bug -- flag it for sign-off before running.
 
   # ── Explicitly NOT sheet-migrated (documented, not an oversight) ────────
   # LOGS               -> Superseded by dedicated tables (erp.stock_adjustments,

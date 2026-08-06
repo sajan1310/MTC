@@ -39,6 +39,11 @@ def _has_deleted_at(cur, table: str) -> bool:
     return cur.fetchone() is not None
 
 
+def _deleted_at_clause(cur, table: str) -> str:
+    """SQL fragment excluding soft-deleted rows, or "" if `table` has no deleted_at column."""
+    return " AND deleted_at IS NULL" if _has_deleted_at(cur, table) else ""
+
+
 def rename_in_column(cur, table: str, column: str, old: str, new: str, extra_where: str = "") -> None:
     """UPDATE table SET column = new WHERE lower(column) = lower(old).
 
@@ -50,7 +55,7 @@ def rename_in_column(cur, table: str, column: str, old: str, new: str, extra_whe
     """
     if not _table_exists(cur, table):
         return
-    where_extra = " AND deleted_at IS NULL" if _has_deleted_at(cur, table) else ""
+    where_extra = _deleted_at_clause(cur, table)
     cur.execute(
         f"UPDATE {table} SET {column} = %s WHERE lower({column}) = lower(%s){where_extra}{extra_where}",
         (new, old),
@@ -80,9 +85,10 @@ def rename_composite_key(
     """
     if not _table_exists(cur, table):
         return
+    where_extra = _deleted_at_clause(cur, table)
     cur.execute(
         f"UPDATE {table} SET {name_col} = %s, {size_col} = %s "
-        f"WHERE lower({name_col}) = lower(%s) AND lower({size_col}) = lower(%s){extra_where}",
+        f"WHERE lower({name_col}) = lower(%s) AND lower({size_col}) = lower(%s){where_extra}{extra_where}",
         (new_name, new_size, old_name, old_size),
     )
 
@@ -95,7 +101,7 @@ def rename_in_either_column(cur, table: str, column_a: str, column_b: str, old: 
     """
     if not _table_exists(cur, table):
         return
-    where_extra = " AND deleted_at IS NULL" if _has_deleted_at(cur, table) else ""
+    where_extra = _deleted_at_clause(cur, table)
     cur.execute(
         f"""
         UPDATE {table}

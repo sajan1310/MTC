@@ -1099,7 +1099,9 @@ document.addEventListener('DOMContentLoaded', () => {
           } else {
             safeModalHide('returnGoodsModal');
           }
-          App.Utils.showToast(res?.message || 'Return saved.', !res?.success);
+          App.Utils.showToast(res?.message || 'Return saved.', !res?.success, res?.success
+            ? { type: 'return', value: res.data?.returnNumber || formData.returnNumber }
+            : null);
         } catch (err) {
           App.Utils.showToast(err.message || 'Failed to save return.', true);
         } finally {

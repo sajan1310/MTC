@@ -226,7 +226,7 @@ def test_delete_client_blocked_by_dispatch_reference(erp_app, erp_client):
     _rpc(
         erp_client,
         "saveDispatch",
-        [{"productId": product_id, "productName": product_name, "qty": 2, "clientName": name}],
+        [{"lines": [{"productId": product_id, "productName": product_name, "qty": 2}], "clientName": name}],
         mutation=True,
     )
 
@@ -263,7 +263,7 @@ def test_client_rename_cascades_into_client_orders_and_dispatch(erp_app, erp_cli
     _rpc(
         erp_client,
         "saveDispatch",
-        [{"productId": product_id, "productName": product_name, "qty": 2, "clientName": old_name}],
+        [{"lines": [{"productId": product_id, "productName": product_name, "qty": 2}], "clientName": old_name}],
         mutation=True,
     )
 
@@ -452,6 +452,36 @@ def test_save_client_order_pushes_unambiguous_final_stage_line_into_production(e
     assert "Auto-queued from PI" in lot["remarks"]
 
 
+def test_save_client_order_push_to_production_matches_lowercase_common_color_group(erp_app, erp_client):
+    """GAS e37529e: a recipe's Color Sub-Group of "Common"/"common" was
+    compared exactly against the COMMON sentinel in
+    _pushOrderLinesToProduction, so a lowercase spelling silently dropped
+    the row out of componentsConsumed instead of raising it into the new
+    Pending Production lot. Ports the same case-insensitive
+    isCommonColorGroup() check clients_service.py now uses (via
+    process_service._is_common_color_group).
+    """
+    token = _get_bom_token(erp_app, erp_client)
+    item = _unique_name("RecipeItemLower")
+    _proc_payload, process_id = _save_process(
+        erp_client,
+        isFinalStage=True,
+        components=[{"itemName": item, "qtyPerUnit": 2, "sourceType": "ITEM", "colorGroup": "common"}],
+    )
+    _product_name, product_id = _save_pushable_bom_product(erp_client, token, process_id)
+    _payload, client_name = _save_client(erp_client)
+
+    result = _save_client_order(erp_client, client_name, [{"productId": product_id, "qty": 5}], status="Order Confirmed")
+    assert result["success"] is True
+    assert "queued into Production" in result["message"]
+
+    prod = _rpc(erp_client, "getProductionData").get_json()["data"]
+    lot = next(r for r in prod if r["productId"] == product_id)
+    assert lot["componentsConsumed"], "lowercase 'common' colorGroup should still be consumed"
+    assert lot["componentsConsumed"][0]["itemName"] == item
+    assert lot["componentsConsumed"][0]["qty"] == 10  # qtyPerUnit(2) * lineQty(5)
+
+
 def test_save_client_order_needs_manual_production_when_unresolvable(erp_app, erp_client):
     token = _get_bom_token(erp_app, erp_client)
     _product_name, product_id = _save_bom_product(erp_client, token)  # no processId -> unresolvable
@@ -499,7 +529,7 @@ def test_delete_client_order_blocked_by_dispatch_reference(erp_app, erp_client):
     _rpc(
         erp_client,
         "saveDispatch",
-        [{"productId": product_id, "productName": product_name, "qty": 2, "orderNumber": order_number}],
+        [{"lines": [{"productId": product_id, "productName": product_name, "qty": 2}], "orderNumber": order_number}],
         mutation=True,
     )
 
@@ -539,7 +569,7 @@ def test_delete_client_orders_bulk_skip_and_report(erp_app, erp_client):
     _rpc(
         erp_client,
         "saveDispatch",
-        [{"productId": product_id, "productName": product_name, "qty": 1, "orderNumber": order_a}],
+        [{"lines": [{"productId": product_id, "productName": product_name, "qty": 1}], "orderNumber": order_a}],
         mutation=True,
     )
 
@@ -584,7 +614,7 @@ def test_save_dispatch_blocks_over_fulfilling_specific_order_line(erp_app, erp_c
     resp = _rpc(
         erp_client,
         "saveDispatch",
-        [{"productId": product_id, "productName": product_name, "qty": 5, "orderNumber": order_number}],
+        [{"lines": [{"productId": product_id, "productName": product_name, "qty": 5}], "orderNumber": order_number}],
         mutation=True,
     )
     body = resp.get_json()
@@ -596,7 +626,7 @@ def test_save_dispatch_blocks_over_fulfilling_specific_order_line(erp_app, erp_c
     ok = _rpc(
         erp_client,
         "saveDispatch",
-        [{"productId": product_id, "productName": product_name, "qty": 3, "orderNumber": order_number}],
+        [{"lines": [{"productId": product_id, "productName": product_name, "qty": 3}], "orderNumber": order_number}],
         mutation=True,
     )
     ok_body = ok.get_json()

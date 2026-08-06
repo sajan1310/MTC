@@ -9,7 +9,7 @@ per-module.
 from __future__ import annotations
 
 import re
-from datetime import date, datetime
+from datetime import date, datetime, timezone
 
 _ISO_RE = re.compile(r"^(\d{4})-(\d{1,2})-(\d{1,2})")
 _DISPLAY_RE = re.compile(r"^(\d{1,2})[/.\-](\d{1,2})[/.\-](\d{4})$")
@@ -31,7 +31,7 @@ def parse_date_parts(date_val) -> tuple[int, int, int] | None:
     if isinstance(date_val, (int, float)):
         seconds = date_val / 1000 if date_val > 1_000_000_000_000 else date_val
         try:
-            dt = datetime.utcfromtimestamp(seconds)
+            dt = datetime.fromtimestamp(seconds, tz=timezone.utc)
         except (ValueError, OSError, OverflowError):
             return None
         return (dt.year, dt.month, dt.day)

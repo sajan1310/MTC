@@ -42,6 +42,19 @@ App.Item = {
     { value: 'noMetadata', label: 'No Metadata' }
   ],
 
+  // Loads Items Master once, for tabs that only READ it rather than owning
+  // it -- App.State.globalItems is otherwise populated solely by this
+  // module's own loadData(), i.e. only if the operator happened to visit
+  // the Item Master tab first. Production resolves component narration and
+  // Base Unit live against globalItems (_resolveDisplayNarration /
+  // _resolveDisplayUnit), so without this every component silently
+  // rendered its stored narration and a blanket 'Pcs' fallback unit.
+  // Mirrors App.Process.ensureLoaded.
+  async ensureLoaded() {
+    if (App.State.globalItems && App.State.globalItems.length) return;
+    await this.loadData();
+  },
+
   async loadData() {
     const tbody = document.getElementById('itemTableBody');
     if (tbody) tbody.innerHTML = '<tr><td colspan="7" class="text-center p-4">Fetching Items Master…</td></tr>';
@@ -2300,7 +2313,9 @@ document.addEventListener('DOMContentLoaded', () => {
         } else {
           safeModalHide('itemModal');
         }
-        App.Utils.showToast(res?.message || 'Item saved.', !res?.success);
+        App.Utils.showToast(res?.message || 'Item saved.', !res?.success, res?.success
+          ? { type: 'item', value: `${savedName}␟${savedSize}` }
+          : null);
       } catch (err) {
         App.Utils.showToast(err.message || 'Failed to save item.', true);
       } finally {

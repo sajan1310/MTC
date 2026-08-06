@@ -517,8 +517,12 @@ TABLE_NAMES = {
     # Activates contractors_service._get_dispatch_logistics_payable_rows,
     # bom_service._get_product_ids_in_use's DISPATCH leg, and
     # warehouse_service._recalculate_warehouse_pool's Pass 3 -- all guarded
-    # no-ops until now.
-    "DISPATCH": "erp.dispatch",
+    # no-ops until now. Header-level (date/client/order/logistics) vs
+    # line-level (product/qty/rate) fields live on different tables, same
+    # split as PO_HEADERS/PO_LINES -- no flat "DISPATCH" key exists (see
+    # migrations/erp/023_dispatch_header_lines.sql).
+    "DISPATCH_HEADERS": "erp.dispatch_headers",
+    "DISPATCH_LINES": "erp.dispatch_lines",
     "CLIENTS": "erp.clients",
     # Activates bom_service._get_product_ids_in_use's Client Orders leg and
     # dispatch_service._get_client_order_line_qty -- both guarded no-ops

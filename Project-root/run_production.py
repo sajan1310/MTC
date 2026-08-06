@@ -134,7 +134,13 @@ def run_development_server():
 
     app = create_app(os.getenv("FLASK_ENV", "development"))
     port = int(os.getenv("PORT", 5000))
-    app.run(host="0.0.0.0", port=port, debug=True)
+    # Loopback-only by default and debug is opt-in: this path runs whenever
+    # check_environment() *fails* to detect a production platform, so a
+    # misconfigured/unrecognized prod host must never end up handing out
+    # the Werkzeug debugger (RCE via its console) on a network interface.
+    host = os.getenv("HOST", "127.0.0.1")
+    debug = os.getenv("FLASK_DEBUG", "0") == "1"
+    app.run(host=host, port=port, debug=debug)
 
 
 def main():

@@ -2271,7 +2271,9 @@ document.addEventListener('DOMContentLoaded', function () {
             await App.Process.openCreateModal();
           }
         }
-        App.Utils.showToast(response.message, !response.success);
+        App.Utils.showToast(response.message, !response.success, response.success
+          ? { type: 'process', value: response.data?.process?.processId || formData.processId }
+          : null);
       } catch (err) {
         App.Utils.showToast(err.message || 'Failed to save process', true);
       } finally {

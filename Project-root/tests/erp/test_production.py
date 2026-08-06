@@ -193,6 +193,37 @@ def test_save_production_color_breakdown_custom_subgroup_exempt(erp_client):
     assert resp.get_json()["success"] is True
 
 
+def test_save_production_color_breakdown_keeps_lowercase_common_component(erp_client):
+    """A componentsConsumed row's colorGroup of "common" (lowercase) is just
+    as much the COMMON sentinel as the canonical "COMMON" spelling this
+    save's own blank-defaulting writes -- a case-sensitive compare (the
+    pre-fix `colorGroup == _COLOR_GROUP_COMMON`) would silently drop it out
+    of clean_components entirely once a colorBreakdown is present (a real
+    consumption never written, understating Warehouse Pool Pass 2's debit
+    for it). Ports GAS e37529e's isCommonColorGroup fix.
+    """
+    *_ignored, down_id = _make_color_process(erp_client)
+    resp = _rpc(
+        erp_client,
+        "saveProduction",
+        [
+            {
+                "processId": down_id,
+                "assignedTo": "Worker A",
+                "colorBreakdown": [{"color": "Black", "qty": 5}],
+                "componentsConsumed": [
+                    {"itemName": "RawMat", "qty": 1, "sourceType": "ITEM", "colorGroup": "common"},
+                ],
+            }
+        ],
+        mutation=True,
+    )
+    body = resp.get_json()
+    assert body["success"] is True, body["message"]
+    fresh_row = body["data"]["row"]
+    assert any(c["itemName"] == "RawMat" for c in fresh_row["componentsConsumed"])
+
+
 def test_save_production_custom_color_auto_registers_into_color_master(erp_client):
     """A brand-new color the operator types via "+ Add Custom Sub-Group"
     is auto-registered into Color Master, so it's available everywhere

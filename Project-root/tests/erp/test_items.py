@@ -47,11 +47,47 @@ def test_save_item_creates_with_vendors_and_lists_it(erp_client):
     # row-patch instead of a full reload.
     assert body["data"]["item"]["baseUnit"] == "Pcs"
     assert body["data"]["item"]["vendors"] == [{"vendor": "Acme Co", "rate": 12.5, "ratePerBaseUnit": 12.5}]
+    # The success toast names the item so it's unambiguous on a page that
+    # just patched one row into an already-loaded list of many (reference:
+    # module_items.js saveItem, commit e37529e).
+    assert body["message"] == f'Item "{name}" (Standard) added successfully.'
 
     listed = _rpc(erp_client, "getItemsData").get_json()["data"]
     match = next(i for i in listed if i["name"] == name and i["size"] == "Standard")
     assert match["baseUnit"] == "Pcs"
     assert match["vendors"] == [{"vendor": "Acme Co", "rate": 12.5, "ratePerBaseUnit": 12.5}]
+
+
+def test_save_item_update_message_names_item_without_size(erp_client):
+    """A sizeless item's toast omits the size parenthetical entirely rather
+    than printing an empty "()" -- mirrors the reference's
+    `${size ? ` (${size})` : ''}` conditional.
+    """
+    name = _unique_name("HubBearing")
+    create_resp = _rpc(
+        erp_client,
+        "saveItem",
+        [{"itemName": name, "itemSize": "", "itemBaseUnit": "Pcs"}],
+        mutation=True,
+    )
+    assert create_resp.get_json()["message"] == f'Item "{name}" added successfully.'
+
+    update_resp = _rpc(
+        erp_client,
+        "saveItem",
+        [
+            {
+                "originalName": name,
+                "originalSize": "",
+                "itemName": name,
+                "itemSize": "",
+                "itemBaseUnit": "Pcs",
+                "itemRemarks": "updated",
+            }
+        ],
+        mutation=True,
+    )
+    assert update_resp.get_json()["message"] == f'Item "{name}" updated successfully.'
 
 
 def test_get_items_data_hides_zero_rate_vendors(erp_client):

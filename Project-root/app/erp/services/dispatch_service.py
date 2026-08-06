@@ -1,9 +1,13 @@
 """Dispatch, ported from Apps_Script/module_dispatch.js -- the Dispatched
-Goods ledger. Opens Phase 4, closing Warehouse Pool's Pass 3 (finished-
-goods debit, deferred since Phase 3e/3g) and activating two other
-already-shipped guarded stubs with zero code changes there:
-contractors_service._get_dispatch_logistics_payable_rows (Phase 3d) and
-bom_service._get_product_ids_in_use's DISPATCH leg (Phase 3c).
+Goods ledger. Header+lines (erp.dispatch_headers/erp.dispatch_lines, see
+migrations/erp/023_dispatch_header_lines.sql): one Dispatch Number is a
+"bill" shared by one-or-more line items, each carrying its own Product/Qty
+and an optional Rate (Amount = Qty * Rate, record-keeping only -- never read
+by any availability/pool-crediting math, matching the reference's own
+documented framing for those two columns). Split from a flat single-item
+table into this shape to match module_dispatch.js's own header+lines model
+(reference commits e37529e/6a22f0e), same convention already used here for
+PO/Bill/Return (see po_service.py).
 
 getReadyToDispatchData is a pure read computed on the fly from
 erp.warehouse_pool -- mirrors Stock's own live-computation for raw
@@ -16,36 +20,39 @@ keyed by its own Output Item Name instead. Product Name for tagged rows
 resolves from erp.bom_products directly, bypassing the BOM password gate
 -- that gate is a UI convenience for the editable product master, not a
 data-access control, and source's own _computeReadyToDispatchMap reads
-the BOM sheet directly the same way.
+the BOM sheet directly the same way. None of this changed by the
+header+lines split -- it reads warehouse_pool, never erp.dispatch*.
 
-saveDispatch validates twice: against the aggregate Ready-to-Dispatch qty
-for the product, and -- if an Order Number is given -- against that
-specific PI/Estimate line's own remaining qty, so one dispatch can't
-over-fulfill a small order using stock really earmarked for a different
-order of the same product. _get_client_order_line_qty is guarded via
-TABLE_NAMES.get("CLIENT_ORDERS_HEADERS"/"_LINES") -- real as of Phase 4b
-(Clients). Originally written in this phase against a flat single-table
-assumption; fixed to the real header+lines join once Clients decided the
-schema, the same "flat key" mistake this project has hit and fixed
-before finalizing other denormalized sheets.
+saveDispatch validates every line twice: against the aggregate Ready-to-
+Dispatch qty for that line's product (cumulative across every line of this
+same bill -- two lines of the same product both draw down the same pool),
+and -- if an Order Number is given -- against that specific PI/Estimate
+line's own remaining qty, so one dispatch bill can't over-fulfill a small
+order using stock really earmarked for a different order of the same
+product. Mirrors module_dispatch.js's saveDispatch Validation #1/#2
+exactly, just run once per line instead of once per (single-product) save.
 
-Logistics Contractor rate is snapshotted via contractors_service.
-_get_contractor_rate(name, config_maps.LOGISTICS_PROCESS_NAME) -- an
-admin sets a Logistics Contractor's rate by creating a normal Contractor
-Rate entry with that exact hardcoded virtual process-name string, no
-real Process Master row needed. Reused as-is, zero new code needed in
-contractors_service.py.
+Logistics Contractor rate is snapshotted onto the header (one rate for the
+whole bill) via contractors_service._get_contractor_rate(name,
+config_maps.LOGISTICS_PROCESS_NAME) -- an admin sets a Logistics
+Contractor's rate by creating a normal Contractor Rate entry with that
+exact hardcoded virtual process-name string, no real Process Master row
+needed. Logistics Cost is genuinely per-line (= header's logistics_rate *
+that line's qty), stored on the line so each line carries its own
+contribution to the bill's total.
 
 dispatch_number uses a real Postgres SEQUENCE (erp.dispatch_number_seq),
 same deliberate deviation as PO/Process/Product IDs: a global, unscoped
 counter. getNextDispatchNumber previews via nextval() same as
 getNextProcessId -- a preview call followed by a real save can
 legitimately consume two different values (harmless, already-accepted
-tradeoff).
+tradeoff). Unlike PO, a dispatch bill cannot be renumbered on edit -- the
+reference's own saveDispatch has no such feature, so none is added here.
 """
 
 from __future__ import annotations
 
+import json
 import math
 import re
 from datetime import date
@@ -196,9 +203,9 @@ def _compute_ready_to_dispatch_map(cur) -> dict:
                 # something unique per row to address. productId below is NOT
                 # unique once a differentiator splits one output into several
                 # rows -- every variant reports the same bare Product Tag /
-                # Output Item Name, because that is all a Dispatch row can
-                # store (erp.dispatch has no differentiator column, and the
-                # pool debit in _recalculate_warehouse_pool Pass 3 is
+                # Output Item Name, because that is all a Dispatch line can
+                # store (erp.dispatch_lines has no differentiator column, and
+                # the pool debit in _recalculate_warehouse_pool Pass 3 is
                 # deliberately color-blind).
                 "key": key,
                 # The bare key this row's availability actually pools with --
@@ -246,7 +253,7 @@ def _ready_available_qty_for(ready_map: dict, product_id: str) -> float:
 
     Availability is therefore summed across the bare key AND every variant of
     it. That is not a loosening of the guard -- it's what the ledger actually
-    models: an erp.dispatch row records only the product_id, and
+    models: a dispatch line records only the product_id, and
     _recalculate_warehouse_pool Pass 3 drains whichever color buckets have
     stock, so per-variant consumption isn't representable in the current
     schema. The differentiator splits the Ready to Dispatch *list* for the
@@ -294,15 +301,23 @@ def _get_client_order_line_qty(cur, order_number: str, product_id: str):
     return sum(float(row["qty"] or 0) for row in rows)
 
 
-def _get_dispatched_qty_for_order(cur, order_number: str, product_id: str, exclude_id=None) -> float:
+def _get_dispatched_qty_for_order(cur, order_number: str, product_id: str, exclude_header_id=None) -> float:
+    """Sums Dispatch qty already committed to (order_number, product_id)
+    across every line of every bill, optionally excluding one bill's own
+    lines entirely (the header being edited) -- so re-saving a bill against
+    the same order/product doesn't double-count its own prior contribution.
+    """
+    headers_table = config_maps.TABLE_NAMES.get("DISPATCH_HEADERS")
+    lines_table = config_maps.TABLE_NAMES.get("DISPATCH_LINES")
     sql = (
-        "SELECT COALESCE(SUM(qty), 0) AS total FROM erp.dispatch "
-        "WHERE deleted_at IS NULL AND lower(order_number) = lower(%s) AND lower(product_id) = lower(%s)"
+        f"SELECT COALESCE(SUM(l.qty), 0) AS total FROM {lines_table} l "
+        f"JOIN {headers_table} h ON h.id = l.header_id "
+        "WHERE h.deleted_at IS NULL AND lower(h.order_number) = lower(%s) AND lower(l.product_id) = lower(%s)"
     )
     params = [order_number, product_id]
-    if exclude_id is not None:
-        sql += " AND id != %s"
-        params.append(exclude_id)
+    if exclude_header_id is not None:
+        sql += " AND h.id != %s"
+        params.append(exclude_header_id)
     cur.execute(sql, params)
     return float(cur.fetchone()["total"] or 0)
 
@@ -327,6 +342,49 @@ def _find_contractor_id_by_name(cur, name: str):
     )
     row = cur.fetchone()
     return row["id"] if row else None
+
+
+def _normalize_lines(raw_lines) -> list:
+    """Parses/validates the `lines` array a dispatch save submits. A line
+    missing a product or with qty <= 0 is silently dropped (matches the
+    reference's own line-cleaning in saveDispatch), not errored -- only a
+    save with ZERO valid lines left after cleaning is rejected.
+    """
+    if isinstance(raw_lines, str):
+        try:
+            lines = json.loads(raw_lines) if raw_lines else []
+        except ValueError:
+            raise ValueError("Invalid line-items data: could not parse JSON.")
+    else:
+        lines = raw_lines or []
+
+    if not isinstance(lines, list):
+        lines = []
+
+    normalized = []
+    for line in lines:
+        line = line or {}
+        product_id = str(line.get("productId") or "").strip()
+        product_name = str(line.get("productName") or "").strip()
+        if not product_id or not product_name:
+            continue
+        qty = _validate_number(line.get("qty"), 0.001, 10000000)
+        if qty <= 0:
+            continue
+        rate = _validate_number(line.get("rate"), 0, 10000000)
+        normalized.append(
+            {
+                "productId": product_id,
+                "productName": product_name,
+                "qty": qty,
+                "rate": rate,
+                "amount": qty * rate,
+            }
+        )
+
+    if not normalized:
+        raise ValueError("Please specify at least one valid item with a Product and Quantity greater than zero.")
+    return normalized
 
 
 @rpc_method("getReadyToDispatchData")
@@ -368,53 +426,73 @@ def get_ready_to_dispatch_data():
     return build_response(True, records)
 
 
-def _row_to_dispatch_record(row) -> dict:
-    return {
-        "rowIdx": row["id"],
-        "dispatchNumber": row["dispatch_number"] or "",
-        "dispatchDate": date_utils.to_display_string(row["dispatch_date"]) or "",
-        "dateRaw": date_utils.to_iso_string(row["dispatch_date"]) or "",
-        "orderNumber": row["order_number"] or "",
-        "clientName": row["client_name"] or "",
-        "productId": row["product_id"] or "",
-        "productName": row["product_name"] or "",
-        "qty": float(row["qty"]),
-        "transport": row["transport"] or "",
-        "remarks": row["remarks"] or "",
-        "invoiceNumber": row["invoice_number"] or "",
-        "privateMark": row["private_mark"] or "",
-        "grNumber": row["gr_number"] or "",
-        "logisticsContractor": row["logistics_contractor"] or "",
-        "logisticsRate": float(row["logistics_rate"]),
-        "logisticsCost": float(row["logistics_cost"]),
-    }
+def _load_dispatch_rows(cur, only_dispatch_number: str | None = None) -> list:
+    """Core of getDispatchData: one FLAT record per line, header fields
+    denormalized onto every line -- deliberately NOT grouped into bills
+    server-side, even though Postgres already has the header+lines split
+    available for a JOIN. App.State.globalDispatch is consumed as a flat
+    per-line array by several other client modules that predate this
+    header+lines redesign (client.js's ledger/pending-order-line
+    calculations, stock.js's stock-history projection) -- the exact
+    "everything else keeps working unchanged" reason the reference itself
+    documents for keeping its own globalDispatch flat and grouping into
+    "bills" separately, client-side, only for the Dispatch module's own
+    ledger table/modal (see static/erp/dispatch.js's buildDispatchBills).
+    Matches _row_to_dispatch_record's pre-redesign field set exactly, plus
+    lineId/rate/amount.
+    """
+    headers_table = config_maps.TABLE_NAMES.get("DISPATCH_HEADERS")
+    lines_table = config_maps.TABLE_NAMES.get("DISPATCH_LINES")
+    query = f"""
+        SELECT h.dispatch_number, h.dispatch_date, h.order_number, h.client_name,
+               h.transport, h.remarks, h.invoice_number, h.private_mark, h.gr_number,
+               h.logistics_contractor, h.logistics_rate,
+               l.id AS line_id, l.product_id, l.product_name, l.qty, l.rate, l.amount, l.logistics_cost
+        FROM {headers_table} h
+        JOIN {lines_table} l ON l.header_id = h.id
+        WHERE h.deleted_at IS NULL
+    """
+    params: list = []
+    if only_dispatch_number is not None:
+        query += " AND lower(h.dispatch_number) = lower(%s)"
+        params.append(only_dispatch_number)
+    query += " ORDER BY h.id, l.id"
 
+    cur.execute(query, params)
 
-_DISPATCH_SELECT_COLS = """
-    id, dispatch_number, dispatch_date, order_number, client_name, product_id, product_name,
-    qty, transport, remarks, invoice_number, private_mark, gr_number,
-    logistics_contractor, logistics_rate, logistics_cost
-"""
+    records = [
+        {
+            "lineId": row["line_id"],
+            "dispatchNumber": row["dispatch_number"] or "",
+            "dispatchDate": date_utils.to_display_string(row["dispatch_date"]) or "",
+            "dateRaw": date_utils.to_iso_string(row["dispatch_date"]) or "",
+            "orderNumber": row["order_number"] or "",
+            "clientName": row["client_name"] or "",
+            "productId": row["product_id"] or "",
+            "productName": row["product_name"] or "",
+            "qty": float(row["qty"]),
+            "rate": float(row["rate"]),
+            "amount": float(row["amount"]),
+            "transport": row["transport"] or "",
+            "remarks": row["remarks"] or "",
+            "invoiceNumber": row["invoice_number"] or "",
+            "privateMark": row["private_mark"] or "",
+            "grNumber": row["gr_number"] or "",
+            "logisticsContractor": row["logistics_contractor"] or "",
+            "logisticsRate": float(row["logistics_rate"]),
+            "logisticsCost": float(row["logistics_cost"]),
+        }
+        for row in cur.fetchall()
+    ]
+    records.sort(key=lambda r: (r["dateRaw"] or "", r["dispatchNumber"], r["lineId"]), reverse=True)
+    return records
 
 
 @rpc_method("getDispatchData")
 def get_dispatch_data():
     with database.get_conn(cursor_factory=psycopg2.extras.RealDictCursor) as (_conn, cur):
-        cur.execute(f"SELECT {_DISPATCH_SELECT_COLS} FROM erp.dispatch WHERE deleted_at IS NULL")
-        rows = cur.fetchall()
-
-    records = [_row_to_dispatch_record(row) for row in rows]
-    records.sort(key=lambda r: (r["dateRaw"] or "", r["rowIdx"]), reverse=True)
+        records = _load_dispatch_rows(cur)
     return build_response(True, records)
-
-
-def _fetch_dispatch_record(cur, dispatch_id):
-    """Reads one freshly-written dispatch row back by id, so save_dispatch
-    can hand it to the client for an in-place row-patch instead of a full
-    reload."""
-    cur.execute(f"SELECT {_DISPATCH_SELECT_COLS} FROM erp.dispatch WHERE id = %s", (dispatch_id,))
-    row = cur.fetchone()
-    return _row_to_dispatch_record(row) if row else None
 
 
 @rpc_method("getNextDispatchNumber")
@@ -431,17 +509,9 @@ def get_next_dispatch_number():
 def save_dispatch(conn, cur, form_data):
     form_data = form_data or {}
 
-    product_id = str(form_data.get("productId") or "").strip()
-    product_name = str(form_data.get("productName") or "").strip()
-    if not product_id or not product_name:
-        raise ValueError("Valid Product ID and Product Name are required.")
-
-    qty = _validate_number(form_data.get("qty"), 0.001, 10000000)
-    if qty <= 0:
-        raise ValueError("Dispatch Quantity must be greater than zero.")
+    lines = _normalize_lines(form_data.get("lines"))
 
     dispatch_date = date_utils.to_safe_date(form_data.get("dispatchDate")) or date.today()
-
     order_number = str(form_data.get("orderNumber") or "").strip()
     client_name = str(form_data.get("clientName") or "").strip()
     transport = str(form_data.get("transport") or "").strip()
@@ -451,211 +521,272 @@ def save_dispatch(conn, cur, form_data):
     gr_number = str(form_data.get("grNumber") or "").strip()
     logistics_contractor = str(form_data.get("logisticsContractor") or "").strip()
 
-    row_idx = form_data.get("rowIdx")
-    is_edit = bool(row_idx)
+    old_dispatch_number = str(form_data.get("existingDispatchNumber") or "").strip()
+    is_edit = bool(old_dispatch_number)
 
-    existing = None
-    original_qty = 0.0
+    headers_table = config_maps.TABLE_NAMES.get("DISPATCH_HEADERS")
+    lines_table = config_maps.TABLE_NAMES.get("DISPATCH_LINES")
+
+    header_id = None
+    # This bill's own currently-saved qty per product -- credited back onto
+    # that product's availability below, so re-saving a bill (unchanged, or
+    # with only some lines changed) never rejects against its own prior
+    # consumption before the pool has a chance to reflect the edit.
+    original_qty_by_product: dict = {}
     if is_edit:
-        try:
-            target_id = int(row_idx)
-        except (TypeError, ValueError):
-            raise ValueError("Invalid dispatch record selected for edit.")
         cur.execute(
-            "SELECT id, dispatch_number, product_id, qty FROM erp.dispatch WHERE id = %s AND deleted_at IS NULL",
-            (target_id,),
+            f"SELECT id FROM {headers_table} WHERE lower(dispatch_number) = lower(%s) AND deleted_at IS NULL",
+            (old_dispatch_number,),
         )
-        existing = cur.fetchone()
-        if existing is None:
-            raise ValueError("Invalid dispatch record selected for edit.")
+        header_row = cur.fetchone()
+        if header_row is None:
+            raise ValueError(f'Dispatch "{old_dispatch_number}" not found.')
+        header_id = header_row["id"]
 
-        if str(existing["product_id"] or "").strip().lower() != product_id.lower():
-            raise ValueError("Data mismatch: Product ID does not match original row record.")
+        cur.execute(f"SELECT product_id, qty FROM {lines_table} WHERE header_id = %s", (header_id,))
+        for r in cur.fetchall():
+            key = str(r["product_id"] or "").strip().lower()
+            original_qty_by_product[key] = original_qty_by_product.get(key, 0.0) + float(r["qty"] or 0)
 
-        original_qty = float(existing["qty"] or 0)
-
-    ready_map = _compute_ready_to_dispatch_map(cur)
-    # Pools the bare Product Tag, the '__output__'-prefixed untagged key, and
-    # every '||<differentiator>' variant of either -- see
-    # _ready_available_qty_for for why the guard is per-product even though
-    # the list splits per variant.
-    current_ready_qty = _ready_available_qty_for(ready_map, product_id)
-    available_qty = current_ready_qty + original_qty
-
-    if qty > available_qty + 0.0001:
-        raise ValueError(f'Only {available_qty} unit(s) of "{product_name}" are Ready to Dispatch.')
-
-    order_line_qty = None
-    if order_number:
-        order_line_qty = _get_client_order_line_qty(cur, order_number, product_id)
-        if order_line_qty is not None:
-            already_dispatched_for_order = _get_dispatched_qty_for_order(
-                cur, order_number, product_id, existing["id"] if is_edit else None
-            )
-            available_for_order = order_line_qty - already_dispatched_for_order
-            if qty > available_for_order + 0.0001:
-                raise ValueError(
-                    f'Only {available_for_order} unit(s) of "{product_name}" remain pending on PI/Estimate '
-                    f'"{order_number}" (ordered {order_line_qty}, already dispatched {already_dispatched_for_order} '
-                    "against it). Use a different order reference, or Direct, if this dispatch is really for other stock."
-                )
-
-    if is_edit:
-        dispatch_number = str(existing["dispatch_number"] or "").strip()
+        dispatch_number = old_dispatch_number
     else:
         cur.execute("SELECT nextval('erp.dispatch_number_seq') AS n")
         dispatch_number = f"DSP-{cur.fetchone()['n']}"
 
-    logistics_rate = contractors_service._get_contractor_rate(cur, logistics_contractor, config_maps.LOGISTICS_PROCESS_NAME)
-    logistics_cost = logistics_rate * qty
+    # Guard #1: Ready-to-Dispatch availability, cumulative across this
+    # bill's own lines -- two lines of the same product both draw down the
+    # same pool. Mirrors module_dispatch.js's saveDispatch Validation #1.
+    ready_map = _compute_ready_to_dispatch_map(cur)
+    reserved_by_product: dict = {}
+    for line in lines:
+        key = line["productId"].strip().lower()
+        current_ready_qty = _ready_available_qty_for(ready_map, line["productId"])
+        available_qty = current_ready_qty + original_qty_by_product.get(key, 0.0)
+        reserved_so_far = reserved_by_product.get(key, 0.0)
+        if reserved_so_far + line["qty"] > available_qty + 0.0001:
+            raise ValueError(
+                f'Only {available_qty} unit(s) of "{line["productName"]}" are Ready to Dispatch '
+                f'(requested {reserved_so_far + line["qty"]} across this bill).'
+            )
+        reserved_by_product[key] = reserved_so_far + line["qty"]
 
-    resolved_bom_product_id = _find_bom_product_id(cur, product_id)
+    # Guard #2: per-order-line remaining qty, only when an order/PI is
+    # referenced. A line whose product has no matching order line at all is
+    # a soft "Note:" on the response (not blocking); a line that would
+    # over-fulfill what actually remains open on the order is a hard block.
+    # Mirrors Validation #2, run per line and reserved cumulatively the same
+    # way as Guard #1.
+    order_line_notes: list = []
+    if order_number:
+        order_reserved_by_product: dict = {}
+        for line in lines:
+            key = line["productId"].strip().lower()
+            order_line_qty = _get_client_order_line_qty(cur, order_number, line["productId"])
+            if order_line_qty is None:
+                if line["productName"] not in order_line_notes:
+                    order_line_notes.append(line["productName"])
+                continue
+            already_dispatched_for_order = _get_dispatched_qty_for_order(
+                cur, order_number, line["productId"], header_id if is_edit else None
+            )
+            available_for_order = order_line_qty - already_dispatched_for_order
+            reserved_so_far = order_reserved_by_product.get(key, 0.0)
+            if reserved_so_far + line["qty"] > available_for_order + 0.0001:
+                raise ValueError(
+                    f'Only {available_for_order} unit(s) of "{line["productName"]}" remain pending on PI/Estimate '
+                    f'"{order_number}" (ordered {order_line_qty}, already dispatched {already_dispatched_for_order} '
+                    "against it). Use a different order reference, or Direct, if this dispatch is really for other stock."
+                )
+            order_reserved_by_product[key] = reserved_so_far + line["qty"]
+
+    logistics_rate = contractors_service._get_contractor_rate(cur, logistics_contractor, config_maps.LOGISTICS_PROCESS_NAME)
     resolved_contractor_id = _find_contractor_id_by_name(cur, logistics_contractor)
     user_id = get_current_user_id()
 
     if is_edit:
         cur.execute(
-            """
-            UPDATE erp.dispatch SET
-                dispatch_date = %s, order_number = %s, client_name = %s, product_id = %s, bom_product_id = %s,
-                product_name = %s, qty = %s, transport = %s, remarks = %s, invoice_number = %s,
-                private_mark = %s, gr_number = %s, logistics_contractor = %s, contractor_id = %s,
-                logistics_rate = %s, logistics_cost = %s, updated_by = %s
+            f"""
+            UPDATE {headers_table} SET
+                dispatch_date = %s, order_number = %s, client_name = %s, transport = %s, remarks = %s,
+                invoice_number = %s, private_mark = %s, gr_number = %s,
+                logistics_contractor = %s, contractor_id = %s, logistics_rate = %s, updated_by = %s
             WHERE id = %s
             """,
             (
-                dispatch_date, order_number, client_name, product_id, resolved_bom_product_id,
-                product_name, qty, transport, remarks, invoice_number,
-                private_mark, gr_number, logistics_contractor, resolved_contractor_id,
-                logistics_rate, logistics_cost, user_id,
-                existing["id"],
+                dispatch_date, order_number, client_name, transport, remarks,
+                invoice_number, private_mark, gr_number,
+                logistics_contractor, resolved_contractor_id, logistics_rate, user_id,
+                header_id,
             ),
         )
-        new_id = existing["id"]
+        cur.execute(f"DELETE FROM {lines_table} WHERE header_id = %s", (header_id,))
     else:
         cur.execute(
-            """
-            INSERT INTO erp.dispatch
-                (dispatch_number, dispatch_date, order_number, client_name, product_id, bom_product_id,
-                 product_name, qty, transport, remarks, invoice_number, private_mark, gr_number,
-                 logistics_contractor, contractor_id, logistics_rate, logistics_cost, updated_by)
-            VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+            f"""
+            INSERT INTO {headers_table}
+                (dispatch_number, dispatch_date, order_number, client_name, transport, remarks,
+                 invoice_number, private_mark, gr_number, logistics_contractor, contractor_id,
+                 logistics_rate, updated_by)
+            VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
             RETURNING id
             """,
             (
-                dispatch_number, dispatch_date, order_number, client_name, product_id, resolved_bom_product_id,
-                product_name, qty, transport, remarks, invoice_number, private_mark, gr_number,
-                logistics_contractor, resolved_contractor_id, logistics_rate, logistics_cost, user_id,
+                dispatch_number, dispatch_date, order_number, client_name, transport, remarks,
+                invoice_number, private_mark, gr_number, logistics_contractor, resolved_contractor_id,
+                logistics_rate, user_id,
             ),
         )
-        new_id = cur.fetchone()["id"]
+        header_id = cur.fetchone()["id"]
+
+    for line in lines:
+        resolved_bom_product_id = _find_bom_product_id(cur, line["productId"])
+        line_logistics_cost = logistics_rate * line["qty"]
+        cur.execute(
+            f"""
+            INSERT INTO {lines_table}
+                (header_id, product_id, bom_product_id, product_name, qty, rate, amount, logistics_cost)
+            VALUES (%s, %s, %s, %s, %s, %s, %s, %s)
+            """,
+            (
+                header_id, line["productId"], resolved_bom_product_id, line["productName"],
+                line["qty"], line["rate"], line["amount"], line_logistics_cost,
+            ),
+        )
 
     warehouse_service._recalculate_warehouse_pool(cur)
 
-    message = "Dispatch record updated successfully." if is_edit else "Dispatch recorded successfully."
-    if order_number and order_line_qty is None:
-        message += f' Note: PI / Estimate "{order_number}" has no line for "{product_name}" (it may have been edited or removed).'
+    message = f'Dispatch "{dispatch_number}" updated successfully.' if is_edit else f'Dispatch "{dispatch_number}" recorded successfully.'
+    if order_line_notes:
+        names = ", ".join(f'"{n}"' for n in order_line_notes)
+        message += f' Note: PI / Estimate "{order_number}" has no line for {names} (it may have been edited or removed).'
 
-    # Read this dispatch's own just-written row back so the client can
-    # patch it into an already-loaded list in place instead of a full
-    # reload.
-    fresh_row = _fetch_dispatch_record(cur, new_id)
+    # Read this bill's own just-written lines back (flat, one per line) so
+    # the client can patch them into its already-loaded globalDispatch array
+    # in place instead of a full reload -- mirrors the reference's own
+    # saveDispatch response (freshRows).
+    fresh_rows = _load_dispatch_rows(cur, only_dispatch_number=dispatch_number)
 
-    return build_response(True, {"dispatchNumber": dispatch_number, "row": fresh_row}, message)
+    return build_response(True, {"dispatchNumber": dispatch_number, "rows": fresh_rows}, message)
 
 
 @rpc_method("deleteDispatch", mutation=True)
 @database.transactional
-def delete_dispatch(conn, cur, row_idx, expected_dispatch_number=None, expected_qty=None):
-    try:
-        target_id = int(row_idx)
-    except (TypeError, ValueError):
-        raise ValueError("Invalid dispatch record selected for deletion.")
+def delete_dispatch(conn, cur, dispatch_number, expected_item_count=None, expected_total_qty=None):
+    target = str(dispatch_number or "").strip()
+    if not target:
+        raise ValueError("Dispatch number must not be empty.")
 
-    cur.execute("SELECT dispatch_number, qty FROM erp.dispatch WHERE id = %s AND deleted_at IS NULL", (target_id,))
+    headers_table = config_maps.TABLE_NAMES.get("DISPATCH_HEADERS")
+    lines_table = config_maps.TABLE_NAMES.get("DISPATCH_LINES")
+
+    cur.execute(
+        f"SELECT id FROM {headers_table} WHERE lower(dispatch_number) = lower(%s) AND deleted_at IS NULL",
+        (target,),
+    )
     row = cur.fetchone()
     if row is None:
-        raise ValueError("Invalid dispatch record selected for deletion.")
+        raise ValueError(f'Dispatch "{target}" not found.')
+    header_id = row["id"]
 
-    if expected_dispatch_number is not None and expected_qty is not None:
-        dispatch_number = str(row["dispatch_number"] or "").strip()
-        qty = float(row["qty"] or 0)
+    # Cheap two-number fingerprint of the bill (item count + total qty),
+    # mirroring module_dispatch.js's deleteDispatch(dispatchNumber,
+    # expectedItemCount, expectedTotalQty) exactly -- itemCount alone can't
+    # catch "a line's qty was edited without changing line count", totalQty
+    # alone can't catch "a line was swapped for a different one that happens
+    # to sum the same"; together they catch both without a full line-by-line
+    # diff. Only enforced when the caller actually provides both (older
+    # callers omitting them keep unconditional-delete behavior).
+    if expected_item_count is not None and expected_total_qty is not None:
+        cur.execute(
+            f"SELECT COUNT(*) AS item_count, COALESCE(SUM(qty), 0) AS total_qty FROM {lines_table} WHERE header_id = %s",
+            (header_id,),
+        )
+        stats = cur.fetchone()
         if (
-            dispatch_number.lower() != str(expected_dispatch_number or "").strip().lower()
-            or abs(qty - float(expected_qty)) > 0.0001
+            int(stats["item_count"]) != int(expected_item_count)
+            or abs(float(stats["total_qty"]) - float(expected_total_qty)) > 0.0001
         ):
-            raise ValueError("Data mismatch: The record has been modified or shifted. Please refresh.")
+            raise ValueError("Data mismatch: The bill has been modified since it was loaded. Please refresh.")
 
-    cur.execute("UPDATE erp.dispatch SET deleted_at = NOW(), updated_by = %s WHERE id = %s", (get_current_user_id(), target_id))
+    cur.execute(
+        f"UPDATE {headers_table} SET deleted_at = NOW(), updated_by = %s WHERE id = %s",
+        (get_current_user_id(), header_id),
+    )
 
     warehouse_service._recalculate_warehouse_pool(cur)
 
-    return build_response(True, None, "Dispatch record deleted successfully.")
+    return build_response(True, None, f'Dispatch "{target}" deleted.')
 
 
 @rpc_method("deleteDispatchBulk", mutation=True)
 @database.transactional
-def delete_dispatch_bulk(conn, cur, row_idxs, expected_rows=None):
-    target_ids = []
-    for r in row_idxs or []:
-        try:
-            target_ids.append(int(r))
-        except (TypeError, ValueError):
-            continue
+def delete_dispatch_bulk(conn, cur, dispatch_numbers, expected_bills=None):
+    targets = [str(n or "").strip() for n in (dispatch_numbers or []) if str(n or "").strip()]
+    if not targets:
+        return build_response(True, None, "No dispatch bills selected.")
 
-    if not target_ids:
-        return build_response(True, None, "No dispatch records selected.")
+    headers_table = config_maps.TABLE_NAMES.get("DISPATCH_HEADERS")
+    lines_table = config_maps.TABLE_NAMES.get("DISPATCH_LINES")
 
-    expected_by_id = {}
-    for e in expected_rows or []:
+    expected_by_number = {}
+    for e in expected_bills or []:
         e = e or {}
-        if e.get("rowIdx") is not None:
-            try:
-                expected_by_id[int(e["rowIdx"])] = e
-            except (TypeError, ValueError):
-                continue
+        number = str(e.get("dispatchNumber") or "").strip().lower()
+        if number:
+            expected_by_number[number] = e
 
     cur.execute(
-        "SELECT id, dispatch_number, qty FROM erp.dispatch WHERE deleted_at IS NULL AND id = ANY(%s)",
-        (target_ids,),
+        f"""
+        SELECT h.id, h.dispatch_number, COUNT(l.id) AS item_count, COALESCE(SUM(l.qty), 0) AS total_qty
+        FROM {headers_table} h LEFT JOIN {lines_table} l ON l.header_id = h.id
+        WHERE h.deleted_at IS NULL AND lower(h.dispatch_number) = ANY(%s)
+        GROUP BY h.id, h.dispatch_number
+        """,
+        ([t.lower() for t in targets],),
     )
-    rows_by_id = {row["id"]: row for row in cur.fetchall()}
+    rows_by_number = {row["dispatch_number"].lower(): row for row in cur.fetchall()}
 
+    # Skip-not-abort, per bill -- a mismatched/missing bill is excluded from
+    # this batch rather than failing the whole delete, so the rest still
+    # goes through. Mirrors deleteDispatchBulk exactly.
     deletable_ids = []
+    skipped_missing = 0
     skipped_mismatch = 0
-    for target_id in target_ids:
-        row = rows_by_id.get(target_id)
+    for target in targets:
+        row = rows_by_number.get(target.lower())
         if row is None:
+            skipped_missing += 1
             continue
 
-        expected = expected_by_id.get(target_id)
-        if expected and expected.get("expectedDispatchNumber") is not None and expected.get("expectedQty") is not None:
-            dispatch_number = str(row["dispatch_number"] or "").strip()
-            qty = float(row["qty"] or 0)
+        expected = expected_by_number.get(target.lower())
+        if expected and expected.get("expectedItemCount") is not None and expected.get("expectedTotalQty") is not None:
             if (
-                dispatch_number.lower() != str(expected.get("expectedDispatchNumber") or "").strip().lower()
-                or abs(qty - float(expected.get("expectedQty"))) > 0.0001
+                int(row["item_count"]) != int(expected["expectedItemCount"])
+                or abs(float(row["total_qty"]) - float(expected["expectedTotalQty"])) > 0.0001
             ):
                 skipped_mismatch += 1
                 continue
 
-        deletable_ids.append(target_id)
+        deletable_ids.append(row["id"])
 
     if not deletable_ids:
-        return build_response(False, None, "Data mismatch: the selected record(s) have been modified or shifted. Please refresh.")
+        if skipped_mismatch > 0 and skipped_missing == 0:
+            return build_response(False, None, "Data mismatch: the selected bill(s) have been modified or shifted. Please refresh.")
+        return build_response(False, None, "None of the selected dispatch bills were found.")
 
     user_id = get_current_user_id()
-    cur.execute("UPDATE erp.dispatch SET deleted_at = NOW(), updated_by = %s WHERE id = ANY(%s)", (user_id, deletable_ids))
-    rows_deleted = cur.rowcount
+    cur.execute(f"UPDATE {headers_table} SET deleted_at = NOW(), updated_by = %s WHERE id = ANY(%s)", (user_id, deletable_ids))
+    bills_deleted = cur.rowcount
 
     warehouse_service._recalculate_warehouse_pool(cur)
 
-    if skipped_mismatch > 0:
-        message = (
-            f"Deleted {rows_deleted} dispatch record(s). Skipped {skipped_mismatch} that were modified or "
-            "shifted -- please refresh and retry those."
-        )
-    else:
-        message = f"Deleted {rows_deleted} dispatch record(s)."
+    notes = []
+    if skipped_mismatch:
+        notes.append(f"Skipped {skipped_mismatch} that were modified or shifted -- please refresh and retry those.")
+    if skipped_missing:
+        notes.append(f"{skipped_missing} were already gone.")
+    message = f"Deleted {bills_deleted} dispatch bill(s)."
+    if notes:
+        message += " " + " ".join(notes)
 
     return build_response(True, None, message)

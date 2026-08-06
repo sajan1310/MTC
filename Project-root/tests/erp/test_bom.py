@@ -462,6 +462,46 @@ def test_get_bom_process_components_drift_no_token_and_detects_mismatch(erp_app,
     assert match["recipeQtyPerUnit"] == 5
 
 
+def test_get_bom_process_components_drift_matches_lowercase_common_color_group(erp_app, erp_client):
+    """GAS e37529e: a Color Sub-Group of "Common"/"common" was compared
+    exactly against the COMMON sentinel, dropping the row out of the
+    recipe cache entirely -- a lowercase "common" (or any other casing) on
+    a recipe row silently hid real drift instead of reporting it. Ports
+    the same case-insensitive isCommonColorGroup() check bom_service.py
+    now uses (via process_service._is_common_color_group).
+    """
+    token = _get_bom_token(erp_app, erp_client)
+    item = _unique_name("DriftItemLower")
+
+    _proc_payload, process_id = _save_process(
+        erp_client,
+        isFinalStage=True,
+        components=[{"itemName": item, "qtyPerUnit": 5, "sourceType": "ITEM", "colorGroup": "common"}],
+    )
+
+    create = _rpc(
+        erp_client,
+        "saveBOM",
+        [
+            {
+                "productName": _unique_name("DriftProductLower"),
+                "components": [{"itemName": item, "qtyPerProduct": 3, "processId": process_id}],
+            },
+            token,
+        ],
+        mutation=True,
+    )
+    product_id = create.get_json()["data"]["productId"]
+
+    resp = _rpc(erp_client, "getBomProcessComponentsDrift")
+    body = resp.get_json()
+    assert body["success"] is True
+    match = next(d for d in body["data"] if d["productId"] == product_id)
+    assert match["itemName"] == item
+    assert match["bomQtyPerProduct"] == 3
+    assert match["recipeQtyPerUnit"] == 5
+
+
 def test_item_rename_cascades_into_bom_lines(erp_app, erp_client):
     token = _get_bom_token(erp_app, erp_client)
     old_item = _unique_name("OldBomItem")

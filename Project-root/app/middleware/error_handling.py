@@ -8,6 +8,7 @@ import logging
 import json
 import time
 import traceback
+import threading
 from datetime import datetime
 from functools import wraps
 from typing import Optional, Dict, Any
@@ -20,10 +21,23 @@ class RequestContext:
     """
     Manages request-scoped context including request ID and correlation tracking.
     Enables tracing requests across multiple services and log aggregation.
+
+    Uses threading.local() for proper thread isolation under multi-worker
+    WSGI servers (gunicorn, waitress). Each thread gets its own independent
+    context dict, preventing concurrent requests from corrupting each
+    other's request IDs, start times, and event logs.
     """
 
-    # Thread-local storage for request context
-    _context: Dict[str, Any] = {}
+    # Thread-local storage for request context -- each thread gets its own
+    # independent namespace, so concurrent requests never collide.
+    _local = threading.local()
+
+    @classmethod
+    def _get_context(cls) -> Dict[str, Any]:
+        """Return the per-thread context dict, creating it on first access."""
+        if not hasattr(cls._local, "context"):
+            cls._local.context = {}
+        return cls._local.context
 
     @classmethod
     def initialize(cls, request_id: Optional[str] = None) -> str:
@@ -37,15 +51,16 @@ class RequestContext:
             str: The request ID for this request
         """
         rid = request_id or str(uuid.uuid4())
-        cls._context["request_id"] = rid
-        cls._context["start_time"] = time.time()
-        cls._context["events"] = []
+        ctx = cls._get_context()
+        ctx["request_id"] = rid
+        ctx["start_time"] = time.time()
+        ctx["events"] = []
         return rid
 
     @classmethod
     def get_request_id(cls) -> str:
         """Get current request ID."""
-        return cls._context.get("request_id", "unknown")
+        return cls._get_context().get("request_id", "unknown")
 
     @classmethod
     def log_event(cls, event_type: str, data: Dict[str, Any]) -> None:
@@ -61,12 +76,12 @@ class RequestContext:
             "timestamp": datetime.utcnow().isoformat(),
             "data": data,
         }
-        cls._context.get("events", []).append(event)
+        cls._get_context().get("events", []).append(event)
 
     @classmethod
     def get_duration_ms(cls) -> float:
         """Get elapsed time since request started."""
-        start = cls._context.get("start_time", time.time())
+        start = cls._get_context().get("start_time", time.time())
         return (time.time() - start) * 1000
 
     @classmethod
@@ -75,13 +90,13 @@ class RequestContext:
         return {
             "request_id": cls.get_request_id(),
             "duration_ms": cls.get_duration_ms(),
-            "events": cls._context.get("events", []),
+            "events": cls._get_context().get("events", []),
         }
 
     @classmethod
     def clear(cls) -> None:
         """Clear request context (call after request completes)."""
-        cls._context.clear()
+        cls._get_context().clear()
 
 
 class StructuredLogger:

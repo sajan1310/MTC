@@ -202,9 +202,17 @@ const App = {
     // selection/sort state for the Dispatched Goods sub-tab, plus
     // globalReadyToDispatch/filteredReadyToDispatch for the Ready to
     // Dispatch sub-tab, land here now that App.Dispatch itself exists.
+    // globalDispatch stays FLAT (one entry per line, header fields
+    // repeated) after the header+lines redesign (migration 023) -- client.js
+    // and stock.js both already iterate it assuming that shape.
+    // globalDispatchBills/filteredDispatchBills are a separate, client-side-
+    // grouped view (App.Dispatch.buildDispatchBills) the Dispatch module's
+    // own ledger table/modal use instead.
+    globalDispatch: [],
+    globalDispatchBills: [],
+    filteredDispatchBills: [],
     globalReadyToDispatch: [],
     filteredReadyToDispatch: [],
-    filteredDispatch: [],
     dispatchCurrentPage: 1,
     dispatchRowsPerPage: 15,
     dispatchSortBy: 'dateDesc',
@@ -557,6 +565,12 @@ const App = {
       },
       dispatch: {
         tab: 'dispatchTab',
+        // Dispatch became header+lines (migration 023): App.Dispatch.
+        // openEditDispatchModal now takes a dispatchNumber directly (a bill,
+        // not a single flat row/array index) -- matches the reference's own
+        // post-e37529e openEditDispatchModal(value) call exactly, since
+        // "value" here is the same dispatchNumber save_dispatch's toast link
+        // carries.
         async goto(value) {
           await App.Dispatch.enterTab();
           App.Dispatch.switchSubTab('dispatchedGoodsSubTab');
@@ -1016,9 +1030,12 @@ const App = {
 
   // ── Shared UX primitives ─────────────────────────────────────────────
   Utils: {
-    showToast(message, isError = false) {
+    // `link` -- {type, value?} per App.Notify.NAV -- makes the resulting
+    // bell notification clickable-to-navigate straight to the form/list
+    // the action affected.
+    showToast(message, isError = false, link = null) {
       if (App.Notify && typeof App.Notify.add === 'function') {
-        App.Notify.add(message, isError);
+        App.Notify.add(message, isError, { link });
       }
       const toastEl = document.getElementById('systemToast');
       const msgEl = document.getElementById('toastMessage');
@@ -1252,6 +1269,15 @@ const App = {
     select2Matcher(params, data) {
       if (!params.term) return data;
       return App.Utils.matchesKeywords(data.text, params.term) ? data : null;
+    },
+
+    // Helper to resolve select2 dropdownParent container (modal if inside one, else document.body)
+    select2DropdownParent(target) {
+      if (!target) return window.jQuery ? window.jQuery(document.body) : document.body;
+      const $target = window.jQuery ? window.jQuery(target) : null;
+      if (!$target || !$target.length) return window.jQuery ? window.jQuery(document.body) : document.body;
+      const $modal = $target.closest ? $target.closest('.modal') : null;
+      return ($modal && $modal.length) ? $modal : window.jQuery(document.body);
     },
 
     // Fixed bicycle-size categories a Process's Output Item Name may embed

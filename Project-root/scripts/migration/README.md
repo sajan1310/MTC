@@ -10,12 +10,29 @@ Postgres is the canonical store.
 from `app/erp/config_maps.py` and the 20 `migrations/erp/*.sql` files (the
 project's actual sources of truth), not from a live spreadsheet — there is no
 `Apps_Script/*.js` source checked into this repo to verify column semantics
-against. 18 of 26 sheets are marked `status: ready`; 8 are marked
-`needs_review` (BOM, BOM_COSTS, CLIENT_ORDERS, DISPATCH, PRODUCTION,
-PROCESS_COLOR_LINKS, plus the ITEMS `vendors`-column child mapping) because
-they involve a judgment call — JSON cell parsing, FK resolution, or a sheet
-column with no obvious DB column. **Get a second pair of eyes on those
-specific entries in `mapping.yaml` before trusting them past a dry-run.**
+against.
+
+**Second-pair-of-eyes review completed 2026-08-01** (cross-checked every
+flagged entry against the actual current schema in `migrations/erp/*.sql`
+and `production_service.py`, not just the source map): `BOM_COSTS`,
+`CLIENT_ORDERS`, and `DISPATCH` upgraded from `needs_review` to `ready` —
+all three checked out exactly against the live schema. 21 of 26 sheets are
+now `status: ready`; 3 remain `needs_review` (`BOM`, `PRODUCTION`,
+`PROCESS_COLOR_LINKS`, plus the ITEMS `vendors`-column child mapping),
+each now annotated in `mapping.yaml` with exactly what's still unconfirmed:
+
+- `PROCESS_COLOR_LINKS` — schema side confirmed; only unknown is whether the
+  live sheet has 4 or 6 columns (axis keys).
+- `BOM` — schema side confirmed (header/line placement of remarks/sequence
+  is correct); only unknown is a live-row visual sanity check.
+- `PRODUCTION` — two items resolved (dropping `consumedFromProcessQty` is
+  confirmed safe; JSON cell format needs one live-cell check), but
+  `contractor_id` will be `NULL` on every migrated historical row (no
+  source column exists) — **that's a product decision needing sign-off
+  before `--execute`, not a script bug.**
+
+**Still get a second pair of eyes on the live-data-dependent unknowns above
+before trusting anything past a dry-run.**
 
 ## Files
 

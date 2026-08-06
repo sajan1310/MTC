@@ -515,7 +515,9 @@ document.addEventListener('DOMContentLoaded', function () {
             App.Contractor.openCreateModal();
           }
         }
-        App.Utils.showToast(response.message, !response.success);
+        App.Utils.showToast(response.message, !response.success, response.success
+          ? { type: 'contractor', value: formData.contractorName || formData.originalContractorName }
+          : null);
       } catch (err) {
         App.Utils.showToast(err.message || 'Failed to save contractor', true);
       } finally {

@@ -51,6 +51,13 @@ App.Dashboard = {
     }
   },
 
+  _showBackupResultState(progressState, resultState, doneBtn, closeHeaderBtn) {
+    progressState.style.display = 'none';
+    resultState.style.display = 'block';
+    doneBtn.style.display = 'inline-block';
+    closeHeaderBtn.style.display = 'block';
+  },
+
   async loadData() {
     if (this.isLoading) return;
     this.isLoading = true;
@@ -72,6 +79,7 @@ App.Dashboard = {
       this.renderDispatchTrendChart(data.dispatchTrend);
       this.hasLoadedOnce = true;
       this.setLastUpdated(data.generatedAt);
+      this.loadBackupStatus();
     } catch (err) {
       this.renderError(err.message || 'Failed to load dashboard data');
     } finally {
@@ -79,6 +87,148 @@ App.Dashboard = {
       this.setRefreshBtnState(false);
     }
   },
+
+  async triggerBackup() {
+    const modalEl = document.getElementById('backupProgressModal');
+    if (!modalEl) return;
+
+    const bsModal = bootstrap.Modal.getOrCreateInstance(modalEl);
+    
+    // UI elements inside modal
+    const progressState = document.getElementById('backupProgressState');
+    const resultState = document.getElementById('backupResultState');
+    const progressBar = document.getElementById('backupProgressBar');
+    const progressStep = document.getElementById('backupProgressStep');
+    const progressSubtext = document.getElementById('backupProgressSubtext');
+    const percentText = document.getElementById('backupPercentText');
+    
+    const resultIcon = document.getElementById('backupResultIcon');
+    const resultTitle = document.getElementById('backupResultTitle');
+    const resultMessage = document.getElementById('backupResultMessage');
+    const detailStatus = document.getElementById('backupDetailStatus');
+    const detailTime = document.getElementById('backupDetailTime');
+    const detailFile = document.getElementById('backupDetailFile');
+    
+    const openSheetBtn = document.getElementById('backupOpenSheetBtn');
+    const doneBtn = document.getElementById('backupModalDoneBtn');
+    const closeHeaderBtn = document.getElementById('backupModalCloseBtn');
+    const triggerBtn = document.getElementById('dashboardBackupBtn');
+
+    // Reset Modal to initial progress state
+    progressState.style.display = 'block';
+    resultState.style.display = 'none';
+    openSheetBtn.style.display = 'none';
+    doneBtn.style.display = 'none';
+    closeHeaderBtn.style.display = 'none';
+    
+    if (progressBar) {
+      progressBar.style.width = '20%';
+      progressBar.className = 'progress-bar progress-bar-striped progress-bar-animated bg-primary';
+    }
+    if (progressStep) progressStep.textContent = 'Creating local database snapshot...';
+    if (progressSubtext) progressSubtext.textContent = 'Dumping PostgreSQL tables to backups directory...';
+    if (percentText) percentText.textContent = '20%';
+    if (triggerBtn) triggerBtn.disabled = true;
+
+    bsModal.show();
+
+    // Simulated progress step timer while waiting for backend response
+    let progressTimer = setInterval(() => {
+      if (!progressBar) return;
+      let currentWidth = parseInt(progressBar.style.width || '20', 10);
+      if (currentWidth < 85) {
+        let nextWidth = currentWidth + 15;
+        progressBar.style.width = nextWidth + '%';
+        if (percentText) percentText.textContent = nextWidth + '%';
+        if (nextWidth >= 50 && progressStep) {
+          progressStep.textContent = 'Formatting & syncing to Google Sheets...';
+          if (progressSubtext) progressSubtext.textContent = 'Exporting erp.* tables into dated spreadsheet tabs...';
+        }
+      }
+    }, 800);
+
+    try {
+      const response = await Api.mutate('triggerBackup');
+
+      clearInterval(progressTimer);
+
+      if (progressBar) progressBar.style.width = '100%';
+      if (percentText) percentText.textContent = '100%';
+
+      await new Promise(resolve => setTimeout(resolve, 400));
+
+      const isOk = response && response.success;
+      const data = (response && response.data) ? response.data : {};
+      const statusStr = data.status || (isOk ? 'SUCCESS' : 'FAILED');
+
+      this._showBackupResultState(progressState, resultState, doneBtn, closeHeaderBtn);
+
+      if (detailTime) detailTime.textContent = data.timestamp ? new Date(data.timestamp).toLocaleString() : new Date().toLocaleString();
+      if (detailFile) detailFile.textContent = data.local_file ? data.local_file.split(/[\/\\]/).pop() : 'N/A';
+      if (detailStatus) detailStatus.textContent = statusStr;
+
+      if (statusStr === 'SUCCESS') {
+        resultIcon.innerHTML = '<i class="bi bi-check-circle-fill text-success" style="font-size: 3rem;"></i>';
+        resultTitle.textContent = 'Backup Completed Successfully!';
+        resultTitle.className = 'fw-bold text-success mb-1';
+        detailStatus.className = 'fw-bold text-success';
+        resultMessage.textContent = response.message || 'Database snapshot created and synced to Google Sheets.';
+        
+        if (data.spreadsheet_url) {
+          openSheetBtn.href = data.spreadsheet_url;
+          openSheetBtn.style.display = 'inline-block';
+        }
+      } else if (statusStr === 'PARTIAL') {
+        resultIcon.innerHTML = '<i class="bi bi-exclamation-triangle-fill text-warning" style="font-size: 3rem;"></i>';
+        resultTitle.textContent = 'Local Snapshot Backup Created';
+        resultTitle.className = 'fw-bold text-warning mb-1';
+        detailStatus.className = 'fw-bold text-warning';
+        resultMessage.textContent = response.message || 'Local database snapshot was saved. Google Sheets sync was skipped or requires credentials.';
+      } else {
+        resultIcon.innerHTML = '<i class="bi bi-x-circle-fill text-danger" style="font-size: 3rem;"></i>';
+        resultTitle.textContent = 'Backup Failed';
+        resultTitle.className = 'fw-bold text-danger mb-1';
+        detailStatus.className = 'fw-bold text-danger';
+        resultMessage.textContent = (response && response.message) ? response.message : 'An unexpected error occurred while creating the backup.';
+      }
+
+      await this.loadBackupStatus();
+    } catch (err) {
+      clearInterval(progressTimer);
+      this._showBackupResultState(progressState, resultState, doneBtn, closeHeaderBtn);
+
+      resultIcon.innerHTML = '<i class="bi bi-x-circle-fill text-danger" style="font-size: 3rem;"></i>';
+      resultTitle.textContent = 'Backup Error';
+      resultTitle.className = 'fw-bold text-danger mb-1';
+      resultMessage.textContent = err.message || 'Failed to communicate with backup service.';
+      if (detailStatus) detailStatus.textContent = 'ERROR';
+      if (detailStatus) detailStatus.className = 'fw-bold text-danger';
+    } finally {
+      if (triggerBtn) triggerBtn.disabled = false;
+    }
+  },
+
+
+  async loadBackupStatus() {
+    try {
+      const response = await Api.call('getBackupStatus');
+      if (response && response.success && response.data) {
+        const el = document.getElementById('backupLastTime');
+        if (el) {
+          const d = response.data;
+          if (d.timestamp) {
+            const dateObj = new Date(d.timestamp);
+            el.textContent = dateObj.toLocaleDateString() + ' ' + dateObj.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+          } else {
+            el.textContent = 'Active (Scheduled)';
+          }
+        }
+      }
+    } catch (e) {
+      // Ignore background status fetch error
+    }
+  },
+
 
   setRefreshBtnState(loading) {
     const btn = document.getElementById('dashboardRefreshBtn');

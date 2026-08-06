@@ -53,7 +53,11 @@ round) is the only caller of any of this.
 
 _setProcessPrimaryColorAxis and the Production leg of
 _renamePoolOutputItemNameEverywhere are real as of Phase 3g, now that
-Production exists to call/target them.
+Production exists to call/target them. The Dispatch leg (an untagged
+final-stage lot's Output Item Name doubling as erp.dispatch.product_id/
+product_name -- see that function's own docstring) was ported later,
+alongside GAS 6a22f0e's fix for the exact staleness bug a missing cascade
+there causes.
 _renameProcessNameInContractorRates has been real since Phase 3d
 (Contractors) -- its target table just isn't a flat rename_in_column call
 here, see that function itself.
@@ -251,6 +255,88 @@ def _rename_pool_output_item_name_everywhere(cur, old_name: str, new_name: str) 
                     f"UPDATE {table} SET components_consumed = %s WHERE id = %s",
                     (json.dumps(components), row["id"]),
                 )
+
+    # Dispatch: an UNTAGGED final-stage lot is dispatched under its Output
+    # Item Name, which is what save_dispatch writes into a dispatch line's
+    # product_id (see dispatch_service._compute_ready_to_dispatch_map:
+    # `productId: product_tag if is_tagged else output_item_name`) and what
+    # _recalculate_warehouse_pool's Pass 3 matches back against
+    # bucket["outputItemName"] to debit the pool. Left un-renamed, Pass 3
+    # finds no bucket for the old name, the entire dispatch debit silently
+    # vanishes, and every already-shipped unit reappears as Ready to
+    # Dispatch -- i.e. a rename made the business look like it still had
+    # goods it had shipped. Ports module_process.js's 6a22f0e fix. Dispatch
+    # is header+lines (migration 023): product_id/product_name live on
+    # dispatch_lines, deleted_at on dispatch_headers, so every touch here is
+    # a join/subquery against the header instead of a flat WHERE.
+    if (dispatch_headers_table := config_maps.TABLE_NAMES.get("DISPATCH_HEADERS")) and (
+        dispatch_lines_table := config_maps.TABLE_NAMES.get("DISPATCH_LINES")
+    ):
+        old_lower = old.lower()
+
+        # A Dispatch line's product_id is EITHER a BOM Product ID (a tagged
+        # final-stage lot) or an Output Item Name (an untagged one) -- the
+        # column doesn't record which. Only the latter is ours to rename,
+        # so a name that is also a real BOM Product ID is left alone
+        # rather than risk rewriting a genuine product reference that
+        # merely happens to share the string.
+        is_also_bom_product_id = False
+        if bom_products_table := config_maps.TABLE_NAMES.get("BOM_PRODUCTS"):
+            cur.execute(
+                f"SELECT 1 FROM {bom_products_table} WHERE lower(product_id) = lower(%s) AND deleted_at IS NULL",
+                (old,),
+            )
+            is_also_bom_product_id = cur.fetchone() is not None
+
+        if not is_also_bom_product_id:
+            cur.execute(
+                f"""
+                UPDATE {dispatch_lines_table} l SET product_id = %s
+                FROM {dispatch_headers_table} h
+                WHERE h.id = l.header_id AND h.deleted_at IS NULL AND lower(l.product_id) = lower(%s)
+                """,
+                (new, old),
+            )
+            # Product Name is a de-normalized display copy of the same
+            # value for an untagged output (see _compute_ready_to_dispatch_
+            # map's base_name), so it goes stale the same way; rewritten
+            # only where it still holds the old name exactly, or carries a
+            # Dispatch Differentiator suffix ("<Output Item Name> / <value>",
+            # see dispatch_service._differentiator_value) -- never where the
+            # operator typed something else.
+            cur.execute(
+                f"""
+                SELECT l.id, l.product_name FROM {dispatch_lines_table} l
+                JOIN {dispatch_headers_table} h ON h.id = l.header_id
+                WHERE h.deleted_at IS NULL AND l.product_name IS NOT NULL
+                """
+            )
+            for row in cur.fetchall():
+                current = str(row["product_name"] or "").strip()
+                current_lower = current.lower()
+                if current_lower == old_lower:
+                    updated_name = new
+                elif current_lower.startswith(old_lower + " / "):
+                    updated_name = new + current[len(old):]
+                else:
+                    continue
+                cur.execute(
+                    f"UPDATE {dispatch_lines_table} SET product_name = %s WHERE id = %s",
+                    (updated_name, row["id"]),
+                )
+
+    # erp.warehouse_pool itself is a materialized cache, entirely rewritten
+    # by _recalculate_warehouse_pool() from the rows just renamed above --
+    # renaming the source rows alone leaves the cached bucket keyed under
+    # the OLD name until some unrelated mutation happens to trigger a
+    # recalc. Recompute now so callers (e.g. getWarehousePoolData right
+    # after this save) see the new name immediately. Same precedent as
+    # tags_service._rename_color_everywhere. Deferred import: warehouse_
+    # service imports this module at load time, so a top-level import here
+    # would be circular.
+    from . import warehouse_service
+
+    warehouse_service._recalculate_warehouse_pool(cur)
 
 
 def _set_process_primary_color_axis(cur, process_id: str, primary_color_axis: str) -> None:
@@ -479,7 +565,7 @@ def save_process(conn, cur, form_data):
         size_suffix = f" ({dup['size']})" if dup["size"] else ""
         group_label = (
             "Common Components"
-            if dup["colorGroup"] == _COLOR_GROUP_COMMON
+            if _is_common_color_group(dup["colorGroup"])
             else f'the "{dup["colorGroup"]}" color sub-group'
         )
         raise ValueError(
@@ -1141,6 +1227,48 @@ def _add_unique_case_insensitive(ordered_map: dict, value) -> None:
         ordered_map[key] = raw
 
 
+def _is_common_color_group(color_group) -> bool:
+    """True when a Process Component row's Color Sub-Group is the COMMON
+    sentinel ("applies to every color") rather than a real color name.
+    Ports utils.js#isCommonColorGroup (GAS e37529e).
+
+    COMMON is written by the app itself, but the column is a plain,
+    user-editable field -- "Common"/"common" must not be mistaken for a
+    color sub-group literally named "Common", which would invent a phantom
+    color axis and pull that row out of every lot's Common Components
+    table. Case-insensitive for exactly this reason; a bare `== _COLOR_
+    GROUP_COMMON` (the pre-fix comparison) only matched the one spelling
+    the app itself writes.
+    """
+    return str(color_group if color_group is not None else "").strip().upper() == _COLOR_GROUP_COMMON
+
+
+def _pool_item_is_color_axis(item_colors) -> bool:
+    """Does this POOL-sourced recipe item contribute a color axis? Ports
+    module_process.js#_poolItemIsColorAxis (GAS 1288076).
+
+    Normally only when it has 2+ live pool colors: an item that exists in
+    exactly one color (e.g. a Fitted Rim that is always Black) is a fixed
+    input, not a per-output-color choice, and must not leak into the
+    output checklist.
+
+    The exception is a single color that is ITSELF a composite (contains
+    COLOR_COMBO_DELIMITER). That color is the accumulated identity of
+    every upstream process in the chain, so excluding it does not drop a
+    non-choice -- it truncates the chain, silently discarding everything
+    earlier stages recorded. A process layer added on top of an upstream
+    stage that has so far produced only ONE combination would otherwise
+    credit its output under just its own axis's color, losing the
+    "/"-joined history the operator expects to keep seeing.
+    """
+    if not item_colors:
+        return False
+    if len(item_colors) > 1:
+        return True
+    (only,) = item_colors.values()
+    return _COLOR_COMBO_DELIMITER in str(only or "")
+
+
 def _get_all_process_color_links(cur) -> list:
     """Every Process Color Link, both sides resolved to their business
     process_id strings (not the internal serial FK) -- the shape
@@ -1204,8 +1332,15 @@ def _axis_link_ref(process_id: str, axis_key: str = "") -> str:
     meaningful on both sides of a link (pairing two of one process's own
     axes) instead of colliding with itself. Returns "" when process_id is
     blank (never matches anything).
+
+    Both halves lowercased: this ref is matched between a Process Color
+    Links row and a pool/tag axis derived from a different query, so a
+    casing difference in either stored Process ID would silently drop the
+    link (the axes then cross-multiply instead of pairing) -- same fix as
+    GAS e37529e, which lowercased only the axis key before this, not the
+    Process ID.
     """
-    pid = str(process_id or "").strip()
+    pid = str(process_id or "").strip().lower()
     if not pid:
         return ""
     key = str(axis_key or "").strip().lower()
@@ -1327,10 +1462,24 @@ def _merge_linked_axes(axes: list, color_links: list) -> list:
         label_parts = [axes[axis_index_by_ref[r]].get("label") for r in component_refs if axes[axis_index_by_ref[r]].get("label")]
 
         if merged_colors:
+            # A merged axis inherits the earliest recipe position of the
+            # axes it absorbed (see _compute_color_axes_for_process), so
+            # pairing two axes never moves the pair somewhere else in the
+            # composite color string. `.get(...)` rather than [...]:
+            # _legacy_color_group_list's own axes-by-signature entries carry
+            # no "recipeIndex" at all (that list has no ordering concept),
+            # so this stays a no-op (falls through to the math.inf default,
+            # which nothing downstream of that caller ever reads).
+            merged_recipe_index = math.inf
+            for r in component_refs:
+                idx = axes[axis_index_by_ref[r]].get("recipeIndex")
+                if isinstance(idx, (int, float)) and idx < merged_recipe_index:
+                    merged_recipe_index = idx
             merged_axes.append(
                 {
                     "colors": merged_colors,
                     "label": ", ".join(label_parts) if label_parts else None,
+                    "recipeIndex": merged_recipe_index,
                     "source": "merged",
                     "processIds": set(),
                 }
@@ -1351,25 +1500,33 @@ def _legacy_color_group_list(components: list, pool_rows: list, color_links: lis
     """
     colors: dict = {}
     for c in components:
-        if c["colorGroup"] and c["colorGroup"] != _COLOR_GROUP_COMMON:
+        if c["colorGroup"] and not _is_common_color_group(c["colorGroup"]):
             _add_unique_case_insensitive(colors, c["colorGroup"])
 
-    pool_item_names = {c["itemName"].lower() for c in components if c["sourceType"] == "POOL"}
-    if pool_item_names:
-        colors_by_item: dict = {}
+    ordered_pool_keys = []
+    for c in components:
+        if c.get("sourceType") == "POOL":
+            k = str(c.get("itemName") or "").strip().lower()
+            if k and k not in ordered_pool_keys:
+                ordered_pool_keys.append(k)
+
+    if ordered_pool_keys:
+        pool_item_names = set(ordered_pool_keys)
+        colors_by_item: dict = {k: {} for k in ordered_pool_keys}
         process_id_by_item: dict = {}
         for r in pool_rows:
-            key = r["outputItemName"].lower()
-            if not r["color"] or key not in pool_item_names:
+            key = str(r.get("outputItemName") or "").strip().lower()
+            if not r.get("color") or key not in pool_item_names:
                 continue
             colors_by_item.setdefault(key, {})
             _add_unique_case_insensitive(colors_by_item[key], r["color"])
-            if key not in process_id_by_item and r["processId"]:
-                process_id_by_item[key] = r["processId"]
+            if key not in process_id_by_item and r.get("processId"):
+                process_id_by_item[key] = r.get("processId")
 
         axes_by_signature: dict = {}
-        for item_key, item_colors in colors_by_item.items():
-            if len(item_colors) <= 1:
+        for item_key in ordered_pool_keys:
+            item_colors = colors_by_item.get(item_key)
+            if not _pool_item_is_color_axis(item_colors):
                 continue
             sorted_colors = sorted(item_colors.values(), key=lambda x: x.lower())
             signature = "|".join(c.lower() for c in sorted_colors)
@@ -1421,39 +1578,79 @@ def _compute_color_axes_for_process(process_id: str, components: list, pool_rows
     `process_id` is this process's own ID -- every tag axis belongs to it
     directly (there is no separate "producing process" the way a pool
     axis has one), so it's needed to make a tag axis link-eligible at all.
+
+    Every returned axis's position in the list is THIS process's own
+    recipe row order -- the primary axis included, pool and tag axes
+    interleaved by whichever recipe row introduced them first. Ports
+    module_process.js's 1288076 recipe-order fix: a recipe listing Fitted
+    Rim above Painted Frame lists the Rim axis first, and reordering the
+    recipe reorders this list, which is what makes
+    warehouse_service._compose_lot_color_key's composite segment order
+    repeatable rather than dependent on Warehouse Pool row order (itself
+    rebuilt on every recalculation -- two lots of the same product could
+    otherwise be credited "Blue-White / Black / Grey" and "Blue-White /
+    Grey / Black" and have their stock split).
     """
     raw_axes = []
 
-    pool_item_names = {c["itemName"].lower() for c in components if c["sourceType"] == "POOL"}
-    if pool_item_names:
-        colors_by_item: dict = {}
+    # Where each axis first appears in THIS process's own recipe. A POOL
+    # row's position is also the association with the upstream process
+    # that produces it, so recipe row order is exactly "this process's
+    # inputs, in the sequence the operator arranged them" -- the same
+    # order the Production checklist renders. Ties (an axis with no
+    # resolvable recipe row) fall back to the label, so the result is
+    # always fully determined rather than input-order dependent.
+    recipe_index_by_pool_item: dict = {}
+    recipe_index_by_tag_axis: dict = {}
+    for idx, c in enumerate(components):
+        if c.get("sourceType") == "POOL":
+            key = str(c.get("itemName") or "").strip().lower()
+            if key and key not in recipe_index_by_pool_item:
+                recipe_index_by_pool_item[key] = idx
+        axis_label_lower = str(c.get("colorAxis") or "").strip().lower()
+        if (
+            axis_label_lower
+            and c.get("colorGroup")
+            and not _is_common_color_group(c["colorGroup"])
+            and axis_label_lower not in recipe_index_by_tag_axis
+        ):
+            recipe_index_by_tag_axis[axis_label_lower] = idx
+    max_recipe_index = len(components) + 1
+
+    ordered_pool_keys = list(recipe_index_by_pool_item.keys())
+
+    if ordered_pool_keys:
+        pool_item_names = set(ordered_pool_keys)
+        colors_by_item: dict = {k: {} for k in ordered_pool_keys}
         process_id_by_item: dict = {}
         item_name_by_key: dict = {}
         for c in components:
-            if c["sourceType"] != "POOL":
+            if c.get("sourceType") != "POOL":
                 continue
-            key = c["itemName"].lower()
-            if key not in item_name_by_key:
-                item_name_by_key[key] = c["itemName"]
+            key = str(c.get("itemName") or "").strip().lower()
+            if key and key not in item_name_by_key:
+                item_name_by_key[key] = c.get("itemName")
 
         for r in pool_rows:
-            key = r["outputItemName"].lower()
-            if not r["color"] or key not in pool_item_names:
+            key = str(r.get("outputItemName") or "").strip().lower()
+            if not r.get("color") or key not in pool_item_names:
                 continue
             colors_by_item.setdefault(key, {})
             _add_unique_case_insensitive(colors_by_item[key], r["color"])
-            if key not in process_id_by_item and r["processId"]:
-                process_id_by_item[key] = r["processId"]
+            if key not in process_id_by_item and r.get("processId"):
+                process_id_by_item[key] = r.get("processId")
 
         axes_by_signature: dict = {}
-        for item_key, item_colors in colors_by_item.items():
-            if len(item_colors) <= 1:
+        for item_key in ordered_pool_keys:
+            item_colors = colors_by_item.get(item_key)
+            if not _pool_item_is_color_axis(item_colors):
                 continue
             sorted_colors = sorted(item_colors.values(), key=lambda x: x.lower())
             signature = "|".join(c.lower() for c in sorted_colors)
             entry = axes_by_signature.setdefault(
-                signature, {"colors": sorted_colors, "processIds": set(), "itemNames": set()}
+                signature, {"colors": sorted_colors, "processIds": set(), "itemNames": set(), "itemKeys": set()}
             )
+            entry["itemKeys"].add(item_key)
             pid = process_id_by_item.get(item_key)
             if pid:
                 entry["processIds"].add(pid)
@@ -1468,11 +1665,18 @@ def _compute_color_axes_for_process(process_id: str, components: list, pool_rows
             # ordinal fallback, and so a merged pool axis can still be
             # resolved by its constituent item names.
             item_names = sorted(axis["itemNames"], key=lambda x: x.lower())
+            # An axis fed by several recipe rows takes the EARLIEST of
+            # them, so it sits where the operator first introduced it.
+            recipe_index = min(
+                (recipe_index_by_pool_item.get(k, max_recipe_index) for k in axis["itemKeys"]),
+                default=max_recipe_index,
+            )
             raw_axes.append(
                 {
                     "colors": axis["colors"],
                     "processIds": axis["processIds"],
                     "label": ", ".join(item_names) if item_names else None,
+                    "recipeIndex": recipe_index,
                     "source": "pool",
                 }
             )
@@ -1486,7 +1690,7 @@ def _compute_color_axes_for_process(process_id: str, components: list, pool_rows
     # never be link-eligible at all.
     raw_tag_groups: dict = {}
     for c in components:
-        if not c["colorGroup"] or c["colorGroup"] == _COLOR_GROUP_COMMON:
+        if not c["colorGroup"] or _is_common_color_group(c["colorGroup"]):
             continue
         axis_label = str(c.get("colorAxis") or "").strip()
         if not axis_label:
@@ -1495,13 +1699,15 @@ def _compute_color_axes_for_process(process_id: str, components: list, pool_rows
         group = raw_tag_groups.setdefault(axis_key, {"label": axis_label, "colors": {}})
         _add_unique_case_insensitive(group["colors"], c["colorGroup"])
 
-    for group in raw_tag_groups.values():
+    for axis_key, group in raw_tag_groups.items():
+        label_lower = group["label"].lower()
         raw_axes.append(
             {
                 "colors": sorted(group["colors"].values(), key=lambda x: x.lower()),
                 "processIds": {process_id} if process_id else set(),
-                "axisKey": f"tag:{group['label'].lower()}",
+                "axisKey": f"tag:{label_lower}",
                 "label": group["label"],
+                "recipeIndex": recipe_index_by_tag_axis.get(label_lower, max_recipe_index),
                 "source": "tag",
             }
         )
@@ -1512,9 +1718,21 @@ def _compute_color_axes_for_process(process_id: str, components: list, pool_rows
     # through completely unchanged.
     merged_axes = _merge_linked_axes(raw_axes, color_links) if len(raw_axes) > 1 and color_links else raw_axes
 
+    # Recipe order is the app's ONE canonical axis order: it drives the
+    # checklist the operator sees and the composite color key the lot is
+    # credited under (see warehouse_service._compose_lot_color_key /
+    # get_axis_order_by_process below), so those two can never disagree.
+    ordered_axes = sorted(
+        merged_axes,
+        key=lambda a: (
+            a.get("recipeIndex") if isinstance(a.get("recipeIndex"), (int, float)) else max_recipe_index,
+            str(a.get("label") or "").lower(),
+        ),
+    )
+
     result = []
     pool_axis_counter = 0
-    for axis in merged_axes:
+    for axis in ordered_axes:
         if axis.get("source") == "tag":
             result.append({"key": f"tag:{axis['label'].lower()}", "label": axis["label"], "colors": axis["colors"], "source": "tag"})
             continue
@@ -1810,14 +2028,27 @@ def get_process_color_axes(process_id):
             None,
         )
 
-    primary_color_axis = str((process or {}).get("primaryColorAxis") or "").strip()
+    saved_primary_color_axis = str((process or {}).get("primaryColorAxis") or "").strip()
     axes = _compute_color_axes_for_process(process_id, components, pool_rows, color_links)
 
-    primary_axis_key = ""
-    if primary_color_axis:
-        match = next((a for a in axes if a["label"].lower() == primary_color_axis.lower()), None)
-        if match:
-            primary_axis_key = match["key"]
+    saved_axis = None
+    if saved_primary_color_axis:
+        saved_axis = next((a for a in axes if a["label"].lower() == saved_primary_color_axis.lower()), None)
+
+    # Every process with an axis reports a primary one, even before anything
+    # has been written to its Primary Color Axis cell -- the first axis in
+    # recipe order stands in (see _default_primary_color_axis_label), so the
+    # Process editor's picker and the Production checklist both open already
+    # pointing at it instead of at "none". A saved label that no longer
+    # resolves (its axis was renamed or removed) falls back to the same
+    # default rather than to no primary at all. Ports module_process.js#
+    # getProcessColorAxes (GAS 6a22f0e) -- save_process/save_production
+    # already persist this same default going forward, so this mainly
+    # covers processes saved before that existed and not yet re-saved or
+    # backfilled via refresh_process_primary_color_axes.
+    primary_axis = saved_axis or (axes[0] if axes else None)
+    primary_color_axis = primary_axis["label"] if primary_axis else ""
+    primary_axis_key = primary_axis["key"] if primary_axis else ""
 
     # Both pickers on the Process form choose from this same `axes` list, so
     # the currently-saved Dispatch Differentiator label rides along for
@@ -1829,6 +2060,12 @@ def get_process_color_axes(process_id):
             "axes": axes,
             "primaryColorAxis": primary_color_axis,
             "primaryAxisKey": primary_axis_key,
+            "savedPrimaryColorAxis": saved_primary_color_axis,
+            # True when the primary above is the fallback rather than this
+            # process's own saved choice -- the Process editor uses it to
+            # know it's showing a default the operator has never explicitly
+            # confirmed.
+            "primaryIsDefault": saved_axis is None and primary_axis is not None,
             "dispatchDifferentiator": str((process or {}).get("dispatchDifferentiator") or "").strip(),
         },
     )
@@ -1874,12 +2111,15 @@ def get_axis_order_by_process(cur) -> dict:
 @rpc_method("getAllProcessColorGroups")
 def get_all_process_color_groups():
     """Returns every process's color groups in one call, keyed by Process
-    ID, as {colors, removable}. `removable` is the subset of `colors` NOT
-    configured on the process's own recipe/pool detection (i.e. safe to
-    pass to excludeWarehousePoolColors) -- the Warehouse Pool breakdown
-    dialog uses it to decide which zero-qty placeholder rows get an
-    enabled delete action versus a protected/disabled one.
+    ID, as {colors, removable}. `removable` is the subset of `colors`
+    excludeWarehousePoolColors would actually accept: NOT configured on
+    the process's own recipe/pool detection, AND NOT carrying real
+    (non-manual) Production/Dispatch history -- the Warehouse Pool
+    breakdown dialog uses it to decide which rows (placeholder or real)
+    get an enabled delete action versus a protected/disabled one.
     """
+    from . import warehouse_service
+
     all_components = get_process_components_data()["data"]
 
     with database.get_conn(cursor_factory=psycopg2.extras.RealDictCursor) as (_conn, cur):
@@ -1888,6 +2128,7 @@ def get_all_process_color_groups():
         color_links = _get_all_process_color_links(cur)
         overrides_by_process = _get_all_process_color_overrides(cur)
         logged_colors_by_process = _get_production_logged_colors_by_process(cur)
+        real_history_by_process = warehouse_service._get_real_history_colors_by_process(cur)
 
     components_by_process: dict = {}
     for c in all_components:
@@ -1900,9 +2141,10 @@ def get_all_process_color_groups():
         logged_colors = list(logged_colors_by_process.get(p["processId"].lower(), []))
         known = _compute_known_colors_for_process(p["processId"], components, pool_rows, color_links, logged_colors, overrides)
         base_lower = {c.lower() for c in known["baseColors"]}
+        real_history_lower = real_history_by_process.get(p["processId"].lower(), set())
         result[p["processId"]] = {
             "colors": known["colors"],
-            "removable": [c for c in known["colors"] if c.lower() not in base_lower],
+            "removable": [c for c in known["colors"] if c.lower() not in base_lower and c.lower() not in real_history_lower],
         }
 
     return build_response(True, result)
@@ -1913,15 +2155,24 @@ def get_all_process_color_groups():
 def exclude_warehouse_pool_colors(conn, cur, process_id, colors):
     """Removes one or more Color/Product-Tag combinations from a process's
     known list -- the Warehouse Pool breakdown dialog's per-row and bulk
-    "X" delete actions. Only ever removes a zero-data PLACEHOLDER
-    combination: any color actually configured on the process's own
-    recipe (protected) or carrying real Warehouse Pool production/
-    consumption history is rejected and reported back individually, never
-    silently skipped. Real history can't be removed here even if we
-    wanted to -- _recalculate_warehouse_pool rebuilds every bucket from
-    that same history the next time it runs, so "deleting" it would look
-    like it worked and then silently reappear.
+    "X" delete actions. Any color actually configured on the process's own
+    recipe (protected) or carrying real (non-manual) Production/Dispatch
+    history is rejected and reported back individually, never silently
+    skipped -- deleting THAT can't be allowed even if we wanted to, since
+    _recalculate_warehouse_pool rebuilds the bucket from that same history
+    the next time it runs, so "deleting" it would look like it worked and
+    then silently reappear.
+
+    A color whose only warehouse_pool activity is manual (Opening Stock /
+    an inline Available Qty correction -- both erp.warehouse_pool_opening
+    rows, see _get_real_history_colors_by_process) IS removable, though:
+    there's no real history to resurrect it, so its Opening rows are
+    purged here too and the pool recalculated, rather than leaving a
+    stale nonzero bucket sitting in erp.warehouse_pool under an
+    now-excluded color.
     """
+    from . import warehouse_service
+
     pid = str(process_id or "").strip()
     if not pid:
         raise ValueError("Process ID is required.")
@@ -1936,15 +2187,7 @@ def exclude_warehouse_pool_colors(conn, cur, process_id, colors):
     base_colors = {c.lower() for c in _compute_color_groups_for_process(pid, components, pool_rows, color_links)}
 
     pid_lower = pid.lower()
-    cur.execute(
-        "SELECT color, produced_qty, consumed_qty FROM erp.warehouse_pool WHERE lower(process_id) = %s",
-        (pid_lower,),
-    )
-    bucket_has_history = {
-        row["color"].strip().lower()
-        for row in cur.fetchall()
-        if row["color"] and (float(row["produced_qty"] or 0) != 0 or float(row["consumed_qty"] or 0) != 0)
-    }
+    bucket_has_history = warehouse_service._get_real_history_colors_by_process(cur).get(pid_lower, set())
 
     removed = []
     blocked = []
@@ -1968,6 +2211,17 @@ def exclude_warehouse_pool_colors(conn, cur, process_id, colors):
             """,
             (pid, c, user_id),
         )
+        # Clears any manual Opening Stock / correction rows backing this
+        # color so the bucket doesn't just get rebuilt right back by the
+        # recalculate below -- safe because bucket_has_history already
+        # proved there's no real Production/Dispatch history to lose.
+        cur.execute(
+            "DELETE FROM erp.warehouse_pool_opening WHERE lower(process_id) = %s AND lower(color) = %s",
+            (pid_lower, c.lower()),
+        )
+
+    if removed:
+        warehouse_service._recalculate_warehouse_pool(cur)
 
     if not blocked:
         message = f"Removed {len(removed)} combination(s)."

@@ -94,6 +94,100 @@ def test_no_axis_when_single_pool_color(erp_client):
     assert groups == []
 
 
+def test_single_composite_pool_color_is_still_an_axis(erp_client):
+    """The complement of test_no_axis_when_single_pool_color: a pool item
+    that has settled into exactly ONE color is normally a fixed input, not
+    an axis -- UNLESS that one color is ITSELF a composite (inherited from
+    an upstream process combining two of ITS OWN axes). Excluding it would
+    truncate the whole upstream chain history rather than dropping a real
+    non-choice. Ports module_process.js#_poolItemIsColorAxis (GAS 1288076).
+    """
+    frame_payload, frame_id = _save_process(erp_client)
+    _seed_pool(erp_client, frame_id, 10, color="Black")
+    _seed_pool(erp_client, frame_id, 10, color="Blue")
+
+    rim_payload, rim_id = _save_process(erp_client)
+    _seed_pool(erp_client, rim_id, 10, color="Red")
+    _seed_pool(erp_client, rim_id, 10, color="Green")
+
+    # Parent combines Frame + Rim but has so far only ever produced ONE
+    # combination -- its own Warehouse Pool bucket carries exactly one,
+    # composite, color ("Black / Red").
+    parent_payload, parent_id = _save_process(
+        erp_client,
+        components=[
+            {"itemName": frame_payload["outputItemName"], "qtyPerUnit": 1, "sourceType": "POOL", "colorGroup": "COMMON"},
+            {"itemName": rim_payload["outputItemName"], "qtyPerUnit": 1, "sourceType": "POOL", "colorGroup": "COMMON"},
+        ],
+    )
+    _rpc(
+        erp_client,
+        "saveProduction",
+        [
+            {
+                "processId": parent_id,
+                "assignedTo": "Worker A",
+                "primaryColorAxis": frame_payload["outputItemName"],
+                "status": "Completed",
+                "colorBreakdown": [
+                    {"color": "Black", "qty": 10, "countsTowardTotal": True},
+                    {"color": "Red", "qty": 10, "countsTowardTotal": False},
+                ],
+                "componentsConsumed": [{"itemName": "RawMat", "qty": 1, "sourceType": "ITEM"}],
+            }
+        ],
+        mutation=True,
+    )
+
+    _downstream_payload, downstream_id = _save_process(
+        erp_client,
+        components=[
+            {"itemName": parent_payload["outputItemName"], "qtyPerUnit": 1, "sourceType": "POOL", "colorGroup": "COMMON"}
+        ],
+    )
+
+    axes = _rpc(erp_client, "getProcessColorAxes", [downstream_id]).get_json()["data"]["axes"]
+    assert len(axes) == 1, f"parent's single composite color was dropped as a non-axis: {axes}"
+    assert axes[0]["colors"] == ["Black / Red"]
+
+    groups = _rpc(erp_client, "getProcessColorGroups", [downstream_id]).get_json()["data"]
+    assert groups == ["Black / Red"]
+
+
+def test_axis_order_follows_recipe_row_order_not_pool_table_order(erp_client):
+    """An axis's position in getProcessColorAxes comes from THIS process's
+    own recipe row order (see process_service._compute_color_axes_for_
+    process), not from whichever order Warehouse Pool happens to return
+    rows in -- a plain SELECT with no ORDER BY, rebuilt on every
+    recalculation and carrying no ordering guarantee of its own. Rim's
+    pool rows are seeded (and therefore physically inserted) BEFORE
+    Frame's, but the downstream recipe lists Frame ahead of Rim -- proving
+    the two are decoupled. Ports module_process.js's 1288076 recipe-order
+    fix (getAxisOrderByProcess / _composeLotColorKey's canonical ordering
+    in warehouse_service.py depend on this).
+    """
+    rim_payload, rim_id = _save_process(erp_client)
+    _seed_pool(erp_client, rim_id, 10, color="Red")
+    _seed_pool(erp_client, rim_id, 10, color="Green")
+
+    frame_payload, frame_id = _save_process(erp_client)
+    _seed_pool(erp_client, frame_id, 10, color="Black")
+    _seed_pool(erp_client, frame_id, 10, color="Blue")
+
+    _downstream_payload, downstream_id = _save_process(
+        erp_client,
+        components=[
+            {"itemName": frame_payload["outputItemName"], "qtyPerUnit": 1, "sourceType": "POOL", "colorGroup": "COMMON"},
+            {"itemName": rim_payload["outputItemName"], "qtyPerUnit": 1, "sourceType": "POOL", "colorGroup": "COMMON"},
+        ],
+    )
+
+    axes = _rpc(erp_client, "getProcessColorAxes", [downstream_id]).get_json()["data"]["axes"]
+    assert len(axes) == 2
+    assert axes[0]["label"] == frame_payload["outputItemName"]
+    assert axes[1]["label"] == rim_payload["outputItemName"]
+
+
 def test_two_independent_axes_kept_separate_but_groups_are_flat_union(erp_client):
     frame_payload, frame_id = _save_process(erp_client)
     _seed_pool(erp_client, frame_id, 10, color="Black")
@@ -624,3 +718,163 @@ def test_refresh_process_primary_color_axes_backfills_unconfigured_process(erp_a
     listed = _rpc(erp_client, "getProcessData").get_json()["data"]
     saved = next(p for p in listed if p["processId"] == downstream_id)
     assert saved["primaryColorAxis"] == frame_payload["outputItemName"]
+
+
+# ── GAS e37529e/1288076/6a22f0e regression coverage ──────────────────────
+# Four small, independent fixes ported from the reference project's own
+# post-verification-report commits, none caught by the tests above because
+# every existing fixture happens to seed/author things in an order that
+# coincidentally matches the buggy shortcut each bug actually took.
+
+
+def test_axis_link_ref_lowercases_process_id():
+    """_axis_link_ref must lowercase the Process ID half, not just the axis
+    key -- a Process Color Link whose stored processId differs in case
+    from the axis's own processId would otherwise fail to pair, and the
+    axes cross-multiply instead of merging (GAS e37529e fixed this; before
+    that fix only the axis key was lowercased).
+    """
+    assert process_service._axis_link_ref("PRC-1001", "tag:rim color") == process_service._axis_link_ref(
+        "prc-1001", "TAG:RIM COLOR"
+    )
+    assert process_service._axis_link_ref("PRC-1001") == process_service._axis_link_ref("prc-1001")
+
+
+def test_duplicate_component_message_labels_common_case_insensitively(erp_client):
+    """The duplicate-component error message must recognize a colorGroup of
+    "common"/"Common" as Common Components, not a literal color sub-group
+    named "common" -- same isCommonColorGroup fix as GAS e37529e (roughly a
+    dozen exact `=== COMPONENT_COLOR_GROUP_COMMON` checks in module_process.js,
+    including this exact message).
+    """
+    resp = _rpc(
+        erp_client,
+        "saveProcess",
+        [
+            {
+                "processName": _unique_name("Process"),
+                "lotPrefix": uuid.uuid4().hex[:6].upper(),
+                "outputItemName": _unique_name("Output"),
+                "sequence": 1,
+                "isFinalStage": False,
+                "active": True,
+                "remarks": "",
+                "processType": "",
+                "primaryColorAxis": "",
+                "colorLinks": [],
+                "components": [
+                    {"itemName": "DupPart", "qtyPerUnit": 1, "sourceType": "ITEM", "colorGroup": "common"},
+                    {"itemName": "DupPart", "qtyPerUnit": 1, "sourceType": "ITEM", "colorGroup": "Common"},
+                ],
+            }
+        ],
+        mutation=True,
+    )
+    body = resp.get_json()
+    assert body["success"] is False
+    assert "Common Components" in body["message"]
+    assert "color sub-group" not in body["message"]
+
+
+def test_common_color_group_is_case_insensitive_in_legacy_list(erp_client):
+    """A Color Sub-Group value of "Common" (not the exact "COMMON" sentinel
+    spelling the app itself writes) must still be folded into Common
+    Components rather than treated as a real color literally named
+    "Common" -- which would invent a phantom color axis and leak "Common"
+    itself into the flat color list (GAS e37529e's isCommonColorGroup fix).
+    """
+    _payload, process_id = _save_process(
+        erp_client,
+        components=[{"itemName": "BasePart", "qtyPerUnit": 1, "sourceType": "ITEM", "colorGroup": "Common"}],
+    )
+
+    groups = _rpc(erp_client, "getProcessColorGroups", [process_id]).get_json()["data"]
+    assert groups == []
+
+
+def test_chained_composite_single_color_still_counts_as_axis(erp_client):
+    """A POOL-sourced recipe item with only ONE distinct color in Warehouse
+    Pool normally does NOT count as a color axis (a fixed input, e.g. a
+    Fitted Rim that's always Black, not a real per-output choice) -- but
+    when that single color is ITSELF a composite (e.g. "Black / Red",
+    produced by an upstream multi-axis process that has, so far, only ever
+    produced ONE combination), excluding it would truncate the chain and
+    silently discard everything the upstream stages already recorded (GAS
+    1288076's _poolItemIsColorAxis exception).
+    """
+    upstream_payload, upstream_id = _save_process(erp_client)
+    _seed_pool(erp_client, upstream_id, 10, color="Black / Red")
+
+    _downstream_payload, downstream_id = _save_process(
+        erp_client,
+        components=[
+            {"itemName": upstream_payload["outputItemName"], "qtyPerUnit": 1, "sourceType": "POOL", "colorGroup": "COMMON"}
+        ],
+    )
+
+    axes = _rpc(erp_client, "getProcessColorAxes", [downstream_id]).get_json()["data"]["axes"]
+    assert len(axes) == 1
+    assert axes[0]["colors"] == ["Black / Red"]
+
+    groups = _rpc(erp_client, "getProcessColorGroups", [downstream_id]).get_json()["data"]
+    assert groups == ["Black / Red"]
+
+
+def test_axis_order_follows_recipe_row_order_not_pool_seed_order(erp_client):
+    """computeColorAxesForProcess orders axes by the CONSUMING process's own
+    recipe row order (GAS 1288076), not by whichever pool item's colors
+    happened to land in Warehouse Pool first. Frame's pool colors are
+    seeded before Rim's here, but the downstream recipe lists Rim BEFORE
+    Frame -- the axis list (and so the composite color a lot is credited
+    under, and the Primary Color Axis default) must still come back
+    Rim-first, matching what the operator authored, not insertion order.
+    """
+    frame_payload, frame_id = _save_process(erp_client)
+    rim_payload, rim_id = _save_process(erp_client)
+
+    # Seeded Frame-then-Rim -- the OPPOSITE of the recipe order below.
+    _seed_pool(erp_client, frame_id, 10, color="Black")
+    _seed_pool(erp_client, frame_id, 10, color="Blue")
+    _seed_pool(erp_client, rim_id, 10, color="Red")
+    _seed_pool(erp_client, rim_id, 10, color="Green")
+
+    # Recipe lists Rim before Frame.
+    _downstream_payload, downstream_id = _save_process(
+        erp_client,
+        components=[
+            {"itemName": rim_payload["outputItemName"], "qtyPerUnit": 1, "sourceType": "POOL", "colorGroup": "COMMON"},
+            {"itemName": frame_payload["outputItemName"], "qtyPerUnit": 1, "sourceType": "POOL", "colorGroup": "COMMON"},
+        ],
+    )
+
+    axes = _rpc(erp_client, "getProcessColorAxes", [downstream_id]).get_json()["data"]["axes"]
+    assert len(axes) == 2
+    assert axes[0]["label"] == rim_payload["outputItemName"]
+    assert axes[1]["label"] == frame_payload["outputItemName"]
+
+    # The Primary Color Axis default (first-in-recipe-order) must agree.
+    listed = _rpc(erp_client, "getProcessData").get_json()["data"]
+    saved = next(p for p in listed if p["processId"] == downstream_id)
+    assert saved["primaryColorAxis"] == rim_payload["outputItemName"]
+
+
+def test_get_process_color_axes_reports_primary_is_default_when_unsaved(erp_app, erp_client):
+    """getProcessColorAxes falls back to axes[0] (recipe order) as the
+    primary when the process's own cell is genuinely blank, and flags it
+    via primaryIsDefault so the Process editor can tell a resolved default
+    apart from an operator's own explicit choice (GAS 6a22f0e).
+    """
+    downstream_payload, downstream_id, frame_output, _rim_output = _two_axis_downstream(erp_client)
+    with erp_app.app_context(), database.get_conn() as (_conn, cur):
+        cur.execute("UPDATE erp.process_master SET primary_color_axis = '' WHERE lower(process_id) = lower(%s)", (downstream_id,))
+
+    data = _rpc(erp_client, "getProcessColorAxes", [downstream_id]).get_json()["data"]
+    assert data["savedPrimaryColorAxis"] == ""
+    assert data["primaryIsDefault"] is True
+    assert data["primaryColorAxis"] == frame_output
+
+    _edit_process(erp_client, downstream_payload, downstream_id, primaryColorAxis=frame_output)
+
+    data_after = _rpc(erp_client, "getProcessColorAxes", [downstream_id]).get_json()["data"]
+    assert data_after["primaryIsDefault"] is False
+    assert data_after["savedPrimaryColorAxis"] == frame_output

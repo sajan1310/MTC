@@ -43,6 +43,7 @@ from flask_limiter import Limiter
 from flask_limiter.util import get_remote_address
 from flask_login import LoginManager
 from flask_mail import Mail
+from flask_talisman import Talisman
 from flask_wtf import CSRFProtect
 from flask_wtf.csrf import CSRFError
 from werkzeug.middleware.proxy_fix import ProxyFix
@@ -58,6 +59,25 @@ limiter = Limiter(key_func=get_remote_address)
 # Module-level cache for deprecation warnings to avoid unbounded growth
 # (warn once per unique path).
 _DEPRECATION_WARNED: set[str] = set()
+
+
+class _SafeRotatingFileHandler(RotatingFileHandler):
+    """RotatingFileHandler that tolerates Windows rename-lock failures.
+
+    On Windows, os.rename() (used by doRollover) raises PermissionError if
+    another process -- OneDrive/Dropbox syncing the log, a lingering dev
+    server from a previous run, another gunicorn/waitress worker -- has the
+    file open. Left uncaught, that turns into an unlogged, unrecoverable
+    error on every subsequent emit() once the file is past maxBytes (it can
+    never shrink), flooding stderr with a traceback per log line. Skipping a
+    failed rotation and retrying next time is a better failure mode than that.
+    """
+
+    def doRollover(self) -> None:
+        try:
+            super().doRollover()
+        except OSError:
+            pass
 
 
 def validate_password(password: str) -> tuple[bool, str]:
@@ -186,9 +206,6 @@ def _init_logging(app: Flask) -> None:
         werk_logger.addHandler(sh)
 
     os.makedirs("logs", exist_ok=True)
-    fh = RotatingFileHandler("logs/app.log", maxBytes=10_000_000, backupCount=10)
-    fh.setFormatter(formatter)
-    fh.setLevel(logging.INFO)
 
     file_on_app = any(
         isinstance(h, RotatingFileHandler) and getattr(h, "baseFilename", "").endswith("logs/app.log")
@@ -200,6 +217,9 @@ def _init_logging(app: Flask) -> None:
     )
 
     if not (file_on_app or file_on_root):
+        fh = _SafeRotatingFileHandler("logs/app.log", maxBytes=10_000_000, backupCount=10)
+        fh.setFormatter(formatter)
+        fh.setLevel(logging.INFO)
         root_logger.addHandler(fh)
 
 
@@ -219,7 +239,7 @@ def _register_error_handlers(app: Flask) -> None:
     @app.errorhandler(CSRFError)
     def handle_csrf_error(e):
         if request.path.startswith("/api/"):
-            return jsonify({"error": e.description}), 400
+            return jsonify({"success": False, "message": f"CSRF error: {e.description}", "error": e.description}), 400
         return render_template("500.html"), 400
 
 
@@ -376,6 +396,66 @@ def create_app(config_name: str | None = None) -> Flask:
              allow_headers=["Content-Type", "X-CSRFToken"],
              methods=["GET", "POST", "PUT", "DELETE", "OPTIONS"])
 
+    # Security headers (CSP/HSTS/X-Frame-Options/etc). Skipped under TESTING:
+    # force_https redirects every plain-http request (the test client's
+    # default), which would 302 every single test instead of hitting the
+    # view.
+    #
+    # force_https/HSTS/secure-cookies are gated on BASE_URL actually being
+    # https://, not on app.debug: this app has several ways to start it
+    # (flask run, run_production.py, wsgi.py, python app.py) that don't all
+    # reliably land on DevelopmentConfig's DEBUG=True, and Talisman only
+    # auto-skips force_https when app.debug is True -- gating on app.debug
+    # alone force-redirected plain http://127.0.0.1:5000 to a https:// port
+    # nothing is listening on, breaking local access entirely the first
+    # time this shipped. BASE_URL's scheme is the one signal this app
+    # already uses elsewhere (PREFERRED_URL_SCHEME below) to mean "this
+    # deployment is actually fronted by TLS".
+    serve_over_https = app.config.get("BASE_URL", "").startswith("https://")
+    if not app.config.get("TESTING"):
+        csp = {
+            "default-src": "'self'",
+            "object-src": "'none'",
+            "base-uri": "'self'",
+            "frame-ancestors": "'self'",
+            "manifest-src": "'self'",
+            "worker-src": "'self'",
+            # 'unsafe-inline' is required by the inline <script>/<style>
+            # blocks in templates/erp/index.html and the auth pages; the
+            # CDN hosts are the third-party libs static/erp/*.js loads
+            # (jQuery, Bootstrap, Select2, Chart.js, SheetJS, html2pdf.js).
+            "script-src": [
+                "'self'",
+                "'unsafe-inline'",
+                "https://code.jquery.com",
+                "https://cdn.jsdelivr.net",
+                "https://cdnjs.cloudflare.com",
+            ],
+            "style-src": [
+                "'self'",
+                "'unsafe-inline'",
+                "https://cdn.jsdelivr.net",
+                "https://fonts.googleapis.com",
+            ],
+            # cdn.jsdelivr.net is required here too, not just script/style-src:
+            # Bootstrap Icons (<i class="bi bi-*">) is an icon *font* whose
+            # CSS and .woff2 file are both served from that same CDN --
+            # without it every "bi bi-*" glyph silently renders blank.
+            "font-src": ["'self'", "https://fonts.gstatic.com", "https://cdn.jsdelivr.net", "data:"],
+            "img-src": ["'self'", "data:", "https:"],
+            "connect-src": ["'self'", "https://cdn.jsdelivr.net"],
+        }
+        Talisman(
+            app,
+            content_security_policy=csp,
+            frame_options="SAMEORIGIN",
+            force_https=serve_over_https,
+            session_cookie_secure=serve_over_https,
+            session_cookie_http_only=True,
+            session_cookie_samesite="Strict" if not app.debug else "Lax",
+            strict_transport_security=serve_over_https,
+        )
+
     # Logging: prefer production logging config but don't silently swallow errors
     if config_name == "production" or app.config.get("ENV") == "production":
         try:
@@ -469,9 +549,11 @@ def create_app(config_name: str | None = None) -> Flask:
     # Internal ledger-reconciliation audit (Apps_Script/module_audit.js) --
     # unattended, hourly, not wired into the UI. No-ops under TESTING/the
     # outer reloader process -- see start_ledger_audit_scheduler()'s guards.
-    from .erp.services import ledger_audit_service
+    from .erp.services import ledger_audit_service, backup_service
 
     ledger_audit_service.start_ledger_audit_scheduler(app)
+    backup_service.start_backup_scheduler(app)
+
 
     # If specific view function names need exemption but are only available
     # after registration, we try to exempt them but log missing keys.
