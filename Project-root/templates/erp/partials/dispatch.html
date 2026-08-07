@@ -23,6 +23,9 @@
       <div class="d-flex w-50 align-items-center">
         <input type="text" id="searchReadyToDispatch" class="form-control me-2" placeholder="Search Product ID or Name..." autocomplete="off" onkeyup="App.Dispatch.filterReady(this.value)">
       </div>
+      <div class="d-flex gap-2 flex-wrap justify-content-end">
+        <button class="btn btn-success fw-bold shadow-sm" onclick="App.Dispatch.openCreateDispatchModal()"><i class="bi bi-truck"></i> Record New Bill</button>
+      </div>
     </div>
 
     <div class="table-responsive">
@@ -78,7 +81,6 @@
         <button class="btn btn-danger fw-bold shadow-sm d-none" id="btnBulkDeleteDispatch" type="button" onclick="App.Dispatch.bulkDeleteDispatch()" style="white-space: nowrap;">
           <i class="bi bi-trash"></i> Delete Selected
         </button>
-        <button class="btn btn-success fw-bold shadow-sm" onclick="App.Dispatch.openCreateDispatchModal()">+ New Dispatch</button>
       </div>
     </div>
 

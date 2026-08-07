@@ -355,9 +355,6 @@
             </table>
           </div>
           <button type="button" class="btn btn-outline-primary btn-sm fw-bold mb-3" onclick="App.Process.addComponentRow(null, null)">+ Add Common Component</button>
-          <button type="button" id="btnRefreshProcessNarrations" class="btn btn-outline-secondary btn-sm fw-bold mb-3 ms-2" onclick="App.Process.refreshAllNarrations()" title="Pull each component's current Narration from Items Master, in case it changed there since this recipe was last saved">
-            <i class="bi bi-arrow-repeat me-1"></i>Refresh Narrations from Items Master
-          </button>
 
           <h6 class="text-secondary border-bottom pb-2 mb-3 fw-bold">
             Color Sub-Groups <small class="text-muted fw-normal">(components that only apply to one color variant of this process — e.g. a Red frame's paint vs. a Blue frame's paint. Logging a Production lot for a given color pulls in Common + that color's group only. The name doesn't have to be a Color Master entry — type any custom sub-group name instead.)</small>

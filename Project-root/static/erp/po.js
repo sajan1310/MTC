@@ -21,6 +21,15 @@
 //   dependency.
 
 App.PO = {
+  // Mirrors App.Item.ensureLoaded -- lets a caller outside the PO Ledger
+  // tab (e.g. the Vendor Profile modal's Ledger tab, Bill's PO-match
+  // lookup, Item Master's Pending Order column) guarantee globalPOs is
+  // populated without re-fetching if PO Ledger already loaded it.
+  async ensureLoaded() {
+    if (App.State.globalPOs && App.State.globalPOs.length) return;
+    await this.loadData();
+  },
+
   async loadData() {
     const tbody = document.getElementById('poTableBody');
     if (tbody)
@@ -48,6 +57,10 @@ App.PO = {
       this.sortFiltered();
       this.renderTable();
       this.updateStatusBar();
+      // Vendor Master may not have loaded yet this session -- ensure it has
+      // before building the vendor dropdown, so it's never missing
+      // Vendor-Master-only entries (see App.Vendor.ensureLoaded).
+      if (App.Vendor) await App.Vendor.ensureLoaded();
       this.populateVendorSelects();
     } catch (err) {
       App.Utils.showToast(
@@ -486,7 +499,19 @@ App.PO = {
     return max > 0 ? max + 1 : 1001;
   },
 
-  openCreateModal() {
+  // Item Master and Bill Ledger may not have loaded yet this session --
+  // ensured here (not just inside refreshNarrationList/applyDependentSizeList
+  // themselves, which read the shared state synchronously) so the row's
+  // Size/Narration suggestions are correct on the very first render instead
+  // of silently empty until those tabs happen to be visited later.
+  async _ensureRowSuggestionData() {
+    await Promise.all([
+      App.Item ? App.Item.ensureLoaded() : Promise.resolve(),
+      App.Bill ? App.Bill.ensureLoaded() : Promise.resolve()
+    ]);
+  },
+
+  async openCreateModal() {
     document.getElementById('poForm')?.reset();
 
     const existingPoNumber = document.getElementById('existingPoNumber');
@@ -525,6 +550,7 @@ App.PO = {
     const printBtn = document.getElementById('poModalPrintBtn');
     if (printBtn) printBtn.style.display = 'none';
 
+    await this._ensureRowSuggestionData();
     this.refreshRowSizeLists();
     this.refreshRowNarrationLists();
     App.Utils.setFormButtonsForMode('poCancelBtn', 'poExitBtn', 'poSubmitBtn', false, 'Generate Purchase Order');
@@ -597,7 +623,7 @@ App.PO = {
     $$('#itemsBody tr').forEach(row => this.refreshNarrationList(row));
   },
 
-  openEditModal(index) {
+  async openEditModal(index) {
     const po = App.State.globalPOs[index];
     if (!po) {
       App.Utils.showToast('Purchase order not found.', true);
@@ -659,6 +685,7 @@ App.PO = {
     const printBtn = document.getElementById('poModalPrintBtn');
     if (printBtn) printBtn.style.display = '';
 
+    await this._ensureRowSuggestionData();
     this.refreshRowSizeLists();
     this.refreshRowNarrationLists();
     App.Utils.setFormButtonsForMode('poCancelBtn', 'poExitBtn', 'poSubmitBtn', true, 'Update Database');
@@ -1238,10 +1265,13 @@ App.PO = {
 
   // Item x vendor rate/last-purchase-date catalog, built purely from
   // App.State.globalPOs/globalItems -- no RPC, no App.Print dependency,
-  // so this is genuinely portable in full this round.
-  openVendorCatalog() {
+  // so this is genuinely portable in full this round. Item Master may not
+  // have loaded yet this session, so ensureLoaded it first (globalPOs is
+  // already guaranteed -- this is only reachable from the PO tab itself).
+  async openVendorCatalog() {
     const tbody = document.getElementById('vendorCatalogBody');
     if (!tbody) return;
+    if (App.Item) await App.Item.ensureLoaded();
 
     const sortedPOs = [...(App.State.globalPOs || [])].sort((a, b) =>
       parseRecordDate(b.poDateRaw, b.poDate) - parseRecordDate(a.poDateRaw, a.poDate)

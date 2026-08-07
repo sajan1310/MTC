@@ -32,6 +32,15 @@
 //   App.Issue's identical pattern in issue.js.
 
 App.Return = {
+  // Mirrors App.Item.ensureLoaded -- lets a caller outside the Return
+  // Ledger tab (e.g. the Vendor Profile modal's Ledger tab) guarantee
+  // globalReturns is populated without re-fetching if Return Ledger
+  // already loaded it.
+  async ensureLoaded() {
+    if (App.State.globalReturns && App.State.globalReturns.length) return;
+    await this.loadData();
+  },
+
   async loadData() {
     const tbody = document.getElementById('returnTableBody');
     if (tbody)
@@ -52,6 +61,22 @@ App.Return = {
       App.State.returnDateFilter = '';
       App.State.selectedReturns = [];
       this.renderTable();
+
+      // #returnVendor shares PO.populateVendorSelects' shared
+      // `select.select2-vendor` target, but nothing ever called it from
+      // the Return tab's own load path -- it only ever got populated as a
+      // side effect of the PO or Vendor tab happening to load first (which
+      // Init used to always do, unconditionally, every page load). Ensure
+      // Vendor Master here so the dropdown is never just silently empty on
+      // a session that lands directly on Return.
+      // updateReturnContactForVendor falls back to Bill history for a
+      // vendor with no Vendor Master contact of its own -- ensure it here
+      // too rather than leaving that fallback silently empty.
+      await Promise.all([
+        App.Vendor ? App.Vendor.ensureLoaded() : Promise.resolve(),
+        App.Bill ? App.Bill.ensureLoaded() : Promise.resolve()
+      ]);
+      if (App.PO && App.PO.populateVendorSelects) App.PO.populateVendorSelects();
     } catch (err) {
       App.Utils.showToast(err.message || 'Failed to load returns.', true);
     }

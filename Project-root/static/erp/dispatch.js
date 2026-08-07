@@ -39,6 +39,10 @@ App.Dispatch = {
   async enterTab() {
     const fetches = [
       App.Contractor.ensureLoaded(),
+      // Delivery Challan print's HSN column looks item names up against
+      // Items Master (see dispatchPrintItemRowsHtml) -- ensured here so
+      // it's not silently blank just because Item Master wasn't visited.
+      App.Item ? App.Item.ensureLoaded() : Promise.resolve(),
       this.loadReadyData(),
       this.loadDispatchData()
     ];

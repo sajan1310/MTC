@@ -804,6 +804,7 @@ App.Process = {
     this.clearContractorRatesTable();
     await App.Color.ensureLoaded();
     await App.ProcessType.ensureLoaded();
+    if (typeof App.Item !== 'undefined') App.Item.ensureLoaded();
     if (seq !== this._modalLoadSeq) return;
     App.ProcessType.populateSelect();
     const newProcTypeEl = document.getElementById('processFormProcessType');
@@ -863,6 +864,13 @@ App.Process = {
         typeof App.Contractor !== 'undefined' ? App.Contractor.ensureLoaded() : Promise.resolve(),
         App.Color.ensureLoaded(),
         App.ProcessType.ensureLoaded(),
+        // renderComponentsGrouped below builds each saved row via
+        // addComponentRow, which resolves Narration live AND matches the
+        // row's own item picker against globalItems (see the preSelectedOption
+        // lookup there) -- without this, an unloaded Items Master would mark
+        // every real item "(Not in Items Master)" instead of just resolving
+        // it once this arrives too late to matter.
+        typeof App.Item !== 'undefined' ? App.Item.ensureLoaded() : Promise.resolve(),
         this.loadContractorRatesForProcess(p.processName, seq)
       ]);
       if (seq !== this._modalLoadSeq) return;
@@ -1218,6 +1226,23 @@ App.Process = {
     return html;
   },
 
+  // The Narration to show for a component row, resolved LIVE from Items
+  // Master by name+size rather than the recipe's own possibly-stale stored
+  // value -- so reopening an existing Process for edit (or a Production
+  // Lot built from it) shows an Items Master correction immediately,
+  // instead of only after someone remembers to click "Refresh Narrations".
+  // `fallback` (the stored value) is kept for a POOL row (Warehouse Pool
+  // output items have no Items Master entry of their own) or when there's
+  // no match, so nothing is ever silently blanked.
+  _resolveDisplayNarration(itemName, size, fallback, isPool) {
+    const stored = String(fallback || '').trim();
+    if (isPool || !itemName) return stored;
+    const match = (App.State.globalItems || []).find(it =>
+      App.Utils.sameText(it.name, itemName) && App.Utils.sameText(it.size || '', size || ''));
+    if (!match) return stored;
+    return String(match.narration || '').trim() || stored;
+  },
+
   // Adds a row to a Components table. targetTbody defaults to the Common
   // Components table; pass a color sub-group's tbody to add there instead.
   addComponentRow(compData = null, targetTbody = null) {
@@ -1225,6 +1250,9 @@ App.Process = {
     if (!tbody) return;
 
     const rowId = 'proc_comp_row_' + Date.now() + '_' + Math.floor(Math.random() * 1000);
+    const displayNarration = compData
+      ? this._resolveDisplayNarration(compData.itemName, compData.size, compData.narration, compData.sourceType === 'POOL')
+      : '';
 
     let preSelectedOption = '';
     if (compData && compData.itemName && compData.sourceType === 'POOL') {
@@ -1257,7 +1285,7 @@ App.Process = {
         ${this.buildSizeOptionsHtml(compData && compData.itemName ? compData.itemName : '', compData && compData.size ? compData.size : '')}
       </select>
     </td>
-    <td><input type="text" class="form-control proc-comp-narration" placeholder="-" value="${compData && compData.narration ? escapeHtml(compData.narration) : ''}"></td>
+    <td><input type="text" class="form-control proc-comp-narration" placeholder="-" value="${escapeHtml(displayNarration)}"></td>
     <td>
       <select class="form-select proc-comp-source" title="ITEM = raw material from Stock. POOL = an upstream process's Output Item Name from the Warehouse Pool." onchange="App.Process.handleSourceChange(this)">
         <option value="ITEM" ${(!compData || compData.sourceType !== 'POOL') ? 'selected' : ''}>Item (Stock)</option>
@@ -1477,49 +1505,6 @@ App.Process = {
 
     const match = (App.State.globalItems || []).find(it => App.Utils.sameText(it.name, itemName) && App.Utils.sameText(it.size || '', selectEl.value || ''));
     narrationInput.value = (match && match.narration) || '';
-  },
-
-  // Narration is copied onto each component row when it's picked (see
-  // handleComponentSizeChange above), so an edit made afterward in Items
-  // Master never reaches a process that already has that item on its
-  // recipe. Pulls the current Item Master data and re-copies Narration
-  // onto every component row across Common + every Color Sub-Group table
-  // in the open modal, leaving item/size/qty/source/remarks untouched.
-  async refreshAllNarrations() {
-    const btn = document.getElementById('btnRefreshProcessNarrations');
-    if (btn) { btn.disabled = true; }
-    try {
-      await App.Item.loadData();
-      const rows = document.querySelectorAll('#editProcessModal .proc-comp-item-select');
-      let updated = 0;
-      let unresolved = 0;
-      rows.forEach(selectEl => {
-        const row = selectEl.closest('tr');
-        const narrationInput = row?.querySelector('.proc-comp-narration');
-        const opt = selectEl.options[selectEl.selectedIndex];
-        const itemName = opt?.dataset.name;
-        const sizeSelect = row?.querySelector('.proc-comp-size');
-        const isPool = row?.querySelector('.proc-comp-source')?.value === 'POOL';
-        if (!itemName || !narrationInput || isPool) return;
-
-        const match = (App.State.globalItems || []).find(it =>
-          App.Utils.sameText(it.name, itemName) && App.Utils.sameText(it.size || '', sizeSelect?.value || ''));
-        if (match) {
-          const fresh = match.narration || '';
-          if (narrationInput.value !== fresh) updated++;
-          narrationInput.value = fresh;
-        } else {
-          unresolved++;
-        }
-      });
-      App.Utils.showToast(
-        unresolved > 0
-          ? `Refreshed ${updated} narration(s) from Items Master. ${unresolved} component(s) reference an item that could not be found (Pool outputs skipped).`
-          : `Refreshed ${updated} narration(s) from Items Master.`
-      );
-    } finally {
-      if (btn) { btn.disabled = false; }
-    }
   },
 
   destroyComponentItemSelect2(rowEl) {

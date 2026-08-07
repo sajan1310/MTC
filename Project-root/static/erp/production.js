@@ -1879,15 +1879,26 @@ App.Production = {
 
     const usedColors = new Set();
     let groupIdx = 0;
+    // Only the first cluster (this process's earliest recipe row -- `groups`
+    // preserves recipe order) drives the lot's total quantity, same "recipe
+    // order wins" convention _default_primary_color_axis_label uses
+    // server-side. Every other cluster is recorded per-color but excluded
+    // from the total -- previously every cluster was hardcoded isPrimary:
+    // true here, so an unlinked secondary group (e.g. a Kit Bag pool set)
+    // double-counted its own checked quantities into the total alongside
+    // the real primary group.
+    let primaryAssigned = false;
     groups.forEach(({ colorSet, itemNames }) => {
       const matching = colors.filter(col => colorSet.has(col.toLowerCase()) && !usedColors.has(col.toLowerCase()));
       if (matching.length === 0) return;
       matching.forEach(c => usedColors.add(c.toLowerCase()));
       groupIdx++;
       const groupKey = `group_${groupIdx}`;
+      const isPrimary = !primaryAssigned;
+      primaryAssigned = true;
       checklistEl.insertAdjacentHTML('beforeend', this._buildColorGroupHeader(groupKey, itemNames.join(', ')));
-      this.renderColorChecklistRows(matching, groupKey, false, true);
-      this._customColorGroupOptions.push({ key: groupKey, label: itemNames.join(', '), isPrimary: true, source: 'pool' });
+      this.renderColorChecklistRows(matching, groupKey, false, isPrimary);
+      this._customColorGroupOptions.push({ key: groupKey, label: itemNames.join(', '), isPrimary, source: 'pool' });
     });
 
     const remaining = colors.filter(c => !usedColors.has(c.toLowerCase()));
@@ -2165,22 +2176,20 @@ App.Production = {
   },
 
   // { color, qty, isCustom, countsTowardTotal, axisKey } for every
-  // checked color with a numeric quantity entered.
+  // checked color with a numeric quantity entered. Strict rule: only the
+  // Primary group's checked colors ever count toward the lot total (no
+  // exception for an unclassified "Other" leftover bucket) -- everything
+  // else is recorded per-color but never added in.
   getCheckedColorQtys() {
     return $$('#productionColorChecklist .production-color-row')
       .filter(row => row.querySelector('.production-color-check')?.checked)
-      .map(row => {
-        const isNonPrimary = row.dataset.primary === 'false';
-        const isUnmatchedOther = isNonPrimary && row.dataset.group === 'other'
-          && this._matchingPrimaryColorQty(row.dataset.color) === null;
-        return {
-          color: row.dataset.color,
-          qty: toNumber(row.querySelector('.production-color-qty')?.value) || 0,
-          isCustom: row.dataset.custom === 'true',
-          countsTowardTotal: !isNonPrimary || isUnmatchedOther,
-          axisKey: row.dataset.group || ''
-        };
-      });
+      .map(row => ({
+        color: row.dataset.color,
+        qty: toNumber(row.querySelector('.production-color-qty')?.value) || 0,
+        isCustom: row.dataset.custom === 'true',
+        countsTowardTotal: row.dataset.primary !== 'false',
+        axisKey: row.dataset.group || ''
+      }));
   },
 
   _currentLotTotalQty() {
@@ -2890,11 +2899,11 @@ App.Production = {
   // operator is left staring at one duplicate column per matched color,
   // and anything typed into one debits stock a second time for units the
   // primary column already accounts for. Their real consumption lives in
-  // that axis's own Per-Process Pool Components table instead. But a
-  // non-primary axis CAN still carry genuinely color-specific non-pool
-  // recipe rows, so this prunes only columns that came back COMPLETELY
-  // empty: no item picked, no quantity in any row. A column the recipe
-  // (or the operator) actually put something in is always left alone.
+  // that axis's own Per-Process Pool Components table instead -- so this
+  // unconditionally prunes the redundant column, even one the operator
+  // already typed into (strict checked-only columns; direct manual
+  // unchecking of a color already clears its own column the same way via
+  // removeMatrixColorColumn).
   _pruneRedundantMatrixColumns() {
     const checked = $$('#productionColorChecklist .production-color-row')
       .filter(row => row.querySelector('.production-color-check')?.checked);
@@ -2911,15 +2920,7 @@ App.Production = {
       .filter(color => this._matchingPrimaryColorQty(color) !== null)
       .forEach(color => {
         const idx = this.getMatrixColumnIndex(color);
-        if (idx === -1) return;
-        const used = $$('#productionColorMatrixBody tr').some(row => {
-          const cell = row.children[idx];
-          if (!cell) return false;
-          const qtyEl = cell.querySelector('.matrix-qty');
-          const itemEl = cell.querySelector('.prod-comp-item-select');
-          return !!(qtyEl && String(qtyEl.value).trim()) || !!(itemEl && itemEl.value);
-        });
-        if (!used) this._removeMatrixColumnAt(idx);
+        if (idx !== -1) this._removeMatrixColumnAt(idx);
       });
   },
 
@@ -3276,11 +3277,16 @@ App.Production = {
   // Populates the Common table + Per-Color matrix + Per-Process Pool
   // tables directly from a saved lot's actual recorded Components
   // Consumed (not recipe defaults) -- used when editing an existing
-  // multi-color batch. A legacy lot saved before this item was
-  // recognized as pool-color-aware (one combined Common-tagged row) is
-  // upgraded on the fly: its quantity is split evenly across this lot's
-  // colors as a starting point, with a toast telling the operator to
-  // adjust and re-save.
+  // multi-color batch. Item/qty/color come from that saved snapshot, but
+  // Narration is still re-resolved live against Items Master (see
+  // _resolveDisplayNarration) rather than the snapshot's own possibly
+  // stale value -- otherwise reopening an old lot for edit kept showing
+  // whatever Narration Items Master had back when the lot was first
+  // logged, even after it was corrected there since. A legacy lot saved
+  // before this item was recognized as pool-color-aware (one combined
+  // Common-tagged row) is upgraded on the fly: its quantity is split
+  // evenly across this lot's colors as a starting point, with a toast
+  // telling the operator to adjust and re-save.
   async populateComponentsConsumedDirect(components, breakdown) {
     // `breakdown` is a colorBreakdown array -- {color, qty} objects, NOT
     // color-name strings. filter(Boolean) because an entry can legitimately
@@ -3337,7 +3343,7 @@ App.Production = {
           // (a brand-new column checked mid-edit), not the value actually
           // used to redisplay/recompute any color that DOES have its own
           // entry below.
-          entry = { itemName: c.itemName, size: c.size, narration: c.narration, sourceType: c.sourceType, colorsQty: {}, colorsQtyPerUnit: {}, qtyPerUnit: derivedQtyPerUnit };
+          entry = { itemName: c.itemName, size: c.size, narration: this._resolveDisplayNarration(c.itemName, c.size, c.narration), sourceType: c.sourceType, colorsQty: {}, colorsQtyPerUnit: {}, qtyPerUnit: derivedQtyPerUnit };
           poolGroupAccum.set(key, entry);
         } else if (entry.qtyPerUnit === undefined) {
           entry.qtyPerUnit = derivedQtyPerUnit;
@@ -3375,7 +3381,7 @@ App.Production = {
         const fallbackColors = colors.filter(col => !overriddenColors.has(col));
         const perColorQty = fallbackColors.length > 0 ? c.qty / fallbackColors.length : c.qty;
         let row = this.findMatrixRowByDisplayName(c.itemName, c.size || '');
-        if (!row) row = this.addMergedMatrixRow({ itemName: c.itemName, size: c.size, narration: c.narration, sourceType: c.sourceType });
+        if (!row) row = this.addMergedMatrixRow({ itemName: c.itemName, size: c.size, narration: this._resolveDisplayNarration(c.itemName, c.size, c.narration), sourceType: c.sourceType });
         fallbackColors.forEach(col => {
           const colIndex = this.getMatrixColumnIndex(col);
           if (colIndex === -1) return;
@@ -3405,7 +3411,7 @@ App.Production = {
         this.addComponentRow({
           itemName: c.itemName,
           size: c.size,
-          narration: c.narration,
+          narration: this._resolveDisplayNarration(c.itemName, c.size, c.narration),
           sourceType: c.sourceType,
           qty: c.qty,
           qtyPerUnit: derivedQtyPerUnit,
@@ -3426,7 +3432,7 @@ App.Production = {
         ? (c.itemName || '').trim()
         : this._stripColorSubstring(c.itemName || '', colorGroup);
       let row = this.findMatrixRowByDisplayName(displayName, c.size || '');
-      if (!row) row = this.addMergedMatrixRow({ itemName: displayName, size: c.size, narration: c.narration, sourceType: c.sourceType });
+      if (!row) row = this.addMergedMatrixRow({ itemName: displayName, size: c.size, narration: this._resolveDisplayNarration(c.itemName, c.size, c.narration), sourceType: c.sourceType });
       matchedColors.forEach(col => {
         const colIndex = this.getMatrixColumnIndex(col);
         if (colIndex === -1) return;
@@ -3455,7 +3461,7 @@ App.Production = {
             // starting estimate via _poolCellQtyPerUnit's row-level
             // fallback, instead of staying permanently blank until the
             // operator types directly into the pool cell.
-            poolGroupAccum.set(key, { itemName: c.itemName, size: c.size, narration: c.narration, sourceType: c.sourceType, colorsQty: {}, colorsQtyPerUnit: {}, qtyPerUnit: c.qtyPerUnit });
+            poolGroupAccum.set(key, { itemName: c.itemName, size: c.size, narration: this._resolveDisplayNarration(c.itemName, c.size, c.narration), sourceType: c.sourceType, colorsQty: {}, colorsQtyPerUnit: {}, qtyPerUnit: c.qtyPerUnit });
           }
         });
     }
@@ -3506,10 +3512,10 @@ App.Production = {
       const tableId = `productionPoolColorGroup_${groupIdx}`;
       const axisKey = this._axisKeyForPoolItemNames(groupEntries.map(e => e.itemName));
       this._poolColorGroupDefs.push({ tableId, colors: groupColors, rows: groupEntries, mode: 'edit', axisKey });
-      const checkedLower = this._checkedColorTokensLower(axisKey);
-      const savedLower = new Set();
-      groupEntries.forEach(e => Object.keys(e.colorsQty || {}).forEach(c => savedLower.add(c)));
-      const visibleColors = groupColors.filter(c => checkedLower.has(c.toLowerCase()) || savedLower.has(c.toLowerCase()));
+      // Strictly checked-only, same helper (and same exact-wins-then-tokens
+      // rule) the Create-mode path uses -- a previously-saved-but-now-
+      // unchecked color no longer keeps its column visible on reopen.
+      const visibleColors = this._checkedPoolGroupColors(groupColors, axisKey);
       container.insertAdjacentHTML('beforeend', this._buildPoolColorGroupTable(tableId, groupColors, visibleColors, groupEntries, 'edit', axisKey));
       document.querySelectorAll(`#${tableId} tbody tr`).forEach(row => this.initComponentItemSelect2(row));
     });

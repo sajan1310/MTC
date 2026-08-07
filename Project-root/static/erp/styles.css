@@ -429,16 +429,20 @@
     border: 1px solid var(--border-color);
   }
 
-  /* Toasts: match new semantic colors */
+  /* Toasts: match new semantic colors. Unlike badges/alerts (which sit on
+     an already-opaque card and can use a light tint), a toast floats fixed
+     over arbitrary page content, so a low-alpha tint let whatever was
+     behind it bleed through and read as a transparent, low-contrast
+     popup -- use solid backgrounds instead. */
   [data-theme="dark"] .toast.bg-success {
-    background-color: rgb(52 211 153 / 12%) !important;
-    border-color: rgb(52 211 153 / 30%) !important;
+    background-color: #14532d !important;
+    border-color: rgb(52 211 153 / 40%) !important;
     color: #6ee7b7 !important;
   }
 
   [data-theme="dark"] .toast.bg-danger {
-    background-color: rgb(248 113 113 / 12%) !important;
-    border-color: rgb(248 113 113 / 30%) !important;
+    background-color: #7f1d1d !important;
+    border-color: rgb(248 113 113 / 40%) !important;
     color: #fca5a5 !important;
   }
 

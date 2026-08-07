@@ -24,6 +24,15 @@
 //   since Round 1) execute for real.
 
 App.Bill = {
+  // Mirrors App.Item.ensureLoaded -- lets a caller outside the Bill Ledger
+  // tab (e.g. the Vendor Profile modal's Ledger tab, PO's narration
+  // suggestions) guarantee globalBills is populated without re-fetching if
+  // Bill Ledger already loaded it.
+  async ensureLoaded() {
+    if (App.State.globalBills && App.State.globalBills.length) return;
+    await this.loadData();
+  },
+
   // Shows the "this bill may double-count Stock" choice modal and
   // resolves to the user's decision: 'update' (bill affects Stock
   // normally), 'ledger' (bill is saved but excluded from Stock's Billed
@@ -823,14 +832,29 @@ App.Bill = {
 
     $$('#billItemsBody .b-item-name').forEach(el => { el.required = !isLabor; });
 
+    // Whichever this bill type's vendor dropdown needs -- PO/Vendor Master
+    // for Goods, Contractors for Labor -- may not have loaded yet this
+    // session, so ensure it BEFORE building the dropdown (not after, which
+    // left it silently incomplete on the very bill it was just built for).
+    await Promise.all(isLabor
+      ? [
+          App.Process.ensureLoaded ? App.Process.ensureLoaded() : Promise.resolve(),
+          App.Contractor.ensureLoaded ? App.Contractor.ensureLoaded() : Promise.resolve(),
+          App.Color.ensureLoaded ? App.Color.ensureLoaded() : Promise.resolve()
+        ]
+      : [
+          App.PO ? App.PO.ensureLoaded() : Promise.resolve(),
+          App.Vendor ? App.Vendor.ensureLoaded() : Promise.resolve(),
+          // Row item-name typeahead falls back to Items Master for
+          // narration/rate (see refreshNarrationList/getLatestRate) --
+          // ensured here so it's ready by the time the operator types,
+          // not just whenever Item Master happens to be visited.
+          App.Item ? App.Item.ensureLoaded() : Promise.resolve()
+        ]);
+
     this.updateVendorFieldForBillType(billType);
 
     if (isLabor) {
-      await Promise.all([
-        App.Process.ensureLoaded ? App.Process.ensureLoaded() : Promise.resolve(),
-        App.Contractor.ensureLoaded ? App.Contractor.ensureLoaded() : Promise.resolve(),
-        App.Color.ensureLoaded ? App.Color.ensureLoaded() : Promise.resolve()
-      ]);
       $$('#billItemsBody tr').forEach(row => this.initRowProcessSelect2(row));
     }
   },

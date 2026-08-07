@@ -68,6 +68,12 @@ App.BOM = {
     App.Color.ensureLoaded();
     App.Model.ensureLoaded();
     App.ProcessType.ensureLoaded();
+    // Component-row item picker (addRow/initItemSelect2) and its custom
+    // vendor picker (initCustomVendorSelect2) both read Items
+    // Master/Vendor Master directly -- ensured here so they're never
+    // silently empty just because those tabs weren't visited first.
+    if (typeof App.Item !== 'undefined') App.Item.ensureLoaded();
+    if (typeof App.Vendor !== 'undefined') App.Vendor.ensureLoaded();
     if (this.getToken()) {
       this.loadData();
     } else {

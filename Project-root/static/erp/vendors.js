@@ -8,11 +8,12 @@
 // syncFromPOHistory calls syncVendorsFromPOHistory (vendors_service.py),
 // now real -- backfills Vendor Master + item-vendor rates from PO history.
 //
-// The Ledger/Pending Orders/Rates tabs inside the profile modal read
-// App.State.globalPOs/globalBills/globalItems -- all still empty arrays
-// this round (PO/Bill/Items aren't ported), so those sections render
-// correctly empty ("No transaction history found." / "All caught up!")
-// rather than crashing. bulkPrint/printLedger are guarded against
+// The vendor table's own "Pending" badge and the Ledger/Pending Orders/
+// Rates tabs inside the profile modal all read App.State.globalPOs/
+// globalBills/globalReturns (via calculateLedgerAndPending) -- loadData
+// ensureLoads all three alongside Vendor's own data (see below) so this
+// always reflects real history, not whatever tabs happened to be visited
+// earlier this session. bulkPrint/printLedger are guarded against
 // App.Print not existing yet (print pages are their own later round).
 
 App.State.globalVendors = [];
@@ -22,12 +23,31 @@ App.State.vendorRowsPerPage = 10;
 App.State.selectedVendors = [];
 
 App.Vendor = {
+  // Mirrors App.Item.ensureLoaded/App.Process.ensureLoaded -- lets a caller
+  // outside the Vendor Master tab (e.g. a Bill/Return vendor picker, the
+  // Vendor Profile modal's own Ledger tab) guarantee globalVendors is
+  // populated without re-fetching if Vendor Master already loaded it.
+  async ensureLoaded() {
+    if (App.State.globalVendors && App.State.globalVendors.length) return;
+    await this.loadData();
+  },
+
   async loadData() {
     const vTbody = document.getElementById('vendorTableBody');
     if (vTbody) vTbody.innerHTML = '<tr><td colspan="6" class="text-center p-4">Loading Vendor Database...</td></tr>';
 
     try {
-      const response = await Api.call('getVendorsData');
+      // renderTable's own per-row "Pending" badge (see calculateLedgerAndPending)
+      // reads globalPOs/globalBills/globalReturns -- fetched alongside Vendor's
+      // own data (not just inside openProfileModal) so the table itself is
+      // never showing "All Clear" for a vendor that actually has pending
+      // history, just because PO/Bill/Return hadn't been visited yet.
+      const [response] = await Promise.all([
+        Api.call('getVendorsData'),
+        App.PO ? App.PO.ensureLoaded() : Promise.resolve(),
+        App.Bill ? App.Bill.ensureLoaded() : Promise.resolve(),
+        App.Return ? App.Return.ensureLoaded() : Promise.resolve()
+      ]);
       if (!response.success) {
         App.Utils.showToast(response.message, true);
         return;

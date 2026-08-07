@@ -944,6 +944,9 @@ const App = {
       }
 
       // 2. Overdue Pending Purchase Orders Alert (pending > 7 days)
+      if (typeof App.PO !== 'undefined') {
+        try { await App.PO.ensureLoaded(); } catch (e) { /* ignore best effort */ }
+      }
       const pos = App.State?.globalPOs || [];
       const now = new Date();
       const SEVEN_DAYS_MS = 7 * 24 * 60 * 60 * 1000;
@@ -1410,25 +1413,46 @@ const App = {
       try { localStorage.setItem(this.LAST_TAB_KEY, id); } catch (e) { /* storage inaccessible */ }
 
       if (typeof App.Dashboard !== 'undefined') App.Dashboard.stopAutoRefresh();
+
+      // Only the tab being switched to fetches its data -- each module loads
+      // lazily right here, on its own visit, rather than every module eagerly
+      // fetching on every page load regardless of which tab is shown (see
+      // Init). Returns that one load's promise so a caller like Init can
+      // await/report on it instead of every module racing in parallel.
+      let loadPromise;
       if (id === 'dashboardTab' && typeof App.Dashboard !== 'undefined') {
-        App.Dashboard.loadData();
+        loadPromise = App.Dashboard.loadData();
         App.Dashboard.startAutoRefresh();
+      } else if (id === 'vendorMaster' && typeof App.Vendor !== 'undefined') {
+        loadPromise = App.Vendor.loadData();
+      } else if (id === 'itemMaster' && typeof App.Item !== 'undefined') {
+        loadPromise = App.Item.loadData();
+      } else if (id === 'poLedger' && typeof App.PO !== 'undefined') {
+        loadPromise = App.PO.loadData();
+      } else if (id === 'billLedger' && typeof App.Bill !== 'undefined') {
+        loadPromise = App.Bill.loadData();
+      } else if (id === 'returnLedger' && typeof App.Return !== 'undefined') {
+        loadPromise = App.Return.loadData();
+      } else if (id === 'stockTab' && typeof App.Stock !== 'undefined') {
+        loadPromise = App.Stock.loadData();
+      } else if (id === 'productsTab' && typeof App.Products !== 'undefined') {
+        loadPromise = App.Products.enterTab();
+      } else if (id === 'contractorsTab' && typeof App.Contractor !== 'undefined') {
+        loadPromise = App.Contractor.loadData();
+      } else if (id === 'productionTab' && typeof App.Production !== 'undefined') {
+        loadPromise = App.Production.loadData();
+      } else if (id === 'clientsTab' && typeof App.Client !== 'undefined') {
+        loadPromise = App.Client.enterTab();
+      } else if (id === 'dispatchTab' && typeof App.Dispatch !== 'undefined') {
+        loadPromise = App.Dispatch.enterTab();
+      } else if (id === 'usersTab' && typeof App.Users !== 'undefined') {
+        loadPromise = App.Users.loadData();
       }
-      if (id === 'vendorMaster' && typeof App.Vendor !== 'undefined') App.Vendor.loadData();
-      if (id === 'itemMaster' && typeof App.Item !== 'undefined') App.Item.loadData();
-      if (id === 'poLedger' && typeof App.PO !== 'undefined') App.PO.loadData();
-      if (id === 'billLedger' && typeof App.Bill !== 'undefined') App.Bill.loadData();
-      if (id === 'returnLedger' && typeof App.Return !== 'undefined') App.Return.loadData();
-      if (id === 'stockTab' && typeof App.Stock !== 'undefined') App.Stock.loadData();
-      if (id === 'productsTab' && typeof App.Products !== 'undefined') App.Products.enterTab();
-      if (id === 'contractorsTab' && typeof App.Contractor !== 'undefined') App.Contractor.loadData();
-      if (id === 'productionTab' && typeof App.Production !== 'undefined') App.Production.loadData();
-      if (id === 'clientsTab' && typeof App.Client !== 'undefined') App.Client.enterTab();
-      if (id === 'dispatchTab' && typeof App.Dispatch !== 'undefined') App.Dispatch.enterTab();
-      if (id === 'usersTab' && typeof App.Users !== 'undefined') App.Users.loadData();
-      // Every other module's own `if (id === '<tab>') App.<Module>.loadData();`
-      // line lands here in that module's own round -- same guarded pattern
-      // Navigation.showTab already used in source for not-yet-loaded modules.
+      // Every other module's own `else if (id === '<tab>') loadPromise =
+      // App.<Module>.loadData();` branch lands here in that module's own
+      // round -- same guarded pattern Navigation.showTab already used in
+      // source for not-yet-loaded modules.
+      return loadPromise;
     }
   },
 
@@ -1527,66 +1551,36 @@ const App = {
     }
   },
 
-  async Init() {
+  // targetTab is the tab about to be shown (the last one the user was on,
+  // or Dashboard by default -- see the DOMContentLoaded handler). Only that
+  // tab's own data loads here; every other module was previously fetched
+  // unconditionally on every single page load regardless of which tab the
+  // user actually landed on (Dashboard *and* Vendor, Item, PO, Bill, Return
+  // every time), which was most of this app's "heavy first load" cost. Each
+  // other module now lazy-loads the moment its own tab is switched to (see
+  // Navigation.showTab) instead.
+  async Init(targetTab) {
     // Load persisted company logo and notification history (non-blocking,
     // best-effort).
     this.Logo.load();
     if (this.Notify) this.Notify.load();
 
-    const labels = [];
-    const promises = [];
+    const promises = [App.Navigation.showTab(targetTab || 'dashboardTab')];
 
-    if (this.Dashboard) {
-      labels.push('Dashboard');
-      promises.push(this.Dashboard.loadData());
-      this.Dashboard.startAutoRefresh();
-    }
-
-    if (this.Vendor) {
-      labels.push('Vendor');
-      promises.push(this.Vendor.loadData());
-    }
-
-    if (this.Item) {
-      labels.push('Item');
-      promises.push(this.Item.loadData());
-    }
-
-    if (this.PO) {
-      labels.push('PO');
-      promises.push(this.PO.loadData());
-    }
-
-    if (this.Bill) {
-      labels.push('Bill');
-      promises.push(this.Bill.loadData());
-    }
-
-    if (this.Return) {
-      labels.push('Return');
-      promises.push(this.Return.loadData());
-    }
-
-    // Unit Master loads eagerly (matches source) since Item Master's
+    // Unit Master stays eager (matches source) since Item Master's
     // Base/Purchase Unit fields need unitList populated whenever that
-    // modal opens, which can happen before the user ever visits Stock.
+    // modal opens, which can happen before the user ever visits Stock or
+    // Item Master itself -- unlike the per-tab data above, there's no
+    // single "visit" that reliably happens before it's needed.
     // Color/Model/ProcessType stay lazy (ensureLoaded() from their own
     // openModal()) -- nothing needs them before their own modal opens.
-    if (this.Unit) {
-      labels.push('Unit');
-      promises.push(this.Unit.ensureLoaded());
-    }
+    if (this.Unit) promises.push(this.Unit.ensureLoaded());
 
     const results = await Promise.allSettled(promises);
-    const failedLabels = [];
-    results.forEach((r, i) => {
-      if (r.status === 'rejected') {
-        failedLabels.push(labels[i]);
-        console.error(`[Init] ${labels[i]} data load failed:`, r.reason);
-      }
-    });
-    if (failedLabels.length > 0) {
-      this.Utils.showToast(`Failed to load: ${failedLabels.join(', ')}. Check your connection and retry.`, true);
+    const failed = results.filter(r => r.status === 'rejected');
+    failed.forEach(r => console.error('[Init] data load failed:', r.reason));
+    if (failed.length > 0) {
+      this.Utils.showToast('Failed to load some data. Check your connection and retry.', true);
     }
 
     // Trigger smart notifications (low stock, pending POs) and surface any
@@ -1812,17 +1806,18 @@ document.addEventListener('DOMContentLoaded', async () => {
   }
 
   bindGlobalEvents();
-  await App.Init();
 
   // Reload/refresh used to always land back on Dashboard because the tab
   // shown was whatever the static HTML marked active, with nothing to say
-  // otherwise. Restore whatever tab the user was last on -- but only if its
-  // nav button actually exists (role-gated tabs like usersTab disappear for
-  // non-admins, and a stale id from an older build shouldn't crash init).
+  // otherwise -- and Init() didn't decide which tab to load until after it
+  // had already eagerly fetched every module's data. Decide the target tab
+  // FIRST, before Init() runs, so it loads only that tab's data (and shows
+  // it) instead of every module's -- but only if its nav button actually
+  // exists (role-gated tabs like usersTab disappear for non-admins, and a
+  // stale id from an older build shouldn't crash init).
   const lastTab = safeGetItem(App.Navigation.LAST_TAB_KEY);
-  if (lastTab && lastTab !== 'dashboardTab' && document.getElementById(`btn-${lastTab}`)) {
-    App.Navigation.showTab(lastTab);
-  }
+  const targetTab = (lastTab && document.getElementById(`btn-${lastTab}`)) ? lastTab : 'dashboardTab';
+  await App.Init(targetTab);
 
   // Register the shell service worker (Phase 5: PWA installability).
   // Scoped to /erp/sw.js, not /static/erp/sw.js, so its default scope

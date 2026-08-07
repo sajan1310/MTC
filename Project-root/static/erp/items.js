@@ -61,9 +61,14 @@ App.Item = {
 
     try {
       const stockNeeded = App.State.globalStock.length === 0;
+      // The table's own "Pending Order" column/badge/filter (see
+      // Utils.getPendingByItem) reads globalPOs -- ensured here alongside
+      // Items' own data so it's never silently blank just because the PO
+      // tab hasn't been visited yet this session.
       const [res, stockRes] = await Promise.all([
         Api.call('getItemsData'),
-        stockNeeded ? Api.call('getStockData') : Promise.resolve(null)
+        stockNeeded ? Api.call('getStockData') : Promise.resolve(null),
+        App.PO ? App.PO.ensureLoaded() : Promise.resolve()
       ]);
 
       if (stockRes?.success) {
@@ -846,6 +851,12 @@ App.Item = {
     if (App.State.globalStockAdjustments.length === 0) {
       fetches.push(Api.call('getStockAdjustmentHistory').then(res => { if (res?.success) App.State.globalStockAdjustments = Array.isArray(res.data) ? res.data : []; }));
     }
+    // getLedgerData's own vendor-rate lookup reads globalVendors -- unlike
+    // the fetches above (kept as direct Api.call for historical reasons,
+    // see this file's header comment), App.Vendor now has its own
+    // ensureLoaded, so just reuse it here instead of hand-rolling another
+    // fetch-if-empty block.
+    if (App.Vendor) fetches.push(App.Vendor.ensureLoaded());
     if (fetches.length) await Promise.all(fetches);
   },
 
