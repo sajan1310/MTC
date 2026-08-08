@@ -56,7 +56,8 @@ TABLES = [
     "erp.return_headers", "erp.return_lines", "erp.wastage_headers", "erp.wastage_lines",
     "erp.issue_headers", "erp.issue_lines", "erp.bom_products", "erp.bom_lines",
     "erp.bom_additional_costs", "erp.client_orders_headers",
-    "erp.client_orders_lines", "erp.production", "erp.dispatch",
+    "erp.client_orders_lines", "erp.production",
+    "erp.dispatch_headers", "erp.dispatch_lines",
     "erp.company_settings", "erp.ledger_audit_log",
 ]
 
