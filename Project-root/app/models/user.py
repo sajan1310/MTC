@@ -23,4 +23,12 @@ class User(UserMixin):
 
     def has_role(self, role: str) -> bool:
         """Check if user has specified role."""
-        return self.role == role or self.role == "admin"
+        return self.role == role or self.role in ("admin", "super_admin")
+
+    @property
+    def is_admin(self) -> bool:
+        """True for admin and super_admin -- the two roles every admin-only
+        UI section/route treats as equivalent. super_admin is a strict
+        superset of admin (see role_required in app/utils.py), so anything
+        gated to admins must also work for super_admin."""
+        return self.role in ("admin", "super_admin")

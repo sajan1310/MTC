@@ -13,7 +13,7 @@
     </div>
     <div class="d-flex align-items-center gap-2">
       <span id="dashboardLastUpdated" class="small text-muted">&nbsp;</span>
-      {% if current_user.role == 'admin' %}
+      {% if current_user.is_admin %}
       <!-- triggerBackup is admin-gated server-side (backup_service.py) --
            hidden here to match, not as the actual enforcement. -->
       <button id="dashboardBackupBtn" class="btn btn-sm btn-outline-primary fw-500 shadow-sm" onclick="App.Dashboard.triggerBackup()" title="Create Database Backup & Upload to Google Sheets">

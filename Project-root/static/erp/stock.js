@@ -2012,20 +2012,29 @@ App.Stock = {
         pageItems.every(item => App.Selection.isSelected(App.State.selectedStock, this.stockKey(item)));
     }
 
-    tbody.innerHTML = pageItems.map(item => {
-      const statusBadge = item.isLowStock
-        ? '<span class="badge bg-danger px-2 py-1 shadow-sm">Low Stock</span>'
-        : '<span class="badge bg-success px-2 py-1 shadow-sm">Well Stocked</span>';
+    tbody.innerHTML = pageItems.map(item => this._stockRowHtml(item)).join('');
 
-      const rowClass = item.isLowStock ? 'low-stock-row' : '';
-      const key = this.stockKey(item);
-      const checked = App.Selection.isSelected(App.State.selectedStock, key) ? 'checked' : '';
-      const encName = encodeURIComponent(item.name);
-      const encSize = encodeURIComponent(item.size || '');
-      const deadChecked = item.deadStock ? 'checked' : '';
-      const deadRowStyle = item.deadStock ? 'opacity: 0.6;' : '';
+    App.Utils.renderPagination('stockPagination', filteredStock.length, cur, rpp, 'stock-page', 'Items');
+    this.updateBulkButtons();
+  },
 
-      return `
+  // One <tr> of the main Stock table -- pulled out of renderTable() so
+  // _patchStockRow can rebuild a single row in place (see editStockCell)
+  // without touching any sibling row, which a full renderTable() would.
+  _stockRowHtml(item) {
+    const statusBadge = item.isLowStock
+      ? '<span class="badge bg-danger px-2 py-1 shadow-sm">Low Stock</span>'
+      : '<span class="badge bg-success px-2 py-1 shadow-sm">Well Stocked</span>';
+
+    const rowClass = item.isLowStock ? 'low-stock-row' : '';
+    const key = this.stockKey(item);
+    const checked = App.Selection.isSelected(App.State.selectedStock, key) ? 'checked' : '';
+    const encName = encodeURIComponent(item.name);
+    const encSize = encodeURIComponent(item.size || '');
+    const deadChecked = item.deadStock ? 'checked' : '';
+    const deadRowStyle = item.deadStock ? 'opacity: 0.6;' : '';
+
+    return `
   <tr class="${rowClass}" style="${deadRowStyle}">
     <td class="text-center"><input type="checkbox" class="form-check-input stock-select-chk" data-key="${escapeHtml(key)}" ${checked} onchange="App.Stock.onRowSelectChange()"></td>
     <td><strong class="text-dark">${escapeHtml(item.name)}</strong></td>
@@ -2061,10 +2070,27 @@ App.Stock = {
       </button>
     </td>
   </tr>`;
-    }).join('');
+  },
 
-    App.Utils.renderPagination('stockPagination', filteredStock.length, cur, rpp, 'stock-page', 'Items');
-    this.updateBulkButtons();
+  // Rebuilds a single row in place (by the same stockKey() its checkbox is
+  // tagged with) instead of the whole table -- used after an inline Stock
+  // edit settles. A full renderTable() there used to nuke every other
+  // row's DOM wholesale, including any input another row's own inline edit
+  // had open, silently discarding whatever the operator was mid-typing in
+  // it. Returns false (caller should fall back to renderTable()) if the
+  // row isn't part of the currently rendered page -- e.g. sorting/paging
+  // shifted underneath the edit.
+  _patchStockRow(name, size) {
+    const tbody = document.getElementById('stockTableBody');
+    if (!tbody) return false;
+    const item = App.State.filteredStock.find(i => App.Utils.sameText(i.name, name) && App.Utils.sameText(i.size || '', size));
+    if (!item) return false;
+    const key = this.stockKey(item);
+    const existingRow = Array.from(tbody.querySelectorAll('input.stock-select-chk'))
+      .find(chk => chk.dataset.key === key)?.closest('tr');
+    if (!existingRow) return false;
+    existingRow.outerHTML = this._stockRowHtml(item);
+    return true;
   },
 
   // Click-to-edit Current Stock cell. Saves by SETTING Current Stock to
@@ -2102,7 +2128,13 @@ App.Stock = {
       const filteredItem = App.State.filteredStock.find(i => App.Utils.sameText(i.name, name) && App.Utils.sameText(i.size || '', size));
       if (filteredItem) { filteredItem.currentStock = qty; filteredItem.isLowStock = qty < filteredItem.threshold; }
       this.renderAlerts();
-      this.renderTable();
+      // Patch just this row -- a full renderTable() here used to blow away
+      // every other row's DOM, including any <input> a second, still-open
+      // inline edit had going (e.g. blurring row A by clicking into row
+      // B's cell), silently discarding whatever the operator was mid-
+      // typing there. Falls back to a full render if this row isn't on
+      // the currently displayed page (sorting/paging moved under it).
+      if (!this._patchStockRow(name, size)) this.renderTable();
     };
 
     let settled = false;
@@ -2412,7 +2444,16 @@ App.Stock = {
       const res = await Api.mutate('updateThreshold', name, size, thresholdVal);
       if (res?.success) {
         App.Utils.showToast('Threshold updated successfully.');
-        await this.loadData();
+        // Patch locally instead of a full loadData() reload -- which used
+        // to wipe out every other row's DOM, including any inline Current
+        // Stock/Threshold edit another row had open at the same time (see
+        // _patchStockRow / editStockCell for the same fix there).
+        const item = App.State.globalStock.find(i => App.Utils.sameText(i.name, name) && App.Utils.sameText(i.size || '', size));
+        if (item) { item.threshold = thresholdVal; item.isLowStock = item.currentStock < thresholdVal; }
+        const filteredItem = App.State.filteredStock.find(i => App.Utils.sameText(i.name, name) && App.Utils.sameText(i.size || '', size));
+        if (filteredItem) { filteredItem.threshold = thresholdVal; filteredItem.isLowStock = filteredItem.currentStock < thresholdVal; }
+        this.renderAlerts();
+        if (!this._patchStockRow(name, size)) this.renderTable();
       } else {
         App.Utils.showToast(res?.message || 'Failed to update threshold.', true);
         inputEl.disabled = false;

@@ -647,6 +647,277 @@ App.Production = {
     }).join('');
   },
 
+  // ── Work Order (Date + Contractor) ───────────────────────────────────
+  // Step 1 of 2: filter modal. Step 2 (generateWorkOrderPreview) groups
+  // that day's lots for that contractor by Output Item Name into the
+  // actual preview -- see _buildWorkOrderHtml.
+  async openWorkOrderModal() {
+    const form = document.getElementById('workOrderForm');
+    if (form) form.reset();
+    const dateInput = document.getElementById('workOrderDate');
+    if (dateInput) dateInput.value = todayIso();
+
+    await App.Contractor.ensureLoaded();
+    this._initWorkOrderContractorSelect2();
+
+    safeModalShow('workOrderModal');
+  },
+
+  // Same shape as initContractorSelect2 above, but tags:false (deliberately
+  // NOT allowClear-to-create) -- this is filtering for an EXISTING
+  // contractor's lots, not assigning a possibly-new one to a lot.
+  _initWorkOrderContractorSelect2() {
+    const selectEl = document.getElementById('workOrderContractor');
+    if (!selectEl || !window.jQuery?.fn?.select2) return;
+
+    const $select = window.jQuery(selectEl);
+    if ($select.data('select2')) $select.select2('destroy');
+    selectEl.innerHTML = '';
+
+    const $parentModal = $select.closest('.modal');
+    $select.select2({
+      placeholder: 'Select a contractor...',
+      width: '100%',
+      allowClear: true,
+      matcher: App.Utils.select2Matcher,
+      dropdownParent: $parentModal.length ? $parentModal : window.jQuery(document.body),
+      data: (App.State.globalContractors || []).map(c => ({ id: c.contractorName, text: c.contractorName }))
+    });
+  },
+
+  generateWorkOrderPreview(e) {
+    if (e) e.preventDefault();
+    const date = document.getElementById('workOrderDate')?.value || '';
+    const contractor = (document.getElementById('workOrderContractor')?.value || '').trim();
+    if (!date || !contractor) {
+      App.Utils.showToast('Pick both a Date and a Contractor.', true);
+      return;
+    }
+
+    const lots = (App.State.globalProduction || []).filter(p =>
+      p.dateRaw === date && App.Utils.sameText(p.assignedTo, contractor));
+    if (lots.length === 0) {
+      App.Utils.showToast('No production lots found for that date and contractor.', true);
+      return;
+    }
+
+    const content = document.getElementById('workOrderPreviewContent');
+    if (content) content.innerHTML = this._buildWorkOrderHtml(date, contractor, lots);
+
+    safeModalHide('workOrderModal');
+    safeModalShow('workOrderPreviewModal');
+  },
+
+  backToWorkOrderFilters() {
+    safeModalHide('workOrderPreviewModal');
+    safeModalShow('workOrderModal');
+  },
+
+  // Splits `items` into the FEWEST bands of at most `maxPerBand`, each as
+  // close to equal size as possible (e.g. 7 items, max 5 -> 4+3, not
+  // 5+2) -- so a band never ends up with just one or two lonely entries
+  // stranded in an otherwise-empty row. items.length <= maxPerBand
+  // (the common case) always returns exactly one band.
+  _evenBands(items, maxPerBand) {
+    if (items.length === 0) return [];
+    const bandCount = Math.ceil(items.length / maxPerBand);
+    const perBand = Math.ceil(items.length / bandCount);
+    const bands = [];
+    for (let i = 0; i < items.length; i += perBand) {
+      bands.push(items.slice(i, i + perBand));
+    }
+    return bands;
+  },
+
+  // One table per distinct Output Item Name among `lots` (already filtered
+  // to a single date + contractor). Colors/quantities are the PRIMARY
+  // color axis only (countsTowardTotal !== false -- same convention
+  // _updateColorCombinationPreview/populateComponentsConsumedDirect
+  // already use elsewhere in this file), summed across every lot in that
+  // item's group so two lots of the same item on the same day combine
+  // into one work order line per color instead of listing twice. A lot
+  // with no colorBreakdown at all falls back to its own single
+  // color/qty (or a bare qty if it has no color either), mirroring
+  // buildProductionSheetPrintPageHtml's own fallback.
+  //
+  // Every text-bearing element below sets its OWN explicit `color` rather
+  // than relying on inheritance -- this preview renders live, inside the
+  // page's normal DOM (not a hidden print-only container like every other
+  // module's builder), so in dark mode it would otherwise inherit
+  // --text-primary/--text-secondary (near-white, meant for a dark
+  // background) straight through onto this deliberately-white "paper"
+  // background and go nearly illegible, which is exactly what happened
+  // before this was added.
+  //
+  // Standard A4 (downloadWorkOrderPdf uses App.Print's shared A4 defaults,
+  // no overrides), but still deliberately compact -- tighter padding/
+  // margins/font sizes than the other A4 builders in this file, since a
+  // Work Order is a short handoff slip, not a multi-page ledger. Assigned
+  // By is hoisted into the shared header (shown once) when every lot in
+  // this work order shares the same one, instead of repeating it on every
+  // single table.
+  _buildWorkOrderHtml(dateIso, contractor, lots) {
+    const BRAND = '#198754';
+    const INK = '#1a1a1a';
+    const displayDate = lots[0]?.date || dateIso;
+
+    const groups = new Map(); // outputItemName -> lots[]
+    lots.forEach(p => {
+      const key = p.outputItemName || '(No Output Item)';
+      if (!groups.has(key)) groups.set(key, []);
+      groups.get(key).push(p);
+    });
+
+    const allAssignedBy = [...new Set(lots.map(p => p.assignedBy).filter(Boolean))];
+    const commonAssignedBy = allAssignedBy.length === 1 ? allAssignedBy[0] : '';
+
+    const tableBlocks = Array.from(groups.entries()).map(([itemName, groupLots]) => {
+      // Same processId -> Process -> processType resolution as
+      // _requirementSheetTitle/rowHtml's own processLabel elsewhere in
+      // this file -- one Output Item Name is expected to come from one
+      // Process in practice, so the first lot's processId is enough
+      // (mirrors displayDate's own "just take the first lot's" shortcut
+      // below). No bracket at all when the process has no Process Type
+      // set, or can no longer be found (deleted/renamed since logged).
+      const groupProcess = (App.State.globalProcesses || []).find(pr => pr.processId === groupLots[0]?.processId);
+      const processType = String(groupProcess?.processType || '').trim();
+      const displayItemName = processType ? `(${processType}) ${itemName}` : itemName;
+
+      const lotNumbers = [...new Set(groupLots.map(p => p.lotNumber).filter(Boolean))].join(', ') || '-';
+      const assignedByList = [...new Set(groupLots.map(p => p.assignedBy).filter(Boolean))].join(', ') || '-';
+      // Only repeat Assigned By per-table when it ISN'T already covered by
+      // the shared header line below (i.e. it varies somewhere in this
+      // work order) -- a single common name is shown exactly once.
+      const showAssignedByHere = !commonAssignedBy && assignedByList !== '-';
+
+      const colorTotals = new Map(); // display label -> summed qty
+      groupLots.forEach(p => {
+        const primaryColors = (p.colorBreakdown || []).filter(c => c.countsTowardTotal !== false);
+        if (primaryColors.length > 0) {
+          primaryColors.forEach(c => {
+            const label = c.color + (c.size ? ` (${c.size})` : '');
+            colorTotals.set(label, (colorTotals.get(label) || 0) + (toNumber(c.qty) || 0));
+          });
+        } else {
+          const label = p.color || '-';
+          colorTotals.set(label, (colorTotals.get(label) || 0) + (toNumber(p.qty) || 0));
+        }
+      });
+
+      const totalQty = Array.from(colorTotals.values()).reduce((sum, qty) => sum + qty, 0);
+      // Colors as COLUMN HEADERS, one row of quantities underneath -- a
+      // vertical color/qty pair per row wasted most of a page on
+      // whitespace for what's usually just 3-6 colors. Bands are sized
+      // ADAPTIVELY per item (_evenBands), not a fixed chunk size: an item
+      // with <=MAX_COLS colors always gets exactly ONE band sized to its
+      // own color count, so it fully occupies the table width instead of
+      // (with a fixed chunk of 4) spilling its 5th color into its own
+      // near-empty trailing row. An item that genuinely needs more than
+      // MAX_COLS still wraps, but split as evenly as possible (e.g. 7
+      // colors -> 4+3, not 6+1) so no band is left mostly blank either.
+      //
+      // MAX_COLS=5, not 6: a composite color name like "Silky Blue-Navy
+      // Blue / Black" needs real column width to wrap onto 2-3 lines --
+      // beyond 5 columns even A4 width leaves too little per column, and
+      // the header text overflowed into neighboring cells instead of
+      // wrapping (word-wrap/overflow-wrap alone weren't enough once the
+      // column itself got too narrow). Each <th>/<td> gets an explicit
+      // width so table-layout:fixed has something concrete to enforce.
+      const MAX_COLS = 5;
+      const colorEntries = Array.from(colorTotals.entries());
+      const bands = this._evenBands(colorEntries, MAX_COLS);
+      const colWidthPct = (100 / (bands[0]?.length || 1)).toFixed(2) + '%';
+      const wrapStyle = 'word-wrap:break-word;overflow-wrap:break-word;word-break:break-word;white-space:normal;';
+      const bandsHtml = bands.map(band => `
+        <tr style="background:#f1f3f5;-webkit-print-color-adjust:exact;print-color-adjust:exact;">
+          ${band.map(([color]) => `<th style="width:${colWidthPct};padding:3px 4px;border:1px solid #ddd;text-align:center;font-size:9px;font-weight:700;color:${INK};${wrapStyle}">${escapeHtml(color)}</th>`).join('')}
+        </tr>
+        <tr>
+          ${band.map(([, qty]) => `<td style="width:${colWidthPct};padding:3px 4px;border:1px solid #ddd;text-align:center;font-weight:700;color:${INK};">${this.formatQty(qty)}</td>`).join('')}
+        </tr>`).join('');
+      // table-layout:fixed derives each column's width from the FIRST
+      // row's cell count -- the Total row (only ever 2 cells) needs an
+      // explicit colspan matching that width, or it renders as two
+      // slivers at the left instead of spanning the full table.
+      const widestBandCols = bands.length > 0 ? bands[0].length : 1;
+      const totalLabelSpan = Math.max(widestBandCols - 1, 1);
+
+      return `
+    <div style="margin-bottom:8px;page-break-inside:avoid;">
+      <div style="display:flex;justify-content:space-between;align-items:baseline;background:${BRAND};color:#fff;padding:3px 8px;-webkit-print-color-adjust:exact;print-color-adjust:exact;">
+        <span style="font-size:11px;font-weight:700;text-transform:uppercase;letter-spacing:0.3px;">${escapeHtml(displayItemName)}</span>
+        <span style="font-size:9.5px;">Lot #${escapeHtml(lotNumbers)}</span>
+      </div>
+      ${showAssignedByHere ? `
+      <div style="font-size:9px;color:#555;padding:2px 8px;border:1px solid #ddd;border-top:none;-webkit-print-color-adjust:exact;print-color-adjust:exact;">
+        Assigned By: <strong style="color:${INK};">${escapeHtml(assignedByList)}</strong>
+      </div>` : ''}
+      <table style="width:100%;border-collapse:collapse;font-size:10.5px;table-layout:fixed;">
+        <tbody>
+          ${bandsHtml}
+          <tr>
+            <td colspan="${totalLabelSpan}" style="padding:3px 6px;border:1px solid #ddd;font-weight:700;text-align:right;color:${INK};">Total</td>
+            <td style="padding:3px 6px;border:1px solid #ddd;font-weight:700;text-align:right;color:${INK};">${this.formatQty(totalQty)}</td>
+          </tr>
+        </tbody>
+      </table>
+    </div>`;
+    }).join('');
+
+    return `
+<div style="background:#fff;color:${INK};font-family:'Segoe UI',Arial,sans-serif;font-size:11px;line-height:1.45;padding:10px 16px 10px 16px;margin:0;box-sizing:border-box;width:100%;border-top:4px solid ${BRAND};border-bottom:2px solid ${BRAND};-webkit-print-color-adjust:exact;print-color-adjust:exact;">
+  <div style="text-align:center;padding:2px 0 4px 0;">
+    ${App.Print.brandHeaderHtml(BRAND)}
+    <div style="font-size:8px;color:#555;margin-top:2px;letter-spacing:0.2px;">
+      6-B, SHIV SHAKTI ESTATE, VERKA CHOWK, DEHLON ROAD, BHAGWANPURA, 141114 LUDHIANA
+    </div>
+    <div style="font-size:9.5px;color:${BRAND};font-weight:700;margin-top:2px;letter-spacing:0.8px;text-transform:uppercase;">
+      Work Order
+    </div>
+  </div>
+  <div style="height:1.5px;background:${BRAND};margin:0 0 6px 0;-webkit-print-color-adjust:exact;print-color-adjust:exact;"></div>
+
+  <div style="display:flex;justify-content:space-between;flex-wrap:wrap;gap:8px;margin-bottom:8px;padding-bottom:6px;border-bottom:1px solid #ccc;">
+    <div>
+      <span style="font-size:8px;color:#666;text-transform:uppercase;letter-spacing:0.4px;">Date</span>
+      <div style="font-size:11px;font-weight:700;color:${INK};">${escapeHtml(displayDate)}</div>
+    </div>
+    <div>
+      <span style="font-size:8px;color:#666;text-transform:uppercase;letter-spacing:0.4px;">Assigned To</span>
+      <div style="font-size:11px;font-weight:700;color:${INK};">${escapeHtml(contractor)}</div>
+    </div>
+    ${commonAssignedBy ? `
+    <div>
+      <span style="font-size:8px;color:#666;text-transform:uppercase;letter-spacing:0.4px;">Assigned By</span>
+      <div style="font-size:11px;font-weight:700;color:${INK};">${escapeHtml(commonAssignedBy)}</div>
+    </div>` : ''}
+  </div>
+
+  ${tableBlocks}
+</div>`;
+  },
+
+  // Standard A4, same as every other module's PDF export -- no overrides
+  // needed, downloadElementAsPDF's defaults (App.Print.PAGE_WIDTH_PX /
+  // PAGE_MARGIN_MM) already are A4. A5 (used in an earlier round) turned
+  // out too narrow once a composite color name like "Silky Blue-Navy Blue
+  // / Black" needed real column width to wrap instead of overflowing into
+  // its neighbor.
+  async downloadWorkOrderPdf() {
+    const date = document.getElementById('workOrderDate')?.value || todayIso();
+    const contractor = (document.getElementById('workOrderContractor')?.value || 'Contractor').trim();
+    const filename = `Work_Order_${contractor.replace(/[^a-zA-Z0-9_-]/g, '_')}_${date}.pdf`;
+
+    const btn = document.getElementById('workOrderDownloadBtn');
+    if (btn) btn.disabled = true;
+    try {
+      const ok = await App.Print.downloadElementAsPDF('workOrderPreviewContent', filename);
+      if (ok) App.Utils.showToast('Work Order PDF downloaded successfully!');
+    } finally {
+      if (btn) btn.disabled = false;
+    }
+  },
+
   // Human-readable qualifier for an axisKey, used only to disambiguate
   // two different axes that happen to produce the exact same color name.
   _axisQualifierLabel(axisKey) {
@@ -1929,7 +2200,7 @@ App.Production = {
       </div>`;
   },
 
-  setPrimaryColorAxisChoice(radioEl) {
+  async setPrimaryColorAxisChoice(radioEl) {
     const axisKey = radioEl.value;
     $$('#productionColorChecklist .production-color-row[data-group]').forEach(row => {
       row.dataset.primary = row.dataset.group === axisKey ? 'true' : 'false';
@@ -1943,6 +2214,15 @@ App.Production = {
     if (warning) warning.remove();
     this.refreshCommonSuggestedQty();
     this.refreshPayableHint();
+
+    // A column that was exempt from pruning while its own axis was Primary
+    // (see _pruneRedundantMatrixColumns) doesn't get re-evaluated on its
+    // own -- nothing else re-checks existing columns once the Primary
+    // designation moves elsewhere, so a color left over from the old
+    // Primary axis would otherwise sit there empty forever, matching the
+    // new Primary axis's colors but never getting pruned.
+    this._pruneRedundantMatrixColumns();
+    await this.refreshPoolAvailability();
   },
 
   _syncColorGroupMasterCheckbox(groupKey) {
@@ -5448,4 +5728,6 @@ document.addEventListener('DOMContentLoaded', function () {
       if (submitBtn) submitBtn.disabled = false;
     }
   };
+
+  document.getElementById('workOrderForm')?.addEventListener('submit', e => App.Production.generateWorkOrderPreview(e));
 });

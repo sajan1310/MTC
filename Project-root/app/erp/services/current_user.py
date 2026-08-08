@@ -17,3 +17,10 @@ def get_current_user_email() -> str:
         return str(getattr(current_user, "email", "") or "")
     except Exception:
         return ""
+
+
+def get_current_user_role() -> str:
+    try:
+        return str(getattr(current_user, "role", "") or "")
+    except Exception:
+        return ""

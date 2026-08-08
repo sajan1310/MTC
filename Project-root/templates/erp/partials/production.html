@@ -48,6 +48,9 @@
         <button class="btn btn-outline-dark fw-bold shadow-sm" type="button" onclick="App.Production.openColorwiseSummaryModal()" style="white-space: nowrap;">
           <i class="bi bi-palette"></i> Colorwise Summary
         </button>
+        <button class="btn btn-outline-dark fw-bold shadow-sm" type="button" onclick="App.Production.openWorkOrderModal()" style="white-space: nowrap;">
+          <i class="bi bi-file-earmark-text"></i> Download Work Order
+        </button>
         <!-- One-off/repeatable repair: rewrites each already-logged lot's stored
              component narration, unit, and item name (casing only) to the
              CURRENT Items Master values. New and re-saved lots already write
@@ -227,6 +230,68 @@
           </table>
         </div>
         <div id="colorwiseSummaryEmptyState" class="text-center p-4 text-muted" style="display:none;">No production lots match this filter.</div>
+      </div>
+    </div>
+  </div>
+</div>
+
+<!-- Work Order: Step 1 -- pick a Date + Contractor, then generate a
+     preview grouping that day's lots for that contractor by Output Item
+     Name (see App.Production.generateWorkOrderPreview). -->
+<div class="modal fade" id="workOrderModal" tabindex="-1" aria-hidden="true">
+  <div class="modal-dialog modal-dialog-centered">
+    <div class="modal-content shadow-lg">
+      <div class="modal-header bg-dark text-white">
+        <h5 class="modal-title fw-bold" style="font-family: 'Outfit', sans-serif;">Download Work Order</h5>
+        <button type="button" class="btn-close btn-close-white" data-bs-dismiss="modal"></button>
+      </div>
+      <div class="modal-body bg-light">
+        <form id="workOrderForm" autocomplete="off">
+          <div class="mb-3">
+            <label class="form-label fw-bold">Date *</label>
+            <input type="date" id="workOrderDate" class="form-control" required>
+          </div>
+          <div class="mb-3">
+            <label class="form-label fw-bold">Contractor (Assigned To) *</label>
+            <select id="workOrderContractor" class="form-control" style="width:100%;" required></select>
+          </div>
+          <div class="d-flex justify-content-end">
+            <button type="submit" id="workOrderPreviewBtn" class="btn btn-primary fw-bold">Generate Preview</button>
+          </div>
+        </form>
+      </div>
+    </div>
+  </div>
+</div>
+
+<!-- Work Order: Step 2 -- the actual preview (App.Production._buildWorkOrderHtml
+     renders into #workOrderPreviewContent), downloaded as a PDF straight
+     from here via App.Print.downloadElementAsPDF -- same shared PDF
+     pipeline every other module's "Download PDF" button already uses, just
+     pointed at this modal's own content instead of one of print.html's
+     hidden print-only containers, since this preview is meant to be seen
+     on screen too, not only captured. -->
+<div class="modal fade" id="workOrderPreviewModal" tabindex="-1" aria-hidden="true">
+  <div class="modal-dialog modal-xl modal-dialog-scrollable modal-fullscreen-sm-down">
+    <div class="modal-content shadow-lg">
+      <div class="modal-header bg-dark text-white">
+        <h5 class="modal-title fw-bold" style="font-family: 'Outfit', sans-serif;">Work Order Preview</h5>
+        <button type="button" class="btn-close btn-close-white" data-bs-dismiss="modal"></button>
+      </div>
+      <div class="modal-body bg-secondary-subtle d-flex justify-content-center">
+        <!-- 748px matches App.Print.PAGE_WIDTH_PX (A4 content width at
+             96dpi, downloadWorkOrderPdf's default) -- what's shown here is
+             what gets exported, not a wider/differently-proportioned
+             preview of it. -->
+        <div id="workOrderPreviewContent" class="shadow-sm" style="max-width:748px;width:100%;border:1px solid #dee2e6;"></div>
+      </div>
+      <div class="modal-footer">
+        <button type="button" class="btn btn-secondary" onclick="App.Production.backToWorkOrderFilters()">
+          <i class="bi bi-arrow-left"></i> Edit Filters
+        </button>
+        <button type="button" id="workOrderDownloadBtn" class="btn btn-primary fw-bold" onclick="App.Production.downloadWorkOrderPdf()">
+          <i class="bi bi-file-earmark-pdf"></i> Download PDF
+        </button>
       </div>
     </div>
   </div>

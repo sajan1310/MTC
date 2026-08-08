@@ -307,7 +307,9 @@ const App = {
     // small enough that the flag isn't worth adding until it isn't.
     globalUsers: [],
     filteredUsers: [],
-    usersSearchTerm: ''
+    usersSearchTerm: '',
+    // Custom roles (roles_service.py) -- fetched alongside globalUsers.
+    globalCustomRoles: []
   },
 
   // ── Bulk Selection Helpers ────────────────────────────────────────────
@@ -1398,6 +1400,72 @@ const App = {
     }
   },
 
+  // ── My Profile (self-service, every role) ───────────────────────────────
+  // Two independent forms/mutations (updateMyProfile / changeMyPassword,
+  // see profile_service.py) since a mistake in one (e.g. a password typo)
+  // shouldn't block saving the other.
+  Profile: {
+    openModal() {
+      const profileForm = document.getElementById('myProfileForm');
+      if (profileForm) profileForm.reset();
+      const passwordForm = document.getElementById('myPasswordForm');
+      if (passwordForm) passwordForm.reset();
+      safeModalShow('myProfileModal');
+    },
+
+    async submitProfile(e) {
+      e.preventDefault();
+      const form = e.target;
+      const name = form.name.value.trim();
+      const email = form.email.value.trim();
+
+      const btn = document.getElementById('myProfileSaveBtn');
+      if (btn) btn.disabled = true;
+      try {
+        const res = await Api.mutate('updateMyProfile', name, email);
+        App.Utils.showToast(res?.message || (res?.success ? 'Profile updated.' : 'Failed to update profile.'), !res?.success);
+        if (res?.success) {
+          // The header/dropdown's name+avatar-initial are rendered from
+          // Jinja at page load, not re-fetched -- patch them directly so
+          // the change is visible without a full reload.
+          const nameEl = document.querySelector('.account-name');
+          if (nameEl) nameEl.textContent = name || email;
+          const avatarEl = document.querySelector('.account-avatar');
+          if (avatarEl) avatarEl.textContent = (name || email || '?').charAt(0).toUpperCase();
+        }
+      } catch (err) {
+        App.Utils.showToast(err.message || 'Failed to update profile.', true);
+      } finally {
+        if (btn) btn.disabled = false;
+      }
+    },
+
+    async submitPassword(e) {
+      e.preventDefault();
+      const form = e.target;
+      const currentPassword = form.currentPassword.value;
+      const newPassword = form.newPassword.value;
+      const confirmNewPassword = form.confirmNewPassword.value;
+
+      if (newPassword !== confirmNewPassword) {
+        App.Utils.showToast('New passwords do not match.', true);
+        return;
+      }
+
+      const btn = document.getElementById('myPasswordSaveBtn');
+      if (btn) btn.disabled = true;
+      try {
+        const res = await Api.mutate('changeMyPassword', currentPassword, newPassword, confirmNewPassword);
+        App.Utils.showToast(res?.message || (res?.success ? 'Password updated.' : 'Failed to update password.'), !res?.success);
+        if (res?.success) form.reset();
+      } catch (err) {
+        App.Utils.showToast(err.message || 'Failed to update password.', true);
+      } finally {
+        if (btn) btn.disabled = false;
+      }
+    }
+  },
+
   // ── Navigation ────────────────────────────────────────────────────────
   Navigation: {
     LAST_TAB_KEY: 'maharaja-erp-last-tab',
@@ -1713,6 +1781,9 @@ function bindGlobalEvents() {
         break;
     }
   });
+
+  document.getElementById('myProfileForm')?.addEventListener('submit', e => App.Profile.submitProfile(e));
+  document.getElementById('myPasswordForm')?.addEventListener('submit', e => App.Profile.submitPassword(e));
 }
 
 // ── Page chrome: dark mode + sidebar collapse ───────────────────────────

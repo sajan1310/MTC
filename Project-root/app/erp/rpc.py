@@ -23,6 +23,7 @@ from . import erp_rpc_bp
 from .envelope import build_response
 from .mutations import get_cached_result, store_result
 from .registry import RPC_METHODS
+from .services.roles_service import TAB_BY_SERVICE_MODULE, get_effective_tab_level
 
 # The service layer's own vocabulary for "expected, user-correctable"
 # failures (verified: 222 raise ValueError + 5 raise RuntimeError sites
@@ -59,6 +60,28 @@ def call(method: str):
     # @login_required.
     if spec.roles is not None and not any(current_user.has_role(r) for r in spec.roles):
         return jsonify(build_response(False, None, f"Not authorized to call {method}.")), 403
+
+    # Custom-role per-tab permission gate (see roles_service.py). Only ever
+    # runs for a role outside the 4 built-in ones -- user/admin/super_admin
+    # keep their exact previous behaviour, completely untouched by this
+    # check (get_effective_tab_level returns "editor" for all three
+    # unconditionally, so the check below can never fire for them; this
+    # early role-name comparison just skips the extra DB lookup for the
+    # common case). A module absent from TAB_BY_SERVICE_MODULE (Units,
+    # Company Settings, this user's own Profile, ...) is cross-cutting and
+    # always allowed, same as today.
+    if current_user.role not in ("user", "admin", "super_admin"):
+        tab = TAB_BY_SERVICE_MODULE.get(spec.module)
+        if tab is not None:
+            level = get_effective_tab_level(current_user.role, tab)
+            if level is None:
+                return jsonify(build_response(False, None, f"Not authorized to call {method}.")), 403
+            if spec.mutation and level != "editor":
+                # Viewer can't mutate at all; Commenter's one narrow
+                # exception (updateEntityRemarks) lives in remarks_service.py,
+                # outside TAB_BY_SERVICE_MODULE, so it never reaches this
+                # branch in the first place.
+                return jsonify(build_response(False, None, f"Not authorized to call {method}.")), 403
 
     mutation_id = request.headers.get("X-Mutation-Id")
     if spec.mutation:

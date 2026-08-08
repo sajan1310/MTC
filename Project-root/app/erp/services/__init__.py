@@ -28,6 +28,9 @@ from . import clients_service  # noqa: F401
 from . import dashboard_service  # noqa: F401
 from . import backup_service  # noqa: F401
 from . import users_service  # noqa: F401
+from . import profile_service  # noqa: F401
+from . import roles_service  # noqa: F401
+from . import remarks_service  # noqa: F401
 
 __all__ = [
     "system_service",
@@ -52,5 +55,8 @@ __all__ = [
     "dashboard_service",
     "backup_service",
     "users_service",
+    "profile_service",
+    "roles_service",
+    "remarks_service",
 ]
 

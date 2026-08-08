@@ -8,6 +8,23 @@ from flask import current_app, redirect, render_template, request, send_from_dir
 from flask_login import current_user, login_required
 
 from . import erp_bp
+from .services.roles_service import get_role_permissions
+
+
+def _permitted_tabs_for(user):
+    """None means unrestricted (every built-in role: user/admin/super_admin
+    -- their sidebar is untouched). A custom role gets the set of tab ids
+    its permissions map grants (any level at all, viewer included) --
+    empty if the role can't be resolved (e.g. deleted out from under an
+    active session). This only controls what index.html renders; the real
+    enforcement is app/erp/rpc.py's per-request gate (see
+    roles_service.get_effective_tab_level), not this.
+    """
+    role = getattr(user, "role", None)
+    if role in ("user", "admin", "super_admin"):
+        return None
+    permissions = get_role_permissions(role) if role else None
+    return set(permissions.keys()) if permissions else set()
 
 
 def _pending_approval_redirect():
@@ -31,7 +48,7 @@ def index():
         return pending
     if request.args.get("ui") == "mobile":
         return redirect(url_for("erp.mobile"))
-    return render_template("erp/index.html")
+    return render_template("erp/index.html", permitted_tabs=_permitted_tabs_for(current_user))
 
 
 @erp_bp.route("/erp/mobile")

@@ -20,21 +20,21 @@ class RpcSpec:
     offline: bool = False
     bom_gated: bool = False
     # Authorization mechanism (plumbing only -- see rpc.py's enforcement).
-    # None (the default, and today the value for all 135 registered methods)
-    # means "no restriction beyond @login_required", i.e. today's actual
-    # behaviour is completely unchanged by this field's existence. A method
-    # can opt in later by passing roles={"manager", "admin"} to @rpc_method;
-    # the dispatcher then requires current_user.has_role() to match one of
-    # them (User.has_role(), app/models/user.py, already treats "admin" as
-    # a superuser wildcard for any role check).
-    #
-    # Deliberately NOT populated for any real method yet: which of the 82
-    # mutating methods should require which role is a business decision
-    # (who may delete records, adjust stock, trigger backups), not a
-    # technical one -- see PYTHON_BACKEND_REVIEW.md PY-009. Assigning that
-    # is next; this field makes it a one-line change per method once the
-    # answer exists, with no dispatcher change required.
+    # None means "no restriction beyond @login_required". A method can opt
+    # in by passing roles={"manager", "admin"} to @rpc_method; the
+    # dispatcher then requires current_user.has_role() to match one of them
+    # (User.has_role(), app/models/user.py, already treats "admin" and
+    # "super_admin" as a superuser wildcard for any role check). Used today
+    # by users_service.py/roles_service.py's admin-only methods and
+    # backup_service.py/items_service.py's two admin-only mutations.
     roles: frozenset[str] | None = None
+    # The service module this method lives in (e.g. "bill_service"),
+    # derived automatically below -- not passed by callers. Lets rpc.py's
+    # dispatcher map a method to the sidebar tab it belongs to (see
+    # roles_service.py's TAB_BY_SERVICE_MODULE) for a custom role's
+    # per-tab permission check, without every one of the ~135 @rpc_method
+    # call sites needing its own explicit tab= kwarg.
+    module: str = ""
 
 
 RPC_METHODS: dict[str, RpcSpec] = {}
@@ -65,6 +65,7 @@ def rpc_method(
             offline=offline,
             bom_gated=bom_gated,
             roles=frozenset(roles) if roles is not None else None,
+            module=func.__module__.rsplit(".", 1)[-1],
         )
         return func
 

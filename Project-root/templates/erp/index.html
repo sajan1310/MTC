@@ -4,12 +4,16 @@
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
   <meta name="csrf-token" content="{{ csrf_token() }}">
-  {% if current_user.role == 'admin' %}
+  {% if current_user.is_admin %}
   <!-- Read by users.js to hide role-change/deactivate controls on the
-       admin's own row (mirrors the equivalent server-side guards in
-       users_service.py -- this is only a UI convenience, not the real
-       enforcement). Only emitted for admins since only they load users.js. -->
+       admin's own row, and to hide the role <select> (showing a read-only
+       badge instead) on any admin/super_admin row when the viewer isn't a
+       super_admin -- mirrors the equivalent server-side guards in
+       users_service.py (update_user_role/create_user); this is only a UI
+       convenience, not the real enforcement. Only emitted for admins since
+       only they load users.js. -->
   <meta name="current-user-id" content="{{ current_user.id }}">
+  <meta name="current-user-role" content="{{ current_user.role }}">
   {% endif %}
   <title>Maharaja Bikes ERP</title>
 
@@ -127,6 +131,65 @@
         <div class="modal-footer">
           <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Cancel</button>
           <button type="button" class="btn btn-danger" id="confirmActionBtn">Yes, Proceed</button>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- My Profile: self-service name/email + password change, open to every
+       authenticated user regardless of role (see app/erp/services/
+       profile_service.py -- updateMyProfile/changeMyPassword operate only
+       on the caller's own row, no role gate needed beyond being logged in).
+       Two independent forms/mutations since they're separate concerns and
+       a mistake in one (e.g. a password typo) shouldn't block the other. -->
+  <div class="modal fade" id="myProfileModal" tabindex="-1" aria-hidden="true" style="z-index: 1070;">
+    <div class="modal-dialog modal-dialog-centered">
+      <div class="modal-content">
+        <div class="modal-header bg-primary text-white">
+          <h5 class="modal-title fw-bold">My Profile</h5>
+          <button type="button" class="btn-close btn-close-white" data-bs-dismiss="modal" aria-label="Close"></button>
+        </div>
+        <div class="modal-body bg-light">
+          <form id="myProfileForm" autocomplete="off">
+            <div class="mb-3">
+              <label class="form-label fw-bold">Name *</label>
+              <input type="text" name="name" class="form-control" required maxlength="150" value="{{ current_user.name }}">
+            </div>
+            <div class="mb-3">
+              <label class="form-label fw-bold">Email *</label>
+              <input type="email" name="email" class="form-control" required maxlength="150" value="{{ current_user.email }}">
+            </div>
+            <div class="mb-3">
+              <label class="form-label fw-bold">Role</label>
+              <input type="text" class="form-control" value="{{ (current_user.role or 'user')|capitalize }}" disabled>
+            </div>
+            <div class="d-flex justify-content-end">
+              <button type="submit" id="myProfileSaveBtn" class="btn btn-primary fw-bold">Save Profile</button>
+            </div>
+          </form>
+
+          <hr class="my-4">
+
+          <h6 class="text-secondary border-bottom pb-2 mb-3 fw-bold">Change Password</h6>
+          <form id="myPasswordForm" autocomplete="off">
+            <div class="mb-3">
+              <label class="form-label fw-bold">Current Password</label>
+              <input type="password" name="currentPassword" class="form-control" autocomplete="current-password">
+              <div class="form-text">Leave blank if you signed up with Google and have never set a password.</div>
+            </div>
+            <div class="mb-3">
+              <label class="form-label fw-bold">New Password *</label>
+              <input type="password" name="newPassword" class="form-control" required autocomplete="new-password">
+              <div class="form-text">At least 8 characters, with an uppercase letter, a lowercase letter, a number, and a special character.</div>
+            </div>
+            <div class="mb-3">
+              <label class="form-label fw-bold">Confirm New Password *</label>
+              <input type="password" name="confirmNewPassword" class="form-control" required autocomplete="new-password">
+            </div>
+            <div class="d-flex justify-content-end">
+              <button type="submit" id="myPasswordSaveBtn" class="btn btn-outline-primary fw-bold">Change Password</button>
+            </div>
+          </form>
         </div>
       </div>
     </div>
@@ -286,7 +349,13 @@
             <div class="text-muted small text-truncate">{{ current_user.email }}</div>
             <span class="badge bg-secondary-subtle text-secondary-emphasis mt-1">{{ (current_user.role or 'user')|capitalize }}</span>
           </li>
-          {% if current_user.role == 'admin' %}
+          <li><hr class="dropdown-divider"></li>
+          <li>
+            <button type="button" class="dropdown-item" onclick="App.Profile.openModal()">
+              <i class="bi bi-person-circle me-2"></i>My Profile
+            </button>
+          </li>
+          {% if current_user.is_admin %}
           <li><hr class="dropdown-divider"></li>
           <li>
             <button type="button" class="dropdown-item" data-action="show-tab" data-tab="usersTab">
@@ -324,13 +393,15 @@
             ('dispatchTab', 'bi-truck', 'Dispatch'),
             ('clientsTab', 'bi-person-lines-fill', 'Clients'),
           ] %}
+          {% if permitted_tabs is none or tab_id in permitted_tabs %}
           <li class="nav-item" role="presentation">
             <button class="nav-link fw-500" id="btn-{{ tab_id }}" type="button" role="tab" aria-controls="{{ tab_id }}" aria-selected="false" data-action="show-tab" data-tab="{{ tab_id }}" title="{{ label }}">
               <i class="bi {{ icon }}"></i><span class="nav-label">{{ label }}</span>
             </button>
           </li>
+          {% endif %}
           {% endfor %}
-          {% if current_user.role == 'admin' %}
+          {% if current_user.is_admin %}
           <li class="nav-item" role="presentation">
             <button class="nav-link fw-500" id="btn-usersTab" type="button" role="tab" aria-controls="usersTab" aria-selected="false" data-action="show-tab" data-tab="usersTab" title="Users">
               <i class="bi bi-people-fill"></i><span class="nav-label">Users</span>
@@ -354,9 +425,19 @@
         {% include "erp/partials/production.html" %}
         {% include "erp/partials/clients.html" %}
         {% include "erp/partials/dispatch.html" %}
-        {% if current_user.role == 'admin' %}
+        {% if current_user.is_admin %}
         {% include "erp/partials/users.html" %}
         {% endif %}
+        <!-- Tab-content partials above are always included regardless of a
+             custom role's permitted_tabs -- some (stock.html) also carry
+             cross-cutting modals (Unit/Color/Model/ProcessType Master,
+             opened from the always-visible header shortcuts, not scoped to
+             one tab) that must render for every role. The sidebar nav
+             button loop above already hides navigation to a tab a role
+             can't use, and the real enforcement is app/erp/rpc.py's
+             per-request gate -- an unreachable, dataless tab-content shell
+             sitting inert in the DOM costs nothing a determined user
+             couldn't already see via view-source anyway. -->
 
       </div>
     </div>
@@ -397,7 +478,7 @@
   <script src="{{ url_for('static', filename='erp/issue.js') }}"></script>
   <script src="{{ url_for('static', filename='erp/client.js') }}"></script>
   <script src="{{ url_for('static', filename='erp/dispatch.js') }}"></script>
-  {% if current_user.role == 'admin' %}
+  {% if current_user.is_admin %}
   <script src="{{ url_for('static', filename='erp/users.js') }}"></script>
   {% endif %}
 
