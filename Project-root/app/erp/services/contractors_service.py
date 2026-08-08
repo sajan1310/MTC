@@ -314,13 +314,13 @@ def save_contractor(conn, cur, form_data):
         # still cascades.
         if new_name != original_name:
             _rename_contractor_everywhere(cur, original_name, new_name)
-        message = "Contractor profile updated successfully."
+        message = f'Contractor "{new_name}" updated.'
     else:
         cur.execute(
             "INSERT INTO erp.contractors (contractor_name, contact, address, gst_pan, remarks, updated_by) VALUES (%s, %s, %s, %s, %s, %s)",
             (new_name, contact, address, gst_pan, remarks, user_id),
         )
-        message = "New contractor registered."
+        message = f'Contractor "{new_name}" registered.'
 
     return build_response(True, {"name": new_name}, message)
 
@@ -463,7 +463,7 @@ def save_contractor_rate(conn, cur, form_data):
             (contractor_name, contractor_id, process_name, rate_per_unit, remarks),
         )
 
-    return build_response(True, None, "Rate saved successfully.")
+    return build_response(True, None, f'Rate for "{contractor_name}" ({process_name}) saved.')
 
 
 @rpc_method("deleteContractorRate", mutation=True)
@@ -572,7 +572,7 @@ def record_contractor_payment(conn, cur, form_data):
         (payment_date, contractor_name, contractor_id, amount, mode_reference, remarks),
     )
 
-    return build_response(True, None, "Payment recorded successfully.")
+    return build_response(True, None, f'Payment of {amount:,.2f} recorded for "{contractor_name}".')
 
 
 @rpc_method("deleteContractorPayment", mutation=True)

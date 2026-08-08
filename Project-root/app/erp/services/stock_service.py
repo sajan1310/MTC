@@ -213,7 +213,8 @@ def update_threshold(conn, cur, item_name, size, threshold):
         "UPDATE erp.stock SET threshold = %s, updated_by = %s WHERE id = %s",
         (threshold_val, get_current_user_id(), row_id),
     )
-    return build_response(True, None, "Threshold updated successfully.")
+    item_label = f'"{item_name}"' + (f" ({size})" if size else "")
+    return build_response(True, None, f"{item_label} threshold updated.")
 
 
 @rpc_method("updateDeadStock", mutation=True)
@@ -229,7 +230,9 @@ def update_dead_stock(conn, cur, item_name, size, is_dead_stock):
         "UPDATE erp.stock SET dead_stock = %s, updated_by = %s WHERE id = %s",
         (dead_stock_val, get_current_user_id(), row_id),
     )
-    return build_response(True, {"deadStock": dead_stock_val}, "Dead stock status updated.")
+    item_label = f'"{item_name}"' + (f" ({size})" if size else "")
+    dead_stock_message = f"{item_label} marked as dead stock." if dead_stock_val else f"{item_label} removed from dead stock."
+    return build_response(True, {"deadStock": dead_stock_val}, dead_stock_message)
 
 
 @rpc_method("adjustStockManually", mutation=True)
@@ -286,10 +289,11 @@ def adjust_stock_manually(conn, cur, item_name, size, new_current_stock, reason)
         (item_name, size or "", old_current_stock, new_stock_val, reason_text, user_id),
     )
 
+    item_label = f'"{row["item_name"]}"' + (f" ({row['size']})" if row["size"] else "")
     return build_response(
         True,
         {"oldCurrentStock": old_current_stock, "newCurrentStock": new_stock_val},
-        "Stock adjusted successfully.",
+        f"{item_label} stock adjusted to {new_stock_val:g}.",
     )
 
 

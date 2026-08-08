@@ -2171,7 +2171,7 @@ App.Stock = {
         }
 
         applyLocally(newQty);
-        App.Utils.showToast('Stock updated.');
+        App.Utils.showToast(res?.message || 'Stock updated.');
       } catch (err) {
         App.Utils.showToast(err.message || 'Failed to update stock.', true);
         revert();

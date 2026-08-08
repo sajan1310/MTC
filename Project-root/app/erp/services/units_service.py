@@ -152,7 +152,7 @@ def save_unit(conn, cur, form_data):
     if is_edit and new_name != original_name:
         _rename_unit_everywhere(cur, original_name, new_name)
 
-    message = "Unit updated successfully." if is_edit else "Unit added successfully."
+    message = f'Unit "{new_name}" updated.' if is_edit else f'Unit "{new_name}" added.'
     return build_response(True, {"unitName": new_name}, message)
 
 

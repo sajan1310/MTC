@@ -178,7 +178,7 @@ def save_vendor(conn, cur, form_data):
             (new_name, contact, address, gstin, remarks, user_id),
         )
 
-    message = "Vendor profile updated successfully." if is_edit else "New Vendor registered."
+    message = f'Vendor "{new_name}" updated.' if is_edit else f'Vendor "{new_name}" registered.'
     return build_response(True, {"name": new_name}, message)
 
 

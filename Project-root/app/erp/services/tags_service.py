@@ -100,7 +100,7 @@ def _save_tag(conn, cur, sheet_key: str, label: str, form_data):
         # MODEL_MASTER: no cascade -- Model Master's name isn't stored as a
         # reference anywhere else in the schema (see module_tags.js).
 
-    message = f"{label} entry updated successfully." if is_edit else f"{label} entry added successfully."
+    message = f'"{new_name}" updated in {label}.' if is_edit else f'"{new_name}" added to {label}.'
     return build_response(True, {"name": new_name}, message)
 
 

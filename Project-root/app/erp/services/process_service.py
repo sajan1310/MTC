@@ -686,9 +686,9 @@ def save_process(conn, cur, form_data):
         if old_process_name and old_process_name.lower() != process_name.lower():
             _rename_process_name_in_contractor_rates(cur, old_process_name, process_name)
 
-        message = "Process updated successfully."
+        message = f'Process "{process_name}" updated.'
     else:
-        message = "Process created successfully."
+        message = f'Process "{process_name}" created.'
 
     # Read this process's own just-written row back so the client can
     # patch it into an already-loaded list in place instead of a full

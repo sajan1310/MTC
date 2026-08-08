@@ -624,7 +624,7 @@ def save_bom(conn, cur, form_data, token=None):
             (header_id, description, rate, process_name, contractor_name),
         )
 
-    message = "BOM updated successfully." if is_edit else "Product BOM saved successfully."
+    message = f'BOM for "{product_name}" updated.' if is_edit else f'BOM for "{product_name}" saved.'
 
     # Read this product's own just-written rows back so the client can
     # patch it into an already-loaded list in place instead of a full

@@ -814,7 +814,7 @@ def save_warehouse_pool_opening(conn, cur, form_data):
 
     _recalculate_warehouse_pool(cur)
 
-    return build_response(True, None, "Opening stock recorded successfully.")
+    return build_response(True, None, f'Opening stock for "{process["outputItemName"]}" recorded.')
 
 
 @rpc_method("deleteWarehousePoolOpening", mutation=True)

@@ -683,7 +683,7 @@ def save_production(conn, cur, form_data):
 
     warehouse_service._recalculate_warehouse_pool(cur)
 
-    message = "Production log updated successfully." if is_edit else "Production log saved successfully."
+    message = f"Lot #{lot_number} updated." if is_edit else f"Lot #{lot_number} saved."
     if pool_warning:
         message = f"{message} Warning: {pool_warning} Warehouse Pool stock will now show negative for this item."
 
@@ -703,7 +703,7 @@ def delete_production(conn, cur, row_idx, expected_product_id=None, expected_qty
         raise ValueError("Invalid production record selected for deletion.")
 
     cur.execute(
-        "SELECT product_id, qty, output_item_name, color_breakdown FROM erp.production WHERE id = %s AND deleted_at IS NULL",
+        "SELECT product_id, qty, output_item_name, color_breakdown, lot_number FROM erp.production WHERE id = %s AND deleted_at IS NULL",
         (target_id,),
     )
     row = cur.fetchone()
@@ -727,7 +727,7 @@ def delete_production(conn, cur, row_idx, expected_product_id=None, expected_qty
 
     warehouse_service._recalculate_warehouse_pool(cur)
 
-    message = "Production log deleted successfully."
+    message = f'Lot #{row["lot_number"]} deleted.'
     if pool_credit_warning:
         message = f"{message} {pool_credit_warning}"
     return build_response(True, None, message)
@@ -822,7 +822,7 @@ def update_production_status(conn, cur, row_idx, expected_qty, new_status):
         raise ValueError(f'Invalid status "{status}".')
 
     cur.execute(
-        "SELECT qty, status, components_consumed FROM erp.production WHERE id = %s AND deleted_at IS NULL",
+        "SELECT qty, status, components_consumed, lot_number FROM erp.production WHERE id = %s AND deleted_at IS NULL",
         (target_id,),
     )
     row = cur.fetchone()
@@ -842,7 +842,7 @@ def update_production_status(conn, cur, row_idx, expected_qty, new_status):
 
     warehouse_service._recalculate_warehouse_pool(cur)
 
-    message = "Status updated successfully."
+    message = f'Lot #{row["lot_number"]} status updated to "{status}".'
     if pool_warning:
         message = f"{message} Warning: {pool_warning} Warehouse Pool stock will now show negative for this item."
     return build_response(True, {"status": status}, message)
@@ -856,7 +856,7 @@ def save_production_sheet(conn, cur, row_idx, expected_product_id, expected_qty,
     except (TypeError, ValueError):
         raise ValueError("Invalid production record selected.")
 
-    cur.execute("SELECT product_id, qty FROM erp.production WHERE id = %s AND deleted_at IS NULL", (target_id,))
+    cur.execute("SELECT product_id, qty, lot_number FROM erp.production WHERE id = %s AND deleted_at IS NULL", (target_id,))
     row = cur.fetchone()
     if row is None:
         raise ValueError("Invalid production record selected.")
@@ -901,7 +901,7 @@ def save_production_sheet(conn, cur, row_idx, expected_product_id, expected_qty,
         (json.dumps(clean_components), remarks, target_id),
     )
 
-    return build_response(True, {"customComponents": clean_components, "sheetRemarks": remarks}, "Production sheet saved successfully.")
+    return build_response(True, {"customComponents": clean_components, "sheetRemarks": remarks}, f'Production sheet for Lot #{row["lot_number"]} saved.')
 
 
 @rpc_method("refreshProductionComponentsFromItemsMaster", mutation=True)
