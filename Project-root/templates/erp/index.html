@@ -457,6 +457,31 @@
   <!-- Select2 -->
   <script src="https://cdn.jsdelivr.net/npm/select2@4.1.0-rc.0/dist/js/select2.min.js"></script>
 
+  <!-- Preact + htm, no-build (htm's own published zero-bundler bundle --
+       self-contained h/diff/render + every hook, one global window.htmPreact.
+       Used only by the Dispatch Plan board for now; the same script covers
+       any future Preact-based feature -- see static/erp/planning-board.js. -->
+  <script src="https://cdn.jsdelivr.net/npm/htm@3.1.1/preact/standalone.umd.js"></script>
+  <!-- SortableJS for the Dispatch Plan board's drag-and-drop. The
+       "complete" build is used because the board needs the MultiDrag
+       plugin (multi-select drag), which the plain UMD Sortable.min.js does
+       NOT bundle -- and sortablejs publishes the complete build as an ES
+       module only (no UMD/global equivalent exists), hence deliberately the
+       ONLY type="module" script in this app; everything else stays classic
+       <script src> to match house style. It has a DEFAULT export and
+       auto-mounts every plugin itself (Sortable.mount(new MultiDragPlugin())
+       runs inside the bundle), so there is no named MultiDrag export to
+       import and nothing to mount here.
+       Ordering hazard: module scripts are deferred, so nothing may read
+       window.Sortable at top-level/parse time -- only from inside functions
+       invoked after page load (App.PlanningBoard.mount(), itself only ever
+       called from a tab's enterTab()/switchSubTab()). planning-board.js
+       degrades to a no-drag board if this ever fails to load. -->
+  <script type="module">
+    import Sortable from 'https://cdn.jsdelivr.net/npm/sortablejs@1.15.7/modular/sortable.complete.esm.js';
+    window.Sortable = Sortable;
+  </script>
+
   <!-- App scripts -- order matters, api.js/core.js define shared globals every later file extends -->
   <script src="{{ url_for('static', filename='erp/api.js') }}"></script>
   <script src="{{ url_for('static', filename='erp/core.js') }}"></script>
@@ -478,6 +503,8 @@
   <script src="{{ url_for('static', filename='erp/issue.js') }}"></script>
   <script src="{{ url_for('static', filename='erp/client.js') }}"></script>
   <script src="{{ url_for('static', filename='erp/dispatch.js') }}"></script>
+  <script src="{{ url_for('static', filename='erp/planning-board.js') }}"></script>
+  <script src="{{ url_for('static', filename='erp/dispatch-plan.js') }}"></script>
   {% if current_user.is_admin %}
   <script src="{{ url_for('static', filename='erp/users.js') }}"></script>
   {% endif %}

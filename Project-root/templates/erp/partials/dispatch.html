@@ -13,6 +13,9 @@
       <button class="nav-link active fw-bold text-dark" id="btn-readyToDispatchSubTab" onclick="App.Dispatch.switchSubTab('readyToDispatchSubTab')">Ready to Dispatch</button>
     </li>
     <li class="nav-item">
+      <button class="nav-link fw-bold text-dark" id="btn-dispatchPlanSubTab" onclick="App.Dispatch.switchSubTab('dispatchPlanSubTab')">Dispatch Plan</button>
+    </li>
+    <li class="nav-item">
       <button class="nav-link fw-bold text-dark" id="btn-dispatchedGoodsSubTab" onclick="App.Dispatch.switchSubTab('dispatchedGoodsSubTab')">Dispatched Goods</button>
     </li>
   </ul>
@@ -53,6 +56,21 @@
       <h5 class="fw-bold text-dark">No Finished Goods Ready</h5>
       <p class="text-muted mb-0">Complete a Production lot to make finished goods available for dispatch.</p>
     </div>
+  </div>
+
+  <!-- DISPATCH PLAN SUB-TAB -->
+  <!-- Day-ahead drag-and-drop staging area -- draft only, never touches
+       erp.dispatch* until a card is converted (opens the ordinary Record
+       New Bill modal, pre-filled). See static/erp/dispatch-plan.js and
+       static/erp/planning-board.js (the reusable board itself). -->
+  <div id="dispatchPlanSubTab" class="dispatch-sub-tab" style="display: none;">
+    <div class="d-flex justify-content-between flex-wrap gap-2 mb-3 align-items-center">
+      <div class="d-flex align-items-center gap-2">
+        <label for="dispatchPlanDate" class="form-label fw-bold mb-0">Plan Date</label>
+        <input type="date" id="dispatchPlanDate" class="form-control" style="max-width: 200px;">
+      </div>
+    </div>
+    <div id="dispatchPlanRoot"></div>
   </div>
 
   <!-- DISPATCHED GOODS SUB-TAB -->

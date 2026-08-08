@@ -772,6 +772,215 @@ def test_ready_to_dispatch_stays_aggregate_without_differentiator(erp_app, erp_c
     assert rows[0]["readyQty"] == 7
 
 
+def test_save_dispatch_accepts_product_id_longer_than_50_chars(erp_client):
+    """Regression (migration 028): an untagged final-stage output is keyed by
+    its full Output Item Name, not a short "PRD-<n>" code, and real ones run
+    past 50 characters. erp.dispatch_lines.product_id was VARCHAR(50), so
+    those products listed fine on Ready to Dispatch but blew up with
+    StringDataRightTruncation on save -- an unhandled 500 surfacing as
+    "Something went wrong on our end", making them undispatchable.
+    """
+    long_name = "24 inch Hunter IBC T/Tube 2.40 Unbranded Caliper Break"
+    assert len(long_name) > 50
+
+    _payload, process_id = _save_process(erp_client, isFinalStage=True, outputItemName=long_name)
+    _complete_production_lot(erp_client, process_id, "", 10)
+
+    listed = _rpc(erp_client, "getReadyToDispatchData").get_json()["data"]
+    assert any(r["productId"] == long_name for r in listed)
+
+    resp = _save_dispatch(erp_client, [{"productId": long_name, "productName": long_name, "qty": 2}])
+    body = resp.get_json()
+    assert body["success"] is True, body["message"]
+
+    rows = _rpc(erp_client, "getDispatchData").get_json()["data"]
+    assert any(r["productId"] == long_name and r["qty"] == 2 for r in rows)
+
+
+# ── Dispatch Plan (migration 027) ───────────────────────────────────────
+# A day-ahead drag-and-drop staging area, separate from a real Dispatch
+# bill -- see dispatch_service.py's module docstring. Flat, independently-
+# CRUD'd lines (no header, no delete-and-reinsert) -- see the migration's
+# own comment for why.
+
+
+def _save_plan_line(client, plan_date="2026-08-09", **overrides):
+    payload = {"planDate": plan_date, "clientName": _unique_name("Client"), "sortOrder": 0}
+    payload.update(overrides)
+    return _rpc(client, "saveDispatchPlanLine", [payload], mutation=True)
+
+
+def test_save_dispatch_plan_line_creates_and_lists(erp_app, erp_client):
+    token = _get_bom_token(erp_app, erp_client)
+    product_name, product_id = _save_bom_product(erp_client, token)
+    _payload, process_id = _save_process(erp_client, isFinalStage=True)
+    _complete_production_lot(erp_client, process_id, product_id, 10)
+
+    client_name = _unique_name("Client")
+    resp = _save_plan_line(erp_client, clientName=client_name, productId=product_id, productName=product_name, qty=4)
+    body = resp.get_json()
+    assert body["success"] is True, body["message"]
+    line_id = body["data"]["lineId"]
+
+    listed = _rpc(erp_client, "getDispatchPlans").get_json()["data"]
+    match = next(r for r in listed if r["lineId"] == line_id)
+    assert match["clientName"] == client_name
+    assert match["productId"] == product_id
+    assert match["qty"] == 4
+    assert match["fulfilled"] is False
+    assert match["fulfilledDispatchNumber"] == ""
+
+
+def test_save_dispatch_plan_line_rejects_over_plan(erp_app, erp_client):
+    token = _get_bom_token(erp_app, erp_client)
+    product_name, product_id = _save_bom_product(erp_client, token)
+    _payload, process_id = _save_process(erp_client, isFinalStage=True)
+    _complete_production_lot(erp_client, process_id, product_id, 5)
+
+    resp = _save_plan_line(erp_client, productId=product_id, productName=product_name, qty=10)
+    body = resp.get_json()
+    assert body["success"] is False
+    assert "available to plan" in body["message"]
+
+
+def test_save_dispatch_plan_line_pools_across_open_lines_for_same_product(erp_app, erp_client):
+    """Two DIFFERENT plan lines (different client cards) for the same
+    product both draw down the same availableToPlan pool -- the guard
+    isn't per-card independent.
+    """
+    token = _get_bom_token(erp_app, erp_client)
+    product_name, product_id = _save_bom_product(erp_client, token)
+    _payload, process_id = _save_process(erp_client, isFinalStage=True)
+    _complete_production_lot(erp_client, process_id, product_id, 10)
+
+    first = _save_plan_line(erp_client, productId=product_id, productName=product_name, qty=6)
+    assert first.get_json()["success"] is True
+
+    # 6 already claimed, only 4 left -- a second card asking for 5 is over.
+    second = _save_plan_line(erp_client, productId=product_id, productName=product_name, qty=5)
+    body = second.get_json()
+    assert body["success"] is False
+    assert "available to plan" in body["message"]
+
+    ok = _save_plan_line(erp_client, productId=product_id, productName=product_name, qty=4)
+    assert ok.get_json()["success"] is True
+
+
+def test_ready_to_dispatch_reports_planned_and_available_to_plan(erp_app, erp_client):
+    token = _get_bom_token(erp_app, erp_client)
+    product_name, product_id = _save_bom_product(erp_client, token)
+    _payload, process_id = _save_process(erp_client, isFinalStage=True)
+    _complete_production_lot(erp_client, process_id, product_id, 10)
+
+    _save_plan_line(erp_client, productId=product_id, productName=product_name, qty=3)
+
+    listed = _rpc(erp_client, "getReadyToDispatchData").get_json()["data"]
+    match = next(r for r in listed if r["productId"] == product_id)
+    assert match["readyQty"] == 10
+    assert match["plannedQty"] == 3
+    assert match["availableToPlan"] == 7
+
+
+def test_save_dispatch_plan_line_update_credits_back_own_qty(erp_app, erp_client):
+    token = _get_bom_token(erp_app, erp_client)
+    product_name, product_id = _save_bom_product(erp_client, token)
+    _payload, process_id = _save_process(erp_client, isFinalStage=True)
+    _complete_production_lot(erp_client, process_id, product_id, 10)
+
+    create = _save_plan_line(erp_client, productId=product_id, productName=product_name, qty=8).get_json()
+    line_id = create["data"]["lineId"]
+
+    # Only 2 remain "available to plan" (10 - 8), but re-saving this SAME
+    # line back at qty 8 must succeed -- its own prior qty is credited back.
+    same = _save_plan_line(erp_client, lineId=line_id, productId=product_id, productName=product_name, qty=8)
+    assert same.get_json()["success"] is True
+
+
+def test_delete_dispatch_plan_line_removes_and_frees_availability(erp_app, erp_client):
+    token = _get_bom_token(erp_app, erp_client)
+    product_name, product_id = _save_bom_product(erp_client, token)
+    _payload, process_id = _save_process(erp_client, isFinalStage=True)
+    _complete_production_lot(erp_client, process_id, product_id, 10)
+
+    create = _save_plan_line(erp_client, productId=product_id, productName=product_name, qty=6).get_json()
+    line_id = create["data"]["lineId"]
+
+    delete = _rpc(erp_client, "deleteDispatchPlanLine", [line_id], mutation=True)
+    assert delete.get_json()["success"] is True
+
+    listed = _rpc(erp_client, "getDispatchPlans").get_json()["data"]
+    assert not any(r["lineId"] == line_id for r in listed)
+
+    ready = _rpc(erp_client, "getReadyToDispatchData").get_json()["data"]
+    match = next(r for r in ready if r["productId"] == product_id)
+    assert match["availableToPlan"] == 10
+
+
+def test_save_dispatch_with_source_plan_line_ids_marks_fulfilled(erp_app, erp_client):
+    token = _get_bom_token(erp_app, erp_client)
+    product_name, product_id = _save_bom_product(erp_client, token)
+    _payload, process_id = _save_process(erp_client, isFinalStage=True)
+    _complete_production_lot(erp_client, process_id, product_id, 10)
+
+    client_name = _unique_name("Client")
+    plan = _save_plan_line(
+        erp_client, clientName=client_name, productId=product_id, productName=product_name, qty=4
+    ).get_json()
+    line_id = plan["data"]["lineId"]
+
+    dispatch = _rpc(
+        erp_client,
+        "saveDispatch",
+        [
+            {
+                "lines": [{"productId": product_id, "productName": product_name, "qty": 4}],
+                "clientName": client_name,
+                "sourcePlanLineIds": [line_id],
+            }
+        ],
+        mutation=True,
+    )
+    body = dispatch.get_json()
+    assert body["success"] is True, body["message"]
+    dispatch_number = body["data"]["dispatchNumber"]
+
+    listed = _rpc(erp_client, "getDispatchPlans").get_json()["data"]
+    match = next(r for r in listed if r["lineId"] == line_id)
+    assert match["fulfilled"] is True
+    assert match["fulfilledDispatchNumber"] == dispatch_number
+
+    # A fulfilled line can no longer be edited or removed.
+    edit_attempt = _save_plan_line(erp_client, lineId=line_id, productId=product_id, productName=product_name, qty=1)
+    assert edit_attempt.get_json()["success"] is False
+
+    delete_attempt = _rpc(erp_client, "deleteDispatchPlanLine", [line_id], mutation=True)
+    assert delete_attempt.get_json()["success"] is False
+
+
+def test_client_rename_cascades_to_open_dispatch_plan_lines(erp_app, erp_client):
+    token = _get_bom_token(erp_app, erp_client)
+    product_name, product_id = _save_bom_product(erp_client, token)
+    _payload, process_id = _save_process(erp_client, isFinalStage=True)
+    _complete_production_lot(erp_client, process_id, product_id, 10)
+
+    old_name = _unique_name("Client")
+    _rpc(erp_client, "saveClient", [{"clientName": old_name}], mutation=True)
+    plan = _save_plan_line(
+        erp_client, clientName=old_name, productId=product_id, productName=product_name, qty=2
+    ).get_json()
+    line_id = plan["data"]["lineId"]
+
+    new_name = _unique_name("RenamedClient")
+    rename = _rpc(
+        erp_client, "saveClient", [{"clientName": new_name, "originalClientName": old_name}], mutation=True
+    )
+    assert rename.get_json()["success"] is True
+
+    listed = _rpc(erp_client, "getDispatchPlans").get_json()["data"]
+    match = next(r for r in listed if r["lineId"] == line_id)
+    assert match["clientName"] == new_name
+
+
 def test_process_round_trips_dispatch_differentiator(erp_client):
     payload, process_id = _save_process(erp_client, isFinalStage=True, dispatchDifferentiator="Frame Color")
 

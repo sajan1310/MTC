@@ -1,0 +1,27 @@
+-- Fixes a live bug: a dispatch of any product whose "product id" is longer
+-- than 50 characters failed with a server error, even though the product
+-- listed correctly on Ready to Dispatch.
+--
+-- erp.dispatch_lines.product_id (023_dispatch_header_lines.sql) was sized
+-- VARCHAR(50) on the assumption that a product id is a short generated code
+-- (bom_service.get_next_product_id mints "PRD-<n>"). It isn't, always: for a
+-- final-stage process whose output carries NO Product Tag,
+-- dispatch_service._compute_ready_to_dispatch_map keys the row by its OUTPUT
+-- ITEM NAME instead, and that full name is what getReadyToDispatchData
+-- reports as productId and what saveDispatch then writes here. Real output
+-- names exceed 50 chars ("24 inch Hunter IBC T/Tube 2.40 Unbranded Caliper
+-- Break" is 54), so saving those bills raised
+-- psycopg2.errors.StringDataRightTruncation -- surfacing to the operator as
+-- the generic "Something went wrong on our end" and blocking those products
+-- from being dispatched at all.
+--
+-- Widened to VARCHAR(255), matching product_name on the same table (and the
+-- same reasoning behind erp.dispatch_plan_lines.product_id in 027). Only
+-- this column is affected: erp.client_orders_lines.product_id and
+-- erp.production.product_id are populated from the BOM product dropdown
+-- (short "PRD-<n>" ids), never from an output item name.
+--
+-- Widening a varchar is a catalog-only change in Postgres -- no table
+-- rewrite, no data loss, no lock beyond a brief ACCESS EXCLUSIVE.
+ALTER TABLE erp.dispatch_lines
+    ALTER COLUMN product_id TYPE VARCHAR(255);

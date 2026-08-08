@@ -263,6 +263,16 @@ function todayIso() {
   return [d.getFullYear(), String(d.getMonth() + 1).padStart(2, '0'), String(d.getDate()).padStart(2, '0')].join('-');
 }
 
+// Same local-timezone field-based construction as todayIso (not
+// toISOString(), which shifts to UTC and can land on the wrong day near
+// midnight) -- Dispatch Plan's whole premise is "plan tomorrow", so this
+// needs to be the browser's own tomorrow, not a UTC one.
+function tomorrowIso() {
+  const d = new Date();
+  d.setDate(d.getDate() + 1);
+  return [d.getFullYear(), String(d.getMonth() + 1).padStart(2, '0'), String(d.getDate()).padStart(2, '0')].join('-');
+}
+
 // Converts a record's raw ISO timestamp (preferred) or DD/MM/YYYY display
 // date into the YYYY-MM-DD format <input type="date"> expects/produces.
 function dateToInputValue(rawIso, displayDate) {

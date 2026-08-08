@@ -532,6 +532,10 @@ TABLE_NAMES = {
     # flat "CLIENT_ORDERS" key exists.
     "CLIENT_ORDERS_HEADERS": "erp.client_orders_headers",
     "CLIENT_ORDERS_LINES": "erp.client_orders_lines",
+    # Dispatch Plan (see migrations/erp/027_dispatch_plan.sql) -- a flat
+    # table, deliberately no *_HEADERS counterpart: a plan line has no
+    # header-only data, plan_date/client_name both live on the line itself.
+    "DISPATCH_PLAN_LINES": "erp.dispatch_plan_lines",
 }
 
 _CAMEL_BOUNDARY_RE = re.compile(r"(?<!^)(?=[A-Z])")

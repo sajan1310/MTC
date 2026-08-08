@@ -218,6 +218,21 @@ const App = {
     dispatchSortBy: 'dateDesc',
     selectedDispatch: [],
 
+    // Dispatch Plan (App.DispatchPlan, static/erp/dispatch-plan.js) -- the
+    // day-ahead drag-and-drop board's own data. FLAT, one entry per plan
+    // line (same "flat cache, grouped client-side" convention as
+    // globalDispatch/buildDispatchBills above) -- App.DispatchPlan groups
+    // it into per-client cards itself. dispatchPlanDate defaults to
+    // tomorrow (see api.js's tomorrowIso) the first time the sub-tab loads.
+    globalDispatchPlans: [],
+    dispatchPlanDate: '',
+
+    // Set by App.Dispatch.openPrefilledDispatchModal when a plan card is
+    // being converted, read once by the dispatchForm submit handler and
+    // included as saveDispatch's sourcePlanLineIds so the converted
+    // card's lines get marked fulfilled atomically with the bill save.
+    dispatchSourcePlanLineIds: [],
+
     // Clients / PI-Estimates (Script_Clients.html's App.Client) -- its
     // own pagination/filter/selection state for both sub-tabs, plus the
     // Global Pending Orders modal's own list (allPendingOrders --

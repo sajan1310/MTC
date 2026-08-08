@@ -44,7 +44,12 @@ App.Dispatch = {
       // it's not silently blank just because Item Master wasn't visited.
       App.Item ? App.Item.ensureLoaded() : Promise.resolve(),
       this.loadReadyData(),
-      this.loadDispatchData()
+      this.loadDispatchData(),
+      // Dispatch Plan's own data -- loaded upfront like everything else
+      // here (sub-tab switching only toggles visibility, it doesn't lazy-
+      // load), but its board render is deferred to after Promise.all below
+      // since it depends on loadReadyData's globalReadyToDispatch too.
+      App.DispatchPlan.loadData()
     ];
 
     if (!App.State.globalOrders || !App.State.globalOrders.length) {
@@ -64,6 +69,7 @@ App.Dispatch = {
 
     await Promise.all(fetches);
 
+    App.DispatchPlan.init();
     this.switchSubTab('readyToDispatchSubTab');
   },
 
@@ -74,6 +80,11 @@ App.Dispatch = {
 
     $$('#dispatchSubTabs .nav-link').forEach(btn => btn.classList.remove('active'));
     document.getElementById('btn-' + id)?.classList.add('active');
+
+    // Preact renders fine into a display:none container, but re-rendering
+    // on every visit is cheap and guards against any state that changed
+    // while this sub-tab was hidden (e.g. a plan line saved elsewhere).
+    if (id === 'dispatchPlanSubTab') App.DispatchPlan.render();
   },
 
   // ── Ready to Dispatch ──────────────────────────────────────
@@ -870,6 +881,10 @@ App.Dispatch = {
     document.getElementById('dispatchVisibleNumber').value = '';
     document.getElementById('dispatchDate').value = todayIso();
     App.State.dispatchEditOriginalQtyByProduct = {};
+    // Cleared here (not just after a successful save) so a plain "New
+    // Dispatch" opened right after converting a plan card never
+    // accidentally inherits that card's fulfillment link.
+    App.State.dispatchSourcePlanLineIds = [];
 
     this.populateDispatchOrderSelect('');
     document.getElementById('dispatchOrderNumber').value = '';
@@ -900,6 +915,42 @@ App.Dispatch = {
     App.Utils.setFormButtonsForMode('dispatchCancelBtn', 'dispatchExitBtn', 'dispatchSubmitBtn', false, 'Save Dispatch');
     App.Nav.clear('dispatchModal');
     safeModalShow('dispatchModal');
+  },
+
+  // Converts a Dispatch Plan card (App.DispatchPlan) into a real bill: opens
+  // this SAME "Record New Bill" modal pre-filled with the card's client +
+  // lines, instead of a second bill-writing path -- reuses every guard/
+  // field save_dispatch already has. Builds on openCreateDispatchModal
+  // (already does the reset/select2-init/blank-line dance for a brand-new
+  // bill); only the client value and lines need overriding on top of it.
+  // sourcePlanLineIds is stashed on App.State (not a hidden form field --
+  // the submit handler below builds formData via `new FormData(this)`,
+  // which only reads real named fields) for the submit handler to send back
+  // to saveDispatch, which marks those plan lines fulfilled atomically with
+  // the bill save (see dispatch_service.py's save_dispatch).
+  openPrefilledDispatchModal(clientName, lines, sourcePlanLineIds) {
+    this.openCreateDispatchModal();
+
+    const clientEl = document.getElementById('dispatchClientSelect');
+    if (clientEl && clientName) {
+      // A plan card's client is free text (the board's "+ New Client..."
+      // accepts any name), but populateClientSelect only lists names from
+      // the Clients master -- assigning a value with no matching <option>
+      // silently leaves the select blank, losing the client entirely. Add
+      // the option when it's missing, same as initLogisticsContractorSelect2
+      // does for an off-list contractor.
+      const known = Array.from(clientEl.options).some(o => o.value === clientName);
+      if (!known) clientEl.add(new Option(clientName, clientName));
+      clientEl.value = clientName;
+      if (window.jQuery?.fn?.select2 && window.jQuery(clientEl).data('select2'))
+        window.jQuery(clientEl).trigger('change.select2');
+    }
+
+    document.getElementById('dispatchLinesBody').innerHTML = '';
+    (lines && lines.length ? lines : [null]).forEach(line => this.addDispatchLineRow(line));
+
+    App.State.dispatchSourcePlanLineIds = sourcePlanLineIds || [];
+    document.getElementById('dispatchFormTitle').innerText = `New Dispatch — from Plan (${clientName})`;
   },
 
   // Initializes a searchable Select2 on Logistics Contractor, same pattern
@@ -990,6 +1041,9 @@ App.Dispatch = {
 
     document.getElementById('dispatchNumberHidden').value = b.dispatchNumber;
     document.getElementById('dispatchVisibleNumber').value = b.dispatchNumber;
+    // Editing an existing bill is never a plan conversion -- see
+    // openCreateDispatchModal's own comment for why this is cleared here too.
+    App.State.dispatchSourcePlanLineIds = [];
 
     let inputDateStr = todayIso();
     if (b.dispatchDate && b.dispatchDate.includes('/')) {
@@ -1064,6 +1118,13 @@ document.addEventListener('DOMContentLoaded', function () {
       const formData = Object.fromEntries(new FormData(this));
       const isEdit = !!formData.existingDispatchNumber;
       formData.lines = JSON.stringify(App.Dispatch.serializeDispatchLines());
+      // Set only when this bill was opened via App.Dispatch.
+      // openPrefilledDispatchModal (converting a Dispatch Plan card) --
+      // saveDispatch marks these plan lines fulfilled atomically with the
+      // bill save.
+      if (App.State.dispatchSourcePlanLineIds?.length) {
+        formData.sourcePlanLineIds = JSON.stringify(App.State.dispatchSourcePlanLineIds);
+      }
 
       if (JSON.parse(formData.lines).length === 0) {
         App.Utils.showToast('Please add at least one item with a Product and Quantity greater than zero.', true);
@@ -1099,6 +1160,11 @@ document.addEventListener('DOMContentLoaded', function () {
             // determined cheaply on the client -- full reload here (an
             // edit doesn't need to, see App.Dispatch.patchBillInPlace).
             await App.Dispatch.loadDispatchData();
+            // This save may have just fulfilled plan lines (see
+            // sourcePlanLineIds above) -- reload+re-render the board so a
+            // converted card's lines flip to "Dispatched" (or vanish, if
+            // the card's own lines were all fulfilled) immediately.
+            if (formData.sourcePlanLineIds) await App.DispatchPlan._reload();
             App.Dispatch.openCreateDispatchModal('');
           }
         }

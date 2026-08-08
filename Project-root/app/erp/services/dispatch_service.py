@@ -48,6 +48,19 @@ getNextProcessId -- a preview call followed by a real save can
 legitimately consume two different values (harmless, already-accepted
 tradeoff). Unlike PO, a dispatch bill cannot be renumbered on edit -- the
 reference's own saveDispatch has no such feature, so none is added here.
+
+Dispatch Plan (erp.dispatch_plan_lines, see migrations/erp/027_dispatch_
+plan.sql) is a day-ahead drag-and-drop staging area, separate from a real
+Dispatch bill: warehouse staff pre-assign Ready-to-Dispatch stock to
+clients before actually recording anything. It's a flat table (no header
+-- see the migration's own comment for why), each line independently
+CRUD'd (saveDispatchPlanLine/deleteDispatchPlanLine) rather than replaced
+wholesale, guarded against over-committing stock the same way saveDispatch
+guards a bill (availableToPlan = pooled Ready-to-Dispatch minus whatever's
+already claimed by other still-open plan lines). A card "converts" to a
+real bill by opening the ordinary Dispatch modal pre-filled -- save_dispatch
+itself marks the source plan lines fulfilled (sourcePlanLineIds), atomic
+with the bill save, rather than a second write.
 """
 
 from __future__ import annotations
@@ -272,6 +285,40 @@ def _ready_available_qty_for(ready_map: dict, product_id: str) -> float:
     return total
 
 
+def _open_planned_qty_map(cur) -> dict:
+    """product_id(lower) -> qty already committed to still-open (not yet
+    fulfilled) Dispatch Plan lines, summed across EVERY plan date -- a unit
+    planned for tomorrow isn't re-plannable for the day after either, until
+    its line is fulfilled (converted to a real bill) or removed from its
+    card. A fulfilled line is excluded: its qty is already reflected in the
+    live dispatchedQty _compute_ready_to_dispatch_map reports, so counting
+    it again here would double-subtract from availableToPlan.
+    """
+    table = config_maps.TABLE_NAMES.get("DISPATCH_PLAN_LINES")
+    cur.execute(f"SELECT product_id, qty FROM {table} WHERE fulfilled_dispatch_number IS NULL")
+    result: dict = {}
+    for row in cur.fetchall():
+        key = str(row["product_id"] or "").strip().lower()
+        result[key] = result.get(key, 0.0) + float(row["qty"] or 0)
+    return result
+
+
+def _ready_product_name(ready_map: dict, product_id: str) -> str:
+    """Best-effort productName lookup by matching product_id against
+    _compute_ready_to_dispatch_map's baseKey (same matching
+    _ready_available_qty_for uses). Returns "" when the product isn't (or
+    is no longer) in Ready to Dispatch at all -- the caller falls back to a
+    client-supplied name, mirroring save_dispatch/_normalize_lines' own
+    trust model (there is no dedicated product-name-lookup-by-id helper
+    anywhere else in this module either).
+    """
+    key = str(product_id or "").strip().lower()
+    for entry in ready_map.values():
+        if entry["baseKey"] in (key, f"__output__{key}"):
+            return entry["productName"].split(" / ", 1)[0]
+    return ""
+
+
 def _get_client_order_line_qty(cur, order_number: str, product_id: str):
     """Sums Qty Ordered across every Client Orders line matching (order,
     product) case-insensitively. Returns None if no such line exists at
@@ -391,6 +438,7 @@ def _normalize_lines(raw_lines) -> list:
 def get_ready_to_dispatch_data():
     with database.get_conn(cursor_factory=psycopg2.extras.RealDictCursor) as (_conn, cur):
         ready_map = _compute_ready_to_dispatch_map(cur)
+        planned_map = _open_planned_qty_map(cur)
 
     records = [
         {
@@ -407,6 +455,17 @@ def get_ready_to_dispatch_data():
             "producedQty": r["producedQty"],
             "dispatchedQty": r["dispatchedQty"],
             "readyQty": r["producedQty"] - r["dispatchedQty"],
+            # Committed to other still-open Dispatch Plan cards. Pooled per
+            # productId the same way the plan's own availability GUARD pools
+            # it (see _ready_available_qty_for) -- not scoped to this row's
+            # own differentiator variant, since a plan line (like a dispatch
+            # line) can't record which variant it's for either.
+            "plannedQty": planned_map.get(r["productId"].strip().lower(), 0.0),
+            "availableToPlan": max(
+                _ready_available_qty_for(ready_map, r["productId"])
+                - planned_map.get(r["productId"].strip().lower(), 0.0),
+                0.0,
+            ),
             "colorBreakdown": sorted(
                 (
                     {
@@ -424,6 +483,144 @@ def get_ready_to_dispatch_data():
     ]
     records.sort(key=lambda r: _natural_sort_key(r["productId"]), reverse=True)
     return build_response(True, records)
+
+
+def _load_dispatch_plan_lines(cur, plan_date=None) -> list:
+    """Flat read of erp.dispatch_plan_lines, optionally filtered to one
+    date. Mirrors _load_dispatch_rows' flatten-then-let-the-frontend-group
+    convention -- static/erp/dispatch-plan.js groups these into per-client
+    cards client-side, the same way dispatch.js's buildDispatchBills groups
+    flat globalDispatch into bills.
+    """
+    table = config_maps.TABLE_NAMES.get("DISPATCH_PLAN_LINES")
+    query = (
+        f"SELECT id, plan_date, client_name, product_id, product_name, qty, "
+        f"sort_order, fulfilled_dispatch_number FROM {table}"
+    )
+    params: list = []
+    if plan_date is not None:
+        query += " WHERE plan_date = %s"
+        params.append(plan_date)
+    query += " ORDER BY plan_date, lower(client_name), sort_order, id"
+    cur.execute(query, params)
+    return [
+        {
+            "lineId": row["id"],
+            "planDate": date_utils.to_iso_string(row["plan_date"]) or "",
+            "clientName": row["client_name"] or "",
+            "productId": row["product_id"] or "",
+            "productName": row["product_name"] or "",
+            "qty": float(row["qty"]),
+            "sortOrder": int(row["sort_order"] or 0),
+            "fulfilledDispatchNumber": row["fulfilled_dispatch_number"] or "",
+            "fulfilled": row["fulfilled_dispatch_number"] is not None,
+        }
+        for row in cur.fetchall()
+    ]
+
+
+@rpc_method("getDispatchPlans")
+def get_dispatch_plans():
+    with database.get_conn(cursor_factory=psycopg2.extras.RealDictCursor) as (_conn, cur):
+        records = _load_dispatch_plan_lines(cur)
+    return build_response(True, records)
+
+
+@rpc_method("saveDispatchPlanLine", mutation=True)
+@database.transactional
+def save_dispatch_plan_line(conn, cur, form_data):
+    """Upserts ONE Dispatch Plan line -- a single drag-and-drop action, not
+    a whole-plan resubmit (see migration 027's own comment for why plan
+    lines have independent CRUD instead of the delete-and-reinsert
+    convention every other header+lines module here uses).
+    """
+    form_data = form_data or {}
+    table = config_maps.TABLE_NAMES.get("DISPATCH_PLAN_LINES")
+
+    raw_line_id = form_data.get("lineId")
+    line_id = int(raw_line_id) if raw_line_id not in (None, "") else None
+    plan_date = date_utils.to_safe_date(form_data.get("planDate"))
+    if not plan_date:
+        raise ValueError("A Plan Date is required.")
+    client_name = str(form_data.get("clientName") or "").strip()
+    if not client_name:
+        raise ValueError("A Client is required.")
+    product_id = str(form_data.get("productId") or "").strip()
+    if not product_id:
+        raise ValueError("A Product is required.")
+    qty = _validate_number(form_data.get("qty"), 0.001, 10000000)
+    if qty <= 0:
+        raise ValueError("Quantity must be greater than zero.")
+    sort_order = int(_validate_number(form_data.get("sortOrder"), 0, 1000000))
+
+    # Credit back this line's own currently-saved qty (only when the
+    # product wasn't also changed by this same save) -- same convention as
+    # save_dispatch's original_qty_by_product, so re-saving/re-qty-ing a
+    # line never rejects against its own prior contribution to the pool.
+    credit_back_qty = 0.0
+    if line_id is not None:
+        cur.execute(f"SELECT product_id, qty, fulfilled_dispatch_number FROM {table} WHERE id = %s", (line_id,))
+        existing = cur.fetchone()
+        if existing is None:
+            raise ValueError("This plan line no longer exists -- it may have already been removed.")
+        if existing["fulfilled_dispatch_number"] is not None:
+            raise ValueError("This line has already been dispatched and can no longer be edited.")
+        if str(existing["product_id"] or "").strip().lower() == product_id.lower():
+            credit_back_qty = float(existing["qty"] or 0)
+
+    ready_map = _compute_ready_to_dispatch_map(cur)
+    current_ready_qty = _ready_available_qty_for(ready_map, product_id)
+    planned_qty = _open_planned_qty_map(cur).get(product_id.lower(), 0.0)
+    available_qty = current_ready_qty - planned_qty + credit_back_qty
+    if qty > available_qty + 0.0001:
+        raise ValueError(
+            f'Only {available_qty} unit(s) of "{product_id}" are available to plan '
+            "(Ready to Dispatch minus what other open plan cards already claim)."
+        )
+
+    product_name = _ready_product_name(ready_map, product_id) or str(form_data.get("productName") or "").strip()
+    if not product_name:
+        raise ValueError("Could not resolve a Product Name for this line.")
+
+    user_id = get_current_user_id()
+    if line_id is not None:
+        cur.execute(
+            f"""
+            UPDATE {table} SET
+                plan_date = %s, client_name = %s, product_id = %s, product_name = %s,
+                qty = %s, sort_order = %s, updated_at = NOW(), updated_by = %s
+            WHERE id = %s
+            RETURNING id
+            """,
+            (plan_date, client_name, product_id, product_name, qty, sort_order, user_id, line_id),
+        )
+    else:
+        cur.execute(
+            f"""
+            INSERT INTO {table}
+                (plan_date, client_name, product_id, product_name, qty, sort_order, updated_by)
+            VALUES (%s, %s, %s, %s, %s, %s, %s)
+            RETURNING id
+            """,
+            (plan_date, client_name, product_id, product_name, qty, sort_order, user_id),
+        )
+    saved_id = cur.fetchone()["id"]
+
+    return build_response(True, {"lineId": saved_id}, "Plan saved.")
+
+
+@rpc_method("deleteDispatchPlanLine", mutation=True)
+@database.transactional
+def delete_dispatch_plan_line(conn, cur, line_id):
+    table = config_maps.TABLE_NAMES.get("DISPATCH_PLAN_LINES")
+    cur.execute(f"SELECT fulfilled_dispatch_number FROM {table} WHERE id = %s", (line_id,))
+    row = cur.fetchone()
+    if row is None:
+        return build_response(True, None, "Already removed.")
+    if row["fulfilled_dispatch_number"] is not None:
+        raise ValueError("This line has already been dispatched and can no longer be removed from the plan.")
+    cur.execute(f"DELETE FROM {table} WHERE id = %s", (line_id,))
+    return build_response(True, None, "Removed from plan.")
 
 
 def _load_dispatch_rows(cur, only_dispatch_number: str | None = None) -> list:
@@ -652,6 +849,32 @@ def save_dispatch(conn, cur, form_data):
                 line["qty"], line["rate"], line["amount"], line_logistics_cost,
             ),
         )
+
+    # Dispatch Plan hand-off: when this bill was saved by converting a
+    # plan card (App.Dispatch.openPrefilledDispatchModal), mark those plan
+    # lines fulfilled atomically with the bill itself -- one write, no
+    # partial-failure window between "bill saved" and "plan card cleared".
+    # Regardless of any qty edited in the modal before saving: converting
+    # IS the action, a plan is a forecast, not a contract to match exactly.
+    # An id already removed by someone else is a silent no-op (correct).
+    raw_source_plan_line_ids = form_data.get("sourcePlanLineIds")
+    if raw_source_plan_line_ids:
+        try:
+            parsed_ids = (
+                json.loads(raw_source_plan_line_ids)
+                if isinstance(raw_source_plan_line_ids, str)
+                else raw_source_plan_line_ids
+            )
+        except ValueError:
+            parsed_ids = []
+        source_plan_line_ids = [int(i) for i in (parsed_ids or []) if str(i).strip().lstrip("-").isdigit()]
+        if source_plan_line_ids:
+            plan_lines_table = config_maps.TABLE_NAMES.get("DISPATCH_PLAN_LINES")
+            cur.execute(
+                f"UPDATE {plan_lines_table} SET fulfilled_dispatch_number = %s, fulfilled_at = NOW() "
+                "WHERE id = ANY(%s)",
+                (dispatch_number, source_plan_line_ids),
+            )
 
     warehouse_service._recalculate_warehouse_pool(cur)
 

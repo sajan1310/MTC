@@ -28,6 +28,12 @@ module.exports = [
         // Third-party, loaded via CDN <script> tags in index.html/mobile.html
         bootstrap: 'readonly',
         jQuery: 'readonly',
+        // Preact+htm (one self-contained bundle) and SortableJS, both used
+        // only by planning-board.js. Sortable is assigned by index.html's
+        // one type="module" bootstrap (the MultiDrag plugin ships ES-module
+        // only), so it must never be read at parse time -- see that file.
+        htmPreact: 'readonly',
+        Sortable: 'writable',
         // Third-party, lazily loaded at runtime via this codebase's own
         // loadScript() (core.js) -- dashboard.js, po.js/print.js, stock.js
         // respectively. Genuine existing lazy-loading, worth noting against
@@ -54,6 +60,7 @@ module.exports = [
         parseRecordDate: 'writable',
         formatItemsPreview: 'writable',
         todayIso: 'writable',
+        tomorrowIso: 'writable',
         dateToInputValue: 'writable',
         normalizeDateForInput: 'writable',
         loadScript: 'writable',

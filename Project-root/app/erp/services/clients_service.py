@@ -160,6 +160,14 @@ def _rename_client_everywhere(cur, old_name: str, new_name: str) -> None:
     if dispatch_table := config_maps.TABLE_NAMES.get("DISPATCH_HEADERS"):
         rename_utils.rename_in_column(cur, dispatch_table, "client_name", old, new)
 
+    # Dispatch Plan cards are drafts, not commitments -- deliberately NOT
+    # added to _client_in_use_message's delete-guard above (an open plan
+    # card shouldn't block deleting a client), but a rename still needs to
+    # flow through here or an open card would silently keep pointing at a
+    # name that no longer exists.
+    if plan_lines_table := config_maps.TABLE_NAMES.get("DISPATCH_PLAN_LINES"):
+        rename_utils.rename_in_column(cur, plan_lines_table, "client_name", old, new)
+
 
 @rpc_method("getClientsData")
 def get_clients_data():
@@ -237,7 +245,7 @@ def save_client(conn, cur, form_data):
             (new_name, contact, address, gstin, remarks, user_id),
         )
 
-    message = "Client profile updated successfully." if is_edit else "New client registered."
+    message = f'Client "{new_name}" updated.' if is_edit else f'Client "{new_name}" registered.'
 
     # The client can patch this into an already-loaded list in place
     # instead of a full reload.
@@ -569,7 +577,7 @@ def save_client_order(conn, cur, form_data):
             (header_id, line["productId"], bom_product_id, line["productName"], line["qty"], line["lineRemarks"], pushed_value),
         )
 
-    message = "PI / Estimate updated successfully." if is_edit else "PI / Estimate saved successfully."
+    message = f'PI / Estimate "{order_number}" updated.' if is_edit else f'PI / Estimate "{order_number}" saved.'
     if pushed_count > 0:
         message += f" {pushed_count} product line(s) queued into Production."
     if manual_count > 0:
