@@ -3108,16 +3108,38 @@
   font-size: 12px;
 }
 
+.pb-pool-search {
+  width: 100%;
+  padding: 8px 10px;
+  margin-bottom: 10px;
+  border: 1px solid var(--border-color);
+  border-radius: var(--border-radius-sm);
+  background: var(--bg-light);
+  color: var(--text-primary);
+  font-size: 13px;
+}
+
+.pb-pool-search:focus {
+  outline: none;
+  border-color: var(--primary-color);
+}
+
 .pb-pool-list {
   display: flex;
   flex-direction: column;
   gap: 8px;
 }
 
+.pb-pool-empty {
+  color: var(--text-muted);
+  font-size: 12px;
+  text-align: center;
+  padding: 14px 4px;
+}
+
 .pb-pool-item {
   display: flex;
   align-items: center;
-  justify-content: space-between;
   gap: 8px;
   padding: 10px 12px;
   background: var(--bg-muted);
@@ -3139,12 +3161,22 @@
   box-shadow: 0 0 0 2px var(--primary-color) inset;
 }
 
+.pb-pool-item-check {
+  flex: 0 0 auto;
+  width: 16px;
+  height: 16px;
+  cursor: pointer;
+}
+
+.pb-pool-item-body {
+  flex: 1 1 auto;
+  min-width: 0;
+}
+
 .pb-pool-item-label {
   font-weight: 600;
   color: var(--text-primary);
   font-size: 13px;
-  flex: 1 1 auto;
-  min-width: 0;
   /* Product names here are long and highly similar ("26 inch Runway IBC
      T/Tube 3.00 FSDD Branded") -- the distinguishing part is at the END,
      so truncating with an ellipsis would hide exactly what tells two rows

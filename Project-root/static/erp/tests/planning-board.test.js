@@ -42,14 +42,19 @@ function loadPlanningBoard() {
 
 function makeSortableStub() {
   const instances = [];
+  const selected = new Set();
   window.Sortable = {
     create(el, options) {
       const instance = { el, options, destroy: jest.fn() };
       instances.push(instance);
       return instance;
     },
+    utils: {
+      select: jest.fn(el => selected.add(el)),
+      deselect: jest.fn(el => selected.delete(el)),
+    },
   };
-  return instances;
+  return { instances, selected };
 }
 
 // Preact defers BOTH re-renders after a state update (e.g. the input
@@ -76,10 +81,11 @@ function baseConfig(overrides) {
 
 describe('App.PlanningBoard', () => {
   let instances;
+  let selected;
 
   beforeEach(() => {
     window.htmPreact = loadHtmPreactStandalone();
-    instances = makeSortableStub();
+    ({ instances, selected } = makeSortableStub());
     document.body.innerHTML = '<div id="root"></div>';
     delete window.App;
     loadPlanningBoard();
@@ -105,9 +111,129 @@ describe('App.PlanningBoard', () => {
     }));
 
     expect(document.querySelectorAll('.pb-pool-item')).toHaveLength(1);
+    expect(document.querySelector('.pb-pool-item-check')).not.toBeNull();
     expect(document.querySelector('.pb-pool-item-qty').textContent).toBe('5');
     expect(document.querySelector('.pb-card-empty')).not.toBeNull();
     expect(document.querySelector('.pb-card-action')).toBeNull();
+  });
+
+  test('the search box filters pool items by label or sublabel, matching App.Utils.matchesKeywords semantics', async () => {
+    window.App.Utils = { matchesKeywords: (haystack, term) => String(haystack).toLowerCase().includes(String(term).toLowerCase()) };
+    mount(baseConfig({
+      pool: [
+        { id: 'P1', label: 'Runway IBC T/Tube', sublabel: 'P1', availableQty: 5 },
+        { id: 'P2', label: 'Hunter IBC T/Tube', sublabel: 'P2', availableQty: 8 },
+      ],
+    }));
+    expect(document.querySelectorAll('.pb-pool-item')).toHaveLength(2);
+
+    const search = document.querySelector('.pb-pool-search');
+    search.value = 'Hunter';
+    search.dispatchEvent(new Event('input', { bubbles: true }));
+    await flush();
+
+    expect(document.querySelectorAll('.pb-pool-item')).toHaveLength(1);
+    expect(document.querySelector('.pb-pool-item-label').textContent).toBe('Hunter IBC T/Tube');
+  });
+
+  test('search with no matches shows the empty state instead of an empty list', async () => {
+    window.App.Utils = { matchesKeywords: (haystack, term) => String(haystack).toLowerCase().includes(String(term).toLowerCase()) };
+    mount(baseConfig({ pool: [{ id: 'P1', label: 'Widget', sublabel: '', availableQty: 5 }] }));
+
+    const search = document.querySelector('.pb-pool-search');
+    search.value = 'nothing matches this';
+    search.dispatchEvent(new Event('input', { bubbles: true }));
+    await flush();
+
+    expect(document.querySelectorAll('.pb-pool-item')).toHaveLength(0);
+    expect(document.querySelector('.pb-pool-empty')).not.toBeNull();
+  });
+
+  test('checking a pool item\'s checkbox drives selection via Sortable.utils.select/deselect, not a plain click', async () => {
+    mount(baseConfig({ pool: [{ id: 'P1', label: 'Widget', sublabel: '', availableQty: 5 }] }));
+    await flush();
+
+    const row = document.querySelector('.pb-pool-item');
+    const checkbox = document.querySelector('.pb-pool-item-check');
+    expect(checkbox.checked).toBe(false);
+
+    checkbox.checked = true;
+    checkbox.dispatchEvent(new Event('change', { bubbles: true }));
+    expect(window.Sortable.utils.select).toHaveBeenCalledWith(row);
+    expect(selected.has(row)).toBe(true);
+
+    checkbox.checked = false;
+    checkbox.dispatchEvent(new Event('change', { bubbles: true }));
+    expect(window.Sortable.utils.deselect).toHaveBeenCalledWith(row);
+    expect(selected.has(row)).toBe(false);
+  });
+
+  test('the pool Sortable instance excludes the checkbox from drag-initiation (filter) and wires onSelect/onDeselect', async () => {
+    mount(baseConfig({ pool: [{ id: 'P1', label: 'Widget', sublabel: '', availableQty: 5 }] }));
+    await flush();
+
+    const poolInstance = instances.find(i => i.el.classList.contains('pb-pool-list'));
+    expect(poolInstance.options.filter).toContain('input');
+    expect(poolInstance.options.preventOnFilter).toBe(false);
+    expect(typeof poolInstance.options.onSelect).toBe('function');
+    expect(typeof poolInstance.options.onDeselect).toBe('function');
+  });
+
+  test('a NATIVE row-click selection (MultiDrag\'s own onSelect, not the checkbox) still checks the checkbox -- both are kept in sync', async () => {
+    mount(baseConfig({ pool: [{ id: 'P1', label: 'Widget', sublabel: '', availableQty: 5 }] }));
+    await flush();
+
+    const row = document.querySelector('.pb-pool-item');
+    const checkbox = document.querySelector('.pb-pool-item-check');
+    expect(checkbox.checked).toBe(false);
+
+    const poolInstance = instances.find(i => i.el.classList.contains('pb-pool-list'));
+    // Simulates what MultiDrag itself does internally on a plain row click --
+    // dispatch its onSelect hook directly, bypassing the checkbox entirely.
+    poolInstance.options.onSelect({ item: row });
+    await flush();
+
+    expect(document.querySelector('.pb-pool-item-check').checked).toBe(true);
+
+    poolInstance.options.onDeselect({ item: row });
+    await flush();
+    expect(document.querySelector('.pb-pool-item-check').checked).toBe(false);
+  });
+
+  test('changing the search text clears any active selection', async () => {
+    window.App.Utils = { matchesKeywords: (haystack, term) => String(haystack).toLowerCase().includes(String(term).toLowerCase()) };
+    mount(baseConfig({ pool: [{ id: 'P1', label: 'Widget', sublabel: '', availableQty: 5 }] }));
+    await flush();
+
+    const checkbox = document.querySelector('.pb-pool-item-check');
+    checkbox.checked = true;
+    checkbox.dispatchEvent(new Event('change', { bubbles: true }));
+    await flush();
+    expect(selected.size).toBe(1);
+
+    // Search for something that STILL matches -- isolates "selection cleared
+    // because the search changed" from "selection gone because the item was
+    // filtered out and unmounted".
+    const search = document.querySelector('.pb-pool-search');
+    search.value = 'Widget';
+    search.dispatchEvent(new Event('input', { bubbles: true }));
+    await flush();
+
+    expect(window.Sortable.utils.deselect).toHaveBeenCalled();
+    expect(selected.size).toBe(0);
+    expect(document.querySelector('.pb-pool-item-check')).not.toBeNull();
+    expect(document.querySelector('.pb-pool-item-check').checked).toBe(false);
+  });
+
+  test('clicking the checkbox does not bubble up as a row click', () => {
+    mount(baseConfig({ pool: [{ id: 'P1', label: 'Widget', sublabel: '', availableQty: 5 }] }));
+    const row = document.querySelector('.pb-pool-item');
+    const rowClick = jest.fn();
+    row.addEventListener('click', rowClick);
+
+    document.querySelector('.pb-pool-item-check').dispatchEvent(new MouseEvent('click', { bubbles: true, cancelable: true }));
+
+    expect(rowClick).not.toHaveBeenCalled();
   });
 
   test('"+ New Client..." form calls onAddCard with the trimmed name and clears itself', async () => {

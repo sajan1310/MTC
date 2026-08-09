@@ -53,11 +53,27 @@
 
   const POOL_GROUP = 'planning-board-pool';
 
-  function PoolItem({ item }) {
+  // Controlled by Pool, NOT its own local state: a plain click on the row
+  // ALSO selects natively in MultiDrag (see Pool's onSelect/onDeselect below
+  // -- there is no supported way to turn that off without also breaking
+  // drag-to-select-then-drag-away, so the checkbox is kept in sync with it
+  // rather than fighting it. Both the checkbox and a plain row click are
+  // valid, equivalent ways to select -- same as e.g. Gmail's row checkboxes.
+  function PoolItem({ item, selected, onToggle }) {
     return html`
       <div class="pb-pool-item" data-pool-item-id=${item.id} data-pool-item-qty=${item.availableQty}>
-        <div class="pb-pool-item-label">${item.label}</div>
-        ${item.sublabel ? html`<div class="pb-pool-item-sublabel">${item.sublabel}</div>` : null}
+        <input
+          type="checkbox"
+          class="pb-pool-item-check"
+          checked=${selected}
+          onClick=${e => e.stopPropagation()}
+          onChange=${e => onToggle(item.id, e.target.checked)}
+          aria-label="Select ${item.label} for multi-select drag"
+        />
+        <div class="pb-pool-item-body">
+          <div class="pb-pool-item-label">${item.label}</div>
+          ${item.sublabel ? html`<div class="pb-pool-item-sublabel">${item.sublabel}</div>` : null}
+        </div>
         <div class="pb-pool-item-qty">${item.availableQty}</div>
       </div>
     `;
@@ -65,6 +81,8 @@
 
   function Pool({ pool }) {
     const listRef = useRef(null);
+    const [search, setSearch] = useState('');
+    const [selectedIds, setSelectedIds] = useState(() => new Set());
 
     useEffect(() => {
       if (!listRef.current || !window.Sortable) return undefined;
@@ -76,13 +94,88 @@
         animation: 150,
         fallbackTolerance: 3,
         forceFallback: true,
+        // No multiDragKey: confirmed against the actual plugin source that
+        // it does NOT gate whether a plain click selects at all (a click
+        // always does) -- it only gates whether that click clears any prior
+        // selection first. Leaving it unset means every click (row OR
+        // checkbox) just toggles that one item and leaves the rest alone,
+        // matching a checkbox's own natural "accumulate" semantics.
+        // The checkbox (and anything else interactive) must not itself be
+        // treated as a drag handle -- without this, pressing and slightly
+        // moving the mouse on it starts a drag instead of toggling it.
+        // preventOnFilter:false keeps the browser's own click-to-toggle
+        // behavior on the filtered element intact.
+        filter: 'input, button',
+        preventOnFilter: false,
+        // Fires when MultiDrag selects/deselects an item via ITS OWN native
+        // click handling (i.e. the user clicked the row, not the checkbox --
+        // Sortable.utils.select/deselect, which the checkbox calls directly
+        // below, do NOT fire these) -- keeps this component's own
+        // selectedIds (and so the checkbox's checked state) in sync either
+        // way, since multiDragElements is the one real source of truth.
+        onSelect(evt) {
+          const id = evt.item && evt.item.getAttribute('data-pool-item-id');
+          if (id) setSelectedIds(prev => new Set(prev).add(id));
+        },
+        onDeselect(evt) {
+          const id = evt.item && evt.item.getAttribute('data-pool-item-id');
+          if (id) setSelectedIds(prev => { const next = new Set(prev); next.delete(id); return next; });
+        },
       });
       return () => sortable.destroy();
     }, []);
 
+    // A new search deliberately resets any in-progress selection rather
+    // than risk a filtered-out (unmounted) item staying selected in
+    // Sortable's own tracking with no rendered node behind it. Walks
+    // selectedIds (this component's own state, not Sortable's DOM-class
+    // side effect) to find which elements to deselect -- selectedIds is
+    // already kept authoritative either way (see onSelect/onDeselect and
+    // handleToggle above).
+    useEffect(() => {
+      if (!listRef.current || !window.Sortable || !selectedIds.size) return;
+      Array.from(listRef.current.children)
+        .filter(child => child.getAttribute && selectedIds.has(child.getAttribute('data-pool-item-id')))
+        .forEach(el => window.Sortable.utils.deselect(el));
+      setSelectedIds(new Set());
+      // Deliberately [search] only, not [search, selectedIds] -- this must
+      // fire on a search change, not on every selection change (which would
+      // just immediately re-clear whatever the checkbox/row click just set).
+    }, [search]);
+
+    const handleToggle = (id, checked) => {
+      setSelectedIds(prev => {
+        const next = new Set(prev);
+        if (checked) next.add(id); else next.delete(id);
+        return next;
+      });
+      const el = listRef.current
+        && Array.from(listRef.current.children).find(child => child.getAttribute && child.getAttribute('data-pool-item-id') === id);
+      if (el && window.Sortable) {
+        if (checked) window.Sortable.utils.select(el);
+        else window.Sortable.utils.deselect(el);
+      }
+    };
+
+    const filtered = search.trim()
+      ? pool.filter(item => App.Utils.matchesKeywords(`${item.label} ${item.sublabel || ''}`, search))
+      : pool;
+
     return html`
-      <div class="pb-pool-list" ref=${listRef}>
-        ${pool.map(item => html`<${PoolItem} key=${item.id} item=${item} />`)}
+      <div>
+        <input
+          type="text"
+          class="pb-pool-search"
+          placeholder="Search products..."
+          value=${search}
+          onInput=${e => setSearch(e.target.value)}
+        />
+        <div class="pb-pool-list" ref=${listRef}>
+          ${filtered.map(item => html`
+            <${PoolItem} key=${item.id} item=${item} selected=${selectedIds.has(item.id)} onToggle=${handleToggle} />
+          `)}
+          ${!filtered.length ? html`<div class="pb-pool-empty">No matching products.</div>` : null}
+        </div>
       </div>
     `;
   }
@@ -189,14 +282,14 @@
   }
 
   function Board(config) {
-    const { pool, cards, onDropToCard, onQtyChange, onRemoveLine, onAddCard, onConvertCard, cardActionLabel } = config;
+    const { pool, cards, onDropToCard, onQtyChange, onRemoveLine, onAddCard, onConvertCard, cardActionLabel, renderNonce } = config;
     return html`
       <div class="pb-board">
         <div class="pb-pool-panel">
           <div class="pb-panel-heading">
-            Ready to Dispatch <span class="pb-panel-hint">(click to multi-select, drag onto a card)</span>
+            Ready to Dispatch <span class="pb-panel-hint">(check to multi-select, drag onto a card)</span>
           </div>
-          <${Pool} pool=${pool} />
+          <${Pool} key=${renderNonce} pool=${pool} />
         </div>
         <div class="pb-cards-panel">
           <div class="pb-cards-list">
@@ -218,10 +311,30 @@
     `;
   }
 
+  // Confirmed live (not just theoretical): after a multi-item clone-drag off
+  // the pool, SortableJS's own DOM manipulation of the SOURCE list during
+  // the drag corrupts Preact's next diff for that subtree -- items that
+  // _buildPool() has already correctly excluded (their qty was fully
+  // consumed by the drop) kept rendering anyway, stale, alongside the
+  // correct remaining rows, i.e. visible near-duplicates. The onAdd handler
+  // above already defends the DESTINATION (card) side by discarding
+  // Sortable's inserted node itself; nothing defended the SOURCE (pool)
+  // side, since pull:'clone' was assumed to leave it untouched -- it
+  // doesn't, reliably enough to reproduce every time. Rather than chase the
+  // exact internal desync, every mount() call gives Pool a new `key`,
+  // forcing Preact to fully discard and rebuild that subtree (and its
+  // Sortable instance) from scratch instead of trying to diff/patch DOM
+  // Sortable already mutated -- same "never trust the DOM Sortable touched,
+  // rebuild from the next render" principle as the onAdd handler, just
+  // applied preventatively instead of reactively. Selection resets on any
+  // refresh as a result (search changes already do the same, deliberately).
+  let renderNonce = 0;
+
   window.App.PlanningBoard = {
     mount(container, config) {
       if (!container) return;
-      render(html`<${Board} ...${config} />`, container);
+      renderNonce += 1;
+      render(html`<${Board} ...${config} renderNonce=${renderNonce} />`, container);
     },
   };
 })();
