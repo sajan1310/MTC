@@ -3265,6 +3265,25 @@
   color: #dc2626;
 }
 
+.pb-card-transport {
+  width: 100%;
+  padding: 6px 8px;
+  border: 1px solid var(--border-color);
+  border-radius: var(--border-radius-sm);
+  background: var(--bg-light);
+  color: var(--text-primary);
+  font-size: 12px;
+}
+
+.pb-card-transport:focus {
+  outline: none;
+  border-color: var(--primary-color);
+}
+
+.pb-card-transport::placeholder {
+  color: var(--text-muted);
+}
+
 .pb-card-lines {
   display: flex;
   flex-direction: column;
@@ -3274,8 +3293,8 @@
 
 .pb-card-line {
   display: flex;
-  align-items: center;
-  gap: 6px;
+  flex-direction: column;
+  gap: 4px;
   padding: 6px 8px;
   background: var(--bg-muted);
   border: 1px solid var(--border-light);
@@ -3292,6 +3311,13 @@
   opacity: 0.6;
 }
 
+.pb-card-line-top,
+.pb-card-line-bottom {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
 .pb-card-line-label {
   flex: 1 1 auto;
   min-width: 0;
@@ -3302,7 +3328,8 @@
   color: var(--text-primary);
 }
 
-.pb-card-line-qty {
+.pb-card-line-qty,
+.pb-card-line-rate {
   width: 64px;
   flex: 0 0 auto;
   padding: 2px 6px;
@@ -3312,6 +3339,22 @@
   color: var(--text-primary);
   font-size: 12px;
   text-align: right;
+}
+
+.pb-card-line-remarks {
+  flex: 1 1 auto;
+  min-width: 0;
+  padding: 2px 6px;
+  border: 1px solid var(--border-color);
+  border-radius: var(--border-radius-sm);
+  background: var(--bg-light);
+  color: var(--text-primary);
+  font-size: 12px;
+}
+
+.pb-card-line-rate::placeholder,
+.pb-card-line-remarks::placeholder {
+  color: var(--text-muted);
 }
 
 .pb-card-line-remove {

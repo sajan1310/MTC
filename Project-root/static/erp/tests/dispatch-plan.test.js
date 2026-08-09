@@ -129,6 +129,28 @@ describe('App.DispatchPlan', () => {
     expect(acme.lines.find(l => l.lineId === 2).label).toBe('Widget (P2)');
   });
 
+  test('_buildCards exposes rate/remarks per line, and the card\'s transport (denormalized across its lines) once at the card level', () => {
+    App.State.dispatchPlanDate = '2026-08-09';
+    App.State.globalDispatchPlans = [
+      { lineId: 1, planDate: '2026-08-09', clientName: 'Acme', productId: 'P1', productName: 'Widget', qty: 3, rate: 12.5, remarks: 'Fragile', transport: 'Truck #7', fulfilled: false },
+    ];
+
+    const acme = App.DispatchPlan._buildCards().find(c => c.id === 'Acme');
+
+    expect(acme.transport).toBe('Truck #7');
+    expect(acme.lines[0]).toMatchObject({ rate: 12.5, remarks: 'Fragile' });
+  });
+
+  test('_buildCards defaults a pending (empty, unsaved) card\'s transport to an empty string', () => {
+    App.State.dispatchPlanDate = '2026-08-09';
+    App.State.globalDispatchPlans = [];
+    App.DispatchPlan._pendingEmptyCards.add('DraftClient');
+
+    const draft = App.DispatchPlan._buildCards().find(c => c.id === 'DraftClient');
+
+    expect(draft.transport).toBe('');
+  });
+
   test('_handleAddCard only tracks a pending empty card locally -- no save, immediate re-render', () => {
     App.DispatchPlan._handleAddCard('Fresh Client');
 
@@ -183,6 +205,84 @@ describe('App.DispatchPlan', () => {
     expect(App.Utils.showToast).toHaveBeenCalledWith(expect.stringContaining('available to plan'), true);
   });
 
+  test('_handleDrop inherits the card\'s existing Transport value onto a newly-dropped line', async () => {
+    App.State.dispatchPlanDate = '2026-08-09';
+    App.State.globalReadyToDispatch = [{ productId: 'P2', productName: 'Gadget', availableToPlan: 10, readyQty: 10 }];
+    App.State.globalDispatchPlans = [
+      { lineId: 1, planDate: '2026-08-09', clientName: 'Acme', productId: 'P1', productName: 'Widget', qty: 3, transport: 'Truck #7', fulfilled: false },
+    ];
+    Api.mutate.mockResolvedValue({ success: true, data: { lineId: 2 } });
+
+    await App.DispatchPlan._handleDrop([{ poolItemId: 'P2', qty: 5 }], 'Acme');
+
+    expect(Api.mutate).toHaveBeenCalledWith('saveDispatchPlanLine', expect.objectContaining({
+      productId: 'P2', transport: 'Truck #7',
+    }));
+  });
+
+  test('_handleDrop leaves transport blank for a brand-new card with no existing lines', async () => {
+    App.State.dispatchPlanDate = '2026-08-09';
+    App.State.globalReadyToDispatch = [{ productId: 'P1', productName: 'Widget', availableToPlan: 10, readyQty: 10 }];
+    App.State.globalDispatchPlans = [];
+    Api.mutate.mockResolvedValue({ success: true, data: { lineId: 1 } });
+
+    await App.DispatchPlan._handleDrop([{ poolItemId: 'P1', qty: 5 }], 'BrandNewClient');
+
+    expect(Api.mutate).toHaveBeenCalledWith('saveDispatchPlanLine', expect.objectContaining({ transport: '' }));
+  });
+
+  test('_handleRateChange resends every other field of the line unchanged, overriding only rate', async () => {
+    App.State.globalDispatchPlans = [
+      { lineId: 5, planDate: '2026-08-09', clientName: 'Acme', productId: 'P1', productName: 'Widget', qty: 3, sortOrder: 0, rate: 0, remarks: 'Old remark', transport: 'Old truck' },
+    ];
+    Api.mutate.mockResolvedValue({ success: true, data: {} });
+
+    await App.DispatchPlan._handleRateChange(5, 9.5);
+
+    expect(Api.mutate).toHaveBeenCalledWith('saveDispatchPlanLine', expect.objectContaining({
+      lineId: 5, qty: 3, rate: 9.5, remarks: 'Old remark', transport: 'Old truck',
+    }));
+  });
+
+  test('_handleRemarksChange resends every other field of the line unchanged, overriding only remarks', async () => {
+    App.State.globalDispatchPlans = [
+      { lineId: 5, planDate: '2026-08-09', clientName: 'Acme', productId: 'P1', productName: 'Widget', qty: 3, sortOrder: 0, rate: 9.5, remarks: '', transport: 'Old truck' },
+    ];
+    Api.mutate.mockResolvedValue({ success: true, data: {} });
+
+    await App.DispatchPlan._handleRemarksChange(5, 'Fragile');
+
+    expect(Api.mutate).toHaveBeenCalledWith('saveDispatchPlanLine', expect.objectContaining({
+      lineId: 5, qty: 3, rate: 9.5, remarks: 'Fragile', transport: 'Old truck',
+    }));
+  });
+
+  test('_handleTransportChange updates every OPEN line of the card (not fulfilled ones), preserving each line\'s own qty/rate/remarks', async () => {
+    App.State.dispatchPlanDate = '2026-08-09';
+    App.State.globalDispatchPlans = [
+      { lineId: 1, planDate: '2026-08-09', clientName: 'Acme', productId: 'P1', productName: 'Widget', qty: 3, rate: 5, remarks: 'a', transport: '', fulfilled: false },
+      { lineId: 2, planDate: '2026-08-09', clientName: 'Acme', productId: 'P2', productName: 'Gadget', qty: 1, rate: 0, remarks: '', transport: '', fulfilled: true },
+      { lineId: 3, planDate: '2026-08-09', clientName: 'OtherClient', productId: 'P1', productName: 'Widget', qty: 9, rate: 0, remarks: '', transport: '', fulfilled: false },
+    ];
+    Api.mutate.mockResolvedValue({ success: true, data: {} });
+
+    await App.DispatchPlan._handleTransportChange('Acme', 'Van #2');
+
+    expect(Api.mutate).toHaveBeenCalledTimes(1);
+    expect(Api.mutate).toHaveBeenCalledWith('saveDispatchPlanLine', expect.objectContaining({
+      lineId: 1, qty: 3, rate: 5, remarks: 'a', transport: 'Van #2',
+    }));
+  });
+
+  test('_handleTransportChange is a no-op for a card with no open lines (e.g. a pending empty card)', async () => {
+    App.State.dispatchPlanDate = '2026-08-09';
+    App.State.globalDispatchPlans = [];
+
+    await App.DispatchPlan._handleTransportChange('DraftClient', 'Van #2');
+
+    expect(Api.mutate).not.toHaveBeenCalled();
+  });
+
   test('_handleQtyChange resaves the existing line with its own identity; unknown lineId is a no-op', async () => {
     App.State.globalDispatchPlans = [
       { lineId: 5, planDate: '2026-08-09', clientName: 'Acme', productId: 'P1', productName: 'Widget', qty: 3, sortOrder: 0 },
@@ -208,21 +308,54 @@ describe('App.DispatchPlan', () => {
     expect(App.Dispatch.loadReadyData).toHaveBeenCalled();
   });
 
-  test('_handleConvertCard forwards only this card\'s non-fulfilled lines for the selected date', () => {
+  test('_handleConvertCard forwards only this card\'s non-fulfilled lines for the selected date, with an untouched (0) rate left undefined', () => {
     App.State.dispatchPlanDate = '2026-08-09';
     App.State.globalDispatchPlans = [
-      { lineId: 1, planDate: '2026-08-09', clientName: 'Acme', productId: 'P1', productName: 'Widget', qty: 3, fulfilled: false },
-      { lineId: 2, planDate: '2026-08-09', clientName: 'Acme', productId: 'P2', productName: 'Gadget', qty: 1, fulfilled: true },
-      { lineId: 3, planDate: '2026-08-09', clientName: 'OtherClient', productId: 'P1', productName: 'Widget', qty: 9, fulfilled: false },
+      { lineId: 1, planDate: '2026-08-09', clientName: 'Acme', productId: 'P1', productName: 'Widget', qty: 3, rate: 0, remarks: '', transport: '', fulfilled: false },
+      { lineId: 2, planDate: '2026-08-09', clientName: 'Acme', productId: 'P2', productName: 'Gadget', qty: 1, rate: 0, remarks: '', transport: '', fulfilled: true },
+      { lineId: 3, planDate: '2026-08-09', clientName: 'OtherClient', productId: 'P1', productName: 'Widget', qty: 9, rate: 0, remarks: '', transport: '', fulfilled: false },
     ];
 
     App.DispatchPlan._handleConvertCard('Acme');
 
     expect(App.Dispatch.openPrefilledDispatchModal).toHaveBeenCalledWith(
       'Acme',
-      [{ productId: 'P1', qty: 3 }],
+      [{ productId: 'P1', qty: 3, rate: undefined }],
       [1],
+      '',
+      '',
     );
+  });
+
+  test('_handleConvertCard carries the card\'s rate and transport through, and passes a single line\'s remarks as-is', () => {
+    App.State.dispatchPlanDate = '2026-08-09';
+    App.State.globalDispatchPlans = [
+      { lineId: 1, planDate: '2026-08-09', clientName: 'Acme', productId: 'P1', productName: 'Widget', qty: 3, rate: 12.5, remarks: 'Handle with care', transport: 'Truck #7', fulfilled: false },
+    ];
+
+    App.DispatchPlan._handleConvertCard('Acme');
+
+    expect(App.Dispatch.openPrefilledDispatchModal).toHaveBeenCalledWith(
+      'Acme',
+      [{ productId: 'P1', qty: 3, rate: 12.5 }],
+      [1],
+      'Truck #7',
+      'Handle with care',
+    );
+  });
+
+  test('_handleConvertCard joins MULTIPLE distinct per-line remarks, prefixed by product name, and skips blank ones', () => {
+    App.State.dispatchPlanDate = '2026-08-09';
+    App.State.globalDispatchPlans = [
+      { lineId: 1, planDate: '2026-08-09', clientName: 'Acme', productId: 'P1', productName: 'Widget', qty: 3, rate: 0, remarks: 'Fragile', transport: '', fulfilled: false },
+      { lineId: 2, planDate: '2026-08-09', clientName: 'Acme', productId: 'P2', productName: 'Gadget', qty: 1, rate: 0, remarks: '', transport: '', fulfilled: false },
+      { lineId: 3, planDate: '2026-08-09', clientName: 'Acme', productId: 'P3', productName: 'Gizmo', qty: 2, rate: 0, remarks: 'Keep dry', transport: '', fulfilled: false },
+    ];
+
+    App.DispatchPlan._handleConvertCard('Acme');
+
+    const [, , , , remarks] = App.Dispatch.openPrefilledDispatchModal.mock.calls[0];
+    expect(remarks).toBe('Widget: Fragile; Gizmo: Keep dry');
   });
 
   test('_handleConvertCard is a no-op when the card has no open lines', () => {

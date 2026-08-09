@@ -502,9 +502,9 @@
   <script src="{{ url_for('static', filename='erp/production.js') }}"></script>
   <script src="{{ url_for('static', filename='erp/issue.js') }}"></script>
   <script src="{{ url_for('static', filename='erp/client.js') }}"></script>
-  <script src="{{ url_for('static', filename='erp/dispatch.js') }}"></script>
-  <script src="{{ url_for('static', filename='erp/planning-board.js') }}"></script>
-  <script src="{{ url_for('static', filename='erp/dispatch-plan.js') }}"></script>
+  <script src="{{ url_for('static', filename='erp/dispatch.js') }}?v=3"></script>
+  <script src="{{ url_for('static', filename='erp/planning-board.js') }}?v=5"></script>
+  <script src="{{ url_for('static', filename='erp/dispatch-plan.js') }}?v=5"></script>
   {% if current_user.is_admin %}
   <script src="{{ url_for('static', filename='erp/users.js') }}"></script>
   {% endif %}

@@ -981,6 +981,66 @@ def test_client_rename_cascades_to_open_dispatch_plan_lines(erp_app, erp_client)
     assert match["clientName"] == new_name
 
 
+def test_save_dispatch_plan_line_round_trips_rate_remarks_transport(erp_app, erp_client):
+    token = _get_bom_token(erp_app, erp_client)
+    product_name, product_id = _save_bom_product(erp_client, token)
+    _payload, process_id = _save_process(erp_client, isFinalStage=True)
+    _complete_production_lot(erp_client, process_id, product_id, 10)
+
+    resp = _save_plan_line(
+        erp_client, productId=product_id, productName=product_name, qty=4,
+        rate=12.5, remarks="Handle with care", transport="Truck #7",
+    )
+    body = resp.get_json()
+    assert body["success"] is True, body["message"]
+    line_id = body["data"]["lineId"]
+
+    listed = _rpc(erp_client, "getDispatchPlans").get_json()["data"]
+    match = next(r for r in listed if r["lineId"] == line_id)
+    assert match["rate"] == 12.5
+    assert match["remarks"] == "Handle with care"
+    assert match["transport"] == "Truck #7"
+
+
+def test_save_dispatch_plan_line_defaults_rate_remarks_transport_when_omitted(erp_app, erp_client):
+    token = _get_bom_token(erp_app, erp_client)
+    product_name, product_id = _save_bom_product(erp_client, token)
+    _payload, process_id = _save_process(erp_client, isFinalStage=True)
+    _complete_production_lot(erp_client, process_id, product_id, 10)
+
+    resp = _save_plan_line(erp_client, productId=product_id, productName=product_name, qty=4)
+    body = resp.get_json()
+    assert body["success"] is True, body["message"]
+
+    listed = _rpc(erp_client, "getDispatchPlans").get_json()["data"]
+    match = next(r for r in listed if r["lineId"] == body["data"]["lineId"])
+    assert match["rate"] == 0
+    assert match["remarks"] == ""
+    assert match["transport"] == ""
+
+
+def test_save_dispatch_plan_line_updates_rate_remarks_transport_on_existing_line(erp_app, erp_client):
+    token = _get_bom_token(erp_app, erp_client)
+    product_name, product_id = _save_bom_product(erp_client, token)
+    _payload, process_id = _save_process(erp_client, isFinalStage=True)
+    _complete_production_lot(erp_client, process_id, product_id, 10)
+
+    create = _save_plan_line(erp_client, productId=product_id, productName=product_name, qty=4).get_json()
+    line_id = create["data"]["lineId"]
+
+    update = _save_plan_line(
+        erp_client, lineId=line_id, productId=product_id, productName=product_name, qty=4,
+        rate=7, remarks="Fragile", transport="Van #2",
+    )
+    assert update.get_json()["success"] is True
+
+    listed = _rpc(erp_client, "getDispatchPlans").get_json()["data"]
+    match = next(r for r in listed if r["lineId"] == line_id)
+    assert match["rate"] == 7
+    assert match["remarks"] == "Fragile"
+    assert match["transport"] == "Van #2"
+
+
 def test_process_round_trips_dispatch_differentiator(erp_client):
     payload, process_id = _save_process(erp_client, isFinalStage=True, dispatchDifferentiator="Frame Color")
 

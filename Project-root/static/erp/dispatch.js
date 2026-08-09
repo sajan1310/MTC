@@ -927,9 +927,16 @@ App.Dispatch = {
   // the submit handler below builds formData via `new FormData(this)`,
   // which only reads real named fields) for the submit handler to send back
   // to saveDispatch, which marks those plan lines fulfilled atomically with
-  // the bill save (see dispatch_service.py's save_dispatch).
-  openPrefilledDispatchModal(clientName, lines, sourcePlanLineIds) {
+  // the bill save (see dispatch_service.py's save_dispatch). transport/
+  // remarks are the plan card's own captured values (optional, blank if the
+  // operator never filled them in while planning) -- prefilled straight
+  // into the same #dispatchTransport/#dispatchRemarks fields a manually-
+  // created bill already has, not new fields of their own.
+  openPrefilledDispatchModal(clientName, lines, sourcePlanLineIds, transport, remarks) {
     this.openCreateDispatchModal();
+
+    if (transport) document.getElementById('dispatchTransport').value = transport;
+    if (remarks) document.getElementById('dispatchRemarks').value = remarks;
 
     const clientEl = document.getElementById('dispatchClientSelect');
     if (clientEl && clientName) {

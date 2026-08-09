@@ -11,17 +11,25 @@
 //
 //   App.PlanningBoard.mount(container, config)
 //     config.pool:  [{id, label, sublabel, availableQty}]
-//     config.cards: [{id, title, lines: [{lineId, label, qty, fulfilled}]}]
+//     config.cards: [{id, title, transport, lines: [{lineId, label, qty, rate, remarks, fulfilled}]}]
 //     config.onDropToCard(drops, cardId)  -- drops: [{poolItemId, qty}], one
 //         or more pool items dropped on a card (qty defaults to that pool
 //         item's current availableQty; the caller/glue layer persists it,
 //         the operator can then edit it inline via onQtyChange).
-//     config.onQtyChange(lineId, qty)     -- a card line's qty was edited
+//     config.onQtyChange(lineId, qty)         -- a card line's qty was edited
+//     config.onRateChange(lineId, rate)       -- a card line's rate was edited
+//     config.onRemarksChange(lineId, remarks) -- a card line's remarks was edited
 //     config.onRemoveLine(lineId)         -- a card line's remove (x) was clicked
+//     config.onTransportChange(cardId, transport) -- a card's shared Transport field was edited
 //     config.onAddCard(title)             -- "+ New Client..." form submitted
 //     config.onConvertCard(cardId)        -- a card's action button was clicked
 //     config.onCancelCard(cardId)         -- a card's own × (cancel/remove) was clicked
 //     config.cardActionLabel (optional, default "Dispatch")
+//
+// rate/remarks/transport are record-keeping only (never read by any
+// availability/pool math anywhere) -- purely so a card carries forward
+// into whatever "convert" does with it (Dispatch Plan's own consumer
+// pre-fills the real bill's own Rate/Remarks/Transport fields with them).
 //
 // SortableJS + a virtual-DOM library is a known-tricky combination:
 // Sortable mutates real DOM nodes directly, bypassing Preact's diffing. The
@@ -53,6 +61,18 @@
   const { html, render, useState, useEffect, useRef } = lib;
 
   const POOL_GROUP = 'planning-board-pool';
+
+  // Enter commits the same way blur does (and blurs afterward, so the
+  // input visibly loses focus like a real "submit") -- shared by every
+  // commit-on-blur-or-enter text field below (qty, rate, remarks, transport).
+  function commitOnEnter(fn) {
+    return e => {
+      if (e.key !== 'Enter') return;
+      e.preventDefault();
+      fn();
+      e.target.blur();
+    };
+  }
 
   // Controlled by Pool, NOT its own local state: a plain click on the row
   // ALSO selects natively in MultiDrag (see Pool's onSelect/onDeselect below
@@ -181,41 +201,94 @@
     `;
   }
 
-  function CardLine({ line, onQtyChange, onRemoveLine }) {
+  function CardLine({ line, onQtyChange, onRemoveLine, onRateChange, onRemarksChange }) {
     const [qty, setQty] = useState(line.qty);
+    const [rate, setRate] = useState(line.rate || 0);
+    const [remarks, setRemarks] = useState(line.remarks || '');
     useEffect(() => { setQty(line.qty); }, [line.qty]);
+    useEffect(() => { setRate(line.rate || 0); }, [line.rate]);
+    useEffect(() => { setRemarks(line.remarks || ''); }, [line.remarks]);
 
-    const commit = () => {
+    const commitQty = () => {
       const n = Number(qty);
       if (!Number.isFinite(n) || n <= 0 || n === line.qty) { setQty(line.qty); return; }
       onQtyChange(line.lineId, n);
     };
+    const commitRate = () => {
+      const n = Number(rate);
+      const normalized = Number.isFinite(n) && n >= 0 ? n : 0;
+      if (normalized === (line.rate || 0)) { setRate(normalized); return; }
+      onRateChange(line.lineId, normalized);
+    };
+    const commitRemarks = () => {
+      const trimmed = remarks.trim();
+      if (trimmed === (line.remarks || '')) { setRemarks(trimmed); return; }
+      onRemarksChange(line.lineId, trimmed);
+    };
 
     return html`
       <div class="pb-card-line ${line.fulfilled ? 'pb-card-line-fulfilled' : ''}">
-        <span class="pb-card-line-label">${line.label}</span>
-        <input
-          type="number"
-          class="pb-card-line-qty"
-          min="0.001"
-          step="any"
-          value=${qty}
-          disabled=${line.fulfilled}
-          onInput=${e => setQty(e.target.value)}
-          onBlur=${commit}
-          onKeyDown=${e => { if (e.key === 'Enter') { e.preventDefault(); commit(); e.target.blur(); } }}
-        />
-        ${!line.fulfilled
-          // A literal '×', not the &times; entity -- htm does not decode
-          // HTML entities in its tagged templates, it would render as text.
-          ? html`<button type="button" class="pb-card-line-remove" title="Remove" aria-label="Remove" onClick=${() => onRemoveLine(line.lineId)}>×</button>`
-          : html`<span class="pb-card-line-fulfilled-badge">Dispatched</span>`}
+        <div class="pb-card-line-top">
+          <span class="pb-card-line-label">${line.label}</span>
+          <input
+            type="number"
+            class="pb-card-line-qty"
+            title="Qty"
+            min="0.001"
+            step="any"
+            value=${qty}
+            disabled=${line.fulfilled}
+            onInput=${e => setQty(e.target.value)}
+            onBlur=${commitQty}
+            onKeyDown=${commitOnEnter(commitQty)}
+          />
+          ${!line.fulfilled
+            // A literal '×', not the &times; entity -- htm does not decode
+            // HTML entities in its tagged templates, it would render as text.
+            ? html`<button type="button" class="pb-card-line-remove" title="Remove" aria-label="Remove" onClick=${() => onRemoveLine(line.lineId)}>×</button>`
+            : html`<span class="pb-card-line-fulfilled-badge">Dispatched</span>`}
+        </div>
+        <div class="pb-card-line-bottom">
+          <input
+            type="number"
+            class="pb-card-line-rate"
+            title="Rate"
+            placeholder="Rate"
+            min="0"
+            step="any"
+            value=${rate}
+            disabled=${line.fulfilled}
+            onInput=${e => setRate(e.target.value)}
+            onBlur=${commitRate}
+            onKeyDown=${commitOnEnter(commitRate)}
+          />
+          <input
+            type="text"
+            class="pb-card-line-remarks"
+            title="Remarks"
+            placeholder="Remarks"
+            maxlength="255"
+            value=${remarks}
+            disabled=${line.fulfilled}
+            onInput=${e => setRemarks(e.target.value)}
+            onBlur=${commitRemarks}
+            onKeyDown=${commitOnEnter(commitRemarks)}
+          />
+        </div>
       </div>
     `;
   }
 
-  function Card({ card, onDropToCard, onQtyChange, onRemoveLine, onConvertCard, onCancelCard, cardActionLabel }) {
+  function Card({ card, onDropToCard, onQtyChange, onRemoveLine, onRateChange, onRemarksChange, onTransportChange, onConvertCard, onCancelCard, cardActionLabel }) {
     const listRef = useRef(null);
+    const [transport, setTransport] = useState(card.transport || '');
+    useEffect(() => { setTransport(card.transport || ''); }, [card.transport]);
+
+    const commitTransport = () => {
+      const trimmed = transport.trim();
+      if (trimmed === (card.transport || '')) return;
+      onTransportChange(card.id, trimmed);
+    };
 
     useEffect(() => {
       if (!listRef.current || !window.Sortable) return undefined;
@@ -256,9 +329,28 @@
               : null}
           </div>
         </div>
+        ${onTransportChange ? html`
+          <input
+            type="text"
+            class="pb-card-transport"
+            placeholder="Transport"
+            maxlength="255"
+            value=${transport}
+            onInput=${e => setTransport(e.target.value)}
+            onBlur=${commitTransport}
+            onKeyDown=${commitOnEnter(commitTransport)}
+          />
+        ` : null}
         <div class="pb-card-lines" ref=${listRef}>
           ${card.lines.map(line => html`
-            <${CardLine} key=${line.lineId} line=${line} onQtyChange=${onQtyChange} onRemoveLine=${onRemoveLine} />
+            <${CardLine}
+              key=${line.lineId}
+              line=${line}
+              onQtyChange=${onQtyChange}
+              onRemoveLine=${onRemoveLine}
+              onRateChange=${onRateChange}
+              onRemarksChange=${onRemarksChange}
+            />
           `)}
         </div>
         ${!card.lines.length ? html`<div class="pb-card-empty">Drop products here</div>` : null}
@@ -289,7 +381,10 @@
   }
 
   function Board(config) {
-    const { pool, cards, onDropToCard, onQtyChange, onRemoveLine, onAddCard, onConvertCard, onCancelCard, cardActionLabel, renderNonce } = config;
+    const {
+      pool, cards, onDropToCard, onQtyChange, onRemoveLine, onRateChange, onRemarksChange, onTransportChange,
+      onAddCard, onConvertCard, onCancelCard, cardActionLabel, renderNonce,
+    } = config;
     return html`
       <div class="pb-board">
         <div class="pb-pool-panel">
@@ -307,6 +402,9 @@
                 onDropToCard=${onDropToCard}
                 onQtyChange=${onQtyChange}
                 onRemoveLine=${onRemoveLine}
+                onRateChange=${onRateChange}
+                onRemarksChange=${onRemarksChange}
+                onTransportChange=${onTransportChange}
                 onConvertCard=${onConvertCard}
                 onCancelCard=${onCancelCard}
                 cardActionLabel=${cardActionLabel}

@@ -495,7 +495,7 @@ def _load_dispatch_plan_lines(cur, plan_date=None) -> list:
     table = config_maps.TABLE_NAMES.get("DISPATCH_PLAN_LINES")
     query = (
         f"SELECT id, plan_date, client_name, product_id, product_name, qty, "
-        f"sort_order, fulfilled_dispatch_number FROM {table}"
+        f"sort_order, fulfilled_dispatch_number, rate, remarks, transport FROM {table}"
     )
     params: list = []
     if plan_date is not None:
@@ -514,6 +514,13 @@ def _load_dispatch_plan_lines(cur, plan_date=None) -> list:
             "sortOrder": int(row["sort_order"] or 0),
             "fulfilledDispatchNumber": row["fulfilled_dispatch_number"] or "",
             "fulfilled": row["fulfilled_dispatch_number"] is not None,
+            # Record-keeping only, same framing as erp.dispatch_lines.rate
+            # (023_dispatch_header_lines.sql) -- never read by any
+            # availability/pool math. transport is denormalized across
+            # every line of one card (see migration 029's own comment).
+            "rate": float(row["rate"] or 0),
+            "remarks": row["remarks"] or "",
+            "transport": row["transport"] or "",
         }
         for row in cur.fetchall()
     ]
@@ -552,6 +559,11 @@ def save_dispatch_plan_line(conn, cur, form_data):
     if qty <= 0:
         raise ValueError("Quantity must be greater than zero.")
     sort_order = int(_validate_number(form_data.get("sortOrder"), 0, 1000000))
+    # All three record-keeping only (see migration 029) -- no validation
+    # beyond the same sane bounds/lengths their real-bill counterparts use.
+    rate = _validate_number(form_data.get("rate"), 0, 10000000)
+    remarks = str(form_data.get("remarks") or "").strip()[:255]
+    transport = str(form_data.get("transport") or "").strip()[:255]
 
     # Credit back this line's own currently-saved qty (only when the
     # product wasn't also changed by this same save) -- same convention as
@@ -588,21 +600,22 @@ def save_dispatch_plan_line(conn, cur, form_data):
             f"""
             UPDATE {table} SET
                 plan_date = %s, client_name = %s, product_id = %s, product_name = %s,
-                qty = %s, sort_order = %s, updated_at = NOW(), updated_by = %s
+                qty = %s, sort_order = %s, rate = %s, remarks = %s, transport = %s,
+                updated_at = NOW(), updated_by = %s
             WHERE id = %s
             RETURNING id
             """,
-            (plan_date, client_name, product_id, product_name, qty, sort_order, user_id, line_id),
+            (plan_date, client_name, product_id, product_name, qty, sort_order, rate, remarks, transport, user_id, line_id),
         )
     else:
         cur.execute(
             f"""
             INSERT INTO {table}
-                (plan_date, client_name, product_id, product_name, qty, sort_order, updated_by)
-            VALUES (%s, %s, %s, %s, %s, %s, %s)
+                (plan_date, client_name, product_id, product_name, qty, sort_order, rate, remarks, transport, updated_by)
+            VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
             RETURNING id
             """,
-            (plan_date, client_name, product_id, product_name, qty, sort_order, user_id),
+            (plan_date, client_name, product_id, product_name, qty, sort_order, rate, remarks, transport, user_id),
         )
     saved_id = cur.fetchone()["id"]
 

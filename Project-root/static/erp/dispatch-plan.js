@@ -82,26 +82,28 @@ App.DispatchPlan = {
     (App.State.globalDispatchPlans || [])
       .filter(l => l.planDate === date)
       .forEach(line => {
-        if (!byClient.has(line.clientName)) byClient.set(line.clientName, []);
+        if (!byClient.has(line.clientName)) byClient.set(line.clientName, { transport: line.transport || '', lines: [] });
         // An untagged final-stage output reports its Output Item Name as
         // BOTH productId and productName (see _buildPool's own identical
         // check) -- appending "(productId)" would just repeat the name.
         const label = line.productId === line.productName
           ? line.productName
           : `${line.productName} (${line.productId})`;
-        byClient.get(line.clientName).push({
+        byClient.get(line.clientName).lines.push({
           lineId: line.lineId,
           label,
           qty: line.qty,
+          rate: line.rate,
+          remarks: line.remarks,
           fulfilled: line.fulfilled,
         });
       });
     this._pendingEmptyCards.forEach(name => {
-      if (!byClient.has(name)) byClient.set(name, []);
+      if (!byClient.has(name)) byClient.set(name, { transport: '', lines: [] });
     });
     return Array.from(byClient.entries())
       .sort((a, b) => a[0].localeCompare(b[0]))
-      .map(([clientName, lines]) => ({ id: clientName, title: clientName, lines }));
+      .map(([clientName, data]) => ({ id: clientName, title: clientName, transport: data.transport, lines: data.lines }));
   },
 
   render() {
@@ -113,7 +115,10 @@ App.DispatchPlan = {
       cardActionLabel: 'Dispatch',
       onDropToCard: (drops, cardId) => this._handleDrop(drops, cardId),
       onQtyChange: (lineId, qty) => this._handleQtyChange(lineId, qty),
+      onRateChange: (lineId, rate) => this._handleRateChange(lineId, rate),
+      onRemarksChange: (lineId, remarks) => this._handleRemarksChange(lineId, remarks),
       onRemoveLine: (lineId) => this._handleRemoveLine(lineId),
+      onTransportChange: (cardId, transport) => this._handleTransportChange(cardId, transport),
       onAddCard: (title) => this._handleAddCard(title),
       onConvertCard: (cardId) => this._handleConvertCard(cardId),
       onCancelCard: (cardId) => this._handleCancelCard(cardId),
@@ -127,6 +132,13 @@ App.DispatchPlan = {
   async _handleDrop(drops, clientName) {
     const date = App.State.dispatchPlanDate;
     const readyByProduct = new Map((App.State.globalReadyToDispatch || []).map(r => [r.productId, r]));
+    // A new line dropped onto a card that already has a Transport value
+    // set inherits it -- Transport is presented as ONE shared field per
+    // card, so a freshly-dropped line shouldn't silently start blank while
+    // its siblings already carry a value.
+    const existingLine = (App.State.globalDispatchPlans || [])
+      .find(l => l.planDate === date && l.clientName === clientName);
+    const transport = existingLine ? existingLine.transport : '';
     for (const drop of drops) {
       const ready = readyByProduct.get(drop.poolItemId);
       const productName = ready ? ready.productName : drop.poolItemId;
@@ -137,6 +149,7 @@ App.DispatchPlan = {
         productName,
         qty: drop.qty,
         sortOrder: 0,
+        transport,
       });
       if (!res.success) App.Utils.showToast(res.message, true);
     }
@@ -144,19 +157,61 @@ App.DispatchPlan = {
     await this._reload();
   },
 
-  async _handleQtyChange(lineId, qty) {
-    const line = (App.State.globalDispatchPlans || []).find(l => l.lineId === lineId);
-    if (!line) return;
-    const res = await Api.mutate('saveDispatchPlanLine', {
-      lineId,
+  _lineSavePayload(line, overrides) {
+    return Object.assign({
+      lineId: line.lineId,
       planDate: line.planDate,
       clientName: line.clientName,
       productId: line.productId,
       productName: line.productName,
-      qty,
+      qty: line.qty,
       sortOrder: line.sortOrder,
-    });
+      rate: line.rate,
+      remarks: line.remarks,
+      transport: line.transport,
+    }, overrides);
+  },
+
+  // Shared by every single-field edit below (qty/rate/remarks) --
+  // saveDispatchPlanLine is a full UPDATE, not a partial patch, so every
+  // call must resend every column via _lineSavePayload or an edit to ONE
+  // field (e.g. qty) would silently reset the others (e.g. rate) to their
+  // defaults.
+  async _saveLineField(lineId, overrides) {
+    const line = (App.State.globalDispatchPlans || []).find(l => l.lineId === lineId);
+    if (!line) return;
+    const res = await Api.mutate('saveDispatchPlanLine', this._lineSavePayload(line, overrides));
     if (!res.success) App.Utils.showToast(res.message, true);
+    await this._reload();
+  },
+
+  async _handleQtyChange(lineId, qty) {
+    await this._saveLineField(lineId, { qty });
+  },
+
+  async _handleRateChange(lineId, rate) {
+    await this._saveLineField(lineId, { rate });
+  },
+
+  async _handleRemarksChange(lineId, remarks) {
+    await this._saveLineField(lineId, { remarks });
+  },
+
+  // Transport is ONE shared field per card, denormalized across every one
+  // of its lines (see migration 029) -- editing it updates all of them
+  // together. No-op on a pending/empty card: there's nothing to persist
+  // a value onto yet, it'll be picked up by _handleDrop's own inherit
+  // logic once the card's first line actually exists.
+  async _handleTransportChange(clientName, transport) {
+    const date = App.State.dispatchPlanDate;
+    const lines = (App.State.globalDispatchPlans || [])
+      .filter(l => l.planDate === date && l.clientName === clientName && !l.fulfilled);
+    if (!lines.length) return;
+    const results = await Promise.all(
+      lines.map(line => Api.mutate('saveDispatchPlanLine', this._lineSavePayload(line, { transport })))
+    );
+    const failed = results.find(r => !r.success);
+    if (failed) App.Utils.showToast(failed.message, true);
     await this._reload();
   },
 
@@ -177,8 +232,21 @@ App.DispatchPlan = {
       .filter(l => l.planDate === date && l.clientName === clientName && !l.fulfilled);
     if (!lines.length) return;
     const sourcePlanLineIds = lines.map(l => l.lineId);
-    const modalLines = lines.map(l => ({ productId: l.productId, qty: l.qty }));
-    App.Dispatch.openPrefilledDispatchModal(clientName, modalLines, sourcePlanLineIds);
+    // rate: an untouched (0) rate stays UNDEFINED, not 0 -- addDispatchLineRow
+    // renders undefined/null as a blank, optional field (matching the real
+    // bill's own placeholder="optional"); an explicit 0 would render as a
+    // literal "0" in every line the operator never bothered pricing.
+    const modalLines = lines.map(l => ({ productId: l.productId, qty: l.qty, rate: l.rate || undefined }));
+    const transport = lines[0].transport || '';
+    // The real bill has ONE Remarks field (header-level); the plan has one
+    // PER LINE. A single line's remarks carries over as-is; more than one
+    // distinct remark gets prefixed by product name so the operator can
+    // still tell them apart, as a starting point they can edit further.
+    const withRemarks = lines.filter(l => l.remarks);
+    const remarks = withRemarks.length <= 1
+      ? (withRemarks[0]?.remarks || '')
+      : withRemarks.map(l => `${l.productName}: ${l.remarks}`).join('; ');
+    App.Dispatch.openPrefilledDispatchModal(clientName, modalLines, sourcePlanLineIds, transport, remarks);
   },
 
   // A pending (not-yet-saved) empty card just gets dropped locally -- no

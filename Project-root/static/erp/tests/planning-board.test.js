@@ -281,14 +281,80 @@ describe('App.PlanningBoard', () => {
     expect(onQtyChange).toHaveBeenCalledWith(7, 9);
   });
 
-  test('a fulfilled line disables its qty input, hides the remove button, and shows a badge instead', () => {
+  test('a card line\'s rate input only commits onRateChange on blur, and only when the value actually changed', async () => {
+    const onRateChange = jest.fn();
     mount(baseConfig({
-      cards: [{ id: 'Acme', title: 'Acme', lines: [{ lineId: 7, label: 'Widget (P1)', qty: 3, fulfilled: true }] }],
+      cards: [{ id: 'Acme', title: 'Acme', lines: [{ lineId: 7, label: 'Widget (P1)', qty: 3, rate: 5, fulfilled: false }] }],
+      onRateChange,
+    }));
+    await flush();
+
+    const rateInput = document.querySelector('.pb-card-line-rate');
+    expect(rateInput.value).toBe('5');
+
+    rateInput.dispatchEvent(new Event('blur'));
+    expect(onRateChange).not.toHaveBeenCalled();
+
+    rateInput.value = '12.5';
+    rateInput.dispatchEvent(new Event('input', { bubbles: true }));
+    await flush();
+    rateInput.dispatchEvent(new Event('blur'));
+    expect(onRateChange).toHaveBeenCalledWith(7, 12.5);
+  });
+
+  test('a card line\'s remarks input commits on Enter (and blurs), matching the qty/rate pattern', async () => {
+    const onRemarksChange = jest.fn();
+    mount(baseConfig({
+      cards: [{ id: 'Acme', title: 'Acme', lines: [{ lineId: 7, label: 'Widget (P1)', qty: 3, remarks: '', fulfilled: false }] }],
+      onRemarksChange,
+    }));
+    await flush();
+
+    const remarksInput = document.querySelector('.pb-card-line-remarks');
+    remarksInput.value = 'Handle with care';
+    remarksInput.dispatchEvent(new Event('input', { bubbles: true }));
+    await flush();
+    remarksInput.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', bubbles: true, cancelable: true }));
+
+    expect(onRemarksChange).toHaveBeenCalledWith(7, 'Handle with care');
+  });
+
+  test('a fulfilled line disables its qty, rate, and remarks inputs, hides the remove button, and shows a badge instead', () => {
+    mount(baseConfig({
+      cards: [{ id: 'Acme', title: 'Acme', lines: [{ lineId: 7, label: 'Widget (P1)', qty: 3, rate: 5, remarks: 'x', fulfilled: true }] }],
     }));
 
     expect(document.querySelector('.pb-card-line-qty').disabled).toBe(true);
+    expect(document.querySelector('.pb-card-line-rate').disabled).toBe(true);
+    expect(document.querySelector('.pb-card-line-remarks').disabled).toBe(true);
     expect(document.querySelector('.pb-card-line-remove')).toBeNull();
     expect(document.querySelector('.pb-card-line-fulfilled-badge')).not.toBeNull();
+  });
+
+  test('a card\'s Transport field only renders when onTransportChange is supplied, defaults from card.transport, and commits on blur', async () => {
+    const onTransportChange = jest.fn();
+    mount(baseConfig({
+      cards: [{ id: 'Acme', title: 'Acme', transport: 'Truck #7', lines: [] }],
+      onTransportChange,
+    }));
+    await flush();
+
+    const transportInput = document.querySelector('.pb-card-transport');
+    expect(transportInput.value).toBe('Truck #7');
+
+    transportInput.dispatchEvent(new Event('blur'));
+    expect(onTransportChange).not.toHaveBeenCalled();
+
+    transportInput.value = 'Van #2';
+    transportInput.dispatchEvent(new Event('input', { bubbles: true }));
+    await flush();
+    transportInput.dispatchEvent(new Event('blur'));
+    expect(onTransportChange).toHaveBeenCalledWith('Acme', 'Van #2');
+  });
+
+  test('a card renders no Transport field at all when the caller omits onTransportChange', () => {
+    mount(baseConfig({ cards: [{ id: 'Acme', title: 'Acme', lines: [] }] }));
+    expect(document.querySelector('.pb-card-transport')).toBeNull();
   });
 
   test('remove button calls onRemoveLine with the line id', () => {
