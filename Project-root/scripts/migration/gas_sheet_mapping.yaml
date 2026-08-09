@@ -1,0 +1,670 @@
+# Postgres -> GAS bound-spreadsheet mirror mapping.
+#
+# Opposite direction from mapping.yaml (which is Sheets -> Postgres, built
+# for the one-time historical import in migrate_sheets_to_pg.py). This file
+# feeds mirror_db_to_gas_sheets.py, which nightly overwrites the GAS app's
+# EXISTING bound spreadsheet's data rows (below the existing header rows)
+# with current MTC data, so the legacy Apps Script app
+# (c:\Users\erkar\my-app-script-project) keeps working as a read-only
+# backup/viewer, unmodified.
+#
+# Deliberately NOT merged into mapping.yaml: different concerns entirely
+# (no unique_on/fk_resolve/date_style/skip_columns-with-reasons needed in
+# this direction), and a shared file would rot in whichever direction isn't
+# being actively worked on -- exactly the kind of drift mapping.yaml itself
+# suffered (see header note below).
+#
+# Built fresh from config.js (c:\Users\erkar\my-app-script-project) --
+# APP_CONFIG.SHEETS for tab names, *_SETTINGS for DATA_START_ROW, *_COL for
+# column layout -- cross-checked against current migrations/erp/*.sql, NOT
+# copied from mapping.yaml. mapping.yaml is confirmed stale/incomplete for
+# this direction as of 2026-08-09:
+#   - Bill Ledger cols 18-22 (billType/processName/color/issuingParty/
+#     manufacturingVendor, the Labor Job Bills feature) are missing from
+#     mapping.yaml's BILL entry, even though both the live GAS sheet
+#     (config.js's BILL_COL) and Postgres (erp.bill_lines.bill_type/
+#     process_name/color, erp.bill_headers.issuing_party/
+#     manufacturing_vendor -- migrations/erp/022_bill_labor_job.sql) have
+#     them.
+#   - Process Master col 11 (dispatchDifferentiator) is missing from
+#     mapping.yaml's PROCESS_MASTER entry, even though erp.process_master.
+#     dispatch_differentiator exists (migrations/erp/021_process_dispatch_
+#     differentiator.sql).
+#   - mapping.yaml never mentions PROCESS_COLOR_OVERRIDES at all (not even
+#     in its "explicitly NOT sheet-migrated" section) -- a real gap, not a
+#     documented decision. erp.process_color_overrides
+#     (migrations/erp/020_process_color_overrides_and_axis_keys.sql) is a
+#     1:1 match for that sheet's 3 columns.
+#   - erp.warehouse_pool is correctly excluded from mapping.yaml's direction
+#     (it's a read-only materialized cache there) but IS needed here: it's
+#     kept live-updated by warehouse_service._recalculate_warehouse_pool()
+#     and its columns match WAREHOUSE_POOL_COL 1:1, so it's mirrored
+#     directly like any other flat table -- no need to trigger a GAS-side
+#     recompute.
+# These two gaps are a follow-up for mapping.yaml itself -- out of scope
+# here, but flagged so it doesn't get trusted blindly for either direction.
+#
+# `kind` drives how mirror_db_to_gas_sheets.py writes each sheet:
+#   flat          -- one Postgres row per sheet row, straight column mapping.
+#                    Most entries use `table` + `order_by` for a generic
+#                    `SELECT * FROM <table> WHERE deleted_at IS NULL ORDER BY
+#                    <order_by>` (soft-delete filter applied only if the
+#                    table actually has deleted_at -- see has_soft_delete).
+#                    A few need `query` instead: a literal SQL override for
+#                    sheets whose source isn't a single un-joined table
+#                    (currently just PROCESS_COLOR_LINKS, which needs to
+#                    resolve process_a_id/process_b_id back to their text
+#                    process_id business keys).
+#   header_lines  -- GAS denormalizes header+lines into repeated rows, one
+#                    per line, with header fields repeated on every line row
+#                    of its group. header_table/lines_table + parent_fk join
+#                    on header_id, group_order_by then line id ascending.
+#   dynamic_pairs -- Items Master only: flat columns 1-8, then N repeating
+#                    (vendor, rate) column pairs from erp.item_vendors,
+#                    starting at col 9, width 2, however many pairs exist
+#                    for that item (no fixed cap -- matches the GAS read
+#                    side, which has none either).
+#   stock         -- Stock only: currentStock (col 4) is reused from
+#                    stock_service.get_stock_data()'s live computation
+#                    rather than re-derived here (that formula aggregates
+#                    Bill Ledger + Production with case-insensitive
+#                    item+size matching -- re-deriving it independently
+#                    would be exactly the kind of duplicated-logic drift
+#                    this mapping's own header is warning about elsewhere).
+#
+# `computed` entries (col + fn name, evaluated by mirror_db_to_gas_sheets.py)
+# cover columns confirmed as literal setValues() numbers in GAS -- never
+# spreadsheet formulas, so they must be calculated here, not left blank:
+#   line_total        = qty * price                (PO, Return)
+#   bill_line_total    = qty * price * (1 + gst/100) (Bill)
+#   po_header_total_qty = SUM(qty) OVER (PARTITION BY header_id) (PO only)
+#
+# Every sheet has data_start_row: 2 (one header row) EXCEPT PO Tracker,
+# which has a 2-row header block (data_start_row: 3) -- confirmed in
+# config.js's PO_SETTINGS vs every other *_SETTINGS block.
+#
+# LOGS is the only config.js sheet with no Postgres equivalent (superseded
+# by erp.stock_adjustments/erp.warehouse_pool_adjustments/
+# erp.ledger_audit_log) -- deliberately not in this file, same reasoning
+# mapping.yaml already documents for its own scope.
+
+gas_spreadsheet_id: "1r5ny663P8nleDB5__83uv1Yyga9Pb8Thxfw4z4NDfpY"
+
+sheets:
+
+  # ── Simple masters ───────────────────────────────────────────────────────
+
+  - key: UNITS
+    sheet_name: "Unit Master"
+    data_start_row: 2
+    kind: flat
+    table: erp.units
+    has_soft_delete: true
+    order_by: id
+    columns:
+      - {col: 1, db: unit_name}
+      - {col: 2, db: family}
+      - {col: 3, db: factor_to_base}
+      - {col: 4, db: remarks}
+
+  - key: COLOR_MASTER
+    sheet_name: "Color Master"
+    data_start_row: 2
+    kind: flat
+    table: erp.color_master
+    has_soft_delete: true
+    order_by: id
+    columns:
+      - {col: 1, db: name}
+      - {col: 2, db: remarks}
+
+  - key: MODEL_MASTER
+    sheet_name: "Model Master"
+    data_start_row: 2
+    kind: flat
+    table: erp.model_master
+    has_soft_delete: true
+    order_by: id
+    columns:
+      - {col: 1, db: name}
+      - {col: 2, db: remarks}
+
+  - key: PROCESS_TYPE_MASTER
+    sheet_name: "Process Type Master"
+    data_start_row: 2
+    kind: flat
+    table: erp.process_type_master
+    has_soft_delete: true
+    order_by: id
+    columns:
+      - {col: 1, db: name}
+      - {col: 2, db: remarks}
+
+  - key: VENDORS
+    sheet_name: "Vendors"
+    data_start_row: 2
+    kind: flat
+    table: erp.vendors
+    has_soft_delete: true
+    order_by: id
+    columns:
+      - {col: 1, db: vendor_name}
+      - {col: 2, db: contact}
+      - {col: 3, db: address}
+      - {col: 4, db: gstin}
+      - {col: 5, db: remarks}
+
+  - key: CONTRACTORS
+    sheet_name: "Contractors"
+    data_start_row: 2
+    kind: flat
+    table: erp.contractors
+    has_soft_delete: true
+    order_by: id
+    columns:
+      - {col: 1, db: contractor_name}
+      - {col: 2, db: contact}
+      - {col: 3, db: address}
+      - {col: 4, db: gst_pan}
+      - {col: 5, db: remarks}
+
+  - key: CONTRACTOR_RATES
+    sheet_name: "Contractor Rates"
+    data_start_row: 2
+    kind: flat
+    table: erp.contractor_rates
+    has_soft_delete: false
+    order_by: id
+    columns:
+      - {col: 1, db: contractor_name}
+      - {col: 2, db: process_name}
+      - {col: 3, db: rate_per_unit}
+      - {col: 4, db: remarks}
+
+  - key: CONTRACTOR_PAYMENTS
+    sheet_name: "Contractor Payments"
+    data_start_row: 2
+    kind: flat
+    table: erp.contractor_payments
+    has_soft_delete: false
+    order_by: id
+    columns:
+      - {col: 1, db: payment_date, type: date}
+      - {col: 2, db: contractor_name}
+      - {col: 3, db: amount}
+      - {col: 4, db: mode_reference}
+      - {col: 5, db: remarks}
+
+  - key: CLIENTS
+    sheet_name: "Clients"
+    data_start_row: 2
+    kind: flat
+    table: erp.clients
+    has_soft_delete: true
+    order_by: id
+    columns:
+      - {col: 1, db: client_name}
+      - {col: 2, db: contact}
+      - {col: 3, db: address}
+      - {col: 4, db: gstin}
+      - {col: 5, db: remarks}
+
+  - key: RATE_HISTORY
+    sheet_name: "Rate History"
+    data_start_row: 2
+    kind: flat
+    table: erp.rate_history
+    has_soft_delete: false
+    order_by: id
+    columns:
+      - {col: 1, db: rate_date, type: date}
+      - {col: 2, db: item_name}
+      - {col: 3, db: size}
+      - {col: 4, db: narration}
+      - {col: 5, db: vendor_name}
+      - {col: 6, db: rate}
+      - {col: 7, db: po_number}
+      - {col: 8, db: bill_number}
+
+  # ── Items Master (dynamic vendor pairs) + Stock (reused live formula) ────
+
+  - key: ITEMS
+    sheet_name: "Items Master"
+    data_start_row: 2
+    kind: dynamic_pairs
+    table: erp.items
+    has_soft_delete: true
+    order_by: id
+    columns:
+      - {col: 1, db: item_name}
+      - {col: 2, db: size}
+      - {col: 3, db: remarks}
+      - {col: 4, db: narration}
+      - {col: 5, db: specification}
+      - {col: 6, db: base_unit}
+      - {col: 7, db: purchase_unit}
+      - {col: 8, db: weight_per_base_unit}
+    vendor_pairs:
+      start_col: 9
+      table: erp.item_vendors
+      parent_fk: item_id
+      order_by: id
+      vendor_db: vendor
+      rate_db: rate
+
+  - key: STOCK
+    sheet_name: "Stock"
+    data_start_row: 2
+    kind: stock
+    table: erp.stock
+    has_soft_delete: true
+    order_by: id DESC   # matches stock_service.get_stock_data()'s own order
+    columns:
+      - {col: 1, db: item_name}
+      - {col: 2, db: size}
+      - {col: 3, db: initial_stock}
+      # col 4 currentStock: from stock_service.get_stock_data(), not a
+      # plain column -- see `kind: stock` handling in the writer.
+      - {col: 5, db: threshold}
+      - {col: 6, db: dead_stock}
+
+  # ── Process Master + its child sheets ────────────────────────────────────
+
+  - key: PROCESS_MASTER
+    sheet_name: "Process Master"
+    data_start_row: 2
+    kind: flat
+    table: erp.process_master
+    has_soft_delete: true
+    order_by: id
+    columns:
+      - {col: 1, db: process_id}
+      - {col: 2, db: process_name}
+      - {col: 3, db: sequence}
+      - {col: 4, db: lot_prefix}
+      - {col: 5, db: is_final_stage}
+      - {col: 6, db: active}
+      - {col: 7, db: remarks}
+      - {col: 8, db: output_item_name}
+      - {col: 9, db: process_type}
+      - {col: 10, db: primary_color_axis}
+      - {col: 11, db: dispatch_differentiator}
+
+  - key: PROCESS_COMPONENTS
+    sheet_name: "Process Components"
+    data_start_row: 2
+    kind: flat
+    has_soft_delete: false
+    order_by: c.id
+    # col 1 is the parent Process Master's business-key process_id, not
+    # process_components.master_id (a surrogate FK) -- resolve via join.
+    query: >
+      SELECT pm.process_id, c.item_name, c.size, c.narration, c.qty_per_unit,
+             c.remarks, c.source_type, c.color_group, c.color_axis, c.unit,
+             c.id
+      FROM erp.process_components c
+      JOIN erp.process_master pm ON pm.id = c.master_id
+      ORDER BY c.id
+    columns:
+      - {col: 1, db: process_id}
+      - {col: 2, db: item_name}
+      - {col: 3, db: size}
+      - {col: 4, db: narration}
+      - {col: 5, db: qty_per_unit}
+      - {col: 6, db: remarks}
+      - {col: 7, db: source_type}
+      - {col: 8, db: color_group}
+      - {col: 9, db: color_axis}
+      - {col: 10, db: unit}
+
+  - key: PROCESS_COLOR_LINKS
+    sheet_name: "Process Color Links"
+    data_start_row: 2
+    kind: flat
+    has_soft_delete: false
+    order_by: l.id
+    # process_a_id/process_b_id are surrogate FKs in Postgres; the sheet
+    # needs the Process Master business-key process_id text on both sides.
+    query: >
+      SELECT pa.process_id AS process_a_id, l.color_a,
+             pb.process_id AS process_b_id, l.color_b,
+             l.axis_a_key, l.axis_b_key, l.id
+      FROM erp.process_color_links l
+      JOIN erp.process_master pa ON pa.id = l.process_a_id
+      JOIN erp.process_master pb ON pb.id = l.process_b_id
+      ORDER BY l.id
+    columns:
+      - {col: 1, db: process_a_id}
+      - {col: 2, db: color_a}
+      - {col: 3, db: process_b_id}
+      - {col: 4, db: color_b}
+      - {col: 5, db: axis_a_key}
+      - {col: 6, db: axis_b_key}
+
+  - key: PROCESS_COLOR_OVERRIDES
+    sheet_name: "Process Color Overrides"
+    data_start_row: 2
+    kind: flat
+    table: erp.process_color_overrides
+    has_soft_delete: false
+    order_by: id
+    columns:
+      - {col: 1, db: process_id}
+      - {col: 2, db: color}
+      - {col: 3, db: action}
+
+  # ── Warehouse Pool: both Opening (real entries) and Pool (materialized
+  #    cache, already kept live-updated by warehouse_service._recalculate_
+  #    warehouse_pool -- mirrored directly, no GAS-side recompute trigger
+  #    needed) ─────────────────────────────────────────────────────────────
+
+  - key: WAREHOUSE_POOL_OPENING
+    sheet_name: "Warehouse Pool Opening"
+    data_start_row: 2
+    kind: flat
+    table: erp.warehouse_pool_opening
+    has_soft_delete: false
+    order_by: id
+    columns:
+      - {col: 1, db: output_item_name}
+      - {col: 2, db: process_id}
+      - {col: 3, db: product_tag}
+      - {col: 4, db: color}
+      - {col: 5, db: qty}
+      - {col: 6, db: opening_date, type: date}
+      - {col: 7, db: remarks}
+
+  - key: WAREHOUSE_POOL
+    sheet_name: "Warehouse Pool"
+    data_start_row: 2
+    kind: flat
+    table: erp.warehouse_pool
+    has_soft_delete: false
+    order_by: id
+    columns:
+      - {col: 1, db: output_item_name}
+      - {col: 2, db: process_id}
+      - {col: 3, db: product_tag}
+      - {col: 4, db: produced_qty}
+      - {col: 5, db: consumed_qty}
+      - {col: 6, db: available_qty}
+      - {col: 7, db: color}
+
+  # ── Header + lines ledgers ────────────────────────────────────────────────
+
+  - key: PO
+    sheet_name: "PO Tracker"
+    data_start_row: 3   # 2-row header block -- the one exception
+    kind: header_lines
+    header_table: erp.po_headers
+    lines_table: erp.po_lines
+    parent_fk: header_id
+    has_soft_delete: true   # on header only
+    group_order_by: header.id
+    line_order_by: line.id
+    header_columns:
+      - {col: 1, db: po_number}
+      - {col: 2, db: po_date, type: date}
+      - {col: 3, db: vendor}
+      - {col: 4, db: contact}
+      - {col: 10, db: po_description}
+      - {col: 11, db: po_remarks}
+      - {col: 15, db: supplier_remarks}
+    line_columns:
+      - {col: 5, db: item_name}
+      - {col: 6, db: narration}
+      - {col: 7, db: size}
+      - {col: 8, db: qty}
+      - {col: 9, db: unit}
+      - {col: 12, db: price}
+      - {col: 16, db: base_qty}
+      - {col: 17, db: base_rate}
+    computed:
+      - {col: 13, fn: line_total}            # qty * price
+      - {col: 14, fn: po_header_total_qty}    # SUM(qty) over the header group
+
+  - key: BILL
+    sheet_name: "Bill Ledger"
+    data_start_row: 2
+    kind: header_lines
+    header_table: erp.bill_headers
+    lines_table: erp.bill_lines
+    parent_fk: header_id
+    has_soft_delete: true
+    group_order_by: header.id
+    line_order_by: line.id
+    header_columns:
+      - {col: 4, db: vendor}
+      - {col: 5, db: contact}
+      - {col: 2, db: bill_number}
+      - {col: 3, db: bill_date, type: date}
+      - {col: 14, db: remarks}
+      - {col: 21, db: issuing_party}
+      - {col: 22, db: manufacturing_vendor}
+    line_columns:
+      - {col: 1, db: po_number}
+      - {col: 6, db: item_name}
+      - {col: 7, db: size}
+      - {col: 8, db: narration}
+      - {col: 9, db: qty}
+      - {col: 10, db: unit}
+      - {col: 11, db: price}
+      - {col: 12, db: gst_rate_pct}
+      - {col: 15, db: base_qty}
+      - {col: 16, db: base_rate}
+      - {col: 17, db: affects_stock}
+      - {col: 18, db: bill_type}
+      - {col: 19, db: process_name}
+      - {col: 20, db: color}
+    computed:
+      - {col: 13, fn: bill_line_total}   # qty * price * (1 + gst/100)
+
+  - key: RETURN
+    sheet_name: "Return Ledger"
+    data_start_row: 2
+    kind: header_lines
+    header_table: erp.return_headers
+    lines_table: erp.return_lines
+    parent_fk: header_id
+    has_soft_delete: true
+    group_order_by: header.id
+    line_order_by: line.id
+    header_columns:
+      - {col: 1, db: return_number}
+      - {col: 2, db: return_date, type: date}
+      - {col: 3, db: vendor}
+      - {col: 4, db: contact}
+      - {col: 5, db: bill_number}
+      - {col: 14, db: remarks}
+    line_columns:
+      - {col: 6, db: item_name}
+      - {col: 7, db: size}
+      - {col: 8, db: narration}
+      - {col: 9, db: qty}
+      - {col: 10, db: unit}
+      - {col: 11, db: price}
+      - {col: 13, db: reason}
+      - {col: 15, db: base_qty}
+      - {col: 16, db: base_rate}
+    computed:
+      - {col: 12, fn: line_total}   # qty * price
+
+  - key: WASTAGE
+    sheet_name: "Wastage Log"
+    data_start_row: 2
+    kind: header_lines
+    header_table: erp.wastage_headers
+    lines_table: erp.wastage_lines
+    parent_fk: header_id
+    has_soft_delete: true
+    group_order_by: header.id
+    line_order_by: line.id
+    header_columns:
+      - {col: 1, db: wastage_id}
+      - {col: 2, db: wastage_date, type: date}
+      - {col: 3, db: vendor}
+      - {col: 9, db: remarks}
+    line_columns:
+      - {col: 4, db: item_name}
+      - {col: 5, db: size}
+      - {col: 6, db: qty}
+      - {col: 7, db: unit}
+      - {col: 8, db: reason}
+      - {col: 10, db: base_qty}
+
+  - key: ISSUE
+    sheet_name: "Issued Stock Log"
+    data_start_row: 2
+    kind: header_lines
+    header_table: erp.issue_headers
+    lines_table: erp.issue_lines
+    parent_fk: header_id
+    has_soft_delete: true
+    group_order_by: header.id
+    line_order_by: line.id
+    header_columns:
+      - {col: 1, db: issue_id}
+      - {col: 2, db: issue_date, type: date}
+      - {col: 3, db: issued_to}
+      - {col: 4, db: reference}
+      - {col: 12, db: vendor}
+      - {col: 9, db: remarks}
+    line_columns:
+      - {col: 5, db: item_name}
+      - {col: 6, db: size}
+      - {col: 7, db: qty}
+      - {col: 8, db: unit}
+      - {col: 10, db: base_qty}
+      - {col: 11, db: rate}
+
+  - key: BOM
+    sheet_name: "BOM"
+    data_start_row: 2
+    kind: header_lines
+    header_table: erp.bom_products
+    lines_table: erp.bom_lines
+    parent_fk: header_id
+    has_soft_delete: true
+    group_order_by: header.id
+    line_order_by: line.id
+    header_columns:
+      - {col: 1, db: product_id}
+      - {col: 2, db: product_name}
+      - {col: 9, db: remarks}
+      - {col: 12, db: sequence}
+    line_columns:
+      - {col: 3, db: item_name}
+      - {col: 4, db: size}
+      - {col: 5, db: narration}
+      - {col: 6, db: rate}
+      - {col: 7, db: vendor}
+      - {col: 8, db: qty_per_product}
+      - {col: 10, db: process_group}
+      - {col: 11, db: color}
+
+  - key: BOM_COSTS
+    sheet_name: "BOM Additional Costs"
+    data_start_row: 2
+    kind: flat
+    has_soft_delete: false
+    order_by: c.id
+    # col 1 is BOM Products' business-key product_id, not
+    # bom_additional_costs.header_id (a surrogate FK) -- resolve via join.
+    query: >
+      SELECT p.product_id, c.description, c.rate, c.process_name,
+             c.contractor_name, c.id
+      FROM erp.bom_additional_costs c
+      JOIN erp.bom_products p ON p.id = c.header_id
+      ORDER BY c.id
+    columns:
+      - {col: 1, db: product_id}
+      - {col: 2, db: description}
+      - {col: 3, db: rate}
+      - {col: 4, db: process_name}
+      - {col: 5, db: contractor_name}
+
+  - key: CLIENT_ORDERS
+    sheet_name: "Client Orders"
+    data_start_row: 2
+    kind: header_lines
+    header_table: erp.client_orders_headers
+    lines_table: erp.client_orders_lines
+    parent_fk: header_id
+    has_soft_delete: true
+    group_order_by: header.id
+    line_order_by: line.id
+    header_columns:
+      - {col: 1, db: order_number}
+      - {col: 2, db: order_date, type: date}
+      - {col: 3, db: client_name}
+      - {col: 7, db: status}
+      - {col: 8, db: order_remarks}
+    line_columns:
+      - {col: 4, db: product_id}
+      - {col: 5, db: product_name}
+      - {col: 6, db: qty}
+      - {col: 9, db: line_remarks}
+      - {col: 10, db: production_pushed}
+
+  - key: DISPATCH
+    sheet_name: "Dispatch"
+    data_start_row: 2
+    kind: header_lines
+    header_table: erp.dispatch_headers
+    lines_table: erp.dispatch_lines
+    parent_fk: header_id
+    has_soft_delete: true
+    group_order_by: header.id
+    line_order_by: line.id
+    header_columns:
+      - {col: 1, db: dispatch_number}
+      - {col: 2, db: dispatch_date, type: date}
+      - {col: 3, db: order_number}
+      - {col: 4, db: client_name}
+      - {col: 8, db: transport}
+      - {col: 9, db: remarks}
+      - {col: 10, db: invoice_number}
+      - {col: 11, db: private_mark}
+      - {col: 12, db: gr_number}
+      - {col: 13, db: logistics_contractor}
+      - {col: 14, db: logistics_rate}
+    line_columns:
+      - {col: 5, db: product_id}
+      - {col: 6, db: product_name}
+      - {col: 7, db: qty}
+      - {col: 15, db: logistics_cost}
+      - {col: 16, db: rate}
+      - {col: 17, db: amount}
+
+  # ── Production (flat, not header+lines -- one row per lot) ────────────────
+
+  - key: PRODUCTION
+    sheet_name: "Production"
+    data_start_row: 2
+    kind: flat
+    table: erp.production
+    has_soft_delete: true
+    order_by: id
+    columns:
+      - {col: 1, db: production_date, type: date}
+      - {col: 2, db: product_id}
+      - {col: 3, db: product_name}
+      - {col: 4, db: qty}
+      - {col: 5, db: assigned_by}
+      - {col: 6, db: assigned_to}
+      - {col: 7, db: status}
+      - {col: 8, db: remarks}
+      - {col: 9, db: custom_components, type: json}
+      - {col: 10, db: sheet_remarks}
+      - {col: 11, db: process_id}
+      - {col: 12, db: lot_number}
+      # col 13 consumedFromProcessQty: confirmed dead in current GAS code
+      # (module_production.js's ensureProductionProcessColumns is a header-
+      # backfill stub only, never reads/writes row data) -- left blank.
+      - {col: 14, db: contractor_rate}
+      - {col: 15, db: contractor_payable}
+      - {col: 16, db: output_item_name}
+      - {col: 17, db: components_consumed, type: json}
+      - {col: 18, db: color}
+      - {col: 19, db: color_breakdown, type: json}
+      - {col: 20, db: order_number}

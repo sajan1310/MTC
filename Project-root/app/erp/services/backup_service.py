@@ -43,6 +43,8 @@ _LAST_BACKUP_STATUS: Dict[str, Any] = {
     "spreadsheet_id": None,
     "spreadsheet_url": None,
     "local_file": None,
+    "mirror_status": None,
+    "mirror_message": None,
     "nightly_scheduler_active": False,
 }
 
@@ -65,6 +67,16 @@ def _migration_module():
     import backup_db_to_sheets  # type: ignore
 
     return backup_db_to_sheets
+
+
+def _mirror_module():
+    """Imports scripts/migration/mirror_db_to_gas_sheets, adding it to sys.path first."""
+    migration_dir = os.path.abspath(os.path.join(os.path.dirname(__file__), "../../../scripts/migration"))
+    if migration_dir not in sys.path:
+        sys.path.insert(0, migration_dir)
+    import mirror_db_to_gas_sheets  # type: ignore
+
+    return mirror_db_to_gas_sheets
 
 
 def export_local_sql_snapshot(cur, backup_filepath: str) -> None:
@@ -174,9 +186,49 @@ def perform_full_backup() -> Dict[str, Any]:
             sheets_error = str(exc)
             logger.error("[backup_service] Google Sheets backup failed: %s", exc)
 
+    # 3. Mirror into the legacy GAS app's bound spreadsheet, in its original
+    # per-sheet layout, via scripts/migration/mirror_db_to_gas_sheets.py.
+    # Independent of step 2's dated-backup spreadsheet -- a different,
+    # fixed destination -- so it gets its own success/error tracking rather
+    # than overloading spreadsheet_id/spreadsheet_url above.
+    mirror_success = False
+    mirror_error = None
+
+    gas_spreadsheet_id = os.environ.get("GAS_MIRROR_SPREADSHEET_ID")
+
+    if not creds_path or not os.path.exists(creds_path):
+        mirror_error = "GOOGLE_APPLICATION_CREDENTIALS is not configured or file not found."
+        logger.warning("[backup_service] GAS sheet mirror skipped: %s", mirror_error)
+    elif not gas_spreadsheet_id:
+        mirror_error = "GAS_MIRROR_SPREADSHEET_ID is not configured."
+        logger.warning("[backup_service] GAS sheet mirror skipped: %s", mirror_error)
+    else:
+        try:
+            mirror_mod = _mirror_module()
+
+            db_url = Config.DATABASE_URL or (
+                f"postgresql://{Config.DB_USER}:{Config.DB_PASS}@"
+                f"{Config.DB_HOST}:{os.environ.get('DB_PORT', '5432')}/{Config.DB_NAME}"
+            )
+
+            mapping = mirror_mod.load_mapping(mirror_mod.SCRIPT_DIR / "gas_sheet_mapping.yaml")
+            results = mirror_mod.run_mirror(db_url, gas_spreadsheet_id, mapping["sheets"], dry_run=False)
+            failed = [r for r in results if r.status in ("error", "skipped_guard")]
+            if failed:
+                mirror_error = f"{len(failed)}/{len(results)} sheet(s) failed or were guard-skipped"
+                logger.error("[backup_service] GAS sheet mirror partial failure: %s", mirror_error)
+            else:
+                mirror_success = True
+                logger.info("[backup_service] GAS sheet mirror updated %d sheet(s)", len(results))
+
+        except Exception as exc:
+            mirror_error = str(exc)
+            logger.error("[backup_service] GAS sheet mirror failed: %s", exc)
+
     # Build final status summary
-    status_str = "SUCCESS" if (local_success and sheets_success) else ("PARTIAL" if local_success else "FAILED")
-    
+    all_succeeded = local_success and sheets_success and mirror_success
+    status_str = "SUCCESS" if all_succeeded else ("PARTIAL" if local_success else "FAILED")
+
     messages = []
     if local_success:
         messages.append(f"Local DB snapshot created ({os.path.basename(local_backup_file)})")
@@ -188,6 +240,11 @@ def perform_full_backup() -> Dict[str, Any]:
     else:
         messages.append(f"Google Sheets upload: {sheets_error}")
 
+    if mirror_success:
+        messages.append("GAS app spreadsheet mirrored successfully.")
+    else:
+        messages.append(f"GAS sheet mirror: {mirror_error}")
+
     full_message = ". ".join(messages)
 
     result_data = {
@@ -197,6 +254,8 @@ def perform_full_backup() -> Dict[str, Any]:
         "spreadsheet_id": spreadsheet_id,
         "spreadsheet_url": spreadsheet_url,
         "local_file": local_backup_file,
+        "mirror_status": "SUCCESS" if mirror_success else "FAILED",
+        "mirror_message": "GAS app spreadsheet mirrored successfully." if mirror_success else mirror_error,
     }
 
     with _STATUS_LOCK:

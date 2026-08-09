@@ -24,7 +24,6 @@ from __future__ import annotations
 
 import argparse
 import datetime
-import decimal
 import os
 import sys
 
@@ -40,11 +39,26 @@ except ImportError:
 
 
 # Every erp.* table worth backing up. Deliberately excludes:
-#   - erp.migrations_applied, erp.bom_access_tokens (internal/runtime state)
+#   - erp.migrations_applied, erp.bom_access_tokens, erp.rpc_mutations
+#     (internal/runtime state -- the last is a replay-idempotency cache for
+#     mutating RPC calls, not business data worth restoring)
+#   - erp.dispatch_legacy: the pre-023 flat dispatch table, renamed (never
+#     dropped) as a one-time safety net by 023_dispatch_header_lines.sql's
+#     migration DO block. It only exists on databases that had an
+#     erp.dispatch table at the moment 023 ran -- a fresh/newer-provisioned
+#     DB never creates it, so `SELECT *` against it would raise
+#     UndefinedTable and abort the whole run. Its rows are frozen duplicates
+#     already carried forward into erp.dispatch_headers/erp.dispatch_lines,
+#     so nothing is actually lost by leaving it out.
 #   - Nothing else is excluded -- unlike the Sheets->PG migration (which
 #     skips computed caches on the READ side), a backup should capture
 #     Postgres's actual current state including materialized tables like
 #     erp.warehouse_pool, so a restore has everything.
+#
+# Keep this list in sync with migrations/erp/*.sql -- it's a plain Python
+# list, not derived from information_schema, so a new CREATE TABLE there
+# needs a corresponding entry here or its data silently never gets backed
+# up (nothing errors; the table is just absent from the backup spreadsheet).
 TABLES = [
     "erp.units", "erp.color_master", "erp.model_master", "erp.process_type_master",
     "erp.vendors", "erp.contractors", "erp.contractor_rates", "erp.contractor_payments",
@@ -57,8 +71,8 @@ TABLES = [
     "erp.issue_headers", "erp.issue_lines", "erp.bom_products", "erp.bom_lines",
     "erp.bom_additional_costs", "erp.client_orders_headers",
     "erp.client_orders_lines", "erp.production",
-    "erp.dispatch_headers", "erp.dispatch_lines",
-    "erp.company_settings", "erp.ledger_audit_log",
+    "erp.dispatch_headers", "erp.dispatch_lines", "erp.dispatch_plan_lines",
+    "erp.company_settings", "erp.ledger_audit_log", "erp.app_settings",
 ]
 
 
@@ -71,22 +85,10 @@ def fetch_table_rows(cur, table: str) -> tuple[list[str], list[list]]:
     return columns, rows
 
 
-def _cell(value):
-    """Sheets API wants JSON-serializable scalars; stringify anything else
-    (dates, JSONB dicts/lists, Decimal) so the write doesn't choke."""
-    if value is None:
-        return ""
-    if isinstance(value, (datetime.date, datetime.datetime)):
-        return value.isoformat()
-    if isinstance(value, (dict, list)):
-        import json
-
-        return json.dumps(value, default=str)
-    if isinstance(value, decimal.Decimal):
-        return float(value)
-    if isinstance(value, (int, float, str, bool)):
-        return value
-    return str(value)
+# Alias, not a re-implementation: the actual coercion logic lives in
+# sheets_client.to_cell_value so every script in this directory that writes
+# Postgres data into Sheets shares one implementation instead of drifting.
+_cell = sheets_client.to_cell_value
 
 
 

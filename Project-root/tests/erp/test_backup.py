@@ -4,6 +4,7 @@ import os
 import unittest
 from unittest.mock import MagicMock, patch
 
+import database
 from app.erp.services import backup_service
 
 
@@ -18,6 +19,8 @@ class TestBackupService(unittest.TestCase):
                 "spreadsheet_id": None,
                 "spreadsheet_url": None,
                 "local_file": None,
+                "mirror_status": None,
+                "mirror_message": None,
                 "nightly_scheduler_active": False,
             })
 
@@ -72,6 +75,42 @@ class TestBackupService(unittest.TestCase):
         self.assertTrue(res["success"])
         self.assertIn("status", res["data"])
         self.assertIn("nightly_scheduler_active", res["data"])
+
+
+# Tables that legitimately have no backup_db_to_sheets.TABLES entry -- keep
+# in sync with the exclusion comment above that list.
+_KNOWN_EXCLUDED_FROM_BACKUP = {
+    "erp.migrations_applied",
+    "erp.bom_access_tokens",
+    "erp.rpc_mutations",  # replay-idempotency cache, not business data
+    "erp.dispatch_legacy",  # only exists on some databases, see comment
+}
+
+
+def test_backup_tables_list_covers_every_erp_table(app):
+    """Regression test for the 2026-08-09 gap where erp.dispatch_plan_lines
+    and erp.app_settings existed in the schema but were never added to
+    backup_db_to_sheets.TABLES, so their data silently never made it into
+    nightly backups (no error -- the table was just absent from the sheet).
+    """
+    backup_mod = backup_service._migration_module()
+
+    with app.app_context():
+        with database.get_conn() as (_conn, cur):
+            cur.execute(
+                "SELECT table_name FROM information_schema.tables "
+                "WHERE table_schema = 'erp' AND table_type = 'BASE TABLE'"
+            )
+            actual = {f"erp.{row[0]}" for row in cur.fetchall()}
+
+    listed = set(backup_mod.TABLES)
+    missing = actual - listed - _KNOWN_EXCLUDED_FROM_BACKUP
+
+    assert not missing, (
+        f"erp table(s) missing from backup_db_to_sheets.TABLES: {sorted(missing)}. "
+        "Add them there (or to _KNOWN_EXCLUDED_FROM_BACKUP here with a reason) "
+        "so nightly backups don't silently skip their data."
+    )
 
 
 if __name__ == "__main__":

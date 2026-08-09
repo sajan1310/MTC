@@ -9,6 +9,8 @@ enabled if backup_db_to_sheets.py is creating new spreadsheets.
 
 from __future__ import annotations
 
+import datetime
+import decimal
 import os
 import time
 
@@ -72,6 +74,28 @@ def with_retry(fn, *, attempts=6, base_delay=1.5):
         time.sleep(base_delay * (2**attempt))
     assert last_exc is not None
     raise last_exc
+
+
+def to_cell_value(value):
+    """Coerce a Postgres row value into something the Sheets API will accept
+    JSON-serialize cleanly: None -> '', dates/datetimes -> ISO string,
+    dict/list (JSONB) -> JSON string, Decimal -> float, everything else
+    passed through as-is. Shared by every script in this directory that
+    writes Postgres data into Sheets, so there's one coercion implementation
+    instead of several that can quietly drift apart."""
+    if value is None:
+        return ""
+    if isinstance(value, (datetime.date, datetime.datetime)):
+        return value.isoformat()
+    if isinstance(value, (dict, list)):
+        import json
+
+        return json.dumps(value, default=str)
+    if isinstance(value, decimal.Decimal):
+        return float(value)
+    if isinstance(value, (int, float, str, bool)):
+        return value
+    return str(value)
 
 
 def fetch_sheet_values(client, spreadsheet_id: str, sheet_name: str) -> list[list[str]]:
@@ -138,6 +162,57 @@ def clear_values(client, spreadsheet_id: str, sheet_name: str):
         .clear(spreadsheetId=spreadsheet_id, range=f"'{sheet_name}'")
         .execute()
     )
+
+
+def clear_values_from_row(client, spreadsheet_id: str, sheet_name: str, start_row: int):
+    """Clear values from `start_row` (1-indexed) to the end of the tab,
+    leaving any header rows above it untouched. Unlike `clear_values`
+    (which wipes the whole tab, headers included), this is for tabs whose
+    header row(s) belong to a destination the caller doesn't own/create --
+    e.g. mirroring into a spreadsheet another app's code already reads a
+    fixed header layout from."""
+    with_retry(
+        lambda: client.spreadsheets()
+        .values()
+        .clear(spreadsheetId=spreadsheet_id, range=f"'{sheet_name}'!A{start_row}:ZZ")
+        .execute()
+    )
+
+
+def write_values_from_row(
+    client, spreadsheet_id: str, sheet_name: str, rows: list[list], start_row: int, fresh: bool = False
+):
+    """Like `write_values`, but anchored at `A{start_row}` instead of `A1`,
+    and clears only from `start_row` onward (via `clear_values_from_row`)
+    instead of the whole tab -- so existing header row(s) above `start_row`
+    are preserved untouched."""
+    if not rows:
+        return
+
+    required_rows = start_row - 1 + len(rows)
+    required_cols = max(len(r) for r in rows) if rows else 1
+    ensure_grid_size(client, spreadsheet_id, sheet_name, required_rows, required_cols)
+    if not fresh:
+        clear_values_from_row(client, spreadsheet_id, sheet_name, start_row)
+
+    chunk_size = 5000  # rows per request
+
+    for start in range(0, len(rows), chunk_size):
+        chunk = rows[start : start + chunk_size]
+        if not chunk:
+            continue
+        body = {"values": chunk}
+        with_retry(
+            lambda: client.spreadsheets()
+            .values()
+            .update(
+                spreadsheetId=spreadsheet_id,
+                range=f"'{sheet_name}'!A{start_row + start}",
+                valueInputOption="RAW",
+                body=body,
+            )
+            .execute()
+        )
 
 
 def write_values(client, spreadsheet_id: str, sheet_name: str, rows: list[list], fresh: bool = False):
