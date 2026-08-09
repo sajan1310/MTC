@@ -3347,6 +3347,7 @@
   font-size: 12px;
   font-weight: 700;
   text-align: center;
+  appearance: textfield;
   -moz-appearance: textfield;
 }
 .pb-card-line-qty::-webkit-inner-spin-button,
