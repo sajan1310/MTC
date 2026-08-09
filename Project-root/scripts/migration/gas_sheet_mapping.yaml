@@ -347,6 +347,7 @@ sheets:
     kind: flat
     table: erp.process_color_overrides
     has_soft_delete: false
+    skip_guard: true  # small curated set, legitimate large shrinks are normal
     order_by: id
     columns:
       - {col: 1, db: process_id}

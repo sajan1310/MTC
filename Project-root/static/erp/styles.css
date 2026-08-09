@@ -3208,10 +3208,10 @@
   border: 1px solid var(--border-color);
   border-radius: var(--border-radius);
   box-shadow: var(--shadow-sm);
-  padding: 12px;
+  padding: 14px;
   display: flex;
   flex-direction: column;
-  gap: 8px;
+  gap: 10px;
   transition: box-shadow 150ms ease;
 }
 
@@ -3225,7 +3225,7 @@
 .pb-card-title {
   font-weight: 700;
   color: var(--text-primary);
-  font-size: 14px;
+  font-size: 15px;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
@@ -3287,17 +3287,18 @@
 .pb-card-lines {
   display: flex;
   flex-direction: column;
-  gap: 6px;
+  gap: 8px;
   min-height: 40px;
 }
 
 .pb-card-line {
   display: flex;
   flex-direction: column;
-  gap: 4px;
-  padding: 6px 8px;
+  gap: 6px;
+  padding: 8px 10px;
   background: var(--bg-muted);
   border: 1px solid var(--border-light);
+  border-left: 3px solid var(--primary-color);
   border-radius: var(--border-radius-sm);
   animation: pb-line-in 180ms ease;
 }
@@ -3309,9 +3310,15 @@
 
 .pb-card-line-fulfilled {
   opacity: 0.6;
+  border-left-color: var(--success-color);
 }
 
-.pb-card-line-top,
+.pb-card-line-top {
+  display: flex;
+  align-items: flex-start;
+  gap: 8px;
+}
+
 .pb-card-line-bottom {
   display: flex;
   align-items: center;
@@ -3321,14 +3328,33 @@
 .pb-card-line-label {
   flex: 1 1 auto;
   min-width: 0;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-  font-size: 12px;
+  font-size: 13px;
+  line-height: 1.4;
   color: var(--text-primary);
+  font-weight: 500;
+  /* Allow wrapping so long product names are fully visible */
+  word-break: break-word;
 }
 
-.pb-card-line-qty,
+.pb-card-line-qty {
+  width: 52px;
+  flex: 0 0 auto;
+  padding: 2px 8px;
+  border: none;
+  border-radius: 10px;
+  background: var(--primary-color);
+  color: #fff;
+  font-size: 12px;
+  font-weight: 700;
+  text-align: center;
+  -moz-appearance: textfield;
+}
+.pb-card-line-qty::-webkit-inner-spin-button,
+.pb-card-line-qty::-webkit-outer-spin-button {
+  -webkit-appearance: none;
+  margin: 0;
+}
+
 .pb-card-line-rate {
   width: 64px;
   flex: 0 0 auto;

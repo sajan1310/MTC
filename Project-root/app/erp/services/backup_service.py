@@ -194,7 +194,7 @@ def perform_full_backup() -> Dict[str, Any]:
     mirror_success = False
     mirror_error = None
 
-    gas_spreadsheet_id = os.environ.get("GAS_MIRROR_SPREADSHEET_ID")
+    gas_spreadsheet_id = os.environ.get("GAS_MIRROR_SPREADSHEET_ID") or os.environ.get("BACKUP_SPREADSHEET_ID")
 
     if not creds_path or not os.path.exists(creds_path):
         mirror_error = "GOOGLE_APPLICATION_CREDENTIALS is not configured or file not found."

@@ -76,8 +76,31 @@ TABLES = [
 ]
 
 
+def _get_pk_columns(cur, table: str) -> list[str]:
+    """Return the primary-key column(s) for *table* (schema-qualified)."""
+    schema, tbl = table.split(".", 1)
+    cur.execute(
+        """
+        SELECT a.attname
+          FROM pg_index i
+          JOIN pg_attribute a ON a.attrelid = i.indrelid
+                              AND a.attnum = ANY(i.indkey)
+         WHERE i.indrelid = %s::regclass
+           AND i.indisprimary
+         ORDER BY array_position(i.indkey, a.attnum)
+        """,
+        (table,),
+    )
+    return [r[0] for r in cur.fetchall()]
+
+
 def fetch_table_rows(cur, table: str) -> tuple[list[str], list[list]]:
-    cur.execute(f"SELECT * FROM {table} ORDER BY id")
+    pk_cols = _get_pk_columns(cur, table)
+    if pk_cols:
+        order_clause = "ORDER BY " + ", ".join(pk_cols)
+    else:
+        order_clause = ""
+    cur.execute(f"SELECT * FROM {table} {order_clause}")
     columns = [d[0] for d in cur.description]
     rows = []
     for record in cur.fetchall():

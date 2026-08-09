@@ -363,7 +363,7 @@ def mirror_sheet(conn, sheets, spreadsheet_id: str, entry: dict, dry_run: bool) 
             sheets, spreadsheet_id, entry["sheet_name"], entry["data_start_row"]
         )
 
-        if would_wipe_unsafely(result.old_row_count, result.new_row_count):
+        if not entry.get("skip_guard") and would_wipe_unsafely(result.old_row_count, result.new_row_count):
             result.status = "skipped_guard"
             return result
 
