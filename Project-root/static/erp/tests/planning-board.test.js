@@ -318,6 +318,25 @@ describe('App.PlanningBoard', () => {
     expect(onConvertCard).toHaveBeenCalledWith('Acme');
   });
 
+  test('a card\'s cancel (×) button fires onCancelCard with the card id, regardless of whether it has lines', () => {
+    const onCancelCard = jest.fn();
+    mount(baseConfig({
+      cards: [{ id: 'Acme', title: 'Acme', lines: [] }],
+      onCancelCard,
+    }));
+
+    const btn = document.querySelector('.pb-card-cancel');
+    expect(btn).not.toBeNull();
+    btn.dispatchEvent(new MouseEvent('click', { bubbles: true }));
+
+    expect(onCancelCard).toHaveBeenCalledWith('Acme');
+  });
+
+  test('the cancel button is omitted when the caller does not supply onCancelCard', () => {
+    mount(baseConfig({ cards: [{ id: 'Acme', title: 'Acme', lines: [] }], onCancelCard: undefined }));
+    expect(document.querySelector('.pb-card-cancel')).toBeNull();
+  });
+
   test('a single-item drop (evt.item) reads the pool-item id/qty off the dropped node, calls onDropToCard, and discards the node', async () => {
     const onDropToCard = jest.fn();
     mount(baseConfig({

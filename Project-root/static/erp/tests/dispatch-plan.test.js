@@ -25,9 +25,16 @@ function loadDispatchPlan() {
 
 describe('App.DispatchPlan', () => {
   beforeEach(() => {
-    document.body.innerHTML = '<input type="date" id="dispatchPlanDate"><div id="dispatchPlanRoot"></div>';
+    document.body.innerHTML = '<input type="date" id="dispatchPlanDate"><div id="dispatchPlanRoot">'
+      + '</div><div id="print-bulk-container"><div id="print-bulk-body"></div></div>';
 
     global.tomorrowIso = () => '2026-08-09';
+    // Real (not stubbed) escaping semantics matter here -- _buildPrintHtml's
+    // own correctness (no unescaped client/product names in the printed
+    // HTML) is exactly what a couple of tests below check.
+    global.escapeHtml = value => String(value == null ? '' : value)
+      .replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;')
+      .replace(/"/g, '&quot;').replace(/'/g, '&#39;');
     global.Api = { call: jest.fn(), mutate: jest.fn() };
     global.App = {
       State: {
@@ -35,12 +42,20 @@ describe('App.DispatchPlan', () => {
         globalDispatchPlans: [],
         dispatchPlanDate: '',
       },
-      Utils: { showToast: jest.fn() },
+      // Default: confirms immediately (calls the callback synchronously) --
+      // matches how most tests want to assert the END result of cancelling.
+      // Tests specifically about the prompt itself inspect the mock's own
+      // calls instead.
+      Utils: { showToast: jest.fn(), confirmAction: jest.fn((_message, cb) => cb()), notPortedYet: jest.fn() },
       Dispatch: {
         loadReadyData: jest.fn().mockResolvedValue(undefined),
         openPrefilledDispatchModal: jest.fn(),
       },
       PlanningBoard: { mount: jest.fn() },
+      Print: {
+        trigger: jest.fn(),
+        brandHeaderHtml: jest.fn(() => '<div>BRAND</div>'),
+      },
     };
 
     loadDispatchPlan();
@@ -99,6 +114,19 @@ describe('App.DispatchPlan', () => {
     expect(acme.lines).toHaveLength(2);
     expect(acme.lines.find(l => l.lineId === 2).fulfilled).toBe(true);
     expect(cards.find(c => c.id === 'NewClient').lines).toHaveLength(0);
+  });
+
+  test('_buildCards line label omits the "(productId)" suffix when it duplicates productName (untagged final-stage output)', () => {
+    App.State.dispatchPlanDate = '2026-08-09';
+    App.State.globalDispatchPlans = [
+      { lineId: 1, planDate: '2026-08-09', clientName: 'Acme', productId: 'Same Name', productName: 'Same Name', qty: 3, fulfilled: false },
+      { lineId: 2, planDate: '2026-08-09', clientName: 'Acme', productId: 'P2', productName: 'Widget', qty: 1, fulfilled: false },
+    ];
+
+    const acme = App.DispatchPlan._buildCards().find(c => c.id === 'Acme');
+
+    expect(acme.lines.find(l => l.lineId === 1).label).toBe('Same Name');
+    expect(acme.lines.find(l => l.lineId === 2).label).toBe('Widget (P2)');
   });
 
   test('_handleAddCard only tracks a pending empty card locally -- no save, immediate re-render', () => {
@@ -204,5 +232,137 @@ describe('App.DispatchPlan', () => {
     App.DispatchPlan._handleConvertCard('Nobody');
 
     expect(App.Dispatch.openPrefilledDispatchModal).not.toHaveBeenCalled();
+  });
+
+  test('_handleCancelCard on a pending (unsaved) empty card just drops it locally -- no confirm, no API call', () => {
+    App.DispatchPlan._pendingEmptyCards.add('DraftClient');
+
+    App.DispatchPlan._handleCancelCard('DraftClient');
+
+    expect(App.DispatchPlan._pendingEmptyCards.has('DraftClient')).toBe(false);
+    expect(App.Utils.confirmAction).not.toHaveBeenCalled();
+    expect(Api.mutate).not.toHaveBeenCalled();
+  });
+
+  test('_handleCancelCard on a card whose only lines are already fulfilled also just drops it locally', () => {
+    App.State.dispatchPlanDate = '2026-08-09';
+    App.State.globalDispatchPlans = [
+      { lineId: 1, planDate: '2026-08-09', clientName: 'Acme', productId: 'P1', productName: 'Widget', qty: 3, fulfilled: true },
+    ];
+
+    App.DispatchPlan._handleCancelCard('Acme');
+
+    expect(App.Utils.confirmAction).not.toHaveBeenCalled();
+    expect(Api.mutate).not.toHaveBeenCalled();
+  });
+
+  test('_handleCancelCard on a card with open lines confirms, then deletes only the non-fulfilled lines and reloads', async () => {
+    App.State.dispatchPlanDate = '2026-08-09';
+    App.State.globalDispatchPlans = [
+      { lineId: 1, planDate: '2026-08-09', clientName: 'Acme', productId: 'P1', productName: 'Widget', qty: 3, fulfilled: false },
+      { lineId: 2, planDate: '2026-08-09', clientName: 'Acme', productId: 'P2', productName: 'Gadget', qty: 1, fulfilled: true },
+      { lineId: 3, planDate: '2026-08-09', clientName: 'OtherClient', productId: 'P1', productName: 'Widget', qty: 9, fulfilled: false },
+    ];
+    Api.mutate.mockResolvedValue({ success: true, data: null });
+
+    App.DispatchPlan._handleCancelCard('Acme');
+    // confirmAction's mock invokes its callback synchronously, but the
+    // callback itself is async -- _handleCancelCard doesn't return that
+    // promise (real confirmAction couldn't either, it resolves on a later
+    // button click), so await it via what the mock itself returned instead
+    // of guessing how many microtask hops to flush.
+    await App.Utils.confirmAction.mock.results[0].value;
+
+    expect(App.Utils.confirmAction).toHaveBeenCalledWith(expect.stringContaining('Acme'), expect.any(Function));
+    expect(App.Utils.confirmAction).toHaveBeenCalledWith(expect.stringContaining('1 item'), expect.any(Function));
+    expect(Api.mutate).toHaveBeenCalledTimes(1);
+    expect(Api.mutate).toHaveBeenCalledWith('deleteDispatchPlanLine', 1);
+    expect(Api.mutate).not.toHaveBeenCalledWith('deleteDispatchPlanLine', 2); // fulfilled -- untouched
+    expect(Api.mutate).not.toHaveBeenCalledWith('deleteDispatchPlanLine', 3); // a different client -- untouched
+    expect(App.Dispatch.loadReadyData).toHaveBeenCalled();
+  });
+
+  test('_handleCancelCard surfaces a failed delete via showToast without throwing', async () => {
+    App.State.dispatchPlanDate = '2026-08-09';
+    App.State.globalDispatchPlans = [
+      { lineId: 1, planDate: '2026-08-09', clientName: 'Acme', productId: 'P1', productName: 'Widget', qty: 3, fulfilled: false },
+    ];
+    Api.mutate.mockResolvedValue({ success: false, message: 'This line has already been dispatched.' });
+
+    App.DispatchPlan._handleCancelCard('Acme');
+    await App.Utils.confirmAction.mock.results[0].value;
+
+    expect(App.Utils.showToast).toHaveBeenCalledWith('This line has already been dispatched.', true);
+  });
+
+  test('printPlan() renders into #print-bulk-body and triggers window.print() via App.Print.trigger', () => {
+    App.State.dispatchPlanDate = '2026-08-09';
+    App.State.globalDispatchPlans = [
+      { lineId: 1, planDate: '2026-08-09', clientName: 'Acme', productId: 'P1', productName: 'Widget', qty: 3, fulfilled: false },
+    ];
+
+    App.DispatchPlan.printPlan();
+
+    const body = document.getElementById('print-bulk-body');
+    expect(body.innerHTML).toContain('Acme');
+    expect(body.innerHTML).toContain('Widget');
+    expect(App.Print.trigger).toHaveBeenCalledWith('print-bulk-container', expect.stringContaining('2026-08-09'));
+  });
+
+  test('printPlan() omits cards with no lines (a pending/empty card) from the printed document', () => {
+    App.State.dispatchPlanDate = '2026-08-09';
+    App.State.globalDispatchPlans = [];
+    App.DispatchPlan._pendingEmptyCards.add('EmptyDraftClient');
+
+    App.DispatchPlan.printPlan();
+
+    const body = document.getElementById('print-bulk-body');
+    expect(body.innerHTML).not.toContain('EmptyDraftClient');
+    expect(body.innerHTML).toContain('No products planned for this date.');
+  });
+
+  test('printPlan() shows a real checkbox-shaped cell for open lines and a "Dispatched" marker for fulfilled ones', () => {
+    App.State.dispatchPlanDate = '2026-08-09';
+    App.State.globalDispatchPlans = [
+      { lineId: 1, planDate: '2026-08-09', clientName: 'Acme', productId: 'P1', productName: 'Open Item', qty: 3, fulfilled: false },
+      { lineId: 2, planDate: '2026-08-09', clientName: 'Acme', productId: 'P2', productName: 'Done Item', qty: 1, fulfilled: true },
+    ];
+
+    App.DispatchPlan.printPlan();
+
+    const html = document.getElementById('print-bulk-body').innerHTML;
+    expect(html).toContain('Dispatched');
+    // The blank "Loaded" checkbox cell for the open line: a bordered box
+    // with no text content -- crude but effective proxy since jsdom's
+    // innerHTML round-trips the inline style attribute verbatim.
+    expect(html).toMatch(/border:1px solid #666/);
+  });
+
+  test('printPlan() HTML-escapes client and product names', () => {
+    App.State.dispatchPlanDate = '2026-08-09';
+    App.State.globalDispatchPlans = [
+      { lineId: 1, planDate: '2026-08-09', clientName: '<script>alert(1)</script>', productId: 'P1', productName: 'A & B "Widget"', qty: 3, fulfilled: false },
+    ];
+
+    App.DispatchPlan.printPlan();
+
+    const html = document.getElementById('print-bulk-body').innerHTML;
+    // The actual XSS-relevant characters (<, >) stay escaped; jsdom's own
+    // innerHTML serializer normalizes &quot;/&#39; back to literal
+    // "/' on readback since neither needs escaping inside text-node
+    // content (only inside attribute values) -- not a bug in escapeHtml.
+    expect(html).not.toContain('<script>alert(1)</script>');
+    expect(html).toContain('&lt;script&gt;');
+    expect(html).toContain('A &amp; B "Widget"');
+  });
+
+  test('printPlan() is a safe no-op (via notPortedYet) if App.Print never loaded', () => {
+    const realPrint = App.Print;
+    App.Print = undefined;
+
+    App.DispatchPlan.printPlan();
+
+    expect(App.Utils.notPortedYet).toHaveBeenCalledWith('Printing');
+    App.Print = realPrint;
   });
 });

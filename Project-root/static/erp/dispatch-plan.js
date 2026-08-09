@@ -83,9 +83,15 @@ App.DispatchPlan = {
       .filter(l => l.planDate === date)
       .forEach(line => {
         if (!byClient.has(line.clientName)) byClient.set(line.clientName, []);
+        // An untagged final-stage output reports its Output Item Name as
+        // BOTH productId and productName (see _buildPool's own identical
+        // check) -- appending "(productId)" would just repeat the name.
+        const label = line.productId === line.productName
+          ? line.productName
+          : `${line.productName} (${line.productId})`;
         byClient.get(line.clientName).push({
           lineId: line.lineId,
-          label: `${line.productName} (${line.productId})`,
+          label,
           qty: line.qty,
           fulfilled: line.fulfilled,
         });
@@ -110,6 +116,7 @@ App.DispatchPlan = {
       onRemoveLine: (lineId) => this._handleRemoveLine(lineId),
       onAddCard: (title) => this._handleAddCard(title),
       onConvertCard: (cardId) => this._handleConvertCard(cardId),
+      onCancelCard: (cardId) => this._handleCancelCard(cardId),
     });
   },
 
@@ -174,8 +181,141 @@ App.DispatchPlan = {
     App.Dispatch.openPrefilledDispatchModal(clientName, modalLines, sourcePlanLineIds);
   },
 
+  // A pending (not-yet-saved) empty card just gets dropped locally -- no
+  // backend state exists for it yet. A real card's still-open lines are
+  // deleted (with confirmation, since this can clear several items at
+  // once); any already-fulfilled lines are left alone -- deleteDispatchPlanLine
+  // rejects those server-side anyway (see dispatch_service.py), and they're
+  // a record of what was actually dispatched, not a draft to discard.
+  _handleCancelCard(clientName) {
+    const date = App.State.dispatchPlanDate;
+    const openLines = (App.State.globalDispatchPlans || [])
+      .filter(l => l.planDate === date && l.clientName === clientName && !l.fulfilled);
+
+    if (!openLines.length) {
+      this._pendingEmptyCards.delete(clientName);
+      this.render();
+      return;
+    }
+
+    App.Utils.confirmAction(
+      `Remove ${clientName}'s plan card? This clears ${openLines.length} item(s) not yet dispatched.`,
+      async () => {
+        const results = await Promise.all(openLines.map(line => Api.mutate('deleteDispatchPlanLine', line.lineId)));
+        const failed = results.find(r => !r.success);
+        if (failed) App.Utils.showToast(failed.message, true);
+        this._pendingEmptyCards.delete(clientName);
+        await this._reload();
+      }
+    );
+  },
+
   async _reload() {
     await Promise.all([this.loadData(), App.Dispatch.loadReadyData()]);
     this.render();
+  },
+
+  // Prints the currently-selected plan date as one consolidated document
+  // (one section per client, not one page per client -- most days have
+  // several small cards, forcing a page break per client would waste
+  // paper). Dispatch Plan has no fixed record shape to pre-declare a
+  // dedicated static container for in print.html (client count and line
+  // count both vary freely, same situation Production's Work Order is in
+  // -- see _buildWorkOrderHtml), so this reuses the shared
+  // #print-bulk-container/#print-bulk-body App.Print already exposes for
+  // exactly this "dynamically-built, no fixed schema" case, but sets its
+  // innerHTML directly instead of going through App.Print.renderBulkPages
+  // (that helper forces a page-break after every record, which is the
+  // wrong shape for one combined document).
+  printPlan() {
+    if (typeof App.Print === 'undefined') {
+      App.Utils.notPortedYet('Printing');
+      return;
+    }
+    const body = document.getElementById('print-bulk-body');
+    if (!body) return;
+
+    const date = App.State.dispatchPlanDate;
+    body.innerHTML = this._buildPrintHtml(date, this._buildCards().filter(c => c.lines.length));
+    App.Print.trigger('print-bulk-container', `Dispatch Plan - ${date}`);
+  },
+
+  // Every text-bearing element below sets its OWN explicit color rather
+  // than relying on inheritance, matching _buildWorkOrderHtml's own
+  // documented reasoning (production.js) even though this specific path
+  // renders into a normally-hidden print.html-style container rather than
+  // a live on-page preview -- App.Print.trigger briefly makes it visible
+  // in the actual browser window (not just the print dialog) between
+  // hideAll() and window.print(), so the same dark-mode-inheritance risk
+  // applies for that brief window too.
+  _buildPrintHtml(dateIso, cards) {
+    const BRAND = '#0D6EFD'; // matches dispatch.js's own Delivery Challan BRAND -- same document family.
+    const [y, m, d] = String(dateIso || '').split('-');
+    const displayDate = (y && m && d) ? `${d}/${m}/${y}` : (dateIso || '');
+
+    const cardsHtml = cards.length
+      ? cards.map(card => `
+        <div style="margin-bottom:16px;page-break-inside:avoid;break-inside:avoid;">
+          <div style="font-size:13px;font-weight:700;color:${BRAND};margin-bottom:6px;padding-bottom:3px;border-bottom:1px solid ${BRAND};-webkit-print-color-adjust:exact;print-color-adjust:exact;">
+            ${escapeHtml(card.title)}
+          </div>
+          <table style="width:100%;border-collapse:collapse;font-size:12px;">
+            <thead style="background-color:${BRAND};color:#fff;text-align:center;font-weight:700;-webkit-print-color-adjust:exact;print-color-adjust:exact;">
+              <tr>
+                <th style="padding:7px 6px;border:1px solid ${BRAND};width:6%;">#</th>
+                <th style="padding:7px 6px;border:1px solid ${BRAND};text-align:left;width:56%;">Product</th>
+                <th style="padding:7px 6px;border:1px solid ${BRAND};width:16%;">Qty</th>
+                <th style="padding:7px 6px;border:1px solid ${BRAND};width:22%;">Loaded</th>
+              </tr>
+            </thead>
+            <tbody style="color:#1a1a1a;text-align:center;">
+              ${card.lines.map((line, idx) => `
+                <tr>
+                  <td style="padding:7px 6px;border:1px solid #e5e5e5;color:#999;font-weight:600;">${idx + 1}</td>
+                  <td style="padding:7px 6px;border:1px solid #e5e5e5;text-align:left;font-weight:600;">${escapeHtml(line.label)}</td>
+                  <td style="padding:7px 6px;border:1px solid #e5e5e5;font-weight:600;">${escapeHtml(String(line.qty))}</td>
+                  <td style="padding:7px 6px;border:1px solid #e5e5e5;">
+                    ${line.fulfilled
+                      ? `<span style="color:#198754;font-weight:700;-webkit-print-color-adjust:exact;print-color-adjust:exact;">Dispatched</span>`
+                      : `<span style="display:inline-block;width:14px;height:14px;border:1px solid #666;"></span>`}
+                  </td>
+                </tr>
+              `).join('')}
+            </tbody>
+          </table>
+        </div>
+      `).join('')
+      : `<div style="text-align:center;color:#888;padding:30px 0;">No products planned for this date.</div>`;
+
+    return `
+    <div style="background:#fff;color:#1a1a1a;font-family:'Segoe UI',Arial,sans-serif;font-size:12px;line-height:1.5;padding:14px 20px 12px 20px;margin:0;box-sizing:border-box;width:100%;border-top:5px solid ${BRAND};border-bottom:3px solid ${BRAND};-webkit-print-color-adjust:exact;print-color-adjust:exact;">
+      <div style="text-align:center;padding:4px 0 8px 0;">
+        ${App.Print.brandHeaderHtml(BRAND)}
+        <div style="font-size:10px;color:#555;margin-top:3px;letter-spacing:0.3px;">
+          6-B, SHIV SHAKTI ESTATE, VERKA CHOWK, DEHLON ROAD, BHAGWANPURA, 141114 LUDHIANA
+        </div>
+        <div style="font-size:10px;color:#555;margin-top:2px;letter-spacing:0.3px;">
+          Ph : 86996-42398, 91546-94000, 94170-42398 &nbsp;|&nbsp; E-mail : maharaja.bikes@gmail.com
+          &nbsp;&nbsp; GSTIN : 03AFIPS4089J1Z1
+        </div>
+      </div>
+      <div style="height:2px;background:${BRAND};margin:0 0 12px 0;-webkit-print-color-adjust:exact;print-color-adjust:exact;"></div>
+
+      <div style="text-align:center;margin-bottom:14px;">
+        <span style="font-size:18px;font-weight:800;color:${BRAND};letter-spacing:3px;text-transform:uppercase;-webkit-print-color-adjust:exact;print-color-adjust:exact;">
+          Dispatch Plan
+        </span>
+        <div style="font-size:13px;font-weight:700;color:#1a1a1a;margin-top:4px;">${escapeHtml(displayDate)}</div>
+      </div>
+      <div style="height:1px;background:#bbb;margin-bottom:14px;"></div>
+
+      ${cardsHtml}
+
+      <div style="display:flex;justify-content:flex-end;margin-top:10px;page-break-inside:avoid;break-inside:avoid;">
+        <div style="width:180px;text-align:center;padding-top:5px;border-top:2px solid ${BRAND};-webkit-print-color-adjust:exact;print-color-adjust:exact;">
+          <span style="font-size:10px;color:#666;letter-spacing:0.5px;font-style:italic;">Authorized Signatory</span>
+        </div>
+      </div>
+    </div>`;
   },
 };

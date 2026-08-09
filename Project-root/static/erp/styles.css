@@ -3231,6 +3231,13 @@
   white-space: nowrap;
 }
 
+.pb-card-header-actions {
+  flex: 0 0 auto;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
 .pb-card-action {
   flex: 0 0 auto;
   border: none;
@@ -3241,6 +3248,21 @@
   font-size: 12px;
   padding: 5px 12px;
   cursor: pointer;
+}
+
+.pb-card-cancel {
+  flex: 0 0 auto;
+  border: none;
+  background: transparent;
+  color: var(--text-muted);
+  font-size: 18px;
+  line-height: 1;
+  cursor: pointer;
+  padding: 0 2px;
+}
+
+.pb-card-cancel:hover {
+  color: #dc2626;
 }
 
 .pb-card-lines {

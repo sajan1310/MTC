@@ -20,6 +20,7 @@
 //     config.onRemoveLine(lineId)         -- a card line's remove (x) was clicked
 //     config.onAddCard(title)             -- "+ New Client..." form submitted
 //     config.onConvertCard(cardId)        -- a card's action button was clicked
+//     config.onCancelCard(cardId)         -- a card's own × (cancel/remove) was clicked
 //     config.cardActionLabel (optional, default "Dispatch")
 //
 // SortableJS + a virtual-DOM library is a known-tricky combination:
@@ -213,7 +214,7 @@
     `;
   }
 
-  function Card({ card, onDropToCard, onQtyChange, onRemoveLine, onConvertCard, cardActionLabel }) {
+  function Card({ card, onDropToCard, onQtyChange, onRemoveLine, onConvertCard, onCancelCard, cardActionLabel }) {
     const listRef = useRef(null);
 
     useEffect(() => {
@@ -245,9 +246,15 @@
       <div class="pb-card">
         <div class="pb-card-header">
           <span class="pb-card-title">${card.title}</span>
-          ${card.lines.length && onConvertCard
-            ? html`<button type="button" class="pb-card-action" onClick=${() => onConvertCard(card.id)}>${cardActionLabel || 'Dispatch'}</button>`
-            : null}
+          <div class="pb-card-header-actions">
+            ${card.lines.length && onConvertCard
+              ? html`<button type="button" class="pb-card-action" onClick=${() => onConvertCard(card.id)}>${cardActionLabel || 'Dispatch'}</button>`
+              : null}
+            ${onCancelCard
+              // A literal '×' -- htm does not decode HTML entities (see CardLine's own note above).
+              ? html`<button type="button" class="pb-card-cancel" title="Cancel card" aria-label="Cancel ${card.title}'s card" onClick=${() => onCancelCard(card.id)}>×</button>`
+              : null}
+          </div>
         </div>
         <div class="pb-card-lines" ref=${listRef}>
           ${card.lines.map(line => html`
@@ -282,7 +289,7 @@
   }
 
   function Board(config) {
-    const { pool, cards, onDropToCard, onQtyChange, onRemoveLine, onAddCard, onConvertCard, cardActionLabel, renderNonce } = config;
+    const { pool, cards, onDropToCard, onQtyChange, onRemoveLine, onAddCard, onConvertCard, onCancelCard, cardActionLabel, renderNonce } = config;
     return html`
       <div class="pb-board">
         <div class="pb-pool-panel">
@@ -301,6 +308,7 @@
                 onQtyChange=${onQtyChange}
                 onRemoveLine=${onRemoveLine}
                 onConvertCard=${onConvertCard}
+                onCancelCard=${onCancelCard}
                 cardActionLabel=${cardActionLabel}
               />
             `)}
