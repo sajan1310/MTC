@@ -144,6 +144,7 @@ textarea:focus-visible,
 
 /* ── App shell ───────────────────────────────────────────────────────── */
 #mapp-root {
+  position: relative;
   display: flex;
   flex-direction: column;
   height: 100vh;
@@ -151,15 +152,40 @@ textarea:focus-visible,
   overflow: hidden;
 }
 
+/* On a tablet/desktop-width viewport, frame the app as a phone rather than
+   stretching it edge-to-edge — every tap target and layout number above
+   was tuned for a ~390-430px wide screen. */
+@media (min-width: 640px) {
+  html, body { height: 100%; }
+  body {
+    display: flex;
+    justify-content: center;
+    background: #1b2126;
+  }
+  #mapp-root {
+    width: 100%;
+    max-width: 480px;
+    box-shadow: 0 0 48px rgb(0 0 0 / 35%);
+  }
+  .mb-toast-stack { left: 50%; right: auto; width: calc(480px - var(--mb-sp-4) * 2); max-width: calc(100% - var(--mb-sp-4) * 2); transform: translateX(-50%); }
+}
+
 .mapp-topbar {
-  flex: 0 0 var(--mb-topbar-h);
+  flex: 0 0 calc(var(--mb-topbar-h) + env(safe-area-inset-top));
   display: flex;
   align-items: center;
   gap: var(--mb-sp-3);
-  padding: 0 var(--mb-sp-4);
+  padding: env(safe-area-inset-top) var(--mb-sp-4) 0;
   background: var(--mb-ink);
   color: #fff;
   z-index: 30;
+  transition: box-shadow var(--mb-motion-base);
+}
+
+/* Raised once content has scrolled under it (toggled by mobile.js) — a
+   cheap depth cue that also tells the user the screen is scrollable. */
+.mapp-topbar.mapp-elevated {
+  box-shadow: 0 4px 12px rgb(20 24 28 / 30%);
 }
 
 .mapp-topbar-title {
@@ -193,15 +219,67 @@ textarea:focus-visible,
   -webkit-overflow-scrolling: touch;
   position: relative;
   padding: var(--mb-sp-4) var(--mb-sp-4) calc(var(--mb-sp-8) + env(safe-area-inset-bottom));
+  overscroll-behavior-y: contain;
+}
+
+/* Screen-switch transition (Shell.showTab) — a quick fade+rise so tab
+   changes read as navigation, not a hard content swap. Restarted on every
+   switch via a forced reflow in JS (adding the class a second time in a
+   row wouldn't otherwise replay the animation). */
+@keyframes mapp-screen-in {
+  from { opacity: 0; transform: translateY(8px); }
+  to   { opacity: 1; transform: translateY(0); }
+}
+.mapp-content.mapp-screen-enter { animation: mapp-screen-in var(--mb-motion-base); }
+@media (prefers-reduced-motion: reduce) {
+  .mapp-content.mapp-screen-enter { animation: none; }
+}
+
+/* ── Pull-to-refresh ─────────────────────────────────────────────────── */
+.mb-ptr-indicator {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  height: 0;
+  overflow: hidden;
+  color: var(--mb-steel);
+  margin: 0 calc(var(--mb-sp-4) * -1);
+}
+.mb-ptr-indicator.mb-ptr-animated { transition: height var(--mb-motion-base); }
+.mb-ptr-indicator svg { width: 22px; height: 22px; }
+.mb-ptr-indicator.mb-ptr-ready { color: var(--mb-safety); }
+.mb-ptr-indicator.mb-ptr-spinning svg { animation: mb-ptr-spin 0.7s linear infinite; }
+@keyframes mb-ptr-spin { to { transform: rotate(360deg); } }
+@media (prefers-reduced-motion: reduce) {
+  .mb-ptr-indicator.mb-ptr-spinning svg { animation: none; }
+  .mb-ptr-indicator.mb-ptr-animated { transition: none; }
 }
 
 .mapp-tabbar {
+  position: relative;
   flex: 0 0 auto;
   display: flex;
   background: var(--mb-surface);
   border-top: 1px solid var(--mb-steel-faint);
   padding-bottom: env(safe-area-inset-bottom);
   z-index: 40;
+}
+
+/* Sliding indicator under the active tab — width/position set inline by
+   MApp.Shell.showTab() since it depends on tab count/index, not just CSS. */
+.mapp-tab-indicator {
+  position: absolute;
+  top: 0;
+  left: 0;
+  height: 3px;
+  width: 20%;
+  background: var(--mb-safety);
+  border-radius: 0 0 3px 3px;
+  transition: transform var(--mb-motion-base);
+  pointer-events: none;
+}
+@media (prefers-reduced-motion: reduce) {
+  .mapp-tab-indicator { transition: none; }
 }
 
 .mapp-tab {
@@ -221,10 +299,16 @@ textarea:focus-visible,
   font-weight: 600;
   cursor: pointer;
   padding: var(--mb-sp-1) 0;
+  transition: color var(--mb-motion-fast), transform var(--mb-motion-fast);
 }
-.mapp-tab svg { width: 24px; height: 24px; }
+.mapp-tab svg { width: 24px; height: 24px; transition: transform var(--mb-motion-fast); }
 .mapp-tab.active { color: var(--mb-safety); }
-.mapp-tab:active { background: var(--mb-workshop); }
+.mapp-tab.active svg { transform: translateY(-1px) scale(1.08); }
+.mapp-tab:active { background: var(--mb-workshop); transform: scale(0.94); }
+@media (prefers-reduced-motion: reduce) {
+  .mapp-tab, .mapp-tab svg { transition: none; }
+  .mapp-tab:active { transform: none; }
+}
 
 /* Outbox pending/failed count (Phase 6 Round 3) -- same enamel-red as
    .mb-chip-lowstock, positioned over the tab's own icon. */
@@ -277,8 +361,13 @@ textarea:focus-visible,
   cursor: pointer;
   -webkit-user-select: none;
   user-select: none;
+  transition: transform var(--mb-motion-fast), background var(--mb-motion-fast);
 }
-.mb-card-tappable:active { background: var(--mb-workshop); }
+.mb-card-tappable:active { background: var(--mb-workshop); transform: scale(0.98); }
+@media (prefers-reduced-motion: reduce) {
+  .mb-card-tappable { transition: none; }
+  .mb-card-tappable:active { transform: none; }
+}
 
 .mb-card-row {
   display: flex;
@@ -307,6 +396,43 @@ textarea:focus-visible,
   line-height: 1;
 }
 
+/* ── Home header + quick actions ────────────────────────────────────── */
+.mapp-home-header { margin-bottom: var(--mb-sp-5); }
+.mapp-home-header .mapp-screen-title { margin-bottom: 2px; }
+
+.mb-quick-actions {
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  gap: var(--mb-sp-3);
+  margin-bottom: var(--mb-sp-5);
+}
+
+.mb-quick-action {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: var(--mb-sp-2);
+  min-height: 76px;
+  padding: var(--mb-sp-3) var(--mb-sp-2);
+  border: none;
+  border-radius: var(--mb-radius-md);
+  background: var(--mb-ink);
+  color: #fff;
+  font-size: 12px;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.02em;
+  cursor: pointer;
+  transition: transform var(--mb-motion-fast), background var(--mb-motion-fast);
+}
+.mb-quick-action svg { width: 22px; height: 22px; color: var(--mb-safety); }
+.mb-quick-action:active { background: var(--mb-ink-soft); transform: scale(0.96); }
+@media (prefers-reduced-motion: reduce) {
+  .mb-quick-action { transition: none; }
+  .mb-quick-action:active { transform: none; }
+}
+
 /* ── Stat tiles (Home) ───────────────────────────────────────────────── */
 .mb-stat-grid {
   display: grid;
@@ -315,17 +441,43 @@ textarea:focus-visible,
   margin-bottom: var(--mb-sp-5);
 }
 
+/* Extra horizontal room in the 480px phone frame (see the min-width:640px
+   block above) — 3 tiles read more like a dashboard than 2 tiles + an odd
+   3rd one stretched full-width. Must come after the base rule above:
+   same specificity, so source order is what decides the tie. */
+@media (min-width: 640px) {
+  .mb-stat-grid { grid-template-columns: repeat(3, 1fr); }
+  .mb-stat-grid > .mb-stat-tile[style*="grid-column"] { grid-column: auto !important; }
+}
+
 .mb-stat-tile {
   background: var(--mb-surface);
   border-radius: var(--mb-radius-md);
   box-shadow: var(--mb-shadow-card);
   padding: var(--mb-sp-4);
   border: none;
+  border-left: 3px solid var(--mb-steel-light);
   text-align: left;
   cursor: pointer;
   min-height: var(--mb-tap-min);
+  transition: transform var(--mb-motion-fast), background var(--mb-motion-fast);
 }
-.mb-stat-tile:active { background: var(--mb-workshop); }
+.mb-stat-tile:active { background: var(--mb-workshop); transform: scale(0.98); }
+.mb-stat-tile.mb-accent-safety { border-left-color: var(--mb-safety); }
+.mb-stat-tile.mb-accent-blue { border-left-color: var(--mb-enamel-blue); }
+.mb-stat-tile.mb-accent-red { border-left-color: var(--mb-enamel-red); }
+@media (prefers-reduced-motion: reduce) {
+  .mb-stat-tile { transition: none; }
+  .mb-stat-tile:active { transform: none; }
+}
+
+.mb-stat-tile-top {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--mb-sp-2);
+  margin-bottom: var(--mb-sp-2);
+}
 
 .mb-stat-tile-label {
   font-size: 13px;
@@ -333,8 +485,9 @@ textarea:focus-visible,
   text-transform: uppercase;
   letter-spacing: 0.04em;
   color: var(--mb-steel);
-  margin-bottom: var(--mb-sp-2);
 }
+
+.mb-stat-tile-top svg { width: 18px; height: 18px; color: var(--mb-steel-light); flex-shrink: 0; }
 
 .mb-stat-tile-value {
   font-family: var(--mb-font-display);
@@ -594,15 +747,35 @@ textarea:focus-visible,
   transition: transform var(--mb-motion-sheet);
 }
 .mb-sheet.open { transform: translateY(0); }
+/* Dragged state (MApp.Sheet's swipe-to-dismiss) — JS drives translateY
+   directly via inline style while the finger moves, so the transition
+   above is suspended for the duration of the drag. */
+.mb-sheet.mb-dragging { transition: none; }
 
 .mb-sheet-header {
-  flex: 0 0 var(--mb-topbar-h);
+  position: relative;
+  flex: 0 0 calc(var(--mb-topbar-h) + env(safe-area-inset-top));
   display: flex;
   align-items: center;
   gap: var(--mb-sp-3);
-  padding: 0 var(--mb-sp-2) 0 var(--mb-sp-4);
+  padding: env(safe-area-inset-top) var(--mb-sp-2) 0 var(--mb-sp-4);
   background: var(--mb-ink);
   color: #fff;
+  cursor: grab;
+  touch-action: none;
+}
+
+/* Visual grip cueing that the header can be dragged down to dismiss. */
+.mb-sheet-header::before {
+  content: '';
+  position: absolute;
+  top: calc(6px + env(safe-area-inset-top));
+  left: 50%;
+  transform: translateX(-50%);
+  width: 36px;
+  height: 4px;
+  border-radius: 2px;
+  background: rgb(255 255 255 / 25%);
 }
 
 .mb-sheet-header h2 {
@@ -820,6 +993,39 @@ textarea:focus-visible,
 
 @media (prefers-reduced-motion: reduce) {
   .mb-toast { animation: none; }
+}
+
+/* ── Activity feed (Home) ────────────────────────────────────────────── */
+.mb-activity-row { display: flex; align-items: flex-start; gap: var(--mb-sp-3); }
+.mb-activity-icon {
+  flex: 0 0 36px;
+  width: 36px;
+  height: 36px;
+  border-radius: 50%;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: var(--mb-workshop);
+  color: var(--mb-steel);
+}
+.mb-activity-icon svg { width: 18px; height: 18px; }
+.mb-activity-icon.mb-accent-safety { background: var(--mb-safety-faint); color: var(--mb-safety-dark); }
+.mb-activity-icon.mb-accent-blue { background: var(--mb-enamel-blue-bg); color: var(--mb-enamel-blue); }
+.mb-activity-body { flex: 1 1 auto; min-width: 0; }
+
+/* Staggered entrance for list items — each card's `--i` custom property
+   (set inline by JS) offsets its start so cards cascade in instead of
+   popping together. */
+@keyframes mb-stagger-in {
+  from { opacity: 0; transform: translateY(6px); }
+  to   { opacity: 1; transform: translateY(0); }
+}
+.mb-stagger-in {
+  animation: mb-stagger-in var(--mb-motion-base) both;
+  animation-delay: calc(var(--i, 0) * 40ms);
+}
+@media (prefers-reduced-motion: reduce) {
+  .mb-stagger-in { animation: none; }
 }
 
 /* ── Misc utility ────────────────────────────────────────────────────── */

@@ -164,6 +164,45 @@ def test_build_stock_rows_reuses_service_current_stock():
     assert rows == [["Bolt", "M8", 100, 42, 10, False]]
 
 
+def test_date_columns_collects_flagged_cols_across_column_kinds():
+    entry = {
+        "header_columns": [{"col": 2, "db": "po_date", "type": "date"}, {"col": 3, "db": "vendor"}],
+        "line_columns": [{"col": 5, "db": "item_name"}],
+    }
+    assert mirror.date_columns(entry) == [2]
+
+
+def test_date_columns_empty_when_none_flagged():
+    entry = {"columns": [{"col": 1, "db": "unit_name"}, {"col": 2, "db": "family"}]}
+    assert mirror.date_columns(entry) == []
+
+
+def test_real_mapping_date_columns_match_expected_sheets():
+    """Locks in which sheets/columns the yaml itself flags as dates -- so a
+    future edit that silently drops a `type: date` (undoing the real-date
+    fix) or adds one without wiring a test fails here instead of quietly
+    going back to writing literal-text dates."""
+    mapping = mirror.load_mapping(MAPPING_PATH)
+    expected = {
+        "RATE_HISTORY": [1],
+        "CONTRACTOR_PAYMENTS": [1],
+        "ITEMS": [],
+        "STOCK": [],
+        "PO": [2],
+        "BILL": [3],
+        "RETURN": [2],
+        "WASTAGE": [2],
+        "ISSUE": [2],
+        "CLIENT_ORDERS": [2],
+        "DISPATCH": [2],
+        "WAREHOUSE_POOL_OPENING": [6],
+        "PRODUCTION": [1],
+    }
+    for entry in mapping["sheets"]:
+        if entry["key"] in expected:
+            assert mirror.date_columns(entry) == expected[entry["key"]], entry["key"]
+
+
 # ─────────────────────────────────────────────────────────────────────────
 # Row-count sanity guard
 # ─────────────────────────────────────────────────────────────────────────
@@ -235,6 +274,36 @@ def test_write_values_from_row_noop_on_empty_rows():
     sheets_client.write_values_from_row(client, "SHEET_ID", "Unit Master", [], start_row=2)
     client.spreadsheets.return_value.values.return_value.update.assert_not_called()
     client.spreadsheets.return_value.values.return_value.clear.assert_not_called()
+
+
+def test_write_date_columns_user_entered_targets_only_flagged_columns():
+    client = MagicMock()
+    # DISPATCH-shaped rows: col 1 dispatch_number, col 2 dispatch_date (ISO
+    # text from to_cell_value), col 3 something else entirely.
+    rows = [["DSP-1", "2026-08-09", "Acme"], ["DSP-2", "2026-08-10", "Beta"]]
+    sheets_client.write_date_columns_user_entered(client, "SHEET_ID", "Dispatch", rows, start_row=2, date_cols=[2])
+
+    batch_call = client.spreadsheets.return_value.values.return_value.batchUpdate
+    batch_call.assert_called_once()
+    _, kwargs = batch_call.call_args
+    assert kwargs["spreadsheetId"] == "SHEET_ID"
+    body = kwargs["body"]
+    assert body["valueInputOption"] == "USER_ENTERED"
+    assert body["data"] == [
+        {"range": "'Dispatch'!B2:B3", "values": [["2026-08-09"], ["2026-08-10"]]}
+    ]
+
+
+def test_write_date_columns_user_entered_noop_on_no_date_cols():
+    client = MagicMock()
+    sheets_client.write_date_columns_user_entered(client, "SHEET_ID", "Dispatch", [["a", "b"]], 2, [])
+    client.spreadsheets.return_value.values.return_value.batchUpdate.assert_not_called()
+
+
+def test_col_letter_handles_double_letter_columns():
+    assert sheets_client._col_letter(1) == "A"
+    assert sheets_client._col_letter(26) == "Z"
+    assert sheets_client._col_letter(27) == "AA"
 
 
 def test_to_cell_value_covers_all_types():

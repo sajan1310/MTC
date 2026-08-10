@@ -94,7 +94,9 @@ def _fn_bill_line_total(line: dict, group: list[dict]) -> float:
 
 
 def _fn_po_header_total_qty(line: dict, group: list[dict]) -> float:
-    return round(sum(_num(gl.get("qty")) for gl in group), 2)
+    # Matches module_po.js's _makePoHeader: items.reduce((sum, item) => sum
+    # + item.qty, 0) -- unrounded, unlike line_total/bill_line_total.
+    return sum(_num(gl.get("qty")) for gl in group)
 
 
 COMPUTED_FNS = {
@@ -354,6 +356,22 @@ def build_rows_for_entry(conn, entry: dict) -> list[list]:
     raise ValueError(f"Unknown sheet kind: {kind!r}")
 
 
+def date_columns(entry: dict) -> list[int]:
+    """1-indexed output columns flagged `type: date` in the mapping (across
+    `columns`/`header_columns`/`line_columns` -- whichever the entry's
+    `kind` uses). These need a follow-up USER_ENTERED write (see
+    sheets_client.write_date_columns_user_entered): the main bulk write
+    goes through valueInputOption=RAW, which stores an ISO 'YYYY-MM-DD'
+    string as literal text, not a real Sheets date. GAS's own module_*.js
+    code (e.g. module_dispatch.js's `rawDate instanceof Date ? ... :
+    null`) gates its display formatting AND its `dateRaw` sort key on the
+    cell actually being a Date object -- a literal-text cell reads back as
+    a plain string, silently nulling `dateRaw` and breaking that sheet's
+    date-sort order in the GAS app."""
+    col_defs = [*entry.get("columns", []), *entry.get("header_columns", []), *entry.get("line_columns", [])]
+    return sorted({c["col"] for c in col_defs if c.get("type") == "date"})
+
+
 def mirror_sheet(conn, sheets, spreadsheet_id: str, entry: dict, dry_run: bool) -> SheetMirrorResult:
     result = SheetMirrorResult(entry["key"])
     try:
@@ -375,6 +393,11 @@ def mirror_sheet(conn, sheets, spreadsheet_id: str, entry: dict, dry_run: bool) 
             sheets_client.write_values_from_row(
                 sheets, spreadsheet_id, entry["sheet_name"], new_rows, entry["data_start_row"]
             )
+            cols = date_columns(entry)
+            if cols:
+                sheets_client.write_date_columns_user_entered(
+                    sheets, spreadsheet_id, entry["sheet_name"], new_rows, entry["data_start_row"], cols
+                )
         elif result.old_row_count:
             # write_values_from_row no-ops on an empty list (nothing to
             # size the write range from) -- clear explicitly so a table

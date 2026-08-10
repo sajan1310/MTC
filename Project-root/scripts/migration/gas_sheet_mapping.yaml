@@ -304,6 +304,7 @@ sheets:
              c.id
       FROM erp.process_components c
       JOIN erp.process_master pm ON pm.id = c.master_id
+      WHERE pm.deleted_at IS NULL
       ORDER BY c.id
     columns:
       - {col: 1, db: process_id}
@@ -332,6 +333,7 @@ sheets:
       FROM erp.process_color_links l
       JOIN erp.process_master pa ON pa.id = l.process_a_id
       JOIN erp.process_master pb ON pb.id = l.process_b_id
+      WHERE pa.deleted_at IS NULL AND pb.deleted_at IS NULL
       ORDER BY l.id
     columns:
       - {col: 1, db: process_a_id}
@@ -576,6 +578,7 @@ sheets:
              c.contractor_name, c.id
       FROM erp.bom_additional_costs c
       JOIN erp.bom_products p ON p.id = c.header_id
+      WHERE p.deleted_at IS NULL
       ORDER BY c.id
     columns:
       - {col: 1, db: product_id}

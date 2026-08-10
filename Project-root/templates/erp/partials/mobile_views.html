@@ -51,7 +51,25 @@
      TAB 1 — HOME
      ═══════════════════════════════════════════════════════════════════ -->
 <template id="tpl-home">
-  <h1 class="mapp-screen-title">Today</h1>
+  <div class="mapp-home-header">
+    <h1 class="mapp-screen-title" id="home-greeting">Today</h1>
+    <div class="mb-text-sm mb-text-steel" id="home-date"></div>
+  </div>
+
+  <div class="mb-quick-actions">
+    <button type="button" class="mb-quick-action" onclick="MApp.Production.openLogLotSheet()">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="9"/><path d="M10 8.5v7l6-3.5-6-3.5z"/></svg>
+      <span>Log Lot</span>
+    </button>
+    <button type="button" class="mb-quick-action" onclick="MApp.Dispatch.openNewDispatchSheet()">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="1" y="7" width="14" height="10" rx="1"/><path d="M15 10h4l3 3v4h-7z"/><circle cx="6" cy="19" r="1.6"/><circle cx="17.5" cy="19" r="1.6"/></svg>
+      <span>Dispatch</span>
+    </button>
+    <button type="button" class="mb-quick-action" onclick="MApp.Returns.openNewReturnSheet()">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 7v6h6"/><path d="M3 13a9 9 0 1 0 3-6.7L3 9"/></svg>
+      <span>Return</span>
+    </button>
+  </div>
 
   <div id="home-stats" class="mb-stat-grid">
     <div class="mb-skel mb-skel-tile"></div>
@@ -395,6 +413,102 @@
     </div>
     <div id="directory-list"></div>
   </div>
+  <button type="button" class="mb-fab" id="directory-fab" onclick="MApp.Directory.openForm(null)">
+    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><path d="M12 5v14M5 12h14"/></svg>
+    <span id="directory-fab-label">Add</span>
+  </button>
+</div>
+
+<!-- ═══════════════════════════════════════════════════════════════════
+     SHEET — ENTITY FORM (Phase 1 mobile-parity) — shared Add/Edit form
+     for Vendors/Clients/Contractors, driven by MApp.Directory.CONFIGS
+     the same way sheet-directory's list already is. Body rendered
+     dynamically since the field set differs slightly per type.
+     ═══════════════════════════════════════════════════════════════════ -->
+<div class="mb-sheet" id="sheet-entity-form" role="dialog" aria-modal="true">
+  <div class="mb-sheet-header">
+    <h2 id="entity-form-title">Add</h2>
+    <button type="button" class="mapp-topbar-btn" aria-label="Close" onclick="MApp.Directory.closeForm()">
+      <svg viewBox="0 0 24 24" width="22" height="22" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><path d="M6 6l12 12M18 6L6 18"/></svg>
+    </button>
+  </div>
+  <div class="mb-sheet-body" id="entity-form-body"></div>
+  <div class="mb-sheet-footer" style="display:flex; gap:var(--mb-sp-3);">
+    <button type="button" class="mb-btn mb-btn-danger mb-hidden" id="entity-form-delete-btn" style="flex:0 0 auto; width:auto; padding:0 var(--mb-sp-4);" onclick="MApp.Directory.deleteEntity()">Delete</button>
+    <button type="button" class="mb-btn mb-btn-primary" id="entity-form-save-btn" style="flex:1;" onclick="MApp.Directory.saveEntity()">Save</button>
+  </div>
+</div>
+
+<!-- ═══════════════════════════════════════════════════════════════════
+     SHEET — CONTRACTOR: ADD RATE (Phase 1) — quick-add only, no listing/
+     editing of existing rates on mobile (that stays a desktop task).
+     ═══════════════════════════════════════════════════════════════════ -->
+<div class="mb-sheet" id="sheet-contractor-rate" role="dialog" aria-modal="true">
+  <div class="mb-sheet-header">
+    <h2>Add Rate</h2>
+    <button type="button" class="mapp-topbar-btn" aria-label="Close" onclick="MApp.Directory.closeRateSheet()">
+      <svg viewBox="0 0 24 24" width="22" height="22" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><path d="M6 6l12 12M18 6L6 18"/></svg>
+    </button>
+  </div>
+  <div class="mb-sheet-body">
+    <div class="mb-field">
+      <label>Contractor</label>
+      <input type="text" id="contractor-rate-name" readonly>
+    </div>
+    <div class="mb-field">
+      <label for="contractor-rate-process">Process name</label>
+      <input type="text" id="contractor-rate-process" placeholder="e.g. Powder Coating">
+    </div>
+    <div class="mb-field">
+      <label for="contractor-rate-value">Rate per unit</label>
+      <input type="number" id="contractor-rate-value" inputmode="decimal" step="any">
+    </div>
+    <div class="mb-field">
+      <label for="contractor-rate-remarks">Remarks</label>
+      <textarea id="contractor-rate-remarks" rows="2"></textarea>
+    </div>
+  </div>
+  <div class="mb-sheet-footer">
+    <button type="button" class="mb-btn mb-btn-primary" id="contractor-rate-save-btn" onclick="MApp.Directory.saveRate()">Save Rate</button>
+  </div>
+</div>
+
+<!-- ═══════════════════════════════════════════════════════════════════
+     SHEET — CONTRACTOR: RECORD PAYMENT (Phase 1) — quick-add only, ledger
+     itself (computed balances etc.) stays a desktop-only view for now.
+     ═══════════════════════════════════════════════════════════════════ -->
+<div class="mb-sheet" id="sheet-contractor-payment" role="dialog" aria-modal="true">
+  <div class="mb-sheet-header">
+    <h2>Record Payment</h2>
+    <button type="button" class="mapp-topbar-btn" aria-label="Close" onclick="MApp.Directory.closePaymentSheet()">
+      <svg viewBox="0 0 24 24" width="22" height="22" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><path d="M6 6l12 12M18 6L6 18"/></svg>
+    </button>
+  </div>
+  <div class="mb-sheet-body">
+    <div class="mb-field">
+      <label>Contractor</label>
+      <input type="text" id="contractor-payment-name" readonly>
+    </div>
+    <div class="mb-field">
+      <label for="contractor-payment-date">Date</label>
+      <input type="date" id="contractor-payment-date">
+    </div>
+    <div class="mb-field">
+      <label for="contractor-payment-amount">Amount</label>
+      <input type="number" id="contractor-payment-amount" inputmode="decimal" step="any">
+    </div>
+    <div class="mb-field">
+      <label for="contractor-payment-mode">Mode / Reference</label>
+      <input type="text" id="contractor-payment-mode" placeholder="e.g. UPI, Cheque #1234">
+    </div>
+    <div class="mb-field">
+      <label for="contractor-payment-remarks">Remarks</label>
+      <textarea id="contractor-payment-remarks" rows="2"></textarea>
+    </div>
+  </div>
+  <div class="mb-sheet-footer">
+    <button type="button" class="mb-btn mb-btn-primary" id="contractor-payment-save-btn" onclick="MApp.Directory.savePayment()">Record Payment</button>
+  </div>
 </div>
 
 <!-- ═══════════════════════════════════════════════════════════════════
@@ -413,6 +527,29 @@
       <input type="text" id="items-lookup-search" placeholder="Search item master..." oninput="MApp.Items.onSearch(this.value)" autocomplete="off">
     </div>
     <div id="items-lookup-list"></div>
+  </div>
+  <button type="button" class="mb-fab" onclick="MApp.Items.openForm(null)">
+    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><path d="M12 5v14M5 12h14"/></svg>
+    Add Item
+  </button>
+</div>
+
+<!-- ═══════════════════════════════════════════════════════════════════
+     SHEET — ITEM FORM (Items lookup, Phase 1 mobile-parity) — Add/Edit,
+     body rendered dynamically by MApp.Items._renderForm() since the
+     vendor-rate rows are a variable-length list.
+     ═══════════════════════════════════════════════════════════════════ -->
+<div class="mb-sheet" id="sheet-item-form" role="dialog" aria-modal="true">
+  <div class="mb-sheet-header">
+    <h2 id="item-form-title">Add Item</h2>
+    <button type="button" class="mapp-topbar-btn" aria-label="Close" onclick="MApp.Items.closeForm()">
+      <svg viewBox="0 0 24 24" width="22" height="22" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><path d="M6 6l12 12M18 6L6 18"/></svg>
+    </button>
+  </div>
+  <div class="mb-sheet-body" id="item-form-body"></div>
+  <div class="mb-sheet-footer" style="display:flex; gap:var(--mb-sp-3);">
+    <button type="button" class="mb-btn mb-btn-danger mb-hidden" id="item-form-delete-btn" style="flex:0 0 auto; width:auto; padding:0 var(--mb-sp-4);" onclick="MApp.Items.deleteItem()">Delete</button>
+    <button type="button" class="mb-btn mb-btn-primary" id="item-form-save-btn" style="flex:1;" onclick="MApp.Items.saveItem()">Save</button>
   </div>
 </div>
 

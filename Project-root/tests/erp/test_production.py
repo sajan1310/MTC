@@ -772,6 +772,75 @@ def test_completed_lot_credits_pool_and_debits_stock(erp_client):
     assert stock_match["currentStock"] == 44  # 50 initial - 6 consumed by the Completed lot
 
 
+def test_save_production_merges_duplicate_item_component_lines(erp_client):
+    stock_item = _unique_name("DupStockItem")
+    _rpc(erp_client, "saveItem", [{"itemName": stock_item, "itemInitialStock": 50}], mutation=True)
+
+    _, process_id = _save_process(erp_client)
+
+    resp = _rpc(
+        erp_client,
+        "saveProduction",
+        [
+            {
+                "processId": process_id,
+                "assignedTo": "Worker A",
+                "qty": 10,
+                "status": "Completed",
+                "componentsConsumed": [
+                    {"itemName": stock_item, "qty": 4, "sourceType": "ITEM", "unit": "Pcs"},
+                    {"itemName": stock_item, "qty": 2, "sourceType": "ITEM", "unit": "Pcs"},
+                ],
+            }
+        ],
+        mutation=True,
+    )
+    body = resp.get_json()
+    assert body["success"] is True
+
+    # The two duplicate lines are merged (4 + 2 = 6), not written -- and
+    # therefore consumed -- as two separate entries.
+    assert len(body["data"]["row"]["componentsConsumed"]) == 1
+    assert body["data"]["row"]["componentsConsumed"][0]["qty"] == 6
+
+    stock = _rpc(erp_client, "getStockData").get_json()["data"]
+    stock_match = next(r for r in stock if r["name"] == stock_item)
+    assert stock_match["currentStock"] == 44  # 50 initial - 6 consumed, not 50 - 4 - 2 twice-counted
+
+
+def test_save_production_rejects_same_item_from_both_stock_and_pool(erp_client):
+    shared_name = _unique_name("SharedMaterial")
+    _rpc(erp_client, "saveItem", [{"itemName": shared_name, "itemInitialStock": 50}], mutation=True)
+
+    _, process_id = _save_process(erp_client)
+
+    resp = _rpc(
+        erp_client,
+        "saveProduction",
+        [
+            {
+                "processId": process_id,
+                "assignedTo": "Worker A",
+                "qty": 10,
+                "status": "Completed",
+                "componentsConsumed": [
+                    {"itemName": shared_name, "qty": 6, "sourceType": "ITEM", "unit": "Pcs"},
+                    {"itemName": shared_name, "qty": 6, "sourceType": "POOL"},
+                ],
+            }
+        ],
+        mutation=True,
+    )
+    body = resp.get_json()
+    assert body["success"] is False
+    assert "Stock" in body["message"] and "Warehouse Pool" in body["message"]
+
+    # Nothing was written -- Stock is unaffected by the rejected save.
+    stock = _rpc(erp_client, "getStockData").get_json()["data"]
+    stock_match = next(r for r in stock if r["name"] == shared_name)
+    assert stock_match["currentStock"] == 50
+
+
 def test_uncompleting_lot_reverses_pool_and_stock(erp_client):
     stock_item = _unique_name("ReverseStockItem")
     _rpc(erp_client, "saveItem", [{"itemName": stock_item, "itemInitialStock": 50}], mutation=True)

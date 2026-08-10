@@ -324,16 +324,23 @@ App.DispatchPlan = {
     const cardsHtml = cards.length
       ? cards.map(card => `
         <div style="margin-bottom:16px;page-break-inside:avoid;break-inside:avoid;">
-          <div style="font-size:13px;font-weight:700;color:${BRAND};margin-bottom:6px;padding-bottom:3px;border-bottom:1px solid ${BRAND};-webkit-print-color-adjust:exact;print-color-adjust:exact;">
-            ${escapeHtml(card.title)}
+          <div style="display:flex;justify-content:space-between;align-items:baseline;margin-bottom:6px;padding-bottom:3px;border-bottom:1px solid ${BRAND};">
+            <span style="font-size:13px;font-weight:700;color:${BRAND};-webkit-print-color-adjust:exact;print-color-adjust:exact;">
+              ${escapeHtml(card.title)}
+            </span>
+            ${card.transport
+              ? `<span style="font-size:11px;color:#555;">Transport: <span style="font-weight:700;color:#1a1a1a;">${escapeHtml(card.transport)}</span></span>`
+              : ''}
           </div>
           <table style="width:100%;border-collapse:collapse;font-size:12px;">
             <thead style="background-color:${BRAND};color:#fff;text-align:center;font-weight:700;-webkit-print-color-adjust:exact;print-color-adjust:exact;">
               <tr>
-                <th style="padding:7px 6px;border:1px solid ${BRAND};width:6%;">#</th>
-                <th style="padding:7px 6px;border:1px solid ${BRAND};text-align:left;width:56%;">Product</th>
-                <th style="padding:7px 6px;border:1px solid ${BRAND};width:16%;">Qty</th>
-                <th style="padding:7px 6px;border:1px solid ${BRAND};width:22%;">Loaded</th>
+                <th style="padding:7px 6px;border:1px solid ${BRAND};width:5%;">#</th>
+                <th style="padding:7px 6px;border:1px solid ${BRAND};text-align:left;width:36%;">Product</th>
+                <th style="padding:7px 6px;border:1px solid ${BRAND};width:11%;">Qty</th>
+                <th style="padding:7px 6px;border:1px solid ${BRAND};width:12%;">Rate</th>
+                <th style="padding:7px 6px;border:1px solid ${BRAND};text-align:left;width:22%;">Remarks</th>
+                <th style="padding:7px 6px;border:1px solid ${BRAND};width:14%;">Loaded</th>
               </tr>
             </thead>
             <tbody style="color:#1a1a1a;text-align:center;">
@@ -342,6 +349,8 @@ App.DispatchPlan = {
                   <td style="padding:7px 6px;border:1px solid #e5e5e5;color:#999;font-weight:600;">${idx + 1}</td>
                   <td style="padding:7px 6px;border:1px solid #e5e5e5;text-align:left;font-weight:600;">${escapeHtml(line.label)}</td>
                   <td style="padding:7px 6px;border:1px solid #e5e5e5;font-weight:600;">${escapeHtml(String(line.qty))}</td>
+                  <td style="padding:7px 6px;border:1px solid #e5e5e5;">${line.rate ? escapeHtml(String(line.rate)) : '-'}</td>
+                  <td style="padding:7px 6px;border:1px solid #e5e5e5;text-align:left;">${line.remarks ? escapeHtml(line.remarks) : '-'}</td>
                   <td style="padding:7px 6px;border:1px solid #e5e5e5;">
                     ${line.fulfilled
                       ? `<span style="color:#198754;font-weight:700;-webkit-print-color-adjust:exact;print-color-adjust:exact;">Dispatched</span>`

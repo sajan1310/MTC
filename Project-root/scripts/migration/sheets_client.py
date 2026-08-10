@@ -215,6 +215,61 @@ def write_values_from_row(
         )
 
 
+def _col_letter(n: int) -> str:
+    """1-indexed column number -> A1-style letters (1 -> 'A', 27 -> 'AA')."""
+    letters = ""
+    while n > 0:
+        n, rem = divmod(n - 1, 26)
+        letters = chr(65 + rem) + letters
+    return letters
+
+
+def write_date_columns_user_entered(
+    client, spreadsheet_id: str, sheet_name: str, rows: list[list], start_row: int, date_cols: list[int]
+):
+    """Re-writes just `date_cols` (1-indexed column numbers already present
+    in `rows`, holding to_cell_value()'s ISO 'YYYY-MM-DD' strings) using
+    valueInputOption=USER_ENTERED, so Sheets parses each one into a real
+    date-typed cell instead of leaving literal text behind.
+
+    Why this needs a second, separate write: the bulk row write
+    (write_values_from_row) uses RAW so that ordinary text/number columns
+    -- item codes, phone numbers, anything that happens to look numeric --
+    are stored exactly as given, with no auto-parsing that could mangle
+    them (e.g. a leading zero silently dropped). USER_ENTERED gives that
+    same auto-parsing to every cell in a request, not just date ones, so it
+    can't be used for the whole row -- only for the columns that actually
+    need it.
+
+    ISO 'YYYY-MM-DD' is the one string format safe to hand to
+    USER_ENTERED here: it's unambiguous regardless of the spreadsheet's
+    locale, so it can't trigger the day/month swap utils.js's own
+    _parseDateParts (in the GAS app) guards against for its own DD/MM/YYYY
+    display strings.
+    """
+    if not rows or not date_cols:
+        return
+
+    chunk_size = 5000  # rows per request, matching write_values_from_row
+
+    for chunk_start in range(0, len(rows), chunk_size):
+        chunk = rows[chunk_start : chunk_start + chunk_size]
+        row0 = start_row + chunk_start
+        value_ranges = []
+        for col in date_cols:
+            idx = col - 1
+            col_values = [[row[idx] if idx < len(row) else ""] for row in chunk]
+            letter = _col_letter(col)
+            value_ranges.append({
+                "range": f"'{sheet_name}'!{letter}{row0}:{letter}{row0 + len(chunk) - 1}",
+                "values": col_values,
+            })
+        body = {"valueInputOption": "USER_ENTERED", "data": value_ranges}
+        with_retry(
+            lambda body=body: client.spreadsheets().values().batchUpdate(spreadsheetId=spreadsheet_id, body=body).execute()
+        )
+
+
 def write_values(client, spreadsheet_id: str, sheet_name: str, rows: list[list], fresh: bool = False):
     """Overwrite `sheet_name!A1` onward with `rows`. Chunked to stay under the
     Sheets API's per-request cell-count limits for very large tables.

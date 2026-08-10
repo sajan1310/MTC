@@ -163,6 +163,65 @@ def _with_master_narration(cur, components: list) -> list:
     return components
 
 
+def _consolidate_duplicate_components(components: list) -> list:
+    """Collapses more than one submitted line for the same physical
+    consumption (same itemName+size+colorGroup) into one, instead of
+    writing them as separate array entries that would each independently
+    debit Stock (ITEM) or Warehouse Pool (POOL) for the same material --
+    this is the guard against a lot's own components_consumed silently
+    double-deducting, whatever client-side bug produced the duplicate (a
+    stale row left behind after switching a component's source, a
+    reconstruction bug in the Edit Lot form, a double-submitted add, ...).
+
+    Two lines for the same item+size+colorGroup but DIFFERENT sourceType
+    (one ITEM, one POOL) are refused outright rather than merged -- an
+    ITEM qty and a POOL qty debit two different systems (Stock vs
+    Warehouse Pool), so summing them would silently pick one meaning and
+    discard the other. This is exactly the "changed a component's source
+    from Stock to Warehouse Pool (or back) on an already-completed lot"
+    case: if the old line wasn't actually replaced, both would otherwise
+    fire, deducting the same material from both places for one lot.
+
+    Two lines that agree on sourceType are safe to sum -- same system,
+    same physical meaning, and summing is exactly what a lot that
+    legitimately lists the same item twice (e.g. two recipe rows for one
+    item) already implies.
+    """
+    order: list = []
+    groups: dict = {}
+    for c in components:
+        key = (
+            str(c.get("itemName") or "").strip().lower(),
+            str(c.get("size") or "").strip().lower(),
+            str(c.get("colorGroup") or "").strip().lower(),
+        )
+        if key not in groups:
+            groups[key] = []
+            order.append(key)
+        groups[key].append(c)
+
+    result = []
+    for key in order:
+        entries = groups[key]
+        if len(entries) == 1:
+            result.append(entries[0])
+            continue
+
+        source_types = {e["sourceType"] for e in entries}
+        if len(source_types) > 1:
+            raise ValueError(
+                f'"{entries[0]["itemName"]}" is listed as consumed from both Stock and Warehouse Pool '
+                "in this lot. Remove the duplicate line (keep only the correct source) before saving --"
+                " saving both would deduct this item from both places for the same lot."
+            )
+
+        merged = dict(entries[0])
+        merged["qty"] = sum(e["qty"] for e in entries)
+        result.append(merged)
+
+    return result
+
+
 def _build_pool_needed_map(components: list) -> dict:
     pool_needed: dict = {}
     for c in components or []:
@@ -567,6 +626,8 @@ def save_production(conn, cur, form_data):
             c for c in clean_components
             if process_service._is_common_color_group(c["colorGroup"]) or c["colorGroup"].lower() in breakdown_colors_lower
         ]
+
+    clean_components = _consolidate_duplicate_components(clean_components)
 
     if not clean_components:
         raise ValueError("At least one component consumed is required for this lot.")

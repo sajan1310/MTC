@@ -489,6 +489,36 @@ describe('App.DispatchPlan', () => {
     expect(html).toContain('A &amp; B "Widget"');
   });
 
+  test('printPlan() includes transport, rate and remarks in the printed table', () => {
+    App.State.dispatchPlanDate = '2026-08-09';
+    App.State.globalDispatchPlans = [
+      {
+        lineId: 1, planDate: '2026-08-09', clientName: 'Acme', productId: 'P1', productName: 'Widget',
+        qty: 3, fulfilled: false, rate: 125, remarks: 'Handle with care', transport: 'Tata Ace - PB10AB1234',
+      },
+    ];
+
+    App.DispatchPlan.printPlan();
+
+    const html = document.getElementById('print-bulk-body').innerHTML;
+    expect(html).toContain('Tata Ace - PB10AB1234');
+    expect(html).toContain('125');
+    expect(html).toContain('Handle with care');
+  });
+
+  test('printPlan() shows a dash placeholder for lines/cards with no rate, remarks or transport', () => {
+    App.State.dispatchPlanDate = '2026-08-09';
+    App.State.globalDispatchPlans = [
+      { lineId: 1, planDate: '2026-08-09', clientName: 'Acme', productId: 'P1', productName: 'Widget', qty: 3, fulfilled: false },
+    ];
+
+    App.DispatchPlan.printPlan();
+
+    const html = document.getElementById('print-bulk-body').innerHTML;
+    expect(html).not.toContain('Transport:');
+    expect(html).toContain('>-<');
+  });
+
   test('printPlan() is a safe no-op (via notPortedYet) if App.Print never loaded', () => {
     const realPrint = App.Print;
     App.Print = undefined;

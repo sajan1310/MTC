@@ -4367,6 +4367,7 @@ App.Production = {
         : (p.color ? [{ color: p.color, qty: p.qty }] : []);
 
       const claimedRows = new Set();
+      const touchedGroups = new Set();
       const findChecklistRow = (color, axisKey) => {
         const rows = $$('#productionColorChecklist .production-color-row').filter(r => !claimedRows.has(r));
         let row = axisKey ? rows.find(r => r.dataset.group === axisKey && App.Utils.sameColor(r.dataset.color, color)) : null;
@@ -4380,16 +4381,35 @@ App.Production = {
         let colorRow = findChecklistRow(color, entry.axisKey);
 
         if (!colorRow) {
+          // This saved entry's axis/color has no live checklist row to
+          // land on (the process's color/axis config has since drifted)
+          // -- but if its axisKey still names a REAL group this process
+          // currently has, re-render it under THAT group with that
+          // group's own current isPrimary, rather than a disconnected
+          // "custom" bucket carrying whatever countsTowardTotal happened
+          // to be saved on it. save_production's own qty calc
+          // (_is_primary_axis_row) always decides a REAL axis's rows by
+          // axis-key identity, never by the submitted flag -- landing a
+          // real-axis entry in "custom" here made this form scale the
+          // Common Components table (refreshCommonSuggestedQty) against
+          // a total that could disagree with what the server would
+          // independently recompute, letting a lot's saved qty and its
+          // components_consumed silently drift apart on the next save.
+          const realGroup = (this._customColorGroupOptions || [])
+            .find(g => String(g.key || '').toLowerCase() === String(entry.axisKey || '').toLowerCase());
+          const groupKey = realGroup ? realGroup.key : 'custom';
+          const isPrimaryFlag = realGroup ? !!realGroup.isPrimary : (entry.countsTowardTotal !== false);
+
           const checklistEl = document.getElementById('productionColorChecklist');
           if (checklistEl) {
-            if (!checklistEl.querySelector('[data-group-master="custom"]')) {
+            if (!realGroup && !checklistEl.querySelector('[data-group-master="custom"]')) {
               checklistEl.insertAdjacentHTML('beforeend', this._buildColorGroupHeader('custom', 'Custom'));
             }
-            const isPrimaryFlag = entry.countsTowardTotal !== false;
-            checklistEl.insertAdjacentHTML('beforeend', this._colorRowHtml(color, 'custom', true, isPrimaryFlag));
+            checklistEl.insertAdjacentHTML('beforeend', this._colorRowHtml(color, groupKey, !realGroup, isPrimaryFlag));
             colorRow = $$('#productionColorChecklist .production-color-row')
-              .find(r => r.dataset.group === 'custom' && App.Utils.sameColor(r.dataset.color, color) && !claimedRows.has(r));
+              .find(r => r.dataset.group === groupKey && App.Utils.sameColor(r.dataset.color, color) && !claimedRows.has(r));
           }
+          touchedGroups.add(groupKey);
         }
 
         if (colorRow) claimedRows.add(colorRow);
@@ -4398,7 +4418,7 @@ App.Production = {
         if (chk) chk.checked = true;
         if (qtyInput) { qtyInput.disabled = false; qtyInput.value = qty; }
       });
-      this._syncColorGroupMasterCheckbox('custom');
+      touchedGroups.forEach(groupKey => this._syncColorGroupMasterCheckbox(groupKey));
       // The rows above were checked/quantified by setting checkbox.checked
       // and qtyInput.value directly (not via handleColorCheckToggle/
       // onColorQtyChanged), so refreshCommonSuggestedQty's own preview
