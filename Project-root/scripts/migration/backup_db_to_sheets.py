@@ -63,6 +63,7 @@ TABLES = [
     "erp.units", "erp.color_master", "erp.model_master", "erp.process_type_master",
     "erp.vendors", "erp.contractors", "erp.contractor_rates", "erp.contractor_payments",
     "erp.clients", "erp.items", "erp.item_vendors", "erp.stock", "erp.stock_adjustments",
+    "erp.stock_group_master", "erp.stock_group_items",
     "erp.rate_history", "erp.process_master", "erp.process_components",
     "erp.process_color_links", "erp.process_color_overrides",
     "erp.warehouse_pool_opening", "erp.warehouse_pool", "erp.warehouse_pool_adjustments",

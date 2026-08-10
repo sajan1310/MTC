@@ -47,6 +47,9 @@
         <button class="btn btn-secondary fw-bold shadow-sm" onclick="App.Stock.openDeadStockDialog()" style="white-space: nowrap;">
           <i class="bi bi-x-circle me-2"></i>Dead Stock
         </button>
+        <button class="btn btn-outline-dark fw-bold shadow-sm" onclick="App.StockGroup.openManageModal()" style="white-space: nowrap;">
+          <i class="bi bi-collection me-2"></i>Stock Groups
+        </button>
         <button class="btn btn-danger fw-bold shadow-sm" onclick="App.Stock.openLowStockPreview()">
           <i class="bi bi-printer me-2"></i>Print Low Stock Report
         </button>
@@ -262,6 +265,9 @@
                   <option value="low">Show: Low Stock Only</option>
                   <option value="selected">Show: Selected Only</option>
                   <option value="unselected">Show: Unselected Only</option>
+                  <optgroup label="Stock Groups" id="lowStockPreviewGroupOptions">
+                    <!-- Populated by App.Stock.openLowStockPreview() from App.StockGroup.groups -->
+                  </optgroup>
                 </select>
                 <button type="button" class="btn btn-outline-dark btn-sm fw-bold" onclick="App.Stock.selectAllLowStockPreview()">Select All</button>
                 <button type="button" class="btn btn-outline-secondary btn-sm fw-bold" onclick="App.Stock.selectNoneLowStockPreview()">Select None</button>
@@ -298,6 +304,103 @@
         </button>
         <button type="button" class="btn btn-danger fw-bold" onclick="App.Stock.confirmLowStockPrint(false)">
           <i class="bi bi-printer me-1"></i>Print Report
+        </button>
+      </div>
+    </div>
+  </div>
+</div>
+
+<!-- Stock Groups Modal -- named collections of item/size rows (e.g.
+     "Stickers", "Mudguard Bolts"), so the Low Stock Report can be printed
+     group-wise (App.Stock's "Show" filter offers every group as an
+     option) instead of re-picking the same set of items each time. -->
+<div class="modal fade" id="stockGroupModal" data-bs-backdrop="static" tabindex="-1" aria-hidden="true">
+  <div class="modal-dialog modal-lg modal-fullscreen-sm-down">
+    <div class="modal-content shadow-lg">
+      <div class="modal-header bg-dark text-white">
+        <h5 class="modal-title fw-bold" style="font-family: 'Outfit', sans-serif;">
+          <i class="bi bi-collection me-2"></i>Stock Groups
+        </h5>
+        <button type="button" class="btn-close btn-close-white" data-bs-dismiss="modal"></button>
+      </div>
+      <div class="modal-body bg-light">
+        <div class="alert alert-info py-2" role="alert" style="font-size: 13px;">
+          <i class="bi bi-info-circle-fill me-2"></i>Group related items together (e.g. "Stickers", "Mudguard Bolts") so the Low Stock Report can be printed for just that group. Use "Manage Items" to bulk-select which item/size rows belong to a group.
+        </div>
+
+        <h6 class="text-secondary border-bottom pb-1 fw-bold" id="stockGroupFormTitle">Add Stock Group</h6>
+        <form id="stockGroupForm" class="row g-2 align-items-end mb-4" autocomplete="off" onsubmit="App.StockGroup.handleFormSubmit(event)">
+          <input type="hidden" id="originalStockGroupId">
+          <div class="col-md-4">
+            <label class="form-label small">Group Name *</label>
+            <input type="text" id="formStockGroupName" class="form-control" required maxlength="255">
+          </div>
+          <div class="col-md-6">
+            <label class="form-label small">Remarks</label>
+            <input type="text" id="formStockGroupRemarks" class="form-control" maxlength="200">
+          </div>
+          <div class="col-md-2 d-flex gap-1">
+            <button type="submit" id="stockGroupSubmitBtn" class="btn btn-info fw-bold text-dark w-100">Save</button>
+            <button type="button" id="stockGroupCancelEditBtn" class="btn btn-outline-secondary d-none" onclick="App.StockGroup.cancelEdit()" title="Cancel edit"><i class="bi bi-x"></i></button>
+          </div>
+        </form>
+
+        <div class="table-responsive">
+          <table class="table table-bordered bg-white shadow-sm align-middle mb-0">
+            <thead class="table-light">
+              <tr>
+                <th scope="col">Group Name</th>
+                <th scope="col">Remarks</th>
+                <th scope="col" class="text-center" style="width:10%;">Items</th>
+                <th scope="col" class="text-center" style="width:20%;">Actions</th>
+              </tr>
+            </thead>
+            <tbody id="stockGroupTableBody">
+              <tr><td colspan="4" class="text-center text-muted p-4">Loading stock groups...</td></tr>
+            </tbody>
+          </table>
+        </div>
+      </div>
+    </div>
+  </div>
+</div>
+
+<!-- Stock Group "Manage Items" bulk-select dialog -- same search +
+     Show-filter + checkbox-grouped-by-item-name UX as the Low Stock
+     Report preview's item picker, but backed by the FULL stock list
+     (every item/size, not just currently low ones) and saved as a
+     group's membership on submit instead of a print selection. -->
+<div class="modal fade" id="stockGroupItemsModal" data-bs-backdrop="static" tabindex="-1" aria-hidden="true">
+  <div class="modal-dialog modal-lg modal-fullscreen-sm-down">
+    <div class="modal-content shadow-lg">
+      <div class="modal-header bg-dark text-white">
+        <h5 class="modal-title fw-bold" id="stockGroupItemsModalTitle" style="font-family: 'Outfit', sans-serif;">
+          <i class="bi bi-ui-checks me-2"></i>Manage Items
+        </h5>
+        <button type="button" class="btn-close btn-close-white" data-bs-dismiss="modal"></button>
+      </div>
+      <div class="modal-body bg-light">
+        <div class="p-2 pb-3">
+          <input type="text" id="stockGroupItemsSearch" class="form-control form-control-sm mb-2" placeholder="Search item or size..." autocomplete="off" onkeyup="App.StockGroup.filterItemsDialog(this.value)">
+          <div class="d-flex flex-wrap gap-2 align-items-center">
+            <select id="stockGroupItemsFilter" class="form-select form-select-sm w-auto" title="Filter the list below -- Select All/None only act on what's showing" onchange="App.StockGroup.setItemsDialogFilter(this.value)">
+              <option value="all">Show: All Items</option>
+              <option value="selected">Show: Selected Only</option>
+              <option value="unselected">Show: Unselected Only</option>
+            </select>
+            <button type="button" class="btn btn-outline-dark btn-sm fw-bold" onclick="App.StockGroup.selectAllItemsDialog()">Select All</button>
+            <button type="button" class="btn btn-outline-secondary btn-sm fw-bold" onclick="App.StockGroup.selectNoneItemsDialog()">Select None</button>
+            <span id="stockGroupItemsCount" class="badge bg-secondary ms-auto">0 item/size row(s) selected</span>
+          </div>
+        </div>
+        <div id="stockGroupItemsChecklist" class="overflow-auto p-2" style="max-height: 50vh;">
+          <!-- Populated by App.StockGroup.renderItemsChecklist() -->
+        </div>
+      </div>
+      <div class="modal-footer">
+        <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Cancel</button>
+        <button type="button" id="stockGroupItemsSaveBtn" class="btn btn-primary fw-bold" onclick="App.StockGroup.saveItemsDialog()">
+          <i class="bi bi-check2 me-1"></i>Save Items
         </button>
       </div>
     </div>

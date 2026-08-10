@@ -2647,6 +2647,8 @@ App.Stock = {
     if (!App.State.globalStock) {
       await this.loadData();
     }
+    await App.StockGroup.ensureLoaded();
+    this._populateLowStockPreviewGroupOptions();
 
     App.State.selectedLowStockPreview = (App.State.globalStock || [])
       .filter(item => item.isLowStock)
@@ -2661,6 +2663,18 @@ App.Stock = {
     this.renderLowStockPreviewChecklist();
     this.renderLowStockPreviewTable();
     safeModalShow('lowStockPreviewModal');
+  },
+
+  // Fills the "Show" filter's "Stock Groups" optgroup with one option per
+  // saved App.StockGroup group (value "group:<id>") so printing group-wise
+  // is just: pick the group here, Select All, Print.
+  _populateLowStockPreviewGroupOptions() {
+    const optgroup = document.getElementById('lowStockPreviewGroupOptions');
+    if (!optgroup) return;
+    const groups = App.StockGroup.groups || [];
+    optgroup.innerHTML = groups.length
+      ? groups.map(g => `<option value="group:${g.id}">Group: ${escapeHtml(g.name)} (${g.items.length})</option>`).join('')
+      : '<option value="" disabled>No stock groups yet -- create one from "Stock Groups"</option>';
   },
 
   filterLowStockPreview(term) {
@@ -2680,15 +2694,25 @@ App.Stock = {
 
   // Every stock row matching the current search term + Show filter --
   // shared by the checklist renderer and Select All/None so both agree on
-  // what's "currently visible".
+  // what's "currently visible". mode "group:<id>" narrows to one
+  // App.StockGroup group's saved membership -- picking a group here then
+  // Select All is what "print group-wise" actually means in this UI.
   _visibleLowStockPreviewItems() {
     const term = (App.State.lowStockPreviewSearch || '').toLowerCase();
     const mode = App.State.lowStockPreviewFilter || 'all';
     const selected = App.State.selectedLowStockPreview || [];
 
+    let groupKeys = null;
+    if (mode.startsWith('group:')) {
+      const groupId = Number(mode.slice('group:'.length));
+      const group = (App.StockGroup.groups || []).find(g => g.id === groupId);
+      groupKeys = new Set((group ? group.items : []).map(it => this.stockKey(it)));
+    }
+
     return (App.State.globalStock || []).filter(item => {
       if (term && !item.name.toLowerCase().includes(term) && !(item.size || '').toLowerCase().includes(term)) return false;
       if (mode === 'low' && !item.isLowStock) return false;
+      if (groupKeys && !groupKeys.has(this.stockKey(item))) return false;
       const isSelected = App.Selection.isSelected(selected, this.stockKey(item));
       if (mode === 'selected' && !isSelected) return false;
       if (mode === 'unselected' && isSelected) return false;
@@ -2829,10 +2853,27 @@ App.Stock = {
       return;
     }
 
+    // When the "Show" filter is pinned to a Stock Group, label the
+    // printout with that group's name -- this is what "print group-wise"
+    // means in this UI: filter to a saved group, Select All, Print.
+    const mode = App.State.lowStockPreviewFilter || 'all';
+    let subtitle = 'Low Stock Alerts & Inventory Status Report';
+    let reportType = 'Inventory Alert (Low Stock)';
+    let fileNamePrefix = 'Low_Stock_Report';
+    if (mode.startsWith('group:')) {
+      const groupId = Number(mode.slice('group:'.length));
+      const group = (App.StockGroup.groups || []).find(g => g.id === groupId);
+      if (group) {
+        subtitle = `Stock Group Report -- ${group.name}`;
+        reportType = `Stock Group: ${group.name}`;
+        fileNamePrefix = `Stock_Group_${group.name.replace(/[^a-zA-Z0-9_-]+/g, '_')}`;
+      }
+    }
+
     const ok = await this.printStockPivot(items, [], {
-      subtitle: 'Low Stock Alerts & Inventory Status Report',
-      reportType: 'Inventory Alert (Low Stock)',
-      fileNamePrefix: 'Low_Stock_Report',
+      subtitle,
+      reportType,
+      fileNamePrefix,
       emptyMessage: 'No stock records found.',
       asPdf: !!asPdf
     });
@@ -3016,5 +3057,302 @@ App.Stock = {
       return App.Print.downloadElementAsPDF('print-low-stock-container', `${filenameBase}.pdf`);
     }
     App.Print.trigger('print-low-stock-container', filenameBase);
+  }
+};
+
+// ==========================================
+// STOCK GROUPS -- named collections of item/size rows, so the Low Stock
+// Report can be printed group-wise (App.Stock's "Show" filter offers
+// every group as an option, see openLowStockPreview/_visibleLowStockPreviewItems)
+// instead of the user re-picking the same set of items every time.
+// ==========================================
+App.StockGroup = {
+  groups: [], // [{id, name, remarks, items: [{name, size}]}]
+  _loaded: false,
+
+  async ensureLoaded() {
+    if (this._loaded) return;
+    await this.loadData();
+  },
+
+  async loadData() {
+    try {
+      const res = await Api.call('getStockGroupsData');
+      if (!res?.success) {
+        App.Utils.showToast(res?.message || 'Failed to load stock groups.', true);
+        return;
+      }
+      this.groups = Array.isArray(res.data) ? res.data : [];
+      this._loaded = true;
+    } catch (err) {
+      App.Utils.showToast(err.message || 'Failed to load stock groups.', true);
+    }
+  },
+
+  async openManageModal() {
+    await this.loadData();
+    this.renderGroupsTable();
+    this.cancelEdit();
+    safeModalShow('stockGroupModal');
+  },
+
+  renderGroupsTable() {
+    const tbody = document.getElementById('stockGroupTableBody');
+    if (!tbody) return;
+
+    if (!this.groups.length) {
+      tbody.innerHTML = '<tr><td colspan="4" class="text-center text-muted p-4">No stock groups yet. Create one above.</td></tr>';
+      return;
+    }
+
+    tbody.innerHTML = this.groups.map(g => `
+      <tr>
+        <td><strong>${escapeHtml(g.name)}</strong></td>
+        <td class="text-muted small">${escapeHtml(g.remarks || '')}</td>
+        <td class="text-center"><span class="badge bg-secondary">${g.items.length}</span></td>
+        <td class="text-center">
+          <button type="button" class="btn btn-sm btn-outline-primary me-1" onclick="App.StockGroup.openItemsDialog(${g.id})" title="Manage Items">
+            <i class="bi bi-ui-checks"></i>
+          </button>
+          <button type="button" class="btn btn-sm btn-outline-secondary me-1" onclick="App.StockGroup.editGroup(${g.id})" title="Rename">
+            <i class="bi bi-pencil"></i>
+          </button>
+          <button type="button" class="btn btn-sm btn-outline-danger" onclick="App.StockGroup.deleteGroup(${g.id})" title="Delete">
+            <i class="bi bi-trash"></i>
+          </button>
+        </td>
+      </tr>
+    `).join('');
+  },
+
+  editGroup(id) {
+    const g = this.groups.find(x => x.id === id);
+    if (!g) return;
+    document.getElementById('originalStockGroupId').value = g.id;
+    document.getElementById('formStockGroupName').value = g.name;
+    document.getElementById('formStockGroupRemarks').value = g.remarks || '';
+    document.getElementById('stockGroupFormTitle').textContent = `Rename "${g.name}"`;
+    document.getElementById('stockGroupCancelEditBtn').classList.remove('d-none');
+  },
+
+  cancelEdit() {
+    const form = document.getElementById('stockGroupForm');
+    if (form) form.reset();
+    document.getElementById('originalStockGroupId').value = '';
+    document.getElementById('stockGroupFormTitle').textContent = 'Add Stock Group';
+    document.getElementById('stockGroupCancelEditBtn').classList.add('d-none');
+  },
+
+  async handleFormSubmit(e) {
+    e.preventDefault();
+
+    const id = document.getElementById('originalStockGroupId').value;
+    const name = document.getElementById('formStockGroupName').value.trim();
+    const remarks = document.getElementById('formStockGroupRemarks').value.trim();
+    if (!name) {
+      App.Utils.showToast('Group name is required.', true);
+      return;
+    }
+
+    const submitBtn = document.getElementById('stockGroupSubmitBtn');
+    if (submitBtn) submitBtn.disabled = true;
+    try {
+      const res = await Api.mutate('saveStockGroup', { id: id ? Number(id) : null, name, remarks });
+      if (res?.success) {
+        App.Utils.showToast(res.message || 'Stock group saved.');
+        this.cancelEdit();
+        await this.loadData();
+        this.renderGroupsTable();
+      } else {
+        App.Utils.showToast(res?.message || 'Failed to save stock group.', true);
+      }
+    } catch (err) {
+      App.Utils.showToast(err.message || 'Failed to save stock group.', true);
+    } finally {
+      if (submitBtn) submitBtn.disabled = false;
+    }
+  },
+
+  async deleteGroup(id) {
+    const g = this.groups.find(x => x.id === id);
+    if (!g) return;
+    if (!confirm(`Delete stock group "${g.name}"? This cannot be undone.`)) return;
+
+    try {
+      const res = await Api.mutate('deleteStockGroup', id);
+      if (res?.success) {
+        App.Utils.showToast(res.message || 'Stock group deleted.');
+        await this.loadData();
+        this.renderGroupsTable();
+      } else {
+        App.Utils.showToast(res?.message || 'Failed to delete stock group.', true);
+      }
+    } catch (err) {
+      App.Utils.showToast(err.message || 'Failed to delete stock group.', true);
+    }
+  },
+
+  // ── "Manage Items" bulk-select dialog ────────────────────────────────
+  // Same search + Show-filter + checkbox-grouped-by-item-name UX as the
+  // Low Stock Report preview's item picker (App.Stock.renderLowStockPreviewChecklist),
+  // but backed by the full stock list and saved as group membership
+  // instead of a print selection.
+  _itemsDialogGroupId: null,
+  _itemsDialogSelected: [],
+  _itemsDialogSearch: '',
+  _itemsDialogFilter: 'all',
+
+  async openItemsDialog(id) {
+    const g = this.groups.find(x => x.id === id);
+    if (!g) return;
+
+    if (!App.State.globalStock) {
+      await App.Stock.loadData();
+    }
+
+    this._itemsDialogGroupId = id;
+    this._itemsDialogSelected = g.items.map(it => App.Stock.stockKey(it));
+    this._itemsDialogSearch = '';
+    this._itemsDialogFilter = 'all';
+
+    document.getElementById('stockGroupItemsModalTitle').textContent = `Manage Items — ${g.name}`;
+    const searchInput = document.getElementById('stockGroupItemsSearch');
+    if (searchInput) searchInput.value = '';
+    const filterSelect = document.getElementById('stockGroupItemsFilter');
+    if (filterSelect) filterSelect.value = 'all';
+
+    this.renderItemsChecklist();
+    safeModalShow('stockGroupItemsModal');
+  },
+
+  filterItemsDialog(term) {
+    this._itemsDialogSearch = term || '';
+    this.renderItemsChecklist();
+  },
+
+  setItemsDialogFilter(mode) {
+    this._itemsDialogFilter = mode || 'all';
+    this.renderItemsChecklist();
+  },
+
+  _visibleItemsDialogItems() {
+    const term = (this._itemsDialogSearch || '').toLowerCase();
+    const mode = this._itemsDialogFilter || 'all';
+    const selected = this._itemsDialogSelected;
+
+    return (App.State.globalStock || []).filter(item => {
+      if (term && !item.name.toLowerCase().includes(term) && !(item.size || '').toLowerCase().includes(term)) return false;
+      const isSelected = App.Selection.isSelected(selected, App.Stock.stockKey(item));
+      if (mode === 'selected' && !isSelected) return false;
+      if (mode === 'unselected' && isSelected) return false;
+      return true;
+    });
+  },
+
+  selectAllItemsDialog() {
+    this._visibleItemsDialogItems().forEach(item => App.Selection.toggle(this._itemsDialogSelected, App.Stock.stockKey(item), true));
+    this.renderItemsChecklist();
+  },
+
+  selectNoneItemsDialog() {
+    this._visibleItemsDialogItems().forEach(item => App.Selection.toggle(this._itemsDialogSelected, App.Stock.stockKey(item), false));
+    this.renderItemsChecklist();
+  },
+
+  toggleItemsDialogRow(encKey, checked) {
+    App.Selection.toggle(this._itemsDialogSelected, decodeURIComponent(encKey), checked);
+    this.renderItemsChecklist();
+  },
+
+  toggleItemsDialogGroup(encName, checked) {
+    const name = decodeURIComponent(encName);
+    this._visibleItemsDialogItems().filter(item => item.name === name).forEach(item => {
+      App.Selection.toggle(this._itemsDialogSelected, App.Stock.stockKey(item), checked);
+    });
+    this.renderItemsChecklist();
+  },
+
+  renderItemsChecklist() {
+    const container = document.getElementById('stockGroupItemsChecklist');
+    if (!container) return;
+
+    const selected = this._itemsDialogSelected;
+    const countEl = document.getElementById('stockGroupItemsCount');
+    if (countEl) countEl.textContent = `${selected.length} item/size row(s) selected`;
+
+    const byName = new Map();
+    this._visibleItemsDialogItems().forEach(item => {
+      if (!byName.has(item.name)) byName.set(item.name, []);
+      byName.get(item.name).push(item);
+    });
+
+    const names = [...byName.keys()].sort((a, b) => a.localeCompare(b));
+
+    if (!names.length) {
+      container.innerHTML = '<p class="text-muted text-center p-4 mb-0">No items match the current search/filter.</p>';
+      return;
+    }
+
+    container.innerHTML = names.map(name => {
+      const rows = byName.get(name).sort((a, b) => (a.size || '').localeCompare(b.size || ''));
+      const encName = encodeURIComponent(name);
+      const checkedCount = rows.filter(r => App.Selection.isSelected(selected, App.Stock.stockKey(r))).length;
+      const allChecked = checkedCount === rows.length;
+      const someChecked = checkedCount > 0 && !allChecked;
+
+      return `
+        <div class="lsp-item-card">
+          <label class="lsp-item-card-header">
+            <input type="checkbox" class="form-check-input flex-shrink-0 lsp-group-chk" ${allChecked ? 'checked' : ''} ${someChecked ? 'data-indeterminate="1"' : ''}
+                   onchange="App.StockGroup.toggleItemsDialogGroup('${encName}', this.checked)">
+            <strong class="small flex-grow-1">${escapeHtml(name)}</strong>
+            <span class="badge bg-secondary">${checkedCount}/${rows.length}</span>
+          </label>
+          <div class="p-2 pt-1">
+            ${rows.map(r => {
+              const key = App.Stock.stockKey(r);
+              const encKey = encodeURIComponent(key);
+              const checked = App.Selection.isSelected(selected, key);
+              return `
+                <label class="lsp-size-row small">
+                  <input type="checkbox" class="form-check-input" ${checked ? 'checked' : ''}
+                         onchange="App.StockGroup.toggleItemsDialogRow('${encKey}', this.checked)">
+                  <span class="flex-grow-1">${escapeHtml(r.size || 'GENERAL')}</span>
+                  <span class="lsp-size-stock">${r.currentStock}${r.isLowStock ? ' <span class="text-danger fw-bold">(LOW)</span>' : ''}</span>
+                </label>`;
+            }).join('')}
+          </div>
+        </div>`;
+    }).join('');
+
+    container.querySelectorAll('.lsp-group-chk[data-indeterminate="1"]').forEach(chk => { chk.indeterminate = true; });
+  },
+
+  async saveItemsDialog() {
+    const groupId = this._itemsDialogGroupId;
+    if (!groupId) return;
+
+    const items = this._itemsDialogSelected.map(key => {
+      const idx = key.indexOf('|');
+      return { name: key.slice(0, idx), size: key.slice(idx + 1) };
+    });
+
+    const btn = document.getElementById('stockGroupItemsSaveBtn');
+    if (btn) btn.disabled = true;
+    try {
+      const res = await Api.mutate('setStockGroupItems', { groupId, items });
+      if (res?.success) {
+        App.Utils.showToast(res.message || 'Group items saved.');
+        await this.loadData();
+        this.renderGroupsTable();
+        safeModalHide('stockGroupItemsModal');
+      } else {
+        App.Utils.showToast(res?.message || 'Failed to save group items.', true);
+      }
+    } catch (err) {
+      App.Utils.showToast(err.message || 'Failed to save group items.', true);
+    } finally {
+      if (btn) btn.disabled = false;
+    }
   }
 };

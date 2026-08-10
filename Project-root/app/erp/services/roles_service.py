@@ -75,6 +75,7 @@ TAB_BY_SERVICE_MODULE = {
     "return_service": "returnLedger",
     "wastage_service": "returnLedger",
     "stock_service": "stockTab",
+    "stock_group_service": "stockTab",
     "warehouse_service": "stockTab",
     "bom_service": "productsTab",
     "process_service": "productsTab",
