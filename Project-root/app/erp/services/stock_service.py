@@ -37,6 +37,86 @@ from ..envelope import build_response
 from ..registry import rpc_method
 
 
+def _iter_completed_production_components(cur):
+    """Yields one normalized dict per ITEM-sourced component line on a
+    Completed production lot -- the SINGLE definition of "production
+    consumption" in this codebase.
+
+    Both the Current Stock formula (_get_billed_and_consumed_qty_maps's
+    PRODUCTION term) and the Item Ledger (get_item_ledger_data) read this
+    generator rather than each re-deriving "what did production eat". The
+    Item Ledger previously reconstructed an ESTIMATE client-side from the
+    BOM recipe (lot.qty x bom.qtyPerProduct) instead of the lot's own
+    recorded components_consumed, which could not agree with Stock by
+    construction: it silently dropped every non-final-stage lot (only
+    final-stage lots carry a productId to match a BOM by -- see
+    save_production), and even for the lots it did match it showed the
+    planned recipe rather than what was actually consumed (the two
+    legitimately drift -- cf. bom_service.get_bom_process_components_drift).
+
+    POOL-sourced components are excluded here for the same reason Stock
+    excludes them: they debit the Warehouse Pool, not Items Stock (see
+    warehouse_service._build_warehouse_pool_buckets's Pass 2).
+
+    Quantities are converted to the item's Base Unit exactly as the Stock
+    formula does -- blank unit means "already in Base Unit", and an
+    unconvertible unit falls back to the as-entered qty rather than
+    blocking the read. `enteredQty`/`unit` are carried alongside `baseQty`
+    so the ledger can show what the operator actually typed while still
+    totalling in base units.
+    """
+    table = config_maps.TABLE_NAMES.get("PRODUCTION")
+    if not table:
+        return
+
+    item_unit_map = items_service.get_item_unit_info_map(cur)
+    units_map = units_service.get_units_map()
+
+    cur.execute(
+        f"""
+        SELECT lot_number, production_date, process_id, product_name, output_item_name, components_consumed
+        FROM {table}
+        WHERE deleted_at IS NULL AND lower(status) = 'completed'
+        """
+    )
+    for row in cur.fetchall():
+        for comp in row["components_consumed"] or []:
+            if not isinstance(comp, dict):
+                continue
+            if str(comp.get("sourceType") or "").strip().upper() == "POOL":
+                continue
+            item_name = str(comp.get("itemName") or "").strip()
+            if not item_name:
+                continue
+            size = str(comp.get("size") or "").strip()
+            entered_qty = float(comp.get("qty") or 0)
+
+            # Blank unit = "already in the item's Base Unit" -- an
+            # unconvertible unit must never block the Stock computation,
+            # same fallback-to-entered-qty precedent every other term uses.
+            qty = entered_qty
+            unit = str(comp.get("unit") or "").strip()
+            if unit:
+                unit_info = items_service.lookup_item_unit_info(item_unit_map, item_name, size)
+                try:
+                    qty = units_service.convert_qty_to_base_unit(qty, unit, unit_info, units_map)
+                except ValueError:
+                    pass
+
+            yield {
+                "itemName": item_name,
+                "size": size,
+                "baseQty": qty,
+                "enteredQty": entered_qty,
+                "unit": unit,
+                "lotNumber": str(row["lot_number"] or "").strip(),
+                "productionDate": row["production_date"],
+                "processId": str(row["process_id"] or "").strip(),
+                "productName": str(row["product_name"] or "").strip(),
+                "outputItemName": str(row["output_item_name"] or "").strip(),
+            }
+
+
 def _get_billed_and_consumed_qty_maps(cur) -> tuple[dict, dict]:
     """Returns (bill_qty_map, consumed_qty_map), each keyed by
     "item_name_lower|size_lower" -> net base-unit qty affecting Current Stock.
@@ -109,39 +189,12 @@ def _get_billed_and_consumed_qty_maps(cur) -> tuple[dict, dict]:
             continue
         bill_qty_map[key] = bill_qty_map.get(key, 0) - float(row["base_qty"] or 0)
 
+    # Guarded via TABLE_NAMES inside the generator itself -- a no-op until
+    # erp.production exists, same as before this was factored out.
     consumed_qty_map: dict = {}
-    if table := config_maps.TABLE_NAMES.get("PRODUCTION"):
-        item_unit_map = items_service.get_item_unit_info_map(cur)
-        units_map = units_service.get_units_map()
-
-        cur.execute(
-            f"SELECT components_consumed FROM {table} WHERE deleted_at IS NULL AND lower(status) = 'completed'"
-        )
-        for row in cur.fetchall():
-            for comp in row["components_consumed"] or []:
-                if not isinstance(comp, dict):
-                    continue
-                if str(comp.get("sourceType") or "").strip().upper() == "POOL":
-                    continue
-                item_name = str(comp.get("itemName") or "").strip()
-                if not item_name:
-                    continue
-                size = str(comp.get("size") or "").strip()
-                qty = float(comp.get("qty") or 0)
-
-                # Blank unit = "already in the item's Base Unit" -- an
-                # unconvertible unit must never block the Stock computation,
-                # same fallback-to-entered-qty precedent every other term uses.
-                unit = str(comp.get("unit") or "").strip()
-                if unit:
-                    unit_info = items_service.lookup_item_unit_info(item_unit_map, item_name, size)
-                    try:
-                        qty = units_service.convert_qty_to_base_unit(qty, unit, unit_info, units_map)
-                    except ValueError:
-                        pass
-
-                key = f"{item_name.lower()}|{size.lower()}"
-                consumed_qty_map[key] = consumed_qty_map.get(key, 0) + qty
+    for comp in _iter_completed_production_components(cur):
+        key = f'{comp["itemName"].lower()}|{comp["size"].lower()}'
+        consumed_qty_map[key] = consumed_qty_map.get(key, 0) + comp["baseQty"]
 
     return bill_qty_map, consumed_qty_map
 
@@ -193,6 +246,7 @@ def get_stock_data():
             }
         )
     return build_response(True, records)
+
 
 
 @rpc_method("updateThreshold", mutation=True)

@@ -275,6 +275,12 @@ const App = {
     globalContractors: [],
     currentProcessContractorRates: { processName: '', rates: [] },
 
+    // Item Ledger, keyed by item name lowercased -> the server's own
+    // getItemLedgerData payload ({entries, reconciliation}). Cached per
+    // name because the ledger is computed server-side from the same terms
+    // as the Current Stock formula rather than reassembled in the browser.
+    itemLedgers: {},
+
     // Product BOM's own state (Script_Items.html's App.BOM).
     globalBOMs: [],
     filteredBOMs: [],

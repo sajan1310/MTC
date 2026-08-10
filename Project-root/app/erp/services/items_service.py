@@ -48,6 +48,7 @@ from . import stock_rows
 from . import units_service
 from .current_user import get_current_user_id
 from .. import config_maps
+from .. import date_utils
 from ..envelope import build_response
 from ..registry import rpc_method
 
@@ -1265,3 +1266,303 @@ def run_scheduled_item_cleanup(conn, cur):
     return build_response(True, {"autoFixed": fixed, "merged": merged}, message)
 
     return item_id
+
+
+# ─────────────────────────────────────────────────────────────────────────
+# Item Ledger
+# ─────────────────────────────────────────────────────────────────────────
+
+
+def _ledger_entry(date_value, entry_type, kind, ref, party, size, narration, **kwargs) -> dict:
+    entry = {
+        "date": date_utils.to_display_string(date_value) or "",
+        "dateRaw": date_utils.to_iso_string(date_value) or "",
+        "type": entry_type,
+        "kind": kind,
+        "ref": ref or "",
+        "party": party or "",
+        "size": size or "",
+        "narration": narration or "",
+        "orderQty": 0.0,
+        "incomingQty": 0.0,
+        "outgoingQty": 0.0,
+        "price": None,
+        "unit": "",
+        "enteredQty": None,
+        # Whether this row is part of the Current Stock arithmetic. False for
+        # rows that are informational only (a PO is an intent to buy, not a
+        # receipt; a manual adjustment is already absorbed into initial_stock
+        # -- see the reconciliation note in get_item_ledger_data).
+        "countsTowardStock": True,
+    }
+    entry.update(kwargs)
+    return entry
+
+
+@rpc_method("getItemLedgerData")
+def get_item_ledger_data(item_name):
+    """Every stock movement for one Items Master name, across all its size
+    variants, in BASE UNITS -- computed server-side from the exact same
+    terms, signs and unit conversions as the Current Stock formula
+    (_get_billed_and_consumed_qty_maps), so the ledger reconciles with the
+    Stock page by construction rather than by two implementations happening
+    to agree.
+
+    This exists because the Item Ledger was previously assembled entirely
+    client-side (items.js#getLedgerData) from whatever collections the
+    browser happened to have loaded, which made it wrong in three ways at
+    once: Production consumption was reconstructed from the BOM recipe
+    instead of the lot's real components_consumed (see
+    _iter_completed_production_components), Wastage and Issue -- two full
+    terms of the Stock formula -- were missing from the history entirely,
+    and quantities were shown as-entered rather than in base units, so a
+    line entered in Dozen displayed 1 while moving 12 units of stock.
+
+    `countsTowardStock` marks which rows participate in the arithmetic:
+
+    - A Bill line with affects_stock = FALSE ("Ledger only", chosen in the
+      stock-adjustment conflict flow) is shown but excluded, matching the
+      Stock formula's own affects_stock filter.
+    - A PO row is an order, not a movement -- shown for context in the
+      Order Qty column, never counted.
+    - A manual Stock Adjustment is NOT a movement either, despite reading
+      like one. adjust_stock_manually rewrites initial_stock to
+      (new_stock - billed + consumed), so an adjustment is already fully
+      absorbed into the initialStock the reconciliation starts from.
+      Counting its delta again would double-apply it -- these rows are
+      history annotations, and `reconciliation` proves the balance without
+      them.
+
+    The returned `reconciliation` block does that proof per size variant:
+    initialStock + incoming - outgoing (counted rows only) must equal the
+    currentStock the Stock page shows for the same variant, and `balanced`
+    reports whether it does.
+    """
+    # Local import: stock_service imports THIS module, so a module-level
+    # import would be circular -- same precedent as stock_rows.py's own
+    # deferred items_service/units_service imports.
+    from . import stock_service
+
+    target = str(item_name or "").strip()
+    if not target:
+        return build_response(True, {"itemName": "", "entries": [], "reconciliation": []})
+    target_lower = target.lower()
+
+    entries: list = []
+
+    with database.get_conn(cursor_factory=psycopg2.extras.RealDictCursor) as (_conn, cur):
+        # Bill: the one term that ADDS to stock.
+        cur.execute(
+            """
+            SELECT h.bill_number, h.bill_date, h.vendor, l.size, l.narration,
+                   l.qty, l.unit, l.base_qty, l.base_rate, l.affects_stock
+            FROM erp.bill_lines l
+            JOIN erp.bill_headers h ON h.id = l.header_id
+            WHERE h.deleted_at IS NULL AND lower(btrim(l.item_name)) = %s
+            """,
+            (target_lower,),
+        )
+        for row in cur.fetchall():
+            affects_stock = bool(row["affects_stock"])
+            entries.append(
+                _ledger_entry(
+                    row["bill_date"],
+                    "Bill Received" if affects_stock else "Bill (Ledger only)",
+                    "BILL",
+                    row["bill_number"],
+                    row["vendor"],
+                    row["size"],
+                    row["narration"],
+                    incomingQty=float(row["base_qty"] or 0),
+                    price=float(row["base_rate"] or 0),
+                    unit=row["unit"] or "",
+                    enteredQty=float(row["qty"] or 0),
+                    countsTowardStock=affects_stock,
+                )
+            )
+
+        # Return / Wastage / Issue: all three DEBIT stock, same direction.
+        cur.execute(
+            """
+            SELECT h.return_number, h.return_date, h.vendor, l.size, l.narration,
+                   l.qty, l.unit, l.base_qty, l.base_rate
+            FROM erp.return_lines l
+            JOIN erp.return_headers h ON h.id = l.header_id
+            WHERE h.deleted_at IS NULL AND lower(btrim(l.item_name)) = %s
+            """,
+            (target_lower,),
+        )
+        for row in cur.fetchall():
+            entries.append(
+                _ledger_entry(
+                    row["return_date"], "Goods Returned", "RETURN",
+                    row["return_number"], row["vendor"], row["size"], row["narration"],
+                    outgoingQty=float(row["base_qty"] or 0),
+                    price=float(row["base_rate"] or 0),
+                    unit=row["unit"] or "",
+                    enteredQty=float(row["qty"] or 0),
+                )
+            )
+
+        cur.execute(
+            """
+            SELECT h.wastage_id, h.wastage_date, h.vendor, l.size, l.reason,
+                   l.qty, l.unit, l.base_qty
+            FROM erp.wastage_lines l
+            JOIN erp.wastage_headers h ON h.id = l.header_id
+            WHERE h.deleted_at IS NULL AND lower(btrim(l.item_name)) = %s
+            """,
+            (target_lower,),
+        )
+        for row in cur.fetchall():
+            entries.append(
+                _ledger_entry(
+                    row["wastage_date"], "Wastage", "WASTAGE",
+                    row["wastage_id"], row["vendor"], row["size"], row["reason"],
+                    outgoingQty=float(row["base_qty"] or 0),
+                    unit=row["unit"] or "",
+                    enteredQty=float(row["qty"] or 0),
+                )
+            )
+
+        cur.execute(
+            """
+            SELECT h.issue_id, h.issue_date, h.issued_to, h.reference, l.size,
+                   l.qty, l.unit, l.base_qty, l.rate
+            FROM erp.issue_lines l
+            JOIN erp.issue_headers h ON h.id = l.header_id
+            WHERE h.deleted_at IS NULL AND lower(btrim(l.item_name)) = %s
+            """,
+            (target_lower,),
+        )
+        for row in cur.fetchall():
+            entries.append(
+                _ledger_entry(
+                    row["issue_date"], "Stock Issued", "ISSUE",
+                    row["issue_id"], row["issued_to"], row["size"], row["reference"],
+                    outgoingQty=float(row["base_qty"] or 0),
+                    price=float(row["rate"] or 0),
+                    unit=row["unit"] or "",
+                    enteredQty=float(row["qty"] or 0),
+                )
+            )
+
+        # Production: the lot's OWN recorded consumption, every process
+        # stage -- not a BOM estimate, and not final-stage lots only.
+        for comp in stock_service._iter_completed_production_components(cur):
+            if comp["itemName"].strip().lower() != target_lower:
+                continue
+            source = comp["productName"] or comp["outputItemName"] or comp["processId"] or "Production"
+            entries.append(
+                _ledger_entry(
+                    comp["productionDate"], "Production Consumption", "PRODUCTION",
+                    comp["lotNumber"], source, comp["size"], comp["processId"],
+                    outgoingQty=comp["baseQty"],
+                    unit=comp["unit"],
+                    enteredQty=comp["enteredQty"],
+                )
+            )
+
+        # PO: informational only (an order, not a movement).
+        cur.execute(
+            """
+            SELECT h.po_number, h.po_date, h.vendor, l.size, l.narration, l.qty, l.unit, l.base_qty, l.base_rate
+            FROM erp.po_lines l
+            JOIN erp.po_headers h ON h.id = l.header_id
+            WHERE h.deleted_at IS NULL AND lower(btrim(l.item_name)) = %s
+            """,
+            (target_lower,),
+        )
+        for row in cur.fetchall():
+            entries.append(
+                _ledger_entry(
+                    row["po_date"], "PO Issued", "PO",
+                    f'PO-{row["po_number"]}', row["vendor"], row["size"], row["narration"],
+                    orderQty=float(row["base_qty"] or 0),
+                    price=float(row["base_rate"] or 0),
+                    unit=row["unit"] or "",
+                    enteredQty=float(row["qty"] or 0),
+                    countsTowardStock=False,
+                )
+            )
+
+        # Manual adjustments: informational -- already absorbed into
+        # initial_stock, see this function's docstring.
+        cur.execute(
+            """
+            SELECT sa.size, sa.action, sa.old_value, sa.new_value, sa.reason, sa.created_at,
+                   u.email AS user_email
+            FROM erp.stock_adjustments sa
+            LEFT JOIN public.users u ON u.user_id = sa.created_by
+            WHERE lower(btrim(sa.item_name)) = %s
+            """,
+            (target_lower,),
+        )
+        for row in cur.fetchall():
+            delta = float(row["new_value"] or 0) - float(row["old_value"] or 0)
+            is_reset = str(row["action"] or "").strip().upper() == "RESET"
+            entries.append(
+                _ledger_entry(
+                    row["created_at"],
+                    "Stock Reset" if is_reset else "Manual Adjustment",
+                    "ADJUSTMENT",
+                    "-",
+                    row["user_email"] or "System",
+                    row["size"],
+                    row["reason"],
+                    incomingQty=delta if delta > 0 else 0.0,
+                    outgoingQty=-delta if delta < 0 else 0.0,
+                    countsTowardStock=False,
+                )
+            )
+
+        # Reconciliation, per size variant, against the very same maps
+        # get_stock_data renders from.
+        bill_qty_map, consumed_qty_map = stock_service._get_billed_and_consumed_qty_maps(cur)
+        cur.execute(
+            """
+            SELECT item_name, size, initial_stock, threshold
+            FROM erp.stock
+            WHERE deleted_at IS NULL AND lower(btrim(item_name)) = %s
+            ORDER BY size
+            """,
+            (target_lower,),
+        )
+        stock_rows_found = cur.fetchall()
+
+    reconciliation = []
+    for row in stock_rows_found:
+        size = (row["size"] or "").strip()
+        key = f'{row["item_name"].strip().lower()}|{size.lower()}'
+        initial = float(row["initial_stock"])
+        current = initial + bill_qty_map.get(key, 0) - consumed_qty_map.get(key, 0)
+
+        size_lower = size.lower()
+        counted = [
+            e for e in entries
+            if e["countsTowardStock"] and (e["size"] or "").strip().lower() == size_lower
+        ]
+        incoming = sum(e["incomingQty"] for e in counted)
+        outgoing = sum(e["outgoingQty"] for e in counted)
+        computed = initial + incoming - outgoing
+
+        reconciliation.append(
+            {
+                "size": size,
+                "initialStock": initial,
+                "incomingQty": incoming,
+                "outgoingQty": outgoing,
+                "computedStock": computed,
+                "currentStock": current,
+                "threshold": float(row["threshold"]),
+                "isLowStock": current < float(row["threshold"]),
+                # Any drift here means a movement exists that the Stock
+                # formula counts (or doesn't) differently from this ledger --
+                # surfaced rather than hidden, so it can't go unnoticed.
+                "balanced": abs(computed - current) < 0.0001,
+            }
+        )
+
+    entries.sort(key=lambda e: (e["dateRaw"] or "", e["type"]), reverse=True)
+
+    return build_response(True, {"itemName": target, "entries": entries, "reconciliation": reconciliation})

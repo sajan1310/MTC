@@ -596,22 +596,22 @@ App.Item = {
     const checkedAttr = isSelected ? 'checked' : '';
 
     return `
-        <tr class="item-row-clickable" data-item-key="${escapeHtml(key)}" style="cursor:pointer;" data-row-name="${encodedName}" data-row-size="${encodedSize}" title="Click to view Item Ledger">
-          <td class="text-center">
+        <tr class="item-row-clickable" data-item-key="${escapeHtml(key)}" data-row-name="${encodedName}" data-row-size="${encodedSize}">
+          <td class="text-center item-cell-check" style="cursor:pointer;" title="Click to select">
             <input type="checkbox" class="form-check-input item-select-chk"
                    data-key="${escapeHtml(key)}"
                    ${checkedAttr} onchange="App.Item.onRowSelectChange()">
           </td>
-          <td class="d-flex align-items-center gap-2">
+          <td class="d-flex align-items-center gap-2 item-cell-name" style="cursor:pointer;" title="Click to edit item">
             ${item.image
               ? `<img src="${escapeHtml(item.image)}" alt="" class="item-thumb" width="32" height="32">`
               : `<span class="item-thumb item-thumb-placeholder" aria-hidden="true"><i class="bi bi-image"></i></span>`}
             <strong class="text-primary">${escapeHtml(item.name || '')}</strong>
           </td>
-          <td>${escapeHtml(item.size || '-')}</td>
+          <td class="item-cell-ledger" style="cursor:pointer;" title="Click to view Item Ledger">${escapeHtml(item.size || '-')}</td>
           <td>${escapeHtml(item.narration || '-')}</td>
-          <td><small class="text-muted">${metaParts.join('<br>') || 'No metadata'}</small></td>
-          <td>${vendorsHtml || '<span class="text-muted fst-italic">No vendors mapped</span>'}</td>
+          <td class="item-cell-ledger" style="cursor:pointer;" title="Click to view Item Ledger"><small class="text-muted">${metaParts.join('<br>') || 'No metadata'}</small></td>
+          <td class="item-cell-ledger" style="cursor:pointer;" title="Click to view Item Ledger">${vendorsHtml || '<span class="text-muted fst-italic">No vendors mapped</span>'}</td>
           <td>
             <button class="btn btn-sm btn-outline-info text-dark btn-action w-100 mb-1 fw-bold"
                     data-action="item-ledger"
@@ -717,98 +717,92 @@ App.Item = {
       </tr>`;
     });
 
-    let historyList = [];
+    // History comes straight from the server (getItemLedgerData), which
+    // builds it from the SAME terms, signs and unit conversions as the
+    // Current Stock formula -- so it reconciles with the Stock page by
+    // construction. It used to be reassembled here from whichever
+    // collections the browser happened to have loaded, which silently
+    // dropped Wastage and Issue entirely, showed as-entered instead of
+    // base-unit quantities, and reconstructed Production consumption from
+    // the BOM recipe (an estimate that missed every non-final-stage lot,
+    // since only final-stage lots carry a productId to match a BOM by).
+    // Populated by ensureItemLedgerLoaded(), which every caller of this
+    // function awaits first.
+    const ledger = App.State.itemLedgers[nameLower];
+    const historyList = (ledger && ledger.entries) || [];
 
-    (App.State.globalPOs || []).forEach(po => {
-      (po.items || []).forEach(line => {
-        if ((line.name || '').toLowerCase() === nameLower) {
-          historyList.push({
-            dateObj: parseRecordDate(po.poDateRaw, po.poDate), dateStr: po.poDate, type: 'PO Issued', badgeClass: 'bg-primary',
-            ref: `PO-${po.poNumber}`, vendor: po.vendor, size: line.size || '-', narration: line.narration || '-',
-            orderQty: toNumber(line.qty), incomingQty: 0, outgoingQty: 0, price: line.price
-          });
-        }
-      });
-    });
+    const BADGE_BY_KIND = {
+      PO: 'bg-primary',
+      BILL: 'bg-success',
+      RETURN: 'bg-danger',
+      WASTAGE: 'bg-danger',
+      ISSUE: 'bg-danger',
+      PRODUCTION: 'bg-danger',
+      ADJUSTMENT: 'bg-warning text-dark'
+    };
 
-    (App.State.globalBills || []).forEach(bill => {
-      (bill.items || []).forEach(line => {
-        const lineName = typeof line === 'object' ? line.name : String(line).split(' [')[0];
-        const lineSize = typeof line === 'object' ? (line.size || '-') : '-';
-        const lineQty = typeof line === 'object' ? toNumber(line.qty) : 0;
-        const linePrice = typeof line === 'object' ? toNumber(line.price) : 0;
-
-        if (lineName.toLowerCase() === nameLower) {
-          historyList.push({
-            dateObj: parseRecordDate(bill.billDateRaw, bill.billDate), dateStr: bill.billDate, type: 'Bill Received', badgeClass: 'bg-success',
-            ref: bill.billNumber, vendor: bill.vendor, size: lineSize, narration: '-',
-            orderQty: 0, incomingQty: lineQty, outgoingQty: 0, price: linePrice
-          });
-        }
-      });
-    });
-
-    (App.State.globalReturns || []).forEach(ret => {
-      (ret.items || []).forEach(line => {
-        if ((line.name || '').toLowerCase() === nameLower) {
-          historyList.push({
-            dateObj: parseRecordDate(ret.returnDateRaw, ret.returnDate), dateStr: ret.returnDate, type: 'Goods Returned', badgeClass: 'bg-danger',
-            ref: ret.returnNumber, vendor: ret.vendor, size: line.size || '-', narration: '-',
-            orderQty: 0, incomingQty: 0, outgoingQty: toNumber(line.qty), price: toNumber(line.price)
-          });
-        }
-      });
-    });
-
-    (App.State.globalProduction || []).forEach(lot => {
-      if (String(lot.status || '').trim().toLowerCase() !== 'completed') return;
-      const bom = (App.State.globalBOMs || []).find(b => b.productId === lot.productId);
-      if (!bom) return;
-      (bom.components || []).forEach(comp => {
-        if ((comp.itemName || '').toLowerCase() === nameLower) {
-          historyList.push({
-            dateObj: parseRecordDate(lot.dateRaw, lot.date), dateStr: lot.date, type: 'Production Consumption', badgeClass: 'bg-danger',
-            ref: lot.productId, vendor: lot.productName || 'Production', size: comp.size || '-', narration: '-',
-            orderQty: 0, incomingQty: 0, outgoingQty: toNumber(lot.qty) * toNumber(comp.qtyPerProduct), price: null
-          });
-        }
-      });
-    });
-
-    (App.State.globalStockAdjustments || []).forEach(adj => {
-      if ((adj.itemName || '').toLowerCase() === nameLower) {
-        const isReset = adj.action === 'RESET';
-        const delta = adj.newValue - adj.oldValue;
-        historyList.push({
-          dateObj: new Date(adj.date), dateStr: new Date(adj.date).toLocaleDateString('en-GB'),
-          type: isReset ? 'Stock Reset' : 'Manual Adjustment', badgeClass: isReset ? 'bg-info' : 'bg-warning text-dark',
-          ref: '-', vendor: adj.user || 'System', size: adj.size || '-', narration: adj.reason || '-',
-          orderQty: 0, incomingQty: delta > 0 ? delta : 0, outgoingQty: delta < 0 ? -delta : 0, price: null
-        });
-      }
-    });
-
-    historyList.sort((a, b) => b.dateObj - a.dateObj);
+    const fmtQty = v => {
+      const n = toNumber(v);
+      if (!n) return '-';
+      return String(Math.round(n * 10000) / 10000);
+    };
 
     let histHtml = '';
     historyList.forEach(entry => {
-      histHtml += `<tr>
-        <td>${entry.dateStr}</td>
-        <td><span class="badge ${entry.badgeClass}">${entry.type}</span></td>
-        <td><strong class="text-dark">${entry.ref}</strong></td>
-        <td><strong class="text-primary">${escapeHtml(entry.vendor)}</strong></td>
-        <td>${escapeHtml(entry.size)}</td>
-        <td><small class="text-muted">${escapeHtml(entry.narration)}</small></td>
-        <td class="text-center text-primary fw-bold">${entry.orderQty || '-'}</td>
-        <td class="text-center text-success fw-bold">${entry.incomingQty || '-'}</td>
-        <td class="text-center text-danger fw-bold">${entry.outgoingQty || '-'}</td>
-        <td class="text-end">${entry.price !== null ? formatCurrency(entry.price) : '-'}</td>
+      const badgeClass = entry.kind === 'ADJUSTMENT' && entry.type === 'Stock Reset'
+        ? 'bg-info'
+        : (BADGE_BY_KIND[entry.kind] || 'bg-secondary');
+
+      // Quantities are base-unit. Show what was actually typed alongside it
+      // whenever the two differ, so a line entered in Dozen reads
+      // "12 (1 Dozen)" instead of silently disagreeing with the Stock page.
+      const enteredQty = toNumber(entry.enteredQty);
+      const baseMoved = toNumber(entry.incomingQty) || toNumber(entry.outgoingQty) || toNumber(entry.orderQty);
+      const showEntered = entry.unit && enteredQty && Math.abs(enteredQty - baseMoved) > 0.0001;
+      const enteredNote = showEntered
+        ? ` <small class="text-muted">(${fmtQty(enteredQty)} ${escapeHtml(entry.unit)})</small>`
+        : '';
+
+      // A row the Stock formula does not count -- a "Ledger only" bill, a
+      // PO (an order, not a movement), or a manual adjustment (already
+      // absorbed into Initial Stock). Muted so it can't be misread as a
+      // movement that failed to land.
+      const rowClass = entry.countsTowardStock ? '' : ' class="text-muted fst-italic"';
+
+      histHtml += `<tr${rowClass}>
+        <td>${escapeHtml(entry.date || '')}</td>
+        <td><span class="badge ${badgeClass}">${escapeHtml(entry.type || '')}</span></td>
+        <td><strong class="text-dark">${escapeHtml(entry.ref || '-')}</strong></td>
+        <td><strong class="text-primary">${escapeHtml(entry.party || '-')}</strong></td>
+        <td>${escapeHtml(entry.size || '-')}</td>
+        <td><small class="text-muted">${escapeHtml(entry.narration || '-')}</small></td>
+        <td class="text-center text-primary fw-bold">${fmtQty(entry.orderQty)}</td>
+        <td class="text-center text-success fw-bold">${fmtQty(entry.incomingQty)}${entry.incomingQty ? enteredNote : ''}</td>
+        <td class="text-center text-danger fw-bold">${fmtQty(entry.outgoingQty)}${entry.outgoingQty ? enteredNote : ''}</td>
+        <td class="text-end">${entry.price !== null && entry.price !== undefined ? formatCurrency(entry.price) : '-'}</td>
       </tr>`;
     });
 
-    const stockVariants = (App.State.globalStock || [])
-      .filter(s => (s.name || '').toLowerCase() === nameLower)
-      .sort((a, b) => (a.size || '').localeCompare(b.size || ''));
+    // Prefer the server's own freshly-computed figures over globalStock,
+    // which is a tab-load snapshot: a lot completed (or a bill saved) since
+    // the Items tab was last loaded would otherwise render a stale Current
+    // Stock next to fresh movements, and trip the mismatch badge below for
+    // no real reason. Falls back to globalStock only when the ledger call
+    // failed, so the table still renders something.
+    const reconList = (ledger && ledger.reconciliation) || [];
+    const stockVariants = (reconList.length
+      ? reconList.map(r => ({
+        size: r.size,
+        initialStock: r.initialStock,
+        currentStock: r.currentStock,
+        isLowStock: r.isLowStock,
+        computedStock: r.computedStock,
+        balanced: r.balanced
+      }))
+      : (App.State.globalStock || [])
+        .filter(s => (s.name || '').toLowerCase() === nameLower)
+        .map(s => ({ ...s, balanced: true }))
+    ).sort((a, b) => String(a.size || '').localeCompare(String(b.size || '')));
 
     const pendingMap = App.Utils.getPendingByItem();
 
@@ -819,10 +813,18 @@ App.Item = {
         ? `${Math.round(pendingEntry.qty * 100) / 100} <small class="text-muted">(PO# ${[...pendingEntry.poNumbers].map(escapeHtml).join(', ')})</small>`
         : '-';
 
+      // Server-side proof that the movements listed below actually add up
+      // to the Current Stock shown here. Silence means they agree; a
+      // mismatch is badged rather than hidden, since it would mean a
+      // movement exists that one side counts and the other doesn't.
+      const driftBadge = s.balanced === false
+        ? ` <span class="badge bg-danger" title="Ledger movements total ${s.computedStock}, but Current Stock is ${s.currentStock}. These should match -- please report this.">Mismatch</span>`
+        : '';
+
       stockHtml += `<tr>
         <td>${escapeHtml(s.size || '-')}</td>
         <td class="text-center fw-bold">${s.initialStock}</td>
-        <td class="text-center fw-bold ${s.isLowStock ? 'text-danger' : 'text-success'}">${s.currentStock}</td>
+        <td class="text-center fw-bold ${s.isLowStock ? 'text-danger' : 'text-success'}">${s.currentStock}${driftBadge}</td>
         <td class="text-center fw-bold text-warning">${pendingText}</td>
       </tr>`;
     });
@@ -830,10 +832,16 @@ App.Item = {
     return { compHtml, histHtml, stockHtml };
   },
 
-  // Lazily fetches Bills/POs/Returns/Production/Stock-adjustment history
-  // the first time a ledger is requested in this session -- direct RPC
-  // calls, not through App.PO/App.Bill/etc. (which don't have their own
-  // tabs yet), so the ledger is genuinely complete even this round.
+  // Lazily fetches what the ledger's *comparison* table needs the first
+  // time a ledger is requested in this session -- direct RPC calls, not
+  // through App.PO/App.Bill (which don't have their own tabs yet).
+  //
+  // The transaction HISTORY is no longer built from these collections --
+  // it comes from the server via ensureItemLedgerLoaded(), so Returns/
+  // Production/Stock-adjustment fetches that only ever fed the old
+  // client-side history are gone. POs are still needed here for the
+  // master-rate comparison and the Pending Order column, and Bills for
+  // App.Utils.getPendingByItem's billed-so-far lookup.
   async ensureLedgerSourceDataLoaded() {
     const fetches = [];
     if (App.State.globalPOs.length === 0) {
@@ -841,15 +849,6 @@ App.Item = {
     }
     if (App.State.globalBills.length === 0) {
       fetches.push(Api.call('getBillData').then(res => { if (res?.success) App.State.globalBills = Array.isArray(res.data) ? res.data : []; }));
-    }
-    if (App.State.globalReturns.length === 0) {
-      fetches.push(Api.call('getReturnData').then(res => { if (res?.success) App.State.globalReturns = Array.isArray(res.data) ? res.data : []; }));
-    }
-    if (App.State.globalProduction.length === 0) {
-      fetches.push(Api.call('getProductionData').then(res => { if (res?.success) App.State.globalProduction = Array.isArray(res.data) ? res.data : []; }));
-    }
-    if (App.State.globalStockAdjustments.length === 0) {
-      fetches.push(Api.call('getStockAdjustmentHistory').then(res => { if (res?.success) App.State.globalStockAdjustments = Array.isArray(res.data) ? res.data : []; }));
     }
     // getLedgerData's own vendor-rate lookup reads globalVendors -- unlike
     // the fetches above (kept as direct Api.call for historical reasons,
@@ -860,11 +859,42 @@ App.Item = {
     if (fetches.length) await Promise.all(fetches);
   },
 
+  // Fetches (and caches) the server-computed ledger for each named item.
+  // getLedgerData stays synchronous so the bulk print/PDF paths can keep
+  // rendering many items in a loop -- they just await this first, same as
+  // openLedgerModal does.
+  //
+  // `force` refetches even if cached. Opening a single ledger always
+  // forces, because a lot completed (or a bill saved) in another tab since
+  // the last open would otherwise render stale history against a Current
+  // Stock figure that has already moved -- the cache exists for the bulk
+  // paths, which need each name fetched once per batch, not for
+  // cross-session reuse.
+  async ensureItemLedgerLoaded(names, { force = false } = {}) {
+    const wanted = [...new Set(
+      (Array.isArray(names) ? names : [names])
+        .map(n => String(n || '').trim())
+        .filter(n => n && (force || !App.State.itemLedgers[n.toLowerCase()]))
+    )];
+    if (!wanted.length) return;
+
+    await Promise.all(wanted.map(name =>
+      Api.call('getItemLedgerData', name)
+        .then(res => {
+          if (res?.success && res.data) App.State.itemLedgers[name.toLowerCase()] = res.data;
+        })
+        .catch(() => { /* Ignored -- the history table renders its own empty state. */ })
+    ));
+  },
+
   async openLedgerModal(name, size) {
     const titleEl = document.getElementById('itemLedgerTitle');
     if (titleEl) titleEl.innerText = `Item Ledger & Comparison: ${name}`;
 
-    await this.ensureLedgerSourceDataLoaded();
+    await Promise.all([
+      this.ensureLedgerSourceDataLoaded(),
+      this.ensureItemLedgerLoaded(name, { force: true })
+    ]);
 
     const { compHtml, histHtml, stockHtml } = this.getLedgerData(name);
 
@@ -1001,10 +1031,13 @@ App.Item = {
       return;
     }
 
-    await this.ensureLedgerSourceDataLoaded();
-
     const items = App.State.globalItems.filter(i => App.Selection.isSelected(selectedKeys, this.itemKey(i)));
     const names = [...new Set(items.map(i => i.name))];
+
+    await Promise.all([
+      this.ensureLedgerSourceDataLoaded(),
+      this.ensureItemLedgerLoaded(names)
+    ]);
 
     App.Print.triggerBulk(names, name => this.buildItemLedgerPrintPageHtml(name), 'Item_Ledgers_Selected');
   },
@@ -1016,10 +1049,13 @@ App.Item = {
       return;
     }
 
-    await this.ensureLedgerSourceDataLoaded();
-
     const items = App.State.globalItems.filter(i => App.Selection.isSelected(selectedKeys, this.itemKey(i)));
     const names = [...new Set(items.map(i => i.name))];
+
+    await Promise.all([
+      this.ensureLedgerSourceDataLoaded(),
+      this.ensureItemLedgerLoaded(names)
+    ]);
 
     App.Print.renderBulkPages(names, name => this.buildItemLedgerPrintPageHtml(name));
     const filename = App.Print.bulkPdfFilename('Item_Ledgers', names.length);
@@ -2284,16 +2320,34 @@ App.Item = {
   }
 };
 
-// Item row click -> open Item Ledger (matches source's row-click delegate,
-// separate from the explicit "Item Ledger" button for the same action).
+// Item row click -> per-cell action instead of one blanket row handler:
+// the checkbox cell toggles selection, the name cell opens the Edit
+// dialog, and the metadata/vendor (and size) cells open the Item Ledger.
+// The narration cell is intentionally left out so its text stays
+// selectable/copyable, and clicks on the row's own buttons/checkbox
+// input are left to their native/existing handlers.
 document.addEventListener('DOMContentLoaded', () => {
   document.getElementById('itemTableBody')?.addEventListener('click', e => {
+    if (e.target.closest('button, input, a')) return;
     const row = e.target.closest('.item-row-clickable');
-    if (!row || e.target.closest('button')) return;
-    App.Item.openLedgerModal(
-      decodeURIComponent(row.dataset.rowName || ''),
-      decodeURIComponent(row.dataset.rowSize || '')
-    );
+    if (!row) return;
+
+    if (e.target.closest('.item-cell-check')) {
+      row.querySelector('.item-select-chk')?.click();
+      return;
+    }
+
+    const name = decodeURIComponent(row.dataset.rowName || '');
+    const size = decodeURIComponent(row.dataset.rowSize || '');
+
+    if (e.target.closest('.item-cell-name')) {
+      App.Item.openEditModal(name, size);
+      return;
+    }
+
+    if (e.target.closest('.item-cell-ledger')) {
+      App.Item.openLedgerModal(name, size);
+    }
   });
 
   document.getElementById('itemPhotoFileInput')?.addEventListener('change', e => {
