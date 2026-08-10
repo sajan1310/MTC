@@ -47,7 +47,7 @@
         <button class="btn btn-secondary fw-bold shadow-sm" onclick="App.Stock.openDeadStockDialog()" style="white-space: nowrap;">
           <i class="bi bi-x-circle me-2"></i>Dead Stock
         </button>
-        <button class="btn btn-danger fw-bold shadow-sm" onclick="App.Stock.printLowStockReport()">
+        <button class="btn btn-danger fw-bold shadow-sm" onclick="App.Stock.openLowStockPreview()">
           <i class="bi bi-printer me-2"></i>Print Low Stock Report
         </button>
         <button class="btn btn-outline-dark fw-bold shadow-sm" onclick="App.Stock.printFullStockList()">
@@ -226,6 +226,73 @@
             </button>
           </div>
         </form>
+      </div>
+    </div>
+  </div>
+</div>
+
+<!-- Low Stock Report Preview Modal -- customization step "Print Low Stock
+     Report" opens instead of printing immediately: defaults to every
+     currently-low item/size (App.Stock.openLowStockPreview), but lets the
+     user tick/untick individual sizes -- e.g. pull in every size of an item
+     even when only one size is low, or drop items they don't want on this
+     printout -- with a live preview of the exact pivot table that will
+     print, before Print/Download PDF (App.Stock.confirmLowStockPrint). -->
+<div class="modal fade" id="lowStockPreviewModal" data-bs-backdrop="static" tabindex="-1" aria-hidden="true">
+  <div class="modal-dialog modal-xl modal-fullscreen-lg-down">
+    <div class="modal-content shadow-lg">
+      <div class="modal-header bg-danger text-white">
+        <h5 class="modal-title fw-bold" style="font-family: 'Outfit', sans-serif;">
+          <i class="bi bi-printer me-2"></i>Customize Low Stock Report
+        </h5>
+        <button type="button" class="btn-close btn-close-white" data-bs-dismiss="modal"></button>
+      </div>
+      <div class="modal-body bg-light p-0">
+        <div class="alert alert-info py-2 m-3 mb-0" role="alert" style="font-size: 13px;">
+          <i class="bi bi-info-circle-fill me-2"></i>Every currently low-stock item/size is pre-selected below. Tick or untick anything to customize what prints -- e.g. include every size of an item for context, or drop items you don't want on this report.
+        </div>
+        <div class="row g-0" style="min-height: 55vh;">
+          <!-- Item/size picker -->
+          <div class="col-lg-5 border-end d-flex flex-column">
+            <div class="p-3 border-bottom bg-white">
+              <input type="text" id="lowStockPreviewSearch" class="form-control form-control-sm mb-2" placeholder="Search item or size..." autocomplete="off" onkeyup="App.Stock.filterLowStockPreview(this.value)">
+              <div class="d-flex flex-wrap gap-2">
+                <button type="button" class="btn btn-outline-dark btn-sm fw-bold" onclick="App.Stock.selectAllLowStockPreview()">Select All</button>
+                <button type="button" class="btn btn-outline-secondary btn-sm fw-bold" onclick="App.Stock.selectNoneLowStockPreview()">Select None</button>
+                <button type="button" class="btn btn-outline-danger btn-sm fw-bold" onclick="App.Stock.resetLowStockPreviewToDefault()">
+                  <i class="bi bi-arrow-counterclockwise"></i> Low Stock Only
+                </button>
+              </div>
+            </div>
+            <div id="lowStockPreviewChecklist" class="flex-grow-1 overflow-auto p-2" style="max-height: 55vh;">
+              <!-- Populated by App.Stock.renderLowStockPreviewChecklist() -->
+            </div>
+          </div>
+          <!-- Live preview of the printable pivot table -->
+          <div class="col-lg-7 d-flex flex-column">
+            <div class="p-3 border-bottom bg-white d-flex justify-content-between align-items-center">
+              <span class="fw-bold text-dark"><i class="bi bi-eye me-1"></i>Preview</span>
+              <span id="lowStockPreviewCount" class="badge bg-secondary">0 rows selected</span>
+            </div>
+            <div class="flex-grow-1 overflow-auto p-3" style="max-height: 55vh;">
+              <table class="table table-bordered table-sm bg-white mb-0" style="font-size:12px;">
+                <thead class="table-dark">
+                  <tr id="lowStockPreviewHeaderRow"></tr>
+                </thead>
+                <tbody id="lowStockPreviewBody"></tbody>
+              </table>
+            </div>
+          </div>
+        </div>
+      </div>
+      <div class="modal-footer">
+        <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Cancel</button>
+        <button type="button" class="btn btn-outline-dark fw-bold" onclick="App.Stock.confirmLowStockPrint(true)">
+          <i class="bi bi-file-earmark-pdf me-1"></i>Download PDF
+        </button>
+        <button type="button" class="btn btn-danger fw-bold" onclick="App.Stock.confirmLowStockPrint(false)">
+          <i class="bi bi-printer me-1"></i>Print Report
+        </button>
       </div>
     </div>
   </div>

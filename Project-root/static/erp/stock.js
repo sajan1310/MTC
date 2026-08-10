@@ -2623,20 +2623,178 @@ App.Stock = {
     reader.readAsArrayBuffer(file);
   },
 
-  // ── Print (dead code until App.Print exists) ────────────────────────
+  // ── Print ─────────────────────────────────────────────────────────
 
-  printLowStockReport() {
+  // ── Low Stock Report preview/customization ──────────────────────────
+  // "Print Low Stock Report" no longer prints immediately -- it opens
+  // lowStockPreviewModal pre-selected to every currently isLowStock
+  // item/size (the old one-click behavior), but lets the user tick/untick
+  // any row before committing: pull in every size of an item even when
+  // only one size is low (context), or drop an item/section they don't
+  // want on this particular printout. Selection state is keyed the same
+  // way as bulkPrint's (stockKey = name|size) but kept separate from
+  // App.State.selectedStock -- the two selections (main table's bulk-print
+  // checkboxes vs. this modal's) are independent and shouldn't stomp on
+  // each other.
+  async openLowStockPreview() {
     if (typeof App.Print === 'undefined') {
       App.Utils.notPortedYet('Printing');
       return;
     }
-    const lowStockItems = App.State.globalStock.filter(item => item.isLowStock);
-    this.printStockPivot(lowStockItems, [], {
+    // Entry point is also the Dashboard's shortcut button, which never
+    // visits the Stock tab (globalStock is otherwise loaded lazily on
+    // tab-switch) -- load it here if this is the first time.
+    if (!App.State.globalStock) {
+      await this.loadData();
+    }
+
+    App.State.selectedLowStockPreview = (App.State.globalStock || [])
+      .filter(item => item.isLowStock)
+      .map(item => this.stockKey(item));
+    App.State.lowStockPreviewSearch = '';
+    const searchInput = document.getElementById('lowStockPreviewSearch');
+    if (searchInput) searchInput.value = '';
+
+    this.renderLowStockPreviewChecklist();
+    this.renderLowStockPreviewTable();
+    safeModalShow('lowStockPreviewModal');
+  },
+
+  filterLowStockPreview(term) {
+    App.State.lowStockPreviewSearch = term || '';
+    this.renderLowStockPreviewChecklist();
+  },
+
+  selectAllLowStockPreview() {
+    App.State.selectedLowStockPreview = (App.State.globalStock || []).map(item => this.stockKey(item));
+    this.renderLowStockPreviewChecklist();
+    this.renderLowStockPreviewTable();
+  },
+
+  selectNoneLowStockPreview() {
+    App.State.selectedLowStockPreview = [];
+    this.renderLowStockPreviewChecklist();
+    this.renderLowStockPreviewTable();
+  },
+
+  resetLowStockPreviewToDefault() {
+    App.State.selectedLowStockPreview = (App.State.globalStock || [])
+      .filter(item => item.isLowStock)
+      .map(item => this.stockKey(item));
+    this.renderLowStockPreviewChecklist();
+    this.renderLowStockPreviewTable();
+  },
+
+  toggleLowStockPreviewRow(encKey, checked) {
+    App.Selection.toggle(App.State.selectedLowStockPreview, decodeURIComponent(encKey), checked);
+    this.renderLowStockPreviewChecklist();
+    this.renderLowStockPreviewTable();
+  },
+
+  toggleLowStockPreviewGroup(encName, checked) {
+    const name = decodeURIComponent(encName);
+    (App.State.globalStock || []).filter(item => item.name === name).forEach(item => {
+      App.Selection.toggle(App.State.selectedLowStockPreview, this.stockKey(item), checked);
+    });
+    this.renderLowStockPreviewChecklist();
+    this.renderLowStockPreviewTable();
+  },
+
+  // Left panel: every item, grouped by name, one checkbox per size plus a
+  // group checkbox (checked/indeterminate/unchecked) to grab a whole
+  // item's sizes at once.
+  renderLowStockPreviewChecklist() {
+    const container = document.getElementById('lowStockPreviewChecklist');
+    if (!container) return;
+
+    const term = (App.State.lowStockPreviewSearch || '').toLowerCase();
+    const selected = App.State.selectedLowStockPreview || [];
+
+    const byName = new Map();
+    (App.State.globalStock || []).forEach(item => {
+      if (term && !item.name.toLowerCase().includes(term) && !(item.size || '').toLowerCase().includes(term)) return;
+      if (!byName.has(item.name)) byName.set(item.name, []);
+      byName.get(item.name).push(item);
+    });
+
+    const names = [...byName.keys()].sort((a, b) => a.localeCompare(b));
+
+    if (!names.length) {
+      container.innerHTML = '<p class="text-muted text-center p-4 mb-0">No items match your search.</p>';
+      return;
+    }
+
+    container.innerHTML = names.map(name => {
+      const rows = byName.get(name).sort((a, b) => (a.size || '').localeCompare(b.size || ''));
+      const encName = encodeURIComponent(name);
+      const checkedCount = rows.filter(r => App.Selection.isSelected(selected, this.stockKey(r))).length;
+      const allChecked = checkedCount === rows.length;
+      const someChecked = checkedCount > 0 && !allChecked;
+
+      return `
+        <div class="border rounded-2 mb-2 bg-white">
+          <label class="d-flex align-items-center gap-2 p-2 border-bottom mb-0" style="cursor:pointer;background:#f8f9fa;">
+            <input type="checkbox" class="form-check-input flex-shrink-0 lsp-group-chk" ${allChecked ? 'checked' : ''} ${someChecked ? 'data-indeterminate="1"' : ''}
+                   onchange="App.Stock.toggleLowStockPreviewGroup('${encName}', this.checked)">
+            <strong class="small text-dark flex-grow-1">${escapeHtml(name)}</strong>
+            <span class="badge bg-secondary">${checkedCount}/${rows.length}</span>
+          </label>
+          <div class="p-2">
+            ${rows.map(r => {
+              const key = this.stockKey(r);
+              const encKey = encodeURIComponent(key);
+              const checked = App.Selection.isSelected(selected, key);
+              return `
+                <label class="d-flex align-items-center gap-2 py-1 small mb-0" style="cursor:pointer;">
+                  <input type="checkbox" class="form-check-input" ${checked ? 'checked' : ''}
+                         onchange="App.Stock.toggleLowStockPreviewRow('${encKey}', this.checked)">
+                  <span class="flex-grow-1">${escapeHtml(r.size || 'GENERAL')}</span>
+                  <span class="text-muted">${r.currentStock}${r.isLowStock ? ' <span class="text-danger fw-bold">(LOW)</span>' : ''}</span>
+                </label>`;
+            }).join('')}
+          </div>
+        </div>`;
+    }).join('');
+
+    container.querySelectorAll('.lsp-group-chk[data-indeterminate="1"]').forEach(chk => { chk.indeterminate = true; });
+  },
+
+  // Right panel: the exact pivot table that will print, built from
+  // whatever's currently selected -- same builder printStockPivot itself
+  // uses, so what's previewed here is what prints.
+  renderLowStockPreviewTable() {
+    const selected = App.State.selectedLowStockPreview || [];
+    const items = (App.State.globalStock || []).filter(item => App.Selection.isSelected(selected, this.stockKey(item)));
+
+    const { headerHtml, bodyHtml } = this._buildStockPivotMarkup(items, [], 'No items selected -- pick at least one item/size on the left.');
+
+    const headerRow = document.getElementById('lowStockPreviewHeaderRow');
+    if (headerRow) headerRow.innerHTML = headerHtml;
+    const bodyEl = document.getElementById('lowStockPreviewBody');
+    if (bodyEl) bodyEl.innerHTML = bodyHtml;
+
+    const countEl = document.getElementById('lowStockPreviewCount');
+    if (countEl) countEl.textContent = `${items.length} row${items.length === 1 ? '' : 's'} selected`;
+  },
+
+  async confirmLowStockPrint(asPdf) {
+    const selected = App.State.selectedLowStockPreview || [];
+    const items = (App.State.globalStock || []).filter(item => App.Selection.isSelected(selected, this.stockKey(item)));
+    if (items.length === 0) {
+      App.Utils.showToast('Select at least one item/size before printing.', true);
+      return;
+    }
+
+    const ok = await this.printStockPivot(items, [], {
       subtitle: 'Low Stock Alerts & Inventory Status Report',
       reportType: 'Inventory Alert (Low Stock)',
       fileNamePrefix: 'Low_Stock_Report',
-      emptyMessage: 'All items are well stocked. No low stock alerts.'
+      emptyMessage: 'No stock records found.',
+      asPdf: !!asPdf
     });
+
+    safeModalHide('lowStockPreviewModal');
+    if (asPdf && ok) App.Utils.showToast(`${items.length} item(s) exported to PDF!`, false);
   },
 
   // Prints every item currently on the Stock sheet (regardless of any
@@ -2671,19 +2829,12 @@ App.Stock = {
     });
   },
 
-  // Populates and prints #print-low-stock-container as a pivot. Shared
-  // by printFullStockList, printLowStockReport, and bulkPrint -- all
-  // three guard on App.Print before reaching here, so this (and its
-  // App.Utils.getSizeFromOutputItemName call, not ported yet -- that's
-  // a Process-grouping helper that belongs to the Products & Processes
-  // round) is unreachable dead code until then.
-  printStockPivot(items, poolItems, {
-    subtitle = 'Inventory Status Report',
-    reportType = 'Stock Report',
-    fileNamePrefix = 'Stock_Report',
-    emptyMessage = 'No stock records found.',
-    asPdf = false
-  } = {}) {
+  // Pure pivot builder shared by printStockPivot (writes into the hidden
+  // #print-low-stock-container) and renderLowStockPreviewTable (writes
+  // into the modal's own preview table) -- one row per item name, one
+  // column per size, cell = current stock for that size, so what the
+  // preview shows is built by the exact same code that prints.
+  _buildStockPivotMarkup(items, poolItems, emptyMessage) {
     const sizeSet = new Set();
     const byName = new Map();
     items.forEach(item => {
@@ -2715,13 +2866,48 @@ App.Stock = {
     const sizes = [...sizeSet].sort((a, b) => a.localeCompare(b));
     const names = [...byName.keys()].sort((a, b) => a.localeCompare(b));
 
-    const headerRow = document.getElementById('print-low-stock-header-row');
-    if (headerRow) {
-      headerRow.innerHTML = `
-        <th style="padding:6px;border:1px solid #000;text-align:left;">Item Name</th>
-        ${sizes.map(s => `<th style="padding:6px;border:1px solid #000;text-align:center;">${escapeHtml(s)}</th>`).join('')}
-      `;
+    const headerHtml = `
+      <th style="padding:6px;border:1px solid #000;text-align:left;">Item Name</th>
+      ${sizes.map(s => `<th style="padding:6px;border:1px solid #000;text-align:center;">${escapeHtml(s)}</th>`).join('')}
+    `;
+
+    let bodyHtml;
+    if (!names.length) {
+      bodyHtml = `<tr><td colspan="${sizes.length + 1}" style="text-align:center;color:#777;padding:24px;">${escapeHtml(emptyMessage)}</td></tr>`;
+    } else {
+      bodyHtml = names.map(name => {
+        const sizeMap = byName.get(name);
+        const cells = sizes.map(size => {
+          const entry = sizeMap.get(size);
+          if (!entry) return `<td style="padding:6px;border:1px solid #999;text-align:center;color:#1a1a1a;">-</td>`;
+          return `<td style="padding:6px;border:1px solid #999;text-align:center;color:#1a1a1a;${entry.isLowStock ? 'background:#e0e0e0;font-weight:800;' : ''}">${entry.currentStock}</td>`;
+        }).join('');
+        return `
+      <tr>
+        <td style="padding:6px;border:1px solid #999;text-align:left;"><strong style="color:#1a1a1a;">${escapeHtml(name)}</strong></td>
+        ${cells}
+      </tr>
+    `;
+      }).join('');
     }
+
+    return { headerHtml, bodyHtml };
+  },
+
+  // Populates and prints #print-low-stock-container as a pivot. Shared
+  // by printFullStockList, confirmLowStockPrint, and bulkPrint -- all
+  // guard on App.Print before reaching here.
+  printStockPivot(items, poolItems, {
+    subtitle = 'Inventory Status Report',
+    reportType = 'Stock Report',
+    fileNamePrefix = 'Stock_Report',
+    emptyMessage = 'No stock records found.',
+    asPdf = false
+  } = {}) {
+    const { headerHtml, bodyHtml } = this._buildStockPivotMarkup(items, poolItems, emptyMessage);
+
+    const headerRow = document.getElementById('print-low-stock-header-row');
+    if (headerRow) headerRow.innerHTML = headerHtml;
 
     const subtitleEl = document.getElementById('print-low-stock-subtitle');
     if (subtitleEl) subtitleEl.innerText = subtitle;
@@ -2733,26 +2919,7 @@ App.Stock = {
     if (dateEl) dateEl.innerText = new Date().toLocaleDateString('en-GB');
 
     const bodyEl = document.getElementById('print-low-stock-body');
-    if (bodyEl) {
-      if (!names.length) {
-        bodyEl.innerHTML = `<tr><td colspan="${sizes.length + 1}" style="text-align:center;color:#777;padding:24px;">${escapeHtml(emptyMessage)}</td></tr>`;
-      } else {
-        bodyEl.innerHTML = names.map(name => {
-          const sizeMap = byName.get(name);
-          const cells = sizes.map(size => {
-            const entry = sizeMap.get(size);
-            if (!entry) return `<td style="padding:6px;border:1px solid #999;text-align:center;color:#1a1a1a;">-</td>`;
-            return `<td style="padding:6px;border:1px solid #999;text-align:center;color:#1a1a1a;${entry.isLowStock ? 'background:#e0e0e0;font-weight:800;' : ''}">${entry.currentStock}</td>`;
-          }).join('');
-          return `
-        <tr>
-          <td style="padding:6px;border:1px solid #999;text-align:left;"><strong style="color:#1a1a1a;">${escapeHtml(name)}</strong></td>
-          ${cells}
-        </tr>
-      `;
-        }).join('');
-      }
-    }
+    if (bodyEl) bodyEl.innerHTML = bodyHtml;
 
     const filenameBase = `${fileNamePrefix}_${new Date().toISOString().slice(0, 10)}`;
     if (asPdf) {
