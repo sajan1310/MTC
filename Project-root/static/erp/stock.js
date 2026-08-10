@@ -2732,24 +2732,24 @@ App.Stock = {
       const someChecked = checkedCount > 0 && !allChecked;
 
       return `
-        <div class="border rounded-2 mb-2 bg-white">
-          <label class="d-flex align-items-center gap-2 p-2 border-bottom mb-0" style="cursor:pointer;background:#f8f9fa;">
+        <div class="lsp-item-card">
+          <label class="lsp-item-card-header">
             <input type="checkbox" class="form-check-input flex-shrink-0 lsp-group-chk" ${allChecked ? 'checked' : ''} ${someChecked ? 'data-indeterminate="1"' : ''}
                    onchange="App.Stock.toggleLowStockPreviewGroup('${encName}', this.checked)">
-            <strong class="small text-dark flex-grow-1">${escapeHtml(name)}</strong>
+            <strong class="small flex-grow-1">${escapeHtml(name)}</strong>
             <span class="badge bg-secondary">${checkedCount}/${rows.length}</span>
           </label>
-          <div class="p-2">
+          <div class="p-2 pt-1">
             ${rows.map(r => {
               const key = this.stockKey(r);
               const encKey = encodeURIComponent(key);
               const checked = App.Selection.isSelected(selected, key);
               return `
-                <label class="d-flex align-items-center gap-2 py-1 small mb-0" style="cursor:pointer;">
+                <label class="lsp-size-row small">
                   <input type="checkbox" class="form-check-input" ${checked ? 'checked' : ''}
                          onchange="App.Stock.toggleLowStockPreviewRow('${encKey}', this.checked)">
                   <span class="flex-grow-1">${escapeHtml(r.size || 'GENERAL')}</span>
-                  <span class="text-muted">${r.currentStock}${r.isLowStock ? ' <span class="text-danger fw-bold">(LOW)</span>' : ''}</span>
+                  <span class="lsp-size-stock">${r.currentStock}${r.isLowStock ? ' <span class="text-danger fw-bold">(LOW)</span>' : ''}</span>
                 </label>`;
             }).join('')}
           </div>
@@ -2766,7 +2766,7 @@ App.Stock = {
     const selected = App.State.selectedLowStockPreview || [];
     const items = (App.State.globalStock || []).filter(item => App.Selection.isSelected(selected, this.stockKey(item)));
 
-    const { headerHtml, bodyHtml } = this._buildStockPivotMarkup(items, [], 'No items selected -- pick at least one item/size on the left.');
+    const { headerHtml, bodyHtml } = this._buildStockPivotPreviewMarkup(items, [], 'No items selected -- pick at least one item/size on the left.');
 
     const headerRow = document.getElementById('lowStockPreviewHeaderRow');
     if (headerRow) headerRow.innerHTML = headerHtml;
@@ -2829,12 +2829,17 @@ App.Stock = {
     });
   },
 
-  // Pure pivot builder shared by printStockPivot (writes into the hidden
-  // #print-low-stock-container) and renderLowStockPreviewTable (writes
-  // into the modal's own preview table) -- one row per item name, one
-  // column per size, cell = current stock for that size, so what the
-  // preview shows is built by the exact same code that prints.
-  _buildStockPivotMarkup(items, poolItems, emptyMessage) {
+  // Pure pivot computation shared by printStockPivot (via
+  // _buildStockPivotPrintMarkup) and renderLowStockPreviewTable (via
+  // _buildStockPivotPreviewMarkup) -- one row per item name, one column
+  // per size, cell = current stock for that size. Kept as data only (no
+  // HTML) since the print output and the in-app live preview need very
+  // different markup: the print container is a fixed white physical page
+  // (hardcoded dark-on-white inline colors, fine there), but the preview
+  // renders inside the app's own themeable modal -- reusing the print
+  // markup there put dark inline text on a dark theme background with no
+  // inline fallback background, making the Item Name column unreadable.
+  _computeStockPivot(items, poolItems) {
     const sizeSet = new Set();
     const byName = new Map();
     items.forEach(item => {
@@ -2863,8 +2868,18 @@ App.Stock = {
       });
     });
 
-    const sizes = [...sizeSet].sort((a, b) => a.localeCompare(b));
-    const names = [...byName.keys()].sort((a, b) => a.localeCompare(b));
+    return {
+      sizes: [...sizeSet].sort((a, b) => a.localeCompare(b)),
+      names: [...byName.keys()].sort((a, b) => a.localeCompare(b)),
+      byName
+    };
+  },
+
+  // Print/PDF markup: hardcoded dark-on-white inline styles, matching
+  // every other print template in print.html (self-contained on purpose --
+  // html2canvas/window.print() never apply the app's own theme CSS).
+  _buildStockPivotPrintMarkup(items, poolItems, emptyMessage) {
+    const { sizes, names, byName } = this._computeStockPivot(items, poolItems);
 
     const headerHtml = `
       <th style="padding:6px;border:1px solid #000;text-align:left;">Item Name</th>
@@ -2894,6 +2909,37 @@ App.Stock = {
     return { headerHtml, bodyHtml };
   },
 
+  // Live-preview markup: no inline colors at all -- plain <th>/<td> that
+  // inherit the app's own (already dark-mode-aware) .table styling, same
+  // as every other table in the app. Low stock is called out with
+  // .text-danger (themed) instead of the print version's inline grey
+  // cell background, which would have the same dark-mode contrast problem.
+  _buildStockPivotPreviewMarkup(items, poolItems, emptyMessage) {
+    const { sizes, names, byName } = this._computeStockPivot(items, poolItems);
+
+    const headerHtml = `
+      <th scope="col">Item Name</th>
+      ${sizes.map(s => `<th scope="col" class="text-center">${escapeHtml(s)}</th>`).join('')}
+    `;
+
+    let bodyHtml;
+    if (!names.length) {
+      bodyHtml = `<tr><td colspan="${sizes.length + 1}" class="text-center text-muted p-4">${escapeHtml(emptyMessage)}</td></tr>`;
+    } else {
+      bodyHtml = names.map(name => {
+        const sizeMap = byName.get(name);
+        const cells = sizes.map(size => {
+          const entry = sizeMap.get(size);
+          if (!entry) return `<td class="text-center text-muted">-</td>`;
+          return `<td class="text-center${entry.isLowStock ? ' text-danger fw-bold' : ''}">${entry.currentStock}</td>`;
+        }).join('');
+        return `<tr><td><strong>${escapeHtml(name)}</strong></td>${cells}</tr>`;
+      }).join('');
+    }
+
+    return { headerHtml, bodyHtml };
+  },
+
   // Populates and prints #print-low-stock-container as a pivot. Shared
   // by printFullStockList, confirmLowStockPrint, and bulkPrint -- all
   // guard on App.Print before reaching here.
@@ -2904,7 +2950,7 @@ App.Stock = {
     emptyMessage = 'No stock records found.',
     asPdf = false
   } = {}) {
-    const { headerHtml, bodyHtml } = this._buildStockPivotMarkup(items, poolItems, emptyMessage);
+    const { headerHtml, bodyHtml } = this._buildStockPivotPrintMarkup(items, poolItems, emptyMessage);
 
     const headerRow = document.getElementById('print-low-stock-header-row');
     if (headerRow) headerRow.innerHTML = headerHtml;

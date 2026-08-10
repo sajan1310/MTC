@@ -2568,6 +2568,57 @@
     background-color: var(--text-muted);
   }
 
+  /* ─────────────────────────────────────────────────────────────────────
+     LOW STOCK REPORT PREVIEW MODAL (#lowStockPreviewModal)
+     Custom classes instead of Bootstrap's bg-white/bg-light utilities:
+     those two both resolve to the same --bg-light token as .modal-body
+     itself in dark mode (see the [data-theme="dark"] .bg-white override),
+     so a bg-white "card" sitting directly on a bg-light modal body became
+     invisible -- same surface color, zero contrast. --bg-muted is a
+     deliberately different token from the modal body's --bg-light so the
+     item cards actually read as distinct cards in both themes.
+     ───────────────────────────────────────────────────────────────────── */
+  .lsp-item-card {
+    background-color: var(--bg-muted);
+    border: 1px solid var(--border-color);
+    border-radius: var(--border-radius-sm);
+    margin-bottom: 8px;
+    overflow: hidden;
+  }
+
+  .lsp-item-card-header {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    padding: 8px;
+    border-bottom: 1px solid var(--border-color);
+    background-color: rgb(0 0 0 / 4%);
+    cursor: pointer;
+    margin-bottom: 0;
+  }
+
+  [data-theme="dark"] .lsp-item-card-header {
+    background-color: rgb(255 255 255 / 4%);
+  }
+
+  .lsp-item-card-header strong {
+    color: var(--text-primary);
+  }
+
+  .lsp-size-row {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    padding: 4px 8px;
+    cursor: pointer;
+    margin-bottom: 0;
+    color: var(--text-primary);
+  }
+
+  .lsp-size-row .lsp-size-stock {
+    color: var(--text-muted);
+  }
+
   /* ═════════════════════════════════════════════════════════════════════
      PRINT / PDF TEMPLATE ISOLATION -- deliberately OUTSIDE @media print
 
