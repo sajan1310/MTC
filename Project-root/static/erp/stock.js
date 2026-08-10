@@ -2652,8 +2652,11 @@ App.Stock = {
       .filter(item => item.isLowStock)
       .map(item => this.stockKey(item));
     App.State.lowStockPreviewSearch = '';
+    App.State.lowStockPreviewFilter = 'all';
     const searchInput = document.getElementById('lowStockPreviewSearch');
     if (searchInput) searchInput.value = '';
+    const filterSelect = document.getElementById('lowStockPreviewFilter');
+    if (filterSelect) filterSelect.value = 'all';
 
     this.renderLowStockPreviewChecklist();
     this.renderLowStockPreviewTable();
@@ -2665,18 +2668,55 @@ App.Stock = {
     this.renderLowStockPreviewChecklist();
   },
 
+  // "Show: All / Low Stock Only / Selected Only / Unselected Only" -- narrows
+  // the checklist so Select All/None below only have to act on a manageable
+  // subset instead of the entire item list, e.g. filter to "Low Stock Only"
+  // then Select All to bulk-grab just those, or "Unselected Only" to sweep up
+  // whatever's still missing without re-scanning everything already checked.
+  setLowStockPreviewFilter(mode) {
+    App.State.lowStockPreviewFilter = mode || 'all';
+    this.renderLowStockPreviewChecklist();
+  },
+
+  // Every stock row matching the current search term + Show filter --
+  // shared by the checklist renderer and Select All/None so both agree on
+  // what's "currently visible".
+  _visibleLowStockPreviewItems() {
+    const term = (App.State.lowStockPreviewSearch || '').toLowerCase();
+    const mode = App.State.lowStockPreviewFilter || 'all';
+    const selected = App.State.selectedLowStockPreview || [];
+
+    return (App.State.globalStock || []).filter(item => {
+      if (term && !item.name.toLowerCase().includes(term) && !(item.size || '').toLowerCase().includes(term)) return false;
+      if (mode === 'low' && !item.isLowStock) return false;
+      const isSelected = App.Selection.isSelected(selected, this.stockKey(item));
+      if (mode === 'selected' && !isSelected) return false;
+      if (mode === 'unselected' && isSelected) return false;
+      return true;
+    });
+  },
+
+  // Selects/deselects only what the current search + Show filter has
+  // narrowed the checklist down to -- not the entire item list -- so
+  // filtering first is what makes bulk selection actually fast.
   selectAllLowStockPreview() {
-    App.State.selectedLowStockPreview = (App.State.globalStock || []).map(item => this.stockKey(item));
+    const selected = App.State.selectedLowStockPreview;
+    this._visibleLowStockPreviewItems().forEach(item => App.Selection.toggle(selected, this.stockKey(item), true));
     this.renderLowStockPreviewChecklist();
     this.renderLowStockPreviewTable();
   },
 
   selectNoneLowStockPreview() {
-    App.State.selectedLowStockPreview = [];
+    const selected = App.State.selectedLowStockPreview;
+    this._visibleLowStockPreviewItems().forEach(item => App.Selection.toggle(selected, this.stockKey(item), false));
     this.renderLowStockPreviewChecklist();
     this.renderLowStockPreviewTable();
   },
 
+  // Unlike Select All/None above, Reset ignores the current search/Show
+  // filter on purpose -- it's a full reset back to the report's original
+  // default (every currently low-stock item/size), not a filtered bulk
+  // action.
   resetLowStockPreviewToDefault() {
     App.State.selectedLowStockPreview = (App.State.globalStock || [])
       .filter(item => item.isLowStock)
@@ -2691,28 +2731,32 @@ App.Stock = {
     this.renderLowStockPreviewTable();
   },
 
+  // Only touches sizes of this item currently visible under the active
+  // search/Show filter -- e.g. with "Show: Low Stock Only" narrowing a
+  // multi-size item down to just its low sizes, the group checkbox grabs
+  // only what's actually shown, not the sizes the filter is hiding.
   toggleLowStockPreviewGroup(encName, checked) {
     const name = decodeURIComponent(encName);
-    (App.State.globalStock || []).filter(item => item.name === name).forEach(item => {
-      App.Selection.toggle(App.State.selectedLowStockPreview, this.stockKey(item), checked);
+    const selected = App.State.selectedLowStockPreview;
+    this._visibleLowStockPreviewItems().filter(item => item.name === name).forEach(item => {
+      App.Selection.toggle(selected, this.stockKey(item), checked);
     });
     this.renderLowStockPreviewChecklist();
     this.renderLowStockPreviewTable();
   },
 
-  // Left panel: every item, grouped by name, one checkbox per size plus a
-  // group checkbox (checked/indeterminate/unchecked) to grab a whole
-  // item's sizes at once.
+  // Left panel: every item matching the current search/Show filter,
+  // grouped by name, one checkbox per size plus a group checkbox
+  // (checked/indeterminate/unchecked) to grab a whole item's visible
+  // sizes at once.
   renderLowStockPreviewChecklist() {
     const container = document.getElementById('lowStockPreviewChecklist');
     if (!container) return;
 
-    const term = (App.State.lowStockPreviewSearch || '').toLowerCase();
     const selected = App.State.selectedLowStockPreview || [];
 
     const byName = new Map();
-    (App.State.globalStock || []).forEach(item => {
-      if (term && !item.name.toLowerCase().includes(term) && !(item.size || '').toLowerCase().includes(term)) return;
+    this._visibleLowStockPreviewItems().forEach(item => {
       if (!byName.has(item.name)) byName.set(item.name, []);
       byName.get(item.name).push(item);
     });
@@ -2720,7 +2764,7 @@ App.Stock = {
     const names = [...byName.keys()].sort((a, b) => a.localeCompare(b));
 
     if (!names.length) {
-      container.innerHTML = '<p class="text-muted text-center p-4 mb-0">No items match your search.</p>';
+      container.innerHTML = '<p class="text-muted text-center p-4 mb-0">No items match the current search/filter.</p>';
       return;
     }
 

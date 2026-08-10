@@ -257,10 +257,16 @@
             <div class="p-3 border-bottom bg-white">
               <input type="text" id="lowStockPreviewSearch" class="form-control form-control-sm mb-2" placeholder="Search item or size..." autocomplete="off" onkeyup="App.Stock.filterLowStockPreview(this.value)">
               <div class="d-flex flex-wrap gap-2">
+                <select id="lowStockPreviewFilter" class="form-select form-select-sm w-auto" title="Filter the list below -- Select All/None only act on what's showing" onchange="App.Stock.setLowStockPreviewFilter(this.value)">
+                  <option value="all">Show: All Items</option>
+                  <option value="low">Show: Low Stock Only</option>
+                  <option value="selected">Show: Selected Only</option>
+                  <option value="unselected">Show: Unselected Only</option>
+                </select>
                 <button type="button" class="btn btn-outline-dark btn-sm fw-bold" onclick="App.Stock.selectAllLowStockPreview()">Select All</button>
                 <button type="button" class="btn btn-outline-secondary btn-sm fw-bold" onclick="App.Stock.selectNoneLowStockPreview()">Select None</button>
                 <button type="button" class="btn btn-outline-danger btn-sm fw-bold" onclick="App.Stock.resetLowStockPreviewToDefault()">
-                  <i class="bi bi-arrow-counterclockwise"></i> Low Stock Only
+                  <i class="bi bi-arrow-counterclockwise"></i> Reset
                 </button>
               </div>
             </div>
