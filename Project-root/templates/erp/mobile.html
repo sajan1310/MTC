@@ -87,6 +87,13 @@
   <!-- Screen templates (cloned into #mapp-content by mobile.js) -->
   {% include "erp/partials/mobile_views.html" %}
 
+  <!-- Phase 4 (Admin, mobile-parity): the current user's role/email, needed
+       client-side for the Create-User form's Admin-role gate and for
+       hiding self-targeting actions in the Users list -- real enforcement
+       is still 100% server-side (app/erp/rpc.py's roles= gate), this is
+       UX only. Set before mobile.js loads since MApp.Admin reads it. -->
+  <script>window.MOBILE_CURRENT_USER = {{ { 'email': current_user.email, 'role': current_user.role } | tojson }};</script>
+
   <!-- Shared google.script.run-equivalent wrapper (same as desktop's Api.call) -->
   <script src="{{ url_for('static', filename='erp/api.js') }}"></script>
 

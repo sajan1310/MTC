@@ -184,6 +184,7 @@ App.Contractor = {
 
     this.switchTab('c-profile');
     document.getElementById('btn-c-rates').parentElement.style.display = 'none';
+    document.getElementById('btn-c-extra-charges').parentElement.style.display = 'none';
     document.getElementById('btn-c-ledger').parentElement.style.display = 'none';
 
     const modalEl = document.getElementById('contractorProfileModal');
@@ -195,6 +196,7 @@ App.Contractor = {
     if (!contractor) return;
 
     App.State.selectedContractorRates = [];
+    App.State.selectedContractorServiceCharges = [];
     App.State.selectedContractorPayments = [];
 
     const form = document.getElementById('contractorForm');
@@ -211,9 +213,12 @@ App.Contractor = {
     document.getElementById('contractorSubmitBtn').innerText = 'Update Profile Info';
 
     document.getElementById('btn-c-rates').parentElement.style.display = 'block';
+    document.getElementById('btn-c-extra-charges').parentElement.style.display = 'block';
     document.getElementById('btn-c-ledger').parentElement.style.display = 'block';
 
+    await App.ProcessType.ensureLoaded();
     await this.loadRateCard(contractor.contractorName);
+    await this.loadServiceCharges(contractor.contractorName);
     await this.renderLedgerTab(contractor.contractorName);
 
     this.switchTab('c-profile');
@@ -222,24 +227,40 @@ App.Contractor = {
     if (modalEl && typeof bootstrap !== 'undefined') new bootstrap.Modal(modalEl).show();
   },
 
-  // Builds the Process <option> list for a rate card row: active Process
-  // Master names plus the hardcoded "Dispatch / Logistics" virtual
-  // category. A row's already-saved process is always included even if
-  // it's since gone inactive or been deleted from Process Master.
-  buildProcessOptionsHtml(selected) {
-    const names = (App.State.globalProcesses || []).filter(p => p.active).map(p => p.processName);
+  // Builds the Process Type <option> list for a rate card row, from
+  // Process Type Master (App.State.globalProcessTypes) plus the
+  // hardcoded "Dispatch / Logistics" pseudo-type (Dispatch has no real
+  // Process record, but its logistics rate lives on this same rate card
+  // -- see dispatch_service.py's use of config_maps.LOGISTICS_PROCESS_NAME).
+  // A row's already-saved type is always included even if it's since
+  // been renamed/removed from the master.
+  buildProcessTypeOptionsHtml(selected) {
+    const names = (App.State.globalProcessTypes || []).map(t => t.name);
     names.push('Dispatch / Logistics');
     const sel = String(selected || '').trim();
     if (sel && !names.some(n => n.toLowerCase() === sel.toLowerCase())) {
       names.unshift(sel);
-      return names.map(n => `<option value="${escapeHtml(n)}" ${n === sel ? 'selected' : ''}>${escapeHtml(n)}${n === sel ? ' (inactive/removed)' : ''}</option>`).join('');
+      return names.map(n => `<option value="${escapeHtml(n)}" ${n === sel ? 'selected' : ''}>${escapeHtml(n)}${n === sel ? ' (removed)' : ''}</option>`).join('');
     }
-    return names.map(n => `<option value="${escapeHtml(n)}" ${n === sel ? 'selected' : ''}>${escapeHtml(n)}</option>`).join('');
+    return `<option value="">Choose a Process Type...</option>` +
+      names.map(n => `<option value="${escapeHtml(n)}" ${n === sel ? 'selected' : ''}>${escapeHtml(n)}</option>`).join('');
+  },
+
+  // Sizes are a fixed list (App.Utils.PROCESS_SIZE_LIST), same one the
+  // Production form's Size cascade dropdown already uses -- plus
+  // 'General', the fallback contractors_service.
+  // _get_size_from_output_item_name resolves to for any Process whose
+  // Output Item Name doesn't mention a recognized size.
+  buildSizeOptionsHtml(selected) {
+    const names = [...App.Utils.PROCESS_SIZE_LIST, 'General'];
+    const sel = String(selected || '').trim();
+    return `<option value="">Choose a Size...</option>` +
+      names.map(n => `<option value="${escapeHtml(n)}" ${n === sel ? 'selected' : ''}>${escapeHtml(n)}</option>`).join('');
   },
 
   async loadRateCard(contractorName) {
     const tbody = document.getElementById('contractorRatesBody');
-    if (tbody) tbody.innerHTML = '<tr><td colspan="4" class="text-center p-3">Loading rate card...</td></tr>';
+    if (tbody) tbody.innerHTML = '<tr><td colspan="6" class="text-center p-3">Loading rate card...</td></tr>';
 
     try {
       const res = await Api.call('getContractorRatesData', contractorName);
@@ -260,17 +281,20 @@ App.Contractor = {
 
   renderRateRow(rate) {
     const rowId = 'rate_row_' + Math.floor(Math.random() * 1000000);
-    const originalProcess = rate.processName || '';
-    // A freshly-added, not-yet-saved row (originalProcess blank) has
+    const originalProcessType = rate.processType || '';
+    const originalSize = rate.size || '';
+    // A freshly-added, not-yet-saved row (originalProcessType blank) has
     // nothing server-side to bulk-delete yet -- no checkbox for it, same
     // as its own ✕ (deleteRateRow) already just removing the DOM row for
     // that case instead of calling the API.
-    const checkboxCell = originalProcess
-      ? `<input type="checkbox" class="form-check-input rate-select-chk" data-key="${escapeHtml(originalProcess)}" ${App.Selection.isSelected(App.State.selectedContractorRates, originalProcess) ? 'checked' : ''} onchange="App.Contractor.onRateRowSelectChange()">`
+    const key = `${originalProcessType}||${originalSize}`;
+    const checkboxCell = originalProcessType
+      ? `<input type="checkbox" class="form-check-input rate-select-chk" data-key="${escapeHtml(key)}" ${App.Selection.isSelected(App.State.selectedContractorRates, key) ? 'checked' : ''} onchange="App.Contractor.onRateRowSelectChange()">`
       : '';
-    return `<tr id="${rowId}" data-original-process="${escapeHtml(originalProcess)}">
+    return `<tr id="${rowId}" data-original-process-type="${escapeHtml(originalProcessType)}" data-original-size="${escapeHtml(originalSize)}">
   <td class="text-center">${checkboxCell}</td>
-  <td><select class="form-select form-select-sm rate-process">${this.buildProcessOptionsHtml(originalProcess)}</select></td>
+  <td><select class="form-select form-select-sm rate-process-type">${this.buildProcessTypeOptionsHtml(originalProcessType)}</select></td>
+  <td><select class="form-select form-select-sm rate-size">${this.buildSizeOptionsHtml(originalSize)}</select></td>
   <td><input type="number" class="form-control form-control-sm text-end rate-amount" value="${rate.ratePerUnit || 0}" min="0" step="0.01"></td>
   <td><input type="text" class="form-control form-control-sm rate-remarks" value="${escapeHtml(rate.remarks || '')}"></td>
   <td class="text-center">
@@ -303,7 +327,10 @@ App.Contractor = {
       `Delete ${selected.length} selected rate card entr${selected.length === 1 ? 'y' : 'ies'} for "${contractorName}"? This cannot be undone.`,
       async () => {
         try {
-          const res = await Api.mutate('deleteContractorRatesBulk', selected.map(processName => ({ contractorName, processName })));
+          const res = await Api.mutate('deleteContractorRatesBulk', selected.map(key => {
+            const [processType, size] = key.split('||');
+            return { contractorName, processType, size };
+          }));
           App.Utils.showToast(res?.message || 'Delete completed.', !res?.success);
           if (res?.success) {
             App.State.selectedContractorRates = [];
@@ -319,14 +346,15 @@ App.Contractor = {
   addRateRow() {
     const tbody = document.getElementById('contractorRatesBody');
     if (!tbody) return;
-    tbody.insertAdjacentHTML('beforeend', this.renderRateRow({ processName: '', ratePerUnit: 0, remarks: '' }));
+    tbody.insertAdjacentHTML('beforeend', this.renderRateRow({ processType: '', size: '', ratePerUnit: 0, remarks: '' }));
   },
 
-  // Saving upserts by (contractor, process) -- it has no idea this row
-  // used to mean a different process. If the dropdown was switched away
-  // from the row's original saved process, the old (contractor,
-  // oldProcess) entry would otherwise be left behind as an orphaned
-  // duplicate, so it's explicitly deleted after the new pair saves.
+  // Saving upserts by (contractor, processType, size) -- it has no idea
+  // this row used to mean a different type/size. If either dropdown was
+  // switched away from the row's original saved values, the old
+  // (contractor, oldType, oldSize) entry would otherwise be left behind
+  // as an orphaned duplicate, so it's explicitly deleted after the new
+  // triple saves.
   async saveRateRow(rowId) {
     const row = document.getElementById(rowId);
     if (!row) return;
@@ -334,24 +362,29 @@ App.Contractor = {
     const contractorName = App.State.currentContractorRates?.contractorName;
     if (!contractorName) return;
 
-    const processName = row.querySelector('.rate-process').value;
+    const processType = row.querySelector('.rate-process-type').value;
+    const size = row.querySelector('.rate-size').value;
     const ratePerUnit = row.querySelector('.rate-amount').value;
     const remarks = row.querySelector('.rate-remarks').value;
-    const originalProcess = row.dataset.originalProcess || '';
+    const originalProcessType = row.dataset.originalProcessType || '';
+    const originalSize = row.dataset.originalSize || '';
 
-    if (!processName) {
-      App.Utils.showToast('Select a process for this rate.', true);
+    if (!processType || !size) {
+      App.Utils.showToast('Select a Process Type and Size for this rate.', true);
       return;
     }
 
     try {
-      const res = await Api.mutate('saveContractorRate', { contractorName, processName, ratePerUnit, remarks });
+      const res = await Api.mutate('saveContractorRate', { contractorName, processType, size, ratePerUnit, remarks });
       if (!res.success) {
         App.Utils.showToast(res.message, true);
         return;
       }
-      if (originalProcess && originalProcess.toLowerCase() !== processName.toLowerCase()) {
-        await Api.mutate('deleteContractorRate', contractorName, originalProcess);
+      const typeOrSizeChanged = originalProcessType && (
+        originalProcessType.toLowerCase() !== processType.toLowerCase() || originalSize.toLowerCase() !== size.toLowerCase()
+      );
+      if (typeOrSizeChanged) {
+        await Api.mutate('deleteContractorRate', contractorName, originalProcessType, originalSize);
       }
       App.Utils.showToast(res.message, false);
       await this.loadRateCard(contractorName);
@@ -364,24 +397,176 @@ App.Contractor = {
     const row = document.getElementById(rowId);
     if (!row) return;
 
-    const originalProcess = row.dataset.originalProcess || '';
+    const originalProcessType = row.dataset.originalProcessType || '';
+    const originalSize = row.dataset.originalSize || '';
     const contractorName = App.State.currentContractorRates?.contractorName;
 
-    const existing = (App.State.currentContractorRates?.rates || []).find(r => App.Utils.sameText(r.processName, originalProcess));
+    const existing = (App.State.currentContractorRates?.rates || [])
+      .find(r => App.Utils.sameText(r.processType, originalProcessType) && App.Utils.sameText(r.size, originalSize));
     if (!existing || !contractorName) {
       row.remove();
       return;
     }
 
     App.Utils.confirmAction(
-      `Delete the rate card entry for "${contractorName}" on process "${originalProcess}"? This cannot be undone.`,
+      `Delete the rate card entry for "${contractorName}" on "${originalProcessType} / ${originalSize}"? This cannot be undone.`,
       async () => {
         try {
-          const res = await Api.mutate('deleteContractorRate', contractorName, originalProcess);
+          const res = await Api.mutate('deleteContractorRate', contractorName, originalProcessType, originalSize);
           App.Utils.showToast(res.message, !res.success);
           if (res.success) await this.loadRateCard(contractorName);
         } catch (err) {
           App.Utils.showToast(err.message || 'Failed to delete rate', true);
+        }
+      }
+    );
+  },
+
+  // ───────────────────────────────────────────────────────────────────
+  // Extra Charges (Layer 2 -- optional flat per-lot charge, e.g.
+  // "Mounting Tyre/Tube"). Same table pattern as the Rate Card above,
+  // upserting by (contractor, serviceType) instead of a numeric row id.
+  // ───────────────────────────────────────────────────────────────────
+
+  async loadServiceCharges(contractorName) {
+    const tbody = document.getElementById('contractorServiceChargesBody');
+    if (tbody) tbody.innerHTML = '<tr><td colspan="5" class="text-center p-3">Loading extra charges...</td></tr>';
+
+    try {
+      const res = await Api.call('getContractorServiceChargesData', contractorName);
+      const charges = res.success ? res.data : [];
+      App.State.currentContractorServiceCharges = { contractorName, charges };
+
+      if (!charges.length) {
+        tbody.innerHTML = '';
+        this.updateServiceChargesBulkButton();
+        return;
+      }
+      tbody.innerHTML = charges.map(c => this.renderServiceChargeRow(c)).join('');
+      this.updateServiceChargesBulkButton();
+    } catch (err) {
+      App.Utils.showToast(err.message || 'Failed to load extra charges', true);
+    }
+  },
+
+  renderServiceChargeRow(charge) {
+    const rowId = 'charge_row_' + Math.floor(Math.random() * 1000000);
+    const originalServiceType = charge.serviceType || '';
+    const checkboxCell = originalServiceType
+      ? `<input type="checkbox" class="form-check-input service-charge-select-chk" data-key="${escapeHtml(originalServiceType)}" ${App.Selection.isSelected(App.State.selectedContractorServiceCharges, originalServiceType) ? 'checked' : ''} onchange="App.Contractor.onServiceChargeRowSelectChange()">`
+      : '';
+    return `<tr id="${rowId}" data-original-service-type="${escapeHtml(originalServiceType)}">
+  <td class="text-center">${checkboxCell}</td>
+  <td><input type="text" class="form-control form-control-sm charge-service-type" value="${escapeHtml(originalServiceType)}" placeholder="e.g. Mounting Tyre/Tube"></td>
+  <td><input type="number" class="form-control form-control-sm text-end charge-amount" value="${charge.chargeAmount || 0}" min="0" step="0.01"></td>
+  <td><input type="text" class="form-control form-control-sm charge-remarks" value="${escapeHtml(charge.remarks || '')}"></td>
+  <td class="text-center">
+    <button type="button" class="btn btn-sm btn-outline-success" onclick="App.Contractor.saveServiceChargeRow('${rowId}')">Save</button>
+    <button type="button" class="btn btn-sm btn-outline-danger" onclick="App.Contractor.deleteServiceChargeRow('${rowId}')">✕</button>
+  </td>
+</tr>`;
+  },
+
+  toggleSelectAllServiceCharges(masterChk) {
+    App.Selection.toggleAll(App.State.selectedContractorServiceCharges, 'service-charge-select-chk', masterChk);
+    this.updateServiceChargesBulkButton();
+  },
+
+  onServiceChargeRowSelectChange() {
+    App.Selection.syncFromRows(App.State.selectedContractorServiceCharges, 'service-charge-select-chk', 'selectAllContractorServiceCharges');
+    this.updateServiceChargesBulkButton();
+  },
+
+  updateServiceChargesBulkButton() {
+    App.Selection.updateButton('btnBulkDeleteContractorServiceCharges', App.State.selectedContractorServiceCharges.length, '<i class="bi bi-trash"></i> Delete Selected');
+  },
+
+  async bulkDeleteServiceCharges() {
+    const selected = App.State.selectedContractorServiceCharges;
+    const contractorName = App.State.currentContractorServiceCharges?.contractorName;
+    if (!selected.length || !contractorName) return;
+
+    App.Utils.confirmAction(
+      `Delete ${selected.length} selected extra charge(s) for "${contractorName}"? This cannot be undone.`,
+      async () => {
+        try {
+          const res = await Api.mutate('deleteContractorServiceChargesBulk', selected.map(serviceType => ({ contractorName, serviceType })));
+          App.Utils.showToast(res?.message || 'Delete completed.', !res?.success);
+          if (res?.success) {
+            App.State.selectedContractorServiceCharges = [];
+            await this.loadServiceCharges(contractorName);
+          }
+        } catch (err) {
+          App.Utils.showToast(err.message || 'Failed to delete extra charges.', true);
+        }
+      }
+    );
+  },
+
+  addServiceChargeRow() {
+    const tbody = document.getElementById('contractorServiceChargesBody');
+    if (!tbody) return;
+    tbody.insertAdjacentHTML('beforeend', this.renderServiceChargeRow({ serviceType: '', chargeAmount: 0, remarks: '' }));
+  },
+
+  // Saving upserts by (contractor, serviceType) -- same orphan-cleanup
+  // reasoning as saveRateRow above.
+  async saveServiceChargeRow(rowId) {
+    const row = document.getElementById(rowId);
+    if (!row) return;
+
+    const contractorName = App.State.currentContractorServiceCharges?.contractorName;
+    if (!contractorName) return;
+
+    const serviceType = row.querySelector('.charge-service-type').value.trim();
+    const chargeAmount = row.querySelector('.charge-amount').value;
+    const remarks = row.querySelector('.charge-remarks').value;
+    const originalServiceType = row.dataset.originalServiceType || '';
+
+    if (!serviceType) {
+      App.Utils.showToast('Enter a Service Type for this charge.', true);
+      return;
+    }
+
+    try {
+      const res = await Api.mutate('saveContractorServiceCharge', { contractorName, serviceType, chargeAmount, remarks });
+      if (!res.success) {
+        App.Utils.showToast(res.message, true);
+        return;
+      }
+      if (originalServiceType && originalServiceType.toLowerCase() !== serviceType.toLowerCase()) {
+        await Api.mutate('deleteContractorServiceCharge', contractorName, originalServiceType);
+      }
+      App.Utils.showToast(res.message, false);
+      await this.loadServiceCharges(contractorName);
+    } catch (err) {
+      App.Utils.showToast(err.message || 'Failed to save extra charge', true);
+    }
+  },
+
+  async deleteServiceChargeRow(rowId) {
+    const row = document.getElementById(rowId);
+    if (!row) return;
+
+    const originalServiceType = row.dataset.originalServiceType || '';
+    const contractorName = App.State.currentContractorServiceCharges?.contractorName;
+
+    const existing = (App.State.currentContractorServiceCharges?.charges || [])
+      .find(c => App.Utils.sameText(c.serviceType, originalServiceType));
+    if (!existing || !contractorName) {
+      row.remove();
+      return;
+    }
+
+    App.Utils.confirmAction(
+      `Delete the extra charge "${originalServiceType}" for "${contractorName}"? This cannot be undone.`,
+      async () => {
+        try {
+          const res = await Api.mutate('deleteContractorServiceCharge', contractorName, originalServiceType);
+          App.Utils.showToast(res.message, !res.success);
+          if (res.success) await this.loadServiceCharges(contractorName);
+        } catch (err) {
+          App.Utils.showToast(err.message || 'Failed to delete extra charge', true);
         }
       }
     );

@@ -1027,7 +1027,7 @@ App.Dispatch = {
     }
 
     try {
-      const res = await Api.call('getContractorRateForProcess', contractorName, 'Dispatch / Logistics');
+      const res = await Api.call('getContractorRateForProcessType', contractorName, 'Dispatch / Logistics', 'General');
       const rate = res.success ? toNumber(res.data?.ratePerUnit) : 0;
       if (!rate) {
         hintEl.innerText = `No rate card entry for "${contractorName}" / Dispatch / Logistics — cost will be 0.`;

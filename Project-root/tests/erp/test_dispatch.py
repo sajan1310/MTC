@@ -444,7 +444,7 @@ def test_save_dispatch_logistics_payable_from_rate(erp_app, erp_client):
     _rpc(
         erp_client,
         "saveContractorRate",
-        [{"contractorName": contractor, "processName": "Dispatch / Logistics", "ratePerUnit": 7}],
+        [{"contractorName": contractor, "processType": "Dispatch / Logistics", "size": "General", "ratePerUnit": 7}],
         mutation=True,
     )
 
@@ -479,7 +479,7 @@ def test_save_dispatch_logistics_cost_per_line(erp_app, erp_client):
     _rpc(
         erp_client,
         "saveContractorRate",
-        [{"contractorName": contractor, "processName": "Dispatch / Logistics", "ratePerUnit": 2}],
+        [{"contractorName": contractor, "processType": "Dispatch / Logistics", "size": "General", "ratePerUnit": 2}],
         mutation=True,
     )
 
@@ -610,7 +610,7 @@ def test_dispatch_logistics_payable_appears_in_contractor_ledger(erp_app, erp_cl
     _rpc(
         erp_client,
         "saveContractorRate",
-        [{"contractorName": contractor, "processName": "Dispatch / Logistics", "ratePerUnit": 5}],
+        [{"contractorName": contractor, "processType": "Dispatch / Logistics", "size": "General", "ratePerUnit": 5}],
         mutation=True,
     )
     _save_dispatch(

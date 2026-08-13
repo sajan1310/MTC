@@ -157,6 +157,22 @@
   </div>
   <button type="button" class="mb-btn mb-btn-secondary mb-mb-4" onclick="MApp.Returns.openNewReturnSheet()">Log Return</button>
 
+  <div class="mapp-section-label mb-mt-4">Logs</div>
+  <button type="button" class="mb-card mb-card-tappable" style="border:none;" onclick="MApp.Issue.open()">
+    <div class="mb-card-row">
+      <span class="mb-card-title">Issued Stock</span>
+      <svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M9 18l6-6-6-6"/></svg>
+    </div>
+    <div class="mb-card-sub">Material issued to a contractor, outside a process recipe</div>
+  </button>
+  <button type="button" class="mb-card mb-card-tappable" style="border:none;" onclick="MApp.Wastage.open()">
+    <div class="mb-card-row">
+      <span class="mb-card-title">Wastage</span>
+      <svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M9 18l6-6-6-6"/></svg>
+    </div>
+    <div class="mb-card-sub">Material losses, per item</div>
+  </button>
+
   <div class="mapp-section-label mb-mt-4">Ledgers</div>
   <button type="button" class="mb-card mb-card-tappable" style="border:none;" onclick="MApp.PO.openLedgerSheet()">
     <div class="mb-card-row">
@@ -205,6 +221,33 @@
     <div class="mb-card-sub">Name, tap-to-call contact, address</div>
   </button>
 
+  <div class="mapp-section-label mb-mt-4">Products &amp; Processes</div>
+  <button type="button" class="mb-card mb-card-tappable" style="border:none;" onclick="MApp.Process.open()">
+    <div class="mb-card-row">
+      <span class="mb-card-title">Processes</span>
+      <svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M9 18l6-6-6-6"/></svg>
+    </div>
+    <div class="mb-card-sub">Stages, output items, recipe components</div>
+  </button>
+  <button type="button" class="mb-card mb-card-tappable" style="border:none;" onclick="MApp.BOM.open()">
+    <div class="mb-card-row">
+      <span class="mb-card-title">Product Recipes (BOM)</span>
+      <svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M9 18l6-6-6-6"/></svg>
+    </div>
+    <div class="mb-card-sub">Password-protected — components, vendors, costs</div>
+  </button>
+
+  {% if current_user.is_admin %}
+  <div class="mapp-section-label mb-mt-4">Admin</div>
+  <button type="button" class="mb-card mb-card-tappable" style="border:none;" onclick="MApp.Admin.open()">
+    <div class="mb-card-row">
+      <span class="mb-card-title">Users &amp; Roles</span>
+      <svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M9 18l6-6-6-6"/></svg>
+    </div>
+    <div class="mb-card-sub">Accounts, roles, activate/deactivate</div>
+  </button>
+  {% endif %}
+
   <div class="mapp-section-label mb-mt-4">Desktop</div>
   <a class="mb-card mb-card-tappable" style="border:none;display:block;text-decoration:none;" id="more-desktop-link" href="?" target="_top">
     <div class="mb-card-row">
@@ -217,7 +260,7 @@
   <div class="mapp-section-label mb-mt-4">Account</div>
   <div class="mb-card">
     <div class="mb-card-title" id="more-account-name">{{ current_user.name }}</div>
-    <div class="mb-card-sub">{{ current_user.email }}</div>
+    <div class="mb-card-sub" id="more-account-email">{{ current_user.email }}</div>
   </div>
   <a class="mb-card mb-card-tappable" style="border:none;display:block;text-decoration:none;color:var(--mb-enamel-red);" href="{{ url_for('auth.logout') }}">
     <div class="mb-card-row">
@@ -392,6 +435,31 @@
     </div>
     <div id="bill-ledger-list"></div>
   </div>
+  <button type="button" class="mb-fab" onclick="MApp.Bill.openForm(null)">
+    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><path d="M12 5v14M5 12h14"/></svg>
+    New Bill
+  </button>
+</div>
+
+<!-- ═══════════════════════════════════════════════════════════════════
+     SHEET — BILL FORM (Phase 3 mobile-parity) — Add/Edit, GOODS bills
+     only for v1 (Labor Job bills, which tie each line to an active
+     Process and force the item name to that process's output, stay a
+     desktop task — same "defer the heaviest variant" call already made
+     for Items' merge flow and Processes/BOM). Body rendered dynamically
+     since line rows are a variable-length list.
+     ═══════════════════════════════════════════════════════════════════ -->
+<div class="mb-sheet" id="sheet-bill-form" role="dialog" aria-modal="true">
+  <div class="mb-sheet-header">
+    <h2 id="bill-form-title">New Bill</h2>
+    <button type="button" class="mapp-topbar-btn" aria-label="Close" onclick="MApp.Bill.closeForm()">
+      <svg viewBox="0 0 24 24" width="22" height="22" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><path d="M6 6l12 12M18 6L6 18"/></svg>
+    </button>
+  </div>
+  <div class="mb-sheet-body" id="bill-form-body"></div>
+  <div class="mb-sheet-footer">
+    <button type="button" class="mb-btn mb-btn-primary" id="bill-form-save-btn" onclick="MApp.Bill.saveBill()">Save Bill</button>
+  </div>
 </div>
 
 <!-- ═══════════════════════════════════════════════════════════════════
@@ -456,8 +524,12 @@
       <input type="text" id="contractor-rate-name" readonly>
     </div>
     <div class="mb-field">
-      <label for="contractor-rate-process">Process name</label>
-      <input type="text" id="contractor-rate-process" placeholder="e.g. Powder Coating">
+      <label for="contractor-rate-process-type">Process Type</label>
+      <select id="contractor-rate-process-type"></select>
+    </div>
+    <div class="mb-field">
+      <label for="contractor-rate-size">Size</label>
+      <select id="contractor-rate-size"></select>
     </div>
     <div class="mb-field">
       <label for="contractor-rate-value">Rate per unit</label>
@@ -470,6 +542,40 @@
   </div>
   <div class="mb-sheet-footer">
     <button type="button" class="mb-btn mb-btn-primary" id="contractor-rate-save-btn" onclick="MApp.Directory.saveRate()">Save Rate</button>
+  </div>
+</div>
+
+<!-- ═══════════════════════════════════════════════════════════════════
+     SHEET — CONTRACTOR: ADD EXTRA CHARGE (Layer 2, Phase 1) — quick-add
+     only, matches the Rate sheet above.
+     ═══════════════════════════════════════════════════════════════════ -->
+<div class="mb-sheet" id="sheet-contractor-extra-charge" role="dialog" aria-modal="true">
+  <div class="mb-sheet-header">
+    <h2>Add Extra Charge</h2>
+    <button type="button" class="mapp-topbar-btn" aria-label="Close" onclick="MApp.Directory.closeExtraChargeSheet()">
+      <svg viewBox="0 0 24 24" width="22" height="22" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><path d="M6 6l12 12M18 6L6 18"/></svg>
+    </button>
+  </div>
+  <div class="mb-sheet-body">
+    <div class="mb-field">
+      <label>Contractor</label>
+      <input type="text" id="contractor-extra-charge-name" readonly>
+    </div>
+    <div class="mb-field">
+      <label for="contractor-extra-charge-service-type">Service type</label>
+      <input type="text" id="contractor-extra-charge-service-type" placeholder="e.g. Mounting Tyre/Tube">
+    </div>
+    <div class="mb-field">
+      <label for="contractor-extra-charge-amount">Charge amount</label>
+      <input type="number" id="contractor-extra-charge-amount" inputmode="decimal" step="any">
+    </div>
+    <div class="mb-field">
+      <label for="contractor-extra-charge-remarks">Remarks</label>
+      <textarea id="contractor-extra-charge-remarks" rows="2"></textarea>
+    </div>
+  </div>
+  <div class="mb-sheet-footer">
+    <button type="button" class="mb-btn mb-btn-primary" id="contractor-extra-charge-save-btn" onclick="MApp.Directory.saveExtraCharge()">Save Charge</button>
   </div>
 </div>
 
@@ -550,6 +656,237 @@
   <div class="mb-sheet-footer" style="display:flex; gap:var(--mb-sp-3);">
     <button type="button" class="mb-btn mb-btn-danger mb-hidden" id="item-form-delete-btn" style="flex:0 0 auto; width:auto; padding:0 var(--mb-sp-4);" onclick="MApp.Items.deleteItem()">Delete</button>
     <button type="button" class="mb-btn mb-btn-primary" id="item-form-save-btn" style="flex:1;" onclick="MApp.Items.saveItem()">Save</button>
+  </div>
+</div>
+
+<!-- ═══════════════════════════════════════════════════════════════════
+     SHEET — ISSUED STOCK LOG (Phase 3 mobile-parity) — read+create+delete,
+     no edit-existing UI on mobile: saveIssueStock's existingIssueId
+     support is itself a PWA-only addition with no desktop equivalent to
+     mirror (see issue_service.py's own module docstring), so treating this
+     as create/delete-only on mobile matches desktop's actual practice.
+     ═══════════════════════════════════════════════════════════════════ -->
+<div class="mb-sheet" id="sheet-issue-log" role="dialog" aria-modal="true">
+  <div class="mb-sheet-header">
+    <h2>Issued Stock</h2>
+    <button type="button" class="mapp-topbar-btn" aria-label="Close" onclick="MApp.Issue.close()">
+      <svg viewBox="0 0 24 24" width="22" height="22" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><path d="M6 6l12 12M18 6L6 18"/></svg>
+    </button>
+  </div>
+  <div class="mb-sheet-body">
+    <div class="mb-search">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="11" cy="11" r="7"/><path d="M21 21l-4.3-4.3"/></svg>
+      <input type="text" id="issue-log-search" placeholder="Search issued to or item..." oninput="MApp.Issue.onSearch(this.value)" autocomplete="off">
+    </div>
+    <div id="issue-log-list"></div>
+  </div>
+  <button type="button" class="mb-fab" onclick="MApp.Issue.openForm()">
+    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><path d="M12 5v14M5 12h14"/></svg>
+    Log Issue
+  </button>
+</div>
+
+<div class="mb-sheet" id="sheet-issue-form" role="dialog" aria-modal="true">
+  <div class="mb-sheet-header">
+    <h2>Log Issue</h2>
+    <button type="button" class="mapp-topbar-btn" aria-label="Close" onclick="MApp.Issue.closeForm()">
+      <svg viewBox="0 0 24 24" width="22" height="22" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><path d="M6 6l12 12M18 6L6 18"/></svg>
+    </button>
+  </div>
+  <div class="mb-sheet-body" id="issue-form-body"></div>
+  <div class="mb-sheet-footer">
+    <button type="button" class="mb-btn mb-btn-primary" id="issue-form-save-btn" onclick="MApp.Issue.save()">Log Issue</button>
+  </div>
+</div>
+
+<!-- ═══════════════════════════════════════════════════════════════════
+     SHEET — WASTAGE LOG (Phase 3 mobile-parity) — read+create+delete,
+     same create/delete-only scope as Issued Stock above.
+     ═══════════════════════════════════════════════════════════════════ -->
+<div class="mb-sheet" id="sheet-wastage-log" role="dialog" aria-modal="true">
+  <div class="mb-sheet-header">
+    <h2>Wastage</h2>
+    <button type="button" class="mapp-topbar-btn" aria-label="Close" onclick="MApp.Wastage.close()">
+      <svg viewBox="0 0 24 24" width="22" height="22" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><path d="M6 6l12 12M18 6L6 18"/></svg>
+    </button>
+  </div>
+  <div class="mb-sheet-body">
+    <div class="mb-search">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="11" cy="11" r="7"/><path d="M21 21l-4.3-4.3"/></svg>
+      <input type="text" id="wastage-log-search" placeholder="Search vendor or item..." oninput="MApp.Wastage.onSearch(this.value)" autocomplete="off">
+    </div>
+    <div id="wastage-log-list"></div>
+  </div>
+  <button type="button" class="mb-fab" onclick="MApp.Wastage.openForm()">
+    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><path d="M12 5v14M5 12h14"/></svg>
+    Log Wastage
+  </button>
+</div>
+
+<div class="mb-sheet" id="sheet-wastage-form" role="dialog" aria-modal="true">
+  <div class="mb-sheet-header">
+    <h2>Log Wastage</h2>
+    <button type="button" class="mapp-topbar-btn" aria-label="Close" onclick="MApp.Wastage.closeForm()">
+      <svg viewBox="0 0 24 24" width="22" height="22" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><path d="M6 6l12 12M18 6L6 18"/></svg>
+    </button>
+  </div>
+  <div class="mb-sheet-body" id="wastage-form-body"></div>
+  <div class="mb-sheet-footer">
+    <button type="button" class="mb-btn mb-btn-primary" id="wastage-form-save-btn" onclick="MApp.Wastage.save()">Log Wastage</button>
+  </div>
+</div>
+
+<!-- ═══════════════════════════════════════════════════════════════════
+     SHEET — PROCESSES (Phase 5 mobile-parity) — header fields + Common
+     Components only. Color Sub-Groups/Primary Axis/Dispatch Differentiator/
+     Linked Processes stay a desktop task (all optional/derived server-side,
+     never block a save) -- but an edit here still reads and silently
+     preserves any existing rows in those categories so saving from mobile
+     can never wipe them (saveProcess replaces the whole components/
+     colorLinks array on every save, not a diff -- see MApp.Process.openForm).
+     ═══════════════════════════════════════════════════════════════════ -->
+<div class="mb-sheet" id="sheet-process-list" role="dialog" aria-modal="true">
+  <div class="mb-sheet-header">
+    <h2>Processes</h2>
+    <button type="button" class="mapp-topbar-btn" aria-label="Close" onclick="MApp.Process.close()">
+      <svg viewBox="0 0 24 24" width="22" height="22" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><path d="M6 6l12 12M18 6L6 18"/></svg>
+    </button>
+  </div>
+  <div class="mb-sheet-body">
+    <div class="mb-search">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="11" cy="11" r="7"/><path d="M21 21l-4.3-4.3"/></svg>
+      <input type="text" id="process-list-search" placeholder="Search process or output item..." oninput="MApp.Process.onSearch(this.value)" autocomplete="off">
+    </div>
+    <div id="process-list-list"></div>
+  </div>
+  <button type="button" class="mb-fab" onclick="MApp.Process.openForm(null)">
+    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><path d="M12 5v14M5 12h14"/></svg>
+    Add Process
+  </button>
+</div>
+
+<div class="mb-sheet" id="sheet-process-form" role="dialog" aria-modal="true">
+  <div class="mb-sheet-header">
+    <h2 id="process-form-title">Add Process</h2>
+    <button type="button" class="mapp-topbar-btn" aria-label="Close" onclick="MApp.Process.closeForm()">
+      <svg viewBox="0 0 24 24" width="22" height="22" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><path d="M6 6l12 12M18 6L6 18"/></svg>
+    </button>
+  </div>
+  <div class="mb-sheet-body" id="process-form-body"></div>
+  <div class="mb-sheet-footer" style="display:flex; gap:var(--mb-sp-3);">
+    <button type="button" class="mb-btn mb-btn-danger mb-hidden" id="process-form-delete-btn" style="flex:0 0 auto; width:auto; padding:0 var(--mb-sp-4);" onclick="MApp.Process.deleteProcess()">Delete</button>
+    <button type="button" class="mb-btn mb-btn-primary" id="process-form-save-btn" style="flex:1;" onclick="MApp.Process.save()">Save Process</button>
+  </div>
+</div>
+
+<!-- ═══════════════════════════════════════════════════════════════════
+     SHEET — BOM / PRODUCT RECIPES (Phase 5 mobile-parity) — password-
+     gated exactly like desktop (verifyBOMAccess mints a session token,
+     required on every BOM read/write). Components + Additional Costs are
+     both fully editable here (no preservation risk like Processes above:
+     mobile loads/edits/resends the COMPLETE set every time, same pattern
+     as Bill/Dispatch/Return/PO). "+ Import Process" and the vendor-rate
+     auto-fill convenience stay desktop-only.
+     ═══════════════════════════════════════════════════════════════════ -->
+<div class="mb-sheet" id="sheet-bom-unlock" role="dialog" aria-modal="true">
+  <div class="mb-sheet-header">
+    <h2>Product Recipes</h2>
+    <button type="button" class="mapp-topbar-btn" aria-label="Close" onclick="MApp.BOM.closeUnlock()">
+      <svg viewBox="0 0 24 24" width="22" height="22" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><path d="M6 6l12 12M18 6L6 18"/></svg>
+    </button>
+  </div>
+  <div class="mb-sheet-body">
+    <div class="mb-state">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="11" width="18" height="10" rx="2"/><path d="M7 11V7a5 5 0 0 1 10 0v4"/></svg>
+      <div class="mb-state-title">Password protected</div>
+      <div class="mb-state-body">Enter the BOM password to view or edit product recipes.</div>
+    </div>
+    <div class="mb-field">
+      <label for="bom-unlock-password">Password</label>
+      <input type="password" id="bom-unlock-password" autocomplete="off">
+    </div>
+    <div class="mb-field-hint mb-text-sm" id="bom-unlock-error" style="color:var(--mb-enamel-red);"></div>
+  </div>
+  <div class="mb-sheet-footer">
+    <button type="button" class="mb-btn mb-btn-primary" id="bom-unlock-btn" onclick="MApp.BOM.unlock()">Unlock</button>
+  </div>
+</div>
+
+<div class="mb-sheet" id="sheet-bom-list" role="dialog" aria-modal="true">
+  <div class="mb-sheet-header">
+    <h2>Product Recipes</h2>
+    <button type="button" class="mapp-topbar-btn" aria-label="Close" onclick="MApp.BOM.close()">
+      <svg viewBox="0 0 24 24" width="22" height="22" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><path d="M6 6l12 12M18 6L6 18"/></svg>
+    </button>
+  </div>
+  <div class="mb-sheet-body">
+    <div class="mb-search">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="11" cy="11" r="7"/><path d="M21 21l-4.3-4.3"/></svg>
+      <input type="text" id="bom-list-search" placeholder="Search product..." oninput="MApp.BOM.onSearch(this.value)" autocomplete="off">
+    </div>
+    <div id="bom-list-list"></div>
+  </div>
+  <button type="button" class="mb-fab" onclick="MApp.BOM.openForm(null)">
+    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><path d="M12 5v14M5 12h14"/></svg>
+    Add Recipe
+  </button>
+</div>
+
+<div class="mb-sheet" id="sheet-bom-form" role="dialog" aria-modal="true">
+  <div class="mb-sheet-header">
+    <h2 id="bom-form-title">Add Recipe</h2>
+    <button type="button" class="mapp-topbar-btn" aria-label="Close" onclick="MApp.BOM.closeForm()">
+      <svg viewBox="0 0 24 24" width="22" height="22" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><path d="M6 6l12 12M18 6L6 18"/></svg>
+    </button>
+  </div>
+  <div class="mb-sheet-body" id="bom-form-body"></div>
+  <div class="mb-sheet-footer" style="display:flex; gap:var(--mb-sp-3);">
+    <button type="button" class="mb-btn mb-btn-danger mb-hidden" id="bom-form-delete-btn" style="flex:0 0 auto; width:auto; padding:0 var(--mb-sp-4);" onclick="MApp.BOM.deleteBom()">Delete</button>
+    <button type="button" class="mb-btn mb-btn-primary" id="bom-form-save-btn" style="flex:1;" onclick="MApp.BOM.save()">Save Recipe</button>
+  </div>
+</div>
+
+<!-- ═══════════════════════════════════════════════════════════════════
+     SHEET — ADMIN: USERS & ROLES (Phase 4 mobile-parity, minimal v1)
+     Jinja-gated entry point (More tab) means only an admin/super_admin
+     ever sees the "Users & Roles" card at all -- but every RPC this sheet
+     calls is independently enforced server-side (roles=frozenset({"admin"})
+     in app/erp/rpc.py) regardless of that, same as desktop's own gate.
+     Deliberately NOT built here: the custom-role permissions-matrix editor
+     (createCustomRole/updateCustomRole's tab x level grid) -- that stays a
+     desktop-only screen per the hybrid-strategy plan; this sheet only
+     ASSIGNS existing roles (built-in or custom), never creates one.
+     ═══════════════════════════════════════════════════════════════════ -->
+<div class="mb-sheet" id="sheet-admin-users" role="dialog" aria-modal="true">
+  <div class="mb-sheet-header">
+    <h2>Users &amp; Roles</h2>
+    <button type="button" class="mapp-topbar-btn" aria-label="Close" onclick="MApp.Admin.close()">
+      <svg viewBox="0 0 24 24" width="22" height="22" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><path d="M6 6l12 12M18 6L6 18"/></svg>
+    </button>
+  </div>
+  <div class="mb-sheet-body">
+    <div class="mb-search">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="11" cy="11" r="7"/><path d="M21 21l-4.3-4.3"/></svg>
+      <input type="text" id="admin-users-search" placeholder="Search name or email..." oninput="MApp.Admin.onSearch(this.value)" autocomplete="off">
+    </div>
+    <div id="admin-users-list"></div>
+  </div>
+  <button type="button" class="mb-fab" onclick="MApp.Admin.openCreateForm()">
+    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><path d="M12 5v14M5 12h14"/></svg>
+    Add User
+  </button>
+</div>
+
+<div class="mb-sheet" id="sheet-admin-user-form" role="dialog" aria-modal="true">
+  <div class="mb-sheet-header">
+    <h2>Add User</h2>
+    <button type="button" class="mapp-topbar-btn" aria-label="Close" onclick="MApp.Admin.closeCreateForm()">
+      <svg viewBox="0 0 24 24" width="22" height="22" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><path d="M6 6l12 12M18 6L6 18"/></svg>
+    </button>
+  </div>
+  <div class="mb-sheet-body" id="admin-user-form-body"></div>
+  <div class="mb-sheet-footer">
+    <button type="button" class="mb-btn mb-btn-primary" id="admin-user-form-save-btn" onclick="MApp.Admin.createUser()">Create User</button>
   </div>
 </div>
 

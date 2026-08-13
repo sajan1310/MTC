@@ -53,6 +53,9 @@
             <button class="nav-link fw-bold text-dark" id="btn-c-rates" onclick="App.Contractor.switchTab('c-rates')">Rate Card</button>
           </li>
           <li class="nav-item">
+            <button class="nav-link fw-bold text-dark" id="btn-c-extra-charges" onclick="App.Contractor.switchTab('c-extra-charges')">Extra Charges</button>
+          </li>
+          <li class="nav-item">
             <button class="nav-link fw-bold text-dark" id="btn-c-ledger" onclick="App.Contractor.switchTab('c-ledger')">Ledger</button>
           </li>
         </ul>
@@ -92,15 +95,16 @@
 
         <!-- Rate Card Tab -->
         <div id="c-rates" class="contractor-tab-content" style="display:none;">
-          <div class="alert alert-info py-2">Set a negotiated rate per unit for each process this contractor runs. Leave a process unset if they don't carry it.</div>
+          <div class="alert alert-info py-2">Set a negotiated rate per unit for each Process Type + Size this contractor runs (e.g. Fitting x 14 inch). Leave a combination unset if they don't carry it.</div>
           <div class="table-responsive mb-3">
             <table class="table table-bordered bg-white shadow-sm table-hover mb-0">
               <thead class="table-dark">
                 <tr>
                   <th scope="col" style="width: 4%; text-align: center;"><input type="checkbox" id="selectAllContractorRates" class="form-check-input" onclick="App.Contractor.toggleSelectAllRates(this)"></th>
-                  <th scope="col" style="width: 32%;">Process</th>
-                  <th scope="col" style="width: 19%; text-align: right;">Rate / Unit</th>
-                  <th scope="col" style="width: 30%;">Remarks</th>
+                  <th scope="col" style="width: 22%;">Process Type</th>
+                  <th scope="col" style="width: 15%;">Size</th>
+                  <th scope="col" style="width: 17%; text-align: right;">Rate / Unit</th>
+                  <th scope="col" style="width: 27%;">Remarks</th>
                   <th scope="col" style="width: 15%; text-align: center;">Actions</th>
                 </tr>
               </thead>
@@ -110,6 +114,31 @@
           <div class="d-flex gap-2">
             <button type="button" class="btn btn-outline-primary btn-sm fw-bold" onclick="App.Contractor.addRateRow()">+ Add Rate</button>
             <button type="button" id="btnBulkDeleteContractorRates" class="btn btn-outline-danger btn-sm fw-bold d-none" onclick="App.Contractor.bulkDeleteRates()">
+              <i class="bi bi-trash"></i> Delete Selected
+            </button>
+          </div>
+        </div>
+
+        <!-- Extra Charges Tab (Layer 2 -- optional flat per-lot charges, e.g. Mounting Tyre/Tube) -->
+        <div id="c-extra-charges" class="contractor-tab-content" style="display:none;">
+          <div class="alert alert-info py-2">Optional flat charges this contractor bills on top of their base rate for specific services (e.g. "Mounting Tyre/Tube"). Picked per lot as a radio choice on the Production form.</div>
+          <div class="table-responsive mb-3">
+            <table class="table table-bordered bg-white shadow-sm table-hover mb-0">
+              <thead class="table-dark">
+                <tr>
+                  <th scope="col" style="width: 4%; text-align: center;"><input type="checkbox" id="selectAllContractorServiceCharges" class="form-check-input" onclick="App.Contractor.toggleSelectAllServiceCharges(this)"></th>
+                  <th scope="col" style="width: 32%;">Service Type</th>
+                  <th scope="col" style="width: 19%; text-align: right;">Charge Amount</th>
+                  <th scope="col" style="width: 30%;">Remarks</th>
+                  <th scope="col" style="width: 15%; text-align: center;">Actions</th>
+                </tr>
+              </thead>
+              <tbody id="contractorServiceChargesBody"></tbody>
+            </table>
+          </div>
+          <div class="d-flex gap-2">
+            <button type="button" class="btn btn-outline-primary btn-sm fw-bold" onclick="App.Contractor.addServiceChargeRow()">+ Add Extra Charge</button>
+            <button type="button" id="btnBulkDeleteContractorServiceCharges" class="btn btn-outline-danger btn-sm fw-bold d-none" onclick="App.Contractor.bulkDeleteServiceCharges()">
               <i class="bi bi-trash"></i> Delete Selected
             </button>
           </div>

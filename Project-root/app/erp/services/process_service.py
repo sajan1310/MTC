@@ -353,15 +353,6 @@ def _set_process_primary_color_axis(cur, process_id: str, primary_color_axis: st
     )
 
 
-def _rename_process_name_in_contractor_rates(cur, old_name: str, new_name: str) -> None:
-    old = (old_name or "").strip()
-    new = (new_name or "").strip()
-    if not old or not new or old.lower() == new.lower():
-        return
-    if table := config_maps.TABLE_NAMES.get("CONTRACTOR_RATES"):
-        rename_utils.rename_in_column(cur, table, config_maps.to_snake_case("processName"), old, new)
-
-
 def _find_duplicate_component(components: list):
     seen = set()
     for comp in components or []:
@@ -514,8 +505,11 @@ def save_process(conn, cur, form_data):
     active = True if form_data.get("active") is None else bool(form_data.get("active"))
     remarks = str(form_data.get("remarks") or "").strip()[:_MAX_REMARKS_LENGTH]
 
-    # Only a light shape check -- a stale/mismatched label falls back to
-    # legacy behavior client-side rather than blocking save.
+    # A stale/mismatched label (an axis renamed or removed since this was
+    # saved) is still only a light shape check -- it falls back to legacy
+    # behavior client-side rather than blocking save. A genuinely BLANK
+    # value is different: see the len(axes) >= 2 check below, which turns
+    # that into a hard error instead of silently picking a default.
     primary_color_axis = str(form_data.get("primaryColorAxis") or "").strip()
 
     # Same light shape check, and same label-not-key convention, as
@@ -556,9 +550,27 @@ def save_process(conn, cur, form_data):
             for c in components
             if str((c or {}).get("itemName") or "").strip()
         ]
-        primary_color_axis = _default_primary_color_axis_label(
+        axes = _compute_color_axes_for_process(
             str(form_data.get("processId") or "").strip(), axis_components, pool_rows, saved_color_links
         )
+        # 2+ independent axes (this process pool-sources 2+ upstream
+        # processes/items that each carry their own color history, and/or
+        # tags its own recipe rows with 2+ color axes) means there's a real
+        # choice to make -- which one's checked quantities become the lot's
+        # total. Silently picking the first-in-recipe-order axis here (the
+        # old behavior) is exactly how an unrelated recipe reorder could
+        # flip which axis is Primary without anyone deciding that on
+        # purpose. Below this threshold there's nothing to choose between
+        # (0 axes: no color concept at all; 1 axis: it's the only candidate,
+        # so defaulting to it isn't really a "decision" either), so those
+        # cases still auto-resolve same as before.
+        if len(axes) >= 2:
+            raise ValueError(
+                "This process has more than one independent Color Axis (e.g. a Base plus a separate Mudguard "
+                'Color, or 2+ Pool-sourced components each carrying their own color history) -- pick which one '
+                'is "Primary Axis" before saving.'
+            )
+        primary_color_axis = axes[0]["label"] if axes else ""
 
     dup = _find_duplicate_component(components)
     if dup:
@@ -579,10 +591,9 @@ def save_process(conn, cur, form_data):
 
     existing_id = None
     old_output_item_name = ""
-    old_process_name = ""
     if is_edit:
         cur.execute(
-            "SELECT id, output_item_name, process_name FROM erp.process_master WHERE lower(process_id) = lower(%s) AND deleted_at IS NULL",
+            "SELECT id, output_item_name FROM erp.process_master WHERE lower(process_id) = lower(%s) AND deleted_at IS NULL",
             (process_id_input,),
         )
         existing_row = cur.fetchone()
@@ -590,7 +601,6 @@ def save_process(conn, cur, form_data):
             raise ValueError(f'Process with ID "{process_id_input}" not found.')
         existing_id = existing_row["id"]
         old_output_item_name = existing_row["output_item_name"] or ""
-        old_process_name = existing_row["process_name"] or ""
 
     # Duplicate Lot Prefix -- across EVERY non-deleted process, active or
     # not (excludes the row being edited).
@@ -680,11 +690,6 @@ def save_process(conn, cur, form_data):
         output_item_name_changed = bool(old_output_item_name) and old_output_item_name.lower() != output_item_name.lower()
         if output_item_name_changed:
             _rename_pool_output_item_name_everywhere(cur, old_output_item_name, output_item_name)
-
-        # Contractor Rates keys its rate card on Process Name as a free
-        # string, not Process ID.
-        if old_process_name and old_process_name.lower() != process_name.lower():
-            _rename_process_name_in_contractor_rates(cur, old_process_name, process_name)
 
         message = f'Process "{process_name}" updated.'
     else:

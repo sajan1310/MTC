@@ -514,15 +514,15 @@ def test_save_production_primary_axis_qty_summation_excludes_other_axis(erp_clie
     _seed_pool(erp_client, rim_id, 10, color="Red")
     _seed_pool(erp_client, rim_id, 10, color="Green")
 
+    axis_label = frame_payload["outputItemName"]
     _down_payload, down_id = _save_process(
         erp_client,
+        primaryColorAxis=axis_label,
         components=[
             {"itemName": frame_payload["outputItemName"], "qtyPerUnit": 1, "sourceType": "POOL", "colorGroup": "COMMON"},
             {"itemName": rim_payload["outputItemName"], "qtyPerUnit": 1, "sourceType": "POOL", "colorGroup": "COMMON"},
         ],
     )
-
-    axis_label = frame_payload["outputItemName"]
     resp = _rpc(
         erp_client,
         "saveProduction",
@@ -642,12 +642,16 @@ def test_save_production_returns_fresh_row_for_in_place_patch(erp_client):
 
 
 def test_save_production_contractor_payable_computed_from_rate(erp_client):
-    payload, process_id = _save_process(erp_client)
+    process_type = _unique_name("RateType")
+    _payload, process_id = _save_process(erp_client, processType=process_type)
     contractor = _unique_name("RateWorker")
+    # _save_process's default outputItemName has no recognized size
+    # substring, so contractors_service._get_size_from_output_item_name
+    # resolves it to 'General' -- the rate must be keyed there to match.
     _rpc(
         erp_client,
         "saveContractorRate",
-        [{"contractorName": contractor, "processName": payload["processName"], "ratePerUnit": 15}],
+        [{"contractorName": contractor, "processType": process_type, "size": "General", "ratePerUnit": 15}],
         mutation=True,
     )
 
@@ -662,6 +666,7 @@ def test_save_production_contractor_payable_computed_from_rate(erp_client):
 
     listed = _rpc(erp_client, "getProductionData").get_json()["data"]
     match = next(r for r in listed if r["lotNumber"] == body["data"]["lotNumber"])
+    assert match["contractorRate"] == 15
     assert match["contractorPayable"] == 60  # 15 rate * 4 qty
 
 
@@ -677,6 +682,70 @@ def test_save_production_contractor_payable_defaults_zero_without_rate(erp_clien
     listed = _rpc(erp_client, "getProductionData").get_json()["data"]
     match = next(r for r in listed if r["lotNumber"] == body["data"]["lotNumber"])
     assert match["contractorPayable"] == 0
+
+
+def test_save_production_extra_charge_adds_flat_amount_on_top_of_rate(erp_client):
+    process_type = _unique_name("ExtraChargeType")
+    _payload, process_id = _save_process(erp_client, processType=process_type)
+    contractor = _unique_name("ExtraChargeWorker")
+    service_type = _unique_name("MountingService")
+
+    _rpc(
+        erp_client, "saveContractorRate",
+        [{"contractorName": contractor, "processType": process_type, "size": "General", "ratePerUnit": 15}],
+        mutation=True,
+    )
+    _rpc(
+        erp_client, "saveContractorServiceCharge",
+        [{"contractorName": contractor, "serviceType": service_type, "chargeAmount": 50}], mutation=True,
+    )
+
+    resp = _rpc(
+        erp_client,
+        "saveProduction",
+        [{
+            "processId": process_id, "assignedTo": contractor, "qty": 4, "extraChargeType": service_type,
+            "componentsConsumed": [_item_component()],
+        }],
+        mutation=True,
+    )
+    body = resp.get_json()
+    assert body["success"] is True
+
+    listed = _rpc(erp_client, "getProductionData").get_json()["data"]
+    match = next(r for r in listed if r["lotNumber"] == body["data"]["lotNumber"])
+    assert match["extraChargeType"] == service_type
+    assert match["extraChargeAmount"] == 50
+    assert match["contractorPayable"] == 110  # 15 rate * 4 qty + 50 flat extra charge
+
+
+def test_save_production_unrecognized_extra_charge_type_contributes_zero(erp_client):
+    process_type = _unique_name("UnknownChargeType")
+    _payload, process_id = _save_process(erp_client, processType=process_type)
+    contractor = _unique_name("UnknownChargeWorker")
+    _rpc(
+        erp_client, "saveContractorRate",
+        [{"contractorName": contractor, "processType": process_type, "size": "General", "ratePerUnit": 15}],
+        mutation=True,
+    )
+
+    resp = _rpc(
+        erp_client,
+        "saveProduction",
+        [{
+            "processId": process_id, "assignedTo": contractor, "qty": 4,
+            "extraChargeType": _unique_name("NeverConfiguredService"),
+            "componentsConsumed": [_item_component()],
+        }],
+        mutation=True,
+    )
+    body = resp.get_json()
+    assert body["success"] is True
+
+    listed = _rpc(erp_client, "getProductionData").get_json()["data"]
+    match = next(r for r in listed if r["lotNumber"] == body["data"]["lotNumber"])
+    assert match["extraChargeAmount"] == 0
+    assert match["contractorPayable"] == 60  # 15 rate * 4 qty, extra charge not found so 0
 
 
 def test_save_production_warns_non_blocking_on_insufficient_pool(erp_client):
@@ -890,6 +959,60 @@ def test_update_production_status_enforces_enum(erp_client):
     body = resp.get_json()
     assert body["success"] is False
     assert "Invalid status" in body["message"]
+
+
+def test_save_production_enforces_status_enum(erp_client):
+    """saveProduction must reject an off-list status for the same reason
+    updateProductionStatus always has. Everything that decides whether a
+    lot's material movements happen at all keys off lower(status) ==
+    'completed' (warehouse_service Pass 1/2, stock_service), so a status
+    outside the four options isn't a cosmetic label problem: the lot saves,
+    shows a status the UI can't even select, and silently never credits the
+    Warehouse Pool nor debits Stock.
+    """
+    _payload, process_id = _save_process(erp_client)
+
+    resp = _rpc(
+        erp_client,
+        "saveProduction",
+        [
+            {
+                "processId": process_id,
+                "assignedTo": "Worker A",
+                "qty": 5,
+                "status": "Complete",  # near-miss of the real "Completed"
+                "componentsConsumed": [_item_component()],
+            }
+        ],
+        mutation=True,
+    )
+    body = resp.get_json()
+    assert body["success"] is False
+    assert "Invalid status" in body["message"]
+
+    # ...and nothing was written for it.
+    listed = _rpc(erp_client, "getProductionData").get_json()["data"]
+    assert all(r["status"] != "Complete" for r in listed)
+
+
+def test_save_production_accepts_every_valid_status(erp_client):
+    _payload, process_id = _save_process(erp_client)
+    for status in ("Pending", "In Progress", "Completed", "Cancelled"):
+        body = _rpc(
+            erp_client,
+            "saveProduction",
+            [
+                {
+                    "processId": process_id,
+                    "assignedTo": "Worker A",
+                    "qty": 1,
+                    "status": status,
+                    "componentsConsumed": [_item_component()],
+                }
+            ],
+            mutation=True,
+        ).get_json()
+        assert body["success"] is True, f"{status}: {body['message']}"
 
 
 def test_update_production_status_rechecks_pool_on_entering_completed(erp_client):

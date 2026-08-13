@@ -127,9 +127,67 @@ App.Production = {
   }),
 
   // Shared with .prod-color-table CSS -- every place below that sets a
-  // pool-color-group/matrix table's inline min-width uses these.
-  PROD_COLOR_TABLE_FIXED_RESERVE_PX: 378,
+  // pool-color-group/matrix table's inline min-width uses these. The
+  // reserve covers the non-color columns: the reorder grip, Item / Pool
+  // Name, Size, Narration, Source and ✕.
+  PROD_COLOR_TABLE_FIXED_RESERVE_PX: 412,
   PROD_COLOR_TABLE_COLOR_COL_PX: 88,
+
+  // ── Row reordering (drag & sort) ──────────────────────────────────────
+  // Available on all three component tables of the Create/Edit Production
+  // Lot form: Common Components, Per-Color Components and Per-Process Pool
+  // Components.
+  //
+  // The order is not cosmetic. serializeComponentsConsumed,
+  // serializeColorMatrix and serializePoolColorGroups each read their
+  // table top-to-bottom, the submit handler concatenates them in that
+  // order, and _consolidate_duplicate_components preserves first-seen
+  // order server-side -- so what the operator arranges here becomes the
+  // order of the lot's stored components_consumed array, which is in turn
+  // the order the Production Sheet, its print/PDF export, the bulk print
+  // sheet and a later Edit Lot reopen all list the components in.
+
+  // One row's grip cell. It gets a leading column of its own rather than
+  // an icon tucked in beside ✕ because these tables scroll horizontally
+  // once a batch has several colors -- a grip in the last column would
+  // scroll out of reach exactly when a long row most needs moving.
+  _dragCellHtml() {
+    return '<td class="prod-drag-cell"><span class="prod-drag-handle" title="Drag to reorder — this order is what the saved lot and its printed sheet use"><i class="bi bi-grip-vertical"></i></span></td>';
+  },
+
+  // Bound once per <tbody> ELEMENT, tracked with a marker on the node
+  // itself. clearComponentsTable/clearColorMatrix only empty a tbody's
+  // innerHTML (the element survives), so one instance keeps working across
+  // every reload of the Common and Per-Color tables; the Pool tables are
+  // rebuilt as new elements each render and simply get a fresh instance.
+  //
+  // Degrades to a plain, non-draggable table when window.Sortable is
+  // absent: it is loaded by the app's only type="module" script (see
+  // index.html), which is deferred and may legitimately fail, and nothing
+  // here is allowed to depend on it having arrived.
+  _initRowSorting(tbody) {
+    if (!tbody || tbody._prodRowSortable || !window.Sortable) return;
+    tbody._prodRowSortable = window.Sortable.create(tbody, {
+      handle: '.prod-drag-handle',
+      draggable: 'tr',
+      animation: 150,
+      ghostClass: 'prod-row-ghost',
+      chosenClass: 'prod-row-chosen',
+      // An OPEN Select2 dropdown is rendered into the modal, not into the
+      // row it belongs to, so dragging the <tr> out from under it would
+      // leave it floating over whichever row landed there instead. The
+      // CLOSED widget needs no such care -- it is a sibling of the original
+      // <select> inside the same <td> and travels with the row, jQuery data
+      // (and therefore the Select2 instance) surviving the DOM move.
+      onStart: () => {
+        if (!window.jQuery?.fn?.select2) return;
+        window.jQuery(tbody).find('.prod-comp-item-select').each(function () {
+          const $sel = window.jQuery(this);
+          if ($sel.data('select2')) $sel.select2('close');
+        });
+      }
+    });
+  },
 
   // Per-load cache for getProcessComponentsData/getWarehousePoolData,
   // reset every time _compLoadSeq is bumped -- collapses what would
@@ -1310,6 +1368,30 @@ App.Production = {
     if (nameHiddenInput) nameHiddenInput.value = matchedBOM ? matchedBOM.productName : '';
   },
 
+  // Keeps an Edit Lot's own saved value selectable even when it is no
+  // longer among the options the dropdown builds from. Every select in
+  // this cascade is populated from ACTIVE processes only, so reopening a
+  // lot whose process was since deactivated (or deleted, or whose
+  // size/model/type combination no longer has any active process left)
+  // assigned select.value a value with no matching <option> -- which the
+  // DOM silently resolves to "". For Size/Model/Type that showed the
+  // operator a blank, disabled field; for Process it was an outright save
+  // blocker: the submit handler re-enables that field to read it into
+  // FormData, read "", and the server rejected the save with 'A Process
+  // must be selected for this lot.' on a lot that plainly has one.
+  //
+  // The lot's real value is preserved rather than silently swapped for a
+  // valid-looking one -- an edit must never repoint a lot at a different
+  // process as a side effect of merely opening it. The Process caller
+  // passes an explicitly "(inactive)" label so the operator can see why
+  // that option isn't in the normal list; the Size/Model/Type ones just
+  // read back their own saved value.
+  _ensureSelectedOption(select, value, label) {
+    if (!select || !value) return;
+    if (Array.from(select.options).some(o => o.value === value)) return;
+    select.add(new Option(label || value, value, true, true));
+  },
+
   populateSizeSelect(isDisabled = false, selectedValue = null) {
     const select = document.getElementById('productionSize');
     if (!select) return;
@@ -1331,6 +1413,7 @@ App.Production = {
     select.innerHTML = html;
 
     if (selectedValue !== null) {
+      this._ensureSelectedOption(select, selectedValue);
       select.value = selectedValue;
     } else {
       select.value = '';
@@ -1377,6 +1460,7 @@ App.Production = {
     select.innerHTML = html;
 
     if (selectedValue !== null) {
+      this._ensureSelectedOption(select, selectedValue);
       select.value = selectedValue;
     } else {
       select.value = '';
@@ -1425,6 +1509,7 @@ App.Production = {
     select.innerHTML = html;
 
     if (selectedValue !== null) {
+      this._ensureSelectedOption(select, selectedValue);
       select.value = selectedValue;
     } else {
       select.value = '';
@@ -1485,6 +1570,8 @@ App.Production = {
     select.innerHTML = html;
 
     if (selectedValue !== null) {
+      const savedProcess = (App.State.globalProcesses || []).find(p => p.processId === selectedValue);
+      this._ensureSelectedOption(select, selectedValue, `${savedProcess ? savedProcess.processName : selectedValue} (inactive)`);
       select.value = selectedValue;
     } else {
       select.value = '';
@@ -1683,7 +1770,14 @@ App.Production = {
       return;
     }
     sel.style.display = '';
-    sel.innerHTML = '<option value="">Independent extra color (adds to lot total)</option>'
+    // The picker only ever shows when 2+ groups exist -- i.e. when this
+    // checklist HAS a primary/secondary structure -- so leaving a custom
+    // color unfiled means it is not in the primary group and does not add
+    // to the lot total. The label said the opposite, and the code used to
+    // match the label (see addCustomColorRow); both now say "recorded
+    // separately". To make an extra color count, file it into the Primary
+    // group in this same picker.
+    sel.innerHTML = '<option value="">Independent extra color (recorded separately — does not add to the lot total)</option>'
       + options.map(o => `<option value="${escapeHtml(o.key)}">${escapeHtml(o.label)}${o.isPrimary ? ' (Primary)' : ''}</option>`).join('');
   },
 
@@ -2003,7 +2097,17 @@ App.Production = {
       if (!checklistEl.querySelector('[data-group-master="custom"]')) {
         checklistEl.insertAdjacentHTML('beforeend', this._buildColorGroupHeader('custom', 'Custom'));
       }
-      this.renderColorChecklistRows([name], 'custom', true);
+      // Not filed into any group -- so not filed into the PRIMARY one, and
+      // therefore recorded per color without adding to the lot total. (The
+      // picked-group branch above already inherits its group's own
+      // isPrimary, so a custom color put INTO the primary axis counts.)
+      //
+      // The single exception is a checklist with no primary/secondary
+      // structure at all, where every checked color counts and there is
+      // nothing for this row to be secondary to -- passing undefined there
+      // leaves the flag off, exactly like the rows already on screen.
+      const isPrimaryFlag = this._checklistHasPrimaryStructure() ? false : undefined;
+      this.renderColorChecklistRows([name], 'custom', true, isPrimaryFlag);
     }
     if (input) {
       if (window.jQuery?.fn?.select2 && window.jQuery(input).data('select2')) {
@@ -2082,6 +2186,110 @@ App.Production = {
     await this.refreshPoolAvailability();
   },
 
+  // A process that resolves to exactly ONE Color Axis, but whose
+  // configured color sub-groups include colors that axis does not own --
+  // e.g. a "Kit Bag" / "Small Kit Bag 24-26" sub-group that isn't tied to
+  // any process's own color history. Those are sub-groups, not a second
+  // axis: they are recorded per color but must NOT add to the lot's total.
+  //
+  // The flat render this replaces emitted them through
+  // renderColorChecklistRows(colors) with no groupKey and no isPrimary, so
+  // _colorRowHtml wrote no data-primary attribute at all -- and
+  // getCheckedColorQtys reads a MISSING attribute as counting
+  // (row.dataset.primary !== 'false'). Every such sub-group was therefore
+  // silently promoted to primary and added into the lot quantity.
+  //
+  // The server never agreed with that. save_production's
+  // _is_primary_axis_row falls back, for exactly these rows (no axisKey,
+  // not custom), to "is this color one of the primary axis's colors?" and
+  // excludes everything else from the qty it stores. So the form's running
+  // total -- and the component quantities and Payable scaled off it --
+  // disagreed with what was actually saved, and checking ONLY sub-group
+  // colors failed the save with 'At least one "<axis>" color is required
+  // for this lot.' Giving each side of the split a real group key makes the
+  // two agree by construction: the axis rows now carry that axis's own key
+  // (matched by axis identity server-side), and the sub-group rows carry
+  // an explicit countsTowardTotal:false the server honors directly.
+  //
+  // Returns false -- caller keeps the flat render -- when there is nothing
+  // to split: no color belongs to the axis (splitting would leave an empty
+  // primary group), or every color does (flat is already correct, and the
+  // server already counts them all).
+  SUB_GROUP_BUCKET_LABEL: 'Other (recorded per color — does not add to the lot total)',
+
+  // Every color this process KNOWS (getProcessColorGroups) that no axis
+  // owns. That list is recipe/pool colors UNION this process's own logged
+  // production history UNION the operator's own INCLUDE overrides -- and
+  // that last category is exactly the sub-group an operator designates by
+  // hand in the Process editor ("Add Combination" exists to pre-seed a
+  // color no recipe or pool signal would ever produce). None of those can
+  // ever belong to a computed axis, so any render path that draws only
+  // axis colors drops them silently.
+  _nonAxisSubGroupColors(colors, axes) {
+    const axisColorsLower = new Set();
+    (axes || []).forEach(a => (a.colors || []).forEach(c => axisColorsLower.add(String(c).trim().toLowerCase())));
+    return (colors || []).filter(c => !axisColorsLower.has(String(c).trim().toLowerCase()));
+  },
+
+  // Is this checklist running with a primary/secondary structure at all?
+  // True as soon as ANY group has been designated -- an axis, a pool
+  // cluster, or the non-counting sub-group bucket -- in which case a color
+  // not placed in the primary group must not add to the lot total. False
+  // only for the flat render (a process with no Color Axis, or "Add Colors
+  // to this Lot"), where every checked color counts and "primary" has
+  // nothing to mean. Read off the rendered rows rather than
+  // _customColorGroupOptions, so it stays right for a shape that renders
+  // groups without registering a pickable option for them.
+  _checklistHasPrimaryStructure() {
+    return $$('#productionColorChecklist .production-color-row[data-primary]').length > 0;
+  },
+
+  // Renders non-axis sub-groups as their own non-counting bucket. Shared by
+  // all three grouped render paths so they can't drift.
+  _renderSubGroupBucket(checklistEl, subGroupColors) {
+    if (!subGroupColors || subGroupColors.length === 0) return;
+    checklistEl.insertAdjacentHTML('beforeend', this._buildColorGroupHeader('other', this.SUB_GROUP_BUCKET_LABEL));
+    this.renderColorChecklistRows(subGroupColors, 'other', false, false);
+    // Registered as a pickable destination too, so "+ Add Custom Sub-Group"
+    // can file a one-off color HERE explicitly. Without it the picker lists
+    // only the counting groups, which on a process with one axis plus
+    // sub-groups left the operator no way to add a custom color that
+    // doesn't inflate the lot total.
+    this._customColorGroupOptions.push({ key: 'other', label: 'Other', isPrimary: false, source: 'other' });
+  },
+
+  // Renders a single-axis process's checklist: that axis's own colors as
+  // the counting group, everything else as non-counting sub-groups.
+  //
+  // Once a process HAS an axis, this always handles the whole list -- it
+  // never hands back to the flat render. The flat render marks no row
+  // primary at all, which getCheckedColorQtys reads as "counts", so falling
+  // back to it for an awkward shape (an axis that owns none of the
+  // configured colors) would put sub-groups back into the lot total by the
+  // very default this exists to remove. Both halves are simply allowed to
+  // be empty instead:
+  //   - no axis colors: only the sub-group bucket renders, the running
+  //     total is 0, and the operator can see there is nothing primary to
+  //     produce -- which is the truth, and is what the server independently
+  //     concludes too ('At least one "<axis>" color is required for this
+  //     lot.').
+  //   - no sub-group colors: only the axis group renders. Worth doing even
+  //     though a flat render would total the same, because these rows now
+  //     carry the axis's real key, so save_production matches them by axis
+  //     identity rather than falling back to comparing color names.
+  _renderAxisAndSubGroupChecklist(checklistEl, colors, axis) {
+    const subGroupColors = this._nonAxisSubGroupColors(colors, [axis]);
+    const subGroupLower = new Set(subGroupColors.map(c => String(c).trim().toLowerCase()));
+    const axisColors = colors.filter(c => !subGroupLower.has(String(c).trim().toLowerCase()));
+
+    if (axisColors.length > 0) {
+      checklistEl.insertAdjacentHTML('beforeend', this._buildColorGroupHeader(axis.key, axis.label));
+      this.renderColorChecklistRows(axisColors, axis.key, false, true);
+      this._customColorGroupOptions.push({ key: axis.key, label: axis.label, isPrimary: true, source: axis.source });
+    }
+    this._renderSubGroupBucket(checklistEl, subGroupColors);
+  },
+
   // Splits the Colors to Produce checklist into sub-groups: one per Color
   // Axis when this process has 2+ (see getProcessColorAxes), else one per
   // multi-color pool item set, with any leftover in a final "Other" block.
@@ -2089,19 +2297,40 @@ App.Production = {
     const checklistEl = document.getElementById('productionColorChecklist');
     if (!checklistEl) return;
 
+    // Hoisted: the single-axis case is resolved further down, in the
+    // fallback paths, long after this try block has returned or thrown.
+    let axes = [];
     try {
       const axesRes = await Api.call('getProcessColorAxes', processId);
       if (seq !== undefined && seq !== this._compLoadSeq) return;
-      const axes = (axesRes.success && axesRes.data && Array.isArray(axesRes.data.axes)) ? axesRes.data.axes : [];
+      axes = (axesRes.success && axesRes.data && Array.isArray(axesRes.data.axes)) ? axesRes.data.axes : [];
       if (axes.length >= 2) {
         checklistEl.innerHTML = '';
-        const primaryAxisKey = axesRes.data.primaryAxisKey || '';
+        // primaryIsDefault true means nobody has actually chosen this axis
+        // -- it's just the first one in recipe order, standing in because
+        // this process's Primary Axis cell is still blank. Pre-checking its
+        // radio anyway would let every lot save through the "Pick which
+        // group is Primary" guard below without the operator ever making a
+        // real choice, silently locking in whichever axis happens to sit
+        // first in the recipe (which a later reorder could then flip).
+        // Leaving nothing checked forces this lot's operator to be the one
+        // who decides -- their pick then persists as the process's default
+        // going forward (see save_production's write-back).
+        const primaryAxisKey = axesRes.data.primaryIsDefault ? '' : (axesRes.data.primaryAxisKey || '');
         axes.forEach(axis => {
           const isPrimary = !!primaryAxisKey && axis.key === primaryAxisKey;
           checklistEl.insertAdjacentHTML('beforeend', this._buildColorAxisGroupHeader(axis, isPrimary));
           this.renderColorChecklistRows(axis.colors, axis.key, false, isPrimary);
           this._customColorGroupOptions.push({ key: axis.key, label: axis.label, isPrimary, source: axis.source });
         });
+        // This branch used to render ONLY axis.colors and discard `colors`
+        // entirely, so on a 2+-axis process a sub-group the operator had
+        // deliberately designated on the process -- and any color this
+        // process had genuinely produced before -- simply never appeared in
+        // Colors to Produce at all, with nothing to say why. They are
+        // sub-groups, not a further axis, so they land in the same
+        // non-counting bucket the other render paths give them.
+        this._renderSubGroupBucket(checklistEl, this._nonAxisSubGroupColors(colors, axes));
         if (!primaryAxisKey) {
           checklistEl.insertAdjacentHTML('afterbegin',
             '<div class="alert alert-warning py-1 px-2 small mb-2" style="flex: 1 0 100%;" id="productionPrimaryAxisWarning">' +
@@ -2126,7 +2355,10 @@ App.Production = {
     } catch (err) {
       if (seq !== undefined && seq !== this._compLoadSeq) return;
       checklistEl.innerHTML = '';
-      this.renderColorChecklistRows(colors);
+      // Only a process with NO axis at all may use the flat render, where
+      // every checked color counts -- see the groups.size === 0 branch.
+      if (axes.length > 0) this._renderAxisAndSubGroupChecklist(checklistEl, colors, axes[0]);
+      else this.renderColorChecklistRows(colors);
       return;
     }
 
@@ -2144,7 +2376,18 @@ App.Production = {
     });
 
     if (groups.size === 0) {
-      this.renderColorChecklistRows(colors);
+      // No multi-color pool cluster to group by -- but an axis may still
+      // exist, and the moment one does, a color outside it is a sub-group:
+      // recorded per color, never added to the lot total.
+      //
+      // The flat render below is the ONLY path that lets a checked color
+      // count without belonging to a primary group, and it is reserved for
+      // the one shape where that is right: a process with no axis at all,
+      // where there is no primary/secondary distinction to draw and the
+      // server independently totals every counted row the same way (see
+      // save_production's no-primary-axis branch).
+      if (axes.length > 0) this._renderAxisAndSubGroupChecklist(checklistEl, colors, axes[0]);
+      else this.renderColorChecklistRows(colors);
       return;
     }
 
@@ -2172,11 +2415,11 @@ App.Production = {
       this._customColorGroupOptions.push({ key: groupKey, label: itemNames.join(', '), isPrimary, source: 'pool' });
     });
 
-    const remaining = colors.filter(c => !usedColors.has(c.toLowerCase()));
-    if (remaining.length > 0) {
-      checklistEl.insertAdjacentHTML('beforeend', this._buildColorGroupHeader('other', 'Other'));
-      this.renderColorChecklistRows(remaining, 'other', false, false);
-    }
+    // Same non-counting bucket, same label, same pickable destination as
+    // the axis-driven paths -- this branch used to build its own inline
+    // 'Other' block, which is how the three paths drifted apart in the
+    // first place.
+    this._renderSubGroupBucket(checklistEl, colors.filter(c => !usedColors.has(c.toLowerCase())));
   },
 
   _buildColorGroupHeader(groupKey, label) {
@@ -2494,12 +2737,14 @@ App.Production = {
   // COMMON POOL-sourced recipe component of this process.
   async getPoolColorAwareItemNames(processId) {
     try {
-      const [compRes, poolRes] = await Promise.all([
+      const [compRes, poolRes, axesRes] = await Promise.all([
         this._fetchProcessComponents(processId),
-        this._fetchWarehousePoolData()
+        this._fetchWarehousePoolData(),
+        Api.call('getProcessColorAxes', processId).catch(() => null)
       ]);
-      const comps = compRes.success ? (compRes.data || []) : [];
-      const poolRows = poolRes.success ? (poolRes.data || []) : [];
+      const comps = compRes?.success ? (compRes.data || []) : [];
+      const poolRows = poolRes?.success ? (poolRes.data || []) : [];
+      const axes = (axesRes?.success && axesRes.data && Array.isArray(axesRes.data.axes)) ? axesRes.data.axes : [];
 
       const commonPoolItems = new Set(
         comps
@@ -2513,6 +2758,23 @@ App.Production = {
         if (!r.color || !commonPoolItems.has(key)) return;
         if (!colorSets.has(key)) colorSets.set(key, new Set());
         colorSets.get(key).add(r.color);
+      });
+
+      axes.forEach(axis => {
+        // A 'merged' axis (Process Color Links pairing a pool axis with
+        // another axis) inherits its constituent axes' own labels joined
+        // by ', ' -- per process_service.py's _merge_linked_axes, a pool
+        // axis's label is already its item names, so this still resolves
+        // correctly; a non-pool constituent's label (e.g. a tag axis'
+        // "Rim Color") just won't match any commonPoolItems key below and
+        // is harmlessly skipped.
+        if ((axis.source !== 'pool' && axis.source !== 'merged') || !Array.isArray(axis.colors)) return;
+        const itemNames = (axis.label || '').split(',').map(s => s.trim().toLowerCase());
+        itemNames.forEach(key => {
+          if (!commonPoolItems.has(key)) return;
+          if (!colorSets.has(key)) colorSets.set(key, new Set());
+          axis.colors.forEach(col => colorSets.get(key).add(col));
+        });
       });
 
       const result = new Map();
@@ -2709,6 +2971,10 @@ App.Production = {
       const visibleColors = this._checkedPoolGroupColors(colors, axisKey);
       container.insertAdjacentHTML('beforeend', this._buildPoolColorGroupTable(tableId, colors, visibleColors, comps, 'create', axisKey));
       document.querySelectorAll(`#${tableId} tbody tr`).forEach(row => this.initComponentItemSelect2(row));
+      // Fresh <tbody> element on every render (the container is emptied
+      // above), so this gets its own Sortable instance rather than reusing
+      // one -- see _initRowSorting.
+      this._initRowSorting(document.querySelector(`#${tableId} tbody`));
     });
   },
 
@@ -2821,6 +3087,7 @@ App.Production = {
       }).join('');
       return `
         <tr id="${rowId}" data-row-idx="${rowIdx}">
+          ${this._dragCellHtml()}
           <td>
             <select class="form-select prod-comp-item-select" required>
               <option value=""></option>
@@ -2828,7 +3095,19 @@ App.Production = {
             </select>
           </td>
           <td><input type="text" class="form-control prod-comp-size" value="${escapeHtml(r.size || '')}" placeholder="-" readonly></td>
-          <td><input type="text" class="form-control prod-comp-narration" value="${escapeHtml(r.narration || '')}" placeholder="-" readonly title="From the Process recipe — Warehouse Pool output items have no Item Master entry of their own"></td>
+          <!-- Editable, like the Narration on every other component table in
+               this form. It was read-only on the grounds that a Warehouse
+               Pool output item has no Items Master entry to derive a
+               narration from -- but that is precisely why it needs to be
+               typed here: nothing else can supply one, so the field could
+               only ever show whatever the Process recipe happened to store
+               and the operator had no way to describe a pool component on
+               this lot. serializePoolColorGroups already reads this input,
+               so what is typed is saved; and _with_master_narration only
+               overwrites a component whose name+size Items Master actually
+               knows, which by definition is not a pool output item -- so an
+               edit here survives the save rather than being stamped over. -->
+          <td><input type="text" class="form-control prod-comp-narration" value="${escapeHtml(r.narration || '')}" placeholder="-" title="Describe this pool component for the printed sheet — pre-filled from the Process recipe"></td>
           <td>
             <select class="form-select prod-comp-source" disabled>
               <option value="POOL" selected>Pool (Warehouse)</option>
@@ -2848,6 +3127,11 @@ App.Production = {
           <table class="table table-bordered bg-white shadow-sm mb-0 prod-color-table" id="${tableId}" data-all-colors="${escapeHtml(colors.join('|'))}" data-axis-key="${escapeHtml(axisKey || '')}" style="min-width: ${minWidthPx}px;">
             <thead class="table-light">
               <tr>
+                <!-- Reorder grip column -- FIRST, and mirrored by
+                     _dragCellHtml() in every body row above, because
+                     syncPoolColorGroupColumns addresses this table's color
+                     cells by their position among these header children. -->
+                <th scope="col" style="width: 3%;"><span class="visually-hidden">Reorder rows</span></th>
                 <th style="width: 18%;">Item / Pool Name</th>
                 <th style="width: 7%;">Size</th>
                 <th style="width: 13%;">Narration</th>
@@ -3262,6 +3546,7 @@ App.Production = {
 
     const rowHtml = `
       <tr id="${rowId}" data-merged="true">
+        ${this._dragCellHtml()}
         <td><input type="text" class="form-control prod-comp-display-name" value="${escapeHtml(itemName)}" readonly title="Merged across colors — each color cell below has its own item picker"></td>
         <td><input type="text" class="form-control prod-comp-size" value="${escapeHtml(size)}" placeholder="-"></td>
         <td><input type="text" class="form-control prod-comp-narration" value="${escapeHtml(narration)}" placeholder="-" title="Shared across this row's colors, even though each color cell may secretly use a different literal item"></td>
@@ -3280,6 +3565,7 @@ App.Production = {
     colors.forEach(({ index }) => {
       this.initMergedCellItemSelect2(rowEl.children[index]?.querySelector('.prod-comp-item-select'));
     });
+    this._initRowSorting(tbody);
     return rowEl;
   },
 
@@ -3332,6 +3618,7 @@ App.Production = {
 
     const rowHtml = `
       <tr id="${rowId}">
+        ${this._dragCellHtml()}
         <td>
           <select class="form-select prod-comp-item-select" required>
             <option value=""></option>
@@ -3353,6 +3640,7 @@ App.Production = {
     tbody.insertAdjacentHTML('beforeend', rowHtml);
     const rowEl = document.getElementById(rowId);
     this.initComponentItemSelect2(rowEl);
+    this._initRowSorting(tbody);
     return rowEl;
   },
 
@@ -3798,6 +4086,10 @@ App.Production = {
       const visibleColors = this._checkedPoolGroupColors(groupColors, axisKey);
       container.insertAdjacentHTML('beforeend', this._buildPoolColorGroupTable(tableId, groupColors, visibleColors, groupEntries, 'edit', axisKey));
       document.querySelectorAll(`#${tableId} tbody tr`).forEach(row => this.initComponentItemSelect2(row));
+      // Fresh <tbody> element on every render (the container is emptied
+      // above), so this gets its own Sortable instance rather than reusing
+      // one -- see _initRowSorting.
+      this._initRowSorting(document.querySelector(`#${tableId} tbody`));
     });
   },
 
@@ -3875,6 +4167,7 @@ App.Production = {
 
     const rowHtml = `
       <tr id="${rowId}" ${qtyPerUnitAttr}${unitAttr}${colorScopeAttr}>
+        ${this._dragCellHtml()}
         <td>
           <select class="form-select prod-comp-item-select" required>
             <option value=""></option>
@@ -3897,6 +4190,7 @@ App.Production = {
     `;
     tbody.insertAdjacentHTML('beforeend', rowHtml);
     this.initComponentItemSelect2(document.getElementById(rowId));
+    this._initRowSorting(tbody);
   },
 
   removeComponentRow(rowId) {
@@ -4152,12 +4446,66 @@ App.Production = {
     });
 
     let handlingChange = false;
-    $select.off('change.prodAssignedTo').on('change.prodAssignedTo', () => {
+    $select.off('change.prodAssignedTo').on('change.prodAssignedTo', async () => {
       if (handlingChange) return;
       handlingChange = true;
       Promise.resolve().then(() => { handlingChange = false; });
+      // A fresh contractor pick means whatever Extra Charge was showing
+      // belonged to the PREVIOUS contractor -- reset to that contractor's
+      // own list (no preselect) before refreshing the Payable preview,
+      // so it never briefly reads a stale/foreign radio's amount.
+      await this.refreshExtraChargeOptions(document.getElementById('productionAssignedTo')?.value);
       this.refreshPayableHint();
     });
+  },
+
+  // Populates the per-lot Extra Charge radio group (Layer 2) with
+  // whichever service types/charges THIS contractor's own rate card
+  // lists -- every contractor can offer a different set, so this refetches
+  // on every contractor change rather than showing one shared list.
+  // preselectServiceType restores a previously-saved choice on edit.
+  async refreshExtraChargeOptions(contractorName, preselectServiceType) {
+    const wrapper = document.getElementById('productionExtraChargeWrapper');
+    const optionsEl = document.getElementById('productionExtraChargeOptions');
+    if (!wrapper || !optionsEl) return;
+
+    if (!contractorName) {
+      wrapper.style.display = 'none';
+      optionsEl.innerHTML = '';
+      return;
+    }
+
+    let charges = [];
+    try {
+      const res = await Api.call('getContractorServiceChargesForContractor', contractorName);
+      charges = res.success ? (res.data || []) : [];
+    } catch (err) {
+      charges = [];
+    }
+
+    if (!charges.length) {
+      wrapper.style.display = 'none';
+      optionsEl.innerHTML = '';
+      return;
+    }
+
+    const preselect = String(preselectServiceType || '').trim();
+    const preselectMatches = preselect && charges.some(c => App.Utils.sameText(c.serviceType, preselect));
+
+    let html = `<div class="form-check form-check-inline">
+      <input class="form-check-input" type="radio" name="extraChargeType" id="prodExtraChargeNone" value="" data-charge-amount="0" ${!preselectMatches ? 'checked' : ''} onchange="App.Production.refreshPayableHint()">
+      <label class="form-check-label" for="prodExtraChargeNone">None</label>
+    </div>`;
+    charges.forEach((c, i) => {
+      const id = `prodExtraCharge_${i}`;
+      const checked = App.Utils.sameText(c.serviceType, preselect) ? 'checked' : '';
+      html += `<div class="form-check form-check-inline">
+      <input class="form-check-input" type="radio" name="extraChargeType" id="${id}" value="${escapeHtml(c.serviceType)}" data-charge-amount="${c.chargeAmount}" ${checked} onchange="App.Production.refreshPayableHint()">
+      <label class="form-check-label" for="${id}">${escapeHtml(c.serviceType)} (+${formatCurrency(c.chargeAmount)})</label>
+    </div>`;
+    });
+    optionsEl.innerHTML = html;
+    wrapper.style.display = '';
   },
 
   refreshPayableHint() {
@@ -4171,22 +4519,45 @@ App.Production = {
 
     const contractorName = document.getElementById('productionAssignedTo')?.value;
     const processId = document.getElementById('productionProcessId')?.value;
-    const qty = toNumber(document.getElementById('productionQty')?.value);
+    // The lot's REAL total, not the plain Qty field. populateColorChecklist
+    // both hides and BLANKS that field whenever this process has color
+    // sub-groups, so reading it directly meant the Payable hint was
+    // permanently empty for every color-driven lot -- even though
+    // toggleColorGroup / handleColorCheckToggle / onColorQtyChanged /
+    // setPrimaryColorAxisChoice all faithfully call refreshPayableHint() on
+    // every checklist edit. _currentComponentQtyMultiplier resolves the
+    // same total save_production actually bills the contractor on (the
+    // primary axis's summed quantities), and still degrades to the plain
+    // Qty field in single-quantity mode.
+    const qty = this._currentComponentQtyMultiplier();
     const process = (App.State.globalProcesses || []).find(p => p.processId === processId);
+
+    // Read directly off the checked radio's own data-charge-amount rather
+    // than re-fetching -- refreshExtraChargeOptions already populated it
+    // for the current contractor, and this runs on a 300ms debounce that
+    // can fire many times per keystroke/toggle.
+    const extraChargeRadio = document.querySelector('#productionExtraChargeOptions input[name="extraChargeType"]:checked');
+    const extraChargeType = extraChargeRadio ? extraChargeRadio.value : '';
+    const extraChargeAmount = extraChargeRadio ? toNumber(extraChargeRadio.dataset.chargeAmount) : 0;
 
     if (!contractorName || !process || !qty) {
       hintEl.innerText = '';
       return;
     }
 
+    const size = App.Utils.getSizeFromOutputItemName(process.outputItemName);
+
     try {
-      const res = await Api.call('getContractorRateForProcess', contractorName, process.processName);
+      const res = await Api.call('getContractorRateForProcessType', contractorName, process.processType, size);
       const rate = res.success ? toNumber(res.data?.ratePerUnit) : 0;
-      if (!rate) {
-        hintEl.innerText = `No rate card entry for "${contractorName}" / ${process.processName} — Payable will be 0.`;
+      if (!rate && !extraChargeAmount) {
+        hintEl.innerText = `No rate card entry for "${contractorName}" / ${process.processType || 'General'} / ${size} — Payable will be 0.`;
         return;
       }
-      hintEl.innerText = `Payable: ${formatCurrency(qty * rate)} (${qty} x ${rate}/unit)`;
+      let text = `Payable: ${formatCurrency(qty * rate + extraChargeAmount)} (${qty} x ${rate}/unit`;
+      if (extraChargeType) text += ` + ${extraChargeType} ${formatCurrency(extraChargeAmount)}`;
+      text += ')';
+      hintEl.innerText = text;
     } catch (err) {
       hintEl.innerText = '';
     }
@@ -4231,6 +4602,7 @@ App.Production = {
 
     this.initContractorSelect2('');
     document.getElementById('productionPayableHint').innerText = '';
+    await this.refreshExtraChargeOptions('');
 
     this.populateSizeSelect(false);
     const sizeSelect = document.getElementById('productionSize');
@@ -4353,6 +4725,15 @@ App.Production = {
       wrapper.style.display = '';
       document.getElementById('productionComponentsSectionLabel').innerText = 'Common Components';
       this.showColorMatrix();
+      // This lot is in exactly the state revertToSingleQty exists to undo
+      // -- colors added by hand to a process that has none configured --
+      // yet the button was blanket-hidden for every edit above, so a lot
+      // logged that way could never be put back on a single quantity
+      // without deleting and re-logging it. The Create path shows it here
+      // (enableManualColors), and revertToSingleQty is edit-safe: it
+      // reloads the process's own non-color recipe and the lot then saves
+      // with a plain qty and no colorBreakdown.
+      if (revertColorsBtn) revertColorsBtn.style.display = '';
 
       colors = allColors;
     }
@@ -4442,6 +4823,12 @@ App.Production = {
       }
       await this.refreshPoolAvailability();
     } else {
+      // Plain single-quantity lot on a process with no configured color
+      // sub-groups -- the same state handleProcessChange offers "+ Add
+      // Colors to this Lot" in on the Create path. Hiding it for every
+      // edit meant a colour breakdown could only ever be added to a lot at
+      // the moment it was first logged.
+      if (addColorsBtn) addColorsBtn.style.display = p.processId ? '' : 'none';
       document.getElementById('productionQty').value = p.qty;
       if (p.componentsConsumed && p.componentsConsumed.length > 0) {
         this.clearComponentsTable();
@@ -4452,6 +4839,15 @@ App.Production = {
       }
     }
     if (seq !== this._compLoadSeq) return;
+
+    // handleProcessChange -- which is what normally ends a Process
+    // selection by refreshing this hint -- is deliberately suppressed on
+    // this path (_suppressCascade), so nothing else fires it here: a
+    // reopened lot showed a blank Payable until the operator happened to
+    // touch the contractor or a quantity. Runs last, once the checklist
+    // and component tables have settled, so it reads this lot's real total.
+    await this.refreshExtraChargeOptions(p.assignedTo, p.extraChargeType);
+    this.refreshPayableHint();
 
     document.getElementById('productionFormTitle').innerText = `Edit Production Lot: Row #${p.rowIdx}`;
     document.getElementById('productionSubmitBtn').innerText = 'Update Production Lot';
@@ -5658,7 +6054,7 @@ document.addEventListener('DOMContentLoaded', function () {
         return;
       }
       if (document.querySelector('#productionColorChecklist input[name="productionPrimaryAxisPick"]') &&
-          !document.querySelector('#productionColorChecklist input[name="productionPrimaryAxisPick"]:checked')) {
+        !document.querySelector('#productionColorChecklist input[name="productionPrimaryAxisPick"]:checked')) {
         App.Utils.showToast('Pick which group is Primary (its quantities become this lot\'s total) before saving.', true);
         return;
       }

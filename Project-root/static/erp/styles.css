@@ -2034,13 +2034,26 @@
   }
 
   /* ── Bill form: Goods vs Labor Job column toggle (see App.Bill.setBillType) ── */
-  #billItemsTable .labor-col { display: none; }
-  #billItemsTable.labor-mode .labor-col { display: table-cell; }
-  #billItemsTable.labor-mode .goods-col { display: none; }
+  #billItemsTable .labor-col {
+    display: none;
+  }
+
+  #billItemsTable.labor-mode .labor-col {
+    display: table-cell;
+  }
+
+  #billItemsTable.labor-mode .goods-col {
+    display: none;
+  }
 
   /* ── Bill form: Labor-Job-only header fields (Issuing Party / Manufacturing Vendor) ── */
-  #billForm .labor-only-field { display: none; }
-  #billForm.labor-mode .labor-only-field { display: block; }
+  #billForm .labor-only-field {
+    display: none;
+  }
+
+  #billForm.labor-mode .labor-only-field {
+    display: block;
+  }
 
   /* ── Custom PO multi-select dropdown (replaces Select2 multiple) ─────── */
   .po-multiselect {
@@ -2280,7 +2293,51 @@
   .prod-color-table {
     table-layout: fixed;
     width: 100%;
-    min-width: 378px;
+    min-width: 412px;
+  }
+
+  /* Row-reorder grip (see App.Production._initRowSorting). Deliberately a
+     column of its own rather than an icon squeezed in beside the ✕ button:
+     both of these tables can scroll horizontally, and a grip parked in the
+     last column would scroll out of sight exactly when a long row most
+     needs reordering. Kept narrow enough that the 34px it adds to
+     PROD_COLOR_TABLE_FIXED_RESERVE_PX is the whole of its cost. */
+  .prod-drag-cell {
+    text-align: center;
+    vertical-align: middle;
+    padding-left: 0;
+    padding-right: 0;
+  }
+
+  .prod-drag-handle {
+    cursor: grab;
+    color: #adb5bd;
+    line-height: 1;
+    display: inline-block;
+    padding: 2px;
+    /* Chrome/Safari otherwise start a native text selection on the icon
+       instead of letting SortableJS take the pointer. */
+    user-select: none;
+    touch-action: none;
+  }
+
+  .prod-drag-handle:hover {
+    color: #495057;
+  }
+
+  .prod-drag-handle:active {
+    cursor: grabbing;
+  }
+
+  /* The placeholder SortableJS leaves where the row will land. */
+  tr.prod-row-ghost > td {
+    background-color: #d1e7dd !important;
+    opacity: 0.65;
+  }
+
+  /* The row actually being dragged. */
+  tr.prod-row-chosen > td {
+    background-color: #f8f9fa;
   }
 
   .prod-color-table th[data-color] {
@@ -3119,403 +3176,412 @@
       outline-offset: 2px;
     }
   }
-/* ── Dispatch Plan / Planning Board (planning-board.js) ──────────────────
+
+  /* ── Dispatch Plan / Planning Board (planning-board.js) ──────────────────
    Generic pb-* classes -- shared by any future App.PlanningBoard consumer
    (Production planning later), not Dispatch-specific styling. Uses the
    theme variables above so dark mode needs no separate overrides. */
 
-.pb-board {
-  display: flex;
-  gap: 20px;
-  align-items: flex-start;
-}
-
-.pb-pool-panel {
-  flex: 0 0 320px;
-  background: var(--bg-light);
-  border: 1px solid var(--border-color);
-  border-radius: var(--border-radius);
-  box-shadow: var(--shadow-sm);
-  padding: 12px;
-  max-height: 70vh;
-  overflow-y: auto;
-}
-
-.pb-cards-panel {
-  flex: 1 1 auto;
-  min-width: 0;
-}
-
-.pb-panel-heading {
-  font-weight: 700;
-  color: var(--text-primary);
-  margin-bottom: 10px;
-  font-size: 14px;
-}
-
-.pb-panel-hint {
-  font-weight: 400;
-  color: var(--text-muted);
-  font-size: 12px;
-}
-
-.pb-pool-search {
-  width: 100%;
-  padding: 8px 10px;
-  margin-bottom: 10px;
-  border: 1px solid var(--border-color);
-  border-radius: var(--border-radius-sm);
-  background: var(--bg-light);
-  color: var(--text-primary);
-  font-size: 13px;
-}
-
-.pb-pool-search:focus {
-  outline: none;
-  border-color: var(--primary-color);
-}
-
-.pb-pool-list {
-  display: flex;
-  flex-direction: column;
-  gap: 8px;
-}
-
-.pb-pool-empty {
-  color: var(--text-muted);
-  font-size: 12px;
-  text-align: center;
-  padding: 14px 4px;
-}
-
-.pb-pool-item {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-  padding: 10px 12px;
-  background: var(--bg-muted);
-  border: 1px solid var(--border-color);
-  border-radius: var(--border-radius-sm);
-  cursor: grab;
-  user-select: none;
-  transition: transform 150ms ease, box-shadow 150ms ease, border-color 150ms ease;
-}
-
-.pb-pool-item:hover {
-  border-color: var(--primary-color);
-  box-shadow: var(--shadow-sm);
-}
-
-.pb-pool-item.pb-selected {
-  border-color: var(--primary-color);
-  background: var(--bg-light);
-  box-shadow: 0 0 0 2px var(--primary-color) inset;
-}
-
-.pb-pool-item-check {
-  flex: 0 0 auto;
-  width: 16px;
-  height: 16px;
-  cursor: pointer;
-}
-
-.pb-pool-item-body {
-  flex: 1 1 auto;
-  min-width: 0;
-}
-
-.pb-pool-item-label {
-  font-weight: 600;
-  color: var(--text-primary);
-  font-size: 13px;
-  /* Product names here are long and highly similar ("26 inch Runway IBC
-     T/Tube 3.00 FSDD Branded") -- the distinguishing part is at the END,
-     so truncating with an ellipsis would hide exactly what tells two rows
-     apart. Wrapped instead. */
-  overflow-wrap: anywhere;
-}
-
-.pb-pool-item-sublabel {
-  color: var(--text-muted);
-  font-size: 11px;
-}
-
-.pb-pool-item-qty {
-  font-weight: 700;
-  color: var(--success-color);
-  font-size: 13px;
-  flex: 0 0 auto;
-}
-
-.pb-cards-list {
-  display: grid;
-  grid-template-columns: repeat(auto-fill, minmax(260px, 1fr));
-  gap: 16px;
-  margin-bottom: 16px;
-}
-
-.pb-card {
-  background: var(--bg-light);
-  border: 1px solid var(--border-color);
-  border-radius: var(--border-radius);
-  box-shadow: var(--shadow-sm);
-  padding: 14px;
-  display: flex;
-  flex-direction: column;
-  gap: 10px;
-  transition: box-shadow 150ms ease;
-}
-
-.pb-card-header {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: 8px;
-}
-
-.pb-card-title {
-  font-weight: 700;
-  color: var(--text-primary);
-  font-size: 15px;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-
-.pb-card-header-actions {
-  flex: 0 0 auto;
-  display: flex;
-  align-items: center;
-  gap: 6px;
-}
-
-.pb-card-action {
-  flex: 0 0 auto;
-  border: none;
-  border-radius: var(--border-radius-sm);
-  background: var(--success-color);
-  color: #fff;
-  font-weight: 700;
-  font-size: 12px;
-  padding: 5px 12px;
-  cursor: pointer;
-}
-
-.pb-card-cancel {
-  flex: 0 0 auto;
-  border: none;
-  background: transparent;
-  color: var(--text-muted);
-  font-size: 18px;
-  line-height: 1;
-  cursor: pointer;
-  padding: 0 2px;
-}
-
-.pb-card-cancel:hover {
-  color: #dc2626;
-}
-
-.pb-card-transport {
-  width: 100%;
-  padding: 6px 8px;
-  border: 1px solid var(--border-color);
-  border-radius: var(--border-radius-sm);
-  background: var(--bg-light);
-  color: var(--text-primary);
-  font-size: 12px;
-}
-
-.pb-card-transport:focus {
-  outline: none;
-  border-color: var(--primary-color);
-}
-
-.pb-card-transport::placeholder {
-  color: var(--text-muted);
-}
-
-.pb-card-lines {
-  display: flex;
-  flex-direction: column;
-  gap: 8px;
-  min-height: 40px;
-}
-
-.pb-card-line {
-  display: flex;
-  flex-direction: column;
-  gap: 6px;
-  padding: 8px 10px;
-  background: var(--bg-muted);
-  border: 1px solid var(--border-light);
-  border-left: 3px solid var(--primary-color);
-  border-radius: var(--border-radius-sm);
-  animation: pb-line-in 180ms ease;
-}
-
-@keyframes pb-line-in {
-  from { opacity: 0; transform: translateY(-4px) scale(0.97); }
-  to { opacity: 1; transform: translateY(0) scale(1); }
-}
-
-.pb-card-line-fulfilled {
-  opacity: 0.6;
-  border-left-color: var(--success-color);
-}
-
-.pb-card-line-top {
-  display: flex;
-  align-items: flex-start;
-  gap: 8px;
-}
-
-.pb-card-line-bottom {
-  display: flex;
-  align-items: center;
-  gap: 6px;
-}
-
-.pb-card-line-label {
-  flex: 1 1 auto;
-  min-width: 0;
-  font-size: 13px;
-  line-height: 1.4;
-  color: var(--text-primary);
-  font-weight: 500;
-  /* Allow wrapping so long product names are fully visible */
-  word-break: break-word;
-}
-
-.pb-card-line-qty {
-  width: 52px;
-  flex: 0 0 auto;
-  padding: 2px 8px;
-  border: none;
-  border-radius: 10px;
-  background: var(--primary-color);
-  color: #fff;
-  font-size: 12px;
-  font-weight: 700;
-  text-align: center;
-  appearance: textfield;
-  -moz-appearance: textfield;
-}
-.pb-card-line-qty::-webkit-inner-spin-button,
-.pb-card-line-qty::-webkit-outer-spin-button {
-  -webkit-appearance: none;
-  margin: 0;
-}
-
-.pb-card-line-rate {
-  width: 64px;
-  flex: 0 0 auto;
-  padding: 2px 6px;
-  border: 1px solid var(--border-color);
-  border-radius: var(--border-radius-sm);
-  background: var(--bg-light);
-  color: var(--text-primary);
-  font-size: 12px;
-  text-align: right;
-}
-
-.pb-card-line-remarks {
-  flex: 1 1 auto;
-  min-width: 0;
-  padding: 2px 6px;
-  border: 1px solid var(--border-color);
-  border-radius: var(--border-radius-sm);
-  background: var(--bg-light);
-  color: var(--text-primary);
-  font-size: 12px;
-}
-
-.pb-card-line-rate::placeholder,
-.pb-card-line-remarks::placeholder {
-  color: var(--text-muted);
-}
-
-.pb-card-line-remove {
-  flex: 0 0 auto;
-  border: none;
-  background: transparent;
-  color: var(--text-muted);
-  font-size: 16px;
-  line-height: 1;
-  cursor: pointer;
-  padding: 0 4px;
-}
-
-.pb-card-line-remove:hover {
-  color: #dc2626;
-}
-
-.pb-card-line-fulfilled-badge {
-  flex: 0 0 auto;
-  font-size: 10px;
-  font-weight: 700;
-  color: var(--success-color);
-  text-transform: uppercase;
-}
-
-.pb-card-empty {
-  color: var(--text-muted);
-  font-size: 12px;
-  text-align: center;
-  padding: 14px 4px;
-  border: 1px dashed var(--border-color);
-  border-radius: var(--border-radius-sm);
-}
-
-.pb-add-card {
-  max-width: 260px;
-}
-
-.pb-add-card-input {
-  width: 100%;
-  padding: 8px 10px;
-  border: 1px dashed var(--border-color);
-  border-radius: var(--border-radius-sm);
-  background: transparent;
-  color: var(--text-secondary);
-  font-size: 13px;
-}
-
-.pb-add-card-input:focus {
-  outline: none;
-  border-style: solid;
-  border-color: var(--primary-color);
-  color: var(--text-primary);
-}
-
-/* SortableJS state classes -- shared by the pool list and every card's
-   line list, for the "smooth, professional feel" the feature asked for. */
-.sortable-ghost {
-  opacity: 0.35;
-}
-
-.sortable-chosen {
-  box-shadow: var(--shadow-md);
-}
-
-.sortable-drag,
-.sortable-fallback {
-  opacity: 0.9 !important;
-  box-shadow: var(--shadow-lg) !important;
-}
-
-.pb-cards-panel .sortable-ghost {
-  border: 2px dashed var(--primary-color) !important;
-  background: var(--bg-muted) !important;
-}
-
-@media (max-width: 900px) {
   .pb-board {
-    flex-direction: column;
+    display: flex;
+    gap: 20px;
+    align-items: flex-start;
   }
 
   .pb-pool-panel {
-    flex: 1 1 auto;
-    max-height: 40vh;
+    flex: 0 0 320px;
+    background: var(--bg-light);
+    border: 1px solid var(--border-color);
+    border-radius: var(--border-radius);
+    box-shadow: var(--shadow-sm);
+    padding: 12px;
+    max-height: 70vh;
+    overflow-y: auto;
   }
-}
+
+  .pb-cards-panel {
+    flex: 1 1 auto;
+    min-width: 0;
+  }
+
+  .pb-panel-heading {
+    font-weight: 700;
+    color: var(--text-primary);
+    margin-bottom: 10px;
+    font-size: 14px;
+  }
+
+  .pb-panel-hint {
+    font-weight: 400;
+    color: var(--text-muted);
+    font-size: 12px;
+  }
+
+  .pb-pool-search {
+    width: 100%;
+    padding: 8px 10px;
+    margin-bottom: 10px;
+    border: 1px solid var(--border-color);
+    border-radius: var(--border-radius-sm);
+    background: var(--bg-light);
+    color: var(--text-primary);
+    font-size: 13px;
+  }
+
+  .pb-pool-search:focus {
+    outline: none;
+    border-color: var(--primary-color);
+  }
+
+  .pb-pool-list {
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+  }
+
+  .pb-pool-empty {
+    color: var(--text-muted);
+    font-size: 12px;
+    text-align: center;
+    padding: 14px 4px;
+  }
+
+  .pb-pool-item {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    padding: 10px 12px;
+    background: var(--bg-muted);
+    border: 1px solid var(--border-color);
+    border-radius: var(--border-radius-sm);
+    cursor: grab;
+    user-select: none;
+    transition: transform 150ms ease, box-shadow 150ms ease, border-color 150ms ease;
+  }
+
+  .pb-pool-item:hover {
+    border-color: var(--primary-color);
+    box-shadow: var(--shadow-sm);
+  }
+
+  .pb-pool-item.pb-selected {
+    border-color: var(--primary-color);
+    background: var(--bg-light);
+    box-shadow: 0 0 0 2px var(--primary-color) inset;
+  }
+
+  .pb-pool-item-check {
+    flex: 0 0 auto;
+    width: 16px;
+    height: 16px;
+    cursor: pointer;
+  }
+
+  .pb-pool-item-body {
+    flex: 1 1 auto;
+    min-width: 0;
+  }
+
+  .pb-pool-item-label {
+    font-weight: 600;
+    color: var(--text-primary);
+    font-size: 13px;
+    /* Product names here are long and highly similar ("26 inch Runway IBC
+     T/Tube 3.00 FSDD Branded") -- the distinguishing part is at the END,
+     so truncating with an ellipsis would hide exactly what tells two rows
+     apart. Wrapped instead. */
+    overflow-wrap: anywhere;
+  }
+
+  .pb-pool-item-sublabel {
+    color: var(--text-muted);
+    font-size: 11px;
+  }
+
+  .pb-pool-item-qty {
+    font-weight: 700;
+    color: var(--success-color);
+    font-size: 13px;
+    flex: 0 0 auto;
+  }
+
+  .pb-cards-list {
+    display: grid;
+    grid-template-columns: repeat(auto-fill, minmax(260px, 1fr));
+    gap: 16px;
+    margin-bottom: 16px;
+  }
+
+  .pb-card {
+    background: var(--bg-light);
+    border: 1px solid var(--border-color);
+    border-radius: var(--border-radius);
+    box-shadow: var(--shadow-sm);
+    padding: 14px;
+    display: flex;
+    flex-direction: column;
+    gap: 10px;
+    transition: box-shadow 150ms ease;
+  }
+
+  .pb-card-header {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 8px;
+  }
+
+  .pb-card-title {
+    font-weight: 700;
+    color: var(--text-primary);
+    font-size: 15px;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+
+  .pb-card-header-actions {
+    flex: 0 0 auto;
+    display: flex;
+    align-items: center;
+    gap: 6px;
+  }
+
+  .pb-card-action {
+    flex: 0 0 auto;
+    border: none;
+    border-radius: var(--border-radius-sm);
+    background: var(--success-color);
+    color: #fff;
+    font-weight: 700;
+    font-size: 12px;
+    padding: 5px 12px;
+    cursor: pointer;
+  }
+
+  .pb-card-cancel {
+    flex: 0 0 auto;
+    border: none;
+    background: transparent;
+    color: var(--text-muted);
+    font-size: 18px;
+    line-height: 1;
+    cursor: pointer;
+    padding: 0 2px;
+  }
+
+  .pb-card-cancel:hover {
+    color: #dc2626;
+  }
+
+  .pb-card-transport {
+    width: 100%;
+    padding: 6px 8px;
+    border: 1px solid var(--border-color);
+    border-radius: var(--border-radius-sm);
+    background: var(--bg-light);
+    color: var(--text-primary);
+    font-size: 12px;
+  }
+
+  .pb-card-transport:focus {
+    outline: none;
+    border-color: var(--primary-color);
+  }
+
+  .pb-card-transport::placeholder {
+    color: var(--text-muted);
+  }
+
+  .pb-card-lines {
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+    min-height: 40px;
+  }
+
+  .pb-card-line {
+    display: flex;
+    flex-direction: column;
+    gap: 6px;
+    padding: 8px 10px;
+    background: var(--bg-muted);
+    border: 1px solid var(--border-light);
+    border-left: 3px solid var(--primary-color);
+    border-radius: var(--border-radius-sm);
+    animation: pb-line-in 180ms ease;
+  }
+
+  @keyframes pb-line-in {
+    from {
+      opacity: 0;
+      transform: translateY(-4px) scale(0.97);
+    }
+
+    to {
+      opacity: 1;
+      transform: translateY(0) scale(1);
+    }
+  }
+
+  .pb-card-line-fulfilled {
+    opacity: 0.6;
+    border-left-color: var(--success-color);
+  }
+
+  .pb-card-line-top {
+    display: flex;
+    align-items: flex-start;
+    gap: 8px;
+  }
+
+  .pb-card-line-bottom {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+  }
+
+  .pb-card-line-label {
+    flex: 1 1 auto;
+    min-width: 0;
+    font-size: 13px;
+    line-height: 1.4;
+    color: var(--text-primary);
+    font-weight: 500;
+    /* Allow wrapping so long product names are fully visible */
+    word-break: break-word;
+  }
+
+  .pb-card-line-qty {
+    width: 52px;
+    flex: 0 0 auto;
+    padding: 2px 8px;
+    border: none;
+    border-radius: 10px;
+    background: var(--primary-color);
+    color: #fff;
+    font-size: 12px;
+    font-weight: 700;
+    text-align: center;
+    appearance: textfield;
+    -moz-appearance: textfield;
+  }
+
+  .pb-card-line-qty::-webkit-inner-spin-button,
+  .pb-card-line-qty::-webkit-outer-spin-button {
+    -webkit-appearance: none;
+    margin: 0;
+  }
+
+  .pb-card-line-rate {
+    width: 64px;
+    flex: 0 0 auto;
+    padding: 2px 6px;
+    border: 1px solid var(--border-color);
+    border-radius: var(--border-radius-sm);
+    background: var(--bg-light);
+    color: var(--text-primary);
+    font-size: 12px;
+    text-align: right;
+  }
+
+  .pb-card-line-remarks {
+    flex: 1 1 auto;
+    min-width: 0;
+    padding: 2px 6px;
+    border: 1px solid var(--border-color);
+    border-radius: var(--border-radius-sm);
+    background: var(--bg-light);
+    color: var(--text-primary);
+    font-size: 12px;
+  }
+
+  .pb-card-line-rate::placeholder,
+  .pb-card-line-remarks::placeholder {
+    color: var(--text-muted);
+  }
+
+  .pb-card-line-remove {
+    flex: 0 0 auto;
+    border: none;
+    background: transparent;
+    color: var(--text-muted);
+    font-size: 16px;
+    line-height: 1;
+    cursor: pointer;
+    padding: 0 4px;
+  }
+
+  .pb-card-line-remove:hover {
+    color: #dc2626;
+  }
+
+  .pb-card-line-fulfilled-badge {
+    flex: 0 0 auto;
+    font-size: 10px;
+    font-weight: 700;
+    color: var(--success-color);
+    text-transform: uppercase;
+  }
+
+  .pb-card-empty {
+    color: var(--text-muted);
+    font-size: 12px;
+    text-align: center;
+    padding: 14px 4px;
+    border: 1px dashed var(--border-color);
+    border-radius: var(--border-radius-sm);
+  }
+
+  .pb-add-card {
+    max-width: 260px;
+  }
+
+  .pb-add-card-input {
+    width: 100%;
+    padding: 8px 10px;
+    border: 1px dashed var(--border-color);
+    border-radius: var(--border-radius-sm);
+    background: transparent;
+    color: var(--text-secondary);
+    font-size: 13px;
+  }
+
+  .pb-add-card-input:focus {
+    outline: none;
+    border-style: solid;
+    border-color: var(--primary-color);
+    color: var(--text-primary);
+  }
+
+  /* SortableJS state classes -- shared by the pool list and every card's
+   line list, for the "smooth, professional feel" the feature asked for. */
+  .sortable-ghost {
+    opacity: 0.35;
+  }
+
+  .sortable-chosen {
+    box-shadow: var(--shadow-md);
+  }
+
+  .sortable-drag,
+  .sortable-fallback {
+    opacity: 0.9 !important;
+    box-shadow: var(--shadow-lg) !important;
+  }
+
+  .pb-cards-panel .sortable-ghost {
+    border: 2px dashed var(--primary-color) !important;
+    background: var(--bg-muted) !important;
+  }
+
+  @media (max-width: 900px) {
+    .pb-board {
+      flex-direction: column;
+    }
+
+    .pb-pool-panel {
+      flex: 1 1 auto;
+      max-height: 40vh;
+    }
+  }

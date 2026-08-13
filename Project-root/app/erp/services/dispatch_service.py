@@ -809,7 +809,13 @@ def save_dispatch(conn, cur, form_data):
                 )
             order_reserved_by_product[key] = reserved_so_far + line["qty"]
 
-    logistics_rate = contractors_service._get_contractor_rate(cur, logistics_contractor, config_maps.LOGISTICS_PROCESS_NAME)
+    # Dispatch / Logistics has no real Process record (no Process Type, no
+    # Size) -- it's keyed into the same Layer 1 rate card as a pseudo
+    # Process Type paired with the fixed size fallback, so a logistics
+    # rate is just one more row on a contractor's normal rate card.
+    logistics_rate = contractors_service._get_contractor_rate(
+        cur, logistics_contractor, config_maps.LOGISTICS_PROCESS_NAME, config_maps.PROCESS_SIZE_FALLBACK
+    )
     resolved_contractor_id = _find_contractor_id_by_name(cur, logistics_contractor)
     user_id = get_current_user_id()
 

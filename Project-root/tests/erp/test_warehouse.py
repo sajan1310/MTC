@@ -415,6 +415,12 @@ def test_composite_bucket_credit_combines_two_independent_axes(erp_client):
 
     down_payload, down_id = _save_process(
         erp_client,
+        # save_process now REFUSES a 2+-axis process with no Primary Axis
+        # (it is a real choice, not something to default silently). The
+        # first axis in recipe order is exactly what it used to pick on
+        # its own, so naming it here keeps this test asserting the same
+        # behaviour it always did.
+        primaryColorAxis=frame_payload["outputItemName"],
         components=[
             {"itemName": frame_payload["outputItemName"], "qtyPerUnit": 1, "sourceType": "POOL", "colorGroup": "COMMON"},
             {"itemName": rim_payload["outputItemName"], "qtyPerUnit": 1, "sourceType": "POOL", "colorGroup": "COMMON"},
@@ -468,6 +474,12 @@ def test_composite_bucket_debit_resolves_single_token_to_composite(erp_client):
 
     combo_payload, combo_id = _save_process(
         erp_client,
+        # save_process now REFUSES a 2+-axis process with no Primary Axis
+        # (it is a real choice, not something to default silently). The
+        # first axis in recipe order is exactly what it used to pick on
+        # its own, so naming it here keeps this test asserting the same
+        # behaviour it always did.
+        primaryColorAxis=frame_payload["outputItemName"],
         components=[
             {"itemName": frame_payload["outputItemName"], "qtyPerUnit": 1, "sourceType": "POOL", "colorGroup": "COMMON"},
             {"itemName": rim_payload["outputItemName"], "qtyPerUnit": 1, "sourceType": "POOL", "colorGroup": "COMMON"},
@@ -535,6 +547,122 @@ def test_composite_bucket_debit_resolves_single_token_to_composite(erp_client):
     assert combo_buckets[0]["availableQty"] == 6
     # No phantom single-token "Black" bucket was created.
     assert not any(b["color"] == "Black" for b in combo_buckets)
+
+
+def test_per_lot_output_item_name_override_merges_into_process_bucket(erp_client):
+    """Two Completed lots of the SAME process -- one logged under the
+    process's own default Output Item Name, one under a per-lot override
+    (e.g. "<name> (Sports)") -- must credit ONE warehouse pool bucket keyed
+    to the process's own Output Item Name, not two buckets that read like
+    duplicate combinations in the Warehouse Pool modal. See
+    _build_warehouse_pool_buckets's process_output_item_map normalization.
+    """
+    payload, process_id = _save_process(erp_client)
+    override_name = f"{payload['outputItemName']} (Sports)"
+
+    default_lot = _rpc(
+        erp_client,
+        "saveProduction",
+        [
+            {
+                "processId": process_id,
+                "assignedTo": "Worker A",
+                "qty": 4,
+                "status": "Completed",
+                "componentsConsumed": [{"itemName": "RawMat", "qty": 1, "sourceType": "ITEM"}],
+            }
+        ],
+        mutation=True,
+    )
+    assert default_lot.get_json()["success"] is True
+
+    override_lot = _rpc(
+        erp_client,
+        "saveProduction",
+        [
+            {
+                "processId": process_id,
+                "assignedTo": "Worker A",
+                "qty": 3,
+                "status": "Completed",
+                "outputItemName": override_name,
+                "componentsConsumed": [{"itemName": "RawMat", "qty": 1, "sourceType": "ITEM"}],
+            }
+        ],
+        mutation=True,
+    )
+    body = override_lot.get_json()
+    assert body["success"] is True, body["message"]
+    # The override name is still stamped on the lot row itself...
+    assert body["data"]["row"]["outputItemName"] == override_name
+
+    # ...but the pool bucket it credits is the process's own name -- one
+    # bucket for this process, carrying both lots' qty.
+    pool = _rpc(erp_client, "getWarehousePoolData").get_json()["data"]
+    matching = [b for b in pool if b["processId"] == process_id]
+    assert len(matching) == 1
+    assert matching[0]["outputItemName"] == payload["outputItemName"]
+    assert matching[0]["producedQty"] == 7
+    assert matching[0]["availableQty"] == 7
+    assert not any(b["outputItemName"] == override_name for b in pool)
+
+
+def test_pool_lookup_by_process_default_name_sees_stock_from_override_named_lot(erp_client):
+    """A downstream recipe references an upstream process's own (default)
+    Output Item Name as its POOL source. If every upstream lot happened to
+    be logged under a per-lot override name, the downstream availability
+    lookup must still see that stock -- not read 0 available -- because
+    Pass 1 credits the process's own name regardless of the lot's override.
+    """
+    upstream_payload, upstream_id = _save_process(erp_client)
+    override_name = f"{upstream_payload['outputItemName']} (Sports)"
+
+    lot = _rpc(
+        erp_client,
+        "saveProduction",
+        [
+            {
+                "processId": upstream_id,
+                "assignedTo": "Worker A",
+                "qty": 8,
+                "status": "Completed",
+                "outputItemName": override_name,
+                "componentsConsumed": [{"itemName": "RawMat", "qty": 1, "sourceType": "ITEM"}],
+            }
+        ],
+        mutation=True,
+    )
+    assert lot.get_json()["success"] is True
+
+    down_payload, down_id = _save_process(
+        erp_client,
+        components=[
+            {"itemName": upstream_payload["outputItemName"], "qtyPerUnit": 1, "sourceType": "POOL", "colorGroup": "COMMON"}
+        ],
+    )
+    resp = _rpc(
+        erp_client,
+        "saveProduction",
+        [
+            {
+                "processId": down_id,
+                "assignedTo": "Worker A",
+                "qty": 5,
+                "status": "Completed",
+                "componentsConsumed": [
+                    {"itemName": upstream_payload["outputItemName"], "qty": 5, "sourceType": "POOL", "colorGroup": "COMMON"}
+                ],
+            }
+        ],
+        mutation=True,
+    )
+    body = resp.get_json()
+    assert body["success"] is True
+    assert "Warning" not in body["message"]  # would warn if pool read 0 available
+
+    pool = _rpc(erp_client, "getWarehousePoolData").get_json()["data"]
+    upstream_bucket = next(b for b in pool if b["outputItemName"] == upstream_payload["outputItemName"] and not b["color"])
+    assert upstream_bucket["availableQty"] == 3  # 8 produced - 5 consumed
 
 
 def test_pool_debit_converts_component_unit_before_debiting(erp_client):

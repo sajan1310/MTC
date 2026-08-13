@@ -68,6 +68,16 @@ App.Process = {
   // render is guarded by re-checking this counter right after its await.
   _modalLoadSeq: 0,
 
+  // Union of known color combinations detected across every POOL-sourced
+  // component row currently on the form (Common + every Color Sub-Group
+  // card), refreshed by refreshUpstreamColorCombos. Once non-empty, the
+  // Color/Sub-Group picker (see _buildColorGroupOptionsHtml) restricts
+  // itself to ONLY these names instead of the full Color Master list, so a
+  // sub-group can't end up named something that isn't actually one of the
+  // referenced process's colors.
+  _upstreamColorCombos: [],
+  _upstreamColorSeq: 0,
+
   // The 3 dimensions selectable in the "Group by" dropdowns. getValue
   // returns the dimension's value for a process row; rank orders those
   // values the same way the row-level dropdown already orders them
@@ -871,7 +881,7 @@ App.Process = {
         // every real item "(Not in Items Master)" instead of just resolving
         // it once this arrives too late to matter.
         typeof App.Item !== 'undefined' ? App.Item.ensureLoaded() : Promise.resolve(),
-        this.loadContractorRatesForProcess(p.processName, seq)
+        this.loadContractorRatesForProcess(p.processType, App.Utils.getSizeFromOutputItemName(p.outputItemName), seq)
       ]);
       if (seq !== this._modalLoadSeq) return;
       this.renderComponentsGrouped(compRes.success ? compRes.data : []);
@@ -1058,6 +1068,12 @@ App.Process = {
   // Destroys Select2 instances on all component rows and empties the table.
   clearComponentsTable() {
     const tbody = document.getElementById('processComponentsBody');
+    // Reset regardless of tbody presence -- this runs at the start of every
+    // form load (new/edit/import), and a stale list from whichever process
+    // was open before would otherwise restrict the Color/Sub-Group picker
+    // to the WRONG process's colors until refreshUpstreamColorCombos's
+    // async re-scan catches up.
+    this._upstreamColorCombos = [];
     if (!tbody) return;
     tbody.querySelectorAll('tr').forEach(row => this.destroyComponentItemSelect2(row));
     tbody.innerHTML = '';
@@ -1070,20 +1086,26 @@ App.Process = {
     if (!tbody) return;
     tbody.querySelectorAll('tr').forEach(row => this.destroyContractorRateSelect2(row));
     tbody.innerHTML = '';
-    App.State.currentProcessContractorRates = { processName: '', rates: [] };
+    App.State.currentProcessContractorRates = { processType: '', size: '', rates: [] };
   },
 
-  async loadContractorRatesForProcess(processName, seq) {
+  // Rate Card is keyed by (Contractor, Process Type, Size), not by this
+  // specific Process -- so this mini-table shows/edits whatever rate
+  // applies to this process's own Type + Size, and a save here is shared
+  // with every other process under that same Type + Size combination.
+  async loadContractorRatesForProcess(processType, size, seq) {
     const tbody = document.getElementById('processContractorRatesBody');
     if (tbody) tbody.innerHTML = '<tr><td colspan="4" class="text-center p-3">Loading rates...</td></tr>';
 
     try {
       const res = await Api.call('getContractorRatesData');
       if (seq !== undefined && seq !== this._modalLoadSeq) return;
+      const typeLower = String(processType || '').trim().toLowerCase();
+      const sizeLower = String(size || '').trim().toLowerCase();
       const rates = res.success
-        ? (res.data || []).filter(r => r.processName.toLowerCase() === String(processName || '').trim().toLowerCase())
+        ? (res.data || []).filter(r => r.processType.toLowerCase() === typeLower && r.size.toLowerCase() === sizeLower)
         : [];
-      App.State.currentProcessContractorRates = { processName, rates };
+      App.State.currentProcessContractorRates = { processType, size, rates };
 
       if (tbody) tbody.innerHTML = '';
       rates.forEach(r => this.addContractorRateRow(r));
@@ -1150,15 +1172,28 @@ App.Process = {
     if ($select.data('select2')) $select.select2('destroy');
   },
 
+  // Process Type + Size are read live from the form (not the originally
+  // opened process) -- same reasoning the old processName read had: if
+  // the operator changes Process Type or Output Item Name before saving
+  // a rate row, the row should follow the form's current values.
+  _currentFormProcessType() {
+    return document.getElementById('processFormProcessType')?.value.trim() || '';
+  },
+
+  _currentFormSize() {
+    return App.Utils.getSizeFromOutputItemName(document.getElementById('processFormOutputItemName')?.value || '');
+  },
+
   async saveContractorRateRow(rowId) {
     const row = document.getElementById(rowId);
     if (!row) return;
 
-    const processName = document.getElementById('processFormName')?.value.trim();
-    if (!processName) {
-      App.Utils.showToast('Enter a Process Name first.', true);
+    const processType = this._currentFormProcessType();
+    if (!processType) {
+      App.Utils.showToast('Choose a Process Type first.', true);
       return;
     }
+    const size = this._currentFormSize();
 
     const contractorName = row.querySelector('.proc-rate-contractor-select').value;
     const ratePerUnit = row.querySelector('.proc-rate-amount').value;
@@ -1171,11 +1206,11 @@ App.Process = {
 
     try {
       const seq = this._modalLoadSeq;
-      const res = await Api.mutate('saveContractorRate', { contractorName, processName, ratePerUnit, remarks });
+      const res = await Api.mutate('saveContractorRate', { contractorName, processType, size, ratePerUnit, remarks });
       App.Utils.showToast(res.message, !res.success);
       if (res.success) {
         if (typeof App.Contractor !== 'undefined') await App.Contractor.ensureLoaded();
-        await this.loadContractorRatesForProcess(processName, seq);
+        await this.loadContractorRatesForProcess(processType, size, seq);
       }
     } catch (err) {
       App.Utils.showToast(err.message || 'Failed to save contractor rate', true);
@@ -1186,26 +1221,27 @@ App.Process = {
     const row = document.getElementById(rowId);
     if (!row) return;
 
-    const processName = document.getElementById('processFormName')?.value.trim();
+    const processType = this._currentFormProcessType();
+    const size = this._currentFormSize();
     const contractorName = row.querySelector('.proc-rate-contractor-select').value;
 
     const existing = (App.State.currentProcessContractorRates?.rates || [])
       .find(r => r.contractorName.toLowerCase() === contractorName.toLowerCase());
 
-    if (!existing || !processName) {
+    if (!existing || !processType) {
       this.destroyContractorRateSelect2(row);
       row.remove();
       return;
     }
 
     App.Utils.confirmAction(
-      `Delete the rate card entry for "${contractorName}" on process "${processName}"? This cannot be undone.`,
+      `Delete the rate card entry for "${contractorName}" on "${processType} / ${size}"? This cannot be undone.`,
       async () => {
         try {
           const seq = this._modalLoadSeq;
-          const res = await Api.mutate('deleteContractorRate', contractorName, processName);
+          const res = await Api.mutate('deleteContractorRate', contractorName, processType, size);
           App.Utils.showToast(res.message, !res.success);
-          if (res.success) await this.loadContractorRatesForProcess(processName, seq);
+          if (res.success) await this.loadContractorRatesForProcess(processType, size, seq);
         } catch (err) {
           App.Utils.showToast(err.message || 'Failed to delete contractor rate', true);
         }
@@ -1316,6 +1352,7 @@ App.Process = {
     if (row) {
       this.destroyComponentItemSelect2(row);
       row.remove();
+      this.refreshUpstreamColorCombos();
     }
   },
 
@@ -1370,36 +1407,117 @@ App.Process = {
     return Array.from(new Set(names));
   },
 
-  // Fired after picking a POOL-sourced item on a component row -- sets a
-  // native hover tooltip showing what colors the source process produces.
-  async showPoolColorHint(row, itemName) {
-    const cell = row?.querySelector('.proc-comp-item-select')?.closest('td');
-    if (!cell) return;
-    cell.removeAttribute('title');
-    if (!itemName) return;
-
+  // Resolves the known color combinations of whichever process(es) produce
+  // the Warehouse Pool item named itemName (matched by Output Item Name --
+  // the same match a POOL-sourced component resolves against at
+  // production time). Shared by showPoolColorHint (the per-row hover tip)
+  // and refreshUpstreamColorCombos (the Color/Sub-Group picker restriction),
+  // so there is one fetch/merge path for "what colors does this upstream
+  // process make", not two that could drift.
+  async getUpstreamColorsForItem(itemName) {
+    if (!itemName) return [];
     const upstreamProcesses = (App.State.globalProcesses || []).filter(
       p => (p.outputItemName || '').toLowerCase() === itemName.toLowerCase()
     );
-    if (!upstreamProcesses.length) return;
+    if (!upstreamProcesses.length) return [];
 
-    let colors = [];
     try {
       const results = await Promise.all(
         upstreamProcesses.map(p => Api.call('getProcessColorGroups', p.processId))
       );
-      const merged = new Set();
+      const merged = new Map();
       results.forEach(res => {
-        if (res?.success) (res.data || []).forEach(c => merged.add(c));
+        if (res?.success) (res.data || []).forEach(c => merged.set(c.toLowerCase(), c));
       });
-      colors = Array.from(merged);
+      return Array.from(merged.values()).filter(c => !c.includes(' / '));
     } catch (e) {
-      return;
+      return [];
     }
-    colors = colors.filter(c => !c.includes(' / '));
-    if (!colors.length) return;
+  },
 
-    cell.title = `"${itemName}" is produced in these colors by its source process: ${colors.join(', ')}`;
+  // Fired after picking a POOL-sourced item on a component row -- sets a
+  // native hover tooltip showing what colors the source process produces,
+  // and re-scans the whole form's upstream color combinations since this
+  // row's contribution to that set may have just changed.
+  async showPoolColorHint(row, itemName) {
+    const cell = row?.querySelector('.proc-comp-item-select')?.closest('td');
+    if (cell) cell.removeAttribute('title');
+
+    const colors = await this.getUpstreamColorsForItem(itemName);
+    if (cell && colors.length) {
+      cell.title = `"${itemName}" is produced in these colors by its source process: ${colors.join(', ')}`;
+    }
+    this.refreshUpstreamColorCombos();
+  },
+
+  // Scans every POOL-sourced component row across Common + all Color
+  // Sub-Group cards, resolves each referenced item's upstream color
+  // combinations, and unions them into _upstreamColorCombos -- the set the
+  // Color/Sub-Group picker (see _buildColorGroupOptionsHtml) restricts
+  // itself to once it's non-empty. Re-run after any component add/remove/
+  // change so already-rendered pickers can be widened/narrowed via
+  // refreshColorGroupPickerOptions once the fetch resolves.
+  // _upstreamColorSeq guards against an earlier, slower scan overwriting a
+  // later one's result.
+  async refreshUpstreamColorCombos() {
+    const seq = ++this._upstreamColorSeq;
+    const itemNames = new Set();
+    document.querySelectorAll('#processComponentsBody tr, #processColorGroupsContainer .proc-colorgroup-body tr').forEach(row => {
+      if (row.querySelector('.proc-comp-source')?.value !== 'POOL') return;
+      const sel = row.querySelector('.proc-comp-item-select');
+      const opt = sel?.options[sel.selectedIndex];
+      const name = opt?.dataset.name || '';
+      if (name) itemNames.add(name);
+    });
+
+    const merged = new Map();
+    await Promise.all(Array.from(itemNames).map(async name => {
+      (await this.getUpstreamColorsForItem(name)).forEach(c => merged.set(c.toLowerCase(), c));
+    }));
+    if (seq !== this._upstreamColorSeq) return;
+
+    this._upstreamColorCombos = Array.from(merged.values()).sort((a, b) => a.localeCompare(b));
+    this.refreshColorGroupPickerOptions();
+  },
+
+  // Builds the <option> list for a Color Sub-Group card's Color/Sub-Group
+  // picker. Once this process has at least one POOL component sourced from
+  // a colored upstream process (_upstreamColorCombos non-empty), the list
+  // is restricted to ONLY that process's actual color combinations --
+  // picking from it can no longer produce a sub-group name that doesn't
+  // match what upstream really makes. With no upstream signal, this is
+  // unchanged from before: every Color Master name, free text still
+  // allowed via select2 tags.
+  _buildColorGroupOptionsHtml(initialColorName) {
+    const combos = this._upstreamColorCombos || [];
+    const sourceNames = combos.length ? combos : (App.State.globalColors || []).map(c => c.name);
+    const knownNames = new Set(sourceNames.map(n => n.toLowerCase()));
+    let html = sourceNames
+      .map(name => `<option value="${escapeHtml(name)}" ${App.Utils.sameText(name, initialColorName) ? 'selected' : ''}>${escapeHtml(name)}</option>`)
+      .join('');
+    if (initialColorName && !knownNames.has(initialColorName.trim().toLowerCase())) {
+      html += `<option value="${escapeHtml(initialColorName)}" selected>${escapeHtml(initialColorName)}</option>`;
+    }
+    return html;
+  },
+
+  // Rebuilds every already-rendered Color Sub-Group card's picker options
+  // against the current _upstreamColorCombos, preserving whichever value is
+  // already chosen. Needed because a card can exist BEFORE the Pool
+  // component that reveals its process's color combinations gets added (or
+  // removed), so the restriction has to be re-applied after the fact too,
+  // not just at card-creation time in addColorGroup.
+  refreshColorGroupPickerOptions() {
+    document.querySelectorAll('#processColorGroupsContainer .proc-colorgroup-card').forEach(card => {
+      const selectEl = card.querySelector('.proc-colorgroup-select');
+      if (!selectEl) return;
+      const currentVal = selectEl.value;
+      selectEl.innerHTML = this._buildColorGroupOptionsHtml(currentVal);
+      if (window.jQuery?.fn?.select2) {
+        const $select = window.jQuery(selectEl);
+        if ($select.data('select2')) $select.val(currentVal).trigger('change.select2');
+      }
+    });
   },
 
   // Fired when a row's Source select changes between ITEM/POOL.
@@ -1586,13 +1704,23 @@ App.Process = {
 
     const picker = document.getElementById('processPrimaryColorAxis');
     const wrapper = document.getElementById('processPrimaryColorAxisWrapper');
+    // 2+ axes means there's a real choice to make -- which one's checked
+    // quantities become the lot's total -- so "None" stops being an option
+    // at that point instead of quietly falling back to whichever axis sits
+    // first in recipe order (see save_process's matching server-side
+    // check). Below 2 axes there's nothing to choose between, so the
+    // legacy "None" escape hatch stays.
+    const choiceRequired = labels.length >= 2;
     if (picker) {
       const current = picker.value;
-      picker.innerHTML = '<option value="">— None (legacy: sum every checked color) —</option>'
+      picker.innerHTML = (choiceRequired
+        ? '<option value="">— Choose which is Primary —</option>'
+        : '<option value="">— None (legacy: sum every checked color) —</option>')
         + labels.map(l => `<option value="${escapeHtml(l)}">${escapeHtml(l)}</option>`).join('');
       picker.value = labels.includes(current) ? current : '';
+      picker.required = choiceRequired;
     }
-    if (wrapper) wrapper.style.display = labels.length >= 2 ? '' : 'none';
+    if (wrapper) wrapper.style.display = choiceRequired ? '' : 'none';
 
     this.refreshDispatchDifferentiatorOptions(labels);
   },
@@ -1672,13 +1800,7 @@ App.Process = {
     if (!container) return;
 
     const groupId = 'proc_colorgroup_' + Date.now() + '_' + Math.floor(Math.random() * 1000);
-    const knownColorNames = new Set((App.State.globalColors || []).map(c => c.name.toLowerCase()));
-    let colorOptionsHtml = (App.State.globalColors || [])
-      .map(c => `<option value="${escapeHtml(c.name)}" ${App.Utils.sameText(c.name, initialColorName) ? 'selected' : ''}>${escapeHtml(c.name)}</option>`)
-      .join('');
-    if (initialColorName && !knownColorNames.has(initialColorName.trim().toLowerCase())) {
-      colorOptionsHtml += `<option value="${escapeHtml(initialColorName)}" selected>${escapeHtml(initialColorName)}</option>`;
-    }
+    const colorOptionsHtml = this._buildColorGroupOptionsHtml(initialColorName);
 
     const axisValue = initialAxis || (components.find(c => c.colorAxis)?.colorAxis || '');
 
@@ -1775,6 +1897,7 @@ App.Process = {
     const selectEl = card?.querySelector('.proc-colorgroup-select');
     if (!selectEl || !window.jQuery?.fn?.select2) return;
 
+    const self = this;
     const $select = window.jQuery(selectEl);
     const $parentModal = $select.closest('.modal');
     $select.select2({
@@ -1786,6 +1909,15 @@ App.Process = {
       createTag(params) {
         const term = (params.term || '').trim();
         if (!term) return null;
+        // Once this process has a Pool component sourced from a colored
+        // upstream process, typing something that isn't one of THAT
+        // process's actual combinations is exactly the mismatch this
+        // restriction exists to prevent -- no "Create new" option for it.
+        const combos = self._upstreamColorCombos || [];
+        if (combos.length) {
+          const match = combos.find(c => App.Utils.sameText(c, term));
+          return match ? { id: match, text: match } : null;
+        }
         const existing = (App.State.globalColors || []).find(c => App.Utils.sameText(c.name, term));
         if (existing) return { id: existing.name, text: existing.name };
         return { id: term, text: term, newTag: true };
@@ -1878,6 +2010,13 @@ App.Process = {
     });
     Object.keys(byColor).sort((a, b) => a.localeCompare(b))
       .forEach(colorName => this.addColorGroup(colorName, byColor[colorName]));
+
+    // Cards above were just built with an empty/stale _upstreamColorCombos
+    // (cleared in clearComponentsTable) since it's only known after this
+    // async scan resolves -- this narrows each card's picker down to the
+    // right process's colors once it does, without touching whatever's
+    // already selected.
+    this.refreshUpstreamColorCombos();
   },
 
   clearColorGroups() {
@@ -2244,6 +2383,13 @@ document.addEventListener('DOMContentLoaded', function () {
         .some(card => !(card.querySelector('.proc-colorgroup-select')?.value || '').trim());
       if (groupsMissingColor) {
         App.Utils.showToast('Every Color Sub-Group needs a Color selected (or remove the group).', true);
+        return;
+      }
+
+      const primaryAxisWrapper = document.getElementById('processPrimaryColorAxisWrapper');
+      const primaryAxisPicker = document.getElementById('processPrimaryColorAxis');
+      if (primaryAxisWrapper && primaryAxisWrapper.style.display !== 'none' && !(primaryAxisPicker?.value || '').trim()) {
+        App.Utils.showToast('This process has more than one independent color choice — pick which one is Primary Axis before saving.', true);
         return;
       }
 

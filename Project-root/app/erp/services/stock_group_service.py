@@ -80,21 +80,29 @@ def save_stock_group(conn, cur, form_data):
     group_id = form_data.get("id")
     is_edit = bool(group_id)
 
+    existing_name = None
     if is_edit:
         cur.execute(
-            "SELECT id FROM erp.stock_group_master WHERE id = %s AND deleted_at IS NULL",
+            "SELECT id, name FROM erp.stock_group_master WHERE id = %s AND deleted_at IS NULL",
             (group_id,),
         )
-        if cur.fetchone() is None:
+        existing = cur.fetchone()
+        if existing is None:
             raise ValueError("Stock group not found.")
+        existing_name = existing["name"]
 
-    cur.execute(
-        "SELECT id FROM erp.stock_group_master WHERE lower(name) = lower(%s) AND deleted_at IS NULL",
-        (name,),
-    )
-    dup = cur.fetchone()
-    if dup and (not is_edit or dup["id"] != group_id):
-        raise ValueError(f'A stock group named "{name}" already exists.')
+    # Skip the duplicate-name check on an edit that isn't actually renaming
+    # the group (e.g. just updating remarks) -- comparing DB row ids to the
+    # raw, untyped form `id` here would be fragile (a string "5" from a
+    # non-JS caller never equals int 5), same pitfall units_service.py's
+    # save_unit avoids by keying off whether the name changed instead.
+    if not is_edit or name.lower() != existing_name.lower():
+        cur.execute(
+            "SELECT id FROM erp.stock_group_master WHERE lower(name) = lower(%s) AND deleted_at IS NULL",
+            (name,),
+        )
+        if cur.fetchone():
+            raise ValueError(f'A stock group named "{name}" already exists.')
 
     user_id = get_current_user_id()
 
@@ -131,7 +139,9 @@ def delete_stock_group(conn, cur, group_id):
         "UPDATE erp.stock_group_master SET deleted_at = NOW(), updated_by = %s WHERE id = %s",
         (get_current_user_id(), group_id),
     )
-    cur.execute("DELETE FROM erp.stock_group_items WHERE group_id = %s", (group_id,))
+    # Leave erp.stock_group_items alone -- soft-deleting only the parent
+    # (matching items_service.delete_item's convention for erp.item_vendors)
+    # keeps the group's membership recoverable if deleted_at is ever reset.
     return build_response(True, None, f'Stock group "{row["name"]}" deleted.')
 
 
@@ -164,10 +174,15 @@ def set_stock_group_items(conn, cur, form_data):
         clean_items.append((item_name, size))
 
     cur.execute("DELETE FROM erp.stock_group_items WHERE group_id = %s", (group_id,))
-    for item_name, size in clean_items:
-        cur.execute(
-            "INSERT INTO erp.stock_group_items (group_id, item_name, size) VALUES (%s, %s, %s)",
-            (group_id, item_name, size),
+    if clean_items:
+        # A group can legitimately hold hundreds of rows (the "Manage
+        # Items" checklist bulk-selects across the whole stock list), so
+        # this is one batched multi-row insert rather than a round trip
+        # per item.
+        psycopg2.extras.execute_values(
+            cur,
+            "INSERT INTO erp.stock_group_items (group_id, item_name, size) VALUES %s",
+            [(group_id, item_name, size) for item_name, size in clean_items],
         )
 
     return build_response(

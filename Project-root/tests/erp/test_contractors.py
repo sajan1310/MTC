@@ -1,11 +1,14 @@
-"""Contractors / Contractor Rates / Contractor Payments RPC tests, ported
-behavior from Apps_Script/module_contractors.js.
+"""Contractors / Contractor Rates / Contractor Service Charges / Contractor
+Payments RPC tests, ported behavior from Apps_Script/module_contractors.js
+plus the two-layer Contractor Rates redesign (Layer 1: contractor + process
+type + size; Layer 2: contractor + service type, a flat optional per-lot
+extra charge).
 
-Also proves two "validating moment" cascades: a Process rename reaching
-contractor_rates.process_name (process_service._rename_process_name_in_contractor_rates,
-a guarded no-op since Phase 3a) and a Contractor rename reaching
-bom_additional_costs.contractor_name (this round's own cascade reaching
-Phase 3c's pre-registered BOM_ADDITIONAL_COSTS target).
+Also proves two "validating moment" cascades: a Process Type Master rename
+reaching contractor_rates.process_type (tags_service._rename_process_type_everywhere)
+and a Contractor rename reaching bom_additional_costs.contractor_name
+(this round's own cascade reaching Phase 3c's pre-registered
+BOM_ADDITIONAL_COSTS target).
 """
 
 from __future__ import annotations
@@ -158,14 +161,14 @@ def test_delete_contractors_bulk(erp_client):
     assert b not in names
 
 
-def test_save_contractor_rate_upserts_by_pair(erp_client):
+def test_save_contractor_rate_upserts_by_triple(erp_client):
     contractor = _unique_name("RateContractor")
-    process_name = _unique_name("RateProcess")
+    process_type = _unique_name("RateType")
 
     first = _rpc(
         erp_client,
         "saveContractorRate",
-        [{"contractorName": contractor, "processName": process_name, "ratePerUnit": 10}],
+        [{"contractorName": contractor, "processType": process_type, "size": "14 inch", "ratePerUnit": 10}],
         mutation=True,
     )
     assert first.get_json()["success"] is True
@@ -173,25 +176,28 @@ def test_save_contractor_rate_upserts_by_pair(erp_client):
     second = _rpc(
         erp_client,
         "saveContractorRate",
-        [{"contractorName": contractor, "processName": process_name, "ratePerUnit": 25}],
+        [{"contractorName": contractor, "processType": process_type, "size": "14 inch", "ratePerUnit": 25}],
         mutation=True,
     )
     assert second.get_json()["success"] is True
 
     listed = _rpc(erp_client, "getContractorRatesData", [contractor]).get_json()["data"]
-    matches = [r for r in listed if r["contractorName"] == contractor and r["processName"] == process_name]
+    matches = [
+        r for r in listed
+        if r["contractorName"] == contractor and r["processType"] == process_type and r["size"] == "14 inch"
+    ]
     assert len(matches) == 1
     assert matches[0]["ratePerUnit"] == 25
 
 
 def test_save_contractor_rate_auto_creates_contractor(erp_client):
     contractor = _unique_name("FreshRateContractor")
-    process_name = _unique_name("FreshRateProcess")
+    process_type = _unique_name("FreshRateType")
 
     resp = _rpc(
         erp_client,
         "saveContractorRate",
-        [{"contractorName": contractor, "processName": process_name, "ratePerUnit": 5}],
+        [{"contractorName": contractor, "processType": process_type, "size": "16 inch", "ratePerUnit": 5}],
         mutation=True,
     )
     assert resp.get_json()["success"] is True
@@ -201,20 +207,32 @@ def test_save_contractor_rate_auto_creates_contractor(erp_client):
     assert match["remarks"] == "Auto-created from rate card entry"
 
 
+def test_save_contractor_rate_requires_type_and_size(erp_client):
+    resp = _rpc(
+        erp_client,
+        "saveContractorRate",
+        [{"contractorName": _unique_name("IncompleteRateContractor"), "ratePerUnit": 5}],
+        mutation=True,
+    )
+    body = resp.get_json()
+    assert body["success"] is False
+    assert "required" in body["message"].lower()
+
+
 def test_delete_contractor_rate_not_found_and_success(erp_client):
-    missing = _rpc(erp_client, "deleteContractorRate", ["NoSuchContractor", "NoSuchProcess"], mutation=True)
+    missing = _rpc(erp_client, "deleteContractorRate", ["NoSuchContractor", "NoSuchType", "General"], mutation=True)
     assert missing.get_json()["success"] is False
 
     contractor = _unique_name("RateDeleteContractor")
-    process_name = _unique_name("RateDeleteProcess")
+    process_type = _unique_name("RateDeleteType")
     _rpc(
         erp_client,
         "saveContractorRate",
-        [{"contractorName": contractor, "processName": process_name, "ratePerUnit": 8}],
+        [{"contractorName": contractor, "processType": process_type, "size": "General", "ratePerUnit": 8}],
         mutation=True,
     )
 
-    resp = _rpc(erp_client, "deleteContractorRate", [contractor, process_name], mutation=True)
+    resp = _rpc(erp_client, "deleteContractorRate", [contractor, process_type, "General"], mutation=True)
     assert resp.get_json()["success"] is True
 
     listed = _rpc(erp_client, "getContractorRatesData", [contractor]).get_json()["data"]
@@ -223,28 +241,31 @@ def test_delete_contractor_rate_not_found_and_success(erp_client):
 
 def test_delete_contractor_rates_bulk_removes_selected_only(erp_client):
     contractor = _unique_name("BulkRateContractor")
-    process_a = _unique_name("BulkRateProcessA")
-    process_b = _unique_name("BulkRateProcessB")
-    process_keep = _unique_name("BulkRateProcessKeep")
-    for p in (process_a, process_b, process_keep):
+    type_a = _unique_name("BulkRateTypeA")
+    type_b = _unique_name("BulkRateTypeB")
+    type_keep = _unique_name("BulkRateTypeKeep")
+    for t in (type_a, type_b, type_keep):
         _rpc(
             erp_client, "saveContractorRate",
-            [{"contractorName": contractor, "processName": p, "ratePerUnit": 5}], mutation=True,
+            [{"contractorName": contractor, "processType": t, "size": "General", "ratePerUnit": 5}], mutation=True,
         )
 
     resp = _rpc(
         erp_client, "deleteContractorRatesBulk",
-        [[{"contractorName": contractor, "processName": process_a}, {"contractorName": contractor, "processName": process_b}]],
+        [[
+            {"contractorName": contractor, "processType": type_a, "size": "General"},
+            {"contractorName": contractor, "processType": type_b, "size": "General"},
+        ]],
         mutation=True,
     )
     body = resp.get_json()
     assert body["success"] is True
     assert "2" in body["message"]
 
-    remaining = [r["processName"] for r in _rpc(erp_client, "getContractorRatesData", [contractor]).get_json()["data"]]
-    assert process_a not in remaining
-    assert process_b not in remaining
-    assert process_keep in remaining
+    remaining = [r["processType"] for r in _rpc(erp_client, "getContractorRatesData", [contractor]).get_json()["data"]]
+    assert type_a not in remaining
+    assert type_b not in remaining
+    assert type_keep in remaining
 
 
 def test_delete_contractor_rates_bulk_no_selection_is_a_success_noop(erp_client):
@@ -254,11 +275,105 @@ def test_delete_contractor_rates_bulk_no_selection_is_a_success_noop(erp_client)
     assert "No rates selected" in body["message"]
 
 
-def test_get_contractor_rate_for_process_returns_zero_for_no_match(erp_client):
-    resp = _rpc(erp_client, "getContractorRateForProcess", ["NoSuchContractor", "NoSuchProcess"])
+def test_get_contractor_rate_for_process_type_returns_zero_for_no_match(erp_client):
+    resp = _rpc(erp_client, "getContractorRateForProcessType", ["NoSuchContractor", "NoSuchType", "General"])
     body = resp.get_json()
     assert body["success"] is True
     assert body["data"]["ratePerUnit"] == 0
+
+
+# ─────────────────────────────────────────────────────────────────────────
+# Contractor Extra Charges (Layer 2)
+# ─────────────────────────────────────────────────────────────────────────
+
+
+def test_save_contractor_service_charge_upserts_by_pair(erp_client):
+    contractor = _unique_name("ChargeContractor")
+    service_type = _unique_name("MountingService")
+
+    first = _rpc(
+        erp_client,
+        "saveContractorServiceCharge",
+        [{"contractorName": contractor, "serviceType": service_type, "chargeAmount": 30}],
+        mutation=True,
+    )
+    assert first.get_json()["success"] is True
+
+    second = _rpc(
+        erp_client,
+        "saveContractorServiceCharge",
+        [{"contractorName": contractor, "serviceType": service_type, "chargeAmount": 45}],
+        mutation=True,
+    )
+    assert second.get_json()["success"] is True
+
+    listed = _rpc(erp_client, "getContractorServiceChargesData", [contractor]).get_json()["data"]
+    matches = [c for c in listed if c["serviceType"] == service_type]
+    assert len(matches) == 1
+    assert matches[0]["chargeAmount"] == 45
+
+
+def test_get_contractor_service_charges_for_contractor_is_scoped(erp_client):
+    contractor_a = _unique_name("ScopedChargeContractorA")
+    contractor_b = _unique_name("ScopedChargeContractorB")
+    _rpc(
+        erp_client, "saveContractorServiceCharge",
+        [{"contractorName": contractor_a, "serviceType": "Mounting Tyre/Tube", "chargeAmount": 20}], mutation=True,
+    )
+    _rpc(
+        erp_client, "saveContractorServiceCharge",
+        [{"contractorName": contractor_b, "serviceType": "Balancing", "chargeAmount": 15}], mutation=True,
+    )
+
+    listed = _rpc(erp_client, "getContractorServiceChargesForContractor", [contractor_a]).get_json()["data"]
+    assert [c["serviceType"] for c in listed] == ["Mounting Tyre/Tube"]
+
+
+def test_delete_contractor_service_charge_not_found_and_success(erp_client):
+    missing = _rpc(erp_client, "deleteContractorServiceCharge", ["NoSuchContractor", "NoSuchService"], mutation=True)
+    assert missing.get_json()["success"] is False
+
+    contractor = _unique_name("DeleteChargeContractor")
+    service_type = _unique_name("DeleteChargeService")
+    _rpc(
+        erp_client, "saveContractorServiceCharge",
+        [{"contractorName": contractor, "serviceType": service_type, "chargeAmount": 10}], mutation=True,
+    )
+
+    resp = _rpc(erp_client, "deleteContractorServiceCharge", [contractor, service_type], mutation=True)
+    assert resp.get_json()["success"] is True
+
+    listed = _rpc(erp_client, "getContractorServiceChargesData", [contractor]).get_json()["data"]
+    assert listed == []
+
+
+def test_delete_contractor_service_charges_bulk_removes_selected_only(erp_client):
+    contractor = _unique_name("BulkChargeContractor")
+    service_a = _unique_name("BulkChargeServiceA")
+    service_b = _unique_name("BulkChargeServiceB")
+    service_keep = _unique_name("BulkChargeServiceKeep")
+    for s in (service_a, service_b, service_keep):
+        _rpc(
+            erp_client, "saveContractorServiceCharge",
+            [{"contractorName": contractor, "serviceType": s, "chargeAmount": 5}], mutation=True,
+        )
+
+    resp = _rpc(
+        erp_client, "deleteContractorServiceChargesBulk",
+        [[
+            {"contractorName": contractor, "serviceType": service_a},
+            {"contractorName": contractor, "serviceType": service_b},
+        ]],
+        mutation=True,
+    )
+    body = resp.get_json()
+    assert body["success"] is True
+    assert "2" in body["message"]
+
+    remaining = [c["serviceType"] for c in _rpc(erp_client, "getContractorServiceChargesData", [contractor]).get_json()["data"]]
+    assert service_a not in remaining
+    assert service_b not in remaining
+    assert service_keep in remaining
 
 
 def test_record_contractor_payment_validates_amount(erp_client):
@@ -365,12 +480,16 @@ def test_get_contractor_ledger_data_includes_negative_payable_correction_lot(erp
     in, not dropped by a stale `payable <= 0` guard.
     """
     contractor = _unique_name("NegativePayableContractor")
-    payload, process_id = _save_process(erp_client)
+    process_type = _unique_name("NegativePayableType")
+    _payload, process_id = _save_process(erp_client, processType=process_type)
 
+    # _save_process's default outputItemName carries no recognized size
+    # substring, so contractors_service._get_size_from_output_item_name
+    # resolves it to the 'General' fallback -- the rate must be keyed there.
     _rpc(
         erp_client,
         "saveContractorRate",
-        [{"contractorName": contractor, "processName": payload["processName"], "ratePerUnit": 10}],
+        [{"contractorName": contractor, "processType": process_type, "size": "General", "ratePerUnit": 10}],
         mutation=True,
     )
 
@@ -452,25 +571,60 @@ def test_get_contractor_account_ledger_requires_name(erp_client):
     assert "required" in body["message"].lower()
 
 
-def test_process_rename_cascades_into_contractor_rates(erp_client):
-    _payload, process_id = _save_process(erp_client)
-    old_process_name = _payload["processName"]
-    new_process_name = _unique_name("RenamedProcess")
+def test_process_type_rename_cascades_into_contractor_rates(erp_client):
+    old_type = _unique_name("OldCascadeType")
+    new_type = _unique_name("NewCascadeType")
 
-    contractor = _unique_name("ProcessCascadeContractor")
+    created = _rpc(erp_client, "saveProcessType", [{"name": old_type}], mutation=True)
+    assert created.get_json()["success"] is True
+
+    contractor = _unique_name("ProcessTypeCascadeContractor")
     _rpc(
         erp_client,
         "saveContractorRate",
-        [{"contractorName": contractor, "processName": old_process_name, "ratePerUnit": 12}],
+        [{"contractorName": contractor, "processType": old_type, "size": "General", "ratePerUnit": 12}],
         mutation=True,
     )
 
-    edit_payload = dict(_payload, processId=process_id, processName=new_process_name)
-    rename = _rpc(erp_client, "saveProcess", [edit_payload], mutation=True)
+    rename = _rpc(erp_client, "saveProcessType", [{"name": new_type, "originalName": old_type}], mutation=True)
     assert rename.get_json()["success"] is True
 
     listed = _rpc(erp_client, "getContractorRatesData", [contractor]).get_json()["data"]
-    assert listed[0]["processName"] == new_process_name
+    assert listed[0]["processType"] == new_type
+
+
+def test_delete_contractor_removes_service_charges(erp_client):
+    contractor = _unique_name("DeleteChargeCascadeContractor")
+    _rpc(
+        erp_client, "saveContractorServiceCharge",
+        [{"contractorName": contractor, "serviceType": "Mounting", "chargeAmount": 10}], mutation=True,
+    )
+
+    deleted = _rpc(erp_client, "deleteContractor", [contractor], mutation=True)
+    assert deleted.get_json()["success"] is True
+
+    listed = _rpc(erp_client, "getContractorServiceChargesData", [contractor]).get_json()["data"]
+    assert listed == []
+
+
+def test_contractor_rename_cascades_into_service_charges(erp_client):
+    old_contractor = _unique_name("OldChargeCascadeContractor")
+    new_contractor = _unique_name("NewChargeCascadeContractor")
+    _rpc(erp_client, "saveContractor", [{"contractorName": old_contractor}], mutation=True)
+    _rpc(
+        erp_client, "saveContractorServiceCharge",
+        [{"contractorName": old_contractor, "serviceType": "Mounting", "chargeAmount": 10}], mutation=True,
+    )
+
+    rename = _rpc(
+        erp_client, "saveContractor",
+        [{"contractorName": new_contractor, "originalContractorName": old_contractor}], mutation=True,
+    )
+    assert rename.get_json()["success"] is True
+
+    listed = _rpc(erp_client, "getContractorServiceChargesData", [new_contractor]).get_json()["data"]
+    assert len(listed) == 1
+    assert listed[0]["contractorName"] == new_contractor
 
 
 def test_contractor_rename_cascades_into_bom_additional_costs(erp_app, erp_client):

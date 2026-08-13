@@ -294,8 +294,10 @@ const App = {
     globalContractorLedger: [],
     selectedContractors: [],
     selectedContractorRates: [],
+    selectedContractorServiceCharges: [],
     selectedContractorPayments: [],
     currentContractorRates: { contractorName: '', rates: [] },
+    currentContractorServiceCharges: { contractorName: '', charges: [] },
     currentAccountLedgerContractor: '',
     currentAccountLedgerData: null,
 

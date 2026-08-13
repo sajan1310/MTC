@@ -285,11 +285,19 @@ def _build_warehouse_pool_buckets(cur, include_opening: bool = True) -> dict:
             buckets[key] = bucket
         return bucket
 
+    process_output_item_map = {
+        p["processId"].strip().lower(): p["outputItemName"].strip()
+        for p in process_service._get_all_processes(cur)
+        if p.get("processId") and p.get("outputItemName")
+    }
+
     # Pass 0: seed buckets from manually-recorded Opening Balances -- the
     # one durable source of "stock that didn't come from a Production lot".
     if include_opening:
         for r in _get_warehouse_pool_opening_rows(cur):
-            bucket = get_bucket(r["outputItemName"], r["processId"], r["productTag"], r["color"])
+            proc_id = (r["processId"] or "").strip().lower()
+            name = process_output_item_map.get(proc_id) or r["outputItemName"]
+            bucket = get_bucket(name, r["processId"], r["productTag"], r["color"])
             bucket["producedQty"] += r["qty"]
 
     if table := config_maps.TABLE_NAMES.get("PRODUCTION"):
@@ -327,10 +335,13 @@ def _build_warehouse_pool_buckets(cur, include_opening: bool = True) -> dict:
             """
         )
         for row in cur.fetchall():
-            output_item_name = str(row["output_item_name"] or "").strip()
+            process_id = str(row["process_id"] or "").strip()
+            output_item_name = (
+                process_output_item_map.get(process_id.lower())
+                or str(row["output_item_name"] or "").strip()
+            )
             if not output_item_name:
                 continue
-            process_id = str(row["process_id"] or "").strip()
             product_tag = str(row["product_id"] or "").strip()
             color_breakdown = row["color_breakdown"] or []
 

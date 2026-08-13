@@ -12,7 +12,7 @@
 //   Api.call): every one is mutation=True on the backend, so rpc.py
 //   requires a fresh X-Mutation-Id per call. verifyBOMAccess/getBOMData/
 //   getNextProductId/getBomProcessComponentsDrift/getBOMProductionData/
-//   getContractorRateForProcess are all non-mutating and stay Api.call.
+//   getContractorRateForProcessType are all non-mutating and stay Api.call.
 // - No default BOM password exists anywhere in this port (see
 //   bom_service.py's module docstring -- the source's own hardcoded
 //   ONE_TIME_setBOMPassword plaintext is deliberately not reproduced).
@@ -24,7 +24,7 @@
 //   genuinely locked out until that one-time setup step happens.
 // - App.Contractor.ensureLoaded() (enterTab) is guarded against
 //   App.Contractor not existing yet (Contractors is its own later
-//   round). App.Contractor.buildProcessOptionsHtml (addCostRow) was
+//   round). App.Contractor.buildProcessTypeOptionsHtml (addCostRow) was
 //   already guarded in source itself.
 // - bulkPrint is guarded behind App.Print not existing yet; its builder
 //   (buildBOMPrintPageHtml) stays as ported dead code.
@@ -707,14 +707,19 @@ App.BOM = {
         ? components.map(c => ({ itemName: c.itemName, size: c.size, narration: c.narration, qtyPerProduct: c.qtyPerUnit }))
         : null);
 
+      // Rate Card is keyed by (Contractor, Process Type, Size), not this
+      // specific Process -- so this imports whichever rate applies to
+      // the process's own Type + Size.
+      const processTypeLower = (process.processType || '').toLowerCase();
+      const processSize = App.Utils.getSizeFromOutputItemName(process.outputItemName);
       const rates = rateRes.success
-        ? (rateRes.data || []).filter(r => r.processName.toLowerCase() === process.processName.toLowerCase())
+        ? (rateRes.data || []).filter(r => r.processType.toLowerCase() === processTypeLower && r.size.toLowerCase() === processSize.toLowerCase())
         : [];
       rates.forEach(r => {
         this.addCostRow({
           description: `${process.processName} - Contractor`,
           rate: r.ratePerUnit,
-          processName: process.processName,
+          processName: process.processType,
           contractorName: r.contractorName
         });
       });
@@ -1328,7 +1333,7 @@ App.BOM = {
     <td>
       <select class="form-select cost-process">
         <option value="">— None —</option>
-        ${typeof App.Contractor !== 'undefined' ? App.Contractor.buildProcessOptionsHtml(processName) : ''}
+        ${typeof App.Contractor !== 'undefined' ? App.Contractor.buildProcessTypeOptionsHtml(processName) : ''}
       </select>
     </td>
     <td>
@@ -1380,25 +1385,29 @@ App.BOM = {
     });
   },
 
-  // Fills a cost row's Rate from the selected Contractor + Process's rate
-  // card entry, leaving it editable.
+  // Fills a cost row's Rate from the selected Contractor + Process Type's
+  // rate card entry, leaving it editable. This row has no Size field of
+  // its own (it's a flat additional-cost line, not tied to one specific
+  // Process), so the lookup uses the 'General' size bucket -- if the
+  // contractor's actual rate is size-specific, this simply won't find one
+  // and the operator types the rate in manually instead.
   async useContractorRate(rowId) {
     const row = document.getElementById(rowId);
     if (!row) return;
 
-    const processName = row.querySelector('.cost-process').value;
+    const processType = row.querySelector('.cost-process').value;
     const contractorName = row.querySelector('.cost-contractor-select').value;
 
-    if (!processName || !contractorName) {
+    if (!processType || !contractorName) {
       App.Utils.showToast('Select a Process and Contractor first.', true);
       return;
     }
 
     try {
-      const res = await Api.call('getContractorRateForProcess', contractorName, processName);
+      const res = await Api.call('getContractorRateForProcessType', contractorName, processType, 'General');
       const rate = res.success ? toNumber(res.data?.ratePerUnit) : 0;
       if (!rate) {
-        App.Utils.showToast(`No rate card entry for "${contractorName}" / ${processName}.`, true);
+        App.Utils.showToast(`No rate card entry for "${contractorName}" / ${processType} / General.`, true);
         return;
       }
       row.querySelector('.cost-rate').value = rate;

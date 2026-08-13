@@ -287,6 +287,12 @@ def _rename_process_type_everywhere(cur, old_name: str, new_name: str) -> None:
     if table := config_maps.TABLE_NAMES.get("PROCESS_MASTER"):
         rename_utils.rename_in_column(cur, table, config_maps.to_snake_case("processType"), old, new)
 
+    # Contractor Rates (Layer 1) keys its rate card on Process Type as a
+    # free string, not a Process Type Master ID -- see
+    # contractors_service._get_contractor_rate.
+    if table := config_maps.TABLE_NAMES.get("CONTRACTOR_RATES"):
+        rename_utils.rename_in_column(cur, table, "process_type", old, new)
+
 
 def ensure_color_master_entries(cur, color_names: list) -> list:
     """Auto-registers any brand-new color name into Color Master (called

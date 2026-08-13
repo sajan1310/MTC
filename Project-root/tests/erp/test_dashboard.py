@@ -225,12 +225,13 @@ def test_dashboard_ready_to_dispatch_kpi(erp_app, erp_client):
 def test_dashboard_contractor_payables_kpi(erp_client):
     before = _dashboard_kpis(erp_client)
 
-    payload, process_id = _save_process(erp_client)
+    process_type = _unique_name("DashPayableType")
+    _payload, process_id = _save_process(erp_client, processType=process_type)
     contractor = _unique_name("DashPayableContractor")
     _rpc(
         erp_client,
         "saveContractorRate",
-        [{"contractorName": contractor, "processName": payload["processName"], "ratePerUnit": 20}],
+        [{"contractorName": contractor, "processType": process_type, "size": "General", "ratePerUnit": 20}],
         mutation=True,
     )
     _complete_production_lot(erp_client, process_id, "", 5, contractor=contractor)

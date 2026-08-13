@@ -652,6 +652,15 @@ MApp.Picker = {
   _selectedValue: null,
 
   open({ title, items, selectedValue, searchable = true, allowCustom = false }) {
+    // A picker session is already pending (e.g. a fast double-tap on two
+    // different "Choose an item" buttons) -- resolve it with null so it
+    // doesn't hang forever, and so this new session's selection can't get
+    // silently misattributed to it.
+    if (this._resolve) {
+      const prevResolve = this._resolve;
+      this._resolve = null;
+      prevResolve(null);
+    }
     return new Promise(resolve => {
       this._resolve = resolve;
       this._items = items || [];
@@ -1409,12 +1418,21 @@ MApp.Production = {
   flatColors: [],
   axes: [],
   primaryAxisKey: '',
+  // True whenever primaryAxisKey is only the server's recipe-order
+  // fallback (see get_process_color_axes's primaryIsDefault) rather than a
+  // choice actually confirmed for THIS lot -- gates _renderQtyOrColorSection
+  // into the "pick which group is Primary" step instead of silently
+  // trusting the fallback, same reasoning as the desktop Production form's
+  // primaryIsDefault handling.
+  primaryIsDefault: false,
   recipeComponents: [],
   colorQtyByColor: {},
   secondaryChoice: {},
   selectedStatus: 'Pending',
   selectedAssignedTo: '',
+  selectedExtraChargeType: '',
   editingLot: null,
+  _procSelectSeq: 0,
 
   mount() {
     this.bomProducts = null;
@@ -1543,11 +1561,13 @@ MApp.Production = {
     this.flatColors = [];
     this.axes = [];
     this.primaryAxisKey = '';
+    this.primaryIsDefault = false;
     this.recipeComponents = [];
     this.colorQtyByColor = {};
     this.secondaryChoice = {};
     this.selectedStatus = 'Pending';
     this.selectedAssignedTo = '';
+    this.selectedExtraChargeType = '';
 
     const titleEl = document.querySelector('#sheet-log-lot h2');
     if (titleEl) titleEl.textContent = 'Log Lot';
@@ -1586,11 +1606,13 @@ MApp.Production = {
     this.flatColors = [];
     this.axes = [];
     this.primaryAxisKey = '';
+    this.primaryIsDefault = false;
     this.recipeComponents = [];
     this.colorQtyByColor = {};
     this.secondaryChoice = {};
     this.selectedStatus = lot.status || 'Pending';
     this.selectedAssignedTo = lot.assignedTo || '';
+    this.selectedExtraChargeType = lot.extraChargeType || '';
 
     const titleEl = document.querySelector('#sheet-log-lot h2');
     if (titleEl) titleEl.textContent = 'Edit Lot';
@@ -1609,6 +1631,23 @@ MApp.Production = {
 
       if (process) {
         await this.onProcessSelected(lot.processId);
+        // An existing lot already RECORDS which axis was Primary for it
+        // (its counts-toward-total entries carry that axisKey), so it must
+        // never be sent back through the "pick which group is Primary"
+        // step _renderQtyOrColorSection shows for a brand-new lot on a
+        // process that has no stored default -- that step would withhold
+        // the colour chips and drop the quantities being restored just
+        // below. Only a key that still resolves to a live axis is trusted;
+        // anything else falls through to the picker, which is the correct
+        // outcome once the recorded axis no longer exists.
+        if (Array.isArray(lot.colorBreakdown)) {
+          const recordedPrimary = lot.colorBreakdown.find(
+            cb => cb && cb.countsTowardTotal !== false && cb.axisKey && this.axes.some(a => a.key === cb.axisKey));
+          if (recordedPrimary) {
+            this.primaryAxisKey = recordedPrimary.axisKey;
+            this.primaryIsDefault = false;
+          }
+        }
         if (this.flatColors.length > 0 && Array.isArray(lot.colorBreakdown)) {
           lot.colorBreakdown.forEach(cb => {
             if (cb.countsTowardTotal === false && cb.axisKey) this.secondaryChoice[cb.axisKey] = cb.color;
@@ -1660,6 +1699,11 @@ MApp.Production = {
       <div class="mb-field">
         <label>Assigned to</label>
         <button type="button" class="mb-picker-field${lot.assignedTo ? '' : ' mb-placeholder'}" id="lot-assignedto-field" onclick="MApp.Production.pickAssignedTo()">${MApp.Util.escapeHtml(lot.assignedTo || 'Choose or add a name...')}</button>
+      </div>
+
+      <div class="mb-field">
+        <label>Extra charge (optional)</label>
+        <button type="button" class="mb-picker-field${lot.extraChargeType ? '' : ' mb-placeholder'}" id="lot-extracharge-field" onclick="MApp.Production.pickExtraCharge()">${MApp.Util.escapeHtml(lot.extraChargeType || 'None')}</button>
       </div>
 
       <div class="mb-field">
@@ -1755,6 +1799,11 @@ MApp.Production = {
       </div>
 
       <div class="mb-field">
+        <label>Extra charge (optional)</label>
+        <button type="button" class="mb-picker-field mb-placeholder" id="lot-extracharge-field" onclick="MApp.Production.pickExtraCharge()">None</button>
+      </div>
+
+      <div class="mb-field">
         <label for="lot-assignedby">Assigned by (optional)</label>
         <input type="text" id="lot-assignedby" placeholder="Supervisor name">
       </div>
@@ -1810,6 +1859,7 @@ MApp.Production = {
     this.flatColors = [];
     this.axes = [];
     this.primaryAxisKey = '';
+    this.primaryIsDefault = false;
     this.recipeComponents = [];
     this.colorQtyByColor = {};
     this.secondaryChoice = {};
@@ -1928,6 +1978,17 @@ MApp.Production = {
     const process = this.activeProcesses.find(p => p.processId === processId);
     if (!process) return;
 
+    // Tapping through processes quickly (picking the wrong one, then
+    // correcting) can let an EARLIER process's slower getProcessColorAxes/
+    // getProcessColorGroups response land AFTER a later one for the process
+    // actually selected now -- with no guard, that stale response used to
+    // silently overwrite this.axes/flatColors with a DIFFERENT process's
+    // color sub-groups (e.g. an unrelated Packing process's "Kit Bag"/
+    // "Small Kit" tag axes bleeding into a plain process like Rim Fitting
+    // that has none of its own). Same mySeq/_formSeq guard idiom as
+    // Bills/Vendors openForm() elsewhere in this file.
+    const mySeq = ++this._procSelectSeq;
+
     this.selection.processId = processId;
     this.selection.process = process;
     this.selection.productId = '';
@@ -1942,11 +2003,13 @@ MApp.Production = {
         MApp.Api.call('getProcessColorAxes', processId),
         MApp.Api.call('getProcessComponentsData', processId)
       ]);
+      if (mySeq !== this._procSelectSeq) return;
 
       this.flatColors = (groupsRes && groupsRes.success) ? (groupsRes.data || []) : [];
       const axesData = (axesRes && axesRes.success) ? (axesRes.data || {}) : {};
       this.axes = axesData.axes || [];
       this.primaryAxisKey = axesData.primaryAxisKey || (this.axes[0] && this.axes[0].key) || '';
+      this.primaryIsDefault = this.axes.length >= 2 ? !!axesData.primaryIsDefault : false;
       this.recipeComponents = (compRes && compRes.success) ? (compRes.data || []) : [];
       this.colorQtyByColor = {};
       this.secondaryChoice = {};
@@ -1956,14 +2019,16 @@ MApp.Production = {
 
       if (process.isFinalStage && this.bomProducts === null) {
         const bomRes = await MApp.Api.call('getBOMProductionData');
+        if (mySeq !== this._procSelectSeq) return;
         this.bomProducts = (bomRes && bomRes.success) ? (bomRes.data || []) : [];
       }
 
       this._renderQtyOrColorSection();
     } catch (err) {
+      if (mySeq !== this._procSelectSeq) return;
       MApp.Toast.error('Could not load this process: ' + (err.message || ''));
     } finally {
-      this._setCascadeBusy(false);
+      if (mySeq === this._procSelectSeq) this._setCascadeBusy(false);
     }
   },
 
@@ -1988,6 +2053,36 @@ MApp.Production = {
     if (!picked) return;
     this.selectedAssignedTo = picked.value;
     this._updateFieldLabel('lot-assignedto-field', picked.label);
+    // A fresh contractor pick invalidates whatever Extra Charge was
+    // showing (it belonged to the previous contractor's own rate card) --
+    // same reasoning as desktop's refreshExtraChargeOptions reset.
+    this.selectedExtraChargeType = '';
+    this._updateFieldLabel('lot-extracharge-field', 'None');
+  },
+
+  // Extra Charge (Layer 2) options are scoped to whichever contractor is
+  // currently Assigned To -- every contractor can offer a different set,
+  // so this always fetches fresh rather than caching across contractors.
+  async pickExtraCharge() {
+    if (!this.selectedAssignedTo) {
+      MApp.Toast.error('Choose a contractor first.');
+      return;
+    }
+    let charges = [];
+    try {
+      const res = await MApp.Api.call('getContractorServiceChargesForContractor', this.selectedAssignedTo);
+      charges = (res && res.success) ? (res.data || []) : [];
+    } catch (err) {
+      charges = [];
+    }
+    const items = [
+      { value: '', label: 'None' },
+      ...charges.map(c => ({ value: c.serviceType, label: `${c.serviceType} (+${MApp.Util.formatCurrency(c.chargeAmount)})` }))
+    ];
+    const picked = await MApp.Picker.open({ title: 'Extra charge', items, selectedValue: this.selectedExtraChargeType });
+    if (!picked) return;
+    this.selectedExtraChargeType = picked.value;
+    this._updateFieldLabel('lot-extracharge-field', picked.value ? picked.label : 'None');
   },
 
   setStatus(status) {
@@ -2014,6 +2109,35 @@ MApp.Production = {
     colorWrap.classList.remove('mb-hidden');
 
     const isMultiAxis = this.axes.length >= 2;
+
+    // The "pick which group is Primary" step primaryIsDefault has always
+    // documented but never actually had. Without it, primaryAxisKey fell
+    // back to whatever axis sits first in recipe order, the lot's
+    // quantities were attributed to it, AND saveLot sent it as
+    // formData.primaryColorAxis -- which save_production persists as this
+    // process's default from then on (_set_process_primary_color_axis).
+    // So a choice nobody made got silently locked in from mobile, the
+    // exact outcome the desktop form refuses to allow (see
+    // renderGroupedColorChecklist, which leaves its Primary radio
+    // unchecked for the same reason). The colour chips are withheld until
+    // the choice is made because which axis is Primary decides which
+    // colours carry the lot's quantity at all.
+    if (isMultiAxis && this.primaryIsDefault) {
+      colorWrap.innerHTML = `
+        <div class="mapp-section-label">Which group is Primary?</div>
+        <div class="mb-field-hint">This process has more than one independent colour group. The Primary group's quantities become this lot's total — the others are recorded per colour but don't add to it.</div>
+        <div class="mb-color-chip-list mb-mt-2" id="lot-primary-axis-pick">
+          ${this.axes.map(a => `
+            <button type="button" class="mb-color-chip" style="min-width:auto;padding:10px 16px;" data-primary-axis-key="${MApp.Util.escapeHtml(a.key)}">
+              ${MApp.Util.escapeHtml(a.label)}
+            </button>`).join('')}
+        </div>`;
+      colorWrap.querySelectorAll('[data-primary-axis-key]').forEach(el => {
+        el.addEventListener('click', () => this.pickPrimaryAxis(el.dataset.primaryAxisKey));
+      });
+      return;
+    }
+
     const primaryAxis = isMultiAxis ? (this.axes.find(a => a.key === this.primaryAxisKey) || this.axes[0]) : null;
     const primaryColors = isMultiAxis ? primaryAxis.colors : this.flatColors;
     const secondaryAxes = isMultiAxis ? this.axes.filter(a => a !== primaryAxis) : [];
@@ -2032,6 +2156,19 @@ MApp.Production = {
 
     colorWrap.innerHTML = html;
     this._wireColorSectionEvents();
+  },
+
+  // Records THIS lot's Primary Axis choice (see _renderQtyOrColorSection's
+  // picker). Any colour quantities already entered are dropped: they were
+  // entered against a different axis's colour list, so carrying them over
+  // would attribute one axis's quantities to another.
+  pickPrimaryAxis(axisKey) {
+    if (!axisKey || !this.axes.some(a => a.key === axisKey)) return;
+    this.primaryAxisKey = axisKey;
+    this.primaryIsDefault = false;
+    this.colorQtyByColor = {};
+    this.secondaryChoice = {};
+    this._renderQtyOrColorSection();
   },
 
   _wireColorSectionEvents() {
@@ -2154,7 +2291,19 @@ MApp.Production = {
         color: color,
         sourceType: r.sourceType,
         qty: Math.round(qty * 1000) / 1000,
-        colorGroup: isCommon ? 'COMMON' : r.colorGroup
+        colorGroup: isCommon ? 'COMMON' : r.colorGroup,
+        // The recipe row's own Unit must ride along, exactly as the desktop
+        // form carries it (production.js addComponentRow/_readProdComponentRow).
+        // qtyPerUnit is expressed IN that unit, and both consumption paths
+        // convert a non-blank unit to the item's Base Unit before debiting
+        // (stock_service for ITEM rows, warehouse_service Pass 2 for POOL
+        // rows) -- a blank unit means "already in Base Unit". Omitting it
+        // therefore did not merely lose a label: a recipe row measured in
+        // e.g. Dozen was debited as if its number were Pcs, so a
+        // mobile-logged lot silently under-consumed Stock/Warehouse Pool by
+        // that item's whole conversion factor, while the identical lot
+        // logged on desktop consumed the right amount.
+        unit: r.unit || ''
       });
     });
     return components;
@@ -2170,6 +2319,13 @@ MApp.Production = {
     }
     if (!this.selectedAssignedTo) {
       MApp.Toast.error('Choose or add who this lot is assigned to.');
+      return;
+    }
+    // Mirrors save_production's own "Pick which group is Primary" refusal,
+    // caught here so the operator is sent back to the picker instead of to
+    // a server error (see _renderQtyOrColorSection).
+    if (this.axes.length >= 2 && this.primaryIsDefault) {
+      MApp.Toast.error('Pick which colour group is Primary before saving.');
       return;
     }
 
@@ -2205,6 +2361,7 @@ MApp.Production = {
       processId: this.selection.process.processId,
       assignedBy: (document.getElementById('lot-assignedby')?.value || '').trim(),
       assignedTo: this.selectedAssignedTo,
+      extraChargeType: this.selectedExtraChargeType || '',
       status: this.selectedStatus || 'Pending',
       remarks: (document.getElementById('lot-remarks')?.value || '').trim(),
       componentsConsumed: JSON.stringify(componentsConsumed)
@@ -2225,7 +2382,17 @@ MApp.Production = {
       formData.productName = this.selection.productName;
     }
 
-    if (this.editingLot) formData.rowIdx = this.editingLot.rowIdx;
+    if (this.editingLot) {
+      formData.rowIdx = this.editingLot.rowIdx;
+      // A lot's Output Item Name is editable per lot on desktop (a
+      // rework/variant run credits its own Warehouse Pool bucket), and
+      // save_production falls back to the PROCESS's default whenever this
+      // field arrives blank. Omitting it therefore didn't leave the saved
+      // value alone -- it silently reset a customised lot back to the
+      // process default, moving that lot's pool credit into a different
+      // bucket, just from opening it on mobile and pressing Save.
+      if (this.editingLot.outputItemName) formData.outputItemName = this.editingLot.outputItemName;
+    }
 
     // Note: re-enabling after this point is NOT a single blanket
     // setSheetBusy(false) in a finally block — on success, resetLogLotForm()
@@ -2297,11 +2464,13 @@ MApp.Production = {
     this.flatColors = [];
     this.axes = [];
     this.primaryAxisKey = '';
+    this.primaryIsDefault = false;
     this.recipeComponents = [];
     this.colorQtyByColor = {};
     this.secondaryChoice = {};
     this.selectedStatus = 'Pending';
     this.selectedAssignedTo = '';
+    this.selectedExtraChargeType = '';
     document.getElementById('log-lot-body').innerHTML = this._formHtml();
   }
 };
@@ -3041,7 +3210,7 @@ MApp.Returns = {
     const picked = await MApp.Picker.open({
       title: 'Choose an item', items, selectedValue: this.lines[i].name + '||' + this.lines[i].size
     });
-    if (!picked) return;
+    if (!picked || !this.lines[i]) return;
 
     const match = (this.items || []).find(it => (it.name + '||' + it.size) === picked.value);
     this.lines[i].name = match ? match.name : picked.label;
@@ -3542,7 +3711,7 @@ MApp.PO = {
     const picked = await MApp.Picker.open({
       title: 'Choose an item', items, selectedValue: this.lines[i].name + '||' + this.lines[i].size
     });
-    if (!picked) return;
+    if (!picked || !this.lines[i]) return;
 
     const match = (this.items || []).find(it => (it.name + '||' + it.size) === picked.value);
     this.lines[i].name = match ? match.name : picked.label;
@@ -3643,6 +3812,20 @@ MApp.Bill = {
   bills: [],
   filtered: [],
   searchTerm: '',
+  // Phase 3: New/Edit form state. GOODS bills only for v1 -- see
+  // sheet-bill-form's own comment in mobile_views.html for why Labor Job
+  // bills stay a desktop task. `editingBillVendor` is the ORIGINAL vendor
+  // (kept separate from the editable `selection.vendor`) since saveBill's
+  // identity lookup is (existingVendor, existingBillNumber), not just the
+  // bill number -- same "old identity preserved separately" pattern as
+  // Items' originalName/originalSize.
+  vendors: [],
+  items: [],
+  selection: { vendor: '', contact: '' },
+  lines: [],
+  editingBillNumber: null,
+  editingBillVendor: null,
+  _formSeq: 0,
 
   async openLedgerSheet() {
     const listEl = document.getElementById('bill-ledger-list');
@@ -3717,8 +3900,21 @@ MApp.Bill = {
         </div>
         <div class="mb-card-sub" style="margin-top:4px;">Qty: ${MApp.Util.formatQty(bill.totalQty)} · Total: ${MApp.Util.formatCurrency(bill.totalAmount)}</div>
         <div class="mb-card-sub" style="margin-top:4px;">${poRef}</div>
+        <div class="mb-mt-2" style="display:flex; gap:var(--mb-sp-4);">
+          <button type="button" class="mb-btn-text" style="padding:0;min-height:auto;" data-bill-action="edit" data-bill-index="${idx}">Edit</button>
+          <button type="button" class="mb-btn-text" style="padding:0;min-height:auto;color:var(--mb-enamel-red);" data-bill-action="delete" data-bill-index="${idx}">Delete</button>
+        </div>
       </div>`;
     }).join('');
+
+    listEl.querySelectorAll('[data-bill-action]').forEach(btn => {
+      btn.addEventListener('click', () => {
+        const bill = this.bills[Number(btn.dataset.billIndex)];
+        if (!bill) return;
+        if (btn.dataset.billAction === 'edit') this.openForm(bill);
+        else this.deleteBillRecord(bill);
+      });
+    });
   },
 
   print(index) {
@@ -3770,6 +3966,702 @@ MApp.Bill = {
     if (tblBody) tblBody.innerHTML = bodyHtml;
 
     setText('print-bill-grand-total', MApp.Util.toNumber(bill.totalAmount).toFixed(2));
+  },
+
+  // ── New/Edit Bill sheet (Phase 3) ────────────────────────────────────
+  async openForm(bill) {
+    const mySeq = ++this._formSeq;
+    this.editingBillNumber = bill ? bill.billNumber : null;
+    this.editingBillVendor = bill ? bill.vendor : null;
+    this.selection = { vendor: bill ? bill.vendor : '', contact: bill ? bill.contact : '' };
+    this.lines = bill
+      ? (bill.items || []).map(it => ({ name: it.name, size: it.size || '', unit: it.unit || 'Pcs', qty: it.qty, price: it.price, gst: it.gstRatePct, narration: it.narration || '' }))
+      : [{ name: '', size: '', unit: 'Pcs', qty: '', price: '', gst: 18 }];
+    if (this.lines.length === 0) this.lines.push({ name: '', size: '', unit: 'Pcs', qty: '', price: '', gst: 18 });
+
+    const titleEl = document.getElementById('bill-form-title');
+    if (titleEl) titleEl.textContent = bill ? 'Edit Bill' : 'New Bill';
+    const saveBtn = document.getElementById('bill-form-save-btn');
+    if (saveBtn) saveBtn.textContent = bill ? 'Save Changes' : 'Save Bill';
+
+    document.getElementById('bill-form-body').innerHTML = `
+      <div class="mb-skel mb-skel-card" style="height:56px;"></div>
+      <div class="mb-skel mb-skel-card" style="height:56px;"></div>
+      <div class="mb-skel mb-skel-card" style="height:56px;"></div>`;
+    MApp.Sheet.open('sheet-bill-form');
+    if (saveBtn) saveBtn.disabled = true;
+
+    try {
+      const [vendorsRes, itemsRes] = await Promise.all([
+        MApp.Api.call('getVendorsData'),
+        MApp.Api.call('getItemsData')
+      ]);
+      // A newer openForm() call superseded this one while we were awaiting --
+      // don't let this stale response repaint the (now different) form.
+      if (mySeq !== this._formSeq) return;
+      this.vendors = (vendorsRes && vendorsRes.success) ? (vendorsRes.data || []) : [];
+      this.items = (itemsRes && itemsRes.success) ? (itemsRes.data || []) : [];
+
+      document.getElementById('bill-form-body').innerHTML = this._billFormHtml(bill);
+
+      if (bill && bill.vendor) {
+        const vendorField = document.getElementById('bill-form-vendor-field');
+        if (vendorField) { vendorField.textContent = bill.vendor; vendorField.classList.remove('mb-placeholder'); }
+      }
+    } catch (err) {
+      if (mySeq !== this._formSeq) return;
+      MApp.Toast.error('Could not load bill reference data: ' + (err.message || ''));
+      this.closeForm();
+      return;
+    } finally {
+      if (mySeq === this._formSeq && saveBtn) saveBtn.disabled = false;
+    }
+  },
+
+  closeForm() {
+    MApp.Sheet.close('sheet-bill-form');
+  },
+
+  _billFormHtml(bill) {
+    return `
+      <div class="mb-field">
+        <label for="bill-form-number">Bill Number</label>
+        <input type="text" id="bill-form-number" value="${MApp.Util.escapeHtml(bill ? bill.billNumber : '')}" ${bill ? 'readonly' : ''}>
+      </div>
+
+      <div class="mb-field">
+        <label for="bill-form-date">Invoice Date</label>
+        <input type="date" id="bill-form-date" value="${bill ? dateToInputValue(bill.billDateRaw, bill.billDate) : MApp.Util.todayInputValue()}">
+      </div>
+
+      <div class="mb-field">
+        <label>Vendor</label>
+        <button type="button" class="mb-picker-field mb-placeholder" id="bill-form-vendor-field" onclick="MApp.Bill.pickVendor()">Choose a vendor...</button>
+      </div>
+
+      <div class="mb-field">
+        <label for="bill-form-contact">Contact (optional)</label>
+        <input type="text" id="bill-form-contact" value="${MApp.Util.escapeHtml(bill ? bill.contact : '')}">
+      </div>
+
+      <div class="mapp-section-label">Items</div>
+      <div id="bill-form-lines">${this._linesHtml()}</div>
+      <button type="button" class="mb-btn mb-btn-secondary mb-mt-2 mb-mb-4" onclick="MApp.Bill.addLine()">+ Add Item</button>
+
+      <div class="mb-field">
+        <label for="bill-form-remarks">Remarks (optional)</label>
+        <textarea id="bill-form-remarks" rows="3">${MApp.Util.escapeHtml(bill ? bill.remarks : '')}</textarea>
+      </div>
+    `;
+  },
+
+  async pickVendor() {
+    const items = (this.vendors || []).map(v => ({ value: v.name, label: v.name }));
+    const picked = await MApp.Picker.open({ title: 'Choose a vendor', items, selectedValue: this.selection.vendor, allowCustom: true });
+    if (!picked) return;
+    this.selection.vendor = picked.value;
+    const el = document.getElementById('bill-form-vendor-field');
+    if (el) { el.textContent = picked.label; el.classList.remove('mb-placeholder'); }
+  },
+
+  // ── Line items (Phase 3) ─────────────────────────────────────────────
+  _linesHtml() {
+    if (this.lines.length === 0) return '<div class="mb-text-sm mb-text-steel mb-mb-2">No items added yet.</div>';
+    return this.lines.map((line, i) => `
+      <div class="mb-card" style="padding:var(--mb-sp-3);">
+        <div class="mb-field" style="margin-bottom:var(--mb-sp-2);">
+          <label>Item</label>
+          <button type="button" class="mb-picker-field${line.name ? '' : ' mb-placeholder'}" onclick="MApp.Bill.pickLineItem(${i})">${line.name ? MApp.Util.escapeHtml(line.name) + (line.size ? ` (${MApp.Util.escapeHtml(line.size)})` : '') : 'Choose an item...'}</button>
+        </div>
+        <div class="mb-field" style="margin-bottom:var(--mb-sp-2);">
+          <label>Quantity</label>
+          <input type="number" inputmode="decimal" min="0" step="1" value="${line.qty === '' ? '' : line.qty}" oninput="MApp.Bill.updateLine(${i}, 'qty', this.value)">
+        </div>
+        <div class="mb-field" style="margin-bottom:var(--mb-sp-2);">
+          <label>Unit Price</label>
+          <input type="number" inputmode="decimal" min="0" step="0.01" value="${line.price || ''}" oninput="MApp.Bill.updateLine(${i}, 'price', this.value)">
+        </div>
+        <div class="mb-field" style="margin-bottom:0;">
+          <label>GST %</label>
+          <input type="number" inputmode="decimal" min="0" step="0.01" value="${line.gst != null ? line.gst : 18}" oninput="MApp.Bill.updateLine(${i}, 'gst', this.value)">
+        </div>
+        ${this.lines.length > 1 ? `<button type="button" class="mb-btn-text mb-mt-2" style="padding:0;min-height:auto;color:var(--mb-enamel-red);" onclick="MApp.Bill.removeLine(${i})">Remove</button>` : ''}
+      </div>
+    `).join('');
+  },
+
+  addLine() {
+    this.lines.push({ name: '', size: '', unit: 'Pcs', qty: '', price: '', gst: 18 });
+    const el = document.getElementById('bill-form-lines');
+    if (el) el.innerHTML = this._linesHtml();
+  },
+
+  removeLine(i) {
+    this.lines.splice(i, 1);
+    if (this.lines.length === 0) this.lines.push({ name: '', size: '', unit: 'Pcs', qty: '', price: '', gst: 18 });
+    const el = document.getElementById('bill-form-lines');
+    if (el) el.innerHTML = this._linesHtml();
+  },
+
+  updateLine(i, key, value) {
+    if (!this.lines[i]) return;
+    this.lines[i][key] = MApp.Util.toNumber(value);
+  },
+
+  async pickLineItem(i) {
+    if (!this.lines[i]) return;
+    const items = (this.items || []).map(it => ({
+      value: it.name + '||' + it.size, label: it.name, sublabel: it.size ? `Size: ${it.size}` : ''
+    }));
+    const picked = await MApp.Picker.open({
+      title: 'Choose an item', items, selectedValue: this.lines[i].name + '||' + this.lines[i].size
+    });
+    if (!picked || !this.lines[i]) return;
+
+    const match = (this.items || []).find(it => (it.name + '||' + it.size) === picked.value);
+    this.lines[i].name = match ? match.name : picked.label;
+    this.lines[i].size = match ? match.size : '';
+    this.lines[i].unit = match ? match.baseUnit : 'Pcs';
+
+    const el = document.getElementById('bill-form-lines');
+    if (el) el.innerHTML = this._linesHtml();
+  },
+
+  async saveBill() {
+    if (!this.selection.vendor) {
+      MApp.Toast.error('Choose a vendor first.');
+      return;
+    }
+    const billNumber = (document.getElementById('bill-form-number')?.value || '').trim();
+    if (!billNumber) {
+      MApp.Toast.error('Enter a bill number.');
+      return;
+    }
+    const validLines = this.lines.filter(l => l.name && l.qty > 0);
+    if (validLines.length === 0) {
+      MApp.Toast.error('Add at least one item with a name and quantity greater than zero.');
+      return;
+    }
+
+    const formData = {
+      billNumber,
+      billDate: document.getElementById('bill-form-date')?.value || MApp.Util.todayInputValue(),
+      vendor: this.selection.vendor,
+      contact: (document.getElementById('bill-form-contact')?.value || '').trim(),
+      remarks: (document.getElementById('bill-form-remarks')?.value || '').trim(),
+      items: JSON.stringify(validLines.map(l => ({
+        name: l.name, size: l.size || '', narration: l.narration || '', unit: l.unit || 'Pcs',
+        qty: l.qty, price: l.price || 0, gst: l.gst != null ? l.gst : 18
+      })))
+    };
+    if (this.editingBillNumber) {
+      formData.existingBillNumber = this.editingBillNumber;
+      formData.existingVendor = this.editingBillVendor;
+    }
+
+    const isEdit = !!this.editingBillNumber;
+    const saveBtn = document.getElementById('bill-form-save-btn');
+    if (saveBtn) { saveBtn.disabled = true; saveBtn.textContent = 'Saving…'; }
+
+    const res = await MApp.Util.mutateSimple('saveBill', [formData], isEdit ? 'Bill updated.' : 'Bill saved.');
+    if (res.success) {
+      this.closeForm();
+      this.openLedgerSheet();
+      return;
+    }
+    if (saveBtn) { saveBtn.disabled = false; saveBtn.textContent = isEdit ? 'Save Changes' : 'Save Bill'; }
+  },
+
+  async deleteBillRecord(bill) {
+    if (!MApp.Util.confirmDelete(bill.billNumber)) return;
+    const res = await MApp.Util.mutateSimple('deleteBill', [bill.vendor, bill.billNumber], 'Bill deleted.');
+    if (res.success) this.openLedgerSheet();
+  }
+};
+// ================================================================
+// ISSUED STOCK LOG (Phase 3, More tab) — read + create + delete. No
+// edit-existing UI on mobile: saveIssueStock's own existingIssueId
+// support is itself a PWA-only addition with no desktop equivalent (see
+// issue_service.py's module docstring) -- create/delete-only here
+// matches desktop's actual practice, same call as Wastage below.
+// ================================================================
+MApp.Issue = {
+  records: [],
+  filtered: [],
+  searchTerm: '',
+  items: [],
+  lines: [],
+
+  async open() {
+    const listEl = document.getElementById('issue-log-list');
+    const searchInput = document.getElementById('issue-log-search');
+    if (searchInput) searchInput.value = '';
+    this.searchTerm = '';
+    MApp.Util.renderSkeleton(listEl, 4);
+    MApp.Sheet.open('sheet-issue-log');
+
+    try {
+      const res = await MApp.Api.call('getIssueData');
+      if (!res || !res.success) {
+        MApp.Util.renderError(listEl, res && res.message, () => this.open());
+        return;
+      }
+      this.records = res.data || [];
+      this._applyFilters();
+    } catch (err) {
+      MApp.Util.renderError(listEl, err && err.message, () => this.open());
+    }
+  },
+
+  close() {
+    MApp.Sheet.close('sheet-issue-log');
+  },
+
+  onSearch(term) {
+    this.searchTerm = String(term || '').trim().toLowerCase();
+    this._applyFilters();
+  },
+
+  _applyFilters() {
+    let list = this.records;
+    if (this.searchTerm) {
+      const term = this.searchTerm;
+      list = list.filter(r =>
+        String(r.issuedTo || '').toLowerCase().includes(term) ||
+        (r.items || []).some(it => String(it.name || '').toLowerCase().includes(term)));
+    }
+    this.filtered = list;
+    this.render();
+  },
+
+  render() {
+    const listEl = document.getElementById('issue-log-list');
+    if (!listEl) return;
+
+    if (this.filtered.length === 0) {
+      MApp.Util.renderEmpty(listEl, {
+        title: 'No issued stock records found',
+        body: this.records.length === 0 ? 'Tap "Log Issue" to record the first one.' : 'Try a different search term.'
+      });
+      return;
+    }
+
+    listEl.innerHTML = this.filtered.slice(0, 100).map((r, i) => {
+      const itemSummary = (r.items || []).map(it => `${MApp.Util.escapeHtml(it.name)} (${MApp.Util.formatQty(it.qty)} ${MApp.Util.escapeHtml(it.unit || '')})`).join(', ');
+      return `
+      <div class="mb-card">
+        <div class="mb-card-row">
+          <div>
+            <div class="mb-card-title">${MApp.Util.escapeHtml(r.issuedTo)}</div>
+            <div class="mb-card-sub">${itemSummary}</div>
+          </div>
+          <div style="text-align:right;">
+            <div class="mb-card-number">${MApp.Util.formatQty(r.totalQty)}</div>
+            <div class="mb-card-sub">${MApp.Util.escapeHtml(r.date || '')}</div>
+          </div>
+        </div>
+        ${r.reference ? `<div class="mb-card-sub mb-mt-2">Ref: ${MApp.Util.escapeHtml(r.reference)}</div>` : ''}
+        <div class="mb-mt-2"><button type="button" class="mb-btn-text" style="padding:0;min-height:auto;color:var(--mb-enamel-red);" data-issue-index="${i}">Delete</button></div>
+      </div>`;
+    }).join('');
+
+    listEl.querySelectorAll('[data-issue-index]').forEach(btn => {
+      btn.addEventListener('click', () => {
+        const record = this.filtered[Number(btn.dataset.issueIndex)];
+        if (record) this.deleteIssue(record);
+      });
+    });
+  },
+
+  async openForm() {
+    this.lines = [{ name: '', size: '', unit: 'Pcs', qty: '', rate: '' }];
+
+    document.getElementById('issue-form-body').innerHTML = `
+      <div class="mb-skel mb-skel-card" style="height:56px;"></div>
+      <div class="mb-skel mb-skel-card" style="height:56px;"></div>`;
+    MApp.Sheet.open('sheet-issue-form');
+
+    const saveBtn = document.getElementById('issue-form-save-btn');
+    if (saveBtn) saveBtn.disabled = true;
+
+    try {
+      // Always refetch (not just "if empty") so an item added earlier in
+      // this same session shows up in the picker without a page reload.
+      const itemsRes = await MApp.Api.call('getItemsData');
+      this.items = (itemsRes && itemsRes.success) ? (itemsRes.data || []) : [];
+      document.getElementById('issue-form-body').innerHTML = this._formHtml();
+    } catch (err) {
+      MApp.Toast.error('Could not load reference data: ' + (err.message || ''));
+      this.closeForm();
+      return;
+    } finally {
+      if (saveBtn) saveBtn.disabled = false;
+    }
+  },
+
+  closeForm() {
+    MApp.Sheet.close('sheet-issue-form');
+  },
+
+  _formHtml() {
+    return `
+      <div class="mb-field">
+        <label for="issue-form-date">Date</label>
+        <input type="date" id="issue-form-date" value="${MApp.Util.todayInputValue()}">
+      </div>
+      <div class="mb-field">
+        <label for="issue-form-issuedto">Issued To</label>
+        <input type="text" id="issue-form-issuedto" placeholder="Contractor or person name">
+      </div>
+      <div class="mb-field">
+        <label for="issue-form-reference">Reference (optional)</label>
+        <input type="text" id="issue-form-reference" placeholder="e.g. Production Lot #">
+      </div>
+
+      <div class="mapp-section-label">Items</div>
+      <div id="issue-form-lines">${this._linesHtml()}</div>
+      <button type="button" class="mb-btn mb-btn-secondary mb-mt-2 mb-mb-4" onclick="MApp.Issue.addLine()">+ Add Item</button>
+
+      <div class="mb-field">
+        <label for="issue-form-remarks">Remarks (optional)</label>
+        <textarea id="issue-form-remarks" rows="3"></textarea>
+      </div>
+    `;
+  },
+
+  _linesHtml() {
+    if (this.lines.length === 0) return '<div class="mb-text-sm mb-text-steel mb-mb-2">No items added yet.</div>';
+    return this.lines.map((line, i) => `
+      <div class="mb-card" style="padding:var(--mb-sp-3);">
+        <div class="mb-field" style="margin-bottom:var(--mb-sp-2);">
+          <label>Item</label>
+          <button type="button" class="mb-picker-field${line.name ? '' : ' mb-placeholder'}" onclick="MApp.Issue.pickLineItem(${i})">${line.name ? MApp.Util.escapeHtml(line.name) + (line.size ? ` (${MApp.Util.escapeHtml(line.size)})` : '') : 'Choose an item...'}</button>
+        </div>
+        <div class="mb-field" style="margin-bottom:var(--mb-sp-2);">
+          <label>Quantity</label>
+          <input type="number" inputmode="decimal" min="0" step="1" value="${line.qty === '' ? '' : line.qty}" oninput="MApp.Issue.updateLine(${i}, 'qty', this.value)">
+        </div>
+        <div class="mb-field" style="margin-bottom:0;">
+          <label>Rate (optional)</label>
+          <input type="number" inputmode="decimal" min="0" step="0.01" value="${line.rate === '' ? '' : line.rate}" oninput="MApp.Issue.updateLine(${i}, 'rate', this.value)">
+        </div>
+        ${this.lines.length > 1 ? `<button type="button" class="mb-btn-text mb-mt-2" style="padding:0;min-height:auto;color:var(--mb-enamel-red);" onclick="MApp.Issue.removeLine(${i})">Remove</button>` : ''}
+      </div>
+    `).join('');
+  },
+
+  addLine() {
+    this.lines.push({ name: '', size: '', unit: 'Pcs', qty: '', rate: '' });
+    const el = document.getElementById('issue-form-lines');
+    if (el) el.innerHTML = this._linesHtml();
+  },
+
+  removeLine(i) {
+    this.lines.splice(i, 1);
+    if (this.lines.length === 0) this.lines.push({ name: '', size: '', unit: 'Pcs', qty: '', rate: '' });
+    const el = document.getElementById('issue-form-lines');
+    if (el) el.innerHTML = this._linesHtml();
+  },
+
+  updateLine(i, key, value) {
+    if (!this.lines[i]) return;
+    this.lines[i][key] = MApp.Util.toNumber(value);
+  },
+
+  async pickLineItem(i) {
+    if (!this.lines[i]) return;
+    const items = (this.items || []).map(it => ({
+      value: it.name + '||' + it.size, label: it.name, sublabel: it.size ? `Size: ${it.size}` : ''
+    }));
+    const picked = await MApp.Picker.open({
+      title: 'Choose an item', items, selectedValue: this.lines[i].name + '||' + this.lines[i].size
+    });
+    if (!picked || !this.lines[i]) return;
+    const match = (this.items || []).find(it => (it.name + '||' + it.size) === picked.value);
+    this.lines[i].name = match ? match.name : picked.label;
+    this.lines[i].size = match ? match.size : '';
+    this.lines[i].unit = match ? match.baseUnit : 'Pcs';
+
+    const el = document.getElementById('issue-form-lines');
+    if (el) el.innerHTML = this._linesHtml();
+  },
+
+  async save() {
+    const issuedTo = (document.getElementById('issue-form-issuedto')?.value || '').trim();
+    if (!issuedTo) {
+      MApp.Toast.error('Enter who this stock was issued to.');
+      return;
+    }
+    const validLines = this.lines.filter(l => l.name && l.qty > 0);
+    if (validLines.length === 0) {
+      MApp.Toast.error('Add at least one item with a name and quantity greater than zero.');
+      return;
+    }
+
+    const formData = {
+      date: document.getElementById('issue-form-date')?.value || MApp.Util.todayInputValue(),
+      issuedTo,
+      reference: (document.getElementById('issue-form-reference')?.value || '').trim(),
+      remarks: (document.getElementById('issue-form-remarks')?.value || '').trim(),
+      items: JSON.stringify(validLines.map(l => ({ name: l.name, size: l.size || '', unit: l.unit || 'Pcs', qty: l.qty, rate: l.rate || 0 })))
+    };
+
+    const saveBtn = document.getElementById('issue-form-save-btn');
+    if (saveBtn) { saveBtn.disabled = true; saveBtn.textContent = 'Saving…'; }
+
+    const res = await MApp.Util.mutateSimple('saveIssueStock', [formData], 'Stock issue logged.');
+    if (res.success) {
+      this.closeForm();
+      this.open();
+      return;
+    }
+    if (saveBtn) { saveBtn.disabled = false; saveBtn.textContent = 'Log Issue'; }
+  },
+
+  // deleteIssueBulk takes a plain array (not a form_data object), sent as
+  // a single positional arg -- a one-element array for a single-record
+  // delete, matching desktop's own "delete one" = "bulk-delete of one".
+  async deleteIssue(record) {
+    if (!MApp.Util.confirmDelete(record.issueId)) return;
+    const res = await MApp.Util.mutateSimple('deleteIssueBulk', [[record.issueId]], 'Issue record deleted.');
+    if (res.success) this.open();
+  }
+};
+// ================================================================
+// WASTAGE LOG (Phase 3, More tab) — read + create + delete, same scope
+// call as Issued Stock above (no edit-existing UI on mobile).
+// ================================================================
+MApp.Wastage = {
+  records: [],
+  filtered: [],
+  searchTerm: '',
+  items: [],
+  lines: [],
+
+  async open() {
+    const listEl = document.getElementById('wastage-log-list');
+    const searchInput = document.getElementById('wastage-log-search');
+    if (searchInput) searchInput.value = '';
+    this.searchTerm = '';
+    MApp.Util.renderSkeleton(listEl, 4);
+    MApp.Sheet.open('sheet-wastage-log');
+
+    try {
+      const res = await MApp.Api.call('getWastageData');
+      if (!res || !res.success) {
+        MApp.Util.renderError(listEl, res && res.message, () => this.open());
+        return;
+      }
+      this.records = res.data || [];
+      this._applyFilters();
+    } catch (err) {
+      MApp.Util.renderError(listEl, err && err.message, () => this.open());
+    }
+  },
+
+  close() {
+    MApp.Sheet.close('sheet-wastage-log');
+  },
+
+  onSearch(term) {
+    this.searchTerm = String(term || '').trim().toLowerCase();
+    this._applyFilters();
+  },
+
+  _applyFilters() {
+    let list = this.records;
+    if (this.searchTerm) {
+      const term = this.searchTerm;
+      list = list.filter(r =>
+        String(r.vendor || '').toLowerCase().includes(term) ||
+        (r.items || []).some(it => String(it.name || '').toLowerCase().includes(term)));
+    }
+    this.filtered = list;
+    this.render();
+  },
+
+  render() {
+    const listEl = document.getElementById('wastage-log-list');
+    if (!listEl) return;
+
+    if (this.filtered.length === 0) {
+      MApp.Util.renderEmpty(listEl, {
+        title: 'No wastage records found',
+        body: this.records.length === 0 ? 'Tap "Log Wastage" to record the first one.' : 'Try a different search term.'
+      });
+      return;
+    }
+
+    listEl.innerHTML = this.filtered.slice(0, 100).map((r, i) => {
+      const itemSummary = (r.items || []).map(it => `${MApp.Util.escapeHtml(it.name)} (${MApp.Util.formatQty(it.qty)} ${MApp.Util.escapeHtml(it.unit || '')})`).join(', ');
+      return `
+      <div class="mb-card">
+        <div class="mb-card-row">
+          <div>
+            <div class="mb-card-title">${MApp.Util.escapeHtml(r.vendor || 'No vendor')}</div>
+            <div class="mb-card-sub">${itemSummary}</div>
+          </div>
+          <div style="text-align:right;">
+            <div class="mb-card-number">${MApp.Util.formatQty(r.totalQty)}</div>
+            <div class="mb-card-sub">${MApp.Util.escapeHtml(r.date || '')}</div>
+          </div>
+        </div>
+        <div class="mb-mt-2"><button type="button" class="mb-btn-text" style="padding:0;min-height:auto;color:var(--mb-enamel-red);" data-wastage-index="${i}">Delete</button></div>
+      </div>`;
+    }).join('');
+
+    listEl.querySelectorAll('[data-wastage-index]').forEach(btn => {
+      btn.addEventListener('click', () => {
+        const record = this.filtered[Number(btn.dataset.wastageIndex)];
+        if (record) this.deleteWastage(record);
+      });
+    });
+  },
+
+  async openForm() {
+    this.lines = [{ name: '', size: '', unit: 'Pcs', qty: '', reason: '' }];
+
+    document.getElementById('wastage-form-body').innerHTML = `
+      <div class="mb-skel mb-skel-card" style="height:56px;"></div>
+      <div class="mb-skel mb-skel-card" style="height:56px;"></div>`;
+    MApp.Sheet.open('sheet-wastage-form');
+
+    const saveBtn = document.getElementById('wastage-form-save-btn');
+    if (saveBtn) saveBtn.disabled = true;
+
+    try {
+      // Always refetch (not just "if empty") so an item added earlier in
+      // this same session shows up in the picker without a page reload.
+      const itemsRes = await MApp.Api.call('getItemsData');
+      this.items = (itemsRes && itemsRes.success) ? (itemsRes.data || []) : [];
+      document.getElementById('wastage-form-body').innerHTML = this._formHtml();
+    } catch (err) {
+      MApp.Toast.error('Could not load reference data: ' + (err.message || ''));
+      this.closeForm();
+      return;
+    } finally {
+      if (saveBtn) saveBtn.disabled = false;
+    }
+  },
+
+  closeForm() {
+    MApp.Sheet.close('sheet-wastage-form');
+  },
+
+  _formHtml() {
+    return `
+      <div class="mb-field">
+        <label for="wastage-form-date">Date</label>
+        <input type="date" id="wastage-form-date" value="${MApp.Util.todayInputValue()}">
+      </div>
+      <div class="mb-field">
+        <label for="wastage-form-vendor">Vendor (optional)</label>
+        <input type="text" id="wastage-form-vendor">
+      </div>
+
+      <div class="mapp-section-label">Items</div>
+      <div id="wastage-form-lines">${this._linesHtml()}</div>
+      <button type="button" class="mb-btn mb-btn-secondary mb-mt-2 mb-mb-4" onclick="MApp.Wastage.addLine()">+ Add Item</button>
+
+      <div class="mb-field">
+        <label for="wastage-form-remarks">Remarks (optional)</label>
+        <textarea id="wastage-form-remarks" rows="3"></textarea>
+      </div>
+    `;
+  },
+
+  _linesHtml() {
+    if (this.lines.length === 0) return '<div class="mb-text-sm mb-text-steel mb-mb-2">No items added yet.</div>';
+    return this.lines.map((line, i) => `
+      <div class="mb-card" style="padding:var(--mb-sp-3);">
+        <div class="mb-field" style="margin-bottom:var(--mb-sp-2);">
+          <label>Item</label>
+          <button type="button" class="mb-picker-field${line.name ? '' : ' mb-placeholder'}" onclick="MApp.Wastage.pickLineItem(${i})">${line.name ? MApp.Util.escapeHtml(line.name) + (line.size ? ` (${MApp.Util.escapeHtml(line.size)})` : '') : 'Choose an item...'}</button>
+        </div>
+        <div class="mb-field" style="margin-bottom:var(--mb-sp-2);">
+          <label>Quantity</label>
+          <input type="number" inputmode="decimal" min="0" step="1" value="${line.qty === '' ? '' : line.qty}" oninput="MApp.Wastage.updateLine(${i}, 'qty', this.value)">
+        </div>
+        <div class="mb-field" style="margin-bottom:0;">
+          <label>Reason</label>
+          <input type="text" value="${MApp.Util.escapeHtml(line.reason || '')}" oninput="MApp.Wastage.updateLineText(${i}, 'reason', this.value)">
+        </div>
+        ${this.lines.length > 1 ? `<button type="button" class="mb-btn-text mb-mt-2" style="padding:0;min-height:auto;color:var(--mb-enamel-red);" onclick="MApp.Wastage.removeLine(${i})">Remove</button>` : ''}
+      </div>
+    `).join('');
+  },
+
+  addLine() {
+    this.lines.push({ name: '', size: '', unit: 'Pcs', qty: '', reason: '' });
+    const el = document.getElementById('wastage-form-lines');
+    if (el) el.innerHTML = this._linesHtml();
+  },
+
+  removeLine(i) {
+    this.lines.splice(i, 1);
+    if (this.lines.length === 0) this.lines.push({ name: '', size: '', unit: 'Pcs', qty: '', reason: '' });
+    const el = document.getElementById('wastage-form-lines');
+    if (el) el.innerHTML = this._linesHtml();
+  },
+
+  updateLine(i, key, value) {
+    if (!this.lines[i]) return;
+    this.lines[i][key] = MApp.Util.toNumber(value);
+  },
+
+  updateLineText(i, key, value) {
+    if (!this.lines[i]) return;
+    this.lines[i][key] = value;
+  },
+
+  async pickLineItem(i) {
+    if (!this.lines[i]) return;
+    const items = (this.items || []).map(it => ({
+      value: it.name + '||' + it.size, label: it.name, sublabel: it.size ? `Size: ${it.size}` : ''
+    }));
+    const picked = await MApp.Picker.open({
+      title: 'Choose an item', items, selectedValue: this.lines[i].name + '||' + this.lines[i].size
+    });
+    if (!picked || !this.lines[i]) return;
+    const match = (this.items || []).find(it => (it.name + '||' + it.size) === picked.value);
+    this.lines[i].name = match ? match.name : picked.label;
+    this.lines[i].size = match ? match.size : '';
+    this.lines[i].unit = match ? match.baseUnit : 'Pcs';
+
+    const el = document.getElementById('wastage-form-lines');
+    if (el) el.innerHTML = this._linesHtml();
+  },
+
+  async save() {
+    const validLines = this.lines.filter(l => l.name && l.qty > 0);
+    if (validLines.length === 0) {
+      MApp.Toast.error('Add at least one item with a name and quantity greater than zero.');
+      return;
+    }
+
+    const formData = {
+      date: document.getElementById('wastage-form-date')?.value || MApp.Util.todayInputValue(),
+      vendor: (document.getElementById('wastage-form-vendor')?.value || '').trim(),
+      remarks: (document.getElementById('wastage-form-remarks')?.value || '').trim(),
+      items: JSON.stringify(validLines.map(l => ({ name: l.name, size: l.size || '', unit: l.unit || 'Pcs', qty: l.qty, reason: l.reason || '' })))
+    };
+
+    const saveBtn = document.getElementById('wastage-form-save-btn');
+    if (saveBtn) { saveBtn.disabled = true; saveBtn.textContent = 'Saving…'; }
+
+    const res = await MApp.Util.mutateSimple('saveWastage', [formData], 'Wastage logged.');
+    if (res.success) {
+      this.closeForm();
+      this.open();
+      return;
+    }
+    if (saveBtn) { saveBtn.disabled = false; saveBtn.textContent = 'Log Wastage'; }
+  },
+
+  async deleteWastage(record) {
+    if (!MApp.Util.confirmDelete(record.wastageId)) return;
+    const res = await MApp.Util.mutateSimple('deleteWastageBulk', [[record.wastageId]], 'Wastage record deleted.');
+    if (res.success) this.open();
   }
 };
 // ================================================================
@@ -3908,7 +4800,7 @@ MApp.Items = {
       <div class="mb-field">
         <label>Photo</label>
         <div style="display:flex; align-items:center; gap:var(--mb-sp-3);">
-          <img id="item-form-photo-preview" src="${this.photoBase64 || ''}" alt="" style="width:56px;height:56px;border-radius:var(--mb-radius-sm);object-fit:cover;background:var(--mb-steel-faint);${this.photoBase64 ? '' : 'display:none;'}">
+          <img id="item-form-photo-preview" src="${MApp.Util.escapeHtml(this.photoBase64 || '')}" alt="" style="width:56px;height:56px;border-radius:var(--mb-radius-sm);object-fit:cover;background:var(--mb-steel-faint);${this.photoBase64 ? '' : 'display:none;'}">
           <input type="file" accept="image/*" id="item-form-photo-input" onchange="MApp.Items.onPhotoChange(this.files[0])">
         </div>
       </div>
@@ -4193,7 +5085,7 @@ MApp.Directory = {
       // Edit; Vendors/Clients just get Edit. Kept as separate <button>s
       // (not a tappable card) so nothing here nests interactive content.
       const actions = this.type === 'contractor'
-        ? [['edit', 'Edit'], ['rate', '+ Rate'], ['payment', '+ Payment']]
+        ? [['edit', 'Edit'], ['rate', '+ Rate'], ['charge', '+ Charge'], ['payment', '+ Payment']]
         : [['edit', 'Edit']];
       const actionsHtml = actions.map(([action, label]) =>
         `<button type="button" class="mb-btn-text" style="padding:0;min-height:auto;" data-action="${action}" data-name="${MApp.Util.escapeHtml(e.name)}">${label}</button>`
@@ -4214,6 +5106,7 @@ MApp.Directory = {
         if (!record) return;
         if (btn.dataset.action === 'edit') this.openForm(record);
         else if (btn.dataset.action === 'rate') this.openRateSheet(record.name);
+        else if (btn.dataset.action === 'charge') this.openExtraChargeSheet(record.name);
         else if (btn.dataset.action === 'payment') this.openPaymentSheet(record.name);
       });
     });
@@ -4302,14 +5195,42 @@ MApp.Directory = {
   },
 
   // ── Contractor quick-add sub-flows (Phase 1) ────────────────────────
-  openRateSheet(contractorName) {
+
+  // Process Type options are fetched fresh on open rather than relying on
+  // MApp.Production.processTypes -- this sheet must work even if the
+  // Production tab was never visited this session. Size reuses
+  // MApp.Production.PROCESS_SIZE_LIST directly (no session load needed).
+  async _populateRateTypeAndSizeSelects() {
+    const typeSelect = document.getElementById('contractor-rate-process-type');
+    const sizeSelect = document.getElementById('contractor-rate-size');
+    if (!typeSelect || !sizeSelect) return;
+
+    typeSelect.innerHTML = '<option value="">Loading…</option>';
+    let types = [];
+    try {
+      const res = await MApp.Api.call('getProcessTypes');
+      types = (res && res.success) ? (res.data || []) : [];
+    } catch (err) {
+      types = [];
+    }
+    typeSelect.innerHTML = '<option value="">Choose a Process Type…</option>' +
+      types.map(t => `<option value="${MApp.Util.escapeHtml(t.name)}">${MApp.Util.escapeHtml(t.name)}</option>`).join('') +
+      '<option value="Dispatch / Logistics">Dispatch / Logistics</option>';
+
+    const sizes = [...MApp.Production.PROCESS_SIZE_LIST, 'General'];
+    sizeSelect.innerHTML = '<option value="">Choose a Size…</option>' +
+      sizes.map(s => `<option value="${MApp.Util.escapeHtml(s)}">${MApp.Util.escapeHtml(s)}</option>`).join('');
+  },
+
+  async openRateSheet(contractorName) {
     this._rateContractor = contractorName;
     const nameEl = document.getElementById('contractor-rate-name');
     if (nameEl) nameEl.value = contractorName;
-    ['contractor-rate-process', 'contractor-rate-value', 'contractor-rate-remarks'].forEach(id => {
+    ['contractor-rate-value', 'contractor-rate-remarks'].forEach(id => {
       const el = document.getElementById(id);
       if (el) el.value = '';
     });
+    await this._populateRateTypeAndSizeSelects();
     MApp.Sheet.open('sheet-contractor-rate');
   },
 
@@ -4318,14 +5239,16 @@ MApp.Directory = {
   },
 
   async saveRate() {
-    const process = (document.getElementById('contractor-rate-process')?.value || '').trim();
+    const processType = (document.getElementById('contractor-rate-process-type')?.value || '').trim();
+    const size = (document.getElementById('contractor-rate-size')?.value || '').trim();
     const rate = MApp.Util.toNumber(document.getElementById('contractor-rate-value')?.value);
-    if (!process) { MApp.Toast.error('Enter a process name.'); return; }
+    if (!processType || !size) { MApp.Toast.error('Choose a Process Type and Size.'); return; }
     if (!rate || rate <= 0) { MApp.Toast.error('Enter a rate greater than zero.'); return; }
 
     const formData = {
       contractorName: this._rateContractor,
-      processName: process,
+      processType,
+      size,
       ratePerUnit: rate,
       remarks: (document.getElementById('contractor-rate-remarks')?.value || '').trim()
     };
@@ -4335,6 +5258,42 @@ MApp.Directory = {
     const res = await MApp.Util.mutateSimple('saveContractorRate', [formData], 'Rate saved.');
     if (res.success) this.closeRateSheet();
     if (saveBtn) { saveBtn.disabled = false; saveBtn.textContent = 'Save Rate'; }
+  },
+
+  // ── Contractor Extra Charges (Layer 2, Phase 1 quick-add) ───────────
+  openExtraChargeSheet(contractorName) {
+    this._extraChargeContractor = contractorName;
+    const nameEl = document.getElementById('contractor-extra-charge-name');
+    if (nameEl) nameEl.value = contractorName;
+    ['contractor-extra-charge-service-type', 'contractor-extra-charge-amount', 'contractor-extra-charge-remarks'].forEach(id => {
+      const el = document.getElementById(id);
+      if (el) el.value = '';
+    });
+    MApp.Sheet.open('sheet-contractor-extra-charge');
+  },
+
+  closeExtraChargeSheet() {
+    MApp.Sheet.close('sheet-contractor-extra-charge');
+  },
+
+  async saveExtraCharge() {
+    const serviceType = (document.getElementById('contractor-extra-charge-service-type')?.value || '').trim();
+    const chargeAmount = MApp.Util.toNumber(document.getElementById('contractor-extra-charge-amount')?.value);
+    if (!serviceType) { MApp.Toast.error('Enter a service type.'); return; }
+    if (!chargeAmount || chargeAmount <= 0) { MApp.Toast.error('Enter a charge amount greater than zero.'); return; }
+
+    const formData = {
+      contractorName: this._extraChargeContractor,
+      serviceType,
+      chargeAmount,
+      remarks: (document.getElementById('contractor-extra-charge-remarks')?.value || '').trim()
+    };
+
+    const saveBtn = document.getElementById('contractor-extra-charge-save-btn');
+    if (saveBtn) { saveBtn.disabled = true; saveBtn.textContent = 'Saving…'; }
+    const res = await MApp.Util.mutateSimple('saveContractorServiceCharge', [formData], 'Extra charge saved.');
+    if (res.success) this.closeExtraChargeSheet();
+    if (saveBtn) { saveBtn.disabled = false; saveBtn.textContent = 'Save Charge'; }
   },
 
   openPaymentSheet(contractorName) {
@@ -4371,6 +5330,974 @@ MApp.Directory = {
     const res = await MApp.Util.mutateSimple('recordContractorPayment', [formData], 'Payment recorded.');
     if (res.success) this.closePaymentSheet();
     if (saveBtn) { saveBtn.disabled = false; saveBtn.textContent = 'Record Payment'; }
+  }
+};
+
+// ================================================================
+// ADMIN — USERS & ROLES (Phase 4, minimal v1). Entry point is Jinja-
+// gated (mobile_views.html's More tab, {% if current_user.is_admin %}),
+// but every RPC here is independently enforced server-side regardless
+// (roles=frozenset({"admin"}) in app/erp/rpc.py) -- that Jinja gate is
+// UX only, same as desktop's own. Deliberately does NOT build the
+// custom-role permissions-matrix editor (createCustomRole/updateCustomRole's
+// tab x level grid) -- that stays a desktop-only screen per the hybrid-
+// strategy plan; this sheet only ASSIGNS existing roles, never creates one.
+// ================================================================
+MApp.Admin = {
+  users: [],
+  filtered: [],
+  searchTerm: '',
+  customRoles: [],
+
+  ROLE_LABELS: {
+    pending_approval: 'Pending Approval',
+    user: 'User',
+    admin: 'Admin',
+    super_admin: 'Super Admin'
+  },
+
+  async open() {
+    const listEl = document.getElementById('admin-users-list');
+    const searchInput = document.getElementById('admin-users-search');
+    if (searchInput) searchInput.value = '';
+    this.searchTerm = '';
+    MApp.Util.renderSkeleton(listEl, 5);
+    MApp.Sheet.open('sheet-admin-users');
+
+    try {
+      const [usersRes, rolesRes] = await Promise.all([
+        MApp.Api.call('getUsersData'),
+        MApp.Api.call('getCustomRoles').catch(() => null)
+      ]);
+      if (!usersRes || !usersRes.success) {
+        MApp.Util.renderError(listEl, usersRes && usersRes.message, () => this.open());
+        return;
+      }
+      this.users = usersRes.data || [];
+      // Best-effort -- an admin (not super_admin) may not have custom
+      // roles configured yet; a failure here shouldn't block the user list.
+      this.customRoles = (rolesRes && rolesRes.success) ? (rolesRes.data || []) : [];
+      this._applyFilters();
+    } catch (err) {
+      MApp.Util.renderError(listEl, err && err.message, () => this.open());
+    }
+  },
+
+  close() {
+    MApp.Sheet.close('sheet-admin-users');
+  },
+
+  onSearch(term) {
+    this.searchTerm = String(term || '').trim().toLowerCase();
+    this._applyFilters();
+  },
+
+  _applyFilters() {
+    let list = this.users;
+    if (this.searchTerm) {
+      const term = this.searchTerm;
+      list = list.filter(u => u.name.toLowerCase().includes(term) || u.email.toLowerCase().includes(term));
+    }
+    this.filtered = list;
+    this.render();
+  },
+
+  _roleLabel(role) {
+    if (this.ROLE_LABELS[role]) return this.ROLE_LABELS[role];
+    const custom = this.customRoles.find(r => r.roleKey === role);
+    return custom ? custom.roleName : role;
+  },
+
+  _roleChipClass(role) {
+    if (role === 'admin' || role === 'super_admin') return 'mb-chip-inprogress';
+    if (role === 'pending_approval') return 'mb-chip-pending';
+    if (role === 'user') return 'mb-chip-completed';
+    return '';
+  },
+
+  render() {
+    const listEl = document.getElementById('admin-users-list');
+    if (!listEl) return;
+
+    if (this.filtered.length === 0) {
+      MApp.Util.renderEmpty(listEl, {
+        title: 'No users found',
+        body: this.users.length === 0 ? 'No users yet.' : 'Try a different search term.'
+      });
+      return;
+    }
+
+    // Self-targeting actions (change own role / deactivate self) are
+    // blocked server-side anyway (users_service.py's own guards), but
+    // hiding them here avoids a guaranteed round-trip error for the one
+    // row where they'd always fail.
+    const myEmail = String((window.MOBILE_CURRENT_USER || {}).email || '').toLowerCase();
+
+    listEl.innerHTML = this.filtered.slice(0, 200).map((u, i) => {
+      const isSelf = u.email.toLowerCase() === myEmail;
+      const actions = isSelf ? '<div class="mb-mt-2 mb-text-sm mb-text-steel">This is you</div>' : `
+        <div class="mb-mt-2" style="display:flex; gap:var(--mb-sp-4);">
+          <button type="button" class="mb-btn-text" style="padding:0;min-height:auto;" data-admin-action="role" data-admin-index="${i}">Change Role</button>
+          <button type="button" class="mb-btn-text" style="padding:0;min-height:auto;${u.active ? 'color:var(--mb-enamel-red);' : ''}" data-admin-action="${u.active ? 'deactivate' : 'reactivate'}" data-admin-index="${i}">${u.active ? 'Deactivate' : 'Reactivate'}</button>
+        </div>`;
+      return `
+        <div class="mb-card">
+          <div class="mb-card-row">
+            <div>
+              <div class="mb-card-title">${MApp.Util.escapeHtml(u.name)}</div>
+              <div class="mb-card-sub">${MApp.Util.escapeHtml(u.email)}</div>
+            </div>
+            <span class="mb-chip ${this._roleChipClass(u.role)}">${MApp.Util.escapeHtml(this._roleLabel(u.role))}</span>
+          </div>
+          ${!u.active ? '<div class="mb-mt-2"><span class="mb-chip mb-chip-cancelled">Inactive</span></div>' : ''}
+          ${actions}
+        </div>`;
+    }).join('');
+
+    listEl.querySelectorAll('[data-admin-action]').forEach(btn => {
+      btn.addEventListener('click', () => {
+        const user = this.filtered[Number(btn.dataset.adminIndex)];
+        if (!user) return;
+        const action = btn.dataset.adminAction;
+        if (action === 'role') this.changeRole(user);
+        else if (action === 'deactivate') this.deactivate(user);
+        else this.reactivate(user);
+      });
+    });
+  },
+
+  // Only a super_admin can hand out the Admin role itself (server-enforced
+  // in updateUserRole too) -- omitted from the picker entirely for a
+  // plain admin rather than offered-then-rejected.
+  async changeRole(user) {
+    const builtIn = ['pending_approval', 'user'];
+    if ((window.MOBILE_CURRENT_USER || {}).role === 'super_admin') builtIn.push('admin');
+    const items = builtIn.map(r => ({ value: r, label: this.ROLE_LABELS[r] }))
+      .concat(this.customRoles.map(r => ({ value: r.roleKey, label: r.roleName })));
+
+    const picked = await MApp.Picker.open({ title: `Role for ${user.name}`, items, selectedValue: user.role });
+    if (!picked) return;
+
+    const res = await MApp.Util.mutateSimple('updateUserRole', [user.id, picked.value], `${user.name} is now ${picked.label}.`);
+    if (res.success) this.open();
+  },
+
+  async deactivate(user) {
+    if (!MApp.Util.confirmDelete(`${user.name}'s access`)) return;
+    const res = await MApp.Util.mutateSimple('deactivateUser', [user.id], `${user.name} deactivated.`);
+    if (res.success) this.open();
+  },
+
+  async reactivate(user) {
+    const res = await MApp.Util.mutateSimple('reactivateUser', [user.id], `${user.name} reactivated.`);
+    if (res.success) this.open();
+  },
+
+  // ── Create User ──────────────────────────────────────────────────────
+  openCreateForm() {
+    document.getElementById('admin-user-form-body').innerHTML = this._createFormHtml();
+    MApp.Sheet.open('sheet-admin-user-form');
+  },
+
+  closeCreateForm() {
+    MApp.Sheet.close('sheet-admin-user-form');
+  },
+
+  _createFormHtml() {
+    const isSuperAdmin = (window.MOBILE_CURRENT_USER || {}).role === 'super_admin';
+    return `
+      <div class="mb-field">
+        <label for="admin-user-name">Name</label>
+        <input type="text" id="admin-user-name">
+      </div>
+      <div class="mb-field">
+        <label for="admin-user-email">Email</label>
+        <input type="email" id="admin-user-email" autocomplete="off">
+      </div>
+      <div class="mb-field">
+        <label for="admin-user-password">Password</label>
+        <input type="password" id="admin-user-password" autocomplete="new-password">
+      </div>
+      <div class="mb-field">
+        <label for="admin-user-confirm">Confirm Password</label>
+        <input type="password" id="admin-user-confirm" autocomplete="new-password">
+      </div>
+      <div class="mb-field">
+        <label>Role</label>
+        <select id="admin-user-role">
+          <option value="user" selected>User</option>
+          ${isSuperAdmin ? '<option value="admin">Admin</option>' : ''}
+        </select>
+      </div>
+    `;
+  },
+
+  async createUser() {
+    const name = (document.getElementById('admin-user-name')?.value || '').trim();
+    const email = (document.getElementById('admin-user-email')?.value || '').trim();
+    const password = document.getElementById('admin-user-password')?.value || '';
+    const confirm = document.getElementById('admin-user-confirm')?.value || '';
+    const role = document.getElementById('admin-user-role')?.value || 'user';
+
+    if (!name || !email || !password || !confirm) {
+      MApp.Toast.error('Fill in every field.');
+      return;
+    }
+    if (password !== confirm) {
+      MApp.Toast.error('Passwords do not match.');
+      return;
+    }
+
+    const saveBtn = document.getElementById('admin-user-form-save-btn');
+    if (saveBtn) { saveBtn.disabled = true; saveBtn.textContent = 'Creating…'; }
+
+    const res = await MApp.Util.mutateSimple('createUser', [name, email, password, confirm, role], `${name} created.`);
+    if (res.success) {
+      this.closeCreateForm();
+      this.open();
+      if (saveBtn) { saveBtn.disabled = false; saveBtn.textContent = 'Create User'; }
+      return;
+    }
+    if (saveBtn) { saveBtn.disabled = false; saveBtn.textContent = 'Create User'; }
+  }
+};
+
+// ================================================================
+// PROCESSES (Phase 5, More tab) — header fields + Common Components only.
+// Color Sub-Groups/Primary Axis/Dispatch Differentiator/Linked Processes
+// stay a desktop task (see mobile_views.html's sheet-process-form comment
+// for why that's safe: they're all optional/derived server-side). Not
+// admin-gated -- saveProcess/deleteProcess carry no roles= restriction
+// server-side, matching desktop's own open access.
+// ================================================================
+MApp.Process = {
+  processes: [],
+  filtered: [],
+  searchTerm: '',
+  items: [],
+  editingProcess: null,
+  // Rows this screen doesn't have UI for (color sub-groups, POOL-sourced
+  // Common rows) -- read on edit and resent completely untouched, since
+  // saveProcess replaces the whole components[] array on every save, not
+  // a diff. Never populated on create (nothing to preserve).
+  preservedComponents: [],
+  preservedColorLinks: [],
+  lines: [],
+  _formSeq: 0,
+
+  async open() {
+    const listEl = document.getElementById('process-list-list');
+    const searchInput = document.getElementById('process-list-search');
+    if (searchInput) searchInput.value = '';
+    this.searchTerm = '';
+    MApp.Util.renderSkeleton(listEl, 5);
+    MApp.Sheet.open('sheet-process-list');
+
+    try {
+      const res = await MApp.Api.call('getProcessData');
+      if (!res || !res.success) {
+        MApp.Util.renderError(listEl, res && res.message, () => this.open());
+        return;
+      }
+      this.processes = res.data || [];
+      this._applyFilters();
+    } catch (err) {
+      MApp.Util.renderError(listEl, err && err.message, () => this.open());
+    }
+  },
+
+  close() {
+    MApp.Sheet.close('sheet-process-list');
+  },
+
+  onSearch(term) {
+    this.searchTerm = String(term || '').trim().toLowerCase();
+    this._applyFilters();
+  },
+
+  _applyFilters() {
+    let list = this.processes;
+    if (this.searchTerm) {
+      const term = this.searchTerm;
+      list = list.filter(p =>
+        p.processName.toLowerCase().includes(term) ||
+        (p.outputItemName || '').toLowerCase().includes(term));
+    }
+    this.filtered = list;
+    this.render();
+  },
+
+  render() {
+    const listEl = document.getElementById('process-list-list');
+    if (!listEl) return;
+
+    if (this.filtered.length === 0) {
+      MApp.Util.renderEmpty(listEl, {
+        title: 'No processes found',
+        body: this.processes.length === 0 ? 'Tap + to add the first one.' : 'Try a different search term.'
+      });
+      return;
+    }
+
+    listEl.innerHTML = this.filtered.slice(0, 200).map((p, i) => `
+      <div class="mb-card">
+        <div class="mb-card-row">
+          <div>
+            <div class="mb-card-title">${MApp.Util.escapeHtml(p.processName)}</div>
+            <div class="mb-card-sub">${MApp.Util.escapeHtml(p.outputItemName || '')}</div>
+          </div>
+          <div style="text-align:right;">
+            <div class="mb-card-sub">Stage ${MApp.Util.escapeHtml(String(p.sequence))}</div>
+            <div class="mb-card-sub">${MApp.Util.escapeHtml(p.lotPrefix || '')}</div>
+          </div>
+        </div>
+        ${!p.active ? '<div class="mb-mt-2"><span class="mb-chip mb-chip-cancelled">Inactive</span></div>' : ''}
+        <div class="mb-mt-2"><button type="button" class="mb-btn-text" style="padding:0;min-height:auto;" data-process-index="${i}">Edit</button></div>
+      </div>`).join('');
+
+    listEl.querySelectorAll('[data-process-index]').forEach(btn => {
+      btn.addEventListener('click', () => {
+        const process = this.filtered[Number(btn.dataset.processIndex)];
+        if (process) this.openForm(process);
+      });
+    });
+  },
+
+  async openForm(process) {
+    const mySeq = ++this._formSeq;
+    this.editingProcess = process || null;
+    this.preservedComponents = [];
+    this.preservedColorLinks = [];
+    this.lines = [{ itemName: '', size: '', unit: '', qtyPerUnit: '', remarks: '' }];
+
+    const titleEl = document.getElementById('process-form-title');
+    if (titleEl) titleEl.textContent = process ? 'Edit Process' : 'Add Process';
+    const deleteBtn = document.getElementById('process-form-delete-btn');
+    if (deleteBtn) deleteBtn.classList.toggle('mb-hidden', !process);
+    const saveBtn = document.getElementById('process-form-save-btn');
+    if (saveBtn) { saveBtn.disabled = true; saveBtn.textContent = 'Save Process'; }
+
+    document.getElementById('process-form-body').innerHTML = `
+      <div class="mb-skel mb-skel-card" style="height:56px;"></div>
+      <div class="mb-skel mb-skel-card" style="height:56px;"></div>`;
+    MApp.Sheet.open('sheet-process-form');
+
+    try {
+      if (this.items.length === 0) {
+        const itemsRes = await MApp.Api.call('getItemsData');
+        if (mySeq !== this._formSeq) return;
+        this.items = (itemsRes && itemsRes.success) ? (itemsRes.data || []) : [];
+      }
+
+      if (process) {
+        const [compRes, linksRes] = await Promise.all([
+          MApp.Api.call('getProcessComponentsData', process.processId),
+          MApp.Api.call('getProcessColorLinksData', process.processId)
+        ]);
+        // A newer openForm() call superseded this one while we were
+        // awaiting -- don't let this stale response repaint the form.
+        if (mySeq !== this._formSeq) return;
+        const allComponents = (compRes && compRes.success) ? (compRes.data || []) : [];
+        const editable = allComponents.filter(c => this._isEditableRow(c));
+        this.preservedComponents = allComponents.filter(c => !this._isEditableRow(c));
+        this.lines = editable.length > 0
+          ? editable.map(c => ({ ...c }))
+          : [{ itemName: '', size: '', unit: '', qtyPerUnit: '', remarks: '' }];
+        this.preservedColorLinks = (linksRes && linksRes.success) ? (linksRes.data || []) : [];
+      }
+
+      document.getElementById('process-form-body').innerHTML = this._formHtml(process);
+    } catch (err) {
+      if (mySeq !== this._formSeq) return;
+      MApp.Toast.error('Could not load this process: ' + (err.message || ''));
+      this.closeForm();
+      return;
+    } finally {
+      if (mySeq === this._formSeq && saveBtn) saveBtn.disabled = false;
+    }
+  },
+
+  // A COMMON, ITEM-sourced row is the only kind mobile's flat Common
+  // Components list can safely represent -- a color sub-group row or a
+  // POOL-sourced row (references another process's output, not an Items
+  // Master entry) both need UI this screen doesn't build, so they're
+  // preserved instead (see preservedComponents above).
+  _isEditableRow(c) {
+    return String(c.colorGroup || '').toUpperCase() === 'COMMON' && String(c.sourceType || '').toUpperCase() !== 'POOL';
+  },
+
+  closeForm() {
+    MApp.Sheet.close('sheet-process-form');
+  },
+
+  _formHtml(process) {
+    return `
+      <div class="mb-field">
+        <label for="process-form-name">Process Name</label>
+        <input type="text" id="process-form-name" value="${MApp.Util.escapeHtml(process ? process.processName : '')}">
+      </div>
+      <div class="mb-field">
+        <label for="process-form-sequence">Sequence</label>
+        <input type="number" id="process-form-sequence" min="1" step="1" value="${process ? process.sequence : ''}">
+      </div>
+      <div class="mb-field">
+        <label for="process-form-prefix">Lot Prefix</label>
+        <input type="text" id="process-form-prefix" maxlength="6" style="text-transform:uppercase;" value="${MApp.Util.escapeHtml(process ? process.lotPrefix : '')}">
+        <div class="mb-field-hint">1-6 letters/numbers, must be unique across every process.</div>
+      </div>
+      <div class="mb-field">
+        <label for="process-form-output">Output Item Name</label>
+        <input type="text" id="process-form-output" value="${MApp.Util.escapeHtml(process ? process.outputItemName : '')}">
+      </div>
+      <div class="mb-field">
+        <label for="process-form-type">Process Type (optional)</label>
+        <input type="text" id="process-form-type" value="${MApp.Util.escapeHtml(process ? (process.processType || '') : '')}">
+      </div>
+      <div class="mb-field">
+        <label class="mb-flex-row" style="cursor:pointer;">
+          <input type="checkbox" id="process-form-final" ${process && process.isFinalStage ? 'checked' : ''} style="width:20px;height:20px;">
+          <span>Final stage (produces a dispatchable product)</span>
+        </label>
+      </div>
+      <div class="mb-field">
+        <label class="mb-flex-row" style="cursor:pointer;">
+          <input type="checkbox" id="process-form-active" ${!process || process.active ? 'checked' : ''} style="width:20px;height:20px;">
+          <span>Active</span>
+        </label>
+      </div>
+      <div class="mb-field">
+        <label for="process-form-remarks">Remarks (optional)</label>
+        <textarea id="process-form-remarks" rows="2">${MApp.Util.escapeHtml(process ? (process.remarks || '') : '')}</textarea>
+      </div>
+
+      <div class="mapp-section-label">Common Components</div>
+      ${process && this.preservedComponents.length > 0 ? `<div class="mb-field-hint mb-mb-2">This process also has ${this.preservedComponents.length} color-specific/pooled component row(s) not shown here — edit those on desktop.</div>` : ''}
+      <div id="process-form-lines">${this._linesHtml()}</div>
+      <button type="button" class="mb-btn mb-btn-secondary mb-mt-2 mb-mb-4" onclick="MApp.Process.addLine()">+ Add Component</button>
+    `;
+  },
+
+  _linesHtml() {
+    if (this.lines.length === 0) return '<div class="mb-text-sm mb-text-steel mb-mb-2">No components added yet.</div>';
+    return this.lines.map((line, i) => `
+      <div class="mb-card" style="padding:var(--mb-sp-3);">
+        <div class="mb-field" style="margin-bottom:var(--mb-sp-2);">
+          <label>Item</label>
+          <button type="button" class="mb-picker-field${line.itemName ? '' : ' mb-placeholder'}" onclick="MApp.Process.pickLineItem(${i})">${line.itemName ? MApp.Util.escapeHtml(line.itemName) + (line.size ? ` (${MApp.Util.escapeHtml(line.size)})` : '') : 'Choose an item...'}</button>
+        </div>
+        <div class="mb-field" style="margin-bottom:var(--mb-sp-2);">
+          <label>Qty per unit</label>
+          <input type="number" inputmode="decimal" min="0" step="any" value="${line.qtyPerUnit || ''}" oninput="MApp.Process.updateLine(${i}, 'qtyPerUnit', this.value)">
+        </div>
+        <div class="mb-field" style="margin-bottom:0;">
+          <label>Remarks (optional)</label>
+          <input type="text" value="${MApp.Util.escapeHtml(line.remarks || '')}" oninput="MApp.Process.updateLineText(${i}, 'remarks', this.value)">
+        </div>
+        ${this.lines.length > 1 ? `<button type="button" class="mb-btn-text mb-mt-2" style="padding:0;min-height:auto;color:var(--mb-enamel-red);" onclick="MApp.Process.removeLine(${i})">Remove</button>` : ''}
+      </div>
+    `).join('');
+  },
+
+  addLine() {
+    this.lines.push({ itemName: '', size: '', unit: '', qtyPerUnit: '', remarks: '' });
+    const el = document.getElementById('process-form-lines');
+    if (el) el.innerHTML = this._linesHtml();
+  },
+
+  removeLine(i) {
+    this.lines.splice(i, 1);
+    if (this.lines.length === 0) this.lines.push({ itemName: '', size: '', unit: '', qtyPerUnit: '', remarks: '' });
+    const el = document.getElementById('process-form-lines');
+    if (el) el.innerHTML = this._linesHtml();
+  },
+
+  updateLine(i, key, value) {
+    if (!this.lines[i]) return;
+    this.lines[i][key] = MApp.Util.toNumber(value);
+  },
+
+  updateLineText(i, key, value) {
+    if (!this.lines[i]) return;
+    this.lines[i][key] = value;
+  },
+
+  async pickLineItem(i) {
+    if (!this.lines[i]) return;
+    const items = (this.items || []).map(it => ({
+      value: it.name + '||' + it.size, label: it.name, sublabel: it.size ? `Size: ${it.size}` : ''
+    }));
+    const picked = await MApp.Picker.open({
+      title: 'Choose an item', items, selectedValue: this.lines[i].itemName + '||' + this.lines[i].size
+    });
+    if (!picked || !this.lines[i]) return;
+    const match = (this.items || []).find(it => (it.name + '||' + it.size) === picked.value);
+    this.lines[i].itemName = match ? match.name : picked.label;
+    this.lines[i].size = match ? match.size : '';
+    this.lines[i].unit = match ? match.baseUnit : '';
+
+    const el = document.getElementById('process-form-lines');
+    if (el) el.innerHTML = this._linesHtml();
+  },
+
+  async save() {
+    const name = (document.getElementById('process-form-name')?.value || '').trim();
+    const prefix = (document.getElementById('process-form-prefix')?.value || '').trim().toUpperCase();
+    const output = (document.getElementById('process-form-output')?.value || '').trim();
+    const sequence = MApp.Util.toNumber(document.getElementById('process-form-sequence')?.value);
+    if (!name) { MApp.Toast.error('Enter a process name.'); return; }
+    if (!prefix) { MApp.Toast.error('Enter a lot prefix.'); return; }
+    if (!output) { MApp.Toast.error('Enter an output item name.'); return; }
+    if (!sequence || sequence <= 0) { MApp.Toast.error('Enter a sequence greater than zero.'); return; }
+
+    const editableRows = this.lines.filter(l => l.itemName).map(l => ({
+      itemName: l.itemName, size: l.size || '', narration: '', qtyPerUnit: l.qtyPerUnit || 1,
+      unit: l.unit || '', remarks: l.remarks || '', sourceType: 'ITEM', colorGroup: 'COMMON', colorAxis: ''
+    }));
+    const components = editableRows.concat(this.preservedComponents.map(c => ({
+      itemName: c.itemName, size: c.size, narration: c.narration, qtyPerUnit: c.qtyPerUnit,
+      unit: c.unit, remarks: c.remarks, sourceType: c.sourceType, colorGroup: c.colorGroup, colorAxis: c.colorAxis
+    })));
+
+    const formData = {
+      processName: name,
+      lotPrefix: prefix,
+      outputItemName: output,
+      sequence,
+      processType: (document.getElementById('process-form-type')?.value || '').trim(),
+      isFinalStage: !!document.getElementById('process-form-final')?.checked,
+      active: !!document.getElementById('process-form-active')?.checked,
+      remarks: (document.getElementById('process-form-remarks')?.value || '').trim(),
+      components: JSON.stringify(components)
+    };
+    const isEdit = !!this.editingProcess;
+    if (isEdit) {
+      formData.processId = this.editingProcess.processId;
+      // Preserved verbatim -- mobile never edits Linked Processes, but
+      // omitting this field entirely would wipe them (saveProcess treats
+      // a missing colorLinks key the same as an explicit empty array).
+      formData.colorLinks = JSON.stringify(this.preservedColorLinks.map(l => ({
+        otherProcessId: l.otherProcessId, myColor: l.myColor, theirColor: l.theirColor,
+        myAxisKey: l.myAxisKey, theirAxisKey: l.theirAxisKey
+      })));
+    }
+
+    const saveBtn = document.getElementById('process-form-save-btn');
+    if (saveBtn) { saveBtn.disabled = true; saveBtn.textContent = 'Saving…'; }
+
+    const res = await MApp.Util.mutateSimple('saveProcess', [formData], isEdit ? 'Process updated.' : 'Process saved.');
+    if (res.success) {
+      this.closeForm();
+      this.open();
+      return;
+    }
+    if (saveBtn) { saveBtn.disabled = false; saveBtn.textContent = 'Save Process'; }
+  },
+
+  async deleteProcess() {
+    if (!this.editingProcess) return;
+    if (!MApp.Util.confirmDelete(this.editingProcess.processName)) return;
+    const res = await MApp.Util.mutateSimple('deleteProcess', [this.editingProcess.processId], 'Process deleted.');
+    if (res.success) {
+      this.closeForm();
+      this.open();
+    }
+  }
+};
+
+// ================================================================
+// BOM / PRODUCT RECIPES (Phase 5, More tab) — password-gated exactly like
+// desktop: verifyBOMAccess mints a session token (erp.bom_access_tokens,
+// 6h TTL) that every BOM read/write requires. Cached in a module-level
+// variable for the rest of this page load, mirroring desktop's
+// sessionStorage persist-for-session behavior (a PWA relaunch re-prompts,
+// same as a fresh browser tab does on desktop). save()/deleteBom() bypass
+// the shared MApp.Util.mutateSimple helper (unlike every other Phase 1-4
+// write) because they need one extra branch mutateSimple doesn't support:
+// detecting an expired/invalid token from the response and re-prompting
+// instead of just toasting a generic error.
+// ================================================================
+MApp.BOM = {
+  token: null,
+  products: [],
+  filtered: [],
+  searchTerm: '',
+  items: [],
+  editingProduct: null,
+  components: [],
+  costs: [],
+
+  async open() {
+    if (!this.token) {
+      const errEl = document.getElementById('bom-unlock-error');
+      if (errEl) errEl.textContent = '';
+      const pwEl = document.getElementById('bom-unlock-password');
+      if (pwEl) pwEl.value = '';
+      MApp.Sheet.open('sheet-bom-unlock');
+      return;
+    }
+    await this._loadList();
+  },
+
+  closeUnlock() {
+    MApp.Sheet.close('sheet-bom-unlock');
+  },
+
+  async unlock() {
+    const password = document.getElementById('bom-unlock-password')?.value || '';
+    const errEl = document.getElementById('bom-unlock-error');
+    if (errEl) errEl.textContent = '';
+    if (!password) {
+      if (errEl) errEl.textContent = 'Enter the password.';
+      return;
+    }
+    const btn = document.getElementById('bom-unlock-btn');
+    if (btn) { btn.disabled = true; btn.textContent = 'Checking…'; }
+
+    try {
+      const res = await MApp.Api.call('verifyBOMAccess', password);
+      if (!res || !res.success) {
+        if (errEl) errEl.textContent = (res && res.message) || 'Incorrect password.';
+        return;
+      }
+      this.token = res.data && res.data.token;
+      MApp.Sheet.close('sheet-bom-unlock');
+      await this._loadList();
+    } catch (err) {
+      if (errEl) errEl.textContent = err.message || 'Could not reach the server.';
+    } finally {
+      if (btn) { btn.disabled = false; btn.textContent = 'Unlock'; }
+    }
+  },
+
+  async _loadList() {
+    const listEl = document.getElementById('bom-list-list');
+    const searchInput = document.getElementById('bom-list-search');
+    if (searchInput) searchInput.value = '';
+    this.searchTerm = '';
+    MApp.Util.renderSkeleton(listEl, 4);
+    MApp.Sheet.open('sheet-bom-list');
+
+    try {
+      const res = await MApp.Api.call('getBOMData', this.token);
+      if (!res || !res.success) {
+        if (this._isAccessError(res)) { this._resetToken(); return; }
+        MApp.Util.renderError(listEl, res && res.message, () => this._loadList());
+        return;
+      }
+      this.products = res.data || [];
+      this._applyFilters();
+    } catch (err) {
+      MApp.Util.renderError(listEl, err && err.message, () => this._loadList());
+    }
+  },
+
+  _isAccessError(res) {
+    return !!(res && res.message && /password-protected/i.test(res.message));
+  },
+
+  _resetToken() {
+    this.token = null;
+    MApp.Sheet.close('sheet-bom-list');
+    MApp.Toast.error('Your BOM session expired — enter the password again.');
+    this.open();
+  },
+
+  close() {
+    MApp.Sheet.close('sheet-bom-list');
+  },
+
+  onSearch(term) {
+    this.searchTerm = String(term || '').trim().toLowerCase();
+    this._applyFilters();
+  },
+
+  _applyFilters() {
+    let list = this.products;
+    if (this.searchTerm) {
+      const term = this.searchTerm;
+      list = list.filter(p => p.productName.toLowerCase().includes(term));
+    }
+    this.filtered = list;
+    this.render();
+  },
+
+  render() {
+    const listEl = document.getElementById('bom-list-list');
+    if (!listEl) return;
+
+    if (this.filtered.length === 0) {
+      MApp.Util.renderEmpty(listEl, {
+        title: 'No recipes found',
+        body: this.products.length === 0 ? 'Tap + to add the first one.' : 'Try a different search term.'
+      });
+      return;
+    }
+
+    listEl.innerHTML = this.filtered.slice(0, 200).map((p, i) => `
+      <div class="mb-card">
+        <div class="mb-card-row">
+          <div>
+            <div class="mb-card-title">${MApp.Util.escapeHtml(p.productName)}</div>
+            <div class="mb-card-sub">${(p.components || []).length} component(s)</div>
+          </div>
+          <div style="text-align:right;">
+            <div class="mb-card-number">${MApp.Util.formatCurrency((p.totalCost || 0) + (p.totalAdditionalCost || 0))}</div>
+            <div class="mb-card-sub">Total cost</div>
+          </div>
+        </div>
+        <div class="mb-mt-2"><button type="button" class="mb-btn-text" style="padding:0;min-height:auto;" data-bom-index="${i}">Edit</button></div>
+      </div>`).join('');
+
+    listEl.querySelectorAll('[data-bom-index]').forEach(btn => {
+      btn.addEventListener('click', () => {
+        const product = this.filtered[Number(btn.dataset.bomIndex)];
+        if (product) this.openForm(product);
+      });
+    });
+  },
+
+  async openForm(product) {
+    this.editingProduct = product || null;
+    this.components = product
+      ? (product.components || []).map(c => ({ ...c }))
+      : [{ itemName: '', size: '', narration: '', color: '', vendor: '', rate: '', qtyPerProduct: '', processId: '' }];
+    this.costs = product ? (product.additionalCosts || []).map(c => ({ ...c })) : [];
+
+    const titleEl = document.getElementById('bom-form-title');
+    if (titleEl) titleEl.textContent = product ? 'Edit Recipe' : 'Add Recipe';
+    const deleteBtn = document.getElementById('bom-form-delete-btn');
+    if (deleteBtn) deleteBtn.classList.toggle('mb-hidden', !product);
+    const saveBtn = document.getElementById('bom-form-save-btn');
+    if (saveBtn) { saveBtn.disabled = true; saveBtn.textContent = 'Save Recipe'; }
+
+    document.getElementById('bom-form-body').innerHTML = `
+      <div class="mb-skel mb-skel-card" style="height:56px;"></div>
+      <div class="mb-skel mb-skel-card" style="height:56px;"></div>`;
+    MApp.Sheet.open('sheet-bom-form');
+
+    try {
+      if (this.items.length === 0) {
+        const itemsRes = await MApp.Api.call('getItemsData');
+        this.items = (itemsRes && itemsRes.success) ? (itemsRes.data || []) : [];
+      }
+      document.getElementById('bom-form-body').innerHTML = this._formHtml(product);
+    } catch (err) {
+      MApp.Toast.error('Could not load reference data: ' + (err.message || ''));
+      this.closeForm();
+      return;
+    } finally {
+      if (saveBtn) saveBtn.disabled = false;
+    }
+  },
+
+  closeForm() {
+    MApp.Sheet.close('sheet-bom-form');
+  },
+
+  _formHtml(product) {
+    return `
+      <div class="mb-field">
+        <label for="bom-form-name">Product Name</label>
+        <input type="text" id="bom-form-name" value="${MApp.Util.escapeHtml(product ? product.productName : '')}">
+      </div>
+      <div class="mb-field">
+        <label for="bom-form-remarks">Remarks (optional)</label>
+        <textarea id="bom-form-remarks" rows="2">${MApp.Util.escapeHtml(product ? (product.remarks || '') : '')}</textarea>
+      </div>
+
+      <div class="mapp-section-label">Components</div>
+      <div id="bom-form-components">${this._componentsHtml()}</div>
+      <button type="button" class="mb-btn mb-btn-secondary mb-mt-2 mb-mb-4" onclick="MApp.BOM.addComponent()">+ Add Component</button>
+
+      <div class="mapp-section-label">Additional Costs (optional)</div>
+      <div id="bom-form-costs">${this._costsHtml()}</div>
+      <button type="button" class="mb-btn mb-btn-secondary mb-mt-2 mb-mb-4" onclick="MApp.BOM.addCost()">+ Add Cost</button>
+    `;
+  },
+
+  // ── Components ────────────────────────────────────────────────────
+  _componentsHtml() {
+    if (this.components.length === 0) return '<div class="mb-text-sm mb-text-steel mb-mb-2">No components added yet.</div>';
+    return this.components.map((c, i) => `
+      <div class="mb-card" style="padding:var(--mb-sp-3);">
+        <div class="mb-field" style="margin-bottom:var(--mb-sp-2);">
+          <label>Item</label>
+          <button type="button" class="mb-picker-field${c.itemName ? '' : ' mb-placeholder'}" onclick="MApp.BOM.pickComponentItem(${i})">${c.itemName ? MApp.Util.escapeHtml(c.itemName) + (c.size ? ` (${MApp.Util.escapeHtml(c.size)})` : '') : 'Choose an item...'}</button>
+        </div>
+        <div class="mb-field" style="margin-bottom:var(--mb-sp-2);">
+          <label>Quantity per Product</label>
+          <input type="number" inputmode="decimal" min="0" step="any" value="${c.qtyPerProduct || ''}" oninput="MApp.BOM.updateComponent(${i}, 'qtyPerProduct', this.value)">
+        </div>
+        <div class="mb-field" style="margin-bottom:var(--mb-sp-2);">
+          <label>Vendor (optional)</label>
+          <input type="text" value="${MApp.Util.escapeHtml(c.vendor || '')}" oninput="MApp.BOM.updateComponentText(${i}, 'vendor', this.value)">
+        </div>
+        <div class="mb-field" style="margin-bottom:var(--mb-sp-2);">
+          <label>Rate (optional)</label>
+          <input type="number" inputmode="decimal" min="0" step="0.01" value="${c.rate || ''}" oninput="MApp.BOM.updateComponent(${i}, 'rate', this.value)">
+        </div>
+        <div class="mb-field" style="margin-bottom:0;">
+          <label>Color (optional)</label>
+          <input type="text" value="${MApp.Util.escapeHtml(c.color || '')}" oninput="MApp.BOM.updateComponentText(${i}, 'color', this.value)">
+        </div>
+        ${this.components.length > 1 ? `<button type="button" class="mb-btn-text mb-mt-2" style="padding:0;min-height:auto;color:var(--mb-enamel-red);" onclick="MApp.BOM.removeComponent(${i})">Remove</button>` : ''}
+      </div>
+    `).join('');
+  },
+
+  addComponent() {
+    this.components.push({ itemName: '', size: '', narration: '', color: '', vendor: '', rate: '', qtyPerProduct: '', processId: '' });
+    const el = document.getElementById('bom-form-components');
+    if (el) el.innerHTML = this._componentsHtml();
+  },
+
+  removeComponent(i) {
+    this.components.splice(i, 1);
+    if (this.components.length === 0) this.components.push({ itemName: '', size: '', narration: '', color: '', vendor: '', rate: '', qtyPerProduct: '', processId: '' });
+    const el = document.getElementById('bom-form-components');
+    if (el) el.innerHTML = this._componentsHtml();
+  },
+
+  updateComponent(i, key, value) {
+    if (!this.components[i]) return;
+    this.components[i][key] = MApp.Util.toNumber(value);
+  },
+
+  updateComponentText(i, key, value) {
+    if (!this.components[i]) return;
+    this.components[i][key] = value;
+  },
+
+  async pickComponentItem(i) {
+    if (!this.components[i]) return;
+    const items = (this.items || []).map(it => ({
+      value: it.name + '||' + it.size, label: it.name, sublabel: it.size ? `Size: ${it.size}` : ''
+    }));
+    const picked = await MApp.Picker.open({
+      title: 'Choose an item', items, selectedValue: this.components[i].itemName + '||' + this.components[i].size
+    });
+    if (!picked || !this.components[i]) return;
+    const match = (this.items || []).find(it => (it.name + '||' + it.size) === picked.value);
+    this.components[i].itemName = match ? match.name : picked.label;
+    this.components[i].size = match ? match.size : '';
+
+    const el = document.getElementById('bom-form-components');
+    if (el) el.innerHTML = this._componentsHtml();
+  },
+
+  // ── Additional Costs ─────────────────────────────────────────────────
+  _costsHtml() {
+    if (this.costs.length === 0) return '<div class="mb-text-sm mb-text-steel mb-mb-2">No additional costs added.</div>';
+    return this.costs.map((c, i) => `
+      <div class="mb-card" style="padding:var(--mb-sp-3);">
+        <div class="mb-field" style="margin-bottom:var(--mb-sp-2);">
+          <label>Description</label>
+          <input type="text" value="${MApp.Util.escapeHtml(c.description || '')}" oninput="MApp.BOM.updateCostText(${i}, 'description', this.value)">
+        </div>
+        <div class="mb-field" style="margin-bottom:var(--mb-sp-2);">
+          <label>Rate</label>
+          <input type="number" inputmode="decimal" min="0" step="0.01" value="${c.rate || ''}" oninput="MApp.BOM.updateCost(${i}, 'rate', this.value)">
+        </div>
+        <div class="mb-field" style="margin-bottom:var(--mb-sp-2);">
+          <label>Process (optional)</label>
+          <input type="text" value="${MApp.Util.escapeHtml(c.processName || '')}" oninput="MApp.BOM.updateCostText(${i}, 'processName', this.value)">
+        </div>
+        <div class="mb-field" style="margin-bottom:0;">
+          <label>Contractor (optional)</label>
+          <input type="text" value="${MApp.Util.escapeHtml(c.contractorName || '')}" oninput="MApp.BOM.updateCostText(${i}, 'contractorName', this.value)">
+        </div>
+        <button type="button" class="mb-btn-text mb-mt-2" style="padding:0;min-height:auto;color:var(--mb-enamel-red);" onclick="MApp.BOM.removeCost(${i})">Remove</button>
+      </div>
+    `).join('');
+  },
+
+  addCost() {
+    this.costs.push({ description: '', rate: '', processName: '', contractorName: '' });
+    const el = document.getElementById('bom-form-costs');
+    if (el) el.innerHTML = this._costsHtml();
+  },
+
+  removeCost(i) {
+    this.costs.splice(i, 1);
+    const el = document.getElementById('bom-form-costs');
+    if (el) el.innerHTML = this._costsHtml();
+  },
+
+  updateCost(i, key, value) {
+    if (!this.costs[i]) return;
+    this.costs[i][key] = MApp.Util.toNumber(value);
+  },
+
+  updateCostText(i, key, value) {
+    if (!this.costs[i]) return;
+    this.costs[i][key] = value;
+  },
+
+  async save() {
+    const name = (document.getElementById('bom-form-name')?.value || '').trim();
+    if (!name) { MApp.Toast.error('Enter a product name.'); return; }
+    const validComponents = this.components.filter(c => c.itemName);
+    if (validComponents.length === 0) {
+      MApp.Toast.error('Add at least one component.');
+      return;
+    }
+    const zeroQtyComponent = validComponents.find(c => !(MApp.Util.toNumber(c.qtyPerProduct) > 0));
+    if (zeroQtyComponent) {
+      MApp.Toast.error(`Enter a quantity per product for ${zeroQtyComponent.itemName}.`);
+      return;
+    }
+
+    const formData = {
+      productName: name,
+      remarks: (document.getElementById('bom-form-remarks')?.value || '').trim(),
+      components: JSON.stringify(validComponents.map(c => ({
+        itemName: c.itemName, size: c.size || '', narration: c.narration || '', rate: c.rate || 0,
+        vendor: c.vendor || '', qtyPerProduct: c.qtyPerProduct || 0, processId: c.processId || '', color: c.color || ''
+      }))),
+      additionalCosts: JSON.stringify(this.costs.filter(c => c.description).map(c => ({
+        description: c.description, rate: c.rate || 0, processName: c.processName || '', contractorName: c.contractorName || ''
+      })))
+    };
+    const isEdit = !!this.editingProduct;
+    if (isEdit) formData.productId = this.editingProduct.productId;
+
+    const saveBtn = document.getElementById('bom-form-save-btn');
+    if (saveBtn) { saveBtn.disabled = true; saveBtn.textContent = 'Saving…'; }
+
+    try {
+      const res = await Api.mutateWithId('saveBOM', Api.newMutationId(), formData, this.token);
+      if (!res || !res.success) {
+        if (this._isAccessError(res)) { this.closeForm(); this._resetToken(); return; }
+        MApp.Toast.error((res && res.message) || 'Could not save this recipe.');
+        if (saveBtn) { saveBtn.disabled = false; saveBtn.textContent = 'Save Recipe'; }
+        return;
+      }
+      MApp.Toast.success(isEdit ? 'Recipe updated.' : 'Recipe saved.');
+      this.closeForm();
+      this._loadList();
+    } catch (err) {
+      MApp.Toast.error(err.message || 'Could not reach the server.');
+      if (saveBtn) { saveBtn.disabled = false; saveBtn.textContent = 'Save Recipe'; }
+    }
+  },
+
+  async deleteBom() {
+    if (!this.editingProduct) return;
+    if (!MApp.Util.confirmDelete(this.editingProduct.productName)) return;
+
+    try {
+      const res = await Api.mutateWithId('deleteBOM', Api.newMutationId(), this.editingProduct.productId, this.token);
+      if (!res || !res.success) {
+        if (this._isAccessError(res)) { this.closeForm(); this._resetToken(); return; }
+        MApp.Toast.error((res && res.message) || 'Could not delete this recipe.');
+        return;
+      }
+      MApp.Toast.success('Recipe deleted.');
+      this.closeForm();
+      this._loadList();
+    } catch (err) {
+      MApp.Toast.error(err.message || 'Could not reach the server.');
+    }
   }
 };
 

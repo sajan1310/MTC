@@ -1259,6 +1259,30 @@ App.Stock = {
       leafRows = leafRows.filter(r => App.Utils.matchesKeywords([r.productTag, r.color].join(' '), term));
     }
 
+    // When a process's buckets carry more than one distinct output item
+    // name (edge case: per-lot overrides that survived backend
+    // normalization), show it as a column so the operator can tell
+    // which bucket is which instead of seeing unexplained duplicates.
+    const distinctItems = new Set(leafRows.map(r => (r.outputItemName || '').trim().toLowerCase()));
+    const showItemName = distinctItems.size > 1;
+    this._poolComboShowItemName = showItemName;
+
+    // Dynamically rebuild the modal's <thead> row to include / exclude
+    // the Output Item column.  The static HTML has 7 columns; when
+    // showItemName is true we insert one more after the checkbox.
+    const headerRow = document.querySelector('#warehousePoolProcessModal thead tr');
+    if (headerRow) {
+      headerRow.innerHTML = `
+        <th scope="col" class="text-center" style="width: 4%;"><input type="checkbox" id="selectAllWarehousePoolCombos" class="form-check-input" onclick="App.Stock.toggleSelectAllWarehousePoolCombos(this)"></th>
+        ${showItemName ? '<th scope="col">Output Item</th>' : ''}
+        <th scope="col">Product Tag</th>
+        <th scope="col" class="text-center">Produced</th>
+        <th scope="col" class="text-center">Consumed</th>
+        <th scope="col">Color</th>
+        <th scope="col" class="text-center">Available</th>
+        <th scope="col" class="text-center">Actions</th>`;
+    }
+
     const titleEl = document.getElementById('warehousePoolProcessModalTitle');
     if (titleEl) {
       const outputBadge = process.outputItemName
@@ -1267,11 +1291,12 @@ App.Stock = {
       titleEl.innerHTML = `<i class="bi bi-boxes me-2"></i>Warehouse Pool: ${escapeHtml(process.processName)}${outputBadge}`;
     }
 
+    const colCount = showItemName ? 8 : 7;
     const body = document.getElementById('warehousePoolProcessModalBody');
     if (body) {
       body.innerHTML = leafRows.length
-        ? leafRows.map(r => `<tr>${this.renderWarehousePoolLeafCells(process, r)}</tr>`).join('')
-        : `<tr><td colspan="7" class="text-center text-muted p-4">${term ? 'No combinations match your search.' : 'No Warehouse Pool buckets found for this process.'}</td></tr>`;
+        ? leafRows.map(r => `<tr>${this.renderWarehousePoolLeafCells(process, r, showItemName)}</tr>`).join('')
+        : `<tr><td colspan="${colCount}" class="text-center text-muted p-4">${term ? 'No combinations match your search.' : 'No Warehouse Pool buckets found for this process.'}</td></tr>`;
     }
     this.updatePoolComboBulkButton();
   },
@@ -1371,7 +1396,7 @@ App.Stock = {
     this._runWarehousePoolCombinationDelete([color]);
   },
 
-  renderWarehousePoolLeafCells(process, r) {
+  renderWarehousePoolLeafCells(process, r, showItemName) {
     const encName = encodeURIComponent(r.outputItemName || '');
     const encTag = encodeURIComponent(r.productTag || '');
     const encColor = encodeURIComponent(r.color || '');
@@ -1414,8 +1439,16 @@ App.Stock = {
           onchange="App.Stock.onPoolComboCheckChange()">`
       : '<input type="checkbox" class="form-check-input" disabled>';
 
+    // When the process has buckets with multiple distinct output item
+    // names (per-lot overrides that survived backend normalization),
+    // show the item name so the operator can identify each bucket.
+    const itemNameCell = showItemName
+      ? `<td><span class="badge bg-secondary">${escapeHtml(r.outputItemName || '')}</span></td>`
+      : '';
+
     return `
     <td class="text-center">${checkboxCell}</td>
+    ${itemNameCell}
     <td>${r.productTag ? `<span class="badge bg-dark">${escapeHtml(r.productTag)}</span>` : '<span class="text-muted">—</span>'}</td>
     <td class="text-center" data-pool-field="produced">${App.Production.formatQty(r.producedQty)}</td>
     <td class="text-center">${App.Production.formatQty(r.consumedQty)}</td>
@@ -2745,6 +2778,12 @@ App.Stock = {
     App.State.selectedLowStockPreview = (App.State.globalStock || [])
       .filter(item => item.isLowStock)
       .map(item => this.stockKey(item));
+    // Also reset the "Show" filter -- otherwise a stale filter (e.g. a
+    // group filter, or "Selected Only") can hide most of the just-reset
+    // selection, making Reset look like it didn't work.
+    App.State.lowStockPreviewFilter = 'all';
+    const filterSelect = document.getElementById('lowStockPreviewFilter');
+    if (filterSelect) filterSelect.value = 'all';
     this.renderLowStockPreviewChecklist();
     this.renderLowStockPreviewTable();
   },
@@ -3333,7 +3372,9 @@ App.StockGroup = {
     if (!groupId) return;
 
     const items = this._itemsDialogSelected.map(key => {
-      const idx = key.indexOf('|');
+      // stockKey() joins as `${name}|${size}` -- split on the LAST '|' so an
+      // item name that itself contains a pipe doesn't get sliced mid-name.
+      const idx = key.lastIndexOf('|');
       return { name: key.slice(0, idx), size: key.slice(idx + 1) };
     });
 

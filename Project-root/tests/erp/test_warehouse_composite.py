@@ -30,6 +30,12 @@ def _three_axis_setup(erp_client):
 
     down_payload, down_id = _save_process(
         erp_client,
+        # save_process now REFUSES a 2+-axis process with no Primary Axis
+        # (it is a real choice, not something to default silently). The
+        # first axis in recipe order is exactly what it used to pick on
+        # its own, so naming it here keeps every assertion below testing
+        # the same behaviour it always did.
+        primaryColorAxis=upstream[0],
         components=[
             {"itemName": name, "qtyPerUnit": 1, "sourceType": "POOL", "colorGroup": "COMMON"}
             for name in upstream
@@ -184,6 +190,12 @@ def test_chained_composite_pool_axis_is_not_truncated(erp_client):
     # combination -- its own bucket carries exactly one composite color.
     parent_payload, parent_id = _save_process(
         erp_client,
+        # save_process now REFUSES a 2+-axis process with no Primary Axis
+        # (it is a real choice, not something to default silently). The
+        # first axis in recipe order is exactly what it used to pick on
+        # its own, so naming it here keeps every assertion below testing
+        # the same behaviour it always did.
+        primaryColorAxis=g1_payload["outputItemName"],
         components=[
             {"itemName": g1_payload["outputItemName"], "qtyPerUnit": 1, "sourceType": "POOL", "colorGroup": "COMMON"},
             {"itemName": g2_payload["outputItemName"], "qtyPerUnit": 1, "sourceType": "POOL", "colorGroup": "COMMON"},
@@ -204,6 +216,12 @@ def test_chained_composite_pool_axis_is_not_truncated(erp_client):
     # its own tag-based Seat Color axis.
     child_payload, child_id = _save_process(
         erp_client,
+        # save_process now REFUSES a 2+-axis process with no Primary Axis
+        # (it is a real choice, not something to default silently). The
+        # first axis in recipe order is exactly what it used to pick on
+        # its own, so naming it here keeps every assertion below testing
+        # the same behaviour it always did.
+        primaryColorAxis=parent_payload["outputItemName"],
         components=[
             {"itemName": parent_payload["outputItemName"], "qtyPerUnit": 1, "sourceType": "POOL", "colorGroup": "COMMON"},
             {"itemName": "SeatPartGrey", "qtyPerUnit": 1, "sourceType": "ITEM", "colorGroup": "Grey", "colorAxis": "Seat Color"},

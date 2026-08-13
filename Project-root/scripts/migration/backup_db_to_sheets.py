@@ -61,7 +61,8 @@ except ImportError:
 # up (nothing errors; the table is just absent from the backup spreadsheet).
 TABLES = [
     "erp.units", "erp.color_master", "erp.model_master", "erp.process_type_master",
-    "erp.vendors", "erp.contractors", "erp.contractor_rates", "erp.contractor_payments",
+    "erp.vendors", "erp.contractors", "erp.contractor_rates", "erp.contractor_service_charges",
+    "erp.contractor_payments",
     "erp.clients", "erp.items", "erp.item_vendors", "erp.stock", "erp.stock_adjustments",
     "erp.stock_group_master", "erp.stock_group_items",
     "erp.rate_history", "erp.process_master", "erp.process_components",

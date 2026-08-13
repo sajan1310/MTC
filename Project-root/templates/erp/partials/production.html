@@ -10,13 +10,16 @@
   <!-- Sub-tab Navigation Pills -->
   <ul class="nav nav-pills mb-4" id="productionSubTabs">
     <li class="nav-item">
-      <button class="nav-link active fw-bold text-dark" id="btn-productionLogSubTab" onclick="App.Production.switchSubTab('productionLogSubTab')">Production Log</button>
+      <button class="nav-link active fw-bold text-dark" id="btn-productionLogSubTab"
+        onclick="App.Production.switchSubTab('productionLogSubTab')">Production Log</button>
     </li>
     <li class="nav-item">
-      <button class="nav-link fw-bold text-dark" id="btn-issuedStockSubTab" onclick="App.Production.switchSubTab('issuedStockSubTab')">Issued Stock</button>
+      <button class="nav-link fw-bold text-dark" id="btn-issuedStockSubTab"
+        onclick="App.Production.switchSubTab('issuedStockSubTab')">Issued Stock</button>
     </li>
     <li class="nav-item">
-      <button class="nav-link fw-bold text-dark" id="btn-productionAllSubTab" onclick="App.Production.switchSubTab('productionAllSubTab')">All Activity</button>
+      <button class="nav-link fw-bold text-dark" id="btn-productionAllSubTab"
+        onclick="App.Production.switchSubTab('productionAllSubTab')">All Activity</button>
     </li>
   </ul>
 
@@ -24,8 +27,11 @@
   <div id="productionLogSubTab" class="production-sub-tab">
     <div class="d-flex justify-content-between flex-wrap gap-2 mb-3">
       <div class="d-flex w-50 align-items-center gap-2">
-        <input type="text" id="searchProduction" class="form-control" placeholder="Search Lot #, Date, Product, Assigned By/To, or Status..." autocomplete="off" onkeyup="App.Production.filterData(this.value)">
-        <select id="productionSortBy" class="form-select" style="max-width: 220px;" aria-label="Sort Production Logs" onchange="App.Production.sortBy(this.value)">
+        <input type="text" id="searchProduction" class="form-control"
+          placeholder="Search Lot #, Date, Product, Assigned By/To, or Status..." autocomplete="off"
+          onkeyup="App.Production.filterData(this.value)">
+        <select id="productionSortBy" class="form-select" style="max-width: 220px;" aria-label="Sort Production Logs"
+          onchange="App.Production.sortBy(this.value)">
           <option value="dateDesc">Date (Newest first)</option>
           <option value="dateAsc">Date (Oldest first)</option>
           <option value="outputItemAsc">Output Item (A&ndash;Z)</option>
@@ -36,19 +42,24 @@
         </select>
       </div>
       <div class="d-flex gap-2 flex-wrap justify-content-end">
-        <button class="btn btn-outline-dark fw-bold shadow-sm d-none" id="btnBulkPrintProduction" type="button" onclick="App.Production.bulkPrint()" style="white-space: nowrap;">
+        <button class="btn btn-outline-dark fw-bold shadow-sm d-none" id="btnBulkPrintProduction" type="button"
+          onclick="App.Production.bulkPrint()" style="white-space: nowrap;">
           <i class="bi bi-printer"></i> Print Selected
         </button>
-        <button class="btn btn-outline-dark fw-bold shadow-sm d-none" id="btnBulkDownloadPdfProduction" type="button" onclick="App.Production.bulkDownloadPDF()" style="white-space: nowrap;">
+        <button class="btn btn-outline-dark fw-bold shadow-sm d-none" id="btnBulkDownloadPdfProduction" type="button"
+          onclick="App.Production.bulkDownloadPDF()" style="white-space: nowrap;">
           <i class="bi bi-file-earmark-pdf"></i> Download PDFs
         </button>
-        <button class="btn btn-danger fw-bold shadow-sm d-none" id="btnBulkDeleteProduction" type="button" onclick="App.Production.bulkDelete()" style="white-space: nowrap;">
+        <button class="btn btn-danger fw-bold shadow-sm d-none" id="btnBulkDeleteProduction" type="button"
+          onclick="App.Production.bulkDelete()" style="white-space: nowrap;">
           <i class="bi bi-trash"></i> Delete Selected
         </button>
-        <button class="btn btn-outline-dark fw-bold shadow-sm" type="button" onclick="App.Production.openColorwiseSummaryModal()" style="white-space: nowrap;">
+        <button class="btn btn-outline-dark fw-bold shadow-sm" type="button"
+          onclick="App.Production.openColorwiseSummaryModal()" style="white-space: nowrap;">
           <i class="bi bi-palette"></i> Colorwise Summary
         </button>
-        <button class="btn btn-outline-dark fw-bold shadow-sm" type="button" onclick="App.Production.openWorkOrderModal()" style="white-space: nowrap;">
+        <button class="btn btn-outline-dark fw-bold shadow-sm" type="button"
+          onclick="App.Production.openWorkOrderModal()" style="white-space: nowrap;">
           <i class="bi bi-file-earmark-text"></i> Download Work Order
         </button>
         <!-- One-off/repeatable repair: rewrites each already-logged lot's stored
@@ -57,13 +68,17 @@
              narration fresh (production_service._with_master_narration), so
              this is for lots logged before a value was set/corrected, or
              before an item's Base Unit or casing changed. -->
-        <button class="btn btn-outline-secondary fw-bold shadow-sm" id="btnRefreshProductionFromItems" type="button" onclick="App.Production.refreshFromItemsMaster()" style="white-space: nowrap;" title="Refreshes narration, unit, and item name (casing only) stored on every already-logged production lot to match Items Master. Quantities, colours, item identities and status are never changed.">
+        <button class="btn btn-outline-secondary fw-bold shadow-sm" id="btnRefreshProductionFromItems" type="button"
+          onclick="App.Production.refreshFromItemsMaster()" style="white-space: nowrap;"
+          title="Refreshes narration, unit, and item name (casing only) stored on every already-logged production lot to match Items Master. Quantities, colours, item identities and status are never changed.">
           <i class="bi bi-arrow-repeat"></i> Refresh from Items Master
         </button>
-        <button class="btn btn-dark fw-bold shadow-sm" type="button" onclick="App.Issue.openIssueModal()" style="white-space: nowrap;">
+        <button class="btn btn-dark fw-bold shadow-sm" type="button" onclick="App.Issue.openIssueModal()"
+          style="white-space: nowrap;">
           <i class="bi bi-box-arrow-up"></i> Issue Stock
         </button>
-        <button class="btn btn-success fw-bold shadow-sm" onclick="App.Production.openCreateModal()">+ Log Production Lot</button>
+        <button class="btn btn-success fw-bold shadow-sm" onclick="App.Production.openCreateModal()">+ Log Production
+          Lot</button>
       </div>
     </div>
 
@@ -71,15 +86,28 @@
       <table class="table table-hover table-bordered align-middle mb-0">
         <thead class="table-dark">
           <tr>
-            <th scope="col" style="width: 4%; text-align: center;"><input type="checkbox" id="selectAllProduction" class="form-check-input" onclick="App.Production.toggleSelectAll(this)"></th>
+            <th scope="col" style="width: 4%; text-align: center;"><input type="checkbox" id="selectAllProduction"
+                class="form-check-input" onclick="App.Production.toggleSelectAll(this)"></th>
             <th scope="col" style="width: 8%;">Date</th>
-            <th scope="col" style="width: 12%;">Process / Lot # <button type="button" class="th-filter-btn" data-filter-key="process" onclick="App.Production.toggleColumnFilter(event, 'process')"><i class="bi bi-funnel"></i></button></th>
-            <th scope="col" style="width: 14%;">Output Item <button type="button" class="th-filter-btn" data-filter-key="outputItem" onclick="App.Production.toggleColumnFilter(event, 'outputItem')"><i class="bi bi-funnel"></i></button></th>
-            <th scope="col" style="width: 12%;">Product Tag <button type="button" class="th-filter-btn" data-filter-key="productTag" onclick="App.Production.toggleColumnFilter(event, 'productTag')"><i class="bi bi-funnel"></i></button></th>
+            <th scope="col" style="width: 12%;">Process / Lot # <button type="button" class="th-filter-btn"
+                data-filter-key="process" onclick="App.Production.toggleColumnFilter(event, 'process')"><i
+                  class="bi bi-funnel"></i></button></th>
+            <th scope="col" style="width: 14%;">Output Item <button type="button" class="th-filter-btn"
+                data-filter-key="outputItem" onclick="App.Production.toggleColumnFilter(event, 'outputItem')"><i
+                  class="bi bi-funnel"></i></button></th>
+            <th scope="col" style="width: 12%;">Product Tag <button type="button" class="th-filter-btn"
+                data-filter-key="productTag" onclick="App.Production.toggleColumnFilter(event, 'productTag')"><i
+                  class="bi bi-funnel"></i></button></th>
             <th scope="col" style="width: 7%; text-align: center;">Lot Qty</th>
-            <th scope="col" style="width: 10%;">Assigned By <button type="button" class="th-filter-btn" data-filter-key="assignedBy" onclick="App.Production.toggleColumnFilter(event, 'assignedBy')"><i class="bi bi-funnel"></i></button></th>
-            <th scope="col" style="width: 10%;">Assigned To <button type="button" class="th-filter-btn" data-filter-key="assignedTo" onclick="App.Production.toggleColumnFilter(event, 'assignedTo')"><i class="bi bi-funnel"></i></button></th>
-            <th scope="col" style="width: 8%; text-align: center;">Status <button type="button" class="th-filter-btn" data-filter-key="status" onclick="App.Production.toggleColumnFilter(event, 'status')"><i class="bi bi-funnel"></i></button></th>
+            <th scope="col" style="width: 10%;">Assigned By <button type="button" class="th-filter-btn"
+                data-filter-key="assignedBy" onclick="App.Production.toggleColumnFilter(event, 'assignedBy')"><i
+                  class="bi bi-funnel"></i></button></th>
+            <th scope="col" style="width: 10%;">Assigned To <button type="button" class="th-filter-btn"
+                data-filter-key="assignedTo" onclick="App.Production.toggleColumnFilter(event, 'assignedTo')"><i
+                  class="bi bi-funnel"></i></button></th>
+            <th scope="col" style="width: 8%; text-align: center;">Status <button type="button" class="th-filter-btn"
+                data-filter-key="status" onclick="App.Production.toggleColumnFilter(event, 'status')"><i
+                  class="bi bi-funnel"></i></button></th>
             <th scope="col" style="width: 15%; text-align: center;">Actions</th>
           </tr>
         </thead>
@@ -90,7 +118,8 @@
         </tbody>
       </table>
     </div>
-    <div id="productionEmptyState" class="text-center p-5 border rounded-3 bg-white shadow-sm mt-3" style="display: none;">
+    <div id="productionEmptyState" class="text-center p-5 border rounded-3 bg-white shadow-sm mt-3"
+      style="display: none;">
       <i class="bi bi-calendar2-check fs-1 text-muted d-block mb-3"></i>
       <h5 class="fw-bold text-dark">No Production Records</h5>
       <p class="text-muted mb-0">Log a new production run using the button above.</p>
@@ -106,17 +135,23 @@
   <div id="issuedStockSubTab" class="production-sub-tab" style="display:none;">
     <div class="d-flex justify-content-between flex-wrap gap-2 mb-3">
       <div class="d-flex flex-wrap gap-2 align-items-center" style="max-width: 900px;">
-        <input type="text" id="searchIssue" class="form-control" style="min-width:220px;" placeholder="Search by Issue #, Issued To, Reference, or item…" autocomplete="off" onkeyup="App.Issue.filterData(this.value)">
-        <input type="date" id="issueDateFilter" class="form-control" style="min-width:150px;" onchange="App.Issue.filterByDate(this.value)">
+        <input type="text" id="searchIssue" class="form-control" style="min-width:220px;"
+          placeholder="Search by Issue #, Issued To, Reference, or item…" autocomplete="off"
+          onkeyup="App.Issue.filterData(this.value)">
+        <input type="date" id="issueDateFilter" class="form-control" style="min-width:150px;"
+          onchange="App.Issue.filterByDate(this.value)">
       </div>
       <div class="d-flex gap-2 flex-wrap justify-content-end">
-        <button class="btn btn-outline-dark fw-bold shadow-sm d-none" id="btnBulkPrintIssue" type="button" onclick="App.Issue.bulkPrint()" style="white-space: nowrap;">
+        <button class="btn btn-outline-dark fw-bold shadow-sm d-none" id="btnBulkPrintIssue" type="button"
+          onclick="App.Issue.bulkPrint()" style="white-space: nowrap;">
           <i class="bi bi-printer"></i> Print Selected
         </button>
-        <button class="btn btn-outline-dark fw-bold shadow-sm d-none" id="btnBulkDownloadPdfIssue" type="button" onclick="App.Issue.bulkDownloadPDF()" style="white-space: nowrap;">
+        <button class="btn btn-outline-dark fw-bold shadow-sm d-none" id="btnBulkDownloadPdfIssue" type="button"
+          onclick="App.Issue.bulkDownloadPDF()" style="white-space: nowrap;">
           <i class="bi bi-file-earmark-pdf"></i> Download PDFs
         </button>
-        <button class="btn btn-danger fw-bold shadow-sm d-none" id="btnBulkDeleteIssue" type="button" onclick="App.Issue.bulkDelete()" style="white-space: nowrap;">
+        <button class="btn btn-danger fw-bold shadow-sm d-none" id="btnBulkDeleteIssue" type="button"
+          onclick="App.Issue.bulkDelete()" style="white-space: nowrap;">
           <i class="bi bi-trash"></i> Delete Selected
         </button>
         <button class="btn btn-dark fw-bold shadow-sm" type="button" onclick="App.Issue.openIssueModal()">
@@ -129,7 +164,8 @@
       <table class="table table-hover table-bordered align-middle mb-0">
         <thead class="table-dark">
           <tr>
-            <th scope="col" style="width: 4%; text-align: center;"><input type="checkbox" id="selectAllIssue" class="form-check-input" onclick="App.Issue.toggleSelectAll(this)"></th>
+            <th scope="col" style="width: 4%; text-align: center;"><input type="checkbox" id="selectAllIssue"
+                class="form-check-input" onclick="App.Issue.toggleSelectAll(this)"></th>
             <th scope="col" style="width: 14%;">Issue #</th>
             <th scope="col" style="width: 10%;">Date</th>
             <th scope="col" style="width: 16%;">Issued To</th>
@@ -140,14 +176,17 @@
           </tr>
         </thead>
         <tbody id="issueTableBody">
-          <tr><td colspan="8" class="text-center p-4">Loading Issued Stock…</td></tr>
+          <tr>
+            <td colspan="8" class="text-center p-4">Loading Issued Stock…</td>
+          </tr>
         </tbody>
       </table>
     </div>
     <div id="issueEmptyState" class="text-center p-5 border rounded-3 bg-white shadow-sm mt-3" style="display: none;">
       <i class="bi bi-box-arrow-up fs-1 text-muted d-block mb-3"></i>
       <h5 class="fw-bold text-dark">No Issued Stock Records</h5>
-      <p class="text-muted mb-0">Issue items not covered by a Process's own recipe using the button above — it debits Stock automatically.</p>
+      <p class="text-muted mb-0">Issue items not covered by a Process's own recipe using the button above — it debits
+        Stock automatically.</p>
     </div>
 
     <!-- Pagination -->
@@ -157,7 +196,9 @@
   <!-- ALL ACTIVITY SUB-TAB -->
   <div id="productionAllSubTab" class="production-sub-tab" style="display:none;">
     <div class="d-flex justify-content-between flex-wrap gap-2 mb-3">
-      <input type="text" id="searchProductionAll" class="form-control w-50" placeholder="Search across Production Log and Issued Stock…" autocomplete="off" onkeyup="App.Production.filterAllActivity(this.value)">
+      <input type="text" id="searchProductionAll" class="form-control w-50"
+        placeholder="Search across Production Log and Issued Stock…" autocomplete="off"
+        onkeyup="App.Production.filterAllActivity(this.value)">
     </div>
 
     <div class="table-responsive">
@@ -173,11 +214,14 @@
           </tr>
         </thead>
         <tbody id="productionAllTableBody">
-          <tr><td colspan="6" class="text-center p-4">Loading…</td></tr>
+          <tr>
+            <td colspan="6" class="text-center p-4">Loading…</td>
+          </tr>
         </tbody>
       </table>
     </div>
-    <div id="productionAllEmptyState" class="text-center p-5 border rounded-3 bg-white shadow-sm mt-3" style="display: none;">
+    <div id="productionAllEmptyState" class="text-center p-5 border rounded-3 bg-white shadow-sm mt-3"
+      style="display: none;">
       <i class="bi bi-list-check fs-1 text-muted d-block mb-3"></i>
       <h5 class="fw-bold text-dark">No Activity Yet</h5>
       <p class="text-muted mb-0">Production lots and issued stock entries will appear here together.</p>
@@ -198,13 +242,15 @@
         <div class="row g-3 mb-3">
           <div class="col-md-6">
             <label class="form-label fw-bold">Process</label>
-            <select id="colorwiseSummaryProcessFilter" class="form-select" onchange="App.Production.renderColorwiseSummary()">
+            <select id="colorwiseSummaryProcessFilter" class="form-select"
+              onchange="App.Production.renderColorwiseSummary()">
               <option value="">All Processes</option>
             </select>
           </div>
           <div class="col-md-6">
             <label class="form-label fw-bold">Status</label>
-            <select id="colorwiseSummaryStatusFilter" class="form-select" onchange="App.Production.renderColorwiseSummary()">
+            <select id="colorwiseSummaryStatusFilter" class="form-select"
+              onchange="App.Production.renderColorwiseSummary()">
               <option value="">All Statuses</option>
               <option value="Pending">Pending</option>
               <option value="In Progress">In Progress</option>
@@ -229,7 +275,8 @@
             <tbody id="colorwiseSummaryBody"></tbody>
           </table>
         </div>
-        <div id="colorwiseSummaryEmptyState" class="text-center p-4 text-muted" style="display:none;">No production lots match this filter.</div>
+        <div id="colorwiseSummaryEmptyState" class="text-center p-4 text-muted" style="display:none;">No production lots
+          match this filter.</div>
       </div>
     </div>
   </div>
@@ -283,13 +330,15 @@
              96dpi, downloadWorkOrderPdf's default) -- what's shown here is
              what gets exported, not a wider/differently-proportioned
              preview of it. -->
-        <div id="workOrderPreviewContent" class="shadow-sm" style="max-width:748px;width:100%;border:1px solid #dee2e6;"></div>
+        <div id="workOrderPreviewContent" class="shadow-sm"
+          style="max-width:748px;width:100%;border:1px solid #dee2e6;"></div>
       </div>
       <div class="modal-footer">
         <button type="button" class="btn btn-secondary" onclick="App.Production.backToWorkOrderFilters()">
           <i class="bi bi-arrow-left"></i> Edit Filters
         </button>
-        <button type="button" id="workOrderDownloadBtn" class="btn btn-primary fw-bold" onclick="App.Production.downloadWorkOrderPdf()">
+        <button type="button" id="workOrderDownloadBtn" class="btn btn-primary fw-bold"
+          onclick="App.Production.downloadWorkOrderPdf()">
           <i class="bi bi-file-earmark-pdf"></i> Download PDF
         </button>
       </div>
@@ -305,177 +354,229 @@
   <div class="modal-dialog modal-xl modal-fullscreen-sm-down">
     <div class="modal-content shadow-lg">
       <div class="modal-header bg-success text-white">
-        <h5 class="modal-title fw-bold" id="productionFormTitle" style="font-family: 'Outfit', sans-serif;">Log Production Lot</h5>
+        <h5 class="modal-title fw-bold" id="productionFormTitle" style="font-family: 'Outfit', sans-serif;">Log
+          Production Lot</h5>
         <button type="button" class="btn-close btn-close-white" data-bs-dismiss="modal"></button>
       </div>
       <div class="modal-body bg-light">
         <form id="productionForm" autocomplete="off">
-        <fieldset id="productionFormFieldset">
-          <input type="hidden" id="productionRowIdx" name="rowIdx">
+          <fieldset id="productionFormFieldset">
+            <input type="hidden" id="productionRowIdx" name="rowIdx">
 
-          <h6 class="text-secondary border-bottom pb-2 mb-3 fw-bold">Lot Information</h6>
-          <div class="row g-3 mb-4">
-            <div class="col-md-6">
-              <label class="form-label fw-bold">Production Date *</label>
-              <input type="date" name="date" id="productionDate" class="form-control" required>
-            </div>
-            <div class="col-md-6">
-              <label class="form-label fw-bold">Size *</label>
-              <select id="productionSize" class="form-select" required onchange="App.Production.handleSizeChange(this.value)">
-                <option value="">Choose a Size...</option>
-              </select>
-            </div>
-            <div class="col-md-6">
-              <label class="form-label fw-bold">Model *</label>
-              <select id="productionModel" class="form-select" required disabled onchange="App.Production.handleModelChange(this.value)">
-                <option value="">Choose a Size first...</option>
-              </select>
-            </div>
-            <div class="col-md-6">
-              <label class="form-label fw-bold">Process Type *</label>
-              <select id="productionProcessType" class="form-select" required disabled onchange="App.Production.handleProcessTypeChange(this.value)">
-                <option value="">Choose a Model first...</option>
-              </select>
-            </div>
-            <div class="col-md-6">
-              <label class="form-label fw-bold">Process *</label>
-              <select name="processId" id="productionProcessId" class="form-select" required disabled onchange="App.Production.handleProcessChange(this.value)">
-                <option value="">Choose a Process Type first...</option>
-              </select>
-            </div>
-            <div class="col-md-6">
-              <label class="form-label fw-bold">Lot Number</label>
-              <input type="text" id="productionLotNumber" class="form-control bg-light" readonly placeholder="Auto-generated on save">
-            </div>
-            <div class="col-md-6">
-              <label class="form-label fw-bold">Output Item Name</label>
-              <input type="text" name="outputItemName" id="productionOutputItemName" class="form-control" placeholder="Select a Process to populate" maxlength="150">
-              <div class="form-text">Defaults to the Process's Output Item Name. Editing it only relabels <strong>this lot</strong> (e.g. a rework/variant run) — the Process itself, and every other lot under it, is unaffected. Warehouse Pool stock for this lot is credited under whatever name is saved here.</div>
-            </div>
-            <div class="col-md-6" id="productionQtyWrapper">
-              <label class="form-label fw-bold">Quantity to Produce *</label>
-              <input type="number" name="qty" id="productionQty" class="form-control" placeholder="0" step="any" required oninput="App.Production.refreshPayableHint();App.Production.refreshSuggestedComponentQty();">
-              <button type="button" id="productionAddColorsBtn" class="btn btn-link btn-sm p-0 mt-1" style="display:none;" onclick="App.Production.enableManualColors()">+ Add Colors to this Lot</button>
-            </div>
-            <div class="col-md-12" id="productionColorWrapper" style="display:none;">
-              <label class="form-label fw-bold d-flex justify-content-between align-items-center">
-                <span>Colors to Produce *</span>
-                <button type="button" id="productionRevertColorsBtn" class="btn btn-link btn-sm p-0" style="display:none;" onclick="App.Production.revertToSingleQty()">Use a single quantity instead</button>
-              </label>
-              <div id="productionColorChecklist" class="d-flex flex-wrap gap-4 p-2 border rounded bg-white"></div>
-              <div id="productionColorCombinationPreview" class="small fw-bold text-success mt-2" style="display:none;"></div>
-              <div class="d-flex align-items-center gap-2 mt-2">
-                <select id="productionCustomColorInput" class="form-select form-select-sm" style="max-width:260px;"></select>
-                <select id="productionCustomColorGroupSelect" class="form-select form-select-sm" style="max-width:260px; display:none;" title="Which group does this belong to?"></select>
-                <button type="button" class="btn btn-outline-secondary btn-sm" onclick="App.Production.addCustomColorRow()">+ Add Custom Sub-Group</button>
+            <h6 class="text-secondary border-bottom pb-2 mb-3 fw-bold">Lot Information</h6>
+            <div class="row g-3 mb-4">
+              <div class="col-md-6">
+                <label class="form-label fw-bold">Production Date *</label>
+                <input type="date" name="date" id="productionDate" class="form-control" required>
               </div>
-              <div class="form-text">Check every color being produced in this run and enter each one's own quantity &mdash; this whole batch is saved as a single Production Lot. Not producing a Color Master color? Type a one-off custom sub-group name above.</div>
+              <div class="col-md-6">
+                <label class="form-label fw-bold">Size *</label>
+                <select id="productionSize" class="form-select" required
+                  onchange="App.Production.handleSizeChange(this.value)">
+                  <option value="">Choose a Size...</option>
+                </select>
+              </div>
+              <div class="col-md-6">
+                <label class="form-label fw-bold">Model *</label>
+                <select id="productionModel" class="form-select" required disabled
+                  onchange="App.Production.handleModelChange(this.value)">
+                  <option value="">Choose a Size first...</option>
+                </select>
+              </div>
+              <div class="col-md-6">
+                <label class="form-label fw-bold">Process Type *</label>
+                <select id="productionProcessType" class="form-select" required disabled
+                  onchange="App.Production.handleProcessTypeChange(this.value)">
+                  <option value="">Choose a Model first...</option>
+                </select>
+              </div>
+              <div class="col-md-6">
+                <label class="form-label fw-bold">Process *</label>
+                <select name="processId" id="productionProcessId" class="form-select" required disabled
+                  onchange="App.Production.handleProcessChange(this.value)">
+                  <option value="">Choose a Process Type first...</option>
+                </select>
+              </div>
+              <div class="col-md-6">
+                <label class="form-label fw-bold">Lot Number</label>
+                <input type="text" id="productionLotNumber" class="form-control bg-light" readonly
+                  placeholder="Auto-generated on save">
+              </div>
+              <div class="col-md-6">
+                <label class="form-label fw-bold">Output Item Name</label>
+                <input type="text" name="outputItemName" id="productionOutputItemName" class="form-control"
+                  placeholder="Select a Process to populate" maxlength="150">
+                <div class="form-text">Defaults to the Process's Output Item Name. Editing it only relabels <strong>this
+                    lot</strong> (e.g. a rework/variant run) — the Process itself, and every other lot under it, is
+                  unaffected. Warehouse Pool stock for this lot is credited under whatever name is saved here.</div>
+              </div>
+              <div class="col-md-6" id="productionQtyWrapper">
+                <label class="form-label fw-bold">Quantity to Produce *</label>
+                <input type="number" name="qty" id="productionQty" class="form-control" placeholder="0" step="any"
+                  required oninput="App.Production.refreshPayableHint();App.Production.refreshSuggestedComponentQty();">
+                <button type="button" id="productionAddColorsBtn" class="btn btn-link btn-sm p-0 mt-1"
+                  style="display:none;" onclick="App.Production.enableManualColors()">+ Add Colors to this Lot</button>
+              </div>
+              <div class="col-md-12" id="productionColorWrapper" style="display:none;">
+                <label class="form-label fw-bold d-flex justify-content-between align-items-center">
+                  <span>Colors to Produce *</span>
+                  <button type="button" id="productionRevertColorsBtn" class="btn btn-link btn-sm p-0"
+                    style="display:none;" onclick="App.Production.revertToSingleQty()">Use a single quantity
+                    instead</button>
+                </label>
+                <div id="productionColorChecklist" class="d-flex flex-wrap gap-4 p-2 border rounded bg-white"></div>
+                <div id="productionColorCombinationPreview" class="small fw-bold text-success mt-2"
+                  style="display:none;"></div>
+                <div class="d-flex align-items-center gap-2 mt-2">
+                  <select id="productionCustomColorInput" class="form-select form-select-sm"
+                    style="max-width:260px;"></select>
+                  <select id="productionCustomColorGroupSelect" class="form-select form-select-sm"
+                    style="max-width:260px; display:none;" title="Which group does this belong to?"></select>
+                  <button type="button" class="btn btn-outline-secondary btn-sm"
+                    onclick="App.Production.addCustomColorRow()">+ Add Custom Sub-Group</button>
+                </div>
+                <div class="form-text">Check every color being produced in this run and enter each one's own quantity
+                  &mdash; this whole batch is saved as a single Production Lot. Not producing a Color Master color? Type
+                  a one-off custom sub-group name above.</div>
+              </div>
+              <div class="col-md-12" id="productionProductTagWrapper" style="display:none;">
+                <label class="form-label fw-bold">Product (optional — tags this packed lot so Dispatch can find
+                  it)</label>
+                <select id="productionProductId" class="form-select"
+                  onchange="App.Production.handleProductChange(this.value)">
+                  <option value="">— Untagged (stays in Warehouse Pool only) —</option>
+                </select>
+                <input type="hidden" name="productId" id="productionProductIdHidden">
+                <input type="hidden" name="productName" id="productionProductNameHidden">
+              </div>
             </div>
-            <div class="col-md-12" id="productionProductTagWrapper" style="display:none;">
-              <label class="form-label fw-bold">Product (optional — tags this packed lot so Dispatch can find it)</label>
-              <select id="productionProductId" class="form-select" onchange="App.Production.handleProductChange(this.value)">
-                <option value="">— Untagged (stays in Warehouse Pool only) —</option>
-              </select>
-              <input type="hidden" name="productId" id="productionProductIdHidden">
-              <input type="hidden" name="productName" id="productionProductNameHidden">
+
+            <h6 class="text-secondary border-bottom pb-2 mb-3 fw-bold">
+              <span id="productionComponentsSectionLabel">Components Consumed</span> <small
+                class="text-muted fw-normal">(pre-filled from the process recipe — qty editable; "Pool" sources debit
+                the Warehouse Pool, "Item" sources debit Stock)</small>
+              <a href="#" class="float-end small" onclick="App.Color.openModal(); return false;">Manage Color Master
+                &#8599;</a>
+            </h6>
+            <div class="table-responsive mb-2">
+              <table class="table table-bordered bg-white shadow-sm mb-0">
+                <thead class="table-light">
+                  <tr>
+                    <!-- Row-reorder grip column (App.Production._initRowSorting).
+                         Blank header on purpose: the grip icon in each row is
+                         self-explanatory and a label here would only steal width
+                         from Item / Pool Name. -->
+                    <th scope="col" style="width: 3%;"><span class="visually-hidden">Reorder rows</span></th>
+                    <th scope="col" style="width: 24%;">Item / Pool Name</th>
+                    <th scope="col" style="width: 9%;">Size</th>
+                    <th scope="col" style="width: 13%;">Narration</th>
+                    <th scope="col" style="width: 10%;">Color</th>
+                    <th scope="col" style="width: 12%;">Source</th>
+                    <th scope="col" style="width: 12%; text-align: right;">Qty</th>
+                    <th scope="col" style="width: 12%;">Available</th>
+                    <th scope="col" style="width: 5%; text-align: center;">✕</th>
+                  </tr>
+                </thead>
+                <tbody id="productionComponentsBody"></tbody>
+              </table>
             </div>
-          </div>
+            <div class="d-flex justify-content-between align-items-center mb-3">
+              <button type="button" class="btn btn-outline-primary btn-sm fw-bold" id="productionAddCommonBtn"
+                onclick="App.Production.addComponentRow()">+ Add Component</button>
+              <button type="button" class="btn btn-outline-dark btn-sm fw-bold"
+                onclick="App.Production.openIssueStockForLot()">
+                <i class="bi bi-box-arrow-up me-1"></i>Issue Stock <small class="fw-normal">(not part of this lot's
+                  BOM)</small>
+              </button>
+            </div>
 
-          <h6 class="text-secondary border-bottom pb-2 mb-3 fw-bold">
-            <span id="productionComponentsSectionLabel">Components Consumed</span> <small class="text-muted fw-normal">(pre-filled from the process recipe — qty editable; "Pool" sources debit the Warehouse Pool, "Item" sources debit Stock)</small>
-            <a href="#" class="float-end small" onclick="App.Color.openModal(); return false;">Manage Color Master &#8599;</a>
-          </h6>
-          <div class="table-responsive mb-2">
-            <table class="table table-bordered bg-white shadow-sm mb-0">
-              <thead class="table-light">
-                <tr>
-                  <th scope="col" style="width: 24%;">Item / Pool Name</th>
-                  <th scope="col" style="width: 9%;">Size</th>
-                  <th scope="col" style="width: 15%;">Narration</th>
-                  <th scope="col" style="width: 10%;">Color</th>
-                  <th scope="col" style="width: 12%;">Source</th>
-                  <th scope="col" style="width: 12%; text-align: right;">Qty</th>
-                  <th scope="col" style="width: 13%;">Available</th>
-                  <th scope="col" style="width: 5%; text-align: center;">✕</th>
-                </tr>
-              </thead>
-              <tbody id="productionComponentsBody"></tbody>
-            </table>
-          </div>
-          <div class="d-flex justify-content-between align-items-center mb-3">
-            <button type="button" class="btn btn-outline-primary btn-sm fw-bold" id="productionAddCommonBtn" onclick="App.Production.addComponentRow()">+ Add Component</button>
-            <button type="button" class="btn btn-outline-dark btn-sm fw-bold" onclick="App.Production.openIssueStockForLot()">
-              <i class="bi bi-box-arrow-up me-1"></i>Issue Stock <small class="fw-normal">(not part of this lot's BOM)</small>
-            </button>
-          </div>
-
-          <!-- Per-Color Components -- auto-populated from the process
+            <!-- Per-Color Components -- auto-populated from the process
                recipe's explicit per-color rows; an operator can also
                manually tag a one-off component via
                "+ Add Per-Color Component". -->
-          <div id="productionColorMatrixWrapper" style="display:none;">
-            <h6 class="text-secondary border-bottom pb-2 mb-3 fw-bold">
-              Per-Color Components <small class="text-muted fw-normal">(one quantity column per color in this batch — leave a cell blank if that item doesn't apply to that color)</small>
-            </h6>
-            <div class="table-responsive mb-2">
-              <table class="table table-bordered bg-white shadow-sm mb-0 prod-color-table">
-                <thead class="table-light">
-                  <tr id="productionColorMatrixHeaderRow">
-                    <th scope="col" style="width: 18%;">Item / Pool Name</th>
-                    <th scope="col" style="width: 7%;">Size</th>
-                    <th scope="col" style="width: 13%;">Narration</th>
-                    <th scope="col" style="width: 11%;">Source</th>
-                    <th scope="col" style="width: 3%;" class="text-center">✕</th>
-                  </tr>
-                </thead>
-                <tbody id="productionColorMatrixBody"></tbody>
-              </table>
+            <div id="productionColorMatrixWrapper" style="display:none;">
+              <h6 class="text-secondary border-bottom pb-2 mb-3 fw-bold">
+                Per-Color Components <small class="text-muted fw-normal">(one quantity column per color in this batch —
+                  leave a cell blank if that item doesn't apply to that color)</small>
+              </h6>
+              <div class="table-responsive mb-2">
+                <table class="table table-bordered bg-white shadow-sm mb-0 prod-color-table">
+                  <thead class="table-light">
+                    <tr id="productionColorMatrixHeaderRow">
+                      <!-- Row-reorder grip column -- must stay FIRST and must
+                           exist in both this header row and every body row:
+                           every per-color cell in this table is addressed by
+                           its position among the header's children (see
+                           getMatrixColors / getMatrixColumnIndex), so the two
+                           only line up while the shift is uniform. -->
+                      <th scope="col" style="width: 3%;"><span class="visually-hidden">Reorder rows</span></th>
+                      <th scope="col" style="width: 18%;">Item / Pool Name</th>
+                      <th scope="col" style="width: 7%;">Size</th>
+                      <th scope="col" style="width: 13%;">Narration</th>
+                      <th scope="col" style="width: 11%;">Source</th>
+                      <th scope="col" style="width: 3%;" class="text-center">✕</th>
+                    </tr>
+                  </thead>
+                  <tbody id="productionColorMatrixBody"></tbody>
+                </table>
+              </div>
+              <button type="button" class="btn btn-outline-primary btn-sm fw-bold mb-3"
+                onclick="App.Production.addColorMatrixRow()">+ Add Per-Color Component</button>
             </div>
-            <button type="button" class="btn btn-outline-primary btn-sm fw-bold mb-3" onclick="App.Production.addColorMatrixRow()">+ Add Per-Color Component</button>
-          </div>
 
-          <!-- Per-Process Pool Components -- one table per upstream
+            <!-- Per-Process Pool Components -- one table per upstream
                process/output item that has 2+ colors live in the
                Warehouse Pool. Purely auto-populated (no manual entry
                point in source either). -->
-          <div id="productionPoolColorGroupsWrapper" style="display:none;">
-            <h6 class="text-secondary border-bottom pb-2 mb-3 fw-bold">
-              Per-Process Pool Components <small class="text-muted fw-normal">(one table per upstream process/output item — only its own colors are shown)</small>
-            </h6>
-            <div id="productionPoolColorGroupsContainer"></div>
-          </div>
+            <div id="productionPoolColorGroupsWrapper" style="display:none;">
+              <h6 class="text-secondary border-bottom pb-2 mb-3 fw-bold">
+                Per-Process Pool Components <small class="text-muted fw-normal">(one table per upstream process/output
+                  item — only its own colors are shown)</small>
+              </h6>
+              <div id="productionPoolColorGroupsContainer"></div>
+            </div>
 
-          <h6 class="text-secondary border-bottom pb-2 mb-3 fw-bold">Assignment & Workflow</h6>
-          <div class="row g-3 mb-4">
-            <div class="col-md-4">
-              <label class="form-label fw-bold">Assigned By</label>
-              <input type="text" name="assignedBy" id="productionAssignedBy" class="form-control" placeholder="e.g. Supervisor Name" maxlength="100">
+            <h6 class="text-secondary border-bottom pb-2 mb-3 fw-bold">Assignment & Workflow</h6>
+            <div class="row g-3 mb-4">
+              <div class="col-md-4">
+                <label class="form-label fw-bold">Assigned By</label>
+                <input type="text" name="assignedBy" id="productionAssignedBy" class="form-control"
+                  placeholder="e.g. Supervisor Name" maxlength="100">
+              </div>
+              <div class="col-md-4">
+                <label class="form-label fw-bold">Assigned To (Contractor) *</label>
+                <select name="assignedTo" id="productionAssignedTo" class="form-control" style="width:100%;"
+                  required></select>
+                <div class="form-text" id="productionPayableHint"></div>
+              </div>
+              <div class="col-md-12" id="productionExtraChargeWrapper" style="display:none;">
+                <label class="form-label fw-bold">Extra Charge (optional)</label>
+                <div id="productionExtraChargeOptions" class="d-flex flex-wrap gap-3"></div>
+              </div>
+              <div class="col-md-4">
+                <label class="form-label fw-bold">Status *</label>
+                <select name="status" id="productionStatus" class="form-select" required>
+                  <option value="Pending">Pending</option>
+                  <option value="In Progress">In Progress</option>
+                  <option value="Completed">Completed</option>
+                  <option value="Cancelled">Cancelled</option>
+                </select>
+              </div>
+              <div class="col-md-12">
+                <label class="form-label">Production Remarks / Notes</label>
+                <textarea name="remarks" id="productionRemarks" class="form-control" rows="2"
+                  placeholder="Lot details, delay reasons, etc..." maxlength="500"></textarea>
+              </div>
             </div>
-            <div class="col-md-4">
-              <label class="form-label fw-bold">Assigned To (Contractor) *</label>
-              <select name="assignedTo" id="productionAssignedTo" class="form-control" style="width:100%;" required></select>
-              <div class="form-text" id="productionPayableHint"></div>
-            </div>
-            <div class="col-md-4">
-              <label class="form-label fw-bold">Status *</label>
-              <select name="status" id="productionStatus" class="form-select" required>
-                <option value="Pending">Pending</option>
-                <option value="In Progress">In Progress</option>
-                <option value="Completed">Completed</option>
-                <option value="Cancelled">Cancelled</option>
-              </select>
-            </div>
-            <div class="col-md-12">
-              <label class="form-label">Production Remarks / Notes</label>
-              <textarea name="remarks" id="productionRemarks" class="form-control" rows="2" placeholder="Lot details, delay reasons, etc..." maxlength="500"></textarea>
-            </div>
-          </div>
-        </fieldset>
+          </fieldset>
 
           <div class="text-end mt-4">
-            <button type="button" id="productionCancelBtn" class="btn btn-secondary me-2" data-bs-dismiss="modal">Cancel</button>
-            <button type="button" id="productionExitBtn" class="btn btn-secondary me-2" style="display:none;" onclick="App.Nav.exit('editProductionModal')">Exit</button>
-            <button type="submit" id="productionSubmitBtn" class="btn btn-success px-5 fw-bold shadow-sm">Save Production Record</button>
+            <button type="button" id="productionCancelBtn" class="btn btn-secondary me-2"
+              data-bs-dismiss="modal">Cancel</button>
+            <button type="button" id="productionExitBtn" class="btn btn-secondary me-2" style="display:none;"
+              onclick="App.Nav.exit('editProductionModal')">Exit</button>
+            <button type="submit" id="productionSubmitBtn" class="btn btn-success px-5 fw-bold shadow-sm">Save
+              Production Record</button>
           </div>
         </form>
       </div>
@@ -492,34 +593,56 @@
   <div class="modal-dialog modal-fullscreen-sm-down" style="max-width: 95vw;">
     <div class="modal-content shadow-lg">
       <div class="modal-header bg-success text-white">
-        <h5 class="modal-title fw-bold" id="productionSheetTitle" style="font-family: 'Outfit', sans-serif;">Production Sheet</h5>
+        <h5 class="modal-title fw-bold" id="productionSheetTitle" style="font-family: 'Outfit', sans-serif;">Production
+          Sheet</h5>
         <div class="d-flex align-items-center">
-          <button class="btn btn-outline-light btn-sm fw-bold me-2" id="prodSheetSaveBtn" onclick="App.Production.saveProductionSheet()" title="Save these component changes and remarks with this production lot"><i class="bi bi-save me-1"></i> Save Customization</button>
-          <button class="btn btn-outline-light btn-sm fw-bold me-2" onclick="App.Production.resetProductionSheetQuantities()" title="Discard customizations and restore this lot's originally recorded components"><i class="bi bi-arrow-counterclockwise me-1"></i> Reset to Recorded Components</button>
-          <button class="btn btn-dark btn-sm fw-bold me-2" onclick="App.Production.printProductionSheet()"><i class="bi bi-printer me-1"></i> Print Sheet</button>
-          <button class="btn btn-outline-light btn-sm fw-bold me-2" onclick="App.Production.downloadProductionSheetPDF()"><i class="bi bi-file-earmark-pdf me-1"></i> Download PDF</button>
-          <button type="button" class="btn-close btn-close-white" data-bs-dismiss="modal" style="margin-top: 1px;"></button>
+          <button class="btn btn-outline-light btn-sm fw-bold me-2" id="prodSheetSaveBtn"
+            onclick="App.Production.saveProductionSheet()"
+            title="Save these component changes and remarks with this production lot"><i class="bi bi-save me-1"></i>
+            Save Customization</button>
+          <button class="btn btn-outline-light btn-sm fw-bold me-2"
+            onclick="App.Production.resetProductionSheetQuantities()"
+            title="Discard customizations and restore this lot's originally recorded components"><i
+              class="bi bi-arrow-counterclockwise me-1"></i> Reset to Recorded Components</button>
+          <button class="btn btn-dark btn-sm fw-bold me-2" onclick="App.Production.printProductionSheet()"><i
+              class="bi bi-printer me-1"></i> Print Sheet</button>
+          <button class="btn btn-outline-light btn-sm fw-bold me-2"
+            onclick="App.Production.downloadProductionSheetPDF()"><i class="bi bi-file-earmark-pdf me-1"></i> Download
+            PDF</button>
+          <button type="button" class="btn-close btn-close-white" data-bs-dismiss="modal"
+            style="margin-top: 1px;"></button>
         </div>
       </div>
       <div class="modal-body bg-light">
         <div class="card mb-3 border-0 shadow-sm">
           <div class="card-body py-3">
             <div class="row g-2">
-              <div class="col-md-3"><span class="text-muted small text-uppercase">Date</span><div class="fw-bold" id="prodSheetDate"></div></div>
-              <div class="col-md-3"><span class="text-muted small text-uppercase">Lot #</span><div class="fw-bold" id="prodSheetProductId"></div></div>
-              <div class="col-md-3"><span class="text-muted small text-uppercase">Output Item</span><div class="fw-bold" id="prodSheetProductName"></div></div>
-              <div class="col-md-3"><span class="text-muted small text-uppercase">Lot Qty</span><div class="fw-bold" id="prodSheetLotQty"></div></div>
+              <div class="col-md-3"><span class="text-muted small text-uppercase">Date</span>
+                <div class="fw-bold" id="prodSheetDate"></div>
+              </div>
+              <div class="col-md-3"><span class="text-muted small text-uppercase">Lot #</span>
+                <div class="fw-bold" id="prodSheetProductId"></div>
+              </div>
+              <div class="col-md-3"><span class="text-muted small text-uppercase">Output Item</span>
+                <div class="fw-bold" id="prodSheetProductName"></div>
+              </div>
+              <div class="col-md-3"><span class="text-muted small text-uppercase">Lot Qty</span>
+                <div class="fw-bold" id="prodSheetLotQty"></div>
+              </div>
             </div>
           </div>
         </div>
 
         <div class="alert alert-info py-2 mb-3" role="alert" style="font-size: 13px;">
-          <i class="bi bi-info-circle-fill me-2"></i>This entire table is editable &mdash; change item names, sizes, narrations, vendors, or quantities, and add/remove rows to match the customer's requirement. Click <strong>Save Customization</strong> to keep these changes with this lot.
+          <i class="bi bi-info-circle-fill me-2"></i>This entire table is editable &mdash; change item names, sizes,
+          narrations, vendors, or quantities, and add/remove rows to match the customer's requirement. Click
+          <strong>Save Customization</strong> to keep these changes with this lot.
         </div>
 
         <div class="card border-0 shadow-sm mb-3">
           <div class="card-header bg-dark text-white fw-bold" style="font-family: 'Outfit', sans-serif;">
-            Common Components <small class="fw-normal">(applies regardless of color &mdash; Qty per Unit &times; Lot Qty, from the Process recipe)</small>
+            Common Components <small class="fw-normal">(applies regardless of color &mdash; Qty per Unit &times; Lot
+              Qty, from the Process recipe)</small>
           </div>
           <div class="card-body p-0">
             <div class="table-responsive">
@@ -538,21 +661,25 @@
             </div>
           </div>
           <div class="card-body border-top">
-            <button type="button" class="btn btn-outline-primary btn-sm fw-bold" onclick="App.Production.addCommonSheetRow()">+ Add Common Component</button>
+            <button type="button" class="btn btn-outline-primary btn-sm fw-bold"
+              onclick="App.Production.addCommonSheetRow()">+ Add Common Component</button>
           </div>
         </div>
 
         <div class="card border-0 shadow-sm" id="productionSheetMatrixCard">
           <div class="card-header bg-dark text-white fw-bold" style="font-family: 'Outfit', sans-serif;">
-            Per-Color Components <small class="fw-normal">(grouped into one table per set of colors actually used &mdash; same item across colors is shown as a single row)</small>
+            Per-Color Components <small class="fw-normal">(grouped into one table per set of colors actually used
+              &mdash; same item across colors is shown as a single row)</small>
           </div>
           <!-- Populated by App.Production.renderProductionSheetTable as one
                <table> per distinct color-signature group, instead of a
                single shared table with every color in the lot as a column. -->
           <div class="card-body p-0" id="productionSheetMatrixTables"></div>
           <div class="card-body border-top">
-            <button type="button" class="btn btn-outline-primary btn-sm fw-bold me-2" onclick="App.Production.addMatrixSheetRow()">+ Add Per-Color Component</button>
-            <button type="button" class="btn btn-outline-secondary btn-sm fw-bold" onclick="App.Production.addProductionSheetColor()">+ Add Color Column</button>
+            <button type="button" class="btn btn-outline-primary btn-sm fw-bold me-2"
+              onclick="App.Production.addMatrixSheetRow()">+ Add Per-Color Component</button>
+            <button type="button" class="btn btn-outline-secondary btn-sm fw-bold"
+              onclick="App.Production.addProductionSheetColor()">+ Add Color Column</button>
           </div>
         </div>
 
@@ -562,9 +689,9 @@
              renderProductionSheetPrintOptions so the column list always matches
              the lot currently in the dialog. -->
         <div class="mt-3">
-          <button class="btn btn-link btn-sm fw-bold p-0 text-decoration-none" type="button"
-                  data-bs-toggle="collapse" data-bs-target="#productionSheetPrintOptions"
-                  aria-expanded="false" aria-controls="productionSheetPrintOptions">
+          <button class="btn btn-link btn-sm fw-bold p-0 text-decoration-none" type="button" data-bs-toggle="collapse"
+            data-bs-target="#productionSheetPrintOptions" aria-expanded="false"
+            aria-controls="productionSheetPrintOptions">
             <i class="bi bi-sliders me-1"></i> Print options
           </button>
           <div class="collapse mt-2" id="productionSheetPrintOptions">
@@ -573,17 +700,21 @@
                 <div class="col-md-8">
                   <div class="fw-bold small mb-2">Columns to print</div>
                   <div id="productionSheetPrintColumns" class="d-flex flex-wrap gap-3"></div>
-                  <div class="form-text">Unticked columns are left out of the printed sheet only — nothing is removed from the lot.</div>
+                  <div class="form-text">Unticked columns are left out of the printed sheet only — nothing is removed
+                    from the lot.</div>
                 </div>
                 <div class="col-md-4">
                   <div class="fw-bold small mb-2">Page</div>
                   <div class="form-check">
-                    <input class="form-check-input" type="radio" name="prodSheetOrientation" id="prodSheetOrientPortrait" value="portrait" checked>
+                    <input class="form-check-input" type="radio" name="prodSheetOrientation"
+                      id="prodSheetOrientPortrait" value="portrait" checked>
                     <label class="form-check-label" for="prodSheetOrientPortrait">Portrait</label>
                   </div>
                   <div class="form-check">
-                    <input class="form-check-input" type="radio" name="prodSheetOrientation" id="prodSheetOrientLandscape" value="landscape">
-                    <label class="form-check-label" for="prodSheetOrientLandscape">Landscape <span class="text-muted small">(wide colour sets)</span></label>
+                    <input class="form-check-input" type="radio" name="prodSheetOrientation"
+                      id="prodSheetOrientLandscape" value="landscape">
+                    <label class="form-check-label" for="prodSheetOrientLandscape">Landscape <span
+                        class="text-muted small">(wide colour sets)</span></label>
                   </div>
                 </div>
               </div>
@@ -593,7 +724,9 @@
 
         <div class="mt-3">
           <label class="form-label fw-bold" for="productionSheetRemarks">Remarks</label>
-          <textarea id="productionSheetRemarks" class="form-control" rows="2" placeholder="What was changed, and why or for whom? (e.g. customer-requested substitution)" maxlength="500"></textarea>
+          <textarea id="productionSheetRemarks" class="form-control" rows="2"
+            placeholder="What was changed, and why or for whom? (e.g. customer-requested substitution)"
+            maxlength="500"></textarea>
         </div>
       </div>
     </div>
@@ -612,7 +745,8 @@
       </div>
       <div class="modal-body bg-light">
         <div class="alert alert-secondary py-2 mb-3" role="alert" style="font-size: 13px;">
-          <i class="bi bi-info-circle-fill me-2"></i>For items not covered by a Process's own recipe (BOM). This debits Stock directly and stays out of any Production lot's Components Consumed list.
+          <i class="bi bi-info-circle-fill me-2"></i>For items not covered by a Process's own recipe (BOM). This debits
+          Stock directly and stays out of any Production lot's Components Consumed list.
         </div>
         <form id="issueStockForm" autocomplete="off">
           <input type="hidden" id="issueSavedId">
@@ -624,15 +758,18 @@
             </div>
             <div class="col-md-4">
               <label class="form-label fw-bold">Issued To / Purpose *</label>
-              <input type="text" name="issuedTo" id="issueIssuedTo" class="form-control" list="vendorList" placeholder="Contractor name, department, or select a vendor…" required maxlength="200">
+              <input type="text" name="issuedTo" id="issueIssuedTo" class="form-control" list="vendorList"
+                placeholder="Contractor name, department, or select a vendor…" required maxlength="200">
             </div>
             <div class="col-md-2">
               <label class="form-label">Reference <span class="text-muted fw-normal">(optional)</span></label>
-              <input type="text" name="reference" id="issueReferenceInput" class="form-control" placeholder="e.g. Lot #" maxlength="100">
+              <input type="text" name="reference" id="issueReferenceInput" class="form-control" placeholder="e.g. Lot #"
+                maxlength="100">
             </div>
             <div class="col-md-3">
               <label class="form-label">Remarks <span class="text-muted fw-normal">(optional)</span></label>
-              <input type="text" name="remarks" id="issueRemarksInput" class="form-control" placeholder="Optional notes…" maxlength="500">
+              <input type="text" name="remarks" id="issueRemarksInput" class="form-control"
+                placeholder="Optional notes…" maxlength="500">
             </div>
           </div>
 
@@ -653,12 +790,15 @@
             </table>
           </div>
 
-          <button type="button" class="btn btn-outline-dark btn-sm mb-3 fw-bold" onclick="App.Issue.addRow()">+ Add Item</button>
+          <button type="button" class="btn btn-outline-dark btn-sm mb-3 fw-bold" onclick="App.Issue.addRow()">+ Add
+            Item</button>
 
           <div class="text-end mt-2">
             <button type="button" class="btn btn-secondary me-2" data-bs-dismiss="modal">Cancel</button>
-            <button type="button" id="issueStockPrintBtn" class="btn btn-outline-dark me-2" style="display:none;" onclick="App.Issue.printCurrent()"><i class="bi bi-printer"></i> Print</button>
-            <button type="button" id="issueStockDoneBtn" class="btn btn-success px-4 fw-bold shadow-sm" style="display:none;" onclick="App.Issue.done()"><i class="bi bi-check2"></i> Done</button>
+            <button type="button" id="issueStockPrintBtn" class="btn btn-outline-dark me-2" style="display:none;"
+              onclick="App.Issue.printCurrent()"><i class="bi bi-printer"></i> Print</button>
+            <button type="button" id="issueStockDoneBtn" class="btn btn-success px-4 fw-bold shadow-sm"
+              style="display:none;" onclick="App.Issue.done()"><i class="bi bi-check2"></i> Done</button>
             <button type="submit" id="issueStockSubmitBtn" class="btn btn-dark px-5 fw-bold shadow-sm">
               <i class="bi bi-box-arrow-up me-1"></i>Issue Stock
             </button>

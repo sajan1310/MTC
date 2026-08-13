@@ -667,6 +667,8 @@ textarea:focus-visible,
 .mb-field input[type="text"],
 .mb-field input[type="number"],
 .mb-field input[type="date"],
+.mb-field input[type="email"],
+.mb-field input[type="password"],
 .mb-field textarea,
 .mb-field select {
   width: 100%;

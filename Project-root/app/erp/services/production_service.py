@@ -315,7 +315,8 @@ def backfill_production_consumed_item_refs(cur, old_name: str, old_size: str, ne
 _PRODUCTION_SELECT_COLS = """
     id, production_date, product_id, product_name, qty, assigned_by, assigned_to,
     status, remarks, custom_components, sheet_remarks, process_id, lot_number,
-    contractor_payable, output_item_name, components_consumed, color, color_breakdown
+    contractor_rate, contractor_payable, extra_charge_type, extra_charge_amount,
+    output_item_name, components_consumed, color, color_breakdown
 """
 
 
@@ -335,7 +336,10 @@ def _row_to_production_record(row) -> dict:
         "sheetRemarks": row["sheet_remarks"] or "",
         "processId": row["process_id"] or "",
         "lotNumber": row["lot_number"] or "",
+        "contractorRate": float(row["contractor_rate"]),
         "contractorPayable": float(row["contractor_payable"]),
+        "extraChargeType": row["extra_charge_type"] or "",
+        "extraChargeAmount": float(row["extra_charge_amount"]),
         "outputItemName": row["output_item_name"] or "",
         "componentsConsumed": row["components_consumed"] or [],
         "color": row["color"] or "",
@@ -500,6 +504,24 @@ def save_production(conn, cur, form_data):
         stored_primary_color_axis = str(process.get("primaryColorAxis") or "").strip()
         requested_primary_color_axis = submitted_primary_color_axis or stored_primary_color_axis
         axes = process_service._compute_color_axes_for_process(process_id, color_components, pool_rows, color_links)
+
+        # 2+ axes with NEITHER a per-lot pick NOR a process-level default is
+        # the one case with nothing a human has ever actually decided --
+        # save_process now requires a Primary Axis choice going forward (see
+        # its own 2+ axes check), but a process saved before that existed can
+        # still reach here with a blank stored value. Silently defaulting to
+        # the first axis in recipe order is exactly the "nobody decided,
+        # a reorder could flip it later" behavior this is meant to end, so
+        # this is the one gap left for the operator to close right here on
+        # the Production Lot form -- after which the write-back below
+        # persists their pick as the process's default, so this only ever
+        # blocks a given process's first lot post-migration.
+        if not requested_primary_color_axis and len(axes) >= 2:
+            raise ValueError(
+                "This process has more than one independent Color Axis. Pick which group is \"Primary\" on this "
+                "lot (or set a default Primary Axis for this process in the Process editor) before saving."
+            )
+
         primary_axis = (
             next((a for a in axes if a["label"].lower() == requested_primary_color_axis.lower()), None)
             if requested_primary_color_axis
@@ -638,7 +660,21 @@ def save_production(conn, cur, form_data):
 
     production_date = date_utils.to_safe_date(form_data.get("date")) or date.today()
     assigned_by = str(form_data.get("assignedBy") or "").strip()
+
+    # Same whitelist update_production_status has always enforced -- this
+    # path accepted ANY string, and everything downstream that decides
+    # whether a lot's material movements happen at all keys off
+    # `lower(status) = 'completed'` (warehouse_service's Pass 1 pool credit
+    # and Pass 2 pool debit, stock_service's consumption term). A status
+    # that isn't one of the four options is therefore not a cosmetic label
+    # error: the lot is written, shows a status nobody can select from the
+    # UI, and silently never credits the Warehouse Pool nor debits Stock.
+    # Rejecting it here means the two write paths for the same column can
+    # no longer disagree about what a valid status is.
     status = str(form_data.get("status") or "Pending").strip() or "Pending"
+    if status not in _PRODUCTION_STATUS_OPTIONS:
+        raise ValueError(f'Invalid status "{status}".')
+
     remarks = str(form_data.get("remarks") or "").strip()
 
     row_idx = form_data.get("rowIdx")
@@ -691,8 +727,19 @@ def save_production(conn, cur, form_data):
         else None
     )
 
-    contractor_rate = contractors_service._get_contractor_rate(cur, assigned_to, process["processName"])
-    contractor_payable = contractor_rate * qty
+    # Size is never a form input -- derived server-side from this lot's
+    # Process outputItemName, mirroring the client's own Size cascade
+    # dropdown (App.Utils.getSizeFromOutputItemName), so Layer 1's rate key
+    # falls out of the single Process the operator already picked.
+    size = contractors_service._get_size_from_output_item_name(process["outputItemName"])
+    contractor_rate = contractors_service._get_contractor_rate(cur, assigned_to, process["processType"], size)
+
+    extra_charge_type = str(form_data.get("extraChargeType") or "").strip()
+    extra_charge_amount = (
+        contractors_service._get_extra_charge(cur, assigned_to, extra_charge_type) if extra_charge_type else 0.0
+    )
+
+    contractor_payable = contractor_rate * qty + extra_charge_amount
 
     components_json = json.dumps(clean_components)
     color_breakdown_json = json.dumps(color_breakdown) if color_breakdown else None
@@ -708,7 +755,8 @@ def save_production(conn, cur, form_data):
                 production_date = %s, product_id = %s, product_name = %s, bom_product_id = %s,
                 qty = %s, assigned_by = %s, assigned_to = %s, contractor_id = %s, status = %s, remarks = %s,
                 process_id = %s, process_master_id = %s, lot_number = %s,
-                contractor_rate = %s, contractor_payable = %s, output_item_name = %s,
+                contractor_rate = %s, contractor_payable = %s, extra_charge_type = %s, extra_charge_amount = %s,
+                output_item_name = %s,
                 components_consumed = %s, color = %s, color_breakdown = %s, updated_by = %s
             WHERE id = %s
             """,
@@ -716,7 +764,8 @@ def save_production(conn, cur, form_data):
                 production_date, product_id, product_name, resolved_bom_product_id,
                 qty, assigned_by, assigned_to, resolved_contractor_id, status, remarks,
                 process_id, resolved_process_master_id, lot_number,
-                contractor_rate, contractor_payable, output_item_name,
+                contractor_rate, contractor_payable, extra_charge_type or None, extra_charge_amount,
+                output_item_name,
                 components_json, color, color_breakdown_json, user_id,
                 existing["id"],
             ),
@@ -728,15 +777,17 @@ def save_production(conn, cur, form_data):
             INSERT INTO erp.production
                 (production_date, product_id, product_name, bom_product_id, qty, assigned_by, assigned_to,
                  contractor_id, status, remarks, process_id, process_master_id, lot_number,
-                 contractor_rate, contractor_payable, output_item_name, components_consumed, color,
+                 contractor_rate, contractor_payable, extra_charge_type, extra_charge_amount,
+                 output_item_name, components_consumed, color,
                  color_breakdown, updated_by)
-            VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+            VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
             RETURNING id
             """,
             (
                 production_date, product_id, product_name, resolved_bom_product_id, qty, assigned_by, assigned_to,
                 resolved_contractor_id, status, remarks, process_id, resolved_process_master_id, lot_number,
-                contractor_rate, contractor_payable, output_item_name, components_json, color,
+                contractor_rate, contractor_payable, extra_charge_type or None, extra_charge_amount,
+                output_item_name, components_json, color,
                 color_breakdown_json, user_id,
             ),
         )

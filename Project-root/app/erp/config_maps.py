@@ -73,6 +73,15 @@ COLOR_COMBO_DELIMITER = " / "
 # Hardcoded virtual "process" category for logistics rate-card entries.
 LOGISTICS_PROCESS_NAME = "Dispatch / Logistics"
 
+# Mirrors static/erp/core.js's PROCESS_SIZE_LIST (also duplicated in
+# mobile.js) -- kept as a third, independently-maintained copy rather than
+# a new shared-config mechanism, matching how the two JS copies are
+# already maintained. Used server-side to resolve a Production lot's
+# Contractor Rate (Layer 1 key includes Size) from its Process's
+# outputItemName -- see contractors_service._get_size_from_output_item_name.
+PROCESS_SIZE_LIST = ["12 inch", "14 inch", "16 inch", "20 inch", "24 inch", "26 inch"]
+PROCESS_SIZE_FALLBACK = "General"
+
 DATE_FORMATS = {
     "DISPLAY": "DD/MM/YYYY",
     "ISO": "YYYY-MM-DD",
@@ -281,6 +290,8 @@ PRODUCTION_COL_NAMES = {
     "color": 18,
     "colorBreakdown": 19,
     "orderNumber": 20,
+    "extraChargeType": 21,
+    "extraChargeAmount": 22,
 }
 
 PROCESS_COL_NAMES = {
@@ -346,8 +357,19 @@ CONTRACTORS_COL_NAMES = {
 
 CONTRACTOR_RATES_COL_NAMES = {
     "contractorName": 1,
-    "processName": 2,
-    "ratePerUnit": 3,
+    "processType": 2,
+    "size": 3,
+    "ratePerUnit": 4,
+    "remarks": 5,
+}
+
+# Layer 2: optional flat per-lot extra charge (e.g. "Mounting Tyre/Tube"),
+# keyed by (contractor, service_type). Service Type is free-text -- it
+# varies contractor to contractor, same as BOM_COSTS_COL_NAMES.description.
+CONTRACTOR_SERVICE_CHARGES_COL_NAMES = {
+    "contractorName": 1,
+    "serviceType": 2,
+    "chargeAmount": 3,
     "remarks": 4,
 }
 
@@ -460,6 +482,7 @@ COLUMN_MAPS = {
     "DISPATCH": DISPATCH_COL_NAMES,
     "CONTRACTORS": CONTRACTORS_COL_NAMES,
     "CONTRACTOR_RATES": CONTRACTOR_RATES_COL_NAMES,
+    "CONTRACTOR_SERVICE_CHARGES": CONTRACTOR_SERVICE_CHARGES_COL_NAMES,
     "CONTRACTOR_PAYMENTS": CONTRACTOR_PAYMENTS_COL_NAMES,
     "LOGS": LOGS_COL_NAMES,
 }
@@ -504,6 +527,7 @@ TABLE_NAMES = {
     # a guarded no-op since Phase 3a.
     "CONTRACTORS": "erp.contractors",
     "CONTRACTOR_RATES": "erp.contractor_rates",
+    "CONTRACTOR_SERVICE_CHARGES": "erp.contractor_service_charges",
     "CONTRACTOR_PAYMENTS": "erp.contractor_payments",
     # Activates three dormant cascades/guards: tags_service.
     # _rename_color_everywhere, process_service.
@@ -536,6 +560,10 @@ TABLE_NAMES = {
     # table, deliberately no *_HEADERS counterpart: a plan line has no
     # header-only data, plan_date/client_name both live on the line itself.
     "DISPATCH_PLAN_LINES": "erp.dispatch_plan_lines",
+    # Stock Groups (see migrations/erp/030_stock_groups.sql) -- activates
+    # items_service._propagate_item_identity_change/_get_item_keys_in_use
+    # for group membership, a guarded no-op until now.
+    "STOCK_GROUP_ITEMS": "erp.stock_group_items",
 }
 
 _CAMEL_BOUNDARY_RE = re.compile(r"(?<!^)(?=[A-Z])")

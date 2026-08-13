@@ -229,7 +229,10 @@ def get_item_master_refresh_map(cur) -> dict:
 
 
 def _propagate_item_identity_change(cur, old_name: str, old_size: str, new_name: str, new_size: str) -> None:
-    for sheet_key in ("PO_LINES", "BILL_LINES", "BOM_LINES", "RETURN_LINES", "WASTAGE_LINES", "ISSUE_LINES"):
+    for sheet_key in (
+        "PO_LINES", "BILL_LINES", "BOM_LINES", "RETURN_LINES", "WASTAGE_LINES", "ISSUE_LINES",
+        "STOCK_GROUP_ITEMS",
+    ):
         table = config_maps.TABLE_NAMES.get(sheet_key)
         if table:
             rename_utils.rename_composite_key(cur, table, "item_name", "size", old_name, old_size, new_name, new_size)
@@ -255,10 +258,11 @@ def _propagate_item_identity_change(cur, old_name: str, old_size: str, new_name:
 
 
 def _get_item_keys_in_use(cur, items: list) -> set:
-    """"nameLower|sizeLower" keys referenced by a BOM component row or an
-    ITEM-sourced Process Components row -- unsafe to delete. Guarded via
-    config_maps.TABLE_NAMES exactly like Phase 1a's rename cascades; both
-    targets are real as of Phase 3c (BOM) and Phase 3a (Process Components).
+    """"nameLower|sizeLower" keys referenced by a BOM component row, an
+    ITEM-sourced Process Components row, or a saved Stock Group -- unsafe to
+    delete. Guarded via config_maps.TABLE_NAMES exactly like Phase 1a's
+    rename cascades; all three targets are real as of Phase 3c (BOM),
+    Phase 3a (Process Components), and this round (Stock Groups).
     """
     requested = {
         f'{str(it.get("name") or "").strip().lower()}|{str(it.get("size") or "").strip().lower()}'
@@ -300,6 +304,24 @@ def _get_item_keys_in_use(cur, items: list) -> set:
             FROM {comp_table} pc
             JOIN {master_table} pm ON pm.id = pc.master_id
             WHERE pm.deleted_at IS NULL AND upper(pc.source_type) != 'POOL'
+            """
+        )
+        for row in cur.fetchall():
+            key = f'{(row["item_name"] or "").strip().lower()}|{(row["size"] or "").strip().lower()}'
+            if key in requested:
+                in_use.add(key)
+
+    group_items_table = config_maps.TABLE_NAMES.get("STOCK_GROUP_ITEMS")
+    if group_items_table:
+        # erp.stock_group_items has no deleted_at of its own (rewritten
+        # wholesale alongside its parent group, same as erp.item_vendors) --
+        # visibility comes from the parent group's deleted_at via this join.
+        cur.execute(
+            f"""
+            SELECT gi.item_name, gi.size
+            FROM {group_items_table} gi
+            JOIN erp.stock_group_master gm ON gm.id = gi.group_id
+            WHERE gm.deleted_at IS NULL
             """
         )
         for row in cur.fetchall():
@@ -450,6 +472,16 @@ def get_item_identity_drift_report():
                 if str(comp.get("sourceType") or "").strip().upper() == "POOL":
                     continue
                 check("Production (Components Consumed)", context, comp.get("itemName"), comp.get("size"), valid_keys)
+
+        cur.execute(
+            """
+            SELECT gm.name AS group_name, gi.item_name, gi.size
+            FROM erp.stock_group_items gi JOIN erp.stock_group_master gm ON gm.id = gi.group_id
+            WHERE gm.deleted_at IS NULL
+            """
+        )
+        for row in cur.fetchall():
+            check("Stock Groups", f'Group "{row["group_name"] or ""}"', row["item_name"], row["size"], valid_keys)
 
     counts: dict = {}
     for f in findings:
@@ -621,6 +653,12 @@ def save_item(conn, cur, form_data):
         # company logo) targets well under this -- a value this large means
         # something bypassed that resize, not a legitimate photo.
         raise ValueError("Item photo is too large. Please choose a smaller image.")
+    if image and not image.startswith("data:image/"):
+        # The only legitimate producer is canvas-resize, which always emits
+        # a data:image/... URI -- anything else is not a photo (and, since
+        # this value is rendered into an <img src="..."> on mobile, letting
+        # arbitrary strings through here is a stored-XSS vector).
+        raise ValueError("Item photo is not a valid image.")
     initial_stock = _validate_initial_stock(form_data.get("itemInitialStock"))
     base_unit = _validate_base_unit(form_data.get("itemBaseUnit"))
     purchase_unit = _validate_purchase_unit(form_data.get("itemPurchaseUnit"), base_unit)
@@ -758,7 +796,7 @@ def delete_item(conn, cur, name, size=""):
     in_use_key = f"{valid_name.lower()}|{valid_size.lower()}"
     if in_use_key in _get_item_keys_in_use(cur, [{"name": valid_name, "size": valid_size}]):
         size_suffix = f" ({valid_size})" if valid_size else ""
-        raise ValueError(f'Cannot delete "{valid_name}"{size_suffix}: referenced by a Product\'s BOM or a Process recipe.')
+        raise ValueError(f'Cannot delete "{valid_name}"{size_suffix}: referenced by a Product\'s BOM, a Process recipe, or a Stock Group.')
 
     cur.execute(
         "UPDATE erp.items SET deleted_at = NOW(), updated_by = %s WHERE id = %s",
@@ -807,7 +845,7 @@ def delete_items_bulk(conn, cur, items):
     if skipped:
         labels = [f'{it["name"]} ({it["size"]})' if it["size"] else it["name"] for it in skipped]
         message += (
-            f" Skipped {len(skipped)} item(s) referenced by a Product's BOM or a Process recipe: "
+            f" Skipped {len(skipped)} item(s) referenced by a Product's BOM, a Process recipe, or a Stock Group: "
             f"{', '.join(labels)}."
         )
 
