@@ -298,7 +298,6 @@ App.Contractor = {
   <td><input type="number" class="form-control form-control-sm text-end rate-amount" value="${rate.ratePerUnit || 0}" min="0" step="0.01"></td>
   <td><input type="text" class="form-control form-control-sm rate-remarks" value="${escapeHtml(rate.remarks || '')}"></td>
   <td class="text-center">
-    <button type="button" class="btn btn-sm btn-outline-success" onclick="App.Contractor.saveRateRow('${rowId}')">Save</button>
     <button type="button" class="btn btn-sm btn-outline-danger" onclick="App.Contractor.deleteRateRow('${rowId}')">✕</button>
   </td>
 </tr>`;
@@ -349,48 +348,80 @@ App.Contractor = {
     tbody.insertAdjacentHTML('beforeend', this.renderRateRow({ processType: '', size: '', ratePerUnit: 0, remarks: '' }));
   },
 
-  // Saving upserts by (contractor, processType, size) -- it has no idea
-  // this row used to mean a different type/size. If either dropdown was
-  // switched away from the row's original saved values, the old
-  // (contractor, oldType, oldSize) entry would otherwise be left behind
-  // as an orphaned duplicate, so it's explicitly deleted after the new
-  // triple saves.
-  async saveRateRow(rowId) {
-    const row = document.getElementById(rowId);
-    if (!row) return;
-
+  // Saves every row in the Rate Card table in one action instead of a
+  // per-row Save button -- rate cards routinely need several Process
+  // Type/Size combinations set at once, and clicking Save on each row
+  // individually was the exact tedium this feature was meant to avoid.
+  // Rows are saved sequentially (always a short list per contractor) so
+  // one failure's toast doesn't get lost among a burst of others.
+  async saveAllRates() {
     const contractorName = App.State.currentContractorRates?.contractorName;
     if (!contractorName) return;
 
-    const processType = row.querySelector('.rate-process-type').value;
-    const size = row.querySelector('.rate-size').value;
-    const ratePerUnit = row.querySelector('.rate-amount').value;
-    const remarks = row.querySelector('.rate-remarks').value;
-    const originalProcessType = row.dataset.originalProcessType || '';
-    const originalSize = row.dataset.originalSize || '';
-
-    if (!processType || !size) {
-      App.Utils.showToast('Select a Process Type and Size for this rate.', true);
+    const rows = Array.from(document.querySelectorAll('#contractorRatesBody tr'));
+    if (!rows.length) {
+      App.Utils.showToast('No rates to save.', true);
       return;
     }
 
-    try {
-      const res = await Api.mutate('saveContractorRate', { contractorName, processType, size, ratePerUnit, remarks });
-      if (!res.success) {
-        App.Utils.showToast(res.message, true);
-        return;
+    const btn = document.getElementById('btnSaveAllContractorRates');
+    if (btn) { btn.disabled = true; btn.innerHTML = '<i class="bi bi-hourglass-split"></i> Saving…'; }
+
+    let saved = 0;
+    let skipped = 0;
+    const failures = [];
+
+    for (const row of rows) {
+      const processType = row.querySelector('.rate-process-type')?.value || '';
+      const size = row.querySelector('.rate-size')?.value || '';
+      const ratePerUnit = row.querySelector('.rate-amount')?.value;
+      const remarks = row.querySelector('.rate-remarks')?.value || '';
+      const originalProcessType = row.dataset.originalProcessType || '';
+      const originalSize = row.dataset.originalSize || '';
+
+      // A freshly-added row nobody filled in yet -- skip quietly rather
+      // than blocking the whole batch on it.
+      if (!processType && !size && !originalProcessType) {
+        skipped++;
+        continue;
       }
-      const typeOrSizeChanged = originalProcessType && (
-        originalProcessType.toLowerCase() !== processType.toLowerCase() || originalSize.toLowerCase() !== size.toLowerCase()
-      );
-      if (typeOrSizeChanged) {
-        await Api.mutate('deleteContractorRate', contractorName, originalProcessType, originalSize);
+      if (!processType || !size) {
+        failures.push(`${originalProcessType || 'New row'}: choose both a Process Type and Size`);
+        continue;
       }
-      App.Utils.showToast(res.message, false);
-      await this.loadRateCard(contractorName);
-    } catch (err) {
-      App.Utils.showToast(err.message || 'Failed to save rate', true);
+
+      try {
+        const res = await Api.mutate('saveContractorRate', { contractorName, processType, size, ratePerUnit, remarks });
+        if (!res.success) {
+          failures.push(`${processType} / ${size}: ${res.message}`);
+          continue;
+        }
+        // Upserts by (contractor, processType, size) -- it has no idea this
+        // row used to mean a different type/size. If either dropdown was
+        // switched away from the row's original saved values, the old
+        // (contractor, oldType, oldSize) entry would otherwise be left
+        // behind as an orphaned duplicate.
+        const typeOrSizeChanged = originalProcessType && (
+          originalProcessType.toLowerCase() !== processType.toLowerCase() || originalSize.toLowerCase() !== size.toLowerCase()
+        );
+        if (typeOrSizeChanged) {
+          await Api.mutate('deleteContractorRate', contractorName, originalProcessType, originalSize);
+        }
+        saved++;
+      } catch (err) {
+        failures.push(`${processType} / ${size}: ${err.message || 'failed'}`);
+      }
     }
+
+    if (btn) { btn.disabled = false; btn.innerHTML = '<i class="bi bi-check2-all"></i> Save All Rates'; }
+
+    const parts = [];
+    if (saved) parts.push(`${saved} rate${saved === 1 ? '' : 's'} saved`);
+    if (skipped) parts.push(`${skipped} empty row${skipped === 1 ? '' : 's'} skipped`);
+    if (failures.length) parts.push(`${failures.length} failed (${failures.join('; ')})`);
+    App.Utils.showToast(parts.join(', ') || 'Nothing to save.', failures.length > 0);
+
+    await this.loadRateCard(contractorName);
   },
 
   async deleteRateRow(rowId) {
@@ -510,7 +541,7 @@ App.Contractor = {
   },
 
   // Saving upserts by (contractor, serviceType) -- same orphan-cleanup
-  // reasoning as saveRateRow above.
+  // reasoning as saveAllRates above.
   async saveServiceChargeRow(rowId) {
     const row = document.getElementById(rowId);
     if (!row) return;

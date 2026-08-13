@@ -113,6 +113,9 @@
           </div>
           <div class="d-flex gap-2">
             <button type="button" class="btn btn-outline-primary btn-sm fw-bold" onclick="App.Contractor.addRateRow()">+ Add Rate</button>
+            <button type="button" id="btnSaveAllContractorRates" class="btn btn-success btn-sm fw-bold" onclick="App.Contractor.saveAllRates()">
+              <i class="bi bi-check2-all"></i> Save All Rates
+            </button>
             <button type="button" id="btnBulkDeleteContractorRates" class="btn btn-outline-danger btn-sm fw-bold d-none" onclick="App.Contractor.bulkDeleteRates()">
               <i class="bi bi-trash"></i> Delete Selected
             </button>
