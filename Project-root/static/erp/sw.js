@@ -16,7 +16,7 @@
 // network-only and never touched by this worker -- ERP data must never
 // be served stale from a cache.
 
-const CACHE_NAME = 'erp-shell-v8';
+const CACHE_NAME = 'erp-shell-v9';
 
 
 

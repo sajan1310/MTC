@@ -492,7 +492,6 @@ App.Contractor = {
   <td><input type="number" class="form-control form-control-sm text-end charge-amount" value="${charge.chargeAmount || 0}" min="0" step="0.01"></td>
   <td><input type="text" class="form-control form-control-sm charge-remarks" value="${escapeHtml(charge.remarks || '')}"></td>
   <td class="text-center">
-    <button type="button" class="btn btn-sm btn-outline-success" onclick="App.Contractor.saveServiceChargeRow('${rowId}')">Save</button>
     <button type="button" class="btn btn-sm btn-outline-danger" onclick="App.Contractor.deleteServiceChargeRow('${rowId}')">✕</button>
   </td>
 </tr>`;
@@ -540,39 +539,70 @@ App.Contractor = {
     tbody.insertAdjacentHTML('beforeend', this.renderServiceChargeRow({ serviceType: '', chargeAmount: 0, remarks: '' }));
   },
 
-  // Saving upserts by (contractor, serviceType) -- same orphan-cleanup
-  // reasoning as saveAllRates above.
-  async saveServiceChargeRow(rowId) {
-    const row = document.getElementById(rowId);
-    if (!row) return;
-
+  // Saves every row in the Extra Charges table in one action instead of
+  // a per-row Save button -- same reasoning and shape as saveAllRates
+  // above. Upserts by (contractor, serviceType); if Service Type was
+  // edited away from a row's original saved value, the old (contractor,
+  // oldServiceType) entry would otherwise be left behind as an orphaned
+  // duplicate, so it's explicitly deleted after the new one saves.
+  async saveAllServiceCharges() {
     const contractorName = App.State.currentContractorServiceCharges?.contractorName;
     if (!contractorName) return;
 
-    const serviceType = row.querySelector('.charge-service-type').value.trim();
-    const chargeAmount = row.querySelector('.charge-amount').value;
-    const remarks = row.querySelector('.charge-remarks').value;
-    const originalServiceType = row.dataset.originalServiceType || '';
-
-    if (!serviceType) {
-      App.Utils.showToast('Enter a Service Type for this charge.', true);
+    const rows = Array.from(document.querySelectorAll('#contractorServiceChargesBody tr'));
+    if (!rows.length) {
+      App.Utils.showToast('No extra charges to save.', true);
       return;
     }
 
-    try {
-      const res = await Api.mutate('saveContractorServiceCharge', { contractorName, serviceType, chargeAmount, remarks });
-      if (!res.success) {
-        App.Utils.showToast(res.message, true);
-        return;
+    const btn = document.getElementById('btnSaveAllContractorServiceCharges');
+    if (btn) { btn.disabled = true; btn.innerHTML = '<i class="bi bi-hourglass-split"></i> Saving…'; }
+
+    let saved = 0;
+    let skipped = 0;
+    const failures = [];
+
+    for (const row of rows) {
+      const serviceType = (row.querySelector('.charge-service-type')?.value || '').trim();
+      const chargeAmount = row.querySelector('.charge-amount')?.value;
+      const remarks = row.querySelector('.charge-remarks')?.value || '';
+      const originalServiceType = row.dataset.originalServiceType || '';
+
+      // A freshly-added row nobody filled in yet -- skip quietly rather
+      // than blocking the whole batch on it.
+      if (!serviceType && !originalServiceType) {
+        skipped++;
+        continue;
       }
-      if (originalServiceType && originalServiceType.toLowerCase() !== serviceType.toLowerCase()) {
-        await Api.mutate('deleteContractorServiceCharge', contractorName, originalServiceType);
+      if (!serviceType) {
+        failures.push(`${originalServiceType || 'New row'}: enter a Service Type`);
+        continue;
       }
-      App.Utils.showToast(res.message, false);
-      await this.loadServiceCharges(contractorName);
-    } catch (err) {
-      App.Utils.showToast(err.message || 'Failed to save extra charge', true);
+
+      try {
+        const res = await Api.mutate('saveContractorServiceCharge', { contractorName, serviceType, chargeAmount, remarks });
+        if (!res.success) {
+          failures.push(`${serviceType}: ${res.message}`);
+          continue;
+        }
+        if (originalServiceType && originalServiceType.toLowerCase() !== serviceType.toLowerCase()) {
+          await Api.mutate('deleteContractorServiceCharge', contractorName, originalServiceType);
+        }
+        saved++;
+      } catch (err) {
+        failures.push(`${serviceType}: ${err.message || 'failed'}`);
+      }
     }
+
+    if (btn) { btn.disabled = false; btn.innerHTML = '<i class="bi bi-check2-all"></i> Save All Charges'; }
+
+    const parts = [];
+    if (saved) parts.push(`${saved} charge${saved === 1 ? '' : 's'} saved`);
+    if (skipped) parts.push(`${skipped} empty row${skipped === 1 ? '' : 's'} skipped`);
+    if (failures.length) parts.push(`${failures.length} failed (${failures.join('; ')})`);
+    App.Utils.showToast(parts.join(', ') || 'Nothing to save.', failures.length > 0);
+
+    await this.loadServiceCharges(contractorName);
   },
 
   async deleteServiceChargeRow(rowId) {
