@@ -285,11 +285,15 @@ def _build_warehouse_pool_buckets(cur, include_opening: bool = True) -> dict:
             buckets[key] = bucket
         return bucket
 
+    all_processes = process_service._get_all_processes(cur)
     process_output_item_map = {
         p["processId"].strip().lower(): p["outputItemName"].strip()
-        for p in process_service._get_all_processes(cur)
+        for p in all_processes
         if p.get("processId") and p.get("outputItemName")
     }
+    # Only used to decide Pass 1's per-final-stage-lot naming below; Pass 3
+    # reuses this same set rather than re-querying processes a second time.
+    final_stage_ids = {p["processId"].strip().lower() for p in all_processes if p["isFinalStage"]}
 
     # Pass 0: seed buckets from manually-recorded Opening Balances -- the
     # one durable source of "stock that didn't come from a Production lot".
@@ -336,10 +340,22 @@ def _build_warehouse_pool_buckets(cur, include_opening: bool = True) -> dict:
         )
         for row in cur.fetchall():
             process_id = str(row["process_id"] or "").strip()
-            output_item_name = (
-                process_output_item_map.get(process_id.lower())
-                or str(row["output_item_name"] or "").strip()
-            )
+            own_output_item_name = str(row["output_item_name"] or "").strip()
+            if process_id.lower() in final_stage_ids:
+                # Final-stage output is dispatch-terminal -- nothing downstream
+                # ever sources a POOL component off it (unlike a WIP process's
+                # output, which the else branch below still normalizes so
+                # per-lot renames don't fragment a recipe's own upstream
+                # lookup). So a per-lot override (e.g. a rework/variant run
+                # logged under its own name) keeps its own bucket instead of
+                # being folded into the process's default-named one --
+                # dispatch_service._compute_ready_to_dispatch_map keys
+                # untagged Ready-to-Dispatch rows off this same name, so each
+                # distinct per-lot name surfaces there as its own trackable
+                # row/qty.
+                output_item_name = own_output_item_name or process_output_item_map.get(process_id.lower(), "")
+            else:
+                output_item_name = process_output_item_map.get(process_id.lower()) or own_output_item_name
             if not output_item_name:
                 continue
             product_tag = str(row["product_id"] or "").strip()
@@ -538,10 +554,6 @@ def _build_warehouse_pool_buckets(cur, include_opening: bool = True) -> dict:
                 continue
             key = product_id.lower()
             dispatch_qty_by_key[key] = dispatch_qty_by_key.get(key, 0) + float(row["qty"] or 0)
-
-        final_stage_ids = {
-            p["processId"].strip().lower() for p in process_service._get_all_processes(cur) if p["isFinalStage"]
-        }
 
         # Dispatch carries no color of its own, so a Product Tag (or
         # untagged Output Item Name) credited across multiple color

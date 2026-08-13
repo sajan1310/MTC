@@ -144,6 +144,29 @@ def test_ready_to_dispatch_untagged_final_stage_surfaces_under_output_name(erp_c
     assert match["readyQty"] == 6
 
 
+def test_ready_to_dispatch_untagged_final_stage_keeps_per_lot_override_separate(erp_client):
+    """Unlike a non-final-stage (WIP) process -- see test_warehouse.py's
+    test_per_lot_output_item_name_override_merges_into_process_bucket,
+    where an override-named lot merges into the process's default-named
+    bucket so a downstream recipe's POOL lookup still finds it -- a
+    final-stage lot's own name is dispatch-terminal: nothing downstream
+    keys a POOL component off it, so each distinct per-lot name (e.g. a
+    variant/rework run logged under its own name) surfaces as its own
+    Ready-to-Dispatch row/qty instead of being folded into one aggregate.
+    """
+    payload, process_id = _save_process(erp_client, isFinalStage=True)
+    override_name = f"{payload['outputItemName']} (123)"
+
+    _complete_production_lot(erp_client, process_id, "", 10)
+    _complete_production_lot(erp_client, process_id, "", 20, outputItemName=override_name)
+
+    listed = _rpc(erp_client, "getReadyToDispatchData").get_json()["data"]
+    default_row = next(r for r in listed if r["productId"] == payload["outputItemName"])
+    override_row = next(r for r in listed if r["productId"] == override_name)
+    assert default_row["readyQty"] == 10
+    assert override_row["readyQty"] == 20
+
+
 def test_ready_to_dispatch_non_final_stage_stays_invisible(erp_client):
     payload, process_id = _save_process(erp_client, isFinalStage=False)
     _complete_production_lot(erp_client, process_id, "", 6)
