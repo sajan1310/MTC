@@ -2,7 +2,7 @@
 
 <div id="contractorsTab" class="tab-content table-container" role="tabpanel" aria-labelledby="btn-contractorsTab">
   <div class="d-flex justify-content-between flex-wrap gap-2 mb-3">
-    <input type="text" id="searchContractor" class="form-control w-50" placeholder="Search Contractors by Name or Contact..." onkeyup="App.Contractor.filterData(this.value)">
+    <input type="text" id="searchContractor" class="form-control w-50" placeholder="Search Contractors by Name or Contact..." aria-label="Search contractors" autocomplete="off" onkeyup="App.Contractor.filterData(this.value)">
     <div class="d-flex gap-2 flex-wrap justify-content-end">
       <button class="btn btn-danger fw-bold shadow-sm d-none" id="btnBulkDeleteContractors" type="button"
         onclick="App.Contractor.bulkDelete()" style="white-space: nowrap;">

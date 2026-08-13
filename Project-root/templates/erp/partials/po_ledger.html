@@ -226,7 +226,7 @@
       </div>
       <div class="modal-body bg-light">
         <div class="d-flex w-50 align-items-center mb-3">
-          <input type="text" id="searchPendingPOs" class="form-control" placeholder="Search PO #, Vendor, or Item..." autocomplete="off" onkeyup="App.PO.filterPendingPOs(this.value)">
+          <input type="text" id="searchPendingPOs" class="form-control" placeholder="Search PO #, Vendor, or Item..." aria-label="Search pending purchase orders" autocomplete="off" onkeyup="App.PO.filterPendingPOs(this.value)">
         </div>
         <div class="table-responsive">
           <table class="table table-bordered bg-white shadow-sm table-hover mb-0">
@@ -267,7 +267,7 @@
         <button type="button" class="btn-close btn-close-white" data-bs-dismiss="modal"></button>
       </div>
       <div class="modal-body">
-        <input type="text" id="vendorCatalogSearch" class="form-control form-control-sm mb-3" placeholder="Search by item, size, narration, or vendor…">
+        <input type="text" id="vendorCatalogSearch" class="form-control form-control-sm mb-3" placeholder="Search by item, size, narration, or vendor…" aria-label="Search vendor catalog" autocomplete="off">
         <div class="table-responsive">
           <table class="table table-sm table-bordered table-hover">
             <thead class="table-dark sticky-top">

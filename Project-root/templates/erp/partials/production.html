@@ -28,7 +28,7 @@
     <div class="d-flex justify-content-between flex-wrap gap-2 mb-3">
       <div class="d-flex w-50 align-items-center gap-2">
         <input type="text" id="searchProduction" class="form-control"
-          placeholder="Search Lot #, Date, Product, Assigned By/To, or Status..." autocomplete="off"
+          placeholder="Search Lot #, Date, Product, Assigned By/To, or Status..." aria-label="Search production log" autocomplete="off"
           onkeyup="App.Production.filterData(this.value)">
         <select id="productionSortBy" class="form-select" style="max-width: 220px;" aria-label="Sort Production Logs"
           onchange="App.Production.sortBy(this.value)">
@@ -90,23 +90,23 @@
                 class="form-check-input" onclick="App.Production.toggleSelectAll(this)"></th>
             <th scope="col" style="width: 8%;">Date</th>
             <th scope="col" style="width: 12%;">Process / Lot # <button type="button" class="th-filter-btn"
-                data-filter-key="process" onclick="App.Production.toggleColumnFilter(event, 'process')"><i
+                data-filter-key="process" aria-label="Filter by Process / Lot #" onclick="App.Production.toggleColumnFilter(event, 'process')"><i
                   class="bi bi-funnel"></i></button></th>
             <th scope="col" style="width: 14%;">Output Item <button type="button" class="th-filter-btn"
-                data-filter-key="outputItem" onclick="App.Production.toggleColumnFilter(event, 'outputItem')"><i
+                data-filter-key="outputItem" aria-label="Filter by Output Item" onclick="App.Production.toggleColumnFilter(event, 'outputItem')"><i
                   class="bi bi-funnel"></i></button></th>
             <th scope="col" style="width: 12%;">Product Tag <button type="button" class="th-filter-btn"
-                data-filter-key="productTag" onclick="App.Production.toggleColumnFilter(event, 'productTag')"><i
+                data-filter-key="productTag" aria-label="Filter by Product Tag" onclick="App.Production.toggleColumnFilter(event, 'productTag')"><i
                   class="bi bi-funnel"></i></button></th>
             <th scope="col" style="width: 7%; text-align: center;">Lot Qty</th>
             <th scope="col" style="width: 10%;">Assigned By <button type="button" class="th-filter-btn"
-                data-filter-key="assignedBy" onclick="App.Production.toggleColumnFilter(event, 'assignedBy')"><i
+                data-filter-key="assignedBy" aria-label="Filter by Assigned By" onclick="App.Production.toggleColumnFilter(event, 'assignedBy')"><i
                   class="bi bi-funnel"></i></button></th>
             <th scope="col" style="width: 10%;">Assigned To <button type="button" class="th-filter-btn"
-                data-filter-key="assignedTo" onclick="App.Production.toggleColumnFilter(event, 'assignedTo')"><i
+                data-filter-key="assignedTo" aria-label="Filter by Assigned To" onclick="App.Production.toggleColumnFilter(event, 'assignedTo')"><i
                   class="bi bi-funnel"></i></button></th>
             <th scope="col" style="width: 8%; text-align: center;">Status <button type="button" class="th-filter-btn"
-                data-filter-key="status" onclick="App.Production.toggleColumnFilter(event, 'status')"><i
+                data-filter-key="status" aria-label="Filter by Status" onclick="App.Production.toggleColumnFilter(event, 'status')"><i
                   class="bi bi-funnel"></i></button></th>
             <th scope="col" style="width: 15%; text-align: center;">Actions</th>
           </tr>
@@ -136,10 +136,10 @@
     <div class="d-flex justify-content-between flex-wrap gap-2 mb-3">
       <div class="d-flex flex-wrap gap-2 align-items-center" style="max-width: 900px;">
         <input type="text" id="searchIssue" class="form-control" style="min-width:220px;"
-          placeholder="Search by Issue #, Issued To, Reference, or item…" autocomplete="off"
+          placeholder="Search by Issue #, Issued To, Reference, or item…" aria-label="Search issued stock" autocomplete="off"
           onkeyup="App.Issue.filterData(this.value)">
         <input type="date" id="issueDateFilter" class="form-control" style="min-width:150px;"
-          onchange="App.Issue.filterByDate(this.value)">
+          aria-label="Filter by date" onchange="App.Issue.filterByDate(this.value)">
       </div>
       <div class="d-flex gap-2 flex-wrap justify-content-end">
         <button class="btn btn-outline-dark fw-bold shadow-sm d-none" id="btnBulkPrintIssue" type="button"
@@ -197,7 +197,7 @@
   <div id="productionAllSubTab" class="production-sub-tab" style="display:none;">
     <div class="d-flex justify-content-between flex-wrap gap-2 mb-3">
       <input type="text" id="searchProductionAll" class="form-control w-50"
-        placeholder="Search across Production Log and Issued Stock…" autocomplete="off"
+        placeholder="Search across Production Log and Issued Stock…" aria-label="Search all production activity" autocomplete="off"
         onkeyup="App.Production.filterAllActivity(this.value)">
     </div>
 
@@ -538,22 +538,22 @@
 
             <h6 class="text-secondary border-bottom pb-2 mb-3 fw-bold">Assignment & Workflow</h6>
             <div class="row g-3 mb-4">
-              <div class="col-md-4">
+              <div class="col-md-3">
                 <label class="form-label fw-bold">Assigned By</label>
                 <input type="text" name="assignedBy" id="productionAssignedBy" class="form-control"
                   placeholder="e.g. Supervisor Name" maxlength="100">
               </div>
-              <div class="col-md-4">
+              <div class="col-md-3">
                 <label class="form-label fw-bold">Assigned To (Contractor) *</label>
                 <select name="assignedTo" id="productionAssignedTo" class="form-control" style="width:100%;"
                   required></select>
                 <div class="form-text" id="productionPayableHint"></div>
               </div>
-              <div class="col-md-12" id="productionExtraChargeWrapper" style="display:none;">
+              <div class="col-md-3" id="productionExtraChargeWrapper" style="display:none;">
                 <label class="form-label fw-bold">Extra Charge (optional)</label>
                 <div id="productionExtraChargeOptions" class="d-flex flex-wrap gap-3"></div>
               </div>
-              <div class="col-md-4">
+              <div class="col-md-3">
                 <label class="form-label fw-bold">Status *</label>
                 <select name="status" id="productionStatus" class="form-select" required>
                   <option value="Pending">Pending</option>

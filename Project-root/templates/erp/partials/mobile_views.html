@@ -40,7 +40,7 @@
     <div id="mapp-picker-search-wrap" style="padding:var(--mb-sp-4) var(--mb-sp-4) 0;">
       <div class="mb-search">
         <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="11" cy="11" r="7"/><path d="M21 21l-4.3-4.3"/></svg>
-        <input type="text" id="mapp-picker-search" placeholder="Search..." oninput="MApp.Picker.onSearch(this.value)" autocomplete="off">
+        <input type="text" id="mapp-picker-search" placeholder="Search..." aria-label="Search options" oninput="MApp.Picker.onSearch(this.value)" autocomplete="off">
       </div>
     </div>
     <div id="mapp-picker-list"></div>
@@ -93,7 +93,7 @@
 
   <div class="mb-search mb-search-sticky">
     <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="11" cy="11" r="7"/><path d="M21 21l-4.3-4.3"/></svg>
-    <input type="text" id="stock-search" placeholder="Search items..." oninput="MApp.Stock.onSearch(this.value)" autocomplete="off">
+    <input type="text" id="stock-search" placeholder="Search items..." aria-label="Search stock" oninput="MApp.Stock.onSearch(this.value)" autocomplete="off">
   </div>
 
   <div id="stock-list">
@@ -343,11 +343,11 @@
       <span>Use this only to correct stock errors (e.g. after a physical recount). The correction is logged in the audit log.</span>
     </div>
     <div class="mb-field">
-      <label>Item</label>
+      <label for="stock-adjust-item-label">Item</label>
       <input type="text" id="stock-adjust-item-label" readonly>
     </div>
     <div class="mb-field">
-      <label>Current stock (system value)</label>
+      <label for="stock-adjust-old-value">Current stock (system value)</label>
       <input type="text" id="stock-adjust-old-value" readonly>
     </div>
     <div class="mb-field">
@@ -378,7 +378,7 @@
   <div class="mb-sheet-body">
     <div class="mb-search">
       <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="11" cy="11" r="7"/><path d="M21 21l-4.3-4.3"/></svg>
-      <input type="text" id="po-ledger-search" placeholder="Search PO number or vendor..." oninput="MApp.PO.onSearch(this.value)" autocomplete="off">
+      <input type="text" id="po-ledger-search" placeholder="Search PO number or vendor..." aria-label="Search purchase orders" oninput="MApp.PO.onSearch(this.value)" autocomplete="off">
     </div>
     <!-- The 3 literal data-status/onclick values below must match
          config.js#PO_STATUS (server) and its client mirror in
@@ -431,7 +431,7 @@
   <div class="mb-sheet-body">
     <div class="mb-search">
       <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="11" cy="11" r="7"/><path d="M21 21l-4.3-4.3"/></svg>
-      <input type="text" id="bill-ledger-search" placeholder="Search bill number or vendor..." oninput="MApp.Bill.onSearch(this.value)" autocomplete="off">
+      <input type="text" id="bill-ledger-search" placeholder="Search bill number or vendor..." aria-label="Search bills" oninput="MApp.Bill.onSearch(this.value)" autocomplete="off">
     </div>
     <div id="bill-ledger-list"></div>
   </div>
@@ -477,7 +477,7 @@
   <div class="mb-sheet-body">
     <div class="mb-search">
       <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="11" cy="11" r="7"/><path d="M21 21l-4.3-4.3"/></svg>
-      <input type="text" id="directory-search" placeholder="Search..." oninput="MApp.Directory.onSearch(this.value)" autocomplete="off">
+      <input type="text" id="directory-search" placeholder="Search..." aria-label="Search directory" oninput="MApp.Directory.onSearch(this.value)" autocomplete="off">
     </div>
     <div id="directory-list"></div>
   </div>
@@ -520,7 +520,7 @@
   </div>
   <div class="mb-sheet-body">
     <div class="mb-field">
-      <label>Contractor</label>
+      <label for="contractor-rate-name">Contractor</label>
       <input type="text" id="contractor-rate-name" readonly>
     </div>
     <div class="mb-field">
@@ -558,7 +558,7 @@
   </div>
   <div class="mb-sheet-body">
     <div class="mb-field">
-      <label>Contractor</label>
+      <label for="contractor-extra-charge-name">Contractor</label>
       <input type="text" id="contractor-extra-charge-name" readonly>
     </div>
     <div class="mb-field">
@@ -592,7 +592,7 @@
   </div>
   <div class="mb-sheet-body">
     <div class="mb-field">
-      <label>Contractor</label>
+      <label for="contractor-payment-name">Contractor</label>
       <input type="text" id="contractor-payment-name" readonly>
     </div>
     <div class="mb-field">
@@ -630,7 +630,7 @@
   <div class="mb-sheet-body">
     <div class="mb-search">
       <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="11" cy="11" r="7"/><path d="M21 21l-4.3-4.3"/></svg>
-      <input type="text" id="items-lookup-search" placeholder="Search item master..." oninput="MApp.Items.onSearch(this.value)" autocomplete="off">
+      <input type="text" id="items-lookup-search" placeholder="Search item master..." aria-label="Search item master" oninput="MApp.Items.onSearch(this.value)" autocomplete="off">
     </div>
     <div id="items-lookup-list"></div>
   </div>
@@ -676,7 +676,7 @@
   <div class="mb-sheet-body">
     <div class="mb-search">
       <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="11" cy="11" r="7"/><path d="M21 21l-4.3-4.3"/></svg>
-      <input type="text" id="issue-log-search" placeholder="Search issued to or item..." oninput="MApp.Issue.onSearch(this.value)" autocomplete="off">
+      <input type="text" id="issue-log-search" placeholder="Search issued to or item..." aria-label="Search issue log" oninput="MApp.Issue.onSearch(this.value)" autocomplete="off">
     </div>
     <div id="issue-log-list"></div>
   </div>
@@ -713,7 +713,7 @@
   <div class="mb-sheet-body">
     <div class="mb-search">
       <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="11" cy="11" r="7"/><path d="M21 21l-4.3-4.3"/></svg>
-      <input type="text" id="wastage-log-search" placeholder="Search vendor or item..." oninput="MApp.Wastage.onSearch(this.value)" autocomplete="off">
+      <input type="text" id="wastage-log-search" placeholder="Search vendor or item..." aria-label="Search wastage log" oninput="MApp.Wastage.onSearch(this.value)" autocomplete="off">
     </div>
     <div id="wastage-log-list"></div>
   </div>
@@ -755,7 +755,7 @@
   <div class="mb-sheet-body">
     <div class="mb-search">
       <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="11" cy="11" r="7"/><path d="M21 21l-4.3-4.3"/></svg>
-      <input type="text" id="process-list-search" placeholder="Search process or output item..." oninput="MApp.Process.onSearch(this.value)" autocomplete="off">
+      <input type="text" id="process-list-search" placeholder="Search process or output item..." aria-label="Search processes" oninput="MApp.Process.onSearch(this.value)" autocomplete="off">
     </div>
     <div id="process-list-list"></div>
   </div>
@@ -822,7 +822,7 @@
   <div class="mb-sheet-body">
     <div class="mb-search">
       <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="11" cy="11" r="7"/><path d="M21 21l-4.3-4.3"/></svg>
-      <input type="text" id="bom-list-search" placeholder="Search product..." oninput="MApp.BOM.onSearch(this.value)" autocomplete="off">
+      <input type="text" id="bom-list-search" placeholder="Search product..." aria-label="Search bill of materials" oninput="MApp.BOM.onSearch(this.value)" autocomplete="off">
     </div>
     <div id="bom-list-list"></div>
   </div>
@@ -867,7 +867,7 @@
   <div class="mb-sheet-body">
     <div class="mb-search">
       <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="11" cy="11" r="7"/><path d="M21 21l-4.3-4.3"/></svg>
-      <input type="text" id="admin-users-search" placeholder="Search name or email..." oninput="MApp.Admin.onSearch(this.value)" autocomplete="off">
+      <input type="text" id="admin-users-search" placeholder="Search name or email..." aria-label="Search users" oninput="MApp.Admin.onSearch(this.value)" autocomplete="off">
     </div>
     <div id="admin-users-list"></div>
   </div>

@@ -13,7 +13,7 @@
 <div id="itemMaster" class="tab-content table-container" role="tabpanel" aria-labelledby="btn-itemMaster">
   <div class="d-flex justify-content-between flex-wrap gap-2 mb-3">
     <div class="d-flex w-50 align-items-center flex-wrap gap-2">
-      <input type="text" id="searchItem" class="form-control me-2" placeholder="Search Items, Sizes, Vendors, or try 'pending orders' / 'low stock' / 'no metadata'..." autocomplete="off" onkeyup="App.Item.filterData(this.value)">
+      <input type="text" id="searchItem" class="form-control me-2" placeholder="Search Items, Sizes, Vendors, or try 'pending orders' / 'low stock' / 'no metadata'..." aria-label="Search items" autocomplete="off" onkeyup="App.Item.filterData(this.value)">
       <button class="btn btn-outline-dark fw-bold shadow-sm d-none" id="btnBulkPrintItems" onclick="App.Item.bulkPrint()" style="white-space: nowrap;"><i class="bi bi-printer"></i> Print Selected</button>
       <button class="btn btn-outline-dark fw-bold shadow-sm d-none" id="btnBulkDownloadPdfItems" onclick="App.Item.bulkDownloadPDF()" style="white-space: nowrap;"><i class="bi bi-file-earmark-pdf"></i> Download PDFs</button>
       <button class="btn btn-outline-warning fw-bold shadow-sm d-none" id="btnMergeSelected" onclick="App.Item.mergeSelected()" style="white-space: nowrap;" title="Check exactly 2 items: the one to KEEP first, then the duplicate to remove."><i class="bi bi-magic"></i> Merge Selected</button>
@@ -46,11 +46,11 @@
       <thead class="table-dark">
         <tr>
           <th scope="col" style="width: 5%; text-align: center;"><input type="checkbox" id="selectAllItems" class="form-check-input" onclick="App.Item.toggleSelectAll(this)"></th>
-          <th scope="col" style="width: 20%;">Item Name <button type="button" class="th-filter-btn" data-filter-key="name" onclick="App.Item.toggleColumnFilter(event, 'name')"><i class="bi bi-funnel"></i></button></th>
-          <th scope="col" style="width: 10%;">Size <button type="button" class="th-filter-btn" data-filter-key="size" onclick="App.Item.toggleColumnFilter(event, 'size')"><i class="bi bi-funnel"></i></button></th>
-          <th scope="col" style="width: 15%;">Narration <button type="button" class="th-filter-btn" data-filter-key="narration" onclick="App.Item.toggleColumnFilter(event, 'narration')"><i class="bi bi-funnel"></i></button></th>
-          <th scope="col" style="width: 15%;">Meta Data <button type="button" class="th-filter-btn" data-filter-key="metadata" onclick="App.Item.toggleColumnFilter(event, 'metadata')"><i class="bi bi-funnel"></i></button></th>
-          <th scope="col" style="width: 23%;">Associated Vendor Rates <button type="button" class="th-filter-btn" data-filter-key="vendor" onclick="App.Item.toggleColumnFilter(event, 'vendor')"><i class="bi bi-funnel"></i></button></th>
+          <th scope="col" style="width: 20%;">Item Name <button type="button" class="th-filter-btn" data-filter-key="name" aria-label="Filter by Item Name" onclick="App.Item.toggleColumnFilter(event, 'name')"><i class="bi bi-funnel"></i></button></th>
+          <th scope="col" style="width: 10%;">Size <button type="button" class="th-filter-btn" data-filter-key="size" aria-label="Filter by Size" onclick="App.Item.toggleColumnFilter(event, 'size')"><i class="bi bi-funnel"></i></button></th>
+          <th scope="col" style="width: 15%;">Narration <button type="button" class="th-filter-btn" data-filter-key="narration" aria-label="Filter by Narration" onclick="App.Item.toggleColumnFilter(event, 'narration')"><i class="bi bi-funnel"></i></button></th>
+          <th scope="col" style="width: 15%;">Meta Data <button type="button" class="th-filter-btn" data-filter-key="metadata" aria-label="Filter by Meta Data" onclick="App.Item.toggleColumnFilter(event, 'metadata')"><i class="bi bi-funnel"></i></button></th>
+          <th scope="col" style="width: 23%;">Associated Vendor Rates <button type="button" class="th-filter-btn" data-filter-key="vendor" aria-label="Filter by Associated Vendor" onclick="App.Item.toggleColumnFilter(event, 'vendor')"><i class="bi bi-funnel"></i></button></th>
           <th scope="col" style="width: 12%;">Actions</th>
         </tr>
       </thead>
@@ -229,30 +229,13 @@
         </div>
 
         <div class="card border-0 shadow-sm">
-          <div class="card-header bg-dark text-white fw-bold" style="font-family: 'Outfit', sans-serif;">
+          <div class="card-header bg-dark text-white fw-bold d-flex justify-content-between align-items-center" style="font-family: 'Outfit', sans-serif;">
             <span>Transaction Ledger History (POs, Bills & Production Consumption)</span>
+            <span class="badge bg-info text-dark">Grouped by Size</span>
           </div>
-          <div class="card-body p-0">
-            <div class="table-responsive">
-              <table class="table table-hover table-striped align-middle mb-0">
-                <thead class="table-light">
-                  <tr>
-                    <th scope="col" style="width: 9%;">Date</th>
-                    <th scope="col" style="width: 11%;">Type</th>
-                    <th scope="col" style="width: 10%;">Ref #</th>
-                    <th scope="col" style="width: 16%;">Vendor / Source</th>
-                    <th scope="col" style="width: 9%;">Size</th>
-                    <th scope="col" style="width: 13%;">Narration</th>
-                    <th scope="col" style="width: 9%; text-align: center;">Order Qty</th>
-                    <th scope="col" style="width: 9%; text-align: center;">Incoming Qty</th>
-                    <th scope="col" style="width: 9%; text-align: center;">Outgoing Qty</th>
-                    <th scope="col" style="width: 9%; text-align: right;">Price</th>
-                  </tr>
-                </thead>
-                <tbody id="itemLedgerHistoryBody"></tbody>
-              </table>
-            </div>
-          </div>
+          <!-- Populated by App.Item.getLedgerData() with one heading + table
+               per size, instead of a single flat table with a Size column. -->
+          <div class="card-body p-0" id="itemLedgerHistoryBody"></div>
         </div>
       </div>
     </div>

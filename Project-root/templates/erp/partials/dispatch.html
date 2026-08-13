@@ -24,7 +24,7 @@
   <div id="readyToDispatchSubTab" class="dispatch-sub-tab">
     <div class="d-flex justify-content-between flex-wrap gap-2 mb-3">
       <div class="d-flex w-50 align-items-center">
-        <input type="text" id="searchReadyToDispatch" class="form-control me-2" placeholder="Search Product ID or Name..." autocomplete="off" onkeyup="App.Dispatch.filterReady(this.value)">
+        <input type="text" id="searchReadyToDispatch" class="form-control me-2" placeholder="Search Product ID or Name..." aria-label="Search ready to dispatch" autocomplete="off" onkeyup="App.Dispatch.filterReady(this.value)">
       </div>
       <div class="d-flex gap-2 flex-wrap justify-content-end">
         <button class="btn btn-success fw-bold shadow-sm" onclick="App.Dispatch.openCreateDispatchModal()"><i class="bi bi-truck"></i> Record New Bill</button>
@@ -82,7 +82,7 @@
   <div id="dispatchedGoodsSubTab" class="dispatch-sub-tab" style="display: none;">
     <div class="d-flex justify-content-between flex-wrap gap-2 mb-3">
       <div class="d-flex w-50 align-items-center gap-2">
-        <input type="text" id="searchDispatchedGoods" class="form-control" placeholder="Search Dispatch #, Order #, Client, or Product..." autocomplete="off" onkeyup="App.Dispatch.filterDispatch(this.value)">
+        <input type="text" id="searchDispatchedGoods" class="form-control" placeholder="Search Dispatch #, Order #, Client, or Product..." aria-label="Search dispatched goods" autocomplete="off" onkeyup="App.Dispatch.filterDispatch(this.value)">
         <select id="dispatchSortBy" class="form-select" style="max-width: 220px;" aria-label="Sort Dispatched Goods" onchange="App.Dispatch.sortDispatchBy(this.value)">
           <option value="dateDesc">Date (Newest first)</option>
           <option value="dateAsc">Date (Oldest first)</option>

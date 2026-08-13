@@ -18,7 +18,7 @@
   <!-- PROCESSES SUB-TAB -->
   <div id="processTab" class="products-sub-tab">
     <div class="d-flex justify-content-between flex-wrap gap-2 mb-3">
-      <input type="text" id="searchProcess" class="form-control w-50" placeholder="Search Processes by Name or Lot Prefix..." onkeyup="App.Process.filterData(this.value)">
+      <input type="text" id="searchProcess" class="form-control w-50" placeholder="Search Processes by Name or Lot Prefix..." aria-label="Search processes" autocomplete="off" onkeyup="App.Process.filterData(this.value)">
       <div class="d-flex gap-2 flex-wrap justify-content-end">
         <button class="btn btn-outline-dark fw-bold shadow-sm d-none" id="btnBulkPrintProcesses" type="button" onclick="App.Process.bulkPrint()" style="white-space: nowrap;">
           <i class="bi bi-printer"></i> Print Selected
@@ -50,10 +50,10 @@
             <th scope="col" style="width: 16%;">Process Name</th>
             <th scope="col" style="width: 7%; text-align: center;">Sequence</th>
             <th scope="col" style="width: 8%; text-align: center;">Lot Prefix</th>
-            <th scope="col" style="width: 10%;">Process Type <button type="button" class="th-filter-btn" data-filter-key="processType" onclick="App.Process.toggleColumnFilter(event, 'processType')"><i class="bi bi-funnel"></i></button></th>
-            <th scope="col" style="width: 13%;">Output Item Name <button type="button" class="th-filter-btn" data-filter-key="outputItem" onclick="App.Process.toggleColumnFilter(event, 'outputItem')"><i class="bi bi-funnel"></i></button></th>
-            <th scope="col" style="width: 9%; text-align: center;">Final Stage <button type="button" class="th-filter-btn" data-filter-key="finalStage" onclick="App.Process.toggleColumnFilter(event, 'finalStage')"><i class="bi bi-funnel"></i></button></th>
-            <th scope="col" style="width: 8%; text-align: center;">Active <button type="button" class="th-filter-btn" data-filter-key="active" onclick="App.Process.toggleColumnFilter(event, 'active')"><i class="bi bi-funnel"></i></button></th>
+            <th scope="col" style="width: 10%;">Process Type <button type="button" class="th-filter-btn" data-filter-key="processType" aria-label="Filter by Process Type" onclick="App.Process.toggleColumnFilter(event, 'processType')"><i class="bi bi-funnel"></i></button></th>
+            <th scope="col" style="width: 13%;">Output Item Name <button type="button" class="th-filter-btn" data-filter-key="outputItem" aria-label="Filter by Output Item Name" onclick="App.Process.toggleColumnFilter(event, 'outputItem')"><i class="bi bi-funnel"></i></button></th>
+            <th scope="col" style="width: 9%; text-align: center;">Final Stage <button type="button" class="th-filter-btn" data-filter-key="finalStage" aria-label="Filter by Final Stage" onclick="App.Process.toggleColumnFilter(event, 'finalStage')"><i class="bi bi-funnel"></i></button></th>
+            <th scope="col" style="width: 8%; text-align: center;">Active <button type="button" class="th-filter-btn" data-filter-key="active" aria-label="Filter by Active" onclick="App.Process.toggleColumnFilter(event, 'active')"><i class="bi bi-funnel"></i></button></th>
             <th scope="col" style="width: 20%; text-align: center;">Actions</th>
           </tr>
         </thead>
@@ -73,7 +73,7 @@
   <div id="bomTab" class="products-sub-tab" style="display: none;">
     <div class="d-flex justify-content-between flex-wrap gap-2 mb-3">
       <div class="d-flex w-50 align-items-center">
-        <input type="text" id="searchBOM" class="form-control me-2" placeholder="Search Product ID, Name, or Components..." autocomplete="off" onkeyup="App.BOM.filterData(this.value)">
+        <input type="text" id="searchBOM" class="form-control me-2" placeholder="Search Product ID, Name, or Components..." aria-label="Search bill of materials" autocomplete="off" onkeyup="App.BOM.filterData(this.value)">
       </div>
       <div class="d-flex gap-2 flex-wrap justify-content-end">
         <button class="btn btn-outline-dark fw-bold shadow-sm d-none" id="btnBulkPrintBOMs" type="button" onclick="App.BOM.bulkPrint()" style="white-space: nowrap;">
@@ -425,7 +425,7 @@
       </div>
       <div class="modal-body">
         <p class="text-muted small mb-2">Pick a process to copy its recipe — output item, type, common components, and color sub-groups — into the form you have open. Nothing saves until you review and click Save Process.</p>
-        <input type="text" id="importProcessSearch" class="form-control mb-2" placeholder="Search by name, ID, or type..." oninput="App.Process.filterImportPicker(this.value)">
+        <input type="text" id="importProcessSearch" class="form-control mb-2" placeholder="Search by name, ID, or type..." aria-label="Search processes to import" autocomplete="off" oninput="App.Process.filterImportPicker(this.value)">
         <div id="importProcessList" class="list-group"></div>
         <div id="importProcessEmpty" class="text-muted text-center small py-3" style="display:none;">No processes found.</div>
       </div>

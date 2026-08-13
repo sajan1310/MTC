@@ -747,8 +747,10 @@ App.Item = {
       return String(Math.round(n * 10000) / 10000);
     };
 
-    let histHtml = '';
-    historyList.forEach(entry => {
+    // One entry -> one <tr>. Size itself is no longer a cell here -- entries
+    // are grouped into a separate mini-table per size below, so the size is
+    // said once in that group's heading instead of repeated down a column.
+    const buildHistRow = entry => {
       const badgeClass = entry.kind === 'ADJUSTMENT' && entry.type === 'Stock Reset'
         ? 'bg-info'
         : (BADGE_BY_KIND[entry.kind] || 'bg-secondary');
@@ -769,19 +771,71 @@ App.Item = {
       // movement that failed to land.
       const rowClass = entry.countsTowardStock ? '' : ' class="text-muted fst-italic"';
 
-      histHtml += `<tr${rowClass}>
+      return `<tr${rowClass}>
         <td>${escapeHtml(entry.date || '')}</td>
         <td><span class="badge ${badgeClass}">${escapeHtml(entry.type || '')}</span></td>
         <td><strong class="text-dark">${escapeHtml(entry.ref || '-')}</strong></td>
         <td><strong class="text-primary">${escapeHtml(entry.party || '-')}</strong></td>
-        <td>${escapeHtml(entry.size || '-')}</td>
         <td><small class="text-muted">${escapeHtml(entry.narration || '-')}</small></td>
         <td class="text-center text-primary fw-bold">${fmtQty(entry.orderQty)}</td>
         <td class="text-center text-success fw-bold">${fmtQty(entry.incomingQty)}${entry.incomingQty ? enteredNote : ''}</td>
         <td class="text-center text-danger fw-bold">${fmtQty(entry.outgoingQty)}${entry.outgoingQty ? enteredNote : ''}</td>
         <td class="text-end">${entry.price !== null && entry.price !== undefined ? formatCurrency(entry.price) : '-'}</td>
       </tr>`;
+    };
+
+    // Group by size (preserving each size's own chronological order from
+    // the server), then sort the groups themselves by size so the
+    // Comparison/Stock tables above and the History groups below list
+    // sizes in the same order.
+    const bySize = new Map();
+    historyList.forEach(entry => {
+      const sizeKey = entry.size || '-';
+      if (!bySize.has(sizeKey)) bySize.set(sizeKey, []);
+      bySize.get(sizeKey).push(entry);
     });
+    const sizeKeys = [...bySize.keys()].sort((a, b) => String(a).localeCompare(String(b)));
+
+    // Namespaced by item name so bulk-print pages (which concatenate many
+    // items' ledgers, each rebuilding its own groups) don't hand out
+    // duplicate ids across items.
+    const idBase = (nameLower.replace(/[^a-z0-9]/g, '') || 'item');
+
+    let histHtml = sizeKeys.map((sizeKey, i) => {
+      const entries = bySize.get(sizeKey);
+      const rows = entries.map(buildHistRow).join('');
+      const groupId = `ledgerHist-${idBase}-${i}`;
+      return `
+      <div class="ledger-size-group mb-3">
+        <div class="ledger-size-toggle fw-bold px-3 py-2 d-flex justify-content-between align-items-center"
+             style="background:#eef6f8;border-left:4px solid #17a2b8;cursor:pointer;"
+             data-bs-toggle="collapse" data-bs-target="#${groupId}"
+             role="button" aria-expanded="true" aria-controls="${groupId}">
+          <span>Size: ${escapeHtml(sizeKey)} <span class="badge bg-secondary ms-2">${entries.length} txn${entries.length === 1 ? '' : 's'}</span></span>
+          <i class="bi bi-chevron-down"></i>
+        </div>
+        <div class="collapse show" id="${groupId}">
+          <div class="table-responsive">
+            <table class="table table-hover table-striped align-middle mb-0">
+              <thead class="table-light">
+                <tr>
+                  <th scope="col" style="width: 9%;">Date</th>
+                  <th scope="col" style="width: 12%;">Type</th>
+                  <th scope="col" style="width: 11%;">Ref #</th>
+                  <th scope="col" style="width: 18%;">Vendor / Source</th>
+                  <th scope="col" style="width: 15%;">Narration</th>
+                  <th scope="col" style="width: 10%; text-align: center;">Order Qty</th>
+                  <th scope="col" style="width: 10%; text-align: center;">Incoming Qty</th>
+                  <th scope="col" style="width: 10%; text-align: center;">Outgoing Qty</th>
+                  <th scope="col" style="width: 9%; text-align: right;">Price</th>
+                </tr>
+              </thead>
+              <tbody>${rows}</tbody>
+            </table>
+          </div>
+        </div>
+      </div>`;
+    }).join('');
 
     // Prefer the server's own freshly-computed figures over globalStock,
     // which is a tab-load snapshot: a lot completed (or a bill saved) since
@@ -905,7 +959,7 @@ App.Item = {
     if (compBody) compBody.innerHTML = compHtml || '<tr><td colspan="6" class="text-center text-muted p-4">No variant comparisons available.</td></tr>';
 
     const historyBody = document.getElementById('itemLedgerHistoryBody');
-    if (historyBody) historyBody.innerHTML = histHtml || '<tr><td colspan="10" class="text-center text-muted p-4">No transaction history found for this item.</td></tr>';
+    if (historyBody) historyBody.innerHTML = histHtml || '<div class="text-center text-muted p-4">No transaction history found for this item.</div>';
 
     const modalEl = document.getElementById('itemLedgerModal');
     if (modalEl && typeof bootstrap !== 'undefined') {
@@ -936,7 +990,12 @@ App.Item = {
 
     const histTableSource = document.getElementById('itemLedgerHistoryBody');
     const histTableDest = document.getElementById('print-item-history-body');
-    if (histTableSource && histTableDest) histTableDest.innerHTML = histTableSource.innerHTML;
+    if (histTableSource && histTableDest) {
+      histTableDest.innerHTML = histTableSource.innerHTML;
+      // A size group the user left collapsed on screen must still print in
+      // full -- force every group open in the copy, not the live modal.
+      histTableDest.querySelectorAll('.collapse').forEach(el => el.classList.add('show'));
+    }
 
     App.Print.trigger('print-item-ledger-container', `Item_Ledger_${name.replace(/[^a-zA-Z0-9_-]/g, '_')}`);
   },
@@ -948,7 +1007,7 @@ App.Item = {
     const { compHtml, histHtml, stockHtml } = this.getLedgerData(name);
     const stockRows = stockHtml || '<tr><td colspan="4" style="padding:10px;text-align:center;color:#999;">No stock record found for this item.</td></tr>';
     const compRows = compHtml || '<tr><td colspan="6" style="padding:10px;text-align:center;color:#999;">No variant comparisons available.</td></tr>';
-    const histRows = histHtml || '<tr><td colspan="10" style="padding:10px;text-align:center;color:#999;">No transaction history found for this item.</td></tr>';
+    const histRows = histHtml || '<div style="padding:10px;text-align:center;color:#999;">No transaction history found for this item.</div>';
     const reportDate = new Date().toLocaleDateString('en-GB');
 
     return `
@@ -998,24 +1057,7 @@ App.Item = {
       </div>
       <div style="margin-bottom:20px;">
         <h6 style="color:${BRAND};font-size:11px;font-weight:700;margin:0 0 8px 0;text-transform:uppercase;letter-spacing:0.5px;-webkit-print-color-adjust:exact;print-color-adjust:exact;">Transaction History (POs, Bills &amp; Production Consumption)</h6>
-        <table style="width:100%;border-collapse:collapse;font-size:11px;">
-          <thead><tr style="background-color:${BRAND};color:#fff;font-weight:700;-webkit-print-color-adjust:exact;print-color-adjust:exact;">
-            <!-- These 10 must add up to 100%. They summed to 104%, which the
-                 renderer silently rescales, so no column got the share it
-                 declared. Mirrored in print.html's static template. -->
-            <th style="padding:6px;border:1px solid #bbb;text-align:left;width:8%;">Date</th>
-            <th style="padding:6px;border:1px solid #bbb;text-align:left;width:10%;">Type</th>
-            <th style="padding:6px;border:1px solid #bbb;text-align:left;width:10%;">Ref #</th>
-            <th style="padding:6px;border:1px solid #bbb;text-align:left;width:16%;">Vendor / Source</th>
-            <th style="padding:6px;border:1px solid #bbb;text-align:left;width:8%;">Size</th>
-            <th style="padding:6px;border:1px solid #bbb;text-align:left;width:13%;">Narration</th>
-            <th style="padding:6px;border:1px solid #bbb;text-align:center;width:9%;">Order Qty</th>
-            <th style="padding:6px;border:1px solid #bbb;text-align:center;width:9%;">Incoming Qty</th>
-            <th style="padding:6px;border:1px solid #bbb;text-align:center;width:9%;">Outgoing Qty</th>
-            <th style="padding:6px;border:1px solid #bbb;text-align:right;width:8%;">Price</th>
-          </tr></thead>
-          <tbody>${histRows}</tbody>
-        </table>
+        ${histRows}
       </div>
     </div>`;
   },

@@ -1083,6 +1083,34 @@
   }
 
   /* ─────────────────────────────────────────────────────────────────────
+     APP HEADER
+     ───────────────────────────────────────────────────────────────────── */
+  .brand-tagline-badge {
+    font-family: Outfit, sans-serif;
+    font-size: 12px !important;
+    padding: 6px 14px !important;
+    border-radius: 20px;
+    background: linear-gradient(135deg, var(--secondary-color) 0%, #ec4899 100%) !important;
+  }
+
+  [data-theme="dark"] .brand-tagline-badge {
+    background: linear-gradient(135deg, var(--secondary-color) 0%, #f472b6 100%) !important;
+  }
+
+  .app-header {
+    margin: -20px -20px 24px -20px;
+    padding: 20px 24px 16px 24px;
+    background: rgb(255 255 255 / 70%);
+    backdrop-filter: blur(12px);
+    -webkit-backdrop-filter: blur(12px);
+    border-bottom: 1px solid rgb(0 0 0 / 5%);
+    position: sticky;
+    top: 0;
+    z-index: 1000;
+    box-shadow: 0 4px 20px rgb(0 0 0 / 2%);
+  }
+
+  /* ─────────────────────────────────────────────────────────────────────
      SIDEBAR + MAIN BODY LAYOUT
      ───────────────────────────────────────────────────────────────────── */
   .app-body {
@@ -1595,6 +1623,17 @@
     background: var(--bg-muted);
     color: var(--text-muted);
     font-size: 14px;
+  }
+
+  /* Item Ledger's per-size Transaction History groups (collapsible).
+     Bootstrap's Collapse plugin keeps aria-expanded in sync on the
+     trigger itself, so the chevron can just key off that. */
+  .ledger-size-toggle .bi-chevron-down {
+    transition: transform 0.15s ease-in-out;
+  }
+
+  .ledger-size-toggle[aria-expanded="false"] .bi-chevron-down {
+    transform: rotate(-90deg);
   }
 
   .item-photo-preview {
@@ -3121,6 +3160,30 @@
     /* Large data-entry modals get full screen real estate on phones */
     .modal-fullscreen-sm-down .modal-body {
       max-height: none;
+    }
+
+    /* Notification/filter panels are position:absolute, anchored to their
+       trigger button (right:0 / a fixed px width) -- correct on desktop,
+       but a button that isn't near the viewport's own right edge lets a
+       320px/240px panel run off-screen. Re-anchor to the viewport instead
+       of the button below this breakpoint so neither can ever overflow,
+       regardless of where its trigger sits in a wrapped header/toolbar.
+       Bottom-anchored (not top: below the header) since .app-header wraps
+       to a variable, taller height at this width (see its own flex-wrap
+       rule above) -- anchoring from the bottom sidesteps needing to know
+       that height at all. */
+    .notif-panel {
+      position: fixed;
+      top: auto;
+      bottom: 8px;
+      left: 8px;
+      right: 8px;
+      width: auto;
+      max-height: 70vh;
+    }
+
+    .col-filter-panel {
+      max-width: calc(100vw - 16px);
     }
 
   }

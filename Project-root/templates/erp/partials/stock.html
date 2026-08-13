@@ -27,7 +27,7 @@
 
     <div class="d-flex justify-content-between flex-wrap gap-2 mb-3">
       <div class="d-flex w-50 align-items-center">
-        <input type="text" id="searchStock" class="form-control me-2" placeholder="Search Item Name or Size..." autocomplete="off" onkeyup="App.Stock.filterData(this.value)">
+        <input type="text" id="searchStock" class="form-control me-2" placeholder="Search Item Name or Size..." aria-label="Search stock" autocomplete="off" onkeyup="App.Stock.filterData(this.value)">
         <select id="stockDeadSort" class="form-select me-2" style="max-width: 220px;" title="Dead Stock position" onchange="App.Stock.setDeadSortMode(this.value)">
           <option value="default">Dead Stock: Default Order</option>
           <option value="last">Dead Stock: Move to Bottom</option>
@@ -104,7 +104,7 @@
   <div id="warehousePoolSubTab" class="stock-sub-tab" style="display: none;">
     <div class="d-flex justify-content-between flex-wrap gap-2 mb-3">
       <div class="d-flex w-50 align-items-center">
-        <input type="text" id="searchWarehousePool" class="form-control me-2" placeholder="Search Process, Output Item, or Product Tag..." autocomplete="off" onkeyup="App.Stock.filterWarehousePool(this.value)">
+        <input type="text" id="searchWarehousePool" class="form-control me-2" placeholder="Search Process, Output Item, or Product Tag..." aria-label="Search warehouse pool" autocomplete="off" onkeyup="App.Stock.filterWarehousePool(this.value)">
         <button class="btn btn-outline-primary fw-bold shadow-sm" type="button" onclick="App.Stock.selectAllFilteredWarehousePool()" style="white-space: nowrap;">
           <i class="bi bi-check2-square"></i> Select All
         </button>
@@ -258,7 +258,7 @@
           <!-- Item/size picker -->
           <div class="col-lg-5 border-end d-flex flex-column">
             <div class="p-3 border-bottom bg-white">
-              <input type="text" id="lowStockPreviewSearch" class="form-control form-control-sm mb-2" placeholder="Search item or size..." autocomplete="off" onkeyup="App.Stock.filterLowStockPreview(this.value)">
+              <input type="text" id="lowStockPreviewSearch" class="form-control form-control-sm mb-2" placeholder="Search item or size..." aria-label="Search low stock preview" autocomplete="off" onkeyup="App.Stock.filterLowStockPreview(this.value)">
               <div class="d-flex flex-wrap gap-2">
                 <select id="lowStockPreviewFilter" class="form-select form-select-sm w-auto" title="Filter the list below -- Select All/None only act on what's showing" onchange="App.Stock.setLowStockPreviewFilter(this.value)">
                   <option value="all">Show: All Items</option>
@@ -381,7 +381,7 @@
       </div>
       <div class="modal-body bg-light">
         <div class="p-2 pb-3">
-          <input type="text" id="stockGroupItemsSearch" class="form-control form-control-sm mb-2" placeholder="Search item or size..." autocomplete="off" onkeyup="App.StockGroup.filterItemsDialog(this.value)">
+          <input type="text" id="stockGroupItemsSearch" class="form-control form-control-sm mb-2" placeholder="Search item or size..." aria-label="Search stock group items" autocomplete="off" onkeyup="App.StockGroup.filterItemsDialog(this.value)">
           <div class="d-flex flex-wrap gap-2 align-items-center">
             <select id="stockGroupItemsFilter" class="form-select form-select-sm w-auto" title="Filter the list below -- Select All/None only act on what's showing" onchange="App.StockGroup.setItemsDialogFilter(this.value)">
               <option value="all">Show: All Items</option>
@@ -572,7 +572,7 @@
         <div class="alert alert-info py-2" role="alert" style="font-size: 13px;">
           <i class="bi bi-info-circle-fill me-2"></i>Every known Color / Product-Tag combination for this process. Click Available Qty to correct it — corrections are recorded in the audit log.
         </div>
-        <input type="text" id="searchWarehousePoolCombo" class="form-control form-control-sm mb-2" placeholder="Search Color or Product Tag..." autocomplete="off" onkeyup="App.Stock.filterWarehousePoolCombos(this.value)">
+        <input type="text" id="searchWarehousePoolCombo" class="form-control form-control-sm mb-2" placeholder="Search Color or Product Tag..." aria-label="Search warehouse pool combinations" autocomplete="off" onkeyup="App.Stock.filterWarehousePoolCombos(this.value)">
         <div class="d-flex gap-2 mb-3">
           <input type="text" id="warehousePoolAddCombinationInput" class="form-control form-control-sm" list="colorList" style="max-width:260px;" placeholder="Add a color combination…">
           <button type="button" class="btn btn-outline-dark btn-sm fw-bold" onclick="App.Stock.addWarehousePoolCombination()">+ Add Combination</button>
@@ -638,7 +638,7 @@
         </form>
 
         <div class="d-flex justify-content-between align-items-center gap-2 mb-2">
-          <input type="text" id="unitMasterSearch" class="form-control" placeholder="Search units..." autocomplete="off" onkeyup="App.Unit.renderTable()">
+          <input type="text" id="unitMasterSearch" class="form-control" placeholder="Search units..." aria-label="Search units" autocomplete="off" onkeyup="App.Unit.renderTable()">
           <button type="button" id="btnBulkDeleteUnits" class="btn btn-outline-danger fw-bold d-none" style="white-space:nowrap;" onclick="App.Unit.bulkDelete()">
             <i class="bi bi-trash"></i> Delete Selected
           </button>
@@ -697,7 +697,7 @@
         </form>
 
         <div class="d-flex justify-content-between align-items-center gap-2 mb-2">
-          <input type="text" id="colorMasterSearch" class="form-control" placeholder="Search colors..." autocomplete="off" onkeyup="App.Color.renderTable()">
+          <input type="text" id="colorMasterSearch" class="form-control" placeholder="Search colors..." aria-label="Search colors" autocomplete="off" onkeyup="App.Color.renderTable()">
           <button type="button" id="btnBulkDeleteColors" class="btn btn-outline-danger fw-bold d-none" style="white-space:nowrap;" onclick="App.Color.bulkDelete()">
             <i class="bi bi-trash"></i> Delete Selected
           </button>
@@ -751,7 +751,7 @@
         </form>
 
         <div class="d-flex justify-content-between align-items-center gap-2 mb-2">
-          <input type="text" id="modelMasterSearch" class="form-control" placeholder="Search models..." autocomplete="off" onkeyup="App.Model.renderTable()">
+          <input type="text" id="modelMasterSearch" class="form-control" placeholder="Search models..." aria-label="Search models" autocomplete="off" onkeyup="App.Model.renderTable()">
           <button type="button" id="btnBulkDeleteModels" class="btn btn-outline-danger fw-bold d-none" style="white-space:nowrap;" onclick="App.Model.bulkDelete()">
             <i class="bi bi-trash"></i> Delete Selected
           </button>
@@ -809,7 +809,7 @@
         </form>
 
         <div class="d-flex justify-content-between align-items-center gap-2 mb-2">
-          <input type="text" id="processTypeMasterSearch" class="form-control" placeholder="Search process types..." autocomplete="off" onkeyup="App.ProcessType.renderTable()">
+          <input type="text" id="processTypeMasterSearch" class="form-control" placeholder="Search process types..." aria-label="Search process types" autocomplete="off" onkeyup="App.ProcessType.renderTable()">
           <button type="button" id="btnBulkDeleteProcessTypes" class="btn btn-outline-danger fw-bold d-none" style="white-space:nowrap;" onclick="App.ProcessType.bulkDelete()">
             <i class="bi bi-trash"></i> Delete Selected
           </button>
