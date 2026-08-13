@@ -119,3 +119,32 @@ def erp_admin_client(erp_app, erp_admin_user):
         sess["_user_id"] = str(erp_admin_user)
         sess["_fresh"] = True
     return client
+
+
+@pytest.fixture
+def erp_super_admin_user(erp_app):
+    """Same pattern as erp_admin_user, role='super_admin' -- 'super_admin'
+    isn't in users_service.ROLES (it's not a role updateUserRole can ever
+    promote someone TO, only a status a user can already hold), so this
+    seeds it directly, same as the real bootstrap path would."""
+    with erp_app.app_context():
+        with database.get_conn() as (_conn, cur):
+            cur.execute(
+                """
+                INSERT INTO users (name, email, password_hash, role)
+                VALUES (%s, %s, %s, 'super_admin')
+                ON CONFLICT (email) DO UPDATE SET name = EXCLUDED.name, role = 'super_admin'
+                RETURNING user_id
+                """,
+                ("ERP Super Admin Test User", "erp-super-admin-test-user@example.invalid", "not-a-real-hash"),
+            )
+            return cur.fetchone()[0]
+
+
+@pytest.fixture
+def erp_super_admin_client(erp_app, erp_super_admin_user):
+    client = erp_app.test_client()
+    with client.session_transaction() as sess:
+        sess["_user_id"] = str(erp_super_admin_user)
+        sess["_fresh"] = True
+    return client

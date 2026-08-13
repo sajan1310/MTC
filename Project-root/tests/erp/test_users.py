@@ -58,16 +58,33 @@ def test_update_user_role_denied_for_plain_user(erp_app, erp_client, erp_test_us
 
 # ── updateUserRole business rules ────────────────────────────────────────
 
-def test_update_user_role_happy_path(erp_app, erp_admin_client):
+def test_update_user_role_happy_path(erp_app, erp_super_admin_client):
+    # Promoting to 'admin' is a Super Admin-only power (see
+    # users_service.update_user_role) -- an ordinary admin is covered
+    # separately by test_update_user_role_admin_cannot_promote_to_admin.
     target_id = _insert_user(erp_app, name="Target One", email=_unique_email("target"), role="user")
-    resp = _rpc(erp_admin_client, "updateUserRole", [target_id, "admin"], mutation=True)
+    resp = _rpc(erp_super_admin_client, "updateUserRole", [target_id, "admin"], mutation=True)
     body = resp.get_json()
     assert body["success"] is True
     assert "admin" in body["message"]
 
-    listed = _rpc(erp_admin_client, "getUsersData").get_json()["data"]
+    listed = _rpc(erp_super_admin_client, "getUsersData").get_json()["data"]
     match = next(u for u in listed if u["id"] == target_id)
     assert match["role"] == "admin"
+
+
+def test_update_user_role_admin_cannot_promote_to_admin(erp_app, erp_admin_client):
+    """An ordinary admin lacks the power to mint peer admins -- only a
+    Super Admin can, so nobody remains above every admin to revoke it."""
+    target_id = _insert_user(erp_app, name="Target Promo", email=_unique_email("target"), role="user")
+    resp = _rpc(erp_admin_client, "updateUserRole", [target_id, "admin"], mutation=True)
+    body = resp.get_json()
+    assert body["success"] is False
+    assert "Super Admin" in body["message"]
+
+    listed = _rpc(erp_admin_client, "getUsersData").get_json()["data"]
+    match = next(u for u in listed if u["id"] == target_id)
+    assert match["role"] == "user"
 
 
 def test_update_user_role_rejects_invalid_role(erp_app, erp_admin_client):
@@ -98,8 +115,13 @@ def test_update_user_role_cannot_change_own_role(erp_admin_client, erp_admin_use
 
 
 def test_update_user_role_rejects_unknown_user(erp_admin_client):
-    resp = _rpc(erp_admin_client, "updateUserRole", [999999999, "admin"], mutation=True)
-    assert resp.get_json()["success"] is False
+    # role='user', not 'admin' -- the Super Admin promotion gate runs before
+    # the user lookup, so 'admin' here would false-pass by tripping THAT
+    # check instead of the "not found" one this test means to exercise.
+    resp = _rpc(erp_admin_client, "updateUserRole", [999999999, "user"], mutation=True)
+    body = resp.get_json()
+    assert body["success"] is False
+    assert "not found" in body["message"].lower()
 
 
 # ── deactivate / reactivate ──────────────────────────────────────────────
