@@ -3003,10 +3003,36 @@ App.Production = {
   // to disambiguate (e.g. a shared/pool item using the literal same name
   // in every colour).
   _cellItemTag(rowLabel, cellItemName) {
-    const tokenize = s => String(s || '').split(/[^a-z0-9]+/i).map(t => t.trim()).filter(Boolean);
-    const labelTokens = new Set(tokenize(rowLabel).map(t => t.toLowerCase()));
-    const leftover = tokenize(cellItemName).filter(t => !labelTokens.has(t.toLowerCase()));
-    return leftover.join(' ');
+    const labelTokens = new Set(
+      String(rowLabel || '').split(/[^a-z0-9]+/i).map(t => t.trim().toLowerCase()).filter(Boolean)
+    );
+
+    // Split into alternating [token, delimiter, token, delimiter, ...],
+    // keeping each ORIGINAL delimiter rather than tokenizing straight to
+    // a flat word list -- a two-tone colour like "Red-Blue" must stay
+    // "Red-Blue" in the tag, not flatten to "Red Blue" and read as two
+    // unrelated leftover words. Consecutive surviving tokens rejoin with
+    // their own single hyphen/underscore; a wider field separator
+    // ("---") or a dropped token in between starts a new, space-joined
+    // segment instead.
+    const parts = String(cellItemName || '').split(/([^a-z0-9]+)/i).filter(p => p !== '');
+    const segments = [];
+    let segment = '';
+    for (let i = 0; i < parts.length; i += 2) {
+      const token = parts[i];
+      if (!token || labelTokens.has(token.toLowerCase())) {
+        if (segment) { segments.push(segment); segment = ''; }
+        continue;
+      }
+      if (!segment) {
+        segment = token;
+      } else {
+        const sep = parts[i - 1] || '';
+        segment += /^[-_]$/.test(sep) ? `-${token}` : ` ${token}`;
+      }
+    }
+    if (segment) segments.push(segment);
+    return segments.join(' ');
   },
 
   // Detects components that are genuinely ONE shared physical item
