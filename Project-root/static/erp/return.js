@@ -166,7 +166,7 @@ App.Return = {
         <td><strong class="text-primary">${escapeHtml(ret.returnNumber || '')}</strong></td>
         <td>${billBadge}</td>
         <td>${escapeHtml(ret.returnDate || '')}</td>
-        <td>${escapeHtml(ret.vendor || '')}</td>
+        <td>${escapeHtml(App.Utils.formatNameCase(ret.vendor))}</td>
         <td><small class="text-muted">${itemsPreview}</small></td>
         <td>${escapeHtml(String(ret.totalQty ?? 0))}</td>
         <td class="text-danger fw-bold">${formatCurrency(ret.totalAmount)}</td>
@@ -297,7 +297,7 @@ App.Return = {
           <div style="flex:1;">
             <div style="margin-bottom:6px;">
               <span style="font-size:10px;color:#666;text-transform:uppercase;letter-spacing:0.5px;">Vendor</span>
-              <div style="font-weight:700;font-size:13px;color:#1a1a1a;margin-top:1px;">${escapeHtml(ret.vendor || '')}</div>
+              <div style="font-weight:700;font-size:13px;color:#1a1a1a;margin-top:1px;">${escapeHtml(App.Utils.formatNameCase(ret.vendor))}</div>
             </div>
             <div>
               <span style="font-size:10px;color:#666;text-transform:uppercase;letter-spacing:0.5px;">Remarks</span>
@@ -470,7 +470,7 @@ App.Return = {
         ret.vendor &&
         !Array.from(vendorSelect.options).some(o => App.Utils.sameText(o.value, ret.vendor))
       ) {
-        vendorSelect.add(new Option(ret.vendor, ret.vendor, true, true));
+        vendorSelect.add(new Option(App.Utils.formatNameCase(ret.vendor), ret.vendor, true, true));
       }
       if (
         window.jQuery?.fn?.select2 &&
@@ -709,7 +709,7 @@ App.Wastage = {
       }).join('<br>') + (w.items.length > 3 ? `<br><em>+${w.items.length - 3} more…</em>` : '');
 
       const vendorBadge = w.vendor
-        ? `<span class="badge bg-secondary">${escapeHtml(w.vendor)}</span>`
+        ? `<span class="badge bg-secondary">${escapeHtml(App.Utils.formatNameCase(w.vendor))}</span>`
         : '<span class="text-muted">—</span>';
 
       return `
@@ -978,7 +978,7 @@ App.Wastage = {
           <td style="padding:6px 8px; border:1px solid #dee2e6;">${escapeHtml(it.reason || '—')}</td>
         </tr>`).join('');
 
-    const vendorLine = w.vendor ? `<br><small><strong>Vendor:</strong> ${escapeHtml(w.vendor)}</small>` : '';
+    const vendorLine = w.vendor ? `<br><small><strong>Vendor:</strong> ${escapeHtml(App.Utils.formatNameCase(w.vendor))}</small>` : '';
     const remarksLine = w.remarks ? `<br><small><strong>Remarks:</strong> ${escapeHtml(w.remarks)}</small>` : '';
 
     return `

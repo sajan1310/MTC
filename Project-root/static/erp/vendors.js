@@ -108,7 +108,7 @@ App.Vendor = {
         <td class="text-center">
           <input type="checkbox" class="form-check-input vendor-select-chk" data-key="${escapeHtml(v.name)}" ${checkedAttr} onchange="App.Vendor.onRowSelectChange()">
         </td>
-        <td><strong class="text-dark fs-5">${escapeHtml(v.name)}</strong></td>
+        <td><strong class="text-dark fs-5">${escapeHtml(App.Utils.formatNameCase(v.name))}</strong></td>
         <td>
           <div><small class="text-muted">Ph:</small> ${escapeHtml(v.contact) || '-'}</div>
           <div><small class="text-muted">Add:</small> ${escapeHtml(v.address) || '-'}</div>
@@ -266,7 +266,7 @@ App.Vendor = {
     document.getElementById('vFormGstin').value = vendor.gstin;
     document.getElementById('vFormRemarks').value = vendor.remarks;
 
-    document.getElementById('vendorProfileTitle').innerText = `Vendor Dashboard: ${vendor.name}`;
+    document.getElementById('vendorProfileTitle').innerText = `Vendor Dashboard: ${App.Utils.formatNameCase(vendor.name)}`;
     document.getElementById('vendorSubmitBtn').innerText = 'Update Profile Info';
 
     document.getElementById('btn-v-ledger').parentElement.style.display = 'block';
@@ -590,7 +590,7 @@ App.Vendor = {
           <div style="flex:1;">
             <div style="margin-bottom:6px;">
               <span style="font-size:10px;color:#666;text-transform:uppercase;letter-spacing:0.5px;">Vendor Name</span>
-              <div style="font-weight:700;font-size:14px;color:#1a1a1a;margin-top:1px;">${escapeHtml(vendor.name || '')}</div>
+              <div style="font-weight:700;font-size:14px;color:#1a1a1a;margin-top:1px;">${escapeHtml(App.Utils.formatNameCase(vendor.name))}</div>
             </div>
             <div>
               <span style="font-size:10px;color:#666;text-transform:uppercase;letter-spacing:0.5px;">GSTIN</span>
@@ -650,7 +650,7 @@ App.Vendor = {
 
   delete(vendorName) {
     App.Utils.confirmAction(
-      `Are you sure you want to delete vendor "${vendorName}" from the Master list? (Historical POs/Bills will not be deleted).`,
+      `Are you sure you want to delete vendor "${App.Utils.formatNameCase(vendorName)}" from the Master list? (Historical POs/Bills will not be deleted).`,
       async () => {
         try {
           const res = await Api.mutate('deleteVendor', vendorName);

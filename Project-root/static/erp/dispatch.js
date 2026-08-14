@@ -359,12 +359,12 @@ App.Dispatch = {
         <td><span class="badge bg-dark fs-6 shadow-sm">${escapeHtml(b.dispatchNumber)}</span></td>
         <td>${escapeHtml(b.dispatchDate)}</td>
         <td>${b.orderNumber ? escapeHtml(b.orderNumber) : '<span class="text-muted">&mdash;</span>'}</td>
-        <td>${escapeHtml(b.clientName) || '-'}</td>
+        <td>${escapeHtml(App.Utils.formatNameCase(b.clientName)) || '-'}</td>
         <td><small>${productsCell}</small></td>
         <td class="text-center fw-bold">${App.Production.formatQty(b.totalQty)}</td>
         <td>${escapeHtml(b.transport) || '-'}</td>
         <td><small>${b.invoiceNumber ? `Inv: ${escapeHtml(b.invoiceNumber)}` : '<span class="text-muted">No Invoice #</span>'}${b.grNumber ? `<br>GR: ${escapeHtml(b.grNumber)}` : ''}</small></td>
-        <td class="text-end">${b.totalLogisticsCost ? `${formatCurrency(b.totalLogisticsCost)}<br><small class="text-muted">${escapeHtml(b.logisticsContractor)}</small>` : '<span class="text-muted">&mdash;</span>'}</td>
+        <td class="text-end">${b.totalLogisticsCost ? `${formatCurrency(b.totalLogisticsCost)}<br><small class="text-muted">${escapeHtml(App.Utils.formatNameCase(b.logisticsContractor))}</small>` : '<span class="text-muted">&mdash;</span>'}</td>
         <td class="text-center">
           <button class="btn btn-sm btn-outline-dark btn-action w-100 mb-1" onclick="App.Dispatch.print('${escapeHtml(key)}')">Print Challan</button>
           <button class="btn btn-sm btn-outline-primary btn-action w-100 mb-1" onclick="App.Dispatch.openEditDispatchModal('${escapeHtml(key)}')">Edit</button>
@@ -438,7 +438,7 @@ App.Dispatch = {
 
     setText('print-dispatch-number', b.dispatchNumber || '');
     setText('print-dispatch-date', b.dispatchDate || '');
-    setText('print-dispatch-client', b.clientName || '');
+    setText('print-dispatch-client', App.Utils.formatNameCase(b.clientName));
     setText('print-dispatch-client-address', client?.address || '');
     setText('print-dispatch-client-gstin', client?.gstin || '');
     setText('print-dispatch-transport', b.transport || '');
@@ -569,7 +569,7 @@ App.Dispatch = {
           <div style="flex:1;">
             <div style="margin-bottom:6px;">
               <span style="font-size:10px;color:#666;text-transform:uppercase;letter-spacing:0.5px;">Consignee (Ship To)</span>
-              <div style="font-weight:700;font-size:13px;color:#1a1a1a;margin-top:1px;">${escapeHtml(b.clientName || '')}</div>
+              <div style="font-weight:700;font-size:13px;color:#1a1a1a;margin-top:1px;">${escapeHtml(App.Utils.formatNameCase(b.clientName))}</div>
             </div>
             <div style="margin-bottom:6px;">
               <span style="font-size:10px;color:#666;text-transform:uppercase;letter-spacing:0.5px;">Address</span>
@@ -833,7 +833,7 @@ App.Dispatch = {
         html += `<option value="${escapeHtml(value)}"
       data-order="${escapeHtml(o.orderNumber)}"
       data-client="${escapeHtml(o.clientName)}">
-      ${escapeHtml(o.orderNumber)} - ${escapeHtml(o.clientName)} - ${escapeHtml(line.productName)} (Pending: ${App.Production.formatQty(pending)})
+      ${escapeHtml(o.orderNumber)} - ${escapeHtml(App.Utils.formatNameCase(o.clientName))} - ${escapeHtml(line.productName)} (Pending: ${App.Production.formatQty(pending)})
     </option>`;
       });
     });
@@ -947,7 +947,7 @@ App.Dispatch = {
       // the option when it's missing, same as initLogisticsContractorSelect2
       // does for an off-list contractor.
       const known = Array.from(clientEl.options).some(o => o.value === clientName);
-      if (!known) clientEl.add(new Option(clientName, clientName));
+      if (!known) clientEl.add(new Option(App.Utils.formatNameCase(clientName), clientName));
       clientEl.value = clientName;
       if (window.jQuery?.fn?.select2 && window.jQuery(clientEl).data('select2'))
         window.jQuery(clientEl).trigger('change.select2');
@@ -957,7 +957,7 @@ App.Dispatch = {
     (lines && lines.length ? lines : [null]).forEach(line => this.addDispatchLineRow(line));
 
     App.State.dispatchSourcePlanLineIds = sourcePlanLineIds || [];
-    document.getElementById('dispatchFormTitle').innerText = `New Dispatch — from Plan (${clientName})`;
+    document.getElementById('dispatchFormTitle').innerText = `New Dispatch — from Plan (${App.Utils.formatNameCase(clientName)})`;
   },
 
   // Initializes a searchable Select2 on Logistics Contractor, same pattern
@@ -969,7 +969,7 @@ App.Dispatch = {
     const $select = window.jQuery(selectEl);
     if ($select.data('select2')) $select.select2('destroy');
     selectEl.innerHTML = '';
-    if (currentValue) selectEl.add(new Option(currentValue, currentValue, true, true));
+    if (currentValue) selectEl.add(new Option(App.Utils.formatNameCase(currentValue), currentValue, true, true));
 
     const $parentModal = $select.closest('.modal');
 
@@ -980,7 +980,7 @@ App.Dispatch = {
       allowClear: true,
       matcher: App.Utils.select2Matcher,
       dropdownParent: $parentModal.length ? $parentModal : window.jQuery(document.body),
-      data: (App.State.globalContractors || []).map(c => ({ id: c.contractorName, text: c.contractorName })),
+      data: (App.State.globalContractors || []).map(c => ({ id: c.contractorName, text: App.Utils.formatNameCase(c.contractorName) })),
       createTag(params) {
         const term = (params.term || '').trim();
         if (!term) return null;
@@ -988,7 +988,7 @@ App.Dispatch = {
         // instead of minting a second, differently-cased entry for the
         // same real contractor (e.g. typing "seat" when "Seat" is on file).
         const existing = (App.State.globalContractors || []).find(c => App.Utils.sameText(c.contractorName, term));
-        if (existing) return { id: existing.contractorName, text: existing.contractorName };
+        if (existing) return { id: existing.contractorName, text: App.Utils.formatNameCase(existing.contractorName) };
         return { id: term, text: term, newTag: true };
       }
     });
@@ -1030,7 +1030,7 @@ App.Dispatch = {
       const res = await Api.call('getContractorRateForProcessType', contractorName, 'Dispatch / Logistics', 'General');
       const rate = res.success ? toNumber(res.data?.ratePerUnit) : 0;
       if (!rate) {
-        hintEl.innerText = `No rate card entry for "${contractorName}" / Dispatch / Logistics — cost will be 0.`;
+        hintEl.innerText = `No rate card entry for "${App.Utils.formatNameCase(contractorName)}" / Dispatch / Logistics — cost will be 0.`;
         return;
       }
       hintEl.innerText = `Logistics Cost: ${formatCurrency(totalQty * rate)} (${totalQty} x ${rate}/unit, across all lines)`;

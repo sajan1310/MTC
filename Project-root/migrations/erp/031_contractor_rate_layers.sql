@@ -6,8 +6,9 @@
 -- existing free-text tag on process_master.processType, size is derived
 -- server-side from a lot's Process outputItemName (contractors_service.
 -- _get_size_from_output_item_name), never a new user input. Layer 2 is
--- an optional flat per-lot extra charge (e.g. "Mounting Tyre/Tube"),
--- keyed on (contractor, service_type), selected per Production lot.
+-- an optional per-unit extra charge (e.g. "Mounting Tyre/Tube"), added to
+-- the Layer 1 rate before multiplying by qty, keyed on (contractor,
+-- service_type), selected per Production lot.
 --
 -- No pre-existing rate data needs preserving (confirmed with the user),
 -- so contractor_rates is dropped and recreated rather than altered in
@@ -32,8 +33,10 @@ CREATE UNIQUE INDEX ux_erp_contractor_rates_key_ci
     ON erp.contractor_rates (lower(contractor_name), lower(process_type), lower(size));
 
 
--- Layer 2, additive. Same no-sync-columns / hard-delete-with-contractor
--- precedent as contractor_rates.
+-- Layer 2, added to the Layer 1 rate per unit (not a flat per-lot fee --
+-- see contractor_payable = (contractor_rate + extra_charge_amount) * qty
+-- in production_service.py). Same no-sync-columns / hard-delete-with-
+-- contractor precedent as contractor_rates.
 CREATE TABLE IF NOT EXISTS erp.contractor_service_charges (
     id SERIAL PRIMARY KEY,
     contractor_name VARCHAR(255) NOT NULL,

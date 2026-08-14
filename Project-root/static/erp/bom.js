@@ -1363,7 +1363,7 @@ App.BOM = {
     const $select = window.jQuery(selectEl);
     if ($select.data('select2')) $select.select2('destroy');
     selectEl.innerHTML = '';
-    if (currentValue) selectEl.add(new Option(currentValue, currentValue, true, true));
+    if (currentValue) selectEl.add(new Option(App.Utils.formatNameCase(currentValue), currentValue, true, true));
 
     const $parentModal = $select.closest('.modal');
 
@@ -1374,12 +1374,12 @@ App.BOM = {
       allowClear: true,
       matcher: App.Utils.select2Matcher,
       dropdownParent: $parentModal.length ? $parentModal : window.jQuery(document.body),
-      data: (App.State.globalContractors || []).map(c => ({ id: c.contractorName, text: c.contractorName })),
+      data: (App.State.globalContractors || []).map(c => ({ id: c.contractorName, text: App.Utils.formatNameCase(c.contractorName) })),
       createTag(params) {
         const term = (params.term || '').trim();
         if (!term) return null;
         const existing = (App.State.globalContractors || []).find(c => App.Utils.sameText(c.contractorName, term));
-        if (existing) return { id: existing.contractorName, text: existing.contractorName };
+        if (existing) return { id: existing.contractorName, text: App.Utils.formatNameCase(existing.contractorName) };
         return { id: term, text: term, newTag: true };
       }
     });
@@ -1407,7 +1407,7 @@ App.BOM = {
       const res = await Api.call('getContractorRateForProcessType', contractorName, processType, 'General');
       const rate = res.success ? toNumber(res.data?.ratePerUnit) : 0;
       if (!rate) {
-        App.Utils.showToast(`No rate card entry for "${contractorName}" / ${processType} / General.`, true);
+        App.Utils.showToast(`No rate card entry for "${App.Utils.formatNameCase(contractorName)}" / ${processType} / General.`, true);
         return;
       }
       row.querySelector('.cost-rate').value = rate;

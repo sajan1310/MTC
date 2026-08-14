@@ -221,7 +221,7 @@ App.Bill = {
         <td>${poBadge}</td>
         <td><strong class="text-primary">${escapeHtml(bill.billNumber || '')}</strong>${billTypeBadge}</td>
         <td>${escapeHtml(bill.billDate || '')}</td>
-        <td>${escapeHtml(bill.vendor || '')}</td>
+        <td>${escapeHtml(App.Utils.formatNameCase(bill.vendor))}</td>
         <td><small class="text-muted">${itemsPreview}</small></td>
         <td>${escapeHtml(String(bill.totalQty ?? 0))}</td>
         <td class="text-success fw-bold">${formatCurrency(bill.totalAmount)}</td>
@@ -367,7 +367,7 @@ App.Bill = {
 
     setText('print-bill-number', bill.billNumber || '');
     setText('print-bill-date', bill.billDate || '');
-    setText('print-bill-vendor', bill.vendor || '');
+    setText('print-bill-vendor', App.Utils.formatNameCase(bill.vendor));
     setText('print-bill-remarks', bill.remarks || '');
     setText('print-bill-contact', bill.contact || '');
 
@@ -483,7 +483,7 @@ App.Bill = {
           <div style="flex:1;">
             <div style="margin-bottom:6px;">
               <span style="font-size:10px;color:#666;text-transform:uppercase;letter-spacing:0.5px;">Vendor</span>
-              <div style="font-weight:700;font-size:13px;color:#1a1a1a;margin-top:1px;">${escapeHtml(bill.vendor || '')}</div>
+              <div style="font-weight:700;font-size:13px;color:#1a1a1a;margin-top:1px;">${escapeHtml(App.Utils.formatNameCase(bill.vendor))}</div>
             </div>
             <div>
               <span style="font-size:10px;color:#666;text-transform:uppercase;letter-spacing:0.5px;">Remarks</span>
@@ -653,7 +653,7 @@ App.Bill = {
         bill.vendor &&
         !Array.from(vendorSelect.options).some(o => App.Utils.sameText(o.value, bill.vendor))
       ) {
-        vendorSelect.add(new Option(bill.vendor, bill.vendor, true, true));
+        vendorSelect.add(new Option(App.Utils.formatNameCase(bill.vendor), bill.vendor, true, true));
       }
       if (
         window.jQuery?.fn?.select2 &&

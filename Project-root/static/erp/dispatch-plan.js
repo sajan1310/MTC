@@ -103,7 +103,7 @@ App.DispatchPlan = {
     });
     return Array.from(byClient.entries())
       .sort((a, b) => a[0].localeCompare(b[0]))
-      .map(([clientName, data]) => ({ id: clientName, title: clientName, transport: data.transport, lines: data.lines }));
+      .map(([clientName, data]) => ({ id: clientName, title: App.Utils.formatNameCase(clientName), transport: data.transport, lines: data.lines }));
   },
 
   render() {
@@ -267,7 +267,7 @@ App.DispatchPlan = {
     }
 
     App.Utils.confirmAction(
-      `Remove ${clientName}'s plan card? This clears ${openLines.length} item(s) not yet dispatched.`,
+      `Remove ${App.Utils.formatNameCase(clientName)}'s plan card? This clears ${openLines.length} item(s) not yet dispatched.`,
       async () => {
         const results = await Promise.all(openLines.map(line => Api.mutate('deleteDispatchPlanLine', line.lineId)));
         const failed = results.find(r => !r.success);

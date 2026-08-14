@@ -113,7 +113,7 @@ App.Contractor = {
     <td class="text-center">
       <input type="checkbox" class="form-check-input contractor-select-chk" data-key="${escapeHtml(c.contractorName)}" ${checkedAttr} onchange="App.Contractor.onRowSelectChange()">
     </td>
-    <td><strong>${escapeHtml(c.contractorName)}</strong></td>
+    <td><strong>${escapeHtml(App.Utils.formatNameCase(c.contractorName))}</strong></td>
     <td>${escapeHtml(c.contact || '-')}</td>
     <td class="text-center">${ledger ? escapeHtml(String(ledger.lotCount)) : '0'}</td>
     <td class="text-end fw-bold ${balanceClass}">${formatCurrency(balanceDue)}</td>
@@ -209,7 +209,7 @@ App.Contractor = {
     document.getElementById('ctrFormGstPan').value = contractor.gstPan;
     document.getElementById('ctrFormRemarks').value = contractor.remarks;
 
-    document.getElementById('contractorProfileTitle').innerText = `Contractor: ${contractor.contractorName}`;
+    document.getElementById('contractorProfileTitle').innerText = `Contractor: ${App.Utils.formatNameCase(contractor.contractorName)}`;
     document.getElementById('contractorSubmitBtn').innerText = 'Update Profile Info';
 
     document.getElementById('btn-c-rates').parentElement.style.display = 'block';
@@ -323,7 +323,7 @@ App.Contractor = {
     if (!selected.length || !contractorName) return;
 
     App.Utils.confirmAction(
-      `Delete ${selected.length} selected rate card entr${selected.length === 1 ? 'y' : 'ies'} for "${contractorName}"? This cannot be undone.`,
+      `Delete ${selected.length} selected rate card entr${selected.length === 1 ? 'y' : 'ies'} for "${App.Utils.formatNameCase(contractorName)}"? This cannot be undone.`,
       async () => {
         try {
           const res = await Api.mutate('deleteContractorRatesBulk', selected.map(key => {
@@ -440,7 +440,7 @@ App.Contractor = {
     }
 
     App.Utils.confirmAction(
-      `Delete the rate card entry for "${contractorName}" on "${originalProcessType} / ${originalSize}"? This cannot be undone.`,
+      `Delete the rate card entry for "${App.Utils.formatNameCase(contractorName)}" on "${originalProcessType} / ${originalSize}"? This cannot be undone.`,
       async () => {
         try {
           const res = await Api.mutate('deleteContractorRate', contractorName, originalProcessType, originalSize);
@@ -454,8 +454,8 @@ App.Contractor = {
   },
 
   // ───────────────────────────────────────────────────────────────────
-  // Extra Charges (Layer 2 -- optional flat per-lot charge, e.g.
-  // "Mounting Tyre/Tube"). Same table pattern as the Rate Card above,
+  // Extra Charges (Layer 2 -- optional per-unit charge added to the base
+  // rate, e.g. "Mounting Tyre/Tube"). Same table pattern as the Rate Card above,
   // upserting by (contractor, serviceType) instead of a numeric row id.
   // ───────────────────────────────────────────────────────────────────
 
@@ -517,7 +517,7 @@ App.Contractor = {
     if (!selected.length || !contractorName) return;
 
     App.Utils.confirmAction(
-      `Delete ${selected.length} selected extra charge(s) for "${contractorName}"? This cannot be undone.`,
+      `Delete ${selected.length} selected extra charge(s) for "${App.Utils.formatNameCase(contractorName)}"? This cannot be undone.`,
       async () => {
         try {
           const res = await Api.mutate('deleteContractorServiceChargesBulk', selected.map(serviceType => ({ contractorName, serviceType })));
@@ -620,7 +620,7 @@ App.Contractor = {
     }
 
     App.Utils.confirmAction(
-      `Delete the extra charge "${originalServiceType}" for "${contractorName}"? This cannot be undone.`,
+      `Delete the extra charge "${originalServiceType}" for "${App.Utils.formatNameCase(contractorName)}"? This cannot be undone.`,
       async () => {
         try {
           const res = await Api.mutate('deleteContractorServiceCharge', contractorName, originalServiceType);
@@ -715,7 +715,7 @@ App.Contractor = {
     if (!selected.length || !contractorName) return;
 
     App.Utils.confirmAction(
-      `Delete ${selected.length} selected payment record(s) for "${contractorName}"? This cannot be undone.`,
+      `Delete ${selected.length} selected payment record(s) for "${App.Utils.formatNameCase(contractorName)}"? This cannot be undone.`,
       async () => {
         try {
           const res = await Api.mutate('deleteContractorPaymentsBulk', selected);
@@ -744,7 +744,7 @@ App.Contractor = {
 
     const contractor = App.State.globalContractors.find(c => App.Utils.sameText(c.contractorName, contractorName)) || {};
 
-    document.getElementById('print-contractor-name').innerText = contractorName;
+    document.getElementById('print-contractor-name').innerText = App.Utils.formatNameCase(contractorName);
     document.getElementById('print-contractor-gstpan').innerText = contractor.gstPan || '-';
     document.getElementById('print-contractor-contact').innerText = contractor.contact || '-';
     document.getElementById('print-contractor-address').innerText = contractor.address || '-';
@@ -801,7 +801,7 @@ App.Contractor = {
 
   deletePayment(rowIdx, contractorName, amount, date) {
     App.Utils.confirmAction(
-      `Delete ${contractorName}'s payment of ${formatCurrency(amount)}${date ? ` dated ${date}` : ''}? This cannot be undone.`,
+      `Delete ${App.Utils.formatNameCase(contractorName)}'s payment of ${formatCurrency(amount)}${date ? ` dated ${date}` : ''}? This cannot be undone.`,
       async () => {
         try {
           const res = await Api.mutate('deleteContractorPayment', rowIdx, contractorName, amount);
@@ -819,7 +819,7 @@ App.Contractor = {
 
   delete(contractorName) {
     App.Utils.confirmAction(
-      `Are you sure you want to delete contractor "${contractorName}"? Their rate card will also be removed.`,
+      `Are you sure you want to delete contractor "${App.Utils.formatNameCase(contractorName)}"? Their rate card will also be removed.`,
       async () => {
         try {
           const res = await Api.mutate('deleteContractor', contractorName);

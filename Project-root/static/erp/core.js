@@ -1281,6 +1281,15 @@ const App = {
       return String(a == null ? '' : a).trim().toLowerCase() === String(b == null ? '' : b).trim().toLowerCase();
     },
 
+    // Display casing for name-like fields (Assigned By/To, ...) so
+    // "ANIL"/"anil"/"Anil" -- all the same real contractor per sameText --
+    // render identically instead of as visibly different strings. First
+    // letter capital, rest lowercase; does not touch what's stored/saved.
+    formatNameCase(text) {
+      const s = String(text == null ? '' : text).trim();
+      return s ? s.charAt(0).toUpperCase() + s.slice(1).toLowerCase() : s;
+    },
+
     // Same real color, ignoring case/whitespace -- a color name reaches the
     // browser from several independent places (Color Master, a recipe's
     // Color Sub-Group, a Warehouse Pool bucket, a saved lot's Color

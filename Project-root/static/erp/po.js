@@ -116,7 +116,7 @@ App.PO = {
         </td>
         <td><span class="badge bg-dark fs-6 shadow-sm">PO-${escapeHtml(po.poNumber)}</span></td>
         <td>${escapeHtml(po.poDate || '')}</td>
-        <td><strong class="text-primary">${escapeHtml(po.vendor || '')}</strong></td>
+        <td><strong class="text-primary">${escapeHtml(App.Utils.formatNameCase(po.vendor))}</strong></td>
         <td><small class="text-muted">${itemsPreview}</small></td>
         <td class="text-center fw-bold">${escapeHtml(String(po.totalQty ?? 0))}</td>
         <td class="text-success fw-bold">${formatCurrency(po.grandTotal)}</td>
@@ -419,7 +419,7 @@ App.PO = {
     tbody.innerHTML = items.map(p => `<tr>
       <td><span class="badge bg-dark shadow-sm">PO-${escapeHtml(p.poNumber)}</span></td>
       <td>${escapeHtml(p.poDate)}</td>
-      <td><strong>${escapeHtml(p.vendor)}</strong></td>
+      <td><strong>${escapeHtml(App.Utils.formatNameCase(p.vendor))}</strong></td>
       <td>${escapeHtml(p.itemName)} ${p.size ? `<span class="text-muted">(${escapeHtml(p.size)})</span>` : ''}</td>
       <td class="text-center">${formatQty(p.orderedQty)} ${escapeHtml(p.unit || '')}</td>
       <td class="text-center">${formatQty(p.receivedQty)} ${escapeHtml(p.unit || '')}</td>
@@ -438,7 +438,7 @@ App.PO = {
     const optionsHtml =
       '<option value="">Select or type new vendor…</option>' +
       vendors
-        .map(v => `<option value="${escapeHtml(v)}">${escapeHtml(v)}</option>`)
+        .map(v => `<option value="${escapeHtml(v)}">${escapeHtml(App.Utils.formatNameCase(v))}</option>`)
         .join('');
 
     $$('select.select2-vendor').forEach(el => {
@@ -654,7 +654,7 @@ App.PO = {
         po.vendor &&
         !Array.from(vendorSelect.options).some(o => App.Utils.sameText(o.value, po.vendor))
       ) {
-        vendorSelect.add(new Option(po.vendor, po.vendor, true, true));
+        vendorSelect.add(new Option(App.Utils.formatNameCase(po.vendor), po.vendor, true, true));
       }
       if (
         window.jQuery?.fn?.select2 &&
@@ -785,7 +785,7 @@ App.PO = {
 
     const parts = item.vendors.map(v => {
       const isCurrent = vendorName && (v.vendor || '').trim().toLowerCase() === vendorName;
-      const label = `${escapeHtml(v.vendor)}: <strong>${formatCurrency(v.rate)}</strong>`;
+      const label = `${escapeHtml(App.Utils.formatNameCase(v.vendor))}: <strong>${formatCurrency(v.rate)}</strong>`;
       return isCurrent ? `<span class="text-primary">${label}</span>` : label;
     });
 
@@ -862,7 +862,7 @@ App.PO = {
       if (el) el.innerText = val ?? '';
     };
 
-    setText('print-vendor', po.vendor || '');
+    setText('print-vendor', App.Utils.formatNameCase(po.vendor));
     setText('print-contact', po.contact || '');
     setText('print-supp-rem', po.supplierRemarks || '');
     setText('print-ponum', po.poNumber || '');
@@ -1081,7 +1081,7 @@ App.PO = {
           <div style="flex:1;">
             <div style="margin-bottom:6px;">
               <span style="font-size:10px;color:#666;text-transform:uppercase;letter-spacing:0.5px;">Vendor</span>
-              <div style="font-weight:700;font-size:13px;color:#1a1a1a;margin-top:1px;">${escapeHtml(po.vendor || '')}</div>
+              <div style="font-weight:700;font-size:13px;color:#1a1a1a;margin-top:1px;">${escapeHtml(App.Utils.formatNameCase(po.vendor))}</div>
             </div>
             <div>
               <span style="font-size:10px;color:#666;text-transform:uppercase;letter-spacing:0.5px;">Supplier Rem.</span>
@@ -1310,7 +1310,7 @@ App.PO = {
         <td>${escapeHtml(r.name)}</td>
         <td>${escapeHtml(r.size)}</td>
         <td>${escapeHtml(r.narration)}</td>
-        <td>${escapeHtml(r.vendor)}</td>
+        <td>${escapeHtml(App.Utils.formatNameCase(r.vendor))}</td>
         <td class="text-end">${formatCurrency(r.rate)}</td>
         <td>${escapeHtml(r.lastDate)}</td>
       </tr>`).join('');

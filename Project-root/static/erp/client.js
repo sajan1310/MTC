@@ -131,7 +131,7 @@ App.Client = {
         <td class="text-center">
           <input type="checkbox" class="form-check-input client-select-chk" data-key="${escapeHtml(c.name)}" ${checked} onchange="App.Client.onClientRowSelectChange()">
         </td>
-        <td><strong class="text-dark fs-5">${escapeHtml(c.name)}</strong></td>
+        <td><strong class="text-dark fs-5">${escapeHtml(App.Utils.formatNameCase(c.name))}</strong></td>
         <td>${escapeHtml(c.contact) || '-'}</td>
         <td><span class="badge bg-light text-dark border">${escapeHtml(c.gstin) || 'No GSTIN'}</span></td>
         <td>${escapeHtml(c.address) || '-'}</td>
@@ -226,7 +226,7 @@ App.Client = {
     document.getElementById('cFormAddress').value = client.address || '';
     document.getElementById('cFormRemarks').value = client.remarks || '';
 
-    document.getElementById('clientModalTitle').innerText = `Edit Client: ${client.name}`;
+    document.getElementById('clientModalTitle').innerText = `Edit Client: ${App.Utils.formatNameCase(client.name)}`;
     document.getElementById('clientSubmitBtn').innerText = 'Update Client';
 
     App.Utils.setFormButtonsForMode('clientCancelBtn', 'clientExitBtn', 'clientSubmitBtn', true, 'Update Client');
@@ -241,7 +241,7 @@ App.Client = {
 
   deleteClient(clientName) {
     App.Utils.confirmAction(
-      `Are you sure you want to delete client "${clientName}" from the Master list? This is blocked if the client has any PI/Estimate or Dispatch history.`,
+      `Are you sure you want to delete client "${App.Utils.formatNameCase(clientName)}" from the Master list? This is blocked if the client has any PI/Estimate or Dispatch history.`,
       async () => {
         try {
           const res = await Api.mutate('deleteClient', clientName);
@@ -260,7 +260,7 @@ App.Client = {
 
     let html = '<option value="">Choose a Client...</option>';
     (App.State.globalClients || []).forEach(c => {
-      html += `<option value="${escapeHtml(c.name)}">${escapeHtml(c.name)}</option>`;
+      html += `<option value="${escapeHtml(c.name)}">${escapeHtml(App.Utils.formatNameCase(c.name))}</option>`;
     });
 
     selectEl.innerHTML = html;
@@ -376,7 +376,7 @@ App.Client = {
         </td>
         <td><span class="badge bg-dark fs-6 shadow-sm">${escapeHtml(o.orderNumber)}</span></td>
         <td>${escapeHtml(o.orderDate)}</td>
-        <td><strong>${escapeHtml(o.clientName)}</strong></td>
+        <td><strong>${escapeHtml(App.Utils.formatNameCase(o.clientName))}</strong></td>
         <td><small>${productsSummary || '-'}</small></td>
         <td class="text-center"><span class="badge ${badgeClass} shadow-sm">${label}</span></td>
         <td class="text-center">
@@ -507,7 +507,7 @@ App.Client = {
         <div style="display:flex;gap:16px;">
           <div style="flex:1;">
             <span style="font-size:10px;color:#666;text-transform:uppercase;letter-spacing:0.5px;">Client</span>
-            <div style="font-weight:700;font-size:13px;color:#1a1a1a;margin-top:1px;">${escapeHtml(order.clientName || '')}</div>
+            <div style="font-weight:700;font-size:13px;color:#1a1a1a;margin-top:1px;">${escapeHtml(App.Utils.formatNameCase(order.clientName))}</div>
           </div>
           <div style="flex:1;">
             <span style="font-size:10px;color:#666;text-transform:uppercase;letter-spacing:0.5px;">GSTIN</span>
@@ -826,7 +826,7 @@ App.Client = {
     const client = App.State.globalClients.find(c => App.Utils.sameText(c.name, clientName));
     if (!client) return;
 
-    document.getElementById('clientLedgerTitle').innerText = `Client Ledger: ${client.name}`;
+    document.getElementById('clientLedgerTitle').innerText = `Client Ledger: ${App.Utils.formatNameCase(client.name)}`;
     document.getElementById('clientLedgerContact').innerText = client.contact || '-';
     document.getElementById('clientLedgerGstin').innerText = client.gstin || '-';
     document.getElementById('clientLedgerAddress').innerText = client.address || '-';
@@ -914,7 +914,7 @@ App.Client = {
     const client = App.State.globalClients.find(c => App.Utils.sameText(c.name, clientName));
     if (!client) return;
 
-    document.getElementById('print-client-name').innerText = client.name;
+    document.getElementById('print-client-name').innerText = App.Utils.formatNameCase(client.name);
     document.getElementById('print-client-gstin').innerText = client.gstin || '-';
     document.getElementById('print-client-contact').innerText = client.contact || '-';
     document.getElementById('print-client-address').innerText = client.address || '-';
@@ -976,7 +976,7 @@ App.Client = {
       html += `<tr>
         <td><span class="badge bg-dark shadow-sm">${escapeHtml(p.orderNumber)}</span></td>
         <td>${escapeHtml(p.orderDate)}</td>
-        <td><strong>${escapeHtml(p.clientName)}</strong></td>
+        <td><strong>${escapeHtml(App.Utils.formatNameCase(p.clientName))}</strong></td>
         <td>${escapeHtml(p.productName)} <span class="text-muted">(${escapeHtml(p.productId)})</span></td>
         <td class="text-center">${App.Production.formatQty(p.orderedQty)}</td>
         <td class="text-center">${App.Production.formatQty(p.dispatchedQty)}</td>

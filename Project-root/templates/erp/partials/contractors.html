@@ -122,16 +122,16 @@
           </div>
         </div>
 
-        <!-- Extra Charges Tab (Layer 2 -- optional flat per-lot charges, e.g. Mounting Tyre/Tube) -->
+        <!-- Extra Charges Tab (Layer 2 -- optional per-unit charges added to the base rate, e.g. Mounting Tyre/Tube) -->
         <div id="c-extra-charges" class="contractor-tab-content" style="display:none;">
-          <div class="alert alert-info py-2">Optional flat charges this contractor bills on top of their base rate for specific services (e.g. "Mounting Tyre/Tube"). Picked per lot as a radio choice on the Production form.</div>
+          <div class="alert alert-info py-2">Optional per-unit charges added on top of this contractor's base rate for specific services (e.g. "Mounting Tyre/Tube") -- billed per unit produced, not a one-time flat fee. Picked per lot as a radio choice on the Production form.</div>
           <div class="table-responsive mb-3">
             <table class="table table-bordered bg-white shadow-sm table-hover mb-0">
               <thead class="table-dark">
                 <tr>
                   <th scope="col" style="width: 4%; text-align: center;"><input type="checkbox" id="selectAllContractorServiceCharges" class="form-check-input" onclick="App.Contractor.toggleSelectAllServiceCharges(this)"></th>
                   <th scope="col" style="width: 32%;">Service Type</th>
-                  <th scope="col" style="width: 19%; text-align: right;">Charge Amount</th>
+                  <th scope="col" style="width: 19%; text-align: right;">Charge Amount (per unit)</th>
                   <th scope="col" style="width: 30%;">Remarks</th>
                   <th scope="col" style="width: 15%; text-align: center;">Actions</th>
                 </tr>

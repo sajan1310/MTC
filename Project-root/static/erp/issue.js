@@ -133,7 +133,7 @@ App.Issue = {
         </td>
         <td><strong class="text-dark">${escapeHtml(iss.issueId || '')}</strong></td>
         <td>${escapeHtml(iss.date || '')}</td>
-        <td>${escapeHtml(iss.issuedTo || '')}</td>
+        <td>${escapeHtml(App.Utils.formatNameCase(iss.issuedTo))}</td>
         <td>${refBadge}</td>
         <td><small class="text-muted">${itemsPreview}</small></td>
         <td class="text-center fw-bold">${escapeHtml(String(iss.totalQty ?? 0))}</td>
@@ -283,7 +283,7 @@ App.Issue = {
         <div style="display:flex;gap:16px;">
           <div style="flex:1;">
             <span style="font-size:10px;color:#666;text-transform:uppercase;letter-spacing:0.5px;">Issued To / Purpose</span>
-            <div style="font-weight:700;font-size:13px;color:#1a1a1a;margin-top:1px;">${escapeHtml(iss.issuedTo || '')}</div>
+            <div style="font-weight:700;font-size:13px;color:#1a1a1a;margin-top:1px;">${escapeHtml(App.Utils.formatNameCase(iss.issuedTo))}</div>
           </div>
           <div style="flex:1;">
             <span style="font-size:10px;color:#666;text-transform:uppercase;letter-spacing:0.5px;">Reference</span>

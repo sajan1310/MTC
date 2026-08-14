@@ -1,8 +1,8 @@
 """Contractors / Contractor Rates / Contractor Service Charges / Contractor
 Payments RPC tests, ported behavior from Apps_Script/module_contractors.js
 plus the two-layer Contractor Rates redesign (Layer 1: contractor + process
-type + size; Layer 2: contractor + service type, a flat optional per-lot
-extra charge).
+type + size; Layer 2: contractor + service type, an optional per-unit
+extra charge added to the Layer 1 rate before multiplying by qty).
 
 Also proves two "validating moment" cascades: a Process Type Master rename
 reaching contractor_rates.process_type (tags_service._rename_process_type_everywhere)

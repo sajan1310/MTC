@@ -739,7 +739,7 @@ def save_production(conn, cur, form_data):
         contractors_service._get_extra_charge(cur, assigned_to, extra_charge_type) if extra_charge_type else 0.0
     )
 
-    contractor_payable = contractor_rate * qty + extra_charge_amount
+    contractor_payable = (contractor_rate + extra_charge_amount) * qty
 
     components_json = json.dumps(clean_components)
     color_breakdown_json = json.dumps(color_breakdown) if color_breakdown else None

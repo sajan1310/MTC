@@ -46,7 +46,15 @@ describe('App.DispatchPlan', () => {
       // matches how most tests want to assert the END result of cancelling.
       // Tests specifically about the prompt itself inspect the mock's own
       // calls instead.
-      Utils: { showToast: jest.fn(), confirmAction: jest.fn((_message, cb) => cb()), notPortedYet: jest.fn() },
+      Utils: {
+        showToast: jest.fn(),
+        confirmAction: jest.fn((_message, cb) => cb()),
+        notPortedYet: jest.fn(),
+        formatNameCase: text => {
+          const s = String(text == null ? '' : text).trim();
+          return s ? s.charAt(0).toUpperCase() + s.slice(1).toLowerCase() : s;
+        },
+      },
       Dispatch: {
         loadReadyData: jest.fn().mockResolvedValue(undefined),
         openPrefilledDispatchModal: jest.fn(),

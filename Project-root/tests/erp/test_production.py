@@ -684,7 +684,7 @@ def test_save_production_contractor_payable_defaults_zero_without_rate(erp_clien
     assert match["contractorPayable"] == 0
 
 
-def test_save_production_extra_charge_adds_flat_amount_on_top_of_rate(erp_client):
+def test_save_production_extra_charge_adds_per_unit_amount_to_rate(erp_client):
     process_type = _unique_name("ExtraChargeType")
     _payload, process_id = _save_process(erp_client, processType=process_type)
     contractor = _unique_name("ExtraChargeWorker")
@@ -716,7 +716,7 @@ def test_save_production_extra_charge_adds_flat_amount_on_top_of_rate(erp_client
     match = next(r for r in listed if r["lotNumber"] == body["data"]["lotNumber"])
     assert match["extraChargeType"] == service_type
     assert match["extraChargeAmount"] == 50
-    assert match["contractorPayable"] == 110  # 15 rate * 4 qty + 50 flat extra charge
+    assert match["contractorPayable"] == 260  # (15 rate + 50 extra per unit) * 4 qty
 
 
 def test_save_production_unrecognized_extra_charge_type_contributes_zero(erp_client):

@@ -300,7 +300,15 @@ def _build_warehouse_pool_buckets(cur, include_opening: bool = True) -> dict:
     if include_opening:
         for r in _get_warehouse_pool_opening_rows(cur):
             proc_id = (r["processId"] or "").strip().lower()
-            name = process_output_item_map.get(proc_id) or r["outputItemName"]
+            if proc_id in final_stage_ids:
+                # Same final-stage exception as Pass 1 below: a per-entry
+                # Output Item Name override (see save_warehouse_pool_opening)
+                # keeps its own bucket instead of merging into the process
+                # default, since nothing downstream sources a POOL
+                # component off dispatch-terminal output.
+                name = r["outputItemName"] or process_output_item_map.get(proc_id, "")
+            else:
+                name = process_output_item_map.get(proc_id) or r["outputItemName"]
             bucket = get_bucket(name, r["processId"], r["productTag"], r["color"])
             bucket["producedQty"] += r["qty"]
 
@@ -791,6 +799,19 @@ def save_warehouse_pool_opening(conn, cur, form_data):
     product_tag = str(form_data.get("productTag") or "").strip() if process["isFinalStage"] else ""
     color = str(form_data.get("color") or "").strip()
 
+    # A per-entry Output Item Name override -- same final-stage-only
+    # reasoning as Product Tag above, and mirrors Production's own per-lot
+    # override (production_service.save_production). Silently ignored (not
+    # rejected) for a WIP process: _build_warehouse_pool_buckets's Pass 0
+    # only keeps a non-default name segregated for final-stage output, so
+    # accepting one here for a WIP process would just merge back into the
+    # process default at the next recalculation anyway.
+    output_item_name = process["outputItemName"]
+    if process["isFinalStage"]:
+        override = str(form_data.get("outputItemName") or "").strip()
+        if override:
+            output_item_name = override
+
     # A process with known colors (from its own component recipe, linked
     # processes, or colors already seen in Production/Warehouse Pool) tracks
     # stock per-color -- an opening balance logged without one would land in
@@ -830,14 +851,14 @@ def save_warehouse_pool_opening(conn, cur, form_data):
         VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s)
         """,
         (
-            process["outputItemName"], process["processId"], process_master_id, product_tag, color,
+            output_item_name, process["processId"], process_master_id, product_tag, color,
             qty, opening_date, remarks, user_id,
         ),
     )
 
     _recalculate_warehouse_pool(cur)
 
-    return build_response(True, None, f'Opening stock for "{process["outputItemName"]}" recorded.')
+    return build_response(True, None, f'Opening stock for "{output_item_name}" recorded.')
 
 
 @rpc_method("deleteWarehousePoolOpening", mutation=True)

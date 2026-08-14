@@ -404,9 +404,9 @@ App.Production = {
       } else if (key === 'productTag') {
         if (p.productId) values.add(p.productId);
       } else if (key === 'assignedBy') {
-        if (p.assignedBy) values.add(p.assignedBy);
+        if (p.assignedBy) values.add(App.Utils.formatNameCase(p.assignedBy));
       } else if (key === 'assignedTo') {
-        if (p.assignedTo) values.add(p.assignedTo);
+        if (p.assignedTo) values.add(App.Utils.formatNameCase(p.assignedTo));
       }
     });
 
@@ -552,8 +552,8 @@ App.Production = {
       }
       if (outputItem.length && !outputItem.includes(p.outputItemName || '')) return false;
       if (productTag.length && !productTag.includes(p.productId || '')) return false;
-      if (assignedBy.length && !assignedBy.includes(p.assignedBy || '')) return false;
-      if (assignedTo.length && !assignedTo.includes(p.assignedTo || '')) return false;
+      if (assignedBy.length && !assignedBy.includes(App.Utils.formatNameCase(p.assignedBy))) return false;
+      if (assignedTo.length && !assignedTo.includes(App.Utils.formatNameCase(p.assignedTo))) return false;
       if (status.length && !status.includes(p.status || '')) return false;
       return true;
     });
@@ -739,7 +739,7 @@ App.Production = {
       allowClear: true,
       matcher: App.Utils.select2Matcher,
       dropdownParent: $parentModal.length ? $parentModal : window.jQuery(document.body),
-      data: (App.State.globalContractors || []).map(c => ({ id: c.contractorName, text: c.contractorName }))
+      data: (App.State.globalContractors || []).map(c => ({ id: c.contractorName, text: App.Utils.formatNameCase(c.contractorName) }))
     });
   },
 
@@ -826,7 +826,7 @@ App.Production = {
       groups.get(key).push(p);
     });
 
-    const allAssignedBy = [...new Set(lots.map(p => p.assignedBy).filter(Boolean))];
+    const allAssignedBy = [...new Set(lots.map(p => App.Utils.formatNameCase(p.assignedBy)).filter(Boolean))];
     const commonAssignedBy = allAssignedBy.length === 1 ? allAssignedBy[0] : '';
 
     const tableBlocks = Array.from(groups.entries()).map(([itemName, groupLots]) => {
@@ -842,7 +842,7 @@ App.Production = {
       const displayItemName = processType ? `(${processType}) ${itemName}` : itemName;
 
       const lotNumbers = [...new Set(groupLots.map(p => p.lotNumber).filter(Boolean))].join(', ') || '-';
-      const assignedByList = [...new Set(groupLots.map(p => p.assignedBy).filter(Boolean))].join(', ') || '-';
+      const assignedByList = [...new Set(groupLots.map(p => App.Utils.formatNameCase(p.assignedBy)).filter(Boolean))].join(', ') || '-';
       // Only repeat Assigned By per-table when it ISN'T already covered by
       // the shared header line below (i.e. it varies somewhere in this
       // work order) -- a single common name is shown exactly once.
@@ -942,7 +942,7 @@ App.Production = {
     </div>
     <div>
       <span style="font-size:8px;color:#666;text-transform:uppercase;letter-spacing:0.4px;">Assigned To</span>
-      <div style="font-size:11px;font-weight:700;color:${INK};">${escapeHtml(contractor)}</div>
+      <div style="font-size:11px;font-weight:700;color:${INK};">${escapeHtml(App.Utils.formatNameCase(contractor))}</div>
     </div>
     ${commonAssignedBy ? `
     <div>
@@ -1047,8 +1047,8 @@ App.Production = {
     <td>${escapeHtml(p.outputItemName || '-')}${colorBadges ? `<br>${colorBadges}` : ''}</td>
     <td>${p.productId ? `<span class="badge bg-dark fs-6 shadow-sm">${escapeHtml(p.productId)}</span><br>${escapeHtml(p.productName || '')}` : '<span class="text-muted">—</span>'}</td>
     <td class="text-center fw-bold">${escapeHtml(String(p.qty))} Units</td>
-    <td>${escapeHtml(p.assignedBy || '-')}</td>
-    <td>${escapeHtml(p.assignedTo || '-')}${p.contractorPayable ? `<br><span class="badge bg-light text-dark border">${formatCurrency(p.contractorPayable)}</span>` : ''}</td>
+    <td>${escapeHtml(App.Utils.formatNameCase(p.assignedBy) || '-')}</td>
+    <td>${escapeHtml(App.Utils.formatNameCase(p.assignedTo) || '-')}${p.contractorPayable ? `<br><span class="badge bg-light text-dark border">${formatCurrency(p.contractorPayable)}</span>` : ''}</td>
     <td class="text-center">
       <select class="form-select form-select-sm fw-bold border-0 shadow-sm" style="font-size:0.75rem;appearance:none;-webkit-appearance:none;-moz-appearance:none;background-image:none;padding-right:0.5rem;${this.statusStyleFor(p.status)}" data-row-idx="${idx}" onchange="App.Production.updateStatus(this)" title="Change status directly without opening Edit Lot">${statusOptions}</select>
     </td>
@@ -2902,6 +2902,113 @@ App.Production = {
     return `${(name || '').trim().toLowerCase()}|${(size || '').trim().toLowerCase()}`;
   },
 
+  // Reconstructs which entries belong to the same conceptual Per-Color
+  // Components matrix ROW, given only the flat colorGroup-tagged list
+  // saved on components_consumed (or a process recipe's own components).
+  // Text-matching alone (_stripColorSubstring) cannot always do this: a
+  // "Teddy Basket" can legitimately be a literal RED item under the lot's
+  // Blue colour group and a literal BLUE item under Red, so stripping
+  // finds nothing in common between the two and they never merge --
+  // fragmenting one dragged/authored row into several single-colour rows
+  // that then sort by WHICH colour they belong to instead of staying in
+  // the order they were entered (see LOT-PF2IIS-0002).
+  //
+  // Primary signal: partition entries into one ordered list per colour
+  // (preserving each colour's own original relative order), then zip the
+  // Nth entry of every colour's list together as one row -- i.e. treat
+  // each colour's own component list as a numbered sub-group and align
+  // across colours by position, exactly mirroring how the matrix was
+  // actually built (one row, one cell per colour, added left to right).
+  // Only trustworthy when every colour's list is the SAME length -- a
+  // colour that genuinely skips or adds an item throws the position
+  // alignment off, so that (and the single-colour case, where "position"
+  // is meaningless) falls back to the older name-based merge instead of
+  // risking a wrong pairing.
+  _reconstructPerColorRows(entries) {
+    if (!entries || entries.length === 0) return [];
+
+    const byColor = new Map();
+    entries.forEach(e => {
+      if (!byColor.has(e.colorKey)) byColor.set(e.colorKey, []);
+      byColor.get(e.colorKey).push(e);
+    });
+
+    const colorKeys = Array.from(byColor.keys());
+    const counts = colorKeys.map(c => byColor.get(c).length);
+    const evenCoverage = colorKeys.length > 1 && counts.every(n => n === counts[0]);
+    if (!evenCoverage) return this._reconstructPerColorRowsByName(entries);
+
+    const rows = [];
+    for (let i = 0; i < counts[0]; i++) {
+      const cells = colorKeys.map(c => byColor.get(c)[i]);
+      const first = cells[0];
+      rows.push({
+        size: first.size,
+        narration: first.narration,
+        unit: cells.find(c => c.unit)?.unit || '',
+        // The ORIGINAL entry objects, not a re-shaped copy -- callers that
+        // stash extra fields on their own entries (e.g. populateComponents-
+        // ConsumedDirect's __ref back to the raw saved component, needed to
+        // materialize a DOM row) get them back unchanged.
+        cells
+      });
+    }
+    return rows;
+  },
+
+  // The pre-position-alignment fallback: groups entries whose item name
+  // (with THIS entry's own colour word stripped out, unless the raw name
+  // is already shared verbatim across more than one colour -- see
+  // _sharedItemSlotKeys' reasoning, reimplemented here against `entries`
+  // rather than raw components) lands on the same name+size+narration.
+  // Used whenever _reconstructPerColorRows can't trust position (uneven
+  // per-colour counts, or only one colour in play).
+  _reconstructPerColorRowsByName(entries) {
+    const groupsByItemKey = new Map();
+    entries.forEach(e => {
+      const key = this._itemSlotKey(e.itemName, e.size);
+      if (!groupsByItemKey.has(key)) groupsByItemKey.set(key, new Set());
+      groupsByItemKey.get(key).add(e.colorKey);
+    });
+    const sharedKeys = new Set();
+    groupsByItemKey.forEach((set, key) => { if (set.size > 1) sharedKeys.add(key); });
+
+    const rows = [];
+    const rowIndex = new Map();
+    entries.forEach(e => {
+      const displayName = sharedKeys.has(this._itemSlotKey(e.itemName, e.size))
+        ? (e.itemName || '').trim()
+        : this._stripColorSubstring(e.itemName || '', e.colorKey);
+      const rowKey = [displayName, e.size || '', e.narration || ''].join('|').toLowerCase();
+      let row = rowIndex.get(rowKey);
+      if (!row) {
+        row = { size: e.size, narration: e.narration, unit: e.unit, cells: [] };
+        rowIndex.set(rowKey, row);
+        rows.push(row);
+      }
+      if (!row.unit) row.unit = e.unit;
+      row.cells.push(e);
+    });
+    return rows;
+  },
+
+  // The short "(Pink)"-style label rendered under a per-colour cell's Qty
+  // on the Sheet and its print/PDF export -- so a merged row's own
+  // generic label (necessarily a best-effort guess; see
+  // _reconstructPerColorRows) never has to be trusted blindly. Shows
+  // whatever token(s) survive in the cell's own literal item name after
+  // removing every word it shares with the row's label, so the operator
+  // can always see exactly which physical item a colour's quantity came
+  // from. Empty when the cell's name IS the row's label with nothing left
+  // to disambiguate (e.g. a shared/pool item using the literal same name
+  // in every colour).
+  _cellItemTag(rowLabel, cellItemName) {
+    const tokenize = s => String(s || '').split(/[^a-z0-9]+/i).map(t => t.trim()).filter(Boolean);
+    const labelTokens = new Set(tokenize(rowLabel).map(t => t.toLowerCase()));
+    const leftover = tokenize(cellItemName).filter(t => !labelTokens.has(t.toLowerCase()));
+    return leftover.join(' ');
+  },
+
   // Detects components that are genuinely ONE shared physical item
   // referenced under more than one colorGroup (e.g. a sticker sheet
   // printed with two colors, consumed by both those colors' recipes) --
@@ -3879,7 +3986,11 @@ App.Production = {
     const poolGroupAccum = new Map();
 
     const commonOverrideComps = this._getCommonItemsWithColorOverride(components || []);
-    const sharedItemKeys = this._sharedItemSlotKeys(components || []);
+    // Per-color, non-pool-aware, non-override components are collected
+    // here rather than placed on a matrix row immediately -- which row
+    // each one belongs to is decided AFTER every one has been seen, by
+    // _reconstructPerColorRows (see below).
+    const mergedRowEntries = [];
 
     (components || []).forEach(c => {
       const colorGroup = c.colorGroup || 'COMMON';
@@ -3991,21 +4102,38 @@ App.Production = {
       }
       // Explicitly color-tagged, not pool-color-aware: a genuinely
       // different literal item per color (e.g. "Frame---Red" /
-      // "Frame---Blue") -- keep on a merged row, one real item picker per
-      // color cell. Both tokens of a composite legitimately apply at once
-      // (mirrors populateColorMatrixForColors and save_production's own
-      // server-side rule), so this fills EVERY composite color it
-      // matches, not just the first.
-      const displayName = sharedItemKeys.has(this._itemSlotKey(c.itemName, c.size))
-        ? (c.itemName || '').trim()
-        : this._stripColorSubstring(c.itemName || '', colorGroup);
-      let row = this.findMatrixRowByDisplayName(displayName, c.size || '');
-      if (!row) row = this.addMergedMatrixRow({ itemName: displayName, size: c.size, narration: this._resolveDisplayNarration(c.itemName, c.size, c.narration), sourceType: c.sourceType });
-      matchedColors.forEach(col => {
-        const colIndex = this.getMatrixColumnIndex(col);
-        if (colIndex === -1) return;
-        const cell = row.children[colIndex];
-        this._setMergedCellItem(cell, { itemName: c.itemName, size: c.size, sourceType: c.sourceType }, c.qty, derivedQtyPerUnit);
+      // "Frame---Blue") -- belongs on a merged row, one real item picker
+      // per color cell. Which entries share a row is worked out below,
+      // once every per-color component has been seen.
+      mergedRowEntries.push({ colorGroup, comp: c, matchedColors, derivedQtyPerUnit });
+    });
+
+    // Reconstruct rows from every collected per-color component (position
+    // across each colour's own list, not just name-stripping -- see
+    // _reconstructPerColorRows for why: a "Teddy Basket" can be a literal
+    // RED item under colour Blue and a literal BLUE item under colour Red,
+    // and name-stripping alone never catches that), then materialize each
+    // as one merged matrix <tr>. Every matched composite colour of a cell
+    // is filled, not just the first -- both tokens of a composite legitimately
+    // apply at once (mirrors populateColorMatrixForColors and
+    // save_production's own server-side rule).
+    const mergedEntries = mergedRowEntries.map(e => ({
+      colorKey: e.colorGroup, itemName: e.comp.itemName || '', size: e.comp.size || '',
+      narration: e.comp.narration || '', unit: e.comp.unit || '', qty: e.comp.qty, __src: e
+    }));
+    this._reconstructPerColorRows(mergedEntries).forEach(rowData => {
+      const primary = rowData.cells[0];
+      const displayName = this._stripColorSubstring(primary.itemName, primary.colorKey);
+      let row = this.findMatrixRowByDisplayName(displayName, rowData.size || '');
+      if (!row) row = this.addMergedMatrixRow({ itemName: displayName, size: rowData.size, narration: this._resolveDisplayNarration(primary.itemName, rowData.size, rowData.narration), sourceType: primary.__src.comp.sourceType });
+      rowData.cells.forEach(cell => {
+        const src = cell.__src;
+        src.matchedColors.forEach(col => {
+          const colIndex = this.getMatrixColumnIndex(col);
+          if (colIndex === -1) return;
+          const cellEl = row.children[colIndex];
+          this._setMergedCellItem(cellEl, { itemName: src.comp.itemName, size: src.comp.size, sourceType: src.comp.sourceType }, src.comp.qty, src.derivedQtyPerUnit);
+        });
       });
     });
 
@@ -4424,7 +4552,7 @@ App.Production = {
     if ($select.data('select2')) $select.select2('destroy');
     selectEl.innerHTML = '';
 
-    if (currentValue) selectEl.add(new Option(currentValue, currentValue, true, true));
+    if (currentValue) selectEl.add(new Option(App.Utils.formatNameCase(currentValue), currentValue, true, true));
 
     const $parentModal = $select.closest('.modal');
 
@@ -4435,12 +4563,12 @@ App.Production = {
       allowClear: true,
       matcher: App.Utils.select2Matcher,
       dropdownParent: $parentModal.length ? $parentModal : window.jQuery(document.body),
-      data: (App.State.globalContractors || []).map(c => ({ id: c.contractorName, text: c.contractorName })),
+      data: (App.State.globalContractors || []).map(c => ({ id: c.contractorName, text: App.Utils.formatNameCase(c.contractorName) })),
       createTag(params) {
         const term = (params.term || '').trim();
         if (!term) return null;
         const existing = (App.State.globalContractors || []).find(c => App.Utils.sameText(c.contractorName, term));
-        if (existing) return { id: existing.contractorName, text: existing.contractorName };
+        if (existing) return { id: existing.contractorName, text: App.Utils.formatNameCase(existing.contractorName) };
         return { id: term, text: term, newTag: true };
       }
     });
@@ -4501,7 +4629,7 @@ App.Production = {
       const checked = App.Utils.sameText(c.serviceType, preselect) ? 'checked' : '';
       html += `<div class="form-check form-check-inline">
       <input class="form-check-input" type="radio" name="extraChargeType" id="${id}" value="${escapeHtml(c.serviceType)}" data-charge-amount="${c.chargeAmount}" ${checked} onchange="App.Production.refreshPayableHint()">
-      <label class="form-check-label" for="${id}">${escapeHtml(c.serviceType)} (+${formatCurrency(c.chargeAmount)})</label>
+      <label class="form-check-label" for="${id}">${escapeHtml(c.serviceType)} (+${formatCurrency(c.chargeAmount)}/unit)</label>
     </div>`;
     });
     optionsEl.innerHTML = html;
@@ -4551,11 +4679,11 @@ App.Production = {
       const res = await Api.call('getContractorRateForProcessType', contractorName, process.processType, size);
       const rate = res.success ? toNumber(res.data?.ratePerUnit) : 0;
       if (!rate && !extraChargeAmount) {
-        hintEl.innerText = `No rate card entry for "${contractorName}" / ${process.processType || 'General'} / ${size} — Payable will be 0.`;
+        hintEl.innerText = `No rate card entry for "${App.Utils.formatNameCase(contractorName)}" / ${process.processType || 'General'} / ${size} — Payable will be 0.`;
         return;
       }
-      let text = `Payable: ${formatCurrency(qty * rate + extraChargeAmount)} (${qty} x ${rate}/unit`;
-      if (extraChargeType) text += ` + ${extraChargeType} ${formatCurrency(extraChargeAmount)}`;
+      let text = `Payable: ${formatCurrency(qty * (rate + extraChargeAmount))} (${qty} x ${rate}/unit`;
+      if (extraChargeType) text += ` + ${extraChargeType} ${formatCurrency(extraChargeAmount)}/unit`;
       text += ')';
       hintEl.innerText = text;
     } catch (err) {
@@ -5088,28 +5216,28 @@ App.Production = {
   },
 
   // Splits a lot's components into the Common table (no color, shown
-  // once) and the Per-Color matrix (one row per de-duplicated item, one
+  // once) and the Per-Color matrix (one row per reconstructed item, one
   // quantity column per color) -- mirroring the Create/Edit Lot form's
-  // layout. Each color-specific component has its color's name substring
-  // stripped from its item name before being used as the matrix row key,
-  // so e.g. "Red Fabric" (colorGroup Red) and "Blue Fabric" (colorGroup
-  // Blue) collapse into a single "Fabric" row with separate Red/Blue
-  // columns instead of two unrelated-looking flat rows.
+  // layout. Which entries belong to the same matrix row is decided by
+  // _reconstructPerColorRows (position across each colour's own ordered
+  // sub-list, falling back to _stripColorSubstring-based name matching
+  // when position can't be trusted) -- not by name-stripping alone, which
+  // silently fragments a row like "Teddy Basket" into one row per colour
+  // whenever the literal item's own colour word doesn't match the
+  // colorGroup it's tagged under (see LOT-PF2IIS-0002).
   groupComponentsForSheet(components, knownColors) {
     const common = [];
-    const matrixIndex = new Map();
-    const matrixSlots = [];
     const colors = new Set(knownColors || []);
 
     const commonOverrideComps = this._getCommonItemsWithColorOverride(components || []);
-    const sharedItemKeys = this._sharedItemSlotKeys(components || []);
     const pendingCommonOverrides = [];
+    const perColorEntries = [];
 
     (components || []).forEach(comp => {
       const colorKey = this._resolveSheetColorKey(comp);
       const qty = comp.requiredQty !== undefined ? toNumber(comp.requiredQty) : toNumber(comp.qty);
       // Resolved against this component's OWN literal item name (not the
-      // color-stripped display name used as the matrix row key below) --
+      // color-stripped display name used as the matrix row's label) --
       // that literal name is what Items Master is keyed by.
       const narration = this._resolveDisplayNarration(comp.itemName, comp.size, comp.narration);
       // Same reason the unit must be resolved HERE and carried on the row
@@ -5137,22 +5265,29 @@ App.Production = {
       }
 
       colors.add(colorKey);
-      const displayName = sharedItemKeys.has(this._itemSlotKey(comp.itemName, comp.size))
-        ? (comp.itemName || '').trim()
-        : this._stripColorSubstring(comp.itemName || '', colorKey);
-      const slotKey = [displayName, comp.size || '', narration].join('|').toLowerCase();
-      let slot = matrixIndex.get(slotKey);
-      if (!slot) {
-        slot = { itemName: displayName, size: comp.size || '', narration, unit, colors: {} };
-        matrixIndex.set(slotKey, slot);
-        matrixSlots.push(slot);
-      }
-      // Every colour of one merged row is the same physical item, so they
-      // share a Base Unit; first resolvable one wins, so a colour variant
-      // that happens to be missing from Items Master can't blank it.
-      if (!slot.unit) slot.unit = unit;
-      slot.colors[colorKey] = (slot.colors[colorKey] || 0) + qty;
+      perColorEntries.push({ colorKey, itemName: comp.itemName || '', size: comp.size || '', narration, unit, qty });
     });
+
+    // The row's own displayed label is still best-effort (first cell's
+    // colour word stripped out where possible) -- it no longer decides
+    // which entries merged together, only what the row is CALLED, so a
+    // less-than-clean label here is cosmetic. _cellItemTag (rendered by
+    // the caller under each colour's Qty) is what actually tells the
+    // operator which literal item that colour uses, so a rough label is
+    // never the only source of truth.
+    const matrixSlots = this._reconstructPerColorRows(perColorEntries).map(row => {
+      const primary = row.cells[0];
+      const itemName = this._stripColorSubstring(primary.itemName, primary.colorKey);
+      const slot = { itemName, size: row.size, narration: row.narration, unit: row.unit, colors: {}, cellItems: {} };
+      row.cells.forEach(cell => {
+        slot.colors[cell.colorKey] = (slot.colors[cell.colorKey] || 0) + cell.qty;
+        slot.cellItems[cell.colorKey] = cell.itemName;
+      });
+      return slot;
+    });
+
+    const matrixIndex = new Map();
+    matrixSlots.forEach(s => matrixIndex.set([s.itemName, s.size, s.narration].join('|').toLowerCase(), s));
 
     const allColors = Array.from(colors);
     pendingCommonOverrides.forEach(({ comp, qty, narration, unit, overriddenColors }) => {
@@ -5163,12 +5298,15 @@ App.Production = {
       const slotKey = [displayName, comp.size || '', narration].join('|').toLowerCase();
       let slot = matrixIndex.get(slotKey);
       if (!slot) {
-        slot = { itemName: displayName, size: comp.size || '', narration, unit, colors: {} };
+        slot = { itemName: displayName, size: comp.size || '', narration, unit, colors: {}, cellItems: {} };
         matrixIndex.set(slotKey, slot);
         matrixSlots.push(slot);
       }
       if (!slot.unit) slot.unit = unit;
-      fallbackColors.forEach(c => { slot.colors[c] = (slot.colors[c] || 0) + perColorQty; });
+      fallbackColors.forEach(c => {
+        slot.colors[c] = (slot.colors[c] || 0) + perColorQty;
+        if (!slot.cellItems[c]) slot.cellItems[c] = displayName;
+      });
     });
 
     return { common, matrixSlots, colors: allColors.sort((a, b) => a.localeCompare(b)) };
@@ -5314,7 +5452,19 @@ App.Production = {
     const qtyCell = (color) => {
       const val = slot.colors ? slot.colors[color] : undefined;
       const display = (val === undefined) ? '' : this.formatQty(val);
-      return `<td><input type="number" class="form-control form-control-sm text-end prod-sheet-color-qty" data-color="${escapeHtml(color)}" value="${display}" step="any" min="0" placeholder="-"></td>`;
+      // Which literal item that colour's quantity actually refers to --
+      // the row's own Item Name is necessarily a best-effort generic label
+      // (see _reconstructPerColorRows), so this is what tells the operator
+      // apart, e.g., a "Teddy Basket" row's Blue column really uses the RED
+      // one. Blank when the cell's literal item IS the row's label (a
+      // shared/pool item using the same name in every colour -- nothing to
+      // disambiguate).
+      const cellItemName = slot.cellItems ? slot.cellItems[color] : '';
+      const tag = cellItemName ? this._cellItemTag(slot.itemName, cellItemName) : '';
+      const tagHtml = tag
+        ? `<div class="small fw-semibold text-muted text-end prod-sheet-color-tag" data-color="${escapeHtml(color)}" title="${escapeHtml(cellItemName)}">(${escapeHtml(tag)})</div>`
+        : '';
+      return `<td><input type="number" class="form-control form-control-sm text-end prod-sheet-color-qty" data-color="${escapeHtml(color)}" value="${display}" step="any" min="0" placeholder="-">${tagHtml}</td>`;
     };
 
     let html = `<tr>
@@ -5619,12 +5769,21 @@ App.Production = {
       const input = $$('.prod-sheet-color-qty', row).find(el => App.Utils.sameColor(el.dataset.color, group));
       return input?.value || '';
     };
+    // Reads back the small "(Pink)"-style tag renderMatrixSheetRow put
+    // under that colour's Qty cell (see _cellItemTag) -- not recomputed
+    // here, so the print/PDF export can never disagree with what the
+    // operator just looked at in the dialog.
+    const tagFor = (row, group) => {
+      const tagEl = $$('.prod-sheet-color-tag', row).find(el => App.Utils.sameColor(el.dataset.color, group));
+      return tagEl?.textContent.trim() || '';
+    };
     const toMatrixRow = columns => row => ({
       name: get(row, '.prod-sheet-item-name'),
       size: get(row, '.prod-sheet-size'),
       narration: get(row, '.prod-sheet-narration'),
       unit: this._sheetRowUnitFromDom(row),
-      colorQty: columns.map(c => qtyFor(row, c))
+      colorQty: columns.map(c => qtyFor(row, c)),
+      colorTag: columns.map(c => tagFor(row, c))
     });
     const sheet = App.State.currentProductionSheet || {};
     const allGroups = sheet.colors || [];
@@ -5827,9 +5986,15 @@ App.Production = {
         let row = bodyCell(withBreakPoints(r.name), tier, { zebra, emphasis: true });
         if (!hideSize) row += bodyCell(r.size || '&#8211;', tier, { align: 'center', zebra, nowrap: true });
         row += bodyCell(r.narration || '&#8211;', tier, { align: 'center', zebra });
-        r.colorQty.forEach(val => {
+        r.colorQty.forEach((val, ci) => {
           const cellText = val ? `${escapeHtml(this.formatQty(val))}${r.unit ? ' ' + escapeHtml(r.unit) : ''}` : '&#8211;';
-          row += bodyCell(cellText, tier, { align: 'right', bold: !!val, zebra, emphasis: true });
+          // Which literal item this colour's qty refers to, e.g. a "Teddy
+          // Basket" row's Blue column reading "(Red)" -- read back from
+          // renderMatrixSheetRow's own tag rather than recomputed, so print
+          // can never disagree with the dialog. See _cellItemTag.
+          const tag = (r.colorTag && r.colorTag[ci]) || '';
+          const tagHtml = tag ? `<div style="font-size:${Math.max(tier.font - 2, 8)}px;font-weight:700;color:${INK_MUTED};line-height:1.2;">${escapeHtml(tag)}</div>` : '';
+          row += bodyCell(cellText + tagHtml, tier, { align: 'right', bold: !!val, zebra, emphasis: true });
         });
         return `<tr>${row}</tr>`;
       }).join('');

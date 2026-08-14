@@ -1631,7 +1631,19 @@ App.Stock = {
   // doesn't need.
   async handleWarehouseOpeningProcessChange(processId) {
     const process = (App.State.globalProcesses || []).find(p => p.processId === processId);
-    document.getElementById('woOutputItemName').value = process ? (process.outputItemName || '') : '';
+    const outputEl = document.getElementById('woOutputItemName');
+    const hintEl = document.getElementById('woOutputItemNameHint');
+    outputEl.value = process ? (process.outputItemName || '') : '';
+    // A per-entry name override only ever segregates a final-stage
+    // process's own Ready to Dispatch row (see save_warehouse_pool_opening
+    // / _build_warehouse_pool_buckets Pass 0) -- for a WIP process it would
+    // just merge back into the process default on the next recalculation,
+    // so keep it read-only there to avoid a misleading edit.
+    const editable = !!(process && process.isFinalStage);
+    outputEl.readOnly = !editable;
+    outputEl.classList.toggle('bg-light', !editable);
+    outputEl.placeholder = editable ? "Defaults to the Process's Output Item Name" : 'Auto-filled from Process';
+    if (hintEl) hintEl.style.display = editable ? '' : 'none';
 
     const tagWrapper = document.getElementById('woProductTagWrapper');
     if (tagWrapper) tagWrapper.style.display = (process && process.isFinalStage) ? '' : 'none';
@@ -1702,6 +1714,7 @@ App.Stock = {
 
     const formData = {
       processId: processId,
+      outputItemName: document.getElementById('woOutputItemName')?.value || '',
       productTag: document.getElementById('woProductTag')?.value || '',
       color: colorSelect?.value || '',
       qty: document.getElementById('woQty').value,
@@ -1716,9 +1729,10 @@ App.Stock = {
       App.Utils.showToast(res?.message, !res?.success);
       if (res?.success) {
         document.getElementById('warehouseOpeningForm').reset();
-        document.getElementById('woOutputItemName').value = '';
-        document.getElementById('woProductTagWrapper').style.display = 'none';
-        document.getElementById('woColorWrapper').style.display = 'none';
+        // form.reset() doesn't fire the Process select's own onchange, so
+        // Output Item's readonly/hint state (and Product Tag/Color) needs
+        // re-syncing to "no process chosen" explicitly.
+        await this.handleWarehouseOpeningProcessChange('');
         document.getElementById('woDate').value = todayIso();
         await this.loadWarehouseOpeningData();
         await this.loadWarehousePoolData();

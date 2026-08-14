@@ -214,7 +214,7 @@ App.Users = {
 
     return `
       <tr>
-        <td>${escapeHtml(u.name || '-')}</td>
+        <td>${escapeHtml(App.Utils.formatNameCase(u.name) || '-')}</td>
         <td>${escapeHtml(u.email || '-')}</td>
         <td>
           ${isSuperAdmin

@@ -451,7 +451,8 @@
             </div>
             <div class="col-md-6">
               <label class="form-label fw-bold">Output Item</label>
-              <input type="text" id="woOutputItemName" class="form-control bg-light" readonly placeholder="Auto-filled from Process">
+              <input type="text" id="woOutputItemName" class="form-control bg-light" readonly placeholder="Auto-filled from Process" maxlength="150">
+              <div class="form-text" id="woOutputItemNameHint" style="display:none;">Defaults to the Process's Output Item Name. Editing it only labels <strong>this opening entry</strong> (e.g. a size/spec variant) -- the Process itself is unaffected, and it's credited to Ready to Dispatch under whatever name is saved here.</div>
             </div>
 
             <div class="col-md-6" id="woProductTagWrapper" style="display:none;">

@@ -261,6 +261,14 @@ MApp.Util = {
     return isNaN(n) ? 0 : n;
   },
 
+  // Display casing for name-like fields (Assigned By/To, contractor/client
+  // names) -- same rule as core.js's App.Utils.formatNameCase, duplicated
+  // here since this page never loads core.js. Display-only.
+  formatNameCase(str) {
+    const s = String(str == null ? '' : str).trim();
+    return s ? s.charAt(0).toUpperCase() + s.slice(1).toLowerCase() : s;
+  },
+
   // For a date input's default value / server payload — local YYYY-MM-DD,
   // not toISOString() (which shifts to UTC and can land on the wrong day).
   todayInputValue() {
@@ -1515,7 +1523,7 @@ MApp.Production = {
               </div>
               <div style="text-align:right;">
                 <div class="mb-card-number">${l.qty}</div>
-                <div class="mb-card-sub">${MApp.Util.escapeHtml(l.assignedTo || '—')}</div>
+                <div class="mb-card-sub">${MApp.Util.escapeHtml(MApp.Util.formatNameCase(l.assignedTo) || '—')}</div>
               </div>
             </div>
             <div class="mb-mt-2"><span class="mb-chip ${MApp.Util.statusChipClass(l.status)}">${MApp.Util.escapeHtml(l.status || 'Pending')}</span></div>
@@ -1698,7 +1706,7 @@ MApp.Production = {
 
       <div class="mb-field">
         <label>Assigned to</label>
-        <button type="button" class="mb-picker-field${lot.assignedTo ? '' : ' mb-placeholder'}" id="lot-assignedto-field" onclick="MApp.Production.pickAssignedTo()">${MApp.Util.escapeHtml(lot.assignedTo || 'Choose or add a name...')}</button>
+        <button type="button" class="mb-picker-field${lot.assignedTo ? '' : ' mb-placeholder'}" id="lot-assignedto-field" onclick="MApp.Production.pickAssignedTo()">${MApp.Util.escapeHtml(MApp.Util.formatNameCase(lot.assignedTo) || 'Choose or add a name...')}</button>
       </div>
 
       <div class="mb-field">
@@ -2046,7 +2054,7 @@ MApp.Production = {
   // contractorName (verified via Round M2's ledger-source reads and
   // desktop's own Round 10/19 fix for the same field), not name.
   async pickAssignedTo() {
-    const items = (this.contractors || []).map(c => ({ value: c.contractorName, label: c.contractorName }));
+    const items = (this.contractors || []).map(c => ({ value: c.contractorName, label: MApp.Util.formatNameCase(c.contractorName) }));
     const picked = await MApp.Picker.open({
       title: 'Assigned to', items, selectedValue: this.selectedAssignedTo, allowCustom: true
     });
@@ -2562,7 +2570,7 @@ MApp.Dispatch = {
           <div class="mb-card-row">
             <div>
               <div class="mb-card-title">${MApp.Util.escapeHtml(d.dispatchNumber)}</div>
-              <div class="mb-card-sub">${MApp.Util.escapeHtml(d.clientName || 'Direct supply')}</div>
+              <div class="mb-card-sub">${MApp.Util.escapeHtml(MApp.Util.formatNameCase(d.clientName) || 'Direct supply')}</div>
             </div>
             <div style="text-align:right;">
               <div class="mb-card-number">${d.qty}</div>
@@ -2612,7 +2620,7 @@ MApp.Dispatch = {
 
     setText('print-dispatch-number', d.dispatchNumber);
     setText('print-dispatch-date', d.dispatchDate);
-    setText('print-dispatch-client', d.clientName || 'Direct Supply');
+    setText('print-dispatch-client', MApp.Util.formatNameCase(d.clientName) || 'Direct Supply');
     setText('print-dispatch-client-address', client ? client.address : '');
     setText('print-dispatch-client-gstin', client && client.gstin ? 'GSTIN: ' + client.gstin : '');
     setText('print-dispatch-transport', d.transport);
@@ -2710,11 +2718,11 @@ MApp.Dispatch = {
 
       if (header.clientName) {
         const clientField = document.getElementById('dispatch-client-field');
-        if (clientField) { clientField.textContent = header.clientName; clientField.classList.remove('mb-placeholder'); }
+        if (clientField) { clientField.textContent = MApp.Util.formatNameCase(header.clientName); clientField.classList.remove('mb-placeholder'); }
       }
       if (header.logisticsContractor) {
         const logisticsField = document.getElementById('dispatch-logistics-field');
-        if (logisticsField) { logisticsField.textContent = header.logisticsContractor; logisticsField.classList.remove('mb-placeholder'); }
+        if (logisticsField) { logisticsField.textContent = MApp.Util.formatNameCase(header.logisticsContractor); logisticsField.classList.remove('mb-placeholder'); }
       }
     } catch (err) {
       MApp.Toast.error('Could not load this dispatch: ' + (err.message || ''));
@@ -2796,7 +2804,7 @@ MApp.Dispatch = {
   },
 
   async pickClient() {
-    const items = (this.clients || []).map(c => ({ value: c.name, label: c.name }));
+    const items = (this.clients || []).map(c => ({ value: c.name, label: MApp.Util.formatNameCase(c.name) }));
     const picked = await MApp.Picker.open({ title: 'Choose a client', items, selectedValue: this.selection.clientName, allowCustom: true });
     if (!picked) return;
     this.selection.clientName = picked.value;
@@ -2861,7 +2869,7 @@ MApp.Dispatch = {
   // Fixed from source's own c.name -- getContractorsData returns
   // contractorName, not name (same fix as Production's pickAssignedTo).
   async pickLogistics() {
-    const items = (this.contractors || []).map(c => ({ value: c.contractorName, label: c.contractorName }));
+    const items = (this.contractors || []).map(c => ({ value: c.contractorName, label: MApp.Util.formatNameCase(c.contractorName) }));
     const picked = await MApp.Picker.open({ title: 'Logistics contractor', items, selectedValue: this.selection.logisticsContractor, allowCustom: true });
     if (!picked) return;
     this.selection.logisticsContractor = picked.value;
@@ -3150,7 +3158,7 @@ MApp.Returns = {
   },
 
   async pickVendor() {
-    const items = (this.vendors || []).map(v => ({ value: v.name, label: v.name }));
+    const items = (this.vendors || []).map(v => ({ value: v.name, label: MApp.Util.formatNameCase(v.name) }));
     const picked = await MApp.Picker.open({ title: 'Choose a vendor', items, selectedValue: this.selection.vendor, allowCustom: true });
     if (!picked) return;
     this.selection.vendor = picked.value;
@@ -3646,7 +3654,7 @@ MApp.PO = {
   },
 
   async pickVendor() {
-    const items = (this.vendors || []).map(v => ({ value: v.name, label: v.name }));
+    const items = (this.vendors || []).map(v => ({ value: v.name, label: MApp.Util.formatNameCase(v.name) }));
     const picked = await MApp.Picker.open({ title: 'Choose a vendor', items, selectedValue: this.selection.vendor, allowCustom: true });
     if (!picked) return;
     this.selection.vendor = picked.value;
@@ -4056,7 +4064,7 @@ MApp.Bill = {
   },
 
   async pickVendor() {
-    const items = (this.vendors || []).map(v => ({ value: v.name, label: v.name }));
+    const items = (this.vendors || []).map(v => ({ value: v.name, label: MApp.Util.formatNameCase(v.name) }));
     const picked = await MApp.Picker.open({ title: 'Choose a vendor', items, selectedValue: this.selection.vendor, allowCustom: true });
     if (!picked) return;
     this.selection.vendor = picked.value;
@@ -5092,7 +5100,7 @@ MApp.Directory = {
       ).join('');
       return `
         <div class="mb-card">
-          <div class="mb-card-title">${MApp.Util.escapeHtml(e.name)}</div>
+          <div class="mb-card-title">${MApp.Util.escapeHtml(MApp.Util.formatNameCase(e.name))}</div>
           <div class="mb-card-sub">${contactHtml}</div>
           ${e.address ? `<div class="mb-card-sub" style="margin-top:2px;">${MApp.Util.escapeHtml(e.address)}</div>` : ''}
           <div class="mb-mt-2" style="display:flex; gap:var(--mb-sp-4);">${actionsHtml}</div>
@@ -5225,7 +5233,7 @@ MApp.Directory = {
   async openRateSheet(contractorName) {
     this._rateContractor = contractorName;
     const nameEl = document.getElementById('contractor-rate-name');
-    if (nameEl) nameEl.value = contractorName;
+    if (nameEl) nameEl.value = MApp.Util.formatNameCase(contractorName);
     ['contractor-rate-value', 'contractor-rate-remarks'].forEach(id => {
       const el = document.getElementById(id);
       if (el) el.value = '';
@@ -5264,7 +5272,7 @@ MApp.Directory = {
   openExtraChargeSheet(contractorName) {
     this._extraChargeContractor = contractorName;
     const nameEl = document.getElementById('contractor-extra-charge-name');
-    if (nameEl) nameEl.value = contractorName;
+    if (nameEl) nameEl.value = MApp.Util.formatNameCase(contractorName);
     ['contractor-extra-charge-service-type', 'contractor-extra-charge-amount', 'contractor-extra-charge-remarks'].forEach(id => {
       const el = document.getElementById(id);
       if (el) el.value = '';
@@ -5299,7 +5307,7 @@ MApp.Directory = {
   openPaymentSheet(contractorName) {
     this._paymentContractor = contractorName;
     const nameEl = document.getElementById('contractor-payment-name');
-    if (nameEl) nameEl.value = contractorName;
+    if (nameEl) nameEl.value = MApp.Util.formatNameCase(contractorName);
     const dateEl = document.getElementById('contractor-payment-date');
     if (dateEl) dateEl.value = MApp.Util.todayInputValue();
     ['contractor-payment-amount', 'contractor-payment-mode', 'contractor-payment-remarks'].forEach(id => {
@@ -5444,7 +5452,7 @@ MApp.Admin = {
         <div class="mb-card">
           <div class="mb-card-row">
             <div>
-              <div class="mb-card-title">${MApp.Util.escapeHtml(u.name)}</div>
+              <div class="mb-card-title">${MApp.Util.escapeHtml(MApp.Util.formatNameCase(u.name))}</div>
               <div class="mb-card-sub">${MApp.Util.escapeHtml(u.email)}</div>
             </div>
             <span class="mb-chip ${this._roleChipClass(u.role)}">${MApp.Util.escapeHtml(this._roleLabel(u.role))}</span>
@@ -5475,21 +5483,21 @@ MApp.Admin = {
     const items = builtIn.map(r => ({ value: r, label: this.ROLE_LABELS[r] }))
       .concat(this.customRoles.map(r => ({ value: r.roleKey, label: r.roleName })));
 
-    const picked = await MApp.Picker.open({ title: `Role for ${user.name}`, items, selectedValue: user.role });
+    const picked = await MApp.Picker.open({ title: `Role for ${MApp.Util.formatNameCase(user.name)}`, items, selectedValue: user.role });
     if (!picked) return;
 
-    const res = await MApp.Util.mutateSimple('updateUserRole', [user.id, picked.value], `${user.name} is now ${picked.label}.`);
+    const res = await MApp.Util.mutateSimple('updateUserRole', [user.id, picked.value], `${MApp.Util.formatNameCase(user.name)} is now ${picked.label}.`);
     if (res.success) this.open();
   },
 
   async deactivate(user) {
-    if (!MApp.Util.confirmDelete(`${user.name}'s access`)) return;
-    const res = await MApp.Util.mutateSimple('deactivateUser', [user.id], `${user.name} deactivated.`);
+    if (!MApp.Util.confirmDelete(`${MApp.Util.formatNameCase(user.name)}'s access`)) return;
+    const res = await MApp.Util.mutateSimple('deactivateUser', [user.id], `${MApp.Util.formatNameCase(user.name)} deactivated.`);
     if (res.success) this.open();
   },
 
   async reactivate(user) {
-    const res = await MApp.Util.mutateSimple('reactivateUser', [user.id], `${user.name} reactivated.`);
+    const res = await MApp.Util.mutateSimple('reactivateUser', [user.id], `${MApp.Util.formatNameCase(user.name)} reactivated.`);
     if (res.success) this.open();
   },
 

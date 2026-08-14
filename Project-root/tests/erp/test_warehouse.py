@@ -154,6 +154,53 @@ def test_save_warehouse_pool_opening_product_tag_kept_for_final_stage(erp_client
     assert match["productTag"] == "PRD-1234"
 
 
+def test_save_warehouse_pool_opening_output_item_name_override_ignored_for_non_final_stage(erp_client):
+    payload, process_id = _save_process(erp_client, isFinalStage=False)
+    override_name = f"{payload['outputItemName']} (Sports)"
+    resp = _rpc(
+        erp_client,
+        "saveWarehousePoolOpening",
+        [{"processId": process_id, "qty": 10, "outputItemName": override_name}],
+        mutation=True,
+    )
+    assert resp.get_json()["success"] is True
+
+    listed = _rpc(erp_client, "getWarehousePoolOpeningData").get_json()["data"]
+    match = next(o for o in listed if o["processId"] == process_id)
+    assert match["outputItemName"] == payload["outputItemName"]
+
+
+def test_save_warehouse_pool_opening_output_item_name_override_segregates_for_final_stage(erp_client):
+    """A final-stage Opening Stock entry's own name (default or a per-entry
+    override) is credited to its own Ready to Dispatch row, not merged with
+    the process default -- same rule as a Production lot's own override
+    (see test_dispatch.py's test_ready_to_dispatch_untagged_final_stage_
+    keeps_per_lot_override_separate)."""
+    payload, process_id = _save_process(erp_client, isFinalStage=True)
+    override_name = f"{payload['outputItemName']} (123)"
+
+    _rpc(erp_client, "saveWarehousePoolOpening", [{"processId": process_id, "qty": 10}], mutation=True)
+    resp = _rpc(
+        erp_client,
+        "saveWarehousePoolOpening",
+        [{"processId": process_id, "qty": 20, "outputItemName": override_name}],
+        mutation=True,
+    )
+    assert resp.get_json()["success"] is True
+
+    pool = _rpc(erp_client, "getWarehousePoolData").get_json()["data"]
+    default_bucket = next(b for b in pool if b["outputItemName"] == payload["outputItemName"])
+    override_bucket = next(b for b in pool if b["outputItemName"] == override_name)
+    assert default_bucket["producedQty"] == 10
+    assert override_bucket["producedQty"] == 20
+
+    listed = _rpc(erp_client, "getReadyToDispatchData").get_json()["data"]
+    default_row = next(r for r in listed if r["productId"] == payload["outputItemName"])
+    override_row = next(r for r in listed if r["productId"] == override_name)
+    assert default_row["readyQty"] == 10
+    assert override_row["readyQty"] == 20
+
+
 def test_get_warehouse_pool_opening_data_lists_entries(erp_client):
     payload, process_id = _save_process(erp_client)
     _rpc(

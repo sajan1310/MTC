@@ -406,7 +406,7 @@ App.Dashboard = {
     }
     tbody.innerHTML = rows.map(r => `
       <tr style="cursor:pointer" onclick="App.Navigation.showTab('contractorsTab')">
-        <td>${escapeHtml(r.contractorName)}</td>
+        <td>${escapeHtml(App.Utils.formatNameCase(r.contractorName))}</td>
         <td class="text-end fw-bold">${formatCurrency(r.balanceDue)}</td>
       </tr>
     `).join('');
