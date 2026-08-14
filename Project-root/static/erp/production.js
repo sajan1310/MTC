@@ -2913,47 +2913,84 @@ App.Production = {
   // that then sort by WHICH colour they belong to instead of staying in
   // the order they were entered (see LOT-PF2IIS-0002).
   //
-  // Primary signal: partition entries into one ordered list per colour
-  // (preserving each colour's own original relative order), then zip the
-  // Nth entry of every colour's list together as one row -- i.e. treat
-  // each colour's own component list as a numbered sub-group and align
-  // across colours by position, exactly mirroring how the matrix was
-  // actually built (one row, one cell per colour, added left to right).
-  // Only trustworthy when every colour's list is the SAME length -- a
-  // colour that genuinely skips or adds an item throws the position
-  // alignment off, so that (and the single-colour case, where "position"
-  // is meaningless) falls back to the older name-based merge instead of
-  // risking a wrong pairing.
+  // Two passes, most-confident signal first:
+  //
+  // PASS 1 -- exact shared name: an item saved under the LITERAL SAME
+  // name+size under more than one colour (e.g. one physical two-tone
+  // sticker used under both "Blue-White / Black" and "Red-White /
+  // Black") is unambiguously one row, position or no position. Pulling
+  // these out FIRST also protects the positional pass below from being
+  // misled by them -- a shared item is often logged at a different
+  // relative spot among its neighbours per colour than its non-shared
+  // siblings (e.g. one colour pair's data entry listed the shared
+  // sticker before an unrelated Handle Grip, the other pair listed it
+  // after -- zipping the whole list by raw index would then merge the
+  // sticker with that unrelated Handle Grip; see LOT-PC2IDS-0001).
+  //
+  // PASS 2 -- position across each colour's own remaining ordered list
+  // (everything Pass 1 didn't already claim): partition into one list
+  // per colour, then zip the Nth entry of every colour's list together
+  // as one row, i.e. treat each colour's own list as a numbered
+  // sub-group and align across colours by position -- mirroring how the
+  // matrix was actually built (one row, one cell per colour, added left
+  // to right). Only trustworthy when every colour's REMAINING list is
+  // the same length; a colour that genuinely skips or adds an item
+  // throws the alignment off, so that (and the single-colour case, where
+  // "position" is meaningless) falls back to the older name-stripping
+  // merge instead of risking a wrong pairing.
+  //
+  // Both passes' rows are then handed back in original first-appearance
+  // order, so which pass caught a given row never affects drag order.
   _reconstructPerColorRows(entries) {
     if (!entries || entries.length === 0) return [];
 
-    const byColor = new Map();
+    const indexOf = new Map(entries.map((e, i) => [e, i]));
+    const firstIndexOf = cells => Math.min(...cells.map(c => indexOf.get(c)));
+    const rowFrom = cells => ({
+      firstIndex: firstIndexOf(cells),
+      size: cells[0].size,
+      narration: cells[0].narration,
+      unit: cells.find(c => c.unit)?.unit || '',
+      // The ORIGINAL entry objects, not a re-shaped copy -- callers that
+      // stash extra fields on their own entries (e.g. populateComponents-
+      // ConsumedDirect's __ref back to the raw saved component, needed to
+      // materialize a DOM row) get them back unchanged.
+      cells
+    });
+
+    const byItemKey = new Map();
     entries.forEach(e => {
+      const key = this._itemSlotKey(e.itemName, e.size);
+      if (!byItemKey.has(key)) byItemKey.set(key, []);
+      byItemKey.get(key).push(e);
+    });
+
+    const sharedRows = [];
+    const remaining = [];
+    byItemKey.forEach(group => {
+      const colorsInGroup = new Set(group.map(e => e.colorKey));
+      if (colorsInGroup.size > 1) {
+        sharedRows.push(rowFrom(group));
+      } else {
+        remaining.push(...group);
+      }
+    });
+    const remainingOrdered = remaining.slice().sort((a, b) => indexOf.get(a) - indexOf.get(b));
+
+    const byColor = new Map();
+    remainingOrdered.forEach(e => {
       if (!byColor.has(e.colorKey)) byColor.set(e.colorKey, []);
       byColor.get(e.colorKey).push(e);
     });
-
     const colorKeys = Array.from(byColor.keys());
     const counts = colorKeys.map(c => byColor.get(c).length);
     const evenCoverage = colorKeys.length > 1 && counts.every(n => n === counts[0]);
-    if (!evenCoverage) return this._reconstructPerColorRowsByName(entries);
 
-    const rows = [];
-    for (let i = 0; i < counts[0]; i++) {
-      const cells = colorKeys.map(c => byColor.get(c)[i]);
-      const first = cells[0];
-      rows.push({
-        size: first.size,
-        narration: first.narration,
-        unit: cells.find(c => c.unit)?.unit || '',
-        // The ORIGINAL entry objects, not a re-shaped copy -- callers that
-        // stash extra fields on their own entries (e.g. populateComponents-
-        // ConsumedDirect's __ref back to the raw saved component, needed to
-        // materialize a DOM row) get them back unchanged.
-        cells
-      });
-    }
-    return rows;
+    const positionalRows = evenCoverage
+      ? Array.from({ length: counts[0] }, (_, i) => rowFrom(colorKeys.map(c => byColor.get(c)[i])))
+      : this._reconstructPerColorRowsByName(remainingOrdered).map(row => ({ ...row, firstIndex: firstIndexOf(row.cells) }));
+
+    return [...sharedRows, ...positionalRows].sort((a, b) => a.firstIndex - b.firstIndex);
   },
 
   // The pre-position-alignment fallback: groups entries whose item name
@@ -2990,6 +3027,27 @@ App.Production = {
       row.cells.push(e);
     });
     return rows;
+  },
+
+  // A reconstructed row's own best-effort generic label (see
+  // _reconstructPerColorRows). The RAW literal name, unchanged, when
+  // EVERY colour's cell is the literal same item -- a genuinely shared
+  // item (e.g. a fixed two-tone sticker printed once and used under
+  // several colour groups, "CURVY-STICKER-Side Flap---Red-BLUE" under
+  // both "Blue-White / Black" and "Red-White / Black") that just happens
+  // to be position-zipped together. Stripping the FIRST cell's own
+  // colour word out of a shared name is actively harmful here: "Blue"
+  // legitimately appears inside "Red-BLUE" as part of the item's own
+  // fixed two-tone description, not as this row's colour tag, so
+  // stripping it mislabels the row AND makes _cellItemTag think "Blue"
+  // is the one thing left to disambiguate on EVERY cell, including ones
+  // that were never tagged Blue at all. Otherwise falls back to
+  // stripping the first cell's own colour word out of its name, same as
+  // before.
+  _rowDisplayName(row) {
+    const primary = row.cells[0];
+    const shared = row.cells.length > 1 && row.cells.every(c => App.Utils.sameText(c.itemName, primary.itemName));
+    return shared ? (primary.itemName || '').trim() : this._stripColorSubstring(primary.itemName || '', primary.colorKey);
   },
 
   // The short "(Pink)"-style label rendered under a per-colour cell's Qty
@@ -4149,7 +4207,7 @@ App.Production = {
     }));
     this._reconstructPerColorRows(mergedEntries).forEach(rowData => {
       const primary = rowData.cells[0];
-      const displayName = this._stripColorSubstring(primary.itemName, primary.colorKey);
+      const displayName = this._rowDisplayName(rowData);
       let row = this.findMatrixRowByDisplayName(displayName, rowData.size || '');
       if (!row) row = this.addMergedMatrixRow({ itemName: displayName, size: rowData.size, narration: this._resolveDisplayNarration(primary.itemName, rowData.size, rowData.narration), sourceType: primary.__src.comp.sourceType });
       rowData.cells.forEach(cell => {
@@ -5302,8 +5360,7 @@ App.Production = {
     // operator which literal item that colour uses, so a rough label is
     // never the only source of truth.
     const matrixSlots = this._reconstructPerColorRows(perColorEntries).map(row => {
-      const primary = row.cells[0];
-      const itemName = this._stripColorSubstring(primary.itemName, primary.colorKey);
+      const itemName = this._rowDisplayName(row);
       const slot = { itemName, size: row.size, narration: row.narration, unit: row.unit, colors: {}, cellItems: {} };
       row.cells.forEach(cell => {
         slot.colors[cell.colorKey] = (slot.colors[cell.colorKey] || 0) + cell.qty;
