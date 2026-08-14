@@ -353,6 +353,45 @@ def _set_process_primary_color_axis(cur, process_id: str, primary_color_axis: st
     )
 
 
+def _with_master_narration(cur, components: list) -> list:
+    """Overwrites each ITEM-sourced component's `narration` with the current
+    Items Master narration for its name+size, leaving it alone when Items
+    Master doesn't know the item or has nothing set (see
+    items_service.get_item_narration_map, which omits blanks for exactly
+    this reason). Ports production_service._with_master_narration's same
+    save-time-freshening idea onto a Process's own recipe.
+
+    A POOL row's item_name is a Process's Output Item Name, a different
+    identity space than Items Master (see _save_process_components_for_
+    process's own comment on this) -- never looked up here.
+
+    Applied at the one point that writes a process's component list --
+    _save_process_components_for_process -- so the stored snapshot is
+    always fresh rather than persisting whatever the client happened to
+    have on screen (which itself already live-resolves via process.js's
+    own _resolveDisplayNarration, but a hand-typed override or a stale tab
+    could still submit an old value). Without this, a saved process would
+    quietly write stale narration back and undo
+    refresh_process_components_from_items_master.
+    """
+    if not components:
+        return components
+    narration_map = items_service.get_item_narration_map(cur)
+    if not narration_map:
+        return components
+    for comp in components:
+        comp = comp or {}
+        if str(comp.get("sourceType") or "").strip().upper() == "POOL":
+            continue
+        name = str(comp.get("itemName") or "").strip()
+        if not name:
+            continue
+        master = narration_map.get(f'{name.lower()}|{str(comp.get("size") or "").strip().lower()}')
+        if master:
+            comp["narration"] = master
+    return components
+
+
 def _find_duplicate_component(components: list):
     seen = set()
     for comp in components or []:
@@ -375,6 +414,7 @@ def _save_process_components_for_process(cur, master_id: int, components: list) 
     """
     cur.execute("DELETE FROM erp.process_components WHERE master_id = %s", (master_id,))
 
+    components = _with_master_narration(cur, components)
     for comp in components or []:
         comp = comp or {}
         item_name = str(comp.get("itemName") or "").strip()
@@ -851,6 +891,69 @@ def _fetch_process_components(cur, process_id="") -> list:
 def get_process_components_data(process_id=""):
     with database.get_conn(cursor_factory=psycopg2.extras.RealDictCursor) as (_conn, cur):
         return build_response(True, _fetch_process_components(cur, process_id))
+
+
+@rpc_method("refreshProcessComponentsFromItemsMaster", mutation=True)
+@database.transactional
+def refresh_process_components_from_items_master(conn, cur):
+    """Rewrites the `narration` STORED on every active process's ITEM-sourced
+    components to the current Items Master value. Mirrors production_service.
+    refresh_production_components_from_items_master's reasoning, applied to
+    erp.process_components instead of a lot's JSONB snapshot.
+
+    Why this is needed at all: narration is metadata the operator maintains
+    in Items Master, but a process's recipe COPIES it into its own row at
+    save time (see _save_process_components_for_process's _with_master_
+    narration call). A component saved before an Items Master value was
+    set/corrected carries stale data in the DATABASE forever unless
+    explicitly refreshed here -- process.js's own display (edit form,
+    Production's recipe-driven auto-populate) already resolves narration
+    LIVE and is unaffected either way, but the stored value itself, and
+    anything reading it directly (e.g. a raw export), stays stale without
+    this. New and re-saved processes already write narration fresh via
+    _with_master_narration, so in normal use this is a one-off catch-up.
+
+    POOL rows are skipped -- their item_name is a Process's Output Item
+    Name, a different identity space than Items Master (see
+    _save_process_components_for_process's own comment on this).
+
+    Idempotent and safe to re-run: a component already in sync is left
+    untouched, and a row is only written when its narration actually
+    changes.
+    """
+    narration_map = items_service.get_item_narration_map(cur)
+    if not narration_map:
+        return build_response(
+            True, {"componentsScanned": 0, "componentsUpdated": 0}, "Items Master has no narrations set -- nothing to sync."
+        )
+
+    cur.execute(
+        """
+        SELECT pc.id, pc.item_name, pc.size, pc.narration
+        FROM erp.process_components pc
+        JOIN erp.process_master pm ON pm.id = pc.master_id
+        WHERE pm.deleted_at IS NULL AND pc.source_type = 'ITEM'
+        """
+    )
+    rows = cur.fetchall()
+
+    updated = 0
+    for row in rows:
+        name = str(row["item_name"] or "").strip()
+        if not name:
+            continue
+        master = narration_map.get(f'{name.lower()}|{str(row["size"] or "").strip().lower()}')
+        if not master or master == str(row["narration"] or "").strip():
+            continue
+        cur.execute("UPDATE erp.process_components SET narration = %s WHERE id = %s", (master, row["id"]))
+        updated += 1
+
+    if updated == 0:
+        message = f"All {len(rows)} process component(s) already match Items Master -- nothing to change."
+    else:
+        message = f"Refreshed narration on {updated} of {len(rows)} process component(s)."
+
+    return build_response(True, {"componentsScanned": len(rows), "componentsUpdated": updated}, message)
 
 
 # ─────────────────────────────────────────────────────────────────────────

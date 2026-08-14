@@ -619,3 +619,99 @@ def test_save_item_process_mappings_warns_when_removing_from_process_with_produc
     assert body["success"] is True
     assert body["data"]["removed"] == 1
     assert any("production lots" in w for w in body["data"]["warnings"])
+
+
+def test_save_process_writes_fresh_narration_from_items_master(erp_client):
+    """An ITEM-sourced component's submitted narration is overwritten with
+    Items Master's current value at save time (_with_master_narration) --
+    the same save-time-freshening production_service applies to
+    components_consumed, so a saved recipe never persists a stale/hand-typed
+    narration that disagrees with Items Master.
+    """
+    item = _unique_name("FreshNarrationItem")
+    _rpc(erp_client, "saveItem", [{"itemName": item, "itemNarration": "Master desc"}], mutation=True)
+
+    _payload, process_id = _save_process(
+        erp_client,
+        components=[{"itemName": item, "narration": "stale typed-in text", "qtyPerUnit": 1, "sourceType": "ITEM", "colorGroup": "COMMON"}],
+    )
+
+    components = _rpc(erp_client, "getProcessComponentsData", [process_id]).get_json()["data"]
+    assert components[0]["narration"] == "Master desc"
+
+
+def test_save_process_leaves_pool_narration_and_unknown_item_narration_alone(erp_client):
+    """A POOL row's narration is never looked up against Items Master (its
+    item_name is another process's Output Item Name, a different identity
+    space -- see _save_process_components_for_process's own comment), and a
+    component naming an item Items Master doesn't know keeps whatever
+    narration was submitted.
+    """
+    _payload, process_id = _save_process(
+        erp_client,
+        components=[
+            {"itemName": _unique_name("PoolOutput"), "narration": "pool note", "qtyPerUnit": 1, "sourceType": "POOL", "colorGroup": "COMMON"},
+            {"itemName": _unique_name("UnknownItem"), "narration": "hand note", "qtyPerUnit": 1, "sourceType": "ITEM", "colorGroup": "COMMON"},
+        ],
+    )
+
+    components = _rpc(erp_client, "getProcessComponentsData", [process_id]).get_json()["data"]
+    by_source = {c["sourceType"]: c["narration"] for c in components}
+    assert by_source["POOL"] == "pool note"
+    assert by_source["ITEM"] == "hand note"
+
+
+def test_refresh_process_components_from_items_master_backfills_stale_component(erp_client):
+    """A component saved BEFORE an item's Items Master narration was set
+    keeps its stale (blank) stored narration until explicitly refreshed --
+    this RPC is that one-off catch-up pass, mirroring
+    refresh_production_components_from_items_master.
+    """
+    item = _unique_name("StaleProcessItem")
+    _rpc(erp_client, "saveItem", [{"itemName": item}], mutation=True)
+
+    _payload, process_id = _save_process(
+        erp_client,
+        components=[{"itemName": item, "qtyPerUnit": 1, "sourceType": "ITEM", "colorGroup": "COMMON"}],
+    )
+
+    before = _rpc(erp_client, "getProcessComponentsData", [process_id]).get_json()["data"]
+    assert before[0]["narration"] == ""
+
+    # Narration set AFTER the process was saved.
+    _rpc(
+        erp_client,
+        "saveItem",
+        [{"itemName": item, "itemNarration": "Corrected desc", "originalName": item, "originalSize": ""}],
+        mutation=True,
+    )
+
+    refresh = _rpc(erp_client, "refreshProcessComponentsFromItemsMaster", mutation=True)
+    refresh_body = refresh.get_json()
+    assert refresh_body["success"] is True, refresh_body["message"]
+    assert refresh_body["data"]["componentsUpdated"] > 0
+
+    after = _rpc(erp_client, "getProcessComponentsData", [process_id]).get_json()["data"]
+    assert after[0]["narration"] == "Corrected desc"
+
+
+def test_refresh_process_components_from_items_master_is_idempotent(erp_client):
+    """A second run right after the first, with nothing changed in Items
+    Master in between, must not touch the same component again.
+    """
+    item = _unique_name("IdempotentProcessRefreshItem")
+    _rpc(erp_client, "saveItem", [{"itemName": item, "itemNarration": "Stable desc"}], mutation=True)
+    _save_process(
+        erp_client,
+        components=[{"itemName": item, "qtyPerUnit": 1, "sourceType": "ITEM", "colorGroup": "COMMON"}],
+    )
+
+    # First run already matches (save-time freshening already stamped it),
+    # so even the FIRST run here is expected to be a no-op for this item --
+    # confirms save-time and refresh-time agree, then confirms idempotency.
+    first = _rpc(erp_client, "refreshProcessComponentsFromItemsMaster", mutation=True).get_json()
+    assert first["success"] is True
+
+    second = _rpc(erp_client, "refreshProcessComponentsFromItemsMaster", mutation=True).get_json()
+    assert second["success"] is True
+    assert second["data"]["componentsUpdated"] == 0

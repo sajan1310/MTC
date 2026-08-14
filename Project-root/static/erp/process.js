@@ -205,6 +205,46 @@ App.Process = {
     }
   },
 
+  // Rewrites the narration STORED on every active process's ITEM-sourced
+  // components to the current Items Master value
+  // (process_service.refresh_process_components_from_items_master).
+  //
+  // Every OTHER narration display (the Create/Edit Process form,
+  // Production's recipe-driven auto-populate, this file's own print/PDF
+  // export) already resolves narration LIVE against Items Master (see
+  // _resolveDisplayNarration) and needs no such refresh -- this is for the
+  // STORED value itself: catching up components saved before an Items
+  // Master value was set/corrected, and anything that ever reads
+  // narration straight off the database instead of through this file.
+  refreshNarrationsFromItemsMaster() {
+    App.Utils.confirmAction(
+      'Refresh the narration stored on every process\'s components to match Items Master?\n\n' +
+      'Only narration is touched -- quantities, item identities, color groups, and every other field are never ' +
+      'changed. Warehouse Pool components (whose "item" is another process\'s own output, not an Items Master ' +
+      'entry) are skipped.',
+      async () => {
+        const btn = document.getElementById('btnRefreshProcessNarrations');
+        const original = btn?.innerHTML;
+        if (btn) {
+          btn.disabled = true;
+          btn.innerHTML = '<span class="spinner-border spinner-border-sm me-1"></span> Refreshing...';
+        }
+        try {
+          const res = await Api.mutate('refreshProcessComponentsFromItemsMaster');
+          App.Utils.showToast(res.message, !res.success);
+          if (res.success) await this.loadData();
+        } catch (err) {
+          App.Utils.showToast(err.message || 'Failed to refresh process components from Items Master', true);
+        } finally {
+          if (btn) {
+            btn.disabled = false;
+            btn.innerHTML = original;
+          }
+        }
+      }
+    );
+  },
+
   filterData(searchTerm) {
     App.State.processSearchTerm = searchTerm || '';
     const term = String(searchTerm || '').toLowerCase().trim();
@@ -679,10 +719,15 @@ App.Process = {
     let rowsHtml = '';
     (p.components || []).forEach(c => {
       const colorGroup = c.colorGroup && c.colorGroup !== 'COMMON' ? c.colorGroup : 'Common';
+      // Live from Items Master, not the recipe row's own possibly-stale
+      // stored value -- same reason addComponentRow resolves it live for
+      // the edit form (see _resolveDisplayNarration); this print/PDF path
+      // was the one place still reading the raw stored value.
+      const narration = this._resolveDisplayNarration(c.itemName, c.size, c.narration, c.sourceType === 'POOL');
       rowsHtml += `<tr>
       <td style="padding:6px;border:1px solid #e5e5e5;font-weight:600;">${escapeHtml(c.itemName)}</td>
       <td style="padding:6px;border:1px solid #e5e5e5;">${escapeHtml(c.size || '-')}</td>
-      <td style="padding:6px;border:1px solid #e5e5e5;color:#555;">${escapeHtml(c.narration || '-')}</td>
+      <td style="padding:6px;border:1px solid #e5e5e5;color:#555;">${escapeHtml(narration || '-')}</td>
       <td style="padding:6px;border:1px solid #e5e5e5;text-align:center;">${escapeHtml(colorGroup)}</td>
       <td style="padding:6px;border:1px solid #e5e5e5;text-align:center;">${Number(toNumber(c.qtyPerUnit).toFixed(4))}</td>
       <td style="padding:6px;border:1px solid #e5e5e5;">${escapeHtml(c.remarks || '-')}</td>

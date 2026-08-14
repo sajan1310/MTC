@@ -29,6 +29,17 @@
         <button class="btn btn-danger fw-bold shadow-sm d-none" id="btnBulkDeleteProcesses" type="button" onclick="App.Process.bulkDelete()" style="white-space: nowrap;">
           <i class="bi bi-trash"></i> Delete Selected
         </button>
+        <!-- Narration is already resolved LIVE from Items Master everywhere
+             it's displayed (process.js's own _resolveDisplayNarration), so
+             this is for the value STORED on each process's components --
+             for processes saved before an Items Master value was
+             set/corrected, or anything reading narration straight off the
+             database. -->
+        <button class="btn btn-outline-secondary fw-bold shadow-sm" id="btnRefreshProcessNarrations" type="button"
+          onclick="App.Process.refreshNarrationsFromItemsMaster()" style="white-space: nowrap;"
+          title="Refreshes the narration stored on every process's components to match Items Master. Quantities, item identities and every other field are never changed.">
+          <i class="bi bi-arrow-repeat"></i> Refresh Narrations
+        </button>
         <button class="btn btn-info fw-bold text-dark shadow-sm" onclick="App.Process.openCreateModal()">+ Add Process</button>
       </div>
     </div>
