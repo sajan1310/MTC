@@ -2939,8 +2939,17 @@ App.Production = {
   // "position" is meaningless) falls back to the older name-stripping
   // merge instead of risking a wrong pairing.
   //
-  // Both passes' rows are then handed back in original first-appearance
-  // order, so which pass caught a given row never affects drag order.
+  // PASS 3 -- pairing up 2-colour shared-row groups (see
+  // _pairTwoColorSharedRowGroups): a physical item that's printed once
+  // per OUTER colour pair rather than once per lot colour (e.g. a
+  // sticker set with a "Red-BLUE" variant for one pair of colours and a
+  // "PINK-SeaGreen" variant for another) is, after Pass 1, several
+  // separate 2-colour rows -- correct, but not consolidated. Deliberately
+  // narrow and opt-in: only 2-colour groups are ever considered, and only
+  // merged when doing so is unambiguous (see that method's own comment).
+  //
+  // All rows are then handed back in original first-appearance order, so
+  // which pass caught a given row never affects drag order.
   _reconstructPerColorRows(entries) {
     if (!entries || entries.length === 0) return [];
 
@@ -2965,16 +2974,17 @@ App.Production = {
       byItemKey.get(key).push(e);
     });
 
-    const sharedRows = [];
+    const sharedRowCells = [];
     const remaining = [];
     byItemKey.forEach(group => {
       const colorsInGroup = new Set(group.map(e => e.colorKey));
       if (colorsInGroup.size > 1) {
-        sharedRows.push(rowFrom(group));
+        sharedRowCells.push(group);
       } else {
         remaining.push(...group);
       }
     });
+    const sharedRows = this._pairTwoColorSharedRowGroups(sharedRowCells).map(rowFrom);
     const remainingOrdered = remaining.slice().sort((a, b) => indexOf.get(a) - indexOf.get(b));
 
     const byColor = new Map();
@@ -2991,6 +3001,58 @@ App.Production = {
       : this._reconstructPerColorRowsByName(remainingOrdered).map(row => ({ ...row, firstIndex: firstIndexOf(row.cells) }));
 
     return [...sharedRows, ...positionalRows].sort((a, b) => a.firstIndex - b.firstIndex);
+  },
+
+  // Pairs up 2-colour exact-shared-item rows (each already proven by
+  // Pass 1 above to be ONE literal item across exactly 2 colours) into
+  // fewer rows spanning more colours, when it's unambiguous to do so --
+  // e.g. a sticker set's "Red-BLUE" variant (colours A+B) and its
+  // "PINK-SeaGreen" variant (colours C+D) are really the same four
+  // physical items, printed once per outer colour pair rather than once
+  // per lot colour.
+  //
+  // Only merges when: every 2-colour group's own colour-set is disjoint
+  // from every other's (a colour claimed by more than one group makes it
+  // ambiguous which group a shared column belongs to), AND every group
+  // carries the exact same number of rows (so "position N of every
+  // group" is well-defined). Rows are then zipped by that position --
+  // the SAME "trust position when the shape matches" the primary pass
+  // (Pass 2) already relies on, just applied one level up to whole rows
+  // instead of raw entries. Deliberately narrow: groups covering 3+
+  // colours are left untouched (not this pattern), and ANY failed check
+  // backs out to leaving every group's rows separate rather than risking
+  // a wrong pairing -- this is strictly an opt-in consolidation, never a
+  // requirement for correctness (see _reconstructPerColorRows Pass 1).
+  //
+  // Takes/returns arrays of cell-arrays (not yet wrapped into rows) so
+  // the caller can apply its own row-building (with its own firstIndex
+  // etc.) uniformly to whatever comes back, merged or not.
+  _pairTwoColorSharedRowGroups(sharedRowCellGroups) {
+    const byColorPair = new Map();
+    const untouched = [];
+    (sharedRowCellGroups || []).forEach(cells => {
+      const colorsInRow = Array.from(new Set(cells.map(c => c.colorKey)));
+      if (colorsInRow.length !== 2) { untouched.push(cells); return; }
+      const key = colorsInRow.slice().sort().join(' ');
+      if (!byColorPair.has(key)) byColorPair.set(key, { colors: colorsInRow, rows: [] });
+      byColorPair.get(key).rows.push(cells);
+    });
+
+    const pairGroups = Array.from(byColorPair.values());
+    if (pairGroups.length < 2) return [...untouched, ...pairGroups.flatMap(g => g.rows)];
+
+    const seenColors = new Set();
+    let disjoint = true;
+    pairGroups.forEach(g => g.colors.forEach(c => {
+      if (seenColors.has(c)) disjoint = false;
+      seenColors.add(c);
+    }));
+    const counts = pairGroups.map(g => g.rows.length);
+    const evenCounts = counts.every(n => n === counts[0]);
+    if (!disjoint || !evenCounts) return [...untouched, ...pairGroups.flatMap(g => g.rows)];
+
+    const merged = Array.from({ length: counts[0] }, (_, i) => pairGroups.flatMap(g => g.rows[i]));
+    return [...untouched, ...merged];
   },
 
   // The pre-position-alignment fallback: groups entries whose item name
@@ -3030,24 +3092,59 @@ App.Production = {
   },
 
   // A reconstructed row's own best-effort generic label (see
-  // _reconstructPerColorRows). The RAW literal name, unchanged, when
-  // EVERY colour's cell is the literal same item -- a genuinely shared
-  // item (e.g. a fixed two-tone sticker printed once and used under
-  // several colour groups, "CURVY-STICKER-Side Flap---Red-BLUE" under
-  // both "Blue-White / Black" and "Red-White / Black") that just happens
-  // to be position-zipped together. Stripping the FIRST cell's own
-  // colour word out of a shared name is actively harmful here: "Blue"
-  // legitimately appears inside "Red-BLUE" as part of the item's own
-  // fixed two-tone description, not as this row's colour tag, so
-  // stripping it mislabels the row AND makes _cellItemTag think "Blue"
-  // is the one thing left to disambiguate on EVERY cell, including ones
-  // that were never tagged Blue at all. Otherwise falls back to
-  // stripping the first cell's own colour word out of its name, same as
-  // before.
+  // _reconstructPerColorRows). Three shapes, most specific first:
+  //
+  // 1. EVERY cell is the literal same item (a genuinely shared item, e.g.
+  //    a fixed two-tone sticker printed once and used under several
+  //    colour groups, "CURVY-STICKER-Side Flap---Red-BLUE") -- the RAW
+  //    name, unstripped. Stripping the FIRST cell's own colour word out
+  //    of a shared name is actively harmful here: "Blue" legitimately
+  //    appears inside "Red-BLUE" as part of the item's own fixed
+  //    two-tone description, not as this row's colour tag, so stripping
+  //    it would mislabel the row AND make _cellItemTag think "Blue" is
+  //    the one thing left to disambiguate on EVERY cell, including ones
+  //    that were never tagged Blue at all.
+  //
+  // 2. More than one distinct literal name, but fewer distinct names than
+  //    cells (a _pairTwoColorSharedRowGroups merge of two or more
+  //    exact-shared-name clusters, e.g. a "Red-BLUE" print variant AND a
+  //    "PINK-SeaGreen" print variant of the same physical sticker) --
+  //    stripping any ONE cluster's own colour word would randomly eat
+  //    into another cluster's own tag the same way as case 1, so instead
+  //    take the longest run of tokens every distinct name starts with,
+  //    which is exactly the part before the print variants start to
+  //    differ ("CURVY-STICKER-Side Flap" out of both example names).
+  //
+  // 3. One distinct literal name per cell (a genuinely different item per
+  //    colour, e.g. Teddy Basket) -- best-effort strip the first cell's
+  //    own colour word out of its name, same as before.
   _rowDisplayName(row) {
     const primary = row.cells[0];
-    const shared = row.cells.length > 1 && row.cells.every(c => App.Utils.sameText(c.itemName, primary.itemName));
-    return shared ? (primary.itemName || '').trim() : this._stripColorSubstring(primary.itemName || '', primary.colorKey);
+    const distinctNames = Array.from(new Set(row.cells.map(c => (c.itemName || '').trim().toLowerCase())));
+    if (distinctNames.length === 1) return (primary.itemName || '').trim();
+    if (distinctNames.length < row.cells.length) {
+      return this._longestCommonTokenPrefix(row.cells.map(c => c.itemName)) || (primary.itemName || '').trim();
+    }
+    return this._stripColorSubstring(primary.itemName || '', primary.colorKey);
+  },
+
+  // The longest leading run of tokens (delimiters included, so "CURVY",
+  // "-", "STICKER" rejoins as "CURVY-STICKER") every one of `names`
+  // starts with, stopping at the first token where they diverge. Used by
+  // _rowDisplayName case 2 above to label a row merged from more than one
+  // exact-shared-name cluster without guessing at what's shared past the
+  // point the names actually start to differ.
+  _longestCommonTokenPrefix(names) {
+    const tokenLists = (names || []).map(n => String(n || '').split(/([^a-z0-9]+)/i).filter(p => p !== ''));
+    if (tokenLists.length === 0) return '';
+    const shortest = Math.min(...tokenLists.map(t => t.length));
+    let prefix = [];
+    for (let i = 0; i < shortest; i++) {
+      const token = tokenLists[0][i];
+      if (!tokenLists.every(list => list[i].toLowerCase() === token.toLowerCase())) break;
+      prefix.push(token);
+    }
+    return prefix.join('').replace(/[\s\-_]+$/, '').trim();
   },
 
   // The short "(Pink)"-style label rendered under a per-colour cell's Qty
