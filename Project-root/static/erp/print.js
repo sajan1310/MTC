@@ -222,7 +222,10 @@ App.Print = {
   // straight to html2pdf.
   async downloadElementAsPDF(elementId, filename, pdfOverrides = {}) {
     const element = document.getElementById(elementId);
-    if (!element) return false;
+    if (!element) {
+      console.warn('[PDF] Print container not found:', elementId);
+      return false;
+    }
 
     const { captureWidthPx, ...html2pdfOverrides } = pdfOverrides;
     const captureWidth = captureWidthPx || this.PAGE_WIDTH_PX;
@@ -287,9 +290,27 @@ App.Print = {
           // container's plain border-bottom has no size of its own to
           // defend against the guillotine, so it could land squeezed flush
           // against whatever row happened to fall near a slice boundary.
-          // Harmless for every other container: the selector simply matches
-          // nothing there.
-          pagebreak: { mode: ['css', 'legacy'], avoid: ['tr', '.print-sheet-closing-accent'] }
+          //
+          // The three #print-* ids are the PO document's closing blocks, kept
+          // from po.js's now-deleted private copy of this function so that
+          // deleting it changed no configuration. They appear to be inert in
+          // practice: sweeping row counts until #print-signature genuinely
+          // straddles a page boundary produces the same pagination with and
+          // without them, so html2pdf's avoid does not seem to act on them the
+          // way it does on 'tr'. They are preserved rather than dropped because
+          // a refactor is the wrong place to also change behaviour, and they
+          // cost nothing -- a selector that matches nothing in a given
+          // container is simply skipped.
+          pagebreak: {
+            mode: ['css', 'legacy'],
+            avoid: [
+              'tr',
+              '.print-sheet-closing-accent',
+              '#print-grand-total-container',
+              '#print-footer-meta',
+              '#print-signature'
+            ]
+          }
         }, html2pdfOverrides))
         .from(element)
         .save();

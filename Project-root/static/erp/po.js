@@ -1127,27 +1127,6 @@ App.PO = {
     </div>`;
   },
 
-  sanitizeFilename(text = '', allowSpaces = true) {
-    const pattern = allowSpaces ? /[^a-zA-Z0-9\s_-]/g : /[^a-zA-Z0-9_-]/g;
-    return (
-      text
-        .replace(pattern, '')
-        .trim()
-        .replace(/\s+/g, '_')
-        .slice(0, 50) || 'Document'
-    );
-  },
-
-  async ensureAssetsReady() {
-    try {
-      if (document.fonts?.ready) {
-        await document.fonts.ready;
-      }
-    } catch (err) {
-      console.warn('[PDF] Font loading check failed:', err);
-    }
-  },
-
   async downloadPDF(index) {
     if (typeof App.Print === 'undefined') {
       App.Utils.notPortedYet('PDF export');
@@ -1160,105 +1139,16 @@ App.PO = {
       return;
     }
 
-    const element = document.getElementById('print-po-container');
-    if (!element) {
-      console.warn('[PDF] Print container not found');
-      return;
-    }
+    // Page geometry, the html2canvas offset/clipping dance, font readiness and
+    // the pagebreak.avoid list all live in App.Print.downloadElementAsPDF.
+    // This was a 116-line copy of that function which had drifted from it in
+    // both directions -- see docs/audit/PDF_GENERATION_REVIEW.md PDF-004.
+    const filename =
+      `PO_${App.Print.sanitizeFilename(String(po.poNumber || 'PO'))}` +
+      `_${App.Print.sanitizeFilename(String(po.vendor || 'Vendor'), false)}.pdf`;
 
-    // Defer to App.Print so the self-hosted bundle path and its offline
-    // behaviour live in one place. This whole function is a duplicate of
-    // App.Print.downloadElementAsPDF and is slated for deletion -- see
-    // docs/audit/PDF_GENERATION_REVIEW.md PDF-004.
-    if (!(await App.Print.ensureHtml2Pdf())) return;
-
-    await this.ensureAssetsReady();
-
-    const safePoNumber = this.sanitizeFilename(String(po.poNumber || 'PO'));
-    const safeVendorName = this.sanitizeFilename(String(po.vendor || 'Vendor'), false);
-
-    const prevStyle = element.getAttribute('style');
-    const prevHtmlOverflow = document.documentElement.style.overflow;
-    const prevBodyPad = document.body.style.padding;
-    const prevBodyMar = document.body.style.margin;
-    const prevBodyOvf = document.body.style.overflow;
-
-    const originalParent = element.parentNode;
-    const originalSibling = element.nextSibling;
-
-    const prevScrollX = window.pageXOffset || document.documentElement.scrollLeft;
-    const prevScrollY = window.pageYOffset || document.documentElement.scrollTop;
-    window.scrollTo(0, 0);
-
-    document.body.insertBefore(element, document.body.firstChild);
-
-    document.body.style.padding = '0';
-    document.body.style.margin = '0';
-    document.body.style.overflow = 'visible';
-    document.documentElement.style.overflow = 'visible';
-
-    // 749px ~= 198mm at 96 dpi = A4 minus 2x6mm margins, so the canvas
-    // maps 1:1 to the jsPDF content area.
-    element.style.display = 'block';
-    element.style.width = '749px';
-    element.style.maxWidth = 'none';
-
-    await new Promise(r => requestAnimationFrame(r));
-
-    try {
-      await window.html2pdf()
-        .set({
-          margin: [6, 6, 6, 6],
-          filename: `PO_${safePoNumber}_${safeVendorName}.pdf`,
-          image: { type: 'jpeg', quality: 0.98 },
-          html2canvas: {
-            scale: 2,
-            useCORS: true,
-            allowTaint: true,
-            logging: false,
-            scrollX: 0,
-            scrollY: 0,
-            backgroundColor: '#ffffff'
-          },
-          jsPDF: { unit: 'mm', format: 'a4', orientation: 'portrait' },
-          pagebreak: {
-            mode: ['css', 'legacy'],
-            avoid: [
-              'tr',
-              '#print-grand-total-container',
-              '#print-footer-meta',
-              '#print-signature'
-            ]
-          }
-        })
-        .from(element)
-        .save();
-
-      App.Utils.showToast('PDF exported successfully!', false);
-    } catch (err) {
-      console.error('[PDF] Generation failed:', err);
-      App.Utils.showToast(err instanceof Error ? err.message : 'Failed to export PDF.', true);
-    } finally {
-      window.scrollTo(prevScrollX, prevScrollY);
-
-      document.body.style.padding = prevBodyPad;
-      document.body.style.margin = prevBodyMar;
-      document.body.style.overflow = prevBodyOvf;
-      document.documentElement.style.overflow = prevHtmlOverflow;
-      if (prevStyle !== null) {
-        element.setAttribute('style', prevStyle);
-      } else {
-        element.removeAttribute('style');
-      }
-
-      if (originalParent) {
-        if (originalSibling) {
-          originalParent.insertBefore(element, originalSibling);
-        } else {
-          originalParent.appendChild(element);
-        }
-      }
-    }
+    const ok = await App.Print.downloadElementAsPDF('print-po-container', filename);
+    if (ok) App.Utils.showToast('PDF exported successfully!', false);
   },
 
   // Item x vendor rate/last-purchase-date catalog, built purely from

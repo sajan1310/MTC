@@ -21,9 +21,9 @@ this document is scoped to document *output*.
 | PDF-001 | PDF export cannot work offline — its only library is deliberately un-cached | High | P0 | ✅ Fixed |
 | PDF-002 | Output is a flat JPEG: 0 characters of searchable text, 7.5× the bytes | High | P0 | Open — decision |
 | PDF-003 | `html2pdf.js` pinned 4.5 years stale; 12 CDN deps carry no SRI | Medium | P1 | ◑ Partly fixed |
-| PDF-004 | `po.js` duplicates `downloadElementAsPDF` in 116 lines, drifted both ways | High | P1 | Open |
-| PDF-005 | Bulk separate-PDF export can silently under-deliver and over-report | Medium | P1 | Open |
-| PDF-006 | `print.js` has zero test coverage across 10+ call sites | High (process) | P1 | Open |
+| PDF-004 | `po.js` duplicates `downloadElementAsPDF` in 116 lines, drifted both ways | Medium | P1 | ✅ Fixed |
+| PDF-005 | Bulk separate-PDF export can silently under-deliver and over-report | Medium | P1 | ◑ Partly fixed |
+| PDF-006 | `print.js` has zero test coverage across 10+ call sites | High (process) | P1 | ◑ Started |
 | PDF-007 | `MApp.Print` duplicates `App.Print.trigger`; desktop's container list is manual | Low | P3 | Open |
 | PDF-008 | A vector renderer is already installed, undeclared in `requirements.txt` | Info | — | Open |
 
@@ -246,7 +246,8 @@ the `pagebreak.avoid` list still paginates the same. Safe drop-in, confirmed.
 ---
 
 ## PDF-004 · `po.js` duplicates `downloadElementAsPDF` in 116 lines, drifted both ways
-**Location** `static/erp/po.js:1151-1266` · **Severity** High · **Priority** P1
+**Location** `static/erp/po.js:1151-1266` · **Severity** High → **Medium** (see correction) · **Priority** P1
+· **Status** ✅ **Fixed**
 
 `App.PO.downloadPDF(index)` is a near-verbatim copy of
 `App.Print.downloadElementAsPDF()` — 116 lines against a 273-line shared module,
@@ -265,10 +266,25 @@ other lacks:
 | `#print-footer-meta` | — | ✓ |
 | `#print-signature` | — | ✓ |
 
-Consequence: a **single**-PO download protects its grand-total block, footer and
-signature from the page guillotine; a **bulk** PO download does not. The two
-buttons sit next to each other and produce differently-paginated documents from
-the same record.
+> **Correction.** The first version of this finding asserted the consequence
+> was that a single-PO download protects its grand-total block, footer and
+> signature from the page guillotine while a bulk download does not — two
+> adjacent buttons paginating the same record differently. **That was
+> over-claimed, and testing it disproved it.** Row counts were swept until
+> `#print-signature` genuinely straddled a page boundary (37 rows: block spans
+> 1046–1067 px, boundary at 1055 px) and pagination was identical with and
+> without the three `#print-*` selectors, at every row count from 30 to 45. A
+> control re-running the same list twice showed html2pdf's output is not
+> byte-reproducible, so an earlier byte-comparison signal was noise. Those
+> selectors appear **inert** — html2pdf's `avoid` does not act on them the way
+> it does on `tr`.
+>
+> They were still kept when consolidating, because a refactor is the wrong place
+> to also change behaviour and a non-matching selector costs nothing.
+
+What remains, without the pagination claim, is still worth fixing: two copies of
+a 116-line function whose configuration had already drifted apart in both
+directions, where any future fix lands in one and not the other.
 
 `po.js` also hardcodes the page geometry it was meant to inherit —
 `element.style.width = '749px'` (`po.js:1207`) and `margin: [6, 6, 6, 6]`
@@ -277,10 +293,40 @@ path" contract stated at `print.js:12-20`, where `PAGE_WIDTH_PX` derives 749 fro
 `PAGE_MARGIN_MM`. Change the margin in `print.js` and the single-PO export
 silently keeps the old geometry.
 
-**Fix.** Delete `po.js:1151-1266`; have `downloadPDF(index)` call
-`populatePrintData(index)` then `App.Print.downloadElementAsPDF('print-po-container', filename, { pagebreak: {...} })`,
-and merge the **union** of both `avoid` lists into the shared default. Net
-−116 lines and one pagination behaviour instead of two.
+### Resolution
+
+`downloadPDF()` is now a 23-line function that resolves a filename and calls
+`App.Print.downloadElementAsPDF('print-po-container', filename)`. **Net −110
+lines** in `po.js` (1,430 → 1,316). Deleted alongside it:
+
+- `App.PO.sanitizeFilename` — superseded by `App.Print.sanitizeFilename`.
+- `App.PO.ensureAssetsReady` — it awaited `document.fonts.ready`, which
+  `downloadElementAsPDF` already does internally.
+
+The union of both `avoid` lists moved into the shared default so the deletion
+changed no configuration (see the correction above on why those selectors are
+kept despite appearing inert). The hardcoded `749px` and `[6, 6, 6, 6]` are gone
+with it, so the single-PO path now derives its geometry from `PAGE_MARGIN_MM`
+like every other export — previously, changing that constant would have silently
+left this one path on the old geometry.
+
+`downloadElementAsPDF` also gained the `console.warn` on a missing container that
+`po.js`'s copy had, so no diagnostic was lost and every caller now gets it.
+
+**Verified** by driving the refactored `App.PO.downloadPDF(0)` through the real
+`print.js` and `po.js` over HTTP with html2pdf's `save` intercepted:
+
+```
+filename requested : ['PO_2026-0417_Document.pdf']
+toasts             : [['PDF exported successfully!', false]]
+DOM after          : parent BODY, bodyPad 40px, display none
+page errors        : none
+```
+
+The borrowed container is returned to its original parent and `body` padding is
+restored. That filename also shows the PDF-005 fix working: the vendor name is
+Gurmukhi, which before the `'Document'` fallback was restored produced
+`PO_2026-0417_.pdf`.
 
 ---
 
@@ -308,13 +354,35 @@ rasterisation on the main thread. Total work is comparable to the old merged
 export (same content area), but it is now N discrete jobs with no counter, no
 spinner and no way to stop a 40-record export mid-flight.
 
-**Fix.** Interleave a short delay between saves to reduce coalescing; show a
+**4. Filenames could collide, so files overwrote each other.** Found while
+fixing PDF-004 and fixed separately: `sanitizeFilename` strips everything outside
+`[a-zA-Z0-9_-]`, so any name written wholly in Gurmukhi or Devanagari sanitized
+to the empty string. Every such record produced the identical filename, and a
+browser handed the same name repeatedly either overwrites or appends its own
+`(1)`. A 5-record export could quietly deliver fewer than 5 distinct documents.
+
+This was a regression introduced when `sanitizeFilename` was promoted out of
+`po.js` — the promotion dropped its `.slice(0, 50)` cap and its `|| 'Document'`
+fallback. It was latent in the original because that sanitizer only ever named
+single-record downloads, one file at a time, where a collision is impossible.
+
+### Resolution (partial)
+
+Both dropped behaviours restored, and `downloadSeparatePDFs` now de-duplicates
+across the batch via `uniqueFilename()`, suffixing repeats `_2`, `_3`, … before
+the extension. Matching is case-insensitive, since Windows and macOS treat
+`PO_1_Acme.pdf` and `po_1_acme.pdf` as one file. This also covers two long names
+that differ only past the 50-character cap.
+
+Covered by `static/erp/tests/print_filenames.test.js` (14 cases), including the
+Gurmukhi/Devanagari fallback and the three-records-one-name case.
+
+**Still open** — items 1–3 above: interleave a short delay between saves; show a
 determinate progress indicator (`Exporting 7 of 23…`); word the completion toast
 as *generated* rather than *downloaded*, or verify delivery where the platform
-allows. Above a threshold (~5 records) prefer a single ZIP — one download, one
-user gesture, no prompt, and it sidesteps 1 and 2 entirely. That was considered
-and declined for the initial change to avoid adding a zip dependency; it remains
-the more robust shape for large selections.
+allows. Above ~5 records prefer a single ZIP — one download, one user gesture, no
+prompt, and it sidesteps 1 and 2 entirely. That was declined initially to avoid a
+zip dependency; it remains the more robust shape for large selections.
 
 ---
 
@@ -344,6 +412,18 @@ risky behaviour is pure DOM bookkeeping, independent of html2pdf. With
 
 `downloadSeparatePDFs()` is equally testable: N records ⇒ N renders, one file
 name per record, and a count that reflects failures.
+
+### Progress
+
+`static/erp/tests/print_filenames.test.js` is the first test to touch
+`print.js` — 14 cases over `sanitizeFilename`, `uniqueFilename` and
+`downloadSeparatePDFs`'s naming loop, including the count-only-successes
+behaviour. It loads the real `print.js` in a `vm` context with a minimal `App`
+stub, which is a workable pattern for the rest.
+
+**Still open:** the `downloadElementAsPDF` DOM-restore invariants listed above —
+the `finally` path in particular. Those are the ones that leave the app visibly
+broken when they regress, and they remain uncovered.
 
 ---
 
@@ -459,12 +539,19 @@ CSS colour function or a Bootstrap upgrade (see PDF-003), not before.
    precached (see PDF-001 *Resolution* for why), `cdnjs` dropped from CSP,
    jsPDF 2→4 verified, offline export verified. `npm run lint` clean and all
    135 tests pass. Output unchanged.
-2. **Delete the `po.js` duplicate** (PDF-004) — merge the union of both
-   `avoid` lists into `print.js`; −116 lines, one pagination behaviour.
-3. **Make bulk export honest** (PDF-005) — progress indicator, delivery-accurate
-   wording, inter-download delay; ZIP above ~5 records.
-4. **Pin `print.js` with jsdom tests** (PDF-006) — do this *before* step 5, so
-   the renderer swap has a safety net. Also add SRI to the remaining CDN assets.
+2. ~~**Delete the `po.js` duplicate** (PDF-004)~~ ✅ **Done.** −110 lines;
+   `App.PO.sanitizeFilename` and `App.PO.ensureAssetsReady` deleted with it, and
+   the hardcoded `749px`/`[6,6,6,6]` geometry now derives from `PAGE_MARGIN_MM`.
+   Testing the claimed pagination symptom disproved it — see the correction in
+   PDF-004.
+3. **Make bulk export honest** (PDF-005) — ◑ the filename-collision half is
+   done (`uniqueFilename`, plus the restored `'Document'` fallback). Still to do:
+   progress indicator, delivery-accurate wording, inter-download delay; ZIP
+   above ~5 records.
+4. **Pin `print.js` with jsdom tests** (PDF-006) — ◑ started: 14 cases now cover
+   the filename layer. Still to do: the `downloadElementAsPDF` DOM-restore
+   invariants, especially the `finally` path. Do this *before* step 5, so the
+   renderer swap has a safety net. Also add SRI to the remaining CDN assets.
 5. **Move the document paths to vector** (Option B) — PO, Goods Receipt,
    Delivery Challan, Work Order, where searchable archives have real business
    value. Keep A as the offline fallback. Reconcile `requirements.txt` (PDF-008).
