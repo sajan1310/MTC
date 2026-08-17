@@ -3125,7 +3125,26 @@ App.Production = {
     if (distinctNames.length < row.cells.length) {
       return this._longestCommonTokenPrefix(row.cells.map(c => c.itemName)) || (primary.itemName || '').trim();
     }
-    return this._stripColorSubstring(primary.itemName || '', primary.colorKey);
+    return this._stripRowOwnColorSubstring(primary.itemName || '', row.cells.map(c => c.colorKey));
+  },
+
+  // Strips whichever colour word actually appears in `itemName`, tried in
+  // this row's own cell order (primary's own axis colour first, same as
+  // before -- the common case where an item's colour word matches the lot
+  // colour it's filed under). Falls through to the row's OTHER cells'
+  // colours because a physical item can be deliberately paired with a lot
+  // colour other than its own (e.g. a Red-coloured accessory used under
+  // the lot's Blue column for contrast, see LOT-PF2IIS-0002 in
+  // groupComponentsForSheet) -- stripping only primary.colorKey then finds
+  // nothing, and the raw name (still carrying its own colour word) leaks
+  // through as the row label instead of being cleaned up like every other
+  // colour's _cellItemTag already is.
+  _stripRowOwnColorSubstring(itemName, colorKeys) {
+    for (const color of colorKeys) {
+      const stripped = this._stripColorSubstring(itemName, color);
+      if (stripped !== itemName) return stripped;
+    }
+    return itemName;
   },
 
   // The longest leading run of tokens (delimiters included, so "CURVY",
@@ -5333,17 +5352,20 @@ App.Production = {
     return (match && match.baseUnit) || 'Pcs';
   },
 
-  // The unit to print for one rendered sheet row, read back off the cell the
+  // The unit to print for one rendered sheet row, read back off the INPUT the
   // dialog already shows so the export can never disagree with what the
-  // operator just looked at. That cell is the only place the unit resolved
-  // from a merged row's LITERAL item name survives -- the rendered Item Name
-  // is colour-stripped and would re-resolve to the 'Pcs' fallback (see
-  // groupComponentsForSheet). Falls back to resolving from the rendered name
-  // for a caller that built the sheet DOM without the cell, and maps the
-  // "unknown item" em dash back to no label at all.
+  // operator just looked at -- and so an operator's manual override (see
+  // renderCommonSheetRow/renderMatrixSheetRow) makes it into the printed
+  // sheet. That input is also the only place the unit resolved from a merged
+  // row's LITERAL item name survives -- the rendered Item Name is
+  // colour-stripped and would re-resolve to the 'Pcs' fallback (see
+  // groupComponentsForSheet). A blank input is a deliberate "no unit" and is
+  // returned as-is; only a row whose DOM was built WITHOUT the input at all
+  // (a caller that skipped the template) falls back to resolving fresh from
+  // the rendered name.
   _sheetRowUnitFromDom(row) {
-    const shown = row?.querySelector('.prod-sheet-unit')?.textContent.trim() || '';
-    if (shown) return shown === '—' ? '' : shown;
+    const unitInput = row?.querySelector('.prod-sheet-unit');
+    if (unitInput) return unitInput.value.trim();
     return this._resolveDisplayUnit(
       row?.querySelector('.prod-sheet-item-name')?.value.trim() || '',
       row?.querySelector('.prod-sheet-size')?.value.trim() || ''
@@ -5377,8 +5399,8 @@ App.Production = {
       narrationInput.value = this._resolveDisplayNarration(itemName, size, narrationInput.value);
     }
 
-    const unitCell = row.querySelector('.prod-sheet-unit');
-    if (unitCell) unitCell.textContent = this._resolveDisplayUnit(itemName, size) || '—';
+    const unitInput = row.querySelector('.prod-sheet-unit');
+    if (unitInput) unitInput.value = this._resolveDisplayUnit(itemName, size);
   },
 
   // The Narration to show alongside a component, resolved LIVE from Items
@@ -5600,11 +5622,13 @@ App.Production = {
   _SHEET_IDENTITY_HOOK: 'onchange="App.Production.handleSheetRowItemChange(this)"',
 
   // Builds one editable Common-table <tr>: item/size/narration + a single
-  // Required Qty input, suffixed with the item's Base Unit from Items
-  // Master so a quantity is never read as a bare number ("2" for a
-  // by-weight item means 2 Kg, not 2 pieces). Read-only: the unit belongs
-  // to Items Master, and the printed sheet resolves it there too (see
-  // _resolveDisplayUnit).
+  // Required Qty input, suffixed with an editable Unit box pre-filled from
+  // the item's Base Unit in Items Master so a quantity is never read as a
+  // bare number ("2" for a by-weight item means 2 Kg, not 2 pieces). The
+  // override is print-only: serializeProductionSheet never reads
+  // .prod-sheet-unit, so it's never saved back to the lot or to Items
+  // Master -- re-opening this sheet later re-resolves the Base Unit fresh
+  // (see _resolveDisplayUnit), same as before this field became editable.
   renderCommonSheetRow(row) {
     const display = row.qty !== undefined ? this.formatQty(row.qty) : '';
     return `<tr>
@@ -5614,20 +5638,22 @@ App.Production = {
       <td>
         <div class="input-group input-group-sm flex-nowrap">
           <input type="number" class="form-control form-control-sm text-end prod-sheet-qty" value="${display}" step="any" min="0" placeholder="-">
-          <span class="input-group-text prod-sheet-unit" title="Base Unit from Items Master">${escapeHtml(this._sheetRowUnit(row) || '—')}</span>
+          <input type="text" class="form-control form-control-sm text-center prod-sheet-unit" style="max-width:56px;" value="${escapeHtml(this._sheetRowUnit(row) || '')}" placeholder="Unit" title="Base Unit -- edit to override for this printed sheet only, Items Master is unaffected">
         </div>
       </td>
       <td class="text-center"><button type="button" class="btn btn-outline-danger btn-sm" onclick="this.closest('tr').remove()">✕</button></td>
     </tr>`;
   },
 
-  // Builds one editable matrix <tr>: item/size/narration text inputs, a
-  // Base Unit cell, plus one Required Qty number input per color column
-  // (blank = not applicable to that color, rather than a misleading 0).
-  // The unit sits in its own cell just ahead of the quantity columns, and
-  // applies to every one of them -- suffixing each colour cell individually
-  // (as the printed sheet does, where width is fixed) would add an addon
-  // per colour and push this already-wide table into horizontal scroll.
+  // Builds one editable matrix <tr>: item/size/narration text inputs, an
+  // editable Base Unit cell, plus one Required Qty number input per color
+  // column (blank = not applicable to that color, rather than a misleading
+  // 0). The unit sits in its own cell just ahead of the quantity columns,
+  // and applies to every one of them -- suffixing each colour cell
+  // individually (as the printed sheet does, where width is fixed) would
+  // add an addon per colour and push this already-wide table into
+  // horizontal scroll. Like renderCommonSheetRow's unit input, an edit here
+  // is print-only -- see _sheetRowUnitFromDom.
   renderMatrixSheetRow(slot, colors) {
     const qtyCell = (color) => {
       const val = slot.colors ? slot.colors[color] : undefined;
@@ -5651,7 +5677,7 @@ App.Production = {
       <td><input type="text" class="form-control form-control-sm prod-sheet-item-name" value="${escapeHtml(slot.itemName || '')}" placeholder="Item name" ${this._SHEET_IDENTITY_HOOK}></td>
       <td><input type="text" class="form-control form-control-sm prod-sheet-size" value="${escapeHtml(slot.size || '')}" placeholder="-" ${this._SHEET_IDENTITY_HOOK}></td>
       <td><input type="text" class="form-control form-control-sm prod-sheet-narration" value="${escapeHtml(slot.narration || '')}" placeholder="-"></td>
-      <td class="text-center small text-muted prod-sheet-unit" title="Base Unit from Items Master — applies to every quantity in this row">${escapeHtml(this._sheetRowUnit(slot) || '—')}</td>`;
+      <td><input type="text" class="form-control form-control-sm text-center prod-sheet-unit" value="${escapeHtml(this._sheetRowUnit(slot) || '')}" placeholder="Unit" title="Base Unit -- edit to override for this printed sheet only, applies to every quantity in this row"></td>`;
     (colors || []).forEach(c => { html += qtyCell(c); });
     html += `<td class="text-center"><button type="button" class="btn btn-outline-danger btn-sm" onclick="this.closest('tr').remove()">✕</button></td>
     </tr>`;
