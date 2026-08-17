@@ -1166,15 +1166,11 @@ App.PO = {
       return;
     }
 
-    if (typeof window.html2pdf !== 'function') {
-      try {
-        await loadScript('https://cdnjs.cloudflare.com/ajax/libs/html2pdf.js/0.10.1/html2pdf.bundle.min.js');
-      } catch (err) {
-        console.error('[PDF] Failed to load html2pdf library:', err);
-        App.Utils.showToast('PDF library failed to load. Check your connection and try again.', true);
-        return;
-      }
-    }
+    // Defer to App.Print so the self-hosted bundle path and its offline
+    // behaviour live in one place. This whole function is a duplicate of
+    // App.Print.downloadElementAsPDF and is slated for deletion -- see
+    // docs/audit/PDF_GENERATION_REVIEW.md PDF-004.
+    if (!(await App.Print.ensureHtml2Pdf())) return;
 
     await this.ensureAssetsReady();
 

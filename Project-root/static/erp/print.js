@@ -148,14 +148,25 @@ App.Print = {
 
   // Lazy-loads html2pdf.js (used by every module's "Download PDF" button)
   // on first use so it isn't fetched until actually needed.
+  //
+  // Served from our own origin, NOT a CDN. This used to fetch 0.10.1 from
+  // cdnjs, which made every PDF export the one part of the app that could not
+  // work offline: sw.js precaches print.js but deliberately never caches
+  // third-party CDN assets, so the shell would load, tables would render,
+  // Print (native window.print) would work, and only Download PDF would fail.
+  // Same reason the bundle is fetched by the service worker's post-activate
+  // warm step -- see sw.js WARM_URLS. Provenance/checksums/upgrade procedure:
+  // static/erp/vendor/README.md.
+  HTML2PDF_URL: '/static/erp/vendor/html2pdf.bundle.min.js',
+
   async ensureHtml2Pdf() {
     if (typeof window.html2pdf === 'function') return true;
     try {
-      await loadScript('https://cdnjs.cloudflare.com/ajax/libs/html2pdf.js/0.10.1/html2pdf.bundle.min.js');
+      await loadScript(this.HTML2PDF_URL);
       return true;
     } catch (err) {
       console.error('[PDF] Failed to load html2pdf library:', err);
-      App.Utils.showToast('PDF library failed to load. Check your connection and try again.', true);
+      App.Utils.showToast('PDF library failed to load. Please reload the page and try again.', true);
       return false;
     }
   },

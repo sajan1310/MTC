@@ -423,13 +423,17 @@ def create_app(config_name: str | None = None) -> Flask:
             # 'unsafe-inline' is required by the inline <script>/<style>
             # blocks in templates/erp/index.html and the auth pages; the
             # CDN hosts are the third-party libs static/erp/*.js loads
-            # (jQuery, Bootstrap, Select2, Chart.js, SheetJS, html2pdf.js).
+            # (jQuery, Bootstrap, Select2, Chart.js, SheetJS).
+            #
+            # cdnjs.cloudflare.com was dropped when html2pdf.js moved on-origin
+            # to static/erp/vendor/ -- it was that host's only use, and 'self'
+            # now covers it. Do not re-add a CDN host without also adding an
+            # SRI hash at the call site (see PDF-003).
             "script-src": [
                 "'self'",
                 "'unsafe-inline'",
                 "https://code.jquery.com",
                 "https://cdn.jsdelivr.net",
-                "https://cdnjs.cloudflare.com",
             ],
             "style-src": [
                 "'self'",
