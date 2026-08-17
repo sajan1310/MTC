@@ -172,9 +172,18 @@ sheets:
     sheet_name: "Contractor Rates"
     data_start_row: 2
     kind: flat
-    table: erp.contractor_rates
-    has_soft_delete: false
-    order_by: id
+    # erp.contractor_rates has no process_name column since the 2026-08-13
+    # two-layer restructuring (f8c8c81): it's now keyed on (contractor,
+    # process_type, size), collapsed from ~200 per-process rows down to
+    # ~one row per type/size combo. The legacy GAS sheet's layout (config.js
+    # CONTRACTOR_RATES_COL_NAMES) still has a single processName column, so
+    # fold type+size into it here using the same "{type} / {size}" label
+    # contractors_service.py already uses in its own user-facing messages.
+    query: >
+      SELECT contractor_name, process_type || ' / ' || size AS process_name,
+             rate_per_unit, remarks
+      FROM erp.contractor_rates
+      ORDER BY id
     columns:
       - {col: 1, db: contractor_name}
       - {col: 2, db: process_name}
