@@ -701,10 +701,12 @@ App.Process = {
         const res = await Api.call('getProcessComponentsData', p.processId);
         return Object.assign({}, p, { components: res.success ? res.data : [] });
       }));
-      App.Print.renderBulkPages(withComponents, p => this.buildProcessPrintPageHtml(p));
-      const filename = App.Print.bulkPdfFilename('Process_Sheets', withComponents.length);
-      const ok = await App.Print.downloadElementAsPDF('print-bulk-container', filename);
-      if (ok) App.Utils.showToast(`${withComponents.length} process sheet(s) exported to PDF!`, false);
+      const count = await App.Print.downloadSeparatePDFs(
+        withComponents,
+        p => this.buildProcessPrintPageHtml(p),
+        p => `Process_Sheet_${App.Print.sanitizeFilename(String(p.processId || 'Process'))}_${App.Print.sanitizeFilename(String(p.processName || ''), false)}.pdf`
+      );
+      if (count) App.Utils.showToast(`${count} process sheet(s) exported to PDF!`, false);
     } catch (err) {
       App.Utils.showToast(err.message || 'Failed to prepare processes for export', true);
     }

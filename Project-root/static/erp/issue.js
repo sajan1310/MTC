@@ -197,10 +197,12 @@ App.Issue = {
     const issues = App.State.globalIssues.filter(iss => App.Selection.isSelected(selected, String(iss.issueId)));
     if (!issues.length) return;
 
-    App.Print.renderBulkPages(issues, iss => this.buildIssuePrintPageHtml(iss));
-    const filename = App.Print.bulkPdfFilename('Stock_Issue_Receipts', issues.length);
-    const ok = await App.Print.downloadElementAsPDF('print-bulk-container', filename);
-    if (ok) App.Utils.showToast(`${issues.length} issue receipt(s) exported to PDF!`, false);
+    const count = await App.Print.downloadSeparatePDFs(
+      issues,
+      iss => this.buildIssuePrintPageHtml(iss),
+      iss => `Stock_Issue_Receipt_${App.Print.sanitizeFilename(String(iss.issueId || 'Issue'))}.pdf`
+    );
+    if (count) App.Utils.showToast(`${count} issue receipt(s) exported to PDF!`, false);
   },
 
   // Single-record print for the per-row "Print" button -- reuses the

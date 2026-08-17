@@ -346,10 +346,12 @@ App.Bill = {
     const bills = App.State.globalBills.filter(bill => App.Selection.isSelected(selected, this.billKey(bill)));
     if (!bills.length) return;
 
-    App.Print.renderBulkPages(bills, bill => this.buildBillPrintPageHtml(bill));
-    const filename = App.Print.bulkPdfFilename('Goods_Receipts', bills.length);
-    const ok = await App.Print.downloadElementAsPDF('print-bulk-container', filename);
-    if (ok) App.Utils.showToast(`${bills.length} bill(s) exported to PDF!`, false);
+    const count = await App.Print.downloadSeparatePDFs(
+      bills,
+      bill => this.buildBillPrintPageHtml(bill),
+      bill => `Bill_${App.Print.sanitizeFilename(String(bill.billNumber || 'Bill'))}_${App.Print.sanitizeFilename(String(bill.vendor || ''), false)}.pdf`
+    );
+    if (count) App.Utils.showToast(`${count} bill(s) exported to PDF!`, false);
   },
 
   // ── Print (dead code until App.Print exists) ────────────────────────

@@ -118,14 +118,32 @@ App.Print = {
     this.trigger('print-bulk-container', documentTitle);
   },
 
-  // Shared filename for every module's bulk "Download PDFs" button:
-  // <prefix>_<ddmmyy-of-export>_<count><unit>.pdf, e.g.
-  // "Purchase_Orders_290726_3.pdf" or "Production_Sheets_290726_3Lots.pdf".
-  bulkPdfFilename(prefix, count, unit = '') {
-    const now = new Date();
-    const pad = n => String(n).padStart(2, '0');
-    const ddmmyy = `${pad(now.getDate())}${pad(now.getMonth() + 1)}${String(now.getFullYear()).slice(-2)}`;
-    return `${prefix}_${ddmmyy}_${count}${unit}.pdf`;
+  // Shared filename sanitizer for every module's per-record PDF filenames
+  // (bulk "Download PDFs" and single-record downloads alike).
+  sanitizeFilename(text = '', allowSpaces = true) {
+    const pattern = allowSpaces ? /[^a-zA-Z0-9\s_-]/g : /[^a-zA-Z0-9_-]/g;
+    return String(text)
+      .replace(pattern, '')
+      .trim()
+      .replace(/\s+/g, '_');
+  },
+
+  // Renders and downloads one PDF per record instead of merging every
+  // record into a single file: each record gets its own render pass into
+  // print-bulk-container (so buildPageHtml never has to know it's the
+  // only page) followed by its own downloadElementAsPDF call. Downloads
+  // are sequential -- concurrent html2pdf runs would fight over the same
+  // shared container -- so this awaits each one before starting the next.
+  // filenameForRecord(record) must return that record's .pdf filename.
+  async downloadSeparatePDFs(records, buildPageHtml, filenameForRecord, pdfOverrides = {}) {
+    let successCount = 0;
+    for (const record of records) {
+      this.renderBulkPages([record], buildPageHtml);
+      const filename = filenameForRecord(record);
+      const ok = await this.downloadElementAsPDF('print-bulk-container', filename, pdfOverrides);
+      if (ok) successCount++;
+    }
+    return successCount;
   },
 
   // Lazy-loads html2pdf.js (used by every module's "Download PDF" button)

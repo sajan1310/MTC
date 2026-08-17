@@ -1099,10 +1099,12 @@ App.Item = {
       this.ensureItemLedgerLoaded(names)
     ]);
 
-    App.Print.renderBulkPages(names, name => this.buildItemLedgerPrintPageHtml(name));
-    const filename = App.Print.bulkPdfFilename('Item_Ledgers', names.length);
-    const ok = await App.Print.downloadElementAsPDF('print-bulk-container', filename);
-    if (ok) App.Utils.showToast(`${names.length} item ledger(s) exported to PDF!`, false);
+    const count = await App.Print.downloadSeparatePDFs(
+      names,
+      name => this.buildItemLedgerPrintPageHtml(name),
+      name => `Item_Ledger_${App.Print.sanitizeFilename(String(name || 'Item'), false)}.pdf`
+    );
+    if (count) App.Utils.showToast(`${count} item ledger(s) exported to PDF!`, false);
   },
 
   openCreateModal() {

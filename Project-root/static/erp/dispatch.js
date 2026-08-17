@@ -515,10 +515,12 @@ App.Dispatch = {
     const bills = App.State.globalDispatchBills.filter(b => App.Selection.isSelected(selected, b.dispatchNumber));
     if (!bills.length) return;
 
-    App.Print.renderBulkPages(bills, b => this.buildDispatchPrintPageHtml(b));
-    const filename = App.Print.bulkPdfFilename('Delivery_Challans', bills.length);
-    const ok = await App.Print.downloadElementAsPDF('print-bulk-container', filename);
-    if (ok) App.Utils.showToast(`${bills.length} delivery challan(s) exported to PDF!`, false);
+    const count = await App.Print.downloadSeparatePDFs(
+      bills,
+      b => this.buildDispatchPrintPageHtml(b),
+      b => `Delivery_Challan_${App.Print.sanitizeFilename(String(b.dispatchNumber || 'Challan'))}_${App.Print.sanitizeFilename(String(b.clientName || ''), false)}.pdf`
+    );
+    if (count) App.Utils.showToast(`${count} delivery challan(s) exported to PDF!`, false);
   },
 
   // Builds a fully self-contained "Delivery Challan" page (mirrors

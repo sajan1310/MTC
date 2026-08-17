@@ -207,10 +207,12 @@ App.Vendor = {
       await App.Issue.loadData();
     }
 
-    App.Print.renderBulkPages(vendors, vendor => this.buildVendorLedgerPrintPageHtml(vendor));
-    const filename = App.Print.bulkPdfFilename('Vendor_Ledgers', vendors.length);
-    const ok = await App.Print.downloadElementAsPDF('print-bulk-container', filename);
-    if (ok) App.Utils.showToast(`${vendors.length} vendor ledger(s) exported to PDF!`, false);
+    const count = await App.Print.downloadSeparatePDFs(
+      vendors,
+      vendor => this.buildVendorLedgerPrintPageHtml(vendor),
+      vendor => `Vendor_Ledger_${App.Print.sanitizeFilename(String(vendor.name || 'Vendor'), false)}.pdf`
+    );
+    if (count) App.Utils.showToast(`${count} vendor ledger(s) exported to PDF!`, false);
   },
 
   switchTab(tabId) {

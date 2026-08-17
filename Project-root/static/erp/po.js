@@ -233,10 +233,12 @@ App.PO = {
     const pos = App.State.globalPOs.filter(po => App.Selection.isSelected(selected, String(po.poNumber)));
     if (!pos.length) return;
 
-    App.Print.renderBulkPages(pos, po => this.buildPOPrintPageHtml(po, includeRates, includeTotal));
-    const filename = App.Print.bulkPdfFilename('Purchase_Orders', pos.length);
-    const ok = await App.Print.downloadElementAsPDF('print-bulk-container', filename);
-    if (ok) App.Utils.showToast(`${pos.length} purchase order(s) exported to PDF!`, false);
+    const count = await App.Print.downloadSeparatePDFs(
+      pos,
+      po => this.buildPOPrintPageHtml(po, includeRates, includeTotal),
+      po => `PO_${App.Print.sanitizeFilename(String(po.poNumber || 'PO'))}_${App.Print.sanitizeFilename(String(po.vendor || 'Vendor'), false)}.pdf`
+    );
+    if (count) App.Utils.showToast(`${count} purchase order(s) exported to PDF!`, false);
   },
 
   filterData(searchTerm) {
