@@ -120,12 +120,23 @@ App.Print = {
 
   // Shared filename sanitizer for every module's per-record PDF filenames
   // (bulk "Download PDFs" and single-record downloads alike).
+  //
+  // The 50-char cap and the 'Document' fallback both matter and must stay.
+  // The pattern strips everything outside [a-zA-Z0-9_-], which means a name
+  // written wholly in Gurmukhi or Devanagari -- ordinary for vendors and items
+  // here -- sanitizes to the empty string, not to a short name. Without the
+  // fallback that yields "Item_Ledger_.pdf"; see also the de-duplication in
+  // downloadSeparatePDFs, since one fallback name cannot distinguish several
+  // such records in the same export.
   sanitizeFilename(text = '', allowSpaces = true) {
     const pattern = allowSpaces ? /[^a-zA-Z0-9\s_-]/g : /[^a-zA-Z0-9_-]/g;
-    return String(text)
-      .replace(pattern, '')
-      .trim()
-      .replace(/\s+/g, '_');
+    return (
+      String(text)
+        .replace(pattern, '')
+        .trim()
+        .replace(/\s+/g, '_')
+        .slice(0, 50) || 'Document'
+    );
   },
 
   // Renders and downloads one PDF per record instead of merging every
@@ -135,15 +146,41 @@ App.Print = {
   // are sequential -- concurrent html2pdf runs would fight over the same
   // shared container -- so this awaits each one before starting the next.
   // filenameForRecord(record) must return that record's .pdf filename.
+  //
+  // Filenames are de-duplicated across the batch. Two records can easily want
+  // the same name -- sanitizeFilename maps every non-Latin name onto its
+  // 'Document' fallback, and its 50-char cap can collapse two long names that
+  // differ only past that point -- and a browser handed the same name twice
+  // either silently overwrites or appends its own "(1)", so a 5-record export
+  // can quietly deliver fewer than 5 distinct documents.
   async downloadSeparatePDFs(records, buildPageHtml, filenameForRecord, pdfOverrides = {}) {
+    const used = new Set();
     let successCount = 0;
     for (const record of records) {
       this.renderBulkPages([record], buildPageHtml);
-      const filename = filenameForRecord(record);
+      const filename = this.uniqueFilename(filenameForRecord(record), used);
       const ok = await this.downloadElementAsPDF('print-bulk-container', filename, pdfOverrides);
       if (ok) successCount++;
     }
     return successCount;
+  },
+
+  // Returns `filename` unchanged the first time it is seen, then _2, _3, ...
+  // for each repeat, recording every name it hands out in `used`. Matching is
+  // case-insensitive because the filesystems these land on (Windows, macOS)
+  // treat "PO_1_Acme.pdf" and "po_1_acme.pdf" as the same file.
+  uniqueFilename(filename, used) {
+    const dot = filename.lastIndexOf('.');
+    const stem = dot > 0 ? filename.slice(0, dot) : filename;
+    const ext = dot > 0 ? filename.slice(dot) : '';
+    let candidate = filename;
+    let n = 1;
+    while (used.has(candidate.toLowerCase())) {
+      n += 1;
+      candidate = `${stem}_${n}${ext}`;
+    }
+    used.add(candidate.toLowerCase());
+    return candidate;
   },
 
   // Lazy-loads html2pdf.js (used by every module's "Download PDF" button)
