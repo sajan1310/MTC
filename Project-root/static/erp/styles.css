@@ -3174,10 +3174,7 @@
        that height at all. */
     .notif-panel {
       position: fixed;
-      top: auto;
-      bottom: 8px;
-      left: 8px;
-      right: 8px;
+      inset: auto 8px 8px 8px;
       width: auto;
       max-height: 70vh;
     }
@@ -3511,8 +3508,12 @@
     line-height: 1.4;
     color: var(--text-primary);
     font-weight: 500;
-    /* Allow wrapping so long product names are fully visible */
-    word-break: break-word;
+    /* Allow wrapping so long product names are fully visible.
+       overflow-wrap, not word-break: `word-break: break-word` is a deprecated
+       alias that the spec defines as normal word-break plus this. Note
+       `word-break: break-all` is NOT the equivalent -- it slices ordinary
+       words mid-word even when they would fit on the next line. */
+    overflow-wrap: break-word;
   }
 
   .pb-card-line-qty {

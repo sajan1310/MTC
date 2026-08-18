@@ -157,11 +157,13 @@ textarea:focus-visible,
    was tuned for a ~390-430px wide screen. */
 @media (min-width: 640px) {
   html, body { height: 100%; }
+
   body {
     display: flex;
     justify-content: center;
     background: #1b2126;
   }
+
   #mapp-root {
     width: 100%;
     max-width: 480px;
@@ -231,6 +233,7 @@ textarea:focus-visible,
   to   { opacity: 1; transform: translateY(0); }
 }
 .mapp-content.mapp-screen-enter { animation: mapp-screen-in var(--mb-motion-base); }
+
 @media (prefers-reduced-motion: reduce) {
   .mapp-content.mapp-screen-enter { animation: none; }
 }
@@ -249,7 +252,9 @@ textarea:focus-visible,
 .mb-ptr-indicator svg { width: 22px; height: 22px; }
 .mb-ptr-indicator.mb-ptr-ready { color: var(--mb-safety); }
 .mb-ptr-indicator.mb-ptr-spinning svg { animation: mb-ptr-spin 0.7s linear infinite; }
+
 @keyframes mb-ptr-spin { to { transform: rotate(360deg); } }
+
 @media (prefers-reduced-motion: reduce) {
   .mb-ptr-indicator.mb-ptr-spinning svg { animation: none; }
   .mb-ptr-indicator.mb-ptr-animated { transition: none; }
@@ -278,6 +283,7 @@ textarea:focus-visible,
   transition: transform var(--mb-motion-base);
   pointer-events: none;
 }
+
 @media (prefers-reduced-motion: reduce) {
   .mapp-tab-indicator { transition: none; }
 }
@@ -305,6 +311,7 @@ textarea:focus-visible,
 .mapp-tab.active { color: var(--mb-safety); }
 .mapp-tab.active svg { transform: translateY(-1px) scale(1.08); }
 .mapp-tab:active { background: var(--mb-workshop); transform: scale(0.94); }
+
 @media (prefers-reduced-motion: reduce) {
   .mapp-tab, .mapp-tab svg { transition: none; }
   .mapp-tab:active { transform: none; }
@@ -364,6 +371,7 @@ textarea:focus-visible,
   transition: transform var(--mb-motion-fast), background var(--mb-motion-fast);
 }
 .mb-card-tappable:active { background: var(--mb-workshop); transform: scale(0.98); }
+
 @media (prefers-reduced-motion: reduce) {
   .mb-card-tappable { transition: none; }
   .mb-card-tappable:active { transform: none; }
@@ -428,6 +436,7 @@ textarea:focus-visible,
 }
 .mb-quick-action svg { width: 22px; height: 22px; color: var(--mb-safety); }
 .mb-quick-action:active { background: var(--mb-ink-soft); transform: scale(0.96); }
+
 @media (prefers-reduced-motion: reduce) {
   .mb-quick-action { transition: none; }
   .mb-quick-action:active { transform: none; }
@@ -466,6 +475,7 @@ textarea:focus-visible,
 .mb-stat-tile.mb-accent-safety { border-left-color: var(--mb-safety); }
 .mb-stat-tile.mb-accent-blue { border-left-color: var(--mb-enamel-blue); }
 .mb-stat-tile.mb-accent-red { border-left-color: var(--mb-enamel-red); }
+
 @media (prefers-reduced-motion: reduce) {
   .mb-stat-tile { transition: none; }
   .mb-stat-tile:active { transform: none; }
@@ -999,6 +1009,7 @@ textarea:focus-visible,
 
 /* ── Activity feed (Home) ────────────────────────────────────────────── */
 .mb-activity-row { display: flex; align-items: flex-start; gap: var(--mb-sp-3); }
+
 .mb-activity-icon {
   flex: 0 0 36px;
   width: 36px;
@@ -1022,10 +1033,12 @@ textarea:focus-visible,
   from { opacity: 0; transform: translateY(6px); }
   to   { opacity: 1; transform: translateY(0); }
 }
+
 .mb-stagger-in {
   animation: mb-stagger-in var(--mb-motion-base) both;
   animation-delay: calc(var(--i, 0) * 40ms);
 }
+
 @media (prefers-reduced-motion: reduce) {
   .mb-stagger-in { animation: none; }
 }
