@@ -13,6 +13,7 @@ exactly what the client-side raster path cannot produce (PDF-002).
 from __future__ import annotations
 
 import io
+import os
 
 import pytest
 
@@ -302,7 +303,10 @@ def test_probe_accepts_an_installed_chromium(monkeypatch, tmp_path):
 
 
 def test_probe_never_raises(monkeypatch):
-    monkeypatch.setattr(pdf_render_service, "_browsers_root", lambda: (_ for _ in ()).throw(OSError("boom")))
+    def boom():
+        raise OSError("boom")
+
+    monkeypatch.setattr(pdf_render_service, "_candidate_roots", boom)
     ok, detail = pdf_render_service.probe()
     assert ok is False
     assert "could not check" in detail
@@ -340,3 +344,103 @@ def test_log_availability_confirms_when_enabled(monkeypatch, tmp_path):
     assert pdf_render_service.log_availability(log) is True
     assert log.warn_msgs == []
     assert len(log.info_msgs) == 1
+
+
+# ── the two deployment traps ─────────────────────────────────────────
+
+
+def test_explicit_browsers_path_is_never_second_guessed(monkeypatch, tmp_path):
+    """If an operator configured a location, honour it rather than hunting."""
+    monkeypatch.setenv("PLAYWRIGHT_BROWSERS_PATH", str(tmp_path))
+    assert pdf_render_service._candidate_roots() == [tmp_path]
+
+
+def test_candidates_cover_the_root_installs_service_runs_split(monkeypatch):
+    """The VPS trap: installed by root, served by www-data."""
+    import pathlib
+
+    monkeypatch.delenv("PLAYWRIGHT_BROWSERS_PATH", raising=False)
+    monkeypatch.setattr(pdf_render_service.sys, "platform", "linux")
+    roots = pdf_render_service._candidate_roots()
+    # Compare Path objects, not strings: this suite also runs on Windows, where
+    # Path("/ms-playwright") stringifies with a backslash.
+    assert pathlib.Path(pdf_render_service.SHARED_BROWSERS_PATH) in roots
+    assert pathlib.Path("/root/.cache/ms-playwright") in roots
+    assert pathlib.Path("/opt/ms-playwright") in roots
+    assert len(roots) == len(set(map(str, roots)))  # no duplicates
+
+
+def test_resolve_adopts_a_browser_another_user_installed(monkeypatch, tmp_path):
+    """The actual fix, not just the diagnosis: a browser outside this user's
+    own cache is found AND pointed at, so rendering works instead of merely
+    being explainable."""
+    other_user_cache = tmp_path / "root-cache"
+    (other_user_cache / "chromium-1234").mkdir(parents=True)
+    mine = tmp_path / "my-empty-cache"
+    mine.mkdir()
+
+    monkeypatch.delenv("PLAYWRIGHT_BROWSERS_PATH", raising=False)
+    monkeypatch.setattr(pdf_render_service, "_candidate_roots", lambda: [mine, other_user_cache])
+
+    found = pdf_render_service._resolve_browsers_path()
+    assert found == other_user_cache
+    # Playwright reads this env var, so setting it is what makes it usable.
+    assert os.environ["PLAYWRIGHT_BROWSERS_PATH"] == str(other_user_cache)
+
+
+def test_resolve_returns_none_when_nothing_is_installed(monkeypatch, tmp_path):
+    monkeypatch.delenv("PLAYWRIGHT_BROWSERS_PATH", raising=False)
+    monkeypatch.setattr(pdf_render_service, "_candidate_roots", lambda: [tmp_path])
+    assert pdf_render_service._resolve_browsers_path() is None
+
+
+def test_probe_lists_where_it_looked(monkeypatch, tmp_path):
+    monkeypatch.delenv("PLAYWRIGHT_BROWSERS_PATH", raising=False)
+    monkeypatch.setattr(pdf_render_service, "_candidate_roots", lambda: [tmp_path / "a", tmp_path / "b"])
+    ok, detail = pdf_render_service.probe()
+    assert ok is False
+    assert "looked in" in detail
+    assert "playwright install chromium" in detail
+
+
+# The Render trap: the browser downloads, then cannot start because the host
+# has no libnss3 etc. Raw, that error names a .so file and no remedy.
+
+def test_missing_system_libraries_explains_the_fix():
+    exc = Exception(
+        "Host system is missing dependencies to run browsers."
+        "\n    libnss3.so: cannot open shared object file"
+    )
+    msg = pdf_render_service._explain_launch_failure(exc)
+    assert "missing its system libraries" in msg
+    assert "playwright install-deps chromium" in msg
+    assert "Docker" in msg
+
+
+def test_shared_library_error_is_recognised_on_its_own():
+    exc = Exception("error while loading shared libraries: libnss3.so: cannot open")
+    msg = pdf_render_service._explain_launch_failure(exc)
+    assert "playwright install-deps chromium" in msg
+
+
+def test_missing_browser_explains_the_other_fix():
+    exc = Exception("Executable doesn't exist at /root/.cache/ms-playwright/chromium-1234/chrome")
+    msg = pdf_render_service._explain_launch_failure(exc)
+    assert "playwright install chromium" in msg
+    assert "PLAYWRIGHT_BROWSERS_PATH" in msg
+
+
+def test_permission_error_explains_the_permission_fix():
+    msg = pdf_render_service._explain_launch_failure(PermissionError("permission denied"))
+    assert "not executable by this user" in msg
+
+
+def test_unknown_launch_failure_still_reports_something_useful():
+    msg = pdf_render_service._explain_launch_failure(Exception("kaboom"))
+    assert "could not start Chromium" in msg
+    assert "kaboom" in msg
+
+
+def test_launch_failures_are_truncated_not_dumped():
+    exc = Exception("x" * 5000)
+    assert len(pdf_render_service._explain_launch_failure(exc)) < 400

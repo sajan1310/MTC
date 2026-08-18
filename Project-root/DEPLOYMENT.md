@@ -484,6 +484,16 @@ render       : ok -- 17,423 bytes
 output       : ok -- server-side vector rendering is working
 ```
 
+### If something is wrong
+
+The startup log names the problem and the fix. The three you are likely to see:
+
+| Log says | Meaning | Fix |
+|---|---|---|
+| `no chromium build found (looked in: ...)` | never installed, or installed somewhere unusual | `sh scripts/install_chromium.sh`, or set `PLAYWRIGHT_BROWSERS_PATH` |
+| `missing its system libraries` | downloaded, cannot start | `playwright install-deps chromium` as root, or deploy via Docker |
+| `not executable by this user` | permissions on the browsers directory | `chmod -R a+rX` on it, or reinstall |
+
 ### Memory
 
 Each worker process holds its own Chromium once it has rendered something

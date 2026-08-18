@@ -19,11 +19,19 @@ RUN pip install --no-cache-dir -r requirements.txt
 # renderer -- the app keeps working, the PDFs just go back to being
 # unsearchable images. See docs/audit/PDF_GENERATION_REVIEW.md PDF-002.
 #
-# --with-deps pulls the shared libraries headless Chromium needs on slim.
-# This is the largest layer in the image by some margin (~400 MB); it is
-# placed after pip and before the app source so it is not rebuilt on every
-# code change.
-RUN playwright install --with-deps chromium \
+# Installed into a fixed path rather than the default per-user cache, and the
+# same value is exported at runtime: Playwright installs into the *installing*
+# user's home, so a build that runs as root and a container that later drops to
+# another user would otherwise leave the browser present but invisible.
+#
+# --with-deps pulls the shared libraries headless Chromium needs on slim. This
+# is the largest layer in the image by some margin (~400 MB); it sits after pip
+# and before the app source so ordinary code changes do not rebuild it.
+ENV PLAYWRIGHT_BROWSERS_PATH=/ms-playwright
+COPY scripts/install_chromium.sh /tmp/install_chromium.sh
+RUN sh /tmp/install_chromium.sh \
+    && rm -f /tmp/install_chromium.sh \
+    && chmod -R a+rX "$PLAYWRIGHT_BROWSERS_PATH" \
     && rm -rf /var/lib/apt/lists/*
 
 COPY . .

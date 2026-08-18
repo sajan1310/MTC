@@ -73,16 +73,69 @@ class PdfRenderUnavailable(RuntimeError):
     """
 
 
-def _browsers_root() -> pathlib.Path:
-    """Where `playwright install` puts browser builds on this platform."""
-    env = os.environ.get("PLAYWRIGHT_BROWSERS_PATH")
-    if env:
-        return pathlib.Path(env)
+# A fixed, user-independent location. The Dockerfile installs here, and
+# _resolve_browsers_path falls back to it, so "installed by one user, served by
+# another" cannot silently disable rendering.
+SHARED_BROWSERS_PATH = "/ms-playwright"
+
+
+def _default_browsers_root() -> pathlib.Path:
+    """Playwright's own per-user default for this platform."""
     if sys.platform == "win32":
         return pathlib.Path(os.environ.get("USERPROFILE", "~")).expanduser() / "AppData/Local/ms-playwright"
     if sys.platform == "darwin":
         return pathlib.Path.home() / "Library/Caches/ms-playwright"
     return pathlib.Path.home() / ".cache/ms-playwright"
+
+
+def _candidate_roots() -> list[pathlib.Path]:
+    """Everywhere a chromium build might plausibly be, best first.
+
+    Playwright installs into the *installing* user's cache. A VPS that runs
+    `playwright install` as root and then serves as www-data therefore ends up
+    with the browser present on disk but invisible to the process that needs
+    it -- the app degrades to client-side rasterisation and says nothing. So
+    rather than trusting one path, look in the obvious places and adopt
+    whichever actually has a browser.
+    """
+    env = os.environ.get("PLAYWRIGHT_BROWSERS_PATH")
+    if env:
+        # Explicit configuration always wins; no guessing over the top of it.
+        return [pathlib.Path(env)]
+
+    roots = [pathlib.Path(SHARED_BROWSERS_PATH), _default_browsers_root()]
+    if sys.platform not in ("win32", "darwin"):
+        # The two halves of the root-installs/service-runs mismatch.
+        roots += [pathlib.Path("/opt/ms-playwright"), pathlib.Path("/root/.cache/ms-playwright")]
+    seen, unique = set(), []
+    for r in roots:
+        if str(r) not in seen:
+            seen.add(str(r))
+            unique.append(r)
+    return unique
+
+
+def _has_chromium(root: pathlib.Path) -> bool:
+    try:
+        return root.is_dir() and any(root.glob("chromium*"))
+    except OSError:
+        return False
+
+
+def _resolve_browsers_path() -> pathlib.Path | None:
+    """Find a root holding a chromium build and point Playwright at it.
+
+    Sets PLAYWRIGHT_BROWSERS_PATH for this process when the browser is
+    somewhere other than Playwright's own default, which is what makes the
+    cross-user case work instead of merely being diagnosable. Must run before
+    Playwright starts.
+    """
+    for root in _candidate_roots():
+        if _has_chromium(root):
+            if os.environ.get("PLAYWRIGHT_BROWSERS_PATH") != str(root):
+                os.environ["PLAYWRIGHT_BROWSERS_PATH"] = str(root)
+            return root
+    return None
 
 
 def probe() -> tuple[bool, str]:
@@ -102,15 +155,53 @@ def probe() -> tuple[bool, str]:
     except ImportError:
         return False, "the 'playwright' package is not installed (pip install -r requirements.txt)"
     try:
-        root = _browsers_root()
-        if not root.exists():
-            return False, f"no browsers installed at {root} -- run: playwright install chromium"
-        builds = sorted(root.glob("chromium*"))
-        if not builds:
-            return False, f"no chromium build under {root} -- run: playwright install chromium"
-        return True, f"chromium available ({builds[-1].name})"
+        root = _resolve_browsers_path()
+        if root is None:
+            looked = ", ".join(str(p) for p in _candidate_roots())
+            return False, (
+                f"no chromium build found (looked in: {looked}) -- "
+                f"run: playwright install chromium"
+            )
+        build = max(root.glob("chromium*")).name
+        return True, f"chromium available ({build} in {root})"
     except Exception as exc:  # pragma: no cover - defensive
         return False, f"could not check for chromium: {exc}"
+
+
+def _explain_launch_failure(exc: Exception) -> str:
+    """Turn Chromium's launch errors into something actionable.
+
+    The one that costs the most time is a browser that downloaded fine but
+    cannot start because the host lacks its shared libraries -- common where
+    `playwright install` ran without `--with-deps`, or where the platform's
+    build step cannot apt-get anything (Render's native Python environment).
+    Raw, that surfaces as `libnss3.so: cannot open shared object file`, which
+    says nothing about the fix.
+    """
+    text = str(exc)
+    low = text.lower()
+
+    if "missing dependencies" in low or "shared librar" in low or ".so:" in low or ".so " in low:
+        return (
+            "Chromium is installed but cannot start -- this host is missing its "
+            "system libraries. Fix with `playwright install-deps chromium` (needs "
+            "root), or deploy the Docker image, which already includes them. "
+            f"Original error: {text.splitlines()[0][:200]}"
+        )
+    if "executable doesn't exist" in low or "please run the following command" in low:
+        return (
+            "Chromium is not installed for this process -- run "
+            "`playwright install chromium` as the user that runs the app, or set "
+            "PLAYWRIGHT_BROWSERS_PATH to a shared location used by both. "
+            f"Original error: {text.splitlines()[0][:200]}"
+        )
+    if "permission denied" in low or isinstance(exc, PermissionError):
+        return (
+            "Chromium is present but not executable by this user -- check the "
+            "permissions on the browsers directory, or reinstall as the serving "
+            f"user. Original error: {text.splitlines()[0][:200]}"
+        )
+    return f"could not start Chromium: {text.splitlines()[0][:200]}"
 
 
 def log_availability(logger) -> bool:
@@ -173,6 +264,10 @@ def _browser():
     except ImportError as exc:  # pragma: no cover - depends on deployment
         raise PdfRenderUnavailable("playwright is not installed") from exc
 
+    # Adopt whichever browser root actually holds a build, before Playwright
+    # reads the environment.
+    _resolve_browsers_path()
+
     try:
         pw = sync_playwright().start()
         # --no-sandbox is required in most containers, where the kernel
@@ -180,7 +275,7 @@ def _browser():
         # only because the page has no network and no JavaScript.
         browser = pw.chromium.launch(args=["--no-sandbox", "--disable-dev-shm-usage"])
     except Exception as exc:
-        raise PdfRenderUnavailable(f"could not start Chromium: {exc}") from exc
+        raise PdfRenderUnavailable(_explain_launch_failure(exc)) from exc
 
     _local.playwright = pw
     _local.browser = browser
