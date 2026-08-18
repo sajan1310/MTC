@@ -537,6 +537,19 @@ def create_app(config_name: str | None = None) -> Flask:
     app.register_blueprint(erp_rpc_bp, url_prefix="/api/erp")
     limiter.exempt(erp_rpc_bp)
 
+    # Say once, at boot, whether this deployment can render PDFs server-side.
+    # Without it the only signal is a 503 the first time somebody exports, and
+    # the client falls back to rasterising without complaint -- so PDFs quietly
+    # revert to being unsearchable images and nobody finds out. The check is
+    # filesystem-only (see probe()); it never starts a browser and never raises.
+    if not app.config.get("TESTING"):
+        try:
+            from .erp.services.pdf_render_service import log_availability
+
+            log_availability(app.logger)
+        except Exception as exc:  # never let a diagnostic stop the app booting
+            app.logger.debug("[PDF] availability check skipped: %s", exc)
+
     def _erp_home_redirect():
         return redirect(url_for("erp.index"))
 

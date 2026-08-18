@@ -43,6 +43,9 @@ the API's threading rules.
 
 from __future__ import annotations
 
+import os
+import pathlib
+import sys
 import threading
 
 from flask import current_app
@@ -68,6 +71,68 @@ class PdfRenderUnavailable(RuntimeError):
     client can fall back to its own renderer permanently for the session,
     rather than retrying per document.
     """
+
+
+def _browsers_root() -> pathlib.Path:
+    """Where `playwright install` puts browser builds on this platform."""
+    env = os.environ.get("PLAYWRIGHT_BROWSERS_PATH")
+    if env:
+        return pathlib.Path(env)
+    if sys.platform == "win32":
+        return pathlib.Path(os.environ.get("USERPROFILE", "~")).expanduser() / "AppData/Local/ms-playwright"
+    if sys.platform == "darwin":
+        return pathlib.Path.home() / "Library/Caches/ms-playwright"
+    return pathlib.Path.home() / ".cache/ms-playwright"
+
+
+def probe() -> tuple[bool, str]:
+    """Is this process able to render? Filesystem-only, so it costs nothing.
+
+    Deliberately does NOT start Playwright: doing that just to read
+    `chromium.executable_path` measured ~5s here, which would be paid by every
+    gunicorn worker at boot. Checking the browser registry directory is enough
+    to tell a deployment that the browser was never installed, which is the
+    failure this exists to catch.
+
+    Returns (ok, human-readable detail). Never raises -- a broken probe must
+    not stop the app booting, since PDF export degrades rather than breaks.
+    """
+    try:
+        import playwright  # noqa: F401
+    except ImportError:
+        return False, "the 'playwright' package is not installed (pip install -r requirements.txt)"
+    try:
+        root = _browsers_root()
+        if not root.exists():
+            return False, f"no browsers installed at {root} -- run: playwright install chromium"
+        builds = sorted(root.glob("chromium*"))
+        if not builds:
+            return False, f"no chromium build under {root} -- run: playwright install chromium"
+        return True, f"chromium available ({builds[-1].name})"
+    except Exception as exc:  # pragma: no cover - defensive
+        return False, f"could not check for chromium: {exc}"
+
+
+def log_availability(logger) -> bool:
+    """Say plainly, once at boot, which PDF path this deployment will use.
+
+    Without this the only signal is a 503 the first time somebody exports,
+    long after deploy -- and the client falls back to its raster renderer
+    without complaining, so the PDFs quietly go back to being unsearchable
+    images and nobody notices.
+    """
+    ok, detail = probe()
+    if ok:
+        logger.info("[PDF] server-side vector rendering enabled -- %s", detail)
+    else:
+        logger.warning(
+            "[PDF] server-side vector rendering DISABLED -- %s. "
+            "/erp/render-pdf will return 503 and clients will fall back to "
+            "client-side rasterisation: PDFs will be images, not searchable "
+            "documents. See docs/audit/PDF_GENERATION_REVIEW.md PDF-002.",
+            detail,
+        )
+    return ok
 
 
 def _document(body_html: str, landscape: bool) -> str:
@@ -193,3 +258,31 @@ def shutdown() -> None:
         except Exception as exc:  # pragma: no cover - teardown is best effort
             log.debug("[PDF] playwright stop failed during shutdown: %s", exc)
         _local.playwright = None
+
+
+if __name__ == "__main__":  # pragma: no cover - operational tool
+    # Deploy smoke check:  python -m app.erp.services.pdf_render_service
+    # Exits non-zero if this box cannot produce a vector PDF, so it can gate a
+    # release step instead of being discovered by the first user to export.
+    import logging as _logging
+
+    _logging.basicConfig(level=_logging.INFO, format="%(message)s")
+    _ok, _detail = probe()
+    print(f"probe        : {'ok' if _ok else 'FAILED'} -- {_detail}")
+    if not _ok:
+        raise SystemExit(1)
+
+    # The probe only checks the browser is on disk; actually render something.
+    try:
+        _pdf = render_pdf("<h1>PDF render smoke check</h1><p>PO-2026-0417</p>")
+    except Exception as _exc:
+        print(f"render       : FAILED -- {_exc}")
+        raise SystemExit(1) from _exc
+    finally:
+        shutdown()
+
+    print(f"render       : ok -- {len(_pdf):,} bytes")
+    if not _pdf.startswith(b"%PDF-"):
+        print("output       : FAILED -- not a PDF")
+        raise SystemExit(1)
+    print("output       : ok -- server-side vector rendering is working")

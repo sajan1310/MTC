@@ -258,3 +258,85 @@ def test_inline_data_uri_images_still_render(erp_client):
     res = erp_client.post("/erp/render-pdf", json={"html": f"<p>logo</p><img src='{png}'>"})
     assert res.status_code == 200
     assert "logo" in _pdf_text(res.data)
+
+
+# ── deployment diagnostics ───────────────────────────────────────────
+#
+# The failure this guards against is silent: without Chromium the endpoint
+# 503s, the client falls back to rasterising without complaint, and the PDFs
+# quietly go back to being unsearchable images. These make it loud at boot.
+
+
+def test_probe_is_filesystem_only_and_fast():
+    """It must not start Playwright -- doing that to read executable_path
+    measured ~5s, which every gunicorn worker would pay at boot."""
+    import time
+
+    start = time.monotonic()
+    ok, detail = pdf_render_service.probe()
+    assert isinstance(ok, bool)
+    assert isinstance(detail, str) and detail
+    assert time.monotonic() - start < 1.0
+
+
+def test_probe_reports_missing_browsers_with_the_fix(monkeypatch, tmp_path):
+    monkeypatch.setenv("PLAYWRIGHT_BROWSERS_PATH", str(tmp_path / "nope"))
+    ok, detail = pdf_render_service.probe()
+    assert ok is False
+    assert "playwright install chromium" in detail
+
+
+def test_probe_reports_an_empty_browsers_directory(monkeypatch, tmp_path):
+    monkeypatch.setenv("PLAYWRIGHT_BROWSERS_PATH", str(tmp_path))
+    ok, detail = pdf_render_service.probe()
+    assert ok is False
+    assert "playwright install chromium" in detail
+
+
+def test_probe_accepts_an_installed_chromium(monkeypatch, tmp_path):
+    (tmp_path / "chromium-1234").mkdir()
+    monkeypatch.setenv("PLAYWRIGHT_BROWSERS_PATH", str(tmp_path))
+    ok, detail = pdf_render_service.probe()
+    assert ok is True
+    assert "chromium-1234" in detail
+
+
+def test_probe_never_raises(monkeypatch):
+    monkeypatch.setattr(pdf_render_service, "_browsers_root", lambda: (_ for _ in ()).throw(OSError("boom")))
+    ok, detail = pdf_render_service.probe()
+    assert ok is False
+    assert "could not check" in detail
+
+
+class _Log:
+    def __init__(self):
+        self.info_msgs = []
+        self.warn_msgs = []
+
+    def info(self, msg, *a):
+        self.info_msgs.append(msg % a if a else msg)
+
+    def warning(self, msg, *a):
+        self.warn_msgs.append(msg % a if a else msg)
+
+
+def test_log_availability_warns_loudly_when_disabled(monkeypatch, tmp_path):
+    monkeypatch.setenv("PLAYWRIGHT_BROWSERS_PATH", str(tmp_path / "nope"))
+    log = _Log()
+    assert pdf_render_service.log_availability(log) is False
+    assert log.info_msgs == []
+    assert len(log.warn_msgs) == 1
+    warning = log.warn_msgs[0]
+    # Must name the consequence, not just the condition.
+    assert "playwright install chromium" in warning
+    assert "503" in warning
+    assert "searchable" in warning
+
+
+def test_log_availability_confirms_when_enabled(monkeypatch, tmp_path):
+    (tmp_path / "chromium-1234").mkdir()
+    monkeypatch.setenv("PLAYWRIGHT_BROWSERS_PATH", str(tmp_path))
+    log = _Log()
+    assert pdf_render_service.log_availability(log) is True
+    assert log.warn_msgs == []
+    assert len(log.info_msgs) == 1

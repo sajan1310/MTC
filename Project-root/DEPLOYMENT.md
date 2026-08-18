@@ -14,10 +14,11 @@ Complete guide for deploying the Inventory Management System to production.
    - [Render](#render-deployment)
    - [Heroku](#heroku-deployment)
    - [AWS/DigitalOcean/VPS](#vps-deployment)
-5. [Post-Deployment](#post-deployment)
-6. [Monitoring & Maintenance](#monitoring--maintenance)
-7. [Troubleshooting](#troubleshooting)
-8. [Additional Deployment Guides](#additional-deployment-guides)
+5. [PDF Rendering (Chromium)](#pdf-rendering-chromium)
+6. [Post-Deployment](#post-deployment)
+7. [Monitoring & Maintenance](#monitoring--maintenance)
+8. [Troubleshooting](#troubleshooting)
+9. [Additional Deployment Guides](#additional-deployment-guides)
 
 ---
 
@@ -170,6 +171,11 @@ railway up
 - Install dependencies from `requirements.txt`
 - Run `gunicorn wsgi:app`
 
+> **PDF rendering:** `pip install` does not download the Chromium build the
+> server-side PDF renderer needs. See [PDF Rendering (Chromium)](#pdf-rendering-chromium)
+> — without it, exported PDFs fall back to being images rather than searchable
+> documents.
+
 #### Step 6: Configure Domain
 
 1. Go to Railway dashboard → Settings
@@ -190,8 +196,12 @@ railway up
 3. Configure:
    - **Name**: inventory-management
    - **Environment**: Python 3
-   - **Build Command**: `pip install -r requirements.txt`
+   - **Build Command**: `pip install -r requirements.txt && playwright install --with-deps chromium`
    - **Start Command**: `gunicorn wsgi:app`
+
+   The `playwright install` half is what enables server-side PDF rendering; see
+   [PDF Rendering (Chromium)](#pdf-rendering-chromium). Without it the app still
+   works, but exported PDFs are images rather than searchable documents.
 
 #### Step 2: Add PostgreSQL
 
@@ -383,6 +393,104 @@ sudo systemctl restart nginx
 ```bash
 sudo certbot --nginx -d yourdomain.com
 ```
+
+---
+
+---
+
+## PDF Rendering (Chromium)
+
+Purchase orders, goods receipts and delivery challans are rendered to PDF
+**server-side** by headless Chromium, which is what makes them real documents:
+searchable, copyable, and a fraction of the size. Skipping this step does not
+break anything — the app falls back to rendering in the browser — but the
+fallback embeds each page as a JPEG, so a PO can no longer be searched for its
+own PO number. See `docs/audit/PDF_GENERATION_REVIEW.md` PDF-002.
+
+`pip install` brings in the Playwright **library**; it never downloads the
+browser. That is a separate step, and it is the one that gets missed.
+
+### What "missed" looks like
+
+The app boots and works. On the first export you get, in the logs:
+
+```
+WARNING [PDF] server-side vector rendering DISABLED -- no chromium build under
+/root/.cache/ms-playwright -- run: playwright install chromium. /erp/render-pdf
+will return 503 and clients will fall back to client-side rasterisation ...
+```
+
+That warning is emitted **once at startup**, not only when somebody exports, so
+it shows up in the deploy log rather than a week later.
+
+### Docker / docker-compose
+
+Already handled — the `Dockerfile` runs:
+
+```dockerfile
+RUN playwright install --with-deps chromium
+```
+
+This is the largest layer in the image (~400 MB). It sits after `pip install`
+and before `COPY . .`, so ordinary code changes do not rebuild it.
+
+### Railway
+
+Railway uses the `Dockerfile` when one is present, which is the recommended
+path here and needs no extra configuration. If you have forced Nixpacks/Procfile
+detection instead, add a build step:
+
+```bash
+railway variables set NIXPACKS_BUILD_CMD="pip install -r requirements.txt && playwright install --with-deps chromium"
+```
+
+### Render
+
+The default Build Command does not install the browser. Change it to:
+
+```
+pip install -r requirements.txt && playwright install --with-deps chromium
+```
+
+On Render's native Python environment `--with-deps` may not be able to apt-get
+the shared libraries Chromium needs. If the build fails on that, deploy via
+Docker instead (Render supports a Dockerfile-based service), which is the more
+reliable route.
+
+### Heroku / VPS
+
+```bash
+pip install -r requirements.txt
+playwright install --with-deps chromium
+```
+
+On a VPS run it as the same user that runs gunicorn — browsers install into
+that user's cache (`~/.cache/ms-playwright`), so installing as `root` and
+serving as `www-data` silently leaves the renderer unavailable. Set
+`PLAYWRIGHT_BROWSERS_PATH` to a shared location if the two differ.
+
+### Verifying it
+
+Run the smoke check on the deployed box. It probes for the browser, renders a
+real document, and exits non-zero on failure, so it can gate a release step:
+
+```bash
+python -m app.erp.services.pdf_render_service
+```
+
+```
+probe        : ok -- chromium available (chromium-1234)
+render       : ok -- 17,423 bytes
+output       : ok -- server-side vector rendering is working
+```
+
+### Memory
+
+Each worker process holds its own Chromium once it has rendered something
+(Playwright's sync API binds objects to their creating thread, so a single
+shared browser is not possible). With gunicorn's default `--workers 4`, budget
+for up to four. On a small instance either lower `WEB_CONCURRENCY` or accept
+the client-side fallback by simply not installing the browser.
 
 ---
 
