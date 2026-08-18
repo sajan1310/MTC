@@ -153,16 +153,80 @@ App.Print = {
   // differ only past that point -- and a browser handed the same name twice
   // either silently overwrites or appends its own "(1)", so a 5-record export
   // can quietly deliver fewer than 5 distinct documents.
-  async downloadSeparatePDFs(records, buildPageHtml, filenameForRecord, pdfOverrides = {}) {
+  //
+  // options: { pdfOverrides, progressButtonId }. Pass the id of the button that
+  // triggered the export and it doubles as the progress indicator -- disabled
+  // and relabelled "Exporting 3 of 12…", restored afterwards. That reuses the
+  // element the user is already looking at rather than adding markup, and it
+  // keeps progress out of showToast, which also feeds the notification centre
+  // (App.Notify) and would leave one entry per record behind.
+  //
+  // Returns the number of PDFs GENERATED, which is not necessarily the number
+  // delivered: html2pdf's .save() resolves once it hands the blob to the
+  // browser and cannot observe what happened next. Chrome and Edge prompt once
+  // per origin for "automatic downloads" after the first file, and if that is
+  // denied the rest are dropped with no signal available here. See
+  // reportBulkResult for how that is worded, and PDF-005 for the delivery-
+  // confirming alternatives (folder picker / single ZIP) still on the table.
+  async downloadSeparatePDFs(records, buildPageHtml, filenameForRecord, options = {}) {
+    const { pdfOverrides = {}, progressButtonId = null } = options;
     const used = new Set();
-    let successCount = 0;
-    for (const record of records) {
-      this.renderBulkPages([record], buildPageHtml);
-      const filename = this.uniqueFilename(filenameForRecord(record), used);
-      const ok = await this.downloadElementAsPDF('print-bulk-container', filename, pdfOverrides);
-      if (ok) successCount++;
+    const total = records.length;
+
+    const btn = progressButtonId ? document.getElementById(progressButtonId) : null;
+    const btnHtml = btn ? btn.innerHTML : null;
+    const btnDisabled = btn ? btn.disabled : false;
+
+    let generated = 0;
+    try {
+      if (btn) btn.disabled = true;
+      for (let i = 0; i < total; i++) {
+        if (btn) {
+          btn.innerHTML =
+            '<span class="spinner-border spinner-border-sm me-1" aria-hidden="true"></span>' +
+            `Exporting ${i + 1} of ${total}…`;
+          // Yield so that label actually paints. Each record's html2canvas pass
+          // occupies the main thread for a noticeable stretch, and without a
+          // turn of the event loop between iterations the button would jump
+          // straight from its original text to "done" with nothing in between.
+          // This is NOT a workaround for the download prompt above -- a delay
+          // does not grant user activation.
+          await new Promise(r => setTimeout(r, this.BULK_EXPORT_YIELD_MS));
+        }
+        this.renderBulkPages([records[i]], buildPageHtml);
+        const filename = this.uniqueFilename(filenameForRecord(records[i]), used);
+        const ok = await this.downloadElementAsPDF('print-bulk-container', filename, pdfOverrides);
+        if (ok) generated++;
+      }
+    } finally {
+      if (btn) {
+        btn.innerHTML = btnHtml;
+        btn.disabled = btnDisabled;
+      }
     }
-    return successCount;
+    return generated;
+  },
+
+  // Long enough for the relabelled button to paint, short enough to be
+  // invisible next to a rasterisation pass that costs far more than this.
+  BULK_EXPORT_YIELD_MS: 120,
+
+  // Shared completion message for every bulk export, so all eight callers word
+  // partial failure the same way instead of each claiming total success.
+  // "generated" rather than "exported" or "downloaded" is deliberate: it is the
+  // strongest claim this code can actually support (see downloadSeparatePDFs).
+  reportBulkResult(generated, total, noun) {
+    const plural = n => `${noun}${n === 1 ? '' : 's'}`;
+    if (!generated) {
+      App.Utils.showToast(`Could not generate any ${plural(total)}.`, true);
+    } else if (generated < total) {
+      App.Utils.showToast(
+        `Generated ${generated} of ${total} ${plural(total)} — ${total - generated} failed.`,
+        true
+      );
+    } else {
+      App.Utils.showToast(`${generated} ${plural(generated)} generated.`, false);
+    }
   },
 
   // Returns `filename` unchanged the first time it is seen, then _2, _3, ...

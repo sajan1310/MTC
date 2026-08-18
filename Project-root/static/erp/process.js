@@ -704,9 +704,10 @@ App.Process = {
       const count = await App.Print.downloadSeparatePDFs(
         withComponents,
         p => this.buildProcessPrintPageHtml(p),
-        p => `Process_Sheet_${App.Print.sanitizeFilename(String(p.processId || 'Process'))}_${App.Print.sanitizeFilename(String(p.processName || ''), false)}.pdf`
+        p => `Process_Sheet_${App.Print.sanitizeFilename(String(p.processId || 'Process'))}_${App.Print.sanitizeFilename(String(p.processName || ''), false)}.pdf`,
+        { progressButtonId: 'btnBulkDownloadPdfProcesses' }
       );
-      if (count) App.Utils.showToast(`${count} process sheet(s) exported to PDF!`, false);
+      App.Print.reportBulkResult(count, withComponents.length, 'process sheet PDF');
     } catch (err) {
       App.Utils.showToast(err.message || 'Failed to prepare processes for export', true);
     }

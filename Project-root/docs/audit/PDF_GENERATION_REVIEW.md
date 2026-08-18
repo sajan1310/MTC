@@ -23,7 +23,7 @@ this document is scoped to document *output*.
 | PDF-003 | `html2pdf.js` pinned 4.5 years stale; 12 CDN deps carry no SRI | Medium | P1 | ◑ Partly fixed |
 | PDF-004 | `po.js` duplicates `downloadElementAsPDF` in 116 lines, drifted both ways | Medium | P1 | ✅ Fixed |
 | PDF-005 | Bulk separate-PDF export can silently under-deliver and over-report | Medium | P1 | ◑ Partly fixed |
-| PDF-006 | `print.js` has zero test coverage across 10+ call sites | High (process) | P1 | ◑ Started |
+| PDF-006 | `print.js` has zero test coverage across 10+ call sites | High (process) | P1 | ◑ In progress |
 | PDF-007 | `MApp.Print` duplicates `App.Print.trigger`; desktop's container list is manual | Low | P3 | Open |
 | PDF-008 | A vector renderer is already installed, undeclared in `requirements.txt` | Info | — | Open |
 
@@ -332,6 +332,7 @@ Gurmukhi, which before the `'Document'` fallback was restored produced
 
 ## PDF-005 · Bulk separate-PDF export can silently under-deliver and over-report
 **Location** `static/erp/print.js:138-147` · **Severity** Medium · **Priority** P1
+· **Status** ◑ **Mostly fixed** — progress, honest wording and filename collisions done; delivery confirmation and cancellation open
 
 `downloadSeparatePDFs()` (added when bulk export was changed from one merged file
 to one file per record, now used by all 8 bulk callers) has three honest
@@ -377,12 +378,59 @@ that differ only past the 50-character cap.
 Covered by `static/erp/tests/print_filenames.test.js` (14 cases), including the
 Gurmukhi/Devanagari fallback and the three-records-one-name case.
 
-**Still open** — items 1–3 above: interleave a short delay between saves; show a
-determinate progress indicator (`Exporting 7 of 23…`); word the completion toast
-as *generated* rather than *downloaded*, or verify delivery where the platform
-allows. Above ~5 records prefer a single ZIP — one download, one user gesture, no
-prompt, and it sidesteps 1 and 2 entirely. That was declined initially to avoid a
-zip dependency; it remains the more robust shape for large selections.
+### Resolution (items 2, 3 and 4)
+
+**Progress (item 3).** `downloadSeparatePDFs` takes a `progressButtonId`; the
+button that triggered the export is disabled and relabelled
+*"Exporting 3 of 12…"* with a spinner, then restored — including when an export
+throws. Reusing that button avoids new markup and, more importantly, keeps
+progress out of `showToast`, which also feeds `App.Notify` and would otherwise
+leave one notification per record behind. A short yield (`BULK_EXPORT_YIELD_MS`)
+between records lets the label actually paint; without it the main thread is
+occupied by `html2canvas` and the button jumps straight from its original text to
+done. That yield is **not** a workaround for item 1 — a delay does not grant user
+activation.
+
+**Honest wording (item 2).** All eight callers now end at a shared
+`reportBulkResult(generated, total, noun)` rather than eight copies of a
+success-only toast. It says **"generated"**, which is the strongest claim this
+code can support, and it reports partial failure as an error naming both numbers
+(*"Generated 2 of 5 item ledger PDFs — 3 failed."*) instead of quietly claiming
+success. Previously every caller did `if (count) showToast(...)` — a batch where
+4 of 5 failed announced the 1 success and said nothing about the 4.
+
+**Item 4** was fixed in the preceding commit.
+
+Covered by `static/erp/tests/print_bulk_export.test.js` (13 cases: label
+sequence, disable/restore, restore-on-throw, already-disabled buttons, missing
+and absent button ids, `pdfOverrides` forwarding, and all four wordings).
+
+**Verified end to end** in a real browser with downloads landing on disk: four
+records produced four distinct valid PDFs, progress ran
+`Exporting 1..4 of 4`, the button was restored to `Download PDFs (4)` and
+re-enabled, the toast read *"4 purchase order PDFs generated."*, no console
+errors.
+
+### Still open
+
+- **Item 1 — delivery is still unconfirmable.** `.save()` cannot observe whether
+  a file landed, so "generated" remains an honest ceiling rather than a fix.
+  Closing it properly needs a delivery model that reports back. Two candidates:
+  - **`showDirectoryPicker()`** — one gesture, one folder, files written with
+    confirmed success and exact names, no multi-download prompt. Chromium-only,
+    and it must be called *while user activation is live*, which means moving the
+    call to the top of each click handler: `items.js`, `process.js` and
+    `vendors.js` all `await` data loading before exporting, and activation is
+    gone by then. That is an 8-call-site restructure, not a drop-in.
+  - **A single ZIP** — one download, one gesture, no prompt. Note this was
+    offered at the outset and **deliberately declined** in favour of one file per
+    download, so it should not be adopted without revisiting that decision.
+- **No cancellation.** A 40-record export still cannot be stopped once started.
+  The progress button is the natural place to put it (relabel to "Cancel"), now
+  that it is already wired.
+- `stock.js`'s three consolidated-report toasts still say *"exported to PDF"*.
+  They are single-file exports on a different path, where the overstatement is
+  much smaller, and were left alone as out of scope for this finding.
 
 ---
 
@@ -415,11 +463,17 @@ name per record, and a count that reflects failures.
 
 ### Progress
 
-`static/erp/tests/print_filenames.test.js` is the first test to touch
-`print.js` — 14 cases over `sanitizeFilename`, `uniqueFilename` and
-`downloadSeparatePDFs`'s naming loop, including the count-only-successes
-behaviour. It loads the real `print.js` in a `vm` context with a minimal `App`
-stub, which is a workable pattern for the rest.
+`print.js` now has **27 cases** across two files, where it had none:
+
+- `print_filenames.test.js` — 14 cases over `sanitizeFilename` and
+  `uniqueFilename` (the naming layer).
+- `print_bulk_export.test.js` — 13 cases over `downloadSeparatePDFs`'s loop and
+  `reportBulkResult`, including **restore-on-throw**, which is the same
+  `finally`-path class of bug listed above.
+
+Both load the real `print.js` in a `vm` context; the second passes the real
+jsdom `document` in, so button relabelling is exercised rather than mocked. That
+is the pattern the remaining cases should follow.
 
 **Still open:** the `downloadElementAsPDF` DOM-restore invariants listed above —
 the `finally` path in particular. Those are the ones that leave the app visibly
@@ -544,13 +598,14 @@ CSS colour function or a Bootstrap upgrade (see PDF-003), not before.
    the hardcoded `749px`/`[6,6,6,6]` geometry now derives from `PAGE_MARGIN_MM`.
    Testing the claimed pagination symptom disproved it — see the correction in
    PDF-004.
-3. **Make bulk export honest** (PDF-005) — ◑ the filename-collision half is
-   done (`uniqueFilename`, plus the restored `'Document'` fallback). Still to do:
-   progress indicator, delivery-accurate wording, inter-download delay; ZIP
-   above ~5 records.
-4. **Pin `print.js` with jsdom tests** (PDF-006) — ◑ started: 14 cases now cover
-   the filename layer. Still to do: the `downloadElementAsPDF` DOM-restore
-   invariants, especially the `finally` path. Do this *before* step 5, so the
+3. ~~**Make bulk export honest** (PDF-005)~~ ◑ **Mostly done.** Filename
+   collisions, a determinate progress indicator on the triggering button, and a
+   shared `reportBulkResult` that never claims total success on partial work.
+   Still open: delivery confirmation (needs a folder picker or ZIP — the latter
+   was deliberately declined earlier) and cancellation.
+4. **Pin `print.js` with jsdom tests** (PDF-006) — ◑ 27 cases now cover the
+   naming layer and the bulk-export loop. Still to do: the
+   `downloadElementAsPDF` DOM-restore invariants. Do this *before* step 5, so the
    renderer swap has a safety net. Also add SRI to the remaining CDN assets.
 5. **Move the document paths to vector** (Option B) — PO, Goods Receipt,
    Delivery Challan, Work Order, where searchable archives have real business

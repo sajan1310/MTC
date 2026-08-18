@@ -518,9 +518,10 @@ App.Dispatch = {
     const count = await App.Print.downloadSeparatePDFs(
       bills,
       b => this.buildDispatchPrintPageHtml(b),
-      b => `Delivery_Challan_${App.Print.sanitizeFilename(String(b.dispatchNumber || 'Challan'))}_${App.Print.sanitizeFilename(String(b.clientName || ''), false)}.pdf`
+      b => `Delivery_Challan_${App.Print.sanitizeFilename(String(b.dispatchNumber || 'Challan'))}_${App.Print.sanitizeFilename(String(b.clientName || ''), false)}.pdf`,
+      { progressButtonId: 'btnBulkDownloadPdfDispatch' }
     );
-    if (count) App.Utils.showToast(`${count} delivery challan(s) exported to PDF!`, false);
+    App.Print.reportBulkResult(count, bills.length, 'delivery challan PDF');
   },
 
   // Builds a fully self-contained "Delivery Challan" page (mirrors

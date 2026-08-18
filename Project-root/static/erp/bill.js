@@ -349,9 +349,10 @@ App.Bill = {
     const count = await App.Print.downloadSeparatePDFs(
       bills,
       bill => this.buildBillPrintPageHtml(bill),
-      bill => `Bill_${App.Print.sanitizeFilename(String(bill.billNumber || 'Bill'))}_${App.Print.sanitizeFilename(String(bill.vendor || ''), false)}.pdf`
+      bill => `Bill_${App.Print.sanitizeFilename(String(bill.billNumber || 'Bill'))}_${App.Print.sanitizeFilename(String(bill.vendor || ''), false)}.pdf`,
+      { progressButtonId: 'btnBulkDownloadPdfBills' }
     );
-    if (count) App.Utils.showToast(`${count} bill(s) exported to PDF!`, false);
+    App.Print.reportBulkResult(count, bills.length, 'goods receipt PDF');
   },
 
   // ── Print (dead code until App.Print exists) ────────────────────────

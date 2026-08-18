@@ -465,9 +465,10 @@ App.BOM = {
     const count = await App.Print.downloadSeparatePDFs(
       boms,
       bom => this.buildBOMPrintPageHtml(bom),
-      bom => `BOM_Cost_Sheet_${App.Print.sanitizeFilename(String(bom.productId || 'BOM'))}_${App.Print.sanitizeFilename(String(bom.productName || ''), false)}.pdf`
+      bom => `BOM_Cost_Sheet_${App.Print.sanitizeFilename(String(bom.productId || 'BOM'))}_${App.Print.sanitizeFilename(String(bom.productName || ''), false)}.pdf`,
+      { progressButtonId: 'btnBulkDownloadPdfBOMs' }
     );
-    if (count) App.Utils.showToast(`${count} BOM cost sheet(s) exported to PDF!`, false);
+    App.Print.reportBulkResult(count, boms.length, 'BOM cost sheet PDF');
   },
 
   // Builds a fully self-contained "BOM Cost Sheet / Recipe Card" page

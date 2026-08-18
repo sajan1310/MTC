@@ -236,9 +236,10 @@ App.PO = {
     const count = await App.Print.downloadSeparatePDFs(
       pos,
       po => this.buildPOPrintPageHtml(po, includeRates, includeTotal),
-      po => `PO_${App.Print.sanitizeFilename(String(po.poNumber || 'PO'))}_${App.Print.sanitizeFilename(String(po.vendor || 'Vendor'), false)}.pdf`
+      po => `PO_${App.Print.sanitizeFilename(String(po.poNumber || 'PO'))}_${App.Print.sanitizeFilename(String(po.vendor || 'Vendor'), false)}.pdf`,
+      { progressButtonId: 'btnBulkDownloadPdfPOs' }
     );
-    if (count) App.Utils.showToast(`${count} purchase order(s) exported to PDF!`, false);
+    App.Print.reportBulkResult(count, pos.length, 'purchase order PDF');
   },
 
   filterData(searchTerm) {

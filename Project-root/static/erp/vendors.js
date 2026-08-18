@@ -210,9 +210,10 @@ App.Vendor = {
     const count = await App.Print.downloadSeparatePDFs(
       vendors,
       vendor => this.buildVendorLedgerPrintPageHtml(vendor),
-      vendor => `Vendor_Ledger_${App.Print.sanitizeFilename(String(vendor.name || 'Vendor'), false)}.pdf`
+      vendor => `Vendor_Ledger_${App.Print.sanitizeFilename(String(vendor.name || 'Vendor'), false)}.pdf`,
+      { progressButtonId: 'btnBulkDownloadPdfVendors' }
     );
-    if (count) App.Utils.showToast(`${count} vendor ledger(s) exported to PDF!`, false);
+    App.Print.reportBulkResult(count, vendors.length, 'vendor ledger PDF');
   },
 
   switchTab(tabId) {

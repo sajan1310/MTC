@@ -200,9 +200,10 @@ App.Issue = {
     const count = await App.Print.downloadSeparatePDFs(
       issues,
       iss => this.buildIssuePrintPageHtml(iss),
-      iss => `Stock_Issue_Receipt_${App.Print.sanitizeFilename(String(iss.issueId || 'Issue'))}.pdf`
+      iss => `Stock_Issue_Receipt_${App.Print.sanitizeFilename(String(iss.issueId || 'Issue'))}.pdf`,
+      { progressButtonId: 'btnBulkDownloadPdfIssue' }
     );
-    if (count) App.Utils.showToast(`${count} issue receipt(s) exported to PDF!`, false);
+    App.Print.reportBulkResult(count, issues.length, 'issue receipt PDF');
   },
 
   // Single-record print for the per-row "Print" button -- reuses the

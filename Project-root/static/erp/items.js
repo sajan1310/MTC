@@ -1102,9 +1102,10 @@ App.Item = {
     const count = await App.Print.downloadSeparatePDFs(
       names,
       name => this.buildItemLedgerPrintPageHtml(name),
-      name => `Item_Ledger_${App.Print.sanitizeFilename(String(name || 'Item'), false)}.pdf`
+      name => `Item_Ledger_${App.Print.sanitizeFilename(String(name || 'Item'), false)}.pdf`,
+      { progressButtonId: 'btnBulkDownloadPdfItems' }
     );
-    if (count) App.Utils.showToast(`${count} item ledger(s) exported to PDF!`, false);
+    App.Print.reportBulkResult(count, names.length, 'item ledger PDF');
   },
 
   openCreateModal() {
