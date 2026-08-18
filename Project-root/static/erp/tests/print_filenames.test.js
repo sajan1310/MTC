@@ -7,7 +7,7 @@
 //   - sanitizeFilename's 'Document' fallback: the character class strips
 //     everything outside [a-zA-Z0-9_-], so a vendor or item named wholly in
 //     Gurmukhi/Devanagari sanitizes to '' and yields "Item_Ledger_.pdf".
-//   - de-duplication in downloadSeparatePDFs: once several records share a
+//   - de-duplication in deliverSeparatePDFs: once several records share a
 //     name (which the fallback guarantees), the browser overwrites or appends
 //     its own "(1)", so the export silently delivers fewer files than records.
 
@@ -104,7 +104,7 @@ describe('App.Print.uniqueFilename', () => {
   });
 });
 
-describe('downloadSeparatePDFs filename de-duplication', () => {
+describe('deliverSeparatePDFs filename de-duplication', () => {
   // Drives the real method with downloadElementAsPDF and renderBulkPages
   // stubbed, so it exercises the loop's naming rather than html2pdf.
   function run(records, filenameFor) {
@@ -116,8 +116,8 @@ describe('downloadSeparatePDFs filename de-duplication', () => {
       return Promise.resolve(true);
     };
     return stub
-      .downloadSeparatePDFs(records, () => '', filenameFor)
-      .then(count => ({ count, seen }));
+      .deliverSeparatePDFs(records, () => '', filenameFor)
+      .then(r => ({ count: r.generated, seen }));
   }
 
   it('gives three non-Latin-named items three distinct files', async () => {
@@ -148,7 +148,7 @@ describe('downloadSeparatePDFs filename de-duplication', () => {
     stub.renderBulkPages = () => {};
     let n = 0;
     stub.downloadElementAsPDF = () => Promise.resolve(++n !== 2);
-    const count = await stub.downloadSeparatePDFs([1, 2, 3], () => '', () => 'a.pdf');
-    expect(count).toBe(2);
+    const r = await stub.deliverSeparatePDFs([1, 2, 3], () => '', () => 'a.pdf');
+    expect(r.generated).toBe(2);
   });
 });

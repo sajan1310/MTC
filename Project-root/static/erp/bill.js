@@ -346,13 +346,17 @@ App.Bill = {
     const bills = App.State.globalBills.filter(bill => App.Selection.isSelected(selected, this.billKey(bill)));
     if (!bills.length) return;
 
-    const count = await App.Print.downloadSeparatePDFs(
+    const destination = await App.Print.chooseBulkDestination(bills.length);
+    if (destination.mode === 'cancelled') return;
+
+    const result = await App.Print.deliverSeparatePDFs(
       bills,
       bill => this.buildBillPrintPageHtml(bill),
       bill => `Bill_${App.Print.sanitizeFilename(String(bill.billNumber || 'Bill'))}_${App.Print.sanitizeFilename(String(bill.vendor || ''), false)}.pdf`,
-      { progressButtonId: 'btnBulkDownloadPdfBills' }
+      { progressButtonId: 'btnBulkDownloadPdfBills', destination,
+        zipName: App.Print.bulkZipName('Goods_Receipts') }
     );
-    App.Print.reportBulkResult(count, bills.length, 'goods receipt PDF');
+    App.Print.reportBulkResult(result, bills.length, 'goods receipt PDF');
   },
 
   // ── Print (dead code until App.Print exists) ────────────────────────

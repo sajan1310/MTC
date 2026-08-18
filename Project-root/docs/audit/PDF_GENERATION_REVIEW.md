@@ -22,7 +22,7 @@ this document is scoped to document *output*.
 | PDF-002 | Output is a flat JPEG: 0 characters of searchable text, 7.5× the bytes | High | P0 | Open — decision |
 | PDF-003 | `html2pdf.js` pinned 4.5 years stale; 12 CDN deps carry no SRI | Medium | P1 | ◑ Partly fixed |
 | PDF-004 | `po.js` duplicates `downloadElementAsPDF` in 116 lines, drifted both ways | Medium | P1 | ✅ Fixed |
-| PDF-005 | Bulk separate-PDF export can silently under-deliver and over-report | Medium | P1 | ◑ Partly fixed |
+| PDF-005 | Bulk separate-PDF export can silently under-deliver and over-report | Medium | P1 | ✅ Fixed |
 | PDF-006 | `print.js` has zero test coverage across 10+ call sites | High (process) | P1 | ◑ In progress |
 | PDF-007 | `MApp.Print` duplicates `App.Print.trigger`; desktop's container list is manual | Low | P3 | Open |
 | PDF-008 | A vector renderer is already installed, undeclared in `requirements.txt` | Info | — | Open |
@@ -332,7 +332,7 @@ Gurmukhi, which before the `'Document'` fallback was restored produced
 
 ## PDF-005 · Bulk separate-PDF export can silently under-deliver and over-report
 **Location** `static/erp/print.js:138-147` · **Severity** Medium · **Priority** P1
-· **Status** ◑ **Mostly fixed** — progress, honest wording and filename collisions done; delivery confirmation and cancellation open
+· **Status** ✅ **Fixed** — all four problems closed; cancellation remains as a separate enhancement
 
 `downloadSeparatePDFs()` (added when bulk export was changed from one merged file
 to one file per record, now used by all 8 bulk callers) has three honest
@@ -411,20 +411,52 @@ records produced four distinct valid PDFs, progress ran
 re-enabled, the toast read *"4 purchase order PDFs generated."*, no console
 errors.
 
+### Resolution (item 1 — delivery)
+
+Both candidates were built, and a bulk export now picks the best one available
+(`chooseBulkDestination`):
+
+| Mode | When | Delivery | Confirmable |
+|---|---|---|---|
+| **folder** | `showDirectoryPicker` exists (Chromium) | separate files, exact names, one permission prompt | **yes** — each write resolves or throws |
+| **zip** | no picker, and more than `ZIP_THRESHOLD` (5) records | one download containing separate PDFs | one download, so no multi-download prompt |
+| **files** | otherwise, and always for a single record | one download per PDF | no — the original ceiling |
+
+**Activation.** `showDirectoryPicker()` needs live user activation, which does
+not survive an earlier `await`. All eight callers were restructured to choose the
+destination as their **first** await — `items.js`, `process.js` and `vendors.js`
+previously loaded data first, which would have spent the activation and made the
+picker throw. Dismissing the picker cancels the export rather than falling back
+to a noisier mode.
+
+**ZIP.** Written here rather than vendored (~90 lines, store-only). Every entry
+is STOREd, not deflated, which costs almost nothing: a PDF's streams are already
+deflate-compressed. No ZIP64 — that would only matter past 4 GB or 65,535
+entries. Note this reverses the delivery decision taken at the outset (one file
+per download over a ZIP); it was reinstated on request, and the folder mode means
+Chromium users still get separate files.
+
+**Wording follows the mode**, since only one of them can prove delivery:
+*"4 purchase order PDFs saved to the selected folder."* / *"… packaged into
+Purchase_Orders_180826.zip."* / *"… generated."*
+
+**Verified end to end** in a real browser:
+
+```
+ZIP    : one download, opened with Python's zipfile
+         testzip (CRC check): all entries OK
+         4 entries, every one a valid 1-page PDF
+FOLDER : 4 writes confirmed through a real FileSystemDirectoryHandle shape,
+         zero downloads triggered
+```
+
+The ZIP check matters most: `testzip()` validates every entry's CRC using an
+independent implementation, so a malformed archive from a hand-written writer
+cannot pass. 15 more unit tests assert the byte structure directly (signatures,
+CRC against `zlib.crc32`, sizes, central-directory offsets, the UTF-8 name flag).
+
 ### Still open
 
-- **Item 1 — delivery is still unconfirmable.** `.save()` cannot observe whether
-  a file landed, so "generated" remains an honest ceiling rather than a fix.
-  Closing it properly needs a delivery model that reports back. Two candidates:
-  - **`showDirectoryPicker()`** — one gesture, one folder, files written with
-    confirmed success and exact names, no multi-download prompt. Chromium-only,
-    and it must be called *while user activation is live*, which means moving the
-    call to the top of each click handler: `items.js`, `process.js` and
-    `vendors.js` all `await` data loading before exporting, and activation is
-    gone by then. That is an 8-call-site restructure, not a drop-in.
-  - **A single ZIP** — one download, one gesture, no prompt. Note this was
-    offered at the outset and **deliberately declined** in favour of one file per
-    download, so it should not be adopted without revisiting that decision.
 - **No cancellation.** A 40-record export still cannot be stopped once started.
   The progress button is the natural place to put it (relabel to "Cancel"), now
   that it is already wired.
@@ -598,11 +630,11 @@ CSS colour function or a Bootstrap upgrade (see PDF-003), not before.
    the hardcoded `749px`/`[6,6,6,6]` geometry now derives from `PAGE_MARGIN_MM`.
    Testing the claimed pagination symptom disproved it — see the correction in
    PDF-004.
-3. ~~**Make bulk export honest** (PDF-005)~~ ◑ **Mostly done.** Filename
-   collisions, a determinate progress indicator on the triggering button, and a
-   shared `reportBulkResult` that never claims total success on partial work.
-   Still open: delivery confirmation (needs a folder picker or ZIP — the latter
-   was deliberately declined earlier) and cancellation.
+3. ~~**Make bulk export honest** (PDF-005)~~ ✅ **Done.** Filename collisions, a
+   determinate progress indicator, a shared `reportBulkResult` that never claims
+   total success on partial work, and both delivery models — folder picker
+   (confirmable) and single ZIP — with the mode chosen automatically.
+   Cancellation remains as a separate enhancement.
 4. **Pin `print.js` with jsdom tests** (PDF-006) — ◑ 27 cases now cover the
    naming layer and the bulk-export loop. Still to do: the
    `downloadElementAsPDF` DOM-restore invariants. Do this *before* step 5, so the

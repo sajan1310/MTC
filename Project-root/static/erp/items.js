@@ -1094,18 +1094,24 @@ App.Item = {
     const items = App.State.globalItems.filter(i => App.Selection.isSelected(selectedKeys, this.itemKey(i)));
     const names = [...new Set(items.map(i => i.name))];
 
+    // Before the ledger load below: the folder picker needs live user
+    // activation, which an await would spend.
+    const destination = await App.Print.chooseBulkDestination(names.length);
+    if (destination.mode === 'cancelled') return;
+
     await Promise.all([
       this.ensureLedgerSourceDataLoaded(),
       this.ensureItemLedgerLoaded(names)
     ]);
 
-    const count = await App.Print.downloadSeparatePDFs(
+    const result = await App.Print.deliverSeparatePDFs(
       names,
       name => this.buildItemLedgerPrintPageHtml(name),
       name => `Item_Ledger_${App.Print.sanitizeFilename(String(name || 'Item'), false)}.pdf`,
-      { progressButtonId: 'btnBulkDownloadPdfItems' }
+      { progressButtonId: 'btnBulkDownloadPdfItems', destination,
+        zipName: App.Print.bulkZipName('Item_Ledgers') }
     );
-    App.Print.reportBulkResult(count, names.length, 'item ledger PDF');
+    App.Print.reportBulkResult(result, names.length, 'item ledger PDF');
   },
 
   openCreateModal() {

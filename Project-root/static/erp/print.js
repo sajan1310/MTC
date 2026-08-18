@@ -168,16 +168,25 @@ App.Print = {
   // denied the rest are dropped with no signal available here. See
   // reportBulkResult for how that is worded, and PDF-005 for the delivery-
   // confirming alternatives (folder picker / single ZIP) still on the table.
-  async downloadSeparatePDFs(records, buildPageHtml, filenameForRecord, options = {}) {
-    const { pdfOverrides = {}, progressButtonId = null } = options;
+  async deliverSeparatePDFs(records, buildPageHtml, filenameForRecord, options = {}) {
+    const {
+      pdfOverrides = {},
+      progressButtonId = null,
+      destination = { mode: 'files' },
+      zipName = 'Documents.zip'
+    } = options;
+
+    const mode = destination.mode;
     const used = new Set();
     const total = records.length;
+    const forZip = [];
 
     const btn = progressButtonId ? document.getElementById(progressButtonId) : null;
     const btnHtml = btn ? btn.innerHTML : null;
     const btnDisabled = btn ? btn.disabled : false;
 
     let generated = 0;
+    let delivered = 0;
     try {
       if (btn) btn.disabled = true;
       for (let i = 0; i < total; i++) {
@@ -188,15 +197,37 @@ App.Print = {
           // Yield so that label actually paints. Each record's html2canvas pass
           // occupies the main thread for a noticeable stretch, and without a
           // turn of the event loop between iterations the button would jump
-          // straight from its original text to "done" with nothing in between.
-          // This is NOT a workaround for the download prompt above -- a delay
-          // does not grant user activation.
+          // straight from its original text to "done". This is NOT a
+          // workaround for the multi-download prompt -- a delay does not grant
+          // user activation.
           await new Promise(r => setTimeout(r, this.BULK_EXPORT_YIELD_MS));
         }
         this.renderBulkPages([records[i]], buildPageHtml);
         const filename = this.uniqueFilename(filenameForRecord(records[i]), used);
-        const ok = await this.downloadElementAsPDF('print-bulk-container', filename, pdfOverrides);
-        if (ok) generated++;
+
+        if (mode === 'files') {
+          if (await this.downloadElementAsPDF('print-bulk-container', filename, pdfOverrides)) {
+            generated++;
+            // Handed over, not confirmed -- see the note above the function.
+            delivered++;
+          }
+          continue;
+        }
+
+        const blob = await this.renderElementToPdfBlob('print-bulk-container', filename, pdfOverrides);
+        if (!blob) continue;
+        generated++;
+        if (mode === 'folder') {
+          if (await this._writeIntoFolder(destination.handle, filename, blob)) delivered++;
+        } else {
+          forZip.push({ name: filename, blob });
+        }
+      }
+
+      if (mode === 'zip' && forZip.length) {
+        if (btn) btn.innerHTML = 'Packaging…';
+        this.saveBlob(await this.zipStore(forZip), zipName);
+        delivered = forZip.length;
       }
     } finally {
       if (btn) {
@@ -204,29 +235,237 @@ App.Print = {
         btn.disabled = btnDisabled;
       }
     }
-    return generated;
+    return { generated, delivered, mode, zipName };
+  },
+
+  // One write into the chosen folder. Returns whether it actually landed --
+  // this is the only delivery path that can answer that honestly.
+  async _writeIntoFolder(dirHandle, filename, blob) {
+    try {
+      const fileHandle = await dirHandle.getFileHandle(filename, { create: true });
+      const writable = await fileHandle.createWritable();
+      await writable.write(blob);
+      await writable.close();
+      return true;
+    } catch (err) {
+      console.error('[PDF] Could not write', filename, err);
+      return false;
+    }
   },
 
   // Long enough for the relabelled button to paint, short enough to be
   // invisible next to a rasterisation pass that costs far more than this.
   BULK_EXPORT_YIELD_MS: 120,
 
+  // Above this many records, an unconfirmable pile of individual downloads is
+  // worse than one ZIP: Chrome and Edge prompt once per origin for "automatic
+  // downloads" and silently drop the rest if it is denied.
+  ZIP_THRESHOLD: 5,
+
+  // <prefix>_<ddmmyy>.zip, e.g. "Purchase_Orders_170826.zip" -- the same
+  // naming the old merged-PDF export used, now that the ZIP is the thing
+  // that holds a whole batch.
+  bulkZipName(prefix) {
+    const now = new Date();
+    const pad = n => String(n).padStart(2, '0');
+    const ddmmyy = `${pad(now.getDate())}${pad(now.getMonth() + 1)}${String(now.getFullYear()).slice(-2)}`;
+    return `${prefix}_${ddmmyy}.zip`;
+  },
+
+  // ── Choosing where a bulk export goes ────────────────────────────
+  //
+  // MUST be the first thing a click handler awaits. showDirectoryPicker()
+  // requires live user activation, and activation does not survive an earlier
+  // `await` -- several callers load data before exporting, so the picker has
+  // to be opened before that work, not after it.
+  //
+  // Modes, best first:
+  //   folder - File System Access API. Separate files, real filenames, and
+  //            each write either succeeds or throws, so delivery is actually
+  //            confirmable. One permission prompt for the whole batch.
+  //   zip    - one download containing separate PDFs. No multi-download
+  //            prompt, but the user has to unzip.
+  //   files  - one download per PDF. What every browser can do, and what
+  //            cannot be confirmed.
+  async chooseBulkDestination(count) {
+    if (count <= 1) return { mode: 'files' };
+
+    if (typeof window.showDirectoryPicker === 'function') {
+      try {
+        const handle = await window.showDirectoryPicker({
+          id: 'erp-bulk-pdf-export',
+          mode: 'readwrite',
+          startIn: 'downloads'
+        });
+        return { mode: 'folder', handle };
+      } catch (err) {
+        // AbortError is the user closing the picker -- that is a cancellation
+        // of the whole export, not a reason to fall back to a noisier mode.
+        if (err && err.name === 'AbortError') return { mode: 'cancelled' };
+        console.warn('[PDF] Folder picker unavailable, falling back:', err);
+      }
+    }
+
+    return { mode: count > this.ZIP_THRESHOLD ? 'zip' : 'files' };
+  },
+
+
   // Shared completion message for every bulk export, so all eight callers word
   // partial failure the same way instead of each claiming total success.
-  // "generated" rather than "exported" or "downloaded" is deliberate: it is the
-  // strongest claim this code can actually support (see downloadSeparatePDFs).
-  reportBulkResult(generated, total, noun) {
+  //
+  // The verb tracks what the delivery mode can actually prove:
+  //   folder - "saved", because each write either succeeded or threw.
+  //   zip    - "packaged into <name>", true regardless of what the browser
+  //            then does with the single download.
+  //   files  - "generated", the ceiling for this path: .save() resolves on
+  //            handoff and cannot see whether the file landed.
+  // result comes from deliverSeparatePDFs: { generated, delivered, mode, zipName }.
+  reportBulkResult(result, total, noun) {
+    const { generated, delivered, mode, zipName } = result;
     const plural = n => `${noun}${n === 1 ? '' : 's'}`;
+
     if (!generated) {
       App.Utils.showToast(`Could not generate any ${plural(total)}.`, true);
-    } else if (generated < total) {
+      return;
+    }
+    if (generated < total) {
       App.Utils.showToast(
         `Generated ${generated} of ${total} ${plural(total)} — ${total - generated} failed.`,
         true
       );
+      return;
+    }
+    // Everything rendered, but folder writes can still fail individually.
+    if (mode === 'folder' && delivered < generated) {
+      App.Utils.showToast(
+        `Generated ${generated} ${plural(generated)} but only ${delivered} could be saved.`,
+        true
+      );
+      return;
+    }
+    if (mode === 'folder') {
+      App.Utils.showToast(`${delivered} ${plural(delivered)} saved to the selected folder.`, false);
+    } else if (mode === 'zip') {
+      App.Utils.showToast(`${delivered} ${plural(delivered)} packaged into ${zipName}.`, false);
     } else {
       App.Utils.showToast(`${generated} ${plural(generated)} generated.`, false);
     }
+  },
+
+  // ── ZIP (store-only) ─────────────────────────────────────────────
+  // A minimal ZIP writer, ~90 lines, rather than another vendored library.
+  // Every entry is STOREd, not deflated, which costs nothing here: a PDF's
+  // own streams are already deflate-compressed, so re-compressing them buys
+  // almost no bytes for a lot of CPU on the main thread.
+  //
+  // Deliberately narrow. No directories, no ZIP64, no encryption. ZIP64 would
+  // only be needed past 4 GB or 65,535 entries, and a bulk export that large
+  // has worse problems than its container format.
+
+  _CRC_TABLE: null,
+
+  _crc32(bytes) {
+    if (!this._CRC_TABLE) {
+      const t = new Uint32Array(256);
+      for (let i = 0; i < 256; i++) {
+        let c = i;
+        for (let k = 0; k < 8; k++) c = c & 1 ? 0xEDB88320 ^ (c >>> 1) : c >>> 1;
+        t[i] = c >>> 0;
+      }
+      this._CRC_TABLE = t;
+    }
+    let crc = 0xFFFFFFFF;
+    for (let i = 0; i < bytes.length; i++) {
+      crc = this._CRC_TABLE[(crc ^ bytes[i]) & 0xFF] ^ (crc >>> 8);
+    }
+    return (crc ^ 0xFFFFFFFF) >>> 0;
+  },
+
+  // MS-DOS packed date/time, which is what the ZIP format stores.
+  _dosDateTime(d) {
+    return {
+      time: (d.getHours() << 11) | (d.getMinutes() << 5) | (d.getSeconds() >> 1),
+      date: ((d.getFullYear() - 1980) << 9) | ((d.getMonth() + 1) << 5) | d.getDate()
+    };
+  },
+
+  // files: [{ name, blob }] -> a single application/zip Blob.
+  async zipStore(files) {
+    const enc = new TextEncoder();
+    const { time, date } = this._dosDateTime(new Date());
+    const parts = [];
+    const central = [];
+    let offset = 0;
+
+    for (const file of files) {
+      const nameBytes = enc.encode(file.name);
+      const data = new Uint8Array(await file.blob.arrayBuffer());
+      const crc = this._crc32(data);
+
+      const local = new DataView(new ArrayBuffer(30));
+      local.setUint32(0, 0x04034B50, true);   // local file header signature
+      local.setUint16(4, 20, true);           // version needed to extract (2.0)
+      local.setUint16(6, 0x0800, true);       // flag bit 11: filename is UTF-8
+      local.setUint16(8, 0, true);            // method 0 = stored
+      local.setUint16(10, time, true);
+      local.setUint16(12, date, true);
+      local.setUint32(14, crc, true);
+      local.setUint32(18, data.length, true); // compressed size == raw size
+      local.setUint32(22, data.length, true);
+      local.setUint16(26, nameBytes.length, true);
+      local.setUint16(28, 0, true);           // no extra field
+      parts.push(new Uint8Array(local.buffer), nameBytes, data);
+
+      const cd = new DataView(new ArrayBuffer(46));
+      cd.setUint32(0, 0x02014B50, true);      // central directory signature
+      cd.setUint16(4, 20, true);              // version made by
+      cd.setUint16(6, 20, true);              // version needed
+      cd.setUint16(8, 0x0800, true);
+      cd.setUint16(10, 0, true);
+      cd.setUint16(12, time, true);
+      cd.setUint16(14, date, true);
+      cd.setUint32(16, crc, true);
+      cd.setUint32(20, data.length, true);
+      cd.setUint32(24, data.length, true);
+      cd.setUint16(28, nameBytes.length, true);
+      cd.setUint16(30, 0, true);              // extra length
+      cd.setUint16(32, 0, true);              // comment length
+      cd.setUint16(34, 0, true);              // disk number start
+      cd.setUint16(36, 0, true);              // internal attributes
+      cd.setUint32(38, 0, true);              // external attributes
+      cd.setUint32(42, offset, true);         // offset of local header
+      central.push(new Uint8Array(cd.buffer), nameBytes);
+
+      offset += 30 + nameBytes.length + data.length;
+    }
+
+    const centralSize = central.reduce((n, p) => n + p.length, 0);
+    const eocd = new DataView(new ArrayBuffer(22));
+    eocd.setUint32(0, 0x06054B50, true);      // end of central directory
+    eocd.setUint16(4, 0, true);               // this disk number
+    eocd.setUint16(6, 0, true);               // disk with central directory
+    eocd.setUint16(8, files.length, true);    // entries on this disk
+    eocd.setUint16(10, files.length, true);   // total entries
+    eocd.setUint32(12, centralSize, true);
+    eocd.setUint32(16, offset, true);         // central directory offset
+    eocd.setUint16(20, 0, true);              // comment length
+
+    return new Blob([...parts, ...central, new Uint8Array(eocd.buffer)],
+      { type: 'application/zip' });
+  },
+
+  // Hands a Blob to the browser as a download under `filename`.
+  saveBlob(blob, filename) {
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = filename;
+    document.body.appendChild(a);
+    a.click();
+    a.remove();
+    // Revoke on the next turn: revoking synchronously can cancel the download
+    // in some browsers before it has read the blob.
+    setTimeout(() => URL.revokeObjectURL(url), 10000);
   },
 
   // Returns `filename` unchanged the first time it is seen, then _2, _3, ...
@@ -272,36 +511,77 @@ App.Print = {
     }
   },
 
-  // Captures elementId's current content as a downloaded PDF. Shared by
-  // every "Download PDF" button so the html2canvas offset/clipping fixes
-  // (move the element to the document origin so preceding siblings and
-  // scroll position can't clip it, capture, then put it back exactly where
-  // it was) only need to be maintained in one place. Returns true/false
-  // instead of throwing -- callers decide their own success messaging, but
-  // a failure is always toasted here since the cause (library/network) is
-  // the same for every caller. `captureWidthPx` is OURS, not html2pdf's --
-  // it is pulled out of the overrides below rather than forwarded, so a
+  // html2pdf's option object for one export. Split out so the download and
+  // blob paths cannot drift apart in page geometry or pagination.
+  //
+  // `captureWidthPx` is OURS, not html2pdf's -- callers pass it in
+  // pdfOverrides and it is pulled out here rather than forwarded, so a
   // landscape caller can lay the element out at the rotated page width
-  // instead of the portrait default. Everything else in pdfOverrides goes
-  // straight to html2pdf.
-  async downloadElementAsPDF(elementId, filename, pdfOverrides = {}) {
-    const element = document.getElementById(elementId);
-    if (!element) {
-      console.warn('[PDF] Print container not found:', elementId);
-      return false;
-    }
+  // instead of the portrait default. Everything else goes straight through.
+  _pdfOptions(filename, html2pdfOverrides) {
+    return Object.assign({
+      margin: [this.PAGE_MARGIN_MM, this.PAGE_MARGIN_MM, this.PAGE_MARGIN_MM, this.PAGE_MARGIN_MM],
+      filename,
+      image: { type: 'jpeg', quality: 0.98 },
+      html2canvas: {
+        scale: 2,
+        useCORS: true,
+        allowTaint: true,
+        logging: false,
+        scrollX: 0,
+        scrollY: 0,
+        backgroundColor: '#ffffff'
+      },
+      jsPDF: { unit: 'mm', format: 'a4', orientation: 'portrait' },
+      // avoid:['tr'] matters on any multi-page export. html2pdf works by
+      // guillotining one tall canvas at exact page-height multiples, so
+      // without this a row unlucky enough to straddle the cut is sliced
+      // through the middle -- half its text at the bottom of one page,
+      // half at the top of the next. Naming 'tr' makes html2pdf push the
+      // whole row to the next page instead. The CSS
+      // page-break-inside:avoid rules cannot do this job: they live in
+      // @media print, which html2canvas (a screen-media renderer) never
+      // applies.
+      // .print-sheet-closing-accent (Production Sheet's own closing bar,
+      // print.html) gets the same protection -- without it a container's
+      // plain border-bottom has no size of its own to defend against the
+      // guillotine, so it could land squeezed flush against whatever row
+      // happened to fall near a slice boundary.
+      //
+      // The three #print-* ids are the PO document's closing blocks, kept
+      // from po.js's now-deleted private copy of this function so that
+      // deleting it changed no configuration. They appear to be inert in
+      // practice: sweeping row counts until #print-signature genuinely
+      // straddles a page boundary produces the same pagination with and
+      // without them, so html2pdf's avoid does not seem to act on them the
+      // way it does on 'tr'. They are preserved rather than dropped because
+      // a refactor is the wrong place to also change behaviour, and they
+      // cost nothing -- a selector that matches nothing in a given
+      // container is simply skipped.
+      pagebreak: {
+        mode: ['css', 'legacy'],
+        avoid: [
+          'tr',
+          '.print-sheet-closing-accent',
+          '#print-grand-total-container',
+          '#print-footer-meta',
+          '#print-signature'
+        ]
+      }
+    }, html2pdfOverrides);
+  },
 
-    const { captureWidthPx, ...html2pdfOverrides } = pdfOverrides;
-    const captureWidth = captureWidthPx || this.PAGE_WIDTH_PX;
-
-    if (!(await this.ensureHtml2Pdf())) return false;
-
-    try {
-      if (document.fonts?.ready) await document.fonts.ready;
-    } catch (err) {
-      console.warn('[PDF] Font loading check failed:', err);
-    }
-
+  // Lends `element` to html2canvas under the conditions it needs, runs
+  // `capture(element)`, then puts everything back exactly as it was.
+  //
+  // html2canvas rasterises from the document origin, so an element sitting
+  // below other content -- or on a scrolled page -- gets clipped. The fix is
+  // to move it to the top of <body>, neutralise the body's own padding/margin
+  // and overflow, lay it out at the exact capture width, and undo all of that
+  // afterwards. Every export path shares this one copy so the restore logic
+  // has a single home; the finally block is the part that matters, since
+  // failing to restore leaves the app visibly broken.
+  async _withElementPrepared(element, captureWidth, capture) {
     const prevStyle = element.getAttribute('style');
     const prevBodyPad = document.body.style.padding;
     const prevBodyMar = document.body.style.margin;
@@ -325,64 +605,7 @@ App.Print = {
     await new Promise(r => requestAnimationFrame(r));
 
     try {
-      await window.html2pdf()
-        .set(Object.assign({
-          margin: [this.PAGE_MARGIN_MM, this.PAGE_MARGIN_MM, this.PAGE_MARGIN_MM, this.PAGE_MARGIN_MM],
-          filename,
-          image: { type: 'jpeg', quality: 0.98 },
-          html2canvas: {
-            scale: 2,
-            useCORS: true,
-            allowTaint: true,
-            logging: false,
-            scrollX: 0,
-            scrollY: 0,
-            backgroundColor: '#ffffff'
-          },
-          jsPDF: { unit: 'mm', format: 'a4', orientation: 'portrait' },
-          // avoid:['tr'] matters on any multi-page export. html2pdf works by
-          // guillotining one tall canvas at exact page-height multiples, so
-          // without this a row unlucky enough to straddle the cut is sliced
-          // through the middle -- half its text at the bottom of one page,
-          // half at the top of the next. Naming 'tr' makes html2pdf push the
-          // whole row to the next page instead. The CSS
-          // page-break-inside:avoid rules cannot do this job: they live in
-          // @media print, which html2canvas (a screen-media renderer) never
-          // applies.
-          // .print-sheet-closing-accent (Production Sheet's own closing bar,
-          // print.html) gets the same protection -- without it a
-          // container's plain border-bottom has no size of its own to
-          // defend against the guillotine, so it could land squeezed flush
-          // against whatever row happened to fall near a slice boundary.
-          //
-          // The three #print-* ids are the PO document's closing blocks, kept
-          // from po.js's now-deleted private copy of this function so that
-          // deleting it changed no configuration. They appear to be inert in
-          // practice: sweeping row counts until #print-signature genuinely
-          // straddles a page boundary produces the same pagination with and
-          // without them, so html2pdf's avoid does not seem to act on them the
-          // way it does on 'tr'. They are preserved rather than dropped because
-          // a refactor is the wrong place to also change behaviour, and they
-          // cost nothing -- a selector that matches nothing in a given
-          // container is simply skipped.
-          pagebreak: {
-            mode: ['css', 'legacy'],
-            avoid: [
-              'tr',
-              '.print-sheet-closing-accent',
-              '#print-grand-total-container',
-              '#print-footer-meta',
-              '#print-signature'
-            ]
-          }
-        }, html2pdfOverrides))
-        .from(element)
-        .save();
-      return true;
-    } catch (err) {
-      console.error('[PDF] Generation failed:', err);
-      App.Utils.showToast(err instanceof Error ? err.message : 'Failed to export PDF.', true);
-      return false;
+      return await capture(element);
     } finally {
       window.scrollTo(prevScrollX, prevScrollY);
       document.body.style.padding = prevBodyPad;
@@ -401,6 +624,71 @@ App.Print = {
           originalParent.appendChild(element);
         }
       }
+    }
+  },
+
+  // Shared preamble for both export paths: resolve the element, load the
+  // library, wait for fonts. Returns null when the export cannot proceed.
+  async _prepareExport(elementId, pdfOverrides) {
+    const element = document.getElementById(elementId);
+    if (!element) {
+      console.warn('[PDF] Print container not found:', elementId);
+      return null;
+    }
+    if (!(await this.ensureHtml2Pdf())) return null;
+    try {
+      if (document.fonts?.ready) await document.fonts.ready;
+    } catch (err) {
+      console.warn('[PDF] Font loading check failed:', err);
+    }
+    const { captureWidthPx, ...html2pdfOverrides } = pdfOverrides;
+    return { element, captureWidth: captureWidthPx || this.PAGE_WIDTH_PX, html2pdfOverrides };
+  },
+
+  // Captures elementId's current content and hands it to the browser as a
+  // download. Returns true/false instead of throwing -- callers decide their
+  // own messaging, but a failure is always toasted here since the cause
+  // (library/network) is the same for every caller.
+  //
+  // Note "download" is as far as this can report: .save() resolves once the
+  // blob is handed over and cannot observe whether the file landed. Where
+  // delivery must be confirmed, use renderElementToPdfBlob and write the
+  // bytes somewhere that reports back -- see deliverSeparatePDFs.
+  async downloadElementAsPDF(elementId, filename, pdfOverrides = {}) {
+    const prep = await this._prepareExport(elementId, pdfOverrides);
+    if (!prep) return false;
+    try {
+      await this._withElementPrepared(prep.element, prep.captureWidth, el =>
+        window.html2pdf()
+          .set(this._pdfOptions(filename, prep.html2pdfOverrides))
+          .from(el)
+          .save()
+      );
+      return true;
+    } catch (err) {
+      console.error('[PDF] Generation failed:', err);
+      App.Utils.showToast(err instanceof Error ? err.message : 'Failed to export PDF.', true);
+      return false;
+    }
+  },
+
+  // Same capture as downloadElementAsPDF, but returns the PDF as a Blob
+  // instead of downloading it -- the input for the folder and ZIP delivery
+  // modes, both of which need the bytes in hand. Returns null on failure.
+  async renderElementToPdfBlob(elementId, filename, pdfOverrides = {}) {
+    const prep = await this._prepareExport(elementId, pdfOverrides);
+    if (!prep) return null;
+    try {
+      return await this._withElementPrepared(prep.element, prep.captureWidth, el =>
+        window.html2pdf()
+          .set(this._pdfOptions(filename, prep.html2pdfOverrides))
+          .from(el)
+          .outputPdf('blob')
+      );
+    } catch (err) {
+      console.error('[PDF] Generation failed:', err);
+      App.Utils.showToast(err instanceof Error ? err.message : 'Failed to export PDF.', true);
+      return null;
     }
   }
 };

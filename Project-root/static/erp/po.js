@@ -233,13 +233,17 @@ App.PO = {
     const pos = App.State.globalPOs.filter(po => App.Selection.isSelected(selected, String(po.poNumber)));
     if (!pos.length) return;
 
-    const count = await App.Print.downloadSeparatePDFs(
+    const destination = await App.Print.chooseBulkDestination(pos.length);
+    if (destination.mode === 'cancelled') return;
+
+    const result = await App.Print.deliverSeparatePDFs(
       pos,
       po => this.buildPOPrintPageHtml(po, includeRates, includeTotal),
       po => `PO_${App.Print.sanitizeFilename(String(po.poNumber || 'PO'))}_${App.Print.sanitizeFilename(String(po.vendor || 'Vendor'), false)}.pdf`,
-      { progressButtonId: 'btnBulkDownloadPdfPOs' }
+      { progressButtonId: 'btnBulkDownloadPdfPOs', destination,
+        zipName: App.Print.bulkZipName('Purchase_Orders') }
     );
-    App.Print.reportBulkResult(count, pos.length, 'purchase order PDF');
+    App.Print.reportBulkResult(result, pos.length, 'purchase order PDF');
   },
 
   filterData(searchTerm) {

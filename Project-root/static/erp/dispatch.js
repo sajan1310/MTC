@@ -515,13 +515,17 @@ App.Dispatch = {
     const bills = App.State.globalDispatchBills.filter(b => App.Selection.isSelected(selected, b.dispatchNumber));
     if (!bills.length) return;
 
-    const count = await App.Print.downloadSeparatePDFs(
+    const destination = await App.Print.chooseBulkDestination(bills.length);
+    if (destination.mode === 'cancelled') return;
+
+    const result = await App.Print.deliverSeparatePDFs(
       bills,
       b => this.buildDispatchPrintPageHtml(b),
       b => `Delivery_Challan_${App.Print.sanitizeFilename(String(b.dispatchNumber || 'Challan'))}_${App.Print.sanitizeFilename(String(b.clientName || ''), false)}.pdf`,
-      { progressButtonId: 'btnBulkDownloadPdfDispatch' }
+      { progressButtonId: 'btnBulkDownloadPdfDispatch', destination,
+        zipName: App.Print.bulkZipName('Delivery_Challans') }
     );
-    App.Print.reportBulkResult(count, bills.length, 'delivery challan PDF');
+    App.Print.reportBulkResult(result, bills.length, 'delivery challan PDF');
   },
 
   // Builds a fully self-contained "Delivery Challan" page (mirrors

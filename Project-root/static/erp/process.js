@@ -696,18 +696,24 @@ App.Process = {
     const processes = App.State.globalProcesses.filter(p => App.Selection.isSelected(selected, p.processId));
     if (processes.length === 0) return;
 
+    // Before the component fan-out below: the folder picker needs live user
+    // activation, which an await would spend.
+    const destination = await App.Print.chooseBulkDestination(processes.length);
+    if (destination.mode === 'cancelled') return;
+
     try {
       const withComponents = await Promise.all(processes.map(async p => {
         const res = await Api.call('getProcessComponentsData', p.processId);
         return Object.assign({}, p, { components: res.success ? res.data : [] });
       }));
-      const count = await App.Print.downloadSeparatePDFs(
+      const result = await App.Print.deliverSeparatePDFs(
         withComponents,
         p => this.buildProcessPrintPageHtml(p),
         p => `Process_Sheet_${App.Print.sanitizeFilename(String(p.processId || 'Process'))}_${App.Print.sanitizeFilename(String(p.processName || ''), false)}.pdf`,
-        { progressButtonId: 'btnBulkDownloadPdfProcesses' }
+        { progressButtonId: 'btnBulkDownloadPdfProcesses', destination,
+          zipName: App.Print.bulkZipName('Process_Sheets') }
       );
-      App.Print.reportBulkResult(count, withComponents.length, 'process sheet PDF');
+      App.Print.reportBulkResult(result, withComponents.length, 'process sheet PDF');
     } catch (err) {
       App.Utils.showToast(err.message || 'Failed to prepare processes for export', true);
     }

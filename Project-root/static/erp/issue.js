@@ -197,13 +197,17 @@ App.Issue = {
     const issues = App.State.globalIssues.filter(iss => App.Selection.isSelected(selected, String(iss.issueId)));
     if (!issues.length) return;
 
-    const count = await App.Print.downloadSeparatePDFs(
+    const destination = await App.Print.chooseBulkDestination(issues.length);
+    if (destination.mode === 'cancelled') return;
+
+    const result = await App.Print.deliverSeparatePDFs(
       issues,
       iss => this.buildIssuePrintPageHtml(iss),
       iss => `Stock_Issue_Receipt_${App.Print.sanitizeFilename(String(iss.issueId || 'Issue'))}.pdf`,
-      { progressButtonId: 'btnBulkDownloadPdfIssue' }
+      { progressButtonId: 'btnBulkDownloadPdfIssue', destination,
+        zipName: App.Print.bulkZipName('Stock_Issue_Receipts') }
     );
-    App.Print.reportBulkResult(count, issues.length, 'issue receipt PDF');
+    App.Print.reportBulkResult(result, issues.length, 'issue receipt PDF');
   },
 
   // Single-record print for the per-row "Print" button -- reuses the

@@ -462,13 +462,17 @@ App.BOM = {
     const boms = App.State.globalBOMs.filter(b => App.Selection.isSelected(selected, b.productId));
     if (boms.length === 0) return;
 
-    const count = await App.Print.downloadSeparatePDFs(
+    const destination = await App.Print.chooseBulkDestination(boms.length);
+    if (destination.mode === 'cancelled') return;
+
+    const result = await App.Print.deliverSeparatePDFs(
       boms,
       bom => this.buildBOMPrintPageHtml(bom),
       bom => `BOM_Cost_Sheet_${App.Print.sanitizeFilename(String(bom.productId || 'BOM'))}_${App.Print.sanitizeFilename(String(bom.productName || ''), false)}.pdf`,
-      { progressButtonId: 'btnBulkDownloadPdfBOMs' }
+      { progressButtonId: 'btnBulkDownloadPdfBOMs', destination,
+        zipName: App.Print.bulkZipName('BOM_Cost_Sheets') }
     );
-    App.Print.reportBulkResult(count, boms.length, 'BOM cost sheet PDF');
+    App.Print.reportBulkResult(result, boms.length, 'BOM cost sheet PDF');
   },
 
   // Builds a fully self-contained "BOM Cost Sheet / Recipe Card" page

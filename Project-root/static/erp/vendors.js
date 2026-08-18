@@ -203,17 +203,23 @@ App.Vendor = {
     const vendors = App.State.globalVendors.filter(v => App.Selection.isSelected(selected, v.name));
     if (!vendors.length) return;
 
+    // Before the ledger load below: the folder picker needs live user
+    // activation, which an await would spend.
+    const destination = await App.Print.chooseBulkDestination(vendors.length);
+    if (destination.mode === 'cancelled') return;
+
     if (typeof App.Issue !== 'undefined' && !App.State.globalIssues.length) {
       await App.Issue.loadData();
     }
 
-    const count = await App.Print.downloadSeparatePDFs(
+    const result = await App.Print.deliverSeparatePDFs(
       vendors,
       vendor => this.buildVendorLedgerPrintPageHtml(vendor),
       vendor => `Vendor_Ledger_${App.Print.sanitizeFilename(String(vendor.name || 'Vendor'), false)}.pdf`,
-      { progressButtonId: 'btnBulkDownloadPdfVendors' }
+      { progressButtonId: 'btnBulkDownloadPdfVendors', destination,
+        zipName: App.Print.bulkZipName('Vendor_Ledgers') }
     );
-    App.Print.reportBulkResult(count, vendors.length, 'vendor ledger PDF');
+    App.Print.reportBulkResult(result, vendors.length, 'vendor ledger PDF');
   },
 
   switchTab(tabId) {
