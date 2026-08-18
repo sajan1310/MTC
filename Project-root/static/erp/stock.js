@@ -2584,7 +2584,10 @@ App.Stock = {
     reader.onload = async (event) => {
       try {
         if (typeof XLSX === 'undefined') {
-          await loadScript('https://cdn.jsdelivr.net/npm/xlsx@0.18.5/dist/xlsx.full.min.js');
+          await loadScript(
+        'https://cdn.jsdelivr.net/npm/xlsx@0.18.5/dist/xlsx.full.min.js',
+        'sha384-vtjasyidUo0kW94K5MXDXntzOJpQgBKXmE7e2Ga4LG0skTTLeBi97eFAXsqewJjw'
+      );
         }
 
         const data = new Uint8Array(event.target.result);

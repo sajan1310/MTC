@@ -15,12 +15,27 @@
 const $ = (sel, root = document) => root.querySelector(sel);
 const $$ = (sel, root = document) => Array.from(root.querySelectorAll(sel));
 
+// Lazily loads a script once, returning the same promise for repeat calls.
+//
+// `integrity` is REQUIRED for anything served from a third-party CDN: without
+// it a compromised or swapped CDN file executes with full access to an
+// authenticated ERP session. crossorigin="anonymous" has to go with it --
+// without that the response is opaque, the browser cannot verify the hash, and
+// the asset is blocked outright rather than checked. Same-origin scripts
+// (static/erp/vendor/**) need neither.
+//
+// A mismatch fires onerror, so it lands in the same rejection path as a
+// network failure and the caller's existing error handling covers it.
 const _scriptLoadPromises = {};
-function loadScript(src) {
+function loadScript(src, integrity) {
   if (!_scriptLoadPromises[src]) {
     _scriptLoadPromises[src] = new Promise((resolve, reject) => {
       const script = document.createElement('script');
       script.src = src;
+      if (integrity) {
+        script.integrity = integrity;
+        script.crossOrigin = 'anonymous';
+      }
       script.onload = () => resolve();
       script.onerror = () => {
         delete _scriptLoadPromises[src];

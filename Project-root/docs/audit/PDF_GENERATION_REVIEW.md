@@ -20,10 +20,10 @@ this document is scoped to document *output*.
 |---|---|---|---|---|
 | PDF-001 | PDF export cannot work offline — its only library is deliberately un-cached | High | P0 | ✅ Fixed |
 | PDF-002 | Output is a flat JPEG: 0 characters of searchable text, 7.5× the bytes | High | P0 | Open — decision |
-| PDF-003 | `html2pdf.js` pinned 4.5 years stale; 12 CDN deps carry no SRI | Medium | P1 | ◑ Partly fixed |
+| PDF-003 | `html2pdf.js` pinned 4.5 years stale; 12 CDN deps carry no SRI | Medium | P1 | ✅ Fixed |
 | PDF-004 | `po.js` duplicates `downloadElementAsPDF` in 116 lines, drifted both ways | Medium | P1 | ✅ Fixed |
 | PDF-005 | Bulk separate-PDF export can silently under-deliver and over-report | Medium | P1 | ✅ Fixed |
-| PDF-006 | `print.js` has zero test coverage across 10+ call sites | High (process) | P1 | ◑ In progress |
+| PDF-006 | `print.js` has zero test coverage across 10+ call sites | High (process) | P1 | ✅ Fixed |
 | PDF-007 | `MApp.Print` duplicates `App.Print.trigger`; desktop's container list is manual | Low | P3 | Open |
 | PDF-008 | A vector renderer is already installed, undeclared in `requirements.txt` | Info | — | Open |
 
@@ -172,7 +172,7 @@ See **Options** for the decision this finding forces.
 
 ## PDF-003 · `html2pdf.js` pinned 4.5 years stale; 12 CDN deps carry no SRI
 **Location** `static/erp/print.js:154` · `static/erp/po.js:1173` · `app/__init__.py:427-433` · **Severity** Medium · **Priority** P1
-· **Status** ◑ **Partly fixed** — upgraded to 0.14.0 and one CDN host retired; the remaining 11 assets still have no SRI
+· **Status** ✅ **Fixed** — upgraded to 0.14.0, one CDN host retired, and every remaining CDN asset pinned with SRI
 
 Contrary to a reasonable assumption, `html2pdf.js` is **actively maintained** —
 the project is simply pinned to a 2021 build.
@@ -238,10 +238,33 @@ the `pagebreak.avoid` list still paginates the same. Safe drop-in, confirmed.
 > Incidentally: that 2-page PO is a **1.04 MB** PDF. Worth holding next to
 > PDF-002 when weighing Option B.
 
-**Still open.** The other 11 CDN assets have no `integrity` attribute, and
-`loadScript()` still has no parameter for one. Remaining work: add
-`integrity`/`crossorigin` support to `loadScript()` and SRI hashes to
-`index.html`/`mobile.html` (folded into step 4 of the sequence).
+### Resolution (SRI)
+
+Every remaining CDN asset is now pinned with a `sha384` integrity hash and
+`crossorigin="anonymous"` — both are required together, since without the
+latter the response is opaque and the browser blocks the asset instead of
+verifying it.
+
+- **8 tags in `index.html`**: Bootstrap CSS+JS, Bootstrap Icons, Select2 CSS+JS,
+  the Select2 Bootstrap 5 theme, jQuery, and htm/preact.
+- **2 runtime-loaded scripts**: `loadScript()` gained an `integrity` parameter,
+  and `dashboard.js` (Chart.js) and `stock.js` (SheetJS) pass their hashes. A
+  mismatch fires `onerror`, so it lands in the existing rejection path.
+
+Versioned jsdelivr / code.jquery URLs are immutable, so these hashes stay valid.
+
+**Verified in a browser, including the control that matters:** all 8 pinned
+tags load and their globals are present, and the same jQuery tag with *one
+character* of its hash corrupted is refused. Same for both `loadScript` assets —
+correct hash loads, corrupted hash rejected. Without that control the exercise
+would be decorative: a wrong hash does not warn, it silently removes the asset.
+
+**One gap remains, and it cannot be closed this way.** `sortablejs` is pulled in
+by a bare ESM `import` specifier inside a `<script type="module">`
+(`index.html:495`), and an import specifier takes no `integrity` attribute.
+Closing it needs either an import map with an `integrity` key (Chromium-only and
+recent) or vendoring the file the way html2pdf was. Left as-is and recorded here
+rather than half-solved.
 
 ---
 
@@ -635,9 +658,11 @@ CSS colour function or a Bootstrap upgrade (see PDF-003), not before.
    total success on partial work, and both delivery models — folder picker
    (confirmable) and single ZIP — with the mode chosen automatically.
    Cancellation remains as a separate enhancement.
-4. **Pin `print.js` with jsdom tests** (PDF-006) — ◑ 27 cases now cover the
-   naming layer and the bulk-export loop. Still to do: the
-   `downloadElementAsPDF` DOM-restore invariants. Do this *before* step 5, so the
+4. ~~**Pin `print.js` with jsdom tests, add SRI** (PDF-006, PDF-003)~~ ✅ **Done.**
+   73 cases across four files, including every DOM-restore invariant and the
+   `finally` path. Every CDN asset pinned with `sha384` + `crossorigin`, with a
+   corrupted-hash control proving enforcement. One gap recorded: `sortablejs`
+   loads via an ESM import specifier, which takes no integrity attribute. Do this *before* step 5, so the
    renderer swap has a safety net. Also add SRI to the remaining CDN assets.
 5. **Move the document paths to vector** (Option B) — PO, Goods Receipt,
    Delivery Challan, Work Order, where searchable archives have real business

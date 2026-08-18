@@ -139,12 +139,11 @@ App.Print = {
     );
   },
 
-  // Renders and downloads one PDF per record instead of merging every
-  // record into a single file: each record gets its own render pass into
-  // print-bulk-container (so buildPageHtml never has to know it's the
-  // only page) followed by its own downloadElementAsPDF call. Downloads
-  // are sequential -- concurrent html2pdf runs would fight over the same
-  // shared container -- so this awaits each one before starting the next.
+  // Exports one PDF per record instead of merging them into a single file:
+  // each record gets its own render pass into print-bulk-container (so
+  // buildPageHtml never has to know it is the only page) and its own output.
+  // Records are processed sequentially -- concurrent html2pdf runs would fight
+  // over that one shared container -- so this awaits each before the next.
   // filenameForRecord(record) must return that record's .pdf filename.
   //
   // Filenames are de-duplicated across the batch. Two records can easily want
@@ -154,20 +153,26 @@ App.Print = {
   // either silently overwrites or appends its own "(1)", so a 5-record export
   // can quietly deliver fewer than 5 distinct documents.
   //
-  // options: { pdfOverrides, progressButtonId }. Pass the id of the button that
-  // triggered the export and it doubles as the progress indicator -- disabled
-  // and relabelled "Exporting 3 of 12…", restored afterwards. That reuses the
-  // element the user is already looking at rather than adding markup, and it
-  // keeps progress out of showToast, which also feeds the notification centre
-  // (App.Notify) and would leave one entry per record behind.
+  // options:
+  //   destination      - from chooseBulkDestination: folder / zip / files.
+  //                      Defaults to files, the mode every browser can do.
+  //   progressButtonId - the button that triggered the export, reused as the
+  //                      progress indicator: disabled and relabelled
+  //                      "Exporting 3 of 12…", then restored. Reuses the
+  //                      element the user is already looking at rather than
+  //                      adding markup, and keeps progress out of showToast,
+  //                      which also feeds App.Notify and would otherwise leave
+  //                      one notification per record behind.
+  //   zipName          - archive name, zip mode only.
+  //   pdfOverrides     - forwarded to each export (see _pdfOptions).
   //
-  // Returns the number of PDFs GENERATED, which is not necessarily the number
-  // delivered: html2pdf's .save() resolves once it hands the blob to the
-  // browser and cannot observe what happened next. Chrome and Edge prompt once
-  // per origin for "automatic downloads" after the first file, and if that is
-  // denied the rest are dropped with no signal available here. See
-  // reportBulkResult for how that is worded, and PDF-005 for the delivery-
-  // confirming alternatives (folder picker / single ZIP) still on the table.
+  // Returns { generated, delivered, mode, zipName }. The two counts differ by
+  // mode, and only 'folder' can prove delivery: there each write resolves or
+  // throws. In 'files' mode delivered merely counts handoffs, because
+  // html2pdf's .save() resolves once the blob is passed to the browser and
+  // cannot observe what happened next -- Chrome and Edge prompt once per
+  // origin for "automatic downloads" and silently drop the rest if denied.
+  // reportBulkResult words the outcome accordingly.
   async deliverSeparatePDFs(records, buildPageHtml, filenameForRecord, options = {}) {
     const {
       pdfOverrides = {},
@@ -667,7 +672,10 @@ App.Print = {
       return true;
     } catch (err) {
       console.error('[PDF] Generation failed:', err);
-      App.Utils.showToast(err instanceof Error ? err.message : 'Failed to export PDF.', true);
+      // Not `instanceof Error`: html2canvas can reject with a DOMException,
+      // which carries a message without being an Error, and an error
+      // crossing a realm boundary fails the instanceof check too.
+      App.Utils.showToast(err && err.message ? err.message : 'Failed to export PDF.', true);
       return false;
     }
   },
@@ -687,7 +695,10 @@ App.Print = {
       );
     } catch (err) {
       console.error('[PDF] Generation failed:', err);
-      App.Utils.showToast(err instanceof Error ? err.message : 'Failed to export PDF.', true);
+      // Not `instanceof Error`: html2canvas can reject with a DOMException,
+      // which carries a message without being an Error, and an error
+      // crossing a realm boundary fails the instanceof check too.
+      App.Utils.showToast(err && err.message ? err.message : 'Failed to export PDF.', true);
       return null;
     }
   }
