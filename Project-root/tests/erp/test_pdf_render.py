@@ -1,0 +1,260 @@
+"""Tests for POST /erp/render-pdf -- server-side vector PDF rendering.
+
+Split in two. The endpoint contract (auth, validation, error mapping) runs
+everywhere with the renderer stubbed. The rendering tests actually launch
+Chromium and are skipped where Playwright or its browser build is absent, so
+the suite stays runnable on a machine that has not run `playwright install`.
+
+The point of the whole feature is that the output is a *document*, not a
+picture of one -- so the tests that matter assert extractable text, which is
+exactly what the client-side raster path cannot produce (PDF-002).
+"""
+
+from __future__ import annotations
+
+import io
+
+import pytest
+
+from app.erp.services import pdf_render_service
+
+PO_HTML = """
+<div style="font-family:Arial;padding:20px">
+  <h2 style="color:#C0392B">PURCHASE ORDER</h2>
+  <p>No: PO-2026-0417</p>
+  <p>Vendor: Gupta Cycle Industries</p>
+  <table border="1" style="border-collapse:collapse">
+    <tr><td>Freewheel 18T</td><td>75</td><td>142.00</td></tr>
+    <tr><td>Frame Set 26"</td><td>50</td><td>1250.00</td></tr>
+  </table>
+</div>
+"""
+
+
+def _renderable() -> bool:
+    try:
+        pdf_render_service.render_pdf("<p>probe</p>")
+        return True
+    except pdf_render_service.PdfRenderUnavailable:
+        return False
+
+
+needs_chromium = pytest.mark.skipif(
+    not _renderable(), reason="Playwright/Chromium not available in this environment"
+)
+
+
+def _pdf_text(data: bytes) -> str:
+    pypdf = pytest.importorskip("pypdf")
+    reader = pypdf.PdfReader(io.BytesIO(data))
+    return "\n".join((p.extract_text() or "") for p in reader.pages)
+
+
+# ── endpoint contract ────────────────────────────────────────────────
+
+
+def test_requires_authentication(erp_app):
+    """An unauthenticated caller must not be able to drive a headless browser."""
+    with erp_app.test_client() as anon:
+        res = anon.post("/erp/render-pdf", json={"html": PO_HTML})
+    assert res.status_code in (302, 401)
+
+
+def test_rejects_empty_html(erp_client):
+    res = erp_client.post("/erp/render-pdf", json={"html": "   "})
+    assert res.status_code == 400
+    assert res.get_json()["success"] is False
+
+
+def test_rejects_missing_html(erp_client):
+    res = erp_client.post("/erp/render-pdf", json={})
+    assert res.status_code == 400
+
+
+def test_rejects_oversized_html(erp_client):
+    huge = "<p>" + ("x" * (pdf_render_service.MAX_HTML_BYTES + 1)) + "</p>"
+    res = erp_client.post("/erp/render-pdf", json={"html": huge})
+    assert res.status_code == 400
+    assert "too large" in res.get_json()["message"].lower()
+
+
+def test_reports_503_when_rendering_unavailable(erp_client, monkeypatch):
+    """503 is the signal the client uses to stop asking for the session,
+    rather than retrying once per document."""
+    def boom(*a, **k):
+        raise pdf_render_service.PdfRenderUnavailable("no chromium here")
+
+    monkeypatch.setattr(pdf_render_service, "render_pdf", boom)
+    res = erp_client.post("/erp/render-pdf", json={"html": PO_HTML})
+    assert res.status_code == 503
+    assert res.get_json()["success"] is False
+
+
+def test_unexpected_failure_is_500_and_not_leaked(erp_client, monkeypatch):
+    def boom(*a, **k):
+        raise KeyError("internal detail nobody should see")
+
+    monkeypatch.setattr(pdf_render_service, "render_pdf", boom)
+    res = erp_client.post("/erp/render-pdf", json={"html": PO_HTML})
+    assert res.status_code == 500
+    assert "internal detail" not in res.get_json()["message"]
+
+
+def test_returns_pdf_content_type(erp_client, monkeypatch):
+    monkeypatch.setattr(pdf_render_service, "render_pdf", lambda *a, **k: b"%PDF-1.4 stub")
+    res = erp_client.post("/erp/render-pdf", json={"html": PO_HTML})
+    assert res.status_code == 200
+    assert res.mimetype == "application/pdf"
+    assert res.data.startswith(b"%PDF-")
+    assert res.headers["Cache-Control"] == "no-store"
+
+
+def test_landscape_flag_is_forwarded(erp_client, monkeypatch):
+    seen = {}
+
+    def capture(html, *, landscape=False):
+        seen["landscape"] = landscape
+        return b"%PDF-1.4 stub"
+
+    monkeypatch.setattr(pdf_render_service, "render_pdf", capture)
+    erp_client.post("/erp/render-pdf", json={"html": PO_HTML, "landscape": True})
+    assert seen["landscape"] is True
+
+
+# ── the document shell ───────────────────────────────────────────────
+
+
+def test_page_shell_is_built_server_side():
+    """Page size and margins must not be drivable from the request body."""
+    doc = pdf_render_service._document("<p>hi</p>", landscape=False)
+    assert "@page" in doc and "A4 portrait" in doc
+    assert f"margin: {pdf_render_service.PAGE_MARGIN_MM}mm" in doc
+    assert "<p>hi</p>" in doc
+
+
+def test_page_shell_honours_landscape():
+    assert "A4 landscape" in pdf_render_service._document("<p>hi</p>", landscape=True)
+
+
+def test_shell_keeps_rows_and_closing_blocks_whole():
+    """The real CSS equivalent of html2pdf's pagebreak.avoid list."""
+    doc = pdf_render_service._document("<p>hi</p>", landscape=False)
+    assert "break-inside: avoid" in doc
+    for sel in ("tr", "#print-grand-total-container", "#print-signature", "#print-footer-meta"):
+        assert sel in doc
+
+
+# ── actual rendering ─────────────────────────────────────────────────
+
+
+@needs_chromium
+def test_renders_a_real_pdf(erp_client):
+    res = erp_client.post("/erp/render-pdf", json={"html": PO_HTML})
+    assert res.status_code == 200
+    assert res.data.startswith(b"%PDF-")
+
+
+@needs_chromium
+def test_output_is_searchable_text_not_a_picture(erp_client):
+    """The entire point of PDF-002: the PO number must be findable."""
+    res = erp_client.post("/erp/render-pdf", json={"html": PO_HTML})
+    text = _pdf_text(res.data)
+    assert "PO-2026-0417" in text
+    assert "Freewheel" in text
+    assert "PURCHASE ORDER" in text
+
+
+@needs_chromium
+def test_output_embeds_no_images(erp_client):
+    """A raster export would be exactly one full-page image."""
+    pypdf = pytest.importorskip("pypdf")
+    res = erp_client.post("/erp/render-pdf", json={"html": PO_HTML})
+    page = pypdf.PdfReader(io.BytesIO(res.data)).pages[0]
+    assert len(page.images) == 0
+
+
+@needs_chromium
+def test_output_is_a4_at_the_shared_margin(erp_client):
+    pypdf = pytest.importorskip("pypdf")
+    res = erp_client.post("/erp/render-pdf", json={"html": PO_HTML})
+    box = pypdf.PdfReader(io.BytesIO(res.data)).pages[0].mediabox
+    def mm(pt):
+        return round(float(pt) * 25.4 / 72)
+    assert (mm(box.width), mm(box.height)) == (210, 297)
+
+
+@needs_chromium
+def test_landscape_swaps_the_page_dimensions(erp_client):
+    pypdf = pytest.importorskip("pypdf")
+    res = erp_client.post("/erp/render-pdf", json={"html": PO_HTML, "landscape": True})
+    box = pypdf.PdfReader(io.BytesIO(res.data)).pages[0].mediabox
+    def mm(pt):
+        return round(float(pt) * 25.4 / 72)
+    assert (mm(box.width), mm(box.height)) == (297, 210)
+
+
+@needs_chromium
+def test_multi_page_documents_paginate(erp_client):
+    pypdf = pytest.importorskip("pypdf")
+    rows = "".join(
+        f"<tr><td>Component {i}</td><td>{i * 7}</td></tr>" for i in range(120)
+    )
+    html = f"<table border='1'>{rows}</table>"
+    res = erp_client.post("/erp/render-pdf", json={"html": html})
+    assert len(pypdf.PdfReader(io.BytesIO(res.data)).pages) > 1
+
+
+# ── the security boundary ────────────────────────────────────────────
+
+
+@needs_chromium
+def test_does_not_fetch_remote_resources(erp_client):
+    """SSRF guard: an authenticated user must not be able to make the server
+    fetch a URL of their choosing. The render still succeeds -- the resource
+    is simply never requested."""
+    html = (
+        "<p>ssrf probe</p>"
+        "<img src='http://169.254.169.254/latest/meta-data/'>"
+        "<img src='http://127.0.0.1:1/should-not-be-hit'>"
+    )
+    res = erp_client.post("/erp/render-pdf", json={"html": html})
+    assert res.status_code == 200
+    assert "ssrf probe" in _pdf_text(res.data)
+
+
+@needs_chromium
+def test_does_not_read_local_files(erp_client):
+    html = "<p>file probe</p><iframe src='file:///etc/passwd'></iframe>"
+    res = erp_client.post("/erp/render-pdf", json={"html": html})
+    assert res.status_code == 200
+    text = _pdf_text(res.data)
+    assert "file probe" in text
+    assert "root:" not in text
+
+
+@needs_chromium
+def test_does_not_execute_javascript(erp_client):
+    """The print builders emit static markup; scripting stays off so a
+    posted document cannot run code in the renderer."""
+    html = (
+        "<p id='t'>static</p>"
+        "<script>document.getElementById('t').textContent = 'SCRIPTED';</script>"
+    )
+    res = erp_client.post("/erp/render-pdf", json={"html": html})
+    text = _pdf_text(res.data)
+    assert "static" in text
+    assert "SCRIPTED" not in text
+
+
+@needs_chromium
+def test_inline_data_uri_images_still_render(erp_client):
+    """data: URIs are not network requests, so blocking the network must not
+    break the company logo (core.js stores it as a canvas toDataURL)."""
+    # 1x1 red PNG
+    png = (
+        "data:image/png;base64,"
+        "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8BQDwAEhQGAhKmMIQAAAABJRU5ErkJggg=="
+    )
+    res = erp_client.post("/erp/render-pdf", json={"html": f"<p>logo</p><img src='{png}'>"})
+    assert res.status_code == 200
+    assert "logo" in _pdf_text(res.data)

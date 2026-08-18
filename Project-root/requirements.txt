@@ -27,6 +27,15 @@ google-api-python-client==2.126.0
 PyYAML==6.0.1
 
 
+# Server-side vector PDF rendering (app/erp/services/pdf_render_service.py).
+# Renders the same print HTML the client builds, through headless Chromium, so
+# purchase orders and challans are searchable documents rather than embedded
+# JPEGs -- see docs/audit/PDF_GENERATION_REVIEW.md PDF-002.
+# The browser binary is NOT installed by pip: run `playwright install chromium`
+# (the Dockerfile does this). Without it the endpoint returns 503 and the
+# client falls back to its own renderer.
+playwright==1.62.0
+
 # Security Enhancements
 Flask-Limiter==3.5.0
 flask-talisman==1.1.0
@@ -43,4 +52,7 @@ waitress==3.0.0
 pytest==8.1.1
 pytest-flask==1.3.0
 pytest-cov>=4.0
+# Reads back rendered PDFs in tests/erp/test_pdf_render.py to assert the
+# output really is extractable text, not a picture of it.
+pypdf>=6.0
 ruff>=0.1

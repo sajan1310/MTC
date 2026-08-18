@@ -19,13 +19,13 @@ this document is scoped to document *output*.
 | ID | Title | Severity | Priority | Status |
 |---|---|---|---|---|
 | PDF-001 | PDF export cannot work offline — its only library is deliberately un-cached | High | P0 | ✅ Fixed |
-| PDF-002 | Output is a flat JPEG: 0 characters of searchable text, 7.5× the bytes | High | P0 | Open — decision |
+| PDF-002 | Output is a flat JPEG: 0 characters of searchable text, 7.5× the bytes | High | P0 | ✅ Fixed |
 | PDF-003 | `html2pdf.js` pinned 4.5 years stale; 12 CDN deps carry no SRI | Medium | P1 | ✅ Fixed |
 | PDF-004 | `po.js` duplicates `downloadElementAsPDF` in 116 lines, drifted both ways | Medium | P1 | ✅ Fixed |
 | PDF-005 | Bulk separate-PDF export can silently under-deliver and over-report | Medium | P1 | ✅ Fixed |
 | PDF-006 | `print.js` has zero test coverage across 10+ call sites | High (process) | P1 | ✅ Fixed |
 | PDF-007 | `MApp.Print` duplicates `App.Print.trigger`; desktop's container list is manual | Low | P3 | Open |
-| PDF-008 | A vector renderer is already installed, undeclared in `requirements.txt` | Info | — | Open |
+| PDF-008 | A vector renderer is already installed, undeclared in `requirements.txt` | Info | — | ✅ Fixed |
 
 ---
 
@@ -113,7 +113,8 @@ PDF-003.
 ---
 
 ## PDF-002 · Output is a flat JPEG: 0 characters of searchable text, 7.5× the bytes
-**Location** `static/erp/print.js:175-272` · **Severity** High · **Priority** P0 (decision)
+**Location** `static/erp/print.js:175-272` · **Severity** High · **Priority** P0
+· **Status** ✅ **Fixed** — vector rendering added server-side, raster kept as the offline fallback
 
 `downloadElementAsPDF()` runs `html2canvas` over the print container, encodes the
 result as JPEG at `quality: 0.98`, and embeds that single image in a jsPDF page
@@ -166,7 +167,69 @@ the raster comparison. Parse both with `pypdf` and compare
 `page.extract_text()` length and `len(page.images)`. Playwright and a Chromium
 build are already present in the local `venv` (see PDF-008 note below).
 
-See **Options** for the decision this finding forces.
+### Resolution
+
+Option B, as recommended. A new endpoint renders the **same HTML the existing
+builders already produce** through headless Chromium, so no document markup
+changed.
+
+- `app/erp/services/pdf_render_service.py` — the renderer.
+- `POST /erp/render-pdf` (`app/erp/pages.py`) — deliberately not an RPC method,
+  since `/api/erp/rpc/<method>` is a JSON-envelope bridge and this returns
+  binary. `@login_required`, and CSRF applies automatically.
+- `App.Print.renderViaServer()` (`static/erp/print.js`) — tried first by
+  `deliverSeparatePDFs` for every delivery mode.
+
+**It is an upgrade path, not a dependency.** `renderViaServer` returns `null`
+when the server cannot render, and every caller then uses the raster renderer
+exactly as before. A 503 (deployed without Chromium) or a failed fetch (offline)
+settles `serverPdfAvailable = false` for the session so a 40-record export does
+not stall once per record; a per-document 4xx/5xx does not, since the next
+document may be fine. This is what keeps export working with no network.
+
+**Measured end to end** through the real Flask app and a real browser, driving
+`deliverSeparatePDFs` with a purchase order:
+
+| | vector (server) | fallback (offline) |
+|---|---:|---:|
+| Bytes | 51,690 | 122,354 |
+| Embedded images | **0** | 1 |
+| Extractable text | **204 chars** | **0 chars** |
+| Search the PO number | **found** | not found |
+| Producer | Skia/PDF (Chromium) | jsPDF 4.0.0 |
+
+Both paths delivered all files. (The size ratio here is 2.4× rather than the
+7.5× quoted above — that figure was measured on the denser 15-line PO. The
+ratio depends on how much content is on the page; the *searchability* difference
+does not.)
+
+**The page shell is built server-side**, so page size, margins and the
+break-inside rules cannot be driven by the request body. Those rules are the
+real CSS equivalent of html2pdf's `pagebreak.avoid` list — and unlike that one,
+a print engine actually honours them.
+
+### Security
+
+The HTML arrives from an authenticated browser, but authenticated is not
+trusted: an unrestricted renderer is a server-side request forgery primitive and
+a local file reader. Each render therefore runs with **all network blocked**
+(one route handler aborts every request the page makes), **JavaScript
+disabled**, a payload cap and a hard timeout. `data:` URIs are unaffected, which
+is what the company logo uses, so it still renders.
+
+Covered by `tests/erp/test_pdf_render.py` (21 cases): auth, validation, the
+error mapping, and specifically that the renderer does **not** fetch
+`169.254.169.254`, does **not** read `file:///etc/passwd`, does **not** execute
+a `<script>`, and does still render an inline `data:` image.
+
+### Cost, as stated up front
+
+`playwright==1.62.0` is now in `requirements.txt` and the Dockerfile runs
+`playwright install --with-deps chromium` — the largest layer in the image by
+some margin, placed after pip and before the app source so code changes do not
+rebuild it. Rendering costs server CPU per document, and a browser is held per
+worker thread (Playwright's sync API binds objects to their creating thread, so
+one shared browser is not an option).
 
 ---
 
@@ -567,6 +630,7 @@ searchable, correctly-paginated PDFs this whole time — by doing less.
 
 ## PDF-008 · Note: a vector renderer is already installed, undeclared
 **Location** `requirements.txt` · `venv/Lib/site-packages/playwright` · **Severity** Informational
+· **Status** ✅ **Fixed** — `playwright==1.62.0` declared, and now a real runtime dependency (PDF-002)
 
 `playwright 1.62.0` plus Chromium builds (`chromium-1234` and two older) are
 present in the local `venv`, and `puppeteer-core 25.5.0` is in `devDependencies`
@@ -664,11 +728,13 @@ CSS colour function or a Bootstrap upgrade (see PDF-003), not before.
    corrupted-hash control proving enforcement. One gap recorded: `sortablejs`
    loads via an ESM import specifier, which takes no integrity attribute. Do this *before* step 5, so the
    renderer swap has a safety net. Also add SRI to the remaining CDN assets.
-5. **Move the document paths to vector** (Option B) — PO, Goods Receipt,
-   Delivery Challan, Work Order, where searchable archives have real business
-   value. Keep A as the offline fallback. Reconcile `requirements.txt` (PDF-008).
+5. ~~**Move the document paths to vector** (Option B)~~ ✅ **Done.** Every bulk
+   export now renders server-side through Chromium when reachable, falling back
+   to the raster path offline. `playwright` declared, Chromium added to the
+   image, 37 new tests (21 backend, 16 frontend). `requirements.txt` reconciled
+   (PDF-008).
 
-Steps 1–4 are strictly additive cleanup and carry no architectural commitment.
-Step 5 is the only real decision in this document, and PDF-002's measurement —
-**7.5× the size, 0 searchable characters, from identical markup** — is the
-argument for it.
+All five steps are complete. What remains is listed under *Still open* in
+PDF-005 and PDF-007: no cancellation on a long export, `sortablejs` cannot take
+an SRI attribute through an ESM import specifier, and the mobile shell still
+carries its own copy of `App.Print.trigger`.

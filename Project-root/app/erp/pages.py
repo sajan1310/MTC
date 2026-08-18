@@ -1,10 +1,19 @@
-"""ERP page routes: the desktop and mobile HTML shells."""
+"""ERP page routes: the desktop and mobile HTML shells, plus PDF rendering."""
 
 from __future__ import annotations
 
 import os
 
-from flask import current_app, redirect, render_template, request, send_from_directory, url_for
+from flask import (
+    Response,
+    current_app,
+    jsonify,
+    redirect,
+    render_template,
+    request,
+    send_from_directory,
+    url_for,
+)
 from flask_login import current_user, login_required
 
 from . import erp_bp
@@ -141,3 +150,53 @@ def mobile_offline():
     should look like itself even when showing an error state.
     """
     return render_template("erp/mobile_offline.html")
+
+
+@erp_bp.route("/erp/render-pdf", methods=["POST"])
+@login_required
+def render_pdf():
+    """Render one print-page fragment to a **vector** PDF (PDF-002).
+
+    Deliberately not an RPC method: /api/erp/rpc/<method> is a JSON envelope
+    bridge, and this returns binary. CSRF still applies -- CSRFProtect is
+    global and this route is not in the exemption list -- so the client must
+    send X-CSRFToken, which static/erp/api.js already does for every call.
+
+    Contract:
+      request  {"html": "<div>…</div>", "landscape": false}
+      200      application/pdf
+      400      {"success": false, "message": …}  bad input
+      503      {"success": false, "message": …}  rendering unavailable here,
+               which tells the client to stop asking and use its own
+               (raster) renderer for the rest of the session.
+    """
+    from .services import pdf_render_service
+
+    payload = request.get_json(silent=True) or {}
+    html = payload.get("html")
+    landscape = bool(payload.get("landscape"))
+
+    try:
+        pdf = pdf_render_service.render_pdf(html, landscape=landscape)
+    except ValueError as exc:
+        return jsonify({"success": False, "message": str(exc)}), 400
+    except pdf_render_service.PdfRenderUnavailable as exc:
+        current_app.logger.warning("[PDF] server rendering unavailable: %s", exc)
+        return jsonify({
+            "success": False,
+            "message": "Server-side PDF rendering is not available.",
+        }), 503
+    except Exception:
+        current_app.logger.exception("[PDF] server render failed")
+        return jsonify({"success": False, "message": "Failed to render PDF."}), 500
+
+    return Response(
+        pdf,
+        mimetype="application/pdf",
+        headers={
+            # The client names the file; this is only a sensible default for
+            # anyone hitting the endpoint directly.
+            "Content-Disposition": 'attachment; filename="document.pdf"',
+            "Cache-Control": "no-store",
+        },
+    )

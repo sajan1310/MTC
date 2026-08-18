@@ -207,13 +207,32 @@ App.Print = {
           // user activation.
           await new Promise(r => setTimeout(r, this.BULK_EXPORT_YIELD_MS));
         }
-        this.renderBulkPages([records[i]], buildPageHtml);
         const filename = this.uniqueFilename(filenameForRecord(records[i]), used);
+
+        // Vector first. renderViaServer returns null when the server cannot
+        // render (offline, or no Chromium there), and every mode below then
+        // falls through to the raster path unchanged -- so this is an upgrade
+        // where it is available rather than a new dependency.
+        const serverBlob = await this.renderViaServer(buildPageHtml(records[i]), pdfOverrides);
+        if (serverBlob) {
+          generated++;
+          if (mode === 'folder') {
+            if (await this._writeIntoFolder(destination.handle, filename, serverBlob)) delivered++;
+          } else if (mode === 'zip') {
+            forZip.push({ name: filename, blob: serverBlob });
+          } else {
+            this.saveBlob(serverBlob, filename);
+            // Handed over, not confirmed -- see the note above the function.
+            delivered++;
+          }
+          continue;
+        }
+
+        this.renderBulkPages([records[i]], buildPageHtml);
 
         if (mode === 'files') {
           if (await this.downloadElementAsPDF('print-bulk-container', filename, pdfOverrides)) {
             generated++;
-            // Handed over, not confirmed -- see the note above the function.
             delivered++;
           }
           continue;
@@ -489,6 +508,68 @@ App.Print = {
     }
     used.add(candidate.toLowerCase());
     return candidate;
+  },
+
+  // ── Server-side vector rendering ─────────────────────────────────
+  //
+  // POSTs the same HTML the build*PrintPageHtml() builders already produce to
+  // /erp/render-pdf, where headless Chromium renders it as a real document.
+  // The client's own html2pdf path rasterises through html2canvas, so its
+  // output is one flat JPEG: measured on a 15-line purchase order, 361 KB with
+  // ZERO extractable characters against 48 KB and 1,184 characters here. A PO
+  // cannot be searched for its own PO number, part numbers cannot be copied
+  // out, and an archive of them is un-indexable. See PDF-002.
+  //
+  // Strictly an upgrade path: null means "could not", and the caller then uses
+  // the raster renderer exactly as before. That is what keeps export working
+  // offline, where this endpoint by definition cannot be reached.
+  SERVER_PDF_URL: '/erp/render-pdf',
+
+  // null = not yet tried, true/false = settled for this session. Only a 503
+  // (server has no renderer) or a failed fetch (offline) flips it to false; a
+  // per-document 4xx/5xx does not, since the next document may be fine.
+  serverPdfAvailable: null,
+
+  async renderViaServer(bodyHtml, pdfOverrides = {}) {
+    if (this.serverPdfAvailable === false) return null;
+    if (!bodyHtml) return null;
+
+    const landscape = pdfOverrides
+      && pdfOverrides.jsPDF
+      && pdfOverrides.jsPDF.orientation === 'landscape';
+    const csrf = typeof document !== 'undefined'
+      ? (document.querySelector('meta[name="csrf-token"]')?.getAttribute('content') || '')
+      : '';
+
+    let res;
+    try {
+      res = await fetch(this.SERVER_PDF_URL, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', 'X-CSRFToken': csrf },
+        credentials: 'same-origin',
+        body: JSON.stringify({ html: bodyHtml, landscape: !!landscape })
+      });
+    } catch (err) {
+      // The request never completed -- offline, or the server is unreachable.
+      // Stop asking for the rest of the session rather than stalling once per
+      // record of a 40-record export.
+      this.serverPdfAvailable = false;
+      return null;
+    }
+
+    if (res.status === 503) {
+      // Deployed without Chromium. Permanent for this session.
+      this.serverPdfAvailable = false;
+      return null;
+    }
+    if (!res.ok) {
+      // This one document failed; the next may not.
+      console.warn('[PDF] server render failed for one document:', res.status);
+      return null;
+    }
+
+    this.serverPdfAvailable = true;
+    return await res.blob();
   },
 
   // Lazy-loads html2pdf.js (used by every module's "Download PDF" button)
