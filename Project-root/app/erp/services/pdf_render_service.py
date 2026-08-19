@@ -204,14 +204,42 @@ def _explain_launch_failure(exc: Exception) -> str:
     return f"could not start Chromium: {text.splitlines()[0][:200]}"
 
 
-def log_availability(logger) -> bool:
+def is_enabled() -> bool:
+    """Whether server-side rendering is switched on at all.
+
+    Separate from `probe()`: this is the operator's intent, that is the
+    machine's capability. Turning it off deliberately is a supported choice --
+    the browser can do the whole job, just as pictures rather than documents.
+    """
+    try:
+        return current_app.config.get("PDF_SERVER_RENDER", "auto") != "off"
+    except RuntimeError:
+        # No application context (CLI, smoke check): assume enabled so the
+        # tooling still exercises the real path.
+        return True
+
+
+def log_availability(logger, enabled: bool = True) -> bool:
     """Say plainly, once at boot, which PDF path this deployment will use.
 
     Without this the only signal is a 503 the first time somebody exports,
     long after deploy -- and the client falls back to its raster renderer
     without complaining, so the PDFs quietly go back to being unsearchable
     images and nobody notices.
+
+    Three outcomes, and the distinction matters: switched off on purpose is
+    INFO, wanted-but-broken is a WARNING. Logging a deliberate configuration as
+    a warning trains people to ignore warnings.
     """
+    if not enabled:
+        logger.info(
+            "[PDF] server-side vector rendering is OFF by configuration "
+            "(PDF_SERVER_RENDER=off). PDFs are rendered in the browser and will "
+            "be images rather than searchable documents; Print -> Save as PDF "
+            "produces a searchable one with nothing installed."
+        )
+        return False
+
     ok, detail = probe()
     if ok:
         logger.info("[PDF] server-side vector rendering enabled -- %s", detail)
@@ -220,7 +248,8 @@ def log_availability(logger) -> bool:
             "[PDF] server-side vector rendering DISABLED -- %s. "
             "/erp/render-pdf will return 503 and clients will fall back to "
             "client-side rasterisation: PDFs will be images, not searchable "
-            "documents. See docs/audit/PDF_GENERATION_REVIEW.md PDF-002.",
+            "documents. Set PDF_SERVER_RENDER=off if this is deliberate. "
+            "See docs/audit/PDF_GENERATION_REVIEW.md PDF-002.",
             detail,
         )
     return ok

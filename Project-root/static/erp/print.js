@@ -192,6 +192,9 @@ App.Print = {
 
     let generated = 0;
     let delivered = 0;
+    // Whether any record came out of the client's raster renderer rather than
+    // the server's. Drives the one-time "use Print for a searchable PDF" tip.
+    let rasterised = false;
     try {
       if (btn) btn.disabled = true;
       for (let i = 0; i < total; i++) {
@@ -229,6 +232,7 @@ App.Print = {
         }
 
         this.renderBulkPages([records[i]], buildPageHtml);
+        rasterised = true;
 
         if (mode === 'files') {
           if (await this.downloadElementAsPDF('print-bulk-container', filename, pdfOverrides)) {
@@ -259,7 +263,7 @@ App.Print = {
         btn.disabled = btnDisabled;
       }
     }
-    return { generated, delivered, mode, zipName };
+    return { generated, delivered, mode, zipName, rasterised };
   },
 
   // One write into the chosen folder. Returns whether it actually landed --
@@ -334,6 +338,41 @@ App.Print = {
   },
 
 
+  // ── The searchable-PDF route that needs nothing installed ────────
+  //
+  // When PDFs come from the client's raster renderer they are images: a PO
+  // cannot be searched for its own number and nothing can be copied out of it.
+  // The browser's own print engine does produce a real document, and every
+  // module already has a Print button wired to it (App.Print.trigger sets
+  // document.title, which Chrome and Edge use as the default Save-as-PDF
+  // filename) -- so the capability is already there, it just isn't obvious.
+  //
+  // Told once per browser, not once per export. A tip repeated after every
+  // download is nagging, and people stop reading toasts that always appear.
+  SEARCHABLE_HINT_KEY: 'erp.pdfSearchableHintShown',
+
+  hintSearchablePdfOnce() {
+    let alreadyShown = false;
+    try {
+      alreadyShown = window.localStorage.getItem(this.SEARCHABLE_HINT_KEY) === '1';
+    } catch (err) {
+      // Private mode / storage disabled: skip the hint rather than risk
+      // showing it after every single export.
+      return;
+    }
+    if (alreadyShown) return;
+    try {
+      window.localStorage.setItem(this.SEARCHABLE_HINT_KEY, '1');
+    } catch (err) {
+      return;
+    }
+    App.Utils.showToast(
+      'Tip: these PDFs are images. For a searchable PDF, use Print and choose ' +
+      '"Save as PDF" in the print dialog.',
+      false
+    );
+  },
+
   // Shared completion message for every bulk export, so all eight callers word
   // partial failure the same way instead of each claiming total success.
   //
@@ -374,6 +413,10 @@ App.Print = {
     } else {
       App.Utils.showToast(`${generated} ${plural(generated)} generated.`, false);
     }
+
+    // Only where the output actually is an image. If the server rendered these
+    // they are already searchable and the tip would be wrong.
+    if (result.rasterised) this.hintSearchablePdfOnce();
   },
 
   // ── ZIP (store-only) ─────────────────────────────────────────────
@@ -530,14 +573,27 @@ App.Print = {
   // per-document 4xx/5xx does not, since the next document may be fine.
   serverPdfAvailable: null,
 
+  // True when the deployment has switched server rendering off on purpose
+  // (PDF_SERVER_RENDER=off, surfaced as a meta tag by templates/erp/index.html).
+  // Read once, lazily, and cached: with this set there is nothing to discover,
+  // so the client should not spend even one request per session finding out.
+  get serverPdfDisabledByConfig() {
+    if (this._serverPdfOff === undefined) {
+      this._serverPdfOff = typeof document?.querySelector === 'function' &&
+        document.querySelector('meta[name="pdf-server-render"]')?.getAttribute('content') === 'off';
+    }
+    return this._serverPdfOff;
+  },
+
   async renderViaServer(bodyHtml, pdfOverrides = {}) {
+    if (this.serverPdfDisabledByConfig) return null;
     if (this.serverPdfAvailable === false) return null;
     if (!bodyHtml) return null;
 
     const landscape = pdfOverrides
       && pdfOverrides.jsPDF
       && pdfOverrides.jsPDF.orientation === 'landscape';
-    const csrf = typeof document !== 'undefined'
+    const csrf = typeof document?.querySelector === 'function'
       ? (document.querySelector('meta[name="csrf-token"]')?.getAttribute('content') || '')
       : '';
 

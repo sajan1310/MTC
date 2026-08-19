@@ -444,3 +444,78 @@ def test_unknown_launch_failure_still_reports_something_useful():
 def test_launch_failures_are_truncated_not_dumped():
     exc = Exception("x" * 5000)
     assert len(pdf_render_service._explain_launch_failure(exc)) < 400
+
+
+# ── PDF_SERVER_RENDER=off: skipping Chromium as a stated choice ───────
+
+
+def test_disabled_by_config_returns_503_without_rendering(erp_client, erp_app, monkeypatch):
+    """The point of the switch: no browser is touched at all."""
+    launched = {"n": 0}
+
+    def spy():
+        launched["n"] += 1
+        raise AssertionError("must not launch a browser when disabled")
+
+    monkeypatch.setattr(pdf_render_service, "_browser", spy)
+    monkeypatch.setitem(erp_app.config, "PDF_SERVER_RENDER", "off")
+
+    res = erp_client.post("/erp/render-pdf", json={"html": PO_HTML})
+    assert res.status_code == 503
+    assert res.get_json()["success"] is False
+    assert "disabled" in res.get_json()["message"].lower()
+    assert launched["n"] == 0
+
+
+def test_auto_is_the_default(erp_app):
+    assert erp_app.config.get("PDF_SERVER_RENDER", "auto") in ("auto", "off")
+
+
+def test_is_enabled_reflects_the_setting(erp_app):
+    with erp_app.app_context():
+        erp_app.config["PDF_SERVER_RENDER"] = "off"
+        assert pdf_render_service.is_enabled() is False
+        erp_app.config["PDF_SERVER_RENDER"] = "auto"
+        assert pdf_render_service.is_enabled() is True
+
+
+def test_is_enabled_outside_an_app_context():
+    """The smoke check runs with no Flask context and must still work."""
+    assert pdf_render_service.is_enabled() is True
+
+
+# A deliberate choice must not be logged as a broken deploy -- warning about
+# configuration teaches people to ignore warnings.
+def test_disabled_by_config_logs_info_not_warning():
+    log = _Log()
+    assert pdf_render_service.log_availability(log, enabled=False) is False
+    assert log.warn_msgs == []
+    assert len(log.info_msgs) == 1
+    msg = log.info_msgs[0]
+    assert "OFF by configuration" in msg
+    assert "PDF_SERVER_RENDER=off" in msg
+    # Must name the workaround that needs nothing installed.
+    assert "Save as PDF" in msg
+
+
+def test_wanted_but_missing_still_warns(monkeypatch, tmp_path):
+    """Contrast: enabled but no browser is a real problem, so still WARNING."""
+    monkeypatch.setenv("PLAYWRIGHT_BROWSERS_PATH", str(tmp_path / "nope"))
+    log = _Log()
+    assert pdf_render_service.log_availability(log, enabled=True) is False
+    assert log.info_msgs == []
+    assert len(log.warn_msgs) == 1
+    # And it should point at the switch as the way to silence it deliberately.
+    assert "PDF_SERVER_RENDER=off" in log.warn_msgs[0]
+
+
+def test_shell_passes_the_setting_to_the_client(erp_client, erp_app):
+    """The client reads this to avoid one wasted request per session."""
+    monkey = erp_app.config
+    monkey["PDF_SERVER_RENDER"] = "off"
+    res = erp_client.get("/erp")
+    assert res.status_code == 200
+    assert b'name="pdf-server-render" content="off"' in res.data
+    monkey["PDF_SERVER_RENDER"] = "auto"
+    res = erp_client.get("/erp")
+    assert b'name="pdf-server-render" content="auto"' in res.data

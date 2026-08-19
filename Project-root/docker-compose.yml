@@ -1,6 +1,12 @@
 services:
   app:
-    build: .
+    build:
+      context: .
+      args:
+        # Chromium for server-side vector PDF rendering is a ~400 MB layer and
+        # off by default. Set to "true" here (or export INSTALL_CHROMIUM=true)
+        # to get searchable PDFs instead of image-based ones.
+        INSTALL_CHROMIUM: "${INSTALL_CHROMIUM:-false}"
     ports:
       - "8000:8000"
     env_file:
@@ -8,6 +14,10 @@ services:
     environment:
       DATABASE_URL: postgresql://${DB_USER:-postgres}:${DB_PASS:-postgres}@postgres:5432/${DB_NAME:-MTC}
       RATELIMIT_STORAGE_URL: redis://redis:6379/0
+      # Must agree with INSTALL_CHROMIUM above: "off" tells the app the browser
+      # is deliberately absent, so it neither warns at boot nor spends a request
+      # per session rediscovering it.
+      PDF_SERVER_RENDER: "${PDF_SERVER_RENDER:-off}"
     depends_on:
       postgres:
         condition: service_healthy

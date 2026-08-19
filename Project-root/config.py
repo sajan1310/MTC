@@ -53,6 +53,20 @@ class Config:
     # Request body size limit
     MAX_CONTENT_LENGTH = 16 * 1024 * 1024  # 16MB
 
+    # Server-side vector PDF rendering (app/erp/services/pdf_render_service.py).
+    #   "auto" - render server-side when headless Chromium is available, and
+    #            fall back to the client's own renderer when it is not.
+    #   "off"  - never render server-side. The browser does all PDF work.
+    #
+    # Set this to "off" when you have deliberately not installed Chromium: it
+    # keeps the startup log honest (a deliberate choice is reported as INFO, not
+    # a WARNING about a broken deploy) and stops the client wasting a request
+    # per session discovering the same thing. Exported PDFs are then images
+    # rather than searchable documents -- for a searchable one, users can use
+    # Print -> Save as PDF, which needs nothing installed. See
+    # docs/audit/PDF_GENERATION_REVIEW.md PDF-002 and DEPLOYMENT.md.
+    PDF_SERVER_RENDER = os.getenv("PDF_SERVER_RENDER", "auto").strip().lower()
+
     # URL generation and base
     BASE_URL = os.getenv("BASE_URL", "http://127.0.0.1:5000")
     # Only set SERVER_NAME when explicitly configured — Flask enforces host-matching

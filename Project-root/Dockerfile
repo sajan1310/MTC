@@ -27,12 +27,30 @@ RUN pip install --no-cache-dir -r requirements.txt
 # --with-deps pulls the shared libraries headless Chromium needs on slim. This
 # is the largest layer in the image by some margin (~400 MB); it sits after pip
 # and before the app source so ordinary code changes do not rebuild it.
+#
+# Off by default, because it is a ~400 MB layer for a quality improvement
+# rather than a working feature: without it the app still exports PDFs, the
+# browser just renders them as images instead of searchable documents, and
+# Print -> Save as PDF remains available for a searchable one. Turn it on with:
+#
+#     docker build --build-arg INSTALL_CHROMIUM=true .
+#
+# and set PDF_SERVER_RENDER=off (the default is "auto") when you leave it off,
+# so the startup log reports a deliberate choice rather than warning about a
+# broken deploy.
+ARG INSTALL_CHROMIUM=false
 ENV PLAYWRIGHT_BROWSERS_PATH=/ms-playwright
 COPY scripts/install_chromium.sh /tmp/install_chromium.sh
-RUN sh /tmp/install_chromium.sh \
-    && rm -f /tmp/install_chromium.sh \
-    && chmod -R a+rX "$PLAYWRIGHT_BROWSERS_PATH" \
-    && rm -rf /var/lib/apt/lists/*
+RUN if [ "$INSTALL_CHROMIUM" = "true" ]; then \
+        sh /tmp/install_chromium.sh \
+        && chmod -R a+rX "$PLAYWRIGHT_BROWSERS_PATH" \
+        && rm -rf /var/lib/apt/lists/*; \
+    else \
+        echo "[chromium] skipped (INSTALL_CHROMIUM=$INSTALL_CHROMIUM)."; \
+        echo "[chromium] PDFs will be rendered in the browser as images."; \
+        echo "[chromium] Set PDF_SERVER_RENDER=off to make that a stated choice."; \
+    fi \
+    && rm -f /tmp/install_chromium.sh
 
 COPY . .
 

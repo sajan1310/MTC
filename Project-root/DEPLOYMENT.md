@@ -63,6 +63,13 @@ BASE_URL=https://yourdomain.com
 # === Optional: Rate Limiting ===
 RATELIMIT_STORAGE_URL=redis://localhost:6379
 
+# === Optional: PDF rendering ===
+# "auto" (default) renders PDFs server-side via headless Chromium when it is
+# installed, falling back to the browser when it is not. "off" means you have
+# deliberately not installed Chromium: PDFs are rendered in the browser as
+# images, and Print -> Save as PDF remains available for a searchable one.
+PDF_SERVER_RENDER=off
+
 # === Optional: Logging ===
 LOG_LEVEL=INFO
 ```
@@ -409,6 +416,44 @@ own PO number. See `docs/audit/PDF_GENERATION_REVIEW.md` PDF-002.
 
 `pip install` brings in the Playwright **library**; it never downloads the
 browser. That is a separate step, and it is the one that gets missed.
+
+### Not installing it is a supported choice
+
+**Chromium is off by default.** The Docker build skips it unless you ask:
+
+```bash
+docker build --build-arg INSTALL_CHROMIUM=true .
+```
+
+If you are not installing it, say so explicitly:
+
+```bash
+PDF_SERVER_RENDER=off
+```
+
+That one setting does three things: the startup log reports a deliberate choice
+(INFO) instead of warning about a broken deploy, the endpoint stops without ever
+touching Playwright, and the browser is told up front so it does not spend a
+request per session rediscovering the same thing.
+
+What you get without it:
+
+| | With Chromium | Without |
+|---|---|---|
+| Separate PDFs per record | yes | yes |
+| Folder picker / ZIP / individual downloads | yes | yes |
+| Works offline | yes | yes |
+| Searchable, copyable text | **yes** | no -- images |
+| File size | ~50 KB/page | ~120-360 KB/page |
+| **Print -> Save as PDF** | searchable | **searchable** |
+
+The last row is the important one. `window.print()` uses the browser's own print
+engine, so **Print -> Save as PDF produces a fully searchable document with
+nothing installed at all** -- the document title becomes the suggested filename.
+It does not do bulk (Print Selected gives one multi-page file rather than
+separate ones), but for a single PO going to a vendor or an auditor it is the
+complete answer. The app points users at it once, the first time they download an
+image-based PDF. The mobile shell has worked this way from the start.
 
 ### What "missed" looks like
 

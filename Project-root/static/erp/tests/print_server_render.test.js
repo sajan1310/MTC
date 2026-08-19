@@ -30,13 +30,14 @@ function loadPrintModule() {
 
 let Print;
 let sandbox;
+let toasts;
 
 beforeEach(() => {
   document.body.innerHTML = `
     <meta name="csrf-token" content="tok-123">
     <div id="print-bulk-container"><div id="print-bulk-body"></div></div>
   `;
-  ({ Print, sandbox } = loadPrintModule());
+  ({ Print, sandbox, toasts } = loadPrintModule());
   Print.BULK_EXPORT_YIELD_MS = 0;
 });
 
@@ -227,5 +228,108 @@ describe('deliverSeparatePDFs prefers the server', () => {
       'Item_Ledger_Document_2.pdf',
       'Item_Ledger_Document_3.pdf',
     ]);
+  });
+});
+
+describe('PDF_SERVER_RENDER=off', () => {
+  // A deployment that deliberately skips Chromium should not pay one wasted
+  // request per session rediscovering that.
+  it('never contacts the server when the shell says off', async () => {
+    document.body.innerHTML =
+      '<meta name="pdf-server-render" content="off">' + document.body.innerHTML;
+    ({ Print, sandbox, toasts } = loadPrintModule());
+    const calls = fakeFetch(() => pdfResponse());
+    expect(Print.serverPdfDisabledByConfig).toBe(true);
+    expect(await Print.renderViaServer('<p>x</p>')).toBe(null);
+    expect(calls).toHaveLength(0);
+  });
+
+  it('treats a missing meta tag as auto, not off', async () => {
+    const calls = fakeFetch(() => pdfResponse());
+    expect(Print.serverPdfDisabledByConfig).toBe(false);
+    await Print.renderViaServer('<p>x</p>');
+    expect(calls).toHaveLength(1);
+  });
+
+  it('treats an explicit auto as auto', async () => {
+    document.body.innerHTML =
+      '<meta name="pdf-server-render" content="auto">' + document.body.innerHTML;
+    ({ Print, sandbox, toasts } = loadPrintModule());
+    const calls = fakeFetch(() => pdfResponse());
+    await Print.renderViaServer('<p>x</p>');
+    expect(calls).toHaveLength(1);
+  });
+
+  it('still exports, via the raster renderer', async () => {
+    document.body.innerHTML =
+      '<meta name="pdf-server-render" content="off">' + document.body.innerHTML;
+    ({ Print, sandbox, toasts } = loadPrintModule());
+    Print.BULK_EXPORT_YIELD_MS = 0;
+    const raster = [];
+    Print.renderBulkPages = () => {};
+    Print.downloadElementAsPDF = (_i, f) => { raster.push(f); return Promise.resolve(true); };
+    const r = await Print.deliverSeparatePDFs(['a', 'b'], x => `<p>${x}</p>`, x => `${x}.pdf`);
+    expect(r.generated).toBe(2);
+    expect(raster).toEqual(['a.pdf', 'b.pdf']);
+    expect(r.rasterised).toBe(true);
+  });
+
+  it('survives a document with no querySelector at all', () => {
+    // print.js also runs where the DOM is partial (see api.js on service
+    // workers); reading the meta tag must not throw there.
+    const src = fs.readFileSync(path.join(__dirname, '..', 'print.js'), 'utf8');
+    const sb = {
+      App: { Utils: { showToast: () => {} } },
+      document: {}, window: {}, console, setTimeout, Blob, TextEncoder, URL, Date,
+      loadScript: () => Promise.resolve(),
+    };
+    vm.createContext(sb);
+    vm.runInContext(src, sb);
+    expect(sb.App.Print.serverPdfDisabledByConfig).toBe(false);
+  });
+});
+
+describe('the searchable-PDF tip', () => {
+  beforeEach(() => {
+    try { window.localStorage.clear(); } catch (e) { /* ignored */ }
+  });
+
+  it('is shown after a rasterised export', () => {
+    Print.reportBulkResult(
+      { generated: 2, delivered: 2, mode: 'files', rasterised: true }, 2, 'PO PDF');
+    expect(toasts.some(t => /Save as PDF/.test(t[0]))).toBe(true);
+  });
+
+  // Repeating a tip after every export trains people to ignore toasts.
+  it('is shown only once per browser', () => {
+    Print.reportBulkResult(
+      { generated: 1, delivered: 1, mode: 'files', rasterised: true }, 1, 'PO PDF');
+    const first = toasts.filter(t => /Save as PDF/.test(t[0])).length;
+    Print.reportBulkResult(
+      { generated: 1, delivered: 1, mode: 'files', rasterised: true }, 1, 'PO PDF');
+    const total = toasts.filter(t => /Save as PDF/.test(t[0])).length;
+    expect(first).toBe(1);
+    expect(total).toBe(1);
+  });
+
+  // The server output already is searchable, so the tip would be wrong.
+  it('is not shown when the server rendered the PDFs', () => {
+    Print.reportBulkResult(
+      { generated: 2, delivered: 2, mode: 'files', rasterised: false }, 2, 'PO PDF');
+    expect(toasts.some(t => /Save as PDF/.test(t[0]))).toBe(false);
+  });
+
+  it('is not shown when the export failed', () => {
+    Print.reportBulkResult(
+      { generated: 0, delivered: 0, mode: 'files', rasterised: true }, 3, 'PO PDF');
+    expect(toasts.some(t => /Save as PDF/.test(t[0]))).toBe(false);
+  });
+
+  it('does not throw when localStorage is unavailable', () => {
+    const real = window.localStorage.getItem;
+    window.localStorage.getItem = () => { throw new Error('denied'); };
+    expect(() => Print.reportBulkResult(
+      { generated: 1, delivered: 1, mode: 'files', rasterised: true }, 1, 'PO PDF')).not.toThrow();
+    window.localStorage.getItem = real;
   });
 });

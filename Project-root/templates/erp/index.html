@@ -15,6 +15,9 @@
   <meta name="current-user-id" content="{{ current_user.id }}">
   <meta name="current-user-role" content="{{ current_user.role }}">
   {% endif %}
+  <!-- "auto" or "off". When "off", App.Print skips the server render endpoint
+       entirely rather than discovering it is unavailable once per session. -->
+  <meta name="pdf-server-render" content="{{ pdf_server_render }}">
   <title>Maharaja Bikes ERP</title>
 
   <!-- PWA installability (Phase 5) -->

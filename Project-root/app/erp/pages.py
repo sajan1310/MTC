@@ -57,7 +57,11 @@ def index():
         return pending
     if request.args.get("ui") == "mobile":
         return redirect(url_for("erp.mobile"))
-    return render_template("erp/index.html", permitted_tabs=_permitted_tabs_for(current_user))
+    return render_template(
+        "erp/index.html",
+        permitted_tabs=_permitted_tabs_for(current_user),
+        pdf_server_render=current_app.config.get("PDF_SERVER_RENDER", "auto"),
+    )
 
 
 @erp_bp.route("/erp/mobile")
@@ -171,6 +175,15 @@ def render_pdf():
                (raster) renderer for the rest of the session.
     """
     from .services import pdf_render_service
+
+    if not pdf_render_service.is_enabled():
+        # Switched off on purpose (PDF_SERVER_RENDER=off). Same 503 the client
+        # already treats as "stop asking for this session", so no Playwright is
+        # touched and no browser is launched.
+        return jsonify({
+            "success": False,
+            "message": "Server-side PDF rendering is disabled on this deployment.",
+        }), 503
 
     payload = request.get_json(silent=True) or {}
     html = payload.get("html")
