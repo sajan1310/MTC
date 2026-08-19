@@ -1541,69 +1541,161 @@
   /* ─────────────────────────────────────────────────────────────────────
      DASHBOARD
      ───────────────────────────────────────────────────────────────────── */
-  .dash-kpi-card {
+  /* ── "Needs Attention" hero tiles ──────────────────────────────────────
+     Replaces .dash-kpi-card, which styled all 12 old tiles identically --
+     including four that had no number behind them at all. Only four tiles
+     use this now, and each one's [data-status] is set by App.Dashboard from
+     its threshold, so the colour reports whether the number is BAD rather
+     than which metric it is. A red icon on a metric that happens to be zero
+     was the single biggest reason the old row could not be read at a glance.
+
+     A <button>, not a div with role="button": core.js dispatches data-action
+     on click only, so the old role="button" tabindex="0" divs took keyboard
+     focus but could never be activated from the keyboard. The reset below is
+     what makes a button look like a card. */
+  .dash-hero {
     position: relative;
+    display: flex;
+    flex-direction: column;
+    align-items: flex-start;
+    gap: 2px;
+    width: 100%;
+    height: 100%;
+    padding: 16px 18px 14px;
+    text-align: left;
     background: var(--bg-light);
     border: 1px solid var(--border-color);
+    border-left: 4px solid var(--border-color);
     border-radius: var(--border-radius-lg);
     box-shadow: var(--shadow-sm);
-    padding: 14px 16px;
-    height: 100%;
     cursor: pointer;
     overflow: hidden;
-    transition: transform var(--transition-fast), box-shadow var(--transition-fast);
+    transition: transform var(--transition-fast), box-shadow var(--transition-fast), border-color var(--transition-fast);
   }
 
-  .dash-kpi-card:hover {
+  .dash-hero:hover {
     transform: translateY(-2px);
     box-shadow: var(--shadow-md);
   }
 
-  .dash-kpi-goto {
-    position: absolute;
-    top: 10px;
-    right: 10px;
-    color: var(--text-muted);
+  .dash-hero:focus-visible {
+    outline: 2px solid var(--secondary-color);
+    outline-offset: 2px;
+  }
+
+  .dash-hero-head {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    width: 100%;
+    margin-bottom: 6px;
+  }
+
+  .dash-hero-icon {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    width: 26px;
+    height: 26px;
+    border-radius: 7px;
     font-size: 13px;
+    flex-shrink: 0;
+    background: var(--bg-muted);
+    color: var(--text-secondary);
+  }
+
+  .dash-hero-label {
+    font-size: 11.5px;
+    font-weight: 600;
+    color: var(--text-secondary);
+    text-transform: uppercase;
+    letter-spacing: 0.3px;
+    line-height: 1.25;
+  }
+
+  .dash-hero-goto {
+    margin-left: auto;
+    font-size: 13px;
+    color: var(--text-muted);
     opacity: 0;
     transform: translateX(-4px);
     transition: opacity var(--transition-fast), transform var(--transition-fast);
   }
 
-  .dash-kpi-card:hover .dash-kpi-goto {
+  .dash-hero:hover .dash-hero-goto,
+  .dash-hero:focus-visible .dash-hero-goto {
     opacity: 1;
     transform: translateX(0);
   }
 
-  .dash-kpi-top {
-    display: flex;
-    align-items: center;
-    gap: 8px;
-    margin-bottom: 8px;
-    padding-right: 16px;
+  .dash-hero-value {
+    font-family: Outfit, sans-serif;
+    font-size: 30px;
+    font-weight: 700;
+    line-height: 1.1;
+    color: var(--text-primary);
   }
 
-  .dash-kpi-icon {
-    width: 28px;
-    height: 28px;
-    border-radius: 8px;
-    display: flex;
-    align-items: center;
-    justify-content: center;
-    color: #fff;
-    font-size: 13px;
-    flex-shrink: 0;
+  .dash-hero-note {
+    font-size: 12px;
+    line-height: 1.35;
+    color: var(--text-muted);
   }
 
-  /* Dashboard KPI icons pair a white glyph with Bootstrap's default
-     bg-warning (#ffc107) and bg-info (#0dcaf0) fills. Computed contrast:
-     1.63:1 and 1.96:1 -- both fail WCAG 1.4.11 (non-text contrast, 3:1)
-     badly. Every other bg-* variant here (primary/danger/success/secondary/
-     dark) already clears 3:1 with white, so only these two need a dark
-     glyph override. See ACCESSIBILITY_REPORT.md A11Y-002. */
-  .dash-kpi-icon.bg-warning,
-  .dash-kpi-icon.bg-info {
-    color: #1e293b;
+  /* Status states. The left border is the at-a-glance signal (visible in
+     peripheral vision across a row of four); the icon tint reinforces it,
+     and App.Dashboard writes the same state into the note text in words, so
+     the state is never carried by colour alone -- WCAG 1.4.1. */
+  .dash-hero[data-status="ok"] {
+    border-left-color: var(--success-color);
+  }
+
+  .dash-hero[data-status="ok"] .dash-hero-icon {
+    background: rgb(21 128 61 / 12%);
+    color: var(--success-color);
+  }
+
+  .dash-hero[data-status="warn"] {
+    border-left-color: #b45309;
+  }
+
+  .dash-hero[data-status="warn"] .dash-hero-icon {
+    background: rgb(180 83 9 / 12%);
+    color: #b45309;
+  }
+
+  .dash-hero[data-status="critical"] {
+    border-left-color: var(--danger-color);
+  }
+
+  .dash-hero[data-status="critical"] .dash-hero-icon {
+    background: rgb(220 53 69 / 12%);
+    color: var(--danger-color);
+  }
+
+  .dash-hero[data-status="critical"] .dash-hero-value {
+    color: var(--danger-color);
+  }
+
+  /* --warning-color (#ffc107) is only ever safe against dark text in this
+     codebase (see the DESIGN TOKENS block); as a text or border colour on a
+     light card it fails 1.4.3 badly, so "warn" uses amber-700 above instead.
+     Dark mode wants the lighter end of the same ramp. */
+  [data-theme="dark"] .dash-hero[data-status="warn"] {
+    border-left-color: var(--warning-color);
+  }
+
+  [data-theme="dark"] .dash-hero[data-status="warn"] .dash-hero-icon {
+    background: rgb(251 191 36 / 16%);
+    color: var(--warning-color);
+  }
+
+  [data-theme="dark"] .dash-hero[data-status="ok"] .dash-hero-icon {
+    background: rgb(52 211 153 / 16%);
+  }
+
+  [data-theme="dark"] .dash-hero[data-status="critical"] .dash-hero-icon {
+    background: rgb(248 113 113 / 16%);
   }
 
   /* Item Master photo thumbnail (list row + modal preview) */
@@ -1652,27 +1744,109 @@
     font-size: 28px;
   }
 
-  .dash-kpi-value {
-    font-family: Outfit, sans-serif;
-    font-size: 24px;
-    font-weight: 700;
-    color: var(--text-primary);
-    line-height: 1.2;
+  /* ── "This Month" metric strip ─────────────────────────────────────────
+     The four period metrics (Open POs, Bills, Returns, Wastage) that used to
+     sit in the headline row at the same visual weight as the operational
+     alerts. They answer "how are we tracking", not "what do I do now", so
+     they render compact and live beside the charts. */
+  .dash-metric-strip {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
+    gap: 10px;
   }
 
-  .dash-kpi-label {
-    font-size: 11.5px;
-    color: var(--text-secondary);
+  .dash-metric {
+    display: flex;
+    flex-direction: column;
+    align-items: flex-start;
+    gap: 1px;
+    padding: 12px 14px;
+    text-align: left;
+    background: var(--bg-light);
+    border: 1px solid var(--border-color);
+    border-radius: var(--border-radius);
+    box-shadow: var(--shadow-sm);
+    cursor: pointer;
+    transition: border-color var(--transition-fast), box-shadow var(--transition-fast);
+  }
+
+  .dash-metric:hover {
+    border-color: var(--secondary-color);
+    box-shadow: var(--shadow-md);
+  }
+
+  .dash-metric:focus-visible {
+    outline: 2px solid var(--secondary-color);
+    outline-offset: 2px;
+  }
+
+  .dash-metric-label {
+    font-size: 11px;
     font-weight: 600;
+    color: var(--text-secondary);
     text-transform: uppercase;
     letter-spacing: 0.3px;
-    line-height: 1.25;
   }
 
-  .dash-kpi-sub {
-    font-size: 12px;
+  .dash-metric-value {
+    font-family: Outfit, sans-serif;
+    font-size: 20px;
+    font-weight: 700;
+    line-height: 1.2;
+    color: var(--text-primary);
+  }
+
+  .dash-metric-note {
+    font-size: 11.5px;
     color: var(--text-muted);
-    margin-top: 4px;
+  }
+
+  /* Month-over-month delta, rendered as a percentage rather than the raw
+     difference the old tiles showed: "3 vs last mo." cannot be read without
+     already knowing last month's base. Direction is carried by the arrow
+     glyph as well as by weight, and is deliberately NOT colour-coded
+     green/red -- more wastage and more returns are not good news, so a
+     single up-is-good palette would actively mislead on half the strip. */
+  .dash-delta {
+    font-weight: 600;
+    color: var(--text-secondary);
+    white-space: nowrap;
+  }
+
+  .dash-delta[data-dir="flat"] {
+    font-weight: 400;
+    color: var(--text-muted);
+  }
+
+  /* Charts need an explicit box: Chart.js with maintainAspectRatio:false
+     fills its parent, and a parent with no height collapses to zero. Was an
+     inline style="position:relative;height:260px" on each canvas wrapper. */
+  .dash-chart-wrap {
+    position: relative;
+    height: 260px;
+  }
+
+  /* Quick Actions, grouped Inbound / Production & Outbound so "Receive Bill"
+     (purchase, stock in) and "Record New Bill" (dispatch, stock out) are no
+     longer adjacent peers in one flat row of seven. */
+  .dash-action-group {
+    margin-bottom: 14px;
+  }
+
+  .dash-action-group-label {
+    display: block;
+    margin-bottom: 8px;
+    font-size: 11px;
+    font-weight: 600;
+    color: var(--text-muted);
+    text-transform: uppercase;
+    letter-spacing: 0.4px;
+  }
+
+  .dash-action-row {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(140px, 1fr));
+    gap: 8px;
   }
 
   .dash-action-tile {
@@ -1730,103 +1904,201 @@
     margin-bottom: 16px;
   }
 
-  .dash-pipeline {
+  /* ── Process WIP pipeline ──────────────────────────────────────────────
+     A ranked list, not the wrapping wall of equal-size cards this replaced.
+     That layout cost a full screen at a dozen active processes, put a "->"
+     at the end of every wrapped line pointing at nothing, and -- because
+     each card sized itself to its content -- let a long process name
+     ("Fitting Frame 20 inch Valcano Shocker Tyre") spill straight over its
+     neighbour. Here the name owns a fixed grid column and truncates, so no
+     amount of process-name length can break the row. */
+  .dash-wip-summary {
     display: flex;
-    align-items: stretch;
     flex-wrap: wrap;
-    gap: 4px;
-  }
-
-  .dash-pipeline-stage {
-    flex: 1 1 200px;
-    background: var(--bg-muted);
-    border: 1px solid var(--border-color);
-    border-radius: var(--border-radius);
-    padding: 14px;
-    text-align: left;
-    min-width: 180px;
-  }
-
-  .dash-pipeline-name {
-    font-size: 13px;
-    color: var(--text-primary);
-    font-weight: 700;
-    font-family: Outfit, sans-serif;
-    text-align: center;
-  }
-
-  .dash-pipeline-total {
-    font-size: 11px;
+    gap: 4px 18px;
+    margin-bottom: 12px;
+    padding-bottom: 10px;
+    border-bottom: 1px solid var(--border-light);
+    font-size: 12px;
     color: var(--text-muted);
-    text-align: center;
-    margin-top: 2px;
-    margin-bottom: 10px;
   }
 
-  .dash-pipeline-groups {
+  .dash-wip-summary strong {
+    font-family: Outfit, sans-serif;
+    font-size: 14px;
+    color: var(--text-primary);
+  }
+
+  .dash-wip-list {
     display: flex;
     flex-direction: column;
-    gap: 4px;
-    max-height: 180px;
-    overflow-y: auto;
+    gap: 2px;
   }
 
-  .dash-pipeline-group-row {
-    display: flex;
-    justify-content: space-between;
+  .dash-wip-row {
+    display: grid;
+    grid-template-columns: 22px minmax(0, 200px) minmax(60px, 1fr) 76px 56px auto;
     align-items: center;
-    gap: 8px;
-    background: var(--bg-light);
-    border: 1px solid var(--border-light);
+    gap: 10px;
+    width: 100%;
+    padding: 7px 8px;
+    text-align: left;
+    background: none;
+    border: 1px solid transparent;
     border-radius: var(--border-radius-sm);
-    padding: 5px 8px;
+    cursor: pointer;
+    transition: background var(--transition-fast), border-color var(--transition-fast);
   }
 
-  .dash-pipeline-group-title {
+  .dash-wip-row:hover {
+    background: var(--bg-muted);
+    border-color: var(--border-color);
+  }
+
+  .dash-wip-row:focus-visible {
+    outline: 2px solid var(--secondary-color);
+    outline-offset: -2px;
+  }
+
+  .dash-wip-seq {
+    font-family: Outfit, sans-serif;
     font-size: 11px;
-    color: var(--text-secondary);
+    font-weight: 700;
+    color: var(--text-muted);
+    text-align: center;
+  }
+
+  .dash-wip-name {
+    font-size: 12.5px;
     font-weight: 600;
+    color: var(--text-primary);
     white-space: nowrap;
     overflow: hidden;
     text-overflow: ellipsis;
   }
 
-  .dash-pipeline-group-qty {
+  .dash-wip-bar {
+    display: block;
+    height: 8px;
+    background: var(--bg-muted);
+    border-radius: 4px;
+    overflow: hidden;
+  }
+
+  .dash-wip-bar-fill {
+    display: block;
+    height: 100%;
+    border-radius: 4px;
+    background: var(--secondary-light);
+  }
+
+  /* The stage holding more units than any other. Not called a bottleneck --
+     this is "where the most material is sitting", which is a fact; whether
+     that is a blockage is a judgement the data here cannot make. */
+  .dash-wip-bar-fill[data-peak="true"] {
+    background: var(--secondary-color);
+  }
+
+  .dash-wip-qty {
     font-family: Outfit, sans-serif;
     font-size: 13px;
     font-weight: 700;
-    color: var(--secondary-color);
-    flex-shrink: 0;
+    color: var(--text-primary);
+    text-align: right;
   }
 
-  .dash-pipeline-empty {
+  .dash-wip-qty small {
+    font-family: Inter, sans-serif;
+    font-size: 10px;
+    font-weight: 400;
+    color: var(--text-muted);
+  }
+
+  .dash-wip-lots {
     font-size: 11px;
     color: var(--text-muted);
-    text-align: center;
-    padding: 8px 0;
+    text-align: right;
   }
 
-  .dash-pipeline-arrow {
+  .dash-wip-peak {
+    font-size: 9.5px;
+    font-weight: 700;
+    text-transform: uppercase;
+    letter-spacing: 0.4px;
+    color: var(--secondary-color);
+    border: 1px solid var(--secondary-color);
+    border-radius: 999px;
+    padding: 1px 7px;
+    white-space: nowrap;
+  }
+
+  /* Per-colour / per-size split, on its own line under the row. Rendered
+     only when it says something the stage total does not -- see
+     App.Dashboard._informativeGroups. */
+  .dash-wip-chips {
+    grid-column: 2 / -1;
     display: flex;
-    align-items: center;
-    justify-content: center;
-    color: var(--text-muted);
-    flex: 0 0 auto;
-    padding: 0 4px;
+    flex-wrap: wrap;
+    gap: 4px;
+    margin-top: 2px;
   }
 
-  .dash-pipeline-clickable {
+  .dash-wip-chip {
+    display: inline-flex;
+    align-items: baseline;
+    gap: 5px;
+    max-width: 220px;
+    padding: 1px 7px;
+    font-size: 10.5px;
+    background: var(--bg-muted);
+    border: 1px solid var(--border-light);
+    border-radius: 999px;
+  }
+
+  .dash-wip-chip-title {
+    color: var(--text-secondary);
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+  }
+
+  .dash-wip-chip-qty {
+    font-family: Outfit, sans-serif;
+    font-weight: 700;
+    color: var(--secondary-color);
+  }
+
+  .dash-wip-chip-more {
+    color: var(--text-muted);
+    font-style: italic;
+  }
+
+  /* Below ~600px the bar stops being readable before the numbers do, so it
+     is the part that goes. */
+  @media (max-width: 600px) {
+    .dash-wip-row {
+      grid-template-columns: 20px minmax(0, 1fr) 70px 50px;
+    }
+
+    .dash-wip-bar,
+    .dash-wip-peak {
+      display: none;
+    }
+
+    .dash-wip-chips {
+      grid-column: 2 / -1;
+    }
+  }
+
+  /* Table rows that navigate on click. Kept as a mouse affordance only --
+     a <tr> takes no keyboard focus, so the keyboard route to each of these
+     tabs is the "View all" button renderTableFooter always emits. */
+  .dash-row-link {
     cursor: pointer;
-    transition: transform var(--transition-fast), box-shadow var(--transition-fast);
   }
 
-  .dash-pipeline-clickable:hover {
-    transform: translateY(-2px);
-    box-shadow: var(--shadow-md);
-  }
-
-  .dash-kpi-delta {
-    color: var(--text-muted);
+  .dash-row-link:hover {
+    background: var(--bg-muted);
   }
 
   .dash-table-footer {

@@ -1590,12 +1590,7 @@ App.Stock = {
   // Process/Product-tag/Color shape a Production lot uses.
   async openWarehouseOpeningModal() {
     await App.Process.ensureLoaded();
-    if (!App.State.globalBOMs || !App.State.globalBOMs.length) {
-      try {
-        const res = await Api.call('getBOMProductionData');
-        if (res.success) App.State.globalBOMs = res.data;
-      } catch (err) { /* Ignored -- Product dropdown stays empty until BOMs load elsewhere. */ }
-    }
+    if (typeof App.BOM !== 'undefined') await App.BOM.ensureProductListLoaded();
 
     const form = document.getElementById('warehouseOpeningForm');
     if (form) form.reset();
@@ -2367,16 +2362,25 @@ App.Stock = {
     }
   },
 
+  // Re-derives filteredStock from the CURRENT globalStock and the active
+  // search term, without touching pagination or re-rendering.
+  //
+  // Split out of filterData so a background refresh of globalStock can keep
+  // this tab's view pointing at the objects that were just loaded --
+  // App.Production.refreshPoolAvailability reloads Stock to paint the
+  // Production Lot form's availability hints, and used to assign
+  // `filteredStock = [...stock]` directly, silently discarding whatever
+  // search the operator had typed on the Stock tab.
+  recomputeFiltered() {
+    const cleanTerm = String(App.State.stockSearchTerm || '').trim().toLowerCase();
+    App.State.filteredStock = cleanTerm
+      ? App.State.globalStock.filter(item => App.Utils.matchesKeywords(`${item.name} ${item.size}`, cleanTerm))
+      : [...App.State.globalStock];
+  },
+
   filterData(term) {
     App.State.stockSearchTerm = String(term || '').trim();
-    const cleanTerm = App.State.stockSearchTerm.toLowerCase();
-    if (!cleanTerm) {
-      App.State.filteredStock = [...App.State.globalStock];
-    } else {
-      App.State.filteredStock = App.State.globalStock.filter(item =>
-        App.Utils.matchesKeywords(`${item.name} ${item.size}`, cleanTerm)
-      );
-    }
+    this.recomputeFiltered();
     App.State.stockCurrentPage = 1;
     this.renderTable();
   },

@@ -257,6 +257,69 @@ def test_dashboard_pipeline_groups_by_model_and_size(erp_client):
     assert stage["groups"][0]["title"] == "Unspecified"  # non-final-stage lot: no product tag, no size
 
 
+def test_dashboard_pipeline_group_title_includes_color(erp_client):
+    """A colour-tracked lot on a NON-final stage must group by its colour.
+
+    This is what used to make almost every WIP pipeline stage render a single
+    group titled "Unspecified": _get_pipeline_data built its title from
+    productName + size only, and on an intermediate process productName is
+    always blank (production_service writes it only when isFinalStage) while
+    size is optional on a breakdown entry -- colour, the one field
+    save_production actually requires there, went unread.
+    """
+    _payload, process_id = _save_process(erp_client)
+    resp = _rpc(
+        erp_client,
+        "saveProduction",
+        [
+            {
+                "processId": process_id,
+                "assignedTo": "Worker A",
+                "status": "Pending",
+                "componentsConsumed": [_item_component()],
+                "colorBreakdown": [
+                    {"color": "DashPipelineRed", "size": "", "qty": 7, "isCustom": True},
+                    {"color": "DashPipelineBlue", "size": "", "qty": 3, "isCustom": True},
+                ],
+            }
+        ],
+        mutation=True,
+    )
+    assert resp.get_json()["success"] is True, resp.get_json()["message"]
+
+    dash = _rpc(erp_client, "getDashboardData").get_json()["data"]
+    stage = next(p for p in dash["pipeline"] if p["processId"] == process_id)
+
+    titles = {g["title"]: g["qty"] for g in stage["groups"]}
+    assert titles == {"DashPipelineRed": 7, "DashPipelineBlue": 3}
+    assert "Unspecified" not in titles
+
+
+def test_dashboard_pipeline_group_title_keeps_size_alongside_color(erp_client):
+    _payload, process_id = _save_process(erp_client)
+    resp = _rpc(
+        erp_client,
+        "saveProduction",
+        [
+            {
+                "processId": process_id,
+                "assignedTo": "Worker A",
+                "status": "Pending",
+                "componentsConsumed": [_item_component()],
+                "colorBreakdown": [
+                    {"color": "DashSizedGreen", "size": "14 inch", "qty": 5, "isCustom": True},
+                ],
+            }
+        ],
+        mutation=True,
+    )
+    assert resp.get_json()["success"] is True, resp.get_json()["message"]
+
+    dash = _rpc(erp_client, "getDashboardData").get_json()["data"]
+    stage = next(p for p in dash["pipeline"] if p["processId"] == process_id)
+    assert stage["groups"][0]["title"] == "DashSizedGreen 14 inch"
+
+
 def test_dashboard_pipeline_omits_process_with_no_active_lots(erp_client):
     _payload, process_id = _save_process(erp_client)
     dash = _rpc(erp_client, "getDashboardData").get_json()["data"]

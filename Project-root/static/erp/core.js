@@ -1517,7 +1517,66 @@ const App = {
   Navigation: {
     LAST_TAB_KEY: 'maharaja-erp-last-tab',
 
-    showTab(id) {
+    // The tab currently on screen. Tracked so handleHashChange can tell a
+    // real back/forward navigation from a hash that already matches what's
+    // displayed, and skip re-running that tab's data load.
+    current: null,
+
+    // A tab id is only usable if its nav button actually exists: role-gated
+    // tabs like usersTab disappear for non-admins, and a stale id from an
+    // older build -- or a hand-edited URL -- shouldn't crash navigation.
+    isValidTab(id) {
+      return !!id && !!document.getElementById(`btn-${id}`);
+    },
+
+    tabFromHash() {
+      const id = String(location.hash || '').replace(/^#/, '');
+      return this.isValidTab(id) ? id : null;
+    },
+
+    // Which tab a fresh page load lands on. The hash wins because it is
+    // per-browser-tab state; localStorage is only the fallback for a tab
+    // opened without one (a bookmark to bare /erp, or the first load after
+    // this shipped).
+    //
+    // localStorage used to decide this alone, which broke having two tabs
+    // open on two modules: the key is shared by every tab on the origin, so
+    // whichever module was clicked most recently *anywhere* overwrote it and
+    // both tabs then snapped to that module on their next reload, losing
+    // whatever the other one was parked on.
+    resolveInitialTab() {
+      const fromHash = this.tabFromHash();
+      if (fromHash) return fromHash;
+      let stored = null;
+      try { stored = localStorage.getItem(this.LAST_TAB_KEY); } catch (e) { /* storage inaccessible */ }
+      return this.isValidTab(stored) ? stored : 'dashboardTab';
+    },
+
+    // Keeps the URL in step with the visible tab. `replace` is for the
+    // initial restore, which shouldn't leave a synthetic entry sitting
+    // behind the user's first Back press. Writing through the history API
+    // rather than assigning location.hash deliberately fires no hashchange,
+    // so this never re-enters showTab.
+    syncHash(id, replace) {
+      const target = `#${id}`;
+      if (location.hash === target) return;
+      try {
+        history[replace ? 'replaceState' : 'pushState'](null, '', target);
+      } catch (e) {
+        location.hash = id; // history API unavailable (sandboxed iframe, file://)
+      }
+    },
+
+    // Back/forward between tabs lands here, as does a hand-edited hash.
+    // showTab's own syncHash call is a no-op by then (the hash already
+    // matches), so this adds no history entry of its own.
+    handleHashChange() {
+      const id = this.tabFromHash();
+      if (!id || id === this.current) return;
+      this.showTab(id);
+    },
+
+    showTab(id, opts) {
       $$('.tab-content').forEach(tab => {
         tab.style.display = tab.id === id ? 'block' : 'none';
       });
@@ -1525,6 +1584,8 @@ const App = {
       $$('#mainTabs .nav-link').forEach(btn => btn.classList.remove('active'));
       document.getElementById(`btn-${id}`)?.classList.add('active');
 
+      this.current = id;
+      this.syncHash(id, !!(opts && opts.replace));
       try { localStorage.setItem(this.LAST_TAB_KEY, id); } catch (e) { /* storage inaccessible */ }
 
       if (typeof App.Dashboard !== 'undefined') App.Dashboard.stopAutoRefresh();
@@ -1674,13 +1735,13 @@ const App = {
   // every time), which was most of this app's "heavy first load" cost. Each
   // other module now lazy-loads the moment its own tab is switched to (see
   // Navigation.showTab) instead.
-  async Init(targetTab) {
+  async Init(targetTab, opts) {
     // Load persisted company logo and notification history (non-blocking,
     // best-effort).
     this.Logo.load();
     if (this.Notify) this.Notify.load();
 
-    const promises = [App.Navigation.showTab(targetTab || 'dashboardTab')];
+    const promises = [App.Navigation.showTab(targetTab || 'dashboardTab', opts)];
 
     // Unit Master stays eager (matches source) since Item Master's
     // Base/Purchase Unit fields need unitList populated whenever that
@@ -1744,6 +1805,23 @@ function bindGlobalEvents() {
     switch (btn.dataset.action) {
       case 'show-tab':
         App.Navigation.showTab(btn.dataset.tab);
+        break;
+      // Dashboard delegates. These replace inline onclick handlers that
+      // interpolated an id straight into a JS string literal
+      // (onclick="...openPipelineStage('${escapeHtml(id)}')") -- escapeHtml
+      // escapes for HTML, not for a JS string, so any process/product id
+      // containing an apostrophe broke the handler outright.
+      case 'dash-pipeline-stage':
+        App.Dashboard.openPipelineStage(decodeURIComponent(btn.dataset.processid || ''));
+        break;
+      case 'dash-dispatch-product':
+        App.Dashboard.openDispatchFor(decodeURIComponent(btn.dataset.productid || ''));
+        break;
+      case 'dash-new-dispatch':
+        App.Dashboard.openNewDispatch();
+        break;
+      case 'dash-retry':
+        App.Dashboard.loadData();
         break;
       case 'not-ported-yet':
         App.Utils.notPortedYet(btn.dataset.feature);
@@ -1930,12 +2008,17 @@ document.addEventListener('DOMContentLoaded', async () => {
   // otherwise -- and Init() didn't decide which tab to load until after it
   // had already eagerly fetched every module's data. Decide the target tab
   // FIRST, before Init() runs, so it loads only that tab's data (and shows
-  // it) instead of every module's -- but only if its nav button actually
-  // exists (role-gated tabs like usersTab disappear for non-admins, and a
-  // stale id from an older build shouldn't crash init).
-  const lastTab = safeGetItem(App.Navigation.LAST_TAB_KEY);
-  const targetTab = (lastTab && document.getElementById(`btn-${lastTab}`)) ? lastTab : 'dashboardTab';
-  await App.Init(targetTab);
+  // it) instead of every module's. resolveInitialTab reads the URL hash
+  // first and only falls back to localStorage, which is what lets two
+  // browser tabs sit on two different modules across a reload -- see its
+  // comment for the cross-tab clobbering that caused.
+  //
+  // Back/forward between tabs arrives as a hashchange; registering before
+  // Init means a hash typed or restored mid-boot isn't missed. {replace:
+  // true} keeps this first write out of the history stack, so Back leaves
+  // the app instead of bouncing off a synthetic entry.
+  window.addEventListener('hashchange', () => App.Navigation.handleHashChange());
+  await App.Init(App.Navigation.resolveInitialTab(), { replace: true });
 
   // Register the shell service worker (Phase 5: PWA installability).
   // Scoped to /erp/sw.js, not /static/erp/sw.js, so its default scope

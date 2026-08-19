@@ -36,12 +36,8 @@ App.Client = {
     if (typeof App.Dispatch !== 'undefined' && !App.State.globalDispatch.length) {
       fetches.push(App.Dispatch.loadDispatchData());
     }
-    if (!App.State.globalBOMs || !App.State.globalBOMs.length) {
-      fetches.push(
-        Api.call('getBOMProductionData')
-          .then(res => { if (res.success) App.State.globalBOMs = res.data; })
-          .catch(() => { /* Ignored -- product dropdown will simply be empty until BOMs load elsewhere. */ })
-      );
+    if (typeof App.BOM !== 'undefined') {
+      fetches.push(App.BOM.ensureProductListLoaded());
     }
 
     await Promise.all(fetches);

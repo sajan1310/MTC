@@ -1452,3 +1452,104 @@ def test_refresh_production_components_resyncs_pool_row_coincidentally_matching_
     match = next(r for r in listed if r["lotNumber"] == lot_number)
     assert match["componentsConsumed"][0]["itemName"] == recased_name
     assert match["componentsConsumed"][0]["narration"] == "Pool metadata sync"
+
+
+def test_lot_number_is_not_reused_after_a_lot_is_deleted(erp_client):
+    """A deleted lot's number must stay retired.
+
+    Deletes here are SOFT (deleted_at = NOW()), so the deleted row keeps
+    sitting in erp.production holding its lot_number, and
+    ix_erp_production_lot_number is non-unique. _generate_lot_number used
+    to scan only live rows, so deleting the newest lot under a prefix
+    rewound the sequence and handed the very next save that same number --
+    two rows quoting one Lot Number on their printed sheets, work orders
+    and audit messages, and two LIVE ones the moment the deleted lot is
+    restored.
+    """
+    payload, process_id = _save_process(erp_client)
+    prefix = payload["lotPrefix"]
+
+    first = _rpc(
+        erp_client,
+        "saveProduction",
+        [{"processId": process_id, "assignedTo": "Worker A", "qty": 5, "componentsConsumed": [_item_component()]}],
+        mutation=True,
+    ).get_json()
+    assert first["success"] is True, first["message"]
+    first_lot = first["data"]["lotNumber"]
+    assert first_lot.startswith(f"LOT-{prefix}-")
+
+    deleted = _rpc(erp_client, "deleteProduction", [first["data"]["row"]["rowIdx"]], mutation=True).get_json()
+    assert deleted["success"] is True, deleted["message"]
+
+    second = _rpc(
+        erp_client,
+        "saveProduction",
+        [{"processId": process_id, "assignedTo": "Worker A", "qty": 5, "componentsConsumed": [_item_component()]}],
+        mutation=True,
+    ).get_json()
+    assert second["success"] is True, second["message"]
+    assert second["data"]["lotNumber"] != first_lot
+
+
+def test_lot_number_prefix_scan_does_not_bleed_between_similar_prefixes(erp_client):
+    """The per-prefix scan filters in SQL (LIKE) now instead of pulling
+    every lot in the table into Python, so it has to stay exact: one
+    prefix must never absorb another's numbering just because one name is
+    a prefix of the other.
+    """
+    _short_payload, short_id = _save_process(erp_client, lotPrefix="AB")
+    _long_payload, long_id = _save_process(erp_client, lotPrefix="ABC")
+
+    def _log(process_id):
+        body = _rpc(
+            erp_client,
+            "saveProduction",
+            [{"processId": process_id, "assignedTo": "Worker A", "qty": 1, "componentsConsumed": [_item_component()]}],
+            mutation=True,
+        ).get_json()
+        assert body["success"] is True, body["message"]
+        return body["data"]["lotNumber"]
+
+    assert _log(short_id) == "LOT-AB-0001"
+    assert _log(short_id) == "LOT-AB-0002"
+    # "ABC" must start its own sequence, not continue "AB"'s.
+    assert _log(long_id) == "LOT-ABC-0001"
+    # ...and "AB" must not have counted the ABC lot either.
+    assert _log(short_id) == "LOT-AB-0003"
+
+
+def test_save_production_accepts_a_lot_with_many_colors(erp_client):
+    """`color` is a DERIVED summary joined from every colorBreakdown entry,
+    and the Colors to Produce checklist actively encourages many colors per
+    lot. At VARCHAR(1000) a colour-heavy lot blew past the column width and
+    the whole save died on a raw "value too long for type character
+    varying(1000)", which the RPC layer reports as the generic
+    "Something went wrong on our end" -- the operator loses a fully
+    filled-in form with nothing actionable to fix. See
+    migrations/erp/034_widen_production_color_summary.sql.
+    """
+    _payload, process_id = _save_process(erp_client)
+    colors = [f"Custom Colour Number {i:02d} Long Name" for i in range(40)]
+
+    body = _rpc(
+        erp_client,
+        "saveProduction",
+        [{
+            "processId": process_id,
+            "assignedTo": "Worker A",
+            "colorBreakdown": [{"color": c, "qty": 1, "isCustom": True, "countsTowardTotal": True} for c in colors],
+            "componentsConsumed": [_item_component()],
+        }],
+        mutation=True,
+    ).get_json()
+    assert body["success"] is True, body["message"]
+
+    listed = _rpc(erp_client, "getProductionData").get_json()["data"]
+    match = next(r for r in listed if r["lotNumber"] == body["data"]["lotNumber"])
+    assert match["qty"] == len(colors)
+    assert len(match["colorBreakdown"]) == len(colors)
+    # The summary is stored whole, not truncated to the old 1000-char cap.
+    assert len(match["color"]) > 1000
+    assert match["color"].startswith(colors[0])
+    assert match["color"].endswith(colors[-1])

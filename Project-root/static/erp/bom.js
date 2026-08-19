@@ -178,11 +178,27 @@ App.BOM = {
     }
   },
 
-  // Loads a cost-free product list (no rates/costs) on app startup so the
-  // Production tab's Product dropdown and production sheets work for all
-  // users, even before the BOM password has been entered. Not called yet
-  // (Production isn't ported) -- ready for that round's Init() to wire in.
-  async loadProductionData() {
+  // Loads the cost-free product list (no rates/costs) so every Product
+  // dropdown outside the BOM tab works for all users, even before the BOM
+  // password has been entered. Idempotent: no-ops once globalBOMs holds
+  // anything, so it never downgrades a password-authorized full BOM load
+  // to the cost-free list, and never re-fetches per caller.
+  //
+  // This is the one copy. It replaces three ad-hoc inline versions of the
+  // same "if (!globalBOMs.length) Api.call('getBOMProductionData')" block
+  // (App.Client.enterTab, App.Stock.openWarehouseOpeningModal, and this
+  // method's own never-called predecessor) -- and, more to the point,
+  // Production had NO copy at all. Its "Product (optional -- tags this
+  // packed lot so Dispatch can find it)" dropdown reads globalBOMs, so on
+  // any session that had not happened to visit Clients, Stock's Warehouse
+  // Opening modal, or an unlocked BOM tab first, the Create/Edit
+  // Production Lot form offered "Untagged" and nothing else: a final-stage
+  // lot simply could not be tagged, and Dispatch could never find it.
+  //
+  // Never rejects -- every caller treats the product list as optional
+  // enrichment and must not have its own load torn down by this one.
+  async ensureProductListLoaded() {
+    if (App.State.globalBOMs && App.State.globalBOMs.length) return;
     try {
       const response = await Api.call('getBOMProductionData');
       if (!response.success) {

@@ -2,34 +2,62 @@
 the port's "real feature" surface (only Audit, a backend-only cron job
 with no UI, is left after this).
 
-Pure read-only aggregator: every number is derived by calling
-already-ported getters (Stock/Production/Dispatch/Warehouse Pool/
-Contractors/Return/Wastage/Bill/PO/Process), never touching a table
-directly except for the Open PO summary, which reuses
-po_service._load_po_list/bill_service._aggregate_billed_base_qty_by_po/
-_build_po_line_key directly against a fresh cursor -- mirrors source's
-own reuse of module_bill.js's aggregation instead of re-deriving PO
-status logic. This module owns no table of its own -- no migration.
+Read-only aggregator. It owns no table of its own -- no migration except
+033_dashboard_date_indexes.sql, which indexes four OTHER modules' date
+columns purely so the queries below can seek instead of scan.
 
-getDashboardData/getMobileDashboard both call each constituent getter as
-a full standalone, already-ported RPC-style function (its own DB
-connection) rather than threading one shared cursor through every
-sub-computation -- matches the established pattern elsewhere in this
-port (e.g. production_service.get_process_wip_data calling
-process_service.get_process_components_data the same way), and is the
-natural fit for a module that only ever reads.
+Two kinds of number live here, and the split is deliberate:
 
-_summarize_by_two_months deliberately does NOT replicate a real,
-unintentional bug in source's own last-month calculation
-(`last.setMonth(last.getMonth() - 1)` incorrectly rolls into the wrong
-month on the 29th-31st of a month whose predecessor is shorter -- e.g.
-March 31 minus one month lands around March 2-3 in JS, not February).
-This is clearly accidental, not a deliberate design choice worth
-preserving bug-for-bug -- Python's `now.replace(day=1) - timedelta(days=1)`
-gives the correct previous calendar month unconditionally, at no extra
-cost.
+  1. Aggregates that are a plain date-bounded rollup -- Bills/Returns/
+     Wastage "this month vs last month", and the 30-day dispatch trend --
+     are SQL, in the _*_TWO_MONTH_SQL / _DISPATCH_TREND_SQL constants,
+     all sharing the one connection getDashboardData opens.
 
-getMobileDashboard's userEmail reuses a new small
+  2. Numbers whose derivation is genuinely intricate -- current stock
+     (initial + billed - consumed, per item+size), ready-to-dispatch
+     (completed final-stage lots less what already shipped), contractor
+     balances, production lot status and the WIP pipeline, and the Open PO
+     summary -- reuse the already-ported getter that owns that logic
+     rather than re-deriving it in SQL here. Re-implementing them would
+     mean two copies of some of the subtlest business rules in the system,
+     silently drifting apart.
+
+Group (1) used to be group (2): every KPI was derived by calling a
+module's full getter and reducing the result in Python, so a dashboard
+load pulled the ENTIRE bill, return, wastage and dispatch history into
+memory -- O(all history), on an endpoint that auto-refreshes every 5
+minutes per open browser tab -- to produce a handful of scalars. Those
+four getter calls are gone. The remaining four are bounded by item count
+and open-lot count rather than by history, and each is still called as a
+full standalone RPC-style function with its own connection, matching the
+established pattern elsewhere in this port (e.g.
+production_service.get_process_wip_data calling
+process_service.get_process_components_data the same way).
+
+The SQL in group (1) must reproduce its source getter's DOCUMENT grouping
+exactly -- a "bill" is a vendor+bill-number pair, not a header row -- so
+each constant carries a comment naming the getter it mirrors. Deviating
+there changes a KPI silently.
+
+_month_window deliberately does NOT replicate a real, unintentional bug in
+source's own last-month calculation (`last.setMonth(last.getMonth() - 1)`
+incorrectly rolls into the wrong month on the 29th-31st of a month whose
+predecessor is shorter -- e.g. March 31 minus one month lands around
+March 2-3 in JS, not February). This is clearly accidental, not a design
+choice worth preserving bug-for-bug.
+
+There is deliberately NO caching layer in front of any of this. The app
+runs 4 gunicorn workers (Procfile), so a process-local cache would let
+consecutive refreshes land on different workers and show the user numbers
+that jump backwards -- a worse failure than the latency it would save now
+that the history scans are gone.
+
+getMobileDashboard is NOT part of the group (1) rewrite: it still loads
+full production/dispatch/stock history for three counters and five
+activity rows, and is the obvious next target. Left alone here so this
+change's blast radius stays on the desktop dashboard it was made for.
+
+getMobileDashboard's userEmail reuses a small
 current_user.get_current_user_email() helper (mirrors the existing
 get_current_user_id() in the same module) rather than a DB round-trip --
 Flask-Login's current_user already carries .email.
@@ -48,9 +76,7 @@ from . import dispatch_service
 from . import po_service
 from . import process_service
 from . import production_service
-from . import return_service
 from . import stock_service
-from . import wastage_service
 from .current_user import get_current_user_email
 from .. import config_maps
 from .. import date_utils
@@ -58,6 +84,74 @@ from ..envelope import build_response
 from ..registry import rpc_method
 
 _ACTIVE_PRODUCTION_STATUSES = ("Pending", "In Progress")
+
+_T = config_maps.TABLE_NAMES
+
+# One row per Bill document, exactly as bill_service._load_bill_list groups
+# them: keyed on lower/trimmed vendor + bill number (NOT header id -- two
+# headers sharing a vendor+number are one bill to that getter), dated from
+# the lowest-id header in the group (its "first row ORDER BY h.id, l.id"),
+# and valued as the sum of per-line ROUND(qty * price * (1 + gst%), 2).
+#
+# btrim() trims spaces where the Python str.strip() it replaces trimmed all
+# whitespace. Vendor names and bill numbers reach the DB through web form
+# input, so a leading tab or newline is not a case that occurs; if one ever
+# did, it would group as its own document rather than corrupt a total.
+#
+# Rounding note: the Python it replaces rounds each line in float and uses
+# banker's rounding; Postgres rounds numeric half-away-from-zero. The two
+# can differ by one paisa on a line whose exact total lands on a half-paisa
+# boundary -- accepted deliberately, since the alternative is shipping the
+# whole bill ledger to Python on every dashboard load to save a rounding
+# case worth <= Rs 0.01 on a headline KPI.
+_BILLS_TWO_MONTH_SQL = f"""
+    SELECT (array_agg(h.bill_date ORDER BY h.id))[1] AS doc_date,
+           SUM(ROUND(l.qty * l.price * (1 + l.gst_rate_pct / 100.0), 2)) AS amount
+    FROM {_T["BILL_HEADERS"]} h
+    JOIN {_T["BILL_LINES"]} l ON l.header_id = h.id
+    WHERE h.deleted_at IS NULL
+      AND h.bill_date >= %s AND h.bill_date < %s
+    GROUP BY btrim(lower(h.vendor)) || '|' || btrim(lower(h.bill_number))
+"""
+
+# One row per Return document -- return_service._load_return_list keys on a
+# bare return_number (no lower/trim), so this GROUP BY must not add either.
+_RETURNS_TWO_MONTH_SQL = f"""
+    SELECT (array_agg(h.return_date ORDER BY h.id))[1] AS doc_date,
+           SUM(ROUND(l.qty * l.price, 2)) AS amount
+    FROM {_T["RETURN_HEADERS"]} h
+    JOIN {_T["RETURN_LINES"]} l ON l.header_id = h.id
+    WHERE h.deleted_at IS NULL
+      AND h.return_date >= %s AND h.return_date < %s
+    GROUP BY h.return_number
+"""
+
+# One row per Wastage document. "amount" here is a QUANTITY, not money --
+# the Wastage KPI trends units wasted, and wastage_service sums raw qty per
+# document with no per-line rounding, so neither does this.
+_WASTAGE_TWO_MONTH_SQL = f"""
+    SELECT (array_agg(h.wastage_date ORDER BY h.id))[1] AS doc_date,
+           SUM(l.qty) AS amount
+    FROM {_T["WASTAGE_HEADERS"]} h
+    JOIN {_T["WASTAGE_LINES"]} l ON l.header_id = h.id
+    WHERE h.deleted_at IS NULL
+      AND h.wastage_date >= %s AND h.wastage_date < %s
+    GROUP BY h.wastage_id
+"""
+
+# Dispatched qty per day. getDispatchData is a FLAT per-line record set, so
+# summing l.qty per header date is the same total the Python bucketing
+# produced -- with no header/line grouping step to replicate.
+_DISPATCH_TREND_SQL = f"""
+    SELECT h.dispatch_date AS d, SUM(l.qty) AS qty
+    FROM {_T["DISPATCH_HEADERS"]} h
+    JOIN {_T["DISPATCH_LINES"]} l ON l.header_id = h.id
+    WHERE h.deleted_at IS NULL
+      AND h.dispatch_date >= %s AND h.dispatch_date <= %s
+    GROUP BY h.dispatch_date
+"""
+
+_DISPATCH_TREND_DAYS = 30
 
 
 def _round2(n: float) -> float:
@@ -85,26 +179,51 @@ def _get_open_po_summary(cur) -> dict:
     return {"count": open_count, "value": _round2(open_value)}
 
 
-def _summarize_by_two_months(records: list, date_field: str, amount_field: str = None) -> dict:
-    now = date.today()
-    this_month_key = f"{now.year}-{now.month:02d}"
-    last_month_date = now.replace(day=1) - timedelta(days=1)
-    last_month_key = f"{last_month_date.year}-{last_month_date.month:02d}"
+def _month_window() -> tuple:
+    """(last_month_start, this_month_start, next_month_start).
 
-    this_count = this_value = last_count = last_value = 0
-    for rec in records or []:
-        raw = rec.get(date_field)
-        if not raw:
-            continue
-        raw_str = str(raw)
-        if raw_str.startswith(this_month_key):
+    Every two-month KPI queries the half-open range
+    [last_month_start, next_month_start), then splits the rows it gets back
+    on this_month_start. Deliberately does NOT replicate a real, unintentional
+    bug in the Apps Script source's own last-month calculation
+    (`last.setMonth(last.getMonth() - 1)` rolls into the wrong month on the
+    29th-31st of a month whose predecessor is shorter): stepping back one day
+    from the 1st lands on the previous calendar month unconditionally.
+    """
+    this_start = date.today().replace(day=1)
+    last_start = (this_start - timedelta(days=1)).replace(day=1)
+    next_start = (this_start + timedelta(days=32)).replace(day=1)
+    return last_start, this_start, next_start
+
+
+def _summarize_two_months(cur, sql: str) -> dict:
+    """Run a two-month rollup query and split its rows into this/last month.
+
+    `sql` takes (window_start, window_end) and returns one row per ledger
+    DOCUMENT with columns `doc_date` and `amount` -- see the three
+    _*_TWO_MONTH_SQL constants, each of which reproduces its own ledger
+    getter's document grouping. Splitting the two months in Python rather
+    than with a second GROUP BY keeps those queries readable and costs
+    nothing: the result is already narrowed to two months of documents.
+
+    This replaces a version that pulled every bill/return/wastage record
+    ever written through that module's full getter and bucketed the lot in
+    Python -- an O(all history) scan per dashboard load, for two months of
+    numbers.
+    """
+    last_start, this_start, next_start = _month_window()
+    cur.execute(sql, (last_start, next_start))
+
+    this_count = last_count = 0
+    this_value = last_value = 0.0
+    for row in cur.fetchall():
+        amount = float(row["amount"] or 0)
+        if row["doc_date"] >= this_start:
             this_count += 1
-            if amount_field:
-                this_value += rec.get(amount_field) or 0
-        elif raw_str.startswith(last_month_key):
+            this_value += amount
+        else:
             last_count += 1
-            if amount_field:
-                last_value += rec.get(amount_field) or 0
+            last_value += amount
 
     return {
         "thisMonth": {"count": this_count, "value": _round2(this_value)},
@@ -128,17 +247,36 @@ def _get_pipeline_data(production_lots: list) -> list:
         model_name = str(lot.get("productName") or "").strip()
         breakdown = lot.get("colorBreakdown") or []
 
-        def add_to_group(size, qty, bucket=bucket, model_name=model_name):
-            title = " ".join(x for x in [model_name, str(size or "").strip()] if x) or "Unspecified"
+        # Title parts, in narrowing order: what is being made, in which
+        # colour, in which size.
+        #
+        # `color` was previously dropped, and that is why almost every stage
+        # in the WIP pipeline rendered a single group labelled "Unspecified".
+        # Two facts combine to produce it: productName is written ONLY for a
+        # final-stage process (production_service._save, `... if
+        # is_final_stage else ""`), so every intermediate stage -- fitting,
+        # painting, packing -- stores an empty one; and `size` is optional on
+        # a colour breakdown entry while `color` is mandatory (save_production
+        # rejects a breakdown whose entries have no colour, and silently drops
+        # any entry that does). So for an intermediate colour-tracked lot both
+        # of the parts this used to read were empty and the one part that was
+        # always populated went unused -- collapsing a real per-colour split
+        # into one "Unspecified" bucket that merely restated the stage total.
+        #
+        # "Unspecified" still appears, correctly, for a lot with no breakdown
+        # at all on a non-final stage: nothing about that lot is tagged.
+        def add_to_group(color, size, qty, bucket=bucket, model_name=model_name):
+            parts = [model_name, str(color or "").strip(), str(size or "").strip()]
+            title = " ".join(x for x in parts if x) or "Unspecified"
             entry = bucket.setdefault(title, {"qty": 0.0, "lotCount": 0})
             entry["qty"] += qty
             entry["lotCount"] += 1
 
         if breakdown:
             for cb in breakdown:
-                add_to_group(cb.get("size"), float(cb.get("qty") or 0))
+                add_to_group(cb.get("color"), cb.get("size"), float(cb.get("qty") or 0))
         else:
-            add_to_group("", float(lot.get("qty") or 0))
+            add_to_group("", "", float(lot.get("qty") or 0))
 
     result = []
     for p in processes:
@@ -177,34 +315,41 @@ def _get_production_status_breakdown(production_lots: list) -> list:
     return [{"status": status, "count": count} for status, count in counts.items()]
 
 
-def _get_dispatch_trend(dispatch_records: list) -> list:
-    days = 30
-    qty_by_date: dict = {}
-    for d in dispatch_records:
-        if not d.get("dateRaw"):
-            continue
-        date_key = d["dateRaw"][:10]
-        qty_by_date[date_key] = qty_by_date.get(date_key, 0) + d["qty"]
+def _get_dispatch_trend(cur) -> list:
+    """Dispatched qty for each of the last 30 days, oldest first.
+
+    Asks Postgres for just that window instead of summing the entire
+    dispatch history in Python; days with no dispatch still get an explicit
+    0 row, so the client always renders a fixed-width 30-point series.
+    """
+    today = date.today()
+    start = today - timedelta(days=_DISPATCH_TREND_DAYS - 1)
+
+    cur.execute(_DISPATCH_TREND_SQL, (start, today))
+    qty_by_date = {row["d"]: float(row["qty"] or 0) for row in cur.fetchall()}
 
     trend = []
-    today = date.today()
-    for i in range(days - 1, -1, -1):
-        d = today - timedelta(days=i)
-        date_key = d.isoformat()
-        trend.append({"date": date_key, "qty": _round2(qty_by_date.get(date_key, 0))})
+    for i in range(_DISPATCH_TREND_DAYS):
+        day = start + timedelta(days=i)
+        trend.append({"date": day.isoformat(), "qty": _round2(qty_by_date.get(day, 0))})
     return trend
 
 
 @rpc_method("getDashboardData")
 def get_dashboard_data():
+    # Four getters that used to be called here -- getBillData, getReturnData,
+    # getWastageData and getDispatchData -- are gone: each returned its
+    # module's ENTIRE history so this function could derive a two-month
+    # rollup or a 30-day trend from it. Those four are now date-bounded SQL
+    # aggregates sharing the single connection opened below. The four that
+    # remain derive genuinely intricate per-row state (current stock from
+    # billed/consumed maps, ready-to-dispatch from completed final-stage
+    # lots less dispatched, contractor balances, lot status/pipeline) and
+    # are reused rather than re-implemented in SQL.
     stock_records = stock_service.get_stock_data()["data"]
     production_lots = production_service.get_production_data()["data"]
-    dispatch_records = dispatch_service.get_dispatch_data()["data"]
     ready_records = dispatch_service.get_ready_to_dispatch_data()["data"]
     contractor_ledger = contractors_service.get_contractor_ledger_data()["data"]
-    return_records = return_service.get_return_data()["data"]
-    wastage_records = wastage_service.get_wastage_data()["data"]
-    bill_records = bill_service.get_bill_data()["data"]
 
     low_stock_full = sorted(
         (
@@ -261,12 +406,14 @@ def get_dashboard_data():
     )
     contractor_payables_due = contractor_payables_full[:10]
 
+    # One connection for every aggregate that can be expressed as SQL.
     with database.get_conn(cursor_factory=psycopg2.extras.RealDictCursor) as (_conn, cur):
         open_po_summary = _get_open_po_summary(cur)
+        bills_months = _summarize_two_months(cur, _BILLS_TWO_MONTH_SQL)
+        returns_months = _summarize_two_months(cur, _RETURNS_TWO_MONTH_SQL)
+        wastage_months = _summarize_two_months(cur, _WASTAGE_TWO_MONTH_SQL)
+        dispatch_trend = _get_dispatch_trend(cur)
 
-    bills_months = _summarize_by_two_months(bill_records, "billDateRaw", "totalAmount")
-    returns_months = _summarize_by_two_months(return_records, "returnDateRaw", "totalAmount")
-    wastage_months = _summarize_by_two_months(wastage_records, "dateRaw", "totalQty")
     total_contractor_payable_due = sum(max(c["balanceDue"], 0) for c in contractor_ledger)
 
     return build_response(
@@ -299,7 +446,7 @@ def get_dashboard_data():
             },
             "pipeline": _get_pipeline_data(production_lots),
             "productionStatusBreakdown": _get_production_status_breakdown(production_lots),
-            "dispatchTrend": _get_dispatch_trend(dispatch_records),
+            "dispatchTrend": dispatch_trend,
             "lowStockItems": low_stock_items,
             "lowStockTotalCount": len(low_stock_full),
             "contractorPayables": contractor_payables_due,

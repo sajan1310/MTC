@@ -1,5 +1,31 @@
 <!--
-  Dashboard tab, transcribed from Apps_Script/View_Dashboard.html.
+  Dashboard tab.
+
+  Layout is a deliberate narrative, top to bottom: what is wrong -> what to
+  do about it -> where the work currently is -> the detail behind it ->
+  how the month is trending. That ordering is the point of the structure;
+  the previous version opened with a flat grid of 12 identically-styled
+  tiles in which "Open POs" (money at risk) and "Clients" (a link to a tab
+  the sidebar already reaches) were indistinguishable.
+
+  Two rules this file exists to hold:
+
+  1. Only numbers that can prompt an action today belong in "Needs
+     Attention". Each of those four tiles carries a data-status attribute
+     (ok / warn / critical / neutral) that App.Dashboard sets from the
+     thresholds in dashboard.js -- so a number reads as good or bad without
+     the user having to already know what a good value is. Everything that
+     is a trend rather than a task lives in "This Month" at the bottom.
+
+  2. Four tiles that had no metric behind them at all (Items Master,
+     Vendors, Products & Processes, Clients) are gone rather than restyled.
+     They were navigation shortcuts duplicating the sidebar, and their only
+     effect here was to dilute the row carrying the real numbers.
+
+  Every interactive tile is a real <button>, not a div with role="button".
+  The delegated click handler in core.js is click-only, so the previous
+  role="button" tabindex="0" divs could be focused by keyboard but never
+  activated by one.
 -->
 
 <div id="dashboardTab" class="tab-content active" role="tabpanel" aria-labelledby="btn-dashboardTab">
@@ -26,274 +52,250 @@
     </div>
   </div>
 
+  <!-- 1. NEEDS ATTENTION
+       The four numbers that can change what someone does today. Status
+       colour comes from App.Dashboard.THRESHOLDS, not from the metric's
+       identity, so "Stock Alerts" is red only when it is actually bad. -->
+  <section class="mb-4" aria-labelledby="dashAttentionHeading">
+    <h2 class="dash-section-title" id="dashAttentionHeading">Needs Attention</h2>
+    <div class="row row-cols-1 row-cols-sm-2 row-cols-xl-4 g-3">
 
-  <!-- KPI cards -->
-  <div class="row row-cols-2 row-cols-lg-4 g-3 mb-4" id="dashboardKpiRow">
-    <div class="col">
-      <div class="dash-kpi-card" data-action="show-tab" data-tab="poLedger" role="button" tabindex="0">
-        <div class="dash-kpi-goto"><i class="bi bi-chevron-right"></i></div>
-        <div class="dash-kpi-top">
-          <div class="dash-kpi-icon bg-primary"><i class="bi bi-file-earmark-text"></i></div>
-          <div class="dash-kpi-label">Open POs</div>
-        </div>
-        <div class="dash-kpi-value" id="kpiOpenPoCount">–</div>
-        <div class="dash-kpi-sub" id="kpiOpenPoValue">&nbsp;</div>
+      <div class="col">
+        <button type="button" class="dash-hero" data-status="neutral" id="heroLowStock"
+                data-action="show-tab" data-tab="stockTab">
+          <span class="dash-hero-head">
+            <span class="dash-hero-icon"><i class="bi bi-exclamation-triangle" aria-hidden="true"></i></span>
+            <span class="dash-hero-label">Stock Alerts</span>
+            <i class="bi bi-chevron-right dash-hero-goto" aria-hidden="true"></i>
+          </span>
+          <span class="dash-hero-value" id="kpiLowStockCount">&ndash;</span>
+          <span class="dash-hero-note" id="kpiLowStockSub">&nbsp;</span>
+        </button>
       </div>
-    </div>
-    <div class="col">
-      <div class="dash-kpi-card" data-action="show-tab" data-tab="billLedger" role="button" tabindex="0">
-        <div class="dash-kpi-goto"><i class="bi bi-chevron-right"></i></div>
-        <div class="dash-kpi-top">
-          <div class="dash-kpi-icon bg-info"><i class="bi bi-receipt"></i></div>
-          <div class="dash-kpi-label">Bills This Month</div>
-        </div>
-        <div class="dash-kpi-value" id="kpiBillsMonthCount">–</div>
-        <div class="dash-kpi-sub" id="kpiBillsMonthValue">&nbsp;</div>
-      </div>
-    </div>
-    <div class="col">
-      <div class="dash-kpi-card" data-action="show-tab" data-tab="stockTab" role="button" tabindex="0">
-        <div class="dash-kpi-goto"><i class="bi bi-chevron-right"></i></div>
-        <div class="dash-kpi-top">
-          <div class="dash-kpi-icon bg-danger"><i class="bi bi-exclamation-triangle"></i></div>
-          <div class="dash-kpi-label">Stock Alerts</div>
-        </div>
-        <div class="dash-kpi-value" id="kpiLowStockCount">–</div>
-        <div class="dash-kpi-sub" id="kpiLowStockSub">&nbsp;</div>
-      </div>
-    </div>
-    <div class="col">
-      <div class="dash-kpi-card" data-action="show-tab" data-tab="productionTab" role="button" tabindex="0">
-        <div class="dash-kpi-goto"><i class="bi bi-chevron-right"></i></div>
-        <div class="dash-kpi-top">
-          <div class="dash-kpi-icon bg-warning"><i class="bi bi-play-circle"></i></div>
-          <div class="dash-kpi-label">Pending Production</div>
-        </div>
-        <div class="dash-kpi-value" id="kpiPendingProduction">–</div>
-        <div class="dash-kpi-sub" id="kpiPendingProductionSub">&nbsp;</div>
-      </div>
-    </div>
-    <div class="col">
-      <div class="dash-kpi-card" data-action="show-tab" data-tab="dispatchTab" role="button" tabindex="0">
-        <div class="dash-kpi-goto"><i class="bi bi-chevron-right"></i></div>
-        <div class="dash-kpi-top">
-          <div class="dash-kpi-icon bg-success"><i class="bi bi-truck"></i></div>
-          <div class="dash-kpi-label">Ready to Dispatch</div>
-        </div>
-        <div class="dash-kpi-value" id="kpiReadyDispatch">–</div>
-        <div class="dash-kpi-sub" id="kpiReadyDispatchSub">&nbsp;</div>
-      </div>
-    </div>
-    <div class="col">
-      <div class="dash-kpi-card" data-action="show-tab" data-tab="contractorsTab" role="button" tabindex="0">
-        <div class="dash-kpi-goto"><i class="bi bi-chevron-right"></i></div>
-        <div class="dash-kpi-top">
-          <div class="dash-kpi-icon bg-secondary"><i class="bi bi-person-badge"></i></div>
-          <div class="dash-kpi-label">Contractor Payables</div>
-        </div>
-        <div class="dash-kpi-value" id="kpiContractorPayables">–</div>
-        <div class="dash-kpi-sub" id="kpiContractorPayablesSub">&nbsp;</div>
-      </div>
-    </div>
-    <div class="col">
-      <div class="dash-kpi-card" data-action="show-tab" data-tab="returnLedger" role="button" tabindex="0">
-        <div class="dash-kpi-goto"><i class="bi bi-chevron-right"></i></div>
-        <div class="dash-kpi-top">
-          <div class="dash-kpi-icon bg-danger"><i class="bi bi-arrow-return-left"></i></div>
-          <div class="dash-kpi-label">Returns This Month</div>
-        </div>
-        <div class="dash-kpi-value" id="kpiReturnsMonthCount">–</div>
-        <div class="dash-kpi-sub" id="kpiReturnsMonthSub">&nbsp;</div>
-      </div>
-    </div>
-    <div class="col">
-      <div class="dash-kpi-card" data-action="show-tab" data-tab="returnLedger" role="button" tabindex="0">
-        <div class="dash-kpi-goto"><i class="bi bi-chevron-right"></i></div>
-        <div class="dash-kpi-top">
-          <div class="dash-kpi-icon bg-dark"><i class="bi bi-trash3"></i></div>
-          <div class="dash-kpi-label">Wastage This Month</div>
-        </div>
-        <div class="dash-kpi-value" id="kpiWastageMonthQty">–</div>
-        <div class="dash-kpi-sub" id="kpiWastageMonthSub">&nbsp;</div>
-      </div>
-    </div>
-    <!-- Nav-only shortcut tiles: no live aggregate backs these, just navigation -->
-    <div class="col">
-      <div class="dash-kpi-card" data-action="show-tab" data-tab="itemMaster" role="button" tabindex="0">
-        <div class="dash-kpi-goto"><i class="bi bi-chevron-right"></i></div>
-        <div class="dash-kpi-top">
-          <div class="dash-kpi-icon bg-primary"><i class="bi bi-box-seam"></i></div>
-          <div class="dash-kpi-label">Items Master</div>
-        </div>
-      </div>
-    </div>
-    <div class="col">
-      <div class="dash-kpi-card" data-action="show-tab" data-tab="vendorMaster" role="button" tabindex="0">
-        <div class="dash-kpi-goto"><i class="bi bi-chevron-right"></i></div>
-        <div class="dash-kpi-top">
-          <div class="dash-kpi-icon bg-success"><i class="bi bi-people"></i></div>
-          <div class="dash-kpi-label">Vendors</div>
-        </div>
-      </div>
-    </div>
-    <div class="col">
-      <div class="dash-kpi-card" data-action="show-tab" data-tab="productsTab" role="button" tabindex="0">
-        <div class="dash-kpi-goto"><i class="bi bi-chevron-right"></i></div>
-        <div class="dash-kpi-top">
-          <div class="dash-kpi-icon bg-info"><i class="bi bi-diagram-3"></i></div>
-          <div class="dash-kpi-label">Products &amp; Processes</div>
-        </div>
-      </div>
-    </div>
-    <div class="col">
-      <div class="dash-kpi-card" data-action="show-tab" data-tab="clientsTab" role="button" tabindex="0">
-        <div class="dash-kpi-goto"><i class="bi bi-chevron-right"></i></div>
-        <div class="dash-kpi-top">
-          <div class="dash-kpi-icon bg-secondary"><i class="bi bi-person-lines-fill"></i></div>
-          <div class="dash-kpi-label">Clients</div>
-        </div>
-      </div>
-    </div>
-  </div>
 
-  <!-- Quick Actions -->
-  <div class="dash-section mb-4">
-    <div class="dash-section-title">Quick Actions</div>
-    <div class="row row-cols-2 row-cols-sm-3 row-cols-lg-6 g-2">
       <div class="col">
-        <button class="btn btn-success dash-action-tile w-100 h-100" onclick="App.PO.openCreateModal()">
-          <i class="bi bi-plus-circle"></i><span>Create PO</span>
+        <button type="button" class="dash-hero" data-status="neutral" id="heroPendingProduction"
+                data-action="show-tab" data-tab="productionTab">
+          <span class="dash-hero-head">
+            <span class="dash-hero-icon"><i class="bi bi-play-circle" aria-hidden="true"></i></span>
+            <span class="dash-hero-label">Production In Progress</span>
+            <i class="bi bi-chevron-right dash-hero-goto" aria-hidden="true"></i>
+          </span>
+          <span class="dash-hero-value" id="kpiPendingProduction">&ndash;</span>
+          <span class="dash-hero-note" id="kpiPendingProductionSub">&nbsp;</span>
         </button>
       </div>
+
       <div class="col">
-        <button class="btn btn-primary dash-action-tile w-100 h-100" onclick="App.Bill.openReceiveModal()">
-          <i class="bi bi-receipt"></i><span>Receive Bill</span>
+        <button type="button" class="dash-hero" data-status="neutral" id="heroReadyDispatch"
+                data-action="show-tab" data-tab="dispatchTab">
+          <span class="dash-hero-head">
+            <span class="dash-hero-icon"><i class="bi bi-truck" aria-hidden="true"></i></span>
+            <span class="dash-hero-label">Ready to Dispatch</span>
+            <i class="bi bi-chevron-right dash-hero-goto" aria-hidden="true"></i>
+          </span>
+          <span class="dash-hero-value" id="kpiReadyDispatch">&ndash;</span>
+          <span class="dash-hero-note" id="kpiReadyDispatchSub">&nbsp;</span>
         </button>
       </div>
+
       <div class="col">
-        <button class="btn btn-dark dash-action-tile w-100 h-100" onclick="App.Production.openCreateModal()">
-          <i class="bi bi-play-circle"></i><span>Log Production</span>
+        <button type="button" class="dash-hero" data-status="neutral" id="heroContractorPayables"
+                data-action="show-tab" data-tab="contractorsTab">
+          <span class="dash-hero-head">
+            <span class="dash-hero-icon"><i class="bi bi-person-badge" aria-hidden="true"></i></span>
+            <span class="dash-hero-label">Contractor Payables</span>
+            <i class="bi bi-chevron-right dash-hero-goto" aria-hidden="true"></i>
+          </span>
+          <span class="dash-hero-value" id="kpiContractorPayables">&ndash;</span>
+          <span class="dash-hero-note" id="kpiContractorPayablesSub">&nbsp;</span>
         </button>
       </div>
-      <div class="col">
-        <button class="btn btn-dark dash-action-tile w-100 h-100" onclick="App.Issue.openIssueModal()">
-          <i class="bi bi-box-arrow-up"></i><span>Issue Stock</span>
-        </button>
-      </div>
-      <div class="col">
-        <button class="btn btn-success dash-action-tile w-100 h-100" onclick="App.Navigation.showTab('dispatchTab'); App.Dispatch.enterTab().then(() => App.Dispatch.openCreateDispatchModal())">
-          <i class="bi bi-truck"></i><span>Record New Bill</span>
-        </button>
-      </div>
-      <div class="col">
-        <button class="btn btn-secondary dash-action-tile w-100 h-100" onclick="App.Wastage.openWastageModal()">
-          <i class="bi bi-trash3"></i><span>Log Wastage</span>
-        </button>
-      </div>
-      <div class="col">
-        <button class="btn btn-outline-danger dash-action-tile w-100 h-100" onclick="App.Return.openReturnModal()">
-          <i class="bi bi-arrow-return-left"></i><span>Return Goods</span>
-        </button>
-      </div>
+
     </div>
+  </section>
+
+  <!-- 2. QUICK ACTIONS
+       Kept high because these are the highest-frequency controls on the
+       page, and kept to ONE row so they cost one band of vertical space
+       rather than three. "Receive Bill" (a purchase bill arriving from a
+       vendor) and "Record New Bill" (a dispatch bill going out to a client)
+       are both established domain vocabulary here -- see dispatch.js's own
+       "Record New Bill" comment -- so the separator and the tooltips are
+       what disambiguate them. Neither label was renamed: that is a
+       business call, not a layout one. -->
+  <section class="dash-section mb-4" aria-labelledby="dashActionsHeading">
+    <h2 class="dash-section-title" id="dashActionsHeading">Quick Actions</h2>
+
+    <!-- One row, all seven. The Inbound / Outbound split that used to be two
+         stacked labelled rows collapses to a single hairline separator after
+         "Return Goods": it still marks where purchasing ends and production
+         begins -- which is what keeps "Receive Bill" (a purchase bill coming
+         in from a vendor) readable next to "Record New Bill" (a dispatch
+         bill going out to a client) -- without spending a second row on it.
+         The tooltips carry the full disambiguation. -->
+    <div class="dash-action-row">
+      <button class="btn btn-success dash-action-tile" onclick="App.PO.openCreateModal()" title="Raise a purchase order to a vendor">
+        <i class="bi bi-plus-circle" aria-hidden="true"></i><span>Create PO</span>
+      </button>
+      <button class="btn btn-primary dash-action-tile" onclick="App.Bill.openReceiveModal()" title="Record a purchase bill received from a vendor (stock in)">
+        <i class="bi bi-receipt" aria-hidden="true"></i><span>Receive Bill</span>
+      </button>
+      <button class="btn btn-outline-danger dash-action-tile" onclick="App.Return.openReturnModal()" title="Return goods to a vendor">
+        <i class="bi bi-arrow-return-left" aria-hidden="true"></i><span>Return Goods</span>
+      </button>
+
+      <span class="dash-action-sep" aria-hidden="true"></span>
+
+      <button class="btn btn-dark dash-action-tile" onclick="App.Production.openCreateModal()" title="Log a new production lot">
+        <i class="bi bi-play-circle" aria-hidden="true"></i><span>Log Production</span>
+      </button>
+      <button class="btn btn-dark dash-action-tile" onclick="App.Issue.openIssueModal()" title="Issue stock to a contractor or process">
+        <i class="bi bi-box-arrow-up" aria-hidden="true"></i><span>Issue Stock</span>
+      </button>
+      <button class="btn btn-success dash-action-tile" data-action="dash-new-dispatch" title="Record a dispatch bill going out to a client (stock out)">
+        <i class="bi bi-truck" aria-hidden="true"></i><span>Record New Bill</span>
+      </button>
+      <button class="btn btn-secondary dash-action-tile" onclick="App.Wastage.openWastageModal()" title="Log wasted or scrapped material">
+        <i class="bi bi-trash3" aria-hidden="true"></i><span>Log Wastage</span>
+      </button>
+    </div>
+
     <div class="d-flex flex-wrap justify-content-between align-items-center gap-2 dash-quick-secondary">
       <button class="btn btn-outline-danger btn-sm fw-semibold" onclick="App.Stock.openLowStockPreview()">
-        <i class="bi bi-printer me-1"></i>Print Low Stock Report
+        <i class="bi bi-printer me-1" aria-hidden="true"></i>Print Low Stock Report
       </button>
       <div class="d-flex flex-wrap align-items-center gap-2">
         <span class="dash-setup-label">Setup</span>
         <button class="btn btn-outline-secondary btn-sm" onclick="App.Item.openCreateModal()">
-          <i class="bi bi-box-seam me-1"></i>Item
+          <i class="bi bi-box-seam me-1" aria-hidden="true"></i>Item
         </button>
         <button class="btn btn-outline-secondary btn-sm" onclick="App.Process.openCreateModal()">
-          <i class="bi bi-diagram-3 me-1"></i>Process
+          <i class="bi bi-diagram-3 me-1" aria-hidden="true"></i>Process
         </button>
         <button class="btn btn-outline-secondary btn-sm" onclick="App.Vendor.openCreateModal()">
-          <i class="bi bi-people me-1"></i>Vendor
+          <i class="bi bi-people me-1" aria-hidden="true"></i>Vendor
         </button>
       </div>
     </div>
-  </div>
+  </section>
 
-  <!-- Process WIP Pipeline -->
-  <div class="dash-section mb-4">
-    <div class="dash-section-title">Process WIP Pipeline — Active Production Lots</div>
-    <div id="dashboardPipeline" class="dash-pipeline">
-      <div class="text-muted small">Loading pipeline…</div>
+  <!-- 3. WHERE THE WORK IS
+       Promoted above the charts. This is the most operationally useful
+       block on the page and it used to sit below three rows of tiles and
+       two rows of buttons, off the first screen entirely. -->
+  <section class="dash-section mb-4" aria-labelledby="dashPipelineHeading">
+    <h2 class="dash-section-title" id="dashPipelineHeading">Process WIP Pipeline &mdash; Active Production Lots</h2>
+    <div id="dashboardPipeline">
+      <div class="text-muted small">Loading pipeline&hellip;</div>
     </div>
-  </div>
+  </section>
 
-  <!-- Charts -->
+  <!-- 4. THE DETAIL BEHIND THE ALERTS
+       Same three tables as before, but now directly under the tiles whose
+       numbers they explain rather than below the charts. -->
   <div class="row g-3 mb-4">
     <div class="col-lg-4">
-      <div class="dash-section h-100">
-        <div class="dash-section-title">Production Lot Status</div>
-        <div style="position:relative; height:260px;">
-          <canvas id="dashProductionStatusChart"></canvas>
-        </div>
-      </div>
-    </div>
-    <div class="col-lg-8">
-      <div class="dash-section h-100">
-        <div class="dash-section-title">Dispatch Volume — Last 30 Days</div>
-        <div style="position:relative; height:260px;">
-          <canvas id="dashDispatchTrendChart"></canvas>
-        </div>
-      </div>
-    </div>
-  </div>
-
-  <!-- Tables -->
-  <div class="row g-3 mb-4">
-    <div class="col-lg-4">
-      <div class="dash-section h-100">
-        <div class="dash-section-title">Low Stock Items</div>
+      <section class="dash-section h-100" aria-labelledby="dashLowStockHeading">
+        <h2 class="dash-section-title" id="dashLowStockHeading">Low Stock Items</h2>
         <div class="table-responsive">
           <table class="table table-sm align-middle mb-0">
             <thead>
               <tr><th scope="col">Item</th><th scope="col">Size</th><th scope="col" class="text-end">Current</th><th scope="col" class="text-end">Threshold</th></tr>
             </thead>
             <tbody id="dashLowStockBody">
-              <tr><td colspan="4" class="text-muted text-center">Loading…</td></tr>
+              <tr><td colspan="4" class="text-muted text-center">Loading&hellip;</td></tr>
             </tbody>
           </table>
         </div>
         <div id="dashLowStockFooter" class="dash-table-footer"></div>
-      </div>
+      </section>
     </div>
     <div class="col-lg-4">
-      <div class="dash-section h-100">
-        <div class="dash-section-title">Ready to Dispatch</div>
+      <section class="dash-section h-100" aria-labelledby="dashReadyHeading">
+        <h2 class="dash-section-title" id="dashReadyHeading">Ready to Dispatch</h2>
         <div class="table-responsive">
           <table class="table table-sm align-middle mb-0">
             <thead>
               <tr><th scope="col">Product</th><th scope="col" class="text-end">Ready Qty</th><th scope="col"><span class="visually-hidden">Actions</span></th></tr>
             </thead>
             <tbody id="dashReadyToDispatchBody">
-              <tr><td colspan="3" class="text-muted text-center">Loading…</td></tr>
+              <tr><td colspan="3" class="text-muted text-center">Loading&hellip;</td></tr>
             </tbody>
           </table>
         </div>
         <div id="dashReadyToDispatchFooter" class="dash-table-footer"></div>
-      </div>
+      </section>
     </div>
     <div class="col-lg-4">
-      <div class="dash-section h-100">
-        <div class="dash-section-title">Contractor Payables Due</div>
+      <section class="dash-section h-100" aria-labelledby="dashPayablesHeading">
+        <h2 class="dash-section-title" id="dashPayablesHeading">Contractor Payables Due</h2>
         <div class="table-responsive">
           <table class="table table-sm align-middle mb-0">
             <thead>
               <tr><th scope="col">Contractor</th><th scope="col" class="text-end">Balance Due</th></tr>
             </thead>
             <tbody id="dashContractorPayablesBody">
-              <tr><td colspan="2" class="text-muted text-center">Loading…</td></tr>
+              <tr><td colspan="2" class="text-muted text-center">Loading&hellip;</td></tr>
             </tbody>
           </table>
         </div>
         <div id="dashContractorPayablesFooter" class="dash-table-footer"></div>
-      </div>
+      </section>
     </div>
   </div>
+
+  <!-- 5. HOW THE MONTH IS TRENDING
+       The four period metrics demoted out of the headline row into a
+       compact strip: they answer "how are we tracking", not "what do I do
+       now", so they sit with the charts answering the same question. Each
+       carries a percentage delta rather than the raw difference the old
+       tiles showed ("3 vs last mo." is unreadable without the base). -->
+  <section aria-labelledby="dashTrendsHeading">
+    <h2 class="dash-section-title" id="dashTrendsHeading">This Month</h2>
+
+    <div class="dash-metric-strip mb-3">
+      <button type="button" class="dash-metric" data-action="show-tab" data-tab="poLedger">
+        <span class="dash-metric-label"><i class="bi bi-file-earmark-text" aria-hidden="true"></i> Open POs</span>
+        <span class="dash-metric-value" id="kpiOpenPoCount">&ndash;</span>
+        <span class="dash-metric-note" id="kpiOpenPoValue">&nbsp;</span>
+      </button>
+      <button type="button" class="dash-metric" data-action="show-tab" data-tab="billLedger">
+        <span class="dash-metric-label"><i class="bi bi-receipt" aria-hidden="true"></i> Bills</span>
+        <span class="dash-metric-value" id="kpiBillsMonthCount">&ndash;</span>
+        <span class="dash-metric-note" id="kpiBillsMonthValue">&nbsp;</span>
+      </button>
+      <button type="button" class="dash-metric" data-action="show-tab" data-tab="returnLedger">
+        <span class="dash-metric-label"><i class="bi bi-arrow-return-left" aria-hidden="true"></i> Returns</span>
+        <span class="dash-metric-value" id="kpiReturnsMonthCount">&ndash;</span>
+        <span class="dash-metric-note" id="kpiReturnsMonthSub">&nbsp;</span>
+      </button>
+      <button type="button" class="dash-metric" data-action="show-tab" data-tab="returnLedger">
+        <span class="dash-metric-label"><i class="bi bi-trash3" aria-hidden="true"></i> Wastage</span>
+        <span class="dash-metric-value" id="kpiWastageMonthQty">&ndash;</span>
+        <span class="dash-metric-note" id="kpiWastageMonthSub">&nbsp;</span>
+      </button>
+    </div>
+
+    <div class="row g-3">
+      <div class="col-lg-4">
+        <div class="dash-section h-100">
+          <h3 class="dash-section-title">Production Lot Status</h3>
+          <div class="dash-chart-wrap">
+            <canvas id="dashProductionStatusChart" role="img" aria-label="Production lots by status"></canvas>
+          </div>
+        </div>
+      </div>
+      <div class="col-lg-8">
+        <div class="dash-section h-100">
+          <h3 class="dash-section-title">Dispatch Volume &mdash; Last 30 Days</h3>
+          <div class="dash-chart-wrap">
+            <canvas id="dashDispatchTrendChart" role="img" aria-label="Quantity dispatched per day over the last 30 days"></canvas>
+          </div>
+        </div>
+      </div>
+    </div>
+  </section>
 
 </div>
 

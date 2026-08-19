@@ -1,0 +1,22 @@
+-- erp.production.color is a DERIVED display summary, not an input:
+-- save_production builds it by joining every entry of the lot's
+-- color_breakdown ("Blue-White / BCP (26 inch), Red (24 inch), ..."), and
+-- color_breakdown (JSONB) is the real record. VARCHAR(1000) therefore put
+-- a hard ceiling on a field no operator can see or shorten -- and the
+-- Colors to Produce checklist actively encourages many colors per lot
+-- (one checkbox per color x size, plus "+ Add Custom Sub-Group").
+--
+-- Past that ceiling the whole save failed on a raw "value too long for
+-- type character varying(1000)", which the RPC layer reports as the
+-- generic "Something went wrong on our end" -- the operator loses an
+-- entire filled-in Production Lot form with nothing actionable to fix.
+-- Verified reproducible with ~40 colors on one lot.
+--
+-- TEXT rather than a bigger VARCHAR: there is no length this summary
+-- SHOULD be capped at (its length is just "however many colors this batch
+-- runs"), and truncating would silently disagree with color_breakdown.
+-- In Postgres TEXT and VARCHAR are the same storage/performance, so this
+-- is a metadata-only change -- no table rewrite, no data loss, and every
+-- existing value stays byte-identical.
+ALTER TABLE erp.production
+    ALTER COLUMN color TYPE TEXT;

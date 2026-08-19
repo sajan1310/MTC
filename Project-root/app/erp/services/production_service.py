@@ -117,9 +117,38 @@ def _find_contractor_id_by_name(cur, name: str):
 
 
 def _generate_lot_number(cur, lot_prefix: str) -> str:
+    """Next free LOT-<prefix>-NNNN, scanning every lot that has ever held a
+    number under this prefix -- SOFT-DELETED ONES INCLUDED.
+
+    Excluding deleted rows (as this did) made the sequence rewind: delete
+    the newest lot under a prefix and the next save is handed that exact
+    same lot number, while the deleted row still sits in the table holding
+    it (deletes here are soft -- see delete_production's `deleted_at =
+    NOW()`, and ix_erp_production_lot_number is non-unique so nothing
+    objects). Lot Number is the human identifier every printed Production
+    Sheet, Work Order, Issue-Stock reference and audit message quotes, so
+    two rows sharing one is a real ambiguity -- and restoring the deleted
+    lot would leave two live rows with the same number.
+
+    The prefix filter runs in SQL rather than over every lot in the table:
+    lower(lot_number) LIKE lower(...) is exactly what
+    ix_erp_production_lot_number indexes, and the regex below still has the
+    final say on shape (LIKE can't express "digits only", and % would also
+    match e.g. LOT-AB-01-REWORK).
+
+    LIKE metacharacters in the prefix are escaped as defence in depth only:
+    save_process already constrains Lot Prefix to 1-6 letters/digits, so
+    none can occur today. It is one line because the failure it prevents is
+    silent and expensive -- a trailing backslash would escape the pattern's
+    own %, match nothing, and hand out a lot number already in use.
+    """
     prefix = str(lot_prefix or "").strip().upper()
     pattern = re.compile(rf"^LOT-{re.escape(prefix)}-(\d+)$", re.IGNORECASE)
-    cur.execute("SELECT lot_number FROM erp.production WHERE deleted_at IS NULL")
+    like_prefix = prefix.replace("\\", r"\\").replace("%", r"\%").replace("_", r"\_")
+    cur.execute(
+        "SELECT lot_number FROM erp.production WHERE lower(lot_number) LIKE lower(%s)",
+        (f"LOT-{like_prefix}-%",),
+    )
     max_num = 0
     for row in cur.fetchall():
         match = pattern.match(str(row["lot_number"] or "").strip())
@@ -1008,9 +1037,15 @@ def save_production_sheet(conn, cur, row_idx, expected_product_id, expected_qty,
 
     remarks = str(sheet_remarks or "").strip()[:500]
 
+    # updated_by stamped like every other write path in this module
+    # (save_production/delete_production/delete_production_bulk/
+    # update_production_status all set it) -- a Production Sheet edit is a
+    # real change to a stored column, and leaving it off meant the row kept
+    # naming whoever last touched the lot ITSELF as the author of a sheet
+    # customization they never made.
     cur.execute(
-        "UPDATE erp.production SET custom_components = %s, sheet_remarks = %s WHERE id = %s",
-        (json.dumps(clean_components), remarks, target_id),
+        "UPDATE erp.production SET custom_components = %s, sheet_remarks = %s, updated_by = %s WHERE id = %s",
+        (json.dumps(clean_components), remarks, get_current_user_id(), target_id),
     )
 
     return build_response(True, {"customComponents": clean_components, "sheetRemarks": remarks}, f'Production sheet for Lot #{row["lot_number"]} saved.')

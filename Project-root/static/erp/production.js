@@ -147,6 +147,30 @@ App.Production = {
   // the order the Production Sheet, its print/PDF export, the bulk print
   // sheet and a later Edit Lot reopen all list the components in.
 
+  // Monotonic id source for every dynamically built <tr> in this form.
+  //
+  // These ids were `Date.now() + '_' + Math.floor(Math.random() * 1000)`,
+  // which is not unique in the way the DOM needs. Rows are built in tight
+  // SYNCHRONOUS loops -- populateComponentsFromProcess adds one per recipe
+  // component, _buildPoolColorGroupTable maps a whole table at once -- so
+  // every row in one load shares the same Date.now() millisecond and the
+  // id collapses to a single draw from 1000 values. Ten rows collide with
+  // ~4% probability, and a collision is silent but real:
+  // addComponentRow's own `document.getElementById(rowId)` resolves to the
+  // EARLIER row, so the new row never gets its Select2 item picker while
+  // the old one gets a second one, and removeComponentRow('...') then
+  // deletes the wrong row -- dropping a component the operator never
+  // touched out of the lot's saved consumption.
+  //
+  // A counter cannot collide by construction. It is also stable across a
+  // reload of the same table, which no consumer depends on but makes a
+  // failing test reproducible.
+  _rowIdSeq: 0,
+
+  _nextRowId(prefix) {
+    return `${prefix}${++this._rowIdSeq}`;
+  },
+
   // One row's grip cell. It gets a leading column of its own rather than
   // an icon tucked in beside ✕ because these tables scroll horizontally
   // once a batch has several colors -- a grip in the last column would
@@ -228,6 +252,21 @@ App.Production = {
     }
   },
 
+  // The COMPLETE inline style for a Production Log row's status <select> --
+  // its presentation (compact font, native arrow suppressed so the coloured
+  // pill reads as a badge) plus the status colour.
+  //
+  // rowHtml and updateStatus must both use this. updateStatus used to
+  // rewrite the attribute with statusStyleFor's colours ALONE, silently
+  // dropping the presentation half: changing a lot's status inline made
+  // that one row's control jump back to a full-size native dropdown, and it
+  // stayed that way until the next full table render.
+  STATUS_SELECT_BASE_STYLE: 'font-size:0.75rem;appearance:none;-webkit-appearance:none;-moz-appearance:none;background-image:none;padding-right:0.5rem;',
+
+  statusSelectStyle(status) {
+    return this.STATUS_SELECT_BASE_STYLE + this.statusStyleFor(status);
+  },
+
   // Changes a lot's status directly from its table row, without opening
   // the Edit Lot modal.
   async updateStatus(selectEl) {
@@ -245,7 +284,7 @@ App.Production = {
       App.Utils.showToast(res.message, !res.success);
       if (res.success) {
         p.status = newStatus;
-        selectEl.setAttribute('style', this.statusStyleFor(newStatus));
+        selectEl.setAttribute('style', this.statusSelectStyle(newStatus));
       } else {
         selectEl.value = previousStatus;
       }
@@ -267,10 +306,20 @@ App.Production = {
       // render time (_resolveDisplayNarration / _resolveDisplayUnit), so
       // without it every component falls back to its stored narration and
       // a blanket 'Pcs' unit.
-      const [, , , response] = await Promise.all([
+      const [, , , , response] = await Promise.all([
         App.Process.ensureLoaded(),
         App.Color.ensureLoaded(),
         App.Item.ensureLoaded(),
+        // The Create/Edit Lot form's "Product (optional -- tags this packed
+        // lot so Dispatch can find it)" dropdown reads App.State.globalBOMs,
+        // and nothing in the Production tab's own path ever filled it: on a
+        // session that had not first visited Clients, Stock's Warehouse
+        // Opening modal, or an unlocked BOM tab, that dropdown offered
+        // "Untagged" and nothing else -- a final-stage lot could not be
+        // tagged at all, and Dispatch could never find it. Loading it here
+        // (idempotent, cost-free, needs no BOM password) covers both the
+        // Create and the Edit path, which are only reachable after this.
+        typeof App.BOM !== 'undefined' ? App.BOM.ensureProductListLoaded() : Promise.resolve(),
         Api.call('getProductionData')
       ]);
       if (!response.success) {
@@ -1050,12 +1099,12 @@ App.Production = {
     <td>${escapeHtml(App.Utils.formatNameCase(p.assignedBy) || '-')}</td>
     <td>${escapeHtml(App.Utils.formatNameCase(p.assignedTo) || '-')}${p.contractorPayable ? `<br><span class="badge bg-light text-dark border">${formatCurrency(p.contractorPayable)}</span>` : ''}${p.extraChargeType ? `<br><span class="badge" style="background-color:#ffc107;color:#000;" title="Extra charge included in Total Payable above">${escapeHtml(p.extraChargeType)}</span>` : ''}</td>
     <td class="text-center">
-      <select class="form-select form-select-sm fw-bold border-0 shadow-sm" style="font-size:0.75rem;appearance:none;-webkit-appearance:none;-moz-appearance:none;background-image:none;padding-right:0.5rem;${this.statusStyleFor(p.status)}" data-row-idx="${idx}" onchange="App.Production.updateStatus(this)" title="Change status directly without opening Edit Lot">${statusOptions}</select>
+      <select class="form-select form-select-sm fw-bold border-0 shadow-sm" style="${this.statusSelectStyle(p.status)}" data-row-idx="${idx}" onchange="App.Production.updateStatus(this)" title="Change status directly without opening Edit Lot">${statusOptions}</select>
     </td>
     <td>
       <button class="btn btn-sm btn-outline-dark btn-action w-100 mb-1" onclick="App.Production.viewProductionSheet('${idx}')">Production Sheet</button>
       <button class="btn btn-sm btn-outline-primary btn-action w-100 mb-1" onclick="App.Production.openEditModal('${idx}')">Edit Lot</button>
-      <button class="btn btn-sm btn-danger btn-action w-100" onclick="App.Production.delete('${p.rowIdx}', '${escapeHtml(p.productId)}', '${p.qty}')">Delete</button>
+      <button class="btn btn-sm btn-danger btn-action w-100" onclick="App.Production.delete('${idx}')">Delete</button>
     </td>
   </tr>`;
   },
@@ -1234,7 +1283,22 @@ App.Production = {
 </div>`;
   },
 
-  delete(rowIdx, productId, qty) {
+  // Takes the record's POSITION in globalProduction, like every other row
+  // action button (viewProductionSheet / openEditModal), rather than having
+  // rowHtml interpolate rowIdx/productId/qty into the onclick attribute.
+  //
+  // That older shape built a JS string literal out of escapeHtml(productId),
+  // and escapeHtml is an HTML escaper: the browser HTML-decodes an onclick
+  // attribute BEFORE parsing it as JavaScript, so its &#39; turns back into
+  // a bare ' inside the literal. A Product ID containing an apostrophe
+  // therefore produced a syntax error (Delete silently did nothing) and, for
+  // any product name an operator can type, was an injection point into this
+  // page's own script context. Reading the record out of state instead means
+  // no user text is ever concatenated into executable markup.
+  delete(idx) {
+    const p = App.State.globalProduction[Number(idx)];
+    if (!p) return;
+    const { rowIdx, productId, qty } = p;
     App.Utils.confirmAction(
       `Are you sure you want to permanently delete this Production Lot (Qty: ${qty})?`,
       async () => {
@@ -3383,7 +3447,7 @@ App.Production = {
   _buildPoolColorGroupTable(tableId, colors, visibleColors, rows, mode, axisKey) {
     const headHtml = visibleColors.map(col => `<th class="text-end" data-color="${escapeHtml(col)}">${escapeHtml(col)}</th>`).join('');
     const rowsHtml = rows.map((r, rowIdx) => {
-      const rowId = 'prod_pool_group_row_' + Date.now() + '_' + Math.floor(Math.random() * 1000);
+      const rowId = this._nextRowId('prod_pool_group_row_');
       const preSelectedOption = this._buildItemPreselectOption(r.itemName, r.size || '', r.sourceType);
       const cellsHtml = visibleColors.map(col => {
         const qty = this._poolGroupCellValue(mode, r, col, axisKey);
@@ -3839,7 +3903,7 @@ App.Production = {
     const tbody = document.getElementById('productionColorMatrixBody');
     if (!tbody) return null;
 
-    const rowId = 'prod_matrix_row_' + Date.now() + '_' + Math.floor(Math.random() * 1000);
+    const rowId = this._nextRowId('prod_matrix_row_');
     const itemName = (comp && comp.itemName) || '';
     const size = (comp && comp.size) || '';
     const narration = (comp && comp.narration) || '';
@@ -3912,7 +3976,7 @@ App.Production = {
     const tbody = document.getElementById('productionColorMatrixBody');
     if (!tbody) return null;
 
-    const rowId = 'prod_matrix_row_' + Date.now() + '_' + Math.floor(Math.random() * 1000);
+    const rowId = this._nextRowId('prod_matrix_row_');
     const itemName = (comp && comp.itemName) || '';
     const size = (comp && comp.size) || '';
     const narration = (comp && comp.narration) || '';
@@ -4465,7 +4529,7 @@ App.Production = {
     const tbody = document.getElementById('productionComponentsBody');
     if (!tbody) return;
 
-    const rowId = 'prod_comp_row_' + Date.now() + '_' + Math.floor(Math.random() * 1000);
+    const rowId = this._nextRowId('prod_comp_row_');
     const itemName = (comp && comp.itemName) || '';
     const size = (comp && comp.size) || '';
     const narration = (comp && comp.narration) || '';
@@ -4643,7 +4707,18 @@ App.Production = {
       const stock = stockRes.success ? (stockRes.data || []) : [];
       if (stockRes.success) {
         App.State.globalStock = stock;
-        App.State.filteredStock = [...stock];
+        // filteredStock is the STOCK TAB's own view, and it has to be
+        // re-pointed at this freshly loaded array (its old entries are
+        // objects from the array just replaced). Re-derived through Stock's
+        // own predicate rather than reset to "everything": this fires
+        // whenever the operator touches a component row in the Production
+        // Lot form, and blanket-resetting it wiped an active Stock search
+        // out from under a tab they were not even looking at.
+        if (typeof App.Stock !== 'undefined' && typeof App.Stock.recomputeFiltered === 'function') {
+          App.Stock.recomputeFiltered();
+        } else {
+          App.State.filteredStock = [...stock];
+        }
       }
 
       document.querySelectorAll('#productionComponentsBody tr').forEach(row => {
@@ -4902,7 +4977,7 @@ App.Production = {
   },
 
   async resetCreateForm() {
-    ++this._compLoadSeq;
+    const seq = ++this._compLoadSeq;
     this._resetProcDataCache();
     this.clearComponentsTable();
     this.hideColorMatrix();
@@ -4919,6 +4994,11 @@ App.Production = {
     if (form) form.reset();
 
     await Promise.all([App.Process.ensureLoaded(), App.Contractor.ensureLoaded(), App.ProcessType.ensureLoaded(), App.Model.ensureLoaded()]);
+    // Same superseded-load guard openEditModal takes: this is the other
+    // writer of the same fields, so an Edit Lot opened while this is
+    // awaiting must not have its record blanked back out to a fresh form
+    // half a beat later.
+    if (seq !== this._compLoadSeq) return;
 
     document.getElementById('productionRowIdx').value = '';
     document.getElementById('productionDate').value = todayIso();
@@ -4964,6 +5044,15 @@ App.Production = {
     if (form) form.reset();
 
     await Promise.all([App.Process.ensureLoaded(), App.Contractor.ensureLoaded(), App.ProcessType.ensureLoaded(), App.Model.ensureLoaded()]);
+    // Every later await in this method already bails on a superseded load,
+    // but this FIRST one did not -- and the whole block of field writes that
+    // follows sits after it. Two overlapping opens (holding Nav's next
+    // arrow down, or a click landing while the submit handler is re-opening
+    // the record it just saved) therefore let the loser resume and paint
+    // ITS lot's date, contractor, status and remarks over a form whose
+    // hidden rowIdx the winner had already repointed at a different lot.
+    // Saving from that state writes one lot's data onto another lot's row.
+    if (seq !== this._compLoadSeq) return;
 
     document.getElementById('productionRowIdx').value = p.rowIdx;
 

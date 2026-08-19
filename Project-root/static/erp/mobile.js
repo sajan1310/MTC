@@ -503,15 +503,52 @@ MApp.Shell = {
   current: null,
 
   init() {
-    let lastTab = null;
-    try { lastTab = localStorage.getItem(this.LAST_TAB_KEY); } catch (e) { /* storage inaccessible */ }
-    this.showTab(this.TABS.indexOf(lastTab) > -1 ? lastTab : 'home');
+    window.addEventListener('hashchange', () => this.handleHashChange());
+    this.showTab(this.resolveInitialTab(), { replace: true });
   },
 
-  showTab(tab) {
+  tabFromHash() {
+    const tab = String(location.hash || '').replace(/^#/, '');
+    return this.TABS.indexOf(tab) > -1 ? tab : null;
+  },
+
+  // Same split as the desktop shell's Navigation.resolveInitialTab: the URL
+  // hash is per-browser-tab and so wins, localStorage is the origin-wide
+  // fallback for a tab opened without a hash. Reading localStorage alone
+  // meant two tabs open on two modules overwrote each other's "last tab",
+  // and both then reloaded onto whichever was touched most recently.
+  resolveInitialTab() {
+    const fromHash = this.tabFromHash();
+    if (fromHash) return fromHash;
+    let stored = null;
+    try { stored = localStorage.getItem(this.LAST_TAB_KEY); } catch (e) { /* storage inaccessible */ }
+    return this.TABS.indexOf(stored) > -1 ? stored : 'home';
+  },
+
+  // Written through the history API rather than by assigning location.hash
+  // so it fires no hashchange and never re-enters showTab. `replace` keeps
+  // the boot-time write from leaving an entry behind the user's first Back.
+  syncHash(tab, replace) {
+    const target = `#${tab}`;
+    if (location.hash === target) return;
+    try {
+      history[replace ? 'replaceState' : 'pushState'](null, '', target);
+    } catch (e) {
+      location.hash = tab; // history API unavailable
+    }
+  },
+
+  handleHashChange() {
+    const tab = this.tabFromHash();
+    if (!tab || tab === this.current) return;
+    this.showTab(tab);
+  },
+
+  showTab(tab, opts) {
     if (this.TABS.indexOf(tab) === -1) return;
     const changed = tab !== this.current;
     this.current = tab;
+    this.syncHash(tab, !!(opts && opts.replace));
     try { localStorage.setItem(this.LAST_TAB_KEY, tab); } catch (e) { /* storage inaccessible */ }
 
     const titleEl = document.getElementById('mapp-topbar-title');
