@@ -342,3 +342,124 @@ describe('Per-color tables: remembering widths', () => {
     expect(App.Production._colWidthStore().matrix).toBeDefined();
   });
 });
+
+describe('Per-Color Components: redundant colour columns on a reopened lot', () => {
+  beforeEach(() => {
+    localStorage.clear();
+    mountProductionForm();
+  });
+
+  // The checklist the pruning reads: a primary composite row, plus the
+  // non-primary single-colour row it auto-checked. That pair is what makes
+  // "Blue" redundant beside "BLUE-WHITE / BLACK".
+  function checkColour(color, { primary, qty = '10' }) {
+    const checklist = document.getElementById('productionColorChecklist');
+    checklist.insertAdjacentHTML('beforeend', App.Production._colorRowHtml(color, 'g1', false, primary));
+    const row = Array.from(checklist.querySelectorAll('.production-color-row')).pop();
+    row.querySelector('.production-color-check').checked = true;
+    const qtyInput = row.querySelector('.production-color-qty');
+    qtyInput.disabled = false;
+    qtyInput.value = qty;
+    App.Production.addMatrixColorColumn(color);
+    return row;
+  }
+
+  test('an empty duplicate column is pruned; the composite it duplicates stays', () => {
+    checkColour('BLUE-WHITE / BLACK', { primary: true });
+    checkColour('Blue', { primary: false });
+    const row = App.Production.addMatrixItemRow({ itemName: 'Sticker', size: 'L', sourceType: 'ITEM' });
+    row.children[App.Production.getMatrixColumnIndex('BLUE-WHITE / BLACK')]
+      .querySelector('.matrix-qty').value = '10';
+    App.Production._refreshMatrixColumns();
+
+    expect(App.Production.getMatrixColumnIndex('Blue')).not.toBe(-1);
+
+    App.Production._pruneRedundantMatrixColumns({ emptyOnly: true });
+
+    expect(App.Production.getMatrixColumnIndex('Blue')).toBe(-1);
+    expect(App.Production.getMatrixColumnIndex('BLUE-WHITE / BLACK')).not.toBe(-1);
+    // The row shrank with the header -- cells are addressed by position.
+    expect(row.children.length).toBe(headerRow().children.length);
+  });
+
+  test('a duplicate column holding a SAVED quantity is left alone on load', () => {
+    checkColour('BLUE-WHITE / BLACK', { primary: true });
+    checkColour('Blue', { primary: false });
+    const row = App.Production.addMatrixItemRow({ itemName: 'Sticker', size: 'L', sourceType: 'ITEM' });
+    row.children[App.Production.getMatrixColumnIndex('Blue')].querySelector('.matrix-qty').value = '4';
+    App.Production._refreshMatrixColumns();
+
+    App.Production._pruneRedundantMatrixColumns({ emptyOnly: true });
+
+    // Silently dropping it would silently change what the lot saves.
+    expect(App.Production.getMatrixColumnIndex('Blue')).not.toBe(-1);
+    expect(App.Production.serializeColorMatrix()).toEqual(
+      expect.arrayContaining([expect.objectContaining({ colorGroup: 'Blue', qty: 4 })]));
+  });
+
+  test('the operator toggling colours still prunes a populated duplicate', () => {
+    // Unchanged behaviour: mid-edit, a redundant column double-debits, so
+    // it goes whatever is in it.
+    checkColour('BLUE-WHITE / BLACK', { primary: true });
+    checkColour('Blue', { primary: false });
+    const row = App.Production.addMatrixItemRow({ itemName: 'Sticker', size: 'L', sourceType: 'ITEM' });
+    row.children[App.Production.getMatrixColumnIndex('Blue')].querySelector('.matrix-qty').value = '4';
+    App.Production._refreshMatrixColumns();
+
+    App.Production._pruneRedundantMatrixColumns();
+
+    expect(App.Production.getMatrixColumnIndex('Blue')).toBe(-1);
+  });
+});
+
+describe('Per-color tables: fitting a wide lot', () => {
+  beforeEach(() => {
+    localStorage.clear();
+    mountProductionForm();
+  });
+
+  test('twelve columns fit the form instead of overflowing it', () => {
+    // The reported shape: six empty strips beside six composite columns.
+    ['Blue', 'Orange', 'Pink', 'Purple', 'Red', 'SeaGreen'].forEach(c => App.Production.addMatrixColorColumn(c));
+    const composites = ['BLUE-WHITE / BLACK', 'ORANGE-WHITE / BLACK', 'PINK-WHITE / BLACK',
+      'PURPLE-WHITE / BLACK', 'RED-WHITE / BLACK', 'SEAGREEN-WHITE / BLACK'];
+    composites.forEach(c => App.Production.addMatrixColorColumn(c));
+    const row = App.Production.addMergedMatrixRow({ itemName: 'Maharaja SEAT WHITE', size: 'GENERAL', sourceType: 'ITEM' });
+    composites.forEach(c => {
+      row.children[App.Production.getMatrixColumnIndex(c)].querySelector('.matrix-qty').value = '10';
+    });
+    App.Production._refreshMatrixColumns();
+
+    giveTableRoom(matrixTable(), 1708);
+    App.Production._layoutMatrixTable();
+
+    // Every column is laid out, and together they fit the width on offer --
+    // rounding included, which is what used to raise a scrollbar on a table
+    // meant to fit exactly.
+    const total = Array.from(headerRow().children)
+      .reduce((sum, th) => sum + parseFloat(th.style.width), 0);
+    expect(total).toBeLessThanOrEqual(1708);
+    expect(parseFloat(matrixTable().style.width)).toBe(total);
+    expect(widths()['c:Blue']).toBe(App.Production.PROD_COL_SPECS.colorCollapsed.pref);
+  });
+
+  test('a lot too wide to fit is left scrollable rather than crushed below its minimums', () => {
+    for (let i = 0; i < 20; i++) {
+      App.Production.addMatrixColorColumn(`Colour ${i}`);
+    }
+    const row = App.Production.addMatrixItemRow({ itemName: 'Sticker', size: 'L', sourceType: 'ITEM' });
+    Array.from({ length: 20 }, (_, i) => `Colour ${i}`).forEach(c => {
+      row.children[App.Production.getMatrixColumnIndex(c)].querySelector('.matrix-qty').value = '1';
+    });
+    App.Production._refreshMatrixColumns();
+
+    giveTableRoom(matrixTable(), 900);
+    App.Production._layoutMatrixTable();
+
+    Array.from(headerRow().children).forEach((th, i, all) => {
+      const key = App.Production._colKeyAt(th, i, all.length - 1);
+      expect(parseFloat(th.style.width)).toBeGreaterThanOrEqual(App.Production._colSpecFor(th, key).min);
+    });
+    expect(parseFloat(matrixTable().style.width)).toBeGreaterThan(900);
+  });
+});

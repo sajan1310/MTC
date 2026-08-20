@@ -28,7 +28,10 @@
 //
 // v23: both changed again -- the per-color tables now compute their column
 // widths and carry resize handles.
-const CACHE_NAME = 'erp-shell-v23';
+//
+// v24: the fit now re-runs when the form becomes visible, which is the
+// only moment an edited lot's table has a width to be fitted to.
+const CACHE_NAME = 'erp-shell-v24';
 
 const PRECACHE_URLS = [
   '/erp/offline.html',

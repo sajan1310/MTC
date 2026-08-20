@@ -4047,6 +4047,7 @@ App.Production = {
     const cols = this._colModel(table);
     if (!cols.length) return;
     this._ensureColorTableResizeListener();
+    this._observeColorTableWidth(table);
 
     // 0 while the modal is still hidden -- there is no width to fit to yet,
     // so leave what is there rather than collapsing every column to its
@@ -4054,12 +4055,25 @@ App.Production = {
     const available = table.parentElement?.clientWidth || 0;
     if (available > 0) this._fitColorTableColumns(cols, available);
 
-    let total = 0;
-    cols.forEach(c => {
-      const px = Math.round(c.width);
-      c.th.style.width = `${px}px`;
-      total += px;
-    });
+    const rounded = cols.map(c => Math.round(c.width));
+    let total = rounded.reduce((sum, px) => sum + px, 0);
+    // Rounding up to a dozen columns can push the total a few px past the
+    // width they were fitted to, which is enough to raise a horizontal
+    // scrollbar on a table that was meant to fit exactly. Give the spare
+    // pixels back to the widest column that can afford them.
+    if (available > 0 && total > available) {
+      let widest = -1;
+      cols.forEach((c, i) => {
+        if (c.pinned || this._colIsFixedWidth(c.spec)) return;
+        if (widest === -1 || rounded[i] > rounded[widest]) widest = i;
+      });
+      if (widest !== -1) {
+        const trim = Math.min(total - available, rounded[widest] - cols[widest].spec.min);
+        rounded[widest] -= trim;
+        total -= trim;
+      }
+    }
+    cols.forEach((c, i) => { c.th.style.width = `${rounded[i]}px`; });
     if (available > 0) {
       // Both, and to the same number: min-width alone would let the table
       // stretch past the sum of its columns and hand the difference back
@@ -4227,6 +4241,31 @@ App.Production = {
     this._layoutPoolTables();
   },
 
+  // A table is laid out long before it is visible: the edit path fills the
+  // matrix while the modal is still hidden, where clientWidth is 0 and the
+  // fit has nothing to fit to. Nothing re-ran it when the modal opened, so
+  // an edited lot rendered every column at its preferred width -- 1945px of
+  // columns in a 1708px modal, overflowing the form and slicing the last
+  // column in half.
+  //
+  // Watching the scroll wrapper catches that moment, and every later one
+  // (a resized window, a collapsed sidebar), without each caller having to
+  // know whether it is on screen yet. The observed box is the WRAPPER and
+  // what the refit changes is the TABLE inside it, so this cannot feed
+  // itself; the width guard makes that certain and keeps a scrollbar
+  // appearing from triggering a second pass.
+  _observeColorTableWidth(table) {
+    const wrap = table.parentElement;
+    if (!wrap || wrap.dataset.fitObserved === 'true' || typeof ResizeObserver === 'undefined') return;
+    wrap.dataset.fitObserved = 'true';
+    new ResizeObserver(() => {
+      const width = wrap.clientWidth;
+      if (!width || String(width) === table.dataset.fitWidth) return;
+      table.dataset.fitWidth = String(width);
+      this._applyColorTableLayout(table);
+    }).observe(wrap);
+  },
+
   // The fit depends on the width on offer, so it has to be redone when that
   // changes. Bound once, and harmless when neither table is on screen.
   _ensureColorTableResizeListener() {
@@ -4390,7 +4429,15 @@ App.Production = {
   // already typed into (strict checked-only columns; direct manual
   // unchecking of a color already clears its own column the same way via
   // removeMatrixColorColumn).
-  _pruneRedundantMatrixColumns() {
+  // `emptyOnly` is for the load paths. Pruning is unconditional when the
+  // operator is the one toggling colors -- a redundant column they type
+  // into debits stock twice, so it has to go even mid-edit. On load the
+  // numbers in the form are the numbers that were SAVED, and silently
+  // dropping a column that holds some would silently change the lot. So a
+  // populated redundant column is left standing there to be seen and
+  // cleared, and only the empty ones -- the vertical strips an edited lot
+  // opened covered in -- are taken away.
+  _pruneRedundantMatrixColumns({ emptyOnly = false } = {}) {
     const checked = $$('#productionColorChecklist .production-color-row')
       .filter(row => row.querySelector('.production-color-check')?.checked);
 
@@ -4406,7 +4453,9 @@ App.Production = {
       .filter(color => this._matchingPrimaryColorQty(color) !== null)
       .forEach(color => {
         const idx = this.getMatrixColumnIndex(color);
-        if (idx !== -1) this._removeMatrixColumnAt(idx);
+        if (idx === -1) return;
+        if (emptyOnly && !this._isMatrixColumnEmpty(idx, $$('#productionColorMatrixBody tr'))) return;
+        this._removeMatrixColumnAt(idx);
       });
   },
 
@@ -5892,6 +5941,12 @@ App.Production = {
         }
         await this.populateCommonComponentsFromProcess(p.processId, seq);
       }
+      // Reopening a lot rebuilds its columns from what was saved, which is
+      // the one path that never went through handleColorCheckToggle -- so
+      // nothing had ever pruned the non-primary columns duplicating a
+      // composite (a "Blue" column beside "BLUE-WHITE / BLACK"). They came
+      // back empty on every edit, one collapsed vertical strip each.
+      this._pruneRedundantMatrixColumns({ emptyOnly: true });
       await this.refreshPoolAvailability();
     } else {
       // Plain single-quantity lot on a process with no configured color
