@@ -130,6 +130,40 @@ App.Production = {
   // pool-color-group/matrix table's inline min-width uses these. The
   // reserve covers the non-color columns: the reorder grip, Item / Pool
   // Name, Size, Narration, Source and ✕.
+  // Per-column width specs for BOTH per-color tables. table-layout: fixed
+  // means a column is exactly as wide as its header <th> says and nothing
+  // in the cells can push it wider, so the widths have to be decided rather
+  // than discovered -- and the CSS could only ever decide them for one
+  // shape of lot. Leftover space handed to whichever columns happened to be
+  // `auto` gave a single-color lot two ~565px free-text columns beside a
+  // Size reading "G..." and an item picker clipped to "Mah...".
+  //
+  // So _applyColorTableLayout fits these to the width actually on offer:
+  // every column starts at `pref`, then they grow or shrink together, in
+  // proportion, each stopping at its own max/min. Nothing is stretched past
+  // the point where the extra space stops being useful -- a table narrower
+  // than the modal is the correct answer for a lot with one color.
+  //
+  // `max` bounds the AUTOMATIC fit only. A width the operator drags is
+  // theirs and is clamped to PROD_COL_DRAG_MAX_PX instead: the point of the
+  // handles is to overrule this table when a name needs more room.
+  PROD_COL_SPECS: {
+    grip: { pref: 30, min: 30, max: 30 },
+    item: { pref: 320, min: 170, max: 460 },
+    size: { pref: 90, min: 64, max: 170 },
+    narration: { pref: 240, min: 110, max: 420 },
+    source: { pref: 155, min: 120, max: 200 },
+    close: { pref: 30, min: 30, max: 30 },
+    color: { pref: 88, min: 56, max: 220 },
+    // A merged row's per-color cell carries its own item picker, not just a
+    // quantity, so every color column in such a table needs picker room.
+    colorMerged: { pref: 150, min: 90, max: 260 },
+    colorCollapsed: { pref: 30, min: 30, max: 30 },
+  },
+  PROD_COL_DRAG_MAX_PX: 900,
+  PROD_COL_KEYBOARD_STEP_PX: 16,
+  PROD_COL_WIDTH_STORE_KEY: 'maharaja-erp-prod-col-widths',
+
   PROD_COLOR_TABLE_FIXED_RESERVE_PX: 527,
   PROD_COLOR_TABLE_COLOR_COL_PX: 88,
   // What a collapsed (empty) color column reserves instead -- see
@@ -3487,6 +3521,8 @@ App.Production = {
       // one -- see _initRowSorting.
       this._initRowSorting(document.querySelector(`#${tableId} tbody`));
     });
+    // Freshly built markup -- fit its columns and give it resize handles.
+    this._layoutPoolTables();
   },
 
   // Is this checklist group backed by real Warehouse Pool item(s), so a
@@ -3662,7 +3698,7 @@ App.Production = {
     return `
       <div class="mb-3" id="${tableId}_wrapper"${hidden ? ' style="display:none;"' : ''}>
         <div class="table-responsive">
-          <table class="table table-bordered bg-white shadow-sm mb-0 prod-color-table" id="${tableId}" data-axis-key="${escapeHtml(axisKey || '')}" style="min-width: ${minWidthPx}px;">
+          <table class="table table-bordered bg-white shadow-sm mb-0 prod-color-table" id="${tableId}" data-axis-key="${escapeHtml(axisKey || '')}" data-width-scope="pool:${escapeHtml(axisKey || tableId)}" style="min-width: ${minWidthPx}px;">
             <thead class="table-light">
               <tr>
                 <!-- Reorder grip column -- FIRST, and mirrored by
@@ -3753,6 +3789,8 @@ App.Production = {
       });
 
       this._syncPoolGroupTableMinWidth(table);
+      // Columns just changed under it -- refit, and re-hang the handles.
+      this._applyColorTableLayout(table);
     });
   },
 
@@ -3876,6 +3914,9 @@ App.Production = {
     // so the empty state has to be settled here too and not only from
     // _refreshMatrixColumns.
     this._syncMatrixEmptyState();
+    // First moment the table has a container width to be fitted to -- until
+    // the form is displayed, clientWidth is 0 and the fit is skipped.
+    this._layoutColorTables();
   },
 
   hideColorMatrix() {
@@ -3904,6 +3945,297 @@ App.Production = {
     this._expandedMatrixColumns = null;
     this._syncMatrixTableMinWidth();
     this._syncMatrixEmptyState();
+  },
+
+  // ── Column widths, and the handles that override them ─────────────────
+  // Everything below works on ANY .prod-color-table -- the Per-Color
+  // Components matrix and each Per-Process Pool Components table -- keyed
+  // by the table's data-width-scope, so a width dragged on one does not
+  // move the other.
+  //
+  // Widths are applied to header cells only. Every per-color cell in these
+  // tables is addressed by its POSITION among the header's children
+  // (getMatrixColumnIndex -> row.children[idx] -> serializeColorMatrix), so
+  // nothing here may add, remove or reorder a cell: the resize handle is
+  // appended INSIDE an existing <th>, never as a column of its own.
+
+  _colScopeOf(table) {
+    return table?.dataset.widthScope || '';
+  },
+
+  // Which column this is, by role rather than by index, so a stored width
+  // survives the header being rebuilt and follows a color column around as
+  // other colors are checked and unchecked.
+  _colKeyAt(th, index, lastIndex) {
+    if (th.dataset.color) return `c:${th.dataset.color}`;
+    if (index === 0) return 'grip';
+    if (index === lastIndex) return 'close';
+    return ['item', 'size', 'narration', 'source'][index - 1] || `col${index}`;
+  },
+
+  _colSpecFor(th, key) {
+    if (!key.startsWith('c:')) return this.PROD_COL_SPECS[key] || this.PROD_COL_SPECS.item;
+    if (th.classList.contains('prod-col-collapsed')) return this.PROD_COL_SPECS.colorCollapsed;
+    return th.closest('table')?.querySelector('tbody tr[data-merged="true"]')
+      ? this.PROD_COL_SPECS.colorMerged
+      : this.PROD_COL_SPECS.color;
+  },
+
+  // A column that can only ever be one width (the reorder grip, ✕, and a
+  // collapsed color strip) is not resizable, and -- just as important --
+  // never remembers a width: a strip frozen at 30px while collapsed would
+  // otherwise stay 30px wide after the operator expanded it.
+  _colIsFixedWidth(spec) {
+    return spec.min === spec.max;
+  },
+
+  _colWidthStore() {
+    if (this._colWidths) return this._colWidths;
+    let parsed = null;
+    try { parsed = JSON.parse(localStorage.getItem(this.PROD_COL_WIDTH_STORE_KEY) || '{}'); }
+    catch (e) { parsed = null; }
+    this._colWidths = (parsed && typeof parsed === 'object') ? parsed : {};
+    return this._colWidths;
+  },
+
+  _colWidthBucket(scope, create = false) {
+    const store = this._colWidthStore();
+    if (!scope) return {};
+    if (!store[scope] && create) store[scope] = {};
+    return store[scope] || {};
+  },
+
+  _saveColWidths() {
+    try { localStorage.setItem(this.PROD_COL_WIDTH_STORE_KEY, JSON.stringify(this._colWidthStore())); }
+    catch (e) { /* storage inaccessible -- widths just stop persisting */ }
+  },
+
+  _colModel(table) {
+    const ths = Array.from(table.querySelectorAll('thead th'));
+    const bucket = this._colWidthBucket(this._colScopeOf(table));
+    return ths.map((th, i) => {
+      const key = this._colKeyAt(th, i, ths.length - 1);
+      const spec = this._colSpecFor(th, key);
+      const stored = this._colIsFixedWidth(spec) ? undefined : bucket[key];
+      const pinned = typeof stored === 'number' && stored > 0;
+      return { th, key, spec, pinned, width: pinned ? stored : spec.pref };
+    });
+  },
+
+  // Grows or shrinks the flexible columns toward `available`, in proportion
+  // to what each already asks for and each stopping at its own min/max. A
+  // column the operator sized by hand is pinned and never moves -- their
+  // width is an instruction, not a suggestion.
+  _fitColorTableColumns(cols, available) {
+    for (let pass = 0; pass < 4; pass++) {
+      const total = cols.reduce((sum, c) => sum + c.width, 0);
+      const slack = available - total;
+      if (Math.abs(slack) < 1) return;
+      const movable = cols.filter(c => !c.pinned && !this._colIsFixedWidth(c.spec)
+        && (slack > 0 ? c.width < c.spec.max : c.width > c.spec.min));
+      const basis = movable.reduce((sum, c) => sum + c.width, 0);
+      if (!movable.length || basis <= 0) return;
+      movable.forEach(c => {
+        const want = c.width + slack * (c.width / basis);
+        c.width = Math.min(c.spec.max, Math.max(c.spec.min, want));
+      });
+    }
+  },
+
+  _applyColorTableLayout(table) {
+    if (!table) return;
+    const cols = this._colModel(table);
+    if (!cols.length) return;
+    this._ensureColorTableResizeListener();
+
+    // 0 while the modal is still hidden -- there is no width to fit to yet,
+    // so leave what is there rather than collapsing every column to its
+    // minimum. showColorMatrix runs this again once the form is visible.
+    const available = table.parentElement?.clientWidth || 0;
+    if (available > 0) this._fitColorTableColumns(cols, available);
+
+    let total = 0;
+    cols.forEach(c => {
+      const px = Math.round(c.width);
+      c.th.style.width = `${px}px`;
+      total += px;
+    });
+    if (available > 0) {
+      // Both, and to the same number: min-width alone would let the table
+      // stretch past the sum of its columns and hand the difference back
+      // out to whichever column the browser felt like -- which is the
+      // stretching this layout exists to stop.
+      table.style.width = `${total}px`;
+      table.style.minWidth = `${total}px`;
+    }
+    this._initColorTableResizers(table, cols);
+  },
+
+  _layoutMatrixTable() {
+    this._applyColorTableLayout(
+      document.getElementById('productionColorMatrixHeaderRow')?.closest('table'));
+  },
+
+  _layoutPoolTables() {
+    document.querySelectorAll('#productionPoolColorGroupsContainer table.prod-color-table')
+      .forEach(table => this._applyColorTableLayout(table));
+  },
+
+  _layoutColorTables() {
+    this._layoutMatrixTable();
+    this._layoutPoolTables();
+  },
+
+  // Rebuilt from scratch on every layout: _refreshMatrixColumnLabels and
+  // _refreshMatrixColumnCollapse both rewrite a <th>'s textContent, which
+  // takes any handle inside it with them.
+  _initColorTableResizers(table, cols) {
+    cols.forEach((c, i) => {
+      c.th.querySelector('.prod-col-resizer')?.remove();
+      // Nothing to drag on a fixed-width column, and nothing useful on the
+      // last one -- its right edge is the edge of the table.
+      if (this._colIsFixedWidth(c.spec) || i === cols.length - 1) return;
+      const handle = document.createElement('button');
+      handle.type = 'button';
+      handle.className = 'prod-col-resizer';
+      handle.dataset.colKey = c.key;
+      // Deliberately OUT of the tab order. These tables are where an
+      // operator tabs through a quantity per color per row, and a tabbable
+      // handle on every column would put 6-13 stops in front of the first
+      // input on every single row. The handle still takes focus when it is
+      // grabbed (see _startColumnResize), which is what makes the arrow-key
+      // nudge below reachable; and the automatic fit is what keeps the
+      // table readable for anyone who never touches a handle at all.
+      handle.tabIndex = -1;
+      const label = c.th.textContent.trim() || c.key.replace(/^c:/, '');
+      handle.setAttribute('aria-label',
+        `Resize the ${label} column. Arrow keys adjust it, double-click restores the automatic width.`);
+      handle.title = 'Drag to resize — double-click to restore';
+      c.th.appendChild(handle);
+    });
+
+    if (table.dataset.colResizeBound === 'true') return;
+    table.dataset.colResizeBound = 'true';
+    table.addEventListener('pointerdown', e => this._startColumnResize(e));
+    table.addEventListener('keydown', e => this._nudgeColumnWidth(e));
+    table.addEventListener('dblclick', e => {
+      const handle = e.target.closest?.('.prod-col-resizer');
+      if (handle) this._clearColumnWidth(table, handle.dataset.colKey);
+    });
+  },
+
+  // Pins every column at what it is showing right now, so a drag moves ONE
+  // edge instead of re-flowing the whole table under the pointer.
+  _freezeColorTableWidths(table) {
+    const scope = this._colScopeOf(table);
+    if (!scope) return;
+    const bucket = this._colWidthBucket(scope, true);
+    this._colModel(table).forEach(c => {
+      if (this._colIsFixedWidth(c.spec) || bucket[c.key] !== undefined) return;
+      bucket[c.key] = Math.round(c.th.getBoundingClientRect().width
+        || parseFloat(c.th.style.width) || c.spec.pref);
+    });
+  },
+
+  _setColumnWidth(table, key, px) {
+    const scope = this._colScopeOf(table);
+    if (!scope) return;
+    const cols = this._colModel(table);
+    const col = cols.find(c => c.key === key);
+    if (!col || this._colIsFixedWidth(col.spec)) return;
+    // Clamped to the column's own minimum and a generous ceiling, NOT to
+    // spec.max: overruling the automatic fit is the whole point of the
+    // handle, so a name that needs 600px can have 600px.
+    const width = Math.round(Math.min(this.PROD_COL_DRAG_MAX_PX, Math.max(col.spec.min, px)));
+    this._colWidthBucket(scope, true)[key] = width;
+
+    let total = 0;
+    cols.forEach(c => {
+      const w = c.key === key ? width : Math.round(c.width);
+      c.th.style.width = `${w}px`;
+      total += w;
+    });
+    table.style.width = `${total}px`;
+    table.style.minWidth = `${total}px`;
+  },
+
+  _clearColumnWidth(table, key) {
+    const bucket = this._colWidthBucket(this._colScopeOf(table));
+    if (!(key in bucket)) return;
+    delete bucket[key];
+    this._saveColWidths();
+    this._applyColorTableLayout(table);
+  },
+
+  _startColumnResize(e) {
+    const handle = e.target.closest?.('.prod-col-resizer');
+    if (!handle) return;
+    // Without this the browser starts selecting the header text instead of
+    // dragging, and the pointer leaves the column behind.
+    e.preventDefault();
+    const th = handle.closest('th');
+    const table = th?.closest('table');
+    if (!table) return;
+
+    handle.focus?.();
+    this._freezeColorTableWidths(table);
+    const key = handle.dataset.colKey;
+    const startX = e.clientX;
+    const startWidth = th.getBoundingClientRect().width || parseFloat(th.style.width) || 0;
+
+    const onMove = ev => this._setColumnWidth(table, key, startWidth + (ev.clientX - startX));
+    const onUp = () => {
+      window.removeEventListener('pointermove', onMove);
+      window.removeEventListener('pointerup', onUp);
+      document.body.classList.remove('prod-col-resizing');
+      this._saveColWidths();
+    };
+    window.addEventListener('pointermove', onMove);
+    window.addEventListener('pointerup', onUp);
+    // Holds the col-resize cursor for the whole drag, even once the pointer
+    // has left the 6px handle -- which it does immediately.
+    document.body.classList.add('prod-col-resizing');
+  },
+
+  _nudgeColumnWidth(e) {
+    const handle = e.target.closest?.('.prod-col-resizer');
+    if (!handle || (e.key !== 'ArrowLeft' && e.key !== 'ArrowRight')) return;
+    const th = handle.closest('th');
+    const table = th?.closest('table');
+    if (!table) return;
+    e.preventDefault();
+    this._freezeColorTableWidths(table);
+    const step = this.PROD_COL_KEYBOARD_STEP_PX * (e.shiftKey ? 3 : 1) * (e.key === 'ArrowLeft' ? -1 : 1);
+    const current = th.getBoundingClientRect().width || parseFloat(th.style.width) || 0;
+    this._setColumnWidth(table, handle.dataset.colKey, current + step);
+    this._saveColWidths();
+  },
+
+  // "Reset column widths" -- drops every width dragged on this table (or,
+  // for the pool section, on any of its tables) and hands them back to the
+  // automatic fit.
+  resetMatrixColumnWidths() {
+    delete this._colWidthStore().matrix;
+    this._saveColWidths();
+    this._layoutMatrixTable();
+  },
+
+  resetPoolColumnWidths() {
+    const store = this._colWidthStore();
+    Object.keys(store).forEach(scope => { if (scope.startsWith('pool:')) delete store[scope]; });
+    this._saveColWidths();
+    this._layoutPoolTables();
+  },
+
+  // The fit depends on the width on offer, so it has to be redone when that
+  // changes. Bound once, and harmless when neither table is on screen.
+  _ensureColorTableResizeListener() {
+    if (this._colResizeListenerBound) return;
+    this._colResizeListenerBound = true;
+    window.addEventListener('resize', () => {
+      clearTimeout(this._colResizeTimer);
+      this._colResizeTimer = setTimeout(() => this._layoutColorTables(), 120);
+    });
   },
 
   // A matrix with no rows used to render its header anyway: one column per
@@ -4120,6 +4452,9 @@ App.Production = {
     this._refreshMatrixColumnCollapse();
     this._syncMatrixTableMinWidth();
     this._syncMatrixEmptyState();
+    // Last: it reads the collapsed classes the two refreshes above apply,
+    // and it rebuilds the resize handles they just wiped out of the <th>s.
+    this._layoutMatrixTable();
   },
 
   // ── Collapsing empty color columns ────────────────────────────────────

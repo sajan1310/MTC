@@ -2682,6 +2682,13 @@
      two are sized to the widest string each actually has to show -- "Pool
      (Warehouse)" is the longest option the disabled select ever holds.
 
+     These are the pre-JS fallback only. App.Production.
+     _applyColorTableLayout overwrites every one of them with an inline
+     width as soon as the form is visible, fitting the columns to the space
+     actually on offer and to any width the operator has dragged -- see
+     PROD_COL_SPECS. They still matter for the moment before that runs, and
+     they still floor the table.
+
      These floors sum to the 527px App.Production.
      PROD_COLOR_TABLE_FIXED_RESERVE_PX reserves for the non-color columns
      when it computes the table's min-width -- keep the two in step. */
@@ -2764,6 +2771,92 @@
 
   .prod-color-table td.prod-col-collapsed > * {
     display: none;
+  }
+
+  /* Drag handle on a column's right edge (App.Production.
+     _initColorTableResizers). Positioned INSIDE the header cell rather than
+     added as a column of its own: every per-color cell in these tables is
+     addressed by its position among the header's children, so an extra
+     <th> would land quantities on the wrong color.
+
+     The <th> clips its overflow, so the handle sits fully inside the cell
+     (right: 0, not a negative offset straddling the border) -- it would
+     otherwise be half invisible on every column. */
+  .prod-color-table thead th {
+    position: relative;
+  }
+
+  .prod-col-resizer {
+    position: absolute;
+    top: 0;
+    right: 0;
+    width: 6px;
+    height: 100%;
+    padding: 0;
+    border: 0;
+    background: transparent;
+    cursor: col-resize;
+    z-index: 2;
+  }
+
+  .prod-col-resizer::after {
+    /* The grabbable area is 6px wide; the line drawn inside it is 2px, so
+       the handle is easy to hit without looking like a thick border. */
+    content: "";
+    position: absolute;
+    top: 15%;
+    right: 2px;
+    width: 2px;
+    height: 70%;
+    background: transparent;
+    border-radius: 1px;
+  }
+
+  .prod-col-resizer:hover::after,
+  .prod-col-resizer:focus-visible::after {
+    background: #0d6efd;
+  }
+
+  .prod-col-resizer:focus-visible {
+    outline: 2px solid #0d6efd;
+    outline-offset: -1px;
+  }
+
+  /* Held on <body> for the whole drag: the pointer leaves the 6px handle
+     immediately, and without this the cursor flickers back to the default
+     the moment it does. */
+  body.prod-col-resizing {
+    cursor: col-resize;
+    user-select: none;
+  }
+
+  body.prod-col-resizing * {
+    cursor: col-resize !important;
+  }
+
+  /* The collapsed-strip greys above are light-theme values, and they beat
+     the generic [data-theme="dark"] .table-light / .table-bordered rules on
+     specificity -- which left a dark-mode lot with white strips punched
+     through its header and white blanks down the body. */
+  [data-theme="dark"] .prod-color-table th[data-color].prod-col-collapsed {
+    background-color: #1e293b;
+  }
+
+  [data-theme="dark"] .prod-color-table th[data-color].prod-col-collapsed .prod-col-expand {
+    color: #94a3b8;
+  }
+
+  [data-theme="dark"] .prod-color-table td.prod-col-collapsed {
+    background-color: #16202f;
+  }
+
+  [data-theme="dark"] .prod-col-resizer:hover::after,
+  [data-theme="dark"] .prod-col-resizer:focus-visible::after {
+    background: #6ea8fe;
+  }
+
+  [data-theme="dark"] .prod-col-resizer:focus-visible {
+    outline-color: #6ea8fe;
   }
 
   .prod-color-table th,

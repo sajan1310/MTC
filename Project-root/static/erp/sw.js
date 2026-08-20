@@ -25,7 +25,10 @@
 // Both are precached and served cache-first, so an already-installed worker
 // would go on serving the old copies indefinitely -- a shell asset edit is
 // only actually deployed once this name changes.
-const CACHE_NAME = 'erp-shell-v22';
+//
+// v23: both changed again -- the per-color tables now compute their column
+// widths and carry resize handles.
+const CACHE_NAME = 'erp-shell-v23';
 
 const PRECACHE_URLS = [
   '/erp/offline.html',

@@ -499,7 +499,7 @@
                   leave a cell blank if that item doesn't apply to that color)</small>
               </h6>
               <div class="table-responsive mb-2" id="productionColorMatrixTableWrap">
-                <table class="table table-bordered bg-white shadow-sm mb-0 prod-color-table">
+                <table class="table table-bordered bg-white shadow-sm mb-0 prod-color-table" data-width-scope="matrix">
                   <thead class="table-light">
                     <tr id="productionColorMatrixHeaderRow">
                       <!-- Row-reorder grip column -- must stay FIRST and must
@@ -531,6 +531,9 @@
               </p>
               <button type="button" class="btn btn-outline-primary btn-sm fw-bold mb-3"
                 onclick="App.Production.addColorMatrixRow()">+ Add Per-Color Component</button>
+              <button type="button" class="btn btn-link btn-sm text-muted mb-3"
+                onclick="App.Production.resetMatrixColumnWidths()"
+                title="Drop the column widths dragged on this table and fit them to the form again">Reset column widths</button>
             </div>
 
             <!-- Per-Process Pool Components -- one table per upstream
@@ -541,6 +544,9 @@
               <h6 class="text-secondary border-bottom pb-2 mb-3 fw-bold">
                 Per-Process Pool Components <small class="text-muted fw-normal">(one table per upstream process/output
                   item — only its own colors are shown)</small>
+                <button type="button" class="btn btn-link btn-sm text-muted fw-normal float-end py-0"
+                  onclick="App.Production.resetPoolColumnWidths()"
+                  title="Drop the column widths dragged on these tables and fit them to the form again">Reset column widths</button>
               </h6>
               <div id="productionPoolColorGroupsContainer"></div>
             </div>
