@@ -147,20 +147,34 @@ App.Production = {
   // `max` bounds the AUTOMATIC fit only. A width the operator drags is
   // theirs and is clamped to PROD_COL_DRAG_MAX_PX instead: the point of the
   // handles is to overrule this table when a name needs more room.
+  //
+  // `grow` is how the fit shares out width that is left over once every
+  // column has reached its max -- the table always fills the form, because
+  // an empty band to the right of the last column is a gap, not a layout.
+  // The weights say WHERE that width is worth having: a long item name or
+  // a narration can always use more, a per-color cell holds a whole item
+  // name on a merged row, while Size and Source hold a short string and a
+  // fixed set of options and take none of it.
   PROD_COL_SPECS: {
-    grip: { pref: 30, min: 30, max: 30 },
-    item: { pref: 320, min: 170, max: 460 },
-    size: { pref: 90, min: 64, max: 170 },
-    narration: { pref: 240, min: 110, max: 420 },
-    source: { pref: 155, min: 120, max: 200 },
-    close: { pref: 30, min: 30, max: 30 },
-    color: { pref: 88, min: 56, max: 220 },
+    grip: { pref: 30, min: 30, max: 30, grow: 0 },
+    item: { pref: 320, min: 170, max: 460, grow: 3 },
+    size: { pref: 90, min: 64, max: 170, grow: 0 },
+    narration: { pref: 240, min: 110, max: 420, grow: 2 },
+    source: { pref: 155, min: 120, max: 200, grow: 0 },
+    close: { pref: 30, min: 30, max: 30, grow: 0 },
+    color: { pref: 88, min: 56, max: 220, grow: 2 },
     // A merged row's per-color cell carries its own item picker, not just a
     // quantity, so every color column in such a table needs picker room.
-    colorMerged: { pref: 150, min: 90, max: 260 },
-    colorCollapsed: { pref: 30, min: 30, max: 30 },
+    colorMerged: { pref: 150, min: 90, max: 260, grow: 2 },
+    colorCollapsed: { pref: 30, min: 30, max: 30, grow: 0 },
   },
   PROD_COL_DRAG_MAX_PX: 900,
+  // Held back from the width the columns are fitted to. These tables are
+  // border-collapse, and the outer border is drawn half outside the box, so
+  // a table whose columns add up to exactly the wrapper's clientWidth
+  // measures one pixel wider than it -- enough for a horizontal scrollbar
+  // on a table that was meant to fit precisely.
+  PROD_COL_TABLE_EDGE_PX: 1,
   PROD_COL_KEYBOARD_STEP_PX: 16,
   PROD_COL_WIDTH_STORE_KEY: 'maharaja-erp-prod-col-widths',
 
@@ -4027,6 +4041,11 @@ App.Production = {
   // column the operator sized by hand is pinned and never moves -- their
   // width is an instruction, not a suggestion.
   _fitColorTableColumns(cols, available) {
+    this._growColorTableColumns(cols, available);
+    this._fillColorTableWidth(cols, available);
+  },
+
+  _growColorTableColumns(cols, available) {
     for (let pass = 0; pass < 4; pass++) {
       const total = cols.reduce((sum, c) => sum + c.width, 0);
       const slack = available - total;
@@ -4042,6 +4061,21 @@ App.Production = {
     }
   },
 
+  // Whatever is still unclaimed once every column has reached its max goes
+  // out by `grow` weight, max ignored: a one-color lot otherwise left ~650px
+  // of dead space to the right of its last column. Only a table whose
+  // flexible columns are ALL pinned by hand can still come up short -- that
+  // width is the operator's own instruction, so it is left as they set it.
+  _fillColorTableWidth(cols, available) {
+    const total = cols.reduce((sum, c) => sum + c.width, 0);
+    const slack = available - total;
+    if (slack < 1) return;
+    const growable = cols.filter(c => !c.pinned && !this._colIsFixedWidth(c.spec) && c.spec.grow > 0);
+    const weight = growable.reduce((sum, c) => sum + c.spec.grow, 0);
+    if (!weight) return;
+    growable.forEach(c => { c.width += slack * (c.spec.grow / weight); });
+  },
+
   _applyColorTableLayout(table) {
     if (!table) return;
     const cols = this._colModel(table);
@@ -4052,25 +4086,33 @@ App.Production = {
     // 0 while the modal is still hidden -- there is no width to fit to yet,
     // so leave what is there rather than collapsing every column to its
     // minimum. showColorMatrix runs this again once the form is visible.
-    const available = table.parentElement?.clientWidth || 0;
+    const wrapWidth = table.parentElement?.clientWidth || 0;
+    const available = wrapWidth > 0 ? Math.max(0, wrapWidth - this.PROD_COL_TABLE_EDGE_PX) : 0;
     if (available > 0) this._fitColorTableColumns(cols, available);
 
+    const fitted = cols.reduce((sum, c) => sum + c.width, 0);
     const rounded = cols.map(c => Math.round(c.width));
     let total = rounded.reduce((sum, px) => sum + px, 0);
-    // Rounding up to a dozen columns can push the total a few px past the
-    // width they were fitted to, which is enough to raise a horizontal
-    // scrollbar on a table that was meant to fit exactly. Give the spare
-    // pixels back to the widest column that can afford them.
-    if (available > 0 && total > available) {
+    // Rounding a dozen columns leaves the total a pixel or two either side
+    // of the width they were fitted to: over, and a table meant to fit
+    // exactly raises a scrollbar; under, and it leaves a hairline of dead
+    // space. The difference goes on (or comes off) the widest column that
+    // can take it.
+    //
+    // Only when the fit actually LANDED on `available`, though. A lot with
+    // more columns than the form can hold is meant to overflow and scroll,
+    // and "correcting" that difference here would crush one column to its
+    // minimum to pay for all the others.
+    if (available > 0 && Math.abs(fitted - available) < 1 && total !== available) {
       let widest = -1;
       cols.forEach((c, i) => {
         if (c.pinned || this._colIsFixedWidth(c.spec)) return;
         if (widest === -1 || rounded[i] > rounded[widest]) widest = i;
       });
       if (widest !== -1) {
-        const trim = Math.min(total - available, rounded[widest] - cols[widest].spec.min);
-        rounded[widest] -= trim;
-        total -= trim;
+        const room = Math.max(available - total, cols[widest].spec.min - rounded[widest]);
+        rounded[widest] += room;
+        total += room;
       }
     }
     cols.forEach((c, i) => { c.th.style.width = `${rounded[i]}px`; });
@@ -4105,11 +4147,18 @@ App.Production = {
   // takes any handle inside it with them.
   _initColorTableResizers(table, cols) {
     cols.forEach((c, i) => {
-      c.th.querySelector('.prod-col-resizer')?.remove();
+      const existing = c.th.querySelector('.prod-col-resizer');
       // Nothing to drag on a fixed-width column, and nothing useful on the
       // last one -- its right edge is the edge of the table.
-      if (this._colIsFixedWidth(c.spec) || i === cols.length - 1) return;
-      const handle = document.createElement('button');
+      if (this._colIsFixedWidth(c.spec) || i === cols.length - 1) {
+        existing?.remove();
+        return;
+      }
+      // Reused rather than rebuilt wherever it survived. A relayout runs at
+      // the end of every resize, and replacing the very element being
+      // operated took the focus with it -- the second arrow-key press of a
+      // nudge landed on a detached node and did nothing.
+      const handle = existing || document.createElement('button');
       handle.type = 'button';
       handle.className = 'prod-col-resizer';
       handle.dataset.colKey = c.key;
@@ -4125,7 +4174,7 @@ App.Production = {
       handle.setAttribute('aria-label',
         `Resize the ${label} column. Arrow keys adjust it, double-click restores the automatic width.`);
       handle.title = 'Drag to resize — double-click to restore';
-      c.th.appendChild(handle);
+      if (!existing) c.th.appendChild(handle);
     });
 
     if (table.dataset.colResizeBound === 'true') return;
@@ -4144,11 +4193,35 @@ App.Production = {
     const scope = this._colScopeOf(table);
     if (!scope) return;
     const bucket = this._colWidthBucket(scope, true);
+    // Which keys this freeze INVENTED, as opposed to widths the operator
+    // had already dragged. Only the invented ones are given back when the
+    // drag ends -- see _releaseFrozenColumnWidths.
+    const added = [];
     this._colModel(table).forEach(c => {
       if (this._colIsFixedWidth(c.spec) || bucket[c.key] !== undefined) return;
       bucket[c.key] = Math.round(c.th.getBoundingClientRect().width
         || parseFloat(c.th.style.width) || c.spec.pref);
+      added.push(c.key);
     });
+    this._frozenColumnKeys = { scope, added };
+  },
+
+  // The freeze exists to make ONE edge move during a drag. Holding every
+  // column at that width afterwards would mean shrinking a column left a
+  // gap on the right, and widening one left the table overflowing -- the
+  // two things the fit is there to prevent. So when the drag ends,
+  // everything except the column actually dragged is handed back to the
+  // fit, which spreads the difference and lands the table on the form's
+  // width again. Widths dragged in earlier sessions are untouched.
+  _releaseFrozenColumnWidths(table, keptKey) {
+    const frozen = this._frozenColumnKeys;
+    this._frozenColumnKeys = null;
+    if (frozen && frozen.scope === this._colScopeOf(table)) {
+      const bucket = this._colWidthBucket(frozen.scope);
+      frozen.added.forEach(key => { if (key !== keptKey) delete bucket[key]; });
+    }
+    this._saveColWidths();
+    this._applyColorTableLayout(table);
   },
 
   _setColumnWidth(table, key, px) {
@@ -4202,7 +4275,7 @@ App.Production = {
       window.removeEventListener('pointermove', onMove);
       window.removeEventListener('pointerup', onUp);
       document.body.classList.remove('prod-col-resizing');
-      this._saveColWidths();
+      this._releaseFrozenColumnWidths(table, key);
     };
     window.addEventListener('pointermove', onMove);
     window.addEventListener('pointerup', onUp);
@@ -4222,7 +4295,7 @@ App.Production = {
     const step = this.PROD_COL_KEYBOARD_STEP_PX * (e.shiftKey ? 3 : 1) * (e.key === 'ArrowLeft' ? -1 : 1);
     const current = th.getBoundingClientRect().width || parseFloat(th.style.width) || 0;
     this._setColumnWidth(table, handle.dataset.colKey, current + step);
-    this._saveColWidths();
+    this._releaseFrozenColumnWidths(table, handle.dataset.colKey);
   },
 
   // "Reset column widths" -- drops every width dragged on this table (or,

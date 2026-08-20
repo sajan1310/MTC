@@ -31,7 +31,10 @@
 //
 // v24: the fit now re-runs when the form becomes visible, which is the
 // only moment an edited lot's table has a width to be fitted to.
-const CACHE_NAME = 'erp-shell-v24';
+//
+// v25: the fit fills the form exactly instead of stopping at each
+// column's max and leaving a band of dead space.
+const CACHE_NAME = 'erp-shell-v25';
 
 const PRECACHE_URLS = [
   '/erp/offline.html',

@@ -56,6 +56,17 @@ function widths() {
   return out;
 }
 
+// What the columns are fitted to: the wrapper less the one pixel held back
+// for the collapsed outer border.
+function fitTarget(px = MODAL_WIDTH) {
+  return px - App.Production.PROD_COL_TABLE_EDGE_PX;
+}
+
+function sumOfColumns() {
+  return Array.from(headerRow().children)
+    .reduce((sum, th) => sum + parseFloat(th.style.width), 0);
+}
+
 function handleFor(key) {
   return Array.from(headerRow().querySelectorAll('.prod-col-resizer'))
     .find(h => h.dataset.colKey === key);
@@ -120,9 +131,13 @@ describe('Per-color tables: the automatic column fit', () => {
     // option, "Pool (Warehouse)".
     expect(w.size).toBeGreaterThanOrEqual(specs.size.pref);
     expect(w.source).toBeGreaterThanOrEqual(specs.source.pref);
-    // And nothing is stretched past the point where more helps.
-    expect(w.item).toBeLessThanOrEqual(specs.item.max);
-    expect(w.narration).toBeLessThanOrEqual(specs.narration.max);
+    // The slack goes to the columns that can use it, not to the two
+    // holding a short string and a fixed set of options.
+    expect(w.size).toBeLessThanOrEqual(specs.size.max);
+    expect(w.source).toBeLessThanOrEqual(specs.source.max);
+    expect(w.item).toBeGreaterThan(specs.item.pref);
+    // And it is all spent: no dead band to the right of the last column.
+    expect(sumOfColumns()).toBe(fitTarget());
   });
 
   test('every column stays within its own min/max, and the table matches their sum', () => {
@@ -133,16 +148,17 @@ describe('Per-color tables: the automatic column fit', () => {
     giveTableRoom(matrixTable());
     App.Production._layoutMatrixTable();
 
-    let sum = 0;
     Array.from(headerRow().children).forEach((th, i, all) => {
       const key = App.Production._colKeyAt(th, i, all.length - 1);
       const spec = App.Production._colSpecFor(th, key);
       const px = parseFloat(th.style.width);
       expect(px).toBeGreaterThanOrEqual(spec.min);
-      expect(px).toBeLessThanOrEqual(spec.max);
-      sum += px;
+      // A column that takes no share of the leftover never exceeds its max;
+      // one that does may, because the table has to fill the form.
+      if (spec.grow === 0) expect(px).toBeLessThanOrEqual(spec.max);
     });
-    expect(parseFloat(matrixTable().style.width)).toBe(sum);
+    expect(parseFloat(matrixTable().style.width)).toBe(sumOfColumns());
+    expect(sumOfColumns()).toBe(fitTarget());
   });
 
   test('a table with no room to fit to is left alone rather than crushed', () => {
@@ -188,20 +204,49 @@ describe('Per-color tables: widths the operator drags', () => {
     App.Production._layoutMatrixTable();
   });
 
-  test('dragging one edge moves that column only, and the table grows with it', () => {
+  test('during the drag only that edge moves', () => {
     const before = widths();
     const tableBefore = parseFloat(matrixTable().style.width);
+    const handle = handleFor('item');
+
+    handle.dispatchEvent(new window.MouseEvent('pointerdown', { clientX: 500, bubbles: true }));
+    window.dispatchEvent(new window.MouseEvent('pointermove', { clientX: 620 }));
+
+    const during = widths();
+    expect(during.item).toBe(before.item + 120);
+    // The rest hold still -- the table must not re-flow under the pointer.
+    expect(during.size).toBe(before.size);
+    expect(during.narration).toBe(before.narration);
+    expect(during.source).toBe(before.source);
+    expect(parseFloat(matrixTable().style.width)).toBe(tableBefore + 120);
+  });
+
+  test('releasing keeps the dragged width and puts the table back on the form width', () => {
+    const before = widths();
 
     dragHandle('item', 120);
 
-    const after = widths();
-    expect(after.item).toBe(before.item + 120);
-    // Every other column is where it was -- the drag must not re-flow the
-    // table under the pointer.
-    expect(after.size).toBe(before.size);
-    expect(after.narration).toBe(before.narration);
-    expect(after.source).toBe(before.source);
-    expect(parseFloat(matrixTable().style.width)).toBe(tableBefore + 120);
+    // What was dragged is kept; everything else gives up the difference, so
+    // the table neither overflows nor leaves a band of dead space.
+    expect(widths().item).toBe(before.item + 120);
+    expect(sumOfColumns()).toBe(fitTarget());
+    expect(parseFloat(matrixTable().style.width)).toBe(fitTarget());
+  });
+
+  test('narrowing a column is absorbed too, rather than leaving a gap', () => {
+    dragHandle('item', -100);
+
+    expect(sumOfColumns()).toBe(fitTarget());
+  });
+
+  test('a second drag does not discard the width set by the first', () => {
+    dragHandle('item', 100);
+    const item = widths().item;
+
+    dragHandle('narration', 60);
+
+    expect(widths().item).toBe(item);
+    expect(sumOfColumns()).toBe(fitTarget());
   });
 
   test('a dragged width beats the automatic fit on the next relayout', () => {
@@ -228,13 +273,18 @@ describe('Per-color tables: widths the operator drags', () => {
     expect(widths().size).toBe(App.Production.PROD_COL_SPECS.size.min);
   });
 
-  test('arrow keys on a focused handle adjust the width', () => {
+  test('arrow keys on a focused handle adjust the width, press after press', () => {
     const before = widths().item;
     const handle = handleFor('item');
+    const step = App.Production.PROD_COL_KEYBOARD_STEP_PX;
 
     handle.dispatchEvent(new window.KeyboardEvent('keydown', { key: 'ArrowRight', bubbles: true }));
-    expect(widths().item).toBe(before + App.Production.PROD_COL_KEYBOARD_STEP_PX);
+    expect(widths().item).toBe(before + step);
 
+    // The SAME element, not a re-query: a relayout runs after every nudge,
+    // and rebuilding the handle it is running on would drop the focus and
+    // leave the second press doing nothing.
+    expect(handleFor('item')).toBe(handle);
     handle.dispatchEvent(new window.KeyboardEvent('keydown', { key: 'ArrowLeft', bubbles: true }));
     expect(widths().item).toBe(before);
   });
@@ -438,7 +488,7 @@ describe('Per-color tables: fitting a wide lot', () => {
     // meant to fit exactly.
     const total = Array.from(headerRow().children)
       .reduce((sum, th) => sum + parseFloat(th.style.width), 0);
-    expect(total).toBeLessThanOrEqual(1708);
+    expect(total).toBeLessThanOrEqual(fitTarget(1708));
     expect(parseFloat(matrixTable().style.width)).toBe(total);
     expect(widths()['c:Blue']).toBe(App.Production.PROD_COL_SPECS.colorCollapsed.pref);
   });
