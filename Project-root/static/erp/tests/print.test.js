@@ -485,7 +485,36 @@ describe('server-rendered downloads', () => {
       expect(saved).toEqual([]);
       expect(printCalls).toEqual([]);          // no print dialog
       expect(toasts[0].isError).toBe(true);
-      expect(toasts[0].msg).toMatch(/could not reach/i);
+      expect(toasts[0].msg).toMatch(/no PDF renderer installed/i);
+    });
+
+    // "Could not reach the PDF renderer" covered four different situations and
+    // sent a real diagnosis off hunting through virtualenvs. Each cause now
+    // names itself and says what to do about it.
+    it.each([
+      [503, /no PDF renderer installed/i, 'renderer missing on the server'],
+      [404, /older build|needs restarting/i, 'server not restarted'],
+      [403, /session expired/i, 'stale session or CSRF token'],
+      [500, /could not render/i, 'render failed'],
+    ])('explains HTTP %i as %s', async (status, pattern) => {
+      setupFetch(() => Promise.resolve({ ok: false, status }));
+      const toasts = [];
+      App.Utils = { showToast: msg => toasts.push(msg) };
+
+      await Print.downloadMany(docs, 'x.zip');
+
+      expect(toasts[0]).toMatch(pattern);
+      expect(printCalls).toEqual([]);
+    });
+
+    it('distinguishes offline from a server that cannot render', async () => {
+      setupFetch(() => Promise.reject(new TypeError('Failed to fetch')));
+      const toasts = [];
+      App.Utils = { showToast: msg => toasts.push(msg) };
+
+      await Print.downloadMany(docs, 'x.zip');
+
+      expect(toasts[0]).toMatch(/no connection/i);
     });
 
     it('does not print when offline either', async () => {
@@ -659,6 +688,40 @@ describe('docName', () => {
     const warn = jest.spyOn(console, 'warn').mockImplementation(() => {});
     expect(Print.docName({})).toBe('DOC');
     warn.mockRestore();
+  });
+
+  // Production sheets are named after what they make, in the operator's own
+  // words, rather than by the CODE_KEY_PARTY scheme. A sheet is recognised by
+  // its Output Item Name; abbreviating that into a code and a model fragment
+  // would hide the one thing anybody searches for.
+  describe('docNameFromLabel', () => {
+    it('keeps the label whole and readable, as the operator typed it', () => {
+      expect(Print.docNameFromLabel('20 inch Rider D/Gaddi Steel Rim S/Kid Type', '21/08/2026'))
+        .toBe('20 inch Rider D-Gaddi Steel Rim S-Kid Type_210826');
+    });
+
+    it('stamps the date as DDMMYY, matching the on-screen order', () => {
+      expect(Print.docNameFromLabel('Rim', '21/08/2026')).toBe('Rim_210826');
+      expect(Print.docNameFromLabel('Rim', '01/09/2026')).toBe('Rim_010926');
+    });
+
+    it('replaces every character Windows refuses', () => {
+      const out = Print.docNameFromLabel('A/B\C:D*E?F"G<H>I|J', '21/08/2026');
+      expect(out).not.toMatch(/[/\:*?"<>|]/);
+    });
+
+    it('falls back rather than producing a bare date', () => {
+      expect(Print.docNameFromLabel('', '21/08/2026', 'Production Sheet'))
+        .toBe('Production Sheet_210826');
+    });
+
+    // Two lots of the same item on the same day genuinely collide here. The
+    // server de-duplicates inside a batch, so N records still yield N files.
+    it('collides for same item + same date, which the server then resolves', () => {
+      const a = Print.docNameFromLabel('Rim', '21/08/2026');
+      const b = Print.docNameFromLabel('Rim', '21/08/2026');
+      expect(a).toBe(b);
+    });
   });
 
   it('names the archive like the documents inside it', () => {

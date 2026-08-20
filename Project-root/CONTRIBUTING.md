@@ -89,8 +89,15 @@ python -m pytest --cov-report=xml --cov-report=html -q
 To apply basic hygiene checks and Ruff auto-fixes on commit:
 
 ```powershell
-pip install pre-commit
-pre-commit install
+venv2\Scripts\python -m pip install -r requirements-dev.txt
+venv2\Scripts\pre-commit install
 # Run on all files once
-pre-commit run --all-files
+venv2\Scripts\pre-commit run --all-files
 ```
+
+`requirements-dev.txt` pins the version rather than leaving it to whatever a
+bare `pip install pre-commit` resolves to, and records which tools are
+deliberately NOT declared there: the hooks in `.pre-commit-config.yaml`
+(bandit, detect-secrets, ruff) are installed by pre-commit into its own
+environments at the `rev` each hook pins, so listing them again would install a
+second copy at a different version.

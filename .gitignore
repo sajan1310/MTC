@@ -20,6 +20,10 @@ __pycache__/
 env/
 venv/
 venv*/
+# '.venv' does not match 'venv*' -- the leading dot puts it outside that
+# glob, so it was untracked but NOT ignored and a 'git add .' would have
+# staged ~300 MB of it.
+.venv/
 *.egg-info/
 dist/
 build/

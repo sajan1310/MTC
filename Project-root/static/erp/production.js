@@ -1353,7 +1353,7 @@ App.Production = {
         this._populateProductionSheetData(p);
         this._buildProductionSheetForExport();
         documents.push({
-          filename: App.Print.docFilename(this._productionSheetDocSpec()),
+          filename: `${this._productionSheetDocName()}.pdf`,
           html: container.innerHTML,
           landscape
         });
@@ -6133,6 +6133,9 @@ App.Production = {
     App.State.currentProductionSheet = {
       idx, lotQty: p.qty, defaultComponents, colors,
       lotColor: p.color || '', lotNumber: p.lotNumber,
+      // The operator's own Output Item Name -- this is what the exported
+      // PDF is named after, so it has to travel with the sheet.
+      outputItemName: p.outputItemName,
       date: p.date, size, model, processName, requirementSheetTitle
     };
     this._refreshSheetGroupSplit(App.State.currentProductionSheet);
@@ -6771,22 +6774,27 @@ App.Production = {
   // The title doubles as the suggested "Save as PDF" filename, so this uses
   // the same rich lot/size/model/process name the old Download PDF button
   // built rather than the bare product id.
-  // The name for whichever sheet is currently built into the print container.
+  // The filename for whichever sheet is currently built into the print
+  // container: the Output Item Name the operator typed, plus the lot's date.
   //
-  // Shared by Print Sheet, Download PDF and Download PDFs so all three produce
-  // the identical filename for the identical lot. Reading it from
-  // currentProductionSheet rather than from arguments is what guarantees that:
-  // every path populates that state first, so there is one input.
-  _productionSheetDocSpec() {
+  //     20 inch Rider D-Gaddi Steel Rim S-Kid Type_210826
+  //
+  // Shared by Print Sheet, Download PDF and Download PDFs, so all three
+  // produce the identical name for the identical lot. Reading it from
+  // currentProductionSheet rather than from arguments is what guarantees
+  // that: every path populates that state first, so there is one input.
+  //
+  // Falls back through the fields that still identify the sheet when no
+  // output item was recorded, rather than emitting a bare date that several
+  // lots would share.
+  _productionSheetDocName() {
     const state = App.State.currentProductionSheet;
-    return {
-      type: 'PRD',
-      key: state?.lotNumber,
-      party: state?.model || document.getElementById('prodSheetProductId')?.innerText,
-      // No lot number to identify it by (an unsaved sheet) -- fall back to the
-      // lot's own date rather than leaving two sheets sharing a name.
-      date: state?.lotNumber ? null : (state?.date || true)
-    };
+    const label = state?.outputItemName
+      || state?.model
+      || document.getElementById('prodSheetProductName')?.innerText
+      || document.getElementById('prodSheetProductId')?.innerText;
+
+    return App.Print.docNameFromLabel(label, state?.date, 'Production Sheet');
   },
 
   printProductionSheet() {
@@ -6799,7 +6807,7 @@ App.Production = {
 
     App.Print.trigger(
       'print-production-sheet-container',
-      App.Print.docName(this._productionSheetDocSpec()),
+      this._productionSheetDocName(),
       { landscape: this._printOptions().landscape }
     );
   },
@@ -7252,7 +7260,7 @@ App.Production = {
 
     await App.Print.downloadContainer(
       'print-production-sheet-container',
-      App.Print.docName(this._productionSheetDocSpec()),
+      this._productionSheetDocName(),
       { landscape: this._printOptions().landscape }
     );
   }

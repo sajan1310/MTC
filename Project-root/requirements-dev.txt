@@ -1,0 +1,37 @@
+# MTC ERP — developer-only tooling
+#
+# Install alongside the runtime deps:
+#
+#     venv2\Scripts\python -m pip install -r requirements.txt -r requirements-dev.txt
+#     venv2\Scripts\pre-commit install
+#
+# This file is deliberately short. Most of what a contributor needs is already
+# covered elsewhere, and duplicating it here would create a second list to keep
+# in step:
+#
+#   pytest, pytest-cov, ruff, pypdf   stay in requirements.txt, because
+#                                     .github/workflows/ci.yml installs ONLY
+#                                     that file and then runs `python -m
+#                                     pytest`. Moving them here would pass
+#                                     locally and break CI.
+#
+#   bandit, detect-secrets, ruff      pinned in .pre-commit-config.yaml and
+#   pre-commit-hooks                  installed by pre-commit into its own
+#                                     isolated environments, at the `rev` each
+#                                     hook declares. Listing them here would
+#                                     install a SECOND copy at a different
+#                                     version, which is how "passes locally,
+#                                     fails in the hook" starts.
+#
+# Not listed because nothing uses them: black and flake8 have no config in
+# pyproject.toml, .flake8, setup.cfg or the pre-commit hooks; alembic and
+# SQLAlchemy have no alembic.ini and no imports. They are present in the venv
+# from earlier experiments. Declaring them would turn that residue into a
+# requirement.
+
+# Runs the git hooks in .pre-commit-config.yaml (end-of-file-fixer,
+# trailing-whitespace, check-merge-conflict, detect-secrets, bandit, ruff,
+# ruff-format). The config is committed and the hooks are what CI expects the
+# tree to already satisfy, but nothing declared the tool that runs them -- so a
+# fresh clone silently had no hooks at all.
+pre-commit>=3.5

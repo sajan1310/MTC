@@ -328,10 +328,18 @@ App.Print = {
     return (hash >>> 0).toString(16).slice(-4).padStart(4, '0');
   },
 
-  // YYMMDD. Accepts a Date, an ISO string, or the dd/mm/yyyy the ledgers
-  // display; anything unparseable falls back to today rather than emitting
-  // a wrong date.
-  _docDate(value) {
+  // A date stamp for a filename. Accepts a Date, an ISO string, or the
+  // dd/mm/yyyy the ledgers display; anything unparseable falls back to today
+  // rather than emitting a wrong date.
+  //
+  // Two formats, and the choice is not cosmetic:
+  //   'yymmdd'  sorts chronologically in a folder listing. Used by the
+  //             reports, ledgers and ZIP archives, which have no number of
+  //             their own and are found by date.
+  //   'ddmmyy'  reads in the same order as the date on screen. Used where the
+  //             filename already leads with something distinctive, so the
+  //             date is being read rather than sorted on.
+  _docDate(value, format = 'yymmdd') {
     let d;
     if (value instanceof Date) {
       d = value;
@@ -346,7 +354,28 @@ App.Print = {
     if (isNaN(d.getTime())) d = new Date();
 
     const pad = n => String(n).padStart(2, '0');
-    return `${String(d.getFullYear()).slice(-2)}${pad(d.getMonth() + 1)}${pad(d.getDate())}`;
+    const yy = String(d.getFullYear()).slice(-2);
+    const mm = pad(d.getMonth() + 1);
+    const dd = pad(d.getDate());
+    return format === 'ddmmyy' ? `${dd}${mm}${yy}` : `${yy}${mm}${dd}`;
+  },
+
+  // A document named after the thing it is about, in the operator's own
+  // words: "20 inch Rider D-Gaddi Steel Rim S-Kid Type_210826".
+  //
+  // Deliberately NOT the CODE_KEY_PARTY scheme. That scheme suits documents
+  // identified by a number somebody quotes back at you -- a PO number, a
+  // challan number. A production sheet is recognised by what it makes, and
+  // the operator already typed that name; abbreviating it into a code and a
+  // model fragment would hide the one thing they search for.
+  //
+  // The label is kept whole and readable -- spaces intact, only the
+  // characters Windows refuses replaced -- so it matches the Output Item
+  // column on screen character for character.
+  docNameFromLabel(label, date, fallback = 'Document') {
+    const name = this.titleToFilename(label);
+    const stamp = this._docDate(date, 'ddmmyy');
+    return `${name === 'Document' ? fallback : name}_${stamp}`;
   },
 
   // Builds a name from { type, key, party, date }. `date` is opt-in: pass
@@ -469,6 +498,13 @@ App.Print = {
       : '';
   },
 
+  // Why the last render attempt failed, so the toast can say something the
+  // reader can act on. "Could not reach the PDF renderer" covers four quite
+  // different situations, and telling them apart by hand meant checking which
+  // virtualenv the server was running from -- which is not a thing anyone
+  // should have to do from a toast.
+  lastDownloadError: null,
+
   // POSTs `body` and returns a Blob, or null when this server cannot render.
   async _postForBlob(url, body) {
     if (this.serverPdfAvailable === false) return null;
@@ -483,18 +519,35 @@ App.Print = {
       });
     } catch (err) {
       // Never completed: offline, or the server is unreachable.
+      this.lastDownloadError = 'offline';
       this.serverPdfAvailable = false;
       return null;
     }
 
     if (res.status === 503) {
+      // The endpoint is there; the renderer behind it is not installed.
+      this.lastDownloadError = 'no-renderer';
       this.serverPdfAvailable = false;
       return null;
     }
+    if (res.status === 404) {
+      // The build being served predates this endpoint -- almost always a
+      // server that has not been restarted since the code changed.
+      this.lastDownloadError = 'no-endpoint';
+      this.serverPdfAvailable = false;
+      return null;
+    }
+    if (res.status === 401 || res.status === 403 || res.status === 400) {
+      // Session expired, or the CSRF token on the page is stale.
+      this.lastDownloadError = 'rejected';
+      return null;
+    }
     if (!res.ok) {
+      this.lastDownloadError = 'failed';
       console.warn('[PDF] server render failed:', res.status);
       return null;
     }
+    this.lastDownloadError = null;
     this.serverPdfAvailable = true;
     return await res.blob();
   },
@@ -529,10 +582,23 @@ App.Print = {
   // When the renderer is unreachable the honest answer is to say so and name
   // the alternative, leaving the choice with the person who pressed the
   // button.
+  DOWNLOAD_ERRORS: {
+    offline: 'No connection to the server, so nothing was downloaded. ' +
+      'Use Print to save this document through the print dialog instead.',
+    'no-renderer': 'The server has no PDF renderer installed, so nothing was ' +
+      'downloaded. Install it with "pip install -r requirements.txt" on the ' +
+      'server, then restart it. Print still works meanwhile.',
+    'no-endpoint': 'This server does not have the PDF download endpoint — it ' +
+      'is probably running an older build and needs restarting. ' +
+      'Print still works meanwhile.',
+    rejected: 'The server refused the request, which usually means the session ' +
+      'expired. Reload the page and try again.',
+    failed: 'The server could not render this document. Nothing was downloaded.'
+  },
+
   reportDownloadUnavailable() {
     App.Utils.showToast(
-      'Could not reach the PDF renderer, so nothing was downloaded. ' +
-      'Use Print to save this document through the print dialog instead.',
+      this.DOWNLOAD_ERRORS[this.lastDownloadError] || this.DOWNLOAD_ERRORS.failed,
       true
     );
   },

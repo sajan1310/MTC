@@ -1067,6 +1067,38 @@ Three rules, each earning its place:
    whole identity. `YYMMDD`, which sorts; the old ZIP used `DDMMYY`, which
    sorted a year of exports by day-of-month.
 
+### Two rules, not one, and the split is deliberate
+
+A production sheet is not named by the CODE_KEY_PARTY scheme. It is named
+after **the operator's own Output Item Name plus the lot's date**:
+
+```
+20 inch Rider D-Gaddi Steel Rim S-Kid Type_210826.pdf
+14 inch Crysta D-Gaddi Steel Rim_210826.pdf
+```
+
+The distinction is about how each document is recognised. A purchase order or
+a challan is identified by a number somebody quotes back at you, so the number
+leads. A production sheet is recognised by *what it makes* -- and the operator
+already typed that name into the Output Item field. Abbreviating it into a
+code and a model fragment would hide the one string they actually search for.
+
+So the label is kept whole and readable, spaces intact, matching the Output
+Item column character for character; only the characters Windows refuses are
+replaced (these names routinely carry slashes -- `D/Gaddi`, `S/Kid`).
+
+The date format differs between the two rules for the same reason, and this is
+the part most likely to be "corrected" by someone tidying up:
+
+| | Format | Why |
+|---|---|---|
+| Reports, ledgers, ZIPs | `YYMMDD` | No number of their own; found **by date**, so the name must sort chronologically |
+| Production sheets | `DDMMYY` | The name already leads with something distinctive, so the date is **read**, not sorted on -- and it then matches the order shown on screen |
+
+Two lots of the same item on the same day genuinely collide. That is resolved
+server-side by `dedupe_filenames`, so forty records still yield forty files;
+the client does not attempt to pre-empt it.
+
 Three details that only showed up on real data: a party name is never truncated
 mid-word (`Mahadevindustrie` reads as a typo and is no more distinct than
 `Mahadev`); a code the key already carries is not repeated (`DC-1041` would

@@ -245,38 +245,53 @@ describe('App.Production.printProductionSheet', () => {
     expect(document.getElementById('print-prod-color').innerText).toBe('Red / Blue');
   });
 
-  // The title is the suggested "Save as PDF" filename now that window.print()
-  // is the only export path, so it carries the lot's own identity rather than
-  // the bare product id the old print-only title used.
-  test('names the job after the lot: date, size, model and process', () => {
+  // The filename is the operator's own Output Item Name plus the lot's date --
+  // what they typed and what they see in the Output Item column, not an
+  // abbreviation of it. Shared by Print Sheet, Download PDF and Download PDFs
+  // so one lot cannot come out under two different names.
+  test('names the job after the Output Item Name and the lot date', () => {
     App.State.currentProductionSheet = {
       colors: [], lotColor: '', lotNumber: 'LOT-12',
-      date: '19/08/2026', size: '26 inch', model: 'Ranger', processName: 'Wheel Building'
+      outputItemName: '20 inch Rider D/Gaddi Steel Rim S/Kid Type',
+      date: '21/08/2026', size: '26 inch', model: 'Ranger', processName: 'Wheel Building'
     };
     App.Production.printProductionSheet();
 
-    // CODE_KEY_PARTY -- the lot number identifies the sheet, so no date.
     expect(triggerSpy).toHaveBeenCalledWith(
       'print-production-sheet-container',
-      'PRD_LOT-12_Ranger',
+      '20 inch Rider D-Gaddi Steel Rim S-Kid Type_210826',
       { landscape: false }
     );
   });
 
-  // Without a lot number there is nothing unique to name the sheet after, so
-  // the date goes in rather than letting two sheets share a filename.
-  test('falls back to the product id and a date when no lot number is known', () => {
-    App.State.currentProductionSheet = null;
+  // Windows refuses / \ : * ? " < > | in a filename, and these item names
+  // routinely carry slashes ("D/Gaddi", "S/Kid").
+  test('replaces characters Windows refuses, keeping the name readable', () => {
+    App.State.currentProductionSheet = {
+      colors: [], lotColor: '', outputItemName: 'Frame: Ranger <Deluxe> | 26"',
+      date: '01/09/2026'
+    };
     App.Production.printProductionSheet();
 
-    const [, title, opts] = triggerSpy.mock.calls[0];
-    expect(title).toMatch(/^PRD_PRC1_\d{6}$/);
-    expect(opts).toEqual({ landscape: false });
+    const [, title] = triggerSpy.mock.calls[0];
+    expect(title).not.toMatch(/[/\:*?"<>|]/);
+    expect(title).toContain('Ranger');
+    expect(title).toMatch(/_010926$/);
   });
 
-  // The Print options panel's Landscape checkbox used to reach only the PDF
-  // exporter, so ticking it and pressing Print produced a portrait page --
-  // the option looked ignored because on this path it was.
+  // Without an output item there is still a sheet to name; falling through to
+  // the model and then the product id beats emitting a bare date that several
+  // lots would share.
+  test('falls back through model and product id when no output item is set', () => {
+    App.State.currentProductionSheet = {
+      colors: [], lotColor: '', model: 'Ranger', date: '21/08/2026'
+    };
+    App.Production.printProductionSheet();
+
+    expect(triggerSpy).toHaveBeenCalledWith(
+      'print-production-sheet-container', 'Ranger_210826', { landscape: false });
+  });
+
   test('forwards the Landscape option to the print job', () => {
     document.getElementById('prodSheetOrientLandscape').checked = true;
     App.Production.printProductionSheet();

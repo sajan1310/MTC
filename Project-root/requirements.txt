@@ -1,65 +1,100 @@
-# Core Framework
-Flask==3.0.0
-Werkzeug==3.0.1
+# MTC ERP — Python dependencies
+#
+# Every entry below is either imported by the code or invoked as a command, and
+# each is annotated with which. Anything that stops being either should be
+# deleted rather than left "just in case" -- an unused pin is a version to keep
+# patched, a licence to audit and a wheel to build, for nothing.
+#
+# THE environment for this project is `venv2`, at the repo root. `venv` was
+# retired (renamed to `venv.obsolete`) after it caused a real outage: the
+# server ran from venv2 while weasyprint had been installed into venv, so the
+# Download PDF buttons returned 503 and reported the renderer as unavailable.
+#
+# A missing package here surfaces as a feature that silently degrades rather
+# than a crash, which is exactly why it went unnoticed -- so install into the
+# environment that actually runs the app:
+#
+#     venv2\Scripts\python -m pip install -r requirements.txt
 
-# Database
-psycopg[binary]==3.2.2
-# Add psycopg2 for legacy imports used in the codebase and tests
+# ── Core framework ───────────────────────────────────────────────────
+Flask==3.0.0
+Werkzeug==3.0.1                 # also provides the password hashing (auth/routes.py)
+
+# ── Database ─────────────────────────────────────────────────────────
+# psycopg2 only. `psycopg[binary]` (v3) was pinned here for a migration that
+# never landed -- nothing imports `psycopg` or uses its v3 API, so it was two
+# binary wheels installed on every deploy for nothing.
 psycopg2-binary==2.9.10
 
-# Authentication & Security
+# ── Authentication & security ────────────────────────────────────────
 Flask-Login==0.6.3
-Flask-WTF==1.2.1
+Flask-WTF==1.2.1                # CSRF protection, incl. the PDF endpoints
 Flask-Mail==0.10.0
-Authlib==1.3.0
-requests==2.32.5
-bcrypt==4.1.3
-google-auth==2.29.0
-google-auth-oauthlib==1.2.0
-oauthlib>=3.2
-itsdangerous>=2.1
+oauthlib>=3.2                   # Google sign-in (auth/routes.py: WebApplicationClient)
+requests==2.32.5                # the OAuth token/userinfo exchange
+itsdangerous>=2.1               # signed tokens for password reset
+google-auth==2.29.0             # service-account creds (scripts/migration/sheets_client.py)
 
-# Environment Management
+# ── Progressive Web App: document export ─────────────────────────────
+# The PWA prints and exports every document -- purchase orders, challans,
+# ledgers, production sheets -- through the browser's own print engine
+# (static/erp/print.js). That needs nothing installed.
+#
+# WeasyPrint covers the one thing a print dialog cannot do: hand back a FILE.
+# It backs the "Download PDF" buttons, and bulk export as N separately-named
+# PDFs, by rendering the SAME print HTML the browser renders
+# (app/erp/services/pdf_render_service.py) -- one definition of every document,
+# not two.
+#
+# It needs system libraries, NOT just pip:
+#   Debian/Ubuntu/Docker  apt install libpango-1.0-0 libpangoft2-1.0-0 \
+#                                     libharfbuzz-subset0
+#   Windows (dev)         winget install MSYS2.MSYS2
+#                         pacman -S mingw-w64-x86_64-pango
+#                         (the service finds C:/msys64/mingw64/bin by itself;
+#                          no PATH editing needed)
+#
+# Without them the endpoint returns 503, the Download buttons say so, and Print
+# still produces a searchable PDF. Verify with:
+#   python -m app.erp.services.pdf_render_service
+weasyprint==69.0
+
+# ── Environment ──────────────────────────────────────────────────────
 python-dotenv==1.0.1
 
-# Sheets<->Postgres migration & nightly backup scripts (scripts/migration/)
+# ── Sheets <-> Postgres migration & nightly backup (scripts/migration/) ──
 google-api-python-client==2.126.0
 PyYAML==6.0.1
 
-
-# Server-side vector PDF rendering (app/erp/services/pdf_render_service.py).
-# Backs the "Download PDF" buttons: window.print() cannot hand back a file, so
-# bulk export as N separately-named PDFs needs a renderer that returns bytes.
-# It consumes the SAME print HTML the browser prints, so there is one
-# definition of every document.
-#
-# Needs system libraries, NOT just pip:
-#   Debian/Ubuntu  apt install libpango-1.0-0 libpangoft2-1.0-0 libharfbuzz-subset0
-#   Windows        install MSYS2 + mingw-w64-x86_64-pango, put
-#                  C:/msys64/mingw64/bin on PATH
-# Without them the endpoint returns 503 and Download PDF falls back to the
-# print dialog, which still produces a searchable PDF.
-weasyprint==69.0
-# Reads rendered PDFs back in tests/erp/test_pdf_render.py to assert the
-# output really is extractable text and that no column was cut from the
-# page. Without it those assertions importorskip and pass silently, which
-# is worse than failing -- a PDF having a /Font dictionary proves nothing.
-pypdf>=6.0
-
-# Security Enhancements
+# ── Rate limiting, headers, cache ────────────────────────────────────
 Flask-Limiter==3.5.0
 flask-talisman==1.1.0
-redis==5.0.1
-
-# CORS Support
+redis==5.0.1                    # rate-limit storage in production
 Flask-CORS==4.0.0
 
-# Production WSGI Servers
-gunicorn==21.2.0
-waitress==3.0.0
+# ── WSGI servers (invoked, not imported) ─────────────────────────────
+gunicorn==21.2.0                # Procfile, docker-entrypoint.sh
+waitress==3.0.0                 # run_production.py, the Windows path
 
-# Testing
+# ── Testing & tooling (invoked, not imported) ────────────────────────
 pytest==8.1.1
-pytest-flask==1.3.0
-pytest-cov>=4.0
+pytest-cov>=4.0                 # pytest.ini: addopts = --cov=app
 ruff>=0.1
+# Reads rendered PDFs back in tests/erp/test_pdf_render.py to assert the output
+# really is extractable text and that no column was cut off the page. Without
+# it those assertions importorskip and pass silently -- worse than failing,
+# since a PDF having a /Font dictionary proves nothing on its own.
+pypdf>=6.0
+
+# ── Removed, deliberately ────────────────────────────────────────────
+# playwright        Replaced by weasyprint. It drove headless Chromium, cost a
+#                   ~400 MB image layer, and was therefore shipped disabled by
+#                   default -- so the default deployment produced no
+#                   server-rendered PDFs at all.
+# psycopg[binary]   v3 pinned alongside psycopg2; nothing imports it.
+# Authlib           OAuth is implemented directly on oauthlib + requests.
+# bcrypt            Password hashing uses werkzeug.security.
+# google-auth-oauthlib  No import anywhere; google-auth alone covers the
+#                   service-account flow the migration scripts use.
+# pytest-flask      Its fixtures (live_server, accept_json, client_class) are
+#                   unused; tests/conftest.py defines its own app/client.
