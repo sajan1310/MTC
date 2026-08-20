@@ -53,9 +53,9 @@ describe('accessibility: table headers (A11Y-001)', () => {
 
 describe('accessibility: every <th> in every partial declares a scope and a name', () => {
   const partials = fs.readdirSync(PARTIALS_DIR).filter(f => f.endsWith('.html') && f !== 'print.html');
-  // print.html excluded: its layout is owned entirely by inline styles for a
-  // documented html2canvas reason (see static/erp/styles.css) and is out of
-  // scope here, same as it was for the mechanical scope="col" pass.
+  // print.html excluded: its layout is owned entirely by inline styles so
+  // each document stays self-contained (see static/erp/styles.css) and is out
+  // of scope here, same as it was for the mechanical scope="col" pass.
 
   test.each(partials)('%s', name => {
     document.body.innerHTML = loadPartial(name);

@@ -312,12 +312,11 @@
 </div>
 
 <!-- Work Order: Step 2 -- the actual preview (App.Production._buildWorkOrderHtml
-     renders into #workOrderPreviewContent), downloaded as a PDF straight
-     from here via App.Print.downloadElementAsPDF -- same shared PDF
-     pipeline every other module's "Download PDF" button already uses, just
-     pointed at this modal's own content instead of one of print.html's
-     hidden print-only containers, since this preview is meant to be seen
-     on screen too, not only captured. -->
+     renders into #workOrderPreviewContent). Printing does NOT print this
+     element: @media print hides modals, so App.Production.printWorkOrder
+     rebuilds the same HTML into the shared bulk container and prints that,
+     which is the path every other document takes. Both come from the same
+     _buildWorkOrderHtml call, so the preview and the page cannot disagree. -->
 <div class="modal fade" id="workOrderPreviewModal" tabindex="-1" aria-hidden="true">
   <div class="modal-dialog modal-xl modal-dialog-scrollable modal-fullscreen-sm-down">
     <div class="modal-content shadow-lg">
@@ -326,9 +325,9 @@
         <button type="button" class="btn-close btn-close-white" data-bs-dismiss="modal"></button>
       </div>
       <div class="modal-body bg-secondary-subtle d-flex justify-content-center">
-        <!-- 748px matches App.Print.PAGE_WIDTH_PX (A4 content width at
-             96dpi, downloadWorkOrderPdf's default) -- what's shown here is
-             what gets exported, not a wider/differently-proportioned
+        <!-- 748px matches App.Print.PAGE_WIDTH_PX (the A4 content width at
+             96dpi that printWorkOrder lays the page out at) -- what's shown
+             here is what gets printed, not a wider/differently-proportioned
              preview of it. -->
         <div id="workOrderPreviewContent" class="shadow-sm"
           style="max-width:748px;width:100%;border:1px solid #dee2e6;"></div>
@@ -499,7 +498,7 @@
                 Per-Color Components <small class="text-muted fw-normal">(one quantity column per color in this batch —
                   leave a cell blank if that item doesn't apply to that color)</small>
               </h6>
-              <div class="table-responsive mb-2">
+              <div class="table-responsive mb-2" id="productionColorMatrixTableWrap">
                 <table class="table table-bordered bg-white shadow-sm mb-0 prod-color-table">
                   <thead class="table-light">
                     <tr id="productionColorMatrixHeaderRow">
@@ -509,17 +508,27 @@
                            its position among the header's children (see
                            getMatrixColors / getMatrixColumnIndex), so the two
                            only line up while the shift is uniform. -->
-                      <th scope="col" style="width: 3%;"><span class="visually-hidden">Reorder rows</span></th>
-                      <th scope="col" style="width: 18%;">Item / Pool Name</th>
-                      <th scope="col" style="width: 7%;">Size</th>
-                      <th scope="col" style="width: 13%;">Narration</th>
-                      <th scope="col" style="width: 11%;">Source</th>
-                      <th scope="col" style="width: 3%;" class="text-center">✕</th>
+                      <th scope="col"><span class="visually-hidden">Reorder rows</span></th>
+                      <th scope="col">Item / Pool Name</th>
+                      <th scope="col">Size</th>
+                      <th scope="col">Narration</th>
+                      <th scope="col">Source</th>
+                      <th scope="col" class="text-center">✕</th>
                     </tr>
                   </thead>
                   <tbody id="productionColorMatrixBody"></tbody>
                 </table>
               </div>
+              <!-- Shown INSTEAD of the table while the matrix has no rows -- see
+                   App.Production._syncMatrixEmptyState. An empty matrix still
+                   carries a full header (one column per checked color, every
+                   one of them collapsed to a rotated strip because every one
+                   of them is empty), which reads as a broken table rather
+                   than an empty one. -->
+              <p id="productionColorMatrixEmpty" class="text-muted small fst-italic mb-2" style="display:none;">
+                No per-color components on this lot yet — this process recipe has no part tagged to a specific color.
+                Add one below if something was used for only some of the colors in this batch.
+              </p>
               <button type="button" class="btn btn-outline-primary btn-sm fw-bold mb-3"
                 onclick="App.Production.addColorMatrixRow()">+ Add Per-Color Component</button>
             </div>

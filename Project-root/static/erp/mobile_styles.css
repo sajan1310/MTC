@@ -1068,33 +1068,30 @@ textarea:focus-visible,
   gap: var(--mb-sp-3);
 }
 
-/* ── Print (challan) ─────────────────────────────────────────────────
+/* ── Print (challan) ──────────────────────────────────────
    print.html's containers (the same 11 templates the desktop shell
    uses, reused as-is here per Mobile_Index.html's own design) are
    display:none by default and each print template owns its own inline
    styling — this block only handles visibility switching, mirroring
    desktop styles.css's @media print pattern, scoped to the mobile
-   shell's own chrome instead of the desktop app-container. */
+   shell's own chrome instead of the desktop app-container.
+
+   Selects .print-container, the same class desktop styles.css uses, so a
+   new print template is picked up by both shells from one class in the
+   markup. This used to be the 11-id list written out twice more here. The
+   @page rule must stay in step with desktop styles.css and
+   App.Print.PAGE_MARGIN_MM. */
 @page { size: a4 portrait; margin: 6mm; }
 
 @media print {
   body { background: #fff !important; margin: 0 !important; padding: 0 !important; }
   #mapp-root, .mb-toast-stack, .mb-sheet-backdrop { display: none !important; }
 
-  #print-po-container, #print-dispatch-container, #print-item-ledger-container,
-  #print-vendor-ledger-container, #print-client-ledger-container,
-  #print-production-sheet-container, #print-low-stock-container,
-  #print-bill-container, #print-bom-container, #print-contractor-ledger-container,
-  #print-bulk-container {
+  .print-container {
     display: none !important;
   }
 
-  #print-po-container.active-print, #print-dispatch-container.active-print,
-  #print-item-ledger-container.active-print, #print-vendor-ledger-container.active-print,
-  #print-client-ledger-container.active-print, #print-production-sheet-container.active-print,
-  #print-low-stock-container.active-print, #print-bill-container.active-print,
-  #print-bom-container.active-print, #print-contractor-ledger-container.active-print,
-  #print-bulk-container.active-print {
+  .print-container.active-print {
     display: block !important;
     width: 100% !important;
     margin: 0 !important;

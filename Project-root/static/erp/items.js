@@ -1084,6 +1084,11 @@ App.Item = {
     App.Print.triggerBulk(names, name => this.buildItemLedgerPrintPageHtml(name), 'Item_Ledgers_Selected');
   },
 
+  // "Download PDFs" -- one separately-named ledger per selected item.
+  //
+  // The ledger data has to be loaded before the builders can run. That await
+  // used to have to come AFTER the destination picker, which needed live user
+  // activation; there is no picker now, so the order is just what reads best.
   async bulkDownloadPDF() {
     const selectedKeys = App.State.selectedItems;
     if (!selectedKeys.length) {
@@ -1093,27 +1098,22 @@ App.Item = {
 
     const items = App.State.globalItems.filter(i => App.Selection.isSelected(selectedKeys, this.itemKey(i)));
     const names = [...new Set(items.map(i => i.name))];
-
-    // Before the ledger load below: the folder picker needs live user
-    // activation, which an await would spend.
-    const destination = await App.Print.chooseBulkDestination(names.length);
-    if (destination.mode === 'cancelled') return;
+    if (!names.length) return;
 
     await Promise.all([
       this.ensureLedgerSourceDataLoaded(),
       this.ensureItemLedgerLoaded(names)
     ]);
 
-    const result = await App.Print.deliverSeparatePDFs(
-      names,
-      name => this.buildItemLedgerPrintPageHtml(name),
-      name => `Item_Ledger_${App.Print.sanitizeFilename(String(name || 'Item'), false)}.pdf`,
-      { progressButtonId: 'btnBulkDownloadPdfItems', destination,
-        zipName: App.Print.bulkZipName('Item_Ledgers') }
+    await App.Print.downloadMany(
+      names.map(name => ({
+        filename: App.Print.docFilename({ type: 'ILG', party: name, date: true }),
+        html: this.buildItemLedgerPrintPageHtml(name)
+      })),
+      App.Print.bulkZipName('ILG'),
+      { buttonId: 'btnBulkDownloadPdfItems' }
     );
-    App.Print.reportBulkResult(result, names.length, 'item ledger PDF');
   },
-
   openCreateModal() {
     document.getElementById('itemForm')?.reset();
     document.getElementById('originalItemName').value = '';

@@ -5,10 +5,14 @@
    * Scope & Principles:
    * ─────────────────────────────────────────────────────────────────────
    * 1. Application UI styling only
-   * 2. Print/PDF layout is owned entirely by inline styles in View_Print.html
-   *    (ensures html2pdf and window.print() share one canonical source)
-   * 3. @media print rules handle visibility switches ONLY
-   * 4. No print-specific layout overrides here (all in View_Print.html)
+   * 2. Print/PDF layout is owned entirely by inline styles in the print
+   *    templates (templates/erp/partials/print.html and the
+   *    buildXPrintPageHtml builders) -- one canonical source, and every
+   *    export path is window.print(), so there is only one renderer to agree
+   *    with
+   * 3. @media print rules handle visibility switches ONLY, and select
+   *    .print-container rather than enumerating container ids
+   * 4. No print-specific layout overrides here (all in the print templates)
    * 5. Design tokens centralized in :root for maintainability
    * 
    * Color Scheme:
@@ -2651,6 +2655,43 @@
     background-color: #f8f9fa;
   }
 
+  /* Both tables used to carry these widths inline as percentages summing to
+     55%. In a `table-layout: fixed` table the other 45% has to land
+     somewhere, and Chrome gives leftover space to the columns that DON'T
+     have a percentage width -- which here is the per-color columns, the one
+     group whose width is deliberate. A single collapsed color column (30px
+     of vertical strip, the state an empty matrix is in) was measured at
+     801px in a 1780px-wide modal: the "dead white band" between Source and
+     the color strip is that column, stretched ~27x, with its rotated label
+     stranded at the far right edge.
+
+     So the fixed columns move here as px, and the slack is steered to the
+     two free-text columns instead by leaving them `auto` -- in fixed layout
+     leftover space is split evenly between the auto columns, so Item and
+     Narration share it and every other column gets exactly what it asks
+     for. Measured across the three real shapes (1 collapsed / 1 expanded /
+     6 expanded colors) the color columns now come out at their intended
+     30px and 88px in all three, and Item and Narration land within a few px
+     of each other rather than one column taking the lot.
+
+     Size and Source stay fixed: both hold a control of known width (a short
+     size string, a disabled select), so extra space there is wasted -- an
+     early version that let Source flex too handed it 547px. Known width is
+     not the same as narrow, though: measured in Chrome, 50px cut "16 inch"
+     off mid-word and 80px clipped the Source select to "Pool (W", so these
+     two are sized to the widest string each actually has to show -- "Pool
+     (Warehouse)" is the longest option the disabled select ever holds.
+
+     These floors sum to the 527px App.Production.
+     PROD_COLOR_TABLE_FIXED_RESERVE_PX reserves for the non-color columns
+     when it computes the table's min-width -- keep the two in step. */
+  .prod-color-table thead th:nth-child(1) { width: 30px; }
+  .prod-color-table thead th:nth-child(2) { width: auto; min-width: 130px; }
+  .prod-color-table thead th:nth-child(3) { width: 90px; }
+  .prod-color-table thead th:nth-child(4) { width: auto; min-width: 92px; }
+  .prod-color-table thead th:nth-child(5) { width: 155px; }
+  .prod-color-table thead th:last-child { width: 30px; }
+
   .prod-color-table th[data-color] {
     white-space: normal;
     overflow-wrap: break-word;
@@ -2662,6 +2703,67 @@
     vertical-align: middle;
     padding-left: 4px;
     padding-right: 4px;
+  }
+
+  /* A per-color column with no quantity anywhere in it is narrowed to a
+     vertical header strip -- see App.Production._refreshMatrixColumnCollapse
+     for why (a column is rendered for every checked color, not for every
+     color the recipe actually has parts for, so a wide checklist leaves the
+     operator scrolling sideways past blank cells to reach the ones that
+     matter).
+     Only the cell CONTENTS are hidden. The <td> itself must keep its place:
+     every per-color cell in this table is addressed by its position among
+     the header's children (getMatrixColumnIndex, serializeColorMatrix), so
+     a column that stopped occupying an index would land quantities on the
+     wrong color. The attribute+class selector out-specifies the
+     th[data-color] width rule above regardless of source order. */
+  .prod-color-table th[data-color].prod-col-collapsed {
+    width: 30px;
+    min-width: 30px;
+    padding: 4px 1px;
+    background-color: #f1f3f5;
+  }
+
+  .prod-color-table th[data-color].prod-col-collapsed .prod-col-expand {
+    /* Rotated rather than truncated: the color name is what tells the
+       operator whether this is the column they want to open. */
+    writing-mode: vertical-rl;
+    text-orientation: mixed;
+    max-height: 150px;
+    overflow: hidden;
+    padding: 0;
+    border: 0;
+    background: none;
+    font: inherit;
+    color: #6c757d;
+    cursor: pointer;
+  }
+
+  /* An empty column the operator has expanded by hand keeps a normal
+     header, but its label stays a button so the same click closes it. */
+  .prod-color-table th[data-color] .prod-col-expand {
+    padding: 0;
+    border: 0;
+    background: none;
+    font: inherit;
+    color: inherit;
+    cursor: pointer;
+    text-align: inherit;
+  }
+
+  .prod-color-table th[data-color] .prod-col-expand:hover,
+  .prod-color-table th[data-color] .prod-col-expand:focus-visible {
+    color: #0d6efd;
+    text-decoration: underline;
+  }
+
+  .prod-color-table td.prod-col-collapsed {
+    padding: 0;
+    background-color: #f8f9fa;
+  }
+
+  .prod-color-table td.prod-col-collapsed > * {
+    display: none;
   }
 
   .prod-color-table th,
@@ -2987,8 +3089,9 @@
     color: var(--text-muted);
   }
 
+
   /* ═════════════════════════════════════════════════════════════════════
-     PRINT / PDF TEMPLATE ISOLATION -- deliberately OUTSIDE @media print
+     PRINT TEMPLATE ISOLATION -- deliberately OUTSIDE @media print
 
      Every print template (print.html and the buildXPrintPageHtml builders)
      is written to be self-contained: it carries its own typography inline
@@ -3005,38 +3108,125 @@
                             tables are table-layout:auto, where a declared %
                             is only a hint and no column may go below its
                             min-content, so the table grew past width:100%.
-                            Both window.print() and html2canvas capture the
-                            container's own box and simply CUT there, so the
-                            right-hand columns (Price / Total Value) were
-                            missing from the output entirely.
+                            The print engine captures the container's own box
+                            and simply CUTS there, so the right-hand columns
+                            (Price / Total Value) were missing from the output.
        color                Overrode the white the templates set on the header
                             <tr>, printing every header in the app's muted
                             grey -- including grey on the Low Stock sheet's
                             near-black header band.
 
-     This block must stay out of @media print: html2canvas is a screen-media
-     renderer and never applies @media print rules, so a fix living in there
-     would repair window.print() and leave every PDF still clipped.
+     This block stays OUT of @media print, but the reason changed. It used to
+     be "html2canvas is a screen-media renderer and never applies @media
+     print". html2canvas is gone -- every export now goes through the browser's
+     own print engine. The rule stays outside because print containers are
+     also shown ON SCREEN as live previews (dispatch-plan.js's plan preview,
+     the Work Order preview modal), and a header clipped in the preview is
+     just as wrong as one clipped on paper.
 
-     table-layout:fixed would also cap the width, and is deliberately NOT
-     used: html2canvas mis-measures fixed-layout columns and paints each
-     header on a single unwrapped line, clipping it mid-word. Auto layout
-     plus a wrappable header is what both renderers agree on.
+     table-layout:fixed would also cap the width and is deliberately NOT used:
+     auto layout plus a wrappable header is what lays out correctly at both
+     the screen width and the page width.
      ═════════════════════════════════════════════════════════════════════ */
 
-  #print-po-container th,
-  #print-item-ledger-container th,
-  #print-vendor-ledger-container th,
-  #print-client-ledger-container th,
-  #print-contractor-ledger-container th,
-  #print-production-sheet-container th,
-  #print-low-stock-container th,
-  #print-bill-container th,
-  #print-bom-container th,
-  #print-dispatch-container th,
-  #print-bulk-container th {
+  .print-container th {
     white-space: normal;
     color: inherit;
+  }
+
+  /* ═════════════════════════════════════════════════════════════════════
+     FITTING A DOCUMENT TO THE PAGE
+
+     A4 portrait at 6mm margins leaves 198mm of printable width. A table
+     wider than that is not scrolled or shrunk by a print engine -- it is
+     CUT, silently, at the container's box. That is how the Price and Total
+     Value columns went missing from the Low Stock sheet.
+
+     `overflow-wrap: anywhere` is the fix, and the exact property matters.
+     These tables are table-layout:auto, where a column can never be
+     narrower than its own min-content, and min-content is set by the
+     longest unbreakable run of characters -- a 30-character item code, an
+     HSN string, a composite colour name like
+     "Silky Blue-Navy Blue / Black". Sum those floors past 100% and the
+     table overflows no matter what width is declared.
+
+       overflow-wrap: break-word   wraps the text but the break opportunity
+                                   is NOT counted in min-content, so the
+                                   column keeps its old floor and the table
+                                   still overflows. This does nothing here.
+       overflow-wrap: anywhere     the break IS counted in min-content, so
+                                   every column's floor collapses to about
+                                   one character and width:100% is finally
+                                   achievable.
+
+     table-layout:fixed would also cap the width and is still not used: the
+     print tables declare no per-column widths, so fixed layout would divide
+     the space equally and give the "#" column as much room as "Item Name".
+     Auto layout keeps the proportions the documents were designed with;
+     this just removes the floors that let it overflow.
+     ═════════════════════════════════════════════════════════════════════ */
+
+  .print-container table {
+    width: 100%;
+    max-width: 100%;
+  }
+
+  .print-container th,
+  .print-container td {
+    overflow-wrap: anywhere;
+  }
+
+  /* ── Density tiers ──────────────────────────────────────────────────
+     Wrapping stops a table overflowing, but a 16-column pivot that fits
+     only because every cell wrapped to one character per line is not
+     readable. App.Print.fitToPage counts the widest row in the document
+     and adds one of these, so a wide sheet gets smaller type instead of
+     unreadable columns. Nothing is added below the first threshold, so
+     ordinary documents are untouched.
+
+     !important is required and deliberate: the print templates set cell
+     typography inline, and an inline style beats any selector. These rules
+     exist precisely to override the document's own sizing when it does not
+     fit, so they apply to every container including the two that otherwise
+     keep their own cell styling. */
+
+  .print-container.print-fit-compact th,
+  .print-container.print-fit-compact td {
+    font-size: 10px !important;
+    padding: 4px 5px !important;
+  }
+
+  .print-container.print-fit-dense th,
+  .print-container.print-fit-dense td {
+    font-size: 9px !important;
+    padding: 3px 4px !important;
+    line-height: 1.25 !important;
+  }
+
+  .print-container.print-fit-xdense th,
+  .print-container.print-fit-xdense td {
+    font-size: 8px !important;
+    padding: 2px 3px !important;
+    line-height: 1.2 !important;
+    letter-spacing: -0.1px !important;
+  }
+
+  /* ═════════════════════════════════════════════════════════════════════
+     PAGE GEOMETRY -- the single source of truth for page size and margin
+
+     PAGE_MARGIN_MM in static/erp/print.js must stay in step with the margin
+     below, and mobile_styles.css carries a copy of this @page rule for the
+     mobile shell. Three places, one number.
+
+     Portrait is the default for every document. The Production Sheet's
+     "Landscape" option does not edit this rule -- App.Print.setPageOrientation()
+     appends a later @page rule at print time and removes it afterwards, so
+     orientation is a property of one print job rather than global state.
+     ═════════════════════════════════════════════════════════════════════ */
+
+  @page {
+    size: a4 portrait;
+    margin: 6mm;
   }
 
   /* ═════════════════════════════════════════════════════════════════════
@@ -3045,19 +3235,19 @@
      Principles:
      ──────────────────────────────────────────────────────────────────────
      - Show/hide elements for print output
-     - NO layout changes here (all handled in View_Print.html)
-     - NO typography changes (all in View_Print.html)
-     - NO color/background overrides (all in View_Print.html)
-     - Preserve inline styles from View_Print.html untouched
-     ═════════════════════════════════════════════════════════════════════ */
+     - NO layout changes here (all owned by the print templates)
+     - NO typography changes (all owned by the print templates)
+     - NO color/background overrides (all owned by the print templates)
+     - Preserve the templates' inline styles untouched
 
-  /* A4 portrait page geometry — 10mm margins match the html2pdf jsPDF
-     margin (set in Script.html downloadPDF) so window.print() and the
-     downloaded PDF line up identically. */
-  @page {
-    size: a4 portrait;
-    margin: 6mm;
-  }
+     Every rule below selects `.print-container`, the class carried by all 11
+     print containers in templates/erp/partials/print.html. It used to be an
+     11-id list written out seven times, and they had already drifted: five
+     containers were missing from this block entirely, so the page-break,
+     repeating-header and cell-border rules silently never applied to them.
+     Adding a twelfth print template now means adding one class in the markup
+     and touching nothing here.
+     ═════════════════════════════════════════════════════════════════════ */
 
   @media print {
 
@@ -3088,124 +3278,75 @@
       visibility: hidden !important;
     }
 
-    /* Hide all print containers by default during printing.
-       Extended from source's own 6-container list (Client Ledger, Bill,
-       BOM, Dispatch, and Bulk Print templates were added to View_Print.html
-       after this @media print block was last touched in Styles.html --
-       harmless there since JS already toggles container.style.display
-       inline, but this block's OWN later rules (page-break-avoid, thead
-       repeat, cell borders) were silently never applying to those 5
-       templates. Round 20 (Print) fixes that by listing all 11 containers
-       everywhere the original 6 appear below. */
-    #print-po-container,
-    #print-item-ledger-container,
-    #print-vendor-ledger-container,
-    #print-client-ledger-container,
-    #print-contractor-ledger-container,
-    #print-production-sheet-container,
-    #print-low-stock-container,
-    #print-bill-container,
-    #print-bom-container,
-    #print-dispatch-container,
-    #print-bulk-container {
+    /* Hide every print container by default, show only the active one.
+       App.Print.trigger() sets .active-print on exactly one container. */
+    .print-container {
       display: none !important;
     }
 
-    /* Only show the active print container */
-    #print-po-container.active-print,
-    #print-item-ledger-container.active-print,
-    #print-vendor-ledger-container.active-print,
-    #print-client-ledger-container.active-print,
-    #print-contractor-ledger-container.active-print,
-    #print-production-sheet-container.active-print,
-    #print-low-stock-container.active-print,
-    #print-bill-container.active-print,
-    #print-bom-container.active-print,
-    #print-dispatch-container.active-print,
-    #print-bulk-container.active-print {
+    .print-container.active-print {
       display: block !important;
       visibility: visible !important;
       width: 100% !important;
       margin: 0 !important;
     }
 
-    /* Preserve all inline styles from View_Print.html.
-       The color adjust rule ensures headers, backgrounds, and accent bars print with exact colors. */
-    #print-po-container *,
-    #print-item-ledger-container *,
-    #print-vendor-ledger-container *,
-    #print-client-ledger-container *,
-    #print-contractor-ledger-container *,
-    #print-production-sheet-container *,
-    #print-low-stock-container *,
-    #print-bill-container *,
-    #print-bom-container *,
-    #print-dispatch-container *,
-    #print-bulk-container * {
+    /* Print the templates' own header bands, accent bars and backgrounds at
+       their real colors instead of the browser's ink-saving default. */
+    .print-container * {
       -webkit-print-color-adjust: exact !important;
       print-color-adjust: exact !important;
     }
 
-    /* Style copied table cells inside print templates to ensure proper borders and padding */
-    #print-item-ledger-container td,
-    #print-vendor-ledger-container td,
-    #print-client-ledger-container td,
-    #print-contractor-ledger-container td,
-    #print-production-sheet-container td,
-    #print-bill-container td,
-    #print-bom-container td,
-    #print-dispatch-container td,
-    #print-bulk-container td {
+    /* Baseline cell styling for templates that do not set their own.
+
+       `:not(.print-cells-own)` is load-bearing, not tidiness. These
+       declarations are !important, which beats a normal inline style, so
+       applying them to every container would override the cell styling that
+       the Purchase Order and Low Stock templates set inline -- repainting
+       their 1px #e5e5e5 borders as #999 and their 12px text as 11px. Those
+       two carry `print-cells-own` in the markup and keep their own look.
+       This exclusion existed before as two ids quietly absent from the
+       selector list; it is stated here instead. */
+    .print-container:not(.print-cells-own) td {
       border: 1px solid #999 !important;
       padding: 6px 8px !important;
       font-size: 11px !important;
       overflow-wrap: break-word !important;
     }
 
-
-    /* Ensure proper page breaks for multi-page item tables:
-       let the table itself break across pages, repeat the header row
-       on each page, and never split a single item row in half. */
-    #print-po-container thead,
-    #print-item-ledger-container thead,
-    #print-vendor-ledger-container thead,
-    #print-client-ledger-container thead,
-    #print-contractor-ledger-container thead,
-    #print-production-sheet-container thead,
-    #print-low-stock-container thead,
-    #print-bill-container thead,
-    #print-bom-container thead,
-    #print-dispatch-container thead,
-    #print-bulk-container thead {
+    /* Multi-page tables: repeat the header on each page, keep any footer
+       totals at the foot, and never slice a row through the middle. This is
+       what the print engine honours natively -- it replaces the
+       pagebreak.avoid list the old raster exporter needed. */
+    .print-container thead {
       display: table-header-group;
     }
 
-    #print-po-container tfoot,
-    #print-item-ledger-container tfoot,
-    #print-vendor-ledger-container tfoot,
-    #print-client-ledger-container tfoot,
-    #print-contractor-ledger-container tfoot,
-    #print-production-sheet-container tfoot,
-    #print-low-stock-container tfoot,
-    #print-bill-container tfoot,
-    #print-bom-container tfoot,
-    #print-dispatch-container tfoot,
-    #print-bulk-container tfoot {
+    .print-container tfoot {
       display: table-footer-group;
     }
 
-    #print-po-container tr,
-    #print-item-ledger-container tr,
-    #print-vendor-ledger-container tr,
-    #print-client-ledger-container tr,
-    #print-contractor-ledger-container tr,
-    #print-production-sheet-container tr,
-    #print-low-stock-container tr,
-    #print-bill-container tr,
-    #print-bom-container tr,
-    #print-dispatch-container tr,
-    #print-bulk-container tr {
+    .print-container tr {
       break-inside: avoid;
+    }
+
+    /* Keep each document's closing blocks whole across a page break. */
+    .print-container .print-sheet-closing-accent,
+    .print-container #print-grand-total-container,
+    .print-container #print-footer-meta,
+    .print-container #print-signature {
+      break-inside: avoid;
+    }
+
+    /* One record per page in a bulk job. The page-break is also set inline by
+       renderBulkPages so the rule and the markup agree. */
+    .print-container .bulk-print-page {
+      break-after: page;
+    }
+
+    .print-container .bulk-print-page:last-child {
+      break-after: auto;
     }
 
     /* Optimize text for printing */

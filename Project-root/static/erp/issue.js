@@ -187,29 +187,26 @@ App.Issue = {
     App.Print.triggerBulk(issues, iss => this.buildIssuePrintPageHtml(iss), 'Stock_Issue_Receipts_Selected');
   },
 
+  // "Download PDFs" -- one separately-named receipt per selected stock issue.
   async bulkDownloadPDF() {
     const selected = App.State.selectedIssues;
     if (!selected.length) {
-      App.Utils.showToast('No issue records selected.', true);
+      App.Utils.showToast('No issues selected.', true);
       return;
     }
 
     const issues = App.State.globalIssues.filter(iss => App.Selection.isSelected(selected, String(iss.issueId)));
     if (!issues.length) return;
 
-    const destination = await App.Print.chooseBulkDestination(issues.length);
-    if (destination.mode === 'cancelled') return;
-
-    const result = await App.Print.deliverSeparatePDFs(
-      issues,
-      iss => this.buildIssuePrintPageHtml(iss),
-      iss => `Stock_Issue_Receipt_${App.Print.sanitizeFilename(String(iss.issueId || 'Issue'))}.pdf`,
-      { progressButtonId: 'btnBulkDownloadPdfIssue', destination,
-        zipName: App.Print.bulkZipName('Stock_Issue_Receipts') }
+    await App.Print.downloadMany(
+      issues.map(iss => ({
+        filename: App.Print.docFilename({ type: 'ISS', key: iss.issueId }),
+        html: this.buildIssuePrintPageHtml(iss)
+      })),
+      App.Print.bulkZipName('ISS'),
+      { buttonId: 'btnBulkDownloadPdfIssue' }
     );
-    App.Print.reportBulkResult(result, issues.length, 'issue receipt PDF');
   },
-
   // Single-record print for the per-row "Print" button -- reuses the
   // shared bulk-print container with a one-element array, same approach
   // as App.Return.print (Issue has no dedicated static single-print

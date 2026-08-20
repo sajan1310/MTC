@@ -28,13 +28,23 @@ PyYAML==6.0.1
 
 
 # Server-side vector PDF rendering (app/erp/services/pdf_render_service.py).
-# Renders the same print HTML the client builds, through headless Chromium, so
-# purchase orders and challans are searchable documents rather than embedded
-# JPEGs -- see docs/audit/PDF_GENERATION_REVIEW.md PDF-002.
-# The browser binary is NOT installed by pip: run `playwright install chromium`
-# (the Dockerfile does this). Without it the endpoint returns 503 and the
-# client falls back to its own renderer.
-playwright==1.62.0
+# Backs the "Download PDF" buttons: window.print() cannot hand back a file, so
+# bulk export as N separately-named PDFs needs a renderer that returns bytes.
+# It consumes the SAME print HTML the browser prints, so there is one
+# definition of every document.
+#
+# Needs system libraries, NOT just pip:
+#   Debian/Ubuntu  apt install libpango-1.0-0 libpangoft2-1.0-0 libharfbuzz-subset0
+#   Windows        install MSYS2 + mingw-w64-x86_64-pango, put
+#                  C:/msys64/mingw64/bin on PATH
+# Without them the endpoint returns 503 and Download PDF falls back to the
+# print dialog, which still produces a searchable PDF.
+weasyprint==69.0
+# Reads rendered PDFs back in tests/erp/test_pdf_render.py to assert the
+# output really is extractable text and that no column was cut from the
+# page. Without it those assertions importorskip and pass silently, which
+# is worse than failing -- a PDF having a /Font dictionary proves nothing.
+pypdf>=6.0
 
 # Security Enhancements
 Flask-Limiter==3.5.0
@@ -52,7 +62,4 @@ waitress==3.0.0
 pytest==8.1.1
 pytest-flask==1.3.0
 pytest-cov>=4.0
-# Reads back rendered PDFs in tests/erp/test_pdf_render.py to assert the
-# output really is extractable text, not a picture of it.
-pypdf>=6.0
 ruff>=0.1

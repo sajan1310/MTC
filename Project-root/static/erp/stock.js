@@ -1004,15 +1004,15 @@ App.Stock = {
       reportType: term
         ? `Selected Warehouse Pool — Search: "${term}"`
         : 'Selected Warehouse Pool (Available Qty by Size)',
-      fileNamePrefix: term
-        ? `Warehouse_Pool_Selected_${term.replace(/[^a-zA-Z0-9_-]+/g, '_')}`
-        : 'Warehouse_Pool_Selected',
+      docType: 'WHP',
+      nameHint: term,
       emptyMessage: 'No Warehouse Pool buckets selected.'
     });
   },
 
-  // Same pivot table as bulkPrintWarehousePool but captured as a PDF
-  // download instead of opening the browser print dialog.
+  // "Download PDFs" for the warehouse pool. One pivot report rather than one
+  // file per row, so this downloads a single PDF -- the same document
+  // bulkPrintWarehousePool sends to the dialog.
   async bulkDownloadPdfWarehousePool() {
     const selected = App.State.selectedWarehousePool;
     if (selected.length === 0) return;
@@ -1022,20 +1022,17 @@ App.Stock = {
     if (poolItems.length === 0) return;
 
     const term = App.State.warehousePoolSearchTerm;
-    const ok = await this.printStockPivot([], poolItems, {
+    await this.printStockPivot([], poolItems, {
       subtitle: 'Selected Warehouse Pool Register',
       reportType: term
         ? `Selected Warehouse Pool — Search: "${term}"`
         : 'Selected Warehouse Pool (Available Qty by Size)',
-      fileNamePrefix: term
-        ? `Warehouse_Pool_Selected_${term.replace(/[^a-zA-Z0-9_-]+/g, '_')}`
-        : 'Warehouse_Pool_Selected',
+      docType: 'WHP',
+      nameHint: term,
       emptyMessage: 'No Warehouse Pool buckets selected.',
       asPdf: true
     });
-    if (ok) App.Utils.showToast(`${poolItems.length} warehouse pool bucket(s) exported to PDF!`, false);
   },
-
   // Returns the bucket rows to render under one Process: every existing
   // bucket, plus a zero-qty placeholder row for any color variant the
   // Process is known to produce (per getAllProcessColorGroups) that
@@ -2282,15 +2279,14 @@ App.Stock = {
       reportType: term
         ? `Selected Stock Items — Search: "${term}"`
         : 'Selected Stock Items (Current Stock by Size)',
-      fileNamePrefix: term
-        ? `Stock_Report_Selected_${term.replace(/[^a-zA-Z0-9_-]+/g, '_')}`
-        : 'Stock_Report_Selected',
+      docType: 'STK',
+      nameHint: term,
       emptyMessage: 'No stock items selected.'
     });
   },
 
-  // Same pivot table as bulkPrint but captured as a PDF download instead
-  // of opening the browser print dialog (see printStockPivot's asPdf option).
+  // "Download PDFs" for the stock register. One pivot report rather than one
+  // file per row, so this downloads a single PDF.
   async bulkDownloadPDF() {
     const selected = App.State.selectedStock;
     if (selected.length === 0) return;
@@ -2299,20 +2295,17 @@ App.Stock = {
     if (items.length === 0) return;
 
     const term = App.State.stockSearchTerm;
-    const ok = await this.printStockPivot(items, [], {
+    await this.printStockPivot(items, [], {
       subtitle: 'Selected Item & Stock Register',
       reportType: term
         ? `Selected Stock Items — Search: "${term}"`
         : 'Selected Stock Items (Current Stock by Size)',
-      fileNamePrefix: term
-        ? `Stock_Report_Selected_${term.replace(/[^a-zA-Z0-9_-]+/g, '_')}`
-        : 'Stock_Report_Selected',
+      docType: 'STK',
+      nameHint: term,
       emptyMessage: 'No stock items selected.',
       asPdf: true
     });
-    if (ok) App.Utils.showToast(`${items.length} stock item(s) exported to PDF!`, false);
   },
-
   changePage(page) {
     App.State.stockCurrentPage = App.Utils.clampPage(page, App.State.filteredStock.length, App.State.stockRowsPerPage);
     this.renderTable();
@@ -2905,6 +2898,9 @@ App.Stock = {
     if (countEl) countEl.textContent = `${items.length} row${items.length === 1 ? '' : 's'} selected`;
   },
 
+  // asPdf true -> the modal's "Download PDF" button: the report is rendered
+  // server-side and downloaded as a file. false -> "Print Report", the print
+  // dialog. Both produce the same document from the same populated container.
   async confirmLowStockPrint(asPdf) {
     const selected = App.State.selectedLowStockPreview || [];
     const items = (App.State.globalStock || []).filter(item => App.Selection.isSelected(selected, this.stockKey(item)));
@@ -2919,27 +2915,28 @@ App.Stock = {
     const mode = App.State.lowStockPreviewFilter || 'all';
     let subtitle = 'Low Stock Alerts & Inventory Status Report';
     let reportType = 'Inventory Alert (Low Stock)';
-    let fileNamePrefix = 'Low_Stock_Report';
+    let docType = 'LOW';
+    let nameHint = '';
     if (mode.startsWith('group:')) {
       const groupId = Number(mode.slice('group:'.length));
       const group = (App.StockGroup.groups || []).find(g => g.id === groupId);
       if (group) {
         subtitle = `Stock Group Report -- ${group.name}`;
         reportType = `Stock Group: ${group.name}`;
-        fileNamePrefix = `Stock_Group_${group.name.replace(/[^a-zA-Z0-9_-]+/g, '_')}`;
+        nameHint = group.name;
       }
     }
 
-    const ok = await this.printStockPivot(items, [], {
+    await this.printStockPivot(items, [], {
       subtitle,
       reportType,
-      fileNamePrefix,
+      docType,
+      nameHint,
       emptyMessage: 'No stock records found.',
       asPdf: !!asPdf
     });
 
     safeModalHide('lowStockPreviewModal');
-    if (asPdf && ok) App.Utils.showToast(`${items.length} item(s) exported to PDF!`, false);
   },
 
   // Prints every item currently on the Stock sheet (regardless of any
@@ -2969,7 +2966,7 @@ App.Stock = {
     this.printStockPivot(App.State.globalStock, poolItems, {
       subtitle: 'Complete Item & Stock Register',
       reportType: 'Full Inventory List (Current Stock by Size)',
-      fileNamePrefix: 'Complete_Item_Stock_List',
+      docType: 'STK',
       emptyMessage: 'No stock records found.'
     });
   },
@@ -3022,7 +3019,8 @@ App.Stock = {
 
   // Print/PDF markup: hardcoded dark-on-white inline styles, matching
   // every other print template in print.html (self-contained on purpose --
-  // html2canvas/window.print() never apply the app's own theme CSS).
+  // window.print() must not inherit the app's own theme CSS, which would put
+  // dark-mode text on this deliberately-white page).
   _buildStockPivotPrintMarkup(items, poolItems, emptyMessage) {
     const { sizes, names, byName } = this._computeStockPivot(items, poolItems);
 
@@ -3091,8 +3089,9 @@ App.Stock = {
   printStockPivot(items, poolItems, {
     subtitle = 'Inventory Status Report',
     reportType = 'Stock Report',
-    fileNamePrefix = 'Stock_Report',
     emptyMessage = 'No stock records found.',
+    docType = 'STK',
+    nameHint = '',
     asPdf = false
   } = {}) {
     const { headerHtml, bodyHtml } = this._buildStockPivotPrintMarkup(items, poolItems, emptyMessage);
@@ -3112,11 +3111,23 @@ App.Stock = {
     const bodyEl = document.getElementById('print-low-stock-body');
     if (bodyEl) bodyEl.innerHTML = bodyHtml;
 
-    const filenameBase = `${fileNamePrefix}_${new Date().toISOString().slice(0, 10)}`;
+    // These reports have no number of their own -- the date IS the identity,
+    // so unlike a PO it belongs in the name. nameHint carries the stock group
+    // or search term when one narrowed the report.
+    const filenameBase = App.Print.docName({ type: docType, party: nameHint, date: true });
     if (asPdf) {
-      return App.Print.downloadElementAsPDF('print-low-stock-container', `${filenameBase}.pdf`);
+      // Downloads the markup that was just populated above -- the same
+      // document window.print() would print, rendered server-side so it
+      // arrives as a named file instead of a print dialog.
+      return App.Print.downloadContainer('print-low-stock-container', filenameBase);
     }
-    App.Print.trigger('print-low-stock-container', filenameBase);
+    // The title is also the suggested "Save as PDF" filename.
+    //
+    // 'auto' orientation because this is the one document whose width is
+    // unbounded: the pivot grows a column per size, so a warehouse with a
+    // dozen sizes needs the long edge of the page more than it needs
+    // smaller type. App.Print decides from the actual column count.
+    App.Print.trigger('print-low-stock-container', filenameBase, { landscape: 'auto' });
   }
 };
 

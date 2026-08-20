@@ -130,8 +130,12 @@ App.Production = {
   // pool-color-group/matrix table's inline min-width uses these. The
   // reserve covers the non-color columns: the reorder grip, Item / Pool
   // Name, Size, Narration, Source and ✕.
-  PROD_COLOR_TABLE_FIXED_RESERVE_PX: 412,
+  PROD_COLOR_TABLE_FIXED_RESERVE_PX: 527,
   PROD_COLOR_TABLE_COLOR_COL_PX: 88,
+  // What a collapsed (empty) color column reserves instead -- see
+  // _refreshMatrixColumnCollapse. Wide enough for the vertical header
+  // strip .prod-col-collapsed renders and nothing more.
+  PROD_COLOR_TABLE_COLLAPSED_COL_PX: 30,
 
   // ── Row reordering (drag & sort) ──────────────────────────────────────
   // Available on all three component tables of the Create/Edit Production
@@ -808,6 +812,11 @@ App.Production = {
       return;
     }
 
+    // Held so printWorkOrder() prints exactly what is on screen, rather
+    // than re-reading the filter form -- which is still populated behind
+    // this modal and can be edited via "Edit Filters".
+    this._workOrderPreview = { date, contractor, lots };
+
     const content = document.getElementById('workOrderPreviewContent');
     if (content) content.innerHTML = this._buildWorkOrderHtml(date, contractor, lots);
 
@@ -856,7 +865,7 @@ App.Production = {
   // background and go nearly illegible, which is exactly what happened
   // before this was added.
   //
-  // Standard A4 (downloadWorkOrderPdf uses App.Print's shared A4 defaults,
+  // Standard A4 (printWorkOrder uses App.Print's shared A4 page geometry,
   // no overrides), but still deliberately compact -- tighter padding/
   // margins/font sizes than the other A4 builders in this file, since a
   // Work Order is a short handoff slip, not a multi-page ledger. Assigned
@@ -1004,25 +1013,51 @@ App.Production = {
 </div>`;
   },
 
-  // Standard A4, same as every other module's PDF export -- no overrides
-  // needed, downloadElementAsPDF's defaults (App.Print.PAGE_WIDTH_PX /
-  // PAGE_MARGIN_MM) already are A4. A5 (used in an earlier round) turned
-  // out too narrow once a composite color name like "Silky Blue-Navy Blue
-  // / Black" needed real column width to wrap instead of overflowing into
-  // its neighbor.
+  // Standard A4, same as every other module's print output. A5 (used in an
+  // earlier round) turned out too narrow once a composite color name like
+  // "Silky Blue-Navy Blue / Black" needed real column width to wrap instead
+  // of overflowing into its neighbor.
+  //
+  // #workOrderPreviewContent is a live preview inside a modal, and @media
+  // print hides modals -- so this does not print the preview element. It
+  // rebuilds the same HTML into the shared bulk container, which is the path
+  // every other document in the app already takes. Preview and printed page
+  // come from the same _buildWorkOrderHtml call, so they cannot disagree.
+  // Named downloadWorkOrderPdf because that is what the button says and what
+  // it has always been called; it now opens the print dialog, where "Save as
+  // PDF" produces the file. printWorkOrder is the alias for anything that
+  // reads better that way.
   async downloadWorkOrderPdf() {
-    const date = document.getElementById('workOrderDate')?.value || todayIso();
-    const contractor = (document.getElementById('workOrderContractor')?.value || 'Contractor').trim();
-    const filename = `Work_Order_${contractor.replace(/[^a-zA-Z0-9_-]/g, '_')}_${date}.pdf`;
-
-    const btn = document.getElementById('workOrderDownloadBtn');
-    if (btn) btn.disabled = true;
-    try {
-      const ok = await App.Print.downloadElementAsPDF('workOrderPreviewContent', filename);
-      if (ok) App.Utils.showToast('Work Order PDF downloaded successfully!');
-    } finally {
-      if (btn) btn.disabled = false;
+    const preview = this._workOrderPreview;
+    if (!preview) {
+      App.Utils.showToast('Generate the work order preview first.', true);
+      return;
     }
+
+    await App.Print.downloadOne(
+      this._buildWorkOrderHtml(preview.date, preview.contractor, preview.lots),
+      App.Print.docName({ type: 'WO', party: preview.contractor, date: preview.date }),
+      { buttonId: 'workOrderDownloadBtn' }
+    );
+  },
+
+  printWorkOrder() {
+    if (typeof App.Print === 'undefined') {
+      App.Utils.notPortedYet('Printing');
+      return;
+    }
+
+    const preview = this._workOrderPreview;
+    if (!preview) {
+      App.Utils.showToast('Generate the work order preview first.', true);
+      return;
+    }
+
+    App.Print.triggerBulk(
+      [preview],
+      wo => this._buildWorkOrderHtml(wo.date, wo.contractor, wo.lots),
+      App.Print.docName({ type: 'WO', party: preview.contractor, date: preview.date })
+    );
   },
 
   // Human-readable qualifier for an axisKey, used only to disambiguate
@@ -1188,6 +1223,15 @@ App.Production = {
     );
   },
 
+  // Renders each selected lot through the SAME path Print Sheet uses --
+  // populate the sheet, then take the markup out of the print container --
+  // rather than through buildProductionSheetPrintPageHtml, which is a second,
+  // simpler rendering of a production sheet.
+  //
+  // Driving bulk from that other builder is why one lot printed with a
+  // different table layout depending on whether it was reached through "Print
+  // Sheet" or "Print Selected". There is one layout now, and Download PDFs
+  // shares it too.
   bulkPrint() {
     if (typeof App.Print === 'undefined') {
       App.Utils.notPortedYet('Printing');
@@ -1200,9 +1244,80 @@ App.Production = {
     const lots = App.State.globalProduction.filter(p => App.Selection.isSelected(selected, String(p.rowIdx)));
     if (lots.length === 0) return;
 
-    App.Print.triggerBulk(lots, p => this.buildProductionSheetPrintPageHtml(p), 'Production_Sheets_Selected');
+    const container = document.getElementById('print-production-sheet-container');
+    if (!container) {
+      console.warn('[Print] Production sheet container not found');
+      return;
+    }
+
+    // The dialog may have a sheet open behind this; put it back afterwards so
+    // printing a selection does not change what the user is looking at.
+    const openSheet = App.State.currentProductionSheet;
+    try {
+      App.Print.triggerBulk(
+        lots,
+        p => {
+          this._populateProductionSheetData(p);
+          this._buildProductionSheetForExport();
+          return container.innerHTML;
+        },
+        App.Print.docName({ type: 'PRD', date: true }),
+        { landscape: this._printOptions().landscape }
+      );
+    } finally {
+      App.State.currentProductionSheet = openSheet;
+      if (openSheet) this._buildProductionSheetForExport();
+    }
   },
 
+  // "Download PDFs" -- one separately-named Production Sheet per selected lot.
+  //
+  // Each lot is populated into the print container and captured from there,
+  // exactly as Print Sheet and the single Download PDF do. That is the whole
+  // point: buildProductionSheetPrintPageHtml is a SECOND, simpler rendering of
+  // a production sheet, and driving bulk export from it meant the file you got
+  // from "Download PDFs" had a different table layout from the one you got
+  // from "Print Sheet" for the very same lot.
+  //
+  // Sequential on purpose -- every iteration reuses the one shared container,
+  // so overlapping builds would interleave and corrupt each other's output.
+  async bulkDownloadPDF() {
+    const selected = App.State.selectedProduction;
+    if (!selected || selected.length === 0) return;
+
+    const lots = App.State.globalProduction.filter(p => App.Selection.isSelected(selected, String(p.rowIdx)));
+    if (lots.length === 0) return;
+
+    const container = document.getElementById('print-production-sheet-container');
+    if (!container) {
+      console.warn('[PDF] Production sheet container not found');
+      return;
+    }
+
+    const landscape = this._printOptions().landscape;
+    // The dialog may have a sheet open behind this; put it back afterwards so
+    // a bulk export does not silently change what the user is looking at.
+    const openSheet = App.State.currentProductionSheet;
+    const documents = [];
+
+    try {
+      for (const p of lots) {
+        this._populateProductionSheetData(p);
+        this._buildProductionSheetForExport();
+        documents.push({
+          filename: App.Print.docFilename(this._productionSheetDocSpec()),
+          html: container.innerHTML,
+          landscape
+        });
+      }
+    } finally {
+      App.State.currentProductionSheet = openSheet;
+      if (openSheet) this._buildProductionSheetForExport();
+    }
+
+    await App.Print.downloadMany(documents, App.Print.bulkZipName('PRD'),
+      { buttonId: 'btnBulkDownloadPdfProduction' });
+  },
   // Builds a fully self-contained "Production Material Requirement Sheet"
   // page (mirrors #print-production-sheet-container's markup/styling)
   // for bulk printing.
@@ -2102,7 +2217,7 @@ App.Production = {
     if (!targetGroup) {
       return defs.length === 1 ? defs[0] : null;
     }
-    if (targetGroup.source !== 'pool') return null;
+    if (!this._isPoolBackedGroupSource(targetGroup.source)) return null;
     const itemNames = targetGroup.label.split(',').map(s => s.trim().toLowerCase());
     return defs.find(def => (def.rows || []).some(r => itemNames.includes((r.itemName || '').trim().toLowerCase()))) || null;
   },
@@ -2232,7 +2347,7 @@ App.Production = {
     } else {
       toggledColors.forEach(color => {
         this.removeMatrixColorColumn(color);
-        this.refreshPoolColorGroupCells(color, 0, groupKey);
+        this.refreshPoolColorGroupCells(groupKey);
       });
       this.syncPoolColorGroupColumns();
     }
@@ -2654,7 +2769,7 @@ App.Production = {
       if (processId) await this.populateColorMatrixForColors(processId, [color], seq, row?.dataset.group);
     } else {
       this.removeMatrixColorColumn(color);
-      this.refreshPoolColorGroupCells(color, 0, row?.dataset.group);
+      this.refreshPoolColorGroupCells(row?.dataset.group);
     }
     this.syncPoolColorGroupColumns();
     this.refreshCommonSuggestedQty();
@@ -2724,9 +2839,8 @@ App.Production = {
       delete row.dataset.autoSynced;
     }
 
-    const qty = toNumber(row.querySelector('.production-color-qty')?.value) || 0;
     this.syncPoolColorGroupColumns();
-    this.refreshPoolColorGroupCells(color, qty, row.dataset.group);
+    this.refreshPoolColorGroupCells(row.dataset.group);
 
     const colIndex = this.getMatrixColumnIndex(color);
     if (colIndex !== -1) {
@@ -2747,6 +2861,7 @@ App.Production = {
           input.value = this.formatQty(totalQty * toNumber(qtyPerUnit));
         }
       });
+      this._refreshMatrixColumns();
     }
 
     if (row.dataset.primary === 'true') {
@@ -3311,6 +3426,23 @@ App.Production = {
   // columns -- addMatrixColorColumn/syncPoolColorGroupColumns keep
   // these columns live as the operator checks/unchecks colors.
   renderPoolColorSplitGroups(poolColorSplit, poolColorMap) {
+    this._renderPoolColorGroups(poolColorSplit, poolColorMap, 'create');
+  },
+
+  // The shared body of both Per-Process Pool Components render paths. They
+  // were two copies of the same thirty lines, differing only in `mode` and
+  // in what each called its row objects -- and each carried half the
+  // reasoning (the Create path documented the grouping rule, the Edit path
+  // the checked-only column rule), so a fix landing in one and not the
+  // other was a standing hazard.
+  //
+  // `rows` are objects carrying at least { itemName, size, sourceType }:
+  // recipe components in 'create' mode, or the saved-lot accumulator
+  // entries (which additionally carry colorsQty/colorsQtyPerUnit) in
+  // 'edit'. `mode` is read only by _buildPoolColorGroupTable /
+  // _poolGroupCellValue, to decide whether a cell shows this lot's own
+  // recorded quantity or a recipe-scaled suggestion.
+  _renderPoolColorGroups(rows, poolColorMap, mode) {
     const wrapper = document.getElementById('productionPoolColorGroupsWrapper');
     const container = document.getElementById('productionPoolColorGroupsContainer');
     if (!container) return;
@@ -3319,28 +3451,36 @@ App.Production = {
     container.innerHTML = '';
     this._poolColorGroupDefs = [];
 
-    if (!poolColorSplit || poolColorSplit.length === 0) {
+    if (!rows || rows.length === 0) {
       if (wrapper) wrapper.style.display = 'none';
       return;
     }
     if (wrapper) wrapper.style.display = '';
 
+    // One table per distinct "color signature": items coming from the same
+    // upstream process/output item and carrying the exact same set of pool
+    // colors share a table (e.g. Painted Frame's 11 colors); an item with a
+    // different color set gets its own, rather than forcing every item onto
+    // one shared, mostly-blank column set.
     const groups = new Map();
-    poolColorSplit.forEach(c => {
-      const colors = poolColorMap.get((c.itemName || '').trim().toLowerCase()) || [];
+    rows.forEach(row => {
+      const colors = poolColorMap.get((row.itemName || '').trim().toLowerCase()) || [];
       const signature = colors.slice().sort((a, b) => a.localeCompare(b)).join('|').toLowerCase();
-      if (!groups.has(signature)) groups.set(signature, { colors, comps: [] });
-      groups.get(signature).comps.push(c);
+      if (!groups.has(signature)) groups.set(signature, { colors, groupRows: [] });
+      groups.get(signature).groupRows.push(row);
     });
 
     let groupIdx = 0;
-    groups.forEach(({ colors, comps }) => {
+    groups.forEach(({ colors, groupRows }) => {
       groupIdx++;
       const tableId = `productionPoolColorGroup_${groupIdx}`;
-      const axisKey = this._axisKeyForPoolItemNames(comps.map(c => c.itemName));
-      this._poolColorGroupDefs.push({ tableId, colors, rows: comps, mode: 'create', axisKey });
+      const axisKey = this._axisKeyForPoolItemNames(groupRows.map(r => r.itemName));
+      this._poolColorGroupDefs.push({ tableId, colors, rows: groupRows, mode, axisKey });
+      // Strictly checked-only in BOTH modes: on the Edit path this is what
+      // stops a previously-saved-but-now-unchecked color from keeping its
+      // column on reopen.
       const visibleColors = this._checkedPoolGroupColors(colors, axisKey);
-      container.insertAdjacentHTML('beforeend', this._buildPoolColorGroupTable(tableId, colors, visibleColors, comps, 'create', axisKey));
+      container.insertAdjacentHTML('beforeend', this._buildPoolColorGroupTable(tableId, colors, visibleColors, groupRows, mode, axisKey));
       document.querySelectorAll(`#${tableId} tbody tr`).forEach(row => this.initComponentItemSelect2(row));
       // Fresh <tbody> element on every render (the container is emptied
       // above), so this gets its own Sortable instance rather than reusing
@@ -3349,10 +3489,27 @@ App.Production = {
     });
   },
 
+  // Is this checklist group backed by real Warehouse Pool item(s), so a
+  // Per-Process Pool Components table can be scoped to it? 'merged' counts
+  // alongside 'pool': Process Color Links pair a pool axis with another
+  // axis into ONE 'merged' axis whose label is its constituents' labels
+  // joined by ', ' (see process_service._merge_linked_axes), and a pool
+  // axis's own label is already its item names -- so the pool item names
+  // are still in there to match on. getPoolColorAwareItemNames has always
+  // read 'merged' this way; the two readers below had not, so a merged
+  // pool axis resolved to NO axis key at all and every pool table it fed
+  // fell back to the unscoped `_axisScopedCheckedColorQtys('')` -- which
+  // returns EVERY checked color in the lot. On a process pairing a merged
+  // pool axis with a second axis, that other axis's colors then decided
+  // which columns this table showed and what quantity landed in them.
+  _isPoolBackedGroupSource(source) {
+    return source === 'pool' || source === 'merged';
+  },
+
   _axisKeyForPoolItemNames(itemNames) {
     const namesLower = (itemNames || []).map(n => String(n || '').trim().toLowerCase()).filter(Boolean);
     if (namesLower.length === 0) return '';
-    const opt = (this._customColorGroupOptions || []).find(o => o.source === 'pool' &&
+    const opt = (this._customColorGroupOptions || []).find(o => this._isPoolBackedGroupSource(o.source) &&
       o.label.split(',').map(s => s.trim().toLowerCase()).some(l => namesLower.includes(l)));
     return opt ? opt.key : '';
   },
@@ -3373,34 +3530,53 @@ App.Production = {
     return tokens;
   },
 
-  // Do this table's own columns match a checked color EXACTLY? A pool
-  // item's colors are whatever its upstream process credited, and since
-  // composite crediting those are themselves composites ("Blue-White /
-  // BCP"), identical to the checked color. Token matching must not be
-  // used then: it would light up a legacy plain "Blue-White" column
-  // instead of the real "Blue-White / BCP" one, and the qty would be
-  // saved against a color the lot never produced -- a phantom negative
-  // bucket on the plain name. Token matching is still right for the
-  // ORIGINAL shape, where a pool item carries plain colors and the OUTPUT
-  // color is a composite built by pairing two such axes ("Blue-White"
-  // from the frame table, "BCP" from the rim table). So: exact wins when
-  // it matches anything at all, tokens are the fallback.
-  _poolGroupColumnsMatchExactly(colors, axisKey) {
-    const exact = new Set(this._axisScopedCheckedColorQtys(axisKey)
+  // Every checked color of this axis, verbatim and lowercased -- the
+  // "exact" half of the exact-wins-then-tokens rule below.
+  _exactCheckedColorsLower(axisKey) {
+    return new Set(this._axisScopedCheckedColorQtys(axisKey)
       .filter(cc => cc.qty > 0)
       .map(cc => String(cc.color || '').trim().toLowerCase()));
-    return colors.some(c => exact.has(String(c).trim().toLowerCase()));
   },
 
+  // Which of this table's own colors are live right now. Exact wins when
+  // it matches anything at all; tokens are the fallback.
+  //
+  // A pool item's colors are whatever its upstream process credited, and
+  // under composite crediting those are themselves composites ("Blue-White
+  // / BCP"), identical to the checked color. Token matching must not be
+  // used then: it would light up a legacy plain "Blue-White" column
+  // instead of the real "Blue-White / BCP" one, and the qty would be saved
+  // against a color the lot never produced -- a phantom negative bucket on
+  // the plain name. Token matching is still right for the ORIGINAL shape,
+  // where a pool item carries plain colors and the OUTPUT color is a
+  // composite built by pairing two such axes ("Blue-White" from the frame
+  // table, "BCP" from the rim table).
+  //
+  // Same rule, same order, as _checkedQtyForPoolColor's own choice of which
+  // checked quantities feed a cell -- a column that is visible under one
+  // rule and filled under another is exactly the drift these two must not
+  // have, which is why the decision now lives in only these two places.
   _checkedPoolGroupColors(colors, axisKey) {
-    if (this._poolGroupColumnsMatchExactly(colors, axisKey)) {
-      const exact = new Set(this._axisScopedCheckedColorQtys(axisKey)
-        .filter(cc => cc.qty > 0)
-        .map(cc => String(cc.color || '').trim().toLowerCase()));
-      return colors.filter(c => exact.has(String(c).trim().toLowerCase()));
-    }
+    const exact = this._exactCheckedColorsLower(axisKey);
+    const matchedExactly = colors.filter(c => exact.has(String(c).trim().toLowerCase()));
+    if (matchedExactly.length > 0) return matchedExactly;
     const tokensLower = this._checkedColorTokensLower(axisKey);
     return colors.filter(c => tokensLower.has(c.toLowerCase()));
+  },
+
+  // "How much of this pool color is this lot producing?" -- the quantity
+  // half of the same exact-wins-then-tokens rule. Shared by the two places
+  // that need the number: a cell's value at render/column-insert time
+  // (_poolGroupCellValue) and its live recompute as the checklist changes
+  // (refreshPoolColorGroupCells), which each carried their own copy of it.
+  _checkedQtyForPoolColor(colorLower, checked) {
+    const exactTotal = checked.reduce(
+      (sum, cc) => (String(cc.color || '').trim().toLowerCase() === colorLower ? sum + cc.qty : sum), 0);
+    if (exactTotal > 0) return exactTotal;
+    return checked.reduce((sum, cc) => {
+      const tokens = (cc.color || '').split(' / ').map(t => t.trim().toLowerCase()).filter(Boolean);
+      return tokens.includes(colorLower) ? sum + cc.qty : sum;
+    }, 0);
   },
 
   // The qty-per-unit basis to stamp on one Per-Process Pool Components
@@ -3430,22 +3606,13 @@ App.Production = {
     if (mode === 'edit') {
       return row.colorsQty ? row.colorsQty[color.toLowerCase()] : undefined;
     }
-    const colorLower = color.toLowerCase();
-    const checked = this._axisScopedCheckedColorQtys(axisKey);
-    // Exact first -- a composite column must draw only from the one
-    // checked color it names, never from every checked color that
-    // happens to share a token with it (see _poolGroupColumnsMatchExactly).
-    const exactTotal = checked.reduce(
-      (sum, cc) => (String(cc.color || '').trim().toLowerCase() === colorLower ? sum + cc.qty : sum), 0);
-    const total = exactTotal > 0 ? exactTotal : checked.reduce((sum, cc) => {
-      const tokens = (cc.color || '').split(' / ').map(t => t.trim().toLowerCase());
-      return tokens.includes(colorLower) ? sum + cc.qty : sum;
-    }, 0);
+    const total = this._checkedQtyForPoolColor(
+      String(color || '').trim().toLowerCase(), this._axisScopedCheckedColorQtys(axisKey));
     return total > 0 ? total * row.qtyPerUnit : undefined;
   },
 
   _buildPoolColorGroupTable(tableId, colors, visibleColors, rows, mode, axisKey) {
-    const headHtml = visibleColors.map(col => `<th class="text-end" data-color="${escapeHtml(col)}">${escapeHtml(col)}</th>`).join('');
+    const headHtml = visibleColors.map(col => `<th scope="col" class="text-end" data-color="${escapeHtml(col)}">${escapeHtml(col)}</th>`).join('');
     const rowsHtml = rows.map((r, rowIdx) => {
       const rowId = this._nextRowId('prod_pool_group_row_');
       const preSelectedOption = this._buildItemPreselectOption(r.itemName, r.size || '', r.sourceType);
@@ -3495,20 +3662,20 @@ App.Production = {
     return `
       <div class="mb-3" id="${tableId}_wrapper"${hidden ? ' style="display:none;"' : ''}>
         <div class="table-responsive">
-          <table class="table table-bordered bg-white shadow-sm mb-0 prod-color-table" id="${tableId}" data-all-colors="${escapeHtml(colors.join('|'))}" data-axis-key="${escapeHtml(axisKey || '')}" style="min-width: ${minWidthPx}px;">
+          <table class="table table-bordered bg-white shadow-sm mb-0 prod-color-table" id="${tableId}" data-axis-key="${escapeHtml(axisKey || '')}" style="min-width: ${minWidthPx}px;">
             <thead class="table-light">
               <tr>
                 <!-- Reorder grip column -- FIRST, and mirrored by
                      _dragCellHtml() in every body row above, because
                      syncPoolColorGroupColumns addresses this table's color
                      cells by their position among these header children. -->
-                <th scope="col" style="width: 3%;"><span class="visually-hidden">Reorder rows</span></th>
-                <th style="width: 18%;">Item / Pool Name</th>
-                <th style="width: 7%;">Size</th>
-                <th style="width: 13%;">Narration</th>
-                <th style="width: 11%;">Source</th>
+                <th scope="col"><span class="visually-hidden">Reorder rows</span></th>
+                <th>Item / Pool Name</th>
+                <th>Size</th>
+                <th>Narration</th>
+                <th>Source</th>
                 ${headHtml}
-                <th style="width: 3%;" class="text-center">✕</th>
+                <th class="text-center">✕</th>
               </tr>
             </thead>
             <tbody>${rowsHtml}</tbody>
@@ -3559,6 +3726,7 @@ App.Production = {
         const insertIdx = Array.from(headerRow.children).indexOf(insertBeforeEl);
 
         const th = document.createElement('th');
+        th.scope = 'col';
         th.className = 'text-end';
         th.dataset.color = matchColor;
         th.textContent = matchColor;
@@ -3703,6 +3871,11 @@ App.Production = {
   showColorMatrix() {
     const el = document.getElementById('productionColorMatrixWrapper');
     if (el) el.style.display = '';
+    // The section can be revealed before anything has populated it (a
+    // process whose recipe turns out to have no per-color part at all),
+    // so the empty state has to be settled here too and not only from
+    // _refreshMatrixColumns.
+    this._syncMatrixEmptyState();
   },
 
   hideColorMatrix() {
@@ -3728,15 +3901,48 @@ App.Production = {
     if (headerRow) {
       Array.from(headerRow.querySelectorAll('th[data-color]')).forEach(th => th.remove());
     }
+    this._expandedMatrixColumns = null;
     this._syncMatrixTableMinWidth();
+    this._syncMatrixEmptyState();
   },
 
+  // A matrix with no rows used to render its header anyway: one column per
+  // checked color, every one of them collapsed to a rotated 30px strip
+  // (a column with no quantity in it is empty by definition when there are
+  // no rows at all), stranded beside Item/Narration columns stretched to
+  // fill a modal that has nothing to put in them. That reads as a broken
+  // table rather than an empty one, and a header caption means nothing
+  // until there is a row under it to caption.
+  //
+  // So the table is HIDDEN, never emptied: addMatrixColorColumn /
+  // _removeMatrixColumnAt go on maintaining the header's columns while it
+  // is out of view -- every per-color cell is addressed by its position
+  // among the header's children, so a row added later still lands on the
+  // right color. The heading and "+ Add Per-Color Component" stay put,
+  // because tagging a one-off component by hand is exactly what an
+  // operator does from this state.
+  _syncMatrixEmptyState() {
+    const tableWrap = document.getElementById('productionColorMatrixTableWrap');
+    const emptyNote = document.getElementById('productionColorMatrixEmpty');
+    if (!tableWrap || !emptyNote) return;
+    const hasRows = !!document.querySelector('#productionColorMatrixBody tr');
+    tableWrap.style.display = hasRows ? '' : 'none';
+    emptyNote.style.display = hasRows ? 'none' : '';
+  },
+
+  // Runs AFTER _refreshMatrixColumnCollapse has applied its classes: a
+  // collapsed column reserves only its narrow strip, so the table (and
+  // with it the .table-responsive scrollbar) actually shrinks instead of
+  // staying as wide as if nothing had been collapsed.
   _syncMatrixTableMinWidth() {
     const headerRow = document.getElementById('productionColorMatrixHeaderRow');
     const table = headerRow?.closest('table');
     if (!table) return;
-    const colorCount = headerRow.querySelectorAll('th[data-color]').length;
-    table.style.minWidth = (this.PROD_COLOR_TABLE_FIXED_RESERVE_PX + colorCount * this.PROD_COLOR_TABLE_COLOR_COL_PX) + 'px';
+    const colorWidth = Array.from(headerRow.querySelectorAll('th[data-color]'))
+      .reduce((sum, th) => sum + (th.classList.contains('prod-col-collapsed')
+        ? this.PROD_COLOR_TABLE_COLLAPSED_COL_PX
+        : this.PROD_COLOR_TABLE_COLOR_COL_PX), 0);
+    table.style.minWidth = (this.PROD_COLOR_TABLE_FIXED_RESERVE_PX + colorWidth) + 'px';
   },
 
   getMatrixColors() {
@@ -3753,20 +3959,31 @@ App.Production = {
     return Array.from(headerRow.children).findIndex(th => App.Utils.sameColor(th.dataset.color, color));
   },
 
-  _buildMatrixColorCell(isMerged) {
-    const td = document.createElement('td');
+  // The markup for ONE per-color cell of the Per-Color Components matrix.
+  // A merged row's cell carries its own item picker (each color of such a
+  // row is secretly a different literal item -- see addMergedMatrixRow); a
+  // plain item row's cell is just the quantity.
+  //
+  // Single source of truth for both entry points: a cell built together
+  // with its row (addMergedMatrixRow / addMatrixItemRow, as HTML) and one
+  // inserted into an existing row when a color is checked later
+  // (addMatrixColorColumn, as an element). Each used to carry its own copy
+  // and they had already drifted -- the later-inserted plain cell was built
+  // with step="0.0001" while the row-built one used step="any", so whether
+  // the same column accepted a given quantity depended on nothing but when
+  // that column happened to be created.
+  _matrixColorCellHtml(isMerged) {
     if (isMerged) {
-      td.innerHTML = '<select class="form-select form-select-sm prod-comp-item-select mb-1"><option value=""></option></select>'
-        + '<input type="number" class="form-control form-control-sm text-end matrix-qty" min="0" step="any" value="">';
-    } else {
-      const input = document.createElement('input');
-      input.type = 'number';
-      input.className = 'form-control text-end matrix-qty';
-      input.min = '0';
-      input.step = '0.0001';
-      td.appendChild(input);
+      return '<td><select class="form-select form-select-sm prod-comp-item-select mb-1"><option value=""></option></select>'
+        + '<input type="number" class="form-control form-control-sm text-end matrix-qty" min="0" step="any" value=""></td>';
     }
-    return td;
+    return '<td><input type="number" class="form-control text-end matrix-qty" min="0" step="any" value=""></td>';
+  },
+
+  _buildMatrixColorCell(isMerged) {
+    const tpl = document.createElement('template');
+    tpl.innerHTML = this._matrixColorCellHtml(isMerged);
+    return tpl.content.firstElementChild;
   },
 
   addMatrixColorColumn(color) {
@@ -3775,6 +3992,10 @@ App.Production = {
     if (!headerRow) return;
 
     const th = document.createElement('th');
+    // Matches the scope the partial's own static headers carry -- without
+    // it a screen reader has nothing to caption this column's cells with,
+    // and a color column is the one header a per-color quantity most needs.
+    th.scope = 'col';
     th.dataset.color = color;
     th.style.textAlign = 'right';
     th.textContent = color;
@@ -3786,8 +4007,7 @@ App.Production = {
       row.insertBefore(td, row.lastElementChild);
       if (isMerged) this.initMergedCellItemSelect2(td.querySelector('.prod-comp-item-select'));
     });
-    this._refreshMatrixColumnLabels();
-    this._syncMatrixTableMinWidth();
+    this._refreshMatrixColumns();
   },
 
   removeMatrixColorColumn(color) {
@@ -3823,8 +4043,7 @@ App.Production = {
       }
       cell.remove();
     });
-    this._refreshMatrixColumnLabels();
-    this._syncMatrixTableMinWidth();
+    this._refreshMatrixColumns();
   },
 
   // A non-primary Color Axis row that segment-matches a checked primary
@@ -3889,6 +4108,152 @@ App.Production = {
     });
   },
 
+  // The whole per-color reflow, in the order the three steps depend on
+  // each other: labels first (which segments are shared depends on the
+  // whole checked set), then collapse (its header strip renders that
+  // label), then the table's min-width (which counts a collapsed column
+  // at its narrow width). Every structural change to the matrix -- a
+  // column added or removed, a row added or removed, a populate finishing
+  // -- ends here, so no path can leave the three out of step.
+  _refreshMatrixColumns() {
+    this._refreshMatrixColumnLabels();
+    this._refreshMatrixColumnCollapse();
+    this._syncMatrixTableMinWidth();
+    this._syncMatrixEmptyState();
+  },
+
+  // ── Collapsing empty color columns ────────────────────────────────────
+  // A column is added for EVERY checked color (addMatrixColorColumn),
+  // whether or not the process recipe has anything to put in it: a color
+  // whose parts are all Common-tagged gets a full column of blank cells,
+  // because populateColorMatrixForColors only fills a cell whose
+  // component colorGroup token-matches the column (_matchedColorToken).
+  // With a wide checklist that is most of the table, and the operator
+  // scrolls sideways past nothing to reach the columns that matter.
+  //
+  // Such a column is NARROWED TO ITS HEADER, never removed and never
+  // display:none'd on the column as a whole: every per-color cell in this
+  // table is addressed by its POSITION among the header row's children
+  // (getMatrixColors / getMatrixColumnIndex / serializeColorMatrix), so
+  // dropping one cell would silently shift every column after it and land
+  // quantities on the wrong color. Only the cell CONTENTS are hidden, by
+  // a class; the <td> itself stays exactly where it was.
+  //
+  // It stays clickable because an empty cell is not dead space -- it is
+  // the manual entry point for a per-color override the recipe doesn't
+  // define, which is the whole reason the blank cells were rendered in
+  // the first place.
+
+  // Empty means "nothing to lose by hiding it": no quantity anywhere in
+  // the column, and no item picked in a merged cell either (a picked item
+  // with the qty still blank is an operator mid-entry, not an empty
+  // column).
+  _isMatrixColumnEmpty(colIndex, rows) {
+    return (rows || $$('#productionColorMatrixBody tr')).every(row => {
+      const cell = row.children[colIndex];
+      if (!cell) return true;
+      if (toNumber(cell.querySelector('.matrix-qty')?.value) > 0) return false;
+      return !cell.querySelector('.prod-comp-item-select')?.value;
+    });
+  },
+
+  _isMatrixColumnExpanded(color) {
+    return !!this._expandedMatrixColumns
+      && this._expandedMatrixColumns.has(String(color || '').trim().toLowerCase());
+  },
+
+  // Sticky for the rest of this form. Called both when the operator opens
+  // a collapsed column by hand and when they type into any color cell --
+  // without the latter, clearing a value to retype it would let the next
+  // populate collapse the column out from under the cursor.
+  _expandMatrixColumn(color) {
+    if (!this._expandedMatrixColumns) this._expandedMatrixColumns = new Set();
+    this._expandedMatrixColumns.add(String(color || '').trim().toLowerCase());
+  },
+
+  toggleMatrixColumn(color) {
+    const key = String(color || '').trim().toLowerCase();
+    if (this._isMatrixColumnExpanded(color)) this._expandedMatrixColumns.delete(key);
+    else this._expandMatrixColumn(color);
+    this._refreshMatrixColumns();
+    // The refresh rebuilt the button that was just activated, so a
+    // keyboard user would otherwise be dropped back to the top of the
+    // form mid-way through opening columns.
+    const idx = this.getMatrixColumnIndex(color);
+    document.getElementById('productionColorMatrixHeaderRow')
+      ?.children[idx]?.querySelector('.prod-col-expand')?.focus();
+  },
+
+  _refreshMatrixColumnCollapse() {
+    const headerRow = document.getElementById('productionColorMatrixHeaderRow');
+    if (!headerRow) return;
+    this._ensureMatrixCollapseHandlers();
+
+    const rows = $$('#productionColorMatrixBody tr');
+    Array.from(headerRow.children).forEach((th, index) => {
+      const color = th.dataset.color;
+      if (!color) return;
+
+      const empty = this._isMatrixColumnEmpty(index, rows);
+      const collapsed = empty && !this._isMatrixColumnExpanded(color);
+      th.classList.toggle('prod-col-collapsed', collapsed);
+      rows.forEach(row => row.children[index]?.classList.toggle('prod-col-collapsed', collapsed));
+
+      // Only an empty column is toggleable -- collapsing one that holds
+      // quantities would hide real data. A real <button> rather than a
+      // click handler on the <th> so the control is reachable by keyboard
+      // and announced as a control, without overriding the columnheader
+      // role a screen reader needs to caption the cells below it.
+      // _refreshMatrixColumnLabels has just written the visible label into
+      // th.textContent, and it runs before this, so re-wrapping it here is
+      // always working from the current label.
+      if (!empty) return;
+      const label = th.textContent;
+      th.textContent = '';
+      const btn = document.createElement('button');
+      btn.type = 'button';
+      btn.className = 'prod-col-expand';
+      btn.textContent = label;
+      btn.title = collapsed
+        ? `${color} — no quantities in this column; click to expand and enter one`
+        : `${color} — still empty; click to collapse`;
+      th.appendChild(btn);
+    });
+  },
+
+  // Both listeners are delegated onto elements that live in the partial
+  // and outlive every clearColorMatrix (which only empties the tbody), so
+  // they are installed once and never rebound. Delegation rather than an
+  // inline onclick because a color name can contain a double quote -- a
+  // size-suffixed sub-group like `KIT BAG 24"` would break the attribute.
+  _ensureMatrixCollapseHandlers() {
+    const headerRow = document.getElementById('productionColorMatrixHeaderRow');
+    if (headerRow && headerRow.dataset.collapseBound !== 'true') {
+      headerRow.dataset.collapseBound = 'true';
+      headerRow.addEventListener('click', e => {
+        const th = e.target.closest?.('.prod-col-expand')?.closest('th[data-color]');
+        if (th) this.toggleMatrixColumn(th.dataset.color);
+      });
+    }
+
+    const tbody = document.getElementById('productionColorMatrixBody');
+    if (tbody && tbody.dataset.collapseBound !== 'true') {
+      tbody.dataset.collapseBound = 'true';
+      const mark = e => this._markMatrixColumnTouched(e.target);
+      tbody.addEventListener('input', mark);
+      tbody.addEventListener('change', mark);
+    }
+  },
+
+  _markMatrixColumnTouched(target) {
+    const cell = target?.closest?.('td');
+    const row = cell?.parentElement;
+    if (!row) return;
+    const index = Array.from(row.children).indexOf(cell);
+    const color = document.getElementById('productionColorMatrixHeaderRow')?.children[index]?.dataset.color;
+    if (color) this._expandMatrixColumn(color);
+  },
+
   findMatrixRowByDisplayName(displayName, size) {
     const key = `${displayName}|${size || ''}`.toLowerCase();
     return $$('#productionColorMatrixBody tr').find(row => {
@@ -3910,10 +4275,7 @@ App.Production = {
     const sourceType = (comp && comp.sourceType === 'POOL') ? 'POOL' : 'ITEM';
     const colors = this.getMatrixColors();
 
-    const colorCellsHtml = colors
-      .map(() => '<td><select class="form-select form-select-sm prod-comp-item-select mb-1"><option value=""></option></select>'
-        + '<input type="number" class="form-control form-control-sm text-end matrix-qty" min="0" step="any" value=""></td>')
-      .join('');
+    const colorCellsHtml = colors.map(() => this._matrixColorCellHtml(true)).join('');
 
     const rowHtml = `
       <tr id="${rowId}" data-merged="true">
@@ -3937,6 +4299,7 @@ App.Production = {
       this.initMergedCellItemSelect2(rowEl.children[index]?.querySelector('.prod-comp-item-select'));
     });
     this._initRowSorting(tbody);
+    this._refreshMatrixColumns();
     return rowEl;
   },
 
@@ -3983,9 +4346,7 @@ App.Production = {
     const sourceType = (comp && comp.sourceType === 'POOL') ? 'POOL' : 'ITEM';
     const preSelectedOption = this._buildItemPreselectOption(itemName, size, sourceType);
 
-    const colorCellsHtml = this.getMatrixColors()
-      .map(() => `<td><input type="number" class="form-control text-end matrix-qty" min="0" step="any" value=""></td>`)
-      .join('');
+    const colorCellsHtml = this.getMatrixColors().map(() => this._matrixColorCellHtml(false)).join('');
 
     const rowHtml = `
       <tr id="${rowId}">
@@ -4012,6 +4373,7 @@ App.Production = {
     const rowEl = document.getElementById(rowId);
     this.initComponentItemSelect2(rowEl);
     this._initRowSorting(tbody);
+    this._refreshMatrixColumns();
     return rowEl;
   },
 
@@ -4021,6 +4383,9 @@ App.Production = {
       this.destroyComponentItemSelect2(row);
       row.remove();
     }
+    // Dropping the only row that held a column's quantity empties that
+    // column, so this is a collapse trigger like any other.
+    this._refreshMatrixColumns();
   },
 
   handleMatrixSourceChange(selectEl) {
@@ -4031,26 +4396,6 @@ App.Production = {
     }
     const sizeInput = row?.querySelector('.prod-comp-size');
     if (sizeInput) sizeInput.value = '';
-  },
-
-  findMatrixItemRowByName(itemName, size) {
-    const key = `${(itemName || '').trim()}|${(size || '').trim()}`.toLowerCase();
-    return $$('#productionColorMatrixBody tr').find(row => {
-      if (row.dataset.merged === 'true') return false;
-      const itemSelect = row.querySelector('.prod-comp-item-select');
-      if (!itemSelect || itemSelect.value === '') return false;
-      const opt = itemSelect.options[itemSelect.selectedIndex];
-      const rowItemName = (opt.dataset.name || opt.textContent || '').trim();
-      const rowSize = row.querySelector('.prod-comp-size')?.value.trim() || '';
-      return `${rowItemName}|${rowSize}`.toLowerCase() === key;
-    });
-  },
-
-  _setItemRowColorQty(row, colIndex, qty, qtyPerUnit) {
-    const input = row?.children[colIndex]?.querySelector('.matrix-qty');
-    if (!input) return;
-    if (qtyPerUnit !== undefined) input.dataset.qtyPerUnit = qtyPerUnit;
-    input.value = qty !== undefined ? this.formatQty(qty) : '';
   },
 
   async populateColorMatrixForColor(color, seq, axisKey) {
@@ -4116,14 +4461,33 @@ App.Production = {
           });
         }
 
-        this.refreshPoolColorGroupCells(color, thisColorQty, axisKey);
+        this.refreshPoolColorGroupCells(axisKey);
       });
+      // After the loop, never inside it: each addMergedMatrixRow above
+      // reflows against a row whose cells are still blank, so only this
+      // final pass sees which columns actually ended up with quantities.
+      this._refreshMatrixColumns();
     } catch (err) {
       App.Utils.showToast(err.message || 'Failed to load process recipe', true);
     }
   },
 
-  refreshPoolColorGroupCells(color, colorQty, axisKey) {
+  // Recomputes every recipe-scaled cell of the Per-Process Pool Components
+  // tables from the checklist's current quantities.
+  //
+  // `axisKey` is the axis whose checklist row just changed. Tables belonging
+  // to a DIFFERENT axis are skipped rather than recomputed: each table
+  // derives its own value from its own axis's checked colors, so recomputing
+  // one would be a no-op arithmetically -- but it would also overwrite a
+  // quantity the operator had typed into that table by hand, for an axis
+  // they did not touch. Pass nothing to refresh every table (no axis
+  // context, e.g. a bulk re-render).
+  //
+  // Takes no color argument on purpose: every cell of every table in scope
+  // is re-derived from the whole checked set, so which single color moved
+  // makes no difference to the result. It used to accept `color` and
+  // `colorQty` too and read neither.
+  refreshPoolColorGroupCells(axisKey) {
     const container = document.getElementById('productionPoolColorGroupsContainer');
     if (!container) return;
     container.querySelectorAll('table.prod-color-table').forEach(table => {
@@ -4135,15 +4499,7 @@ App.Production = {
         if (!inputColorLower) return;
         const qtyPerUnit = input.dataset.qtyPerUnit;
         if (qtyPerUnit === undefined || qtyPerUnit === '') return;
-
-        const exactTotal = checkedColorQtys.reduce(
-          (sum, cc) => (String(cc.color || '').trim().toLowerCase() === inputColorLower ? sum + cc.qty : sum), 0);
-
-        const total = exactTotal > 0 ? exactTotal : checkedColorQtys.reduce((sum, cc) => {
-          const ccTokens = (cc.color || '').split(' / ').map(t => t.trim().toLowerCase()).filter(Boolean);
-          return ccTokens.includes(inputColorLower) ? sum + cc.qty : sum;
-        }, 0);
-
+        const total = this._checkedQtyForPoolColor(inputColorLower, checkedColorQtys);
         input.value = total > 0 ? this.formatQty(total * toNumber(qtyPerUnit)) : '';
       });
     });
@@ -4427,6 +4783,7 @@ App.Production = {
     }
 
     this.renderPoolColorGroupsFromAccum(Array.from(poolGroupAccum.values()), poolColorMap);
+    this._refreshMatrixColumns();
 
     if (upgradedAny && upgradedCommonOverride) {
       App.Utils.showToast('This lot had a pool item and a Common item now tracked per-color, both split evenly across colors as a starting point — adjust each color\'s quantity to match what was actually used, then save.', false);
@@ -4444,55 +4801,17 @@ App.Production = {
   // built by populateComponentsConsumedDirect from the saved
   // Components Consumed array.
   renderPoolColorGroupsFromAccum(entries, poolColorMap) {
-    const wrapper = document.getElementById('productionPoolColorGroupsWrapper');
-    const container = document.getElementById('productionPoolColorGroupsContainer');
-    if (!container) return;
-
-    container.querySelectorAll('tr').forEach(row => this.destroyComponentItemSelect2(row));
-    container.innerHTML = '';
-    this._poolColorGroupDefs = [];
-
-    if (!entries || entries.length === 0) {
-      if (wrapper) wrapper.style.display = 'none';
-      return;
-    }
-    if (wrapper) wrapper.style.display = '';
-
-    const groups = new Map();
-    entries.forEach(entry => {
-      const itemColors = poolColorMap.get((entry.itemName || '').trim().toLowerCase()) || [];
-      const signature = itemColors.slice().sort((a, b) => a.localeCompare(b)).join('|').toLowerCase();
-      if (!groups.has(signature)) groups.set(signature, { colors: itemColors, entries: [] });
-      groups.get(signature).entries.push(entry);
-    });
-
-    let groupIdx = 0;
-    groups.forEach(({ colors: groupColors, entries: groupEntries }) => {
-      groupIdx++;
-      const tableId = `productionPoolColorGroup_${groupIdx}`;
-      const axisKey = this._axisKeyForPoolItemNames(groupEntries.map(e => e.itemName));
-      this._poolColorGroupDefs.push({ tableId, colors: groupColors, rows: groupEntries, mode: 'edit', axisKey });
-      // Strictly checked-only, same helper (and same exact-wins-then-tokens
-      // rule) the Create-mode path uses -- a previously-saved-but-now-
-      // unchecked color no longer keeps its column visible on reopen.
-      const visibleColors = this._checkedPoolGroupColors(groupColors, axisKey);
-      container.insertAdjacentHTML('beforeend', this._buildPoolColorGroupTable(tableId, groupColors, visibleColors, groupEntries, 'edit', axisKey));
-      document.querySelectorAll(`#${tableId} tbody tr`).forEach(row => this.initComponentItemSelect2(row));
-      // Fresh <tbody> element on every render (the container is emptied
-      // above), so this gets its own Sortable instance rather than reusing
-      // one -- see _initRowSorting.
-      this._initRowSorting(document.querySelector(`#${tableId} tbody`));
-    });
+    this._renderPoolColorGroups(entries, poolColorMap, 'edit');
   },
 
+  // Single-quantity mode's rescale of the Common Components table. Same
+  // walk as refreshCommonSuggestedQty's, differing only in the multiplier
+  // (the plain Qty field rather than the checklist's running total), so
+  // both go through _applyQtyPerUnit rather than keeping a second copy of
+  // the loop.
   refreshSuggestedComponentQty() {
-    const lotQty = toNumber(document.getElementById('productionQty')?.value) || 0;
-    document.querySelectorAll('#productionComponentsBody tr').forEach(row => {
-      const qtyPerUnit = row.dataset.qtyPerUnit;
-      if (qtyPerUnit === undefined || qtyPerUnit === '') return;
-      const qtyInput = row.querySelector('.prod-comp-qty');
-      if (qtyInput) qtyInput.value = this.formatQty(lotQty * toNumber(qtyPerUnit));
-    });
+    this._applyQtyPerUnit('#productionComponentsBody tr',
+      toNumber(document.getElementById('productionQty')?.value) || 0);
   },
 
   clearComponentsTable() {
@@ -5307,7 +5626,7 @@ App.Production = {
 
   // Populates the Production Sheet dialog's DOM (title/date/Common
   // table/Per-Color matrix/Remarks) for one lot, WITHOUT opening the
-  // modal -- split out of viewProductionSheet so bulkDownloadPDF can
+  // modal -- split out of viewProductionSheet so the bulk print path can
   // reuse the exact same rich rendering (Common table + Per-Color matrix,
   // including Pool-sourced per-color components -- see
   // groupComponentsForSheet) for every selected lot in turn, without
@@ -5335,8 +5654,7 @@ App.Production = {
     // Size/Model aren't stored on the lot itself -- they're derived from its
     // Process's Output Item Name the same way the Production form's
     // Size/Model dropdowns are. Remembered (with date/processName) so
-    // downloadProductionSheetPDF/bulkDownloadPDF can name the file after
-    // this lot.
+    // printProductionSheet can name the file after this lot.
     const process = (App.State.globalProcesses || []).find(pr => pr.processId === p.processId);
     const processName = process ? process.processName : (p.processId || 'Process');
     const requirementSheetTitle = this._requirementSheetTitle(p.processId);
@@ -5351,7 +5669,8 @@ App.Production = {
     // are packing/variant sub-groups. See _isColorGroupName.
     App.State.currentProductionSheet = {
       idx, lotQty: p.qty, defaultComponents, colors,
-      lotColor: p.color || '', date: p.date, size, model, processName, requirementSheetTitle
+      lotColor: p.color || '', lotNumber: p.lotNumber,
+      date: p.date, size, model, processName, requirementSheetTitle
     };
     this._refreshSheetGroupSplit(App.State.currentProductionSheet);
     this.renderProductionSheetPrintOptions();
@@ -5863,7 +6182,7 @@ App.Production = {
   // ── Print options ────────────────────────────────────────────────
   // Reads the "Print options" panel. Absent panel / unopened dialog falls
   // back to "print everything, portrait", so every existing caller
-  // (bulkDownloadPDF included) behaves exactly as it did before.
+  // (bulk print included) behaves exactly as it did before.
   _printOptions() {
     const boxes = $$('#productionSheetPrintColumns input[type="checkbox"]');
     const excluded = boxes.filter(b => !b.checked).map(b => b.dataset.group);
@@ -5981,6 +6300,32 @@ App.Production = {
     }
   },
 
+  // The Print options panel's Landscape checkbox is forwarded here as a
+  // per-job @page override. It used to reach only the PDF exporter, so
+  // ticking Landscape and pressing Print silently produced a portrait page
+  // -- the option looked ignored because, on this path, it was.
+  //
+  // The title doubles as the suggested "Save as PDF" filename, so this uses
+  // the same rich lot/size/model/process name the old Download PDF button
+  // built rather than the bare product id.
+  // The name for whichever sheet is currently built into the print container.
+  //
+  // Shared by Print Sheet, Download PDF and Download PDFs so all three produce
+  // the identical filename for the identical lot. Reading it from
+  // currentProductionSheet rather than from arguments is what guarantees that:
+  // every path populates that state first, so there is one input.
+  _productionSheetDocSpec() {
+    const state = App.State.currentProductionSheet;
+    return {
+      type: 'PRD',
+      key: state?.lotNumber,
+      party: state?.model || document.getElementById('prodSheetProductId')?.innerText,
+      // No lot number to identify it by (an unsaved sheet) -- fall back to the
+      // lot's own date rather than leaving two sheets sharing a name.
+      date: state?.lotNumber ? null : (state?.date || true)
+    };
+  },
+
   printProductionSheet() {
     if (typeof App.Print === 'undefined') {
       App.Utils.notPortedYet('Printing');
@@ -5989,8 +6334,11 @@ App.Production = {
 
     this._buildProductionSheetForExport();
 
-    const productId = document.getElementById('prodSheetProductId')?.innerText || 'Production';
-    App.Print.trigger('print-production-sheet-container', `Production_Sheet_${productId.replace(/[^a-zA-Z0-9_-]/g, '_')}`);
+    App.Print.trigger(
+      'print-production-sheet-container',
+      App.Print.docName(this._productionSheetDocSpec()),
+      { landscape: this._printOptions().landscape }
+    );
   },
 
   // The printed sheet's title: "<Process Type> Requirement Sheet" (e.g.
@@ -6007,11 +6355,9 @@ App.Production = {
   },
 
   // Populates #print-production-sheet-container's DOM from the currently
-  // open Production Sheet dialog's state -- split out so both
-  // printProductionSheet (browser print) and downloadProductionSheetPDF /
-  // bulkDownloadPDF (PDF capture via App.Print.downloadElementAsPDF) render
-  // an identical sheet, single source of truth for the single-page
-  // auto-fit layout below.
+  // open Production Sheet dialog's state -- split out so the single-sheet
+  // and bulk print paths render an identical sheet, single source of truth
+  // for the single-page auto-fit layout below.
   _buildProductionSheetForExport() {
     const setText = (id, text) => {
       const el = document.getElementById(id);
@@ -6356,10 +6702,10 @@ App.Production = {
     // stop at the first one that fits a single page -- so nothing shrinks
     // or drops a column unless the sheet actually needs it to.
     const container = document.getElementById('print-production-sheet-container');
-    // Geometry comes from App.Print so the sheet is measured at exactly
-    // the width downloadElementAsPDF will capture it at. Landscape swaps
-    // the page box, so the fit loop must measure against the rotated
-    // dimensions or it would compress a sheet that already fits.
+    // Geometry comes from App.Print so the sheet is measured at exactly the
+    // printable page box (@page A4 minus its margin, in CSS px at 96dpi).
+    // Landscape swaps the page box, so the fit loop must measure against
+    // the rotated dimensions or it would compress a sheet that already fits.
     const landscape = this._printOptions().landscape;
     const PAGE_WIDTH_PX = landscape ? App.Print.PAGE_HEIGHT_PX : App.Print.PAGE_WIDTH_PX;
     const PAGE_HEIGHT_PX = landscape ? App.Print.PAGE_WIDTH_PX : App.Print.PAGE_HEIGHT_PX;
@@ -6431,60 +6777,21 @@ App.Production = {
       this._sanitizeFilenamePart(processName, 'Process')
     ].join('_');
   },
-
-  // jsPDF/orientation overrides matching the Print options panel, plus the
-  // capture width that goes with them -- downloadElementAsPDF lays the
-  // element out at App.Print.PAGE_WIDTH_PX by default, which is the
-  // PORTRAIT width and would squeeze a landscape sheet.
-  _pdfOverridesForOptions() {
-    if (!this._printOptions().landscape) return {};
-    return {
-      jsPDF: { unit: 'mm', format: 'a4', orientation: 'landscape' },
-      captureWidthPx: App.Print.PAGE_HEIGHT_PX
-    };
-  },
-
+  // Backs the Production Sheet dialog's "Download PDF" button, beside "Print
+  // Sheet". Both reach the print dialog, where "Save as PDF" produces the
+  // file -- including the Landscape option, which printProductionSheet now
+  // forwards and which previously only this path honoured.
   async downloadProductionSheetPDF() {
     const state = App.State.currentProductionSheet;
     if (!state) return;
 
     this._buildProductionSheetForExport();
 
-    const filenameBase = this._productionSheetFilenameBase(state.date, state.size, state.model, state.processName);
-    const ok = await App.Print.downloadElementAsPDF(
-      'print-production-sheet-container', `${filenameBase}.pdf`, this._pdfOverridesForOptions());
-    if (ok) App.Utils.showToast('PDF exported successfully!', false);
-  },
-
-  // Bulk "Download PDFs" -- downloads one SEPARATE PDF per selected lot,
-  // each the exact same rich Production Sheet a single "View Sheet" +
-  // "Download PDF" would produce. Lots are processed one at a time,
-  // awaited in sequence rather than in parallel -- every iteration reuses
-  // the SAME #print-production-sheet-container, so overlapping
-  // html2canvas captures would race and corrupt each other's output.
-  async bulkDownloadPDF() {
-    const selected = App.State.selectedProduction;
-    if (!selected || selected.length === 0) return;
-
-    const lots = App.State.globalProduction.filter(p => App.Selection.isSelected(selected, String(p.rowIdx)));
-    if (lots.length === 0) return;
-
-    let successCount = 0;
-    for (const p of lots) {
-      this._populateProductionSheetData(p);
-      this._buildProductionSheetForExport();
-
-      const size = App.Utils.getSizeFromOutputItemName(p.outputItemName);
-      const model = App.Utils.getModelFromOutputItemName(p.outputItemName);
-      const process = (App.State.globalProcesses || []).find(pr => pr.processId === p.processId);
-      const processName = process ? process.processName : (p.processId || 'Process');
-      const filenameBase = this._productionSheetFilenameBase(p.date, size, model, processName);
-      const filename = `${this._sanitizeFilenamePart(p.lotNumber, 'Lot')}_${filenameBase}.pdf`;
-
-      if (await App.Print.downloadElementAsPDF('print-production-sheet-container', filename)) successCount++;
-    }
-
-    App.Utils.showToast(`${successCount} of ${lots.length} production sheet(s) downloaded as separate PDFs.`, successCount < lots.length);
+    await App.Print.downloadContainer(
+      'print-production-sheet-container',
+      App.Print.docName(this._productionSheetDocSpec()),
+      { landscape: this._printOptions().landscape }
+    );
   }
 };
 

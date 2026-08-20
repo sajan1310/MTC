@@ -220,6 +220,8 @@ App.PO = {
     );
   },
 
+  // "Download PDFs" -- one separately-named PDF per selected purchase order,
+  // honouring the same rates/total toggles bulkPrint reads.
   async bulkDownloadPDF() {
     const selected = App.State.selectedPOs;
     if (!selected.length) {
@@ -233,19 +235,15 @@ App.PO = {
     const pos = App.State.globalPOs.filter(po => App.Selection.isSelected(selected, String(po.poNumber)));
     if (!pos.length) return;
 
-    const destination = await App.Print.chooseBulkDestination(pos.length);
-    if (destination.mode === 'cancelled') return;
-
-    const result = await App.Print.deliverSeparatePDFs(
-      pos,
-      po => this.buildPOPrintPageHtml(po, includeRates, includeTotal),
-      po => `PO_${App.Print.sanitizeFilename(String(po.poNumber || 'PO'))}_${App.Print.sanitizeFilename(String(po.vendor || 'Vendor'), false)}.pdf`,
-      { progressButtonId: 'btnBulkDownloadPdfPOs', destination,
-        zipName: App.Print.bulkZipName('Purchase_Orders') }
+    await App.Print.downloadMany(
+      pos.map(po => ({
+        filename: App.Print.docFilename({ type: 'PO', key: po.poNumber, party: po.vendor }),
+        html: this.buildPOPrintPageHtml(po, includeRates, includeTotal)
+      })),
+      App.Print.bulkZipName('PO'),
+      { buttonId: 'btnBulkDownloadPdfPOs' }
     );
-    App.Print.reportBulkResult(result, pos.length, 'purchase order PDF');
   },
-
   filterData(searchTerm) {
     App.State.poSearchTerm = String(searchTerm || '');
     this.applyFilters();
@@ -968,11 +966,10 @@ App.PO = {
     const po = this.populatePrintData(index);
     if (!po) return;
 
-    const title = `PO_${po.poNumber}_${String(po.vendor || '')
-      .replace(/[^a-zA-Z0-9 \-]/g, '')
-      .trim()
-      .replace(/\s+/g, '_')}`;
-    App.Print.trigger('print-po-container', title);
+    // Same name the Download button produces, so Print -> Save as PDF and
+    // Download PDF put the identical filename in front of the user.
+    App.Print.trigger('print-po-container',
+      App.Print.docName({ type: 'PO', key: po.poNumber, party: po.vendor }));
   },
 
   // Builds a fully self-contained "Purchase Order" page (mirrors
@@ -1132,6 +1129,10 @@ App.PO = {
     </div>`;
   },
 
+  // Backs the row's "Download PDF" button. With one renderer, downloading a
+  // PDF is what the print dialog's "Save as PDF" does, so this reaches the
+  // same place as "Print Document" -- same container, same filename. Kept as
+  // its own method so the button and its data-action are unchanged.
   async downloadPDF(index) {
     if (typeof App.Print === 'undefined') {
       App.Utils.notPortedYet('PDF export');
@@ -1144,16 +1145,11 @@ App.PO = {
       return;
     }
 
-    // Page geometry, the html2canvas offset/clipping dance, font readiness and
-    // the pagebreak.avoid list all live in App.Print.downloadElementAsPDF.
-    // This was a 116-line copy of that function which had drifted from it in
-    // both directions -- see docs/audit/PDF_GENERATION_REVIEW.md PDF-004.
-    const filename =
-      `PO_${App.Print.sanitizeFilename(String(po.poNumber || 'PO'))}` +
-      `_${App.Print.sanitizeFilename(String(po.vendor || 'Vendor'), false)}.pdf`;
+    const filename = App.Print.docFilename({ type: 'PO', key: po.poNumber, party: po.vendor });
 
-    const ok = await App.Print.downloadElementAsPDF('print-po-container', filename);
-    if (ok) App.Utils.showToast('PDF exported successfully!', false);
+    // populatePrintData has just filled the static template, so this sends
+    // exactly the markup App.PO.print would have printed.
+    await App.Print.downloadContainer('print-po-container', filename);
   },
 
   // Item x vendor rate/last-purchase-date catalog, built purely from

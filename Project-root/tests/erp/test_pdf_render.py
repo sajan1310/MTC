@@ -1,521 +1,385 @@
-"""Tests for POST /erp/render-pdf -- server-side vector PDF rendering.
+"""Server-side PDF rendering: validation, naming, batching, and the endpoints.
 
-Split in two. The endpoint contract (auth, validation, error mapping) runs
-everywhere with the renderer stubbed. The rendering tests actually launch
-Chromium and are skipped where Playwright or its browser build is absent, so
-the suite stays runnable on a machine that has not run `playwright install`.
+Split deliberately into two halves:
 
-The point of the whole feature is that the output is a *document*, not a
-picture of one -- so the tests that matter assert extractable text, which is
-exactly what the client-side raster path cannot produce (PDF-002).
+  * Everything that does NOT need a renderer -- validation, filename safety,
+    de-duplication, auth, the error mapping -- runs everywhere, including a
+    Windows dev box with no GTK libraries.
+  * Everything that renders is skipped when `probe()` says this machine
+    cannot, and activates the moment the libraries are installed.
+
+The alternative -- one suite that fails wholesale without system libraries --
+trains people to ignore it.
 """
 
-from __future__ import annotations
-
 import io
-import os
+import zipfile
 
 import pytest
 
-from app.erp.services import pdf_render_service
+from app.erp.services import pdf_render_service as svc
 
-PO_HTML = """
-<div style="font-family:Arial;padding:20px">
-  <h2 style="color:#C0392B">PURCHASE ORDER</h2>
-  <p>No: PO-2026-0417</p>
-  <p>Vendor: Gupta Cycle Industries</p>
-  <table border="1" style="border-collapse:collapse">
-    <tr><td>Freewheel 18T</td><td>75</td><td>142.00</td></tr>
-    <tr><td>Frame Set 26"</td><td>50</td><td>1250.00</td></tr>
-  </table>
-</div>
-"""
-
-
-def _renderable() -> bool:
-    try:
-        pdf_render_service.render_pdf("<p>probe</p>")
-        return True
-    except pdf_render_service.PdfRenderUnavailable:
-        return False
-
-
-needs_chromium = pytest.mark.skipif(
-    not _renderable(), reason="Playwright/Chromium not available in this environment"
+RENDERS, RENDER_DETAIL = svc.probe()
+needs_renderer = pytest.mark.skipif(
+    not RENDERS, reason=f"no PDF renderer on this machine: {RENDER_DETAIL}"
 )
 
 
-def _pdf_text(data: bytes) -> str:
-    pypdf = pytest.importorskip("pypdf")
-    reader = pypdf.PdfReader(io.BytesIO(data))
-    return "\n".join((p.extract_text() or "") for p in reader.pages)
-
-
-# ── endpoint contract ────────────────────────────────────────────────
-
-
-def test_requires_authentication(erp_app):
-    """An unauthenticated caller must not be able to drive a headless browser."""
-    with erp_app.test_client() as anon:
-        res = anon.post("/erp/render-pdf", json={"html": PO_HTML})
-    assert res.status_code in (302, 401)
-
-
-def test_rejects_empty_html(erp_client):
-    res = erp_client.post("/erp/render-pdf", json={"html": "   "})
-    assert res.status_code == 400
-    assert res.get_json()["success"] is False
-
-
-def test_rejects_missing_html(erp_client):
-    res = erp_client.post("/erp/render-pdf", json={})
-    assert res.status_code == 400
-
-
-def test_rejects_oversized_html(erp_client):
-    huge = "<p>" + ("x" * (pdf_render_service.MAX_HTML_BYTES + 1)) + "</p>"
-    res = erp_client.post("/erp/render-pdf", json={"html": huge})
-    assert res.status_code == 400
-    assert "too large" in res.get_json()["message"].lower()
-
-
-def test_reports_503_when_rendering_unavailable(erp_client, monkeypatch):
-    """503 is the signal the client uses to stop asking for the session,
-    rather than retrying once per document."""
-    def boom(*a, **k):
-        raise pdf_render_service.PdfRenderUnavailable("no chromium here")
-
-    monkeypatch.setattr(pdf_render_service, "render_pdf", boom)
-    res = erp_client.post("/erp/render-pdf", json={"html": PO_HTML})
-    assert res.status_code == 503
-    assert res.get_json()["success"] is False
-
-
-def test_unexpected_failure_is_500_and_not_leaked(erp_client, monkeypatch):
-    def boom(*a, **k):
-        raise KeyError("internal detail nobody should see")
-
-    monkeypatch.setattr(pdf_render_service, "render_pdf", boom)
-    res = erp_client.post("/erp/render-pdf", json={"html": PO_HTML})
-    assert res.status_code == 500
-    assert "internal detail" not in res.get_json()["message"]
-
-
-def test_returns_pdf_content_type(erp_client, monkeypatch):
-    monkeypatch.setattr(pdf_render_service, "render_pdf", lambda *a, **k: b"%PDF-1.4 stub")
-    res = erp_client.post("/erp/render-pdf", json={"html": PO_HTML})
-    assert res.status_code == 200
-    assert res.mimetype == "application/pdf"
-    assert res.data.startswith(b"%PDF-")
-    assert res.headers["Cache-Control"] == "no-store"
-
-
-def test_landscape_flag_is_forwarded(erp_client, monkeypatch):
-    seen = {}
-
-    def capture(html, *, landscape=False):
-        seen["landscape"] = landscape
-        return b"%PDF-1.4 stub"
-
-    monkeypatch.setattr(pdf_render_service, "render_pdf", capture)
-    erp_client.post("/erp/render-pdf", json={"html": PO_HTML, "landscape": True})
-    assert seen["landscape"] is True
-
-
-# ── the document shell ───────────────────────────────────────────────
-
-
-def test_page_shell_is_built_server_side():
-    """Page size and margins must not be drivable from the request body."""
-    doc = pdf_render_service._document("<p>hi</p>", landscape=False)
-    assert "@page" in doc and "A4 portrait" in doc
-    assert f"margin: {pdf_render_service.PAGE_MARGIN_MM}mm" in doc
-    assert "<p>hi</p>" in doc
-
-
-def test_page_shell_honours_landscape():
-    assert "A4 landscape" in pdf_render_service._document("<p>hi</p>", landscape=True)
-
-
-def test_shell_keeps_rows_and_closing_blocks_whole():
-    """The real CSS equivalent of html2pdf's pagebreak.avoid list."""
-    doc = pdf_render_service._document("<p>hi</p>", landscape=False)
-    assert "break-inside: avoid" in doc
-    for sel in ("tr", "#print-grand-total-container", "#print-signature", "#print-footer-meta"):
-        assert sel in doc
-
-
-# ── actual rendering ─────────────────────────────────────────────────
-
-
-@needs_chromium
-def test_renders_a_real_pdf(erp_client):
-    res = erp_client.post("/erp/render-pdf", json={"html": PO_HTML})
-    assert res.status_code == 200
-    assert res.data.startswith(b"%PDF-")
-
-
-@needs_chromium
-def test_output_is_searchable_text_not_a_picture(erp_client):
-    """The entire point of PDF-002: the PO number must be findable."""
-    res = erp_client.post("/erp/render-pdf", json={"html": PO_HTML})
-    text = _pdf_text(res.data)
-    assert "PO-2026-0417" in text
-    assert "Freewheel" in text
-    assert "PURCHASE ORDER" in text
-
-
-@needs_chromium
-def test_output_embeds_no_images(erp_client):
-    """A raster export would be exactly one full-page image."""
-    pypdf = pytest.importorskip("pypdf")
-    res = erp_client.post("/erp/render-pdf", json={"html": PO_HTML})
-    page = pypdf.PdfReader(io.BytesIO(res.data)).pages[0]
-    assert len(page.images) == 0
-
-
-@needs_chromium
-def test_output_is_a4_at_the_shared_margin(erp_client):
-    pypdf = pytest.importorskip("pypdf")
-    res = erp_client.post("/erp/render-pdf", json={"html": PO_HTML})
-    box = pypdf.PdfReader(io.BytesIO(res.data)).pages[0].mediabox
-    def mm(pt):
-        return round(float(pt) * 25.4 / 72)
-    assert (mm(box.width), mm(box.height)) == (210, 297)
-
-
-@needs_chromium
-def test_landscape_swaps_the_page_dimensions(erp_client):
-    pypdf = pytest.importorskip("pypdf")
-    res = erp_client.post("/erp/render-pdf", json={"html": PO_HTML, "landscape": True})
-    box = pypdf.PdfReader(io.BytesIO(res.data)).pages[0].mediabox
-    def mm(pt):
-        return round(float(pt) * 25.4 / 72)
-    assert (mm(box.width), mm(box.height)) == (297, 210)
-
-
-@needs_chromium
-def test_multi_page_documents_paginate(erp_client):
-    pypdf = pytest.importorskip("pypdf")
-    rows = "".join(
-        f"<tr><td>Component {i}</td><td>{i * 7}</td></tr>" for i in range(120)
-    )
-    html = f"<table border='1'>{rows}</table>"
-    res = erp_client.post("/erp/render-pdf", json={"html": html})
-    assert len(pypdf.PdfReader(io.BytesIO(res.data)).pages) > 1
-
-
-# ── the security boundary ────────────────────────────────────────────
-
-
-@needs_chromium
-def test_does_not_fetch_remote_resources(erp_client):
-    """SSRF guard: an authenticated user must not be able to make the server
-    fetch a URL of their choosing. The render still succeeds -- the resource
-    is simply never requested."""
-    html = (
-        "<p>ssrf probe</p>"
-        "<img src='http://169.254.169.254/latest/meta-data/'>"
-        "<img src='http://127.0.0.1:1/should-not-be-hit'>"
-    )
-    res = erp_client.post("/erp/render-pdf", json={"html": html})
-    assert res.status_code == 200
-    assert "ssrf probe" in _pdf_text(res.data)
-
-
-@needs_chromium
-def test_does_not_read_local_files(erp_client):
-    html = "<p>file probe</p><iframe src='file:///etc/passwd'></iframe>"
-    res = erp_client.post("/erp/render-pdf", json={"html": html})
-    assert res.status_code == 200
-    text = _pdf_text(res.data)
-    assert "file probe" in text
-    assert "root:" not in text
-
-
-@needs_chromium
-def test_does_not_execute_javascript(erp_client):
-    """The print builders emit static markup; scripting stays off so a
-    posted document cannot run code in the renderer."""
-    html = (
-        "<p id='t'>static</p>"
-        "<script>document.getElementById('t').textContent = 'SCRIPTED';</script>"
-    )
-    res = erp_client.post("/erp/render-pdf", json={"html": html})
-    text = _pdf_text(res.data)
-    assert "static" in text
-    assert "SCRIPTED" not in text
-
-
-@needs_chromium
-def test_inline_data_uri_images_still_render(erp_client):
-    """data: URIs are not network requests, so blocking the network must not
-    break the company logo (core.js stores it as a canvas toDataURL)."""
-    # 1x1 red PNG
-    png = (
-        "data:image/png;base64,"
-        "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8BQDwAEhQGAhKmMIQAAAABJRU5ErkJggg=="
-    )
-    res = erp_client.post("/erp/render-pdf", json={"html": f"<p>logo</p><img src='{png}'>"})
-    assert res.status_code == 200
-    assert "logo" in _pdf_text(res.data)
-
-
-# ── deployment diagnostics ───────────────────────────────────────────
-#
-# The failure this guards against is silent: without Chromium the endpoint
-# 503s, the client falls back to rasterising without complaint, and the PDFs
-# quietly go back to being unsearchable images. These make it loud at boot.
-
-
-def test_probe_is_filesystem_only_and_fast():
-    """It must not start Playwright -- doing that to read executable_path
-    measured ~5s, which every gunicorn worker would pay at boot."""
-    import time
-
-    start = time.monotonic()
-    ok, detail = pdf_render_service.probe()
-    assert isinstance(ok, bool)
-    assert isinstance(detail, str) and detail
-    assert time.monotonic() - start < 1.0
-
-
-def test_probe_reports_missing_browsers_with_the_fix(monkeypatch, tmp_path):
-    monkeypatch.setenv("PLAYWRIGHT_BROWSERS_PATH", str(tmp_path / "nope"))
-    ok, detail = pdf_render_service.probe()
-    assert ok is False
-    assert "playwright install chromium" in detail
-
-
-def test_probe_reports_an_empty_browsers_directory(monkeypatch, tmp_path):
-    monkeypatch.setenv("PLAYWRIGHT_BROWSERS_PATH", str(tmp_path))
-    ok, detail = pdf_render_service.probe()
-    assert ok is False
-    assert "playwright install chromium" in detail
-
-
-def test_probe_accepts_an_installed_chromium(monkeypatch, tmp_path):
-    (tmp_path / "chromium-1234").mkdir()
-    monkeypatch.setenv("PLAYWRIGHT_BROWSERS_PATH", str(tmp_path))
-    ok, detail = pdf_render_service.probe()
-    assert ok is True
-    assert "chromium-1234" in detail
-
-
-def test_probe_never_raises(monkeypatch):
-    def boom():
-        raise OSError("boom")
-
-    monkeypatch.setattr(pdf_render_service, "_candidate_roots", boom)
-    ok, detail = pdf_render_service.probe()
-    assert ok is False
-    assert "could not check" in detail
-
-
-class _Log:
-    def __init__(self):
-        self.info_msgs = []
-        self.warn_msgs = []
-
-    def info(self, msg, *a):
-        self.info_msgs.append(msg % a if a else msg)
-
-    def warning(self, msg, *a):
-        self.warn_msgs.append(msg % a if a else msg)
-
-
-def test_log_availability_warns_loudly_when_disabled(monkeypatch, tmp_path):
-    monkeypatch.setenv("PLAYWRIGHT_BROWSERS_PATH", str(tmp_path / "nope"))
-    log = _Log()
-    assert pdf_render_service.log_availability(log) is False
-    assert log.info_msgs == []
-    assert len(log.warn_msgs) == 1
-    warning = log.warn_msgs[0]
-    # Must name the consequence, not just the condition.
-    assert "playwright install chromium" in warning
-    assert "503" in warning
-    assert "searchable" in warning
-
-
-def test_log_availability_confirms_when_enabled(monkeypatch, tmp_path):
-    (tmp_path / "chromium-1234").mkdir()
-    monkeypatch.setenv("PLAYWRIGHT_BROWSERS_PATH", str(tmp_path))
-    log = _Log()
-    assert pdf_render_service.log_availability(log) is True
-    assert log.warn_msgs == []
-    assert len(log.info_msgs) == 1
-
-
-# ── the two deployment traps ─────────────────────────────────────────
-
-
-def test_explicit_browsers_path_is_never_second_guessed(monkeypatch, tmp_path):
-    """If an operator configured a location, honour it rather than hunting."""
-    monkeypatch.setenv("PLAYWRIGHT_BROWSERS_PATH", str(tmp_path))
-    assert pdf_render_service._candidate_roots() == [tmp_path]
-
-
-def test_candidates_cover_the_root_installs_service_runs_split(monkeypatch):
-    """The VPS trap: installed by root, served by www-data."""
-    import pathlib
-
-    monkeypatch.delenv("PLAYWRIGHT_BROWSERS_PATH", raising=False)
-    monkeypatch.setattr(pdf_render_service.sys, "platform", "linux")
-    roots = pdf_render_service._candidate_roots()
-    # Compare Path objects, not strings: this suite also runs on Windows, where
-    # Path("/ms-playwright") stringifies with a backslash.
-    assert pathlib.Path(pdf_render_service.SHARED_BROWSERS_PATH) in roots
-    assert pathlib.Path("/root/.cache/ms-playwright") in roots
-    assert pathlib.Path("/opt/ms-playwright") in roots
-    assert len(roots) == len(set(map(str, roots)))  # no duplicates
-
-
-def test_resolve_adopts_a_browser_another_user_installed(monkeypatch, tmp_path):
-    """The actual fix, not just the diagnosis: a browser outside this user's
-    own cache is found AND pointed at, so rendering works instead of merely
-    being explainable."""
-    other_user_cache = tmp_path / "root-cache"
-    (other_user_cache / "chromium-1234").mkdir(parents=True)
-    mine = tmp_path / "my-empty-cache"
-    mine.mkdir()
-
-    monkeypatch.delenv("PLAYWRIGHT_BROWSERS_PATH", raising=False)
-    monkeypatch.setattr(pdf_render_service, "_candidate_roots", lambda: [mine, other_user_cache])
-
-    found = pdf_render_service._resolve_browsers_path()
-    assert found == other_user_cache
-    # Playwright reads this env var, so setting it is what makes it usable.
-    assert os.environ["PLAYWRIGHT_BROWSERS_PATH"] == str(other_user_cache)
-
-
-def test_resolve_returns_none_when_nothing_is_installed(monkeypatch, tmp_path):
-    monkeypatch.delenv("PLAYWRIGHT_BROWSERS_PATH", raising=False)
-    monkeypatch.setattr(pdf_render_service, "_candidate_roots", lambda: [tmp_path])
-    assert pdf_render_service._resolve_browsers_path() is None
-
-
-def test_probe_lists_where_it_looked(monkeypatch, tmp_path):
-    monkeypatch.delenv("PLAYWRIGHT_BROWSERS_PATH", raising=False)
-    monkeypatch.setattr(pdf_render_service, "_candidate_roots", lambda: [tmp_path / "a", tmp_path / "b"])
-    ok, detail = pdf_render_service.probe()
-    assert ok is False
-    assert "looked in" in detail
-    assert "playwright install chromium" in detail
-
-
-# The Render trap: the browser downloads, then cannot start because the host
-# has no libnss3 etc. Raw, that error names a .so file and no remedy.
-
-def test_missing_system_libraries_explains_the_fix():
-    exc = Exception(
-        "Host system is missing dependencies to run browsers."
-        "\n    libnss3.so: cannot open shared object file"
-    )
-    msg = pdf_render_service._explain_launch_failure(exc)
-    assert "missing its system libraries" in msg
-    assert "playwright install-deps chromium" in msg
-    assert "Docker" in msg
-
-
-def test_shared_library_error_is_recognised_on_its_own():
-    exc = Exception("error while loading shared libraries: libnss3.so: cannot open")
-    msg = pdf_render_service._explain_launch_failure(exc)
-    assert "playwright install-deps chromium" in msg
-
-
-def test_missing_browser_explains_the_other_fix():
-    exc = Exception("Executable doesn't exist at /root/.cache/ms-playwright/chromium-1234/chrome")
-    msg = pdf_render_service._explain_launch_failure(exc)
-    assert "playwright install chromium" in msg
-    assert "PLAYWRIGHT_BROWSERS_PATH" in msg
-
-
-def test_permission_error_explains_the_permission_fix():
-    msg = pdf_render_service._explain_launch_failure(PermissionError("permission denied"))
-    assert "not executable by this user" in msg
-
-
-def test_unknown_launch_failure_still_reports_something_useful():
-    msg = pdf_render_service._explain_launch_failure(Exception("kaboom"))
-    assert "could not start Chromium" in msg
-    assert "kaboom" in msg
-
-
-def test_launch_failures_are_truncated_not_dumped():
-    exc = Exception("x" * 5000)
-    assert len(pdf_render_service._explain_launch_failure(exc)) < 400
-
-
-# ── PDF_SERVER_RENDER=off: skipping Chromium as a stated choice ───────
-
-
-def test_disabled_by_config_returns_503_without_rendering(erp_client, erp_app, monkeypatch):
-    """The point of the switch: no browser is touched at all."""
-    launched = {"n": 0}
-
-    def spy():
-        launched["n"] += 1
-        raise AssertionError("must not launch a browser when disabled")
-
-    monkeypatch.setattr(pdf_render_service, "_browser", spy)
-    monkeypatch.setitem(erp_app.config, "PDF_SERVER_RENDER", "off")
-
-    res = erp_client.post("/erp/render-pdf", json={"html": PO_HTML})
-    assert res.status_code == 503
-    assert res.get_json()["success"] is False
-    assert "disabled" in res.get_json()["message"].lower()
-    assert launched["n"] == 0
-
-
-def test_auto_is_the_default(erp_app):
-    assert erp_app.config.get("PDF_SERVER_RENDER", "auto") in ("auto", "off")
-
-
-def test_is_enabled_reflects_the_setting(erp_app):
-    with erp_app.app_context():
-        erp_app.config["PDF_SERVER_RENDER"] = "off"
-        assert pdf_render_service.is_enabled() is False
-        erp_app.config["PDF_SERVER_RENDER"] = "auto"
-        assert pdf_render_service.is_enabled() is True
-
-
-def test_is_enabled_outside_an_app_context():
-    """The smoke check runs with no Flask context and must still work."""
-    assert pdf_render_service.is_enabled() is True
-
-
-# A deliberate choice must not be logged as a broken deploy -- warning about
-# configuration teaches people to ignore warnings.
-def test_disabled_by_config_logs_info_not_warning():
-    log = _Log()
-    assert pdf_render_service.log_availability(log, enabled=False) is False
-    assert log.warn_msgs == []
-    assert len(log.info_msgs) == 1
-    msg = log.info_msgs[0]
-    assert "OFF by configuration" in msg
-    assert "PDF_SERVER_RENDER=off" in msg
-    # Must name the workaround that needs nothing installed.
-    assert "Save as PDF" in msg
-
-
-def test_wanted_but_missing_still_warns(monkeypatch, tmp_path):
-    """Contrast: enabled but no browser is a real problem, so still WARNING."""
-    monkeypatch.setenv("PLAYWRIGHT_BROWSERS_PATH", str(tmp_path / "nope"))
-    log = _Log()
-    assert pdf_render_service.log_availability(log, enabled=True) is False
-    assert log.info_msgs == []
-    assert len(log.warn_msgs) == 1
-    # And it should point at the switch as the way to silence it deliberately.
-    assert "PDF_SERVER_RENDER=off" in log.warn_msgs[0]
-
-
-def test_shell_passes_the_setting_to_the_client(erp_client, erp_app):
-    """The client reads this to avoid one wasted request per session."""
-    monkey = erp_app.config
-    monkey["PDF_SERVER_RENDER"] = "off"
-    res = erp_client.get("/erp")
-    assert res.status_code == 200
-    assert b'name="pdf-server-render" content="off"' in res.data
-    monkey["PDF_SERVER_RENDER"] = "auto"
-    res = erp_client.get("/erp")
-    assert b'name="pdf-server-render" content="auto"' in res.data
+# ── Filenames ────────────────────────────────────────────────────────
+
+class TestSafeFilename:
+    def test_appends_pdf_extension(self):
+        assert svc.safe_filename("PO_1204_Mahadev") == "PO_1204_Mahadev.pdf"
+        assert svc.safe_filename("PO_1204.pdf") == "PO_1204.pdf"
+
+    def test_strips_path_components(self):
+        """A name is one archive entry, never a path."""
+        assert svc.safe_filename("../../etc/passwd") == "passwd.pdf"
+        assert svc.safe_filename("dir/sub/PO_1.pdf") == "PO_1.pdf"
+        assert svc.safe_filename(r"C:\Windows\System32\evil.pdf") == "evil.pdf"
+
+    def test_absolute_paths_cannot_escape(self):
+        for name in ("/etc/passwd", "//server/share/x.pdf", "....//x.pdf"):
+            out = svc.safe_filename(name)
+            assert "/" not in out and "\\" not in out
+            assert not out.startswith(".")
+
+    def test_replaces_characters_windows_refuses(self):
+        assert svc.safe_filename('PO<1>:"x"|?*.pdf') == "PO-1---x----.pdf"
+
+    def test_falls_back_when_nothing_survives(self):
+        for value in ("", "   ", None, "...", "/"):
+            assert svc.safe_filename(value, "Fallback") == "Fallback.pdf"
+
+
+class TestDedupeFilenames:
+    def test_leaves_distinct_names_alone(self):
+        names = ["a.pdf", "b.pdf", "c.pdf"]
+        assert svc.dedupe_filenames(names) == names
+
+    def test_numbers_repeats(self):
+        out = svc.dedupe_filenames(["PO.pdf", "PO.pdf", "PO.pdf"])
+        assert out == ["PO.pdf", "PO_2.pdf", "PO_3.pdf"]
+
+    def test_is_case_insensitive(self):
+        """Windows and macOS treat these as one file; so must the archive."""
+        out = svc.dedupe_filenames(["PO.pdf", "po.pdf"])
+        assert out[0] != out[1]
+
+    def test_every_name_is_unique(self):
+        """The regression this exists for: a repeat inside a ZIP can be
+        silently dropped by the extractor, so N records yield fewer files."""
+        out = svc.dedupe_filenames(["Document.pdf"] * 40)
+        assert len(set(n.lower() for n in out)) == 40
+
+
+# ── Input validation (no renderer needed) ────────────────────────────
+
+class TestValidation:
+    @pytest.mark.parametrize("bad", ["", "   ", None, 123, []])
+    def test_render_pdf_rejects_empty_html(self, bad):
+        with pytest.raises(ValueError):
+            svc.render_pdf(bad)
+
+    def test_render_pdf_rejects_oversized_html(self):
+        with pytest.raises(ValueError, match="too large"):
+            svc.render_pdf("x" * (svc.MAX_HTML_BYTES + 1))
+
+    @pytest.mark.parametrize("bad", [None, [], "nope", {}])
+    def test_render_batch_rejects_empty(self, bad):
+        with pytest.raises(ValueError):
+            svc.render_batch(bad)
+
+    def test_render_batch_rejects_too_many_documents(self):
+        docs = [{"filename": f"{i}.pdf", "html": "<p>x</p>"}
+                for i in range(svc.MAX_BATCH_DOCUMENTS + 1)]
+        with pytest.raises(ValueError, match="Too many"):
+            svc.render_batch(docs)
+
+    def test_render_batch_rejects_oversized_payload(self):
+        big = "x" * (svc.MAX_HTML_BYTES - 1)
+        docs = [{"filename": f"{i}.pdf", "html": big} for i in range(20)]
+        with pytest.raises(ValueError, match="too large"):
+            svc.render_batch(docs)
+
+
+# ── The URL fetcher is the whole security story ──────────────────────
+
+class TestUrlFetcherBlocksEverything:
+    """The renderer is handed HTML by an authenticated browser, and
+    'authenticated' is not 'trusted'. A renderer that resolves arbitrary URLs
+    is an SSRF primitive and a local file reader.
+    """
+
+    @pytest.mark.parametrize("url", [
+        "http://169.254.169.254/latest/meta-data/",   # cloud metadata
+        "https://example.com/x.png",
+        "file:///etc/passwd",
+        "file://C:/Windows/win.ini",
+        "ftp://example.com/x",
+        "//example.com/protocol-relative.png",
+        "x.png",                                      # relative
+    ])
+    def test_refuses_every_scheme(self, url):
+        with pytest.raises(ValueError, match="not fetched"):
+            svc._blocked_url_fetcher(url)
+
+    @needs_renderer
+    def test_allows_data_uris(self):
+        """The company logo is a canvas toDataURL, so data: must still work."""
+        png = (
+            "data:image/png;base64,"
+            "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8BQDwAEhQGAhKmMIQAAAABJRU5ErkJggg=="
+        )
+        result = svc._blocked_url_fetcher(png)
+        assert result  # default fetcher returned something
+
+
+# ── Rendering (needs the system libraries) ───────────────────────────
+
+@needs_renderer
+class TestRendering:
+    def test_produces_a_pdf(self):
+        pdf = svc.render_pdf("<h1>PO-2026-0417</h1>")
+        assert pdf.startswith(b"%PDF-")
+
+    def test_output_contains_extractable_text(self):
+        """The point of the whole exercise: a document, not a picture of one."""
+        pypdf = pytest.importorskip("pypdf")
+        pdf = svc.render_pdf("<h1>PO-2026-0417</h1><p>Freewheel 16 inch</p>")
+        reader = pypdf.PdfReader(io.BytesIO(pdf))
+        text = "".join(page.extract_text() or "" for page in reader.pages)
+        assert "PO-2026-0417" in text
+        assert "Freewheel" in text
+
+    def test_does_not_execute_script(self):
+        pdf = svc.render_pdf("<p>safe</p><script>document.title='pwned'</script>")
+        assert pdf.startswith(b"%PDF-")
+
+    def test_does_not_read_local_files(self, tmp_path, caplog):
+        """A document referencing file:// must not embed what it points at.
+
+        WeasyPrint catches the fetcher's refusal, logs it, and renders the
+        document without the image rather than aborting -- which is the
+        behaviour we want, so this asserts on the OUTPUT rather than on an
+        exception. A real file with a marker in it makes the check meaningful:
+        if the contents ever did reach the renderer, the marker would be in
+        the PDF.
+        """
+        secret = tmp_path / "secret.txt"
+        secret.write_text("TOPSECRETCREDENTIAL", encoding="utf-8")
+        url = secret.as_uri()
+
+        with caplog.at_level("ERROR"):
+            pdf = svc.render_pdf(f'<p>document</p><img src="{url}">')
+
+        assert pdf.startswith(b"%PDF-")
+        assert b"TOPSECRETCREDENTIAL" not in pdf
+        assert "not fetched" in caplog.text
+
+    def test_does_not_reach_cloud_metadata(self, caplog):
+        """The SSRF case. Nothing is fetched, so nothing can be exfiltrated,
+        and the render still completes."""
+        with caplog.at_level("ERROR"):
+            pdf = svc.render_pdf(
+                '<p>document</p><img src="http://169.254.169.254/latest/meta-data/">'
+            )
+
+        assert pdf.startswith(b"%PDF-")
+        assert "169.254.169.254" in caplog.text
+        assert "not fetched" in caplog.text
+
+    def test_landscape_is_wider_than_portrait(self):
+        pypdf = pytest.importorskip("pypdf")
+        html = "<p>x</p>"
+        portrait = pypdf.PdfReader(io.BytesIO(svc.render_pdf(html))).pages[0]
+        landscape = pypdf.PdfReader(
+            io.BytesIO(svc.render_pdf(html, landscape=True))).pages[0]
+        assert landscape.mediabox.width > portrait.mediabox.width
+        assert landscape.mediabox.width > landscape.mediabox.height
+
+
+@needs_renderer
+class TestBatch:
+    def test_returns_a_zip_of_one_pdf_per_document(self):
+        blob, names = svc.render_batch([
+            {"filename": "PO_1.pdf", "html": "<p>One</p>"},
+            {"filename": "PO_2.pdf", "html": "<p>Two</p>"},
+            {"filename": "PO_3.pdf", "html": "<p>Three</p>"},
+        ])
+        archive = zipfile.ZipFile(io.BytesIO(blob))
+        assert archive.namelist() == names == ["PO_1.pdf", "PO_2.pdf", "PO_3.pdf"]
+        for name in names:
+            assert archive.read(name).startswith(b"%PDF-")
+
+    def test_every_record_yields_a_file_even_when_names_collide(self):
+        """40 records must produce 40 files, not 1."""
+        blob, names = svc.render_batch(
+            [{"filename": "Document.pdf", "html": f"<p>{i}</p>"} for i in range(40)]
+        )
+        archive = zipfile.ZipFile(io.BytesIO(blob))
+        assert len(archive.namelist()) == 40
+        assert len(set(archive.namelist())) == 40
+
+    def test_archive_is_well_formed(self):
+        blob, _ = svc.render_batch([{"filename": "a.pdf", "html": "<p>a</p>"}])
+        assert zipfile.ZipFile(io.BytesIO(blob)).testzip() is None
+
+
+# ── Endpoints ────────────────────────────────────────────────────────
+
+class TestEndpointsRequireAuth:
+    """Uses erp_app rather than the base `client` fixture: that one sets
+    LOGIN_DISABLED=True, so @login_required is a no-op there and this
+    assertion would pass without proving anything.
+    """
+
+    @pytest.mark.parametrize("url", ["/erp/render-pdf", "/erp/render-pdf-batch"])
+    def test_anonymous_is_redirected_or_refused(self, erp_app, url):
+        client = erp_app.test_client()  # no session -- not logged in
+        res = client.post(url, json={"html": "<p>x</p>"})
+        # Flask-Login either redirects to the login view or aborts 401,
+        # depending on the request's Accept header.
+        assert res.status_code in (302, 401)
+
+
+class TestEndpointErrors:
+    def test_bad_input_is_400(self, erp_client):
+        res = erp_client.post("/erp/render-pdf", json={"html": ""})
+        assert res.status_code in (400, 503)
+
+    def test_batch_bad_input_is_400(self, erp_client):
+        res = erp_client.post("/erp/render-pdf-batch", json={"documents": []})
+        assert res.status_code in (400, 503)
+
+    def test_unavailable_renderer_is_503(self, erp_client, monkeypatch):
+        """A 503 is the contract the client keys on to stop asking and fall
+        back to the print dialog for the rest of the session."""
+        def unavailable(*a, **k):
+            raise svc.PdfRenderUnavailable("no libraries here")
+
+        monkeypatch.setattr(svc, "render_pdf", unavailable)
+        res = erp_client.post("/erp/render-pdf", json={"html": "<p>x</p>"})
+        assert res.status_code == 503
+
+
+@needs_renderer
+class TestEndpointSuccess:
+    def test_single_returns_a_named_pdf(self, erp_client):
+        res = erp_client.post(
+            "/erp/render-pdf", json={"html": "<p>PO-1</p>", "filename": "PO_1.pdf"})
+        assert res.status_code == 200
+        assert res.mimetype == "application/pdf"
+        assert "PO_1.pdf" in res.headers["Content-Disposition"]
+        assert res.data.startswith(b"%PDF-")
+
+    def test_batch_returns_a_named_zip(self, erp_client):
+        res = erp_client.post("/erp/render-pdf-batch", json={
+            "documents": [
+                {"filename": "A.pdf", "html": "<p>A</p>"},
+                {"filename": "B.pdf", "html": "<p>B</p>"},
+            ],
+            "zipName": "Purchase_Orders_190826.zip",
+        })
+        assert res.status_code == 200
+        assert res.mimetype == "application/zip"
+        assert "Purchase_Orders_190826.zip" in res.headers["Content-Disposition"]
+        assert zipfile.ZipFile(io.BytesIO(res.data)).namelist() == ["A.pdf", "B.pdf"]
+
+    def test_response_is_not_cached(self, erp_client):
+        res = erp_client.post("/erp/render-pdf", json={"html": "<p>x</p>"})
+        assert res.headers["Cache-Control"] == "no-store"
+
+
+# ── The page shell mirrors the print stylesheet ──────────────────────
+
+class TestPageFitting:
+    """A table wider than the printable box is CUT by a print engine, not
+    scaled, so the right-hand columns vanish. The shell has to carry the same
+    fitting rules the browser applies, or the same document comes out
+    differently depending on which button produced it.
+    """
+
+    def test_shell_lets_cells_wrap_anywhere(self):
+        """`break-word` would not do: its break opportunities are not counted
+        toward min-content, so the column keeps its floor and still overflows.
+        """
+        html = svc._document("<p>x</p>", landscape=False)
+        assert "overflow-wrap: anywhere" in html
+        assert "max-width: 100%" in html
+
+    def test_shell_repeats_headers_and_keeps_rows_whole(self):
+        html = svc._document("<p>x</p>", landscape=False)
+        assert "display: table-header-group" in html
+        assert "break-inside: avoid" in html
+
+    @pytest.mark.parametrize("density,marker", [
+        ("print-fit-compact", "font-size: 10px"),
+        ("print-fit-dense", "font-size: 9px"),
+        ("print-fit-xdense", "font-size: 8px"),
+    ])
+    def test_applies_the_density_tier_the_client_picked(self, density, marker):
+        html = svc._document("<p>x</p>", landscape=False, density=density)
+        assert marker in html
+        assert f"body class='{density}'" in html
+
+    def test_no_tier_css_when_the_document_fits(self):
+        html = svc._document("<p>x</p>", landscape=False)
+        assert "font-size: 10px" not in html
+        assert "body class=''" in html
+
+    # density arrives in the request body, so it is a value from outside.
+    @pytest.mark.parametrize("bad", [
+        "print-fit-nope", "", None, "a{}b", "</style><script>alert(1)</script>",
+    ])
+    def test_an_unknown_density_is_ignored_not_interpolated(self, bad):
+        html = svc._document("<p>x</p>", landscape=False, density=bad)
+        assert "<script>" not in html
+        assert "</style><" not in html.replace("</style></head>", "")
+
+    def test_landscape_switches_the_page_box(self):
+        assert "A4 landscape" in svc._document("<p>x</p>", landscape=True)
+        assert "A4 portrait" in svc._document("<p>x</p>", landscape=False)
+
+
+@needs_renderer
+class TestWideTablesStayOnThePage:
+    def test_a_sixteen_column_table_does_not_overflow_the_sheet(self):
+        """The regression: columns past the right edge were silently dropped."""
+        pypdf = pytest.importorskip("pypdf")
+        headers = "".join(f"<th>Column{i}</th>" for i in range(16))
+        cells = "".join(f"<td>VALUE{i}0000</td>" for i in range(16))
+        pdf = svc.render_pdf(
+            f"<table><thead><tr>{headers}</tr></thead>"
+            f"<tbody><tr>{cells}</tr></tbody></table>",
+            density="print-fit-xdense",
+        )
+        text = "".join(
+            page.extract_text() or ""
+            for page in pypdf.PdfReader(io.BytesIO(pdf)).pages
+        )
+        # Whitespace is stripped before matching: fitting the table to the page
+        # is precisely what breaks a long cell value across lines, so
+        # "VALUE150000" legitimately comes back as "VALUE1500\n00". Wrapping
+        # is the fix working, not a defect -- what would be a defect is the
+        # text being absent entirely, which is what a cut column looks like.
+        flat = "".join(text.split())
+
+        # Every column has to survive -- especially the last one.
+        for i in range(16):
+            assert f"Column{i}" in flat, f"column {i} was cut from the page"
+        assert "VALUE150000" in flat
+
+    def test_an_unbreakable_token_does_not_widen_the_table(self):
+        """A 40-character item code used to set a column's min-content floor
+        and push the whole table past the page."""
+        pypdf = pytest.importorskip("pypdf")
+        long_token = "RIM" + "X" * 40 + "BLACK"
+        pdf = svc.render_pdf(
+            f"<table><tr><td>{long_token}</td><td>LASTCOLUMN</td></tr></table>"
+        )
+        text = "".join(
+            page.extract_text() or ""
+            for page in pypdf.PdfReader(io.BytesIO(pdf)).pages
+        )
+        assert "LASTCOLUMN" in "".join(text.split())

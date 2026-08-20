@@ -14,7 +14,19 @@ def _read_text(path: Path):
 
 
 # directories to ignore while scanning
-SKIP_DIRS = ("venv", "venv2", "site-packages", "backups", "logs")
+SKIP_DIRS = (
+    "venv",
+    "venv2",
+    "site-packages",
+    "backups",
+    "logs",
+    # Third-party JS. Without this the audit reads dependency source as if
+    # it were ours: @puppeteer/browsers embeds a chromium.googlesource.com
+    # URL, which was reported as "a frontend API endpoint with no matching
+    # backend route" and failed the whole suite on any machine that had run
+    # npm install.
+    "node_modules",
+)
 
 
 def gather_backend_routes(root: Path):

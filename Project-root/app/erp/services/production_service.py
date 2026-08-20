@@ -73,6 +73,88 @@ _COLOR_GROUP_COMMON = config_maps.COMPONENT_COLOR_GROUP_COMMON
 _COLOR_COMBO_DELIMITER = config_maps.COLOR_COMBO_DELIMITER
 
 
+def _coerce_row_id(row_idx, message: str) -> int:
+    """The `int(row_idx)` + try/except that each by-id entry point here
+    opened with, four times over, differing only in wording. (The bulk
+    delete keeps its own loop: an unparseable id there is one unselectable
+    row to skip, not a reason to fail the whole request.)"""
+    try:
+        return int(row_idx)
+    except (TypeError, ValueError):
+        raise ValueError(message)
+
+
+def _coerce_json_list(value, message: str) -> list:
+    """A client-submitted JSON array that may arrive already decoded (JSON
+    request body) or still as a string (form post) -- both shapes reach
+    every one of these endpoints. Anything that is neither is treated as
+    absent rather than rejected, which is what each of the three
+    hand-rolled copies of this did.
+    """
+    if isinstance(value, str):
+        try:
+            value = json.loads(value) if value else []
+        except ValueError:
+            raise ValueError(message)
+    return value if isinstance(value, list) else []
+
+
+def _matches_expected(product_id: str, qty: float, expected_product_id, expected_qty) -> bool:
+    """The optimistic-concurrency comparison shared by delete_production,
+    delete_production_bulk and save_production_sheet. Both expectations
+    must be supplied to be checked at all -- a caller that sends neither
+    is opting out, which is why these params are optional.
+    """
+    if expected_product_id is None or expected_qty is None:
+        return True
+    return (
+        product_id.strip().lower() == str(expected_product_id or "").strip().lower()
+        and abs(qty - float(expected_qty)) <= 0.0001
+    )
+
+
+def _is_color_scoped(color_group: str) -> bool:
+    """A component/pool bucket is scoped to one color only when it names a
+    real color group -- blank and the COMMON sentinel both mean "applies to
+    the whole lot", and must read against the pool's total rather than any
+    one color's sub-total."""
+    return bool(color_group) and color_group.upper() != _COLOR_GROUP_COMMON
+
+
+def _pool_available_qty(pool_entry, color_group: str) -> float:
+    """One bucket's available quantity, read from the color sub-total or
+    the total depending on whether the caller is asking about a
+    color-scoped need. Shared by _validate_pool_availability and
+    get_process_wip_data, which had drifted apart only in variable names.
+    """
+    if not pool_entry:
+        return 0.0
+    if _is_color_scoped(color_group):
+        return pool_entry["byColor"].get(color_group.lower(), 0.0)
+    return pool_entry["total"]
+
+
+def _write_component_json(cur, row_id, consumed, custom) -> None:
+    """Writes back whichever of a lot's two component arrays actually
+    changed, leaving the other untouched via COALESCE. Shared by the two
+    bulk rewriters (the rename cascade and the Items Master resync), which
+    carried identical copies of this statement.
+    """
+    cur.execute(
+        """
+        UPDATE erp.production
+        SET components_consumed = COALESCE(%s, components_consumed),
+            custom_components = COALESCE(%s, custom_components)
+        WHERE id = %s
+        """,
+        (
+            json.dumps(consumed) if consumed is not None else None,
+            json.dumps(custom) if custom is not None else None,
+            row_id,
+        ),
+    )
+
+
 def _validate_number(value, min_value: float, max_value: float) -> float:
     try:
         n = float(value)
@@ -160,8 +242,7 @@ def _generate_lot_number(cur, lot_prefix: str) -> str:
 
 
 def _poolneed_key(item_name_lower: str, color_group: str) -> str:
-    is_color_scoped = bool(color_group) and color_group.upper() != _COLOR_GROUP_COMMON
-    return f"{item_name_lower}||{color_group.lower() if is_color_scoped else ''}"
+    return f"{item_name_lower}||{color_group.lower() if _is_color_scoped(color_group) else ''}"
 
 
 def _with_master_narration(cur, components: list) -> list:
@@ -261,9 +342,8 @@ def _build_pool_needed_map(components: list) -> dict:
         if not item_name:
             continue
         color_group = str(c.get("colorGroup") or "").strip()
-        item_name_lower = item_name.lower()
-        is_color_scoped = bool(color_group) and color_group.upper() != _COLOR_GROUP_COMMON
-        key = _poolneed_key(item_name_lower, color_group)
+        is_color_scoped = _is_color_scoped(color_group)
+        key = _poolneed_key(item_name.lower(), color_group)
         entry = pool_needed.setdefault(
             key,
             {"itemName": item_name, "colorGroup": color_group if is_color_scoped else "", "isColorScoped": is_color_scoped, "qty": 0.0},
@@ -276,13 +356,9 @@ def _validate_pool_availability(cur, pool_needed: dict, already_consumed: dict =
     pool_available_map = warehouse_service._get_pool_available_qty_map(cur)
     already_consumed = already_consumed or {}
     for key, need in pool_needed.items():
-        entry = pool_available_map.get(need["itemName"].lower())
-        if not entry:
-            current_available_qty = 0.0
-        elif need["isColorScoped"]:
-            current_available_qty = entry["byColor"].get(need["colorGroup"].lower(), 0.0)
-        else:
-            current_available_qty = entry["total"]
+        current_available_qty = _pool_available_qty(
+            pool_available_map.get(need["itemName"].lower()), need["colorGroup"] if need["isColorScoped"] else ""
+        )
         available_for_this_lot = current_available_qty + already_consumed.get(key, 0)
         if need["qty"] > available_for_this_lot + 0.0001:
             label = f'{need["itemName"]}" in color "{need["colorGroup"]}' if need["isColorScoped"] else need["itemName"]
@@ -326,19 +402,7 @@ def backfill_production_consumed_item_refs(cur, old_name: str, old_size: str, ne
         rewritten_custom = _repoint(row["custom_components"] or [], match_source_type=False)
         if rewritten_consumed is None and rewritten_custom is None:
             continue
-        cur.execute(
-            """
-            UPDATE erp.production
-            SET components_consumed = COALESCE(%s, components_consumed),
-                custom_components = COALESCE(%s, custom_components)
-            WHERE id = %s
-            """,
-            (
-                json.dumps(rewritten_consumed) if rewritten_consumed is not None else None,
-                json.dumps(rewritten_custom) if rewritten_custom is not None else None,
-                row["id"],
-            ),
-        )
+        _write_component_json(cur, row["id"], rewritten_consumed, rewritten_custom)
 
 
 _PRODUCTION_SELECT_COLS = """
@@ -406,15 +470,9 @@ def get_process_wip_data(process_id):
     for c in components:
         if c["sourceType"] != "POOL":
             continue
-        entry = pool_qty_map.get(str(c["itemName"] or "").strip().lower())
-        color_group = str(c.get("colorGroup") or "").strip()
-        is_color_scoped = bool(color_group) and color_group.upper() != _COLOR_GROUP_COMMON
-        if not entry:
-            available_qty = 0.0
-        elif is_color_scoped:
-            available_qty = entry["byColor"].get(color_group.lower(), 0.0)
-        else:
-            available_qty = entry["total"]
+        available_qty = _pool_available_qty(
+            pool_qty_map.get(str(c["itemName"] or "").strip().lower()), str(c.get("colorGroup") or "").strip()
+        )
         records.append({"outputItemName": c["itemName"], "availableQty": available_qty})
 
     return build_response(True, records)
@@ -454,18 +512,19 @@ def save_production(conn, cur, form_data):
     color_links = process_service._get_all_process_color_links(cur)
     color_master_names = process_service._get_color_master_names(cur)
     color_overrides = process_service._get_all_process_color_overrides(cur).get(process_id.lower())
+    # Logged colors are passed in for the same reason the checklist the
+    # operator filled in includes them (getProcessColorGroups ->
+    # _compute_known_colors_for_process): without them a process whose
+    # color mode comes entirely from its own Production history validates
+    # as non-color here, the else branch below reads the plain `qty` the
+    # client already deleted, and the lot lands with qty 0. See
+    # _compute_color_groups_with_overrides_for_process's own docstring.
+    logged_colors = process_service._get_production_logged_colors_by_process(cur, process_id).get(process_id.lower(), [])
     available_color_groups = process_service._compute_color_groups_with_overrides_for_process(
-        process_id, color_components, pool_rows, color_links, color_master_names, color_overrides
+        process_id, color_components, pool_rows, color_links, color_master_names, color_overrides, logged_colors
     )
 
-    raw_breakdown = form_data.get("colorBreakdown")
-    if isinstance(raw_breakdown, str):
-        try:
-            raw_breakdown = json.loads(raw_breakdown) if raw_breakdown else []
-        except ValueError:
-            raise ValueError("Invalid color breakdown data format.")
-    if not isinstance(raw_breakdown, list):
-        raw_breakdown = []
+    raw_breakdown = _coerce_json_list(form_data.get("colorBreakdown"), "Invalid color breakdown data format.")
 
     has_custom_breakdown = any((c or {}).get("isCustom") for c in raw_breakdown)
 
@@ -626,14 +685,7 @@ def save_production(conn, cur, form_data):
         # adjust_warehouse_pool_manually.
         qty = _validate_number(form_data.get("qty"), -10000000, 10000000)
 
-    raw_components = form_data.get("componentsConsumed")
-    if isinstance(raw_components, str):
-        try:
-            raw_components = json.loads(raw_components) if raw_components else []
-        except ValueError:
-            raise ValueError("Invalid components consumed data format.")
-    if not isinstance(raw_components, list):
-        raw_components = []
+    raw_components = _coerce_json_list(form_data.get("componentsConsumed"), "Invalid components consumed data format.")
 
     clean_components = []
     for c in raw_components:
@@ -711,10 +763,7 @@ def save_production(conn, cur, form_data):
 
     existing = None
     if is_edit:
-        try:
-            target_id = int(row_idx)
-        except (TypeError, ValueError):
-            raise ValueError("Invalid production record selected for edit.")
+        target_id = _coerce_row_id(row_idx, "Invalid production record selected for edit.")
         cur.execute(
             "SELECT id, process_id, lot_number, status, components_consumed FROM erp.production WHERE id = %s AND deleted_at IS NULL",
             (target_id,),
@@ -838,10 +887,7 @@ def save_production(conn, cur, form_data):
 @rpc_method("deleteProduction", mutation=True)
 @database.transactional
 def delete_production(conn, cur, row_idx, expected_product_id=None, expected_qty=None):
-    try:
-        target_id = int(row_idx)
-    except (TypeError, ValueError):
-        raise ValueError("Invalid production record selected for deletion.")
+    target_id = _coerce_row_id(row_idx, "Invalid production record selected for deletion.")
 
     cur.execute(
         "SELECT product_id, qty, output_item_name, color_breakdown, lot_number FROM erp.production WHERE id = %s AND deleted_at IS NULL",
@@ -854,9 +900,8 @@ def delete_production(conn, cur, row_idx, expected_product_id=None, expected_qty
     product_id = str(row["product_id"] or "").strip()
     qty = float(row["qty"] or 0)
 
-    if expected_product_id is not None and expected_qty is not None:
-        if product_id.lower() != str(expected_product_id or "").strip().lower() or abs(qty - float(expected_qty)) > 0.0001:
-            raise ValueError("Data mismatch: The record has been modified or shifted. Please refresh.")
+    if not _matches_expected(product_id, qty, expected_product_id, expected_qty):
+        raise ValueError("Data mismatch: The record has been modified or shifted. Please refresh.")
 
     pool_credit_warning = None
     if not product_id:
@@ -912,14 +957,10 @@ def delete_production_bulk(conn, cur, row_idxs, expected_rows=None):
         product_id = str(row["product_id"] or "").strip()
         qty = float(row["qty"] or 0)
 
-        expected = expected_by_id.get(target_id)
-        if expected and expected.get("expectedProductId") is not None and expected.get("expectedQty") is not None:
-            if (
-                product_id.lower() != str(expected.get("expectedProductId") or "").strip().lower()
-                or abs(qty - float(expected.get("expectedQty"))) > 0.0001
-            ):
-                skipped_mismatch += 1
-                continue
+        expected = expected_by_id.get(target_id) or {}
+        if not _matches_expected(product_id, qty, expected.get("expectedProductId"), expected.get("expectedQty")):
+            skipped_mismatch += 1
+            continue
 
         if not product_id:
             warning = warehouse_service._check_pool_credit_removal_warning(cur, row["output_item_name"], row["color_breakdown"], qty)
@@ -953,10 +994,7 @@ def delete_production_bulk(conn, cur, row_idxs, expected_rows=None):
 @rpc_method("updateProductionStatus", mutation=True)
 @database.transactional
 def update_production_status(conn, cur, row_idx, expected_qty, new_status):
-    try:
-        target_id = int(row_idx)
-    except (TypeError, ValueError):
-        raise ValueError("Invalid production record selected.")
+    target_id = _coerce_row_id(row_idx, "Invalid production record selected.")
 
     status = str(new_status or "").strip()
     if status not in _PRODUCTION_STATUS_OPTIONS:
@@ -992,10 +1030,7 @@ def update_production_status(conn, cur, row_idx, expected_qty, new_status):
 @rpc_method("saveProductionSheet", mutation=True)
 @database.transactional
 def save_production_sheet(conn, cur, row_idx, expected_product_id, expected_qty, custom_components, sheet_remarks):
-    try:
-        target_id = int(row_idx)
-    except (TypeError, ValueError):
-        raise ValueError("Invalid production record selected.")
+    target_id = _coerce_row_id(row_idx, "Invalid production record selected.")
 
     cur.execute("SELECT product_id, qty, lot_number FROM erp.production WHERE id = %s AND deleted_at IS NULL", (target_id,))
     row = cur.fetchone()
@@ -1004,19 +1039,10 @@ def save_production_sheet(conn, cur, row_idx, expected_product_id, expected_qty,
 
     product_id = str(row["product_id"] or "").strip()
     qty = float(row["qty"] or 0)
-    if expected_product_id is not None and expected_qty is not None:
-        if product_id.lower() != str(expected_product_id or "").strip().lower() or abs(qty - float(expected_qty)) > 0.0001:
-            raise ValueError("Data mismatch: The record has been modified or shifted. Please refresh.")
+    if not _matches_expected(product_id, qty, expected_product_id, expected_qty):
+        raise ValueError("Data mismatch: The record has been modified or shifted. Please refresh.")
 
-    if isinstance(custom_components, str):
-        try:
-            components = json.loads(custom_components) if custom_components else []
-        except ValueError:
-            raise ValueError("Invalid component data format.")
-    else:
-        components = custom_components or []
-    if not isinstance(components, list):
-        raise ValueError("Invalid component data format.")
+    components = _coerce_json_list(custom_components, "Invalid component data format.")
 
     clean_components = []
     for comp in components:
@@ -1104,10 +1130,13 @@ def refresh_production_components_from_items_master(conn, cur):
             True, {"lotsScanned": 0, "lotsUpdated": 0, "fieldsUpdated": 0, "details": []}, "Items Master is empty -- nothing to sync."
         )
 
-    def _resync(components: list, counter: list, has_unit: bool) -> list | None:
+    def _resync(components: list, has_unit: bool) -> tuple:
+        """Returns (rewritten components, or None when nothing changed;
+        number of individual fields corrected) -- the count used to be
+        accumulated through a one-element list passed in as a mutable box."""
         if not components:
-            return None
-        changed = False
+            return None, 0
+        fields_changed = 0
         for comp in components:
             name = str(comp.get("itemName") or "").strip()
             if not name:
@@ -1118,30 +1147,28 @@ def refresh_production_components_from_items_master(conn, cur):
 
             if master["canonicalName"] and comp["itemName"] != master["canonicalName"]:
                 comp["itemName"] = master["canonicalName"]
-                changed = True
-                counter[0] += 1
+                fields_changed += 1
             if master["narration"] and str(comp.get("narration") or "").strip() != master["narration"]:
                 comp["narration"] = master["narration"]
-                changed = True
-                counter[0] += 1
+                fields_changed += 1
             if has_unit and "unit" in comp and master["baseUnit"] and str(comp.get("unit") or "").strip() != master["baseUnit"]:
                 comp["unit"] = master["baseUnit"]
-                changed = True
-                counter[0] += 1
-        return components if changed else None
+                fields_changed += 1
+        return (components if fields_changed else None), fields_changed
 
     cur.execute(
         "SELECT id, lot_number, components_consumed, custom_components FROM erp.production WHERE deleted_at IS NULL"
     )
     rows = cur.fetchall()
 
-    counter = [0]
+    fields_updated = 0
     details = []
     lots_updated = 0
 
     for row in rows:
-        rewritten_consumed = _resync(row["components_consumed"] or [], counter, has_unit=True)
-        rewritten_custom = _resync(row["custom_components"] or [], counter, has_unit=False)
+        rewritten_consumed, consumed_fields = _resync(row["components_consumed"] or [], has_unit=True)
+        rewritten_custom, custom_fields = _resync(row["custom_components"] or [], has_unit=False)
+        fields_updated += consumed_fields + custom_fields
         if rewritten_consumed is None and rewritten_custom is None:
             continue
 
@@ -1149,27 +1176,15 @@ def refresh_production_components_from_items_master(conn, cur):
         lot_label = str(row["lot_number"] or "").strip() or f"row {row['id']}"
         details.append(f"{lot_label}: fields refreshed")
 
-        cur.execute(
-            """
-            UPDATE erp.production
-            SET components_consumed = COALESCE(%s, components_consumed),
-                custom_components = COALESCE(%s, custom_components)
-            WHERE id = %s
-            """,
-            (
-                json.dumps(rewritten_consumed) if rewritten_consumed is not None else None,
-                json.dumps(rewritten_custom) if rewritten_custom is not None else None,
-                row["id"],
-            ),
-        )
+        _write_component_json(cur, row["id"], rewritten_consumed, rewritten_custom)
 
-    if counter[0] == 0:
+    if fields_updated == 0:
         message = f"All {len(rows)} production lot(s) already match Items Master -- nothing to change."
     else:
-        message = f"Refreshed {counter[0]} field(s) (narration/unit/name) across {lots_updated} of {len(rows)} production lot(s)."
+        message = f"Refreshed {fields_updated} field(s) (narration/unit/name) across {lots_updated} of {len(rows)} production lot(s)."
 
     return build_response(
         True,
-        {"lotsScanned": len(rows), "lotsUpdated": lots_updated, "fieldsUpdated": counter[0], "details": details},
+        {"lotsScanned": len(rows), "lotsUpdated": lots_updated, "fieldsUpdated": fields_updated, "details": details},
         message,
     )

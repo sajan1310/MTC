@@ -824,7 +824,9 @@ def save_warehouse_pool_opening(conn, cur, form_data):
         pool_rows_for_axes = process_service._get_all_warehouse_pool_rows_for_color_axes(cur)
         color_links = process_service._get_all_process_color_links(cur)
         overrides = process_service._get_all_process_color_overrides(cur).get(process_id.lower())
-        logged_colors = list(process_service._get_production_logged_colors_by_process(cur).get(process_id.lower(), []))
+        logged_colors = list(
+            process_service._get_production_logged_colors_by_process(cur, process_id).get(process_id.lower(), [])
+        )
         known = process_service._compute_known_colors_for_process(
             process_id, components, pool_rows_for_axes, color_links, logged_colors, overrides
         )

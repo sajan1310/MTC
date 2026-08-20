@@ -17,14 +17,6 @@
 const globals = require('globals');
 
 module.exports = [
-  // Global ignores. A config object carrying ONLY `ignores` applies repo-wide,
-  // unlike an `ignores` inside a `files` block (which merely excludes the file
-  // from *that* block and still leaves ESLint parsing it). vendor/** holds
-  // byte-identical upstream bundles -- minified third-party code, not ours to
-  // lint or fix. See static/erp/vendor/README.md.
-  {
-    ignores: ['static/erp/vendor/**'],
-  },
   {
     files: ['static/erp/**/*.js'],
     ignores: ['static/erp/tests/**'],
@@ -48,7 +40,6 @@ module.exports = [
         // PERFORMANCE_AUDIT.md PERF-001's "nothing is lazy-loaded" framing:
         // the heaviest third-party libs already are: this is the exception.
         Chart: 'readonly',
-        html2pdf: 'readonly',
         XLSX: 'readonly',
         // This app's own cross-file globals (see header comment)
         $: 'writable',

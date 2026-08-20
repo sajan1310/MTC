@@ -505,29 +505,28 @@ App.Dispatch = {
     App.Print.triggerBulk(bills, b => this.buildDispatchPrintPageHtml(b), 'Delivery_Challans_Selected');
   },
 
+  // "Download PDFs" -- one separately-named challan per selected dispatch.
+  // This is the workflow the feature exists for: each challan goes to a
+  // different client, so one merged document is the wrong shape.
   async bulkDownloadPDF() {
     const selected = App.State.selectedDispatch;
     if (!selected.length) {
-      App.Utils.showToast('No dispatch bills selected.', true);
+      App.Utils.showToast('No dispatches selected.', true);
       return;
     }
 
     const bills = App.State.globalDispatchBills.filter(b => App.Selection.isSelected(selected, b.dispatchNumber));
     if (!bills.length) return;
 
-    const destination = await App.Print.chooseBulkDestination(bills.length);
-    if (destination.mode === 'cancelled') return;
-
-    const result = await App.Print.deliverSeparatePDFs(
-      bills,
-      b => this.buildDispatchPrintPageHtml(b),
-      b => `Delivery_Challan_${App.Print.sanitizeFilename(String(b.dispatchNumber || 'Challan'))}_${App.Print.sanitizeFilename(String(b.clientName || ''), false)}.pdf`,
-      { progressButtonId: 'btnBulkDownloadPdfDispatch', destination,
-        zipName: App.Print.bulkZipName('Delivery_Challans') }
+    await App.Print.downloadMany(
+      bills.map(b => ({
+        filename: App.Print.docFilename({ type: 'DC', key: b.dispatchNumber, party: b.clientName }),
+        html: this.buildDispatchPrintPageHtml(b)
+      })),
+      App.Print.bulkZipName('DC'),
+      { buttonId: 'btnBulkDownloadPdfDispatch' }
     );
-    App.Print.reportBulkResult(result, bills.length, 'delivery challan PDF');
   },
-
   // Builds a fully self-contained "Delivery Challan" page (mirrors
   // #print-dispatch-container's markup/styling) for use in bulk printing.
   // One table row per line item.

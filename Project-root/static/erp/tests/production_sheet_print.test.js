@@ -28,6 +28,7 @@
 
 const fs = require('fs');
 const path = require('path');
+const vm = require('vm');
 
 const HTML_ESCAPE_MAP = { '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' };
 
@@ -44,6 +45,11 @@ function buildPrintContainerDom() {
     <div id="prodSheetProductName"></div>
     <div id="prodSheetLotQty"></div>
     <textarea id="productionSheetRemarks"></textarea>
+
+    <!-- Print options panel. _printOptions() reads the orientation checkbox
+         and the per-group column checkboxes from here. -->
+    <input type="checkbox" id="prodSheetOrientLandscape">
+    <div id="productionSheetPrintColumns"></div>
 
     <div id="productionSheetCommonBody"></div>
     <div id="productionSheetMatrixTables"><div class="prod-sheet-matrix-tbody"></div></div>
@@ -132,7 +138,14 @@ describe('App.Production.printProductionSheet', () => {
     loadProductionAsGlobal();
 
     triggerSpy = jest.fn();
-    App.Print = { trigger: triggerSpy };
+    // The real App.Print, with only trigger() spied. docName is the shared
+    // naming convention; stubbing it would let the test agree with a
+    // convention the app no longer uses.
+    const printSrc = fs.readFileSync(path.join(__dirname, '..', 'print.js'), 'utf8');
+    const printSandbox = { App: {}, document, window, console };
+    vm.createContext(printSandbox);
+    vm.runInContext(printSrc, printSandbox);
+    App.Print = Object.assign(printSandbox.App.Print, { trigger: triggerSpy });
   });
 
   test('disjoint colors (never used together on any row) split into separate tables', () => {
@@ -232,8 +245,46 @@ describe('App.Production.printProductionSheet', () => {
     expect(document.getElementById('print-prod-color').innerText).toBe('Red / Blue');
   });
 
-  test('triggers App.Print.trigger with a sanitized filename derived from the product id', () => {
+  // The title is the suggested "Save as PDF" filename now that window.print()
+  // is the only export path, so it carries the lot's own identity rather than
+  // the bare product id the old print-only title used.
+  test('names the job after the lot: date, size, model and process', () => {
+    App.State.currentProductionSheet = {
+      colors: [], lotColor: '', lotNumber: 'LOT-12',
+      date: '19/08/2026', size: '26 inch', model: 'Ranger', processName: 'Wheel Building'
+    };
     App.Production.printProductionSheet();
-    expect(triggerSpy).toHaveBeenCalledWith('print-production-sheet-container', 'Production_Sheet_PRC-1');
+
+    // CODE_KEY_PARTY -- the lot number identifies the sheet, so no date.
+    expect(triggerSpy).toHaveBeenCalledWith(
+      'print-production-sheet-container',
+      'PRD_LOT-12_Ranger',
+      { landscape: false }
+    );
+  });
+
+  // Without a lot number there is nothing unique to name the sheet after, so
+  // the date goes in rather than letting two sheets share a filename.
+  test('falls back to the product id and a date when no lot number is known', () => {
+    App.State.currentProductionSheet = null;
+    App.Production.printProductionSheet();
+
+    const [, title, opts] = triggerSpy.mock.calls[0];
+    expect(title).toMatch(/^PRD_PRC1_\d{6}$/);
+    expect(opts).toEqual({ landscape: false });
+  });
+
+  // The Print options panel's Landscape checkbox used to reach only the PDF
+  // exporter, so ticking it and pressing Print produced a portrait page --
+  // the option looked ignored because on this path it was.
+  test('forwards the Landscape option to the print job', () => {
+    document.getElementById('prodSheetOrientLandscape').checked = true;
+    App.Production.printProductionSheet();
+
+    expect(triggerSpy).toHaveBeenCalledWith(
+      'print-production-sheet-container',
+      expect.any(String),
+      { landscape: true }
+    );
   });
 });

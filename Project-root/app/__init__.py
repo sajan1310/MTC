@@ -26,6 +26,7 @@ from __future__ import annotations
 
 import logging
 import os
+import shutil
 from logging.handlers import RotatingFileHandler
 from typing import Any
 
@@ -68,16 +69,63 @@ class _SafeRotatingFileHandler(RotatingFileHandler):
     another process -- OneDrive/Dropbox syncing the log, a lingering dev
     server from a previous run, another gunicorn/waitress worker -- has the
     file open. Left uncaught, that turns into an unlogged, unrecoverable
-    error on every subsequent emit() once the file is past maxBytes (it can
-    never shrink), flooding stderr with a traceback per log line. Skipping a
-    failed rotation and retrying next time is a better failure mode than that.
+    error on every subsequent emit() once the file is past maxBytes,
+    flooding stderr with a traceback per log line.
+
+    Simply skipping the failed rotation avoids that flood but silently
+    surrenders the size cap: nothing else ever shrinks this file, so
+    maxBytes/backupCount stop meaning anything and the log grows without
+    bound. That is not hypothetical -- this project lives inside a OneDrive
+    folder, which holds the log open to sync it, so the rename fails on
+    essentially every attempt. Observed in practice at 1.06 GB against a
+    configured 10 MB cap.
+
+    So a failed rename now falls back to copy-then-truncate: stream the
+    current contents into the .1 backup, then truncate the original IN
+    PLACE. Truncating never renames, never re-creates and never moves the
+    inode, so it succeeds against exactly the shared-read lock that defeats
+    os.rename, and any other process holding the file open (including our
+    own reopened stream) keeps writing to it afterwards. The cap is
+    enforced and the content is preserved.
+
+    Both paths are still wrapped: if even the fallback fails, skipping this
+    rollover and retrying on the next record remains better than raising
+    per log line.
     """
 
     def doRollover(self) -> None:
         try:
             super().doRollover()
+            return
         except OSError:
             pass
+
+        try:
+            # super() closes the stream before its first rename, but it can
+            # also fail before reaching that point -- close defensively so
+            # the copy below reads a fully flushed file either way.
+            if self.stream:
+                self.stream.close()
+                self.stream = None
+
+            if self.backupCount > 0:
+                dfn = self.rotation_filename(self.baseFilename + ".1")
+                with open(self.baseFilename, "rb") as src, open(dfn, "wb") as dst:
+                    shutil.copyfileobj(src, dst)
+
+            with open(self.baseFilename, "r+b") as f:
+                f.truncate(0)
+        except OSError:
+            pass
+        finally:
+            # FileHandler.emit reopens a None stream on its own, but doing it
+            # here keeps the handler in the same state a successful rollover
+            # would have left it in.
+            if not self.delay and self.stream is None:
+                try:
+                    self.stream = self._open()
+                except OSError:
+                    pass
 
 
 def validate_password(password: str) -> tuple[bool, str]:
@@ -207,17 +255,30 @@ def _init_logging(app: Flask) -> None:
 
     os.makedirs("logs", exist_ok=True)
 
-    file_on_app = any(
-        isinstance(h, RotatingFileHandler) and getattr(h, "baseFilename", "").endswith("logs/app.log")
-        for h in app.logger.handlers
-    )
-    file_on_root = any(
-        isinstance(h, RotatingFileHandler) and getattr(h, "baseFilename", "").endswith("logs/app.log")
-        for h in root_logger.handlers
-    )
+    # Compared as a resolved path, not with .endswith("logs/app.log"):
+    # logging absolutises baseFilename, so on Windows it reads
+    # ...\\Project-root\\logs\\app.log -- backslashes, which that suffix can
+    # never match. The guard was therefore always False and every
+    # create_app() added ANOTHER handler to the (process-global) root
+    # logger. One app per process hides it; a pytest session building ~150
+    # apps in one process writes every log line ~150 times, which is what
+    # turned this file into a multi-gigabyte one. normcase covers Windows
+    # being case-insensitive about paths.
+    log_path = os.path.normcase(os.path.abspath(os.path.join("logs", "app.log")))
+
+    def _writes_to_log_file(handler) -> bool:
+        base = getattr(handler, "baseFilename", None)
+        return (
+            isinstance(handler, RotatingFileHandler)
+            and base is not None
+            and os.path.normcase(os.path.abspath(base)) == log_path
+        )
+
+    file_on_app = any(_writes_to_log_file(h) for h in app.logger.handlers)
+    file_on_root = any(_writes_to_log_file(h) for h in root_logger.handlers)
 
     if not (file_on_app or file_on_root):
-        fh = _SafeRotatingFileHandler("logs/app.log", maxBytes=10_000_000, backupCount=10)
+        fh = _SafeRotatingFileHandler(log_path, maxBytes=10_000_000, backupCount=10)
         fh.setFormatter(formatter)
         fh.setLevel(logging.INFO)
         root_logger.addHandler(fh)
@@ -425,7 +486,8 @@ def create_app(config_name: str | None = None) -> Flask:
             # CDN hosts are the third-party libs static/erp/*.js loads
             # (jQuery, Bootstrap, Select2, Chart.js, SheetJS).
             #
-            # cdnjs.cloudflare.com was dropped when html2pdf.js moved on-origin
+            # cdnjs.cloudflare.com was dropped with html2pdf.js itself: PDF
+            # export is the browser's own print engine and loads no library
             # to static/erp/vendor/ -- it was that host's only use, and 'self'
             # now covers it. Do not re-add a CDN host without also adding an
             # SRI hash at the call site (see PDF-003).
@@ -537,11 +599,10 @@ def create_app(config_name: str | None = None) -> Flask:
     app.register_blueprint(erp_rpc_bp, url_prefix="/api/erp")
     limiter.exempt(erp_rpc_bp)
 
-    # Say once, at boot, whether this deployment can render PDFs server-side.
-    # Without it the only signal is a 503 the first time somebody exports, and
-    # the client falls back to rasterising without complaint -- so PDFs quietly
-    # revert to being unsearchable images and nobody finds out. The check is
-    # filesystem-only (see probe()); it never starts a browser and never raises.
+    # Say once, at boot, whether Download PDF can produce a file here. Without
+    # it the only signal is a 503 on somebody's first export, and the client
+    # falls back to the print dialog silently -- so bulk export as separate
+    # files is simply absent and nobody finds out why.
     if not app.config.get("TESTING"):
         try:
             from .erp.services.pdf_render_service import log_availability

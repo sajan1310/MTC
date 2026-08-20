@@ -336,6 +336,9 @@ App.Bill = {
     );
   },
 
+  // "Download PDFs" -- one separately-named PDF per selected goods receipt,
+  // delivered as a ZIP. Same records and the same builder as bulkPrint; only
+  // the delivery differs.
   async bulkDownloadPDF() {
     const selected = App.State.selectedBills;
     if (!selected.length) {
@@ -346,19 +349,15 @@ App.Bill = {
     const bills = App.State.globalBills.filter(bill => App.Selection.isSelected(selected, this.billKey(bill)));
     if (!bills.length) return;
 
-    const destination = await App.Print.chooseBulkDestination(bills.length);
-    if (destination.mode === 'cancelled') return;
-
-    const result = await App.Print.deliverSeparatePDFs(
-      bills,
-      bill => this.buildBillPrintPageHtml(bill),
-      bill => `Bill_${App.Print.sanitizeFilename(String(bill.billNumber || 'Bill'))}_${App.Print.sanitizeFilename(String(bill.vendor || ''), false)}.pdf`,
-      { progressButtonId: 'btnBulkDownloadPdfBills', destination,
-        zipName: App.Print.bulkZipName('Goods_Receipts') }
+    await App.Print.downloadMany(
+      bills.map(bill => ({
+        filename: App.Print.docFilename({ type: 'GRN', key: bill.billNumber, party: bill.vendor }),
+        html: this.buildBillPrintPageHtml(bill)
+      })),
+      App.Print.bulkZipName('GRN'),
+      { buttonId: 'btnBulkDownloadPdfBills' }
     );
-    App.Print.reportBulkResult(result, bills.length, 'goods receipt PDF');
   },
-
   // ── Print (dead code until App.Print exists) ────────────────────────
 
   // Populates #print-bill-container's fields from one Bill for the

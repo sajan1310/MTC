@@ -6,7 +6,7 @@
 // the print.html templates (App.Print.trigger's desktop implementation
 // isn't reused directly -- MApp.Print below is its own small port of the
 // same trigger(containerId, documentTitle) contract, since the desktop
-// App.Print also tracks a CONTAINER_IDS hideAll() list and a companyLogo
+// App.Print also tracks a companyLogo
 // injectLogo() step that source's own Mobile_Script.html MApp.Print
 // deliberately doesn't replicate -- ported faithfully to that narrower
 // scope, not upgraded to match desktop's).
@@ -895,7 +895,13 @@ MApp.PullToRefresh = {
 // ================================================================
 MApp.Print = {
   trigger(containerId, documentTitle) {
-    document.querySelectorAll('[id^="print-"]').forEach(el => {
+    // '.print-container' is the same hook desktop print.js and both
+    // stylesheets use. It replaces an '[id^="print-"]' prefix match, which
+    // was wrong in a way that only showed up on the PO: that prefix also
+    // matches #print-grand-total-container, a block NESTED inside the PO
+    // template, so printing a purchase order from the phone hid its own
+    // grand-total block. Only the 11 top-level containers carry the class.
+    document.querySelectorAll('.print-container').forEach(el => {
       el.classList.remove('active-print');
       el.style.display = 'none';
     });

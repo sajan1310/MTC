@@ -193,6 +193,7 @@ App.Vendor = {
     );
   },
 
+  // "Download PDFs" -- one separately-named ledger per selected vendor.
   async bulkDownloadPDF() {
     const selected = App.State.selectedVendors;
     if (!selected.length) {
@@ -203,25 +204,15 @@ App.Vendor = {
     const vendors = App.State.globalVendors.filter(v => App.Selection.isSelected(selected, v.name));
     if (!vendors.length) return;
 
-    // Before the ledger load below: the folder picker needs live user
-    // activation, which an await would spend.
-    const destination = await App.Print.chooseBulkDestination(vendors.length);
-    if (destination.mode === 'cancelled') return;
-
-    if (typeof App.Issue !== 'undefined' && !App.State.globalIssues.length) {
-      await App.Issue.loadData();
-    }
-
-    const result = await App.Print.deliverSeparatePDFs(
-      vendors,
-      vendor => this.buildVendorLedgerPrintPageHtml(vendor),
-      vendor => `Vendor_Ledger_${App.Print.sanitizeFilename(String(vendor.name || 'Vendor'), false)}.pdf`,
-      { progressButtonId: 'btnBulkDownloadPdfVendors', destination,
-        zipName: App.Print.bulkZipName('Vendor_Ledgers') }
+    await App.Print.downloadMany(
+      vendors.map(vendor => ({
+        filename: App.Print.docFilename({ type: 'VLG', party: vendor.name, date: true }),
+        html: this.buildVendorLedgerPrintPageHtml(vendor)
+      })),
+      App.Print.bulkZipName('VLG'),
+      { buttonId: 'btnBulkDownloadPdfVendors' }
     );
-    App.Print.reportBulkResult(result, vendors.length, 'vendor ledger PDF');
   },
-
   switchTab(tabId) {
     document.querySelectorAll('.vendor-tab-content').forEach(t => t.style.display = 'none');
     document.getElementById(tabId).style.display = 'block';

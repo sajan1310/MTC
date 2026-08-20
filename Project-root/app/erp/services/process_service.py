@@ -1883,38 +1883,73 @@ def _get_color_master_names(cur) -> list:
 
 
 def _compute_color_groups_with_overrides_for_process(
-    process_id: str, components: list, pool_rows: list, color_links: list, color_master_names: list = None, overrides: dict = None
+    process_id: str,
+    components: list,
+    pool_rows: list,
+    color_links: list,
+    color_master_names: list = None,
+    overrides: dict = None,
+    logged_colors: list = None,
 ) -> list:
     """The validation-time "available color groups" for a process --
     baseColors (_compute_color_groups_for_process) widened to the full
     Color Master once this process is ALREADY color-enabled via its own
-    recipe/pool detection, plus INCLUDE overrides, minus EXCLUDE
-    overrides. Used by save_production to check a submitted color against
-    "is this valid to type/pick", NOT by the checklist-display endpoints
-    (see _compute_known_colors_for_process for that, a differently-scoped
-    definition using logged colors instead of the whole Color Master).
+    recipe/pool detection, plus this process's own logged colors, plus
+    INCLUDE overrides, minus EXCLUDE overrides. Used by save_production
+    to check a submitted color against "is this valid to pick".
 
-    An INCLUDE override can turn on color mode for an otherwise-plain
-    process (baseColors empty) -- a deliberate escape hatch for "Add
-    Combination" to pre-seed a color no recipe/pool/Color Master signal
-    would ever produce on its own. EXCLUDE always wins, applied last,
-    after the Color Master union.
+    logged_colors is what keeps this in agreement with the checklist the
+    operator actually sees: get_process_color_groups builds that list
+    from _compute_known_colors_for_process, which unions this process's
+    own Production history. A process whose color mode comes ENTIRELY
+    from that history (every recipe row COMMON, no POOL colors, no
+    overrides -- so baseColors is empty) rendered a color checklist on
+    the client while this function returned [], and the two disagreeing
+    about whether the process has colors at all is not a cosmetic
+    mismatch: save_production reads the lot's quantity from
+    colorBreakdown in the color branch and from the plain `qty` field in
+    the other, and the client DELETES `qty` whenever it shows the
+    checklist. The lot was therefore written with qty 0, no color and no
+    colorBreakdown -- silently, since zero is a legal quantity here (a
+    correction/reversal lot). Unioning logged colors is what makes the
+    branch the server takes match the form the operator filled in.
+
+    Unioned unconditionally rather than only as a fallback when the list
+    would otherwise be empty: a process that IS recipe-color-enabled can
+    still have logged a color that no longer resolves from Color Master
+    (removed from the master since), which the checklist still offers and
+    this function would otherwise reject outright with 'Color "X" is not
+    a configured color sub-group for this process'.
+
+    An INCLUDE override can likewise turn on color mode for an
+    otherwise-plain process (baseColors empty) -- a deliberate escape
+    hatch for "Add Combination" to pre-seed a color no recipe/pool/Color
+    Master signal would ever produce on its own. EXCLUDE always wins,
+    applied last, after every union -- same order _compute_known_colors_
+    for_process applies it, so an excluded color is off both lists.
     """
     base_colors = _compute_color_groups_for_process(process_id, components, pool_rows, color_links)
     included_overrides = list((overrides or {}).get("included", {}).values())
-    if not base_colors and not included_overrides:
+    logged = [c for c in (logged_colors or []) if str(c or "").strip()]
+    if not base_colors and not included_overrides and not logged:
         return base_colors
 
     colors: dict = {}
     for c in base_colors:
         _add_unique_case_insensitive(colors, c)
     # Widen to the full Color Master ONLY once this process is ALREADY
-    # color-enabled -- "there's a color to show" and "this process is
-    # color-enabled" are different questions, and only the second one
-    # gates widening.
+    # color-enabled by its own recipe/pool detection -- "there's a color
+    # to show" and "this process is color-enabled" are different
+    # questions, and only the second one gates widening. Logged colors
+    # deliberately do NOT open this gate: a history-only process's
+    # checklist offers exactly its logged colors, so validating against
+    # exactly those keeps this list a superset of the checklist without
+    # making every color in the master silently valid there.
     if base_colors:
         for c in color_master_names if color_master_names is not None else []:
             _add_unique_case_insensitive(colors, c)
+    for c in logged:
+        _add_unique_case_insensitive(colors, c)
     for c in included_overrides:
         _add_unique_case_insensitive(colors, c)
 
@@ -1927,7 +1962,7 @@ def _compute_color_groups_with_overrides_for_process(
     return sorted(colors.values(), key=lambda x: x.lower())
 
 
-def _get_production_logged_colors_by_process(cur) -> dict:
+def _get_production_logged_colors_by_process(cur, process_id: str = None) -> dict:
     """processIdLower -> set of colors this process's own Production
     history has actually logged. Every logged status counts (not just
     Completed) -- even a Pending/Cancelled lot's color choice is real
@@ -1938,12 +1973,37 @@ def _get_production_logged_colors_by_process(cur) -> dict:
     _compute_color_axes_for_process), which reflects colors of UPSTREAM
     items this recipe CONSUMES -- this is about colors THIS process's own
     output has actually been logged under.
+
+    `process_id` narrows the scan to one process. Three of this
+    function's four callers want exactly one process and used to reach it
+    by scanning every lot in the table and then discarding all but one
+    key -- including save_production, which is on the busiest write path
+    there is. The cost is not the scan so much as psycopg2 inflating a
+    `color_breakdown` JSONB blob into Python objects for every lot ever
+    logged, so the filter has to run in SQL to be worth anything.
+
+    The comparison stays `lower(...) = lower(...)`, matching how every
+    other process_id lookup in this codebase matches (a stored id and a
+    submitted one can differ in case). That does mean
+    ix_erp_production_process_id can't serve it -- the index is on the
+    raw column -- but the saving being bought here is the JSONB
+    deserialization, which the filter avoids either way.
     """
     result: dict = {}
     table = config_maps.TABLE_NAMES.get("PRODUCTION")
     if not table:
         return result
-    cur.execute(f"SELECT process_id, color, color_breakdown FROM {table} WHERE deleted_at IS NULL")
+    wanted = str(process_id or "").strip()
+    if process_id is not None and not wanted:
+        return result
+    if wanted:
+        cur.execute(
+            f"SELECT process_id, color, color_breakdown FROM {table} "
+            "WHERE deleted_at IS NULL AND lower(process_id) = lower(%s)",
+            (wanted,),
+        )
+    else:
+        cur.execute(f"SELECT process_id, color, color_breakdown FROM {table} WHERE deleted_at IS NULL")
     for row in cur.fetchall():
         process_id = str(row["process_id"] or "").strip()
         if not process_id:
@@ -2120,7 +2180,9 @@ def get_process_color_groups(process_id):
         pool_rows = _get_all_warehouse_pool_rows_for_color_axes(cur)
         color_links = _get_all_process_color_links(cur)
         overrides = _get_all_process_color_overrides(cur).get(str(process_id or "").strip().lower())
-        logged_colors = list(_get_production_logged_colors_by_process(cur).get(str(process_id or "").strip().lower(), []))
+        logged_colors = list(
+            _get_production_logged_colors_by_process(cur, process_id).get(str(process_id or "").strip().lower(), [])
+        )
     known = _compute_known_colors_for_process(process_id, components, pool_rows, color_links, logged_colors, overrides)
     return build_response(True, known["colors"])
 

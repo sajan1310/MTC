@@ -471,26 +471,26 @@ App.BOM = {
     App.Print.triggerBulk(boms, bom => this.buildBOMPrintPageHtml(bom), 'BOM_Cost_Sheets_Selected');
   },
 
+  // "Download PDFs" -- one separately-named PDF per selected BOM cost sheet.
   async bulkDownloadPDF() {
     const selected = App.State.selectedBOMs;
-    if (selected.length === 0) return;
+    if (!selected.length) {
+      App.Utils.showToast('No BOMs selected.', true);
+      return;
+    }
 
     const boms = App.State.globalBOMs.filter(b => App.Selection.isSelected(selected, b.productId));
-    if (boms.length === 0) return;
+    if (!boms.length) return;
 
-    const destination = await App.Print.chooseBulkDestination(boms.length);
-    if (destination.mode === 'cancelled') return;
-
-    const result = await App.Print.deliverSeparatePDFs(
-      boms,
-      bom => this.buildBOMPrintPageHtml(bom),
-      bom => `BOM_Cost_Sheet_${App.Print.sanitizeFilename(String(bom.productId || 'BOM'))}_${App.Print.sanitizeFilename(String(bom.productName || ''), false)}.pdf`,
-      { progressButtonId: 'btnBulkDownloadPdfBOMs', destination,
-        zipName: App.Print.bulkZipName('BOM_Cost_Sheets') }
+    await App.Print.downloadMany(
+      boms.map(bom => ({
+        filename: App.Print.docFilename({ type: 'BOM', key: bom.productId, party: bom.productName }),
+        html: this.buildBOMPrintPageHtml(bom)
+      })),
+      App.Print.bulkZipName('BOM'),
+      { buttonId: 'btnBulkDownloadPdfBOMs' }
     );
-    App.Print.reportBulkResult(result, boms.length, 'BOM cost sheet PDF');
   },
-
   // Builds a fully self-contained "BOM Cost Sheet / Recipe Card" page
   // (mirrors #print-bom-container's markup/styling) for bulk printing.
   buildBOMPrintPageHtml(bom) {

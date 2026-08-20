@@ -1,267 +1,182 @@
-"""Server-side vector PDF rendering, via headless Chromium (Playwright).
+"""Server-side vector PDF rendering, via WeasyPrint.
 
 Why this exists
 ---------------
-The client-side exporter (static/erp/print.js -> html2pdf.js) rasterises the
-document with html2canvas and embeds the result as a single JPEG, so the PDF
-contains a *picture* of the document rather than the document. Measured on a
-representative 15-line Purchase Order: 361,394 bytes with **0** characters of
-extractable text, against 48,256 bytes and 1,184 characters through a real
-print engine -- 7.5x larger and completely unsearchable. See
-docs/audit/PDF_GENERATION_REVIEW.md PDF-002.
+`window.print()` is how every document in this app reaches paper or a PDF, and
+it is the right default: no dependencies, perfect fidelity, works offline. What
+it cannot do is hand back a *file*. One print dialog produces one document, so
+"export these 40 challans as 40 separately-named PDFs" has no expression in it.
 
-This renders the *same* HTML the client's build*PrintPageHtml() builders
-already produce, so no document markup changes. Chromium applies real
-`@media print` CSS, which also retires html2pdf's page-guillotine workaround.
+That is the only job this module has. It renders the **same HTML the
+build*PrintPageHtml() builders already produce** -- the markup `window.print()`
+prints -- so there is one definition of every document, not two. A second
+definition (redrawing the documents through a client-side PDF library) was the
+alternative, and docs/audit/PDF_GENERATION_REVIEW.md PDF-004 records what
+happens to duplicated document code here: it drifted in both directions.
 
-The client keeps its raster path as the offline fallback: this needs the
-network, the other does not.
+Why WeasyPrint and not a headless browser
+-----------------------------------------
+The predecessor of this file drove headless Chromium through Playwright. It
+produced excellent output and cost a ~400 MB image layer, which is why the
+Dockerfile shipped it disabled by default -- so the default deployment quietly
+produced no server-rendered PDFs at all. WeasyPrint is a few tens of megabytes
+of system libraries, runs in-process, and starts no subprocess.
 
-Safety
-------
+It renders CSS, not JavaScript, which suits this app exactly: the print
+builders emit static tables with inline styles. It is also why the security
+story below is short.
+
+Security
+--------
 The HTML arrives from an authenticated browser, but "authenticated" is not
-"trusted": whatever is posted here is rendered by a real browser running on
-the server, so an unrestricted renderer is a server-side request forgery
-primitive (`<img src="http://169.254.169.254/...">`) and a local file reader
-(`file://`). Every render therefore runs with:
+"trusted". A renderer that resolves whatever URLs it is handed is a
+server-side request forgery primitive (`<img src="http://169.254.169.254/...">`)
+and a local file reader (`file:///etc/passwd`). So:
 
-  * **all network blocked** -- one route handler aborts every request the page
-    makes. Nothing is fetched: no http(s), no file://, no DNS. `data:` URIs
-    still resolve because they are not network requests, which is what the
-    company logo uses (core.js stores it as a canvas toDataURL).
-  * **JavaScript disabled** -- the print builders emit static markup only.
-  * a hard timeout and a payload cap.
-
-Concurrency
------------
-Playwright's sync API binds its objects to the thread that created them, so a
-single shared browser cannot be used from a threaded WSGI server. Each worker
-thread lazily gets its own Playwright + browser and reuses it (thread-local),
-which avoids paying ~0.5s of browser startup per export while staying within
-the API's threading rules.
+  * **every external fetch is refused** -- `_blocked_url_fetcher` raises for
+    anything that is not a `data:` URI. `data:` is not a network request and is
+    what the company logo uses (core.js stores it as a canvas toDataURL), so
+    the logo still renders.
+  * **no base_url**, so a relative path has nothing to resolve against and
+    cannot walk to the filesystem.
+  * **no JavaScript**, because WeasyPrint has no script engine at all.
+  * a payload cap, and a cap on documents per batch.
 """
 
 from __future__ import annotations
 
+import io
 import os
 import pathlib
+import re
 import sys
-import threading
-
-from flask import current_app
-
-# A4 minus the 6mm margin used everywhere else in the print stack. Must stay in
-# step with App.Print.PAGE_MARGIN_MM (static/erp/print.js) and the @page rule in
-# static/erp/styles.css, or window.print() and this path disagree on geometry.
-PAGE_MARGIN_MM = 6
+import zipfile
 
 # Generous next to a purchase order (~4 KB) but far below anything that would
-# tie up a browser. Rejected before Chromium is involved at all.
+# tie up a worker. Rejected before the renderer is involved at all.
 MAX_HTML_BYTES = 2_000_000
 
-DEFAULT_TIMEOUT_MS = 20_000
+# One bulk export. 200 purchase orders is already an unusual day; past this the
+# request is more likely a mistake than a workload.
+MAX_BATCH_DOCUMENTS = 200
+MAX_BATCH_BYTES = 20_000_000
 
-_local = threading.local()
+# A4 minus the margin used everywhere else in the print stack. Must stay in
+# step with App.Print.PAGE_MARGIN_MM (static/erp/print.js) and the @page rule
+# in static/erp/styles.css, or window.print() and this path disagree on
+# geometry -- which would be visible as the same document paginating
+# differently depending on which button produced it.
+PAGE_MARGIN_MM = 6
 
 
-class PdfRenderUnavailable(RuntimeError):
-    """Playwright or its Chromium build is not installed/usable here.
+# Where MSYS2 puts the GTK stack on Windows. Checked in order; the first that
+# actually holds the libraries wins.
+_WINDOWS_LIB_DIRS = (
+    r"C:\msys64\mingw64\bin",
+    r"C:\msys64\clang64\bin",
+    r"C:\Program Files\GTK3-Runtime Win64\bin",
+)
 
-    Distinct from a render failure: the caller turns this into a 503 so the
-    client can fall back to its own renderer permanently for the session,
-    rather than retrying per document.
+
+def _ensure_windows_libs_on_path() -> str | None:
+    """Put the GTK libraries where WeasyPrint will find them, on Windows.
+
+    pip installs WeasyPrint on Windows perfectly happily and it then cannot
+    load: pango, harfbuzz and glib are not Python packages and do not come with
+    it. The usual fix is to install MSYS2 and edit PATH -- and the failure when
+    somebody skips the second half is `cannot load library
+    'libgobject-2.0-0'`, which says nothing about MSYS2.
+
+    So rather than trusting PATH, look where the libraries actually live and
+    adopt whichever directory has them. Must run BEFORE weasyprint is imported,
+    since that import is what loads them.
+
+    Returns the directory used, or None (already importable, not Windows, or
+    nothing found -- all of which are handled by the caller).
     """
+    if sys.platform != "win32":
+        return None
 
+    for candidate in _WINDOWS_LIB_DIRS:
+        path = pathlib.Path(candidate)
+        if not (path / "libgobject-2.0-0.dll").is_file():
+            continue
 
-# A fixed, user-independent location. The Dockerfile installs here, and
-# _resolve_browsers_path falls back to it, so "installed by one user, served by
-# another" cannot silently disable rendering.
-SHARED_BROWSERS_PATH = "/ms-playwright"
+        # add_dll_directory is the targeted mechanism -- it extends DLL search
+        # without touching PATH -- but ctypes.util.find_library, which is how
+        # WeasyPrint locates libgobject in the first place, reads PATH. So both
+        # are needed.
+        #
+        # APPENDED, never prepended. This directory also contains MSYS2's own
+        # libssl, libcrypto, zlib, libiconv and libintl, and putting those
+        # ahead of everything else lets them shadow the copies psycopg loads
+        # for the database connection. Prepending here broke unrelated tests
+        # further down the suite -- probe() runs at import, so one PDF module
+        # was quietly re-pointing the whole process's DLL resolution.
+        # Appending still lets find_library locate libgobject, which nothing
+        # else provides, while anything already resolvable keeps winning.
+        if candidate not in os.environ.get("PATH", ""):
+            os.environ["PATH"] = os.environ.get("PATH", "") + os.pathsep + candidate
+        try:
+            os.add_dll_directory(candidate)
+        except (AttributeError, OSError):  # pragma: no cover - platform detail
+            pass
+        return candidate
 
-
-def _default_browsers_root() -> pathlib.Path:
-    """Playwright's own per-user default for this platform."""
-    if sys.platform == "win32":
-        return pathlib.Path(os.environ.get("USERPROFILE", "~")).expanduser() / "AppData/Local/ms-playwright"
-    if sys.platform == "darwin":
-        return pathlib.Path.home() / "Library/Caches/ms-playwright"
-    return pathlib.Path.home() / ".cache/ms-playwright"
-
-
-def _candidate_roots() -> list[pathlib.Path]:
-    """Everywhere a chromium build might plausibly be, best first.
-
-    Playwright installs into the *installing* user's cache. A VPS that runs
-    `playwright install` as root and then serves as www-data therefore ends up
-    with the browser present on disk but invisible to the process that needs
-    it -- the app degrades to client-side rasterisation and says nothing. So
-    rather than trusting one path, look in the obvious places and adopt
-    whichever actually has a browser.
-    """
-    env = os.environ.get("PLAYWRIGHT_BROWSERS_PATH")
-    if env:
-        # Explicit configuration always wins; no guessing over the top of it.
-        return [pathlib.Path(env)]
-
-    roots = [pathlib.Path(SHARED_BROWSERS_PATH), _default_browsers_root()]
-    if sys.platform not in ("win32", "darwin"):
-        # The two halves of the root-installs/service-runs mismatch.
-        roots += [pathlib.Path("/opt/ms-playwright"), pathlib.Path("/root/.cache/ms-playwright")]
-    seen, unique = set(), []
-    for r in roots:
-        if str(r) not in seen:
-            seen.add(str(r))
-            unique.append(r)
-    return unique
-
-
-def _has_chromium(root: pathlib.Path) -> bool:
-    try:
-        return root.is_dir() and any(root.glob("chromium*"))
-    except OSError:
-        return False
-
-
-def _resolve_browsers_path() -> pathlib.Path | None:
-    """Find a root holding a chromium build and point Playwright at it.
-
-    Sets PLAYWRIGHT_BROWSERS_PATH for this process when the browser is
-    somewhere other than Playwright's own default, which is what makes the
-    cross-user case work instead of merely being diagnosable. Must run before
-    Playwright starts.
-    """
-    for root in _candidate_roots():
-        if _has_chromium(root):
-            if os.environ.get("PLAYWRIGHT_BROWSERS_PATH") != str(root):
-                os.environ["PLAYWRIGHT_BROWSERS_PATH"] = str(root)
-            return root
     return None
 
 
-def probe() -> tuple[bool, str]:
-    """Is this process able to render? Filesystem-only, so it costs nothing.
+class PdfRenderUnavailable(RuntimeError):
+    """WeasyPrint is not installed, or its system libraries are missing.
 
-    Deliberately does NOT start Playwright: doing that just to read
-    `chromium.executable_path` measured ~5s here, which would be paid by every
-    gunicorn worker at boot. Checking the browser registry directory is enough
-    to tell a deployment that the browser was never installed, which is the
-    failure this exists to catch.
-
-    Returns (ok, human-readable detail). Never raises -- a broken probe must
-    not stop the app booting, since PDF export degrades rather than breaks.
+    Distinct from a render failure: the caller turns this into a 503 so the
+    client falls back to the print dialog for the rest of the session rather
+    than retrying once per document.
     """
-    try:
-        import playwright  # noqa: F401
-    except ImportError:
-        return False, "the 'playwright' package is not installed (pip install -r requirements.txt)"
-    try:
-        root = _resolve_browsers_path()
-        if root is None:
-            looked = ", ".join(str(p) for p in _candidate_roots())
-            return False, (
-                f"no chromium build found (looked in: {looked}) -- "
-                f"run: playwright install chromium"
-            )
-        build = max(root.glob("chromium*")).name
-        return True, f"chromium available ({build} in {root})"
-    except Exception as exc:  # pragma: no cover - defensive
-        return False, f"could not check for chromium: {exc}"
 
 
-def _explain_launch_failure(exc: Exception) -> str:
-    """Turn Chromium's launch errors into something actionable.
+def _blocked_url_fetcher(url, *args, **kwargs):
+    """Refuse every fetch except `data:`.
 
-    The one that costs the most time is a browser that downloaded fine but
-    cannot start because the host lacks its shared libraries -- common where
-    `playwright install` ran without `--with-deps`, or where the platform's
-    build step cannot apt-get anything (Render's native Python environment).
-    Raw, that surfaces as `libnss3.so: cannot open shared object file`, which
-    says nothing about the fix.
+    WeasyPrint calls this for every external resource the document references.
+    Raising is what stops it; returning empty content would let a document
+    silently render without an image it expected, which is harder to notice.
     """
-    text = str(exc)
-    low = text.lower()
+    if url.startswith("data:"):
+        from weasyprint import default_url_fetcher
 
-    if "missing dependencies" in low or "shared librar" in low or ".so:" in low or ".so " in low:
-        return (
-            "Chromium is installed but cannot start -- this host is missing its "
-            "system libraries. Fix with `playwright install-deps chromium` (needs "
-            "root), or deploy the Docker image, which already includes them. "
-            f"Original error: {text.splitlines()[0][:200]}"
-        )
-    if "executable doesn't exist" in low or "please run the following command" in low:
-        return (
-            "Chromium is not installed for this process -- run "
-            "`playwright install chromium` as the user that runs the app, or set "
-            "PLAYWRIGHT_BROWSERS_PATH to a shared location used by both. "
-            f"Original error: {text.splitlines()[0][:200]}"
-        )
-    if "permission denied" in low or isinstance(exc, PermissionError):
-        return (
-            "Chromium is present but not executable by this user -- check the "
-            "permissions on the browsers directory, or reinstall as the serving "
-            f"user. Original error: {text.splitlines()[0][:200]}"
-        )
-    return f"could not start Chromium: {text.splitlines()[0][:200]}"
+        return default_url_fetcher(url, *args, **kwargs)
+    raise ValueError(f"External resources are not fetched when rendering: {url!r}")
 
 
-def is_enabled() -> bool:
-    """Whether server-side rendering is switched on at all.
-
-    Separate from `probe()`: this is the operator's intent, that is the
-    machine's capability. Turning it off deliberately is a supported choice --
-    the browser can do the whole job, just as pictures rather than documents.
-    """
-    try:
-        return current_app.config.get("PDF_SERVER_RENDER", "auto") != "off"
-    except RuntimeError:
-        # No application context (CLI, smoke check): assume enabled so the
-        # tooling still exercises the real path.
-        return True
-
-
-def log_availability(logger, enabled: bool = True) -> bool:
-    """Say plainly, once at boot, which PDF path this deployment will use.
-
-    Without this the only signal is a 503 the first time somebody exports,
-    long after deploy -- and the client falls back to its raster renderer
-    without complaining, so the PDFs quietly go back to being unsearchable
-    images and nobody notices.
-
-    Three outcomes, and the distinction matters: switched off on purpose is
-    INFO, wanted-but-broken is a WARNING. Logging a deliberate configuration as
-    a warning trains people to ignore warnings.
-    """
-    if not enabled:
-        logger.info(
-            "[PDF] server-side vector rendering is OFF by configuration "
-            "(PDF_SERVER_RENDER=off). PDFs are rendered in the browser and will "
-            "be images rather than searchable documents; Print -> Save as PDF "
-            "produces a searchable one with nothing installed."
-        )
-        return False
-
-    ok, detail = probe()
-    if ok:
-        logger.info("[PDF] server-side vector rendering enabled -- %s", detail)
-    else:
-        logger.warning(
-            "[PDF] server-side vector rendering DISABLED -- %s. "
-            "/erp/render-pdf will return 503 and clients will fall back to "
-            "client-side rasterisation: PDFs will be images, not searchable "
-            "documents. Set PDF_SERVER_RENDER=off if this is deliberate. "
-            "See docs/audit/PDF_GENERATION_REVIEW.md PDF-002.",
-            detail,
-        )
-    return ok
+# The density tiers from static/erp/styles.css, restated for this renderer.
+# The client picks the tier (App.Print.fitToPage counts the widest row) and
+# sends its class name, because it is the side that has a DOM to count. Keep
+# the numbers here in step with the stylesheet, or the same document paginates
+# differently depending on which button produced it.
+_FIT_TIERS = {
+    "print-fit-compact": "font-size: 10px; padding: 4px 5px;",
+    "print-fit-dense": "font-size: 9px; padding: 3px 4px; line-height: 1.25;",
+    "print-fit-xdense": (
+        "font-size: 8px; padding: 2px 3px; line-height: 1.2; letter-spacing: -0.1px;"
+    ),
+}
 
 
-def _document(body_html: str, landscape: bool) -> str:
+def _document(body_html: str, landscape: bool, density: str = "") -> str:
     """Wrap a print-page fragment in the page shell.
 
-    Built here rather than accepted from the client so that page size, margins
-    and colour handling cannot be driven by the request body.
+    Built here rather than accepted from the request so page size, margins and
+    the page-break rules cannot be driven by the request body. `density` is the
+    one piece of layout the client chooses, and it is validated against a fixed
+    set rather than interpolated.
     """
     size = "A4 landscape" if landscape else "A4 portrait"
+    density = density if density in _FIT_TIERS else ""
+    tier_css = (
+        f"body.{density} th, body.{density} td {{ {_FIT_TIERS[density]} }}"
+        if density else ""
+    )
     return (
         "<!doctype html><html><head><meta charset='utf-8'>"
         "<style>"
@@ -270,48 +185,87 @@ def _document(body_html: str, landscape: bool) -> str:
         # The builders emit their own inline typography; this is only a floor
         # so an unstyled element does not inherit something surprising.
         "body { font-family: 'Segoe UI', Arial, sans-serif; color: #1a1a1a; }"
-        # Keep table rows and the documents' closing blocks whole across a page
-        # break. This is the real CSS equivalent of html2pdf's pagebreak.avoid
-        # list -- and unlike that one, a print engine actually honours it.
+        # Fitting the document to the page, mirroring styles.css. A table
+        # wider than the printable box is CUT, not scaled, so the right-hand
+        # columns simply vanish. `overflow-wrap: anywhere` is the property
+        # that fixes it: unlike `break-word`, its break opportunities COUNT
+        # toward min-content, which is what lets a column narrow past its
+        # longest unbreakable token and lets width:100% actually hold.
+        "table { width: 100%; max-width: 100%; }"
+        "th, td { overflow-wrap: anywhere; }"
+        f"{tier_css}"
+        # The print stylesheet's pagination rules, restated for this renderer:
+        # keep rows whole, repeat table headers, and keep each document's
+        # closing blocks together. Mirrors the @media print block in
+        # static/erp/styles.css so both paths paginate the same way.
         "tr, .print-sheet-closing-accent, #print-grand-total-container,"
         "#print-footer-meta, #print-signature { break-inside: avoid; }"
         "thead { display: table-header-group; }"
-        "</style></head><body>"
+        "tfoot { display: table-footer-group; }"
+        f"</style></head><body class='{density}'>"
         f"{body_html}"
         "</body></html>"
     )
 
 
-def _browser():
-    """The calling thread's Chromium, launched on first use."""
-    browser = getattr(_local, "browser", None)
-    if browser is not None and browser.is_connected():
-        return browser
+def probe() -> tuple[bool, str]:
+    """Can this process render? Never raises.
+
+    Importing WeasyPrint is what actually exercises the system libraries: the
+    package installs from pip on any platform, but loading it fails without
+    pango/harfbuzz present, which on Windows they are not by default.
+    """
+    adopted = _ensure_windows_libs_on_path()
 
     try:
-        from playwright.sync_api import sync_playwright
-    except ImportError as exc:  # pragma: no cover - depends on deployment
-        raise PdfRenderUnavailable("playwright is not installed") from exc
-
-    # Adopt whichever browser root actually holds a build, before Playwright
-    # reads the environment.
-    _resolve_browsers_path()
-
-    try:
-        pw = sync_playwright().start()
-        # --no-sandbox is required in most containers, where the kernel
-        # namespaces Chromium's sandbox needs are unavailable. Acceptable here
-        # only because the page has no network and no JavaScript.
-        browser = pw.chromium.launch(args=["--no-sandbox", "--disable-dev-shm-usage"])
-    except Exception as exc:
-        raise PdfRenderUnavailable(_explain_launch_failure(exc)) from exc
-
-    _local.playwright = pw
-    _local.browser = browser
-    return browser
+        import weasyprint
+    except ImportError:
+        return False, "the 'weasyprint' package is not installed (pip install -r requirements.txt)"
+    except OSError as exc:
+        return False, (
+            "weasyprint is installed but its system libraries are missing "
+            f"({exc}). On Debian/Ubuntu: apt install libpango-1.0-0 "
+            "libpangoft2-1.0-0 libharfbuzz-subset0. On Windows, install MSYS2 "
+            "and its mingw-w64-x86_64-pango package, then put "
+            "C:\\msys64\\mingw64\\bin on PATH."
+        )
+    except Exception as exc:  # pragma: no cover - defensive
+        return False, f"weasyprint could not be loaded: {exc}"
+    version = getattr(weasyprint, "__version__", "?")
+    where = f" (libraries from {adopted})" if adopted else ""
+    return True, f"weasyprint {version} available{where}"
 
 
-def render_pdf(body_html: str, *, landscape: bool = False) -> bytes:
+def _weasyprint():
+    ok, detail = probe()
+    if not ok:
+        raise PdfRenderUnavailable(detail)
+    import weasyprint
+
+    return weasyprint
+
+
+def log_availability(logger) -> bool:
+    """Say once, at boot, whether Download PDF will produce a file here.
+
+    Without this the only signal is a 503 the first time somebody exports, and
+    the client falls back to the print dialog without complaining -- so the
+    feature is quietly absent and nobody finds out.
+    """
+    ok, detail = probe()
+    if ok:
+        logger.info("[PDF] server-side rendering enabled -- %s", detail)
+    else:
+        logger.warning(
+            "[PDF] server-side rendering DISABLED -- %s. Download PDF will fall "
+            "back to the print dialog, which still produces a searchable PDF; "
+            "bulk export as separate files is unavailable until this is fixed.",
+            detail,
+        )
+    return ok
+
+
+def render_pdf(body_html: str, *, landscape: bool = False, density: str = "") -> bytes:
     """Render one print-page fragment to a vector PDF.
 
     Raises ValueError for a bad request and PdfRenderUnavailable when this
@@ -322,91 +276,143 @@ def render_pdf(body_html: str, *, landscape: bool = False) -> bytes:
     if len(body_html.encode("utf-8")) > MAX_HTML_BYTES:
         raise ValueError("Document is too large to render.")
 
-    browser = _browser()
-    context = browser.new_context(java_script_enabled=False)
-    try:
-        page = context.new_page()
-        page.set_default_timeout(DEFAULT_TIMEOUT_MS)
+    weasyprint = _weasyprint()
+    document = weasyprint.HTML(
+        string=_document(body_html, landscape, density),
+        # No base_url: a relative URL then has nothing to resolve against and
+        # cannot reach the filesystem.
+        base_url=None,
+        url_fetcher=_blocked_url_fetcher,
+    )
+    return document.write_pdf()
 
-        # Refuse every request the document tries to make. data: URIs are not
-        # requests and are unaffected, so the embedded logo still renders.
-        blocked: list[str] = []
 
-        def _block(route, request):
-            blocked.append(request.url)
-            route.abort()
+def safe_filename(name: str, fallback: str = "Document") -> str:
+    """Normalise one entry name for the archive.
 
-        context.route("**/*", _block)
+    Rejects anything that could escape the archive root when extracted --
+    separators and parent traversal -- rather than sanitising around them.
+    """
+    name = str(name or "").strip().replace("\\", "/")
+    name = name.rsplit("/", 1)[-1]              # drop any path component
+    name = re.sub(r'[<>:"|?*\x00-\x1f]', "-", name)
+    name = name.strip(". ") or fallback
+    if not name.lower().endswith(".pdf"):
+        name += ".pdf"
+    return name[:120]
 
-        page.set_content(_document(body_html, landscape), wait_until="load")
-        pdf = page.pdf(
-            format="A4",
-            landscape=landscape,
-            print_background=True,
-            margin={
-                "top": f"{PAGE_MARGIN_MM}mm",
-                "bottom": f"{PAGE_MARGIN_MM}mm",
-                "left": f"{PAGE_MARGIN_MM}mm",
-                "right": f"{PAGE_MARGIN_MM}mm",
-            },
+
+def dedupe_filenames(names: list[str]) -> list[str]:
+    """Make every name in a batch distinct, preserving order.
+
+    Two records can easily want the same name: the client's sanitizer maps any
+    wholly non-Latin vendor name onto one fallback, and its length cap can
+    collapse two long names that differ only past the cap. Inside a ZIP a
+    repeat is worse than a collision on disk -- some extractors silently keep
+    only the last one, so a 40-record export quietly yields 38 files.
+    """
+    seen: dict[str, int] = {}
+    out: list[str] = []
+    for name in names:
+        key = name.lower()
+        if key not in seen:
+            seen[key] = 1
+            out.append(name)
+            continue
+        seen[key] += 1
+        stem, dot, ext = name.rpartition(".")
+        out.append(f"{stem}_{seen[key]}{dot}{ext}" if dot else f"{name}_{seen[key]}")
+    return out
+
+
+def render_batch(documents: list[dict]) -> tuple[bytes, list[str]]:
+    """Render many documents into one ZIP of separately-named PDFs.
+
+    `documents` is [{"filename": str, "html": str, "landscape": bool}, ...].
+    Returns (zip_bytes, names_used).
+
+    One request for the whole batch, deliberately. The predecessor of this
+    feature issued one HTTP request and one render per record, with a
+    deliberate pause between them, so a 50-record export was 50 round trips.
+
+    Entries are STOREd rather than deflated: a PDF's own streams are already
+    compressed, so re-compressing them buys almost nothing for real CPU.
+    """
+    if not isinstance(documents, list) or not documents:
+        raise ValueError("No documents supplied.")
+    if len(documents) > MAX_BATCH_DOCUMENTS:
+        raise ValueError(
+            f"Too many documents in one export (limit {MAX_BATCH_DOCUMENTS})."
         )
-        if blocked:
-            # Not an error -- the document rendered without them -- but a
-            # document reaching outward is worth seeing in the log.
-            current_app.logger.info(
-                "[PDF] blocked %d outbound request(s) during render: %s",
-                len(blocked),
-                ", ".join(sorted(set(blocked))[:5]),
+
+    total = sum(len(str(d.get("html") or "").encode("utf-8")) for d in documents)
+    if total > MAX_BATCH_BYTES:
+        raise ValueError("This export is too large to render in one request.")
+
+    names = dedupe_filenames(
+        [safe_filename(d.get("filename"), f"Document_{i + 1}")
+         for i, d in enumerate(documents)]
+    )
+
+    buffer = io.BytesIO()
+    with zipfile.ZipFile(buffer, "w", zipfile.ZIP_STORED) as archive:
+        for name, doc in zip(names, documents):
+            pdf = render_pdf(
+                doc.get("html"),
+                landscape=bool(doc.get("landscape")),
+                density=str(doc.get("density") or ""),
             )
-        return pdf
-    finally:
-        context.close()
-
-
-def shutdown() -> None:
-    """Release this thread's browser. For tests and graceful teardown."""
-    import logging
-
-    log = logging.getLogger(__name__)
-    browser = getattr(_local, "browser", None)
-    if browser is not None:
-        try:
-            browser.close()
-        except Exception as exc:  # pragma: no cover - teardown is best effort
-            log.debug("[PDF] browser close failed during shutdown: %s", exc)
-        _local.browser = None
-    pw = getattr(_local, "playwright", None)
-    if pw is not None:
-        try:
-            pw.stop()
-        except Exception as exc:  # pragma: no cover - teardown is best effort
-            log.debug("[PDF] playwright stop failed during shutdown: %s", exc)
-        _local.playwright = None
+            archive.writestr(name, pdf)
+    return buffer.getvalue(), names
 
 
 if __name__ == "__main__":  # pragma: no cover - operational tool
-    # Deploy smoke check:  python -m app.erp.services.pdf_render_service
-    # Exits non-zero if this box cannot produce a vector PDF, so it can gate a
-    # release step instead of being discovered by the first user to export.
-    import logging as _logging
-
-    _logging.basicConfig(level=_logging.INFO, format="%(message)s")
-    _ok, _detail = probe()
-    print(f"probe        : {'ok' if _ok else 'FAILED'} -- {_detail}")
-    if not _ok:
+    # Smoke check:  python -m app.erp.services.pdf_render_service
+    ok, detail = probe()
+    print(f"probe   : {'ok' if ok else 'FAILED'} -- {detail}")
+    if not ok:
         raise SystemExit(1)
 
-    # The probe only checks the browser is on disk; actually render something.
+    pdf = render_pdf("<h1>PDF render smoke check</h1><p>PO-2026-0417</p>")
+    print(f"render  : ok -- {len(pdf):,} bytes")
+    if not pdf.startswith(b"%PDF-"):
+        print("output  : FAILED -- not a PDF")
+        raise SystemExit(1)
+
+    blob, names = render_batch([
+        {"filename": "PO_1204_Mahadev.pdf", "html": "<h1>One</h1>"},
+        {"filename": "PO_1204_Mahadev.pdf", "html": "<h1>Two</h1>"},
+    ])
+    print(f"batch   : ok -- {len(blob):,} bytes, entries={names}")
+
+    # The check that matters for A4: a wide table must keep every column.
+    # A print engine CUTS what does not fit, so a missing last column is the
+    # symptom, and it is silent.
+    columns = 16
+    head = "".join(f"<th>Column{i}</th>" for i in range(columns))
+    body = "".join(f"<td>VALUE{i}0000</td>" for i in range(columns))
+    wide = render_pdf(
+        f"<table><thead><tr>{head}</tr></thead><tbody><tr>{body}</tr></tbody></table>",
+        density="print-fit-xdense",
+    )
     try:
-        _pdf = render_pdf("<h1>PDF render smoke check</h1><p>PO-2026-0417</p>")
-    except Exception as _exc:
-        print(f"render       : FAILED -- {_exc}")
-        raise SystemExit(1) from _exc
-    finally:
-        shutdown()
+        import pypdf
 
-    print(f"render       : ok -- {len(_pdf):,} bytes")
-    if not _pdf.startswith(b"%PDF-"):
-        print("output       : FAILED -- not a PDF")
-        raise SystemExit(1)
-    print("output       : ok -- server-side vector rendering is working")
+        reader = pypdf.PdfReader(io.BytesIO(wide))
+        page = reader.pages[0]
+        text = "".join(p.extract_text() or "" for p in reader.pages)
+        lost = [i for i in range(columns) if f"Column{i}" not in text]
+        mm = 25.4 / 72
+        print(
+            f"page    : {float(page.mediabox.width) * mm:.0f}"
+            f" x {float(page.mediabox.height) * mm:.0f} mm"
+        )
+        if lost:
+            print(f"columns : FAILED -- {len(lost)} of {columns} cut from the page: {lost}")
+            raise SystemExit(1)
+        print(f"columns : ok -- all {columns} survived on A4")
+        print(f"text    : ok -- {len(text)} extractable characters")
+    except ImportError:
+        print("columns : SKIPPED -- pip install pypdf to verify column survival")
+
+    print("output  : ok -- server-side rendering is working")

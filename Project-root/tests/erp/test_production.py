@@ -1553,3 +1553,132 @@ def test_save_production_accepts_a_lot_with_many_colors(erp_client):
     assert len(match["color"]) > 1000
     assert match["color"].startswith(colors[0])
     assert match["color"].endswith(colors[-1])
+
+
+def test_save_production_history_only_color_process_reads_qty_from_breakdown(erp_client):
+    """A process whose color mode comes ENTIRELY from its own Production
+    history -- every recipe row COMMON, no POOL colors, no overrides, so
+    baseColors is empty -- still renders a color checklist on the client
+    (getProcessColorGroups unions logged colors), and the client DELETES
+    the plain `qty` field whenever it shows that checklist.
+
+    Before _compute_color_groups_with_overrides_for_process took
+    logged_colors, the server disagreed: it saw no available color groups,
+    took the no-color branch, and read the lot's quantity from the `qty`
+    the client had just deleted. The lot was written with qty 0, blank
+    color and no colorBreakdown -- silently, because zero is a legal
+    quantity here (correction/reversal lots). Observed in the field as
+    "entered 90 units, the lot logged 0".
+    """
+    _payload, process_id = _save_process(erp_client)
+
+    # First lot establishes "Sunburst" as a logged color for this process
+    # -- the only color signal it will ever have.
+    seed = _rpc(
+        erp_client,
+        "saveProduction",
+        [
+            {
+                "processId": process_id,
+                "assignedTo": "Worker A",
+                "colorBreakdown": [{"color": "Sunburst", "qty": 1, "isCustom": True}],
+                "componentsConsumed": [_item_component()],
+            }
+        ],
+        mutation=True,
+    )
+    assert seed.get_json()["success"] is True, seed.get_json()["message"]
+
+    # The checklist the operator now sees offers that logged color.
+    groups = _rpc(erp_client, "getProcessColorGroups", [process_id]).get_json()
+    assert groups["success"] is True
+    assert any(c.lower() == "sunburst" for c in groups["data"]), groups["data"]
+
+    # ...and checking it submits colorBreakdown with NO `qty` key at all,
+    # and isCustom false -- it is a real checklist row now, not a typed-in
+    # custom sub-group.
+    resp = _rpc(
+        erp_client,
+        "saveProduction",
+        [
+            {
+                "processId": process_id,
+                "assignedTo": "Worker A",
+                "colorBreakdown": [
+                    {"color": "Sunburst", "qty": 90, "isCustom": False, "countsTowardTotal": True}
+                ],
+                "componentsConsumed": [_item_component()],
+            }
+        ],
+        mutation=True,
+    )
+    body = resp.get_json()
+    assert body["success"] is True, body["message"]
+
+    row = body["data"]["row"]
+    assert row["qty"] == 90, f'lot logged qty {row["qty"]!r}, expected 90'
+    assert row["color"] == "Sunburst"
+    assert [c["color"] for c in row["colorBreakdown"]] == ["Sunburst"]
+
+
+def test_save_production_logged_color_stays_valid_after_color_master_removal(erp_client):
+    """The logged-colors union is unconditional, not just a fallback for a
+    process with no colors of its own: a recipe-color-enabled process can
+    also have logged a color that no longer resolves from Color Master.
+    The checklist still offers it (logged colors are per-process history,
+    not master lookups), so rejecting it here would fail the save outright
+    with 'not a configured color sub-group' on a color the operator was
+    shown and allowed to pick.
+    """
+    *_ignored, down_id = _make_color_process(erp_client)
+
+    seeded = _rpc(
+        erp_client,
+        "saveProduction",
+        [
+            {
+                "processId": down_id,
+                "assignedTo": "Worker A",
+                "colorBreakdown": [{"color": "RetiredShade", "qty": 3, "isCustom": True}],
+                "componentsConsumed": [_item_component()],
+            }
+        ],
+        mutation=True,
+    )
+    assert seeded.get_json()["success"] is True, seeded.get_json()["message"]
+
+    # Custom sub-groups are auto-registered into Color Master on save;
+    # remove it again so the ONLY remaining evidence of this color is this
+    # process's own logged history.
+    colors = _rpc(erp_client, "getColors").get_json()["data"]
+    assert any(str(c["name"]).strip().lower() == "retiredshade" for c in colors), colors
+    deleted = _rpc(erp_client, "deleteColor", ["RetiredShade"], mutation=True)
+    assert deleted.get_json()["success"] is True, deleted.get_json()["message"]
+
+    # Checked alongside a real primary-axis color, exactly as the checklist
+    # presents the two -- isCustom false, because by now "RetiredShade" is a
+    # logged row on that checklist and not a freshly typed sub-group.
+    resp = _rpc(
+        erp_client,
+        "saveProduction",
+        [
+            {
+                "processId": down_id,
+                "assignedTo": "Worker A",
+                "colorBreakdown": [
+                    {"color": "Black", "qty": 7, "isCustom": False, "countsTowardTotal": True},
+                    {"color": "RetiredShade", "qty": 7, "isCustom": False, "countsTowardTotal": False},
+                ],
+                "componentsConsumed": [_item_component()],
+            }
+        ],
+        mutation=True,
+    )
+    body = resp.get_json()
+    assert body["success"] is True, body["message"]
+
+    row = body["data"]["row"]
+    assert [c["color"] for c in row["colorBreakdown"]] == ["Black", "RetiredShade"]
+    # Only the primary axis counts toward the lot total; the point here is
+    # simply that "RetiredShade" was not rejected out of the save.
+    assert row["qty"] == 7

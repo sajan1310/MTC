@@ -13,7 +13,7 @@
   window.print() show only the active container).
 -->
 
-<div id="print-po-container"
+<div id="print-po-container" class="print-container print-cells-own"
      style="display:none;
             background:#fff;
             color:#1a1a1a;
@@ -152,7 +152,7 @@
 <!-- ─────────────────────────────────────────────────────────────────── -->
 <!-- PRINT TEMPLATE: DISPATCH DELIVERY CHALLAN (GST)                     -->
 <!-- ─────────────────────────────────────────────────────────────────── -->
-<div id="print-dispatch-container"
+<div id="print-dispatch-container" class="print-container"
      style="display:none;
             background:#fff;
             color:#1a1a1a;
@@ -291,7 +291,7 @@
 <!-- ─────────────────────────────────────────────────────────────────── -->
 <!-- PRINT TEMPLATE: ITEM LEDGER & COMPARISON                          -->
 <!-- ─────────────────────────────────────────────────────────────────── -->
-<div id="print-item-ledger-container"
+<div id="print-item-ledger-container" class="print-container"
      style="display:none;
             background:#fff;
             color:#1a1a1a;
@@ -391,7 +391,7 @@
 <!-- ─────────────────────────────────────────────────────────────────── -->
 <!-- PRINT TEMPLATE: VENDOR LEDGER & PENDING QUANTITIES                 -->
 <!-- ─────────────────────────────────────────────────────────────────── -->
-<div id="print-vendor-ledger-container"
+<div id="print-vendor-ledger-container" class="print-container"
      style="display:none;
             background:#fff;
             color:#1a1a1a;
@@ -501,7 +501,7 @@
 <!-- ─────────────────────────────────────────────────────────────────── -->
 <!-- PRINT TEMPLATE: CLIENT LEDGER (PI / ESTIMATES & DISPATCH HISTORY)  -->
 <!-- ─────────────────────────────────────────────────────────────────── -->
-<div id="print-client-ledger-container"
+<div id="print-client-ledger-container" class="print-container"
      style="display:none;
             background:#fff;
             color:#1a1a1a;
@@ -631,7 +631,7 @@
 <!-- ─────────────────────────────────────────────────────────────────── -->
 <!-- PRINT TEMPLATE: PRODUCTION SHEET (BOM REQUIREMENT)                 -->
 <!-- ─────────────────────────────────────────────────────────────────── -->
-<div id="print-production-sheet-container"
+<div id="print-production-sheet-container" class="print-container"
      style="display:none;
             background:#fff;
             color:#1a1a1a;
@@ -728,12 +728,11 @@
   </div>
 
   <!-- Closing accent — a real block (not the container's own border-bottom)
-       so the "Download PDF" path (App.Print.downloadElementAsPDF, print.js)
-       can protect it the same way it already protects table rows: html2pdf
-       slices one tall captured canvas at fixed page-height intervals, and a
-       plain border-bottom on the container has no size of its own to
-       defend, so it could land squeezed right against the last table row
-       with almost no visible gap whenever that row happened to fall near a
+       so the print engine can keep it whole the same way it keeps table rows
+       whole: styles.css gives .print-sheet-closing-accent
+       break-inside:avoid, and a plain border-bottom on the container has no
+       box of its own for that rule to act on, so it could land squeezed
+       right against the last table row whenever that row fell near a
        slice boundary. This div's own height + margin gives it real weight
        to protect via .print-sheet-closing-accent in that call's
        pagebreak.avoid list — it either renders with its intended clearance,
@@ -750,7 +749,7 @@
 <!-- ─────────────────────────────────────────────────────────────────── -->
 <!-- PRINT TEMPLATE: LOW STOCK REPORT                                      -->
 <!-- ─────────────────────────────────────────────────────────────────── -->
-<div id="print-low-stock-container"
+<div id="print-low-stock-container" class="print-container print-cells-own"
      style="display:none;
             background:#fff;
             color:#1a1a1a;
@@ -820,7 +819,7 @@
 <!-- ─────────────────────────────────────────────────────────────────── -->
 <!-- PRINT TEMPLATE: BILL / GOODS RECEIPT                                -->
 <!-- ─────────────────────────────────────────────────────────────────── -->
-<div id="print-bill-container"
+<div id="print-bill-container" class="print-container"
      style="display:none;
             background:#fff;
             color:#1a1a1a;
@@ -948,7 +947,7 @@
 <!-- ─────────────────────────────────────────────────────────────────── -->
 <!-- PRINT TEMPLATE: BOM COST SHEET / RECIPE CARD                        -->
 <!-- ─────────────────────────────────────────────────────────────────── -->
-<div id="print-bom-container"
+<div id="print-bom-container" class="print-container"
      style="display:none;
             background:#fff;
             color:#1a1a1a;
@@ -1045,7 +1044,7 @@
 <!-- ─────────────────────────────────────────────────────────────────── -->
 <!-- PRINT TEMPLATE: CONTRACTOR PROFILE & ACCOUNT LEDGER                 -->
 <!-- ─────────────────────────────────────────────────────────────────── -->
-<div id="print-contractor-ledger-container"
+<div id="print-contractor-ledger-container" class="print-container"
      style="display:none;
             background:#fff;
             color:#000;
@@ -1158,6 +1157,6 @@
 <!-- (built by App.<Module>.buildXxxPrintPageHtml()) inside this body,  -->
 <!-- separated by page-break dividers, then printed as one job.         -->
 <!-- ─────────────────────────────────────────────────────────────────── -->
-<div id="print-bulk-container" style="display:none;background:#fff;">
+<div id="print-bulk-container" class="print-container" style="display:none;background:#fff;">
   <div id="print-bulk-body"></div>
 </div>

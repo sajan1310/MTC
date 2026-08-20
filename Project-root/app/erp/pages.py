@@ -1,4 +1,4 @@
-"""ERP page routes: the desktop and mobile HTML shells, plus PDF rendering."""
+"""ERP page routes: the desktop and mobile HTML shells, plus PDF export."""
 
 from __future__ import annotations
 
@@ -60,7 +60,6 @@ def index():
     return render_template(
         "erp/index.html",
         permitted_tabs=_permitted_tabs_for(current_user),
-        pdf_server_render=current_app.config.get("PDF_SERVER_RENDER", "auto"),
     )
 
 
@@ -159,38 +158,31 @@ def mobile_offline():
 @erp_bp.route("/erp/render-pdf", methods=["POST"])
 @login_required
 def render_pdf():
-    """Render one print-page fragment to a **vector** PDF (PDF-002).
+    """Render one print-page fragment to a vector PDF.
+
+    Backs the single "Download PDF" buttons. window.print() cannot hand back a
+    file, so this is what makes Download actually download.
 
     Deliberately not an RPC method: /api/erp/rpc/<method> is a JSON envelope
-    bridge, and this returns binary. CSRF still applies -- CSRFProtect is
-    global and this route is not in the exemption list -- so the client must
-    send X-CSRFToken, which static/erp/api.js already does for every call.
+    bridge and this returns binary. CSRF still applies -- CSRFProtect is global
+    and this route is not exempt.
 
     Contract:
-      request  {"html": "<div>…</div>", "landscape": false}
+      request  {"html": "<div>...</div>", "landscape": false, "filename": "..."}
       200      application/pdf
-      400      {"success": false, "message": …}  bad input
-      503      {"success": false, "message": …}  rendering unavailable here,
-               which tells the client to stop asking and use its own
-               (raster) renderer for the rest of the session.
+      400      bad input
+      503      cannot render here; the client falls back to the print dialog
+               and stops asking for the rest of the session.
     """
     from .services import pdf_render_service
 
-    if not pdf_render_service.is_enabled():
-        # Switched off on purpose (PDF_SERVER_RENDER=off). Same 503 the client
-        # already treats as "stop asking for this session", so no Playwright is
-        # touched and no browser is launched.
-        return jsonify({
-            "success": False,
-            "message": "Server-side PDF rendering is disabled on this deployment.",
-        }), 503
-
     payload = request.get_json(silent=True) or {}
-    html = payload.get("html")
-    landscape = bool(payload.get("landscape"))
-
     try:
-        pdf = pdf_render_service.render_pdf(html, landscape=landscape)
+        pdf = pdf_render_service.render_pdf(
+            payload.get("html"),
+            landscape=bool(payload.get("landscape")),
+            density=str(payload.get("density") or ""),
+        )
     except ValueError as exc:
         return jsonify({"success": False, "message": str(exc)}), 400
     except pdf_render_service.PdfRenderUnavailable as exc:
@@ -200,16 +192,58 @@ def render_pdf():
             "message": "Server-side PDF rendering is not available.",
         }), 503
     except Exception:
-        current_app.logger.exception("[PDF] server render failed")
+        current_app.logger.exception("[PDF] render failed")
         return jsonify({"success": False, "message": "Failed to render PDF."}), 500
 
-    return Response(
-        pdf,
-        mimetype="application/pdf",
-        headers={
-            # The client names the file; this is only a sensible default for
-            # anyone hitting the endpoint directly.
-            "Content-Disposition": 'attachment; filename="document.pdf"',
-            "Cache-Control": "no-store",
-        },
-    )
+    name = pdf_render_service.safe_filename(payload.get("filename"), "Document")
+    return Response(pdf, mimetype="application/pdf", headers={
+        "Content-Disposition": f'attachment; filename="{name}"',
+        "Cache-Control": "no-store",
+    })
+
+
+@erp_bp.route("/erp/render-pdf-batch", methods=["POST"])
+@login_required
+def render_pdf_batch():
+    """Render many documents into one ZIP of separately-named PDFs.
+
+    This is the capability window.print() has no expression for: one dialog
+    produces one document, so "these 40 challans as 40 named files" needs a
+    renderer that returns bytes.
+
+    One request for the whole batch rather than one per record -- the earlier
+    version of this feature made N round trips and N renders for N records.
+
+    Contract:
+      request  {"documents": [{"filename": ..., "html": ..., "landscape": ...}],
+                "zipName": "Purchase_Orders_190826.zip"}
+      200      application/zip
+      400 / 503 as above.
+    """
+    from .services import pdf_render_service
+
+    payload = request.get_json(silent=True) or {}
+    try:
+        blob, _names = pdf_render_service.render_batch(payload.get("documents"))
+    except ValueError as exc:
+        return jsonify({"success": False, "message": str(exc)}), 400
+    except pdf_render_service.PdfRenderUnavailable as exc:
+        current_app.logger.warning("[PDF] server rendering unavailable: %s", exc)
+        return jsonify({
+            "success": False,
+            "message": "Server-side PDF rendering is not available.",
+        }), 503
+    except Exception:
+        current_app.logger.exception("[PDF] batch render failed")
+        return jsonify({"success": False, "message": "Failed to render PDFs."}), 500
+
+    zip_name = pdf_render_service.safe_filename(
+        payload.get("zipName", "Documents.zip"), "Documents"
+    ).removesuffix(".pdf")
+    if not zip_name.lower().endswith(".zip"):
+        zip_name += ".zip"
+
+    return Response(blob, mimetype="application/zip", headers={
+        "Content-Disposition": f'attachment; filename="{zip_name}"',
+        "Cache-Control": "no-store",
+    })

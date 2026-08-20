@@ -5,6 +5,20 @@ across 10 modules, the service-worker interaction, and the third-party library
 choice. Frontend delivery performance generally is in `PERFORMANCE_AUDIT.md`;
 this document is scoped to document *output*.
 
+> ## ⚠️ Superseded in part — there is now one renderer
+>
+> **2026-08-19.** The pipeline this document audits no longer exists. Both
+> renderers it weighs against each other were removed and every export path
+> consolidated onto the browser's own print engine (`window.print()`).
+> See [PDF-009](#pdf-009--consolidated-onto-windowprint-one-renderer-no-dependencies)
+> at the foot of this file for what changed and what it cost.
+>
+> Findings PDF-001 through PDF-005 and PDF-008 describe code that has since
+> been deleted. They are kept because the *measurements* in PDF-002 are the
+> reason the consolidation went the way it did, and because the history
+> explains why the CSS and markup look as they do. PDF-006 (test coverage) and
+> PDF-007 (`MApp.Print` duplication) were carried forward and are now closed.
+
 > **Provenance.** Unlike the other audits in this folder, the two headline
 > numbers here are **measured, not projected**: a representative 15-line
 > Purchase Order was rendered through both the current pipeline and a vector
@@ -24,8 +38,11 @@ this document is scoped to document *output*.
 | PDF-004 | `po.js` duplicates `downloadElementAsPDF` in 116 lines, drifted both ways | Medium | P1 | ✅ Fixed |
 | PDF-005 | Bulk separate-PDF export can silently under-deliver and over-report | Medium | P1 | ✅ Fixed |
 | PDF-006 | `print.js` has zero test coverage across 10+ call sites | High (process) | P1 | ✅ Fixed |
-| PDF-007 | `MApp.Print` duplicates `App.Print.trigger`; desktop's container list is manual | Low | P3 | Open |
-| PDF-008 | A vector renderer is already installed, undeclared in `requirements.txt` | Info | — | ✅ Fixed |
+| PDF-007 | `MApp.Print` duplicates `App.Print.trigger`; desktop's container list is manual | Low | P3 | ✅ Fixed |
+| PDF-008 | A vector renderer is already installed, undeclared in `requirements.txt` | Info | — | ⬜ Obsolete |
+| PDF-009 | Consolidated onto `window.print()`: one renderer, no dependencies | — | — | ✅ Done |
+| PDF-010 | Bulk export as N separately-named files, via WeasyPrint | — | — | ✅ Done |
+| PDF-011 | Documents fit the A4 page; one naming convention for every export | — | — | ✅ Done |
 
 ---
 
@@ -738,3 +755,322 @@ All five steps are complete. What remains is listed under *Still open* in
 PDF-005 and PDF-007: no cancellation on a long export, `sortablejs` cannot take
 an SRI attribute through an ESM import specifier, and the mobile shell still
 carries its own copy of `App.Print.trigger`.
+
+---
+
+## PDF-009 · Consolidated onto `window.print()`: one renderer, no dependencies
+**Location** `static/erp/print.js` · `static/erp/styles.css` · `static/erp/mobile_styles.css`
+· `templates/erp/partials/print.html` · **Status** ✅ **Done** — 2026-08-19
+
+Everything in this document up to here describes a pipeline with **two**
+renderers behind one set of buttons: `html2pdf.js` (html2canvas + jsPDF) in the
+browser, and headless Chromium behind `POST /erp/render-pdf`, with the raster
+path as the offline fallback. Both are gone. Every print and every PDF in the
+app is now the browser's own print engine.
+
+### Why
+
+PDF-002 established that the raster path produced a picture of a document —
+0 extractable characters, 7.5× the bytes. The server renderer fixed that, but
+at the cost of a ~400 MB Chromium layer, which is why the Dockerfile shipped it
+as `INSTALL_CHROMIUM=false`. **The default deployment therefore still produced
+unsearchable PDFs**, and the one path that always produced a searchable
+document — Print → Save as PDF — was already present, already free, and
+already shipped.
+
+### What changed
+
+| | Before | After |
+|---|---|---|
+| Renderers | 3 (raster, Chromium, native print) | **1** (native print) |
+| `print.js` | 842 lines | **223 lines** |
+| Client payload | 946 KB vendored bundle, warmed by the SW | **none** |
+| Server dependency | `playwright` + Chromium layer | **none** |
+| Env vars | `PDF_SERVER_RENDER` | **none** |
+| Searchable output | only where Chromium was installed | **always** |
+| Container id lists | **10 copies** across JS + 2 stylesheets | **1 class** |
+
+Deleted: `deliverSeparatePDFs`, `downloadElementAsPDF`, `renderElementToPdfBlob`,
+`renderViaServer`, `ensureHtml2Pdf`, `_withElementPrepared`, `_prepareExport`,
+`_pdfOptions`, `chooseBulkDestination`, `zipStore` (+ CRC-32/DOS-time helpers),
+`saveBlob`, `uniqueFilename`, `reportBulkResult`, `hintSearchablePdfOnce`,
+`bulkZipName`, `_writeIntoFolder`; `app/erp/services/pdf_render_service.py`,
+`POST /erp/render-pdf`, `scripts/install_chromium.sh`, the vendored bundle, the
+service worker's post-activate warm step, and the Dockerfile's Chromium layer.
+
+### What it cost
+
+**Bulk export as N separately-named files was lost, then restored** — see
+PDF-010. For a period it produced one multi-page PDF instead of N files. The
+folder-write delivery mode did not come back, and neither did PDF-005's class
+of under-deliver/over-report problem: there is now one archive, and the browser
+either saved it or the user cancelled.
+
+**The buttons themselves are unchanged.** Every "Print", "Print Selected",
+"Download PDF" and "Download PDFs" control is still in place, with its original
+id, position and label; each delegates to the print path. An earlier revision of
+this change deleted the download buttons on the grounds that they duplicated
+Print. That was wrong: the brief was to change the mechanism, not to remove the
+affordance, and "Download PDF" tells a user what they are going to get in a way
+that "Print" does not.
+
+The multi-page-instead-of-N-files change is the one genuine regression.
+Restoring per-record files would require a second renderer, which is the thing
+this change exists to remove.
+
+### Fixed on the way through
+
+- **PDF-007 is closed.** The 11 print containers now carry a shared
+  `.print-container` class. That class replaced the id list, which had been
+  written out **ten times** — `CONTAINER_IDS` in `print.js`, seven selector
+  lists in `styles.css`, and two more in `mobile_styles.css` — and had already
+  drifted: five containers were missing from the `@media print` block
+  entirely, so its page-break, repeating-header and cell-border rules silently
+  never applied to them.
+- **A real mobile bug.** `MApp.Print.trigger` selected `[id^="print-"]`, a
+  prefix that also matches `#print-grand-total-container` — a block *nested
+  inside* the PO template. Printing a purchase order from the phone hid its own
+  grand total. The class selector cannot make that mistake.
+- **A dead user-facing option.** The Production Sheet's Landscape checkbox was
+  read only by the PDF exporter. `printProductionSheet()` never passed it, so
+  ticking Landscape and pressing Print produced a portrait page. Orientation is
+  now a per-job `@page` override that `App.Print` appends and removes around
+  the print call, so it cannot leak into the next document.
+- **`@page` documentation.** The rule's comment claimed "10mm margins match the
+  html2pdf jsPDF margin" while the rule itself said `6mm`, and pointed at a
+  file that no longer exists.
+- **The `td` exclusion is now stated.** `#print-po-container` and
+  `#print-low-stock-container` were quietly absent from the cell-styling
+  selector list; those rules are `!important` and would otherwise override the
+  inline styling those two templates set. They carry `print-cells-own` and the
+  rule reads `.print-container:not(.print-cells-own) td`.
+
+### Coverage
+
+The four test files covering deleted APIs (`print_bulk_export`, `print_zip`,
+`print_server_render`, `print_dom_restore`) and `print_filenames` were replaced
+by a single `static/erp/tests/print.test.js` — 24 cases over container
+selection, the arm/print/restore cycle, orientation set-and-clear, filename
+shaping and bulk pagination, run against the real `print.js` in a real jsdom
+document. `production_sheet_print.test.js` gained cases for the lot-derived
+filename and the Landscape option. Suite: 245 passing.
+
+---
+
+## PDF-010 · Bulk export as N separately-named files, via WeasyPrint
+**Location** `app/erp/services/pdf_render_service.py` · `static/erp/print.js`
+· **Status** ✅ **Done** — 2026-08-19
+
+PDF-009 consolidated every export onto `window.print()`, which cost exactly one
+capability: **one print dialog produces one document**, so "export these 40
+challans as 40 separately-named PDFs" had no expression. That is a real
+workflow here — each challan goes to a different client — so it is back.
+
+### The shape
+
+`window.print()` remains the renderer for *printing*. A second renderer exists
+only to return **bytes**, which is the thing a print dialog cannot do:
+
+| Button | Path |
+|---|---|
+| Print / Print Selected | `window.print()` — unchanged |
+| Download PDF | `POST /erp/render-pdf` → one named PDF |
+| Download PDFs | `POST /erp/render-pdf-batch` → ZIP of N named PDFs |
+
+Both endpoints render **the same `build*PrintPageHtml()` output the browser
+prints**. That is the whole design constraint: there is one definition of every
+document, not two. The rejected alternative was a client-side PDF library
+(jsPDF + AutoTable), which would have meant re-implementing 1,138 lines of
+document layout as drawing calls and maintaining it alongside the HTML — and
+PDF-004 in this same document records what happened last time document code was
+duplicated here: it drifted in both directions.
+
+### Why WeasyPrint and not the headless browser again
+
+The renderer PDF-009 deleted was Playwright + Chromium: a ~400 MB image layer,
+which is why the Dockerfile shipped it `INSTALL_CHROMIUM=false` and the default
+deployment produced no server-rendered PDFs at all. WeasyPrint is three apt
+packages, runs in-process, starts no subprocess, and is installed
+unconditionally. It renders CSS and no JavaScript, which suits builders that
+emit static tables with inline styles.
+
+**Its one real cost is Windows dev**, and it is now mostly paid down. WeasyPrint
+pip-installs there but cannot load pango/harfbuzz, which are not Python packages
+-- the failure is `cannot load library 'libgobject-2.0-0'`, which says nothing
+about the fix. `_ensure_windows_libs_on_path()` looks in the places MSYS2 and
+the GTK runtime actually install to and adopts whichever holds the libraries,
+setting both PATH (for `ctypes.util.find_library`) and `os.add_dll_directory`
+(for the DLLs' own dependencies -- neither alone is enough). So the remaining
+cost is one `winget install MSYS2.MSYS2` plus one `pacman -S
+mingw-w64-x86_64-pango`; no PATH editing, and nothing to remember on the next
+machine.
+
+The test suite is split regardless: validation, filename safety,
+de-duplication, auth and the error mapping run everywhere; rendering assertions
+skip when `probe()` reports no libraries, and activate the moment they are
+installed.
+
+### Verified against a real renderer
+
+WeasyPrint 69.0, 60 tests, none skipped:
+
+```
+probe   : ok -- weasyprint 69.0 available (libraries from C:/msys64/mingw64/bin)
+render  : ok -- 5,807 bytes
+batch   : ok -- entries=['PO_1204_Mahadev.pdf', 'PO_1204_Mahadev_2.pdf']
+page    : 210 x 297 mm
+columns : ok -- all 16 survived on A4
+text    : ok -- 316 extractable characters
+```
+
+Three assertions had to be corrected, and each was wrong about how a real
+renderer behaves rather than about the product:
+
+- **`file://` and cloud-metadata refusals do not raise.** WeasyPrint catches
+  the fetcher's `ValueError`, logs `Failed to load image at ...`, and renders
+  the document without the image. That is better than aborting a whole export
+  over one bad `<img>`, so the tests now assert on the output -- a real temp
+  file with a marker in it, and the marker absent from the PDF bytes -- rather
+  than on an exception.
+- **Fitted text wraps mid-token, by design.** `VALUE150000` extracts as
+  `VALUE1500
+00`, because breaking a long cell value is exactly what
+  `overflow-wrap: anywhere` is there to do. The assertion strips whitespace
+  before matching; what would be a defect is the text missing entirely, which
+  is what a cut column looks like.
+
+The `pypdf` dependency is back in `requirements.txt` for this: asserting a PDF
+"has a font dictionary" proves nothing (the old raster exporter embedded one
+for an image-only page). Only reading the text back distinguishes a document
+from a picture of one.
+
+### Degradation, not dependency
+
+`Download PDF` is an upgrade over `Print`, never a requirement. When the server
+cannot render — offline, or libraries missing — the button falls through to
+`window.print()` and says so once per browser. **The output is never worse:**
+the print dialog still produces a searchable vector PDF with no network. This is
+categorically unlike the pre-PDF-009 fallback, which silently produced a JPEG.
+
+A `503` latches the client off for the session, so a 40-record export does not
+make 40 pointless round trips; a per-request `5xx` does not latch, because the
+next request may succeed.
+
+### One request per batch
+
+`POST /erp/render-pdf-batch` takes the whole selection and returns one archive.
+The pre-PDF-009 implementation issued one HTTP request and one render **per
+record**, with a deliberate `BULK_EXPORT_YIELD_MS` pause between them — so a
+50-record export was 50 round trips, 50 renders and 50 sleeps.
+
+A ZIP rather than N loose downloads is also deliberate: Chrome and Edge prompt
+once per origin for "automatic downloads" and silently drop the rest if denied,
+which is exactly how PDF-005's silent under-delivery happened. One archive
+either arrives or does not.
+
+Names are sanitised and de-duplicated server-side. A repeat inside a ZIP is
+worse than a filename collision on disk — some extractors keep only the last
+entry, so 40 records could quietly yield 38 files.
+
+### Not restored
+
+**Folder-write delivery** (File System Access API) did not come back. It existed
+to make delivery confirmable when the alternative was N unconfirmable
+downloads; with a single archive there is nothing left for it to solve.
+
+---
+
+## PDF-011 · Documents fit the A4 page; one naming convention for every export
+**Location** `static/erp/styles.css` · `static/erp/print.js`
+· `app/erp/services/pdf_render_service.py` · **Status** ✅ **Done** — 2026-08-20
+
+Two problems, both visible to whoever holds the paper.
+
+### Columns fell off the right edge
+
+A print engine does not scale or scroll a table wider than the printable box —
+it **cuts** it. On A4 portrait at 6mm margins that box is 198mm, and the Low
+Stock sheet lost its Price and Total Value columns to it.
+
+The earlier partial fix (`th { white-space: normal }`) treated the header. The
+real cause is that these tables are `table-layout: auto`, where **no column can
+be narrower than its own min-content**, and min-content is set by the longest
+unbreakable run of characters — a 30-character item code, an HSN string, a
+composite colour like `Silky Blue-Navy Blue / Black`. Enough of those floors and
+the table exceeds 100% no matter what width is declared.
+
+The fix is one property, and *which* property is the whole point:
+
+| | wraps text | counts toward min-content | fixes the overflow |
+|---|---|---|---|
+| `overflow-wrap: break-word` | yes | **no** | **no** |
+| `overflow-wrap: anywhere` | yes | **yes** | **yes** |
+
+`anywhere` lets a column narrow past its longest token, which is what finally
+makes `width: 100%` achievable. `table-layout: fixed` would also cap the width
+and is still **not** used: the print tables declare no per-column widths, so
+fixed layout would divide space equally and give the `#` column as much room as
+`Item Name`. Auto layout keeps the proportions the documents were designed
+with; this only removes the floors that let it overflow.
+
+**Readability is a separate problem from fitting.** A 16-column pivot that fits
+only because every cell wrapped to one character per line is on the page and
+useless. So `App.Print.fitToPage()` counts the widest row and applies a density
+tier — 10px, 9px, 8px, with matching padding. Nothing is applied below 9
+columns, so ordinary purchase orders and challans are untouched.
+
+Column count, not measured width, is the input: this runs before
+`window.print()`, when the container is laid out at *screen* width, so anything
+measured would be measuring the wrong box.
+
+Past 12 columns no font size helps much, and rotating buys 40% more width than
+any of them. The stock pivot — the one document whose width is unbounded, since
+it grows a column per size — passes `landscape: 'auto'` and rotates itself.
+
+The server shell carries the same rules and the same tier, which the client
+sends (it is the side with a DOM to count). The tier name is validated against
+a fixed set rather than interpolated into the stylesheet.
+
+### Filenames were long, inconsistent, and unsearchable
+
+`Delivery_Challan_DC-1041_Sharma_Traders.pdf` spends 17 characters on a prefix
+repeated across every challan, which pushes the distinguishing part out of a
+file-manager column. Every module also invented its own shape, and the ZIP used
+`DDMMYY` while nothing else used a date at all.
+
+`App.Print.docName()` is now the single convention, used by **both** the Print
+title and the Download filename — so `Print → Save as PDF` and `Download PDF`
+put the identical name in front of the user:
+
+```
+CODE_KEY_PARTY[_YYMMDD]
+```
+
+| Before | After |
+|---|---|
+| `PO_1204_Mahadev industries.pdf` | `PO_1204_Mahadev.pdf` |
+| `Bill_B-3391_Gupta_Cycle_Co.pdf` | `GRN_B-3391_GuptaCycle.pdf` |
+| `Delivery_Challan_DC-1041_Sharma_Traders.pdf` | `DC_1041_SharmaTraders.pdf` |
+| `Stock_Issue_Receipt_882.pdf` | `ISS_882.pdf` |
+| `Item_Ledger_RIM---BLACK.pdf` | `ILG_RIMBLACK_260820.pdf` |
+| `Purchase_Orders_190826.zip` | `PO_260819.zip` |
+
+Three rules, each earning its place:
+
+1. **A short code first.** Typing `DC_` finds every challan.
+2. **The document's own number next** — what someone searches for when holding
+   a paper copy.
+3. **A date only where the date is the identity.** A purchase order is
+   identified by its number; stamping today's date on it is noise *and* a small
+   lie, since it is the day it was downloaded rather than the day it was
+   raised. Reports and ledgers have no number, so for those the date is the
+   whole identity. `YYMMDD`, which sorts; the old ZIP used `DDMMYY`, which
+   sorted a year of exports by day-of-month.
+
+Three details that only showed up on real data: a party name is never truncated
+mid-word (`Mahadevindustrie` reads as a typo and is no more distinct than
+`Mahadev`); a code the key already carries is not repeated (`DC-1041` would
+have produced `DC_DC-1041`); and a vendor named wholly in Gurmukhi or
+Devanagari — ordinary here — has no Latin characters at all, so rather than
+dropping the segment and giving every such vendor the same filename, a short
+stable tag keeps them apart.

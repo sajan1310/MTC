@@ -14,7 +14,7 @@ Complete guide for deploying the Inventory Management System to production.
    - [Render](#render-deployment)
    - [Heroku](#heroku-deployment)
    - [AWS/DigitalOcean/VPS](#vps-deployment)
-5. [PDF Rendering (Chromium)](#pdf-rendering-chromium)
+5. [PDF Export](#pdf-export)
 6. [Post-Deployment](#post-deployment)
 7. [Monitoring & Maintenance](#monitoring--maintenance)
 8. [Troubleshooting](#troubleshooting)
@@ -62,13 +62,6 @@ BASE_URL=https://yourdomain.com
 
 # === Optional: Rate Limiting ===
 RATELIMIT_STORAGE_URL=redis://localhost:6379
-
-# === Optional: PDF rendering ===
-# "auto" (default) renders PDFs server-side via headless Chromium when it is
-# installed, falling back to the browser when it is not. "off" means you have
-# deliberately not installed Chromium: PDFs are rendered in the browser as
-# images, and Print -> Save as PDF remains available for a searchable one.
-PDF_SERVER_RENDER=off
 
 # === Optional: Logging ===
 LOG_LEVEL=INFO
@@ -178,9 +171,8 @@ railway up
 - Install dependencies from `requirements.txt`
 - Run `gunicorn wsgi:app`
 
-> **PDF rendering:** `pip install` does not download the Chromium build the
-> server-side PDF renderer needs. See [PDF Rendering (Chromium)](#pdf-rendering-chromium)
-> — without it, exported PDFs fall back to being images rather than searchable
+> **PDF export** needs no build step and no browser install — it is the
+> user's own browser print engine. See [PDF Export](#pdf-export).
 > documents.
 
 #### Step 6: Configure Domain
@@ -203,12 +195,8 @@ railway up
 3. Configure:
    - **Name**: inventory-management
    - **Environment**: Python 3
-   - **Build Command**: `pip install -r requirements.txt && playwright install --with-deps chromium`
+   - **Build Command**: `pip install -r requirements.txt`
    - **Start Command**: `gunicorn wsgi:app`
-
-   The `playwright install` half is what enables server-side PDF rendering; see
-   [PDF Rendering (Chromium)](#pdf-rendering-chromium). Without it the app still
-   works, but exported PDFs are images rather than searchable documents.
 
 #### Step 2: Add PostgreSQL
 
@@ -405,149 +393,76 @@ sudo certbot --nginx -d yourdomain.com
 
 ---
 
-## PDF Rendering (Chromium)
+## PDF Export
 
-Purchase orders, goods receipts and delivery challans are rendered to PDF
-**server-side** by headless Chromium, which is what makes them real documents:
-searchable, copyable, and a fraction of the size. Skipping this step does not
-break anything — the app falls back to rendering in the browser — but the
-fallback embeds each page as a JPEG, so a PO can no longer be searched for its
-own PO number. See `docs/audit/PDF_GENERATION_REVIEW.md` PDF-002.
+**Printing needs nothing installed. Downloading needs three apt packages.**
 
-`pip install` brings in the Playwright **library**; it never downloads the
-browser. That is a separate step, and it is the one that gets missed.
+Every document in the app --
+purchase orders, goods receipts, delivery challans, ledgers, production sheets
+-- is produced by the browser's own print engine via `window.print()`. Choosing
+"Save as PDF" in the print dialog yields a real document: selectable text,
+searchable, copyable, readable by a screen reader.
 
-### Not installing it is a supported choice
+This replaced two earlier renderers, and the deployment story is the whole
+reason it is simpler now:
 
-**Chromium is off by default.** The Docker build skips it unless you ask:
-
-```bash
-docker build --build-arg INSTALL_CHROMIUM=true .
-```
-
-If you are not installing it, say so explicitly:
-
-```bash
-PDF_SERVER_RENDER=off
-```
-
-That one setting does three things: the startup log reports a deliberate choice
-(INFO) instead of warning about a broken deploy, the endpoint stops without ever
-touching Playwright, and the browser is told up front so it does not spend a
-request per session rediscovering the same thing.
-
-What you get without it:
-
-| | With Chromium | Without |
+| | Before | Now |
 |---|---|---|
-| Separate PDFs per record | yes | yes |
-| Folder picker / ZIP / individual downloads | yes | yes |
-| Works offline | yes | yes |
-| Searchable, copyable text | **yes** | no -- images |
-| File size | ~50 KB/page | ~120-360 KB/page |
-| **Print -> Save as PDF** | searchable | **searchable** |
+| Server dependency | Playwright + a ~400 MB Chromium layer | none |
+| Client dependency | a 946 KB vendored `html2pdf.js` bundle | none |
+| Searchable output | only when Chromium was installed | always |
+| Works offline | yes, but as unsearchable images | yes, unchanged |
+| Env vars | `PDF_SERVER_RENDER` | none |
 
-The last row is the important one. `window.print()` uses the browser's own print
-engine, so **Print -> Save as PDF produces a fully searchable document with
-nothing installed at all** -- the document title becomes the suggested filename.
-It does not do bulk (Print Selected gives one multi-page file rather than
-separate ones), but for a single PO going to a vendor or an auditor it is the
-complete answer. The app points users at it once, the first time they download an
-image-based PDF. The mobile shell has worked this way from the start.
+Because Chromium was a ~400 MB image layer it was **off by default**, which
+meant a default deployment silently produced image-based PDFs. That failure
+mode no longer exists: there is no configuration that can turn searchable
+output off.
 
-### What "missed" looks like
+### What users do
 
-The app boots and works. On the first export you get, in the logs:
+Every button is where it always was. **Print** and **Download PDF** both open
+the print dialog; choosing "Save as PDF" there produces the file.
 
-```
-WARNING [PDF] server-side vector rendering DISABLED -- no chromium build under
-/root/.cache/ms-playwright -- run: playwright install chromium. /erp/render-pdf
-will return 503 and clients will fall back to client-side rasterisation ...
-```
+- **One document** -- the row's Print or Download PDF button.
+- **Several documents** -- select rows, then Print Selected or Download PDFs.
+  They arrive as one multi-page PDF, one record per page.
 
-That warning is emitted **once at startup**, not only when somebody exports, so
-it shows up in the deploy log rather than a week later.
+Chrome and Edge pre-fill the save dialog's filename from `document.title`,
+which the app sets per document (`App.Print.trigger`), so files still land
+named `PO_1041_Acme` rather than `document.pdf`.
 
-### Docker / docker-compose
+### Download PDF: the one thing that needs installing
 
-Already handled — the `Dockerfile` runs:
-
-```dockerfile
-RUN playwright install --with-deps chromium
-```
-
-This is the largest layer in the image (~400 MB). It sits after `pip install`
-and before `COPY . .`, so ordinary code changes do not rebuild it.
-
-### Railway
-
-Railway uses the `Dockerfile` when one is present, which is the recommended
-path here and needs no extra configuration. If you have forced Nixpacks/Procfile
-detection instead, add a build step:
-
-```bash
-railway variables set NIXPACKS_BUILD_CMD="pip install -r requirements.txt && playwright install --with-deps chromium"
-```
-
-### Render
-
-The default Build Command does not install the browser. Change it to:
+A print dialog cannot hand back a *file*, so the **Download PDF** buttons post
+the same HTML to WeasyPrint, which returns bytes. **Download PDFs** on a ledger
+returns a ZIP of one separately-named PDF per selected record.
 
 ```
-pip install -r requirements.txt && playwright install --with-deps chromium
+Debian / Ubuntu / Docker
+    apt install libpango-1.0-0 libpangoft2-1.0-0 libharfbuzz-subset0
+    (already in the Dockerfile)
+
+Windows (dev)
+    winget install --id=MSYS2.MSYS2 -e
+    C:/msys64/usr/bin/pacman -S --noconfirm mingw-w64-x86_64-pango
+    then add C:/msys64/mingw64/bin to PATH
 ```
 
-On Render's native Python environment `--with-deps` may not be able to apt-get
-the shared libraries Chromium needs. If the build fails on that, deploy via
-Docker instead (Render supports a Dockerfile-based service), which is the more
-reliable route.
-
-### Heroku / VPS
-
-```bash
-pip install -r requirements.txt
-playwright install --with-deps chromium
-```
-
-On a VPS run it as the same user that runs gunicorn — browsers install into
-that user's cache (`~/.cache/ms-playwright`), so installing as `root` and
-serving as `www-data` silently leaves the renderer unavailable. Set
-`PLAYWRIGHT_BROWSERS_PATH` to a shared location if the two differ.
-
-### Verifying it
-
-Run the smoke check on the deployed box. It probes for the browser, renders a
-real document, and exits non-zero on failure, so it can gate a release step:
+Check it with:
 
 ```bash
 python -m app.erp.services.pdf_render_service
 ```
 
-```
-probe        : ok -- chromium available (chromium-1234)
-render       : ok -- 17,423 bytes
-output       : ok -- server-side vector rendering is working
-```
+**It degrades, it does not break.** Without the libraries the endpoint returns
+503, Download PDF falls back to the print dialog, and the app says so once. The
+output is still a searchable vector PDF -- you just pick the destination
+yourself, and bulk export gives one multi-page document instead of N files. The
+boot log states which mode this deployment is in.
 
-### If something is wrong
-
-The startup log names the problem and the fix. The three you are likely to see:
-
-| Log says | Meaning | Fix |
-|---|---|---|
-| `no chromium build found (looked in: ...)` | never installed, or installed somewhere unusual | `sh scripts/install_chromium.sh`, or set `PLAYWRIGHT_BROWSERS_PATH` |
-| `missing its system libraries` | downloaded, cannot start | `playwright install-deps chromium` as root, or deploy via Docker |
-| `not executable by this user` | permissions on the browsers directory | `chmod -R a+rX` on it, or reinstall |
-
-### Memory
-
-Each worker process holds its own Chromium once it has rendered something
-(Playwright's sync API binds objects to their creating thread, so a single
-shared browser is not possible). With gunicorn's default `--workers 4`, budget
-for up to four. On a small instance either lower `WEB_CONCURRENCY` or accept
-the client-side fallback by simply not installing the browser.
-
----
+> **Not restored:** folder-write delivery (File System Access API). Bulk export
+> returns one archive; see `docs/audit/PDF_GENERATION_REVIEW.md` PDF-010.
 
 ## Post-Deployment
 

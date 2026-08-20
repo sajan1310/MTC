@@ -1,5 +1,0 @@
-# The repo runs core.autocrlf=true, which rewrites line endings on checkout for
-# anything Git considers text. Vendored third-party bundles must stay
-# byte-identical to their published upstream artifacts so the checksums recorded
-# in Project-root/static/erp/vendor/README.md stay verifiable.
-Project-root/static/erp/vendor/** -text

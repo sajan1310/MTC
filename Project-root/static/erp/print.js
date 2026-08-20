@@ -1,45 +1,78 @@
 'use strict';
-// print.js -- App.Print, ported from Apps_Script/Script_Print.html.
+// print.js -- App.Print.
 //
-// Every module's print/printCurrent/bulkPrint function across all 19
-// prior rounds already calls into this module (App.Print.trigger /
-// App.Print.triggerBulk / App.Print.brandHeaderHtml), guarded behind
-// `typeof App.Print === 'undefined'`. Loading this file is what turns
-// every one of those guarded call sites live -- no changes needed in
-// any other module's JS for this round.
+// Every print and PDF export in this app goes through one route: the
+// browser's own print engine, via window.print(). There is no second
+// renderer. That is what makes output consistent -- a document looks the
+// same whether it is sent to a printer, saved as a PDF, or previewed --
+// and it is what makes every PDF a real document: selectable text,
+// searchable, copyable, readable by a screen reader.
+//
+// How a document gets printed
+// ───────────────────────────────────────────────────────────────────────
+// There are exactly two shapes, and every module uses one of them:
+//
+//   trigger(containerId, title)          one already-populated container
+//   triggerBulk(records, build, title)   N records, one page each
+//
+// Both reveal exactly one container (`.active-print`), set document.title,
+// call window.print(), and put everything back afterwards. Chrome and Edge
+// use document.title as the default "Save as PDF" filename, which is why
+// the title argument is the filename argument -- there is no separate
+// download path that could name a file differently.
+//
+// What used to be here
+// ───────────────────────────────────────────────────────────────────────
+// A client-side raster exporter (html2pdf.js -> html2canvas + jsPDF) and a
+// server-side vector renderer (POST /erp/render-pdf -> headless Chromium),
+// with the raster path as the offline fallback. The raster path produced a
+// flat JPEG: measured on a 15-line purchase order, 361 KB with ZERO
+// extractable characters against 48 KB and 1,184 characters through a real
+// print engine. Both are gone -- see docs/audit/PDF_GENERATION_REVIEW.md.
+//
+// The one capability that went with them is bulk export as separate named
+// files (and its ZIP/folder delivery modes). window.print() produces one
+// document per dialog, so a bulk export is one multi-page document with a
+// page break between records. Every Print and Download PDF button in the app
+// still exists and still sits where it did; what changed is what happens
+// underneath, not what the user reaches for.
 
 App.Print = {
   // ── Canonical A4 page geometry ───────────────────────────────
-  // Single source of truth for every export path. The margin must stay in
-  // step with the @page rule in styles.css so window.print() and the
-  // downloaded PDF line up. PAGE_WIDTH_PX is the width the element is laid
-  // out at before html2canvas captures it, and is what any fit/measure loop
-  // must measure against.
+  // Must stay in step with the @page rule in styles.css AND its copy in
+  // mobile_styles.css. PAGE_WIDTH_PX / PAGE_HEIGHT_PX are the printable box
+  // in CSS pixels at 96dpi -- production.js measures its auto-fit Production
+  // Sheet against them to decide whether the sheet fits one page.
   PAGE_MARGIN_MM: 6,
   get PAGE_WIDTH_PX() { return Math.floor((210 - 2 * this.PAGE_MARGIN_MM) * 96 / 25.4); },
   get PAGE_HEIGHT_PX() { return Math.floor((297 - 2 * this.PAGE_MARGIN_MM) * 96 / 25.4); },
 
-  CONTAINER_IDS: [
-    'print-po-container',
-    'print-item-ledger-container',
-    'print-vendor-ledger-container',
-    'print-client-ledger-container',
-    'print-contractor-ledger-container',
-    'print-production-sheet-container',
-    'print-low-stock-container',
-    'print-bill-container',
-    'print-bom-container',
-    'print-dispatch-container',
-    'print-bulk-container'
-  ],
+  // Every print template carries class="print-container" (see
+  // templates/erp/partials/print.html). Selecting on the class rather than
+  // enumerating ids is deliberate: the id list used to be written out ten
+  // times across print.js, styles.css and mobile_styles.css, and they had
+  // drifted -- five containers were missing from the @media print block, so
+  // its page-break and repeating-header rules silently never applied to them.
+  // A twelfth print template now needs one class in the markup and no
+  // changes here.
+  CONTAINER_SELECTOR: '.print-container',
 
+  containers() {
+    return Array.from(document.querySelectorAll(this.CONTAINER_SELECTOR));
+  },
+
+  // Sweeps '.active-print' as well as '.print-container'. The former is a
+  // class this module sets, so anything still carrying it is ours to clear
+  // even when it lives in markup that predates '.print-container' -- a page
+  // served from a stale template cache against a newer print.js would
+  // otherwise match nothing here and leave the document stranded on screen,
+  // covering the app, with no way back except a reload.
   hideAll() {
-    this.CONTAINER_IDS.forEach(id => {
-      const el = document.getElementById(id);
-      if (el) {
-        el.classList.remove('active-print');
-        el.style.display = 'none';
-      }
+    const armed = new Set(this.containers());
+    document.querySelectorAll('.active-print').forEach(el => armed.add(el));
+    armed.forEach(el => {
+      el.classList.remove('active-print');
+      el.style.display = 'none';
     });
   },
 
@@ -64,7 +97,300 @@ App.Print = {
     });
   },
 
-  trigger(containerId, documentTitle) {
+  // ── Page orientation ─────────────────────────────────────────
+  //
+  // styles.css declares `@page { size: a4 portrait }` for everything. The
+  // Production Sheet is the one document with a user-facing Landscape
+  // option, and orientation has to be a property of one print job rather
+  // than global state -- otherwise printing a landscape sheet would leave
+  // every subsequent purchase order sideways.
+  //
+  // A later @page rule wins, so this appends one and removes it in cleanup.
+  // Deliberately not the CSS `page:` property with a named @page: named
+  // pages are Chromium-only, and this has to behave the same everywhere,
+  // which is the whole point of having one renderer.
+  ORIENTATION_STYLE_ID: 'erp-print-orientation',
+
+  setPageOrientation(landscape) {
+    this.clearPageOrientation();
+    if (!landscape) return;
+    const style = document.createElement('style');
+    style.id = this.ORIENTATION_STYLE_ID;
+    style.textContent = `@page { size: a4 landscape; margin: ${this.PAGE_MARGIN_MM}mm; }`;
+    document.head.appendChild(style);
+  },
+
+  clearPageOrientation() {
+    const existing = document.getElementById(this.ORIENTATION_STYLE_ID);
+    if (existing) existing.remove();
+  },
+
+  // ── Filenames ────────────────────────────────────────────────
+  //
+  // Shared sanitizer for every module's document titles. Because the title
+  // IS the suggested PDF filename, this is the only place filenames are
+  // shaped.
+  //
+  // The 50-char cap and the 'Document' fallback both matter and must stay.
+  // The pattern strips everything outside [a-zA-Z0-9_-], which means a name
+  // written wholly in Gurmukhi or Devanagari -- ordinary for vendors and items
+  // here -- sanitizes to the empty string, not to a short name. Without the
+  // fallback that yields "Item_Ledger_".
+  sanitizeFilename(text = '', allowSpaces = true) {
+    const pattern = allowSpaces ? /[^a-zA-Z0-9\s_-]/g : /[^a-zA-Z0-9_-]/g;
+    return (
+      String(text)
+        .replace(pattern, '')
+        .trim()
+        .replace(/\s+/g, '_')
+        .slice(0, 50) || 'Document'
+    );
+  },
+
+  // Last-resort guard applied to every title on its way to document.title.
+  // Callers already sanitize the variable parts (vendor names, item names);
+  // this only removes the characters Windows and macOS refuse in a filename,
+  // so a title that reached here unsanitized cannot produce a save dialog
+  // the user has to correct by hand. Spaces and dashes are kept -- they are
+  // legal, and "Dispatch Plan - 2026-08-19" is a better filename than its
+  // underscored form.
+  titleToFilename(title) {
+    return String(title == null ? '' : title)
+      .replace(/[/\\:*?"<>|]/g, '-')
+      .replace(/\s+/g, ' ')
+      .trim()
+      .slice(0, 120) || 'Document';
+  },
+
+  // ── Fitting a document to the page ───────────────────────────
+  //
+  // styles.css lets any cell wrap anywhere, so a table can no longer
+  // overflow the page and get cut. What that alone cannot fix is
+  // READABILITY: a 16-column stock pivot that fits only because every cell
+  // wrapped to one character per line is technically on the page and
+  // useless.
+  //
+  // So the widest row in the document picks a density tier, and the tier
+  // trades type size for column room. Documents under the first threshold
+  // get no class at all, so ordinary purchase orders and challans are
+  // untouched.
+  //
+  // Column count, not measured width, is the input on purpose: this runs
+  // before window.print(), when the container is laid out at SCREEN width,
+  // and the page box is a different width entirely. Anything measured here
+  // would be measuring the wrong box. Column count is the same in both.
+  FIT_TIERS: [
+    { maxColumns: 8, className: '' },
+    { maxColumns: 12, className: 'print-fit-compact' },
+    { maxColumns: 16, className: 'print-fit-dense' },
+    { maxColumns: Infinity, className: 'print-fit-xdense' }
+  ],
+
+  // Beyond this many columns even the densest tier is cramped on A4
+  // portrait, and rotating the page buys 40% more width than any font
+  // change can. Callers opt in with `landscape: 'auto'`.
+  AUTO_LANDSCAPE_COLUMNS: 12,
+
+  fitClassNames() {
+    return this.FIT_TIERS.map(t => t.className).filter(Boolean);
+  },
+
+  // The widest row anywhere in `root`, counting colSpan -- a header cell
+  // spanning three columns commits the table to three columns of width.
+  columnCount(root) {
+    let widest = 0;
+    root.querySelectorAll('tr').forEach(row => {
+      let n = 0;
+      for (const cell of row.cells || []) n += cell.colSpan || 1;
+      if (n > widest) widest = n;
+    });
+    return widest;
+  },
+
+  // Applies the tier for `container`'s widest table and returns the column
+  // count, so a caller can also decide on orientation.
+  fitToPage(container) {
+    if (!container) return 0;
+    container.classList.remove(...this.fitClassNames());
+
+    const columns = this.columnCount(container);
+    const tier = this.FIT_TIERS.find(t => columns <= t.maxColumns);
+    if (tier && tier.className) container.classList.add(tier.className);
+    return columns;
+  },
+
+  // The tier a fragment of document HTML would print at.
+  //
+  // The download paths send HTML strings to the server, which has no DOM to
+  // count columns with, so the counting happens here and the class name goes
+  // in the payload. Parsed into a detached element: it is never inserted, so
+  // nothing lays out and no styles apply -- only the table structure is read.
+  fitDensityFor(html) {
+    if (!html) return '';
+    const holder = document.createElement('div');
+    holder.innerHTML = html;
+    const columns = this.columnCount(holder);
+    const tier = this.FIT_TIERS.find(t => columns <= t.maxColumns);
+    return tier ? tier.className : '';
+  },
+
+  // ── Document names ───────────────────────────────────────────
+  //
+  // One convention, used by every Print title and every Download filename,
+  // so the two always agree and a folder of exports sorts and searches
+  // sensibly.
+  //
+  //     CODE_KEY_PARTY[_YYMMDD]
+  //
+  //     PO_1204_Mahadev          purchase order 1204, Mahadev Industries
+  //     GRN_3391_Gupta           goods receipt
+  //     DC_1041_Sharma           delivery challan
+  //     ILG_RimBlack_260819      item ledger as at 19 Aug 2026
+  //     STK_260819               stock report
+  //
+  // Three rules, and each earns its place:
+  //
+  //  1. **A short code first**, never a spelled-out phrase. Typing "DC_"
+  //     finds every challan; "Delivery_Challan_" is 17 characters of prefix
+  //     repeated on every file, which pushes the part that actually
+  //     distinguishes them past the width of a file-manager column.
+  //  2. **The document's own number next**, because that is what someone
+  //     searches for when they are holding a paper copy.
+  //  3. **A date ONLY where the date is the identity.** A purchase order is
+  //     identified by its number, so stamping today's date on it is both
+  //     noise and a small lie -- it is the day it was downloaded, not the
+  //     day it was raised. Reports and ledgers have no number of their own,
+  //     so for those the date is the whole identity.
+  //
+  // Every segment is capped, so a vendor named "Shri Balaji Cycle and
+  // Rickshaw Parts Manufacturing Company Private Limited" cannot produce a
+  // filename nobody can read.
+  DOC_TYPES: {
+    PO: 'Purchase Order',
+    GRN: 'Goods Receipt',
+    DC: 'Delivery Challan',
+    ISS: 'Stock Issue Receipt',
+    RET: 'Return Note',
+    ILG: 'Item Ledger',
+    VLG: 'Vendor Ledger',
+    CLG: 'Client Ledger',
+    KLG: 'Contractor Ledger',
+    BOM: 'BOM Cost Sheet',
+    PRC: 'Process Sheet',
+    PRD: 'Production Sheet',
+    WO: 'Work Order',
+    STK: 'Stock Report',
+    WHP: 'Warehouse Pool Report',
+    LOW: 'Low Stock Report'
+  },
+
+  DOC_KEY_MAX: 18,
+  DOC_PARTY_MAX: 16,
+
+  // A party name reduced to something recognisable: the first word, plus the
+  // second only when both fit whole. "Mahadev industries" -> "Mahadev",
+  // "Shri Balaji Cycle and Rickshaw Parts" -> "ShriBalaji".
+  //
+  // Never truncates mid-word to reach the cap. "Mahadevindustrie" reads like
+  // a typo and is no more distinct than "Mahadev"; a name that is recognisably
+  // one word beats a name that is 16 characters long.
+  _docParty(text) {
+    const raw = String(text || '').trim();
+    const words = raw
+      .replace(/[^a-zA-Z0-9\s]/g, ' ')
+      .trim()
+      .split(/\s+/)
+      .filter(Boolean);
+
+    if (!words.length) {
+      // Names written wholly in Gurmukhi or Devanagari -- ordinary for
+      // vendors and items here -- have no Latin characters at all. Dropping
+      // the segment would make every such vendor's ledger share one filename,
+      // so a short stable tag of the original keeps them distinct. Not
+      // pretty, but a name nobody can tell apart is worse.
+      return raw ? `x${this._docTag(raw)}` : '';
+    }
+
+    const first = words[0].slice(0, this.DOC_PARTY_MAX);
+    if (words[1] && first.length + words[1].length <= this.DOC_PARTY_MAX) {
+      return first + words[1];
+    }
+    return first;
+  },
+
+  // Four hex characters, stable for a given string. Only used to keep
+  // otherwise-identical names apart.
+  _docTag(text) {
+    let hash = 0;
+    for (let i = 0; i < text.length; i++) {
+      hash = ((hash << 5) - hash + text.charCodeAt(i)) | 0;
+    }
+    return (hash >>> 0).toString(16).slice(-4).padStart(4, '0');
+  },
+
+  // YYMMDD. Accepts a Date, an ISO string, or the dd/mm/yyyy the ledgers
+  // display; anything unparseable falls back to today rather than emitting
+  // a wrong date.
+  _docDate(value) {
+    let d;
+    if (value instanceof Date) {
+      d = value;
+    } else if (typeof value === 'string' && /^\d{1,2}\/\d{1,2}\/\d{4}$/.test(value)) {
+      const [dd, mm, yyyy] = value.split('/');
+      d = new Date(Number(yyyy), Number(mm) - 1, Number(dd));
+    } else if (value) {
+      d = new Date(value);
+    } else {
+      d = new Date();
+    }
+    if (isNaN(d.getTime())) d = new Date();
+
+    const pad = n => String(n).padStart(2, '0');
+    return `${String(d.getFullYear()).slice(-2)}${pad(d.getMonth() + 1)}${pad(d.getDate())}`;
+  },
+
+  // Builds a name from { type, key, party, date }. `date` is opt-in: pass
+  // true for "today", a Date/string for a specific day, or omit it for
+  // documents that carry their own number.
+  //
+  // Returns the stem WITHOUT ".pdf" -- it doubles as the print title, where
+  // an extension would be wrong.
+  docName({ type, key = '', party = '', date = null } = {}) {
+    if (!this.DOC_TYPES[type]) {
+      console.warn('[Print] Unknown document type code:', type);
+    }
+
+    const segments = [type || 'DOC'];
+
+    // Drop a prefix the key already repeats: dispatch numbers arrive as
+    // "DC-1041", which would otherwise name the file "DC_DC-1041".
+    let cleanKey = this.sanitizeFilename(String(key), false);
+    const repeated = new RegExp(`^${type}[-_]?`, 'i');
+    if (type && repeated.test(cleanKey)) cleanKey = cleanKey.replace(repeated, '');
+    cleanKey = cleanKey.slice(0, this.DOC_KEY_MAX);
+
+    if (key && cleanKey && cleanKey !== 'Document') segments.push(cleanKey);
+
+    const cleanParty = this._docParty(party);
+    if (cleanParty) segments.push(cleanParty);
+
+    if (date) segments.push(this._docDate(date === true ? null : date));
+
+    return segments.join('_');
+  },
+
+  // The same name with the extension, for download filenames.
+  docFilename(spec) {
+    return `${this.docName(spec)}.pdf`;
+  },
+
+  // ── The one print path ───────────────────────────────────────
+  //
+  // Reveals `containerId`, names the job, prints, and restores. Everything
+  // else in the app funnels through here.
+  //
+  // options.landscape - print this one job in landscape (Production Sheet).
+  trigger(containerId, documentTitle, options = {}) {
     // Ensure no other print template is left active from a
     // previous job before showing this one.
     this.hideAll();
@@ -74,16 +400,39 @@ App.Print = {
     if (container) {
       container.classList.add('active-print');
       container.style.display = 'block';
+    } else {
+      console.warn('[Print] Print container not found:', containerId);
     }
 
+    // Size the document to the page before the dialog opens. Returns the
+    // column count so `landscape: 'auto'` can act on it -- the widest
+    // documents (the stock pivot grows one column per size) are better
+    // rotated than shrunk.
+    const columns = this.fitToPage(container);
+    const landscape = options.landscape === 'auto'
+      ? columns > this.AUTO_LANDSCAPE_COLUMNS
+      : !!options.landscape;
+
     const originalTitle = document.title;
-    document.title = documentTitle;
+    document.title = this.titleToFilename(documentTitle);
+    this.setPageOrientation(landscape);
 
     let cleaned = false;
     const cleanup = () => {
       if (cleaned) return;
       cleaned = true;
       document.title = originalTitle;
+      this.clearPageOrientation();
+      // Put back exactly what this call revealed, by reference, before the
+      // general sweep. Reveal and restore must be symmetric: hideAll() works
+      // off selectors, so if the markup does not carry the expected class it
+      // matches nothing and the container stays visible over the whole app.
+      // Hiding the element we were handed cannot fail that way.
+      if (container) {
+        container.classList.remove('active-print');
+        container.classList.remove(...this.fitClassNames());
+        container.style.display = 'none';
+      }
       this.hideAll();
       window.removeEventListener('afterprint', cleanup);
     };
@@ -94,9 +443,244 @@ App.Print = {
     setTimeout(cleanup, 1000);
   },
 
+  // ── Downloading a file, rather than opening a dialog ─────────
+  //
+  // window.print() cannot hand back a file: one dialog produces one document,
+  // which is why "export these 40 challans as 40 named PDFs" has no
+  // expression in it. These two functions POST the SAME HTML the builders
+  // already produce to a renderer that returns bytes, so there is still only
+  // one definition of every document.
+  //
+  // Strictly an upgrade path. When the server cannot render -- offline, or
+  // deployed without WeasyPrint's system libraries -- they fall back to the
+  // print dialog, which still produces a searchable PDF with no network. The
+  // output is never worse, only less convenient.
+  SERVER_PDF_URL: '/erp/render-pdf',
+  SERVER_PDF_BATCH_URL: '/erp/render-pdf-batch',
+
+  // null = not tried yet; false = settled for this session. Only a 503 (this
+  // deployment cannot render) or a failed fetch (offline) latches it false. A
+  // per-document 4xx/5xx does not -- the next document may be fine.
+  serverPdfAvailable: null,
+
+  _csrfToken() {
+    return typeof document?.querySelector === 'function'
+      ? (document.querySelector('meta[name="csrf-token"]')?.getAttribute('content') || '')
+      : '';
+  },
+
+  // POSTs `body` and returns a Blob, or null when this server cannot render.
+  async _postForBlob(url, body) {
+    if (this.serverPdfAvailable === false) return null;
+
+    let res;
+    try {
+      res = await fetch(url, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', 'X-CSRFToken': this._csrfToken() },
+        credentials: 'same-origin',
+        body: JSON.stringify(body)
+      });
+    } catch (err) {
+      // Never completed: offline, or the server is unreachable.
+      this.serverPdfAvailable = false;
+      return null;
+    }
+
+    if (res.status === 503) {
+      this.serverPdfAvailable = false;
+      return null;
+    }
+    if (!res.ok) {
+      console.warn('[PDF] server render failed:', res.status);
+      return null;
+    }
+    this.serverPdfAvailable = true;
+    return await res.blob();
+  },
+
+  // Hands a Blob to the browser as a download under `filename`.
+  saveBlob(blob, filename) {
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = filename;
+    document.body.appendChild(a);
+    a.click();
+    a.remove();
+    // Revoke on a later turn: revoking synchronously can cancel the download
+    // in some browsers before they have read the blob.
+    setTimeout(() => URL.revokeObjectURL(url), 10000);
+  },
+
+  // The archive is named like the documents inside it: CODE_YYMMDD.zip,
+  // e.g. "PO_260819.zip". It used to be <Long_Prefix>_<DDMMYY>.zip, which
+  // disagreed with the files it contained on both counts -- and DDMMYY does
+  // not sort, so a folder of exports came out in day-of-month order.
+  bulkZipName(type) {
+    return `${type}_${this._docDate()}.zip`;
+  },
+
+  // A Download button downloads. It does NOT quietly become a print dialog.
+  //
+  // Falling back to window.print() was the earlier behaviour and it was
+  // wrong: the user asked for a file, and a print dialog is not a file -- it
+  // is a different task with a different outcome, appearing without warning.
+  // When the renderer is unreachable the honest answer is to say so and name
+  // the alternative, leaving the choice with the person who pressed the
+  // button.
+  reportDownloadUnavailable() {
+    App.Utils.showToast(
+      'Could not reach the PDF renderer, so nothing was downloaded. ' +
+      'Use Print to save this document through the print dialog instead.',
+      true
+    );
+  },
+
+  // Relabels the button that started an export while it runs, then puts it
+  // back. Reuses the element the user is already looking at rather than
+  // adding markup, and keeps progress out of showToast -- which also feeds
+  // App.Notify and would leave a notification behind for every export.
+  async _whileBusy(buttonId, label, work) {
+    const btn = buttonId ? document.getElementById(buttonId) : null;
+    const html = btn ? btn.innerHTML : null;
+    const disabled = btn ? btn.disabled : false;
+    if (btn) {
+      btn.disabled = true;
+      btn.innerHTML =
+        '<span class="spinner-border spinner-border-sm me-1" aria-hidden="true"></span>' + label;
+    }
+    try {
+      return await work();
+    } finally {
+      if (btn) {
+        btn.innerHTML = html;
+        btn.disabled = disabled;
+      }
+    }
+  },
+
+  // One document, downloaded as a file. `onFallback` runs when the server
+  // cannot render -- pass the module's own print call.
+  async downloadOne(bodyHtml, filename, options = {}) {
+    const { landscape = false, buttonId = null } = options;
+    const name = filename.toLowerCase().endsWith('.pdf') ? filename : `${filename}.pdf`;
+
+    const density = this.fitDensityFor(bodyHtml);
+    const blob = await this._whileBusy(buttonId, 'Preparing…', () =>
+      this._postForBlob(this.SERVER_PDF_URL, {
+        html: bodyHtml, landscape, density, filename: name
+      })
+    );
+
+    if (blob) {
+      this.saveBlob(blob, name);
+      return true;
+    }
+    this.reportDownloadUnavailable();
+    return false;
+  },
+
+  // Downloads whatever is currently inside a print container.
+  //
+  // The single-record documents (Purchase Order, Low Stock, Production Sheet)
+  // are populated into print.html's static templates rather than built as an
+  // HTML string, so this reads back the markup the print engine would have
+  // printed. Same document, same source -- populate the container, then call
+  // this instead of trigger().
+  async downloadContainer(containerId, filename, options = {}) {
+    const el = document.getElementById(containerId);
+    if (!el) {
+      console.warn('[PDF] Print container not found:', containerId);
+      return false;
+    }
+    return this.downloadOne(el.innerHTML, filename, options);
+  },
+
+  // N documents, saved as N separately-named PDFs -- one file per record,
+  // straight to the download folder. This is the whole reason a server
+  // renderer exists here: a print dialog produces one document, and "these 40
+  // challans as 40 files" has no expression in it.
+  //
+  // Rendered in ONE request (the server returns an archive) and then unpacked
+  // client-side, rather than one request per record: the earlier design made
+  // N round trips with a deliberate pause between them.
+  //
+  // Note for the caller: Chrome and Edge prompt once per origin for
+  // "automatic downloads" the first time a batch saves more than one file. If
+  // that prompt is dismissed the browser drops the rest silently, so the
+  // count in the toast is what was handed over, not what landed.
+  async downloadMany(documents, zipName, options = {}) {
+    const { buttonId = null } = options;
+    if (!documents || !documents.length) return false;
+
+    // Per document, not per batch: a 40-challan export is uniform, but an
+    // export mixing a 6-column challan with a 16-column pivot is not, and
+    // shrinking the challan to match the pivot would be wrong.
+    const sized = documents.map(doc => Object.assign({}, doc, {
+      density: doc.density || this.fitDensityFor(doc.html)
+    }));
+
+    const blob = await this._whileBusy(
+      buttonId, `Preparing ${documents.length}…`, () =>
+        this._postForBlob(this.SERVER_PDF_BATCH_URL, { documents: sized, zipName })
+    );
+
+    if (!blob) {
+      this.reportDownloadUnavailable();
+      return false;
+    }
+
+    const files = await this.unzip(blob);
+    if (!files.length) {
+      App.Utils.showToast('The renderer returned nothing to download.', true);
+      return false;
+    }
+
+    files.forEach(file => this.saveBlob(file.blob, file.name));
+    App.Utils.showToast(
+      `${files.length} PDF${files.length === 1 ? '' : 's'} downloaded.`, false);
+    return true;
+  },
+
+  // Reads a store-only ZIP into [{ name, blob }].
+  //
+  // Only STOREd entries appear here -- the server writes the archive with
+  // ZIP_STORED because a PDF's own streams are already compressed -- so this
+  // needs no inflate, which is what keeps it to a few lines instead of a
+  // vendored library. A DEFLATEd entry is skipped rather than silently
+  // handed over as corrupt bytes.
+  async unzip(blob) {
+    const view = new DataView(await blob.arrayBuffer());
+    const bytes = new Uint8Array(view.buffer);
+    const decoder = new TextDecoder();
+    const files = [];
+
+    let i = 0;
+    while (i + 30 <= bytes.length && view.getUint32(i, true) === 0x04034B50) {
+      const method = view.getUint16(i + 8, true);
+      const size = view.getUint32(i + 18, true);
+      const nameLen = view.getUint16(i + 26, true);
+      const extraLen = view.getUint16(i + 28, true);
+      const nameAt = i + 30;
+      const dataAt = nameAt + nameLen + extraLen;
+
+      if (method === 0) {
+        files.push({
+          name: decoder.decode(bytes.subarray(nameAt, nameAt + nameLen)),
+          blob: new Blob([bytes.subarray(dataAt, dataAt + size)], { type: 'application/pdf' })
+        });
+      } else {
+        console.warn('[PDF] skipping compressed archive entry; expected STORE');
+      }
+      i = dataAt + size;
+    }
+    return files;
+  },
+
   // Renders one self-contained "page" per record (via buildPageHtml) into
   // the shared bulk container, separated by page breaks. Split out from
-  // triggerBulk so a PDF export can reuse the same markup without also
+  // triggerBulk so a preview can reuse the same markup without also
   // firing window.print().
   renderBulkPages(records, buildPageHtml) {
     const body = document.getElementById('print-bulk-body');
@@ -113,730 +697,13 @@ App.Print = {
   // Renders one self-contained "page" per record (via buildPageHtml)
   // into the shared bulk container, separated by page breaks, then
   // prints them all as a single multi-page job.
-  triggerBulk(records, buildPageHtml, documentTitle) {
+  //
+  // This is what both "Print Selected" and "Download PDFs" reach. The latter
+  // used to produce one separately-named PDF per record, which window.print()
+  // cannot do -- one dialog produces one document. The records still each get
+  // their own page; they arrive in one file.
+  triggerBulk(records, buildPageHtml, documentTitle, options = {}) {
     this.renderBulkPages(records, buildPageHtml);
-    this.trigger('print-bulk-container', documentTitle);
-  },
-
-  // Shared filename sanitizer for every module's per-record PDF filenames
-  // (bulk "Download PDFs" and single-record downloads alike).
-  //
-  // The 50-char cap and the 'Document' fallback both matter and must stay.
-  // The pattern strips everything outside [a-zA-Z0-9_-], which means a name
-  // written wholly in Gurmukhi or Devanagari -- ordinary for vendors and items
-  // here -- sanitizes to the empty string, not to a short name. Without the
-  // fallback that yields "Item_Ledger_.pdf"; see also the de-duplication in
-  // downloadSeparatePDFs, since one fallback name cannot distinguish several
-  // such records in the same export.
-  sanitizeFilename(text = '', allowSpaces = true) {
-    const pattern = allowSpaces ? /[^a-zA-Z0-9\s_-]/g : /[^a-zA-Z0-9_-]/g;
-    return (
-      String(text)
-        .replace(pattern, '')
-        .trim()
-        .replace(/\s+/g, '_')
-        .slice(0, 50) || 'Document'
-    );
-  },
-
-  // Exports one PDF per record instead of merging them into a single file:
-  // each record gets its own render pass into print-bulk-container (so
-  // buildPageHtml never has to know it is the only page) and its own output.
-  // Records are processed sequentially -- concurrent html2pdf runs would fight
-  // over that one shared container -- so this awaits each before the next.
-  // filenameForRecord(record) must return that record's .pdf filename.
-  //
-  // Filenames are de-duplicated across the batch. Two records can easily want
-  // the same name -- sanitizeFilename maps every non-Latin name onto its
-  // 'Document' fallback, and its 50-char cap can collapse two long names that
-  // differ only past that point -- and a browser handed the same name twice
-  // either silently overwrites or appends its own "(1)", so a 5-record export
-  // can quietly deliver fewer than 5 distinct documents.
-  //
-  // options:
-  //   destination      - from chooseBulkDestination: folder / zip / files.
-  //                      Defaults to files, the mode every browser can do.
-  //   progressButtonId - the button that triggered the export, reused as the
-  //                      progress indicator: disabled and relabelled
-  //                      "Exporting 3 of 12…", then restored. Reuses the
-  //                      element the user is already looking at rather than
-  //                      adding markup, and keeps progress out of showToast,
-  //                      which also feeds App.Notify and would otherwise leave
-  //                      one notification per record behind.
-  //   zipName          - archive name, zip mode only.
-  //   pdfOverrides     - forwarded to each export (see _pdfOptions).
-  //
-  // Returns { generated, delivered, mode, zipName }. The two counts differ by
-  // mode, and only 'folder' can prove delivery: there each write resolves or
-  // throws. In 'files' mode delivered merely counts handoffs, because
-  // html2pdf's .save() resolves once the blob is passed to the browser and
-  // cannot observe what happened next -- Chrome and Edge prompt once per
-  // origin for "automatic downloads" and silently drop the rest if denied.
-  // reportBulkResult words the outcome accordingly.
-  async deliverSeparatePDFs(records, buildPageHtml, filenameForRecord, options = {}) {
-    const {
-      pdfOverrides = {},
-      progressButtonId = null,
-      destination = { mode: 'files' },
-      zipName = 'Documents.zip'
-    } = options;
-
-    const mode = destination.mode;
-    const used = new Set();
-    const total = records.length;
-    const forZip = [];
-
-    const btn = progressButtonId ? document.getElementById(progressButtonId) : null;
-    const btnHtml = btn ? btn.innerHTML : null;
-    const btnDisabled = btn ? btn.disabled : false;
-
-    let generated = 0;
-    let delivered = 0;
-    // Whether any record came out of the client's raster renderer rather than
-    // the server's. Drives the one-time "use Print for a searchable PDF" tip.
-    let rasterised = false;
-    try {
-      if (btn) btn.disabled = true;
-      for (let i = 0; i < total; i++) {
-        if (btn) {
-          btn.innerHTML =
-            '<span class="spinner-border spinner-border-sm me-1" aria-hidden="true"></span>' +
-            `Exporting ${i + 1} of ${total}…`;
-          // Yield so that label actually paints. Each record's html2canvas pass
-          // occupies the main thread for a noticeable stretch, and without a
-          // turn of the event loop between iterations the button would jump
-          // straight from its original text to "done". This is NOT a
-          // workaround for the multi-download prompt -- a delay does not grant
-          // user activation.
-          await new Promise(r => setTimeout(r, this.BULK_EXPORT_YIELD_MS));
-        }
-        const filename = this.uniqueFilename(filenameForRecord(records[i]), used);
-
-        // Vector first. renderViaServer returns null when the server cannot
-        // render (offline, or no Chromium there), and every mode below then
-        // falls through to the raster path unchanged -- so this is an upgrade
-        // where it is available rather than a new dependency.
-        const serverBlob = await this.renderViaServer(buildPageHtml(records[i]), pdfOverrides);
-        if (serverBlob) {
-          generated++;
-          if (mode === 'folder') {
-            if (await this._writeIntoFolder(destination.handle, filename, serverBlob)) delivered++;
-          } else if (mode === 'zip') {
-            forZip.push({ name: filename, blob: serverBlob });
-          } else {
-            this.saveBlob(serverBlob, filename);
-            // Handed over, not confirmed -- see the note above the function.
-            delivered++;
-          }
-          continue;
-        }
-
-        this.renderBulkPages([records[i]], buildPageHtml);
-        rasterised = true;
-
-        if (mode === 'files') {
-          if (await this.downloadElementAsPDF('print-bulk-container', filename, pdfOverrides)) {
-            generated++;
-            delivered++;
-          }
-          continue;
-        }
-
-        const blob = await this.renderElementToPdfBlob('print-bulk-container', filename, pdfOverrides);
-        if (!blob) continue;
-        generated++;
-        if (mode === 'folder') {
-          if (await this._writeIntoFolder(destination.handle, filename, blob)) delivered++;
-        } else {
-          forZip.push({ name: filename, blob });
-        }
-      }
-
-      if (mode === 'zip' && forZip.length) {
-        if (btn) btn.innerHTML = 'Packaging…';
-        this.saveBlob(await this.zipStore(forZip), zipName);
-        delivered = forZip.length;
-      }
-    } finally {
-      if (btn) {
-        btn.innerHTML = btnHtml;
-        btn.disabled = btnDisabled;
-      }
-    }
-    return { generated, delivered, mode, zipName, rasterised };
-  },
-
-  // One write into the chosen folder. Returns whether it actually landed --
-  // this is the only delivery path that can answer that honestly.
-  async _writeIntoFolder(dirHandle, filename, blob) {
-    try {
-      const fileHandle = await dirHandle.getFileHandle(filename, { create: true });
-      const writable = await fileHandle.createWritable();
-      await writable.write(blob);
-      await writable.close();
-      return true;
-    } catch (err) {
-      console.error('[PDF] Could not write', filename, err);
-      return false;
-    }
-  },
-
-  // Long enough for the relabelled button to paint, short enough to be
-  // invisible next to a rasterisation pass that costs far more than this.
-  BULK_EXPORT_YIELD_MS: 120,
-
-  // Above this many records, an unconfirmable pile of individual downloads is
-  // worse than one ZIP: Chrome and Edge prompt once per origin for "automatic
-  // downloads" and silently drop the rest if it is denied.
-  ZIP_THRESHOLD: 5,
-
-  // <prefix>_<ddmmyy>.zip, e.g. "Purchase_Orders_170826.zip" -- the same
-  // naming the old merged-PDF export used, now that the ZIP is the thing
-  // that holds a whole batch.
-  bulkZipName(prefix) {
-    const now = new Date();
-    const pad = n => String(n).padStart(2, '0');
-    const ddmmyy = `${pad(now.getDate())}${pad(now.getMonth() + 1)}${String(now.getFullYear()).slice(-2)}`;
-    return `${prefix}_${ddmmyy}.zip`;
-  },
-
-  // ── Choosing where a bulk export goes ────────────────────────────
-  //
-  // MUST be the first thing a click handler awaits. showDirectoryPicker()
-  // requires live user activation, and activation does not survive an earlier
-  // `await` -- several callers load data before exporting, so the picker has
-  // to be opened before that work, not after it.
-  //
-  // Modes, best first:
-  //   folder - File System Access API. Separate files, real filenames, and
-  //            each write either succeeds or throws, so delivery is actually
-  //            confirmable. One permission prompt for the whole batch.
-  //   zip    - one download containing separate PDFs. No multi-download
-  //            prompt, but the user has to unzip.
-  //   files  - one download per PDF. What every browser can do, and what
-  //            cannot be confirmed.
-  async chooseBulkDestination(count) {
-    if (count <= 1) return { mode: 'files' };
-
-    if (typeof window.showDirectoryPicker === 'function') {
-      try {
-        const handle = await window.showDirectoryPicker({
-          id: 'erp-bulk-pdf-export',
-          mode: 'readwrite',
-          startIn: 'downloads'
-        });
-        return { mode: 'folder', handle };
-      } catch (err) {
-        // AbortError is the user closing the picker -- that is a cancellation
-        // of the whole export, not a reason to fall back to a noisier mode.
-        if (err && err.name === 'AbortError') return { mode: 'cancelled' };
-        console.warn('[PDF] Folder picker unavailable, falling back:', err);
-      }
-    }
-
-    return { mode: count > this.ZIP_THRESHOLD ? 'zip' : 'files' };
-  },
-
-
-  // ── The searchable-PDF route that needs nothing installed ────────
-  //
-  // When PDFs come from the client's raster renderer they are images: a PO
-  // cannot be searched for its own number and nothing can be copied out of it.
-  // The browser's own print engine does produce a real document, and every
-  // module already has a Print button wired to it (App.Print.trigger sets
-  // document.title, which Chrome and Edge use as the default Save-as-PDF
-  // filename) -- so the capability is already there, it just isn't obvious.
-  //
-  // Told once per browser, not once per export. A tip repeated after every
-  // download is nagging, and people stop reading toasts that always appear.
-  SEARCHABLE_HINT_KEY: 'erp.pdfSearchableHintShown',
-
-  hintSearchablePdfOnce() {
-    let alreadyShown = false;
-    try {
-      alreadyShown = window.localStorage.getItem(this.SEARCHABLE_HINT_KEY) === '1';
-    } catch (err) {
-      // Private mode / storage disabled: skip the hint rather than risk
-      // showing it after every single export.
-      return;
-    }
-    if (alreadyShown) return;
-    try {
-      window.localStorage.setItem(this.SEARCHABLE_HINT_KEY, '1');
-    } catch (err) {
-      return;
-    }
-    App.Utils.showToast(
-      'Tip: these PDFs are images. For a searchable PDF, use Print and choose ' +
-      '"Save as PDF" in the print dialog.',
-      false
-    );
-  },
-
-  // Shared completion message for every bulk export, so all eight callers word
-  // partial failure the same way instead of each claiming total success.
-  //
-  // The verb tracks what the delivery mode can actually prove:
-  //   folder - "saved", because each write either succeeded or threw.
-  //   zip    - "packaged into <name>", true regardless of what the browser
-  //            then does with the single download.
-  //   files  - "generated", the ceiling for this path: .save() resolves on
-  //            handoff and cannot see whether the file landed.
-  // result comes from deliverSeparatePDFs: { generated, delivered, mode, zipName }.
-  reportBulkResult(result, total, noun) {
-    const { generated, delivered, mode, zipName } = result;
-    const plural = n => `${noun}${n === 1 ? '' : 's'}`;
-
-    if (!generated) {
-      App.Utils.showToast(`Could not generate any ${plural(total)}.`, true);
-      return;
-    }
-    if (generated < total) {
-      App.Utils.showToast(
-        `Generated ${generated} of ${total} ${plural(total)} — ${total - generated} failed.`,
-        true
-      );
-      return;
-    }
-    // Everything rendered, but folder writes can still fail individually.
-    if (mode === 'folder' && delivered < generated) {
-      App.Utils.showToast(
-        `Generated ${generated} ${plural(generated)} but only ${delivered} could be saved.`,
-        true
-      );
-      return;
-    }
-    if (mode === 'folder') {
-      App.Utils.showToast(`${delivered} ${plural(delivered)} saved to the selected folder.`, false);
-    } else if (mode === 'zip') {
-      App.Utils.showToast(`${delivered} ${plural(delivered)} packaged into ${zipName}.`, false);
-    } else {
-      App.Utils.showToast(`${generated} ${plural(generated)} generated.`, false);
-    }
-
-    // Only where the output actually is an image. If the server rendered these
-    // they are already searchable and the tip would be wrong.
-    if (result.rasterised) this.hintSearchablePdfOnce();
-  },
-
-  // ── ZIP (store-only) ─────────────────────────────────────────────
-  // A minimal ZIP writer, ~90 lines, rather than another vendored library.
-  // Every entry is STOREd, not deflated, which costs nothing here: a PDF's
-  // own streams are already deflate-compressed, so re-compressing them buys
-  // almost no bytes for a lot of CPU on the main thread.
-  //
-  // Deliberately narrow. No directories, no ZIP64, no encryption. ZIP64 would
-  // only be needed past 4 GB or 65,535 entries, and a bulk export that large
-  // has worse problems than its container format.
-
-  _CRC_TABLE: null,
-
-  _crc32(bytes) {
-    if (!this._CRC_TABLE) {
-      const t = new Uint32Array(256);
-      for (let i = 0; i < 256; i++) {
-        let c = i;
-        for (let k = 0; k < 8; k++) c = c & 1 ? 0xEDB88320 ^ (c >>> 1) : c >>> 1;
-        t[i] = c >>> 0;
-      }
-      this._CRC_TABLE = t;
-    }
-    let crc = 0xFFFFFFFF;
-    for (let i = 0; i < bytes.length; i++) {
-      crc = this._CRC_TABLE[(crc ^ bytes[i]) & 0xFF] ^ (crc >>> 8);
-    }
-    return (crc ^ 0xFFFFFFFF) >>> 0;
-  },
-
-  // MS-DOS packed date/time, which is what the ZIP format stores.
-  _dosDateTime(d) {
-    return {
-      time: (d.getHours() << 11) | (d.getMinutes() << 5) | (d.getSeconds() >> 1),
-      date: ((d.getFullYear() - 1980) << 9) | ((d.getMonth() + 1) << 5) | d.getDate()
-    };
-  },
-
-  // files: [{ name, blob }] -> a single application/zip Blob.
-  async zipStore(files) {
-    const enc = new TextEncoder();
-    const { time, date } = this._dosDateTime(new Date());
-    const parts = [];
-    const central = [];
-    let offset = 0;
-
-    for (const file of files) {
-      const nameBytes = enc.encode(file.name);
-      const data = new Uint8Array(await file.blob.arrayBuffer());
-      const crc = this._crc32(data);
-
-      const local = new DataView(new ArrayBuffer(30));
-      local.setUint32(0, 0x04034B50, true);   // local file header signature
-      local.setUint16(4, 20, true);           // version needed to extract (2.0)
-      local.setUint16(6, 0x0800, true);       // flag bit 11: filename is UTF-8
-      local.setUint16(8, 0, true);            // method 0 = stored
-      local.setUint16(10, time, true);
-      local.setUint16(12, date, true);
-      local.setUint32(14, crc, true);
-      local.setUint32(18, data.length, true); // compressed size == raw size
-      local.setUint32(22, data.length, true);
-      local.setUint16(26, nameBytes.length, true);
-      local.setUint16(28, 0, true);           // no extra field
-      parts.push(new Uint8Array(local.buffer), nameBytes, data);
-
-      const cd = new DataView(new ArrayBuffer(46));
-      cd.setUint32(0, 0x02014B50, true);      // central directory signature
-      cd.setUint16(4, 20, true);              // version made by
-      cd.setUint16(6, 20, true);              // version needed
-      cd.setUint16(8, 0x0800, true);
-      cd.setUint16(10, 0, true);
-      cd.setUint16(12, time, true);
-      cd.setUint16(14, date, true);
-      cd.setUint32(16, crc, true);
-      cd.setUint32(20, data.length, true);
-      cd.setUint32(24, data.length, true);
-      cd.setUint16(28, nameBytes.length, true);
-      cd.setUint16(30, 0, true);              // extra length
-      cd.setUint16(32, 0, true);              // comment length
-      cd.setUint16(34, 0, true);              // disk number start
-      cd.setUint16(36, 0, true);              // internal attributes
-      cd.setUint32(38, 0, true);              // external attributes
-      cd.setUint32(42, offset, true);         // offset of local header
-      central.push(new Uint8Array(cd.buffer), nameBytes);
-
-      offset += 30 + nameBytes.length + data.length;
-    }
-
-    const centralSize = central.reduce((n, p) => n + p.length, 0);
-    const eocd = new DataView(new ArrayBuffer(22));
-    eocd.setUint32(0, 0x06054B50, true);      // end of central directory
-    eocd.setUint16(4, 0, true);               // this disk number
-    eocd.setUint16(6, 0, true);               // disk with central directory
-    eocd.setUint16(8, files.length, true);    // entries on this disk
-    eocd.setUint16(10, files.length, true);   // total entries
-    eocd.setUint32(12, centralSize, true);
-    eocd.setUint32(16, offset, true);         // central directory offset
-    eocd.setUint16(20, 0, true);              // comment length
-
-    return new Blob([...parts, ...central, new Uint8Array(eocd.buffer)],
-      { type: 'application/zip' });
-  },
-
-  // Hands a Blob to the browser as a download under `filename`.
-  saveBlob(blob, filename) {
-    const url = URL.createObjectURL(blob);
-    const a = document.createElement('a');
-    a.href = url;
-    a.download = filename;
-    document.body.appendChild(a);
-    a.click();
-    a.remove();
-    // Revoke on the next turn: revoking synchronously can cancel the download
-    // in some browsers before it has read the blob.
-    setTimeout(() => URL.revokeObjectURL(url), 10000);
-  },
-
-  // Returns `filename` unchanged the first time it is seen, then _2, _3, ...
-  // for each repeat, recording every name it hands out in `used`. Matching is
-  // case-insensitive because the filesystems these land on (Windows, macOS)
-  // treat "PO_1_Acme.pdf" and "po_1_acme.pdf" as the same file.
-  uniqueFilename(filename, used) {
-    const dot = filename.lastIndexOf('.');
-    const stem = dot > 0 ? filename.slice(0, dot) : filename;
-    const ext = dot > 0 ? filename.slice(dot) : '';
-    let candidate = filename;
-    let n = 1;
-    while (used.has(candidate.toLowerCase())) {
-      n += 1;
-      candidate = `${stem}_${n}${ext}`;
-    }
-    used.add(candidate.toLowerCase());
-    return candidate;
-  },
-
-  // ── Server-side vector rendering ─────────────────────────────────
-  //
-  // POSTs the same HTML the build*PrintPageHtml() builders already produce to
-  // /erp/render-pdf, where headless Chromium renders it as a real document.
-  // The client's own html2pdf path rasterises through html2canvas, so its
-  // output is one flat JPEG: measured on a 15-line purchase order, 361 KB with
-  // ZERO extractable characters against 48 KB and 1,184 characters here. A PO
-  // cannot be searched for its own PO number, part numbers cannot be copied
-  // out, and an archive of them is un-indexable. See PDF-002.
-  //
-  // Strictly an upgrade path: null means "could not", and the caller then uses
-  // the raster renderer exactly as before. That is what keeps export working
-  // offline, where this endpoint by definition cannot be reached.
-  SERVER_PDF_URL: '/erp/render-pdf',
-
-  // null = not yet tried, true/false = settled for this session. Only a 503
-  // (server has no renderer) or a failed fetch (offline) flips it to false; a
-  // per-document 4xx/5xx does not, since the next document may be fine.
-  serverPdfAvailable: null,
-
-  // True when the deployment has switched server rendering off on purpose
-  // (PDF_SERVER_RENDER=off, surfaced as a meta tag by templates/erp/index.html).
-  // Read once, lazily, and cached: with this set there is nothing to discover,
-  // so the client should not spend even one request per session finding out.
-  get serverPdfDisabledByConfig() {
-    if (this._serverPdfOff === undefined) {
-      this._serverPdfOff = typeof document?.querySelector === 'function' &&
-        document.querySelector('meta[name="pdf-server-render"]')?.getAttribute('content') === 'off';
-    }
-    return this._serverPdfOff;
-  },
-
-  async renderViaServer(bodyHtml, pdfOverrides = {}) {
-    if (this.serverPdfDisabledByConfig) return null;
-    if (this.serverPdfAvailable === false) return null;
-    if (!bodyHtml) return null;
-
-    const landscape = pdfOverrides
-      && pdfOverrides.jsPDF
-      && pdfOverrides.jsPDF.orientation === 'landscape';
-    const csrf = typeof document?.querySelector === 'function'
-      ? (document.querySelector('meta[name="csrf-token"]')?.getAttribute('content') || '')
-      : '';
-
-    let res;
-    try {
-      res = await fetch(this.SERVER_PDF_URL, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json', 'X-CSRFToken': csrf },
-        credentials: 'same-origin',
-        body: JSON.stringify({ html: bodyHtml, landscape: !!landscape })
-      });
-    } catch (err) {
-      // The request never completed -- offline, or the server is unreachable.
-      // Stop asking for the rest of the session rather than stalling once per
-      // record of a 40-record export.
-      this.serverPdfAvailable = false;
-      return null;
-    }
-
-    if (res.status === 503) {
-      // Deployed without Chromium. Permanent for this session.
-      this.serverPdfAvailable = false;
-      return null;
-    }
-    if (!res.ok) {
-      // This one document failed; the next may not.
-      console.warn('[PDF] server render failed for one document:', res.status);
-      return null;
-    }
-
-    this.serverPdfAvailable = true;
-    return await res.blob();
-  },
-
-  // Lazy-loads html2pdf.js (used by every module's "Download PDF" button)
-  // on first use so it isn't fetched until actually needed.
-  //
-  // Served from our own origin, NOT a CDN. This used to fetch 0.10.1 from
-  // cdnjs, which made every PDF export the one part of the app that could not
-  // work offline: sw.js precaches print.js but deliberately never caches
-  // third-party CDN assets, so the shell would load, tables would render,
-  // Print (native window.print) would work, and only Download PDF would fail.
-  // Same reason the bundle is fetched by the service worker's post-activate
-  // warm step -- see sw.js WARM_URLS. Provenance/checksums/upgrade procedure:
-  // static/erp/vendor/README.md.
-  HTML2PDF_URL: '/static/erp/vendor/html2pdf.bundle.min.js',
-
-  async ensureHtml2Pdf() {
-    if (typeof window.html2pdf === 'function') return true;
-    try {
-      await loadScript(this.HTML2PDF_URL);
-      return true;
-    } catch (err) {
-      console.error('[PDF] Failed to load html2pdf library:', err);
-      App.Utils.showToast('PDF library failed to load. Please reload the page and try again.', true);
-      return false;
-    }
-  },
-
-  // html2pdf's option object for one export. Split out so the download and
-  // blob paths cannot drift apart in page geometry or pagination.
-  //
-  // `captureWidthPx` is OURS, not html2pdf's -- callers pass it in
-  // pdfOverrides and it is pulled out here rather than forwarded, so a
-  // landscape caller can lay the element out at the rotated page width
-  // instead of the portrait default. Everything else goes straight through.
-  _pdfOptions(filename, html2pdfOverrides) {
-    return Object.assign({
-      margin: [this.PAGE_MARGIN_MM, this.PAGE_MARGIN_MM, this.PAGE_MARGIN_MM, this.PAGE_MARGIN_MM],
-      filename,
-      image: { type: 'jpeg', quality: 0.98 },
-      html2canvas: {
-        scale: 2,
-        useCORS: true,
-        allowTaint: true,
-        logging: false,
-        scrollX: 0,
-        scrollY: 0,
-        backgroundColor: '#ffffff'
-      },
-      jsPDF: { unit: 'mm', format: 'a4', orientation: 'portrait' },
-      // avoid:['tr'] matters on any multi-page export. html2pdf works by
-      // guillotining one tall canvas at exact page-height multiples, so
-      // without this a row unlucky enough to straddle the cut is sliced
-      // through the middle -- half its text at the bottom of one page,
-      // half at the top of the next. Naming 'tr' makes html2pdf push the
-      // whole row to the next page instead. The CSS
-      // page-break-inside:avoid rules cannot do this job: they live in
-      // @media print, which html2canvas (a screen-media renderer) never
-      // applies.
-      // .print-sheet-closing-accent (Production Sheet's own closing bar,
-      // print.html) gets the same protection -- without it a container's
-      // plain border-bottom has no size of its own to defend against the
-      // guillotine, so it could land squeezed flush against whatever row
-      // happened to fall near a slice boundary.
-      //
-      // The three #print-* ids are the PO document's closing blocks, kept
-      // from po.js's now-deleted private copy of this function so that
-      // deleting it changed no configuration. They appear to be inert in
-      // practice: sweeping row counts until #print-signature genuinely
-      // straddles a page boundary produces the same pagination with and
-      // without them, so html2pdf's avoid does not seem to act on them the
-      // way it does on 'tr'. They are preserved rather than dropped because
-      // a refactor is the wrong place to also change behaviour, and they
-      // cost nothing -- a selector that matches nothing in a given
-      // container is simply skipped.
-      pagebreak: {
-        mode: ['css', 'legacy'],
-        avoid: [
-          'tr',
-          '.print-sheet-closing-accent',
-          '#print-grand-total-container',
-          '#print-footer-meta',
-          '#print-signature'
-        ]
-      }
-    }, html2pdfOverrides);
-  },
-
-  // Lends `element` to html2canvas under the conditions it needs, runs
-  // `capture(element)`, then puts everything back exactly as it was.
-  //
-  // html2canvas rasterises from the document origin, so an element sitting
-  // below other content -- or on a scrolled page -- gets clipped. The fix is
-  // to move it to the top of <body>, neutralise the body's own padding/margin
-  // and overflow, lay it out at the exact capture width, and undo all of that
-  // afterwards. Every export path shares this one copy so the restore logic
-  // has a single home; the finally block is the part that matters, since
-  // failing to restore leaves the app visibly broken.
-  async _withElementPrepared(element, captureWidth, capture) {
-    const prevStyle = element.getAttribute('style');
-    const prevBodyPad = document.body.style.padding;
-    const prevBodyMar = document.body.style.margin;
-    const prevBodyOvf = document.body.style.overflow;
-    const prevHtmlOverflow = document.documentElement.style.overflow;
-    const originalParent = element.parentNode;
-    const originalSibling = element.nextSibling;
-    const prevScrollX = window.pageXOffset || document.documentElement.scrollLeft;
-    const prevScrollY = window.pageYOffset || document.documentElement.scrollTop;
-
-    window.scrollTo(0, 0);
-    document.body.insertBefore(element, document.body.firstChild);
-    document.body.style.padding = '0';
-    document.body.style.margin = '0';
-    document.body.style.overflow = 'visible';
-    document.documentElement.style.overflow = 'visible';
-    element.style.display = 'block';
-    element.style.width = captureWidth + 'px';
-    element.style.maxWidth = 'none';
-
-    await new Promise(r => requestAnimationFrame(r));
-
-    try {
-      return await capture(element);
-    } finally {
-      window.scrollTo(prevScrollX, prevScrollY);
-      document.body.style.padding = prevBodyPad;
-      document.body.style.margin = prevBodyMar;
-      document.body.style.overflow = prevBodyOvf;
-      document.documentElement.style.overflow = prevHtmlOverflow;
-      if (prevStyle !== null) {
-        element.setAttribute('style', prevStyle);
-      } else {
-        element.removeAttribute('style');
-      }
-      if (originalParent) {
-        if (originalSibling) {
-          originalParent.insertBefore(element, originalSibling);
-        } else {
-          originalParent.appendChild(element);
-        }
-      }
-    }
-  },
-
-  // Shared preamble for both export paths: resolve the element, load the
-  // library, wait for fonts. Returns null when the export cannot proceed.
-  async _prepareExport(elementId, pdfOverrides) {
-    const element = document.getElementById(elementId);
-    if (!element) {
-      console.warn('[PDF] Print container not found:', elementId);
-      return null;
-    }
-    if (!(await this.ensureHtml2Pdf())) return null;
-    try {
-      if (document.fonts?.ready) await document.fonts.ready;
-    } catch (err) {
-      console.warn('[PDF] Font loading check failed:', err);
-    }
-    const { captureWidthPx, ...html2pdfOverrides } = pdfOverrides;
-    return { element, captureWidth: captureWidthPx || this.PAGE_WIDTH_PX, html2pdfOverrides };
-  },
-
-  // Captures elementId's current content and hands it to the browser as a
-  // download. Returns true/false instead of throwing -- callers decide their
-  // own messaging, but a failure is always toasted here since the cause
-  // (library/network) is the same for every caller.
-  //
-  // Note "download" is as far as this can report: .save() resolves once the
-  // blob is handed over and cannot observe whether the file landed. Where
-  // delivery must be confirmed, use renderElementToPdfBlob and write the
-  // bytes somewhere that reports back -- see deliverSeparatePDFs.
-  async downloadElementAsPDF(elementId, filename, pdfOverrides = {}) {
-    const prep = await this._prepareExport(elementId, pdfOverrides);
-    if (!prep) return false;
-    try {
-      await this._withElementPrepared(prep.element, prep.captureWidth, el =>
-        window.html2pdf()
-          .set(this._pdfOptions(filename, prep.html2pdfOverrides))
-          .from(el)
-          .save()
-      );
-      return true;
-    } catch (err) {
-      console.error('[PDF] Generation failed:', err);
-      // Not `instanceof Error`: html2canvas can reject with a DOMException,
-      // which carries a message without being an Error, and an error
-      // crossing a realm boundary fails the instanceof check too.
-      App.Utils.showToast(err && err.message ? err.message : 'Failed to export PDF.', true);
-      return false;
-    }
-  },
-
-  // Same capture as downloadElementAsPDF, but returns the PDF as a Blob
-  // instead of downloading it -- the input for the folder and ZIP delivery
-  // modes, both of which need the bytes in hand. Returns null on failure.
-  async renderElementToPdfBlob(elementId, filename, pdfOverrides = {}) {
-    const prep = await this._prepareExport(elementId, pdfOverrides);
-    if (!prep) return null;
-    try {
-      return await this._withElementPrepared(prep.element, prep.captureWidth, el =>
-        window.html2pdf()
-          .set(this._pdfOptions(filename, prep.html2pdfOverrides))
-          .from(el)
-          .outputPdf('blob')
-      );
-    } catch (err) {
-      console.error('[PDF] Generation failed:', err);
-      // Not `instanceof Error`: html2canvas can reject with a DOMException,
-      // which carries a message without being an Error, and an error
-      // crossing a realm boundary fails the instanceof check too.
-      App.Utils.showToast(err && err.message ? err.message : 'Failed to export PDF.', true);
-      return null;
-    }
+    this.trigger('print-bulk-container', documentTitle, options);
   }
 };
