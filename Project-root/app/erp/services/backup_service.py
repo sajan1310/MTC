@@ -15,7 +15,7 @@ import os
 import sys
 import threading
 import time
-from typing import Any, Dict, Optional
+from typing import Any, Dict
 
 import psycopg2.sql
 
@@ -293,14 +293,12 @@ def _run_scheduled_backup_safely() -> None:
     The lock is explicitly released in the finally block.
     """
     conn_for_lock = None
-    cur_for_lock = None
     lock_acquired = False
     try:
         # Acquire a session-level advisory lock that persists across
         # transactions until explicitly released or the session ends.
         with database.get_conn() as (_conn, cur):
             conn_for_lock = _conn
-            cur_for_lock = cur
             conn_for_lock.autocommit = True
             cur.execute("SELECT pg_try_advisory_lock(%s)", (_BACKUP_LOCK_KEY,))
             lock_acquired = cur.fetchone()[0]
@@ -330,7 +328,7 @@ def _run_scheduled_backup_safely() -> None:
             # Release the advisory lock explicitly
             cur.execute("SELECT pg_advisory_unlock(%s)", (_BACKUP_LOCK_KEY,))
             lock_acquired = False
-    except Exception as exc:
+    except Exception:
         logger.exception("[backup_service] Error during scheduled backup check")
     finally:
         # Safety net: if lock was acquired but not released (e.g. exception

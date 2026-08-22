@@ -554,14 +554,14 @@ def save_client_order(conn, cur, form_data):
     pushed_count = 0
     manual_count = 0
     if status == "Order Confirmed":
-        lines_to_push = [l for l in clean_lines if not l["productionPushed"]]
+        lines_to_push = [line for line in clean_lines if not line["productionPushed"]]
         if lines_to_push:
             push_result = _push_order_lines_to_production(cur, order_number, client_name, lines_to_push)
-            for l in lines_to_push:
-                if l["productId"].lower() in push_result["autoQueued"]:
-                    l["productionPushed"] = True
+            for line in lines_to_push:
+                if line["productId"].lower() in push_result["autoQueued"]:
+                    line["productionPushed"] = True
                 else:
-                    l["needsManualProduction"] = True
+                    line["needsManualProduction"] = True
             pushed_count = push_result["lotsCreated"]
             manual_count = len(lines_to_push) - pushed_count
 

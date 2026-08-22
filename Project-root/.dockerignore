@@ -1,0 +1,81 @@
+# Build context exclusions for `COPY . .` in the Dockerfile.
+#
+# This is a deny-list, not an allow-list, so a new source file is picked up
+# automatically and a forgotten entry can never break the build -- only make
+# the image bigger. The trade-off is that a NEW kind of secret has to be added
+# here explicitly, which is why the credential patterns below are written
+# broadly (.env*, *key*.json, *secret*) rather than naming today's two files.
+#
+# .gitignore does NOT apply to a Docker build. Both .env and gcp-key.json are
+# correctly git-ignored yet sat in the build context, so `COPY . .` baked the
+# real SECRET_KEY, database password, Google OAuth client secret, Mailjet
+# password and the GCP service-account key into an image layer -- where they
+# survive even if a later layer deletes them, and travel to anyone who pulls
+# the image. Runtime config comes from the environment (docker-compose
+# env_file, or the platform's secret store), never from a file in the image.
+#
+# NOTE ON `**/`: .dockerignore matches with Go's filepath.Match, where a bare
+# `*` does NOT cross a `/`. So `__pycache__/` matches ONLY the one at the
+# context root and misses app/__pycache__, app/erp/__pycache__ and the rest.
+# Anything that can appear at any depth is therefore written `**/name`.
+
+# ── Credentials — the reason this file exists ────────────────────────
+**/.env
+**/.env.*
+**/*.env
+!**/.env.example
+!**/production.env.example
+**/gcp-key.json
+**/*key*.json
+!**/package-lock.json
+**/*credential*
+**/*secret*
+**/*.pem
+**/*.p12
+**/.gemini
+
+# ── Bulk: ~306 MB the image has no use for ───────────────────────────
+# venv/ is a stale interpreter (retired to venv.obsolete after it caused the
+# WeasyPrint outage described in requirements.txt); the image installs into
+# its own site-packages from requirements.txt. node_modules is Jest tooling
+# for the frontend tests, which do not run in the image.
+**/venv
+**/venv*
+**/.venv
+**/node_modules
+**/__pycache__
+**/*.py[cod]
+**/.ruff_cache
+**/.pytest_cache
+
+# ── Runtime output — must come from the container, not the build host ─
+**/logs
+**/*.log
+
+# static/uploads is deliberately NOT excluded: its files are git-tracked repo
+# content (item images, per migration 024_items_image), so dropping them would
+# 404 every existing item photo while saving nothing. Note that uploads WRITTEN
+# by a running container are still ephemeral -- that needs a mounted volume,
+# which is a separate deployment decision, not a build-context one.
+
+# ── Test, lint and docs: not used at runtime ─────────────────────────
+tests
+static/erp/tests
+**/.coverage
+coverage
+htmlcov
+package.json
+eslint.config.js
+.stylelintrc.json
+requirements-dev.txt
+docs
+**/*.md
+!README.md
+audit_report.json
+test_oauth.ps1
+
+# ── Local dev scratch ────────────────────────────────────────────────
+**/.vscode
+.git
+.gitignore
+docker-compose.yml

@@ -1960,14 +1960,16 @@ App.Process = {
       createTag(params) {
         const term = (params.term || '').trim();
         if (!term) return null;
-        // Once this process has a Pool component sourced from a colored
-        // upstream process, typing something that isn't one of THAT
-        // process's actual combinations is exactly the mismatch this
-        // restriction exists to prevent -- no "Create new" option for it.
+        // When this process has Pool-sourced components from a colored
+        // upstream process, prefer the canonical upstream color name when
+        // the typed term matches one. Otherwise allow the typed name
+        // through as a free-text custom sub-group (e.g. "Kit Bag",
+        // "Packing") -- the old behavior rejected it outright, which
+        // blocked legitimate non-color sub-group names.
         const combos = self._upstreamColorCombos || [];
         if (combos.length) {
           const match = combos.find(c => App.Utils.sameText(c, term));
-          return match ? { id: match, text: match } : null;
+          if (match) return { id: match, text: match };
         }
         const existing = (App.State.globalColors || []).find(c => App.Utils.sameText(c.name, term));
         if (existing) return { id: existing.name, text: existing.name };

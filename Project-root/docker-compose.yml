@@ -14,6 +14,24 @@ services:
         condition: service_healthy
       redis:
         condition: service_started
+    # Probes /health, which reports the database rather than only proving
+    # Flask can answer. Written with urllib because python:3.12-slim ships
+    # neither curl nor wget, and adding one just for a healthcheck is a
+    # package to keep patched for nothing. urlopen raises on the 503 that
+    # /health returns when the pool is gone, so a non-zero exit needs no
+    # explicit status check.
+    healthcheck:
+      test:
+        - CMD
+        - python
+        - -c
+        - import urllib.request; urllib.request.urlopen("http://localhost:8000/health")
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      # Migrations run in docker-entrypoint.sh before gunicorn binds, so the
+      # container is legitimately unreachable for a while on first boot.
+      start_period: 60s
 
   postgres:
     image: postgres:16

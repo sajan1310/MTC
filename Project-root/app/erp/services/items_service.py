@@ -1303,8 +1303,6 @@ def run_scheduled_item_cleanup(conn, cur):
 
     return build_response(True, {"autoFixed": fixed, "merged": merged}, message)
 
-    return item_id
-
 
 # ─────────────────────────────────────────────────────────────────────────
 # Item Ledger

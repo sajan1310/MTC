@@ -473,6 +473,9 @@ def create_app(config_name: str | None = None) -> Flask:
     # already uses elsewhere (PREFERRED_URL_SCHEME below) to mean "this
     # deployment is actually fronted by TLS".
     serve_over_https = app.config.get("BASE_URL", "").startswith("https://")
+    # Kept so /health below can opt out of force_https per-view; None under
+    # TESTING, where Talisman is never constructed.
+    talisman = None
     if not app.config.get("TESTING"):
         csp = {
             "default-src": "'self'",
@@ -511,7 +514,7 @@ def create_app(config_name: str | None = None) -> Flask:
             "img-src": ["'self'", "data:", "https:"],
             "connect-src": ["'self'", "https://cdn.jsdelivr.net"],
         }
-        Talisman(
+        talisman = Talisman(
             app,
             content_security_policy=csp,
             frame_options="SAMEORIGIN",
@@ -625,6 +628,60 @@ def create_app(config_name: str | None = None) -> Flask:
     app.add_url_rule(
         "/dashboard", endpoint="dashboard", view_func=_erp_home_redirect
     )
+
+    # /health -- the endpoint DEPLOYMENT.md's post-deployment step 1, its
+    # Kubernetes livenessProbe example and PRODUCTION_READINESS.md's
+    # load-balancer checklist all already instruct operators to point at.
+    # It did not exist, so every one of those checks 404'd: a load balancer
+    # reads that as "this instance is dead" and drains it, and an uptime
+    # monitor pages on it. Documented contract, kept verbatim:
+    #     {"status": ..., "database": ..., "timestamp": ...}
+    #
+    # It probes the DATABASE rather than only proving Flask can answer. An
+    # instance whose connection pool has died still returns a static 200
+    # while every real request 500s -- precisely the outage a health check
+    # exists to catch.
+    def _health():
+        from datetime import datetime, timezone
+
+        timestamp = (
+            datetime.now(timezone.utc).replace(microsecond=0).isoformat().replace("+00:00", "Z")
+        )
+        try:
+            with database.get_conn() as (_conn, cur):
+                cur.execute("SELECT 1")
+                cur.fetchone()
+        except Exception as exc:
+            # Logged, never returned. psycopg2 connection errors quote the
+            # DSN, which carries the database host, user and password, and
+            # this endpoint is public and unauthenticated by necessity.
+            app.logger.error("Health check failed: %s", exc)
+            return (
+                jsonify(status="unhealthy", database="error", timestamp=timestamp),
+                503,
+            )
+        return jsonify(status="healthy", database="connected", timestamp=timestamp), 200
+
+    # Talisman's force_https 302-redirects plain http. Probes hit the pod or
+    # container directly over http, and k8s counts any 3xx as a pass -- so
+    # the probe would "succeed" on a redirect it never followed, without ever
+    # reaching the database check above. Opting this one view out means the
+    # 200 is real. Everything else still redirects.
+    if talisman is not None:
+        _health = talisman(force_https=False)(_health)
+
+    # 503, not 200-with-a-sad-body: the status code is the only part a load
+    # balancer or k8s probe reads, so anything 2xx keeps a broken instance in
+    # rotation no matter what the JSON says.
+    #
+    # Exempt from the rate limiter because RATELIMIT_DEFAULT is "200 per day"
+    # (see above) and a probe every 10s is 8,640 requests/day. Without this
+    # the limiter starts returning 429 within the hour, every instance fails
+    # its health check at once, and the rate limiter takes down the whole
+    # deployment -- a self-inflicted outage with no bad traffic involved.
+    limiter.exempt(_health)
+
+    app.add_url_rule("/health", endpoint="health", view_func=_health, methods=["GET"])
 
     app.logger.info("Registered auth_bp + erp_bp + erp_rpc_bp only")
 

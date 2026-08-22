@@ -369,14 +369,14 @@ def get_dashboard_data():
     low_stock_items = low_stock_full[:10]
     low_stock_total_deficit = _round2(sum(max(i["deficit"], 0) for i in low_stock_full))
 
-    active_production_lots = [l for l in production_lots if l["status"] in _ACTIVE_PRODUCTION_STATUSES]
+    active_production_lots = [lot for lot in production_lots if lot["status"] in _ACTIVE_PRODUCTION_STATUSES]
     pending_production_count = len(active_production_lots)
     oldest_active_lot_date_raw = None
-    for l in active_production_lots:
-        if not l.get("dateRaw"):
+    for lot in active_production_lots:
+        if not lot.get("dateRaw"):
             continue
-        if oldest_active_lot_date_raw is None or l["dateRaw"] < oldest_active_lot_date_raw:
-            oldest_active_lot_date_raw = l["dateRaw"]
+        if oldest_active_lot_date_raw is None or lot["dateRaw"] < oldest_active_lot_date_raw:
+            oldest_active_lot_date_raw = lot["dateRaw"]
     oldest_pending_production_days = None
     if oldest_active_lot_date_raw:
         oldest_date = date_utils.to_safe_date(oldest_active_lot_date_raw)
@@ -465,20 +465,20 @@ def get_mobile_dashboard():
 
     today_key = date.today().isoformat()
 
-    pending_production_count = sum(1 for l in production_lots if l["status"] in _ACTIVE_PRODUCTION_STATUSES)
+    pending_production_count = sum(1 for lot in production_lots if lot["status"] in _ACTIVE_PRODUCTION_STATUSES)
     todays_dispatch_count = sum(1 for d in dispatch_records if d.get("dateRaw") and d["dateRaw"][:10] == today_key)
     low_stock_count = sum(1 for s in stock_records if s["isLowStock"])
 
     activity = []
-    for l in production_lots:
-        if not l.get("dateRaw"):
+    for lot in production_lots:
+        if not lot.get("dateRaw"):
             continue
         activity.append(
             {
                 "type": "production",
-                "title": l.get("lotNumber") or l.get("processId"),
-                "subtitle": f'{l["qty"]} unit(s) · {l["status"]}',
-                "dateRaw": l["dateRaw"],
+                "title": lot.get("lotNumber") or lot.get("processId"),
+                "subtitle": f'{lot["qty"]} unit(s) · {lot["status"]}',
+                "dateRaw": lot["dateRaw"],
             }
         )
     for d in dispatch_records:

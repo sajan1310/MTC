@@ -481,6 +481,13 @@ Expected response:
 }
 ```
 
+It returns **200** when the database answers and **503** when it does not, so a
+load balancer actually drains a broken instance instead of leaving it in
+rotation behind a cheerful 200. The check is exempt from the rate limiter --
+`RATELIMIT_DEFAULT` is 200/day and a 10-second probe interval is 8,640
+requests/day, which would otherwise start returning 429 within the hour and
+fail every instance at once.
+
 The `/health` endpoint can be used for:
 - **Load balancer health checks**: Configure AWS ALB, Azure LB, or GCP Load Balancer to use `/health` as the health check path.
 - **Uptime monitoring**: Services like UptimeRobot, Pingdom, or StatusCake can monitor `/health` and alert on failures.
@@ -491,7 +498,7 @@ Example Kubernetes probe config:
 livenessProbe:
   httpGet:
     path: /health
-    port: 5000
+    port: 8000        # Dockerfile EXPOSEs 8000; docker-entrypoint.sh binds ${PORT:-8000}
   initialDelaySeconds: 30
   periodSeconds: 10
 ```
