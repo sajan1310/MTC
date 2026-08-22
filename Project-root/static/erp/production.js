@@ -6996,25 +6996,32 @@ App.Production = {
     const CELL_VALIGN = 'vertical-align:top;';
     const CELL_WRAP = 'overflow-wrap:break-word;';
 
-    // Item names here are hyphen-chained compounds ("BB---CUP---SET",
-    // "CYCLE-CHAIN--110-LINK") that have to wrap somewhere. Adding an
-    // explicit break opportunity after every hyphen run keeps them breaking
-    // at their own separators instead of at whatever fill point the
-    // renderer picks. A zero-width space rather than <wbr>: html2canvas
-    // walks text nodes with its own segmenter and skips the <wbr> ELEMENT
-    // entirely, so the break opportunity never reached it; U+200B is an
-    // ordinary character in the text node, which both engines honour. Each
-    // segment becomes its own block line, so the cell never depends on the
-    // renderer's own wrapping at all -- html2canvas can only mis-paint a
-    // line it had to wrap itself, and there is now nothing left for it to
-    // wrap. Single hyphens stay inside their segment (part of the token,
-    // e.g. "BRUT-BLACK") but still get a zero-width space after them as a
-    // safety valve so an unusually long segment can wrap rather than spill.
+    // Item names are hyphen-chained compounds where a run of two or more
+    // hyphens is the author's own separator: "BB---CUP---SET",
+    // "CYCLE-CHAIN--110-LINK", "CARTOON--S-D". Those runs are rendered as a
+    // single space, so the whole name reads as ONE line.
+    //
+    // It used to put each segment on its own block line, which turned a
+    // three-part name into a three-line row and was the single biggest
+    // consumer of vertical space on the sheet -- a 15-row Common
+    // Components table could occupy 30+ lines. That was defensive: the old
+    // html2canvas PDF path mis-painted any line IT had to wrap, so the fix
+    // was to leave it nothing to wrap. PDFs are now rendered server-side by
+    // WeasyPrint (app/erp/services/pdf_render_service.py), which wraps text
+    // correctly, so the defence costs page count and buys nothing.
+    //
+    // Single hyphens stay inside their segment (they are part of the token,
+    // e.g. "BRUT-BLACK") but still get a zero-width space after them, so an
+    // unusually long name can still wrap at a sensible point rather than
+    // overflow its cell. Written as an explicit \u200B escape rather than
+    // the literal character: an invisible codepoint sitting in a string
+    // literal is the kind of thing an editor or a paste silently eats.
     const withBreakPoints = text => String(text)
       .split(/-{2,}/)
+      .map(seg => seg.trim())
       .filter(seg => seg !== '')
-      .map(seg => `<span style="display:block;">${seg.replace(/-/g, '$&​')}</span>`)
-      .join('');
+      .map(seg => seg.replace(/-/g, '$&\u200B'))
+      .join(' ');
 
     // Deliberately AUTO layout, not table-layout:fixed. Fixed layout makes
     // the column percentages binding, which does stop the tables blowing

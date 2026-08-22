@@ -359,4 +359,43 @@ describe('App.Production.printProductionSheet', () => {
       expect(text).not.toContain('Front only');
     });
   });
+  // ── Item name occupies one line ───────────────────────────────────────
+  // A run of two or more hyphens is the author's own separator inside an
+  // item name. It used to put each segment on its own block line, so
+  // "Chain Cover---WING---BLACK" was a three-line row and a 15-row table
+  // could run to 30+ lines. That existed to protect the old html2canvas
+  // PDF path, which mis-painted lines it had to wrap; PDFs are now rendered
+  // by WeasyPrint server-side, so the cost is no longer buying anything.
+  describe('item names render on a single line', () => {
+    const noZeroWidth = t => t.replace(/[\u200B]/g, '');
+
+    test('a multi-part name is joined with spaces, not split into blocks', () => {
+      App.State.currentProductionSheet = { colors: [], lotColor: '' };
+      addCommonRow('Chain Cover---WING---BLACK', 'GENERAL', '', '40');
+
+      App.Production.printProductionSheet();
+
+      const cell = document.getElementById('print-production-sheet-common-tables')
+        .querySelector('tbody tr td');
+      expect(noZeroWidth(cell.textContent)).toBe('Chain Cover WING BLACK');
+      // The block-per-segment spans are what made the row multi-line.
+      expect(cell.innerHTML).not.toContain('display:block');
+    });
+
+    test('single hyphens are preserved and still offer a wrap point', () => {
+      App.State.currentProductionSheet = { colors: [], lotColor: '' };
+      addCommonRow('CARTOON--S-D', 'GENERAL', '', '40');
+
+      App.Production.printProductionSheet();
+
+      const cell = document.getElementById('print-production-sheet-common-tables')
+        .querySelector('tbody tr td');
+      // The separator run became a space; the single hyphen inside "S-D"
+      // stays part of the token.
+      expect(noZeroWidth(cell.textContent)).toBe('CARTOON S-D');
+      // ...but keeps a zero-width space after it, so an over-long name can
+      // still wrap somewhere sensible rather than overflow the cell.
+      expect(cell.textContent).toContain('-\u200B');
+    });
+  });
 });

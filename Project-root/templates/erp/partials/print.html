@@ -646,21 +646,33 @@
             -webkit-print-color-adjust:exact;
             print-color-adjust:exact;">
 
-  <!-- Header — trimmed to reduce empty space above Common Components; this
-       block runs once per sheet, so shaving a few px here (unlike the
-       FIT_TIERS-compressed tables below) directly cuts every export's page
-       count, not just borderline-overflow ones. -->
-  <div style="text-align:center;padding:0 0 4px 0;">
-    <div class="print-brand-text" style="font-size:26px;font-weight:800;color:#198754;
-                letter-spacing:2px;text-transform:uppercase;
+  <!-- Header — a single band: logo hard left, sheet title beside it. This
+       block runs once per sheet, so height saved here (unlike the
+       FIT_TIERS-compressed tables below) comes off every export's page
+       count, not just borderline-overflow ones.
+       It was a centred stack of brand / postal address / small title, three
+       lines deep. The address is dropped: this sheet never leaves the
+       factory, so printing where the factory is told nobody anything. That
+       pays for the title going from 11px to 20px, which matters because the
+       title is the PROCESS TYPE ("Packing Requirement Sheet", set per-lot
+       from requirementSheetTitle) and is what someone sorting a stack of
+       printed sheets is actually looking for.
+       inline-block + vertical-align, not flex: this markup is rendered both
+       by the browser's print engine and by WeasyPrint server-side, and
+       inline-block behaves identically in both. Only this template changes
+       -- every other print header in this file keeps its centred layout and
+       its address. -->
+  <div style="padding:0 0 5px 0;">
+    <div class="print-brand-text" style="display:inline-block;vertical-align:middle;
+                font-size:22px;font-weight:800;color:#198754;
+                letter-spacing:2px;text-transform:uppercase;line-height:1.1;
                 font-family:'Segoe UI',Arial,sans-serif;
                 -webkit-print-color-adjust:exact;print-color-adjust:exact;">
       Maharaja Bikes
     </div>
-    <div style="font-size:10px;color:#555;margin-top:2px;letter-spacing:0.3px;">
-      6-B, SHIV SHAKTI ESTATE, VERKA CHOWK, DEHLON ROAD, BHAGWANPURA, 141114 LUDHIANA
-    </div>
-    <div id="print-prod-title" style="font-size:11px;color:#198754;font-weight:700;margin-top:3px;letter-spacing:1px;text-transform:uppercase;">
+    <div id="print-prod-title" style="display:inline-block;vertical-align:middle;
+                margin-left:18px;font-size:20px;color:#198754;font-weight:800;
+                letter-spacing:1.2px;text-transform:uppercase;line-height:1.15;">
       Production Material Requirement Sheet
     </div>
   </div>
