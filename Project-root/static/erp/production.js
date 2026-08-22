@@ -2234,6 +2234,36 @@ App.Production = {
     return new RegExp(`(^|[-/\\s])${escaped}($|[-/\\s])`).test(longer);
   },
 
+  // The quantity a CHECKED non-primary axis row should be filled with.
+  //
+  // The pairing below (mirror the primary color this one shares a name
+  // with) is right when a non-primary axis is genuinely produced one
+  // variant per primary color -- a White rim for the Blue-White frames, a
+  // Black one for the Red-Black frames. It is wrong when the axis carries
+  // a SINGLE color, because then that color is on every unit in the lot
+  // regardless of what the primary axis is doing: a lot of 42 frames in six
+  // colors, all on Black rims, was filling Black with 7 rather than 42
+  // purely because "Black" token-matches the "Red-Black" frame color (see
+  // _colorNamesMatch, which matches a color against either half of a
+  // composite by design).
+  //
+  // So the count of checked colors on the row's OWN axis is what decides:
+  // one means "applies to the whole lot", two or more means the axis really
+  // is split per color and each should track its own match. This is
+  // re-evaluated on every settled toggle (see _refreshAutoSyncedFallbackRows)
+  // rather than fixed at check time -- checking a second color on the axis
+  // has to move the first one off the lot total and onto its own pairing,
+  // and unchecking it has to move it back.
+  _nonPrimaryFillQty(row) {
+    if (!row) return 0;
+    const group = row.dataset.group;
+    const checkedOnAxis = $$('#productionColorChecklist .production-color-row[data-primary="false"]')
+      .filter(r => r.dataset.group === group && r.querySelector('.production-color-check')?.checked);
+    if (checkedOnAxis.length <= 1) return this._primaryColorAxisTotal();
+    const matched = this._matchingPrimaryColorQty(row.dataset.color);
+    return matched !== null ? matched : this._primaryColorAxisTotal();
+  },
+
   _matchingPrimaryColorQty(nonPrimaryColor) {
     const target = String(nonPrimaryColor || '').trim();
     if (!target) return null;
@@ -2657,11 +2687,30 @@ App.Production = {
       </div>`;
   },
 
+  // The visible text of an axis group's header. Two axes of the SAME
+  // process carry the same axis.label -- that label is the upstream pool
+  // item's own name, so a process whose colors were grouped under one
+  // output item renders the identical heading twice with nothing to tell
+  // the operator which is which. The role suffix is what distinguishes
+  // them: the Primary axis's checked quantities ARE the lot's total output
+  // (renderColorChecklistRows' isPrimary), every other axis is recorded per
+  // color without adding to that total -- i.e. exactly the color-group vs
+  // sub-group distinction. It follows the Primary pick rather than being
+  // fixed per axis, because which axis counts is precisely what that pick
+  // decides.
+  //
+  // Composed from data-axis-label + data-axis-role rather than baked into
+  // the text, so setPrimaryColorAxisChoice can rebuild the heading when the
+  // operator moves Primary without having to re-derive either part.
+  _axisGroupHeadingText(label, isPrimary) {
+    return isPrimary ? `${label} — Color Group (Primary)` : `${label} — Sub-Group`;
+  },
+
   _buildColorAxisGroupHeader(axis, isPrimary) {
     return `
       <div class="d-flex align-items-center gap-2 mt-2 mb-1" style="flex: 1 0 100%;">
         <input type="checkbox" class="form-check-input" data-group-master="${escapeHtml(axis.key)}" onchange="App.Production.toggleColorGroup(this, '${escapeHtml(axis.key)}')" title="Select all colors in this group">
-        <span class="text-muted small fw-bold axis-group-label" data-axis-label="${escapeHtml(axis.label)}">${escapeHtml(axis.label)}${isPrimary ? ' (Primary)' : ''}</span>
+        <span class="text-muted small fw-bold axis-group-label" data-axis-label="${escapeHtml(axis.label)}">${escapeHtml(this._axisGroupHeadingText(axis.label, isPrimary))}</span>
         <label class="form-check form-check-inline mb-0 ms-2 small text-muted" title="This group's checked quantities become the lot's total output quantity">
           <input type="radio" class="form-check-input" name="productionPrimaryAxisPick" value="${escapeHtml(axis.key)}" data-axis-label="${escapeHtml(axis.label)}"
             ${isPrimary ? 'checked' : ''} onchange="App.Production.setPrimaryColorAxisChoice(this)">
@@ -2678,7 +2727,10 @@ App.Production = {
     document.querySelectorAll('#productionColorChecklist .axis-group-label').forEach(labelEl => {
       const ownRadio = labelEl.closest('div')?.querySelector('input[name="productionPrimaryAxisPick"]');
       const label = labelEl.dataset.axisLabel || labelEl.textContent;
-      labelEl.textContent = label + (ownRadio?.checked ? ' (Primary)' : '');
+      // Rebuilt through the same composer the initial render used, so the
+      // Color Group / Sub-Group suffix moves with the Primary pick instead
+      // of being stripped off the first time the operator changes it.
+      labelEl.textContent = this._axisGroupHeadingText(label, !!ownRadio?.checked);
     });
     const warning = document.getElementById('productionPrimaryAxisWarning');
     if (warning) warning.remove();
@@ -2802,8 +2854,7 @@ App.Production = {
         qtyInput.value = '';
         if (row) delete row.dataset.autoSynced;
       } else if (row?.dataset.primary === 'false') {
-        const matched = this._matchingPrimaryColorQty(row.dataset.color);
-        const fillQty = matched !== null ? matched : this._primaryColorAxisTotal();
+        const fillQty = this._nonPrimaryFillQty(row);
         if (fillQty > 0) qtyInput.value = this.formatQty(fillQty);
         row.dataset.autoSynced = 'true';
       }
@@ -2825,7 +2876,6 @@ App.Production = {
 
     if (row?.dataset.primary === 'true') {
       await this._syncMatchingNonPrimaryRows(color, checkboxEl.checked);
-      this._refreshAutoSyncedFallbackRows();
     }
 
     // Same top-level-only gate as refreshPoolAvailability: this must see
@@ -2833,19 +2883,36 @@ App.Production = {
     // and its column populated), so a nested call from
     // _syncMatchingNonPrimaryRows would judge half-built columns.
     if (refreshAvailability) {
+      // Now covers a NON-primary toggle too, not just a primary one: what a
+      // non-primary row is filled with depends on how many colors are
+      // checked on its own axis (see _nonPrimaryFillQty), so its siblings
+      // have to be re-evaluated whenever that count changes.
+      this._refreshAutoSyncedFallbackRows();
       this._pruneRedundantMatrixColumns();
       await this.refreshPoolAvailability();
     }
   },
 
+  // Re-applies _nonPrimaryFillQty to every auto-synced non-primary row.
+  // Rows the operator typed into by hand are exempt: onColorQtyChanged
+  // clears their autoSynced flag, and a manual entry must never be
+  // overwritten by a later toggle elsewhere in the checklist.
   _refreshAutoSyncedFallbackRows() {
-    const total = this._primaryColorAxisTotal();
     $$('#productionColorChecklist .production-color-row[data-primary="false"]')
       .filter(r => r.dataset.autoSynced === 'true' && r.querySelector('.production-color-check')?.checked)
       .forEach(r => {
-        if (this._matchingPrimaryColorQty(r.dataset.color) !== null) return;
+        const fillQty = this._nonPrimaryFillQty(r);
         const qi = r.querySelector('.production-color-qty');
-        if (qi) qi.value = total > 0 ? this.formatQty(total) : '';
+        if (!qi) return;
+        const next = fillQty > 0 ? this.formatQty(fillQty) : '';
+        if (qi.value === next) return;
+        qi.value = next;
+        // Propagated the same way the primary branch of onColorQtyChanged
+        // propagates its own re-sync: a rewritten quantity that never
+        // reaches the matrix leaves the per-color cells showing figures
+        // derived from the value this row used to hold. `false` marks it as
+        // not a user edit, so the row keeps its autoSynced flag.
+        this.onColorQtyChanged(r, false);
       });
   },
 
@@ -2870,9 +2937,27 @@ App.Production = {
   // one-table-per-axis), so two independent Color Axes can legitimately
   // share a color name (see renderColorwiseSummary). Degrades to "this
   // row's own qty" whenever the name is unique to one axis.
+  // How many UNITS this lot produces in `color` -- the multiplier a
+  // per-color component's qtyPerUnit is scaled by.
+  //
+  // Counting rows only (countsTowardTotal, i.e. the primary axis and the
+  // flat single-axis checklist), for the same reason _currentLotTotalQty
+  // counts only those: a non-primary axis row records how an already-counted
+  // unit is broken down, it does not add a unit. Summing across every axis
+  // double-counted whenever a color name appeared on both a counting and a
+  // non-counting group -- a lot with the same output item rendered as both
+  // its Color Group and a Sub-Group scaled every per-color component by 6
+  // where 3 units were being produced, and the Per-Color Components table
+  // asked for twice the material the lot actually consumes.
+  //
+  // Still a SUM rather than the one row that happened to change: a color
+  // name is not unique to an axis, so several counting rows can legitimately
+  // carry it (see renderColorwiseSummary). It degrades to that single row's
+  // own qty in the ordinary case where the name appears once.
   _totalQtyForColorName(color) {
     const colorLower = String(color || '').trim().toLowerCase();
     return this.getCheckedColorQtys()
+      .filter(cc => cc.countsTowardTotal)
       .filter(cc => String(cc.color || '').trim().toLowerCase() === colorLower)
       .reduce((sum, cc) => sum + cc.qty, 0);
   },
@@ -2916,8 +3001,7 @@ App.Production = {
       $$('#productionColorChecklist .production-color-row[data-primary="false"]')
         .filter(r => r.dataset.autoSynced === 'true' && r.querySelector('.production-color-check')?.checked)
         .forEach(r => {
-          const matched = this._matchingPrimaryColorQty(r.dataset.color);
-          const fillQty = matched !== null ? matched : this._primaryColorAxisTotal();
+          const fillQty = this._nonPrimaryFillQty(r);
           const qi = r.querySelector('.production-color-qty');
           if (qi) qi.value = fillQty > 0 ? this.formatQty(fillQty) : '';
           this.onColorQtyChanged(r, false);
@@ -3129,6 +3213,123 @@ App.Production = {
     return `${(name || '').trim().toLowerCase()}|${(size || '').trim().toLowerCase()}`;
   },
 
+  // The colour vocabulary Pass 4 (_mergeRowsByColorStrippedName) strips
+  // with, built from the Color Master (Stock > Color Master ->
+  // App.State.globalColors) rather than from the lot's own checked
+  // colours. The lot's own list is NOT enough: a "Chain Cover-ORBIT
+  // BLACK-SILENCER" / "Chain Cover-ORBIT WHITE-SILENCER" pair hinges on
+  // BLACK and WHITE, and neither is a colour of the lot those two are
+  // filed under -- they describe the physical part, which is exactly the
+  // naming this pass exists to see through.
+  //
+  // Two kinds of entry come out, and the distinction is the guard against
+  // over-stripping:
+  //   - phrases: a master colour whose NAME is more than one token
+  //     ("Baby Pink") only ever strips when those tokens appear
+  //     CONSECUTIVELY. "Baby" on its own is not a colour and must not eat
+  //     the "Baby" out of an unrelated "Baby Seat".
+  //   - words: a master colour that is a single token ("Blue", "White")
+  //     strips wherever that whole token appears. A compound master entry
+  //     like "Blue-White" contributes the phrase [blue, white] AND, via
+  //     its own single-token master siblings, the words blue and white.
+  //
+  // Sorted longest-phrase-first so "Baby Pink" is consumed before "Pink"
+  // gets a chance to take half of it. Cached against the globalColors
+  // array identity -- this runs once per matrix row per name otherwise.
+  _colorVocabCache: null,
+  _colorVocabCacheSrc: null,
+
+  _colorMasterVocabulary() {
+    const colors = (App.State && App.State.globalColors) || [];
+    if (this._colorVocabCacheSrc === colors && this._colorVocabCache) return this._colorVocabCache;
+
+    const words = new Set();
+    const phrases = [];
+    colors.forEach(c => {
+      const name = String((c && c.name) || '').trim();
+      if (!name) return;
+      const tokens = name.split(/[^a-z0-9]+/i).map(t => t.toLowerCase()).filter(Boolean);
+      if (tokens.length === 0) return;
+      if (tokens.length === 1) words.add(tokens[0]);
+      else phrases.push(tokens);
+    });
+    phrases.sort((a, b) => b.length - a.length);
+
+    this._colorVocabCacheSrc = colors;
+    this._colorVocabCache = { words, phrases };
+    return this._colorVocabCache;
+  },
+
+  // Removes EVERY Color Master colour from `itemName` and returns what is
+  // left -- the part that identifies the physical component rather than
+  // its colour variant ("Maharaja-SEAT BLUE-WHITE" and "Maharaja SEAT
+  // WHITE" both reduce to "Maharaja SEAT").
+  //
+  // Deliberately token-wise, NOT the raw indexOf substring search
+  // _stripColorSubstring uses. That one is safe only because it is handed
+  // the single colour an entry is already tagged with; run the whole
+  // Color Master through it and any colour that happens to be a substring
+  // of an ordinary word corrupts the name -- "TAN" turns "Petrol Tank"
+  // into "Petrol k", "RED" turns "COVERED SEAT" into "COVEED SEAT". Here
+  // a colour has to BE a whole token (or a whole consecutive run of them)
+  // before it is dropped.
+  //
+  // Returns the ORIGINAL name unchanged when stripping would leave
+  // nothing alphanumeric behind -- an item literally named "BLUE-WHITE"
+  // is its own identity, and an empty residue would otherwise collide
+  // with every other fully-stripped name.
+  _stripAllColorTokens(itemName) {
+    const raw = String(itemName || '').trim();
+    if (!raw) return raw;
+    const { words, phrases } = this._colorMasterVocabulary();
+    if (words.size === 0 && phrases.length === 0) return raw;
+
+    // Alternating [token, delimiter, token, ...], same technique as
+    // _cellItemTag, so surviving tokens can be rejoined with the
+    // separator they originally carried instead of flattening to spaces.
+    const parts = raw.split(/([^a-z0-9]+)/i).filter(p => p !== '');
+    const tokens = [];
+    for (let i = 0; i < parts.length; i += 2) tokens.push({ text: parts[i], sep: parts[i + 1] || '', drop: false });
+
+    const lower = tokens.map(t => t.text.toLowerCase());
+    phrases.forEach(phrase => {
+      for (let i = 0; i + phrase.length <= tokens.length; i++) {
+        if (tokens.slice(i, i + phrase.length).some(t => t.drop)) continue;
+        if (phrase.every((p, k) => lower[i + k] === p)) {
+          for (let k = 0; k < phrase.length; k++) tokens[i + k].drop = true;
+        }
+      }
+    });
+    tokens.forEach((t, i) => { if (words.has(lower[i])) t.drop = true; });
+
+    const kept = tokens.filter(t => !t.drop);
+    if (kept.length === 0) return raw;
+
+    // Surviving tokens rejoin with the separator they originally carried, so
+    // "ORBIT-STICKER-Backrest BLUE" reduces to "ORBIT-STICKER-Backrest" and
+    // not to a flattened "ORBIT STICKER Backrest". The residue doubles as the
+    // merged row's LABEL, so it has to stay readable; matching two residues
+    // against each other is _colorStrippedKey's job, and that is where
+    // delimiter differences get normalised away.
+    let out = '';
+    kept.forEach((t, i) => {
+      if (i === 0) { out = t.text; return; }
+      const sep = kept[i - 1].sep;
+      out += /^[-_]$/.test(sep) ? `-${t.text}` : ` ${t.text}`;
+    });
+    out = out.trim();
+    return out || raw;
+  },
+
+  // The comparison key for two colour-stripped names. Separators are
+  // flattened here and nowhere else: the same physical part is routinely
+  // typed "Maharaja-SEAT BLUE-WHITE" under one colour and "Maharaja SEAT
+  // WHITE" under another, and those must land on one row even though their
+  // residues ("Maharaja-SEAT" / "Maharaja SEAT") differ by a hyphen.
+  _colorStrippedKey(residue, size) {
+    return this._itemSlotKey(String(residue || '').replace(/[\s\-_]+/g, ' ').trim(), size);
+  },
+
   // Reconstructs which entries belong to the same conceptual Per-Color
   // Components matrix ROW, given only the flat colorGroup-tagged list
   // saved on components_consumed (or a process recipe's own components).
@@ -3140,7 +3341,7 @@ App.Production = {
   // that then sort by WHICH colour they belong to instead of staying in
   // the order they were entered (see LOT-PF2IIS-0002).
   //
-  // Two passes, most-confident signal first:
+  // Four passes, most-confident signal first:
   //
   // PASS 1 -- exact shared name: an item saved under the LITERAL SAME
   // name+size under more than one colour (e.g. one physical two-tone
@@ -3174,6 +3375,16 @@ App.Production = {
   // separate 2-colour rows -- correct, but not consolidated. Deliberately
   // narrow and opt-in: only 2-colour groups are ever considered, and only
   // merged when doing so is unambiguous (see that method's own comment).
+  //
+  // PASS 4 -- colour-stripped name match (see
+  // _mergeRowsByColorStrippedName): everything above compares LITERAL
+  // names, so a model that encodes the colour into the component name
+  // ("Maharaja-SEAT BLUE-WHITE" vs "Maharaja SEAT WHITE") still ends up
+  // as several rows. This last pass strips every Color Master colour out
+  // of the names Passes 1-3 produced and merges rows whose remainder --
+  // the physical part -- matches, as long as their colour columns don't
+  // overlap. It only ever merges rows further, never re-pairs cells, so
+  // it cannot disturb what the earlier passes decided.
   //
   // All rows are then handed back in original first-appearance order, so
   // which pass caught a given row never affects drag order.
@@ -3227,7 +3438,81 @@ App.Production = {
       ? Array.from({ length: counts[0] }, (_, i) => rowFrom(colorKeys.map(c => byColor.get(c)[i])))
       : this._reconstructPerColorRowsByName(remainingOrdered).map(row => ({ ...row, firstIndex: firstIndexOf(row.cells) }));
 
-    return [...sharedRows, ...positionalRows].sort((a, b) => a.firstIndex - b.firstIndex);
+    const allRows = this._mergeRowsByColorStrippedName([...sharedRows, ...positionalRows]);
+    return allRows.sort((a, b) => a.firstIndex - b.firstIndex);
+  },
+
+  // PASS 4 -- consolidate rows that are the same physical component named
+  // once per colour variant ("Maharaja-SEAT BLUE-WHITE" under two
+  // colours, "Maharaja SEAT WHITE" under three) by comparing what is left
+  // of each row's item names once every Color Master colour is stripped
+  // out (see _stripAllColorTokens).
+  //
+  // Runs LAST, on whatever Passes 1-3 produced, and only ever merges rows
+  // further -- it can neither split a row nor re-pair cells those passes
+  // already grouped, so the LOT-PF2IIS-0002 / LOT-PC2IDS-0001 cases they
+  // exist for stay exactly as they were. It is what lets a lot whose
+  // models encode the colour into the component NAME consolidate at all:
+  // Pass 1 only matches LITERAL identical names, and Pass 3 refuses any
+  // group that does not span exactly 2 colours, so a 2-colour variant
+  // sitting next to a 3-colour one never merges on its own.
+  //
+  // Two guards, both required:
+  //   - the residue must survive as something (an all-colour name keeps
+  //     its raw form, see _stripAllColorTokens) and size must match, since
+  //     one row carries one Size input;
+  //   - the rows' colour sets must be PAIRWISE DISJOINT. Two rows both
+  //     claiming the same colour column are two different physical parts
+  //     competing for one cell -- merging would silently drop one of the
+  //     two quantities, so the whole residue group is left alone instead.
+  //
+  // Merging is presentational only: each cell keeps its own literal item
+  // (rows carry the ORIGINAL entry objects, and serializeColorMatrix reads
+  // the item name off each merged cell's own picker), so nothing about
+  // what the lot consumes or deducts changes here.
+  _mergeRowsByColorStrippedName(rows) {
+    if (!rows || rows.length < 2) return rows || [];
+
+    const order = [];
+    const groups = new Map();
+    rows.forEach(row => {
+      const residue = this._stripAllColorTokens(row.cells[0]?.itemName || '');
+      const key = this._colorStrippedKey(residue, row.size);
+      if (!groups.has(key)) { groups.set(key, { residue, rows: [] }); order.push(key); }
+      groups.get(key).rows.push(row);
+    });
+
+    const merged = [];
+    order.forEach(key => {
+      const group = groups.get(key);
+      if (group.rows.length === 1) { merged.push(group.rows[0]); return; }
+
+      const seen = new Set();
+      const disjoint = group.rows.every(row =>
+        row.cells.every(cell => {
+          const c = String(cell.colorKey || '').trim().toLowerCase();
+          if (seen.has(c)) return false;
+          seen.add(c);
+          return true;
+        }));
+      if (!disjoint) { merged.push(...group.rows); return; }
+
+      const cells = group.rows.flatMap(row => row.cells);
+      merged.push({
+        firstIndex: Math.min(...group.rows.map(r => r.firstIndex)),
+        size: group.rows[0].size,
+        narration: group.rows.find(r => r.narration)?.narration || '',
+        unit: group.rows.find(r => r.unit)?.unit || '',
+        // The residue IS the row's label here -- it is precisely the part
+        // every merged name has in common. Without it _rowDisplayName
+        // would fall to its case-2 common-token-prefix, which stops at the
+        // first delimiter that differs and would label the example above
+        // "Maharaja" instead of "Maharaja SEAT".
+        label: group.residue,
+        cells
+      });
+    });
+    return merged;
   },
 
   // Pairs up 2-colour exact-shared-item rows (each already proven by
@@ -3346,6 +3631,11 @@ App.Production = {
   //    colour, e.g. Teddy Basket) -- best-effort strip the first cell's
   //    own colour word out of its name, same as before.
   _rowDisplayName(row) {
+    // 0. A Pass 4 merge already computed the exact shared part of every
+    //    name it merged (the colour-stripped residue) -- that is a better
+    //    label than any of the three guesses below, all of which assume
+    //    the row's names differ only by their own colour tag.
+    if (row.label) return row.label;
     const primary = row.cells[0];
     const distinctNames = Array.from(new Set(row.cells.map(c => (c.itemName || '').trim().toLowerCase())));
     if (distinctNames.length === 1) return (primary.itemName || '').trim();
@@ -4647,11 +4937,24 @@ App.Production = {
     this._ensureMatrixCollapseHandlers();
 
     const rows = $$('#productionColorMatrixBody tr');
-    Array.from(headerRow.children).forEach((th, index) => {
-      const color = th.dataset.color;
-      if (!color) return;
+    const colorCols = Array.from(headerRow.children)
+      .map((th, index) => ({ th, index }))
+      .filter(({ th }) => th.dataset.color);
 
-      const empty = this._isMatrixColumnEmpty(index, rows);
+    // Collapsing exists to give the columns that ARE in use the room the
+    // empty ones were wasting. When every colour column is empty there is
+    // nothing to give that room TO: the table collapses to a stub, the
+    // freed width becomes dead space, and the operator is left reading a
+    // row of angled labels to find the column to open -- for a matrix where
+    // every column is equally openable. So this case collapses nothing and
+    // renders plain headers (no toggle either: with the collapse suppressed,
+    // the button would be a control that visibly does nothing).
+    const allEmpty = colorCols.length > 0
+      && colorCols.every(({ index }) => this._isMatrixColumnEmpty(index, rows));
+
+    colorCols.forEach(({ th, index }) => {
+      const color = th.dataset.color;
+      const empty = !allEmpty && this._isMatrixColumnEmpty(index, rows);
       const collapsed = empty && !this._isMatrixColumnExpanded(color);
       th.classList.toggle('prod-col-collapsed', collapsed);
       rows.forEach(row => row.children[index]?.classList.toggle('prod-col-collapsed', collapsed));

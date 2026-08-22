@@ -174,7 +174,13 @@ describe('Per-color tables: the automatic column fit', () => {
 
   test('a collapsed colour strip is not resizable and is never widened by the fit', () => {
     App.Production.addMatrixColorColumn('Blue-White');
-    App.Production.addMatrixItemRow({ itemName: 'Sticker', size: 'L', sourceType: 'ITEM' });
+    App.Production.addMatrixColorColumn('Kit Bag 24"');
+    const row = App.Production.addMatrixItemRow({ itemName: 'Sticker', size: 'L', sourceType: 'ITEM' });
+    // One column in use, so Blue-White is a real collapsed strip: an
+    // all-empty matrix deliberately collapses nothing.
+    const kitQty = row.children[App.Production.getMatrixColumnIndex('Kit Bag 24"')].querySelector('.matrix-qty');
+    kitQty.value = '2';
+    kitQty.dispatchEvent(new window.Event('input', { bubbles: true }));
     App.Production._refreshMatrixColumns();
     giveTableRoom(matrixTable());
     App.Production._layoutMatrixTable();

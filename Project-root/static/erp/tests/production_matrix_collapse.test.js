@@ -95,9 +95,10 @@ describe('Per-Color Components: collapsing empty colour columns', () => {
     App.Production.addMatrixColorColumn('Kit Bag 24"');
     const row = App.Production.addMatrixItemRow({ itemName: 'Sticker', size: 'L', sourceType: 'ITEM' });
 
-    // Nothing entered anywhere yet -- both columns are dead weight.
-    expect(isCollapsed('Blue-White')).toBe(true);
-    expect(isCollapsed('Kit Bag 24"')).toBe(true);
+    // Nothing entered anywhere yet. Both columns are empty, but collapsing
+    // EVERY column frees room for nothing -- see the all-empty test below.
+    expect(isCollapsed('Blue-White')).toBe(false);
+    expect(isCollapsed('Kit Bag 24"')).toBe(false);
 
     typeQty(row, 'Kit Bag 24"', '2');
     App.Production._refreshMatrixColumns();
@@ -145,7 +146,12 @@ describe('Per-Color Components: collapsing empty colour columns', () => {
 
   test('clicking a collapsed header expands that column, and clicking again re-collapses it', () => {
     App.Production.addMatrixColorColumn('Blue-White');
-    App.Production.addMatrixItemRow({ itemName: 'Sticker', size: 'L', sourceType: 'ITEM' });
+    App.Production.addMatrixColorColumn('Kit Bag 24"');
+    const row = App.Production.addMatrixItemRow({ itemName: 'Sticker', size: 'L', sourceType: 'ITEM' });
+    // A column in use, so Blue-White is a genuinely collapsible empty one
+    // rather than half of an all-empty matrix.
+    typeQty(row, 'Kit Bag 24"', '2');
+    App.Production._refreshMatrixColumns();
 
     expect(isCollapsed('Blue-White')).toBe(true);
 
@@ -175,7 +181,11 @@ describe('Per-Color Components: collapsing empty colour columns', () => {
 
   test('a merged cell with an item picked but no qty yet counts as in use', () => {
     App.Production.addMatrixColorColumn('Blue-White');
+    App.Production.addMatrixColorColumn('Kit Bag 24"');
     const row = App.Production.addMergedMatrixRow({ itemName: 'Frame', size: 'L', sourceType: 'ITEM' });
+    // Keeps one column in use so Blue-White collapses on its own merits.
+    typeQty(row, 'Kit Bag 24"', '2');
+    App.Production._refreshMatrixColumns();
 
     expect(isCollapsed('Blue-White')).toBe(true);
 
@@ -223,17 +233,53 @@ describe('Per-Color Components: collapsing empty colour columns', () => {
   });
 
   test('clearing the matrix forgets which columns were expanded by hand', () => {
-    App.Production.addMatrixColorColumn('Blue-White');
-    App.Production.addMatrixItemRow({ itemName: 'Sticker', size: 'L', sourceType: 'ITEM' });
+    const seed = () => {
+      App.Production.addMatrixColorColumn('Blue-White');
+      App.Production.addMatrixColorColumn('Kit Bag 24"');
+      const row = App.Production.addMatrixItemRow({ itemName: 'Sticker', size: 'L', sourceType: 'ITEM' });
+      typeQty(row, 'Kit Bag 24"', '2');
+      App.Production._refreshMatrixColumns();
+    };
+
+    seed();
     headerFor('Blue-White').querySelector('.prod-col-expand').click();
     expect(isCollapsed('Blue-White')).toBe(false);
 
     App.Production.clearColorMatrix();
-    App.Production.addMatrixColorColumn('Blue-White');
-    App.Production.addMatrixItemRow({ itemName: 'Sticker', size: 'L', sourceType: 'ITEM' });
+    seed();
 
     // A different lot opened in the same session starts from the default.
     expect(isCollapsed('Blue-White')).toBe(true);
+  });
+
+  // Why this is not just "collapsing works": collapsing buys room for the
+  // columns that ARE in use, and when none of them is, there is nothing to
+  // buy room for. The whole matrix shrank to a stub beside a wide band of
+  // dead space, and every column -- all equally openable -- had to be read
+  // off an angled 30px strip. A freshly opened lot whose recipe defines no
+  // per-colour quantities hits this every time.
+  test('a matrix where EVERY colour column is empty collapses none of them', () => {
+    App.Production.addMatrixColorColumn('Blue-Sky Blue');
+    App.Production.addMatrixColorColumn('Metallic Purple-Purple');
+    App.Production.addMatrixColorColumn('Pink-White');
+    const row = App.Production.addMatrixItemRow({ itemName: 'Sticker', size: 'L', sourceType: 'ITEM' });
+    App.Production._refreshMatrixColumns();
+
+    ['Blue-Sky Blue', 'Metallic Purple-Purple', 'Pink-White'].forEach(color => {
+      expect(isCollapsed(color)).toBe(false);
+      // No toggle either: with the collapse suppressed it would be a
+      // control that visibly does nothing.
+      expect(headerFor(color).querySelector('.prod-col-expand')).toBeNull();
+    });
+
+    // As soon as ONE column is in use the others have something to make
+    // room for, and normal collapsing resumes.
+    typeQty(row, 'Pink-White', '4');
+    App.Production._refreshMatrixColumns();
+
+    expect(isCollapsed('Pink-White')).toBe(false);
+    expect(isCollapsed('Blue-Sky Blue')).toBe(true);
+    expect(isCollapsed('Metallic Purple-Purple')).toBe(true);
   });
 });
 

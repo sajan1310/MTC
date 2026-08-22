@@ -45,7 +45,19 @@
 // are print-only changes with no visible effect in the app, which is exactly
 // the kind of edit it is easy to ship without bumping this name and then
 // wonder why the tablets still print the old layout.
-const CACHE_NAME = 'erp-shell-v27';
+//
+// v28: production.js gained Pass 4 of the Per-Color Components row
+// reconstruction -- rows for one physical part named once per colour variant
+// now consolidate against the Color Master. This changes what the Lot form
+// and the printed sheet look like, so an installed worker serving the old
+// production.js would keep showing the fragmented tables. production.js and
+// styles.css changed again in the same round: a matrix whose colour columns
+// are ALL empty no longer collapses them, and a collapsed strip's label is
+// angled rather than stacked vertically. Then two quantity fixes on the
+// colour checklist (a sole non-primary colour takes the lot total; a colour
+// on both a counting and a non-counting axis is no longer double-counted)
+// and the Color Group / Sub-Group suffix on each axis heading.
+const CACHE_NAME = 'erp-shell-v28';
 
 const PRECACHE_URLS = [
   '/erp/offline.html',
