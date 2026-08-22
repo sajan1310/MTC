@@ -2546,12 +2546,69 @@ App.Production = {
     const subGroupLower = new Set(subGroupColors.map(c => String(c).trim().toLowerCase()));
     const axisColors = colors.filter(c => !subGroupLower.has(String(c).trim().toLowerCase()));
 
+    // A sequence-1 process CONSUMES a pool item and PRODUCES its own colors,
+    // and only the consumed item resolves as an axis -- nothing upstream
+    // produces the output's own colors, so getProcessColorAxes cannot see
+    // them. Handing the single axis the primary role by default therefore
+    // totalled the wrong thing: a Painted Frame lot counted the Mudguard
+    // ribs it consumed, while the frames it produced sat in the
+    // non-counting "Other" bucket and then lost their matrix columns to
+    // _pruneRedundantMatrixColumns, leaving their per-color components with
+    // nowhere to be recorded.
+    //
+    // Neither group can be assumed primary, so both are rendered as real
+    // pickable axes -- the same radio UI the 2+-axis path uses -- and the
+    // operator says which one this lot's total is. Only leftovers that are
+    // real COLORS are promoted; a genuine sub-group bucket (a packing set
+    // like 'KIT BAG 24"', see _isColorGroupName) stays non-counting where it
+    // belongs.
+    const ownColors = subGroupColors.filter(c => this._isColorGroupName(c));
+    const ownAxis = this._outputItemColorAxis(ownColors);
+
+    if (axisColors.length > 0 && ownAxis) {
+      [{ ...axis, colors: axisColors }, ownAxis].forEach(a => {
+        checklistEl.insertAdjacentHTML('beforeend', this._buildColorAxisGroupHeader(a, null));
+        this.renderColorChecklistRows(a.colors, a.key, false, false);
+        this._customColorGroupOptions.push({ key: a.key, label: a.label, isPrimary: false, source: a.source });
+      });
+      this._renderSubGroupBucket(checklistEl, subGroupColors.filter(c => !this._isColorGroupName(c)));
+      this._insertPrimaryAxisWarning(checklistEl);
+      return;
+    }
+
     if (axisColors.length > 0) {
       checklistEl.insertAdjacentHTML('beforeend', this._buildColorGroupHeader(axis.key, axis.label));
       this.renderColorChecklistRows(axisColors, axis.key, false, true);
       this._customColorGroupOptions.push({ key: axis.key, label: axis.label, isPrimary: true, source: axis.source });
     }
     this._renderSubGroupBucket(checklistEl, subGroupColors);
+  },
+
+  // A pickable axis standing for the colors THIS process outputs, named
+  // after its Output Item Name. The key is prefixed 'own:' so it can never
+  // collide with a computed axis key ('pool:', 'tag:', 'merged:'), which is
+  // what makes it safe on save: production_service._is_primary_axis_row
+  // treats a submitted axisKey as an axis identity only when it matches one
+  // of the process's REAL axis keys, and falls back to the countsTowardTotal
+  // flag the client computed for anything else -- which is exactly the flag
+  // the Primary radio drives here.
+  //
+  // Null when there is nothing to promote, or when the form has no Output
+  // Item Name to name the group after -- an unlabelled radio the operator
+  // cannot identify is worse than the old single-axis default.
+  _outputItemColorAxis(ownColors) {
+    if (!ownColors || ownColors.length === 0) return null;
+    const label = (document.getElementById('productionOutputItemName')?.value || '').trim();
+    if (!label) return null;
+    return { key: `own:${label.toLowerCase()}`, label, colors: ownColors, source: 'output' };
+  },
+
+  // Shared by both paths that can render axes with nothing designated
+  // Primary yet, so the two can't drift.
+  _insertPrimaryAxisWarning(checklistEl) {
+    checklistEl.insertAdjacentHTML('afterbegin',
+      '<div class="alert alert-warning py-1 px-2 small mb-2" style="flex: 1 0 100%;" id="productionPrimaryAxisWarning">' +
+      'Pick which group below is <b>Primary</b> — its checked quantities become this lot\'s total. The others are recorded per-color but won\'t add to it.</div>');
   },
 
   // Splits the Colors to Produce checklist into sub-groups: one per Color
@@ -2583,7 +2640,12 @@ App.Production = {
         const primaryAxisKey = axesRes.data.primaryIsDefault ? '' : (axesRes.data.primaryAxisKey || '');
         axes.forEach(axis => {
           const isPrimary = !!primaryAxisKey && axis.key === primaryAxisKey;
-          checklistEl.insertAdjacentHTML('beforeend', this._buildColorAxisGroupHeader(axis, isPrimary));
+          // null, not false, while nothing is designated: the heading must
+          // not label every group a Sub-Group before the operator has
+          // answered the warning below. The ROWS still go out as
+          // data-primary="false" -- nothing counts until a pick is made.
+          checklistEl.insertAdjacentHTML('beforeend',
+            this._buildColorAxisGroupHeader(axis, primaryAxisKey ? isPrimary : null));
           this.renderColorChecklistRows(axis.colors, axis.key, false, isPrimary);
           this._customColorGroupOptions.push({ key: axis.key, label: axis.label, isPrimary, source: axis.source });
         });
@@ -2595,11 +2657,7 @@ App.Production = {
         // sub-groups, not a further axis, so they land in the same
         // non-counting bucket the other render paths give them.
         this._renderSubGroupBucket(checklistEl, this._nonAxisSubGroupColors(colors, axes));
-        if (!primaryAxisKey) {
-          checklistEl.insertAdjacentHTML('afterbegin',
-            '<div class="alert alert-warning py-1 px-2 small mb-2" style="flex: 1 0 100%;" id="productionPrimaryAxisWarning">' +
-            'Pick which group below is <b>Primary</b> — its checked quantities become this lot\'s total. The others are recorded per-color but won\'t add to it.</div>');
-        }
+        if (!primaryAxisKey) this._insertPrimaryAxisWarning(checklistEl);
         return;
       }
     } catch (err) {
@@ -2709,7 +2767,13 @@ App.Production = {
   // Composed from data-axis-label + data-axis-role rather than baked into
   // the text, so setPrimaryColorAxisChoice can rebuild the heading when the
   // operator moves Primary without having to re-derive either part.
+  // `isPrimary` null means NOTHING has been designated Primary yet. The
+  // suffix is a statement about which group counts, so until that is
+  // decided there is nothing true to say -- and saying "Sub-Group" on every
+  // group, which is what a plain boolean produced, states the opposite of
+  // what the warning above the list is asking the operator to resolve.
   _axisGroupHeadingText(label, isPrimary) {
+    if (isPrimary === null) return label;
     return isPrimary ? `${label} — Color Group (Primary)` : `${label} — Sub-Group`;
   },
 

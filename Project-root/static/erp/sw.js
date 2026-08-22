@@ -62,7 +62,11 @@
 // of its share and five columns ran off the right edge of the page. A
 // print-only fix with no visible effect in the app -- precisely the kind this
 // name exists to get onto the tablets.
-const CACHE_NAME = 'erp-shell-v29';
+// v30: a sequence-1 process (one that consumes a pool item and produces
+// colours of its own) now renders BOTH groups as pickable Primary axes
+// instead of defaulting the consumed item's axis to primary and dumping the
+// output's own colours into the non-counting bucket.
+const CACHE_NAME = 'erp-shell-v30';
 
 const PRECACHE_URLS = [
   '/erp/offline.html',
