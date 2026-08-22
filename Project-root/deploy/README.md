@@ -3,6 +3,20 @@
 Full narrative, sizing and rationale: **[DEPLOYMENT.md § VPS Deployment](../DEPLOYMENT.md#vps-deployment-ubuntu-2404-lts)**.
 This file is the short version.
 
+**First install**, one command — clones, provisions, configures and starts:
+
+```bash
+sudo ./install.sh --repo <repo-url> --base-url http://192.168.1.50
+```
+
+**Every release after that:**
+
+```bash
+sudo /opt/mtc/src/Project-root/deploy/deploy.sh --ref v1.2.0
+```
+
+Or run the two underneath by hand, which is what `install.sh` wraps:
+
 ```bash
 sudo ./provision.sh                                  # once per host
 sudo -u mtc git clone <repo-url> /opt/mtc/src
@@ -12,6 +26,7 @@ sudo /opt/mtc/src/Project-root/deploy/deploy.sh      # every release
 
 | File | Installed to | Purpose |
 |---|---|---|
+| `install.sh` | — | First install: clone + provision + configure + deploy, in one step. |
 | `provision.sh` | — | Packages, timezone, PostgreSQL 16, Redis, nginx, unit. Idempotent. |
 | `deploy.sh` | — | Pull, sync venv, verify runtime, migrate, restart, health-check. |
 | `mtc.service` | `/etc/systemd/system/` | gunicorn under systemd |
