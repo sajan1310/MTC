@@ -109,8 +109,13 @@ else
 fi
 
 PROJECT_DIR="$SRC_DIR/Project-root"
-[[ -x "$PROJECT_DIR/deploy/provision.sh" ]] \
-    || fail "$PROJECT_DIR/deploy/provision.sh missing or not executable -- wrong repo or ref?"
+# -f, not -x. Both scripts are invoked below as `bash <path>`, so the execute
+# bit is irrelevant to whether they run -- and requiring it turned a working
+# tree into a confusing "not executable" failure whenever the code arrived
+# via a transport that does not carry file modes, or from a clone made where
+# core.filemode is false (every Windows checkout).
+[[ -f "$PROJECT_DIR/deploy/provision.sh" ]] \
+    || fail "$PROJECT_DIR/deploy/provision.sh not found -- wrong repo, wrong ref, or a partial copy?"
 
 # ── Host ─────────────────────────────────────────────────────────────────
 log "Provisioning the host"
