@@ -437,10 +437,33 @@ def create_app(config_name: str | None = None) -> Flask:
 
     database.init_app(app)
 
-    # Ensure session cookie security defaults
+    # Does this deployment actually sit behind TLS? BASE_URL's scheme is the
+    # signal used throughout (see the Talisman block below and
+    # PREFERRED_URL_SCHEME); defined here because the session-cookie flags
+    # need it too.
+    serve_over_https = app.config.get("BASE_URL", "").startswith("https://")
+
+    # Ensure session cookie security defaults.
+    #
+    # SESSION_COOKIE_SECURE tracks serve_over_https rather than being pinned
+    # True. Pinned True, a plain-http deployment -- a LAN/factory-WiFi server
+    # on http://192.168.x.x, which has no certificate to present -- set Secure
+    # on the session cookie, so the browser accepted it and then refused to
+    # send it back over http. Every user was silently logged out on the next
+    # request, with no error anywhere to explain it.
+    #
+    # Talisman cannot correct this below: it only ever SETS the flag when its
+    # session_cookie_secure argument is true and has no path that clears it,
+    # so the value chosen here is final. Every neighbouring TLS-dependent
+    # setting (force_https, HSTS) is already gated on serve_over_https; this
+    # one was simply missed.
+    #
+    # Note the intended fix for a LAN deployment is still a certificate --
+    # an internal CA or self-signed cert restores Secure cookies and HSTS.
+    # This only stops plain http failing in a way nobody can diagnose.
     if not app.debug:
         app.config.update(
-            SESSION_COOKIE_SECURE=True,
+            SESSION_COOKIE_SECURE=serve_over_https,
             SESSION_COOKIE_HTTPONLY=True,
             SESSION_COOKIE_SAMESITE="Strict",
         )
@@ -472,7 +495,6 @@ def create_app(config_name: str | None = None) -> Flask:
     # time this shipped. BASE_URL's scheme is the one signal this app
     # already uses elsewhere (PREFERRED_URL_SCHEME below) to mean "this
     # deployment is actually fronted by TLS".
-    serve_over_https = app.config.get("BASE_URL", "").startswith("https://")
     # Kept so /health below can opt out of force_https per-view; None under
     # TESTING, where Talisman is never constructed.
     talisman = None
@@ -485,34 +507,27 @@ def create_app(config_name: str | None = None) -> Flask:
             "manifest-src": "'self'",
             "worker-src": "'self'",
             # 'unsafe-inline' is required by the inline <script>/<style>
-            # blocks in templates/erp/index.html and the auth pages; the
-            # CDN hosts are the third-party libs static/erp/*.js loads
-            # (jQuery, Bootstrap, Select2, Chart.js, SheetJS).
+            # blocks in templates/erp/index.html and the auth pages.
             #
-            # cdnjs.cloudflare.com was dropped with html2pdf.js itself: PDF
-            # export is the browser's own print engine and loads no library
-            # to static/erp/vendor/ -- it was that host's only use, and 'self'
-            # now covers it. Do not re-add a CDN host without also adding an
-            # SRI hash at the call site (see PDF-003).
-            "script-src": [
-                "'self'",
-                "'unsafe-inline'",
-                "https://code.jquery.com",
-                "https://cdn.jsdelivr.net",
-            ],
-            "style-src": [
-                "'self'",
-                "'unsafe-inline'",
-                "https://cdn.jsdelivr.net",
-                "https://fonts.googleapis.com",
-            ],
-            # cdn.jsdelivr.net is required here too, not just script/style-src:
-            # Bootstrap Icons (<i class="bi bi-*">) is an icon *font* whose
-            # CSS and .woff2 file are both served from that same CDN --
-            # without it every "bi bi-*" glyph silently renders blank.
-            "font-src": ["'self'", "https://fonts.gstatic.com", "https://cdn.jsdelivr.net", "data:"],
+            # No CDN host appears anywhere below any more. Every third-party
+            # library -- jQuery, Bootstrap, Bootstrap Icons, Select2, htm/
+            # preact, SortableJS, Chart.js, SheetJS -- and the Inter/Outfit/
+            # Oswald webfonts are served from static/erp/vendor/, so 'self'
+            # covers them. That was done because this app is deployed on
+            # factory LANs with no reliable internet, where a cross-origin
+            # fetch just fails; it also makes them precacheable by sw.js,
+            # which only ever cached same-origin /static/erp/ URLs.
+            #
+            # Do not re-add a CDN host. Vendor the file instead: it keeps the
+            # offline guarantee and removes the need for an SRI hash at the
+            # call site rather than adding one (see PDF-003).
+            "script-src": ["'self'", "'unsafe-inline'"],
+            "style-src": ["'self'", "'unsafe-inline'"],
+            # data: stays for the small inline SVG/font data URIs inside the
+            # vendored Bootstrap and Select2 stylesheets.
+            "font-src": ["'self'", "data:"],
             "img-src": ["'self'", "data:", "https:"],
-            "connect-src": ["'self'", "https://cdn.jsdelivr.net"],
+            "connect-src": ["'self'"],
         }
         talisman = Talisman(
             app,

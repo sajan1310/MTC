@@ -13,12 +13,11 @@
   <link rel="icon" href="{{ url_for('static', filename='erp/icons/favicon.ico') }}">
   <link rel="apple-touch-icon" href="{{ url_for('static', filename='erp/icons/apple-touch-icon.png') }}">
 
-  <!-- Google Fonts: Oswald (display/titles/big numbers) & Inter (body) -->
-  <link rel="preconnect" href="https://fonts.googleapis.com">
-  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-  <link
-    href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=Oswald:wght@500;600;700&display=swap"
-    rel="stylesheet">
+  <!-- Oswald (display/titles/big numbers) & Inter (body), self-hosted from
+       static/erp/vendor/ rather than fonts.googleapis.com: this app runs on
+       factory LANs with no reliable internet, and the service worker caches
+       only same-origin /static/erp/ URLs. Shares one file with index.html. -->
+  <link rel="stylesheet" href="{{ url_for('static', filename='erp/vendor/google-fonts.css') }}">
 
   <link rel="stylesheet" href="{{ url_for('static', filename='erp/mobile_styles.css') }}">
 </head>

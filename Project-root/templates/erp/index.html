@@ -25,25 +25,25 @@
   <link rel="icon" href="{{ url_for('static', filename='erp/icons/favicon.ico') }}">
   <link rel="apple-touch-icon" href="{{ url_for('static', filename='erp/icons/apple-touch-icon.png') }}">
 
+  <!-- Third-party CSS is served from static/erp/vendor/, NOT from a CDN.
+       This app is deployed on factory LANs with no reliable internet, and
+       the service worker only caches same-origin /static/erp/ URLs -- so a
+       CDN-hosted jQuery/Bootstrap was never in the offline cache and the UI
+       broke the moment the uplink dropped. It broke unevenly, too: devices
+       with a warm HTTP cache kept working while others showed a dead page.
+       Serving them ourselves also puts them in PRECACHE_URLS (sw.js), makes
+       Subresource Integrity moot (same-origin, no third party to distrust)
+       and lets the CSP drop the CDN hosts entirely.
+       To update a library, replace the file and bump CACHE_NAME in sw.js. -->
   <!-- Bootstrap 5.3.0 -->
-  <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/css/bootstrap.min.css"
-        integrity="sha384-9ndCyUaIbzAi2FUVXJi0CjmCapSmO7SnpJef0486qhLnuZ2cdeRhO02iuK6FUUVM"
-        crossorigin="anonymous">
-  <!-- Bootstrap Icons -->
-  <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/bootstrap-icons@1.11.3/font/bootstrap-icons.min.css"
-        integrity="sha384-XGjxtQfXaH2tnPFa9x+ruJTuLE3Aa6LhHSWRr1XeTyhezb4abCG4ccI5AkVDxqC+"
-        crossorigin="anonymous">
+  <link rel="stylesheet" href="{{ url_for('static', filename='erp/vendor/bootstrap-5.3.0.min.css') }}">
+  <!-- Bootstrap Icons 1.11.3 (CSS pulls vendor/fonts/bootstrap-icons.woff2) -->
+  <link rel="stylesheet" href="{{ url_for('static', filename='erp/vendor/bootstrap-icons-1.11.3.min.css') }}">
   <!-- Select2 (loaded eagerly -- a modal can open before an async swap finishes otherwise) -->
-  <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/select2@4.1.0-rc.0/dist/css/select2.min.css"
-        integrity="sha384-OXVF05DQEe311p6ohU11NwlnX08FzMCsyoXzGOaL+83dKAb3qS17yZJxESl8YrJQ"
-        crossorigin="anonymous">
-  <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/select2-bootstrap-5-theme@1.3.0/dist/select2-bootstrap-5-theme.min.css"
-        integrity="sha384-IrMr0LFnIMa9H6HhC5VVqVuWNEIwspnRLKQc0SUyPj4Cy4s02DiWDZEoJOo5WNK6"
-        crossorigin="anonymous">
-  <!-- Google Fonts -->
-  <link rel="preconnect" href="https://fonts.googleapis.com">
-  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=Outfit:wght@500;600;700;800&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="{{ url_for('static', filename='erp/vendor/select2-4.1.0.min.css') }}">
+  <link rel="stylesheet" href="{{ url_for('static', filename='erp/vendor/select2-bootstrap-5-theme-1.3.0.min.css') }}">
+  <!-- Inter + Outfit, self-hosted (latin subsets only) -->
+  <link rel="stylesheet" href="{{ url_for('static', filename='erp/vendor/google-fonts.css') }}">
 
   <link rel="stylesheet" href="{{ url_for('static', filename='erp/styles.css') }}">
 
@@ -459,25 +459,17 @@
   {% include "erp/partials/print.html" %}
 
   <!-- jQuery (Select2 dependency) -->
-  <script src="https://code.jquery.com/jquery-3.6.0.min.js"
-        integrity="sha384-vtXRMe3mGCbOeY7l30aIg8H9p3GdeSe4IFlP6G8JMa7o7lXvnz3GFKzPxzJdPfGK"
-        crossorigin="anonymous"></script>
+  <script src="{{ url_for('static', filename='erp/vendor/jquery-3.6.0.min.js') }}"></script>
   <!-- Bootstrap 5.3.0 bundle -->
-  <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/js/bootstrap.bundle.min.js"
-        integrity="sha384-geWF76RCwLtnZ8qwWowPQNguL3RmwHVBC9FhGdlKrxdiJJigb/j/68SIy3Te4Bkz"
-        crossorigin="anonymous"></script>
+  <script src="{{ url_for('static', filename='erp/vendor/bootstrap-5.3.0.bundle.min.js') }}"></script>
   <!-- Select2 -->
-  <script src="https://cdn.jsdelivr.net/npm/select2@4.1.0-rc.0/dist/js/select2.min.js"
-        integrity="sha384-d3UHjPdzJkZuk5H3qKYMLRyWLAQBJbby2yr2Q58hXXtAGF8RSNO9jpLDlKKPv5v3"
-        crossorigin="anonymous"></script>
+  <script src="{{ url_for('static', filename='erp/vendor/select2-4.1.0.min.js') }}"></script>
 
   <!-- Preact + htm, no-build (htm's own published zero-bundler bundle --
        self-contained h/diff/render + every hook, one global window.htmPreact.
        Used only by the Dispatch Plan board for now; the same script covers
        any future Preact-based feature -- see static/erp/planning-board.js. -->
-  <script src="https://cdn.jsdelivr.net/npm/htm@3.1.1/preact/standalone.umd.js"
-        integrity="sha384-w94Y7k7ToXbmIx5Vi/LxHtprASwddoLhbR/0ZhekgNn8pP9VNRRHzmp2tqrALfKY"
-        crossorigin="anonymous"></script>
+  <script src="{{ url_for('static', filename='erp/vendor/htm-preact-3.1.1.standalone.umd.js') }}"></script>
   <!-- SortableJS for the Dispatch Plan board's drag-and-drop. The
        "complete" build is used because the board needs the MultiDrag
        plugin (multi-select drag), which the plain UMD Sortable.min.js does
@@ -494,7 +486,7 @@
        called from a tab's enterTab()/switchSubTab()). planning-board.js
        degrades to a no-drag board if this ever fails to load. -->
   <script type="module">
-    import Sortable from 'https://cdn.jsdelivr.net/npm/sortablejs@1.15.7/modular/sortable.complete.esm.js';
+    import Sortable from "{{ url_for('static', filename='erp/vendor/sortable-1.15.7.complete.esm.js') }}";
     window.Sortable = Sortable;
   </script>
 

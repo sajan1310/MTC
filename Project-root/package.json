@@ -7,7 +7,7 @@
     "test:watch": "jest --watch",
     "test:coverage": "jest --coverage",
     "lint": "eslint static/erp",
-    "lint:css": "stylelint \"static/erp/**/*.css\"",
+    "lint:css": "stylelint \"static/erp/**/*.css\" --ignore-pattern \"static/erp/vendor/**\"",
     "verify": "npm run lint && npm run lint:css && npm test"
   },
   "jest": {

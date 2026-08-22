@@ -19,13 +19,19 @@ const globals = require('globals');
 module.exports = [
   {
     files: ['static/erp/**/*.js'],
-    ignores: ['static/erp/tests/**'],
+    // static/erp/vendor/** holds third-party libraries verbatim (minified
+    // jQuery, Bootstrap, Chart.js, SheetJS...). Linting them reported ~1000
+    // errors about code we neither wrote nor may edit -- the files must stay
+    // byte-identical to the published releases their SRI hashes were checked
+    // against.
+    ignores: ['static/erp/tests/**', 'static/erp/vendor/**'],
     languageOptions: {
       sourceType: 'script', // classic <script> tags, not ES modules -- see FE-003
       ecmaVersion: 2021,
       globals: {
         ...globals.browser,
-        // Third-party, loaded via CDN <script> tags in index.html/mobile.html
+        // Third-party, loaded from static/erp/vendor/ by <script> tags in
+        // index.html/mobile.html (self-hosted, not a CDN -- see sw.js)
         bootstrap: 'readonly',
         jQuery: 'readonly',
         // Preact+htm (one self-contained bundle) and SortableJS, both used

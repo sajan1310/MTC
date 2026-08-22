@@ -2581,10 +2581,13 @@ App.Stock = {
     reader.onload = async (event) => {
       try {
         if (typeof XLSX === 'undefined') {
-          await loadScript(
-        'https://cdn.jsdelivr.net/npm/xlsx@0.18.5/dist/xlsx.full.min.js',
-        'sha384-vtjasyidUo0kW94K5MXDXntzOJpQgBKXmE7e2Ga4LG0skTTLeBi97eFAXsqewJjw'
-      );
+          // Self-hosted -- see the note in dashboard.js ensureChartLib().
+          // Deliberately NOT in the service worker's precache: at 880 KB it
+          // is by far the largest asset, and it is only reachable from the
+          // Excel import flow, which has to talk to the server anyway. If
+          // the server is reachable so is this file; the fetch handler
+          // caches it after first use.
+          await loadScript('/static/erp/vendor/xlsx-0.18.5.full.min.js');
         }
 
         const data = new Uint8Array(event.target.result);

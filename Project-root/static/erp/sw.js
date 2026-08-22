@@ -34,7 +34,7 @@
 //
 // v25: the fit fills the form exactly instead of stopping at each
 // column's max and leaving a band of dead space.
-const CACHE_NAME = 'erp-shell-v25';
+const CACHE_NAME = 'erp-shell-v26';
 
 const PRECACHE_URLS = [
   '/erp/offline.html',
@@ -57,7 +57,41 @@ const PRECACHE_URLS = [
   '/static/erp/client.js',
   '/static/erp/dispatch.js',
   '/static/erp/icons/icon-192.png',
-  '/static/erp/icons/icon-512.png'
+  '/static/erp/icons/icon-512.png',
+
+  // Third-party libraries, self-hosted under /static/erp/vendor/ so they are
+  // precacheable at all. While these were loaded from cdn.jsdelivr.net and
+  // code.jquery.com the fetch handler below skipped them (it only caches
+  // same-origin /static/erp/ URLs), so they were never in the offline shell:
+  // an offline or LAN-without-internet device fetched no jQuery, and with no
+  // jQuery none of the app's JavaScript ran at all. The page was blank, and
+  // only on the devices whose HTTP cache had gone cold.
+  '/static/erp/vendor/bootstrap-5.3.0.min.css',
+  '/static/erp/vendor/bootstrap-5.3.0.bundle.min.js',
+  '/static/erp/vendor/bootstrap-icons-1.11.3.min.css',
+  '/static/erp/vendor/select2-4.1.0.min.css',
+  '/static/erp/vendor/select2-4.1.0.min.js',
+  '/static/erp/vendor/select2-bootstrap-5-theme-1.3.0.min.css',
+  '/static/erp/vendor/jquery-3.6.0.min.js',
+  '/static/erp/vendor/htm-preact-3.1.1.standalone.umd.js',
+  '/static/erp/vendor/sortable-1.15.7.complete.esm.js',
+  '/static/erp/vendor/google-fonts.css',
+  // Chart.js is lazy-loaded by dashboard.js, but the dashboard is the landing
+  // tab, so it is wanted on essentially every session. xlsx (880 KB) is
+  // deliberately absent -- see the note at its loadScript() call in stock.js.
+  '/static/erp/vendor/chart-4.4.0.umd.min.js',
+
+  // Font files the two CSS files above reference. woff2 only: every browser
+  // that can run a service worker supports it, so precaching the .woff
+  // fallback as well would add 176 KB to every install for nothing. The
+  // .woff is still on disk and the fetch handler would cache it on demand.
+  '/static/erp/vendor/fonts/bootstrap-icons.woff2',
+  '/static/erp/vendor/fonts/inter-latin-1.woff2',
+  '/static/erp/vendor/fonts/inter-latin-ext-0.woff2',
+  '/static/erp/vendor/fonts/oswald-latin-3.woff2',
+  '/static/erp/vendor/fonts/oswald-latin-ext-2.woff2',
+  '/static/erp/vendor/fonts/outfit-latin-5.woff2',
+  '/static/erp/vendor/fonts/outfit-latin-ext-4.woff2'
 ];
 
 self.addEventListener('install', event => {

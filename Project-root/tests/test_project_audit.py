@@ -26,6 +26,21 @@ SKIP_DIRS = (
     # backend route" and failed the whole suite on any machine that had run
     # npm install.
     "node_modules",
+    # Same reasoning for the libraries vendored into static/erp/vendor/
+    # (jQuery, Bootstrap, Chart.js, SheetJS...). They are shipped verbatim,
+    # so anything the audit finds in them is neither ours to fix nor
+    # editable -- the files must stay byte-identical to the published
+    # releases their SRI hashes were verified against. No current release
+    # trips the audit; this keeps a future version bump from failing the
+    # whole suite for a string inside a minified bundle.
+    #
+    # Written with both separators, and deliberately NOT as a bare
+    # "vendor": these entries are matched as substrings of the whole
+    # path, so "vendor" would also skip our own static/erp/vendors.js
+    # (the Vendors module -- suppliers) and quietly drop it from the
+    # audit.
+    "vendor/",
+    "vendor\\",
 )
 
 

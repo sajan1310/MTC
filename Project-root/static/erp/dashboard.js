@@ -44,10 +44,13 @@ App.Dashboard = {
       this.chartLibLoaded = true;
       return;
     }
-    await loadScript(
-        'https://cdn.jsdelivr.net/npm/chart.js@4.4.0/dist/chart.umd.min.js',
-        'sha384-e6nUZLBkQ86NJ6TVVKAeSaK8jWa3NhkYWZFomE39AvDbQWeie9PlQqM3pmYW5d1g'
-      );
+    // Self-hosted, not cdn.jsdelivr.net: this app runs on factory LANs with
+    // no reliable internet, where a CDN fetch simply fails and the dashboard
+    // renders with no charts at all. No integrity argument -- SRI guards
+    // against a third party serving something else, and there is no third
+    // party any more. The file was verified byte-identical to the CDN copy
+    // against this call site's own former sha384 hash when it was vendored.
+    await loadScript('/static/erp/vendor/chart-4.4.0.umd.min.js');
     this.chartLibLoaded = true;
   },
 
