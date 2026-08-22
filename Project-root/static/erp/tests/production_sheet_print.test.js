@@ -17,8 +17,8 @@
  *
  * jsdom does not do real layout, so container.offsetHeight/scrollWidth are
  * always 0 -- the auto-fit compression loop's tier-selection (shrinking
- * padding/font, dropping Size) can therefore never be reached here; every
- * call in this file exercises FIT_TIERS[0] only. That part is intentionally
+ * padding and font) can therefore never be reached here; every call in this
+ * file exercises FIT_TIERS[0] only. That part is intentionally
  * left to manual/visual verification. What IS meaningfully covered without
  * real layout: the cluster-split structure, dash-for-missing-color cells,
  * unit suffixes, and the two-column Common Components split threshold.
@@ -301,5 +301,62 @@ describe('App.Production.printProductionSheet', () => {
       expect.any(String),
       { landscape: true }
     );
+  });
+  // ── Printed column set ────────────────────────────────────────────────
+  // Size and Narration are shown and edited in the on-screen sheet but are
+  // deliberately NOT printed. Both are still read from the DOM by
+  // _buildProductionSheetForExport's row mappers, so nothing stops a future
+  // change re-adding the cells; these assertions are what makes that loud.
+  describe('Size and Narration are omitted from the printed sheet', () => {
+    test('Common Components prints Item Name and Required Qty only', () => {
+      App.State.globalItems = [{ name: 'Frame', size: 'L', baseUnit: 'Set' }];
+      App.State.currentProductionSheet = { colors: [], lotColor: '' };
+      addCommonRow('Frame', 'GENERAL', 'Handle with care', '5');
+
+      App.Production.printProductionSheet();
+
+      const table = document.getElementById('print-production-sheet-common-tables')
+        .querySelector('table');
+      const heads = [...table.querySelectorAll('thead th')].map(th => th.textContent.trim());
+      expect(heads).toEqual(['Item Name', 'Required Qty']);
+
+      const cells = table.querySelectorAll('tbody tr td');
+      expect(cells.length).toBe(2);
+      expect(table.textContent).toContain('Frame');
+      expect(table.textContent).not.toContain('GENERAL');
+      expect(table.textContent).not.toContain('Handle with care');
+    });
+
+    test('Per-Color matrix prints Item Name plus one column per colour', () => {
+      App.State.currentProductionSheet = { colors: ['Red', 'Blue'], lotColor: '' };
+      addMatrixRow('Frame', 'GENERAL', 'Handle with care', { Red: '5', Blue: '4' });
+
+      App.Production.printProductionSheet();
+
+      const table = document.getElementById('print-production-sheet-matrix-tables')
+        .querySelector('table');
+      const heads = [...table.querySelectorAll('thead th')].map(th => th.textContent.trim());
+      expect(heads).toEqual(['Item Name', 'Red', 'Blue']);
+
+      // One name cell + one cell per colour, and no leftover Size/Narration.
+      expect(table.querySelectorAll('tbody tr td').length).toBe(3);
+      expect(table.textContent).not.toContain('GENERAL');
+      expect(table.textContent).not.toContain('Handle with care');
+    });
+
+    test('a non-generic Size is dropped too, not just "GENERAL"', () => {
+      // The old fit loop only ever dropped Size when every row was
+      // generic. Hiding is now unconditional, so a real size like "20 inch"
+      // must not survive either.
+      App.State.currentProductionSheet = { colors: [], lotColor: '' };
+      addCommonRow('Rim', '20 inch', 'Front only', '2');
+
+      App.Production.printProductionSheet();
+
+      const text = document.getElementById('print-production-sheet-common-tables').textContent;
+      expect(text).toContain('Rim');
+      expect(text).not.toContain('20 inch');
+      expect(text).not.toContain('Front only');
+    });
   });
 });

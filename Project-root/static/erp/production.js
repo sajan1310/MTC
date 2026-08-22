@@ -6852,7 +6852,6 @@ App.Production = {
     const kept = g => !excluded.some(e => App.Utils.sameColor(e, g));
 
     const get = (row, sel) => escapeHtml(row.querySelector(sel)?.value.trim() || '');
-    const getRaw = (row, sel) => row.querySelector(sel)?.value.trim() || '';
 
     const commonRows = $$('#productionSheetCommonBody tr').filter(row => row.querySelector('.prod-sheet-item-name'));
     const matrixRows = $$('#productionSheetMatrixTables .prod-sheet-matrix-tbody tr').filter(row => row.querySelector('.prod-sheet-item-name'));
@@ -6862,17 +6861,13 @@ App.Production = {
     const matrixSection = document.getElementById('print-prod-matrix-section');
     const subGroupSection = document.getElementById('print-prod-subgroup-section');
 
-    // A Size column that's "GENERAL"/blank on every row carries no
-    // information -- it's the one column the fit loop below is allowed
-    // to drop under space pressure. Narration is never dropped.
-    const isGenericSize = s => !s || s.toUpperCase() === 'GENERAL';
-    const commonSizeDroppable = commonRows.length > 0 && commonRows.every(row => isGenericSize(getRaw(row, '.prod-sheet-size')));
-    const matrixSizeDroppable = matrixRows.length > 0 && matrixRows.every(row => isGenericSize(getRaw(row, '.prod-sheet-size')));
-
+    // Size and Narration are read from the dialog but not carried into the
+    // printed tables -- see buildCommonTable. The fit loop used to have a
+    // last-resort tier that dropped Size when it was "GENERAL"/blank on
+    // every row; now that neither column is ever printed, that tier had
+    // nothing left to drop and the whole droppability test went with it.
     const commonData = commonRows.map(row => ({
       name: get(row, '.prod-sheet-item-name'),
-      size: get(row, '.prod-sheet-size'),
-      narration: get(row, '.prod-sheet-narration'),
       qty: row.querySelector('.prod-sheet-qty')?.value || '',
       unit: this._sheetRowUnitFromDom(row)
     }));
@@ -6891,8 +6886,6 @@ App.Production = {
     };
     const toMatrixRow = columns => row => ({
       name: get(row, '.prod-sheet-item-name'),
-      size: get(row, '.prod-sheet-size'),
-      narration: get(row, '.prod-sheet-narration'),
       unit: this._sheetRowUnitFromDom(row),
       colorQty: columns.map(c => qtyFor(row, c)),
       colorTag: columns.map(c => tagFor(row, c))
@@ -6957,10 +6950,12 @@ App.Production = {
     // Density tiers the fit loop steps through, tightest last: shrink
     // padding, then font (Item Name + Qty held a step larger and bold --
     // the data a worker actually reads off the sheet -- never below a
-    // legible floor), then -- only where Size is droppable -- drop it.
-    // If even the tightest tier still overflows, it's kept anyway (still
-    // the smallest/cleanest option) and the sheet spills to a page 2,
-    // which already gets repeating headers from styles.css's print CSS.
+    // legible floor). If even the tightest tier still overflows, it's kept
+    // anyway (still the smallest/cleanest option) and the sheet spills to a
+    // page 2, which already gets repeating headers from styles.css's print
+    // CSS. There used to be a fifth lever -- the last tier dropped the Size
+    // column when it was generic -- but Size and Narration are no longer
+    // printed at all, so the tiers are now purely typographic.
     //
     // Every font size here MUST stay a whole number, and each tier carries
     // an explicit integer lineHeight. html2canvas (the "Download PDF" path)
@@ -6971,15 +6966,15 @@ App.Production = {
     // the SAME y, rendering long item names as unreadable overlapping mush
     // in the downloaded PDF while window.print() looked fine.
     const FIT_TIERS = [
-      { pad: '7px 9px', font: 12, emphasisFont: 15, lineHeight: 20, tableGap: 12, hideSize: false },
-      { pad: '5px 8px', font: 11, emphasisFont: 14, lineHeight: 19, tableGap: 9, hideSize: false },
-      { pad: '4px 7px', font: 11, emphasisFont: 13, lineHeight: 17, tableGap: 7, hideSize: false },
-      { pad: '3px 6px', font: 10, emphasisFont: 12, lineHeight: 16, tableGap: 5, hideSize: true }
+      { pad: '7px 9px', font: 12, emphasisFont: 15, lineHeight: 20, tableGap: 12 },
+      { pad: '5px 8px', font: 11, emphasisFont: 14, lineHeight: 19, tableGap: 9 },
+      { pad: '4px 7px', font: 11, emphasisFont: 13, lineHeight: 17, tableGap: 7 },
+      { pad: '3px 6px', font: 10, emphasisFont: 12, lineHeight: 16, tableGap: 5 }
     ];
     // Readability palette. The Item Name cannot use bold (see bodyCell), so
     // the hierarchy is carried by size + ink instead: near-black names
-    // against deliberately muted grey Size/Narration, so the eye lands on
-    // the item first and the supporting columns recede. ZEBRA is a real,
+    // against the muted grey of the surrounding cells, so the eye lands on
+    // the item first. ZEBRA is a real,
     // visible band and RULE is a light hairline so the banding, not a heavy
     // grid, does the row tracking. GRID_STRONG outlines the table so
     // columns stay anchored.
@@ -7037,12 +7032,13 @@ App.Production = {
     // Bold is still safe, and still used, on cells that cannot wrap: the
     // Qty column (short values like "24 Pcs") and the column headers.
     //
-    // opts.nowrap pins a column whose values are always short single
-    // tokens (Size: "GENERAL", "20 inch"). Without it auto layout squeezed
-    // Size narrow enough to break "GENERAL" into "GEN/ERAL" mid-token.
+    // There was an opts.nowrap here that pinned short single-token columns;
+    // its only caller was Size, whose "GENERAL" auto layout used to break
+    // into "GEN/ERAL". With Size and Narration no longer printed it had no
+    // callers left, so it went rather than sitting unused.
     const headCell = (label, tier, opts = {}) => {
       const width = opts.width ? `width:${opts.width};` : '';
-      const wrap = CELL_VALIGN + (opts.nowrap ? 'white-space:nowrap;' : CELL_WRAP);
+      const wrap = CELL_VALIGN + CELL_WRAP;
       return `<th style="padding:${tier.pad};border:1px solid ${GRID_STRONG};background:${HEAD_BG};color:${HEAD_INK};
                 font-weight:700;text-align:${opts.align || 'center'};font-size:${Math.max(tier.font + 1, 10)}px;
                 line-height:${tier.lineHeight}px;${wrap}${width}
@@ -7052,29 +7048,32 @@ App.Production = {
       const bg = opts.zebra ? `background:${ZEBRA};` : '';
       const weight = opts.bold ? 'font-weight:700;' : '';
       const fs = opts.emphasis ? tier.emphasisFont : tier.font;
-      const wrap = CELL_VALIGN + (opts.nowrap ? 'white-space:nowrap;' : CELL_WRAP);
+      const wrap = CELL_VALIGN + CELL_WRAP;
       const ink = (opts.emphasis || opts.bold) ? INK_PRIMARY : INK_MUTED;
       return `<td style="padding:${tier.pad};border:1px solid ${RULE};text-align:${opts.align || 'left'};
                 color:${ink};font-size:${fs}px;line-height:${tier.lineHeight}px;${wrap}${weight}${bg}">${content}</td>`;
     };
 
-    const buildCommonTable = (rows, tier, hideSize) => {
+    // PRINT ONLY carries Item Name + quantities. Size and Narration stay in
+    // the on-screen sheet -- still editable, still saved, still serialized --
+    // but are not printed: they were spending ~38% of the paper's width on
+    // information the worker picking and counting items does not read off it
+    // (Size is "GENERAL" on most rows, and Narration repeats what the item
+    // name already says). Dropping them also gives the per-colour matrix its
+    // width back, which is what actually decides whether a lot fits one page.
+    const buildCommonTable = (rows, tier) => {
       if (rows.length === 0) return '';
       // Item Name is deliberately generous: an item name that lands within
       // a few px of the column edge is where html2canvas's own text
       // measuring disagrees with the browser's, wraps a token the browser
       // would have kept whole, and paints the two fragments on top of each
       // other. Slack here keeps the common names clear of that boundary.
-      let head = headCell('Item Name', tier, { align: 'left', width: hideSize ? '48%' : '40%' });
-      if (!hideSize) head += headCell('Size', tier, { width: '16%', nowrap: true });
-      head += headCell('Narration', tier, { width: hideSize ? '30%' : '22%' });
-      head += headCell('Required Qty', tier, { align: 'right', width: hideSize ? '22%' : '22%' });
+      let head = headCell('Item Name', tier, { align: 'left', width: '72%' });
+      head += headCell('Required Qty', tier, { align: 'right', width: '28%' });
 
       const body = rows.map((r, i) => {
         const zebra = i % 2 === 1;
         let row = bodyCell(withBreakPoints(r.name), tier, { zebra, emphasis: true });
-        if (!hideSize) row += bodyCell(r.size || '&#8211;', tier, { align: 'center', zebra, nowrap: true });
-        row += bodyCell(r.narration || '&#8211;', tier, { align: 'center', zebra });
         const qtyText = r.qty ? `${escapeHtml(this.formatQty(r.qty))}${r.unit ? ' ' + escapeHtml(r.unit) : ''}` : '&#8211;';
         row += bodyCell(qtyText, tier, { align: 'right', bold: !!r.qty, zebra, emphasis: true });
         return `<tr>${row}</tr>`;
@@ -7086,18 +7085,17 @@ App.Production = {
 
     // `columns` is passed in rather than closed over, so the same builder
     // renders both the color matrix and the sub-group table.
-    const buildMatrixTable = (rows, tier, hideSize, columns) => {
+    const buildMatrixTable = (rows, tier, columns) => {
       if (rows.length === 0 || columns.length === 0) return '';
-      let head = headCell('Item Name', tier, { align: 'left', width: hideSize ? '30%' : '26%' });
-      if (!hideSize) head += headCell('Size', tier, { width: '12%', nowrap: true });
-      head += headCell('Narration', tier, { width: hideSize ? '16%' : '12%' });
+      // 38%, not the 26% Item Name used to get: with Size and Narration gone
+      // the name is the only identifying column left, so it takes the larger
+      // share of what they freed and the rest goes to the colour columns.
+      let head = headCell('Item Name', tier, { align: 'left', width: '38%' });
       columns.forEach(c => { head += headCell(escapeHtml(c), tier, { align: 'right' }); });
 
       const body = rows.map((r, i) => {
         const zebra = i % 2 === 1;
         let row = bodyCell(withBreakPoints(r.name), tier, { zebra, emphasis: true });
-        if (!hideSize) row += bodyCell(r.size || '&#8211;', tier, { align: 'center', zebra, nowrap: true });
-        row += bodyCell(r.narration || '&#8211;', tier, { align: 'center', zebra });
         r.colorQty.forEach((val, ci) => {
           const cellText = val ? `${escapeHtml(this.formatQty(val))}${r.unit ? ' ' + escapeHtml(r.unit) : ''}` : '&#8211;';
           // Which literal item this colour's qty refers to, e.g. a "Teddy
@@ -7126,33 +7124,30 @@ App.Production = {
 
     const render = tier => {
       if (commonDest) {
-        const hideSize = tier.hideSize && commonSizeDroppable;
         if (commonData.length > COMMON_TWO_COL_THRESHOLD) {
           const mid = Math.ceil(commonData.length / 2);
-          const left = buildCommonTable(commonData.slice(0, mid), tier, hideSize);
-          const right = buildCommonTable(commonData.slice(mid), tier, hideSize);
+          const left = buildCommonTable(commonData.slice(0, mid), tier);
+          const right = buildCommonTable(commonData.slice(mid), tier);
           // minmax(0,1fr), not 1fr: a bare 1fr track is minmax(auto,1fr) and
           // GROWS past its share to fit a wide item's min-content, which
           // blows the grid wider than the page and pushes the right-hand
           // table off the edge of the PDF.
           commonDest.innerHTML = `<div style="display:grid;grid-template-columns:minmax(0,1fr) minmax(0,1fr);gap:12px;">${left}${right}</div>`;
         } else {
-          commonDest.innerHTML = buildCommonTable(commonData, tier, hideSize);
+          commonDest.innerHTML = buildCommonTable(commonData, tier);
         }
       }
       if (matrixDest) {
-        const hideSize = tier.hideSize && matrixSizeDroppable;
         // Stacked full-width, NOT packed side-by-side like Sub-Group
         // Components below: a colour-axis cluster routinely carries 4+
         // columns (a whole colour family), and forcing two of those into a
         // half-width minmax(0,1fr) track overflows the page. Sub-group
         // buckets are usually only 1-2 columns, where half-width is
         // comfortably enough room.
-        matrixDest.innerHTML = matrixGroups.map(g => buildMatrixTable(g.data, tier, hideSize, g.columns)).join('');
+        matrixDest.innerHTML = matrixGroups.map(g => buildMatrixTable(g.data, tier, g.columns)).join('');
       }
       if (subGroupDest) {
-        const hideSize = tier.hideSize && matrixSizeDroppable;
-        const tables = subGroupGroups.map(g => buildMatrixTable(g.data, tier, hideSize, g.columns));
+        const tables = subGroupGroups.map(g => buildMatrixTable(g.data, tier, g.columns));
         // Sub-group cluster tables are usually narrow (packing/variant
         // buckets, often just 1-2 columns) -- stacking them full-width one
         // after another leaves most of each row empty and burns extra
