@@ -34,7 +34,18 @@
 //
 // v25: the fit fills the form exactly instead of stopping at each
 // column's max and leaving a band of dead space.
-const CACHE_NAME = 'erp-shell-v26';
+//
+// v26: jQuery, Bootstrap, Bootstrap Icons, Select2, htm/preact, SortableJS,
+// Chart.js and the webfonts moved out of the CDNs into static/erp/vendor/
+// and joined the precache. Installed workers must re-fetch so the old shell,
+// which points at cdn.jsdelivr.net and code.jquery.com, is evicted.
+//
+// v27: production.js changed twice -- the printed production sheet drops its
+// Size and Narration columns, and item names now render on one line. Both
+// are print-only changes with no visible effect in the app, which is exactly
+// the kind of edit it is easy to ship without bumping this name and then
+// wonder why the tablets still print the old layout.
+const CACHE_NAME = 'erp-shell-v27';
 
 const PRECACHE_URLS = [
   '/erp/offline.html',
