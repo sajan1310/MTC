@@ -34,6 +34,41 @@ concurrency:
 
 jobs:
   #============================================================================
+  # JOB 0: Service Worker Cache Invalidation
+  #============================================================================
+  # Files under static/erp/ listed in sw.js's PRECACHE_URLS are served
+  # cache-first, so an installed client keeps its own copy until CACHE_NAME
+  # changes. Editing one without bumping the version ships it to nobody, and
+  # nothing announces that -- worst of all for print-only changes, where the
+  # app UI looks identical and the first report is "why is it still printing
+  # the old layout".
+  #
+  # Its own job rather than a step in lint, because it needs the full history
+  # (fetch-depth: 0) that lint has no reason to pay for.
+  sw-cache:
+    name: Service Worker Cache Bump
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Check CACHE_NAME was bumped
+        run: |
+          if [ "${{ github.event_name }}" = "pull_request" ]; then
+            RANGE="origin/${{ github.base_ref }}...HEAD"
+          else
+            RANGE="${{ github.event.before }}..${{ github.sha }}"
+          fi
+          echo "Comparing $RANGE"
+          # The script exits 0 for anything it cannot evaluate (an unknown
+          # base, a force-push, the first commit on a branch), so a range it
+          # cannot resolve reports and passes rather than blocking the build.
+          python Project-root/scripts/check_sw_cache_bump.py --range "$RANGE"
+
+  #============================================================================
   # JOB 1: Code Linting and Style Checks
   #============================================================================
   lint:

@@ -23,6 +23,21 @@ repos:
         additional_dependencies: ["bandit[toml]"]
         exclude: 'Project-root/tests/.*\.py$'
   
+  # Service worker cache invalidation.
+  #
+  # Files under static/erp/ that appear in sw.js's PRECACHE_URLS are served
+  # cache-first, so an installed client keeps its own copy until CACHE_NAME
+  # changes. Editing one without bumping the version deploys it to nobody --
+  # and says nothing while doing so. See the script's docstring.
+  - repo: local
+    hooks:
+      - id: sw-cache-bump
+        name: bump sw.js CACHE_NAME when a precached asset changes
+        entry: python Project-root/scripts/check_sw_cache_bump.py
+        language: system
+        pass_filenames: true
+        files: '^Project-root/static/erp/'
+
   # Code quality and security
   - repo: https://github.com/astral-sh/ruff-pre-commit
     rev: v0.6.9
