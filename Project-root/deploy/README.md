@@ -27,7 +27,7 @@ sudo /opt/mtc/src/Project-root/deploy/deploy.sh      # every release
 | File | Installed to | Purpose |
 |---|---|---|
 | `install.sh` | — | First install: clone + provision + configure + deploy, in one step. |
-| `provision.sh` | — | Packages, timezone, PostgreSQL 16, Redis, nginx, unit. Idempotent. |
+| `provision.sh` | — | Packages, timezone, PostgreSQL 17, Redis, nginx, unit. Idempotent. |
 | `deploy.sh` | — | Pull, sync venv, verify runtime, migrate, restart, health-check. |
 | `mtc.service` | `/etc/systemd/system/` | gunicorn under systemd |
 | `nginx-mtc.conf` | `/etc/nginx/sites-available/mtc` | Reverse proxy, static, `/health` |

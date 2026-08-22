@@ -19,7 +19,13 @@ SRC_DIR="$APP_DIR/src"
 ENV_FILE=/etc/mtc/mtc.env
 DB_NAME=mtc
 DB_USER=mtc
-PG_VERSION=16
+# 17, to match the development database a production install is restored
+# FROM. pg_dump/pg_restore only move forward across versions: a dump taken
+# on 17 cannot be loaded into 16, and you find that out half way through a
+# migration with the new box already built. Ubuntu 24.04 ships 16, which is
+# why provision.sh adds the PGDG repository rather than using the distro's.
+# The app itself is version-agnostic (CI runs 14, docker-compose runs 16).
+PG_VERSION=17
 TIMEZONE="${TIMEZONE:-Asia/Kolkata}"
 
 log()  { printf '\n==> %s\n' "$*"; }
@@ -57,9 +63,9 @@ apt-get install -y --no-install-recommends \
 #   and quietly fall back to the browser print dialog. The app keeps working,
 #   so this is a fault you hear about from a user weeks later.
 
-# PGDG for PostgreSQL 16, matching what docker-compose.yml has been tested
-# against. Ubuntu 24.04's own postgresql is also 16; PGDG keeps it pinned
-# there if the distro moves on.
+# PGDG, because Ubuntu 24.04 ships PostgreSQL 16 and $PG_VERSION above is 17
+# -- see the note there for why the version has to match the database being
+# restored from, not whatever the distro happens to package.
 if [[ ! -f /etc/apt/sources.list.d/pgdg.list ]]; then
     log "Adding the PostgreSQL PGDG repository"
     install -d /usr/share/postgresql-common/pgdg

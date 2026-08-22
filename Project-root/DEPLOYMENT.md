@@ -279,7 +279,7 @@ the several that are easy to forget.**
 
 | File | What it is |
 |---|---|
-| [`deploy/provision.sh`](deploy/provision.sh) | One-time host setup: packages, timezone, PostgreSQL 16, Redis, nginx, the systemd unit |
+| [`deploy/provision.sh`](deploy/provision.sh) | One-time host setup: packages, timezone, PostgreSQL 17, Redis, nginx, the systemd unit |
 | [`deploy/deploy.sh`](deploy/deploy.sh) | Every deploy: pull, sync venv, **verify the runtime**, migrate, restart, health-check |
 | [`deploy/mtc.service`](deploy/mtc.service) | systemd unit |
 | [`deploy/nginx-mtc.conf`](deploy/nginx-mtc.conf) | Reverse proxy + static serving |
@@ -398,6 +398,54 @@ curl -s localhost:8000/health
 A server on the shop-floor LAN (`http://192.168.1.50:8000`) is a supported
 deployment, but three things behave differently from an internet-facing one.
 Read this before provisioning.
+
+### Moving an existing system across
+
+**Everything lives in PostgreSQL. One dump carries the lot.**
+
+There is no file storage to migrate — not because it was left out, but by
+design. The company logo is `erp.company_settings.logo_data_url` and item
+photos are `erp.items.image`, both base64 data URLs in TEXT columns (see
+migration `024_items_image.sql`). Users, password hashes, roles, company
+settings, every lot, PO and ledger row are ordinary tables.
+`static/uploads/` holds only git-tracked legacy files that travel with the
+code.
+
+`erp.migrations_applied` is in the dump too, so the restored database
+arrives knowing which migrations it has, and the next `deploy.sh` applies
+only what is genuinely new.
+
+**On the old machine:**
+
+```bash
+pg_dump --format=custom --no-owner --no-privileges \
+        -U postgres -d MTC -f mtc.dump
+```
+
+`--no-owner --no-privileges` because the new database is owned by the `mtc`
+role, not by whatever owns it today.
+
+**On the new server** — provision and place the code, but do **not** start
+the app yet, or it will build an empty schema you then have to restore over:
+
+```bash
+sudo ./install.sh --repo <url> --base-url http://192.168.1.50 --no-deploy
+
+sudo -u postgres pg_restore --no-owner --role=mtc -d mtc /tmp/mtc.dump
+sudo /opt/mtc/src/Project-root/deploy/deploy.sh
+```
+
+**Version matters and only moves one way.** `pg_restore` can load an older
+dump into a newer server, never the reverse. `provision.sh` installs
+PostgreSQL 17 for exactly this reason; if the machine you are dumping from
+is newer than that, raise `PG_VERSION` in `provision.sh` to match before
+provisioning. Check with `psql -c "SHOW server_version"`.
+
+**Config does not come across in the dump.** `/etc/mtc/mtc.env` is written
+fresh by `provision.sh` with a new `SECRET_KEY` and database password.
+Carry over only the values that are genuinely yours — mail settings, Google
+credentials if the deployment can still use them — and leave `BASE_URL` and
+`DATABASE_URL` as the new machine set them.
 
 ### 0. Before you cut over: every user needs a password
 
