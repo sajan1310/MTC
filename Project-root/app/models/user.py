@@ -16,6 +16,18 @@ class User(UserMixin):
         self.profile_picture = user_data.get("profile_picture")
         self.company = user_data.get("company")
         self.mobile = user_data.get("mobile")
+        # Whether this account can authenticate WITHOUT Google. A boolean, and
+        # deliberately never the hash itself -- nothing outside auth needs the
+        # hash, and it has no business travelling with the object that
+        # templates render from.
+        #
+        # get_or_create_user() (app/utils.py) inserts name/email/role/
+        # profile_picture only, so every account ever created through Google
+        # sign-in has password_hash NULL. That is fine while the internet is
+        # up and invisible until it is not: on the factory LAN, Google OAuth
+        # cannot run at all (Google rejects private-IP redirect URIs), so an
+        # account with no password has no way in whatsoever.
+        self.has_password = bool(user_data.get("password_hash"))
 
     def get_id(self):
         """Required for Flask-Login."""

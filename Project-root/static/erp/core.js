@@ -1451,6 +1451,47 @@ const App = {
   // Two independent forms/mutations (updateMyProfile / changeMyPassword,
   // see profile_service.py) since a mistake in one (e.g. a password typo)
   // shouldn't block saving the other.
+  // ── Offline password prompt ───────────────────────────────────────────
+  //
+  // An account created by Google sign-in has no password (get_or_create_user
+  // in app/utils.py inserts name/email/role/profile_picture only). That is
+  // invisible while the internet is up and total once it is not: on the
+  // factory LAN there is no route to accounts.google.com, and Google refuses
+  // to register a private-IP redirect URI in any case, so the account simply
+  // cannot sign in.
+  //
+  // So this is a standing, NON-DISMISSIBLE banner rather than a toast. It
+  // must survive until the thing it warns about is actually fixed, and the
+  // window in which it can be acted on closes the moment the internet does.
+  // The trade-off of not blocking the app outright is that some accounts
+  // will still be missing a password on cut-over day, which is why
+  // DEPLOYMENT.md pairs this with a query for finding them.
+  OfflinePassword: {
+    init() {
+      const meta = document.querySelector('meta[name="current-user-has-password"]');
+      // Absent meta means an older template or a page that does not emit it.
+      // Treated as "has a password": a spurious banner on every load for
+      // every user is worse than a missing one, and the server-side query in
+      // DEPLOYMENT.md is the real backstop either way.
+      if (!meta || meta.getAttribute('content') !== 'no') return;
+
+      const prompt = document.getElementById('offlinePasswordPrompt');
+      if (!prompt) return;
+      prompt.classList.remove('d-none');
+      prompt.classList.add('d-flex');
+
+      document.getElementById('offlinePasswordPromptBtn')
+        ?.addEventListener('click', () => App.Profile.openModal());
+    },
+
+    hidePrompt() {
+      const prompt = document.getElementById('offlinePasswordPrompt');
+      if (!prompt) return;
+      prompt.classList.add('d-none');
+      prompt.classList.remove('d-flex');
+    }
+  },
+
   Profile: {
     openModal() {
       const profileForm = document.getElementById('myProfileForm');
@@ -1504,7 +1545,15 @@ const App = {
       try {
         const res = await Api.mutate('changeMyPassword', currentPassword, newPassword, confirmNewPassword);
         App.Utils.showToast(res?.message || (res?.success ? 'Password updated.' : 'Failed to update password.'), !res?.success);
-        if (res?.success) form.reset();
+        if (res?.success) {
+          form.reset();
+          // The account now has a password, so the standing prompt has
+          // nothing left to warn about. Hidden here rather than on the next
+          // page load, because the whole point of a non-dismissible banner
+          // is that it stays put -- leaving it up after the user did exactly
+          // what it asked reads as "that did not work".
+          App.OfflinePassword.hidePrompt();
+        }
       } catch (err) {
         App.Utils.showToast(err.message || 'Failed to update password.', true);
       } finally {
@@ -1918,6 +1967,10 @@ function bindGlobalEvents() {
 document.addEventListener('DOMContentLoaded', async () => {
   const container = document.getElementById('app-container');
   if (container) container.classList.add('loaded');
+
+  // Before anything that can fail: a Google-only account has a limited
+  // window to set a password, and it closes when the internet does.
+  App.OfflinePassword.init();
 
   const safeGetItem = (key) => {
     try { return localStorage.getItem(key); } catch (e) { return null; }

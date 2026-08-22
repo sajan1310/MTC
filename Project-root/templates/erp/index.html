@@ -15,6 +15,13 @@
   <meta name="current-user-id" content="{{ current_user.id }}">
   <meta name="current-user-role" content="{{ current_user.role }}">
   {% endif %}
+  <!-- Emitted for EVERY user, unlike the two admin-only tags above: a
+       Google-created account has no password until it sets one, and on the
+       factory LAN (no internet, private IP) Google sign-in cannot run, so
+       such an account cannot log in at all. core.js turns "no" into a
+       standing prompt. A bool, never anything derived from the hash. -->
+  <meta name="current-user-has-password"
+        content="{{ 'yes' if current_user.has_password else 'no' }}">
   <!-- "auto" or "off". When "off", App.Print skips the server render endpoint
        entirely rather than discovering it is unavailable once per session. -->
   <title>Maharaja Bikes ERP</title>
@@ -249,6 +256,25 @@
 
   <!-- Main application container -->
   <div class="container-fluid" id="app-container">
+
+    <!-- Standing prompt for a Google-created account that has never set a
+         password. Deliberately NOT dismissible: it is the only warning
+         before an internet outage, or the move to the factory LAN, leaves
+         this account with no way to sign in at all. core.js unhides it from
+         the current-user-has-password meta and hides it again the moment
+         changeMyPassword succeeds. Hidden by default so it can never flash
+         for the ordinary case where a password already exists. -->
+    <div id="offlinePasswordPrompt" class="alert alert-warning d-none align-items-center gap-3 mt-3 mb-0"
+         role="alert">
+      <i class="bi bi-shield-exclamation fs-4" aria-hidden="true"></i>
+      <div class="flex-grow-1">
+        <strong>Set a password for offline sign-in.</strong>
+        You signed in with Google, which needs an internet connection. Without
+        a password you will not be able to sign in on the shop-floor network.
+      </div>
+      <button type="button" class="btn btn-warning fw-bold text-nowrap"
+              id="offlinePasswordPromptBtn">Set password</button>
+    </div>
 
     <!-- Header -->
     <div class="app-header d-flex justify-content-between align-items-center mb-4 pb-3 border-bottom">

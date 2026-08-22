@@ -256,8 +256,23 @@ def api_forgot_password():
                 conn,
                 cur,
             ):
+                # Deliberately NOT filtered on password_hash IS NOT NULL.
+                #
+                # That filter made this route useless to exactly the accounts
+                # that need it most: a Google-created account has no
+                # password_hash (get_or_create_user inserts none), so it was
+                # excluded here -- it could not sign in with a password, and
+                # could not use this route to set one either. On the factory
+                # LAN, where Google sign-in cannot run at all, that is a
+                # locked-out user with no self-service way back.
+                #
+                # Reaching a reset link still requires control of the mailbox,
+                # and the response is identical either way (see below), so
+                # dropping the filter widens no disclosure -- it only stops
+                # the one path back in from being closed to the people who
+                # depend on it.
                 cur.execute(
-                    "SELECT user_id FROM users WHERE email = %s AND password_hash IS NOT NULL",
+                    "SELECT user_id FROM users WHERE email = %s AND deleted_at IS NULL",
                     (email,),
                 )
                 user_exists = cur.fetchone() is not None

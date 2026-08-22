@@ -109,3 +109,97 @@ def test_zzz_debug_no_login(app):
     with app.test_client() as client:
         r = client.get("/erp")
         print("ZZZDEBUG no-login /erp status:", r.status_code, "location:", r.headers.get("Location"))
+
+
+# ── Offline password for Google-created accounts ──────────────────────────
+# get_or_create_user (app/utils.py) inserts name/email/role/profile_picture
+# and no password_hash, so every account made through Google sign-in has no
+# password. Harmless while the internet is up; total once it is not. On the
+# factory LAN there is no route to accounts.google.com, and Google will not
+# register a private-IP redirect URI anyway, so such an account has no way
+# in at all. These cover the two halves of the way back: knowing the account
+# needs a password, and being able to set one.
+
+
+def test_user_reports_whether_it_can_sign_in_without_google():
+    """The banner in index.html is driven entirely by this flag."""
+    google_only = User(
+        {"user_id": 1, "name": "G", "email": "g@example.com", "role": "user"}
+    )
+    assert google_only.has_password is False
+
+    with_password = User(
+        {
+            "user_id": 2,
+            "name": "P",
+            "email": "p@example.com",
+            "role": "user",
+            "password_hash": "pbkdf2:sha256:x$y$z",
+        }
+    )
+    assert with_password.has_password is True
+
+
+def test_user_never_carries_the_password_hash_itself():
+    """has_password is a bool. The hash has no business on the object that
+    templates render from."""
+    user = User(
+        {
+            "user_id": 3,
+            "name": "P",
+            "email": "p@example.com",
+            "role": "user",
+            "password_hash": "pbkdf2:sha256:secret",
+        }
+    )
+    assert "secret" not in repr(vars(user))
+    assert not hasattr(user, "password_hash")
+
+
+def test_forgot_password_reaches_an_account_that_has_no_password(app, client):
+    """This route used to filter on password_hash IS NOT NULL, which shut out
+    exactly the accounts with no other way in -- a Google-created user could
+    not sign in with a password and could not use this route to set one."""
+    import database
+
+    email = "google-only-reset@example.com"
+    with app.app_context():
+        with database.get_conn() as (conn, cur):
+            cur.execute("DELETE FROM users WHERE email = %s", (email,))
+            cur.execute(
+                "INSERT INTO users (name, email, role, password_hash) "
+                "VALUES (%s, %s, %s, NULL)",
+                ("Google Only", email, "user"),
+            )
+            conn.commit()
+
+    # No SMTP configured is both the LAN reality and what makes this
+    # observable: with MAIL_SERVER unset the route returns the reset link in
+    # the response under TESTING instead of emailing it, so its presence is
+    # what proves the account was found. The developer .env sets MAIL_SERVER,
+    # which would otherwise send the mail and tell the test nothing.
+    app.config["MAIL_SERVER"] = None
+
+    try:
+        response = client.post("/auth/api/forgot-password", json={"email": email})
+        assert response.status_code == 200
+        assert response.get_json().get("reset_url"), (
+            "no reset link issued -- the account was filtered out"
+        )
+    finally:
+        with app.app_context():
+            with database.get_conn() as (conn, cur):
+                cur.execute("DELETE FROM users WHERE email = %s", (email,))
+                conn.commit()
+
+
+def test_forgot_password_says_nothing_about_whether_an_account_exists(app, client):
+    """Response for an unknown address must be indistinguishable from the
+    one above, or this becomes an account-enumeration oracle. Same no-SMTP
+    config as the test above, so the two are actually comparable."""
+    app.config["MAIL_SERVER"] = None
+    response = client.post(
+        "/auth/api/forgot-password", json={"email": "nobody-here@example.com"}
+    )
+    assert response.status_code == 200
+    assert not response.get_json().get("reset_url")

@@ -399,6 +399,38 @@ A server on the shop-floor LAN (`http://192.168.1.50:8000`) is a supported
 deployment, but three things behave differently from an internet-facing one.
 Read this before provisioning.
 
+### 0. Before you cut over: every user needs a password
+
+**Do this while the internet still works. There is no way to do it afterwards.**
+
+An account created through Google sign-in has no password —
+`get_or_create_user()` inserts name, email, role and picture, and nothing
+else. That is invisible online and total offline: on the LAN there is no
+route to `accounts.google.com`, and Google will not register a private-IP
+redirect URI in any case, so the account cannot sign in **at all**.
+
+Such users now see a standing banner prompting them to set one (My Profile →
+Change Password, leaving *Current Password* blank). It is not dismissible,
+but it is also not blocking, so it does not guarantee coverage. **Check
+before you cut over:**
+
+```sql
+SELECT email, name, role
+FROM users
+WHERE password_hash IS NULL AND deleted_at IS NULL
+ORDER BY email;
+```
+
+Every row is a person who will be locked out the moment the server moves to
+the LAN. Chase them while they can still sign in with Google.
+
+For anyone who slips through, an admin can create a fresh account for them
+with a password (Users → Add User). The forgot-password route also works for
+a passwordless account now — it used to filter those out, which shut the one
+self-service door on exactly the people who needed it — but that needs SMTP,
+which the LAN will not have either, so it is an *online* remedy, not a
+rescue after the fact.
+
 ### 1. Sign in with email + password, not Google
 
 **Google Sign-In cannot work on a private address.** Google only accepts

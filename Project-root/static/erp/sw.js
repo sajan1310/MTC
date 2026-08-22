@@ -71,7 +71,13 @@
 // the brand) and the table typography changed -- Required Qty up ~10%, item
 // names bold. Print-only, so nothing looks different in the app: exactly the
 // case this name exists for.
-const CACHE_NAME = 'erp-shell-v31';
+//
+// v32: core.js gained App.OfflinePassword -- the standing banner shown to an
+// account created by Google sign-in that has never set a password. Without
+// the bump an installed client keeps the old core.js and the banner never
+// appears, which is the one warning those users get before an internet
+// outage, or the move to the factory LAN, locks them out entirely.
+const CACHE_NAME = 'erp-shell-v32';
 
 const PRECACHE_URLS = [
   '/erp/offline.html',
