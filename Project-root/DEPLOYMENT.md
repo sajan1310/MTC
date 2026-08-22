@@ -13,12 +13,13 @@ Complete guide for deploying the Inventory Management System to production.
    - [Railway](#railway-deployment)
    - [Render](#render-deployment)
    - [Heroku](#heroku-deployment)
-   - [AWS/DigitalOcean/VPS](#vps-deployment)
-5. [PDF Export](#pdf-export)
-6. [Post-Deployment](#post-deployment)
-7. [Monitoring & Maintenance](#monitoring--maintenance)
-8. [Troubleshooting](#troubleshooting)
-9. [Additional Deployment Guides](#additional-deployment-guides)
+   - [VPS / Ubuntu 24.04 (scripted)](#vps-deployment-ubuntu-2404-lts)
+5. [LAN Deployment (factory WiFi, no internet)](#lan-deployment-factory-wifi-no-reliable-internet)
+6. [PDF Export](#pdf-export)
+7. [Post-Deployment](#post-deployment)
+8. [Monitoring & Maintenance](#monitoring--maintenance)
+9. [Troubleshooting](#troubleshooting)
+10. [Additional Deployment Guides](#additional-deployment-guides)
 
 ---
 
@@ -271,125 +272,224 @@ heroku run python run_migration.py
 
 ---
 
-### VPS Deployment
+### VPS Deployment (Ubuntu 24.04 LTS)
 
-**Full control with Ubuntu/CentOS server.**
+**Scripted. Do not follow these steps by hand -- `deploy/` does them, and does
+the several that are easy to forget.**
 
-#### Prerequisites
+| File | What it is |
+|---|---|
+| [`deploy/provision.sh`](deploy/provision.sh) | One-time host setup: packages, timezone, PostgreSQL 16, Redis, nginx, the systemd unit |
+| [`deploy/deploy.sh`](deploy/deploy.sh) | Every deploy: pull, sync venv, **verify the runtime**, migrate, restart, health-check |
+| [`deploy/mtc.service`](deploy/mtc.service) | systemd unit |
+| [`deploy/nginx-mtc.conf`](deploy/nginx-mtc.conf) | Reverse proxy + static serving |
+| [`deploy/mtc.env.example`](deploy/mtc.env.example) | Annotated `/etc/mtc/mtc.env` template |
 
-- Ubuntu 20.04+ or CentOS 8+
-- Root or sudo access
-- Domain name pointed to server IP
+#### Why Ubuntu 24.04 specifically
 
-#### Step 1: Install Dependencies
+Its system Python is **3.12** -- what the Dockerfile pins and what CI tests
+(3.10 / 3.11 / 3.12). There is no `requires-python` in the repo, so the CI
+matrix *is* the support contract. It is also Debian-family, so WeasyPrint's
+three packages carry the same names as in the Dockerfile.
 
-```bash
-sudo apt update
-sudo apt install -y python3 python3-pip python3-venv postgresql nginx certbot python3-certbot-nginx
-```
+Avoid Ubuntu 25.x and Debian 13 (Python 3.13, never tested by CI) and
+RHEL/Rocky 9 (Python 3.9, below the floor, different package names).
 
-#### Step 2: Setup PostgreSQL
-
-```bash
-sudo systemctl start postgresql
-sudo -u postgres psql
-CREATE DATABASE inventory_db;
-CREATE USER inventory_user WITH ENCRYPTED PASSWORD 'secure_password';
-GRANT ALL PRIVILEGES ON DATABASE inventory_db TO inventory_user;
-\q
-```
-
-#### Step 3: Clone Repository
+#### Install
 
 ```bash
-cd /var/www
-sudo git clone https://github.com/yourusername/inventory-system.git
-cd inventory-system/Project-root
+sudo ./deploy/provision.sh                 # once per host
+sudo -u mtc git clone <repo-url> /opt/mtc/src
+sudoedit /etc/mtc/mtc.env                  # BASE_URL, Google creds, WEB_CONCURRENCY
+sudo /opt/mtc/src/Project-root/deploy/deploy.sh
+sudo certbot --nginx -d your.domain        # if internet-facing
 ```
 
-#### Step 4: Setup Python Virtual Environment
+Layout: `/opt/mtc/src` (checkout), `/opt/mtc/venv` (the **one** interpreter),
+`/etc/mtc/mtc.env` (secrets, `root:mtc` `0640`). The service runs as the
+unprivileged `mtc` user.
+
+#### Sizing
+
+Concurrency is `--workers`, because these are **sync** workers -- one request
+each, start to finish. Ordinary requests are ~2.4 ms, so they are never the
+constraint; PDF rendering is, at ~0.66 s per document and one full core per
+render.
+
+| Load | Spec | `WEB_CONCURRENCY` | `DB_POOL_MAX` |
+|---|---|---|---|
+| ≤25 users, occasional exports | 2 vCPU / 4 GB | 5 | 6 |
+| 25–100 users, exports routine | **4 vCPU / 8 GB** | 9 | 6 |
+
+Use **dedicated** vCPU, not burstable. A 50-document export is ~33 seconds of
+sustained single-core work, which drains the CPU credits on t3/t4g-class
+instances and leaves the box throttled exactly when it is busiest.
+
+RAM tracks `WEB_CONCURRENCY`, not user count: sessions are signed cookies and
+connections are pooled, so 50 and 100 users cost the same. A worker is ~85 MB
+until it renders a PDF and ~130 MB after.
+
+`DB_POOL_MAX` is **per worker process**, so the ceiling is
+`WEB_CONCURRENCY × DB_POOL_MAX` and it must stay under Postgres'
+`max_connections`. The default 20 at 9 workers asks for 180 against a stock
+limit of 100, which surfaces as "too many connections" and reads like a
+database fault. 6 is measured: instrumenting all 8,158 `get_conn()`
+acquisitions in the ERP suite showed a maximum of 3 held at once by any one
+path, plus the audit and backup threads. `provision.sh` sets
+`max_connections = 120` and sizes `shared_buffers` from actual RAM.
+
+#### What the scripts do that a hand-written setup forgets
+
+- **`ExecStartPre` runs the migrations.** `docker-entrypoint.sh` did this; a
+  systemd unit written from scratch usually does not, and then new code runs
+  against the old schema.
+- **WeasyPrint's three apt packages.** Missing, the Download PDF endpoints
+  return 503 and silently fall back to the print dialog. `requirements.txt`
+  records this exact outage happening once already.
+- **`deploy.sh` verifies the runtime before restarting.** It imports every
+  critical dependency and calls `pdf_render_service.probe()` -- which is not
+  the same as importing WeasyPrint, since that succeeds without the C
+  libraries and only fails at render time. A bad deploy aborts while the old
+  workers are still serving.
+- **`PROXY_FIX=x_for=1,x_proto=1`.** Without it Flask trusts no proxy header,
+  so every request looks like `127.0.0.1` over http. The rate limiter keys on
+  `remote_addr`, putting the entire userbase in one 200/day bucket; and
+  `url_for(_external=True)` emits `http://`, so Google rejects the OAuth
+  `redirect_uri`.
+- **`Asia/Kolkata`.** The app stores naive datetimes and reads local time for
+  "today's dispatches", month-to-date totals, and the default order/dispatch
+  dates it writes to the database. On a UTC host "today" rolls over at 05:30
+  IST.
+- **Writable `logs/` and `backups/`.** `create_app()` does
+  `os.makedirs("logs")` relative to the working directory and raises if it
+  cannot; `backup_service.py` resolves `backups/` to the **repo root**, one
+  level above `Project-root`. Both are named in the unit's `ReadWritePaths`,
+  which `ProtectSystem=strict` makes mandatory.
+- **Redis before the app.** `create_app()` raises if the rate-limit backend
+  is unreachable under `FLASK_ENV=production`; there is no fallback outside
+  development. The unit `Requires=` it.
+- **`LANG=C.UTF-8`.** Migration scripts print Unicode status characters and
+  systemd gives a service no locale; an encoding error aborts a migration
+  mid-transaction.
+
+#### Operating it
 
 ```bash
-python3 -m venv venv
-source venv/bin/activate
-pip install -r requirements.txt
+sudo systemctl status mtc
+journalctl -u mtc -f
+sudo /opt/mtc/src/Project-root/deploy/deploy.sh --ref v1.2.0   # deploy a tag
+sudo -u mtc /opt/mtc/venv/bin/python \
+    /opt/mtc/src/Project-root/migrations/erp/runner.py --status
+curl -s localhost:8000/health
 ```
 
-#### Step 5: Configure Environment
-
-```bash
-sudo nano .env
-```
-
-Add all environment variables (see [Environment Configuration](#environment-configuration)).
-
-#### Step 6: Setup Systemd Service
-
-```bash
-sudo nano /etc/systemd/system/inventory.service
-```
-
-```ini
-[Unit]
-Description=Inventory Management System
-After=network.target
-
-[Service]
-User=www-data
-Group=www-data
-WorkingDirectory=/var/www/inventory-system/Project-root
-Environment="PATH=/var/www/inventory-system/Project-root/venv/bin"
-ExecStart=/var/www/inventory-system/Project-root/venv/bin/gunicorn wsgi:app --bind 127.0.0.1:8000 --workers 4
-
-[Install]
-WantedBy=multi-user.target
-```
-
-```bash
-sudo systemctl start inventory
-sudo systemctl enable inventory
-sudo systemctl status inventory
-```
-
-#### Step 7: Configure Nginx
-
-```bash
-sudo nano /etc/nginx/sites-available/inventory
-```
-
-```nginx
-server {
-    listen 80;
-    server_name yourdomain.com;
-
-    location / {
-        proxy_pass http://127.0.0.1:8000;
-        proxy_set_header Host $host;
-        proxy_set_header X-Real-IP $remote_addr;
-        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
-        proxy_set_header X-Forwarded-Proto $scheme;
-    }
-
-    location /static {
-        alias /var/www/inventory-system/Project-root/static;
-        expires 30d;
-    }
-}
-```
-
-```bash
-sudo ln -s /etc/nginx/sites-available/inventory /etc/nginx/sites-enabled/
-sudo nginx -t
-sudo systemctl restart nginx
-```
-
-#### Step 8: Setup SSL with Let's Encrypt
-
-```bash
-sudo certbot --nginx -d yourdomain.com
-```
+> **Never put a `.env` in the checkout.** `config.py` calls
+> `load_dotenv(override=True)`, which *overwrites* the process environment --
+> a stray `.env` silently beats everything systemd sets, and the symptom is a
+> value with no visible source. `deploy.sh` refuses to run if one exists.
 
 ---
+
+
+## LAN Deployment (factory WiFi, no reliable internet)
+
+**The UI needs no internet. Sign-in, password reset and the Sheets backup do.**
+
+A server on the shop-floor LAN (`http://192.168.1.50:8000`) is a supported
+deployment, but three things behave differently from an internet-facing one.
+Read this before provisioning.
+
+### 1. Sign in with email + password, not Google
+
+**Google Sign-In cannot work on a private address.** Google only accepts
+`localhost` or a public HTTPS domain as an OAuth redirect URI -- it will
+reject `http://192.168.1.50:8000/auth/google/callback` at registration time --
+and the flow has to reach `accounts.google.com` anyway. On a LAN the
+"Sign in with Google" button on the login page will fail.
+
+Users log in with email and password (the form posts to
+`/auth/api/login`). Create accounts through the normal signup/admin flow.
+
+> The button is rendered unconditionally in `templates/login.html`, so it is
+> visible but dead on a LAN. If that generates support calls, gate it on a
+> config flag -- it is a one-line `{% if %}`.
+
+**The app still refuses to start without Google credentials.** `_load_config()`
+lists `GOOGLE_CLIENT_ID` and `GOOGLE_CLIENT_SECRET` as required in every
+non-testing config, so an empty value aborts boot with
+`Missing required configuration keys`. Set placeholders:
+
+```bash
+GOOGLE_CLIENT_ID=unused-on-lan
+GOOGLE_CLIENT_SECRET=unused-on-lan
+```
+
+### 2. Password reset has no email, but the link is in the log
+
+`MAIL_SERVER` points at an SMTP relay, which needs internet. Leave it unset on
+an isolated LAN: `/auth/api/forgot-password` then logs
+
+```
+[ForgotPassword] Reset link for <email>: http://192.168.1.50:8000/auth/reset-password/<token>
+```
+
+at INFO level and warns that the user cannot receive it. An administrator
+reads the link out of the log (`journalctl -u mtc` or `logs/app.log`) and
+passes it on. The request still succeeds and still returns the same response
+either way, so the flow does not leak which addresses are registered.
+
+### 3. Plain HTTP works, but a certificate is better
+
+`SESSION_COOKIE_SECURE` follows `BASE_URL`'s scheme. Set
+`BASE_URL=http://192.168.1.50:8000` and the session cookie is issued without
+`Secure`, so the browser sends it back over HTTP and login persists.
+`force_https` and HSTS switch off on the same signal.
+
+That means the session cookie crosses the WiFi in the clear. On a WPA2/WPA3
+network it is not readable by a passive outsider, but anyone with the WiFi
+password is on the same broadcast domain. **Prefer an internal certificate**
+-- give the box a hostname, issue a cert from an internal CA (or self-sign and
+install the root on the tablets), and set `BASE_URL=https://mtc.local`. Every
+hardening flag turns itself back on with no other change.
+
+Do **not** reach for `FLASK_ENV=development` to work around a cookie problem:
+it enables the debugger, restricts CORS to localhost, and the app raises
+`Application running with debug=True in production environment` by design.
+
+### 4. What still tries to reach the internet
+
+| Feature | Without internet |
+|---|---|
+| The whole UI (jQuery, Bootstrap, icons, fonts, charts, Excel) | **Works** -- all self-hosted, see below |
+| Email password reset | Link is logged instead (§2) |
+| Google Sign-In | Unavailable (§1) |
+| Nightly Google Sheets backup | Fails and logs; the **local SQL dump still runs** |
+
+### 5. Third-party assets are self-hosted
+
+Everything the browser loads comes from `static/erp/vendor/` -- jQuery,
+Bootstrap, Bootstrap Icons, Select2, htm/preact, SortableJS, Chart.js, SheetJS
+and the Inter/Outfit/Oswald webfonts (Latin subsets). Nothing is fetched from
+`cdn.jsdelivr.net`, `code.jquery.com` or Google Fonts at runtime, and the CSP
+no longer permits those hosts.
+
+This is not a preference. The service worker caches only same-origin
+`/static/erp/` URLs, so while these came from a CDN they were never in the
+offline shell: with no internet the browser fetched no jQuery, and with no
+jQuery none of the app's JavaScript ran -- a blank page. It failed unevenly
+too, since devices with a warm HTTP cache kept working, which makes it a
+miserable fault to diagnose.
+
+**To update one:** replace the file in `static/erp/vendor/`, update the
+reference, and **bump `CACHE_NAME` in `static/erp/sw.js`** -- otherwise
+installed clients keep serving the old shell forever. Verify a download
+against the publisher's SRI hash before committing it:
+
+```bash
+curl -sL <url> | openssl dgst -sha384 -binary | openssl base64 -A
+```
+
+Do not re-add a CDN host to fix a missing library. Vendor it.
 
 ---
 

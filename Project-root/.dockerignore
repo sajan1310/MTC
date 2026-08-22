@@ -69,6 +69,8 @@ eslint.config.js
 .stylelintrc.json
 requirements-dev.txt
 docs
+# Host provisioning for the non-Docker path; nothing in the image runs it.
+deploy
 **/*.md
 !README.md
 audit_report.json

@@ -1,0 +1,98 @@
+# MTC ERP — gunicorn under systemd.
+# Install to /etc/systemd/system/mtc.service (provision.sh does this).
+#
+# Paths assume the layout provision.sh creates:
+#   /opt/mtc/src            git checkout (repo root)
+#   /opt/mtc/src/Project-root   application, and WorkingDirectory
+#   /opt/mtc/venv           virtualenv
+#   /etc/mtc/mtc.env        secrets, root:mtc 0640
+
+[Unit]
+Description=MTC ERP (gunicorn)
+Documentation=file:///opt/mtc/src/Project-root/DEPLOYMENT.md
+# Both are hard dependencies, not conveniences. Postgres is obvious;
+# Redis less so -- create_app() RAISES if the rate-limit backend is
+# unreachable under FLASK_ENV=production, so starting before Redis is a
+# crash loop rather than a degraded start.
+After=network-online.target postgresql.service redis-server.service
+Wants=network-online.target
+Requires=postgresql.service redis-server.service
+
+# Do not restart-loop forever on a config error: 5 failures inside 5 minutes
+# stops the unit so `systemctl status` shows the real cause instead of an
+# endlessly rotating journal. These belong in [Unit] -- systemd moved them
+# out of [Service] in v229 and silently ignores them there.
+StartLimitBurst=5
+StartLimitIntervalSec=300
+
+[Service]
+Type=notify
+User=mtc
+Group=mtc
+
+# WorkingDirectory is load-bearing: app/__init__.py does
+# os.makedirs("logs", exist_ok=True) RELATIVE TO CWD, so this directory must
+# exist and be writable by User= above or create_app() raises and the unit
+# never starts. Same for backups/, which backup_service.py resolves to the
+# REPO ROOT (one level up from here), not to Project-root.
+WorkingDirectory=/opt/mtc/src/Project-root
+EnvironmentFile=/etc/mtc/mtc.env
+
+# Migration scripts print Unicode status characters. systemd gives a service
+# no locale at all, and while Python 3.7+ usually coerces the C locale to
+# UTF-8, an encoding error here aborts a migration MID-TRANSACTION -- which
+# is not a failure mode worth leaving to a coercion rule.
+Environment=LANG=C.UTF-8
+Environment=LC_ALL=C.UTF-8
+Environment=PYTHONIOENCODING=utf-8
+Environment=PYTHONUNBUFFERED=1
+
+# Schema first, every start. This is what docker-entrypoint.sh did and what
+# a hand-written unit usually forgets: without it a deploy runs new code
+# against the old schema. The runner is idempotent and tracks state in
+# erp.migrations_applied, so a no-op start costs one query.
+ExecStartPre=/opt/mtc/venv/bin/python migrations/erp/runner.py
+
+ExecStart=/opt/mtc/venv/bin/gunicorn wsgi:app \
+    --bind 127.0.0.1:8000 \
+    --workers ${WEB_CONCURRENCY} \
+    --timeout 120 \
+    --graceful-timeout 30 \
+    --max-requests 1000 \
+    --max-requests-jitter 100 \
+    --access-logfile - \
+    --error-logfile - \
+    --log-level info
+
+ExecReload=/bin/kill -s HUP $MAINPID
+KillSignal=SIGTERM
+TimeoutStopSec=45
+
+Restart=always
+RestartSec=5
+
+# Journal only. The app ALSO writes logs/app.log itself (10 MB × 10
+# backups), so do not add a second file sink here.
+StandardOutput=journal
+StandardError=journal
+SyslogIdentifier=mtc
+
+# ── Hardening ────────────────────────────────────────────────────────────
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=strict
+ProtectHome=true
+ProtectKernelTunables=true
+ProtectKernelModules=true
+ProtectControlGroups=true
+RestrictSUIDSGID=true
+RestrictRealtime=true
+LockPersonality=true
+# ProtectSystem=strict mounts everything read-only, so every directory the
+# app writes to has to be named. Miss one and the failure is a permission
+# error from deep inside a request, not at boot.
+ReadWritePaths=/opt/mtc/src/Project-root/logs
+ReadWritePaths=/opt/mtc/src/backups
+
+[Install]
+WantedBy=multi-user.target
