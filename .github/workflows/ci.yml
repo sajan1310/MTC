@@ -383,13 +383,3 @@ jobs:
           EOF
           echo "::endgroup::"
 
-      - name: Upload to Codecov
-        if: matrix.python-version == '3.11'
-        uses: codecov/codecov-action@v4
-        with:
-          files: Project-root/coverage.xml
-          flags: unittests
-          name: codecov-py${{ matrix.python-version }}
-          fail_ci_if_error: false
-          token: ${{ secrets.CODECOV_TOKEN }}
-        continue-on-error: true
