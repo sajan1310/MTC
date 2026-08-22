@@ -47,7 +47,11 @@ if [[ -f "$PROJECT_DIR/.env" ]]; then
 fi
 
 # ── Code ─────────────────────────────────────────────────────────────────
-if [[ $PULL -eq 1 ]]; then
+# A git checkout is the usual case but not a requirement: the code can also
+# arrive by rsync, by tarball, or from a bare repo on this machine. Pulling
+# is skipped automatically when there is nothing to pull from, so --no-pull
+# is only needed to deliberately hold a checkout at its current revision.
+if [[ $PULL -eq 1 && -d "$SRC_DIR/.git" ]]; then
     log "Fetching code"
     sudo -u "$APP_USER" git -C "$SRC_DIR" fetch --all --tags --prune
     if [[ -n "$REF" ]]; then
@@ -55,8 +59,23 @@ if [[ $PULL -eq 1 ]]; then
     else
         sudo -u "$APP_USER" git -C "$SRC_DIR" pull --ff-only
     fi
+elif [[ $PULL -eq 1 ]]; then
+    log "No git checkout at $SRC_DIR -- deploying the code already in place"
+    [[ -z "$REF" ]] || fail "--ref needs a git checkout; $SRC_DIR has none."
 fi
-DEPLOYED_REF="$(git -C "$SRC_DIR" rev-parse --short HEAD)"
+
+# What got deployed, for the log and the closing message. Never fatal: under
+# `set -e` an unconditional `git rev-parse` here aborted the whole deploy
+# before it did anything whenever the code had arrived any way other than
+# git -- which is exactly the case this branch exists to support.
+#   git SHA  ->  a RELEASE file, which a tarball can carry  ->  give up.
+if DEPLOYED_REF="$(git -C "$SRC_DIR" rev-parse --short HEAD 2>/dev/null)"; then
+    :
+elif [[ -f "$SRC_DIR/RELEASE" ]]; then
+    DEPLOYED_REF="$(head -1 "$SRC_DIR/RELEASE")"
+else
+    DEPLOYED_REF="unversioned"
+fi
 log "Deploying $DEPLOYED_REF"
 
 # ── Virtualenv ───────────────────────────────────────────────────────────

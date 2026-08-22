@@ -68,7 +68,12 @@ done
 [[ $EUID -eq 0 ]] || { usage; fail "Run with sudo."; }
 [[ -n "$BASE_URL" ]] || { usage; fail "--base-url is required."; }
 [[ "$BASE_URL" =~ ^https?:// ]] || fail "--base-url must start with http:// or https://"
-[[ -n "$REPO" || -d "$SRC_DIR/.git" ]] || { usage; fail "--repo is required (no checkout at $SRC_DIR)."; }
+# --repo is one way to get the code here, not the only one. If it has already
+# been placed at $SRC_DIR -- rsync'd, untarred, or checked out from a bare
+# repo on this machine -- there is nothing to clone and no reason to insist
+# on a remote. Presence of Project-root is the real test, not of .git.
+[[ -n "$REPO" || -d "$SRC_DIR/Project-root" ]] \
+    || { usage; fail "No code at $SRC_DIR. Pass --repo, or put the source there first."; }
 
 if ! grep -q 'VERSION_ID="24.04"' /etc/os-release 2>/dev/null; then
     printf 'WARN: not Ubuntu 24.04. python3 --version should be 3.10-3.12;\n' >&2
@@ -85,8 +90,10 @@ apt-get install -y --no-install-recommends git ca-certificates
 if [[ -d "$SRC_DIR/.git" ]]; then
     log "Updating the existing checkout at $SRC_DIR"
     git -C "$SRC_DIR" fetch --all --tags --prune
-    [[ -n "$REF" ]] && git -C "$SRC_DIR" checkout --force "$REF"
-else
+    if [[ -n "$REF" ]]; then
+        git -C "$SRC_DIR" checkout --force "$REF"
+    fi
+elif [[ -n "$REPO" ]]; then
     log "Cloning $REPO"
     mkdir -p "$APP_DIR"
     if [[ -n "$REF" ]]; then
@@ -94,6 +101,11 @@ else
     else
         git clone "$REPO" "$SRC_DIR"
     fi
+else
+    # Code already placed here by other means -- rsync, a tarball, or a
+    # checkout from a bare repo on this machine. Nothing to fetch, and no
+    # remote to fetch it from.
+    log "Using the code already at $SRC_DIR"
 fi
 
 PROJECT_DIR="$SRC_DIR/Project-root"

@@ -36,6 +36,67 @@ sudo /opt/mtc/src/Project-root/deploy/deploy.sh      # every release
 Layout: `/opt/mtc/src` checkout · `/opt/mtc/venv` the one interpreter ·
 `/etc/mtc/mtc.env` secrets (`root:mtc` `0640`) · service user `mtc`.
 
+### Getting the code onto the server without GitHub
+
+Neither script requires a remote. `deploy.sh` pulls only when `/opt/mtc/src`
+is a git checkout, and falls back to a `RELEASE` file (then to
+`unversioned`) for the revision it reports. Pick whichever transport suits.
+
+**A. A bare repo on the server — best for regular updates.** Keeps history
+and tags, so `deploy.sh --ref v1.2.0` and rollbacks keep working, and never
+leaves the LAN.
+
+```bash
+# on the server, once
+sudo -u mtc git init --bare /opt/mtc/repo.git
+sudo chgrp -R mtc /opt/mtc/repo.git && sudo chmod -R g+rwX /opt/mtc/repo.git
+sudo usermod -aG mtc "$USER"          # your SSH login needs push rights; re-login after
+sudo -u mtc git clone /opt/mtc/repo.git /opt/mtc/src
+
+# on your machine, once
+git remote add factory ssh://you@192.168.1.50/opt/mtc/repo.git
+
+# every release
+git push factory main --tags
+sudo /opt/mtc/src/Project-root/deploy/deploy.sh --ref v1.2.0
+```
+
+Push as your own SSH user, not `mtc` — `mtc` has `nologin` by design, and it
+only needs to *read* the bare repo.
+
+**B. A tarball — simplest, and the one that works from Windows.**
+
+```bash
+# on your machine
+git archive --format=tar.gz --prefix=src/ -o mtc-v1.2.0.tar.gz v1.2.0
+scp mtc-v1.2.0.tar.gz you@192.168.1.50:/tmp/
+
+# on the server -- extract OVER the tree, do not replace it (see below)
+sudo tar -xzf /tmp/mtc-v1.2.0.tar.gz -C /opt/mtc/src --strip-components=1
+echo v1.2.0 | sudo tee /opt/mtc/src/RELEASE
+sudo chown -R mtc:mtc /opt/mtc/src
+sudo /opt/mtc/src/Project-root/deploy/deploy.sh
+```
+
+> **Do not `rm -rf /opt/mtc/src` to get a clean tree.** `backup_service.py`
+> resolves `backups/` to the repo root, so the nightly database dumps live
+> at `/opt/mtc/src/backups` — deleting the directory to "start fresh"
+> destroys every backup you have. Extracting over the top leaves them (and
+> `logs/`) alone. The cost is that files deleted upstream linger; if that
+> matters, move `backups/` aside first, then swap.
+
+**C. rsync — fastest incremental, if you have it.**
+
+```bash
+rsync -a --delete \
+  --exclude '.git' --exclude 'venv*' --exclude 'node_modules' \
+  --exclude '.env' --exclude 'logs' --exclude 'backups' \
+  ./ you@192.168.1.50:/opt/mtc/src/
+sudo chown -R mtc:mtc /opt/mtc/src && sudo /opt/mtc/src/Project-root/deploy/deploy.sh
+```
+
+Excluding `backups` and `logs` is what keeps `--delete` safe here.
+
 ### Three things that bite
 
 - **Never put a `.env` in the checkout.** `config.py` calls
