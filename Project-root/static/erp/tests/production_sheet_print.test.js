@@ -398,4 +398,70 @@ describe('App.Production.printProductionSheet', () => {
       expect(cell.textContent).toContain('-\u200B');
     });
   });
+
+  // The printed sheet is read off a bench, not a screen. These pin the two
+  // things that carry that: the quantity is the largest text in the table,
+  // and the item name is bold.
+  //
+  // Bold on a wrapping cell was forbidden for as long as the html2canvas
+  // exporter was in the build -- it measured lines at normal weight and
+  // painted them bold, so wrapped names overlapped. That exporter is gone
+  // (print.js), and this is what keeps the restriction from creeping back in
+  // with it.
+  describe('print typography', () => {
+    const px = (el, prop) => {
+      const m = new RegExp(`${prop}:\\s*([\\d.]+)px`).exec(el.getAttribute('style'));
+      return m ? parseFloat(m[1]) : null;
+    };
+
+    test('the item name is bold in the Common table', () => {
+      addCommonRow('CARTOON S-D', 'M', '', '90');
+      App.Production.printProductionSheet();
+
+      const nameCell = document.getElementById('print-production-sheet-common-tables')
+        .querySelector('tbody tr td');
+      expect(nameCell.getAttribute('style')).toContain('font-weight:700');
+    });
+
+    test('Required Qty is larger than the item name beside it', () => {
+      addCommonRow('CARTOON S-D', 'M', '', '90');
+      App.Production.printProductionSheet();
+
+      const cells = document.getElementById('print-production-sheet-common-tables')
+        .querySelectorAll('tbody tr td');
+      const nameSize = px(cells[0], 'font-size');
+      const qtySize = px(cells[1], 'font-size');
+
+      expect(qtySize).toBeGreaterThan(nameSize);
+      // ~10% up on the emphasis size, which is what was asked for; the exact
+      // pair depends on which fit tier the sheet settled at.
+      expect(qtySize / nameSize).toBeGreaterThanOrEqual(1.08);
+      expect(qtySize / nameSize).toBeLessThanOrEqual(1.2);
+    });
+
+    test('the matrix table gets the same treatment', () => {
+      App.State.currentProductionSheet = { colors: ['Blue'], lotColor: '' };
+      addMatrixRow('Maharaja-SEAT', 'M', '', { Blue: '20' });
+      App.Production.printProductionSheet();
+
+      const cells = document.getElementById('print-production-sheet-matrix-tables')
+        .querySelectorAll('tbody tr td');
+      expect(cells[0].getAttribute('style')).toContain('font-weight:700');
+      expect(px(cells[1], 'font-size')).toBeGreaterThan(px(cells[0], 'font-size'));
+    });
+
+    test('every fit tier keeps whole-number font sizes', () => {
+      // Fractional sizes against an integer line box drift a wrapped line far
+      // enough to collide with the next one; the tiers carry explicit integer
+      // lineHeights for the same reason.
+      addCommonRow('CARTOON S-D', 'M', '', '90');
+      App.Production.printProductionSheet();
+
+      document.querySelectorAll('#print-production-sheet-common-tables td, #print-production-sheet-common-tables th')
+        .forEach(cell => {
+          const size = px(cell, 'font-size');
+          expect(Number.isInteger(size)).toBe(true);
+        });
+    });
+  });
 });

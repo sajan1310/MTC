@@ -66,7 +66,12 @@
 // colours of its own) now renders BOTH groups as pickable Primary axes
 // instead of defaulting the consumed item's axis to primary and dumping the
 // output's own colours into the non-counting bucket.
-const CACHE_NAME = 'erp-shell-v30';
+// v31: Production Sheet print header rebuilt (output item under the title at
+// title size, Date/Lot #/Lot Qty stacked top-right, colours full width under
+// the brand) and the table typography changed -- Required Qty up ~10%, item
+// names bold. Print-only, so nothing looks different in the app: exactly the
+// case this name exists for.
+const CACHE_NAME = 'erp-shell-v31';
 
 const PRECACHE_URLS = [
   '/erp/offline.html',

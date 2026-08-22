@@ -646,10 +646,12 @@
             -webkit-print-color-adjust:exact;
             print-color-adjust:exact;">
 
-  <!-- Header — a single band: logo hard left, sheet title beside it. This
-       block runs once per sheet, so height saved here (unlike the
-       FIT_TIERS-compressed tables below) comes off every export's page
-       count, not just borderline-overflow ones.
+  <!-- Header — a single band: logo hard left, sheet identity beside it, lot
+       meta hard right, colours full width underneath. This block runs once
+       per sheet, so height saved here (unlike the FIT_TIERS-compressed
+       tables below) comes off every export's page count, not just
+       borderline-overflow ones. Folding Date/Lot #/Lot Qty up into the band
+       is what pays for the output item's own line.
        It was a centred stack of brand / postal address / small title, three
        lines deep. The address is dropped: this sheet never leaves the
        factory, so printing where the factory is told nobody anything. That
@@ -662,51 +664,75 @@
        inline-block behaves identically in both. Only this template changes
        -- every other print header in this file keeps its centred layout and
        its address. -->
-  <div style="padding:0 0 5px 0;">
-    <div class="print-brand-text" style="display:inline-block;vertical-align:middle;
+  <!-- Three cells across the top: brand, identity, lot meta.
+       display:table, not inline-block with percentage widths -- the logo and
+       the meta block both need to be exactly as wide as their content so the
+       titles can sit RIGHT beside the logo. A percentage logo column is
+       always wider than the logo itself, which pushed the titles toward the
+       middle of the page and left them reading as centred. width:1px plus
+       white-space:nowrap is the standard shrink-to-fit table cell: the cell
+       cannot go narrower than its content, so the middle cell takes every
+       remaining pixel and the meta stays flush right.
+
+       OUTPUT ITEM sits under the title at the same size, because the two
+       together are what identify the sheet: the title is the process type
+       ("Packing Requirement Sheet") and the output item is what is being
+       made. Both get read off a stack of sheets at arm's length, so neither
+       belongs in the 12px meta row the output item used to share with Date
+       and Lot #. -->
+  <div style="display:table;width:100%;padding:0 0 2px 0;">
+    <div class="print-brand-text" style="display:table-cell;vertical-align:middle;
+                width:1px;white-space:nowrap;
                 font-size:22px;font-weight:800;color:#198754;
                 letter-spacing:2px;text-transform:uppercase;line-height:1.1;
                 font-family:'Segoe UI',Arial,sans-serif;
                 -webkit-print-color-adjust:exact;print-color-adjust:exact;">
       Maharaja Bikes
     </div>
-    <div id="print-prod-title" style="display:inline-block;vertical-align:middle;
-                margin-left:18px;font-size:20px;color:#198754;font-weight:800;
-                letter-spacing:1.2px;text-transform:uppercase;line-height:1.15;">
-      Production Material Requirement Sheet
+    <div style="display:table-cell;vertical-align:middle;text-align:left;padding-left:12px;">
+      <div id="print-prod-title" style="font-size:20px;color:#198754;font-weight:800;
+                  letter-spacing:1.2px;text-transform:uppercase;line-height:1.15;">
+        Production Material Requirement Sheet
+      </div>
+      <div id="print-prod-name" style="font-size:20px;color:#1a1a1a;font-weight:800;
+                  line-height:1.15;margin-top:2px;"></div>
     </div>
+    <!-- Lot meta, all on ONE row: date over lot number as their own column,
+         with the Lot Qty box beside them. The DATE and LOT # captions are
+         gone -- a date reads as a date and LOT-PO1ID4-0003 reads as a lot
+         number, so the captions cost two lines of header height to say what
+         the values already say. Lot Qty keeps its caption: 90 on its own is
+         just a number. font-size:0 kills the whitespace between the two
+         inline-blocks so the gap is exactly the margin below. -->
+    <div style="display:table-cell;vertical-align:middle;width:1px;white-space:nowrap;
+                text-align:right;padding-left:16px;font-size:0;">
+      <div style="display:inline-block;vertical-align:middle;text-align:right;">
+        <div id="print-prod-date" style="font-size:12px;font-weight:700;color:#1a1a1a;line-height:1.3;"></div>
+        <div id="print-prod-id" style="font-size:12px;font-weight:700;color:#1a1a1a;line-height:1.3;"></div>
+      </div>
+      <div style="display:inline-block;vertical-align:middle;margin-left:10px;
+                  background:#e8f5e9;border:1px solid #198754;
+                  border-radius:7px;padding:1px 11px 2px;text-align:center;
+                  -webkit-print-color-adjust:exact;print-color-adjust:exact;">
+        <span style="font-size:8px;color:#146c43;text-transform:uppercase;letter-spacing:0.5px;">Lot Qty</span>
+        <div id="print-prod-qty" style="font-size:17px;font-weight:800;color:#146c43;line-height:1.05;
+                    -webkit-print-color-adjust:exact;print-color-adjust:exact;"></div>
+      </div>
+    </div>
+  </div>
+  <!-- Colours run full width under the brand rather than inside the meta
+       row: a five-colour lot is a long line, and it now has the whole page
+       to sit on instead of one grid track. Size unchanged; the caption is
+       kept (unlike Date/Lot # above) because a bare list of colour names has
+       nothing to mark it as the lot's colours. Tight leading throughout --
+       this band is two short lines and was spending more height on the gaps
+       around them than on the text. -->
+  <div id="print-prod-color-wrapper" style="display:none;padding:0 0 3px;">
+    <div style="font-size:10px;color:#666;text-transform:uppercase;letter-spacing:0.5px;line-height:1.15;">Color(s)</div>
+    <div id="print-prod-color" style="font-size:12px;font-weight:700;color:#198754;line-height:1.25;"></div>
   </div>
   <div style="height:2px;background:#198754;margin:0 0 8px 0;
               -webkit-print-color-adjust:exact;print-color-adjust:exact;"></div>
-
-  <!-- Lot Info — fixed grid (not space-between flex) so field count/wrapping
-       stays predictable whether or not Color is shown; Lot Qty is the number
-       the whole sheet hangs on, so it gets a boxed, larger treatment. -->
-  <div style="display:grid;grid-template-columns:auto auto 1fr auto;gap:8px 20px;align-items:end;
-              margin-bottom:4px;padding-bottom:6px;border-bottom:1px solid #ccc;">
-    <div>
-      <span style="font-size:10px;color:#666;text-transform:uppercase;letter-spacing:0.5px;">Date</span>
-      <div id="print-prod-date" style="font-size:12px;font-weight:700;color:#1a1a1a;"></div>
-    </div>
-    <div>
-      <span style="font-size:10px;color:#666;text-transform:uppercase;letter-spacing:0.5px;">Lot #</span>
-      <div id="print-prod-id" style="font-size:12px;font-weight:700;color:#1a1a1a;"></div>
-    </div>
-    <div>
-      <span style="font-size:10px;color:#666;text-transform:uppercase;letter-spacing:0.5px;">Output Item</span>
-      <div id="print-prod-name" style="font-size:12px;font-weight:700;color:#1a1a1a;"></div>
-    </div>
-    <div style="background:#e8f5e9;border:1px solid #198754;border-radius:7px;padding:2px 14px 3px;text-align:center;
-                -webkit-print-color-adjust:exact;print-color-adjust:exact;">
-      <span style="font-size:9px;color:#146c43;text-transform:uppercase;letter-spacing:0.5px;">Lot Qty</span>
-      <div id="print-prod-qty" style="font-size:19px;font-weight:800;color:#146c43;line-height:1.05;
-                  -webkit-print-color-adjust:exact;print-color-adjust:exact;"></div>
-    </div>
-  </div>
-  <div id="print-prod-color-wrapper" style="display:none;padding:4px 0 6px;margin-bottom:6px;border-bottom:1px solid #ccc;">
-    <span style="font-size:10px;color:#666;text-transform:uppercase;letter-spacing:0.5px;">Color(s)</span>
-    <div id="print-prod-color" style="font-size:12px;font-weight:700;color:#198754;margin-top:1px;"></div>
-  </div>
 
   <!-- Common Components — App.Production.printProductionSheet builds either
        one full-width table or two side-by-side tables here, at whichever

@@ -7339,18 +7339,21 @@ App.Production = {
     // far enough over a few wrapped lines that two of them get painted at
     // the SAME y, rendering long item names as unreadable overlapping mush
     // in the downloaded PDF while window.print() looked fine.
+    //
+    // qtyFont is emphasisFont + 10%, rounded to the whole number the note
+    // above requires: the quantity is the one value on the sheet that gets
+    // acted on, so it outranks even the item name it sits beside.
     const FIT_TIERS = [
-      { pad: '7px 9px', font: 12, emphasisFont: 15, lineHeight: 20, tableGap: 12 },
-      { pad: '5px 8px', font: 11, emphasisFont: 14, lineHeight: 19, tableGap: 9 },
-      { pad: '4px 7px', font: 11, emphasisFont: 13, lineHeight: 17, tableGap: 7 },
-      { pad: '3px 6px', font: 10, emphasisFont: 12, lineHeight: 16, tableGap: 5 }
+      { pad: '7px 9px', font: 12, emphasisFont: 15, qtyFont: 17, lineHeight: 20, tableGap: 12 },
+      { pad: '5px 8px', font: 11, emphasisFont: 14, qtyFont: 15, lineHeight: 19, tableGap: 9 },
+      { pad: '4px 7px', font: 11, emphasisFont: 13, qtyFont: 14, lineHeight: 17, tableGap: 7 },
+      { pad: '3px 6px', font: 10, emphasisFont: 12, qtyFont: 13, lineHeight: 16, tableGap: 5 }
     ];
-    // Readability palette. The Item Name cannot use bold (see bodyCell), so
-    // the hierarchy is carried by size + ink instead: near-black names
-    // against the muted grey of the surrounding cells, so the eye lands on
-    // the item first. ZEBRA is a real,
-    // visible band and RULE is a light hairline so the banding, not a heavy
-    // grid, does the row tracking. GRID_STRONG outlines the table so
+    // Readability palette. Hierarchy is carried by size, weight and ink
+    // together: near-black bold names against the muted grey of the
+    // surrounding cells, so the eye lands on the item first. ZEBRA is a
+    // real, visible band and RULE is a light hairline so the banding, not a
+    // heavy grid, does the row tracking. GRID_STRONG outlines the table so
     // columns stay anchored.
     const { HEAD_BG, HEAD_INK, ZEBRA, RULE, GRID_STRONG, INK_PRIMARY, INK_MUTED } = this.PRINT_PALETTE;
 
@@ -7406,12 +7409,15 @@ App.Production = {
     // keeps the width in bounds.
     const TABLE_STYLE = 'width:100%;border-collapse:collapse;';
 
-    // Item Name is emphasised by SIZE (tier.emphasisFont) and never by
-    // weight. html2canvas lays a line out using NORMAL-weight metrics and
-    // then paints bold glyphs, so any bold text that WRAPS overruns its
-    // measured line and the fragments get painted on top of each other.
-    // Bold is still safe, and still used, on cells that cannot wrap: the
-    // Qty column (short values like "24 Pcs") and the column headers.
+    // Item Name is emphasised by size (tier.emphasisFont) AND weight.
+    //
+    // Bold on a wrapping cell used to be unsafe: html2canvas laid a line out
+    // using normal-weight metrics and then painted bold glyphs, so wrapped
+    // bold text overran its measured line and the fragments landed on top of
+    // each other. That exporter is gone -- every print and PDF path is now
+    // window.print() against a real print engine, which measures the weight
+    // it paints (see print.js's "What used to be here"). So the restriction
+    // went with it, and the item name reads as strongly as its quantity.
     //
     // There was an opts.nowrap here that pinned short single-token columns;
     // its only caller was Size, whose "GENERAL" auto layout used to break
@@ -7428,7 +7434,9 @@ App.Production = {
     const bodyCell = (content, tier, opts = {}) => {
       const bg = opts.zebra ? `background:${ZEBRA};` : '';
       const weight = opts.bold ? 'font-weight:700;' : '';
-      const fs = opts.emphasis ? tier.emphasisFont : tier.font;
+      // `qty` outranks `emphasis`: a quantity cell is emphasised too, and
+      // takes the larger of the two sizes.
+      const fs = opts.qty ? tier.qtyFont : (opts.emphasis ? tier.emphasisFont : tier.font);
       const wrap = CELL_VALIGN + CELL_WRAP;
       const ink = (opts.emphasis || opts.bold) ? INK_PRIMARY : INK_MUTED;
       return `<td style="padding:${tier.pad};border:1px solid ${RULE};text-align:${opts.align || 'left'};
@@ -7444,19 +7452,17 @@ App.Production = {
     // width back, which is what actually decides whether a lot fits one page.
     const buildCommonTable = (rows, tier) => {
       if (rows.length === 0) return '';
-      // Item Name is deliberately generous: an item name that lands within
-      // a few px of the column edge is where html2canvas's own text
-      // measuring disagrees with the browser's, wraps a token the browser
-      // would have kept whole, and paints the two fragments on top of each
-      // other. Slack here keeps the common names clear of that boundary.
+      // Item Name is deliberately generous: with Size and Narration no
+      // longer printed the name is the only identifying column left, and
+      // Required Qty needs no more than a short "270 Pcs".
       let head = headCell('Item Name', tier, { align: 'left', width: '72%' });
       head += headCell('Required Qty', tier, { align: 'right', width: '28%' });
 
       const body = rows.map((r, i) => {
         const zebra = i % 2 === 1;
-        let row = bodyCell(withBreakPoints(r.name), tier, { zebra, emphasis: true });
+        let row = bodyCell(withBreakPoints(r.name), tier, { zebra, emphasis: true, bold: true });
         const qtyText = r.qty ? `${escapeHtml(this.formatQty(r.qty))}${r.unit ? ' ' + escapeHtml(r.unit) : ''}` : '&#8211;';
-        row += bodyCell(qtyText, tier, { align: 'right', bold: !!r.qty, zebra, emphasis: true });
+        row += bodyCell(qtyText, tier, { align: 'right', bold: !!r.qty, zebra, emphasis: true, qty: true });
         return `<tr>${row}</tr>`;
       }).join('');
 
@@ -7476,7 +7482,7 @@ App.Production = {
 
       const body = rows.map((r, i) => {
         const zebra = i % 2 === 1;
-        let row = bodyCell(withBreakPoints(r.name), tier, { zebra, emphasis: true });
+        let row = bodyCell(withBreakPoints(r.name), tier, { zebra, emphasis: true, bold: true });
         r.colorQty.forEach((val, ci) => {
           const cellText = val ? `${escapeHtml(this.formatQty(val))}${r.unit ? ' ' + escapeHtml(r.unit) : ''}` : '&#8211;';
           // Which literal item this colour's qty refers to, e.g. a "Teddy
@@ -7485,7 +7491,7 @@ App.Production = {
           // can never disagree with the dialog. See _cellItemTag.
           const tag = (r.colorTag && r.colorTag[ci]) || '';
           const tagHtml = tag ? `<div style="font-size:${Math.max(tier.font - 2, 8)}px;font-weight:700;color:${INK_MUTED};line-height:1.2;">${escapeHtml(tag)}</div>` : '';
-          row += bodyCell(cellText + tagHtml, tier, { align: 'right', bold: !!val, zebra, emphasis: true });
+          row += bodyCell(cellText + tagHtml, tier, { align: 'right', bold: !!val, zebra, emphasis: true, qty: true });
         });
         return `<tr>${row}</tr>`;
       }).join('');
