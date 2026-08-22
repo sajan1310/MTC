@@ -992,12 +992,19 @@ App.Production = {
       const bands = this._evenBands(colorEntries, MAX_COLS);
       const colWidthPct = (100 / (bands[0]?.length || 1)).toFixed(2) + '%';
       const wrapStyle = 'word-wrap:break-word;overflow-wrap:break-word;word-break:break-word;white-space:normal;';
+      // border-box, or the percentage widths below are CONTENT widths and
+      // each column silently adds its own padding (4px a side) and border on
+      // top of its share: five columns overflowed the page by ~46px, running
+      // the right-hand column and the Total figure off the edge of the PDF.
+      // The percentages already sum to 100%, so the box they describe has to
+      // be the whole cell.
+      const cellBox = 'box-sizing:border-box;';
       const bandsHtml = bands.map(band => `
         <tr style="background:#f1f3f5;-webkit-print-color-adjust:exact;print-color-adjust:exact;">
-          ${band.map(([color]) => `<th style="width:${colWidthPct};padding:3px 4px;border:1px solid #ddd;text-align:center;font-size:9px;font-weight:700;color:${INK};${wrapStyle}">${escapeHtml(color)}</th>`).join('')}
+          ${band.map(([color]) => `<th style="width:${colWidthPct};${cellBox}padding:3px 4px;border:1px solid #ddd;text-align:center;font-size:9px;font-weight:700;color:${INK};${wrapStyle}">${escapeHtml(color)}</th>`).join('')}
         </tr>
         <tr>
-          ${band.map(([, qty]) => `<td style="width:${colWidthPct};padding:3px 4px;border:1px solid #ddd;text-align:center;font-weight:700;color:${INK};">${this.formatQty(qty)}</td>`).join('')}
+          ${band.map(([, qty]) => `<td style="width:${colWidthPct};${cellBox}padding:3px 4px;border:1px solid #ddd;text-align:center;font-weight:700;color:${INK};">${this.formatQty(qty)}</td>`).join('')}
         </tr>`).join('');
       // table-layout:fixed derives each column's width from the FIRST
       // row's cell count -- the Total row (only ever 2 cells) needs an
@@ -1020,8 +1027,8 @@ App.Production = {
         <tbody>
           ${bandsHtml}
           <tr>
-            <td colspan="${totalLabelSpan}" style="padding:3px 6px;border:1px solid #ddd;font-weight:700;text-align:right;color:${INK};">Total</td>
-            <td style="padding:3px 6px;border:1px solid #ddd;font-weight:700;text-align:right;color:${INK};">${this.formatQty(totalQty)}</td>
+            <td colspan="${totalLabelSpan}" style="${cellBox}padding:3px 6px;border:1px solid #ddd;font-weight:700;text-align:right;color:${INK};">Total</td>
+            <td style="width:${colWidthPct};${cellBox}padding:3px 6px;border:1px solid #ddd;font-weight:700;text-align:right;color:${INK};">${this.formatQty(totalQty)}</td>
           </tr>
         </tbody>
       </table>

@@ -57,7 +57,12 @@
 // colour checklist (a sole non-primary colour takes the lot total; a colour
 // on both a counting and a non-counting axis is no longer double-counted)
 // and the Color Group / Sub-Group suffix on each axis heading.
-const CACHE_NAME = 'erp-shell-v28';
+// v29: the Work Order PDF's colour columns declared percentage widths that
+// were CONTENT widths, so each column added its own padding and border on top
+// of its share and five columns ran off the right edge of the page. A
+// print-only fix with no visible effect in the app -- precisely the kind this
+// name exists to get onto the tablets.
+const CACHE_NAME = 'erp-shell-v29';
 
 const PRECACHE_URLS = [
   '/erp/offline.html',
