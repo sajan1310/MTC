@@ -45,6 +45,10 @@ code_snapshot_*.zip
 .coverage.*
 htmlcov/
 .pytest_cache/
+# jest's istanbul HTML report (package.json coverageDirectory) -- the JS
+# counterpart to htmlcov/, and it appears the first time anyone runs
+# npm run test:coverage.
+coverage/
 
 # Generated reports and artifacts
 *_audit_report.json
