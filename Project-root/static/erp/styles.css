@@ -1101,6 +1101,25 @@
     background: linear-gradient(135deg, var(--secondary-color) 0%, #f472b6 100%) !important;
   }
 
+  /* The offline-password banner sits ABOVE .app-header in the document, so
+     without this it scrolls away and then hides behind the sticky header --
+     and the app scrolls itself down on every load (App.Navigation restores
+     the last tab through location.hash, and the browser scrolls that tab
+     into view), so on a normal load the banner was already ~164px above the
+     viewport before anyone could read it. A standing warning nobody ever
+     sees is worse than no warning, because it reads as covered.
+
+     Pinned at the top instead, above the header's z-index 1000 and well
+     below Bootstrap's modal layer (1055+), so My Profile still opens over
+     it. --offline-banner-offset is published by App.OfflinePassword from
+     the banner's measured height and falls back to 0, so nothing moves for
+     the overwhelmingly common case where the banner is hidden. */
+  #offlinePasswordPrompt {
+    position: sticky;
+    top: 0;
+    z-index: 1001;
+  }
+
   .app-header {
     margin: -20px -20px 24px -20px;
     padding: 20px 24px 16px 24px;
@@ -1109,7 +1128,7 @@
     -webkit-backdrop-filter: blur(12px);
     border-bottom: 1px solid rgb(0 0 0 / 5%);
     position: sticky;
-    top: 0;
+    top: var(--offline-banner-offset, 0);
     z-index: 1000;
     box-shadow: 0 4px 20px rgb(0 0 0 / 2%);
   }

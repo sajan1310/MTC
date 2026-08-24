@@ -82,7 +82,12 @@
 // (App.Profile.applyPasswordMode). Both live in core.js, which is precached
 // cache-first, so an installed client would otherwise keep a banner it
 // cannot close and a field it cannot fill in.
-const CACHE_NAME = 'erp-shell-v33';
+// v34: that banner is now pinned to the top rather than sitting in the
+// document above a sticky header, where the app scrolling itself down to the
+// restored tab carried it off the screen on every single load -- it was only
+// ever visible if you happened to scroll back to the very top. styles.css is
+// precached too, and the fix needs both files.
+const CACHE_NAME = 'erp-shell-v34';
 
 const PRECACHE_URLS = [
   '/erp/offline.html',

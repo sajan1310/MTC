@@ -1531,6 +1531,15 @@ const App = {
       if (!prompt) return;
       prompt.classList.remove('d-none');
       prompt.classList.add('d-flex');
+      this._publishHeight();
+
+      // The banner wraps to two or three lines on a narrow window, and the
+      // header's offset has to follow or it overlaps. Registered once, only
+      // for the accounts that actually see the banner.
+      if (!this._resizeBound) {
+        this._resizeBound = true;
+        window.addEventListener('resize', () => App.OfflinePassword._publishHeight());
+      }
     },
 
     hidePrompt() {
@@ -1538,6 +1547,21 @@ const App = {
       if (!prompt) return;
       prompt.classList.add('d-none');
       prompt.classList.remove('d-flex');
+      this._publishHeight();
+    },
+
+    // The banner is pinned to the top (styles.css #offlinePasswordPrompt) so
+    // it cannot scroll away -- it sits above .app-header in the document,
+    // and the app scrolls itself down on load restoring the last tab, which
+    // used to carry the banner off the top of the screen before anyone could
+    // read it. Pinning means the header has to start below it, and only this
+    // knows how tall "it" is. 0 when hidden, which is the common case and
+    // leaves the header exactly where it has always been.
+    _publishHeight() {
+      const prompt = document.getElementById('offlinePasswordPrompt');
+      const shown = prompt && !prompt.classList.contains('d-none');
+      const px = shown ? Math.ceil(prompt.getBoundingClientRect().height) : 0;
+      document.documentElement.style.setProperty('--offline-banner-offset', `${px}px`);
     },
 
     _dismissKey() {

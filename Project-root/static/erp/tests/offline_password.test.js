@@ -48,6 +48,7 @@ describe('App.OfflinePassword', () => {
     document.head.innerHTML = '';
     document.body.innerHTML = '';
     sessionStorage.clear();
+    document.documentElement.style.removeProperty('--offline-banner-offset');
     loadCoreAsGlobal();
   });
 
@@ -109,6 +110,37 @@ describe('App.OfflinePassword', () => {
     buildPage({ hasPassword: false });
     App.OfflinePassword.init();
     expect(isVisible('currentPasswordField')).toBe(false);
+  });
+
+  test('showing the banner pushes the sticky header down by its height', () => {
+    // The banner is pinned (styles.css #offlinePasswordPrompt: position
+    // sticky) because it sits above .app-header in the document and the app
+    // scrolls itself down on load to the restored tab -- which used to carry
+    // the banner off the top of the screen on every single load. Pinning it
+    // means .app-header has to start below it, and --offline-banner-offset
+    // is the only thing that knows how tall it is. jsdom reports 0-height
+    // boxes, so this asserts the contract (the variable is published, and
+    // returns to 0px when hidden), not the pixel value.
+    buildPage({ hasPassword: false });
+    jest.spyOn(Element.prototype, 'getBoundingClientRect')
+      .mockReturnValue({ height: 75, width: 1436, top: 0, left: 0, bottom: 75, right: 1436 });
+
+    App.OfflinePassword.init();
+    expect(document.documentElement.style.getPropertyValue('--offline-banner-offset')).toBe('75px');
+
+    App.OfflinePassword.hidePrompt();
+    expect(document.documentElement.style.getPropertyValue('--offline-banner-offset')).toBe('0px');
+
+    jest.restoreAllMocks();
+  });
+
+  test('an account that has a password never displaces the header', () => {
+    buildPage({ hasPassword: true });
+    App.OfflinePassword.init();
+
+    // Never set at all, so .app-header keeps its own `top: 0` fallback --
+    // the overwhelmingly common case must not move a single pixel.
+    expect(document.documentElement.style.getPropertyValue('--offline-banner-offset')).toBe('');
   });
 
   test('unreachable sessionStorage leaves the banner showing rather than throwing', () => {
