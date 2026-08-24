@@ -1460,28 +1460,77 @@ const App = {
   // to register a private-IP redirect URI in any case, so the account simply
   // cannot sign in.
   //
-  // So this is a standing, NON-DISMISSIBLE banner rather than a toast. It
-  // must survive until the thing it warns about is actually fixed, and the
-  // window in which it can be acted on closes the moment the internet does.
-  // The trade-off of not blocking the app outright is that some accounts
-  // will still be missing a password on cut-over day, which is why
-  // DEPLOYMENT.md pairs this with a query for finding them.
+  // So this is a standing banner rather than a toast: it must survive until
+  // the thing it warns about is actually fixed, and the window in which it
+  // can be acted on closes the moment the internet does. The trade-off of
+  // not blocking the app outright is that some accounts will still be
+  // missing a password on cut-over day, which is why DEPLOYMENT.md pairs
+  // this with a query for finding them.
   OfflinePassword: {
+    // Dismissal lives in sessionStorage, not localStorage, and is keyed by
+    // user id. Both halves matter:
+    //
+    //   sessionStorage  -- what this warns about is a permanent lockout, so
+    //     a dismissal that outlived the browser session would quietly
+    //     delete the only warning the account ever gets. Closing the banner
+    //     buys quiet for today; it comes back next time the app is opened.
+    //   keyed by user id -- shop-floor terminals are shared. Without the
+    //     key, one user dismissing it would suppress the warning for the
+    //     next person who signs in on that same tab.
+    DISMISS_KEY: 'maharaja-erp-offline-password-dismissed',
+
+    // Whether the signed-in account can authenticate without Google. Read
+    // from the meta at startup and flipped by onPasswordSet(); the profile
+    // modal reads it too, so the wording there and the banner can never
+    // disagree about which state the account is in.
+    hasPassword: true,
+
     init() {
       const meta = document.querySelector('meta[name="current-user-has-password"]');
       // Absent meta means an older template or a page that does not emit it.
       // Treated as "has a password": a spurious banner on every load for
       // every user is worse than a missing one, and the server-side query in
       // DEPLOYMENT.md is the real backstop either way.
-      if (!meta || meta.getAttribute('content') !== 'no') return;
+      this.hasPassword = !meta || meta.getAttribute('content') !== 'no';
 
+      // Unconditional, and deliberately outside the banner's own early
+      // return below: the modal must stop asking an account with no
+      // password to prove a current one even when the banner has been
+      // dismissed, or the dismissal would take the fix down with it.
+      App.Profile.applyPasswordMode(this.hasPassword);
+
+      if (this.hasPassword) return;
+
+      const prompt = document.getElementById('offlinePasswordPrompt');
+      if (!prompt) return;
+
+      document.getElementById('offlinePasswordPromptBtn')
+        ?.addEventListener('click', () => App.Profile.openModal());
+      document.getElementById('offlinePasswordPromptClose')
+        ?.addEventListener('click', () => {
+          App.OfflinePassword._setDismissed(true);
+          App.OfflinePassword.hidePrompt();
+        });
+
+      if (this._isDismissed()) return;
+      this.showPrompt();
+    },
+
+    // Called after changeMyPassword succeeds. Hidden here rather than left
+    // to the next page load, because leaving the banner up after the user
+    // did exactly what it asked reads as "that did not work".
+    onPasswordSet() {
+      this.hasPassword = true;
+      this._setDismissed(false);
+      this.hidePrompt();
+      App.Profile.applyPasswordMode(true);
+    },
+
+    showPrompt() {
       const prompt = document.getElementById('offlinePasswordPrompt');
       if (!prompt) return;
       prompt.classList.remove('d-none');
       prompt.classList.add('d-flex');
-
-      document.getElementById('offlinePasswordPromptBtn')
-        ?.addEventListener('click', () => App.Profile.openModal());
     },
 
     hidePrompt() {
@@ -1489,15 +1538,70 @@ const App = {
       if (!prompt) return;
       prompt.classList.add('d-none');
       prompt.classList.remove('d-flex');
+    },
+
+    _dismissKey() {
+      const id = document.querySelector('meta[name="current-user-id"]')?.getAttribute('content');
+      // No id (older template) falls back to a shared key rather than
+      // skipping dismissal entirely -- a button that visibly does nothing
+      // is worse than one that is slightly over-broad on a page that should
+      // not occur anyway.
+      return `${this.DISMISS_KEY}:${id || 'unknown'}`;
+    },
+
+    // Storage can throw outright, not just come back empty (Safari private
+    // browsing, "block all cookies"). A banner is not worth a broken page,
+    // and a failed read must land on "not dismissed" so the warning shows.
+    _isDismissed() {
+      try {
+        return sessionStorage.getItem(this._dismissKey()) === '1';
+      } catch (e) {
+        return false;
+      }
+    },
+
+    _setDismissed(dismissed) {
+      try {
+        if (dismissed) sessionStorage.setItem(this._dismissKey(), '1');
+        else sessionStorage.removeItem(this._dismissKey());
+      } catch (e) { /* storage inaccessible -- banner returns on reload */ }
     }
   },
 
   Profile: {
+    // Switches the password section between "change" and "set" wording, and
+    // hides the Current Password field entirely for an account that has
+    // none. A Google-created account has no current password to type, so
+    // showing the field asked the user to work out that "blank" was the
+    // right answer -- and change_my_password (profile_service.py) already
+    // skips the check when password_hash IS NULL, so the field was never
+    // doing anything for them anyway.
+    applyPasswordMode(hasPassword) {
+      const field = document.getElementById('currentPasswordField');
+      if (field) field.classList.toggle('d-none', !hasPassword);
+
+      // Cleared as well as hidden. The input stays in the form (so
+      // submitPassword's form.currentPassword still resolves), and a value
+      // typed before the mode switched would otherwise be submitted from a
+      // field the user can no longer see.
+      const input = document.querySelector('#myPasswordForm [name="currentPassword"]');
+      if (input && !hasPassword) input.value = '';
+
+      const heading = document.getElementById('myPasswordHeading');
+      if (heading) heading.textContent = hasPassword ? 'Change Password' : 'Set a Password';
+      const btn = document.getElementById('myPasswordSaveBtn');
+      if (btn) btn.textContent = hasPassword ? 'Change Password' : 'Set Password';
+    },
+
     openModal() {
       const profileForm = document.getElementById('myProfileForm');
       if (profileForm) profileForm.reset();
       const passwordForm = document.getElementById('myPasswordForm');
       if (passwordForm) passwordForm.reset();
+      // reset() restores the field's markup value but not the mode -- and
+      // the modal can be opened before or after a password is set, so
+      // re-apply rather than trusting whatever the last open left behind.
+      this.applyPasswordMode(App.OfflinePassword.hasPassword);
       safeModalShow('myProfileModal');
     },
 
@@ -1547,12 +1651,10 @@ const App = {
         App.Utils.showToast(res?.message || (res?.success ? 'Password updated.' : 'Failed to update password.'), !res?.success);
         if (res?.success) {
           form.reset();
-          // The account now has a password, so the standing prompt has
-          // nothing left to warn about. Hidden here rather than on the next
-          // page load, because the whole point of a non-dismissible banner
-          // is that it stays put -- leaving it up after the user did exactly
-          // what it asked reads as "that did not work".
-          App.OfflinePassword.hidePrompt();
+          // The account now has a password, so the banner has nothing left
+          // to warn about and the modal must start asking for a current
+          // password again on the next change.
+          App.OfflinePassword.onPasswordSet();
         }
       } catch (err) {
         App.Utils.showToast(err.message || 'Failed to update password.', true);

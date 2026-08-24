@@ -4,15 +4,22 @@
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
   <meta name="csrf-token" content="{{ csrf_token() }}">
+  <!-- The viewer's own id. Read by users.js (admins only) to hide the
+       role-change/deactivate controls on the admin's own row, and by
+       App.OfflinePassword to key its per-user dismissal so one user
+       dismissing the offline-password reminder on a shared shop-floor
+       terminal cannot suppress it for the next person who signs in there.
+       Emitted for everyone rather than admins only for that second reason;
+       it is the viewer's own id in the viewer's own page, so there is
+       nothing here they could not already read off their own session. -->
+  <meta name="current-user-id" content="{{ current_user.id }}">
   {% if current_user.is_admin %}
-  <!-- Read by users.js to hide role-change/deactivate controls on the
-       admin's own row, and to hide the role <select> (showing a read-only
-       badge instead) on any admin/super_admin row when the viewer isn't a
+  <!-- Read by users.js to hide the role <select> (showing a read-only badge
+       instead) on any admin/super_admin row when the viewer isn't a
        super_admin -- mirrors the equivalent server-side guards in
        users_service.py (update_user_role/create_user); this is only a UI
-       convenience, not the real enforcement. Only emitted for admins since
-       only they load users.js. -->
-  <meta name="current-user-id" content="{{ current_user.id }}">
+       convenience, not the real enforcement. Still admin-only since only
+       admins load users.js. -->
   <meta name="current-user-role" content="{{ current_user.role }}">
   {% endif %}
   <!-- Emitted for EVERY user, unlike the two admin-only tags above: a
@@ -187,12 +194,18 @@
 
           <hr class="my-4">
 
-          <h6 class="text-secondary border-bottom pb-2 mb-3 fw-bold">Change Password</h6>
+          <!-- Heading, the current-password field and the submit label all
+               switch between "change" and "set" wording in
+               App.Profile.applyPasswordMode(), driven by the same
+               current-user-has-password meta as the banner. An account that
+               has no password cannot be asked to prove one, and telling it
+               to "leave the field blank" was asking the user to understand
+               the implementation instead of just hiding the field. -->
+          <h6 id="myPasswordHeading" class="text-secondary border-bottom pb-2 mb-3 fw-bold">Change Password</h6>
           <form id="myPasswordForm" autocomplete="off">
-            <div class="mb-3">
+            <div class="mb-3" id="currentPasswordField">
               <label class="form-label fw-bold">Current Password</label>
               <input type="password" name="currentPassword" class="form-control" autocomplete="current-password">
-              <div class="form-text">Leave blank if you signed up with Google and have never set a password.</div>
             </div>
             <div class="mb-3">
               <label class="form-label fw-bold">New Password *</label>
@@ -258,12 +271,16 @@
   <div class="container-fluid" id="app-container">
 
     <!-- Standing prompt for a Google-created account that has never set a
-         password. Deliberately NOT dismissible: it is the only warning
-         before an internet outage, or the move to the factory LAN, leaves
-         this account with no way to sign in at all. core.js unhides it from
-         the current-user-has-password meta and hides it again the moment
-         changeMyPassword succeeds. Hidden by default so it can never flash
-         for the ordinary case where a password already exists. -->
+         password. core.js unhides it from the current-user-has-password
+         meta and hides it again the moment changeMyPassword succeeds.
+         Hidden by default so it can never flash for the ordinary case where
+         a password already exists.
+
+         Dismissible, but only for the current browser session (see
+         App.OfflinePassword.DISMISS_KEY): what it warns about is a
+         permanent lockout, so a dismissal that outlived the session would
+         quietly delete the one warning this account ever gets. Closing it
+         buys quiet for today, not forever. -->
     <div id="offlinePasswordPrompt" class="alert alert-warning d-none align-items-center gap-3 mt-3 mb-0"
          role="alert">
       <i class="bi bi-shield-exclamation fs-4" aria-hidden="true"></i>
@@ -274,6 +291,12 @@
       </div>
       <button type="button" class="btn btn-warning fw-bold text-nowrap"
               id="offlinePasswordPromptBtn">Set password</button>
+      <!-- Not data-bs-dismiss="alert": Bootstrap's own dismiss REMOVES the
+           element, so nothing would be left to unhide after the password is
+           set, and the reminder could never come back this page load. -->
+      <button type="button" class="btn-close" id="offlinePasswordPromptClose"
+              aria-label="Dismiss this reminder until the next sign-in"
+              title="Dismiss until the next sign-in"></button>
     </div>
 
     <!-- Header -->

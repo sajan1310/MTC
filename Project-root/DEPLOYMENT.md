@@ -458,9 +458,25 @@ route to `accounts.google.com`, and Google will not register a private-IP
 redirect URI in any case, so the account cannot sign in **at all**.
 
 Such users now see a standing banner prompting them to set one (My Profile →
-Change Password, leaving *Current Password* blank). It is not dismissible,
-but it is also not blocking, so it does not guarantee coverage. **Check
-before you cut over:**
+Set a Password; the *Current Password* field is hidden for an account that
+has none, so there is nothing to leave blank). The banner can be dismissed,
+but only for the current browser session — it returns on the next sign-in,
+because what it warns about does not go away by being acknowledged.
+
+**First, make sure the form it points at can actually work.** On a database
+provisioned before `users.updated_at` existed, every `UPDATE users` — Set
+Password included — fails with `UndefinedColumn`, which the RPC layer masks
+as *"Something went wrong on our end. If this keeps happening, quote
+reference …"*. The banner then warns about a lockout and points at a form
+that cannot possibly fix it. `035_users_updated_at` repairs this; confirm it
+is applied:
+
+```bash
+sudo -u mtc /opt/mtc/venv/bin/python     /opt/mtc/src/Project-root/migrations/erp/runner.py --status
+```
+
+It is also not blocking, so it does not guarantee coverage. **Check before
+you cut over:**
 
 ```sql
 SELECT email, name, role

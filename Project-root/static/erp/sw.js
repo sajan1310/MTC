@@ -77,7 +77,12 @@
 // the bump an installed client keeps the old core.js and the banner never
 // appears, which is the one warning those users get before an internet
 // outage, or the move to the factory LAN, locks them out entirely.
-const CACHE_NAME = 'erp-shell-v32';
+// v33: the offline-password banner gained a dismiss button, and the profile
+// modal now hides the Current Password field for an account that has none
+// (App.Profile.applyPasswordMode). Both live in core.js, which is precached
+// cache-first, so an installed client would otherwise keep a banner it
+// cannot close and a field it cannot fill in.
+const CACHE_NAME = 'erp-shell-v33';
 
 const PRECACHE_URLS = [
   '/erp/offline.html',

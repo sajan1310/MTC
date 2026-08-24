@@ -1,0 +1,29 @@
+-- Adds users.updated_at, written by every statement that modifies a user
+-- row: profile_service.py's update_my_profile and change_my_password, and
+-- users_service.py's update_user_role / deactivate_user / reactivate_user.
+--
+-- Same drift as 025_users_deleted_at.sql, and for the same reason:
+-- init_schema.sql defines this column, but it does so under CREATE TABLE
+-- IF NOT EXISTS, so a `users` table provisioned before the column was
+-- added there never picked it up and there is no other migration path for
+-- the public schema's pre-existing core tables.
+--
+-- The failure it caused is worth spelling out, because it is invisible
+-- from the outside. `UPDATE users SET ... updated_at = NOW()` raises
+-- UndefinedColumn, which is not a domain error, so app/erp/rpc.py masks it
+-- as "Something went wrong on our end. If this keeps happening, quote
+-- reference <id>." -- correct behaviour for a bug, but it means the whole
+-- of Save Profile, Change Password, Change Role, Deactivate and Reactivate
+-- returned that one message and nothing said which column was missing.
+--
+-- Change Password is the one that matters most: it is what the offline
+-- password banner (App.OfflinePassword in static/erp/core.js) tells a
+-- Google-created account to use, and it is the ONLY way such an account
+-- can gain a password without SMTP. So on this database the banner warned
+-- about a lockout and pointed at a form that could not possibly fix it.
+--
+-- DEFAULT CURRENT_TIMESTAMP matches init_schema.sql, and backfills every
+-- existing row rather than leaving NULLs behind. ADD COLUMN IF NOT EXISTS
+-- is additive and safe against a table that may already have it.
+ALTER TABLE users
+    ADD COLUMN IF NOT EXISTS updated_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP;
