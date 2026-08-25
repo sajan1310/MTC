@@ -12,6 +12,28 @@ import logging
 logger = logging.getLogger(__name__)
 
 
+def _sanitize_request_id(value):
+    """Return `value` if it is a well-formed UUID, else None.
+
+    Parsing as a UUID rather than pattern-stripping is deliberate: it accepts
+    exactly the shape this application generates, and rejects everything else
+    outright instead of trying to make a hostile string safe. Nothing with a
+    newline, a control character, an ANSI escape or an unbounded length can
+    get through.
+    """
+    if not value or not isinstance(value, str):
+        return None
+    candidate = value.strip()
+    # uuid.UUID() tolerates surrounding braces, urn: prefixes and missing
+    # hyphens, so compare the canonical form back to the input to keep the
+    # id we log identical to the id the client sent.
+    try:
+        parsed = uuid.UUID(candidate)
+    except (ValueError, AttributeError, TypeError):
+        return None
+    return candidate if str(parsed) == candidate.lower() else str(parsed)
+
+
 def setup_request_id_middleware(app):
     """
     Register before_request and after_request handlers to track request IDs.
@@ -24,8 +46,17 @@ def setup_request_id_middleware(app):
     @app.before_request
     def assign_request_id():
         """Assign a unique request ID to the request context."""
-        # Check if client sent X-Request-ID header (for downstream propagation)
-        request_id = request.headers.get("X-Request-ID")
+        # A client-supplied X-Request-ID is accepted for trace correlation,
+        # but only if it IS a UUID (SEC-011).
+        #
+        # It used to be taken verbatim. This value is written into log lines
+        # and echoed back in a response header, so an arbitrary string is a
+        # log-injection primitive: embedded newlines let a caller forge
+        # whole log entries -- inventing errors that never happened, or
+        # burying real ones under plausible-looking noise -- and an
+        # attacker-chosen id also lets them collide deliberately with
+        # somebody else's trace.
+        request_id = _sanitize_request_id(request.headers.get("X-Request-ID"))
         if not request_id:
             request_id = str(uuid.uuid4())
 

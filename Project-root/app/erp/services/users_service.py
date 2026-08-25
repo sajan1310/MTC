@@ -1,5 +1,5 @@
 """User management -- the admin-facing surface for the `role`/`deleted_at`
-columns that already existed on `users` (migrations/init_schema.sql) but had
+columns on `users` (created by migrations/erp/000_public_core.sql) that had
 no UI and no RPC methods reading or writing them. Every method here is
 role-gated via RpcSpec.roles (registry.py) rather than left open like the
 rest of the RPC surface -- this is deliberately the first (and, for now,
@@ -106,13 +106,14 @@ def create_user(conn, cur, name, email, password, confirm_password, role):
     if not ok:
         raise ValueError(msg)
 
-    if role not in CREATE_ROLES and not is_valid_custom_role(role):
+    if role not in CREATE_ROLES and not is_valid_custom_role(role, cur):
         raise ValueError(f"Invalid role \"{role}\". Must be one of: {', '.join(CREATE_ROLES)}, or a custom role.")
     # Same rule as update_user_role: only a Super Admin can hand out Admin.
     if role == "admin" and get_current_user_role() != "super_admin":
         raise ValueError("Only a Super Admin can create a user with the Admin role.")
 
-    cur.execute("SELECT user_id FROM users WHERE email = %s", (email,))
+    # lower(email) (AUTH-001): identity is case-insensitive.
+    cur.execute("SELECT user_id FROM users WHERE lower(email) = %s", (email,))
     if cur.fetchone():
         raise ValueError("An account with this email already exists.")
 
@@ -133,7 +134,7 @@ def create_user(conn, cur, name, email, password, confirm_password, role):
 def update_user_role(conn, cur, user_id, role):
     user_id = int(user_id)
     role = str(role or "").strip().lower()
-    if role not in ROLES and not is_valid_custom_role(role):
+    if role not in ROLES and not is_valid_custom_role(role, cur):
         raise ValueError(f"Invalid role \"{role}\". Must be one of: {', '.join(ROLES)}, or a custom role.")
 
     # Creating new admins is a Super Admin-only power -- an ordinary admin

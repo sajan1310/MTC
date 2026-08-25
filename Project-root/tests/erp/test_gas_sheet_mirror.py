@@ -15,7 +15,6 @@ import os
 import sys
 from unittest.mock import MagicMock
 
-import database
 
 _MIGRATION_DIR = os.path.abspath(
     os.path.join(os.path.dirname(__file__), "../../scripts/migration")
@@ -47,14 +46,32 @@ def test_every_sheet_entry_builds_rows_without_error(app):
     schema. A renamed/dropped column or table shows up here as a hard
     failure instead of silently producing blank/wrong mirrored data."""
     mapping = mirror.load_mapping(MAPPING_PATH)
-    with app.app_context():
-        with database.get_conn() as (conn, _cur):
+
+    # A standalone psycopg2 connection, NOT database.get_conn(), because that
+    # is what production does: mirror.run_mirror() opens its own
+    # psycopg2.connect(database_url). Using a pooled connection here made the
+    # test diverge from the real path and, once the PERF-003 nesting guard
+    # went in, made the STOCK entry fail -- build_stock_rows calls
+    # stock_service.get_stock_data(), which takes a POOLED connection, so the
+    # test was nesting one inside another in a way production never does.
+    import psycopg2
+
+    conn = psycopg2.connect(
+        host=os.getenv("TEST_DB_HOST", os.getenv("DB_HOST", "127.0.0.1")),
+        dbname=os.getenv("TEST_DB_NAME", "testdb"),
+        user=os.getenv("TEST_DB_USER", os.getenv("DB_USER", "postgres")),
+        password=os.getenv("TEST_DB_PASS", os.getenv("DB_PASS", "abcd")),
+    )
+    try:
+        with app.app_context():
             failures = []
             for entry in mapping["sheets"]:
                 try:
                     mirror.build_rows_for_entry(conn, entry)
                 except Exception as exc:
                     failures.append(f"{entry['key']}: {exc}")
+    finally:
+        conn.close()
     assert not failures, "sheet(s) failed to build:\n" + "\n".join(failures)
 
 

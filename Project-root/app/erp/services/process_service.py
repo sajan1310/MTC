@@ -2173,24 +2173,39 @@ def refresh_process_primary_color_axes(cur) -> dict:
     return {"filled": filled, "skipped": skipped, "details": details}
 
 
+def _fetch_process_color_groups(cur, process_id) -> list:
+    """A process's known colors, using a cursor the caller already holds.
+
+    Split out for PERF-003. The RPC wrapper below read the components through
+    get_process_components_data() -- which opens its OWN connection -- and
+    then opened a second one for everything else. Called from inside
+    clients_service.save_client_order's transaction, that was three
+    connections deep for one logical read.
+    """
+    key = str(process_id or "").strip().lower()
+    components = _fetch_process_components(cur, process_id)
+    pool_rows = _get_all_warehouse_pool_rows_for_color_axes(cur)
+    color_links = _get_all_process_color_links(cur)
+    overrides = _get_all_process_color_overrides(cur).get(key)
+    logged_colors = list(_get_production_logged_colors_by_process(cur, process_id).get(key, []))
+    known = _compute_known_colors_for_process(
+        process_id, components, pool_rows, color_links, logged_colors, overrides
+    )
+    return known["colors"]
+
+
 @rpc_method("getProcessColorGroups")
 def get_process_color_groups(process_id):
-    components = get_process_components_data(process_id)["data"]
     with database.get_conn(cursor_factory=psycopg2.extras.RealDictCursor) as (_conn, cur):
-        pool_rows = _get_all_warehouse_pool_rows_for_color_axes(cur)
-        color_links = _get_all_process_color_links(cur)
-        overrides = _get_all_process_color_overrides(cur).get(str(process_id or "").strip().lower())
-        logged_colors = list(
-            _get_production_logged_colors_by_process(cur, process_id).get(str(process_id or "").strip().lower(), [])
-        )
-    known = _compute_known_colors_for_process(process_id, components, pool_rows, color_links, logged_colors, overrides)
-    return build_response(True, known["colors"])
+        return build_response(True, _fetch_process_color_groups(cur, process_id))
 
 
 @rpc_method("getProcessColorAxes")
 def get_process_color_axes(process_id):
-    components = get_process_components_data(process_id)["data"]
     with database.get_conn(cursor_factory=psycopg2.extras.RealDictCursor) as (_conn, cur):
+        # Read inside the connection this function already opens, rather than
+        # through the RPC reader that opens another (PERF-003).
+        components = _fetch_process_components(cur, process_id)
         pool_rows = _get_all_warehouse_pool_rows_for_color_axes(cur)
         color_links = _get_all_process_color_links(cur)
         process = next(
@@ -2351,7 +2366,7 @@ def exclude_warehouse_pool_colors(conn, cur, process_id, colors):
     if not color_list:
         raise ValueError("No colors specified.")
 
-    components = get_process_components_data(pid)["data"]
+    components = _fetch_process_components(cur, pid)
     pool_rows = _get_all_warehouse_pool_rows_for_color_axes(cur)
     color_links = _get_all_process_color_links(cur)
     base_colors = {c.lower() for c in _compute_color_groups_for_process(pid, components, pool_rows, color_links)}

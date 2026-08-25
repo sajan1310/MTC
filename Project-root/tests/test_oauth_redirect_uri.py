@@ -77,7 +77,14 @@ def test_callback_route_exists_and_accepts_get(client):
 
 def test_callback_route_handles_missing_code(client):
     """Test that callback route properly handles missing authorization code."""
-    response = client.get("/auth/google/callback")
+    # State is validated before the code is looked at (fail fast on CSRF), so
+    # this has to present a valid state to reach the check it is actually
+    # about. Without it the route correctly answers "Invalid OAuth state" and
+    # this test would be asserting the wrong thing.
+    with client.session_transaction() as sess:
+        sess["oauth_state"] = "state-for-missing-code-test"
+
+    response = client.get("/auth/google/callback?state=state-for-missing-code-test")
 
     assert (
         response.status_code == 400

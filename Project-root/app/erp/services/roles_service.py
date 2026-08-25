@@ -97,24 +97,33 @@ def _slugify(role_name: str) -> str:
     return slug[:50]
 
 
-def get_role_permissions(role_key: str) -> dict[str, str] | None:
+def get_role_permissions(role_key: str, cur=None) -> dict[str, str] | None:
     """Plain helper (not an RPC method) -- {tab: level} for `role_key`, or
     None if it isn't a known custom role. Used by rpc.py's dispatcher and
     pages.py's index() route; a fresh, tiny SELECT each call rather than an
     in-process cache -- this table is expected to stay at most a few dozen
     rows, so the extra query is cheap, and it sidesteps any
     cache-invalidation-on-edit bug entirely.
+
+    Pass `cur` when the caller already holds one (PERF-003) -- is_valid_custom_role
+    below is called from inside users_service's write transactions, so without
+    it a role check opened a second pooled connection mid-write.
     """
-    with database.get_conn(cursor_factory=psycopg2.extras.RealDictCursor) as (_conn, cur):
+    if cur is not None:
         cur.execute("SELECT permissions FROM custom_roles WHERE role_key = %s", (role_key,))
         row = cur.fetchone()
+        return None if row is None else dict(row["permissions"] or {})
+
+    with database.get_conn(cursor_factory=psycopg2.extras.RealDictCursor) as (_conn, own):
+        own.execute("SELECT permissions FROM custom_roles WHERE role_key = %s", (role_key,))
+        row = own.fetchone()
     if row is None:
         return None
     return dict(row["permissions"] or {})
 
 
-def is_valid_custom_role(role_key: str) -> bool:
-    return get_role_permissions(role_key) is not None
+def is_valid_custom_role(role_key: str, cur=None) -> bool:
+    return get_role_permissions(role_key, cur) is not None
 
 
 def get_effective_tab_level(role: str, tab: str) -> str | None:

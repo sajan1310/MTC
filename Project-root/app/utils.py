@@ -6,7 +6,6 @@ import database
 import psycopg2.extras
 from flask import current_app
 from flask_login import current_user
-from psycopg2 import sql
 
 
 def role_required(*allowed_roles):
@@ -68,7 +67,17 @@ def get_or_create_user(user_info):
     """
     from .models import User
 
-    email = user_info.get("email")
+    # Imported here, not at module scope: app.auth.routes imports from the app
+    # package, which imports this module, so a top-level import would be
+    # circular. Shared so the Google path and the password path can never
+    # again disagree about what role a brand-new account gets (SEC-002).
+    from .auth.routes import NEW_ACCOUNT_ROLE
+
+    # Lowercased, like every other write path (api_signup,
+    # users_service.create_user). Google returns lowercase for Gmail but makes
+    # no such promise for other domains, and a mixed-case row here would be a
+    # row nothing else could find -- see AUTH-001 and migration 039.
+    email = (user_info.get("email") or "").strip().lower()
     name = user_info.get("name")
     picture = user_info.get("picture")
     try:
@@ -76,13 +85,37 @@ def get_or_create_user(user_info):
             conn,
             cur,
         ):
-            cur.execute("SELECT * FROM users WHERE email = %s", (email,))
+            # Selected WITHOUT a deleted_at filter, then checked below.
+            #
+            # Filtering in the WHERE clause looks like the obvious fix for
+            # FN-08, but it is wrong here: users.email is UNIQUE, so a
+            # soft-deleted row would be invisible to the SELECT and then
+            # collide on the INSERT, turning "your account was deactivated"
+            # into an IntegrityError and a 500. Fetch the row either way and
+            # decide explicitly.
+            # lower(email): matches any legacy row stored with capitals as
+            # well as the canonical form. Backed by the unique index in
+            # migration 039, so this can never match more than one row.
+            cur.execute("SELECT * FROM users WHERE lower(email) = %s", (email,))
             user_row = cur.fetchone()
             if user_row:
+                if user_row.get("deleted_at") is not None:
+                    # Deactivated (users_service.deactivateUser). Previously
+                    # this path let login_user() succeed, and then load_user()
+                    # -- which DOES filter deleted_at -- returned None on the
+                    # very next request and bounced the user back to the login
+                    # page, over and over, with nothing anywhere explaining
+                    # why. Deactivation now means the same thing on all four
+                    # paths: password login, Google login, password reset and
+                    # session loading.
+                    current_app.logger.info(
+                        "[OAuth] Sign-in refused for deactivated account %s", email
+                    )
+                    return None, False
                 return User(user_row), False
             cur.execute(
                 "INSERT INTO users (name, email, role, profile_picture) VALUES (%s, %s, %s, %s) RETURNING *",
-                (name, email, "pending_approval", picture),
+                (name, email, NEW_ACCOUNT_ROLE, picture),
             )
             new_user_row = cur.fetchone()
             # Note: get_conn() context manager commits on successful exit
@@ -90,42 +123,3 @@ def get_or_create_user(user_info):
     except Exception as e:
         current_app.logger.error(f"Error in get_or_create_user: {e}")
         return None, False
-
-
-def get_or_create_master_id(cur, value, table_name, id_col, name_col):
-    value = str(value).strip()
-    if not value:
-        value = "--"
-    select_query = sql.SQL("SELECT {} FROM {} WHERE {} = %s").format(
-        sql.Identifier(id_col), sql.Identifier(table_name), sql.Identifier(name_col)
-    )
-    cur.execute(select_query, (value,))
-    row = cur.fetchone()
-    if row:
-        return row[0]
-    insert_query = sql.SQL("INSERT INTO {} ({}) VALUES (%s) RETURNING {}").format(
-        sql.Identifier(table_name), sql.Identifier(name_col), sql.Identifier(id_col)
-    )
-    cur.execute(insert_query, (value,))
-    return cur.fetchone()[0]
-
-
-def get_or_create_item_master_id(cur, name, model, variation, description):
-    model_id = get_or_create_master_id(
-        cur, model, "model_master", "model_id", "model_name"
-    )
-    variation_id = get_or_create_master_id(
-        cur, variation, "variation_master", "variation_id", "variation_name"
-    )
-    cur.execute(
-        "SELECT item_id FROM item_master WHERE name=%s AND model_id=%s AND variation_id=%s AND COALESCE(description,'')=%s",
-        (name, model_id, variation_id, description or ""),
-    )
-    row = cur.fetchone()
-    if row:
-        return row[0]
-    cur.execute(
-        "INSERT INTO item_master(name, model_id, variation_id, description) VALUES(%s,%s,%s,%s) RETURNING item_id",
-        (name, model_id, variation_id, description),
-    )
-    return cur.fetchone()[0]

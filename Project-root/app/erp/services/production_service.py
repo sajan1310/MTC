@@ -59,6 +59,7 @@ import psycopg2.extras
 import database
 from . import contractors_service
 from . import items_service
+from . import locks
 from . import process_service
 from . import tags_service
 from . import warehouse_service
@@ -353,6 +354,22 @@ def _build_pool_needed_map(components: list) -> dict:
 
 
 def _validate_pool_availability(cur, pool_needed: dict, already_consumed: dict = None) -> str | None:
+    # DATA-002. Same check-then-act as dispatch, one level up the process:
+    # two operators completing lots that draw the same pooled component both
+    # read the same availability and both pass, and the pool goes negative.
+    #
+    # Locked here, inside the validator, rather than at each of its callers:
+    # this function is the single place pool availability is read for a
+    # decision, so a caller cannot forget. Callers run under
+    # @database.transactional, so `cur` is the deciding transaction and the
+    # lock releases with it.
+    #
+    # POOL, not DISPATCH: a pool bucket and a ready-to-dispatch product are
+    # different quantities. _recalculate_warehouse_pool takes the same
+    # namespace lock, so a rebuild cannot interleave with a decision made
+    # against what it is rebuilding.
+    locks.lock_namespace(cur, locks.POOL)
+
     pool_available_map = warehouse_service._get_pool_available_qty_map(cur)
     already_consumed = already_consumed or {}
     for key, need in pool_needed.items():
@@ -507,7 +524,7 @@ def save_production(conn, cur, form_data):
 
     # Read once, reused for both color-group validation and Primary Axis
     # qty resolution below -- avoids doubling reads on the busiest write path.
-    color_components = process_service.get_process_components_data(process_id)["data"]
+    color_components = process_service._fetch_process_components(cur, process_id)
     pool_rows = process_service._get_all_warehouse_pool_rows_for_color_axes(cur)
     color_links = process_service._get_all_process_color_links(cur)
     color_master_names = process_service._get_color_master_names(cur)

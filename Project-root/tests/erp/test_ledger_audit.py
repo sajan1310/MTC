@@ -218,7 +218,11 @@ def test_run_internal_ledger_audit_skips_when_lock_already_held(erp_app):
         holder_cur.execute("SELECT pg_try_advisory_xact_lock(%s)", (ledger_audit_service._AUDIT_LOCK_KEY,))
         assert holder_cur.fetchone()[0] is True  # this connection now holds it
 
-        with erp_app.app_context():
+        # This test needs two connections BY DESIGN -- "another worker already
+        # holds the lock" cannot be demonstrated from one. That is the single
+        # legitimate exemption from the PERF-003 nesting guard, taken
+        # explicitly here rather than by turning the guard off.
+        with database.allow_nested_connections(), erp_app.app_context():
             result = ledger_audit_service.run_internal_ledger_audit()
         assert result == {"success": True, "skipped": True}
     # holder_cur's transaction commits on context exit here, releasing the lock.

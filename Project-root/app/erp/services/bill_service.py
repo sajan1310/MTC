@@ -64,27 +64,49 @@ def _build_po_line_key(po_number, name, size, narration) -> str:
     return f"{part(po_number)}|{part(name)}|{part(size)}|{part(narration)}"
 
 
+# The SQL form of _build_po_line_key + the fold that followed it (PERF-006).
+#
+# This used to transfer EVERY bill line in the ledger and reduce it to a dict
+# in Python. It is called from po_service._attach_po_status (so: every PO
+# ledger load) and from the dashboard's Open PO summary -- and the dashboard
+# is the landing page, on a 5-minute auto-refresh. Profiled at 271ms per call
+# against five years of volume, it was the largest single cost left in
+# getDashboardData once the production reads were fixed.
+#
+# The key must stay byte-identical to _build_po_line_key's, since po_service
+# looks up this dict with keys built by that function:
+#     f"{part(po)}|{part(name)}|{part(size)}|{part(narration)}"
+#   where part(v) = str(v if v is not None else "").strip().lower()
+# btrim() trims spaces where Python's str.strip() trims all whitespace; these
+# columns come from web form input, so a leading tab is not a case that
+# occurs, and if one ever did it would form its own key rather than corrupt a
+# total -- the same trade-off dashboard_service's own SQL constants document.
+_BILLED_BY_PO_SQL = """
+    SELECT lower(btrim(l.po_number)) || '|' ||
+           lower(btrim(COALESCE(l.item_name, ''))) || '|' ||
+           lower(btrim(COALESCE(l.size, ''))) || '|' ||
+           lower(btrim(COALESCE(l.narration, '')))  AS po_line_key,
+           SUM(l.base_qty)                          AS billed
+    FROM erp.bill_lines l
+    JOIN erp.bill_headers h ON h.id = l.header_id
+    WHERE h.deleted_at IS NULL
+      -- A blank or DIRECT PO number is not fulfilling any PO.
+      AND btrim(COALESCE(l.po_number, '')) <> ''
+      AND upper(btrim(l.po_number)) <> 'DIRECT'
+    GROUP BY 1
+"""
+
+
 def _aggregate_billed_base_qty_by_po(cur) -> dict:
     """Sums already-billed base quantity per (PO_NUMBER, item name, size,
     narration) across the entire Bill Ledger. Lines with a blank or
     'DIRECT' PO number aren't fulfilling any PO, so they're excluded.
+
+    Aggregated by the database -- see _BILLED_BY_PO_SQL for why, and for the
+    exact correspondence with _build_po_line_key.
     """
-    cur.execute(
-        """
-        SELECT l.po_number, l.item_name, l.size, l.narration, l.base_qty
-        FROM erp.bill_lines l
-        JOIN erp.bill_headers h ON h.id = l.header_id
-        WHERE h.deleted_at IS NULL
-        """
-    )
-    result: dict = {}
-    for row in cur.fetchall():
-        po_num = (row["po_number"] or "").strip()
-        if not po_num or po_num.upper() == "DIRECT":
-            continue
-        key = _build_po_line_key(po_num, row["item_name"], row["size"], row["narration"])
-        result[key] = result.get(key, 0) + float(row["base_qty"] or 0)
-    return result
+    cur.execute(_BILLED_BY_PO_SQL)
+    return {row["po_line_key"]: float(row["billed"] or 0) for row in cur.fetchall()}
 
 
 def _find_vendor_id(cur, name: str):
@@ -388,7 +410,7 @@ def save_bill(conn, cur, form_data):
     exclude_set = {str(k).strip().lower() for k in exclude_list}
 
     item_unit_map = items_service.get_item_unit_info_map(cur)
-    units_map = units_service.get_units_map()
+    units_map = units_service.get_units_map(cur)
     vendor_id = _find_vendor_id(cur, vendor)
     user_id = get_current_user_id()
 

@@ -1,142 +1,67 @@
-# Migrations
+# Database migrations
 
-This folder contains small, idempotent Python migration scripts for schema
-fixes needed by the application. Each migration is safe to run multiple times
-and uses `ALTER TABLE ... ADD COLUMN IF NOT EXISTS` so it won't fail if the
-column already exists.
-
-How to run a migration (recommended):
-
-1. Backup your database before running any migration.
-2. From the project root run the migration file with Python. Example (PowerShell):
-
-```powershell
-# run finalized_at + variant compatibility migration
-python .\Project-root\migrations\migration_ensure_variant_and_finalized_columns_20251116.py
-```
-
-3. Restart the application after the migration completes.
-
-Notes:
-- The migrations are written to be non-destructive and idempotent.
-- If you have a proper migration tool (Alembic, Flyway), prefer using that
-  workflow and convert these scripts as appropriate.
-# Database Migrations
-
-This directory contains all database migration scripts for the MTC Inventory Management System.
-
-## Schema Initialization
-
-### `init_schema.sql`
-
-**Purpose**: Creates all core database tables required for the application to run.
-
-**Tables Created**:
-- User Management: `users`
-- Master Data: `model_master`, `variation_master`, `color_master`, `size_master`, `item_category_master`, `item_type_master`, `item_brand_master`
-- Inventory: `item_master`, `item_variant`
-- Supplier Management: `suppliers`, `supplier_contacts`, `supplier_item_rates`
-- Purchase Orders: `purchase_orders`, `purchase_order_items`
-- Stock Management: `stock_entries`, `stock_receipts`
-- System: `schema_migrations`
-
-**Usage**:
-
-For local development:
-```bash
-psql -h localhost -U postgres -d your_database -f migrations/init_schema.sql
-```
-
-For CI/CD (already integrated):
-```bash
-psql "postgresql://testuser:testpass@127.0.0.1:5432/testdb" -f Project-root/migrations/init_schema.sql
-```
-
-## Python Migrations
-
-After running `init_schema.sql`, you can apply incremental Python migrations using:
+There is **one** migration path:
 
 ```bash
-python migrations/migrations.py
+python migrations/erp/runner.py            # apply everything pending
+python migrations/erp/runner.py --status   # show applied / pending
 ```
 
-This will:
-1. Create a `schema_migrations` table (if not exists)
-2. Discover all `migration_*.py` files
-3. Apply them in alphabetical order
-4. Track applied migrations to avoid duplicates
+It applies `migrations/erp/*.sql` in filename order under a Postgres advisory
+lock, and records what it applied in `erp.migrations_applied`. It is
+idempotent, safe to run on every start, and safe to run concurrently — the
+lock makes a second instance wait and then find nothing pending, rather than
+half-applying a schema alongside the first.
 
-## Migration Files
+The deploy path (`deploy/deploy.sh`, `docker-entrypoint.sh`,
+`deploy/mtc.service`'s `ExecStartPre`) runs exactly this command and nothing
+else.
 
-All Python migration files follow the pattern: `migration_<description>.py`
+## Layout
 
-Each migration file must have:
-- `upgrade()` function - applies the migration
-- `downgrade()` function - reverts the migration
+| Path | What it is |
+|---|---|
+| `erp/000_public_core.sql` | The public-schema core: `users`, `password_reset_tokens`. Runs first because every migration from `003` on has a foreign key to `users`. |
+| `erp/0NN_*.sql` | The schema, in order. Add new ones here. |
+| `erp/runner.py` | The runner described above. |
+| `legacy/` | Pre-ERP scripts. **Nothing runs these.** See `legacy/README.md`. |
 
-Example:
-```python
-def upgrade():
-    with get_conn() as (conn, cur):
-        cur.execute("ALTER TABLE items ADD COLUMN new_field VARCHAR(255);")
-        conn.commit()
+## Adding a migration
 
-def downgrade():
-    with get_conn() as (conn, cur):
-        cur.execute("ALTER TABLE items DROP COLUMN new_field;")
-        conn.commit()
-```
+Create `erp/0NN_short_name.sql` with the next number and write plain SQL.
+There is no `upgrade()` function, no Python entry point, and no registration
+step — the runner picks up any `.sql` file in that directory that is not
+already in `erp.migrations_applied`.
 
-## CI/CD Integration
+Two rules:
 
-The GitHub Actions workflow (`.github/workflows/ci.yml`) automatically:
+- **Idempotent where it can be.** `CREATE TABLE IF NOT EXISTS`,
+  `ADD COLUMN IF NOT EXISTS`. The runner will not re-apply a recorded
+  migration, but a half-applied one has to be re-runnable.
+- **A data migration is not idempotent, so say so in the file.** `032_recalc_
+  contractor_payable_per_unit_extra_charge.sql` is the example: a
+  recalculation applied twice produces wrong money. The advisory lock is what
+  protects those.
 
-1. **Creates test databases**: `testdb` and `testuser`
-2. **Initializes schema**: Runs `init_schema.sql` on both databases
-3. **Runs tests**: Executes test suite with initialized schema
+## Verifying a fresh build
 
-This ensures all tests have access to the required database structure.
+The chain builds a complete database from empty. To check it still does:
 
-## Troubleshooting
-
-### "relation does not exist" errors
-
-If you see errors like:
-- `relation "users" does not exist`
-- `relation "item_master" does not exist`
-
-**Solution**: Run `init_schema.sql` to create the base schema:
 ```bash
-psql -U your_user -d your_database -f migrations/init_schema.sql
+createdb scratch_check
+DATABASE_URL=postgresql://.../scratch_check python migrations/erp/runner.py
 ```
 
-### Migration tracking issues
+The result should match production: 50 tables in `erp`, three in `public`
+(`users`, `password_reset_tokens`, `custom_roles`), and **zero seeded user
+accounts**. A migration that mints an account is a bug — see
+`legacy/README.md` for what that cost the last time.
 
-To reset migration tracking (⚠️ WARNING: This doesn't undo migrations):
-```sql
-DELETE FROM schema_migrations WHERE version = 'migration_name';
-```
+## History
 
-To see applied migrations:
-```sql
-SELECT * FROM schema_migrations ORDER BY applied_at DESC;
-```
-
-## Order of Operations
-
-**For a fresh database**:
-1. Run `init_schema.sql` (creates base tables)
-2. Run `python migrations/migrations.py` (applies incremental changes)
-3. Application is ready to use
-
-**For existing database**:
-- Just run `python migrations/migrations.py` to apply new migrations
-- The script automatically skips already-applied migrations
-
-## Best Practices
-
-1. **Always test migrations locally** before committing
-2. **Write downgrade functions** for reversibility
-3. **Use transactions** in migration scripts
-4. **Document complex migrations** with inline comments
-5. **Test in CI/CD** - migrations run automatically in workflows
+Until this was consolidated (MIG-001) there were three migration trackers —
+`erp.migrations_applied`, `public.migrations_applied` and
+`public.schema_migrations` — two of which described a schema production no
+longer had, and the public core tables were created by a `psql -f
+init_schema.sql` step outside all three. `legacy/README.md` has the evidence
+and the measurements.

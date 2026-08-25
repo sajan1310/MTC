@@ -1,3 +1,5 @@
+import os
+import threading
 from contextlib import contextmanager
 from urllib.parse import urlparse
 
@@ -94,6 +96,55 @@ def init_app(app):
         raise
 
 
+# Per-thread depth of nested get_conn() blocks (PERF-003).
+#
+# A function that already holds a pooled connection and opens a second one
+# halves effective concurrency and, because
+# ThreadedConnectionPool.getconn() RAISES rather than waiting when the pool
+# is full, turns load into a wall of 500s rather than a queue. It also costs
+# real latency: profiling getStockData measured 65ms in psycopg2._connect for
+# a 0.6ms query.
+#
+# Tracked always (it is two integer operations); only *enforced* when
+# STRICT_NESTED_CONNECTIONS is on, which conftest.py enables for the test
+# suite. Production keeps working -- a nested acquisition there is a
+# performance bug, not a reason to fail a user's request.
+_nesting = threading.local()
+
+STRICT_NESTED_CONNECTIONS = os.getenv("STRICT_NESTED_CONNECTIONS", "").strip().lower() in (
+    "1", "true", "yes", "on",
+)
+
+
+class NestedConnectionError(RuntimeError):
+    """A second pooled connection was requested while one was already held."""
+
+
+def connection_depth() -> int:
+    """How many get_conn() blocks this thread is currently inside."""
+    return getattr(_nesting, "depth", 0)
+
+
+@contextmanager
+def allow_nested_connections():
+    """Suspend the nesting guard for a block that genuinely needs two
+    connections.
+
+    There is exactly one legitimate reason: proving that something behaves
+    correctly when a lock is ALREADY held by someone else, which cannot be
+    demonstrated from a single connection (see
+    tests/erp/test_ledger_audit.py's advisory-lock skip test, and the
+    concurrency suite). Application code should never need this -- if you are
+    reaching for it in a service, the answer is to pass the cursor down.
+    """
+    previous = getattr(_nesting, "depth", 0)
+    _nesting.depth = 0
+    try:
+        yield
+    finally:
+        _nesting.depth = previous
+
+
 @contextmanager
 def get_conn(cursor_factory=None, autocommit=False):
     """
@@ -119,6 +170,18 @@ def get_conn(cursor_factory=None, autocommit=False):
             "Database pool is not available. "
             "Ensure init_app() was called and DATABASE_URL is configured."
         )
+
+    depth = getattr(_nesting, "depth", 0)
+    if depth and STRICT_NESTED_CONNECTIONS:
+        raise NestedConnectionError(
+            "get_conn() was called while this thread already holds a pooled "
+            "connection (depth=%d). Pass the cursor you already have down to "
+            "the helper instead -- see units_service.get_units_map(cur). "
+            "Nested acquisition halves effective concurrency, adds a "
+            "connection establishment to the request, and raises PoolError "
+            "rather than queueing once the pool is full." % depth
+        )
+    _nesting.depth = depth + 1
 
     conn = None
     cur = None
@@ -188,6 +251,7 @@ def get_conn(cursor_factory=None, autocommit=False):
         raise
 
     finally:
+        _nesting.depth = getattr(_nesting, "depth", 1) - 1
         # Always clean up resources
         if cur:
             cur.close()

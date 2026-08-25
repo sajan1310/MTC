@@ -394,11 +394,11 @@ def _push_order_lines_to_production(cur, order_number: str, client_name: str, li
         if process is None:
             continue
 
-        color_groups = process_service.get_process_color_groups(process["processId"])["data"]
+        color_groups = process_service._fetch_process_color_groups(cur, process["processId"])
         if color_groups:
             continue
 
-        recipe_components = process_service.get_process_components_data(process["processId"])["data"]
+        recipe_components = process_service._fetch_process_components(cur, process["processId"])
         components_consumed = []
         for c in recipe_components:
             if not process_service._is_common_color_group(c["colorGroup"]):
@@ -469,7 +469,7 @@ def save_client_order(conn, cur, form_data):
     if not isinstance(raw_lines, list) or not raw_lines:
         raise ValueError("PI / Estimate must contain at least one product line.")
 
-    bom_products = bom_service.get_bom_production_data()["data"]
+    bom_products = bom_service._fetch_bom_production_data(cur)
     valid_product_ids = {p["productId"].lower() for p in bom_products}
     product_name_map = {p["productId"].lower(): p["productName"] for p in bom_products}
 

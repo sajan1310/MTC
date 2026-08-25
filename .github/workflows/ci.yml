@@ -69,6 +69,41 @@ jobs:
           python Project-root/scripts/check_sw_cache_bump.py --range "$RANGE"
 
   #============================================================================
+  # JOB 0b: Frontend — lint + tests (CI-001)
+  #============================================================================
+  # 1.44 MB of application JavaScript ships to every user, and 23 Jest suites
+  # / 390 tests, an ESLint config and a stylelint config all existed in the
+  # repository — while `grep -n "npm\|node\|jest\|eslint"` across both workflow
+  # files returned ZERO matches. None of it ran on a pull request. The tests
+  # could rot unnoticed and a ReferenceError in production.js would reach the
+  # factory floor, which is exactly what happened to bom.js's
+  # DEFAULT_COST_CATEGORIES (see the FIXME there).
+  #
+  # `npm run verify` is eslint + stylelint + jest, and this job is blocking.
+  frontend:
+    name: Frontend (lint + tests)
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Set up Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: 'npm'
+          cache-dependency-path: 'Project-root/package-lock.json'
+
+      - name: Install dependencies
+        working-directory: Project-root
+        run: npm ci
+
+      - name: Lint and test
+        working-directory: Project-root
+        run: npm run verify
+
+  #============================================================================
   # JOB 1: Code Linting and Style Checks
   #============================================================================
   lint:
@@ -98,12 +133,12 @@ jobs:
           echo "::endgroup::"
         continue-on-error: false
 
+      # CI-002: was continue-on-error, so formatting never gated anything.
       - name: Run Ruff formatter check
         run: |
           echo "::group::Checking code formatting"
           ruff format --check Project-root/
-          echo "::endgroup::"
-        continue-on-error: true
+          echo "::endgroup::" 
 
   #============================================================================
   # JOB 2: Security Vulnerability Scanning
@@ -128,13 +163,39 @@ jobs:
           python -m pip install --upgrade pip
           pip install pip-audit
 
-      - name: Run pip-audit security scan
+      # CI-002: this step could never fail the build -- `|| true` swallowed the
+      # exit code AND continue-on-error swallowed the step. A known CVE in a
+      # dependency therefore merged silently. The report is still uploaded for
+      # triage, but a HIGH/CRITICAL advisory now blocks.
+      - name: Run pip-audit security scan (report)
         run: |
           echo "::group::Scanning dependencies for vulnerabilities"
           pip-audit -r Project-root/requirements.txt --desc --format json > security-report.json || true
-          pip-audit -r Project-root/requirements.txt --desc
           echo "::endgroup::"
-        continue-on-error: true
+
+      - name: Fail on high-severity advisories
+        run: |
+          echo "::group::Evaluating advisories"
+          python - <<'EOF'
+          import json, sys
+          try:
+              report = json.load(open("security-report.json"))
+          except Exception as exc:
+              print(f"::error::could not read pip-audit report: {exc}")
+              sys.exit(1)
+
+          deps = report.get("dependencies", report if isinstance(report, list) else [])
+          affected = [d for d in deps if d.get("vulns")]
+          for dep in affected:
+              for vuln in dep["vulns"]:
+                  print(f"::error::{dep.get('name')} {dep.get('version')} -- "
+                        f"{vuln.get('id')}: {(vuln.get('description') or '')[:160]}")
+          if affected:
+              print(f"::error::{len(affected)} vulnerable dependency(ies) found")
+              sys.exit(1)
+          print("No known vulnerabilities in requirements.txt")
+          EOF
+          echo "::endgroup::" 
 
       - name: Upload security report
         if: always()
@@ -278,23 +339,25 @@ jobs:
           
           echo "✅ Test databases created successfully"
 
+      # CI-002: this step was continue-on-error and swallowed psql's exit code
+      # with `|| echo`, so a broken base schema let the suite run anyway. The
+      # failure then surfaced as a scatter of confusing test errors instead of
+      # one clear "the schema did not build" -- and a missing init_schema.sql
+      # printed a warning and carried on. Both are now fatal: every statement
+      # in init_schema.sql is CREATE ... IF NOT EXISTS, so a genuine re-run is
+      # a no-op and any error it reports is real.
       - name: Initialize database schema
         run: |
-          if [ -f Project-root/migrations/init_schema.sql ]; then
-            echo "Initializing database schema for testdb..."
-            psql "postgresql://postgres:testpass@127.0.0.1:5432/testdb" \
-              -f Project-root/migrations/init_schema.sql || echo "⚠️  Schema init for testdb failed or already exists"
-            
-            echo "Initializing database schema for testuser..."
-            psql "postgresql://postgres:testpass@127.0.0.1:5432/testuser" \
-              -f Project-root/migrations/init_schema.sql || echo "⚠️  Schema init for testuser failed or already exists"
-            
-            echo "✅ Database schema initialization completed"
-          else
-            echo "⚠️  init_schema.sql not found - skipping schema initialization"
-            echo "Tests may fail if they require database tables"
+          if [ ! -f Project-root/migrations/init_schema.sql ]; then
+            echo "::error::migrations/init_schema.sql is missing -- cannot build the test schema"
+            exit 1
           fi
-        continue-on-error: true
+          for db in testdb testuser; do
+            echo "Initializing database schema for $db..."
+            psql "postgresql://postgres:testpass@127.0.0.1:5432/$db" \
+              -v ON_ERROR_STOP=1 -q -f Project-root/migrations/init_schema.sql
+          done
+          echo "Database schema initialization completed"
 
       - name: Run database migrations
         working-directory: Project-root
@@ -351,35 +414,106 @@ jobs:
             Project-root/coverage.xml
             Project-root/htmlcov
 
+      # CI-002 / TEST-001. This gate was decorative in two ways at once: the
+      # threshold was 25% while actual coverage was 85%, and it called
+      # sys.exit(0) even when below -- so it could not fail whatever happened.
+      #
+      # The global threshold is now set just under the real figure so a
+      # genuine regression trips it. But the global number was never the
+      # problem: coverage was INVERTED. Business services sat at 86-96% while
+      # the code deciding who may do what sat far lower --
+      # roles_service.py 36%, app/utils.py 39%, auth/routes.py 49% -- and all
+      # three P0 security findings in the audit lived in those untested lines.
+      # So the per-module floors below are the part that matters.
       - name: Coverage threshold check
         if: matrix.python-version == '3.11'
         working-directory: Project-root
         env:
-          MIN_COVERAGE: 25
+          MIN_COVERAGE: 85
         run: |
           echo "::group::Coverage threshold validation"
-          python - <<EOF
+          python - <<'EOF'
+          import os
           import sys
           import xml.etree.ElementTree as ET
-          
-          threshold = float("${MIN_COVERAGE}" or "25")
-          
-          try:
-              tree = ET.parse('coverage.xml')
-              root = tree.getroot()
-              coverage_rate = float(root.attrib.get('line-rate', '0')) * 100.0
-              
-              print(f"📊 Current coverage: {coverage_rate:.2f}%")
-              print(f"🎯 Minimum threshold: {threshold:.2f}%")
-              
-              if coverage_rate < threshold:
-                  print(f"::warning::Coverage {coverage_rate:.2f}% is below threshold {threshold:.2f}%")
-                  sys.exit(0)  # Soft threshold - warn but don't fail
-              else:
-                  print(f"✅ Coverage meets threshold!")
-          except Exception as e:
-              print(f"::warning::Coverage check failed: {e}")
-              sys.exit(0)
+
+          overall_floor = float(os.environ.get("MIN_COVERAGE", "86"))
+
+          # Per-module floors, set just under the CURRENTLY ACHIEVED figure.
+          #
+          # This is a ratchet, not an aspiration. A gate that is always failing
+          # is a gate everyone learns to ignore, which is how the previous one
+          # (25%, and exit(0) even when below) ended up meaning nothing. So
+          # each number here has been measured, and each one has been raised
+          # as the coverage behind it was earned.
+          #
+          # rpc.py's per-tab gate and users_service's role assignment -- the
+          # two TEST-001 gaps this block used to name as outstanding -- are
+          # now at 100%, and the gate tests were mutation-tested rather than
+          # trusted: four ways of breaking the gate were each injected and
+          # each was caught. What remains is auth/routes.py's OAuth callback
+          # token-exchange branch.
+          # Floors sit a little under the measured figure so ordinary churn does
+          # not break the build, but high enough that losing a test is caught.
+          # The four at 100% are the authorization and idempotency path: the
+          # audit's finding was that the code deciding who may do what was the
+          # least verified code in the application (TEST-001).
+          FLOORS = {
+              "app/erp/rpc.py": 97.0,                      # 100% measured; was 77%
+              "app/erp/mutations.py": 95.0,                # 100% measured; was 87%
+              "app/erp/services/roles_service.py": 98.0,   # 100% measured; was 36%
+              "app/erp/services/users_service.py": 97.0,   # 100% measured; was 67%
+              "app/erp/services/db_backup.py": 78.0,       # 82% measured
+              "app/auth/routes.py": 70.0,                  # 72% measured; was 49%
+              # 82% measured -- but part of that rise is 22 statements of dead
+              # code removed (the unreferenced get_or_create_master_id /
+              # get_or_create_item_master_id), not new tests. Floor set on the
+              # honest number, not the flattering one.
+              "app/utils.py": 75.0,
+          }
+
+          tree = ET.parse("coverage.xml")
+          root = tree.getroot()
+          overall = float(root.attrib.get("line-rate", "0")) * 100.0
+
+          # coverage.xml paths are relative to <source>, which for `--cov=app`
+          # is the app/ directory itself -- so a class's filename reads
+          # "auth/routes.py", not "app/auth/routes.py". Index both forms so
+          # the floors below stay readable as full repo paths and keep
+          # matching if the --cov target ever changes. (Getting this wrong is
+          # silent: every module reports NOT MEASURED and the gate fails for
+          # a reason that has nothing to do with coverage.)
+          per_file = {}
+          for cls in root.iter("class"):
+              name = (cls.attrib.get("filename") or "").replace("\\", "/")
+              rate = float(cls.attrib.get("line-rate", "0")) * 100.0
+              per_file[name] = rate
+              if not name.startswith("app/"):
+                  per_file[f"app/{name}"] = rate
+
+          failures = []
+          print(f"Overall coverage: {overall:.2f}%  (floor {overall_floor:.0f}%)")
+          if overall < overall_floor:
+              failures.append(f"overall {overall:.2f}% < {overall_floor:.0f}%")
+
+          print("\nSecurity-critical modules (authorization and identity):")
+          for target, floor in FLOORS.items():
+              matches = [v for k, v in per_file.items() if k == target or k.endswith("/" + target)]
+              if not matches:
+                  print(f"  {target}: NOT MEASURED")
+                  failures.append(f"{target} produced no coverage data")
+                  continue
+              rate = min(matches)
+              status = "ok" if rate >= floor else "BELOW FLOOR"
+              print(f"  {target}: {rate:.2f}%  (floor {floor:.0f}%)  [{status}]")
+              if rate < floor:
+                  failures.append(f"{target} {rate:.2f}% < {floor:.0f}%")
+
+          if failures:
+              for item in failures:
+                  print(f"::error::coverage below floor -- {item}")
+              sys.exit(1)
+          print("\nAll coverage floors met.")
           EOF
           echo "::endgroup::"
 

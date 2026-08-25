@@ -437,23 +437,30 @@ def get_bom_data(token=None):
     return build_response(True, products)
 
 
-@rpc_method("getBOMProductionData")
-def get_bom_production_data():
-    with database.get_conn(cursor_factory=psycopg2.extras.RealDictCursor) as (_conn, cur):
-        process_name_by_id = _process_name_by_id_lower(cur)
+def _fetch_bom_production_data(cur) -> list:
+    """The BOM production list, using a cursor the caller already holds.
 
-        cur.execute(
-            """
-            SELECT bp.product_id, bp.product_name, bp.sequence,
-                   bl.item_name, bl.size, bl.narration, bl.vendor,
-                   bl.qty_per_product, bl.process_group, bl.color
-            FROM erp.bom_products bp
-            JOIN erp.bom_lines bl ON bl.header_id = bp.id
-            WHERE bp.deleted_at IS NULL
-            ORDER BY bp.id, bl.id
-            """
-        )
-        rows = cur.fetchall()
+    Split out of get_bom_production_data for PERF-003: clients_service's
+    save_client_order called the RPC method from inside its own transaction,
+    so a write that was already holding a pooled connection opened a second
+    one -- extra connection-establishment latency on a hot write path, and a
+    step towards PoolError under load, since
+    ThreadedConnectionPool.getconn() raises rather than waits when full.
+    """
+    process_name_by_id = _process_name_by_id_lower(cur)
+
+    cur.execute(
+        """
+        SELECT bp.product_id, bp.product_name, bp.sequence,
+               bl.item_name, bl.size, bl.narration, bl.vendor,
+               bl.qty_per_product, bl.process_group, bl.color
+        FROM erp.bom_products bp
+        JOIN erp.bom_lines bl ON bl.header_id = bp.id
+        WHERE bp.deleted_at IS NULL
+        ORDER BY bp.id, bl.id
+        """
+    )
+    rows = cur.fetchall()
 
     product_map: dict = {}
     colors_seen: dict = {}
@@ -496,7 +503,13 @@ def get_bom_production_data():
 
     products = list(product_map.values())
     products.sort(key=lambda p: p["sequence"])
-    return build_response(True, products)
+    return products
+
+
+@rpc_method("getBOMProductionData")
+def get_bom_production_data():
+    with database.get_conn(cursor_factory=psycopg2.extras.RealDictCursor) as (_conn, cur):
+        return build_response(True, _fetch_bom_production_data(cur))
 
 
 @rpc_method("getNextProductId")

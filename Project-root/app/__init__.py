@@ -28,10 +28,10 @@ import logging
 import os
 import shutil
 from logging.handlers import RotatingFileHandler
-from typing import Any
 
 from flask import (
     Flask,
+    current_app,
     jsonify,
     redirect,
     render_template,
@@ -60,6 +60,32 @@ limiter = Limiter(key_func=get_remote_address)
 # Module-level cache for deprecation warnings to avoid unbounded growth
 # (warn once per unique path).
 _DEPRECATION_WARNED: set[str] = set()
+
+# SECRET_KEY values that must never reach a non-testing deployment, compared
+# case-insensitively after stripping. "dev-insecure-key" is the exact string
+# config.py's base class used to fall back to; it stays listed so that
+# selecting DevelopmentConfig in a production environment is still rejected
+# rather than silently accepted.
+WEAK_SECRET_KEYS = frozenset({
+    "dev-insecure-key",
+    "dev",
+    "development",
+    "changeme",
+    "change-me",
+    "secret",
+    "secret-key",
+    "supersecret",
+    "password",
+    "test",
+    "testing",
+    "test-secret-key-for-ci",
+    "your-secret-key",
+    "please-change-this",
+})
+
+# 32 characters is the floor for a value that signs session cookies and
+# password-reset tokens. `secrets.token_urlsafe(48)` produces 64.
+MIN_SECRET_KEY_LENGTH = 32
 
 
 class _SafeRotatingFileHandler(RotatingFileHandler):
@@ -204,18 +230,51 @@ def _load_config(app: Flask, config_name: str) -> None:
             app.config.get("DB_HOST")
             and app.config.get("DB_NAME")
             and app.config.get("DB_USER")
+            # DB_PASS joined this list when its "abcd" fallback was removed from
+            # config.py. Without it here, a deployment missing the password
+            # passes validation and then hands psycopg2 password=None, which
+            # either fails deep inside the first request or -- against a
+            # trust-auth server -- succeeds and hides the misconfiguration.
+            and app.config.get("DB_PASS")
         )
     ):
-        missing.append("DATABASE_URL or DB_HOST/DB_NAME/DB_USER")
+        missing.append("DATABASE_URL or DB_HOST/DB_NAME/DB_USER/DB_PASS")
     for key in required:
         if not app.config.get(key):
             missing.append(key)
+
+    # Presence is not sufficient for SECRET_KEY.
+    #
+    # The original guard tested truthiness only, and config.py supplied a
+    # non-empty default -- so the check was structurally unreachable for the
+    # one key whose compromise forges sessions and password-reset tokens. The
+    # default is gone, but a guard that only asks "is it set?" would be
+    # defeated again by the next well-meaning default, and does nothing about
+    # an operator who sets SECRET_KEY=changeme. Reject known-weak values and
+    # anything too short to resist offline attack.
+    if not app.config.get("TESTING"):
+        secret = str(app.config.get("SECRET_KEY") or "")
+        if secret and secret.strip().lower() in WEAK_SECRET_KEYS:
+            missing.append("SECRET_KEY (set to a known-weak default value)")
+        elif secret and len(secret) < MIN_SECRET_KEY_LENGTH:
+            missing.append(
+                f"SECRET_KEY (only {len(secret)} chars; needs at least "
+                f"{MIN_SECRET_KEY_LENGTH})"
+            )
 
     if app.config.get("TESTING"):
         missing = []
 
     if missing:
-        raise RuntimeError(f"Missing required configuration keys: {', '.join(missing)}")
+        # Never interpolate the offending value itself -- this message reaches
+        # stderr, the journal and any log shipper.
+        raise RuntimeError(
+            "Refusing to start: invalid or missing configuration -- "
+            + ", ".join(missing)
+            + ". Set these in the environment (see deploy/mtc.env.example). "
+            "Generate a secret with: python -c \"import secrets; "
+            "print(secrets.token_urlsafe(48))\""
+        )
 
 
 def _init_logging(app: Flask) -> None:
@@ -302,6 +361,190 @@ def _register_error_handlers(app: Flask) -> None:
         if request.path.startswith("/api/"):
             return jsonify({"success": False, "message": f"CSRF error: {e.description}", "error": e.description}), 400
         return render_template("500.html"), 400
+
+
+# RPC methods whose cost is dominated by full-table scans rather than by the
+# work the user asked for (SEC-005). Each pulls entire tables into Python:
+# getStockData alone scans bill_lines, return_lines, wastage_lines,
+# issue_lines and every completed production lot, and getDashboardData calls
+# three more of these plus its own aggregates. A loop over any one of them
+# saturates all four gunicorn workers. Until PERF-002 makes them cheap, they
+# get a much lower ceiling than ordinary calls.
+EXPENSIVE_RPC_METHODS = frozenset({
+    "getStockData",
+    "getDashboardData",
+    "getMobileDashboard",
+    "getStockAdjustmentHistory",
+    "getItemLedgerData",
+    "getProductionData",
+    "getReadyToDispatchData",
+    "getContractorLedgerData",
+    "getBOMProductionData",
+    "getItemIdentityDriftReport",
+    "getBomProcessComponentsDrift",
+})
+
+
+def _rpc_rate_limit_key() -> str:
+    """Rate-limit bucket for an RPC call: the user, falling back to the IP.
+
+    Per-IP is close to meaningless here -- a factory LAN presents one public
+    address, so every user shares a bucket: one busy client throttles the shop
+    floor, while an authenticated abuser is barely constrained.
+    """
+    from flask_login import current_user
+
+    try:
+        if current_user and current_user.is_authenticated:
+            return f"user:{current_user.get_id()}"
+    except Exception:  # noqa: BLE001 -- outside a login context
+        pass
+    return f"ip:{get_remote_address()}"
+
+
+def _rpc_rate_limit() -> str:
+    """The limit for THIS call, chosen from the method being invoked.
+
+    flask-limiter accepts a callable, which is what lets one route carry two
+    tiers: /api/erp/rpc/<method> is a single endpoint serving all ~166
+    methods, so a static decorator could only ever express one ceiling --
+    either too tight for a page load that fires dozens of cheap calls, or too
+    loose to bound a loop over the expensive ones.
+    """
+    method = ""
+    if request.view_args:
+        method = str(request.view_args.get("method") or "")
+    if method in EXPENSIVE_RPC_METHODS:
+        return current_app.config.get("RATELIMIT_RPC_EXPENSIVE", "40 per minute")
+    return current_app.config.get("RATELIMIT_RPC_DEFAULT", "600 per minute")
+
+
+def _verify_schema_is_current(app: Flask) -> None:
+    """Refuse to start when the database schema is older than this code.
+
+    Added after a real incident: three migrations were written and applied to
+    the test database, but not to the developer's own. The application started
+    perfectly happily, served every read, and then failed with HTTP 500 and
+    `column "status" of relation "rpc_mutations" does not exist` on the first
+    MUTATION anybody attempted -- which presented as "cannot save production",
+    because that is what the user happened to try first. Nothing at boot said
+    the schema was behind.
+
+    The deployment paths already run the migrator before starting gunicorn
+    (deploy/mtc.service's ExecStartPre, docker-entrypoint.sh). Nothing does so
+    for `flask run` / `python run.py` / `python app.py`, which is exactly where
+    the gap bit. This closes it for every entry point.
+
+    Fails fast rather than warning, for the same reason SECRET_KEY does: code
+    running against a schema it does not match is a broken deployment, and the
+    alternative is discovering it one 500 at a time. Set
+    SKIP_MIGRATION_CHECK=1 to override deliberately.
+    """
+    if app.config.get("TESTING"):
+        # tests/conftest.py builds its own schema and applies migrations
+        # itself, and constructs ~150 apps per session.
+        return
+    if os.getenv("SKIP_MIGRATION_CHECK", "").strip().lower() in ("1", "true", "yes", "on"):
+        app.logger.warning("[SCHEMA] Migration check skipped by SKIP_MIGRATION_CHECK.")
+        return
+
+    import pathlib
+
+    migrations_dir = pathlib.Path(__file__).resolve().parent.parent / "migrations" / "erp"
+    if not migrations_dir.is_dir():
+        return
+
+    on_disk = {p.stem for p in migrations_dir.glob("*.sql")}
+    if not on_disk:
+        return
+
+    import database as _db
+
+    # Read the state first; decide afterwards. The verdict is deliberately
+    # raised OUTSIDE the try, because distinguishing "the schema is behind"
+    # from "the check itself could not run" by exception TYPE does not work --
+    # an earlier version re-raised RuntimeError to let its own signal through
+    # and thereby also re-raised a connection failure, so an infrastructure
+    # blip stopped a perfectly well-migrated app from booting. Its own test
+    # caught that.
+    applied = None
+    try:
+        with _db.get_conn() as (_conn, cur):
+            cur.execute(
+                "SELECT to_regclass('erp.migrations_applied') IS NOT NULL AS present"
+            )
+            if cur.fetchone()[0]:
+                cur.execute("SELECT migration_name FROM erp.migrations_applied")
+                applied = {row[0] for row in cur.fetchall()}
+            else:
+                applied = False  # table absent: never migrated at all
+    except Exception as exc:  # noqa: BLE001
+        # A check must not be the thing that stops a healthy app booting.
+        app.logger.error("[SCHEMA] Could not verify migration state: %s", exc)
+        return
+
+    if applied is False:
+        raise RuntimeError(
+            "Refusing to start: erp.migrations_applied does not exist, so this "
+            "database has never been migrated. Run: "
+            "python migrations/erp/runner.py"
+        )
+
+    pending = sorted(on_disk - applied)
+    if pending:
+        raise RuntimeError(
+            "Refusing to start: %d database migration(s) have not been applied, so "
+            "this code is newer than the schema it is running against -- mutations "
+            "will fail at runtime with column-not-found errors. Pending: %s. "
+            "Run: python migrations/erp/runner.py"
+            % (len(pending), ", ".join(pending))
+        )
+
+
+def _register_process_cleanup(app: Flask) -> None:
+    """Release process-scoped pools when the process exits (PERF-001).
+
+    Connection pools live for the life of the worker process, so this is
+    registered with atexit exactly once, not per request. gunicorn's sync
+    worker exits normally on SIGTERM, so atexit runs; `--max-requests`
+    recycling goes through the same path.
+
+    Idempotent: create_app() is called ~150 times in one pytest session, and
+    registering 150 atexit handlers that each close the same pool would turn
+    interpreter shutdown into a pile of errors on already-closed objects.
+    """
+    if app.config.get("TESTING"):
+        # A test session builds many apps in one process and tears none of
+        # them down; closing the shared pool when the first one is collected
+        # would break every later test.
+        return
+
+    if getattr(_register_process_cleanup, "_registered", False):
+        return
+    _register_process_cleanup._registered = True  # type: ignore[attr-defined]
+
+    import atexit
+
+    logger = app.logger
+
+    def _shutdown() -> None:
+        try:
+            import database
+
+            database.close_db_pool()
+            logger.info("Database connection pool closed at process exit.")
+        except Exception:  # noqa: BLE001 -- shutdown must never raise
+            pass
+
+        try:
+            pool = app.extensions.get("ratelimit_redis_pool")
+            if pool is not None and hasattr(pool, "disconnect"):
+                pool.disconnect()
+                logger.info("[RATE LIMIT] Redis connection pool closed at process exit.")
+        except Exception:  # noqa: BLE001
+            pass
+
+    atexit.register(_shutdown)
 
 
 def _parse_proxy_fix() -> dict[str, int]:
@@ -436,6 +679,10 @@ def create_app(config_name: str | None = None) -> Flask:
     import database
 
     database.init_app(app)
+
+    # The schema must not be older than the code. See the function's docstring
+    # for the incident this exists to prevent.
+    _verify_schema_is_current(app)
 
     # Does this deployment actually sit behind TLS? BASE_URL's scheme is the
     # signal used throughout (see the Talisman block below and
@@ -597,6 +844,31 @@ def create_app(config_name: str | None = None) -> Flask:
                 cur.execute("SELECT * FROM users WHERE user_id = %s AND deleted_at IS NULL", (user_id,))
                 row = cur.fetchone()
                 if row:
+                    # Credential-fingerprint check (SEC-006). A session pinned
+                    # at login to the credential it was created with dies as
+                    # soon as that credential changes -- so a password reset
+                    # invalidates sessions in OTHER browsers too, not just the
+                    # one performing the reset. Before this, a reset prompted
+                    # by a suspected compromise left the attacker's session
+                    # running until it expired on its own.
+                    #
+                    # Absence is tolerated, mismatch is not: sessions created
+                    # before this shipped, and Google sign-ins for accounts
+                    # with no password at all, carry no fingerprint and must
+                    # keep working. Only a session that HAS one and whose one
+                    # no longer matches is rejected.
+                    from flask import session as _session
+                    from .auth.routes import credential_fingerprint
+
+                    pinned = _session.get("cred_fp")
+                    if pinned is not None and pinned != credential_fingerprint(
+                        row.get("password_hash")
+                    ):
+                        app.logger.info(
+                            "[Auth] Session for user %s dropped: credential changed",
+                            user_id,
+                        )
+                        return None
                     return User(row)
         except Exception as e:
             app.logger.error("Error loading user %s: %s", user_id, e)
@@ -615,7 +887,35 @@ def create_app(config_name: str | None = None) -> Flask:
     app.register_blueprint(auth_bp, url_prefix="/auth")
     app.register_blueprint(erp_bp)
     app.register_blueprint(erp_rpc_bp, url_prefix="/api/erp")
-    limiter.exempt(erp_rpc_bp)
+
+    # Tiered, per-USER rate limiting on the RPC surface (SEC-005).
+    #
+    # This line used to read `limiter.exempt(erp_rpc_bp)`, which removed rate
+    # limiting from all ~166 RPC methods -- the entire business API. Nothing
+    # then stopped an authenticated client looping getStockData, which
+    # full-scans bill_lines, return_lines, wastage_lines, issue_lines and
+    # every completed production lot on each call; with 4 sync gunicorn
+    # workers that is a trivial, self-inflicted denial of service against the
+    # whole factory. No quota applied to mutations either.
+    #
+    # Keyed on user id, not IP: the factory shares one NAT address, so a
+    # per-IP limit punishes everyone together and constrains a single
+    # misbehaving client barely at all.
+    #
+    # Limits are deliberately generous. A page load fires many calls, and the
+    # mobile outbox flushes a whole queue of mutations in a burst after
+    # reconnecting -- neither may be mistaken for abuse. The point is to bound
+    # a runaway loop, not to police normal work. Watch the rejection log for a
+    # week before tightening.
+    if not app.config.get("TESTING"):
+        limiter.limit(
+            _rpc_rate_limit,
+            key_func=_rpc_rate_limit_key,
+            error_message=(
+                "You're sending requests faster than the server will accept. "
+                "Wait a moment and try again."
+            ),
+        )(erp_rpc_bp)
 
     # Say once, at boot, whether Download PDF can produce a file here. Without
     # it the only signal is a 503 on somebody's first export, and the client
@@ -763,58 +1063,29 @@ def create_app(config_name: str | None = None) -> Flask:
         # PHASE 5: Log response with request tracking
         return log_response_handler()(response)
 
-    # Teardown handlers: ensure DB and redis pools are closed
-    @app.teardown_appcontext
-    def _close_db_and_pools(exception: Any = None) -> None:
-        # Be defensive: teardown should never raise to the caller. Probe the
-        # `database` module for common cleanup APIs and call whichever exists.
-        try:
-            db_cleanup_candidates = (
-                "close_connection",
-                "close_pool",
-                "close",
-                "shutdown",
-                "dispose",
-                "teardown",
-            )
-            for name in db_cleanup_candidates:
-                fn = getattr(database, name, None)
-                if callable(fn):
-                    try:
-                        fn()
-                        app.logger.info("Database cleanup: called %s()", name)
-                    except Exception:
-                        app.logger.debug("Database cleanup %s() raised", name, exc_info=True)
-                    break
-            else:
-                # No known cleanup function found; try to close a connection pool
-                pool_obj = getattr(database, "pool", None)
-                if pool_obj is not None:
-                    try:
-                        close_fn = getattr(pool_obj, "close", None) or getattr(pool_obj, "disconnect", None)
-                        if callable(close_fn):
-                            close_fn()
-                            app.logger.info("Database pool closed via pool.close()/disconnect().")
-                    except Exception:
-                        app.logger.debug("Database pool cleanup failed", exc_info=True)
-
-            # Close redis pool if we created one during init; be permissive about API
-            pool = app.extensions.get("ratelimit_redis_pool")
-            if pool is not None:
-                try:
-                    # ConnectionPool from redis-py exposes disconnect()
-                    if hasattr(pool, "disconnect") and callable(getattr(pool, "disconnect")):
-                        pool.disconnect()
-                        app.logger.info("[RATE LIMIT] Redis connection pool disconnected.")
-                    # aioredis or other clients may provide close()
-                    elif hasattr(pool, "close") and callable(getattr(pool, "close")):
-                        pool.close()
-                        app.logger.info("[RATE LIMIT] Redis pool closed via close().")
-                except Exception:
-                    app.logger.warning("[RATE LIMIT] Redis pool cleanup failed", exc_info=True)
-        except Exception:
-            # Teardown must not propagate errors to the WSGI server
-            app.logger.debug("Error during teardown_appcontext", exc_info=True)
+    # Process-lifetime cleanup, registered ONCE per process -- deliberately
+    # NOT a teardown_appcontext handler (PERF-001).
+    #
+    # The previous version was @app.teardown_appcontext, which fires at the end
+    # of EVERY REQUEST, and it called ConnectionPool.disconnect() on the rate
+    # limiter's Redis pool. That closes every connection the pool holds -- so
+    # the pool was torn down and rebuilt continuously, adding a TCP connect
+    # (plus AUTH, where configured) to every limited request and writing one
+    # INFO line per request into logs/app.log, which is capped at 10 MB x 10
+    # and therefore lost real diagnostics to the noise. A connection pool is
+    # process-scoped state; releasing it per request defeats its entire
+    # purpose.
+    #
+    # The database half of that handler was dead code besides. It probed the
+    # `database` module for close_connection/close_pool/close/shutdown/dispose/
+    # teardown -- none of which exist there (it defines init_app, get_conn,
+    # close_db_pool and transactional) -- and then fell back to
+    # getattr(database, "pool"), which resolves to the imported psycopg2.pool
+    # MODULE, not a pool object, and has neither .close nor .disconnect. So it
+    # was ~10 getattr calls per request that could never do anything, while
+    # reading as though connections were being cleaned up here. They are, and
+    # always were, returned correctly by get_conn()'s own finally block.
+    _register_process_cleanup(app)
 
     # Production debug mode sanity check: do not allow app.debug in production
     if (config_name == "production" or app.config.get("ENV") == "production") and app.debug:

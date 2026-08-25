@@ -18,7 +18,7 @@
 // a worker.
 importScripts('/static/erp/offline-cache.js', '/static/erp/api.js');
 
-const CACHE_NAME = 'erp-mobile-shell-v5';
+const CACHE_NAME = 'erp-mobile-shell-v6';
 
 
 const PRECACHE_URLS = [
@@ -31,10 +31,49 @@ const PRECACHE_URLS = [
   '/static/erp/icons/icon-512.png'
 ];
 
+// The offline shell is useless without these two: the page the fetch handler
+// falls back to, and the stylesheet that makes it legible. Everything else in
+// PRECACHE_URLS is an optimisation -- absent from the cache, the fetch handler
+// simply fetches it on demand and caches it then.
+const CRITICAL_URLS = ['/erp/mobile/offline.html', '/static/erp/mobile_styles.css'];
+
+// One request per URL instead of cache.addAll (REL-002).
+//
+// addAll is atomic: a single 404, a single dropped connection, and the whole
+// promise rejects, install fails, and the service worker never activates --
+// so the app has NO offline support at all. Silently, because nothing
+// surfaces a failed install to the user, and intermittently, because it
+// depends on the network at the moment of install. With ~45 URLs in the list
+// the chance of one failing is not small, and the failure mode is total.
+//
+// allSettled instead, so one missing font costs that font rather than the
+// entire offline shell. The critical few are then checked explicitly: if
+// THOSE failed there is nothing worth activating, and rejecting lets the
+// browser retry the install later rather than leaving a worker in place that
+// cannot do its job.
+function precache(cache) {
+  return Promise.allSettled(
+    PRECACHE_URLS.map(url => cache.add(url).catch(error => {
+      console.warn('[mobile-sw] precache failed:', url, error && error.message);
+      throw error;
+    }))
+  ).then(results => {
+    const failed = PRECACHE_URLS.filter((_url, i) => results[i].status === 'rejected');
+    if (failed.length) {
+      console.warn(`[mobile-sw] ${failed.length}/${PRECACHE_URLS.length} assets not precached`);
+    }
+    const missingCritical = failed.filter(url => CRITICAL_URLS.includes(url));
+    if (missingCritical.length) {
+      throw new Error('critical assets missing from precache: ' + missingCritical.join(', '));
+    }
+    return failed;
+  });
+}
+
 self.addEventListener('install', event => {
   event.waitUntil(
     caches.open(CACHE_NAME)
-      .then(cache => cache.addAll(PRECACHE_URLS))
+      .then(precache)
       .then(() => self.skipWaiting())
   );
 });

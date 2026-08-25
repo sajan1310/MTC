@@ -114,13 +114,13 @@ After deployment, run:
 
 ```bash
 # Connect via SSH or platform CLI
-python run_migration.py
+python migrations/erp/runner.py
 ```
 
 Or execute migrations manually:
 
 ```bash
-psql $DATABASE_URL < migrations/add_indexes.sql
+# (no manual step: runner.py applies every migration, indexes included)
 ```
 
 ---
@@ -267,7 +267,7 @@ git push heroku main
 #### Step 6: Run Migrations
 
 ```bash
-heroku run python run_migration.py
+heroku run python migrations/erp/runner.py
 ```
 
 ---
@@ -844,7 +844,7 @@ sudo systemctl restart nginx
 
 **Solution**:
 1. Increase `DB_POOL_MAX` environment variable
-2. Add database indexes (see `migrations/add_indexes.sql`)
+2. Database indexes ship as migrations -- `python migrations/erp/runner.py`
 3. Monitor slow queries: `heroku pg:ps` or check PostgreSQL logs
 
 ---

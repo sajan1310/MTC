@@ -1,19 +1,15 @@
 #!/usr/bin/env sh
 set -e
 
-# The public schema first. runner.py applies only migrations/erp/*.sql,
-# which build the `erp` schema; the core tables -- users above all -- come
-# from init_schema.sql. Without this, a VIRGIN database dies at
-# 003_masters.sql with `relation "public.users" does not exist` and the
-# container never starts. Existing deployments never noticed because their
-# database was bootstrapped by hand long ago.
+# One migration path (MIG-001). runner.py now builds the public core tables
+# too, via 000_public_core.sql, so a virgin database comes up complete from
+# this single command -- no psql step, no second untracked schema source.
 #
-# Idempotent: every CREATE in init_schema.sql is IF NOT EXISTS, so this is a
-# no-op on an already-provisioned database.
-echo "Applying base schema..."
-psql "${DATABASE_URL}" -v ON_ERROR_STOP=1 -q -f migrations/init_schema.sql
-
-echo "Applying ERP migrations..."
+# The step this replaces ran migrations/init_schema.sql on every start. That
+# file also created 17 tables this application no longer uses and seeded two
+# admin accounts (admin@mtc.local, demo@example.com); see
+# migrations/legacy/README.md.
+echo "Applying migrations..."
 python migrations/erp/runner.py
 
 echo "Starting gunicorn..."

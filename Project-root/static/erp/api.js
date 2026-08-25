@@ -48,6 +48,14 @@ const Api = (() => {
   // stock-adjustment-conflict checks must reflect the live server state at
   // the moment they're asked, and testConnection is a diagnostic that must
   // always hit the network.
+  // Ceiling on any single RPC round trip (REL-001). Generous: the slowest
+  // legitimate calls here are whole-table reads like getStockData, which get
+  // slower as the database grows (see PERF-002), and a bulk save can take
+  // seconds. This is a backstop against a request that will NEVER return, not
+  // a performance budget -- set it too tight and a slow-but-working save is
+  // reported as a failure the user then repeats.
+  const REQUEST_TIMEOUT_MS = 45_000;
+
   const CACHE_TTL_MS = 15_000;
   const NO_CACHE_METHODS = new Set(['verifyBOMAccess', 'checkStockAdjustmentConflicts', 'testConnection']);
   const _cache = new Map();    // key -> {value, at}
@@ -73,7 +81,22 @@ const Api = (() => {
     if (pending) return pending;
 
     const p = _request(method, args, null).then(
-      value => { _cache.set(key, { value, at: Date.now() }); _inflight.delete(key); return value; },
+      value => {
+        // Only cache a SUCCESSFUL envelope (API-001).
+        //
+        // Domain failures come back as HTTP 200 with {success:false} (see
+        // app/erp/rpc.py), so the previous unconditional _cache.set() stored
+        // failures too. A transient error -- a lock conflict, a validation
+        // race, a momentary backend fault -- was then replayed from cache for
+        // the next 15 seconds, so the user pressing the button again got the
+        // identical error back without a request ever reaching the server. It
+        // looked like a hard failure rather than something worth retrying.
+        if (value && value.success) {
+          _cache.set(key, { value, at: Date.now() });
+        }
+        _inflight.delete(key);
+        return value;
+      },
       err => { _inflight.delete(key); throw err; }
     );
     _inflight.set(key, p);
@@ -91,21 +114,44 @@ const Api = (() => {
     if (mutationId) headers['X-Mutation-Id'] = mutationId;
 
     let res;
+    // REL-001. fetch() has NO default timeout: a request that stalls -- a
+    // half-open TCP connection after the factory WiFi drops, a captive
+    // portal swallowing packets, a worker wedged mid-query -- never settles.
+    // The awaiting caller's spinner then spins forever, and the user's only
+    // recovery is reloading the page and losing whatever they had typed.
+    //
+    // An abort is reported as a network error, deliberately: it is
+    // indistinguishable from an outage from the client's point of view, and
+    // routing it down that path means the mobile offline outbox's existing
+    // retry logic picks it up unchanged rather than needing a new case.
+    const controller = (typeof AbortController !== 'undefined') ? new AbortController() : null;
+    const timer = controller
+      ? setTimeout(() => controller.abort(), REQUEST_TIMEOUT_MS)
+      : null;
     try {
       res = await fetch(`/api/erp/rpc/${method}`, {
         method: 'POST',
         headers,
         credentials: 'same-origin',
-        body: JSON.stringify({ args: args || [] })
+        body: JSON.stringify({ args: args || [] }),
+        signal: controller ? controller.signal : undefined
       });
     } catch (networkErr) {
       // The fetch itself never completed -- DNS failure, no connection,
-      // CORS, a dropped connection before any response arrived. This is
-      // the ONLY case that means "still offline, retry later"; see
-      // isNetworkError below.
-      const err = new Error(networkErr && networkErr.message || 'Network request failed.');
+      // CORS, a dropped connection before any response arrived, or our own
+      // abort above. This is the ONLY case that means "still offline, retry
+      // later"; see isNetworkError below.
+      const aborted = networkErr && networkErr.name === 'AbortError';
+      const err = new Error(
+        aborted
+          ? `The server did not respond within ${Math.round(REQUEST_TIMEOUT_MS / 1000)}s. It may still be working — check before retrying.`
+          : (networkErr && networkErr.message) || 'Network request failed.'
+      );
       err.isNetworkError = true;
+      err.isTimeout = !!aborted;
       throw err;
+    } finally {
+      if (timer) clearTimeout(timer);
     }
 
     if (!res.ok && res.status !== 200) {
@@ -140,6 +186,53 @@ const Api = (() => {
         });
   }
 
+  // ── One id per user action (DATA-003) ──────────────────────────────────
+  // Two submissions of the same save within this window are treated as the
+  // same action and share a mutation id, so the server executes them once.
+  //
+  // 10s covers a double-click, an Enter-key repeat, an impatient second click
+  // while a slow save is in flight, and a user retrying after a stall -- the
+  // realistic ways one intended action becomes two requests. It is short
+  // enough that deliberately repeating an identical save (adding the same
+  // item twice on purpose) is not swallowed: that takes longer than ten
+  // seconds to do, and the args would usually differ anyway.
+  const DEDUPE_WINDOW_MS = 10_000;
+  const _actionIds = new Map();   // key -> {id, at}
+
+  function _actionKey(method, args) {
+    try {
+      return method + '::' + JSON.stringify(args || []);
+    } catch (e) {
+      // Argument that will not serialise (a cyclic object, a DOM node). Fall
+      // back to a unique key so this call simply gets its own id rather than
+      // colliding with an unrelated one.
+      return method + '::' + _newMutationId();
+    }
+  }
+
+  function _actionMutationId(method, args) {
+    const key = _actionKey(method, args);
+    const now = Date.now();
+
+    // Opportunistic sweep -- this map must not grow for the life of the page.
+    if (_actionIds.size > 200) {
+      for (const [k, v] of _actionIds) {
+        if ((now - v.at) > DEDUPE_WINDOW_MS) _actionIds.delete(k);
+      }
+    }
+
+    const hit = _actionIds.get(key);
+    if (hit && (now - hit.at) < DEDUPE_WINDOW_MS) return hit.id;
+
+    const id = _newMutationId();
+    _actionIds.set(key, { id, at: now });
+    return id;
+  }
+
+  function _forgetActionId(method, args) {
+    _actionIds.delete(_actionKey(method, args));
+  }
+
   return {
     call(method, ...args) {
       return _cachedRequest(method, args);
@@ -158,10 +251,32 @@ const Api = (() => {
     // mobile outbox reconciling after a background sync).
     invalidateCache: _invalidateCache,
 
+    // One mutation id per USER ACTION, not per network call (DATA-003).
+    //
+    // This used to mint a fresh UUID on every invocation, which meant the
+    // server-side idempotency table could never match for ordinary desktop
+    // use -- it was pure write amplification, and double-submit protection
+    // rested entirely on client-side button disabling (defeated by a second
+    // tab, an Enter-key repeat, or a user retrying after a network stall).
+    //
+    // The id is now derived from the method plus its arguments and held for
+    // DEDUPE_WINDOW_MS, so the same save fired twice in quick succession
+    // carries the same id and the server executes it once. A genuinely
+    // different save -- different args -- gets its own id immediately, and
+    // the same save repeated deliberately after the window is a new action,
+    // which it is.
     mutate(method, ...args) {
-      return _request(method, args, _newMutationId()).then(
+      const mutationId = _actionMutationId(method, args);
+      return _request(method, args, mutationId).then(
         res => { _invalidateCache(); return res; },
-        err => { _invalidateCache(); throw err; }
+        err => {
+          _invalidateCache();
+          // A request that never reached the server did not consume its id.
+          // Forgetting it lets an immediate retry start cleanly instead of
+          // colliding with a claim that was never taken.
+          if (err && err.isNetworkError) _forgetActionId(method, args);
+          throw err;
+        }
       );
     },
 

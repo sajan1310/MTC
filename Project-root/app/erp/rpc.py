@@ -21,7 +21,7 @@ from app.middleware.request_id import get_request_id
 
 from . import erp_rpc_bp
 from .envelope import build_response
-from .mutations import get_cached_result, store_result
+from . import mutations
 from .registry import RPC_METHODS
 from .services.roles_service import TAB_BY_SERVICE_MODULE, get_effective_tab_level
 
@@ -92,42 +92,79 @@ def call(method: str):
         except ValueError:
             return jsonify(build_response(False, None, "X-Mutation-Id must be a UUID")), 400
 
-        cached = get_cached_result(mutation_id)
+        # Claim the id BEFORE executing (DATA-003). This used to be a
+        # SELECT-then-execute-then-INSERT, so two requests with the same id
+        # arriving together both found no row, both ran the method, and the
+        # loser's envelope was silently dropped by ON CONFLICT DO NOTHING --
+        # the mutation ran twice while the caller was told it ran once.
+        try:
+            cached = mutations.claim(mutation_id, method)
+        except mutations.MutationInProgress:
+            # A concurrent duplicate, most often a double-submit. Answer
+            # honestly rather than executing again or pretending success --
+            # the client can retry the same id once the first one lands, and
+            # will then get its stored envelope.
+            return jsonify(build_response(
+                False, None,
+                "This action is already being processed. Give it a moment, "
+                "then check whether it completed before trying again.",
+            )), 409
+
         if cached is not None:
             return jsonify(cached), 200
 
     payload = request.get_json(silent=True) or {}
     args = payload.get("args") or []
 
+    # Tracks whether the claim taken above has been resolved. If the request
+    # dies in a way that stores no envelope -- including a BaseException such
+    # as a SIGTERM landing mid-execution during a gunicorn recycle -- the
+    # finally block drops the claim, so a legitimate retry is not made to wait
+    # out STALE_CLAIM_SECONDS for nothing.
+    claim_settled = False
     try:
-        result = spec.func(*args)
-    except _DOMAIN_ERROR_TYPES as exc:
-        # Expected, user-correctable (bad input, business-rule violation) --
-        # safe to show verbatim, same behaviour as before this change.
-        result = build_response(False, None, str(exc))
-    except Exception:  # noqa: BLE001 -- see _DOMAIN_ERROR_TYPES above
-        # Anything else is a bug, not a validation message: str(exc) here
-        # could be a raw psycopg2/AttributeError/KeyError message exposing
-        # internals to the client, and -- critically -- until this change
-        # nothing ever logged it, so the application could be substantially
-        # broken while reporting HTTP 200 {success:false} on every request
-        # with no server-side trace of why. Log with enough context to find
-        # it, tell the user only that something went wrong plus a reference
-        # id they can quote to support.
-        request_id = get_request_id()
-        current_app.logger.exception(
-            "RPC method %s failed unexpectedly (user=%s, request_id=%s)",
-            method,
-            getattr(current_user, "id", None) if current_user and current_user.is_authenticated else None,
-            request_id,
-        )
-        result = build_response(
-            False, None,
-            f"Something went wrong on our end. If this keeps happening, "
-            f"quote reference {request_id} to support.",
-        )
+        try:
+            result = spec.func(*args)
+        except _DOMAIN_ERROR_TYPES as exc:
+            # Expected, user-correctable (bad input, business-rule violation) --
+            # safe to show verbatim, same behaviour as before this change.
+            result = build_response(False, None, str(exc))
+        except Exception:  # noqa: BLE001 -- see _DOMAIN_ERROR_TYPES above
+            # Anything else is a bug, not a validation message: str(exc) here
+            # could be a raw psycopg2/AttributeError/KeyError message exposing
+            # internals to the client, and -- critically -- until this change
+            # nothing ever logged it, so the application could be substantially
+            # broken while reporting HTTP 200 {success:false} on every request
+            # with no server-side trace of why. Log with enough context to find
+            # it, tell the user only that something went wrong plus a reference
+            # id they can quote to support.
+            request_id = get_request_id()
+            current_app.logger.exception(
+                "RPC method %s failed unexpectedly (user=%s, request_id=%s)",
+                method,
+                getattr(current_user, "id", None) if current_user and current_user.is_authenticated else None,
+                request_id,
+            )
+            result = build_response(
+                False, None,
+                f"Something went wrong on our end. If this keeps happening, "
+                f"quote reference {request_id} to support.",
+            )
 
-    if spec.mutation:
-        store_result(mutation_id, method, result)
+        if spec.mutation:
+            # Both success and domain-failure envelopes are stored,
+            # deliberately: a replayed duplicate of a rejected save must fail
+            # identically rather than get a second attempt (see
+            # migrations/erp/002's own note).
+            mutations.complete(mutation_id, result)
+            claim_settled = True
+    finally:
+        if spec.mutation and not claim_settled:
+            try:
+                mutations.release(mutation_id)
+            except Exception:  # noqa: BLE001 -- cleanup must never mask the real error
+                current_app.logger.warning(
+                    "Failed to release mutation claim %s after an error", mutation_id
+                )
 
     return jsonify(result), 200

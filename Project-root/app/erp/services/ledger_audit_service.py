@@ -342,7 +342,24 @@ def run_internal_ledger_audit() -> dict:
             return {"success": True, "skipped": True}
 
         try:
-            result = compute_internal_ledger_audit_findings()
+            # A deliberate, documented exception to the PERF-003 nesting guard.
+            #
+            # The lock above is transaction-scoped (pg_try_advisory_xact_lock),
+            # which is the right choice with a pooled connection -- a
+            # session-level lock could outlive this connection's return to the
+            # pool. But that means the lock only exists while THIS transaction
+            # does, so the work it guards has to happen inside it, and that
+            # work is a five-ledger reconciliation whose readers each take
+            # their own connection.
+            #
+            # Threading a cursor through all five service readers to save one
+            # connection on an HOURLY BACKGROUND JOB is not a trade worth
+            # making -- the cost PERF-003 is about (per-request latency, and
+            # pool exhaustion under concurrent load) does not apply to a single
+            # scheduler thread that runs 24 times a day. Marked explicitly so
+            # it reads as a decision rather than an oversight.
+            with database.allow_nested_connections():
+                result = compute_internal_ledger_audit_findings()
         except Exception as exc:  # noqa: BLE001 -- logged below, never raised further
             logger.error("[ledger_audit] Audit run failed: %s", exc)
             _log(cur, "LEDGER_AUDIT_SUMMARY", "ALL", f"Audit run failed: {exc}", "ERROR")

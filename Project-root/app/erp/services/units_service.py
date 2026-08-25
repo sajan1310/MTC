@@ -202,20 +202,52 @@ def delete_units_bulk(conn, cur, unit_names):
 # ─────────────────────────────────────────────────────────────────────────
 
 
-def get_units_map() -> dict:
-    """{unit_name.lower(): {"unitName", "family", "factorToBase"}} for every active unit."""
-    with database.get_conn(cursor_factory=psycopg2.extras.RealDictCursor) as (_conn, cur):
-        cur.execute("SELECT unit_name, family, factor_to_base FROM erp.units WHERE deleted_at IS NULL")
-        rows = cur.fetchall()
+def _units_map_from(cur) -> dict:
+    cur.execute("SELECT unit_name, family, factor_to_base FROM erp.units WHERE deleted_at IS NULL")
     return {
         row["unit_name"].strip().lower(): {
             "unitName": row["unit_name"],
             "family": row["family"],
             "factorToBase": float(row["factor_to_base"]),
         }
-        for row in rows
+        for row in cur.fetchall()
         if row["unit_name"]
     }
+
+
+def get_units_map(cur=None) -> dict:
+    """{unit_name.lower(): {"unitName", "family", "factorToBase"}} for every active unit.
+
+    PASS `cur` WHENEVER YOU ALREADY HOLD ONE (PERF-003).
+
+    This used to always open its own connection, and it is called from inside
+    a dozen functions that are already holding one -- save_bill, save_po,
+    save_return, the Stock formula, the warehouse pool rebuild. Two problems,
+    one of them much worse than it looks:
+
+    * **Latency.** psycopg2's ThreadedConnectionPool creates a new backend
+      when it has none spare, and establishing a PostgreSQL connection costs
+      tens of milliseconds. Profiling getStockData against five years of data
+      measured **65ms in psycopg2._connect for a 0.6ms query** -- roughly a
+      quarter of the whole request, spent opening a connection to read a table
+      of a few dozen rows.
+
+    * **Pool exhaustion.** ThreadedConnectionPool.getconn() RAISES
+      ``PoolError: connection pool exhausted`` when full; it does not block and
+      wait. So under load, requests each holding one connection and asking for
+      a second all fail at once, and the pool does not recover until the
+      in-flight requests finish. That is a cliff, not a slope.
+
+    A second connection is also a separate TRANSACTION, so it cannot see
+    uncommitted work from the first -- a correctness trap this codebase has
+    already documented once, for _import_items_from_stock.
+
+    Calling with no cursor still works, for genuine top-level entry points.
+    """
+    if cur is not None:
+        return _units_map_from(cur)
+    with database.get_conn(cursor_factory=psycopg2.extras.RealDictCursor) as (_conn, own):
+        return _units_map_from(own)
 
 
 def lookup_unit(unit_name: str, fallback_family: str, units_map: dict) -> dict:

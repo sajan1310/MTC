@@ -17,10 +17,11 @@ import threading
 import time
 from typing import Any, Dict
 
-import psycopg2.sql
+from flask import current_app
 
 import database
 from config import Config
+from . import db_backup
 from ..envelope import build_response
 from ..registry import rpc_method
 
@@ -46,15 +47,44 @@ _LAST_BACKUP_STATUS: Dict[str, Any] = {
     "mirror_status": None,
     "mirror_message": None,
     "nightly_scheduler_active": False,
+    # DATA-001 health fields. Defaults are deliberately the pessimistic ones:
+    # before any run has happened, "is there a verified backup?" must answer
+    # False, not None-that-renders-as-blank-and-looks-fine.
+    "snapshot_verified": False,
+    "snapshot_size_bytes": None,
+    "snapshot_sha256": None,
+    "snapshot_table_count": None,
+    "snapshot_error": None,
+    "consecutive_failures": 0,
+    "last_verified_at": None,
+    "pruned_count": 0,
 }
 
 _STATUS_LOCK = threading.Lock()
 
 
 def get_backup_dir() -> str:
-    """Returns absolute path to project backups/ directory."""
-    base_dir = os.path.abspath(os.path.join(os.path.dirname(__file__), "../../../.."))
-    backup_dir = os.path.join(base_dir, "backups")
+    """Absolute path to the directory snapshots are written to.
+
+    Configurable via BACKUP_DIR (DEPLOY-001). The historical default -- a
+    `backups/` directory beside the checkout -- is correct for the systemd
+    deployment, where deploy.sh gives the app user ownership of that tree.
+    It is NOT correct inside the container: the same "four directories up"
+    computation resolves to `/backups`, the filesystem root, which only
+    worked because the container ran as root. It runs as an unprivileged
+    user now, so the image sets BACKUP_DIR explicitly.
+    """
+    configured = None
+    try:
+        configured = current_app.config.get("BACKUP_DIR")
+    except RuntimeError:
+        # No application context (a CLI invocation, a scheduled job outside
+        # the app). Fall through to the environment, then to the default.
+        pass
+    backup_dir = configured or os.getenv("BACKUP_DIR")
+    if not backup_dir:
+        base_dir = os.path.abspath(os.path.join(os.path.dirname(__file__), "../../../.."))
+        backup_dir = os.path.join(base_dir, "backups")
     os.makedirs(backup_dir, exist_ok=True)
     return backup_dir
 
@@ -79,75 +109,58 @@ def _mirror_module():
     return mirror_db_to_gas_sheets
 
 
-def export_local_sql_snapshot(cur, backup_filepath: str) -> None:
-    """Exports a simple SQL dump of all erp.* tables into backup_filepath.
+def perform_full_backup(config=None) -> Dict[str, Any]:
+    """Performs a verified local database snapshot plus the Google Sheets sync.
 
-    Writes INSERT statements for each row so the backup file is actually
-    restorable, not just comment headers. Uses psycopg2.sql.Identifier
-    for table names to avoid SQL injection from unusual table names.
-
-    Reuses backup_db_to_sheets.TABLES for the table list so this backup
-    stays in sync with the curated list there (which deliberately excludes
-    internal/runtime tables such as erp.bom_access_tokens).
+    The local snapshot is now produced by db_backup.create_snapshot(), which
+    shells out to pg_dump and then proves the result readable with pg_restore
+    before returning. See db_backup's module docstring for what the previous
+    hand-rolled INSERT writer got wrong -- in short, it produced files that
+    could not be restored and reported them as successful backups.
     """
-    tables = [qualified.split(".", 1)[1] for qualified in _migration_module().TABLES]
-
-    with open(backup_filepath, "w", encoding="utf-8") as f:
-        f.write(f"-- MTC ERP Database Backup\n-- Generated: {datetime.datetime.now().isoformat()}\n\n")
-        for table in tables:
-            qualified = psycopg2.sql.SQL("{}.{}").format(
-                psycopg2.sql.Identifier("erp"),
-                psycopg2.sql.Identifier(table),
-            )
-            full_table = f"erp.{table}"
-            f.write(f"-- Table: {full_table}\n")
-            try:
-                cur.execute(psycopg2.sql.SQL("SELECT * FROM {}").format(qualified))
-                cols = [d[0] for d in cur.description]
-                rows = cur.fetchall()
-                f.write(f"-- Rows count: {len(rows)}\n")
-                for row in rows:
-                    values = []
-                    for val in row:
-                        if val is None:
-                            values.append("NULL")
-                        elif isinstance(val, (int, float)):
-                            values.append(str(val))
-                        elif isinstance(val, (datetime.date, datetime.datetime)):
-                            values.append(f"'{val.isoformat()}'")
-                        elif isinstance(val, bool):
-                            values.append("TRUE" if val else "FALSE")
-                        else:
-                            # Escape single quotes for SQL safety
-                            escaped = str(val).replace("'", "''")
-                            values.append(f"'{escaped}'")
-                    col_list = ", ".join(cols)
-                    val_list = ", ".join(values)
-                    f.write(f"INSERT INTO {full_table} ({col_list}) VALUES ({val_list});\n")
-            except Exception as e:
-                f.write(f"-- Error exporting {full_table}: {e}\n")
-                continue
-            f.write("\n")
-
-
-def perform_full_backup() -> Dict[str, Any]:
-    """Performs both a local database snapshot backup and Google Sheets upload."""
     now_iso = datetime.datetime.now().isoformat()
-    timestamp_str = datetime.datetime.now().strftime("%Y%m%d_%H%M%S")
     backup_dir = get_backup_dir()
-    local_backup_file = os.path.join(backup_dir, f"db_backup_{timestamp_str}.sql")
 
-    # 1. Local Postgres snapshot backup
+    # 1. Local Postgres snapshot -- dumped AND verified, or not a backup.
     local_success = False
     local_error = None
+    local_backup_file = None
+    snapshot_detail: Dict[str, Any] = {}
+    pruned: list = []
     try:
-        with database.get_conn() as (_conn, cur):
-            export_local_sql_snapshot(cur, local_backup_file)
-            local_success = True
-            logger.info("[backup_service] Local database snapshot saved to: %s", local_backup_file)
+        # config=None lets db_backup resolve it -- current_app.config when
+        # there is an app context, config.Config otherwise. Callers that know
+        # which database they mean (tests, and any future admin CLI) pass it
+        # explicitly rather than relying on ambient state.
+        snapshot = db_backup.create_snapshot(backup_dir, config=config)
+        local_backup_file = snapshot.path
+        local_success = True
+        snapshot_detail = {
+            "sizeBytes": snapshot.size_bytes,
+            "sha256": snapshot.sha256,
+            "tableCount": snapshot.table_count,
+            "verified": snapshot.verified,
+        }
+        logger.info(
+            "[backup_service] Verified snapshot %s (%s bytes, %d tables, sha256=%s)",
+            snapshot.filename,
+            f"{snapshot.size_bytes:,}",
+            snapshot.table_count,
+            snapshot.sha256[:16],
+        )
+        # Retention runs only after a good snapshot exists, so a run of
+        # failures can never delete the last known-good file.
+        pruned = db_backup.prune_snapshots(backup_dir)
+        if pruned:
+            logger.info("[backup_service] Pruned %d old snapshot(s)", len(pruned))
     except Exception as exc:
         local_error = str(exc)
-        logger.error("[backup_service] Local snapshot backup failed: %s", exc)
+        # ERROR, not warning, and the run is FAILED below regardless of what
+        # the Sheets sync does. The old code set local_success = True even
+        # when individual tables had failed to export, writing the error into
+        # the output file as an SQL comment -- so a backup that captured three
+        # of fifty tables was reported green on the dashboard.
+        logger.error("[backup_service] Local snapshot FAILED: %s", exc)
 
     # 2. Google Sheets sync via scripts/migration/backup_db_to_sheets.py
     sheets_success = False
@@ -225,15 +238,32 @@ def perform_full_backup() -> Dict[str, Any]:
             mirror_error = str(exc)
             logger.error("[backup_service] GAS sheet mirror failed: %s", exc)
 
-    # Build final status summary
+    # Build final status summary.
+    #
+    # The local snapshot is the backup. The Sheets sync and the GAS mirror are
+    # convenience exports of the same data into a human-readable form -- losing
+    # one of those is an inconvenience; losing the snapshot is losing the
+    # ability to recover. So a failed snapshot is FAILED, never PARTIAL,
+    # whatever else succeeded.
     all_succeeded = local_success and sheets_success and mirror_success
-    status_str = "SUCCESS" if all_succeeded else ("PARTIAL" if local_success else "FAILED")
+    if not local_success:
+        status_str = "FAILED"
+    elif all_succeeded:
+        status_str = "SUCCESS"
+    else:
+        status_str = "PARTIAL"
 
     messages = []
     if local_success:
-        messages.append(f"Local DB snapshot created ({os.path.basename(local_backup_file)})")
+        messages.append(
+            f"Verified DB snapshot created ({os.path.basename(local_backup_file)}, "
+            f"{snapshot_detail.get('tableCount', 0)} tables, "
+            f"{snapshot_detail.get('sizeBytes', 0):,} bytes)"
+        )
+        if pruned:
+            messages.append(f"Pruned {len(pruned)} snapshot(s) past retention")
     else:
-        messages.append(f"Local DB snapshot failed ({local_error})")
+        messages.append(f"DB SNAPSHOT FAILED -- no recoverable backup was produced ({local_error})")
 
     if sheets_success:
         messages.append("Synced to Google Sheets successfully.")
@@ -256,9 +286,28 @@ def perform_full_backup() -> Dict[str, Any]:
         "local_file": local_backup_file,
         "mirror_status": "SUCCESS" if mirror_success else "FAILED",
         "mirror_message": "GAS app spreadsheet mirrored successfully." if mirror_success else mirror_error,
+        # Health surface (DATA-001). "A file was written" is not evidence of a
+        # backup; these are. snapshot_verified is the one an operator should
+        # look at, and it is only ever True when pg_restore has read the file
+        # back and found every table in db_backup.REQUIRED_TABLES.
+        "snapshot_verified": bool(snapshot_detail.get("verified")),
+        "snapshot_size_bytes": snapshot_detail.get("sizeBytes"),
+        "snapshot_sha256": snapshot_detail.get("sha256"),
+        "snapshot_table_count": snapshot_detail.get("tableCount"),
+        "snapshot_error": local_error,
+        "pruned_count": len(pruned),
     }
 
     with _STATUS_LOCK:
+        # consecutive_failures survives across runs so "it has not worked for
+        # four nights" is visible, rather than each night independently
+        # reporting one failure that nobody correlates.
+        previous_failures = int(_LAST_BACKUP_STATUS.get("consecutive_failures") or 0)
+        result_data["consecutive_failures"] = 0 if local_success else previous_failures + 1
+        if local_success:
+            result_data["last_verified_at"] = now_iso
+        else:
+            result_data["last_verified_at"] = _LAST_BACKUP_STATUS.get("last_verified_at")
         _LAST_BACKUP_STATUS.update(result_data)
 
     return result_data
@@ -269,6 +318,10 @@ def rpc_trigger_backup() -> Dict[str, Any]:
     """RPC method to manually trigger a database backup & Google Sheets upload."""
     try:
         res = perform_full_backup()
+        # PARTIAL still counts as success here because, per perform_full_backup,
+        # PARTIAL can now only mean "the verified snapshot exists but a
+        # convenience export did not". A failed snapshot is FAILED and reports
+        # as a failure to the caller.
         is_ok = res["status"] in ("SUCCESS", "PARTIAL")
         return build_response(is_ok, res, res["message"])
     except Exception as exc:
@@ -278,9 +331,49 @@ def rpc_trigger_backup() -> Dict[str, Any]:
 
 @rpc_method("getBackupStatus")
 def rpc_get_backup_status() -> Dict[str, Any]:
-    """RPC method to fetch the current backup status and last run timestamp."""
+    """Current backup health.
+
+    _LAST_BACKUP_STATUS is per-process in-memory state, so it resets to
+    "NEVER" every time a gunicorn worker is recycled -- and the systemd unit
+    recycles workers every 1000 requests. Answering "when did a backup last
+    succeed?" from that alone is therefore unreliable in exactly the direction
+    that matters. The on-disk snapshot is the durable record, so it is
+    consulted too and wins when it is newer.
+    """
     with _STATUS_LOCK:
         status_copy = dict(_LAST_BACKUP_STATUS)
+
+    try:
+        newest = db_backup.latest_snapshot(get_backup_dir())
+    except Exception:  # noqa: BLE001 -- a status read must never raise
+        newest = None
+
+    if newest is not None:
+        status_copy["latest_snapshot_file"] = newest.filename
+        status_copy["latest_snapshot_at"] = newest.created_at
+        status_copy["latest_snapshot_size_bytes"] = newest.size_bytes
+        # A worker that has itself never run a backup still reports the truth.
+        if not status_copy.get("last_verified_at"):
+            status_copy["last_verified_at"] = newest.created_at
+            status_copy["snapshot_verified"] = newest.verified
+        age_days = None
+        try:
+            age_days = (
+                datetime.datetime.now()
+                - datetime.datetime.fromisoformat(newest.created_at)
+            ).days
+        except ValueError:
+            pass
+        status_copy["latest_snapshot_age_days"] = age_days
+        # Absence of a recent backup produces no error of its own -- nothing
+        # fails, nothing logs, and that silence is the whole problem. Say it.
+        status_copy["stale"] = age_days is not None and age_days >= 2
+    else:
+        status_copy["latest_snapshot_file"] = None
+        status_copy["latest_snapshot_at"] = None
+        status_copy["latest_snapshot_age_days"] = None
+        status_copy["stale"] = True
+
     return build_response(True, status_copy, "Backup status loaded.")
 
 
@@ -324,6 +417,28 @@ def _run_scheduled_backup_safely() -> None:
             if should_run:
                 logger.info("[backup_service] Nightly automated backup triggered")
                 perform_full_backup()
+
+                # DATA-005. erp.rpc_mutations had no pruning anywhere, so a
+                # full JSONB result envelope -- sometimes a whole result set --
+                # was retained for every mutation ever performed, forever.
+                # Attached to this job rather than given its own scheduler: it
+                # already runs nightly, already holds a single-instance
+                # advisory lock, and a housekeeping delete does not warrant a
+                # second daemon thread (see REL-003, which argues these should
+                # be leaving the web workers entirely).
+                #
+                # Deliberately after the backup and separately guarded: a
+                # failed prune must never make a successful backup look failed.
+                try:
+                    from ..mutations import prune_old_mutations
+
+                    removed = prune_old_mutations()
+                    if removed:
+                        logger.info(
+                            "[backup_service] Pruned %d expired mutation record(s)", removed
+                        )
+                except Exception:
+                    logger.exception("[backup_service] Mutation pruning failed")
 
             # Release the advisory lock explicitly
             cur.execute("SELECT pg_advisory_unlock(%s)", (_BACKUP_LOCK_KEY,))

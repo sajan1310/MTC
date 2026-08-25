@@ -33,7 +33,8 @@ def update_my_profile(conn, cur, name, email):
     if not _EMAIL_RE.match(email):
         raise ValueError("Please enter a valid email address.")
 
-    cur.execute("SELECT user_id FROM users WHERE email = %s AND user_id != %s", (email, user_id))
+    # lower(email) (AUTH-001): identity is case-insensitive.
+    cur.execute("SELECT user_id FROM users WHERE lower(email) = %s AND user_id != %s", (email, user_id))
     if cur.fetchone():
         raise ValueError("An account with this email already exists.")
 

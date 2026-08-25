@@ -149,19 +149,18 @@ log "Applying database migrations"
 DATABASE_URL="$(sed -n 's/^DATABASE_URL=//p' "$ENV_FILE" | head -1)"
 [[ -n "$DATABASE_URL" ]] || fail "DATABASE_URL is not set in $ENV_FILE"
 
-# Bootstrap the PUBLIC schema before the ERP runner.
+# One migration path (MIG-001). runner.py builds the public core tables too,
+# via 000_public_core.sql, so a virgin database comes up complete from this
+# single command. Verified by running the runner against an empty database
+# and diffing the result against production: 50 erp tables, 3 public tables,
+# matching columns, zero seeded accounts.
 #
-# The runner only applies migrations/erp/*.sql, which build the `erp` schema.
-# The core tables -- users above all -- live in the public schema and come
-# from init_schema.sql, which nothing in the deploy path applies. On a virgin
-# database the runner therefore dies at 003_masters.sql with
-# `relation "public.users" does not exist`, ExecStartPre fails, and the unit
-# never starts. Verified by running the runner against an empty database.
-#
-# init_schema.sql is fully idempotent (every CREATE is IF NOT EXISTS), so
-# this is a no-op on an already-provisioned database and needs no guard.
-psql "$DATABASE_URL" -v ON_ERROR_STOP=1 -q -f "$PROJECT_DIR/migrations/init_schema.sql" \
-    || fail "init_schema.sql failed -- not restarting the service."
+# This replaces a `psql -f migrations/init_schema.sql` step that ran on every
+# deploy. Besides being a second, untracked schema source, that file created
+# 17 tables this application no longer uses and seeded two admin accounts
+# (admin@mtc.local and demo@example.com, both role 'admin') -- which meant
+# deleting those accounts did not keep them deleted. See
+# migrations/legacy/README.md.
 sudo -u "$APP_USER" env DATABASE_URL="$DATABASE_URL" \
     "$VENV_DIR/bin/python" "$PROJECT_DIR/migrations/erp/runner.py" \
     || fail "Migrations failed -- not restarting the service."

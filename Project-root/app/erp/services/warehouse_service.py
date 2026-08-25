@@ -59,6 +59,7 @@ import psycopg2.extras
 
 import database
 from . import items_service
+from . import locks
 from . import process_service
 from . import units_service
 from .current_user import get_current_user_id
@@ -486,7 +487,7 @@ def _build_warehouse_pool_buckets(cur, include_opening: bool = True) -> dict:
                     if pool_item_unit_map is None:
                         pool_item_unit_map = items_service.get_item_unit_info_map(cur)
                     if pool_units_map is None:
-                        pool_units_map = units_service.get_units_map()
+                        pool_units_map = units_service.get_units_map(cur)
                     unit_info = items_service.lookup_item_unit_info(pool_item_unit_map, item_name, "")
                     try:
                         qty = units_service.convert_qty_to_base_unit(qty, unit, unit_info, pool_units_map)
@@ -604,6 +605,21 @@ def _recalculate_warehouse_pool(cur) -> None:
     """Full rebuild of erp.warehouse_pool from source data -- mirrors
     recalculateStock()'s "always rebuild from source data" approach.
     """
+    # DATA-002. DELETE-then-INSERT the whole table is about as
+    # concurrency-hostile as a write gets: two transactions doing it at once
+    # each delete the other's not-yet-committed rows from their own snapshot,
+    # and the loser's INSERTs land on top of a table the winner also rebuilt.
+    # The result is a pool that reflects neither run.
+    #
+    # Rebuilt from history, so it is self-healing across runs -- but only if
+    # the runs do not interleave. This is called from eight different save
+    # and delete paths across production, dispatch and process, so two of them
+    # overlapping is ordinary, not exotic.
+    #
+    # Namespace-wide rather than per-bucket: the rebuild has no per-key
+    # granularity to exploit, and it is not on a hot path.
+    locks.lock_namespace(cur, locks.POOL)
+
     buckets = _build_warehouse_pool_buckets(cur, include_opening=True)
 
     # Rewrite the table from scratch (small dataset -- process count is tiny).
@@ -820,7 +836,7 @@ def save_warehouse_pool_opening(conn, cur, form_data):
     # own Color dropdown (getProcessColorGroups) is populated from, so
     # "the dropdown showed choices" and "a color is required" always agree.
     if not color:
-        components = process_service.get_process_components_data(process_id)["data"]
+        components = process_service._fetch_process_components(cur, process_id)
         pool_rows_for_axes = process_service._get_all_warehouse_pool_rows_for_color_axes(cur)
         color_links = process_service._get_all_process_color_links(cur)
         overrides = process_service._get_all_process_color_overrides(cur).get(process_id.lower())

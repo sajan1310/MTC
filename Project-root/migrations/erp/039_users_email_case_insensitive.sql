@@ -1,0 +1,39 @@
+-- Email identity is case-insensitive (AUTH-001).
+--
+-- The bug this closes
+-- -------------------
+-- app/auth/routes.py's api_signup and users_service.create_user both store
+-- `email.strip().lower()`. api_login looked the address up with
+-- `.strip()` only, against `WHERE email = %s`.
+--
+-- So an account created by someone who typed `Alice@Example.com` was stored
+-- as `alice@example.com`, and that same person typing the same address the
+-- same way at the login form got `401 Invalid credentials` -- forever, with
+-- nothing to indicate why, and a password reset would not help because the
+-- reset form lowercases and therefore "works" while login still fails.
+-- Reproduced end to end before the fix: signup 201, login with the typed
+-- casing 401, login with the lowercased form 200.
+--
+-- Nothing lowercases on the client (`type=email` does not), and Google may
+-- return mixed case for non-Gmail domains, so the collision was reachable by
+-- ordinary use.
+--
+-- Why an index and not just a code fix
+-- ------------------------------------
+-- The code fix is to compare `lower(email)`. That alone leaves an ambiguity:
+-- `users.email` is UNIQUE, but UNIQUE is case-SENSITIVE, so
+-- 'A@x.com' and 'a@x.com' can both exist -- and then a case-insensitive
+-- lookup matches two rows and `fetchone()` picks one arbitrarily, which for
+-- a login is the worst possible way to resolve it. This makes the database
+-- enforce what the application already assumes.
+--
+-- Verified safe before writing: production holds 0 rows whose email differs
+-- from its lowercase form, and 0 addresses that collide case-insensitively,
+-- so this index builds without conflict on the existing data.
+--
+-- The original UNIQUE(email) stays. It is now redundant for lowercase-only
+-- data but harmless, and dropping a constraint is not something a fix for a
+-- login bug should do.
+
+CREATE UNIQUE INDEX IF NOT EXISTS users_email_lower_key
+    ON public.users (lower(email));

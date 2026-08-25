@@ -113,7 +113,7 @@ App.Vendor = {
           <div><small class="text-muted">Ph:</small> ${escapeHtml(v.contact) || '-'}</div>
           <div><small class="text-muted">Add:</small> ${escapeHtml(v.address) || '-'}</div>
         </td>
-        <td><span class="badge bg-light text-dark border">${v.gstin || 'No GSTIN'}</span></td>
+        <td><span class="badge bg-light text-dark border">${escapeHtml(v.gstin) || 'No GSTIN'}</span></td>
         <td>${pendingBadge}</td>
         <td>
           <button class="btn btn-sm btn-outline-dark fw-bold btn-action w-100" data-vendor-name="${escapeHtml(v.name)}" onclick="App.Vendor.openProfileModal(this.dataset.vendorName)">View Profile / Ledger</button>
@@ -298,7 +298,7 @@ App.Vendor = {
         dateStr: po.poDate,
         type: 'PO Issued',
         ref: `PO-${po.poNumber}`,
-        items: po.items.map(i => `${escapeHtml(i.name)} (${escapeHtml(String(i.qty))})`).join(', '),
+        items: po.items.map(i => `${i.name} (${String(i.qty)})`).join(', '),
         orderQty: po.items.reduce((sum, i) => sum + toNumber(i.qty), 0),
         incomingQty: 0,
         outgoingQty: 0,
@@ -310,8 +310,8 @@ App.Vendor = {
     vendorBills.forEach(b => {
       const itemsStr = b.items.length
         ? (typeof b.items[0] === 'object'
-          ? b.items.map(i => `${escapeHtml(i.name)} (${escapeHtml(String(i.qty))})`).join(', ')
-          : b.items.map(s => escapeHtml(String(s))).join(', '))
+          ? b.items.map(i => `${i.name} (${String(i.qty)})`).join(', ')
+          : b.items.map(s => String(s)).join(', '))
         : '';
       const billQty = typeof b.items[0] === 'object'
         ? b.items.reduce((sum, i) => sum + toNumber(i.qty), 0)
@@ -331,7 +331,7 @@ App.Vendor = {
     });
 
     vendorReturns.forEach(r => {
-      const itemsStr = (r.items || []).map(i => `${escapeHtml(i.name)} (${escapeHtml(String(i.qty))})`).join(', ');
+      const itemsStr = (r.items || []).map(i => `${i.name} (${String(i.qty)})`).join(', ');
       const returnQty = (r.items || []).reduce((sum, i) => sum + toNumber(i.qty), 0);
       ledger.push({
         dateObj: parseRecordDate(r.returnDateRaw, r.returnDate),
@@ -348,7 +348,7 @@ App.Vendor = {
     });
 
     vendorIssues.forEach(iss => {
-      const itemsStr = (iss.items || []).map(i => `${escapeHtml(i.name)} (${escapeHtml(String(i.qty))})`).join(', ');
+      const itemsStr = (iss.items || []).map(i => `${i.name} (${String(i.qty)})`).join(', ');
       ledger.push({
         dateObj: parseRecordDate(iss.dateRaw, iss.date),
         dateStr: iss.date,
@@ -402,10 +402,10 @@ App.Vendor = {
       let lHtml = '';
       ledger.forEach(entry => {
         lHtml += `<tr>
-          <td>${entry.dateStr}</td>
-          <td><span class="badge ${entry.badgeClass}">${entry.type}</span></td>
-          <td><strong class="text-dark">${entry.ref}</strong></td>
-          <td><small class="text-muted">${entry.items}</small></td>
+          <td>${escapeHtml(entry.dateStr)}</td>
+          <td><span class="badge ${entry.badgeClass}">${escapeHtml(entry.type)}</span></td>
+          <td><strong class="text-dark">${escapeHtml(entry.ref)}</strong></td>
+          <td><small class="text-muted">${escapeHtml(entry.items)}</small></td>
           <td class="text-center text-primary fw-bold">${entry.orderQty || '-'}</td>
           <td class="text-center text-success fw-bold">${entry.incomingQty || '-'}</td>
           <td class="text-center text-danger fw-bold">${entry.outgoingQty || '-'}</td>
@@ -421,8 +421,8 @@ App.Vendor = {
       pendingList.forEach(item => {
         const isOver = 0 > item.pending;
         pHtml += `<tr>
-          <td><strong class="text-primary">${item.name}</strong></td>
-          <td>${item.size || '-'}</td>
+          <td><strong class="text-primary">${escapeHtml(item.name)}</strong></td>
+          <td>${escapeHtml(item.size) || '-'}</td>
           <td class="text-center">${item.ordered}</td>
           <td class="text-center">${item.received}</td>
           <td class="${isOver ? 'text-success' : 'text-danger'} fw-bold text-center">

@@ -1,0 +1,37 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Sign Out — Maharaja Bikes ERP</title>
+  <style>
+    body { font-family: 'Inter', Arial, sans-serif; background: #f4f7f6; color: #0f172a; display: flex; align-items: center; justify-content: center; min-height: 100vh; margin: 0; padding: 20px; box-sizing: border-box; }
+    .card { text-align: center; padding: 40px; max-width: 420px; background: #fff; border-radius: 12px; box-shadow: 0 4px 20px rgba(0,0,0,0.06); }
+    .icon { font-size: 40px; margin-bottom: 12px; }
+    h1 { font-size: 22px; margin-bottom: 8px; }
+    p { color: #475569; margin: 8px 0 24px; line-height: 1.5; }
+    .actions { display: flex; gap: 12px; justify-content: center; flex-wrap: wrap; }
+    button.primary { background: #0f172a; color: #fff; border: none; padding: 11px 22px; border-radius: 8px; font-weight: 600; font-size: 15px; cursor: pointer; min-height: 44px; }
+    button.primary:hover { background: #1e293b; }
+    a.secondary { display: inline-flex; align-items: center; color: #475569; text-decoration: none; padding: 11px 22px; border: 1px solid #cbd5e1; border-radius: 8px; font-weight: 600; font-size: 15px; min-height: 44px; box-sizing: border-box; }
+    a.secondary:hover { background: #f8fafc; }
+    :focus-visible { outline: 3px solid #2563eb; outline-offset: 2px; }
+  </style>
+</head>
+<body>
+  <main class="card">
+    <div class="icon" aria-hidden="true">👋</div>
+    <h1>Sign out of the ERP?</h1>
+    <p>You're signed in as <strong>{{ current_user.email }}</strong>. Any unsaved work in an open form will be lost.</p>
+
+    {# SEC-008. Signing out is a state change, so it happens on POST with a
+       CSRF token. Reaching this page by GET -- including via an <img>, an
+       <iframe> or a link prefetch on some other site -- does nothing. #}
+    <form method="POST" action="{{ url_for('auth.logout') }}" class="actions">
+      <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+      <a class="secondary" href="{{ url_for('erp.index') }}">Stay signed in</a>
+      <button type="submit" class="primary" autofocus>Sign Out</button>
+    </form>
+  </main>
+</body>
+</html>

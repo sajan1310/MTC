@@ -307,12 +307,79 @@ def _get_pipeline_data(production_lots: list) -> list:
     return result
 
 
-def _get_production_status_breakdown(production_lots: list) -> list:
-    counts: dict = {}
-    for lot in production_lots:
-        status = lot.get("status") or "Pending"
-        counts[status] = counts.get(status, 0) + 1
-    return [{"status": status, "count": count} for status, count in counts.items()]
+def _get_production_status_breakdown(cur) -> list:
+    """Lot counts per status, counted by the database (PERF-006).
+
+    This used to fold a list of EVERY production lot -- fetched by
+    get_production_data(), whose row mapper parses each lot's JSONB columns --
+    into a dict of counts. At five years of volume that is thousands of rows
+    and thousands of json.loads() calls to produce a handful of integers.
+    """
+    table = config_maps.TABLE_NAMES.get("PRODUCTION")
+    if not table:
+        return []
+    cur.execute(
+        f"""
+        SELECT COALESCE(NULLIF(btrim(status), ''), 'Pending') AS status, count(*) AS n
+        FROM {table}
+        WHERE deleted_at IS NULL
+        GROUP BY 1
+        """
+    )
+    return [{"status": row["status"], "count": int(row["n"])} for row in cur.fetchall()]
+
+
+def _get_active_production_kpis(cur) -> dict:
+    """{"count", "oldestDate"} for lots in an active status.
+
+    Both were derived by materialising every lot and filtering in Python.
+    """
+    table = config_maps.TABLE_NAMES.get("PRODUCTION")
+    if not table:
+        return {"count": 0, "oldestDate": None}
+    cur.execute(
+        f"""
+        SELECT count(*) AS n, min(production_date) AS oldest
+        FROM {table}
+        WHERE deleted_at IS NULL AND status = ANY(%s)
+        """,
+        (list(_ACTIVE_PRODUCTION_STATUSES),),
+    )
+    row = cur.fetchone()
+    return {"count": int(row["n"] or 0), "oldestDate": row["oldest"]}
+
+
+def _get_active_production_lots(cur) -> list:
+    """Only the lots the WIP pipeline actually draws, with only the columns it
+    reads (PERF-006).
+
+    _get_pipeline_data discards every non-active lot on its first line, so
+    fetching completed and cancelled history to throw it away is pure cost --
+    and the row mapper it went through parses each lot's components_consumed
+    and custom_components JSONB, neither of which the pipeline touches.
+    Active lots are a small minority of a mature table.
+    """
+    table = config_maps.TABLE_NAMES.get("PRODUCTION")
+    if not table:
+        return []
+    cur.execute(
+        f"""
+        SELECT process_id, product_name, qty, color_breakdown, status
+        FROM {table}
+        WHERE deleted_at IS NULL AND status = ANY(%s)
+        """,
+        (list(_ACTIVE_PRODUCTION_STATUSES),),
+    )
+    return [
+        {
+            "status": row["status"],
+            "processId": row["process_id"] or "",
+            "productName": row["product_name"] or "",
+            "qty": float(row["qty"] or 0),
+            "colorBreakdown": row["color_breakdown"] or [],
+        }
+        for row in cur.fetchall()
+    ]
 
 
 def _get_dispatch_trend(cur) -> list:
@@ -346,8 +413,17 @@ def get_dashboard_data():
     # billed/consumed maps, ready-to-dispatch from completed final-stage
     # lots less dispatched, contractor balances, lot status/pipeline) and
     # are reused rather than re-implemented in SQL.
+    # PRODUCTION no longer comes through get_production_data() (PERF-006).
+    #
+    # That call returned EVERY lot ever recorded, each mapped through
+    # _row_to_production_record, which parses two JSONB columns per row. At
+    # five years of volume it was the single most expensive part of this
+    # request -- profiled at 486ms of a 789ms dashboard, including ~18,000
+    # json.loads() calls -- and all three things the dashboard derives from it
+    # are either a pure aggregate (lot counts, oldest active date) or need
+    # only the small minority of lots in an ACTIVE status (the WIP pipeline).
+    # Both are now asked of the database directly, below.
     stock_records = stock_service.get_stock_data()["data"]
-    production_lots = production_service.get_production_data()["data"]
     ready_records = dispatch_service.get_ready_to_dispatch_data()["data"]
     contractor_ledger = contractors_service.get_contractor_ledger_data()["data"]
 
@@ -369,19 +445,11 @@ def get_dashboard_data():
     low_stock_items = low_stock_full[:10]
     low_stock_total_deficit = _round2(sum(max(i["deficit"], 0) for i in low_stock_full))
 
-    active_production_lots = [lot for lot in production_lots if lot["status"] in _ACTIVE_PRODUCTION_STATUSES]
-    pending_production_count = len(active_production_lots)
-    oldest_active_lot_date_raw = None
-    for lot in active_production_lots:
-        if not lot.get("dateRaw"):
-            continue
-        if oldest_active_lot_date_raw is None or lot["dateRaw"] < oldest_active_lot_date_raw:
-            oldest_active_lot_date_raw = lot["dateRaw"]
+    # Filled from SQL inside the connection block below.
+    pending_production_count = 0
     oldest_pending_production_days = None
-    if oldest_active_lot_date_raw:
-        oldest_date = date_utils.to_safe_date(oldest_active_lot_date_raw)
-        if oldest_date:
-            oldest_pending_production_days = max(0, (date.today() - oldest_date).days)
+    active_production_lots: list = []
+    production_status_breakdown: list = []
 
     ready_to_dispatch_units = sum(max(r["readyQty"], 0) for r in ready_records)
     ready_to_dispatch_full = sorted(
@@ -414,6 +482,16 @@ def get_dashboard_data():
         wastage_months = _summarize_two_months(cur, _WASTAGE_TWO_MONTH_SQL)
         dispatch_trend = _get_dispatch_trend(cur)
 
+        # Production, on this same connection (PERF-006).
+        active_kpis = _get_active_production_kpis(cur)
+        pending_production_count = active_kpis["count"]
+        if active_kpis["oldestDate"]:
+            oldest = date_utils.to_safe_date(active_kpis["oldestDate"])
+            if oldest:
+                oldest_pending_production_days = max(0, (date.today() - oldest).days)
+        production_status_breakdown = _get_production_status_breakdown(cur)
+        active_production_lots = _get_active_production_lots(cur)
+
     total_contractor_payable_due = sum(max(c["balanceDue"], 0) for c in contractor_ledger)
 
     return build_response(
@@ -444,8 +522,10 @@ def get_dashboard_data():
                 "contractorPayablesDue": _round2(total_contractor_payable_due),
                 "contractorPayablesCount": len(contractor_payables_full),
             },
-            "pipeline": _get_pipeline_data(production_lots),
-            "productionStatusBreakdown": _get_production_status_breakdown(production_lots),
+            # Only ACTIVE lots reach the pipeline -- it discards every other
+            # status on its first line anyway (PERF-006).
+            "pipeline": _get_pipeline_data(active_production_lots),
+            "productionStatusBreakdown": production_status_breakdown,
             "dispatchTrend": dispatch_trend,
             "lowStockItems": low_stock_items,
             "lowStockTotalCount": len(low_stock_full),

@@ -13,23 +13,46 @@ if sys.platform == "win32":
         if hasattr(_stream, "reconfigure"):
             _stream.reconfigure(encoding="utf-8", errors="replace")
 
+# PERF-003: fail the suite on nested pooled-connection acquisition.
+#
+# A function that already holds a connection and opens a second one halves
+# effective concurrency, adds a connection establishment to the request
+# (measured at 65ms for a 0.6ms query), and -- because
+# ThreadedConnectionPool.getconn() RAISES rather than waiting when the pool is
+# full -- turns load into a wall of 500s instead of a queue.
+#
+# Set BEFORE `database` is imported, since it reads the flag at module scope.
+# A test that genuinely needs two connections (proving lock contention, which
+# one connection cannot demonstrate) opts out explicitly with
+# database.allow_nested_connections().
+os.environ.setdefault("STRICT_NESTED_CONNECTIONS", "1")
+
 # Add the project root to the Python path to allow for absolute imports
 sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), "..")))
 
 from app import create_app
 
 
-import pathlib
-import importlib.util
 import psycopg2
 from psycopg2.extensions import ISOLATION_LEVEL_AUTOCOMMIT
 
 
 @pytest.fixture(scope="session", autouse=True)
 def setup_test_db():
-    """
-    Ensure the test database schema is created before any tests run.
-    This runs the migrations/init_schema.sql script followed by Python migrations.
+    """Build the test database schema before any test runs.
+
+    Uses migrations/erp/runner.py -- the same code the deploy path runs, and
+    the only migration path there is (MIG-001). It builds the public core
+    tables (000_public_core.sql) and then the whole erp schema, tracked in
+    erp.migrations_applied.
+
+    This used to run migrations/init_schema.sql followed by ~29 legacy
+    migration_*.py scripts in retry passes, because alphabetical order is not
+    dependency order. That produced a test database with 52 public tables
+    against production's 3: every session rebuilt 47 tables that production
+    does not have and no test asserts anything about. Those scripts now live
+    in migrations/legacy/ and nothing executes them -- see that directory's
+    README for the evidence.
     """
     # Get database connection info from environment.
     # DB_NAME must NEVER be used as a fallback here: it points at the
@@ -87,13 +110,18 @@ def setup_test_db():
         print(f"  [WARNING] Could not verify/create database: {e}")
         print("  Proceeding anyway - database may already exist")
 
-    # Step 1: Run SQL schema initialization
-    print("\nInitializing database schema...")
-    migrations_dir = pathlib.Path(__file__).parent.parent / "migrations"
-    sql_path = migrations_dir / "init_schema.sql"
+    # Step 1: Apply the migration chain -- the SAME runner the deploy path
+    # uses, against the disposable test database. Explicit connection kwargs
+    # are mandatory here: the runner prefers DATABASE_URL when none are
+    # given, and config.py's load_dotenv() repopulates that from .env the
+    # moment `app` is imported, which points at production.
+    print("\nApplying migrations (migrations/erp/runner.py)...")
+    from migrations.erp.runner import run_pending_migrations
 
-    with open(sql_path, "r", encoding="utf-8") as f:
-        sql = f.read()
+    applied = run_pending_migrations(
+        host=db_host, dbname=db_name, user=db_user, password=db_pass
+    )
+    print(f"  [OK] applied {len(applied)} migration(s)")
 
     db_config = {
         "host": db_host,
@@ -107,15 +135,7 @@ def setup_test_db():
     cur = conn.cursor()
 
     try:
-        # Execute the entire SQL file as one statement to handle dollar-quoted strings correctly
-        cur.execute(sql)
-
-        print("[OK] SQL schema initialization completed")
-
-        # Step 2: Run Python-based migrations
-        print("\nApplying Python migrations...")
-
-        # Initialize database module for migrations
+        # The connection pool the non-Flask fixtures use directly.
         import database
 
         class MockApp:
@@ -148,158 +168,30 @@ def setup_test_db():
             def get(self, key, default=None):
                 return self.config.get(key, default)
 
-        # Initialize database pool for migrations
         try:
             database.init_app(MockApp())
             print("  [OK] Database connection pool initialized")
         except Exception as e:
             print(f"  [WARNING] Database pool initialization: {e}")
 
-        # Ensure schema_migrations table exists
+        # The schema this leaves behind is production's, exactly: 3 public
+        # tables and the erp schema. Asserted rather than assumed, because a
+        # test database that quietly drifts from production is how a whole
+        # suite passes against tables production does not have.
         cur.execute(
-            """
-            CREATE TABLE IF NOT EXISTS schema_migrations (
-                version VARCHAR(255) PRIMARY KEY,
-                applied_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP
-            );
-        """
+            "SELECT table_name FROM information_schema.tables "
+            "WHERE table_schema = 'public' AND table_type = 'BASE TABLE'"
         )
-
-        # Get applied migrations
-        cur.execute("SELECT version FROM schema_migrations;")
-        applied_migrations = {row[0] for row in cur.fetchall()}
-
-        # Discover and apply pending migrations.
-        # Migrations are not numbered, and alphabetical order does not match
-        # dependency order (e.g. migration_add_finalized_at_to_production_lots
-        # sorts before migration_add_upf_tables, which creates production_lots).
-        # Apply in passes, retrying failures, until a pass makes no progress.
-        migration_files = sorted(migrations_dir.glob("migration_*.py"))
-
-        print(f"  Found {len(migration_files)} migration files")
-
-        def apply_migration(migration_file):
-            version = migration_file.stem
-            spec = importlib.util.spec_from_file_location(version, migration_file)
-            migration_module = importlib.util.module_from_spec(spec)
-            spec.loader.exec_module(migration_module)
-
-            # Migrations use several entrypoint conventions
-            entrypoint = getattr(migration_module, "upgrade", None) or getattr(
-                migration_module, "up", None
+        public_tables = {row[0] for row in cur.fetchall()}
+        expected = {"users", "password_reset_tokens", "custom_roles"}
+        if public_tables != expected:
+            raise RuntimeError(
+                f"Test database public schema does not match production. "
+                f"Expected {sorted(expected)}, got {sorted(public_tables)}. "
+                f"Extra: {sorted(public_tables - expected)}, "
+                f"missing: {sorted(expected - public_tables)}."
             )
-            if entrypoint is not None:
-                entrypoint()
-            elif hasattr(migration_module, "run"):
-                migration_module.run(conn, cur)
-            else:
-                print(f"  [WARNING] {version} has no upgrade()/up()/run() function")
-
-        pending = [f for f in migration_files if f.stem not in applied_migrations]
-        for f in migration_files:
-            if f.stem in applied_migrations:
-                print(f"  [SKIP] Already applied: {f.stem}")
-
-        pass_num = 0
-        while pending:
-            pass_num += 1
-            failures = []
-            for migration_file in pending:
-                version = migration_file.stem
-                print(f"  Applying migration (pass {pass_num}): {version}...")
-                try:
-                    apply_migration(migration_file)
-                    cur.execute(
-                        "INSERT INTO schema_migrations (version) VALUES (%s) ON CONFLICT DO NOTHING;",
-                        (version,),
-                    )
-                    print(f"  [OK] {version} applied successfully")
-                except Exception as e:
-                    print(f"  [RETRY-LATER] Migration {version} failed: {e}")
-                    failures.append((migration_file, e))
-
-            if len(failures) == len(pending):
-                # No progress this pass; report and stop retrying
-                print(f"\n  [ERROR] {len(failures)} migration(s) failed permanently:")
-                for migration_file, e in failures:
-                    print(f"    - {migration_file.stem}: {e}")
-                break
-            pending = [f for f, _ in failures]
-
-        # Step 3: Seed baseline test data (e.g., a process row for tests)
-        print("\nSeeding baseline test data...")
-        try:
-            # Verify processes table exists
-            cur.execute(
-                "SELECT EXISTS (SELECT FROM information_schema.tables WHERE table_name='processes');"
-            )
-            processes_exists = cur.fetchone()[0]
-
-            if not processes_exists:
-                print("  [ERROR] processes table does not exist after migrations!")
-                print("  [INFO] Available tables:")
-                cur.execute(
-                    "SELECT table_name FROM information_schema.tables WHERE table_schema='public' ORDER BY table_name;"
-                )
-                for row in cur.fetchall():
-                    print(f"    - {row[0]}")
-                raise Exception("processes table not created by migrations")
-
-            # Detect column names for process table
-            cur.execute(
-                "SELECT column_name FROM information_schema.columns WHERE table_name='processes' ORDER BY ordinal_position;"
-            )
-            process_cols = {row[0] for row in cur.fetchall()}
-
-            if not process_cols:
-                raise Exception("processes table has no columns!")
-
-            print(f"  [OK] processes table columns: {sorted(process_cols)}")
-
-            process_class_col = "class" if "class" in process_cols else "process_class"
-            process_user_col = "user_id" if "user_id" in process_cols else "created_by"
-
-            # Discover valid values from check constraints by looking at existing data or trying known values
-            # Valid class values: assembly, manufacturing, packaging, maintenance, service, procurement
-            # Valid status values: draft, active, archived, inactive
-            valid_class = "manufacturing"  # lowercase from check constraint
-            valid_status = "draft"  # lowercase from check constraint
-
-            # Attempt to find existing process to clone values from
-            try:
-                cur.execute(
-                    f"SELECT {process_class_col}, status FROM processes LIMIT 1;"
-                )
-                existing = cur.fetchone()
-                if existing:
-                    valid_class = existing[0]
-                    valid_status = existing[1]
-                    print(
-                        f"  Using existing values: {process_class_col}='{valid_class}', status='{valid_status}'"
-                    )
-                else:
-                    print(
-                        f"  Using default values: {process_class_col}='{valid_class}', status='{valid_status}'"
-                    )
-            except Exception:
-                print(
-                    f"  Using default values: {process_class_col}='{valid_class}', status='{valid_status}'"
-                )
-
-            # Insert baseline process row (processes table has no worst_case_cost column)
-            cur.execute(
-                f"""
-                INSERT INTO processes (name, description, {process_class_col}, status, {process_user_col})
-                VALUES ('Baseline Test Process', 'Reusable process for test fixtures', %s, %s, 1)
-                ON CONFLICT DO NOTHING;
-            """,
-                (valid_class, valid_status),
-            )
-
-            print("  [OK] Baseline test data seeded")
-        except Exception as e:
-            print(f"  [WARNING] Could not seed baseline data: {e}")
-            print("  Tests may need to create their own fixtures")
+        print(f"  [OK] public schema matches production: {sorted(public_tables)}")
 
         print("\n" + "=" * 80)
         print("Test database setup complete!")

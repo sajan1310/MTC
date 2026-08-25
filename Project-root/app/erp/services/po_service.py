@@ -69,7 +69,7 @@ def _normalize_items(cur, raw_items) -> list:
         raise ValueError("Cannot save a PO with zero items.")
 
     item_unit_map = items_service.get_item_unit_info_map(cur)
-    units_map = units_service.get_units_map()
+    units_map = units_service.get_units_map(cur)
 
     normalized = []
     for idx, item in enumerate(items):
@@ -490,8 +490,9 @@ def suggest_po_allocations(vendor, items, bill_date=None):
             billed_map = bill_service._aggregate_billed_base_qty_by_po(cur)
             all_pos = _load_po_list(cur, billed_map)
             item_unit_map = items_service.get_item_unit_info_map(cur)
-
-        units_map = units_service.get_units_map()
+            # Inside the block: `cur` is closed once the `with` exits
+            # (PERF-003 -- this used to open a second connection out here).
+            units_map = units_service.get_units_map(cur)
 
         vendor_pos = [po for po in all_pos if po["vendor"].strip().lower() == vendor_name.lower()]
         if not vendor_pos:

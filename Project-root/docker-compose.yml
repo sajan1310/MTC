@@ -6,6 +6,12 @@ services:
       - "8000:8000"
     env_file:
       - .env
+    volumes:
+      # Snapshots outlive the container. Without this the backups live in the
+      # container's writable layer and are destroyed by the next
+      # `docker compose up --build` -- which is precisely when you would want
+      # one.
+      - mtc_backups:/app/backups
     environment:
       DATABASE_URL: postgresql://${DB_USER:-postgres}:${DB_PASS:-postgres}@postgres:5432/${DB_NAME:-MTC}
       RATELIMIT_STORAGE_URL: redis://redis:6379/0
@@ -55,3 +61,4 @@ services:
 volumes:
   postgres_data:
   redis_data:
+  mtc_backups:

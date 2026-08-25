@@ -15,7 +15,7 @@ psql -U postgres -c "CREATE DATABASE testuser;"
 ### Optional: Initialize Schema
 ```powershell
 # If you have migrations
-psql -U postgres -d testuser -f Project-root/migrations/init_schema.sql
+python Project-root/migrations/erp/runner.py   # normally unnecessary: the suite builds its own database
 ```
 
 ## Running Tests
@@ -80,7 +80,7 @@ psycopg2.errors.UndefinedTable: relation "users" does not exist
 **Solution:**
 - Run schema initialization:
   ```powershell
-  psql -U postgres -d testuser -f Project-root/migrations/init_schema.sql
+  python Project-root/migrations/erp/runner.py   # normally unnecessary: the suite builds its own database
   ```
 
 ## Environment Variables (Optional)

@@ -74,6 +74,7 @@ import psycopg2.extras
 
 import database
 from . import contractors_service
+from . import locks
 from . import process_service
 from . import warehouse_service
 from .current_user import get_current_user_id
@@ -565,6 +566,17 @@ def save_dispatch_plan_line(conn, cur, form_data):
     remarks = str(form_data.get("remarks") or "").strip()[:255]
     transport = str(form_data.get("transport") or "").strip()[:255]
 
+    # DATA-002, same reasoning as save_dispatch: availableToPlan is derived
+    # (Ready-to-Dispatch less what other open plan cards already claim), so
+    # two planners dragging cards for the same product at the same moment
+    # both read the same figure and both pass. Locked BEFORE the credit-back
+    # read below, which also feeds the availability arithmetic.
+    #
+    # Deliberately the same DISPATCH namespace and key as save_dispatch: a
+    # plan card and a dispatch bill draw on the same pool, so they must
+    # contend with each other, not just within their own kind.
+    locks.lock_keys(cur, locks.DISPATCH, [product_id])
+
     # Credit back this line's own currently-saved qty (only when the
     # product wasn't also changed by this same save) -- same convention as
     # save_dispatch's original_qty_by_product, so re-saving/re-qty-ing a
@@ -736,6 +748,26 @@ def save_dispatch(conn, cur, form_data):
 
     headers_table = config_maps.TABLE_NAMES.get("DISPATCH_HEADERS")
     lines_table = config_maps.TABLE_NAMES.get("DISPATCH_LINES")
+
+    # DATA-002. Serialise every concurrent save that touches any of these
+    # products, BEFORE reading their availability below.
+    #
+    # Guard #1 further down is a check-then-act over a value derived from
+    # history (production lots less dispatch lines). Under READ COMMITTED,
+    # two clerks saving 30 units each against 40 available both read 40, both
+    # pass, and both commit -- 60 units dispatched against 40 produced, with
+    # no error anywhere. The locks make the second transaction wait and then
+    # re-read, so it sees the first one's rows and correctly refuses.
+    #
+    # Taken here rather than immediately before the check so that the edit
+    # path's read of original_qty_by_product is inside the same protected
+    # window: that figure is credited back onto availability, so reading it
+    # before the lock would reintroduce the same race one level down.
+    #
+    # Scoped per product, so dispatches of unrelated products stay fully
+    # parallel; sorted inside lock_keys(), so overlapping sets queue rather
+    # than deadlock.
+    locks.lock_keys(cur, locks.DISPATCH, (line["productId"] for line in lines))
 
     header_id = None
     # This bill's own currently-saved qty per product -- credited back onto

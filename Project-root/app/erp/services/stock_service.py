@@ -23,12 +23,12 @@ rename path).
 
 from __future__ import annotations
 
-from datetime import datetime
 
 import psycopg2.extras
 
 import database
 from . import items_service
+from . import locks
 from . import units_service
 from .current_user import get_current_user_id
 from .. import config_maps
@@ -70,7 +70,7 @@ def _iter_completed_production_components(cur):
         return
 
     item_unit_map = items_service.get_item_unit_info_map(cur)
-    units_map = units_service.get_units_map()
+    units_map = units_service.get_units_map(cur)
 
     cur.execute(
         f"""
@@ -117,7 +117,215 @@ def _iter_completed_production_components(cur):
             }
 
 
-def _get_billed_and_consumed_qty_maps(cur) -> tuple[dict, dict]:
+# The four line-table terms of the Current Stock formula, aggregated in SQL
+# (PERF-002 step 1).
+#
+# These four used to be four separate SELECTs whose every row was transferred
+# into Python and folded into a dict -- the entire history of every bill,
+# return, wastage note and stock issue, on every Stock read, every Item Ledger
+# view and every dashboard load. At five years of the audit's own projected
+# volume that is six figures of rows to answer a question about a few hundred
+# items.
+#
+# All four use `base_qty`, which is already normalised to the item's Base Unit
+# at WRITE time, so there is no business logic to move -- this is pure
+# aggregation and the database does it far better. The PRODUCTION term is
+# different and stays partly in Python; see _production_consumed_map.
+#
+# The predicates mirror the Python they replace exactly:
+#   - bill lines are additive and honour affects_stock; the other three debit
+#   - every header filtered on deleted_at IS NULL
+#   - a blank item name is skipped (`if not key.split("|")[0]: continue`)
+#   - keys are lower(strip(...)), matching f'{name.strip().lower()}|{size...}'
+_MOVEMENT_SQL = """
+    SELECT lower(btrim(item_name))                  AS name_k,
+           lower(btrim(COALESCE(size, '')))         AS size_k,
+           SUM(delta)                               AS net
+    FROM (
+        SELECT l.item_name, l.size,  l.base_qty AS delta
+          FROM erp.bill_lines l
+          JOIN erp.bill_headers h ON h.id = l.header_id
+         WHERE h.deleted_at IS NULL AND l.affects_stock = TRUE
+        UNION ALL
+        SELECT l.item_name, l.size, -l.base_qty
+          FROM erp.return_lines l
+          JOIN erp.return_headers h ON h.id = l.header_id
+         WHERE h.deleted_at IS NULL
+        UNION ALL
+        SELECT l.item_name, l.size, -l.base_qty
+          FROM erp.wastage_lines l
+          JOIN erp.wastage_headers h ON h.id = l.header_id
+         WHERE h.deleted_at IS NULL
+        UNION ALL
+        SELECT l.item_name, l.size, -l.base_qty
+          FROM erp.issue_lines l
+          JOIN erp.issue_headers h ON h.id = l.header_id
+         WHERE h.deleted_at IS NULL
+    ) movements
+    WHERE btrim(COALESCE(item_name, '')) <> ''
+    GROUP BY 1, 2
+"""
+
+# Production's ITEM-sourced consumption, expanded and pre-aggregated in SQL.
+#
+# This one cannot move to SQL wholesale: each component's qty may be recorded
+# in a unit other than the item's Base Unit, and converting it is real business
+# logic (units_service.convert_qty_to_base_unit handles same-family ratios,
+# Weight->Count via weight-per-base-unit, and a documented fallback).
+# Reimplementing that in SQL would duplicate a business rule, which is exactly
+# what this codebase has been careful not to do.
+#
+# So SQL does the part it is good at -- unnesting the JSONB array, discarding
+# POOL-sourced entries, and collapsing everything to one row per
+# (item, size, unit) -- and Python still performs the conversion, once per
+# GROUP rather than once per component.
+#
+# That regrouping is exact, not an approximation: convert_qty_to_base_unit is
+# strictly linear in qty on both of its branches
+# (`q * factor / divisor`, no rounding, no clamping), so
+# convert(sum(q)) == sum(convert(q)) for a fixed unit. Verified by test against
+# the row-by-row implementation, which is retained for the Item Ledger.
+_PRODUCTION_CONSUMED_SQL = """
+    SELECT lower(btrim(comp ->> 'itemName'))                    AS name_k,
+           lower(btrim(COALESCE(comp ->> 'size', '')))          AS size_k,
+           btrim(COALESCE(comp ->> 'unit', ''))                 AS unit,
+           SUM(COALESCE(NULLIF(comp ->> 'qty', '')::numeric, 0)) AS qty
+    FROM {table} p
+    CROSS JOIN LATERAL jsonb_array_elements(p.components_consumed) AS comp
+    WHERE p.deleted_at IS NULL
+      AND lower(p.status) = 'completed'
+      -- jsonb_array_elements ERRORS on a non-array. The Python it replaces
+      -- iterated whatever was there and skipped non-dict entries, so a lot
+      -- whose components_consumed is an object must be ignored, not fatal.
+      AND jsonb_typeof(p.components_consumed) = 'array'
+      AND jsonb_typeof(comp) = 'object'
+      AND upper(btrim(COALESCE(comp ->> 'sourceType', ''))) <> 'POOL'
+      AND btrim(COALESCE(comp ->> 'itemName', '')) <> ''
+    GROUP BY 1, 2, 3
+"""
+
+
+# The same aggregation, restricted to a named set of items.
+#
+# This is what makes pagination worth having (PERF-002 step 2). Returning 50
+# rows instead of 800 saves payload, but the expensive half is computing
+# movement for every item that has ever existed -- so a paginated read that
+# still full-scans has fixed the symptom and not the cost.
+#
+# Restricted to a page's items, these four scans become index lookups: the
+# `lower(item_name), lower(size)` expression indexes on all four line tables
+# (migrations 008/009/011) match this predicate exactly. That is the
+# difference between O(all history) and O(rows for 50 items).
+_MOVEMENT_SQL_FOR_ITEMS = """
+    SELECT lower(btrim(item_name))                  AS name_k,
+           lower(btrim(COALESCE(size, '')))         AS size_k,
+           SUM(delta)                               AS net
+    FROM (
+        SELECT l.item_name, l.size,  l.base_qty AS delta
+          FROM erp.bill_lines l
+          JOIN erp.bill_headers h ON h.id = l.header_id
+         WHERE h.deleted_at IS NULL AND l.affects_stock = TRUE
+           AND (lower(l.item_name), lower(COALESCE(l.size, ''))) IN %(keys)s
+        UNION ALL
+        SELECT l.item_name, l.size, -l.base_qty
+          FROM erp.return_lines l
+          JOIN erp.return_headers h ON h.id = l.header_id
+         WHERE h.deleted_at IS NULL
+           AND (lower(l.item_name), lower(COALESCE(l.size, ''))) IN %(keys)s
+        UNION ALL
+        SELECT l.item_name, l.size, -l.base_qty
+          FROM erp.wastage_lines l
+          JOIN erp.wastage_headers h ON h.id = l.header_id
+         WHERE h.deleted_at IS NULL
+           AND (lower(l.item_name), lower(COALESCE(l.size, ''))) IN %(keys)s
+        UNION ALL
+        SELECT l.item_name, l.size, -l.base_qty
+          FROM erp.issue_lines l
+          JOIN erp.issue_headers h ON h.id = l.header_id
+         WHERE h.deleted_at IS NULL
+           AND (lower(l.item_name), lower(COALESCE(l.size, ''))) IN %(keys)s
+    ) movements
+    WHERE btrim(COALESCE(item_name, '')) <> ''
+    GROUP BY 1, 2
+"""
+
+def _movement_map(cur, keys: list | None = None) -> dict:
+    """Net bill/return/wastage/issue movement, optionally for `keys` only.
+
+    `keys` is a list of (name_lower, size_lower) tuples.
+    """
+    if keys is None:
+        cur.execute(_MOVEMENT_SQL)
+    elif not keys:
+        return {}
+    else:
+        cur.execute(_MOVEMENT_SQL_FOR_ITEMS, {"keys": tuple(keys)})
+    return {
+        f'{row["name_k"]}|{row["size_k"]}': float(row["net"] or 0)
+        for row in cur.fetchall()
+    }
+
+
+def _production_consumed_map(cur, keys: list | None = None) -> dict:
+    """{"name|size": base-unit qty} consumed by Completed production lots.
+
+    The PRODUCTION term of the Current Stock formula. Equivalent to folding
+    _iter_completed_production_components (which is retained, because the Item
+    Ledger needs per-lot detail this cannot give), but without transferring
+    every component of every lot into Python.
+    """
+    table = config_maps.TABLE_NAMES.get("PRODUCTION")
+    if not table:
+        return {}
+
+    # Deliberately NOT restricted to `keys`, unlike the movement half.
+    #
+    # Measured, not assumed. The four line tables carry
+    # `lower(item_name), lower(size)` expression indexes, so restricting them
+    # to a page turns four full scans into index lookups -- 60ms to 18ms at
+    # five years of volume. JSONB component arrays have no such index: the
+    # expansion has to happen before an item name exists to filter on, so an
+    # item filter cannot avoid any work, it can only add a row-wise IN
+    # evaluated against every expanded component. Benchmarked on the same
+    # data: unfiltered 82ms, filter-after-expansion 397ms,
+    # filter-during-expansion 642ms.
+    #
+    # So this computes every item every time and the caller looks up the ones
+    # it wants -- which is still a large improvement on the row-by-row Python
+    # fold it replaced, and `keys` is accepted only to keep the two halves'
+    # signatures symmetrical.
+    cur.execute(_PRODUCTION_CONSUMED_SQL.format(table=table))
+    rows = cur.fetchall()
+    if not rows:
+        return {}
+
+    # Only fetched when there is something to convert -- both are extra
+    # queries, and the common no-production case should not pay for them.
+    item_unit_map = items_service.get_item_unit_info_map(cur)
+    units_map = units_service.get_units_map(cur)
+
+    consumed: dict = {}
+    for row in rows:
+        qty = float(row["qty"] or 0)
+        unit = row["unit"]
+        if unit:
+            # Blank unit means "already in the item's Base Unit" -- same
+            # convention as the row-by-row version, which guarded on `if unit:`.
+            unit_info = items_service.lookup_item_unit_info(
+                item_unit_map, row["name_k"], row["size_k"]
+            )
+            try:
+                qty = units_service.convert_qty_to_base_unit(qty, unit, unit_info, units_map)
+            except ValueError:
+                # An unconvertible unit must never block a Stock read -- fall
+                # back to the as-entered qty, exactly as before.
+                pass
+        key = f'{row["name_k"]}|{row["size_k"]}'
+        consumed[key] = consumed.get(key, 0) + qty
+    return consumed
+
+
+def _get_billed_and_consumed_qty_maps(cur, keys: list | None = None) -> tuple[dict, dict]:
     """Returns (bill_qty_map, consumed_qty_map), each keyed by
     "item_name_lower|size_lower" -> net base-unit qty affecting Current Stock.
 
@@ -129,72 +337,19 @@ def _get_billed_and_consumed_qty_maps(cur) -> tuple[dict, dict]:
     Warehouse Pool instead -- see warehouse_service._recalculate_warehouse_pool's
     Pass 2, not this function).
     """
-    bill_qty_map: dict = {}
-    cur.execute(
-        """
-        SELECT l.item_name, l.size, l.base_qty
-        FROM erp.bill_lines l
-        JOIN erp.bill_headers h ON h.id = l.header_id
-        WHERE h.deleted_at IS NULL AND l.affects_stock = TRUE
-        """
-    )
-    for row in cur.fetchall():
-        key = f'{(row["item_name"] or "").strip().lower()}|{(row["size"] or "").strip().lower()}'
-        if not key.split("|")[0]:
-            continue
-        bill_qty_map[key] = bill_qty_map.get(key, 0) + float(row["base_qty"] or 0)
+    # One aggregate query instead of four full-table transfers plus four
+    # Python fold loops (PERF-002). See _MOVEMENT_SQL for how the predicates
+    # map onto the code this replaces.
+    #
+    # `keys` restricts both halves to a set of (name_lower, size_lower)
+    # tuples, which is what makes a paginated read cheap rather than merely
+    # smaller. None means "every item", the whole-table behaviour every
+    # existing caller relies on.
+    bill_qty_map = _movement_map(cur, keys)
 
-    # Return is the mirror image of a bill -- goods sent back to a vendor
-    # debit Stock, no affects_stock-style opt-out exists for it.
-    cur.execute(
-        """
-        SELECT l.item_name, l.size, l.base_qty
-        FROM erp.return_lines l
-        JOIN erp.return_headers h ON h.id = l.header_id
-        WHERE h.deleted_at IS NULL
-        """
-    )
-    for row in cur.fetchall():
-        key = f'{(row["item_name"] or "").strip().lower()}|{(row["size"] or "").strip().lower()}'
-        if not key.split("|")[0]:
-            continue
-        bill_qty_map[key] = bill_qty_map.get(key, 0) - float(row["base_qty"] or 0)
-
-    # Wastage and Issue both debit Stock directly, same direction as Return.
-    cur.execute(
-        """
-        SELECT l.item_name, l.size, l.base_qty
-        FROM erp.wastage_lines l
-        JOIN erp.wastage_headers h ON h.id = l.header_id
-        WHERE h.deleted_at IS NULL
-        """
-    )
-    for row in cur.fetchall():
-        key = f'{(row["item_name"] or "").strip().lower()}|{(row["size"] or "").strip().lower()}'
-        if not key.split("|")[0]:
-            continue
-        bill_qty_map[key] = bill_qty_map.get(key, 0) - float(row["base_qty"] or 0)
-
-    cur.execute(
-        """
-        SELECT l.item_name, l.size, l.base_qty
-        FROM erp.issue_lines l
-        JOIN erp.issue_headers h ON h.id = l.header_id
-        WHERE h.deleted_at IS NULL
-        """
-    )
-    for row in cur.fetchall():
-        key = f'{(row["item_name"] or "").strip().lower()}|{(row["size"] or "").strip().lower()}'
-        if not key.split("|")[0]:
-            continue
-        bill_qty_map[key] = bill_qty_map.get(key, 0) - float(row["base_qty"] or 0)
-
-    # Guarded via TABLE_NAMES inside the generator itself -- a no-op until
+    # Guarded via TABLE_NAMES inside the helper itself -- a no-op until
     # erp.production exists, same as before this was factored out.
-    consumed_qty_map: dict = {}
-    for comp in _iter_completed_production_components(cur):
-        key = f'{comp["itemName"].lower()}|{comp["size"].lower()}'
-        consumed_qty_map[key] = consumed_qty_map.get(key, 0) + comp["baseQty"]
+    consumed_qty_map = _production_consumed_map(cur, keys)
 
     return bill_qty_map, consumed_qty_map
 
@@ -208,44 +363,156 @@ def _find_stock_row(cur, name: str, size: str):
     return row["id"] if row else None
 
 
-@rpc_method("getStockData")
-def get_stock_data():
-    with database.get_conn(cursor_factory=psycopg2.extras.RealDictCursor) as (_conn, cur):
-        bill_qty_map, consumed_qty_map = _get_billed_and_consumed_qty_maps(cur)
-        cur.execute(
-            """
-            SELECT id, item_name, size, initial_stock, threshold, dead_stock
-            FROM erp.stock
-            WHERE deleted_at IS NULL
-            ORDER BY id DESC
-            """
-        )
-        rows = cur.fetchall()
+# Sortable columns available WITHOUT computing Current Stock for every item.
+# These live on erp.stock itself, so a page can be selected first and the
+# movement aggregation restricted to it.
+_STOCK_SORTABLE = {
+    "name": "item_name",
+    "size": "size",
+    "initialStock": "initial_stock",
+    "threshold": "threshold",
+    "deadStock": "dead_stock",
+    "rowIdx": "id",
+}
 
-    records = []
-    for row in rows:
-        key = f'{row["item_name"].strip().lower()}|{(row["size"] or "").strip().lower()}'
-        billed = bill_qty_map.get(key, 0)
-        consumed = consumed_qty_map.get(key, 0)
-        initial = float(row["initial_stock"])
-        current = initial + billed - consumed
-        threshold = float(row["threshold"])
-        records.append(
-            {
-                "name": row["item_name"],
-                "size": row["size"] or "",
-                "initialStock": initial,
-                "currentStock": current,
-                "threshold": threshold,
-                "isLowStock": current < threshold,
-                "deadStock": bool(row["dead_stock"]),
-                # rowIdx maps to erp.stock.id -- the source's literal sheet-row
-                # position has no Postgres equivalent; id serves the same
-                # "stable per-row identifier" purpose (sorted newest-first).
-                "rowIdx": row["id"],
-            }
-        )
-    return build_response(True, records)
+# Sorts that are DERIVED from the aggregation and therefore cannot narrow it:
+# you cannot order by a value you have not computed yet. Requesting one of
+# these falls back to computing every item, then sorting, then slicing --
+# correct, and no slower than the old unpaginated behaviour, but it forfeits
+# the saving. Named explicitly so the trade-off is visible rather than
+# surprising.
+_STOCK_DERIVED_SORTS = {"currentStock", "isLowStock"}
+
+_DEFAULT_PAGE_SIZE = 50
+_MAX_PAGE_SIZE = 500
+
+
+def _stock_record(row, bill_qty_map, consumed_qty_map) -> dict:
+    key = f'{row["item_name"].strip().lower()}|{(row["size"] or "").strip().lower()}'
+    initial = float(row["initial_stock"])
+    current = initial + bill_qty_map.get(key, 0) - consumed_qty_map.get(key, 0)
+    threshold = float(row["threshold"])
+    return {
+        "name": row["item_name"],
+        "size": row["size"] or "",
+        "initialStock": initial,
+        "currentStock": current,
+        "threshold": threshold,
+        "isLowStock": current < threshold,
+        "deadStock": bool(row["dead_stock"]),
+        # rowIdx maps to erp.stock.id -- the source's literal sheet-row
+        # position has no Postgres equivalent; id serves the same
+        # "stable per-row identifier" purpose (sorted newest-first).
+        "rowIdx": row["id"],
+    }
+
+
+@rpc_method("getStockData")
+def get_stock_data(page=None, page_size=None, search=None, sort=None, direction=None):
+    """Stock rows with Current Stock.
+
+    Called with no arguments it behaves exactly as it always has: every row,
+    newest first, returned as a bare list. Every existing caller -- desktop
+    stock.js, mobile.js, the dashboard, the Item Ledger -- keeps working
+    untouched (PERF-002 keeps the RPC contract additive).
+
+    Passing `page` switches on the paginated form and changes the envelope's
+    `data` to {rows, page, pageSize, total}. That is a deliberate opt-in: a
+    caller that asks for a page is a caller that has been updated to read one.
+
+    The point of the paginated form is NOT smaller payloads. It is that the
+    page is selected from erp.stock first -- a small, indexed table -- and the
+    movement aggregation is then restricted to those items, turning four
+    full-history scans into index lookups. A paginated read that still
+    aggregated everything would have fixed the symptom and left the cost.
+    """
+    if page is None:
+        # ── Unpaginated: unchanged behaviour ──────────────────────────────
+        with database.get_conn(cursor_factory=psycopg2.extras.RealDictCursor) as (_conn, cur):
+            bill_qty_map, consumed_qty_map = _get_billed_and_consumed_qty_maps(cur)
+            cur.execute(
+                """
+                SELECT id, item_name, size, initial_stock, threshold, dead_stock
+                FROM erp.stock
+                WHERE deleted_at IS NULL
+                ORDER BY id DESC
+                """
+            )
+            rows = cur.fetchall()
+        return build_response(True, [_stock_record(r, bill_qty_map, consumed_qty_map) for r in rows])
+
+    # ── Paginated ─────────────────────────────────────────────────────────
+    try:
+        page = max(1, int(page))
+    except (TypeError, ValueError):
+        raise ValueError("page must be a positive whole number.")
+    try:
+        size = int(page_size) if page_size not in (None, "") else _DEFAULT_PAGE_SIZE
+    except (TypeError, ValueError):
+        raise ValueError("pageSize must be a whole number.")
+    size = max(1, min(size, _MAX_PAGE_SIZE))
+
+    term = str(search or "").strip().lower()
+    sort_key = str(sort or "rowIdx").strip()
+    descending = str(direction or "desc").strip().lower() != "asc"
+
+    if sort_key not in _STOCK_SORTABLE and sort_key not in _STOCK_DERIVED_SORTS:
+        raise ValueError(f'Cannot sort Stock by "{sort_key}".')
+
+    where = ["deleted_at IS NULL"]
+    params: dict = {}
+    if term:
+        # Matches the client-side filter the desktop already applies to the
+        # full list, so moving a module to the paginated form does not change
+        # what a search finds.
+        where.append("(lower(item_name) LIKE %(term)s OR lower(COALESCE(size, '')) LIKE %(term)s)")
+        params["term"] = f"%{term}%"
+    where_sql = " AND ".join(where)
+
+    with database.get_conn(cursor_factory=psycopg2.extras.RealDictCursor) as (_conn, cur):
+        cur.execute(f"SELECT count(*) AS n FROM erp.stock WHERE {where_sql}", params)
+        total = int(cur.fetchone()["n"])
+
+        if sort_key in _STOCK_DERIVED_SORTS:
+            # Cannot narrow: the sort key is the thing being computed. Compute
+            # everything, sort, then slice -- no worse than the unpaginated
+            # path, and honest about it.
+            bill_qty_map, consumed_qty_map = _get_billed_and_consumed_qty_maps(cur)
+            cur.execute(
+                f"SELECT id, item_name, size, initial_stock, threshold, dead_stock "
+                f"FROM erp.stock WHERE {where_sql}",
+                params,
+            )
+            records = [_stock_record(r, bill_qty_map, consumed_qty_map) for r in cur.fetchall()]
+            records.sort(key=lambda r: r[sort_key], reverse=descending)
+            window = records[(page - 1) * size: (page - 1) * size + size]
+        else:
+            column = _STOCK_SORTABLE[sort_key]
+            order = "DESC" if descending else "ASC"
+            params.update({"limit": size, "offset": (page - 1) * size})
+            cur.execute(
+                f"SELECT id, item_name, size, initial_stock, threshold, dead_stock "
+                f"FROM erp.stock WHERE {where_sql} "
+                # id as a tiebreaker so paging is stable when the sort column
+                # has duplicates -- otherwise a row can appear on two pages or
+                # on none.
+                f"ORDER BY {column} {order}, id DESC LIMIT %(limit)s OFFSET %(offset)s",
+                params,
+            )
+            rows = cur.fetchall()
+            keys = [
+                (r["item_name"].strip().lower(), (r["size"] or "").strip().lower())
+                for r in rows
+            ]
+            bill_qty_map, consumed_qty_map = _get_billed_and_consumed_qty_maps(cur, keys)
+            window = [_stock_record(r, bill_qty_map, consumed_qty_map) for r in rows]
+
+    return build_response(True, {
+        "rows": window,
+        "page": page,
+        "pageSize": size,
+        "total": total,
+    })
 
 
 
@@ -300,6 +567,15 @@ def adjust_stock_manually(conn, cur, item_name, size, new_current_stock, reason)
     reason_text = str(reason or "").strip()
     if not reason_text:
         raise ValueError("A reason is required for manual stock adjustments.")
+
+    # DATA-002. This is a read-modify-write over a derived value:
+    # old_current_stock is initial_stock + billed - consumed, and the new
+    # initial_stock is computed backwards from it. Two operators correcting
+    # the same item at the same moment both read the same old value, both
+    # compute new_initial_stock from it, and the second write silently
+    # discards the first -- a lost update, with an adjustments-log entry for
+    # each that makes it look as though both took effect.
+    locks.lock_keys(cur, locks.STOCK, [f"{item_name}|{size or ''}"])
 
     cur.execute(
         """
@@ -456,16 +732,48 @@ def check_stock_adjustment_conflicts(items, bill_date):
         if not bill_date_native or not isinstance(items, list) or not items:
             return build_response(True, [])
 
-        history = get_stock_adjustment_history()
-        if not history["success"] or not history["data"]:
+        # Latest adjustment per (item, size), computed in SQL for only the
+        # items on THIS bill (PERF-005).
+        #
+        # This used to call get_stock_adjustment_history(), which is an
+        # unbounded `SELECT ... ORDER BY created_at DESC` over the whole
+        # adjustments table, and then reduce it to a latest-per-key map in
+        # Python -- on every single bill save. Every row ever adjusted was
+        # transferred and discarded to answer a question about a handful of
+        # items. A blind LIMIT was not the fix: the same RPC method feeds
+        # mobile.js's item ledger, which legitimately needs the full history,
+        # so capping it there would silently truncate real data. Narrowing
+        # THIS caller to what it actually needs is.
+        keys = []
+        for item in items:
+            item = item or {}
+            name = str(item.get("name") or "").strip()
+            if not name:
+                continue
+            keys.append((name.lower(), str(item.get("size") or "").strip().lower()))
+        if not keys:
             return build_response(True, [])
 
         latest_by_key: dict = {}
-        for rec in history["data"]:
-            key = f'{str(rec["itemName"]).strip().lower()}|{str(rec["size"]).strip().lower()}'
-            rec_date = datetime.fromisoformat(rec["date"]).date()
-            if key not in latest_by_key or rec_date > latest_by_key[key]["date"]:
-                latest_by_key[key] = {"date": rec_date, "reason": rec["reason"]}
+        with database.get_conn(cursor_factory=psycopg2.extras.RealDictCursor) as (_conn, cur):
+            cur.execute(
+                """
+                SELECT DISTINCT ON (lower(item_name), lower(COALESCE(size, '')))
+                       lower(item_name)                AS name_k,
+                       lower(COALESCE(size, ''))       AS size_k,
+                       created_at,
+                       reason
+                FROM erp.stock_adjustments
+                WHERE (lower(item_name), lower(COALESCE(size, ''))) IN %s
+                ORDER BY lower(item_name), lower(COALESCE(size, '')), created_at DESC
+                """,
+                (tuple(keys),),
+            )
+            for row in cur.fetchall():
+                latest_by_key[f'{row["name_k"]}|{row["size_k"]}'] = {
+                    "date": row["created_at"].date(),
+                    "reason": row["reason"] or "",
+                }
 
         conflicts = []
         seen_keys = set()

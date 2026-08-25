@@ -244,11 +244,30 @@ def request_id_middleware():
         def before_request():
             request_id_middleware()
     """
-    # Extract request ID from headers (for correlation) or generate new one
-    request_id = request.headers.get("X-Request-ID")
-    rid = RequestContext.initialize(request_id)
+    # ONE request id per request, generated in ONE place (OBS-001).
+    #
+    # Two implementations used to run on every request. app/middleware/
+    # request_id.py's before_request executed first and set g.request_id;
+    # this one executed second and OVERWROTE it with a freshly generated
+    # UUID. So every request minted two ids and threw the first away, and the
+    # two `get_request_id()` accessors agreed only because this one happened
+    # to run last -- a coincidence, not a design. The reference id quoted to a
+    # user by rpc.py's error handler came from whichever of them won.
+    #
+    # g is now authoritative. This function adopts the id already there and
+    # only derives one when nothing else has (DISABLE_REQUEST_ID_MIDDLEWARE,
+    # or a call from outside the normal request pipeline). RequestContext
+    # still exists because log_response_handler needs its start_time and
+    # events -- it now MIRRORS the id rather than competing to own it.
+    rid = getattr(g, "request_id", None)
+    if not rid:
+        from .request_id import _sanitize_request_id
 
-    # Store in Flask g object for access in handlers
+        # Sanitised (SEC-011): this value reaches the log, and a raw header
+        # can carry newlines and forge entries.
+        rid = _sanitize_request_id(request.headers.get("X-Request-ID")) or str(uuid.uuid4())
+
+    RequestContext.initialize(rid)
     g.request_id = rid
 
     # Log request start

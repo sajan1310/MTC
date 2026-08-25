@@ -201,7 +201,7 @@ def save_return(conn, cur, form_data):
     remarks = str(form_data.get("remarks") or "").strip()
 
     item_unit_map = items_service.get_item_unit_info_map(cur)
-    units_map = units_service.get_units_map()
+    units_map = units_service.get_units_map(cur)
     vendor_id = _find_vendor_id(cur, vendor)
     user_id = get_current_user_id()
 

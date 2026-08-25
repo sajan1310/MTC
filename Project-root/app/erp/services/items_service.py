@@ -600,7 +600,10 @@ def get_items_data():
             for v in cur.fetchall():
                 vendors_by_item.setdefault(v["item_id"], []).append(v)
 
-    units_map = units_service.get_units_map()
+        # Inside the connection block: `cur` is closed once the `with` exits
+        # (PERF-003 -- this used to open a second connection out here).
+        units_map = units_service.get_units_map(cur)
+
     items = [_row_to_item_record(row, vendors_by_item.get(row["id"], []), units_map) for row in item_rows]
     return build_response(True, items)
 
@@ -622,7 +625,7 @@ def _fetch_item_record(cur, item_id):
         return None
     cur.execute("SELECT item_id, vendor, rate FROM erp.item_vendors WHERE item_id = %s ORDER BY id", (item_id,))
     vendor_rows = cur.fetchall()
-    units_map = units_service.get_units_map()
+    units_map = units_service.get_units_map(cur)
     return _row_to_item_record(row, vendor_rows, units_map)
 
 
@@ -1006,7 +1009,7 @@ def _add_vendors_skip_existing(
     """
     cur.execute("SELECT vendor FROM erp.item_vendors WHERE item_id = %s", (item_id,))
     existing = {(row["vendor"] or "").strip().lower() for row in cur.fetchall()}
-    units_map = units_service.get_units_map() if source_info and target_info else None
+    units_map = units_service.get_units_map(cur) if source_info and target_info else None
     for v in vendors or []:
         v = v or {}
         vendor_name = str(v.get("vendor") or "").strip()

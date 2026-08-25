@@ -107,7 +107,7 @@ Tests failed with 302 redirects because endpoints with `@login_required` would r
 2. **Config Loading**: `create_app('testing')` loads `TestingConfig`
 3. **Database Name**: TestingConfig sets `DB_NAME='testuser'`
 4. **CI/CD Setup**: GitHub Actions creates "testuser" database before running tests
-5. **Schema Init**: Optional schema initialization runs if `init_schema.sql` exists
+5. **Schema Init**: the suite applies `migrations/erp/*.sql` via `migrations/erp/runner.py`
 
 ### Local Testing Setup
 To run tests locally, ensure you have a PostgreSQL "testuser" database:
@@ -117,7 +117,7 @@ To run tests locally, ensure you have a PostgreSQL "testuser" database:
 psql -U postgres -c "CREATE DATABASE testuser;"
 
 # Optional: Initialize schema if needed
-psql -U postgres -d testuser -f Project-root/migrations/init_schema.sql
+python Project-root/migrations/erp/runner.py   # normally unnecessary: the suite builds its own database
 
 # Run tests
 cd Project-root

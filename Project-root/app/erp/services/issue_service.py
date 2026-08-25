@@ -185,7 +185,7 @@ def save_issue_stock(conn, cur, form_data):
     remarks = str(form_data.get("remarks") or "").strip()
 
     item_unit_map = items_service.get_item_unit_info_map(cur)
-    units_map = units_service.get_units_map()
+    units_map = units_service.get_units_map(cur)
 
     normalized = []
     for item in items:

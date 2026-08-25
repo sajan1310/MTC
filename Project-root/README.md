@@ -66,7 +66,7 @@ the same service modules under `app/erp/services/`.
 3. **Set up the database:**
 
     ```bash
-    python run_migration.py
+    python migrations/erp/runner.py
     ```
 
 4. **Configure environment variables:**

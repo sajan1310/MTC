@@ -2,10 +2,31 @@
 
 import os
 import unittest
-from unittest.mock import MagicMock, patch
+from unittest.mock import patch
 
 import database
 from app.erp.services import backup_service
+
+
+def _test_db_config():
+    """The disposable test database, stated explicitly.
+
+    Never resolved from the ambient environment: config.py's
+    load_dotenv(override=True) puts the production DATABASE_URL back on every
+    import, and a backup test that silently snapshots production is exactly
+    the kind of accident TestingConfig's own constructor assertion exists to
+    prevent.
+    """
+    from types import SimpleNamespace
+
+    return SimpleNamespace(
+        DATABASE_URL=None,
+        DB_HOST=os.getenv("TEST_DB_HOST", os.getenv("DB_HOST", "127.0.0.1")),
+        DB_NAME=os.getenv("TEST_DB_NAME", "testdb"),
+        DB_USER=os.getenv("TEST_DB_USER", os.getenv("DB_USER", "postgres")),
+        DB_PASS=os.getenv("TEST_DB_PASS", os.getenv("DB_PASS", "abcd")),
+        TESTING=True,
+    )
 
 
 class TestBackupService(unittest.TestCase):
@@ -29,31 +50,80 @@ class TestBackupService(unittest.TestCase):
         self.assertTrue(os.path.exists(backup_dir))
         self.assertTrue(backup_dir.endswith("backups"))
 
-    @patch("app.erp.services.backup_service.database.get_conn")
-    def test_perform_full_backup_local_only(self, mock_get_conn):
-        mock_conn = MagicMock()
-        mock_cur = MagicMock()
-        mock_cur.fetchall.return_value = [("units",)]
-        mock_cur.description = [("id",), ("name",)]
-        mock_get_conn.return_value.__enter__.return_value = (mock_conn, mock_cur)
+    def test_perform_full_backup_local_only(self):
+        """A real pg_dump against the test database, with the Sheets exports
+        skipped: PARTIAL, and a file pg_restore has confirmed it can read.
 
-        # Clear GOOGLE_APPLICATION_CREDENTIALS so Google Sheets upload is skipped
-        with patch.dict(os.environ, {}, clear=True):
-            res = backup_service.perform_full_backup()
+        Rewritten for DATA-001. The previous version mocked database.get_conn
+        and fed the hand-rolled INSERT writer a MagicMock cursor -- so it
+        asserted that a file appeared, which is the exact property that was
+        never evidence of a backup. It also did
+        ``patch.dict(os.environ, {}, clear=True)``, which wipes PATH; with the
+        real implementation that means pg_dump cannot be found, and the run
+        correctly reports FAILED. Only GOOGLE_APPLICATION_CREDENTIALS needs
+        clearing to exercise "local snapshot only".
+        """
+        env = {k: v for k, v in os.environ.items()}
+        env.pop("GOOGLE_APPLICATION_CREDENTIALS", None)
+        env.pop("GAS_MIRROR_SPREADSHEET_ID", None)
+        env.pop("BACKUP_SPREADSHEET_ID", None)
+
+        # Explicit config, not the ambient one. A plain unittest.TestCase has
+        # no Flask app context, so db_backup._resolve_config() would fall back
+        # to config.Config -- whose DATABASE_URL config.py's load_dotenv()
+        # repopulates from .env, i.e. the PRODUCTION database. pg_dump is
+        # read-only so nothing would be corrupted, but the test would be slow
+        # and would drop a copy of live business data into backups/.
+        with patch.dict(os.environ, env, clear=True):
+            res = backup_service.perform_full_backup(config=_test_db_config())
 
         self.assertEqual(res["status"], "PARTIAL")
         self.assertIsNotNone(res["timestamp"])
         self.assertIsNotNone(res["local_file"])
         self.assertTrue(os.path.exists(res["local_file"]))
-        self.assertIn("Local DB snapshot created", res["message"])
+
+        # The properties that make it a backup rather than a file.
+        self.assertTrue(res["snapshot_verified"])
+        self.assertGreater(res["snapshot_table_count"], 0)
+        self.assertGreater(res["snapshot_size_bytes"], 0)
+        self.assertEqual(len(res["snapshot_sha256"]), 64)
+        self.assertEqual(res["consecutive_failures"], 0)
+        self.assertIn("Verified DB snapshot created", res["message"])
         self.assertIn("GOOGLE_APPLICATION_CREDENTIALS is not configured", res["message"])
 
-        # Cleanup created backup file
-        if res["local_file"] and os.path.exists(res["local_file"]):
+        for path in (res["local_file"], res["local_file"] + ".sha256"):
             try:
-                os.remove(res["local_file"])
-            except Exception:
+                os.remove(path)
+            except OSError:
                 pass
+
+    def test_snapshot_failure_is_reported_as_failed_not_partial(self):
+        """The heart of DATA-001.
+
+        The old code caught a per-table export error, wrote it into the output
+        file as an SQL comment, and set ``local_success = True`` regardless --
+        so a backup that captured three of fifty tables showed green on the
+        dashboard. Nothing about "a convenience export was skipped" may ever
+        make a missing snapshot look survivable.
+
+        Clearing PATH makes pg_dump unfindable, which is a faithful stand-in
+        for every way the dump can fail.
+        """
+        with patch.dict(os.environ, {}, clear=True):
+            res = backup_service.perform_full_backup()
+
+        self.assertEqual(res["status"], "FAILED")
+        self.assertFalse(res["snapshot_verified"])
+        self.assertIsNone(res["local_file"])
+        self.assertIsNotNone(res["snapshot_error"])
+        self.assertGreaterEqual(res["consecutive_failures"], 1)
+        self.assertIn("SNAPSHOT FAILED", res["message"])
+
+    def test_trigger_backup_rpc_reports_failure_to_the_caller(self):
+        """A failed backup must not come back as success:true."""
+        with patch.dict(os.environ, {}, clear=True):
+            envelope = backup_service.rpc_trigger_backup()
+        self.assertFalse(envelope["success"])
 
     @patch("app.erp.services.backup_service.perform_full_backup")
     def test_rpc_trigger_backup(self, mock_perform):

@@ -65,7 +65,18 @@ def test_google_login(
     assert response.status_code == 302
     assert "accounts.google.com" in response.location
 
-    response = client.get("/auth/google/callback?code=test_code", follow_redirects=True)
+    # The callback now validates the OAuth `state` parameter unconditionally
+    # and fails closed when the session carries none (SEC-003) -- including
+    # under TESTING, where the check used to be skipped entirely. Seed the
+    # state the way a real /auth/google redirect would have, rather than
+    # relaxing the control to keep this test green.
+    with client.session_transaction() as sess:
+        sess["oauth_state"] = "test-oauth-state"
+
+    response = client.get(
+        "/auth/google/callback?code=test_code&state=test-oauth-state",
+        follow_redirects=True,
+    )
     assert response.status_code == 200
     assert b"Maharaja Bikes" in response.data
 

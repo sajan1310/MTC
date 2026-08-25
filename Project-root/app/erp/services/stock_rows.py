@@ -98,7 +98,7 @@ def sync_stock_for_item(cur, action: str, payload: dict) -> None:
             if old_info["baseUnit"] != new_info["baseUnit"]:
                 try:
                     old_initial = units_service.convert_qty_to_base_unit(
-                        old_initial, old_info["baseUnit"], new_info, units_service.get_units_map()
+                        old_initial, old_info["baseUnit"], new_info, units_service.get_units_map(cur)
                     )
                 except ValueError:
                     # Unconvertible (e.g. no Weight-per-Base-Unit set) --

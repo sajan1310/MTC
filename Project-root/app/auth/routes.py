@@ -1,8 +1,11 @@
 from __future__ import annotations
 
+import hashlib
 import json
 import os
 import re
+import secrets
+import time
 
 import database
 import psycopg2.extras
@@ -22,6 +25,8 @@ from itsdangerous import BadSignature, SignatureExpired, URLSafeTimedSerializer
 from oauthlib.oauth2 import WebApplicationClient
 from requests.exceptions import HTTPError, RequestException
 
+from flask_limiter.util import get_remote_address
+
 from .. import limiter, mail
 from ..models import User
 
@@ -34,22 +39,138 @@ auth_bp = Blueprint("auth", __name__)
 RESET_TOKEN_SALT = "password-reset"
 RESET_TOKEN_MAX_AGE = 3600  # 1 hour
 
+# (connect timeout, read timeout) for every outbound call in this module
+# (REL-001). `requests` defaults to None -- i.e. wait forever -- and with 4
+# sync gunicorn workers, four blocked sign-ins is a full outage. 3.05s to
+# connect follows the requests documentation's advice of a value slightly
+# above a multiple of 3 (TCP retransmit windows); 10s to read is generous for
+# Google and still bounded.
+_HTTP_TIMEOUT = (3.05, 10)
+
+# Google's OpenID discovery document, cached per process.
+# (fetched_at_monotonic, document) or None.
+_GOOGLE_CFG_CACHE: tuple[float, dict] | None = None
+_GOOGLE_CFG_TTL_SECONDS = 3600
+
+# The role every self-created account starts in, whichever door it came
+# through (SEC-002).
+#
+# This used to be "user" on the password path and "pending_approval" on the
+# Google path (app/utils.py's get_or_create_user). Only "pending_approval" is
+# blocked by app/erp/rpc.py's gate, and RpcSpec.roles is None for the large
+# majority of the ~166 RPC methods -- so an unauthenticated, CSRF-exempt POST
+# to /auth/api/signup minted an account with immediate unrestricted access to
+# stock, bills, purchase orders, production, dispatch, clients and vendor
+# ledgers. Every account-creation path now routes through this one constant so
+# the two can no longer drift apart.
+NEW_ACCOUNT_ROLE = "pending_approval"
+
+
+def self_signup_enabled() -> bool:
+    """Whether /auth/api/signup accepts new registrations.
+
+    Defaults to enabled, so this change does not silently remove a workflow
+    the business may depend on -- the escalation is closed by NEW_ACCOUNT_ROLE
+    above, not by this switch. For a single-factory ERP, where every legitimate
+    user is known in advance, setting ALLOW_SELF_SIGNUP=false and having admins
+    create accounts is the stronger posture: it removes the unauthenticated
+    write path entirely rather than making its output harmless.
+    """
+    value = current_app.config.get("ALLOW_SELF_SIGNUP", True)
+    if isinstance(value, str):
+        return value.strip().lower() not in ("0", "false", "no", "off", "")
+    return bool(value)
+
 
 def _reset_serializer() -> URLSafeTimedSerializer:
     return URLSafeTimedSerializer(current_app.config["SECRET_KEY"])
 
 
+def credential_fingerprint(password_hash: str | None) -> str:
+    """A short, non-reversible tag for the account's CURRENT credential.
+
+    This is what makes a reset token single-use (SEC-006) without adding a
+    token table. The tag is embedded in the token and re-derived at
+    verification time; changing the password changes the stored hash, which
+    changes the tag, which invalidates every token issued against the old
+    one -- including the token that was just used.
+
+    Before this, tokens were signed-and-timed only: valid for the full hour
+    regardless of use, so a link captured from a mailbox, a browser history
+    or a proxy log could be replayed repeatedly, and remained valid even
+    after the user had already reset their password with it.
+
+    The same tag is stored in the session at login, so a password change also
+    invalidates sessions elsewhere -- see load_user() in app/__init__.py.
+    Werkzeug hashes are salted, so this changes even when someone "resets" to
+    the same password.
+    """
+    import hashlib
+
+    return hashlib.sha256((password_hash or "").encode("utf-8")).hexdigest()[:16]
+
+
+def _current_fingerprint_for(email: str) -> str | None:
+    """The live fingerprint for `email`, or None if there is no active account.
+
+    None also covers the deactivated case (deleted_at IS NOT NULL), so a
+    soft-deleted account cannot have its password reset (SEC-007) -- the old
+    UPDATE had no deleted_at filter, so a deactivated user could change their
+    password even though every login path would still refuse them.
+    """
+    try:
+        with database.get_conn(cursor_factory=psycopg2.extras.DictCursor) as (_conn, cur):
+            cur.execute(
+                # lower(email) (AUTH-001) -- identity is case-insensitive.
+                "SELECT password_hash FROM users WHERE lower(email) = %s AND deleted_at IS NULL",
+                (str(email or "").strip().lower(),),
+            )
+            row = cur.fetchone()
+    except Exception as exc:  # noqa: BLE001
+        current_app.logger.warning("[ResetPassword] fingerprint lookup failed: %s", exc)
+        return None
+    if row is None:
+        return None
+    return credential_fingerprint(row["password_hash"])
+
+
 def generate_reset_token(email: str) -> str:
-    return _reset_serializer().dumps(email, salt=RESET_TOKEN_SALT)
+    return _reset_serializer().dumps(
+        {"email": email, "fp": _current_fingerprint_for(email)},
+        salt=RESET_TOKEN_SALT,
+    )
 
 
 def verify_reset_token(token: str) -> str | None:
-    """Returns the email the token was issued for, or None if the token is
-    missing, tampered with, or older than RESET_TOKEN_MAX_AGE."""
+    """The email the token was issued for, or None.
+
+    None when the token is missing, tampered with, older than
+    RESET_TOKEN_MAX_AGE, already used (its fingerprint no longer matches the
+    account's current credential), or issued for an account that has since
+    been deleted or deactivated.
+    """
     try:
-        return _reset_serializer().loads(token, salt=RESET_TOKEN_SALT, max_age=RESET_TOKEN_MAX_AGE)
+        payload = _reset_serializer().loads(
+            token, salt=RESET_TOKEN_SALT, max_age=RESET_TOKEN_MAX_AGE
+        )
     except (BadSignature, SignatureExpired):
         return None
+
+    # Tokens minted before this change were a bare email string. Refuse them
+    # rather than honouring them: they are replayable by construction, they
+    # expire within the hour anyway, and "request a new link" is a small cost
+    # next to leaving the old behaviour reachable.
+    if not isinstance(payload, dict):
+        return None
+
+    email = payload.get("email")
+    if not email:
+        return None
+
+    current = _current_fingerprint_for(email)
+    if current is None or current != payload.get("fp"):
+        return None
+    return email
 
 
 def send_reset_email(to_email: str, reset_url: str) -> bool:
@@ -99,7 +220,39 @@ def _oauth_client() -> WebApplicationClient:
 
 
 def _google_cfg():
-    return requests.get(current_app.config["GOOGLE_DISCOVERY_URL"]).json()
+    """Google's OpenID discovery document, fetched at most once per process
+    per TTL.
+
+    Two fixes here (REL-001).
+
+    **Timeout.** `requests` has NO default timeout -- it waits forever. This
+    call had none, and neither did the token exchange or the userinfo fetch
+    below. gunicorn runs 4 sync workers, so four users signing in while
+    Google's endpoint is slow, or while a captive portal is swallowing packets
+    on the factory's uplink, blocked every worker and took the whole ERP
+    offline for everyone -- including the people not using Google sign-in at
+    all. On a factory LAN with intermittent internet that is not a hypothetical.
+
+    **Caching.** The discovery document changes on the order of years, and a
+    single sign-in fetched it twice (once in auth_google, once in the
+    callback). Caching it removes two round trips from every login and means a
+    brief outage at Google does not immediately break sign-in for a process
+    that has already succeeded once.
+    """
+    global _GOOGLE_CFG_CACHE
+
+    cached = _GOOGLE_CFG_CACHE
+    if cached is not None and (time.monotonic() - cached[0]) < _GOOGLE_CFG_TTL_SECONDS:
+        return cached[1]
+
+    response = requests.get(
+        current_app.config["GOOGLE_DISCOVERY_URL"],
+        timeout=_HTTP_TIMEOUT,
+    )
+    response.raise_for_status()
+    cfg = response.json()
+    _GOOGLE_CFG_CACHE = (time.monotonic(), cfg)
+    return cfg
 
 
 # Backward-compatible name for tests that patch auth.routes.get_google_provider_cfg
@@ -127,11 +280,54 @@ def forgot_password():
     return render_template("forgot_password.html")
 
 
+def _login_account_key() -> str:
+    """Rate-limit key for the account being logged into (SEC-009).
+
+    Hashed, not the address itself: the limiter's storage is Redis, whose
+    keys turn up in `KEYS *`, slow-log output and any dump of that instance.
+    A throttle does not need to know who it is throttling, only that two
+    attempts are for the same account -- and a hash gives exactly that.
+
+    Falls back to the client IP when there is no usable address in the body,
+    so a malformed request is still throttled rather than sharing one
+    unbounded bucket.
+    """
+    data = request.get_json(silent=True) or {}
+    email = str(data.get("email") or "").strip().lower()
+    if not email:
+        return f"noaddr:{get_remote_address()}"
+    return "acct:" + hashlib.sha256(email.encode("utf-8")).hexdigest()[:32]
+
+
+def _login_account_limit() -> str:
+    return current_app.config.get("RATELIMIT_LOGIN_PER_ACCOUNT", "10 per 15 minutes")
+
+
 @auth_bp.route("/api/login", methods=["POST"])
+# Per-IP: protects the server from one noisy client.
 @limiter.limit("10 per minute")
+# Per-account: protects one account from many clients (SEC-009). The per-IP
+# limit above cannot do this -- an attacker rotating addresses gets unlimited
+# guesses at a single password, and conversely an office behind one NAT
+# shares a single budget between everyone in it.
+#
+# deduct_when means only a 401 consumes the budget. Successful sign-ins, and
+# the 400 for a malformed request, cost nothing -- so this can never lock out
+# somebody who is typing their password correctly.
+@limiter.limit(
+    _login_account_limit,
+    key_func=_login_account_key,
+    deduct_when=lambda response: response.status_code == 401,
+)
 def api_login():
     data = request.get_json() or {}
-    email = (data.get("email") or "").strip()
+    # .lower(), not just .strip() (AUTH-001). api_signup and
+    # users_service.create_user both STORE the address lowercased, so
+    # comparing the raw typed form meant anyone who signed up with a capital
+    # letter could never log in: their row existed, their password was right,
+    # and the lookup simply did not find it. Reproduced before the fix --
+    # signup 201, login with the same spelling 401.
+    email = (data.get("email") or "").strip().lower()
     password = data.get("password") or ""
     remember = bool(data.get("remember"))
 
@@ -147,7 +343,10 @@ def api_login():
         ):
             # deleted_at IS NULL: a deactivated user (users_service.py's
             # deactivateUser) must not be able to sign back in.
-            cur.execute("SELECT * FROM users WHERE email = %s AND deleted_at IS NULL", (email,))
+            cur.execute(
+                "SELECT * FROM users WHERE lower(email) = %s AND deleted_at IS NULL",
+                (email,),
+            )
             row = cur.fetchone()
     except Exception as e:
         # In TESTING/DEBUG, continue to demo fallback without returning 500
@@ -163,6 +362,10 @@ def api_login():
                 user_obj = User(row)
                 login_user(user_obj, remember=remember)
                 session.permanent = bool(remember)
+                # Pin this session to the credential it was created with, so a
+                # later password reset invalidates it (SEC-006). Checked on
+                # every request by load_user().
+                session["cred_fp"] = credential_fingerprint(row["password_hash"])
                 return jsonify({"success": True, "redirect_url": url_for("main.home")})
         except Exception as e:
             current_app.logger.error(f"[AUTH] Password check failed: {e}")
@@ -183,6 +386,19 @@ def api_login():
 @auth_bp.route("/api/signup", methods=["POST"])
 @limiter.limit("5 per hour")
 def api_signup():
+    if not self_signup_enabled():
+        return (
+            jsonify(
+                {
+                    "error": (
+                        "Self-registration is disabled. Ask an administrator to "
+                        "create your account."
+                    )
+                }
+            ),
+            403,
+        )
+
     data = request.get_json() or {}
     name = (data.get("name") or "").strip()
     email = (data.get("email") or "").strip().lower()
@@ -211,7 +427,10 @@ def api_signup():
             conn,
             cur,
         ):
-            cur.execute("SELECT user_id FROM users WHERE email = %s", (email,))
+            # lower(email) (AUTH-001): otherwise a legacy row stored with
+            # capitals would not be seen here, and the signup would pass this
+            # check only to fail on the unique index as a 500.
+            cur.execute("SELECT user_id FROM users WHERE lower(email) = %s", (email,))
             if cur.fetchone():
                 return (
                     jsonify({"error": "An account with this email already exists."}),
@@ -223,13 +442,38 @@ def api_signup():
             password_hash = generate_password_hash(password)
             cur.execute(
                 "INSERT INTO users (name, email, role, password_hash) VALUES (%s, %s, %s, %s) RETURNING *",
-                (name, email, "user", password_hash),
+                (name, email, NEW_ACCOUNT_ROLE, password_hash),
             )
             new_user = cur.fetchone()
             user_obj = User(new_user)
             login_user(user_obj)
             session.permanent = False
-            return jsonify({"success": True, "redirect_url": url_for("main.home")}), 201
+            current_app.logger.info(
+                "[Signup] New account %s created awaiting admin approval", email
+            )
+            # /erp/pending-approval, not main.home. The account is real and the
+            # session is real, but the role grants nothing until an admin acts
+            # -- landing on the app shell would just fail every RPC call it
+            # makes with a 403 and look broken.
+            return (
+                jsonify(
+                    {
+                        "success": True,
+                        "pending_approval": True,
+                        "message": (
+                            "Account created. An administrator needs to approve it "
+                            "before you can sign in."
+                        ),
+                        "redirect_url": url_for("erp.pending_approval"),
+                    }
+                ),
+                201,
+            )
+    except psycopg2.IntegrityError:
+        # users.email is UNIQUE, so two concurrent signups for the same address
+        # race past the SELECT above and one loses here. That is a duplicate,
+        # not a server fault -- report it the same way the SELECT does.
+        return jsonify({"error": "An account with this email already exists."}), 409
     except Exception as e:
         current_app.logger.error(f"API signup error: {e}")
         return jsonify({"error": "Failed to create account. Please try again."}), 500
@@ -272,7 +516,7 @@ def api_forgot_password():
                 # the one path back in from being closed to the people who
                 # depend on it.
                 cur.execute(
-                    "SELECT user_id FROM users WHERE email = %s AND deleted_at IS NULL",
+                    "SELECT user_id FROM users WHERE lower(email) = %s AND deleted_at IS NULL",
                     (email,),
                 )
                 user_exists = cur.fetchone() is not None
@@ -347,8 +591,12 @@ def api_reset_password():
 
     try:
         with database.get_conn(cursor_factory=psycopg2.extras.DictCursor) as (conn, cur):
+            # deleted_at IS NULL (SEC-007): a deactivated account must not be
+            # able to change its password. Without the filter, deactivation
+            # meant different things on different routes -- login refused
+            # them, this one did not.
             cur.execute(
-                "UPDATE users SET password_hash = %s WHERE email = %s RETURNING user_id",
+                "UPDATE users SET password_hash = %s WHERE lower(email) = %s AND deleted_at IS NULL RETURNING user_id",
                 (generate_password_hash(password), email),
             )
             updated = cur.fetchone()
@@ -362,7 +610,16 @@ def api_reset_password():
         # to distinguish for the user.
         return jsonify({"error": "This reset link is invalid or has expired. Request a new one."}), 400
 
-    current_app.logger.info(f"[ResetPassword] Password reset for {email}")
+    # Drop the session doing the reset, and -- because the credential
+    # fingerprint stored at login no longer matches -- every other session for
+    # this account too (see load_user in app/__init__.py). A reset prompted by
+    # a suspected compromise previously left the attacker's session running.
+    logout_user()
+    session.clear()
+
+    current_app.logger.info(
+        "[ResetPassword] Password reset for %s; all sessions invalidated", email
+    )
     return jsonify({"success": True, "redirect_url": url_for("auth.login")})
 
 
@@ -396,13 +653,33 @@ def auth_google_callback():
         current_app.logger.error(f"[OAuth] Google returned error: {error}")
         return f"Google OAuth error: {error}", 400
 
-    returned_state = request.args.get("state")
+    # SEC-003. This check now fails CLOSED, and runs under TESTING too.
+    #
+    # It used to read `if expected_state and returned_state != expected_state`.
+    # The `expected_state and` guard meant that when the browser's session
+    # carried no oauth_state at all -- because that browser never started an
+    # OAuth flow -- the comparison was skipped entirely and the callback
+    # proceeded with no CSRF protection. The absence of state IS the attack,
+    # and the guard treated it as the safe case: an attacker starts a Google
+    # sign-in with their own account, captures the `code`, and induces the
+    # victim to open the callback URL. The victim, having no oauth_state, is
+    # silently logged in AS THE ATTACKER, and every bill, dispatch and stock
+    # correction they then enter is recorded under the attacker's account.
+    #
+    # The old `if not TESTING` bypass is gone as well. It skipped the entire
+    # branch, so no test could ever exercise the one check protecting this
+    # flow -- which is a large part of why the defect survived. Tests now seed
+    # session["oauth_state"] properly (tests/test_oauth_state.py).
+    returned_state = request.args.get("state") or ""
     expected_state = session.pop("oauth_state", None)
-    # In tests, relax state validation to avoid brittle session handling
-    if not current_app.config.get("TESTING"):
-        if expected_state and returned_state != expected_state:
-            current_app.logger.error("[OAuth] State mismatch in callback")
-            return "Invalid OAuth state", 400
+    if not expected_state or not secrets.compare_digest(
+        str(returned_state), str(expected_state)
+    ):
+        current_app.logger.warning(
+            "[OAuth] Rejecting callback: state %s",
+            "missing from session" if not expected_state else "mismatched",
+        )
+        return "Invalid OAuth state", 400
 
     client = _oauth_client()
     code = request.args.get("code")
@@ -462,13 +739,16 @@ def auth_google_callback():
                 current_app.config["GOOGLE_CLIENT_ID"],
                 current_app.config["GOOGLE_CLIENT_SECRET"],
             ),
+            timeout=_HTTP_TIMEOUT,  # REL-001
         )
         token_response.raise_for_status()
         client.parse_request_body_response(json.dumps(token_response.json()))
 
         userinfo_endpoint = google_cfg["userinfo_endpoint"]
         uri, headers, body = client.add_token(userinfo_endpoint)
-        userinfo_response = requests.get(uri, headers=headers, data=body)
+        userinfo_response = requests.get(
+            uri, headers=headers, data=body, timeout=_HTTP_TIMEOUT  # REL-001
+        )
         userinfo_response.raise_for_status()
         user_info = userinfo_response.json()
 
@@ -518,8 +798,26 @@ def auth_google_callback():
         return "An error occurred during the authentication process.", 500
 
 
-@auth_bp.route("/logout")
+@auth_bp.route("/logout", methods=["GET", "POST"])
 @login_required
 def logout():
+    """Sign out. POST is the real route; GET renders a confirmation (SEC-008).
+
+    Logging out is a state change, and it used to be reachable by GET with no
+    CSRF protection at all -- so `<img src="https://erp.example/auth/logout">`
+    on any page a user visited signed them out. Harmless-looking, but on a
+    factory floor it means losing half-entered work with no explanation, and
+    repeated it is a denial of service against a specific user.
+
+    GET is kept, but it no longer performs the logout: it renders a small
+    confirmation page whose button POSTs with a CSRF token. That way every
+    existing `<a href="{{ url_for('auth.logout') }}">` in the templates keeps
+    working and stays a single click, while an <img>/<iframe>/prefetch can no
+    longer end anyone's session.
+    """
+    if request.method == "GET":
+        return render_template("logout_confirm.html")
+
     logout_user()
+    session.clear()
     return redirect(url_for("auth.login"))

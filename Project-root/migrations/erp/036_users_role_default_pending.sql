@@ -1,0 +1,26 @@
+-- SEC-002 defence in depth: make the DATABASE's own default for a new
+-- account the harmless role, not the privileged one.
+--
+-- migrations/init_schema.sql created public.users with
+--     role VARCHAR(50) NOT NULL DEFAULT 'user'
+-- so any INSERT that omits `role` silently produced a fully-privileged
+-- account. Both application paths now pass the role explicitly
+-- (app/auth/routes.py's NEW_ACCOUNT_ROLE and app/utils.py's
+-- get_or_create_user), but a default that fails open is exactly the shape of
+-- the bug this migration exists to close: the next INSERT written without a
+-- role -- a fixture, an admin script, a psql session, a future endpoint --
+-- would reopen it, and nothing would say so.
+--
+-- 'pending_approval' is inert: app/erp/rpc.py blocks it unconditionally before
+-- any authorization check, and app/erp/pages.py sends it to the holding page.
+-- The worst an omitted role can now do is create an account that cannot act
+-- until an administrator promotes it.
+--
+-- Deliberately NOT retroactive. Existing rows keep the role they have; this
+-- changes only what happens when a role is omitted from here on. Auditing and
+-- correcting historical self-created accounts is an operational step, not a
+-- migration -- see PRODUCTION_REMEDIATION_RUNBOOK.md, which supplies the
+-- query, because demoting a live user is a decision an administrator has to
+-- make with knowledge this file does not have.
+
+ALTER TABLE public.users ALTER COLUMN role SET DEFAULT 'pending_approval';
