@@ -105,6 +105,7 @@ def test_get_dashboard_data_returns_success_envelope(erp_client):
     data = body["data"]
     assert "kpis" in data
     assert isinstance(data["pipeline"], list)
+    assert isinstance(data["upcoming"], list)
     assert isinstance(data["productionStatusBreakdown"], list)
     assert isinstance(data["dispatchTrend"], list)
     assert isinstance(data["lowStockItems"], list)
@@ -205,8 +206,30 @@ def test_dashboard_pending_production_count(erp_client):
 
     after = _dashboard_kpis(erp_client)
     assert after["pendingProductionCount"] == before["pendingProductionCount"] + 1
+    # The new lot is Pending, so it lands in the queued half of the split --
+    # the "in progress" half must not move.
+    assert after["queuedProductionCount"] == before["queuedProductionCount"] + 1
+    assert after["inProgressProductionCount"] == before["inProgressProductionCount"]
     assert after["oldestPendingProductionDays"] is not None
     assert after["oldestPendingProductionDays"] >= 0
+
+
+def test_dashboard_in_progress_count_tracks_the_in_progress_status(erp_client):
+    before = _dashboard_kpis(erp_client)
+
+    _payload, process_id = _save_process(erp_client)
+    _rpc(
+        erp_client,
+        "saveProduction",
+        [{"processId": process_id, "assignedTo": "Worker A", "qty": 5, "status": "In Progress", "componentsConsumed": [_item_component()]}],
+        mutation=True,
+    )
+
+    after = _dashboard_kpis(erp_client)
+    assert after["inProgressProductionCount"] == before["inProgressProductionCount"] + 1
+    assert after["queuedProductionCount"] == before["queuedProductionCount"]
+    # The combined open-lot total still counts both halves.
+    assert after["pendingProductionCount"] == before["pendingProductionCount"] + 1
 
 
 def test_dashboard_ready_to_dispatch_kpi(erp_app, erp_client):
@@ -241,20 +264,96 @@ def test_dashboard_contractor_payables_kpi(erp_client):
     assert after["contractorPayablesCount"] == before["contractorPayablesCount"] + 1
 
 
+def _save_lot(client, process_id, status, **overrides):
+    form = {
+        "processId": process_id,
+        "assignedTo": "Worker A",
+        "qty": 5,
+        "status": status,
+        "componentsConsumed": [_item_component()],
+    }
+    form.update(overrides)
+    resp = _rpc(client, "saveProduction", [form], mutation=True)
+    body = resp.get_json()
+    assert body["success"] is True, body["message"]
+    return body
+
+
 def test_dashboard_pipeline_groups_by_model_and_size(erp_client):
     _payload, process_id = _save_process(erp_client)
-    _rpc(
-        erp_client,
-        "saveProduction",
-        [{"processId": process_id, "assignedTo": "Worker A", "qty": 5, "status": "Pending", "componentsConsumed": [_item_component()]}],
-        mutation=True,
-    )
+    _save_lot(erp_client, process_id, "In Progress")
 
     dash = _rpc(erp_client, "getDashboardData").get_json()["data"]
     stage = next(p for p in dash["pipeline"] if p["processId"] == process_id)
     assert stage["totalLotCount"] == 1
     assert stage["totalQty"] == 5
     assert stage["groups"][0]["title"] == "Unspecified"  # non-final-stage lot: no product tag, no size
+
+
+def test_dashboard_pipeline_shows_only_in_progress_lots(erp_client):
+    """A Pending lot belongs to Upcoming Lots, never to the WIP pipeline.
+
+    "Active" used to mean Pending OR In Progress, so every pipeline stage
+    total mixed material actually being worked with lots nobody had started
+    -- the one number a floor supervisor reads to decide where to go next,
+    systematically overstated.
+    """
+    _payload, process_id = _save_process(erp_client)
+    _save_lot(erp_client, process_id, "Pending", qty=7)
+
+    dash = _rpc(erp_client, "getDashboardData").get_json()["data"]
+    assert not any(p["processId"] == process_id for p in dash["pipeline"])
+
+    queued = next(p for p in dash["upcoming"] if p["processId"] == process_id)
+    assert queued["totalQty"] == 7
+    assert queued["totalLotCount"] == 1
+
+
+def test_dashboard_splits_the_same_stage_across_both_lists(erp_client):
+    _payload, process_id = _save_process(erp_client)
+    _save_lot(erp_client, process_id, "In Progress", qty=4)
+    _save_lot(erp_client, process_id, "Pending", qty=9)
+
+    dash = _rpc(erp_client, "getDashboardData").get_json()["data"]
+    running = next(p for p in dash["pipeline"] if p["processId"] == process_id)
+    queued = next(p for p in dash["upcoming"] if p["processId"] == process_id)
+    assert running["totalQty"] == 4
+    assert queued["totalQty"] == 9
+
+
+def test_dashboard_stage_reports_the_age_of_its_oldest_lot(erp_client):
+    _payload, process_id = _save_process(erp_client)
+    _save_lot(erp_client, process_id, "In Progress")
+
+    dash = _rpc(erp_client, "getDashboardData").get_json()["data"]
+    stage = next(p for p in dash["pipeline"] if p["processId"] == process_id)
+    assert stage["oldestDays"] == 0  # logged today
+
+
+def test_dashboard_stage_counts_a_colour_split_lot_once(erp_client):
+    """One lot in four colours is one lot, not four.
+
+    Lot counts used to be counts of colour-breakdown ENTRIES, so the
+    summary's "N lots" was inflated by exactly the amount of colour tracking
+    the shop does.
+    """
+    _payload, process_id = _save_process(erp_client)
+    _save_lot(
+        erp_client,
+        process_id,
+        "In Progress",
+        colorBreakdown=[
+            {"color": "DashCountRed", "size": "", "qty": 2, "isCustom": True},
+            {"color": "DashCountBlue", "size": "", "qty": 3, "isCustom": True},
+            {"color": "DashCountGreen", "size": "", "qty": 4, "isCustom": True},
+        ],
+    )
+
+    dash = _rpc(erp_client, "getDashboardData").get_json()["data"]
+    stage = next(p for p in dash["pipeline"] if p["processId"] == process_id)
+    assert stage["totalLotCount"] == 1
+    assert stage["totalQty"] == 9
+    assert all(g["lotCount"] == 1 for g in stage["groups"])
 
 
 def test_dashboard_pipeline_group_title_includes_color(erp_client):
@@ -275,7 +374,7 @@ def test_dashboard_pipeline_group_title_includes_color(erp_client):
             {
                 "processId": process_id,
                 "assignedTo": "Worker A",
-                "status": "Pending",
+                "status": "In Progress",
                 "componentsConsumed": [_item_component()],
                 "colorBreakdown": [
                     {"color": "DashPipelineRed", "size": "", "qty": 7, "isCustom": True},
@@ -304,7 +403,7 @@ def test_dashboard_pipeline_group_title_keeps_size_alongside_color(erp_client):
             {
                 "processId": process_id,
                 "assignedTo": "Worker A",
-                "status": "Pending",
+                "status": "In Progress",
                 "componentsConsumed": [_item_component()],
                 "colorBreakdown": [
                     {"color": "DashSizedGreen", "size": "14 inch", "qty": 5, "isCustom": True},
@@ -324,6 +423,7 @@ def test_dashboard_pipeline_omits_process_with_no_active_lots(erp_client):
     _payload, process_id = _save_process(erp_client)
     dash = _rpc(erp_client, "getDashboardData").get_json()["data"]
     assert not any(p["processId"] == process_id for p in dash["pipeline"])
+    assert not any(p["processId"] == process_id for p in dash["upcoming"])
 
 
 def test_dashboard_production_status_breakdown(erp_client):

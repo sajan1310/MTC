@@ -128,8 +128,9 @@ App.Dashboard = {
 
   // Regions rebuilt wholesale by a refresh. Anything focused inside one of
   // them is destroyed by that rebuild.
-  REDRAWN_REGIONS: '#dashboardPipeline, #dashLowStockBody, #dashReadyToDispatchBody, ' +
-    '#dashContractorPayablesBody, .dash-table-footer',
+  REDRAWN_REGIONS: '#dashboardStageChart, #dashboardPipeline, #dashboardUpcoming, ' +
+    '#dashLowStockBody, #dashReadyToDispatchBody, #dashContractorPayablesBody, ' +
+    '.dash-table-footer',
 
   // Identify the focused control well enough to find it again after the
   // rebuild. Its data-action names WHAT it is; one of the id attributes
@@ -138,9 +139,14 @@ App.Dashboard = {
   _captureFocus() {
     const el = document.activeElement;
     if (!el || el === document.body || !el.closest) return null;
-    if (!el.closest(this.REDRAWN_REGIONS)) return null;
+    const region = el.closest(this.REDRAWN_REGIONS);
+    if (!region) return null;
     if (!el.dataset || !el.dataset.action) return null;
-    return { action: el.dataset.action, key: this._focusKey(el) };
+    // The region id disambiguates the two stage lists, whose rows carry the
+    // same data-action and the same process id: without it, focus captured
+    // on an Upcoming row would be restored onto the Pipeline row for the
+    // same stage, silently scrolling the user somewhere they were not.
+    return { action: el.dataset.action, key: this._focusKey(el), region: region.id || '' };
   },
 
   _focusKey(el) {
@@ -153,7 +159,9 @@ App.Dashboard = {
   // SyntaxError on the first id containing a quote or bracket.
   _restoreFocus(token) {
     if (!token) return;
-    const root = document.getElementById('dashboardTab');
+    const root = token.region
+      ? document.getElementById(token.region)
+      : document.getElementById('dashboardTab');
     if (!root) return;
     for (const el of root.querySelectorAll('[data-action]')) {
       if (el.dataset.action !== token.action) continue;
@@ -198,7 +206,9 @@ App.Dashboard = {
       const focused = this._captureFocus();
 
       this.renderKpis(data.kpis);
+      this.renderStageChart(data.pipeline, data.upcoming);
       this.renderPipeline(data.pipeline);
+      this.renderUpcoming(data.upcoming);
       this.renderLowStock(data.lowStockItems, data.lowStockTotalCount);
       this.renderReadyToDispatch(data.readyToDispatchItems, data.readyToDispatchTotalCount);
       this.renderContractorPayables(data.contractorPayables, data.contractorPayablesTotalCount);
@@ -405,8 +415,12 @@ App.Dashboard = {
     ['kpiLowStockSub', 'kpiPendingProductionSub', 'kpiReadyDispatchSub', 'kpiContractorPayablesSub']
       .forEach(id => { const el = document.getElementById(id); if (el) el.textContent = 'Unavailable'; });
 
-    const pipelineEl = document.getElementById('dashboardPipeline');
-    if (pipelineEl) pipelineEl.innerHTML = '<div class="text-danger small">Failed to load pipeline data.</div>';
+    Object.values(this.STAGE_LISTS).forEach(config => {
+      const el = document.getElementById(config.containerId);
+      if (el) el.innerHTML = `<div class="text-danger small">${config.error}</div>`;
+    });
+    const chartEl = document.getElementById('dashboardStageChart');
+    if (chartEl) chartEl.innerHTML = '<div class="text-danger small">Failed to load stage load.</div>';
 
     this.renderTableError('dashLowStockBody', 4);
     this.renderTableError('dashReadyToDispatchBody', 3);
@@ -515,17 +529,29 @@ App.Dashboard = {
         : `${plural(lowStock, 'item')} below threshold &middot; ${formatQty(k.lowStockTotalDeficit)} units short`
     );
 
-    const pending = toNumber(k.pendingProductionCount);
+    // The tile is labelled "Production In Progress", so its VALUE is the
+    // In Progress count -- it used to be Pending + In Progress, which read
+    // as a direct contradiction of the WIP pipeline immediately below it
+    // now that the pipeline draws only what is actually running. The
+    // queued half is not lost, it moves into the note, where "queued" says
+    // what it is. Status still keys off the oldest OPEN lot of either
+    // kind: a pending lot three weeks old is the same problem as a running
+    // one three weeks old, and burying it would be the point of the split
+    // going wrong.
+    const openLots = toNumber(k.pendingProductionCount);
+    const running = toNumber(k.inProgressProductionCount);
+    const queued = toNumber(k.queuedProductionCount);
     const oldestDays = k.oldestPendingProductionDays;
+    const productionNote = [
+      `${plural(running, 'lot')} running`,
+      queued > 0 ? `${queued} queued` : null,
+      oldestDays === null || oldestDays === undefined ? null : `oldest ${plural(oldestDays, 'day')}`,
+    ].filter(Boolean).join(' &middot; ');
     this._setHero(
       'heroPendingProduction', 'kpiPendingProduction', 'kpiPendingProductionSub',
-      pending,
-      pending === 0 ? 'ok' : this._statusFor(oldestDays, this.THRESHOLDS.oldestProductionDays),
-      pending === 0
-        ? 'No lots open'
-        : (oldestDays === null || oldestDays === undefined
-          ? `${plural(pending, 'lot')} open`
-          : `${plural(pending, 'lot')} open &middot; oldest ${plural(oldestDays, 'day')}`)
+      running,
+      openLots === 0 ? 'ok' : this._statusFor(oldestDays, this.THRESHOLDS.oldestProductionDays),
+      openLots === 0 ? 'No lots open' : productionNote
     );
 
     const readyUnits = toNumber(k.readyToDispatchUnits);
@@ -567,7 +593,7 @@ App.Dashboard = {
       `${plural(toNumber(k.wastageThisMonthCount), 'record')} &middot; ${this.deltaLabel(k.wastageThisMonthQty, k.wastageLastMonthQty)}`);
   },
 
-  // The literal dashboard_service._get_pipeline_data falls back to when a
+  // The literal dashboard_service._stage_group_title falls back to when a
   // lot carries neither a product name nor a size. A stage whose ONLY group
   // is this one has nothing to add to its own total, so its breakdown is
   // suppressed -- that case was the bulk of the old pipeline's height,
@@ -588,11 +614,212 @@ App.Dashboard = {
     return groups;
   },
 
-  renderPipeline(pipeline) {
-    const el = document.getElementById('dashboardPipeline');
+  // The two stage lists on this page. Same row component, same grid, same
+  // sequence order -- so a stage sits in the same horizontal position in
+  // both, and "running now" reads directly against "queued behind it".
+  // Only the wording and the bar treatment differ, and both live here
+  // rather than in two near-identical render functions.
+  STAGE_LISTS: {
+    pipeline: {
+      containerId: 'dashboardPipeline',
+      variant: 'wip',
+      unitsLabel: 'units in progress',
+      empty: 'Nothing is in progress right now.',
+      error: 'Failed to load pipeline data.',
+      // Not called a bottleneck: this is "where the most material is
+      // sitting", which is a fact; whether that is a blockage is a
+      // judgement the data here cannot make.
+      peakLabel: 'most WIP',
+      peakTitle: 'More units are sitting at this stage than at any other',
+      ageTitle: days => `Oldest lot at this stage was logged ${days} day${days === 1 ? '' : 's'} ago`,
+      ageSrText: days => `oldest lot ${days} day${days === 1 ? '' : 's'} old`,
+    },
+    upcoming: {
+      containerId: 'dashboardUpcoming',
+      variant: 'upcoming',
+      unitsLabel: 'units queued',
+      empty: 'No pending lots waiting to start.',
+      error: 'Failed to load upcoming lots.',
+      peakLabel: 'longest queue',
+      peakTitle: 'More units are queued at this stage than at any other',
+      ageTitle: days => `Oldest lot here has been waiting ${days} day${days === 1 ? '' : 's'}`,
+      ageSrText: days => `waiting ${days} day${days === 1 ? '' : 's'}`,
+    },
+  },
+
+  // Age of a stage's oldest lot, as a badge. Units alone say how much is
+  // somewhere; age says whether it is moving -- a stage holding 400 units
+  // logged this morning is busy, one holding 40 logged three weeks ago is
+  // stuck, and the list could not tell those apart before. Reuses the
+  // oldestProductionDays thresholds, so the badge turns amber and red at
+  // the same ages the "Production" tile above it does. The visually-hidden
+  // half is what makes "12d" mean something to a screen reader: the row is
+  // a <button>, so its contents ARE its accessible name.
+  _ageBadge(stage, config) {
+    const days = stage.oldestDays;
+    if (days === null || days === undefined || days === '') return '';
+    const n = toNumber(days);
+    const status = this._statusFor(n, this.THRESHOLDS.oldestProductionDays);
+    return `<span class="dash-wip-age" data-status="${status}" title="${escapeHtml(config.ageTitle(n))}">` +
+      `${n}d<span class="visually-hidden"> ${escapeHtml(config.ageSrText(n))}</span></span>`;
+  },
+
+  // Height of the plot area, in px. Kept in JS as well as CSS only because
+  // the gridline layer and the y-axis gutter must agree with it exactly;
+  // both read the same custom property, so this constant just documents it.
+  STAGE_CHART_PLOT_PX: 132,
+
+  // Axis maximum, rounded UP to a 1 / 2 / 2.5 / 5 x 10^n step. Gridlines
+  // landing on 500 and 1,000 read as a scale; gridlines landing on 437 and
+  // 874 read as an accident.
+  _niceMax(value) {
+    if (!(value > 0)) return 0;
+    const magnitude = Math.pow(10, Math.floor(Math.log10(value)));
+    const normalized = value / magnitude;
+    const step = [1, 2, 2.5, 5, 10].find(x => normalized <= x + 1e-9) || 10;
+    return step * magnitude;
+  },
+
+  // One row per process that has ANY open work, in sequence order, carrying
+  // both statuses. Merged here rather than server-side because the two
+  // lists are independently useful and the server sends each in the shape
+  // its own list renders from.
+  _stageChartRows(pipeline, upcoming) {
+    const byProcess = new Map();
+    const merge = (stages, key) => (stages || []).forEach(stage => {
+      const id = stage.processId;
+      const row = byProcess.get(id) || {
+        processId: id, processName: stage.processName,
+        sequence: toNumber(stage.sequence), wip: 0, queued: 0, lots: 0,
+      };
+      row.processName = row.processName || stage.processName;
+      row[key] = toNumber(stage.totalQty);
+      row.lots += toNumber(stage.totalLotCount);
+      byProcess.set(id, row);
+    });
+    merge(pipeline, 'wip');
+    merge(upcoming, 'queued');
+    return Array.from(byProcess.values()).sort((a, b) => a.sequence - b.sequence);
+  },
+
+  // Stacked columns: running on the baseline, queued hatched above it, one
+  // column per stage in the order material flows through them.
+  //
+  // Hand-built rather than handed to Chart.js, for three reasons that all
+  // apply to this block specifically. It renders instantly instead of
+  // waiting on the Chart.js CDN -- loadData deliberately draws this block
+  // before awaiting the library, because it is the most operationally
+  // useful thing on the page. Every column is a real <button>, so the
+  // drill-down is reachable by keyboard, which a <canvas> is not. And its
+  // colours are CSS custom properties, so the dark-mode toggle re-themes it
+  // for free rather than through the MutationObserver + re-render dance the
+  // two Chart.js charts below need.
+  renderStageChart(pipeline, upcoming) {
+    const el = document.getElementById('dashboardStageChart');
     if (!el) return;
-    if (!pipeline || pipeline.length === 0) {
-      el.innerHTML = '<div class="text-muted small">No active processes configured.</div>';
+
+    const rows = this._stageChartRows(pipeline, upcoming);
+    if (rows.length === 0) {
+      el.innerHTML = '<div class="text-muted small">No open production lots at any stage.</div>';
+      return;
+    }
+
+    const totalOf = r => r.wip + r.queued;
+    const axisMax = this._niceMax(Math.max(...rows.map(totalOf)));
+    if (axisMax <= 0) {
+      el.innerHTML = '<div class="text-muted small">No open production lots at any stage.</div>';
+      return;
+    }
+    const peakTotal = Math.max(...rows.map(totalOf));
+
+    // A legend, always -- two series must never be told apart by colour
+    // alone. The hatch on "Pending" is the second channel behind it.
+    const legend = `
+      <div class="dash-stage-legend">
+        <span class="dash-stage-legend-item">
+          <span class="dash-stage-swatch" data-series="wip" aria-hidden="true"></span>In Progress
+        </span>
+        <span class="dash-stage-legend-item">
+          <span class="dash-stage-swatch" data-series="queued" aria-hidden="true"></span>Pending
+        </span>
+      </div>`;
+
+    // Three ticks, three hairlines. More would be noise at this height.
+    const ticks = [axisMax, axisMax / 2, 0];
+    const yAxis = `
+      <div class="dash-stage-yaxis" aria-hidden="true">
+        ${ticks.map((t, i) => `<span class="dash-stage-tick" style="bottom:${100 - (i * 50)}%">${formatQty(t)}</span>`).join('')}
+      </div>`;
+    const gridlines = `
+      <div class="dash-stage-gridlines" aria-hidden="true">
+        ${ticks.map((_t, i) => `<span class="dash-stage-gridline" style="bottom:${100 - (i * 50)}%"></span>`).join('')}
+      </div>`;
+
+    const columns = rows.map(r => {
+      const total = totalOf(r);
+      // Only segments with something in them: an empty one would still take
+      // the 2px surface gap and draw a hairline of colour at the baseline.
+      const segments = [
+        { key: 'wip', qty: r.wip },
+        { key: 'queued', qty: r.queued },
+      ].filter(seg => seg.qty > 0).map(seg => {
+        // Floor the height so a token 1-unit segment is still visible
+        // rather than sub-pixel, without letting it read as a real
+        // quantity.
+        const pct = Math.max((seg.qty / axisMax) * 100, 1.5);
+        return `<span class="dash-stage-seg" data-series="${seg.key}" style="height:${pct.toFixed(2)}%"></span>`;
+      }).join('');
+
+      // Label the tallest column only. Every exact number is in the lists
+      // below, which are this chart's table view -- a value over every
+      // column is the flood that stops direct labels working.
+      const isPeak = total === peakTotal;
+      const parts = [
+        `${formatQty(r.wip)} in progress`,
+        `${formatQty(r.queued)} pending`,
+        `${r.lots} lot${r.lots === 1 ? '' : 's'}`,
+      ];
+      const description = `${r.processName}: ${parts.join(', ')}`;
+
+      return `
+        <button type="button" class="dash-stage-col" data-action="dash-pipeline-stage"
+                data-processid="${encodeURIComponent(r.processId)}"
+                title="${escapeHtml(description)}">
+          <span class="dash-stage-col-stack">
+            ${isPeak ? `<span class="dash-stage-col-value" style="bottom:${((total / axisMax) * 100).toFixed(2)}%">${formatQty(total)}</span>` : ''}
+            ${segments}
+          </span>
+          <span class="dash-stage-col-label">${escapeHtml(r.processName)}</span>
+          <span class="visually-hidden">${escapeHtml(description)}</span>
+        </button>`;
+    }).join('');
+
+    el.innerHTML = `
+      <div class="dash-stage-chart">
+        ${legend}
+        <div class="dash-stage-plot">
+          ${yAxis}
+          <div class="dash-stage-bands">
+            ${gridlines}
+            ${columns}
+          </div>
+        </div>
+      </div>`;
+  },
+
+  renderPipeline(pipeline) {
+    this._renderStageList(pipeline, this.STAGE_LISTS.pipeline);
+  },
+
+  renderUpcoming(upcoming) {
+    this._renderStageList(upcoming, this.STAGE_LISTS.upcoming);
+  },
+
+  _renderStageList(stages, config) {
+    const el = document.getElementById(config.containerId);
+    if (!el) return;
+    if (!stages || stages.length === 0) {
+      el.innerHTML = `<div class="text-muted small">${escapeHtml(config.empty)}</div>`;
       return;
     }
 
@@ -603,23 +830,19 @@ App.Dashboard = {
     // height, and adds the two things the card wall could not show at all:
     // how the stages compare, and where the most material is sitting.
     const qtyOf = p => toNumber(p.totalQty);
-    const totalQty = pipeline.reduce((sum, p) => sum + qtyOf(p), 0);
-    const totalLots = pipeline.reduce((sum, p) => sum + toNumber(p.totalLotCount), 0);
-    const peakQty = Math.max(...pipeline.map(qtyOf));
+    const totalQty = stages.reduce((sum, p) => sum + qtyOf(p), 0);
+    const totalLots = stages.reduce((sum, p) => sum + toNumber(p.totalLotCount), 0);
+    const peakQty = Math.max(...stages.map(qtyOf));
 
     const summary =
       `<div class="dash-wip-summary">
-         <span><strong>${formatQty(totalQty)}</strong> units in progress</span>
+         <span><strong>${formatQty(totalQty)}</strong> ${escapeHtml(config.unitsLabel)}</span>
          <span><strong>${totalLots}</strong> lot${totalLots === 1 ? '' : 's'}</span>
-         <span>across <strong>${pipeline.length}</strong> stage${pipeline.length === 1 ? '' : 's'}</span>
+         <span>across <strong>${stages.length}</strong> stage${stages.length === 1 ? '' : 's'}</span>
        </div>`;
 
-    const rows = pipeline.map((p, i) => {
+    const rows = stages.map((p, i) => {
       const qty = qtyOf(p);
-      // Bar is scaled against the busiest stage, not the total: with a
-      // dozen stages every share-of-total bar would be a stub, and the
-      // useful comparison here is between stages anyway.
-      const width = peakQty > 0 ? Math.max((qty / peakQty) * 100, 1.5) : 0;
       const isPeak = qty === peakQty && peakQty > 0;
       const groups = this._informativeGroups(p);
       const shown = groups.slice(0, this.PIPELINE_CHIP_LIMIT);
@@ -635,25 +858,30 @@ App.Dashboard = {
           ${hidden > 0 ? `<span class="dash-wip-chip dash-wip-chip-more">+${hidden} more</span>` : ''}
         </span>`;
 
+      // Both badges share one grid cell, so a row carrying neither collapses
+      // it to nothing rather than leaving a ragged hole mid-row.
+      const flags = `
+        <span class="dash-wip-flags">
+          ${isPeak && stages.length > 1
+            ? `<span class="dash-wip-peak" title="${escapeHtml(config.peakTitle)}">${escapeHtml(config.peakLabel)}</span>`
+            : ''}
+          ${this._ageBadge(p, config)}
+        </span>`;
+
       return `
         <button type="button" class="dash-wip-row" data-action="dash-pipeline-stage"
                 data-processid="${encodeURIComponent(p.processId)}"
                 title="View ${escapeHtml(p.processName)} in Production">
           <span class="dash-wip-seq">${i + 1}</span>
           <span class="dash-wip-name">${escapeHtml(p.processName)}</span>
-          <span class="dash-wip-bar">
-            <span class="dash-wip-bar-fill" data-peak="${isPeak}" style="width:${width.toFixed(1)}%"></span>
-          </span>
           <span class="dash-wip-qty">${formatQty(qty)}<small> units</small></span>
           <span class="dash-wip-lots">${p.totalLotCount} lot${p.totalLotCount === 1 ? '' : 's'}</span>
-          ${isPeak && pipeline.length > 1
-            ? '<span class="dash-wip-peak" title="More units are sitting at this stage than at any other">most WIP</span>'
-            : ''}
+          ${flags}
           ${chips}
         </button>`;
     }).join('');
 
-    el.innerHTML = summary + `<div class="dash-wip-list">${rows}</div>`;
+    el.innerHTML = summary + `<div class="dash-wip-list" data-variant="${config.variant}">${rows}</div>`;
   },
 
   async openPipelineStage(processId) {

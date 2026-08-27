@@ -83,7 +83,16 @@ from .. import date_utils
 from ..envelope import build_response
 from ..registry import rpc_method
 
-_ACTIVE_PRODUCTION_STATUSES = ("Pending", "In Progress")
+# The two halves of "open work", now told apart everywhere the dashboard
+# draws them. "In Progress" is material actually on the floor; "Pending" is
+# a lot that has been logged but not started. Folding both into one WIP
+# pipeline overstated every stage total with work nobody had touched yet,
+# which is exactly the number a shop floor reads to decide where to go
+# next. They are still fetched together -- one query, one process-master
+# read -- and only split when the payload is built.
+_STATUS_PENDING = "Pending"
+_STATUS_IN_PROGRESS = "In Progress"
+_ACTIVE_PRODUCTION_STATUSES = (_STATUS_PENDING, _STATUS_IN_PROGRESS)
 
 _T = config_maps.TABLE_NAMES
 
@@ -231,46 +240,85 @@ def _summarize_two_months(cur, sql: str) -> dict:
     }
 
 
-def _get_pipeline_data(production_lots: list) -> list:
+def _stage_group_title(model_name: str, color, size) -> str:
+    """Title of one breakdown row inside a stage, in narrowing order: what
+    is being made, in which colour, in which size.
+
+    `color` was previously dropped, and that is why almost every stage in
+    the WIP pipeline rendered a single group labelled "Unspecified". Two
+    facts combine to produce it: productName is written ONLY for a
+    final-stage process (production_service._save, `... if is_final_stage
+    else ""`), so every intermediate stage -- fitting, painting, packing --
+    stores an empty one; and `size` is optional on a colour breakdown entry
+    while `color` is mandatory (save_production rejects a breakdown whose
+    entries have no colour, and silently drops any entry that does). So for
+    an intermediate colour-tracked lot both of the parts this used to read
+    were empty and the one part that was always populated went unused --
+    collapsing a real per-colour split into one "Unspecified" bucket that
+    merely restated the stage total.
+
+    "Unspecified" still appears, correctly, for a lot with no breakdown at
+    all on a non-final stage: nothing about that lot is tagged.
+    """
+    parts = [model_name, str(color or "").strip(), str(size or "").strip()]
+    return " ".join(x for x in parts if x) or "Unspecified"
+
+
+def _get_stage_rollups(production_lots: list) -> dict:
+    """Per-process rollups keyed by lot status, in process sequence.
+
+    Returns {"In Progress": [stage, ...], "Pending": [stage, ...]} -- the
+    WIP pipeline and the Upcoming Lots queue respectively. They are built
+    in ONE pass over the lots and share a single process-master read; the
+    alternative (calling a per-status version twice) would double
+    get_process_data, the only query this function makes.
+
+    Each stage carries `oldestDays`, the age of the oldest lot sitting in
+    it. Units alone say how much is somewhere; age says whether it is
+    moving. A stage holding 400 units logged this morning is a busy stage;
+    one holding 40 units logged three weeks ago is a stuck one, and the old
+    rollup could not tell those apart.
+
+    Lot counts are counts of DISTINCT lots. They used to be counts of
+    colour-breakdown ENTRIES -- one `+= 1` per breakdown row -- so a single
+    lot split across four colours reported itself as four lots, and the
+    pipeline summary's "N lots" was inflated by exactly the amount of
+    colour tracking the shop does.
+    """
     processes = process_service.get_process_data(True)["data"]
 
-    groups_by_process: dict = {}
+    # {status: {process_key: {group title: {"qty", "lots": {lot id, ...}}}}}
+    groups_by_status: dict = {status: {} for status in _ACTIVE_PRODUCTION_STATUSES}
+    # {status: {process_key: {lot id, ...}}} -- a lot spanning several groups
+    # is still one lot at its stage.
+    lots_by_status: dict = {status: {} for status in _ACTIVE_PRODUCTION_STATUSES}
+    # {status: {process_key: earliest production_date seen}}
+    oldest_by_status: dict = {status: {} for status in _ACTIVE_PRODUCTION_STATUSES}
 
     for lot in production_lots or []:
-        if lot.get("status") not in _ACTIVE_PRODUCTION_STATUSES:
+        status = lot.get("status")
+        if status not in _ACTIVE_PRODUCTION_STATUSES:
             continue
         process_key = str(lot.get("processId") or "").strip().lower()
         if not process_key:
             continue
 
-        bucket = groups_by_process.setdefault(process_key, {})
+        lot_id = lot.get("rowIdx")
+        bucket = groups_by_status[status].setdefault(process_key, {})
+        lots_by_status[status].setdefault(process_key, set()).add(lot_id)
         model_name = str(lot.get("productName") or "").strip()
         breakdown = lot.get("colorBreakdown") or []
 
-        # Title parts, in narrowing order: what is being made, in which
-        # colour, in which size.
-        #
-        # `color` was previously dropped, and that is why almost every stage
-        # in the WIP pipeline rendered a single group labelled "Unspecified".
-        # Two facts combine to produce it: productName is written ONLY for a
-        # final-stage process (production_service._save, `... if
-        # is_final_stage else ""`), so every intermediate stage -- fitting,
-        # painting, packing -- stores an empty one; and `size` is optional on
-        # a colour breakdown entry while `color` is mandatory (save_production
-        # rejects a breakdown whose entries have no colour, and silently drops
-        # any entry that does). So for an intermediate colour-tracked lot both
-        # of the parts this used to read were empty and the one part that was
-        # always populated went unused -- collapsing a real per-colour split
-        # into one "Unspecified" bucket that merely restated the stage total.
-        #
-        # "Unspecified" still appears, correctly, for a lot with no breakdown
-        # at all on a non-final stage: nothing about that lot is tagged.
-        def add_to_group(color, size, qty, bucket=bucket, model_name=model_name):
-            parts = [model_name, str(color or "").strip(), str(size or "").strip()]
-            title = " ".join(x for x in parts if x) or "Unspecified"
-            entry = bucket.setdefault(title, {"qty": 0.0, "lotCount": 0})
+        lot_date = date_utils.to_safe_date(lot.get("date"))
+        if lot_date:
+            seen = oldest_by_status[status].get(process_key)
+            if seen is None or lot_date < seen:
+                oldest_by_status[status][process_key] = lot_date
+
+        def add_to_group(color, size, qty, bucket=bucket, model_name=model_name, lot_id=lot_id):
+            entry = bucket.setdefault(_stage_group_title(model_name, color, size), {"qty": 0.0, "lots": set()})
             entry["qty"] += qty
-            entry["lotCount"] += 1
+            entry["lots"].add(lot_id)
 
         if breakdown:
             for cb in breakdown:
@@ -278,33 +326,39 @@ def _get_pipeline_data(production_lots: list) -> list:
         else:
             add_to_group("", "", float(lot.get("qty") or 0))
 
-    result = []
-    for p in processes:
-        bucket = groups_by_process.get(p["processId"].strip().lower(), {})
-        groups = sorted(
-            (
-                {"title": title, "qty": _round2(entry["qty"]), "lotCount": entry["lotCount"]}
-                for title, entry in bucket.items()
-            ),
-            key=lambda g: g["qty"],
-            reverse=True,
-        )
-        total_lot_count = sum(g["lotCount"] for g in groups)
-        if total_lot_count == 0:
-            continue
-        result.append(
-            {
-                "processId": p["processId"],
-                "processName": p["processName"],
-                "sequence": p["sequence"],
-                "totalQty": _round2(sum(g["qty"] for g in groups)),
-                "totalLotCount": total_lot_count,
-                "groups": groups,
-            }
-        )
+    today = date.today()
+    rollups: dict = {}
+    for status in _ACTIVE_PRODUCTION_STATUSES:
+        stages = []
+        for p in processes:
+            process_key = p["processId"].strip().lower()
+            total_lot_count = len(lots_by_status[status].get(process_key, ()))
+            if total_lot_count == 0:
+                continue
+            groups = sorted(
+                (
+                    {"title": title, "qty": _round2(entry["qty"]), "lotCount": len(entry["lots"])}
+                    for title, entry in groups_by_status[status].get(process_key, {}).items()
+                ),
+                key=lambda g: g["qty"],
+                reverse=True,
+            )
+            oldest = oldest_by_status[status].get(process_key)
+            stages.append(
+                {
+                    "processId": p["processId"],
+                    "processName": p["processName"],
+                    "sequence": p["sequence"],
+                    "totalQty": _round2(sum(g["qty"] for g in groups)),
+                    "totalLotCount": total_lot_count,
+                    "oldestDays": max(0, (today - oldest).days) if oldest else None,
+                    "groups": groups,
+                }
+            )
+        stages.sort(key=lambda p: p["sequence"])
+        rollups[status] = stages
 
-    result.sort(key=lambda p: p["sequence"])
-    return result
+    return rollups
 
 
 def _get_production_status_breakdown(cur) -> list:
@@ -330,33 +384,57 @@ def _get_production_status_breakdown(cur) -> list:
 
 
 def _get_active_production_kpis(cur) -> dict:
-    """{"count", "oldestDate"} for lots in an active status.
+    """Open-lot counts and the oldest open lot's date, split by status.
 
-    Both were derived by materialising every lot and filtering in Python.
+    Returns {"count", "inProgressCount", "pendingCount", "oldestDate"} --
+    `count` staying the combined open-lot total the "Production" tile has
+    always shown, with the two halves alongside it so that tile can say how
+    the total divides between work on the floor and work still queued.
+    Without the split it read "Production In Progress: 11" directly above a
+    pipeline totalling 8 lots.
+
+    All of it was derived by materialising every lot and filtering in
+    Python; the GROUP BY costs nothing over the single-row count it
+    replaces.
     """
+    empty = {"count": 0, "inProgressCount": 0, "pendingCount": 0, "oldestDate": None}
     table = config_maps.TABLE_NAMES.get("PRODUCTION")
     if not table:
-        return {"count": 0, "oldestDate": None}
+        return empty
     cur.execute(
         f"""
-        SELECT count(*) AS n, min(production_date) AS oldest
+        SELECT status, count(*) AS n, min(production_date) AS oldest
         FROM {table}
         WHERE deleted_at IS NULL AND status = ANY(%s)
+        GROUP BY status
         """,
         (list(_ACTIVE_PRODUCTION_STATUSES),),
     )
-    row = cur.fetchone()
-    return {"count": int(row["n"] or 0), "oldestDate": row["oldest"]}
+
+    kpis = dict(empty)
+    by_status = {_STATUS_IN_PROGRESS: "inProgressCount", _STATUS_PENDING: "pendingCount"}
+    oldest_dates = []
+    for row in cur.fetchall():
+        n = int(row["n"] or 0)
+        kpis["count"] += n
+        key = by_status.get(row["status"])
+        if key:
+            kpis[key] = n
+        if row["oldest"]:
+            oldest_dates.append(row["oldest"])
+    if oldest_dates:
+        kpis["oldestDate"] = min(oldest_dates)
+    return kpis
 
 
 def _get_active_production_lots(cur) -> list:
-    """Only the lots the WIP pipeline actually draws, with only the columns it
-    reads (PERF-006).
+    """Only the lots the two stage rollups actually draw, with only the
+    columns they read (PERF-006).
 
-    _get_pipeline_data discards every non-active lot on its first line, so
+    _get_stage_rollups discards every non-active lot on its first line, so
     fetching completed and cancelled history to throw it away is pure cost --
     and the row mapper it went through parses each lot's components_consumed
-    and custom_components JSONB, neither of which the pipeline touches.
+    and custom_components JSONB, neither of which the rollups touch.
     Active lots are a small minority of a mature table.
     """
     table = config_maps.TABLE_NAMES.get("PRODUCTION")
@@ -364,7 +442,7 @@ def _get_active_production_lots(cur) -> list:
         return []
     cur.execute(
         f"""
-        SELECT process_id, product_name, qty, color_breakdown, status
+        SELECT id, production_date, process_id, product_name, qty, color_breakdown, status
         FROM {table}
         WHERE deleted_at IS NULL AND status = ANY(%s)
         """,
@@ -372,6 +450,11 @@ def _get_active_production_lots(cur) -> list:
     )
     return [
         {
+            # id and production_date are read by _get_stage_rollups only:
+            # the first so a colour-split lot counts once rather than once
+            # per colour, the second for each stage's oldest-lot age.
+            "rowIdx": row["id"],
+            "date": row["production_date"],
             "status": row["status"],
             "processId": row["process_id"] or "",
             "productName": row["product_name"] or "",
@@ -447,6 +530,8 @@ def get_dashboard_data():
 
     # Filled from SQL inside the connection block below.
     pending_production_count = 0
+    in_progress_production_count = 0
+    queued_production_count = 0
     oldest_pending_production_days = None
     active_production_lots: list = []
     production_status_breakdown: list = []
@@ -485,6 +570,8 @@ def get_dashboard_data():
         # Production, on this same connection (PERF-006).
         active_kpis = _get_active_production_kpis(cur)
         pending_production_count = active_kpis["count"]
+        in_progress_production_count = active_kpis["inProgressCount"]
+        queued_production_count = active_kpis["pendingCount"]
         if active_kpis["oldestDate"]:
             oldest = date_utils.to_safe_date(active_kpis["oldestDate"])
             if oldest:
@@ -493,6 +580,8 @@ def get_dashboard_data():
         active_production_lots = _get_active_production_lots(cur)
 
     total_contractor_payable_due = sum(max(c["balanceDue"], 0) for c in contractor_ledger)
+
+    stage_rollups = _get_stage_rollups(active_production_lots)
 
     return build_response(
         True,
@@ -516,15 +605,21 @@ def get_dashboard_data():
                 "lowStockCount": len(low_stock_full),
                 "lowStockTotalDeficit": low_stock_total_deficit,
                 "pendingProductionCount": pending_production_count,
+                "inProgressProductionCount": in_progress_production_count,
+                "queuedProductionCount": queued_production_count,
                 "oldestPendingProductionDays": oldest_pending_production_days,
                 "readyToDispatchUnits": _round2(ready_to_dispatch_units),
                 "readyToDispatchProductCount": len(ready_to_dispatch_full),
                 "contractorPayablesDue": _round2(total_contractor_payable_due),
                 "contractorPayablesCount": len(contractor_payables_full),
             },
-            # Only ACTIVE lots reach the pipeline -- it discards every other
-            # status on its first line anyway (PERF-006).
-            "pipeline": _get_pipeline_data(active_production_lots),
+            # Only ACTIVE lots reach the rollups -- they discard every other
+            # status on their first line anyway (PERF-006) -- and the two
+            # active statuses go to two different places on the page: the WIP
+            # pipeline draws what is genuinely on the floor, Upcoming Lots
+            # draws what is queued behind it.
+            "pipeline": stage_rollups[_STATUS_IN_PROGRESS],
+            "upcoming": stage_rollups[_STATUS_PENDING],
             "productionStatusBreakdown": production_status_breakdown,
             "dispatchTrend": dispatch_trend,
             "lowStockItems": low_stock_items,

@@ -79,7 +79,8 @@ function kpis(overrides) {
     wastageThisMonthCount: 0, wastageThisMonthQty: 0,
     wastageLastMonthCount: 0, wastageLastMonthQty: 0,
     lowStockCount: 0, lowStockTotalDeficit: 0,
-    pendingProductionCount: 0, oldestPendingProductionDays: null,
+    pendingProductionCount: 0, inProgressProductionCount: 0, queuedProductionCount: 0,
+    oldestPendingProductionDays: null,
     readyToDispatchUnits: 0, readyToDispatchProductCount: 0,
     contractorPayablesDue: 0, contractorPayablesCount: 0,
   }, overrides);
@@ -116,13 +117,41 @@ describe('dashboard KPI status', () => {
 
   test('production status keys off the OLDEST lot age, not the open count', () => {
     // Many lots, all young: busy, not distressed.
-    App.Dashboard.renderKpis(kpis({ pendingProductionCount: 40, oldestPendingProductionDays: 1 }));
+    App.Dashboard.renderKpis(kpis({
+      pendingProductionCount: 40, inProgressProductionCount: 40, oldestPendingProductionDays: 1,
+    }));
     expect(statusOf('heroPendingProduction')).toBe('ok');
 
     // One lot, three weeks old: a real problem.
-    App.Dashboard.renderKpis(kpis({ pendingProductionCount: 1, oldestPendingProductionDays: 21 }));
+    App.Dashboard.renderKpis(kpis({
+      pendingProductionCount: 1, inProgressProductionCount: 1, oldestPendingProductionDays: 21,
+    }));
     expect(statusOf('heroPendingProduction')).toBe('critical');
     expect(noteOf('kpiPendingProductionSub')).toMatch(/oldest 21 days/i);
+  });
+
+  test('the tile counts only what is running, and names the queue separately', () => {
+    // The tile is labelled "Production In Progress" and sits directly above
+    // a WIP pipeline that now draws In Progress lots only. Showing the
+    // combined open count here contradicted the list below it.
+    App.Dashboard.renderKpis(kpis({
+      pendingProductionCount: 11, inProgressProductionCount: 8, queuedProductionCount: 3,
+      oldestPendingProductionDays: 2,
+    }));
+    expect(document.getElementById('kpiPendingProduction').textContent).toBe('8');
+    expect(noteOf('kpiPendingProductionSub')).toMatch(/8 lots running/i);
+    expect(noteOf('kpiPendingProductionSub')).toMatch(/3 queued/i);
+  });
+
+  test('an oldest PENDING lot still escalates the tile it is queued under', () => {
+    // Nothing running, one lot queued for a month. Moving Pending out of the
+    // pipeline must not also move it out of the alerting.
+    App.Dashboard.renderKpis(kpis({
+      pendingProductionCount: 1, inProgressProductionCount: 0, queuedProductionCount: 1,
+      oldestPendingProductionDays: 30,
+    }));
+    expect(statusOf('heroPendingProduction')).toBe('critical');
+    expect(noteOf('kpiPendingProductionSub')).toMatch(/1 queued/i);
   });
 
   test('no open lots is ok even though oldest age is null', () => {
@@ -152,7 +181,8 @@ describe('dashboard KPI status', () => {
   test('every status is also stated in words, never colour alone (WCAG 1.4.1)', () => {
     App.Dashboard.renderKpis(kpis({
       lowStockCount: 9, lowStockTotalDeficit: 40,
-      pendingProductionCount: 2, oldestPendingProductionDays: 30,
+      pendingProductionCount: 2, inProgressProductionCount: 1, queuedProductionCount: 1,
+      oldestPendingProductionDays: 30,
       readyToDispatchUnits: 5, readyToDispatchProductCount: 1,
       contractorPayablesDue: 100, contractorPayablesCount: 1,
     }));
@@ -271,14 +301,17 @@ describe('dashboard WIP pipeline', () => {
     expect(peakRow.querySelector('.dash-wip-name').textContent).toBe('Biggest');
   });
 
-  test('bars are scaled against the busiest stage, not the total', () => {
+  test('rows carry no inline bar -- that comparison belongs to the column chart', () => {
+    // A per-row bar could only scale against its OWN list's maximum, so a
+    // stage's running and queued totals were drawn against two different
+    // maxima and could not be read against each other at all.
     const el = render([
       stage({ processId: 'A', totalQty: 340 }),
       stage({ processId: 'B', totalQty: 170 }),
     ]);
-    const widths = Array.from(el.querySelectorAll('.dash-wip-bar-fill')).map(b => b.style.width);
-    expect(widths[0]).toBe('100.0%');
-    expect(widths[1]).toBe('50.0%');
+    expect(el.querySelectorAll('.dash-wip-bar-fill')).toHaveLength(0);
+    expect(Array.from(el.querySelectorAll('.dash-wip-qty')).map(q => q.textContent))
+      .toEqual(['340 units', '170 units']);
   });
 
   test('a single stage does not get a "most WIP" badge', () => {
@@ -316,8 +349,224 @@ describe('dashboard WIP pipeline', () => {
 
   test('empty pipeline says so instead of rendering an empty frame', () => {
     const el = render([]);
-    expect(el.textContent).toMatch(/no active processes/i);
+    expect(el.textContent).toMatch(/nothing is in progress/i);
     expect(el.querySelectorAll('.dash-wip-row')).toHaveLength(0);
+  });
+
+  test('a stage carries the age of its oldest lot, coloured by the same thresholds', () => {
+    // Units say how much is at a stage; age says whether it is moving.
+    const el = render([
+      stage({ processId: 'A', processName: 'Fresh', oldestDays: 1 }),
+      stage({ processId: 'B', processName: 'Slipping', oldestDays: 9 }),
+      stage({ processId: 'C', processName: 'Stuck', oldestDays: 40 }),
+    ]);
+    const ages = Array.from(el.querySelectorAll('.dash-wip-age'));
+    expect(ages.map(a => a.getAttribute('data-status'))).toEqual(['ok', 'warn', 'critical']);
+    // "12d" alone means nothing read aloud -- the badge spells it out too.
+    expect(ages[2].textContent).toMatch(/40d/);
+    expect(ages[2].querySelector('.visually-hidden').textContent).toMatch(/40 days/i);
+  });
+
+  test('a stage with no known age renders no age badge rather than an empty one', () => {
+    const el = render([stage({ oldestDays: null })]);
+    expect(el.querySelectorAll('.dash-wip-age')).toHaveLength(0);
+  });
+});
+
+// The second list built from the same row component. Its whole reason to
+// exist is that Pending lots used to be counted into the pipeline above,
+// inflating every stage total with work nobody had started.
+describe('dashboard Upcoming Lots', () => {
+  beforeEach(() => {
+    mountPartial();
+    loadDashboardAsGlobal();
+  });
+
+  const stage = (over) => Object.assign({
+    processId: 'P1', processName: 'Rim Fitting 14 inch', sequence: 1,
+    totalQty: 100, totalLotCount: 1, oldestDays: 0,
+    groups: [{ title: 'Unspecified', qty: 100, lotCount: 1 }],
+  }, over);
+
+  const render = stages => {
+    App.Dashboard.renderUpcoming(stages);
+    return document.getElementById('dashboardUpcoming');
+  };
+
+  test('renders into its own container, not the pipeline', () => {
+    App.Dashboard.renderPipeline([stage({ processName: 'Running' })]);
+    render([stage({ processName: 'Queued' })]);
+    expect(document.getElementById('dashboardPipeline').textContent).toContain('Running');
+    expect(document.getElementById('dashboardPipeline').textContent).not.toContain('Queued');
+    expect(document.getElementById('dashboardUpcoming').textContent).toContain('Queued');
+  });
+
+  test('summarises units as queued, not as in progress', () => {
+    const el = render([stage({ totalQty: 250, totalLotCount: 3 })]);
+    const text = el.querySelector('.dash-wip-summary').textContent.replace(/\s+/g, ' ');
+    expect(text).toContain('250 units queued');
+    expect(text).not.toContain('in progress');
+  });
+
+  test('is marked as the upcoming variant so its bars read as not-yet-started', () => {
+    const el = render([stage({})]);
+    expect(el.querySelector('.dash-wip-list').getAttribute('data-variant')).toBe('upcoming');
+    expect(document.querySelector('#dashboardPipeline .dash-wip-list')).toBeNull();
+  });
+
+  test('the busiest queue is labelled as a queue, not as WIP', () => {
+    const el = render([
+      stage({ processId: 'A', totalQty: 50 }),
+      stage({ processId: 'B', totalQty: 400 }),
+    ]);
+    expect(el.querySelector('.dash-wip-peak').textContent).toBe('longest queue');
+  });
+
+  test('empty upcoming list says nothing is queued', () => {
+    const el = render([]);
+    expect(el.textContent).toMatch(/no pending lots/i);
+    expect(el.querySelectorAll('.dash-wip-row')).toHaveLength(0);
+  });
+
+  test('focus on an upcoming row is not restored onto the pipeline row for the same stage', () => {
+    // Both lists key their rows on data-action + processid, so without the
+    // region in the focus token these are indistinguishable.
+    App.Dashboard.renderPipeline([stage({ processId: 'P1' })]);
+    render([stage({ processId: 'P1' })]);
+
+    const upcomingRow = document.querySelector('#dashboardUpcoming .dash-wip-row');
+    upcomingRow.focus();
+    const token = App.Dashboard._captureFocus();
+
+    App.Dashboard.renderPipeline([stage({ processId: 'P1' })]);
+    render([stage({ processId: 'P1' })]);
+    App.Dashboard._restoreFocus(token);
+
+    expect(document.activeElement.closest('#dashboardUpcoming')).not.toBeNull();
+  });
+});
+
+describe('dashboard stage load chart', () => {
+  beforeEach(() => {
+    mountPartial();
+    loadDashboardAsGlobal();
+  });
+
+  const stage = (over) => Object.assign({
+    processId: 'P1', processName: 'Rim Fitting', sequence: 1,
+    totalQty: 100, totalLotCount: 1, oldestDays: 0, groups: [],
+  }, over);
+
+  const render = (pipeline, upcoming) => {
+    App.Dashboard.renderStageChart(pipeline, upcoming);
+    return document.getElementById('dashboardStageChart');
+  };
+
+  test('one column per stage, in process sequence, not in payload order', () => {
+    const el = render(
+      [stage({ processId: 'C', processName: 'Packing', sequence: 3 }),
+        stage({ processId: 'A', processName: 'Cutting', sequence: 1 })],
+      [stage({ processId: 'B', processName: 'Painting', sequence: 2 })],
+    );
+    const labels = Array.from(el.querySelectorAll('.dash-stage-col-label')).map(l => l.textContent);
+    expect(labels).toEqual(['Cutting', 'Painting', 'Packing']);
+  });
+
+  test('a stage appearing in both lists is one column carrying both series', () => {
+    const el = render(
+      [stage({ processId: 'A', totalQty: 100, totalLotCount: 2 })],
+      [stage({ processId: 'A', totalQty: 300, totalLotCount: 3 })],
+    );
+    expect(el.querySelectorAll('.dash-stage-col')).toHaveLength(1);
+    const series = Array.from(el.querySelectorAll('.dash-stage-seg'))
+      .map(seg => seg.getAttribute('data-series'));
+    expect(series).toEqual(['wip', 'queued']);
+    // Lot counts from both lists add up on the one column.
+    expect(el.querySelector('.dash-stage-col').getAttribute('title')).toContain('5 lots');
+  });
+
+  test('both series share one axis, so segment heights are directly comparable', () => {
+    // 100 running + 300 queued = 400 total, and _niceMax rounds that to 500.
+    const el = render(
+      [stage({ processId: 'A', totalQty: 100 })],
+      [stage({ processId: 'A', totalQty: 300 })],
+    );
+    const heights = Array.from(el.querySelectorAll('.dash-stage-seg')).map(seg => seg.style.height);
+    expect(heights).toEqual(['20.00%', '60.00%']);
+  });
+
+  test('the axis maximum is a round number, not the raw peak', () => {
+    const el = render([stage({ processId: 'A', totalQty: 437 })], []);
+    const ticks = Array.from(el.querySelectorAll('.dash-stage-tick')).map(t => t.textContent);
+    expect(ticks).toEqual(['500', '250', '0']);
+  });
+
+  test('a stage with nothing in a series renders no segment for it', () => {
+    // An empty segment would still take the 2px surface gap and draw a
+    // hairline of colour along the baseline.
+    const el = render([stage({ processId: 'A', totalQty: 100 })], []);
+    const series = Array.from(el.querySelectorAll('.dash-stage-seg'))
+      .map(seg => seg.getAttribute('data-series'));
+    expect(series).toEqual(['wip']);
+  });
+
+  test('only the tallest column is value-labelled', () => {
+    const el = render([
+      stage({ processId: 'A', processName: 'Small', sequence: 1, totalQty: 50 }),
+      stage({ processId: 'B', processName: 'Biggest', sequence: 2, totalQty: 400 }),
+      stage({ processId: 'C', processName: 'Middle', sequence: 3, totalQty: 200 }),
+    ], []);
+    const labelled = el.querySelectorAll('.dash-stage-col-value');
+    expect(labelled).toHaveLength(1);
+    expect(labelled[0].textContent).toBe('400');
+    expect(labelled[0].closest('.dash-stage-col').querySelector('.dash-stage-col-label').textContent)
+      .toBe('Biggest');
+    // The label rides the top of its own bar, so its offset is the column's
+    // own share of the axis -- not a fixed row at the top of the plot.
+    expect(labelled[0].style.bottom).toBe('80.00%');
+  });
+
+  test('two series always carry a legend -- identity is never colour alone', () => {
+    const el = render([stage({ processId: 'A' })], [stage({ processId: 'A' })]);
+    const legend = Array.from(el.querySelectorAll('.dash-stage-legend-item')).map(i => i.textContent.trim());
+    expect(legend).toEqual(['In Progress', 'Pending']);
+  });
+
+  test('every column states its full breakdown in text, not only in bar height', () => {
+    const el = render(
+      [stage({ processId: 'A', processName: 'Painting', totalQty: 120, totalLotCount: 2 })],
+      [stage({ processId: 'A', processName: 'Painting', totalQty: 80, totalLotCount: 1 })],
+    );
+    const col = el.querySelector('.dash-stage-col');
+    expect(col.querySelector('.visually-hidden').textContent)
+      .toBe('Painting: 120 in progress, 80 pending, 3 lots');
+    expect(col.getAttribute('title')).toContain('120 in progress');
+  });
+
+  test('columns are real buttons carrying the stage drill-down', () => {
+    const el = render([stage({ processId: 'P/1' })], []);
+    const col = el.querySelector('.dash-stage-col');
+    expect(col.tagName).toBe('BUTTON');
+    expect(col.dataset.action).toBe('dash-pipeline-stage');
+    expect(decodeURIComponent(col.dataset.processid)).toBe('P/1');
+  });
+
+  test('escapes process names rather than trusting them as markup', () => {
+    const el = render([stage({ processName: '<img src=x onerror=alert(1)>' })], []);
+    expect(el.querySelector('img')).toBeNull();
+    expect(el.querySelector('.dash-stage-col-label').textContent).toBe('<img src=x onerror=alert(1)>');
+  });
+
+  test('no open work anywhere says so instead of drawing an empty axis', () => {
+    const el = render([], []);
+    expect(el.textContent).toMatch(/no open production lots/i);
+    expect(el.querySelectorAll('.dash-stage-col')).toHaveLength(0);
+  });
+
+  test('stages that are all zero do not divide by a zero axis', () => {
+    const el = render([stage({ processId: 'A', totalQty: 0 })], []);
+    expect(el.querySelectorAll('.dash-stage-col')).toHaveLength(0);
+    expect(el.textContent).toMatch(/no open production lots/i);
   });
 });
 

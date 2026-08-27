@@ -78,6 +78,24 @@
 
     --border-color: #e2e8f0;
     --border-light: #f1f5f9;
+
+    /* Stage load chart. Two series that are NOT peer categories: "running"
+       is the subject and "queued" is context, so this is one accent plus a
+       de-emphasis grey rather than two categorical hues.
+
+       Checked with the dataviz palette validator against this surface:
+       adjacent OKLab dE 16.9 for normal vision and 16.8 under deuteranopia,
+       both comfortably clear, but 7.3 under tritanopia -- inside the floor
+       band where colour alone is not enough. That is why the queued series
+       also carries a hatch, why the legend is never optional, and why the
+       lists below the chart hold every exact number.
+
+       --dash-stage-hatch is the SURFACE showing through the queued fill,
+       not white: painting white stripes on a dark page would lighten that
+       series until it closed the gap with the accent again. */
+    --dash-stage-wip: #6366f1;
+    --dash-stage-queued: #64748b;
+    --dash-stage-hatch: rgb(255 255 255 / 55%);
   }
 
   /* ─────────────────────────────────────────────────────────────────────
@@ -112,6 +130,13 @@
 
     --border-color: #253044;
     --border-light: #1a2438;
+
+    /* Accent follows --secondary-color into dark; the grey holds, which
+       keeps the pair at dE 20.1 for normal vision against this surface
+       (the lighter --text-muted grey drops it to 13.2 -- a hard fail). */
+    --dash-stage-wip: #a78bfa;
+    --dash-stage-queued: #64748b;
+    --dash-stage-hatch: rgb(22 27 39 / 55%);
 
     --shadow-sm: 0 2px 4px rgb(0 0 0 / 40%);
     --shadow-md: 0 4px 12px rgb(0 0 0 / 50%);
@@ -1927,7 +1952,235 @@
     margin-bottom: 16px;
   }
 
-  /* ── Process WIP pipeline ──────────────────────────────────────────────
+  /* ── Stage load column chart ───────────────────────────────────────────
+     Stacked columns, one per process stage, left-to-right in the order
+     material flows: running on the baseline, queued hatched above it. This
+     replaced a horizontal bar drawn inside every list row -- those compared
+     stages within ONE list, so a stage's running and queued totals were
+     scaled against two different maxima and could not be read against each
+     other at all. One shared axis fixes that, and the reclaimed row column
+     went to the process name.
+
+     Geometry is three custom properties, because the gridline layer, the
+     y-axis gutter and the columns must agree on the plot height exactly. */
+  .dash-stage-chart {
+    --dash-stage-plot-h: 132px;
+    --dash-stage-label-h: 24px;
+
+    /* Headroom above the plot for the peak column's value label. It lives
+       INSIDE .dash-stage-bands rather than as padding on the grid, because
+       that element scrolls horizontally -- and `overflow-x: auto` makes
+       overflow-y compute to auto too, so anything drawn above the bands'
+       content box is clipped rather than overflowing. That is what sliced
+       the peak label in half at narrow widths. */
+    --dash-stage-head-h: 20px;
+
+    margin-bottom: 18px;
+  }
+
+  .dash-stage-legend {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 4px 16px;
+    margin-bottom: 10px;
+    font-size: 11.5px;
+    color: var(--text-secondary);
+  }
+
+  .dash-stage-legend-item {
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+  }
+
+  .dash-stage-swatch {
+    width: 11px;
+    height: 11px;
+    border-radius: 2px;
+    background: var(--dash-stage-wip, #6366f1);
+  }
+
+  /* The two series are one accent plus a de-emphasis grey: "queued" is
+     context for "running", not a peer category. Their OKLab separation is
+     comfortable for normal vision but sits in the floor band for tritanopia,
+     so the hatch below is a required second channel, not decoration -- as
+     are the legend above and the exact numbers in the lists underneath. */
+  .dash-stage-swatch[data-series="queued"],
+  .dash-stage-seg[data-series="queued"] {
+    background: var(--dash-stage-queued, #64748b);
+    background-image: repeating-linear-gradient(
+      135deg,
+      var(--dash-stage-hatch) 0,
+      var(--dash-stage-hatch) 2px,
+      transparent 2px,
+      transparent 5px
+    );
+  }
+
+  /* align-items:start, not the default stretch: the two cells are
+     deliberately different heights (the bands carry the x-axis labels, the
+     y-axis gutter does not) and they must share a TOP edge for the ticks and
+     the gridlines to line up. The padding is headroom for the peak column's
+     value label, which rides the top of its bar. */
+  .dash-stage-plot {
+    display: grid;
+    grid-template-columns: auto minmax(0, 1fr);
+    align-items: start;
+    gap: 0 10px;
+  }
+
+  /* Ticks are positioned from the baseline rather than spaced by flexbox so
+     they line up with the gridlines to the pixel. */
+  .dash-stage-yaxis {
+    position: relative;
+    width: 34px;
+    height: var(--dash-stage-plot-h);
+    margin-top: var(--dash-stage-head-h);
+  }
+
+  .dash-stage-tick {
+    position: absolute;
+    right: 0;
+    transform: translateY(50%);
+    font-size: 10px;
+    line-height: 1;
+    color: var(--text-muted);
+    white-space: nowrap;
+  }
+
+  /* Horizontal scroll rather than columns thinning to slivers: at a dozen
+     stages the labels are what break first, and a scrolling plot keeps every
+     column readable instead of making all of them illegible. */
+  .dash-stage-bands {
+    position: relative;
+    display: flex;
+    align-items: flex-end;
+    gap: 6px;
+    overflow-x: auto;
+    padding-top: var(--dash-stage-head-h);
+    padding-bottom: 1px;
+  }
+
+  /* Sized to the plot height directly, NOT by insetting the label row off
+     the bands' total height -- the bands are as tall as their tallest
+     column, so anything the label row costs beyond its own height (line-box
+     rounding, a scrollbar) dropped the whole grid below the bars. */
+  .dash-stage-gridlines {
+    position: absolute;
+    top: var(--dash-stage-head-h);
+    right: 0;
+    left: 0;
+    height: var(--dash-stage-plot-h);
+    pointer-events: none;
+  }
+
+  .dash-stage-gridline {
+    position: absolute;
+    left: 0;
+    right: 0;
+    height: 1px;
+    background: var(--border-color);
+  }
+
+  .dash-stage-col {
+    display: flex;
+    flex: 1 1 46px;
+    flex-direction: column;
+    align-items: center;
+    width: 46px;
+    min-width: 46px;
+    padding: 0;
+    background: none;
+    border: 0;
+    border-radius: var(--border-radius-sm);
+    cursor: pointer;
+  }
+
+  .dash-stage-col:hover .dash-stage-col-label {
+    color: var(--text-primary);
+  }
+
+  .dash-stage-col:focus-visible {
+    outline: 2px solid var(--secondary-color);
+    outline-offset: 2px;
+  }
+
+  /* Rides the top of its own bar rather than sitting in a fixed row at the
+     top of the plot -- which floated the number a long way above a short
+     column and read as belonging to nothing. `bottom` is set inline to the
+     column's own total. */
+  .dash-stage-col-value {
+    position: absolute;
+    left: 50%;
+    transform: translate(-50%, -100%);
+    margin-bottom: 4px;
+    font-family: Outfit, sans-serif;
+    font-size: 11.5px;
+    font-weight: 700;
+    line-height: 1;
+    color: var(--text-primary);
+    white-space: nowrap;
+  }
+
+  /* column-reverse so segments stack up from the baseline in DOM order
+     (running first, queued above it). The 2px gap is the surface doing the
+     separating -- no stroke around the segments. */
+  .dash-stage-col-stack {
+    position: relative;
+    display: flex;
+    flex-direction: column-reverse;
+    gap: 2px;
+    width: 100%;
+    height: var(--dash-stage-plot-h);
+  }
+
+  .dash-stage-col-stack .dash-stage-seg {
+    align-self: center;
+    max-width: 24px;
+  }
+
+  .dash-stage-seg {
+    display: block;
+    width: 100%;
+    background: var(--dash-stage-wip, #6366f1);
+  }
+
+  /* Rounded at the data end, square at the baseline. :last-child is the
+     topmost segment because the stack is column-reverse. */
+  .dash-stage-col-stack .dash-stage-seg:last-child {
+    border-radius: 3px 3px 0 0;
+  }
+
+  /* One line, then ellipsis. Deliberately NOT -webkit-line-clamp: two
+     wrapped lines would read better, but the clamp did not hold here and
+     silently degraded to a hard mid-character cut with no ellipsis at all.
+     One nowrap line is deterministic in every browser, and it costs
+     nothing: the full name is in the column's title, in its
+     visually-hidden description, and spelled out in the list below.
+     Letting the name size the column instead would push every other
+     column out of shape. */
+  .dash-stage-col-label {
+    display: block;
+    height: var(--dash-stage-label-h);
+    width: 100%;
+    padding-top: 7px;
+    overflow: hidden;
+    font-size: 10.5px;
+    line-height: 1.3;
+    color: var(--text-muted);
+    text-align: center;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+
+  /* ── Process stage lists (WIP pipeline + Upcoming Lots) ────────────────
+     ONE row component, rendered twice: the WIP pipeline (lots In Progress)
+     and Upcoming Lots (lots Pending). Identical grid, identical sequence
+     order, so the same stage lands in the same horizontal position in both
+     and the two lists can be read against each other. The only difference
+     is [data-variant="upcoming"] on the list, which mutes the bars -- queued
+     work should not compete visually with work actually running.
+
      A ranked list, not the wrapping wall of equal-size cards this replaced.
      That layout cost a full screen at a dozen active processes, put a "->"
      at the end of every wrapped line pointing at nothing, and -- because
@@ -1935,6 +2188,20 @@
      ("Fitting Frame 20 inch Valcano Shocker Tyre") spill straight over its
      neighbour. Here the name owns a fixed grid column and truncates, so no
      amount of process-name length can break the row. */
+  .dash-wip-block + .dash-wip-block {
+    margin-top: 18px;
+  }
+
+  .dash-wip-subhead {
+    font-family: Outfit, sans-serif;
+    font-size: 11px;
+    font-weight: 700;
+    text-transform: uppercase;
+    letter-spacing: 0.4px;
+    color: var(--text-secondary);
+    margin-bottom: 8px;
+  }
+
   .dash-wip-summary {
     display: flex;
     flex-wrap: wrap;
@@ -1960,7 +2227,14 @@
 
   .dash-wip-row {
     display: grid;
-    grid-template-columns: 22px minmax(0, 200px) minmax(60px, 1fr) 76px 56px auto;
+    /* seq | name | qty | lots | flags | (chips wrap to row 2)
+       The name column used to be capped at 200px to leave room for a bar;
+       with the bar's job moved to the column chart above, it takes the
+       slack instead -- process names here run to "Fitting Frame 20 inch
+       Valcano Shocker Tyre" and truncating them was the original defect.
+       `flags` is auto so a row carrying neither badge collapses it away
+       instead of leaving a ragged hole where the badges line up. */
+    grid-template-columns: 22px minmax(0, 1fr) 76px 56px auto;
     align-items: center;
     gap: 10px;
     width: 100%;
@@ -2000,28 +2274,6 @@
     text-overflow: ellipsis;
   }
 
-  .dash-wip-bar {
-    display: block;
-    height: 8px;
-    background: var(--bg-muted);
-    border-radius: 4px;
-    overflow: hidden;
-  }
-
-  .dash-wip-bar-fill {
-    display: block;
-    height: 100%;
-    border-radius: 4px;
-    background: var(--secondary-light);
-  }
-
-  /* The stage holding more units than any other. Not called a bottleneck --
-     this is "where the most material is sitting", which is a fact; whether
-     that is a blockage is a judgement the data here cannot make. */
-  .dash-wip-bar-fill[data-peak="true"] {
-    background: var(--secondary-color);
-  }
-
   .dash-wip-qty {
     font-family: Outfit, sans-serif;
     font-size: 13px;
@@ -2053,6 +2305,66 @@
     border-radius: 999px;
     padding: 1px 7px;
     white-space: nowrap;
+  }
+
+  .dash-wip-flags {
+    display: inline-flex;
+    align-items: center;
+    gap: 5px;
+    justify-self: end;
+  }
+
+  /* Age of the stage's oldest lot. The number of units says how much is
+     here; this says whether it is moving. Colour comes from the same
+     oldestProductionDays thresholds the "Production" tile uses, so 12d
+     means the same thing in both places -- and the badge carries a
+     visually-hidden phrase so "12d" is not the only thing a screen reader
+     gets. */
+  .dash-wip-age {
+    font-family: Outfit, sans-serif;
+    font-size: 10px;
+    font-weight: 700;
+    color: var(--text-muted);
+    background: var(--bg-muted);
+    border: 1px solid var(--border-light);
+    border-radius: 999px;
+    padding: 1px 6px;
+    white-space: nowrap;
+  }
+
+  /* Same amber-700 the hero tiles use, for the same reason: --warning-color
+     (#ffc107) is only ever safe against dark text here and fails 1.4.3 badly
+     as small text on a light row. Dark mode takes the lighter end of the
+     ramp, matching .dash-hero[data-status="warn"]. */
+  .dash-wip-age[data-status="warn"] {
+    color: #b45309;
+    border-color: currentcolor;
+    background: none;
+  }
+
+  .dash-wip-age[data-status="critical"] {
+    color: var(--danger-color);
+    border-color: currentcolor;
+    background: none;
+  }
+
+  [data-theme="dark"] .dash-wip-age[data-status="warn"] {
+    color: var(--warning-color);
+  }
+
+  /* Upcoming Lots: the same rows, deliberately quieter -- queued work should
+     not compete visually with work actually running. */
+  .dash-wip-list[data-variant="upcoming"] .dash-wip-qty,
+  .dash-wip-list[data-variant="upcoming"] .dash-wip-peak {
+    color: var(--text-secondary);
+  }
+
+  .dash-wip-list[data-variant="upcoming"] .dash-wip-peak {
+    border-color: var(--border-color);
+  }
+
+  .dash-wip-list[data-variant="upcoming"] .dash-wip-chip-qty {
+    color: var(--text-secondary);
   }
 
   /* Per-colour / per-size split, on its own line under the row. Rendered
@@ -2096,20 +2408,30 @@
     font-style: italic;
   }
 
-  /* Below ~600px the bar stops being readable before the numbers do, so it
-     is the part that goes. */
+  /* Below ~600px the "most WIP" label is the first thing that stops paying
+     for its width. The age badge stays -- at this width it is the only
+     thing left in the row saying whether a stage is moving. */
   @media (max-width: 600px) {
     .dash-wip-row {
-      grid-template-columns: 20px minmax(0, 1fr) 70px 50px;
+      grid-template-columns: 20px minmax(0, 1fr) 70px 46px auto;
     }
 
-    .dash-wip-bar,
     .dash-wip-peak {
       display: none;
     }
 
     .dash-wip-chips {
       grid-column: 2 / -1;
+    }
+
+    /* A shorter plot and narrower bands: the chart keeps its shape, and the
+       bands scroll rather than crushing every column into a sliver. */
+    .dash-stage-chart {
+      --dash-stage-plot-h: 104px;
+    }
+
+    .dash-stage-col {
+      min-width: 40px;
     }
   }
 

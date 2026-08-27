@@ -183,11 +183,53 @@
   <!-- 3. WHERE THE WORK IS
        Promoted above the charts. This is the most operationally useful
        block on the page and it used to sit below three rows of tiles and
-       two rows of buttons, off the first screen entirely. -->
+       two rows of buttons, off the first screen entirely.
+
+       One stacked column chart, then two detail lists, all inside one
+       section.
+
+       The chart carries BOTH statuses because that comparison is the whole
+       point of the split below it: "In Progress" used to mean Pending OR
+       In Progress, so every stage total mixed material actually being
+       worked with lots nobody had started. A stacked column per stage --
+       running on the baseline, queued hatched above it -- says how much
+       work is attached to a stage AND how much of it has actually started,
+       in one mark, on one shared scale. Two separate charts could not do
+       that: each would scale to its own maximum, so a 40-unit queue and a
+       400-unit queue would draw the same height.
+
+       Columns run left to right in process sequence, so the chart reads in
+       the direction material actually flows. That is also why it is
+       columns and not a pie: a pie answers "what share of WIP is at
+       painting", which is rarely the question, and it destroys the
+       sequence that makes this a pipeline at all.
+
+       The per-row horizontal bars the lists used to carry are gone -- the
+       chart above does that comparison better, and the reclaimed column
+       goes to the process name, which is the field that was truncating.
+
+       Both lists keep their own summary line and empty state, and every
+       exact number lives in them: the chart deliberately labels only its
+       tallest column, so the lists are also the chart's table view. -->
   <section class="dash-section mb-4" aria-labelledby="dashPipelineHeading">
-    <h2 class="dash-section-title" id="dashPipelineHeading">Process WIP Pipeline &mdash; Active Production Lots</h2>
-    <div id="dashboardPipeline">
-      <div class="text-muted small">Loading pipeline&hellip;</div>
+    <h2 class="dash-section-title" id="dashPipelineHeading">Process WIP Pipeline</h2>
+
+    <div id="dashboardStageChart">
+      <div class="text-muted small">Loading stage load&hellip;</div>
+    </div>
+
+    <div class="dash-wip-block">
+      <h3 class="dash-wip-subhead" id="dashPipelineListHeading">In Progress</h3>
+      <div id="dashboardPipeline" aria-labelledby="dashPipelineListHeading">
+        <div class="text-muted small">Loading pipeline&hellip;</div>
+      </div>
+    </div>
+
+    <div class="dash-wip-block">
+      <h3 class="dash-wip-subhead" id="dashUpcomingHeading">Upcoming &mdash; Pending, Not Yet Started</h3>
+      <div id="dashboardUpcoming" aria-labelledby="dashUpcomingHeading">
+        <div class="text-muted small">Loading upcoming lots&hellip;</div>
+      </div>
     </div>
   </section>
 

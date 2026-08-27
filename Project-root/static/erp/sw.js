@@ -114,7 +114,10 @@
 // v39: the Production Sheet's per-colour cells now print the Warehouse
 // Pool bucket a POOL component was drawn from, which is the one row on the
 // sheet whose colour was never evident from its own name.
-const CACHE_NAME = 'erp-shell-v39';
+// v40: the WIP pipeline splits Pending from In Progress and gains a
+// per-stage stacked column chart. dashboard.js and styles.css are both
+// precached, and v39 has already shipped, so they need their own bump.
+const CACHE_NAME = 'erp-shell-v40';
 
 const PRECACHE_URLS = [
   '/erp/offline.html',
