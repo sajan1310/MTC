@@ -292,6 +292,19 @@ def _build_warehouse_pool_buckets(cur, include_opening: bool = True) -> dict:
         for p in all_processes
         if p.get("processId") and p.get("outputItemName")
     }
+    # Inverse of the above: which process PRODUCES a given output item, so
+    # Pass 2 can attribute a debit-only bucket to it instead of leaving the
+    # process id blank (see its get_bucket call). Built from the same
+    # already-loaded process list rather than a second query. A name produced
+    # by more than one process keeps the first in process order -- the pool
+    # bucket is keyed by item name anyway, so any producer of that name
+    # attributes the row to somewhere it can actually be seen.
+    producing_process_by_item: dict = {}
+    for p in all_processes:
+        item_key = str(p.get("outputItemName") or "").strip().lower()
+        if item_key and item_key not in producing_process_by_item and p.get("processId"):
+            producing_process_by_item[item_key] = p["processId"].strip()
+
     # Only used to decide Pass 1's per-final-stage-lot naming below; Pass 3
     # reuses this same set rather than re-querying processes a second time.
     final_stage_ids = {p["processId"].strip().lower() for p in all_processes if p["isFinalStage"]}
@@ -407,11 +420,53 @@ def _build_warehouse_pool_buckets(cur, include_opening: bool = True) -> dict:
                         if len(segments) >= 2:  # a chained/composite primary
                             inherited_segments_lower.update(s.lower() for s in segments)
 
+                    # Redundancy is a property of an AXIS, not of a single
+                    # entry. A mirror axis is the primary axis restated --
+                    # the same batch described a second way -- so it carries
+                    # a partner for EVERY primary colour (a lot of Blue-White
+                    # / Pink-White / Red-White frames on colour-matched
+                    # mudguards lists Blue, Pink and Red on the mudguard
+                    # axis). An axis that covers only SOME primaries is not a
+                    # restatement of anything; it is an independent axis that
+                    # happens to share a word with one primary.
+                    #
+                    # Judging entry-by-entry instead got this backwards in
+                    # both directions. `not any(_color_names_match(pc, e))`
+                    # over every primary colour meant a single incidental
+                    # collision spoke for the whole lot: a rim axis holding
+                    # "Black" against a frame axis that happened to include
+                    # "Red-Black" was folded away, and every bucket that lot
+                    # credited lost its rim segment -- not just the colliding
+                    # one. Those lots landed under bare primary-only names
+                    # ("Orange-White" instead of "Orange-White / Black"),
+                    # splitting their stock away from the composite buckets
+                    # every other lot on the process uses and driving the
+                    # real bucket negative as downstream consumption kept
+                    # debiting the composite name.
+                    #
+                    # Keying off axisKey identity alone is not the answer
+                    # either: a genuine mirror IS a different axis (mudguard
+                    # mirroring frame), so "different axisKey" cannot mean
+                    # "independent". Coverage is what separates the two.
+                    axis_entries: dict = {}
+                    for entry in other_entries:
+                        axis_key = str(entry.get("axisKey") or "").strip().lower() or "__no_axis_key__"
+                        axis_entries.setdefault(axis_key, []).append(entry)
+
+                    def _axis_is_mirror(entries) -> bool:
+                        return all(
+                            any(_color_names_match(pc, e.get("color")) for e in entries)
+                            for pc in primary_colors
+                        )
+
+                    mirror_axis_keys = {k for k, entries in axis_entries.items() if _axis_is_mirror(entries)}
+
                     def _is_independent(entry):
                         color_lower = str(entry.get("color") or "").strip().lower()
                         if color_lower in inherited_segments_lower:
                             return True  # collision, keep as its own axis
-                        return not any(_color_names_match(pc, entry.get("color")) for pc in primary_colors)
+                        axis_key = str(entry.get("axisKey") or "").strip().lower() or "__no_axis_key__"
+                        return axis_key not in mirror_axis_keys
 
                     independent = [e for e in other_entries if _is_independent(e)]
 
@@ -472,6 +527,10 @@ def _build_warehouse_pool_buckets(cur, include_opening: bool = True) -> dict:
         )
         pool_item_unit_map = None
         pool_units_map = None
+        # COMMON-scoped consumption is aggregated per item and settled after
+        # this loop rather than debited inline -- see the greedy drain below
+        # for why it cannot be decided one component at a time.
+        common_consumption_by_item: dict = {}
         for row in cur.fetchall():
             for comp in row["components_consumed"] or []:
                 comp = comp or {}
@@ -500,6 +559,20 @@ def _build_warehouse_pool_buckets(cur, include_opening: bool = True) -> dict:
 
                 color_group = str(comp.get("colorGroup") or "").strip()
                 color = color_group if color_group and color_group.upper() != _COLOR_GROUP_COMMON else ""
+
+                if not color:
+                    # Held back for the post-loop settlement. Colour-specific
+                    # debits still land inline below, so by the time the
+                    # drain runs every bucket already carries the claims that
+                    # named it explicitly -- COMMON then takes what is left,
+                    # which is the correct precedence.
+                    key = item_name.lower()
+                    entry = common_consumption_by_item.get(key)
+                    if entry is None:
+                        common_consumption_by_item[key] = {"itemName": item_name, "qty": qty}
+                    else:
+                        entry["qty"] += qty
+                    continue
 
                 # See _resolve_composite_color_token -- a manually
                 # -configured single-token Color Sub-Group can legitimately
@@ -532,10 +605,99 @@ def _build_warehouse_pool_buckets(cur, include_opening: bool = True) -> dict:
                         resolved = _resolve_composite_color_token(
                             [b["color"].lower() for b in candidates], color.lower()
                         )
+                        if resolved is None:
+                            # _resolve_composite_color_token only ever matches
+                            # a WHOLE delimiter-segment of a COMPOSITE bucket,
+                            # so two shapes it cannot see still opened phantom
+                            # negative buckets that no live bucket balances:
+                            # a recipe token naming part of a hyphenated
+                            # colour ("Wine" against a bucket credited
+                            # "Purple-Wine / Black"), and a non-composite
+                            # bucket entirely ("Pink" against "Pink-White",
+                            # which carries no delimiter at all and is
+                            # skipped outright).
+                            #
+                            # Fall back to the same hyphen/slash-segment
+                            # heuristic Pass 1 folds mirror axes with, so the
+                            # credit side and the debit side agree on when two
+                            # colour names describe the same thing. Still only
+                            # when EXACTLY one candidate matches -- an
+                            # ambiguous token is left alone deliberately, as
+                            # before.
+                            name_matches = [b for b in candidates if _color_names_match(b["color"], color)]
+                            if len(name_matches) == 1:
+                                resolved = name_matches[0]["color"]
                         if resolved:
                             color = resolved
 
-                get_bucket(item_name, "", "", color)["consumedQty"] += qty
+                # Attribute the debit to the process that PRODUCES this item,
+                # not to a blank id. get_bucket keys on
+                # (outputItemName, productTag, color) and only reads
+                # process_id when it CREATES a bucket, so this changes nothing
+                # for a bucket Pass 0/1 already credited -- it only names the
+                # process on one that consumption opens by itself.
+                #
+                # Those self-opened buckets were previously written with
+                # process_id = '', and the Warehouse Pool table joins pool
+                # rows to processes by exact processId (static/erp/stock.js's
+                # computeLeafRowsForProcess), so a blank one matched no
+                # process and could never be rendered at all: real
+                # consumption, permanently invisible instead of showing as
+                # the negative balance it is.
+                get_bucket(item_name, producing_process_by_item.get(item_name.lower(), ""), "", color)[
+                    "consumedQty"
+                ] += qty
+
+        # Settle the COMMON-scoped consumption held back above.
+        #
+        # A COMMON component means "this recipe consumes the item whatever
+        # colour it is", so it used to debit the blank-colour bucket and only
+        # that one. Where the upstream item is colour-tracked, though, EVERY
+        # credit it has lands in a NAMED bucket and the blank one is never
+        # credited at all -- so the debit sank a bucket that structurally
+        # cannot hold stock, while the real coloured buckets never drained.
+        # That is the whole of the -111 on "Fitted Rim 20 inch Mega Hub
+        # Black" and six more like it: not over-consumption, just consumption
+        # pointed at a bucket with nothing in it.
+        #
+        # Pass 3 already solved this exact shape for Dispatch, which likewise
+        # carries no colour of its own: take the blank bucket first (so
+        # nothing changes wherever a real colourless credit exists), then
+        # greedily drain whichever coloured buckets still have stock, and
+        # dump any true shortfall back on the blank one so the total debited
+        # still equals the total consumed and a genuine over-consumption
+        # stays visible as a negative instead of being silently absorbed.
+        for key, entry in common_consumption_by_item.items():
+            item_name = entry["itemName"]
+            process_id_for_item = producing_process_by_item.get(key, "")
+            blank_bucket = get_bucket(item_name, process_id_for_item, "", "")
+
+            remaining = entry["qty"]
+            available_blank = max(blank_bucket["producedQty"] - blank_bucket["consumedQty"], 0)
+            take = min(remaining, available_blank)
+            blank_bucket["consumedQty"] += take
+            remaining -= take
+
+            if remaining > 0:
+                colored = [
+                    b
+                    for b in buckets.values()
+                    if b["outputItemName"].lower() == key and not b["productTag"] and b["color"]
+                ]
+                # Stable order so a rebuild is repeatable rather than
+                # dependent on dict insertion order, which follows whichever
+                # lot happened to be credited first.
+                colored.sort(key=lambda b: _color_order_key(b["color"]))
+                for bucket in colored:
+                    if remaining <= 0:
+                        break
+                    available = max(bucket["producedQty"] - bucket["consumedQty"], 0)
+                    take = min(remaining, available)
+                    bucket["consumedQty"] += take
+                    remaining -= take
+
+            if remaining > 0:
+                blank_bucket["consumedQty"] += remaining
 
     if (headers_table := config_maps.TABLE_NAMES.get("DISPATCH_HEADERS")) and (
         lines_table := config_maps.TABLE_NAMES.get("DISPATCH_LINES")

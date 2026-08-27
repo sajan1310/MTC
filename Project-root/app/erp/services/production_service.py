@@ -742,9 +742,30 @@ def save_production(conn, cur, form_data):
         # it out of clean_components entirely (a real consumption silently
         # never written, understating Warehouse Pool Pass 2's debit for it).
         # Ports GAS e37529e's isCommonColorGroup fix.
+        # The exact/token compare above splits only on COLOR_COMBO_DELIMITER,
+        # so it sees a composite lot colour's axis values ("Black" in
+        # "Pink-White / Black") but NOT a hyphen segment of a single one:
+        # a recipe row scoped to sub-group "Pink" against a lot logged as
+        # "Pink-White" matched nothing and the component was dropped right
+        # here -- a real consumption silently never written, and Warehouse
+        # Pool Pass 2 never debited for it. When it was the lot's ONLY
+        # component the save failed outright with "At least one component
+        # consumed is required for this lot", which names the wrong cause.
+        #
+        # _color_names_match is the same hyphen/slash-segment heuristic Pass
+        # 1 folds mirror axes with and Pass 2 resolves a recipe token to a
+        # live bucket with, so all three now agree on when two colour names
+        # describe the same thing. It stays a match against THIS lot's own
+        # colours, so a component scoped to a colour the lot did not produce
+        # ("Blue" on a Pink-White lot) is still dropped exactly as before.
         clean_components = [
             c for c in clean_components
-            if process_service._is_common_color_group(c["colorGroup"]) or c["colorGroup"].lower() in breakdown_colors_lower
+            if process_service._is_common_color_group(c["colorGroup"])
+            or c["colorGroup"].lower() in breakdown_colors_lower
+            or any(
+                warehouse_service._color_names_match(breakdown_color, c["colorGroup"])
+                for breakdown_color in breakdown_colors_lower
+            )
         ]
 
     clean_components = _consolidate_duplicate_components(clean_components)
