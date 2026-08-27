@@ -174,3 +174,62 @@ describe('Reopening a saved lot', () => {
     expect(html).toContain('>Mudguard 26</option>');
   });
 });
+
+describe('The Production Sheet names the bucket a pool cell came from', () => {
+  beforeEach(() => mount());
+
+  const renderSlot = (slot, colors) => {
+    document.body.insertAdjacentHTML('beforeend', `<table><tbody id="t">${App.Production.renderMatrixSheetRow(slot, colors)}</tbody></table>`);
+    return Array.from(document.querySelectorAll('#t .prod-sheet-color-tag'))
+      .map(el => [el.dataset.color, el.textContent.trim()]);
+  };
+
+  test('a pool cell shows the bucket it was drawn from', () => {
+    // Was blank: _cellItemTag subtracts the row label's words from the
+    // cell's item name, and a pool item is named identically in every
+    // column, so nothing survived -- the one row whose colour is not
+    // evident from its name printed no tag at all.
+    const tags = renderSlot({
+      itemName: '14 inch Round Mudguard Painted Half',
+      colors: { 'Purple-Wine': 10 },
+      cellItems: { 'Purple-Wine': '14 inch Round Mudguard Painted Half' },
+      cellPoolColors: { 'Purple-Wine': 'Blue' },
+    }, ['Purple-Wine']);
+
+    expect(tags).toEqual([['Purple-Wine', '(Blue)']]);
+  });
+
+  test('without a bucket it falls back to the derived tag, unchanged', () => {
+    const tags = renderSlot({
+      itemName: 'Teddy Basket',
+      colors: { Blue: 10 },
+      cellItems: { Blue: 'Teddy Basket Red' },
+      cellPoolColors: {},
+    }, ['Blue']);
+
+    expect(tags).toEqual([['Blue', '(Red)']]);
+  });
+
+  test('a cell with neither still prints no tag', () => {
+    const tags = renderSlot({
+      itemName: 'Chain Cover',
+      colors: { Blue: 10 },
+      cellItems: { Blue: 'Chain Cover' },
+      cellPoolColors: {},
+    }, ['Blue']);
+
+    expect(tags).toEqual([]);
+  });
+
+  test('the hover text says where the bucket came from', () => {
+    renderSlot({
+      itemName: 'Mudguard',
+      colors: { 'Purple-Wine': 10 },
+      cellItems: { 'Purple-Wine': 'Mudguard' },
+      cellPoolColors: { 'Purple-Wine': 'Blue' },
+    }, ['Purple-Wine']);
+
+    expect(document.querySelector('#t .prod-sheet-color-tag').title)
+      .toBe('Mudguard — Warehouse Pool colour: Blue');
+  });
+});

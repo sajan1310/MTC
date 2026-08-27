@@ -6837,7 +6837,9 @@ App.Production = {
       }
 
       colors.add(colorKey);
-      perColorEntries.push({ colorKey, itemName: comp.itemName || '', size: comp.size || '', narration, unit, qty });
+      // poolColor rides along so the sheet can name the Warehouse Pool
+      // bucket this cell was drawn from -- see renderMatrixSheetRow's tag.
+      perColorEntries.push({ colorKey, itemName: comp.itemName || '', size: comp.size || '', narration, unit, qty, poolColor: (comp.poolColor || '').trim() });
     });
 
     // The row's own displayed label is still best-effort (first cell's
@@ -6849,10 +6851,11 @@ App.Production = {
     // never the only source of truth.
     const matrixSlots = this._reconstructPerColorRows(perColorEntries).map(row => {
       const itemName = this._rowDisplayName(row);
-      const slot = { itemName, size: row.size, narration: row.narration, unit: row.unit, colors: {}, cellItems: {} };
+      const slot = { itemName, size: row.size, narration: row.narration, unit: row.unit, colors: {}, cellItems: {}, cellPoolColors: {} };
       row.cells.forEach(cell => {
         slot.colors[cell.colorKey] = (slot.colors[cell.colorKey] || 0) + cell.qty;
         slot.cellItems[cell.colorKey] = cell.itemName;
+        if (cell.poolColor) slot.cellPoolColors[cell.colorKey] = cell.poolColor;
       });
       return slot;
     });
@@ -6869,7 +6872,7 @@ App.Production = {
       const slotKey = [displayName, comp.size || '', narration].join('|').toLowerCase();
       let slot = matrixIndex.get(slotKey);
       if (!slot) {
-        slot = { itemName: displayName, size: comp.size || '', narration, unit, colors: {}, cellItems: {} };
+        slot = { itemName: displayName, size: comp.size || '', narration, unit, colors: {}, cellItems: {}, cellPoolColors: {} };
         matrixIndex.set(slotKey, slot);
         matrixSlots.push(slot);
       }
@@ -7035,9 +7038,21 @@ App.Production = {
       // shared/pool item using the same name in every colour -- nothing to
       // disambiguate).
       const cellItemName = slot.cellItems ? slot.cellItems[color] : '';
-      const tag = cellItemName ? this._cellItemTag(slot.itemName, cellItemName) : '';
+      // A POOL cell's bucket wins over the derived tag. _cellItemTag works
+      // by subtracting the row label's words from the cell's literal item
+      // name, and a pool item carries the SAME literal name in every
+      // colour -- nothing survives, so the one row on the sheet whose
+      // colour is not evident from its name was the only one printing no
+      // tag at all. The bucket is that missing information, and it is the
+      // only place it appears: an off-colour draw (Blue mudguards fitted
+      // to the Purple-Wine units) is invisible on the sheet otherwise.
+      const cellPoolColor = slot.cellPoolColors ? (slot.cellPoolColors[color] || '') : '';
+      const tag = cellPoolColor || (cellItemName ? this._cellItemTag(slot.itemName, cellItemName) : '');
+      const tagTitle = cellPoolColor
+        ? `${cellItemName || slot.itemName || ''} — Warehouse Pool colour: ${cellPoolColor}`
+        : cellItemName;
       const tagHtml = tag
-        ? `<div class="small fw-semibold text-muted text-end prod-sheet-color-tag" data-color="${escapeHtml(color)}" title="${escapeHtml(cellItemName)}">(${escapeHtml(tag)})</div>`
+        ? `<div class="small fw-semibold text-muted text-end prod-sheet-color-tag" data-color="${escapeHtml(color)}" title="${escapeHtml(tagTitle)}">(${escapeHtml(tag)})</div>`
         : '';
       return `<td><input type="number" class="form-control form-control-sm text-end prod-sheet-color-qty" data-color="${escapeHtml(color)}" value="${display}" step="any" min="0" placeholder="-">${tagHtml}</td>`;
     };

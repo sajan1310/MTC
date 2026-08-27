@@ -111,7 +111,10 @@
 // Precached and cache-first, so without the bump an installed client keeps
 // picking bare item names and silently attributes every off-color pool
 // draw to the lot's own color.
-const CACHE_NAME = 'erp-shell-v38';
+// v39: the Production Sheet's per-colour cells now print the Warehouse
+// Pool bucket a POOL component was drawn from, which is the one row on the
+// sheet whose colour was never evident from its own name.
+const CACHE_NAME = 'erp-shell-v39';
 
 const PRECACHE_URLS = [
   '/erp/offline.html',
