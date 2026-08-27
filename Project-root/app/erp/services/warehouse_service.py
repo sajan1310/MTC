@@ -557,7 +557,13 @@ def _build_warehouse_pool_buckets(cur, include_opening: bool = True) -> dict:
                         # bad recipe row.
                         pass
 
-                color_group = str(comp.get("colorGroup") or "").strip()
+                # poolColor before colorGroup: the bucket this row draws
+                # FROM, which is only the lot's own output colour in the
+                # ordinary case. See production_service._pool_bucket_color
+                # -- and note _build_pool_needed_map resolves it the same
+                # way, so the availability check and this debit cannot
+                # disagree about which bucket is being spent.
+                color_group = str(comp.get("poolColor") or "").strip() or str(comp.get("colorGroup") or "").strip()
                 color = color_group if color_group and color_group.upper() != _COLOR_GROUP_COMMON else ""
 
                 if not color:

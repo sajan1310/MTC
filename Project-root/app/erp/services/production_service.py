@@ -122,6 +122,26 @@ def _is_color_scoped(color_group: str) -> bool:
     return bool(color_group) and color_group.upper() != _COLOR_GROUP_COMMON
 
 
+def _pool_bucket_color(component) -> str:
+    """Which Warehouse Pool bucket a POOL component draws FROM.
+
+    `colorGroup` answers a different question -- which of the LOT's own
+    output colours this consumption belongs to -- and for a recipe
+    component the two coincide, which is why one field served both for so
+    long. They come apart the moment a lot consumes a pool item in a colour
+    it does not itself produce: a Blue mudguard fitted to a Purple-Wine
+    lot. colorGroup must stay Purple-Wine there, or save_production's own
+    filter drops the component outright; the debit still has to land on
+    Blue. poolColor carries that second answer.
+
+    Falls back to colorGroup whenever poolColor is absent -- which is every
+    component written before this field existed, so their attribution is
+    unchanged.
+    """
+    component = component or {}
+    return str(component.get("poolColor") or "").strip() or str(component.get("colorGroup") or "").strip()
+
+
 def _pool_available_qty(pool_entry, color_group: str) -> float:
     """One bucket's available quantity, read from the color sub-total or
     the total depending on whether the caller is asking about a
@@ -305,6 +325,12 @@ def _consolidate_duplicate_components(components: list) -> list:
             str(c.get("itemName") or "").strip().lower(),
             str(c.get("size") or "").strip().lower(),
             str(c.get("colorGroup") or "").strip().lower(),
+            # Two rows for the same item under the same LOT colour that
+            # draw on different pool buckets (20 Blue and 30 Red mudguards
+            # both fitted to the Purple-Wine units) are not duplicates --
+            # merging them would keep the total and silently lose one
+            # bucket's share of it.
+            str(c.get("poolColor") or "").strip().lower(),
         )
         if key not in groups:
             groups[key] = []
@@ -333,6 +359,24 @@ def _consolidate_duplicate_components(components: list) -> list:
     return result
 
 
+def _dropped_component_warning(dropped: list) -> str | None:
+    """The message for components save_production refused to record because
+    they name a colour this lot does not produce. Names them -- up to three,
+    then a count -- because "some components were not saved" is not
+    something an operator can act on, and this is the only notice they get.
+    """
+    if not dropped:
+        return None
+    labels = [f'{c["itemName"]} ({c["colorGroup"]})' for c in dropped[:3]]
+    listed = ", ".join(labels)
+    if len(dropped) > 3:
+        listed = f"{listed} and {len(dropped) - 3} more"
+    return (
+        f"Warning: {len(dropped)} component(s) were NOT recorded because they are scoped to a colour "
+        f"this lot does not produce -- {listed}. Add that colour to the lot, or remove the component."
+    )
+
+
 def _build_pool_needed_map(components: list) -> dict:
     pool_needed: dict = {}
     for c in components or []:
@@ -342,7 +386,7 @@ def _build_pool_needed_map(components: list) -> dict:
         item_name = str(c.get("itemName") or "").strip()
         if not item_name:
             continue
-        color_group = str(c.get("colorGroup") or "").strip()
+        color_group = _pool_bucket_color(c)
         is_color_scoped = _is_color_scoped(color_group)
         key = _poolneed_key(item_name.lower(), color_group)
         entry = pool_needed.setdefault(
@@ -722,11 +766,17 @@ def save_production(conn, cur, form_data):
                     "sourceType": "POOL" if str(c.get("sourceType") or "").strip().upper() == "POOL" else "ITEM",
                     "qty": qty_c,
                     "colorGroup": str(c.get("colorGroup") or "").strip() or _COLOR_GROUP_COMMON,
+                    # Which pool bucket a POOL row draws from, when that is
+                    # NOT the lot colour above -- see _pool_bucket_color.
+                    # Blank for every ITEM row and for any POOL row taking
+                    # its bucket from the lot colour, which is the norm.
+                    "poolColor": str(c.get("poolColor") or "").strip(),
                     "unit": str(c.get("unit") or "").strip(),
                 }
             )
     clean_components = _with_master_narration(cur, clean_components)
 
+    dropped_colour_warning = None
     if color_breakdown:
         breakdown_colors_lower = set()
         for c in color_breakdown:
@@ -758,15 +808,32 @@ def save_production(conn, cur, form_data):
         # describe the same thing. It stays a match against THIS lot's own
         # colours, so a component scoped to a colour the lot did not produce
         # ("Blue" on a Pink-White lot) is still dropped exactly as before.
-        clean_components = [
-            c for c in clean_components
-            if process_service._is_common_color_group(c["colorGroup"])
-            or c["colorGroup"].lower() in breakdown_colors_lower
-            or any(
-                warehouse_service._color_names_match(breakdown_color, c["colorGroup"])
-                for breakdown_color in breakdown_colors_lower
-            )
-        ]
+        #
+        # Dropping is still the right call -- writing a consumption scoped
+        # to a colour this lot never produced would debit a bucket the lot
+        # has no claim on -- but doing it SILENTLY was not. The operator saw
+        # a successful save and simply never got the material recorded, and
+        # nobody found out until the pool drifted. It is reported now, in
+        # the response message, the same informational-not-blocking way this
+        # module already reports a pool draw that will go negative. Blocking
+        # instead would fail saves that succeed today, on a path an operator
+        # cannot always fix from where they are standing.
+        kept_components = []
+        dropped_for_colour = []
+        for c in clean_components:
+            if (
+                process_service._is_common_color_group(c["colorGroup"])
+                or c["colorGroup"].lower() in breakdown_colors_lower
+                or any(
+                    warehouse_service._color_names_match(breakdown_color, c["colorGroup"])
+                    for breakdown_color in breakdown_colors_lower
+                )
+            ):
+                kept_components.append(c)
+            else:
+                dropped_for_colour.append(c)
+        clean_components = kept_components
+        dropped_colour_warning = _dropped_component_warning(dropped_for_colour)
 
     clean_components = _consolidate_duplicate_components(clean_components)
 
@@ -829,7 +896,10 @@ def save_production(conn, cur, form_data):
                 if str(c.get("sourceType") or "").strip().upper() != "POOL":
                     continue
                 item_name_lower = str(c.get("itemName") or "").strip().lower()
-                color_group = str(c.get("colorGroup") or "").strip()
+                # Same bucket resolution _build_pool_needed_map uses, or
+                # the headroom this lot is credited back would be keyed to
+                # a different bucket than the one it is about to re-claim.
+                color_group = _pool_bucket_color(c)
                 key = _poolneed_key(item_name_lower, color_group)
                 original_pool_consumed[key] = original_pool_consumed.get(key, 0) + float(c.get("qty") or 0)
 
@@ -912,6 +982,8 @@ def save_production(conn, cur, form_data):
     warehouse_service._recalculate_warehouse_pool(cur)
 
     message = f"Lot #{lot_number} updated." if is_edit else f"Lot #{lot_number} saved."
+    if dropped_colour_warning:
+        message = f"{message} {dropped_colour_warning}"
     if pool_warning:
         message = f"{message} Warning: {pool_warning} Warehouse Pool stock will now show negative for this item."
 

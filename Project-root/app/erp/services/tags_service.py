@@ -313,7 +313,7 @@ def _rename_color_everywhere(cur, old_name: str, new_name: str) -> None:
             # already writes a component's own color there, and the
             # per-color pool-bucket work builds on the same field.
             consumed_changed = _rename_color_token_in_json_entries(
-                consumed, ("colorGroup", "color"), old_lower, new
+                consumed, ("colorGroup", "color", "poolColor"), old_lower, new
             )
 
             custom = row["custom_components"]

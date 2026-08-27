@@ -105,7 +105,13 @@
 // copy no matter how many times the server restarts or the page is reloaded
 // -- which is exactly how the sub-group fixes first appeared to have had no
 // effect at all.
-const CACHE_NAME = 'erp-shell-v37';
+// v38: production.js's POOL item pickers now list live Warehouse Pool
+// BUCKETS (item + color + available qty) instead of bare item names, and
+// carry the picked bucket through to the saved component as poolColor.
+// Precached and cache-first, so without the bump an installed client keeps
+// picking bare item names and silently attributes every off-color pool
+// draw to the lot's own color.
+const CACHE_NAME = 'erp-shell-v38';
 
 const PRECACHE_URLS = [
   '/erp/offline.html',

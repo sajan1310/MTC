@@ -287,9 +287,50 @@ App.Production = {
   _fetchWarehousePoolData() {
     if (!this._procDataCache) this._resetProcDataCache();
     if (!this._procDataCache.pool) {
-      this._procDataCache.pool = Api.call('getWarehousePoolData');
+      // Bucket cache filled off this one fetch rather than a second call:
+      // a POOL item picker (see _wireItemSelect2) needs the live
+      // item+color buckets SYNCHRONOUSLY, since Select2's transport is a
+      // filter over a local array, and every path that opens the form has
+      // already awaited this.
+      this._procDataCache.pool = Api.call('getWarehousePoolData').then(res => {
+        this._cachePoolBuckets(res);
+        return res;
+      });
     }
     return this._procDataCache.pool;
+  },
+
+  // [{ name, color, availableQty }] -- one entry per live untagged
+  // Warehouse Pool bucket, which is exactly the set a POOL component can
+  // actually be drawn from. Tagged (product) buckets are excluded for the
+  // same reason _poolAvailByItemColor excludes them: they are finished
+  // output reserved to a product, not intermediate WIP.
+  _cachePoolBuckets(res) {
+    const rows = (res && res.success) ? (res.data || []) : [];
+    const byKey = new Map();
+    rows.forEach(r => {
+      if (r.productTag) return;
+      const name = String(r.outputItemName || '').trim();
+      const color = String(r.color || '').trim();
+      if (!name || !color) return;
+      const key = `${name.toLowerCase()}|${color.toLowerCase()}`;
+      const entry = byKey.get(key);
+      if (entry) entry.availableQty += Number(r.availableQty) || 0;
+      else byKey.set(key, { name, color, availableQty: Number(r.availableQty) || 0 });
+    });
+    this._poolBuckets = Array.from(byKey.values())
+      .sort((a, b) => a.name.localeCompare(b.name) || a.color.localeCompare(b.color));
+  },
+
+  // How one pool bucket reads in an item picker. The available quantity is
+  // part of the label rather than a separate hint because this is the
+  // moment the choice is made -- a color with nothing in it is exactly what
+  // the operator needs to see BEFORE picking it, not after saving.
+  _poolBucketLabel(item) {
+    const size = item.size ? ` [${item.size}]` : '';
+    if (!item.color) return `${item.name}${size}`;
+    const avail = item.availableQty === undefined ? '' : ` — ${this.formatQty(item.availableQty)} avail.`;
+    return `${item.name}${size} · ${item.color}${avail}`;
   },
 
   // Maps a status value to the inline background/text color of its row
@@ -5176,7 +5217,7 @@ App.Production = {
 
     if (selectEl) {
       const sourceType = (itemComp.sourceType === 'POOL') ? 'POOL' : 'ITEM';
-      const option = this._buildItemPreselectOption(itemComp.itemName || '', itemComp.size || '', sourceType);
+      const option = this._buildItemPreselectOption(itemComp.itemName || '', itemComp.size || '', sourceType, itemComp.poolColor);
       selectEl.innerHTML = `<option value=""></option>${option}`;
       if (window.jQuery?.fn?.select2 && window.jQuery(selectEl).data('select2')) {
         window.jQuery(selectEl).trigger('change.select2');
@@ -5210,7 +5251,7 @@ App.Production = {
     const size = (comp && comp.size) || '';
     const narration = (comp && comp.narration) || '';
     const sourceType = (comp && comp.sourceType === 'POOL') ? 'POOL' : 'ITEM';
-    const preSelectedOption = this._buildItemPreselectOption(itemName, size, sourceType);
+    const preSelectedOption = this._buildItemPreselectOption(itemName, size, sourceType, comp && comp.poolColor);
 
     const colorCellsHtml = this.getMatrixColors().map(() => this._matrixColorCellHtml(false)).join('');
 
@@ -5312,7 +5353,7 @@ App.Production = {
             if (!row) row = this.addMergedMatrixRow({ itemName: c.displayName, size: c.size, sourceType: c.sourceType, narration: this._resolveDisplayNarration(c.itemName, c.size, c.narration) });
             const cell = row.children[colIndex];
             const qty = thisColorQty > 0 ? thisColorQty * c.qtyPerUnit : c.qtyPerUnit;
-            this._setMergedCellItem(cell, { itemName: c.itemName, size: c.size, sourceType: c.sourceType }, qty, c.qtyPerUnit);
+            this._setMergedCellItem(cell, { itemName: c.itemName, size: c.size, sourceType: c.sourceType, poolColor: c.poolColor }, qty, c.qtyPerUnit);
           });
 
           const overriddenKeys = new Set(colorComps.map(c => this._itemSlotKey(c.displayName, c.size)));
@@ -5323,7 +5364,7 @@ App.Production = {
             if (!row) row = this.addMergedMatrixRow({ itemName: c.itemName, size: c.size, sourceType: c.sourceType, narration: this._resolveDisplayNarration(c.itemName, c.size, c.narration) });
             const cell = row.children[colIndex];
             const qty = thisColorQty > 0 ? thisColorQty * c.qtyPerUnit : c.qtyPerUnit;
-            this._setMergedCellItem(cell, { itemName: c.itemName, size: c.size, sourceType: c.sourceType }, qty, c.qtyPerUnit);
+            this._setMergedCellItem(cell, { itemName: c.itemName, size: c.size, sourceType: c.sourceType, poolColor: c.poolColor }, qty, c.qtyPerUnit);
           });
         }
 
@@ -5384,11 +5425,13 @@ App.Production = {
       const sourceType = row.querySelector('.prod-comp-source')?.value === 'POOL' ? 'POOL' : 'ITEM';
 
       let rowItemName = '';
+      let rowPoolColor = '';
       if (!isMerged) {
         const itemSelect = row.querySelector('.prod-comp-item-select');
         if (!itemSelect || itemSelect.value === '') return;
         const itemOpt = itemSelect.options[itemSelect.selectedIndex];
         rowItemName = (itemOpt.dataset.name || itemOpt.textContent || '').trim();
+        rowPoolColor = itemOpt.dataset.poolColor || '';
         if (!rowItemName) return;
       }
 
@@ -5398,14 +5441,21 @@ App.Production = {
         if (qty <= 0) return;
 
         let itemName = rowItemName;
+        let poolColor = rowPoolColor;
         if (isMerged) {
           const cellSelect = cell?.querySelector('.prod-comp-item-select');
           if (!cellSelect || cellSelect.value === '') return;
           const cellOpt = cellSelect.options[cellSelect.selectedIndex];
           itemName = (cellOpt.dataset.name || cellOpt.textContent || '').trim();
+          poolColor = cellOpt.dataset.poolColor || '';
         }
         if (!itemName) return;
-        components.push({ itemName, size, narration, color: '', sourceType, qty, colorGroup: color });
+        // colorGroup stays the COLUMN -- which of this lot's output colors
+        // consumed this. poolColor is the separate question of which pool
+        // bucket it came out of, and is only ever set when the operator
+        // picked a specific one; blank means "the same color", which is
+        // how every component written before this behaved and still does.
+        components.push({ itemName, size, narration, color: '', sourceType, qty, colorGroup: color, poolColor: sourceType === 'POOL' ? poolColor : '' });
       });
     });
     return components;
@@ -5551,7 +5601,7 @@ App.Production = {
           const colIndex = this.getMatrixColumnIndex(col);
           if (colIndex === -1) return;
           const cell = row.children[colIndex];
-          this._setMergedCellItem(cell, { itemName: c.itemName, size: c.size, sourceType: c.sourceType }, perColorQty, derivedQtyPerUnit);
+          this._setMergedCellItem(cell, { itemName: c.itemName, size: c.size, sourceType: c.sourceType, poolColor: c.poolColor }, perColorQty, derivedQtyPerUnit);
         });
         return;
       }
@@ -5618,7 +5668,7 @@ App.Production = {
           const colIndex = this.getMatrixColumnIndex(col);
           if (colIndex === -1) return;
           const cellEl = row.children[colIndex];
-          this._setMergedCellItem(cellEl, { itemName: src.comp.itemName, size: src.comp.size, sourceType: src.comp.sourceType }, src.comp.qty, src.derivedQtyPerUnit);
+          this._setMergedCellItem(cellEl, { itemName: src.comp.itemName, size: src.comp.size, sourceType: src.comp.sourceType, poolColor: src.comp.poolColor }, src.comp.qty, src.derivedQtyPerUnit);
         });
       });
     });
@@ -5687,10 +5737,17 @@ App.Production = {
     tbody.innerHTML = '';
   },
 
-  _buildItemPreselectOption(itemName, size, sourceType) {
+  // `poolColor` is the bucket a POOL row draws from (see _pool_bucket_color
+  // server-side). It has to survive into the rebuilt <option>, or reopening
+  // a saved lot and pressing Save with no edits would drop it and silently
+  // re-attribute that lot's consumption to the lot's own color.
+  _buildItemPreselectOption(itemName, size, sourceType, poolColor) {
     if (!itemName) return '';
     if (sourceType === 'POOL') {
-      return `<option value="pool:${escapeHtml(itemName)}" selected data-name="${escapeHtml(itemName)}">${escapeHtml(itemName)}</option>`;
+      const bucket = String(poolColor || '').trim();
+      const attr = bucket ? ` data-pool-color="${escapeHtml(bucket)}"` : '';
+      const label = bucket ? `${itemName} · ${bucket}` : itemName;
+      return `<option value="pool:${escapeHtml(itemName)}" selected data-name="${escapeHtml(itemName)}"${attr}>${escapeHtml(label)}</option>`;
     }
     const items = App.State.globalItems || [];
     const matchIdx = items.findIndex(item =>
@@ -5739,7 +5796,7 @@ App.Production = {
     const qtyPerUnitAttr = (qtyPerUnit !== undefined) ? `data-qty-per-unit="${qtyPerUnit}"` : '';
     const unitAttr = (comp && comp.unit) ? ` data-unit="${escapeHtml(comp.unit)}"` : '';
     const colorScopeAttr = colorScope ? ` data-color-scope="${escapeHtml(colorScope)}"` : '';
-    const preSelectedOption = this._buildItemPreselectOption(itemName, size, sourceType);
+    const preSelectedOption = this._buildItemPreselectOption(itemName, size, sourceType, comp && comp.poolColor);
     const colorReadonlyAttrs = colorScope ? ' readonly title="This item only exists in this one Warehouse Pool color — fixed automatically"' : '';
 
     const rowHtml = `
@@ -5817,21 +5874,34 @@ App.Production = {
           const q = (params.data.q || '').trim();
           const page = params.data.page || 1;
           const isPool = selectEl.closest('tr')?.querySelector('.prod-comp-source')?.value === 'POOL';
+          // A POOL row picks a BUCKET, not just an item: the same physical
+          // Mudguard exists in the pool once per color, and which of those
+          // a lot draws from is what the debit lands on. Listing bare item
+          // names (the old behavior, kept as the fallback below) left the
+          // operator no way to say -- and no way to see that a color they
+          // wanted has nothing in it. Falls back when the cache has not
+          // been filled yet, so the picker is never empty.
+          const buckets = App.Production._poolBuckets || [];
           const items = isPool
-            ? App.Process.getDistinctOutputItemNames().map(name => ({ name, size: '' }))
+            ? (buckets.length > 0
+              ? buckets
+              : App.Process.getDistinctOutputItemNames().map(name => ({ name, size: '' })))
             : (App.State.globalItems || []);
           const start = (page - 1) * PAGE_SIZE;
 
           const pool = q
-            ? items.map((item, idx) => ({ idx, item })).filter(({ item }) => App.Utils.matchesKeywords(`${item.name} ${item.size || ''}`, q))
+            ? items.map((item, idx) => ({ idx, item })).filter(({ item }) => App.Utils.matchesKeywords(`${item.name} ${item.size || ''} ${item.color || ''}`, q))
             : items.map((item, idx) => ({ idx, item }));
 
           const pageItems = pool.slice(start, start + PAGE_SIZE);
           success({
             results: pageItems.map(({ idx, item }) => ({
               id: (isPool ? 'pool:' : 'item:') + idx,
-              text: `${item.name}${item.size ? ` [${item.size}]` : ''}`,
-              _itemName: item.name, _size: item.size || ''
+              // Color is appended with a separator rather than a second
+              // bracket: brackets already mean SIZE everywhere in this
+              // form, and two of them side by side read as two sizes.
+              text: App.Production._poolBucketLabel(item),
+              _itemName: item.name, _size: item.size || '', _poolColor: item.color || ''
             })),
             pagination: { more: (start + PAGE_SIZE) < pool.length }
           });
@@ -5856,7 +5926,15 @@ App.Production = {
     $select.on('select2:select', function (e) {
       const data = e.params.data;
       const opt = selectEl.options[selectEl.selectedIndex];
-      if (opt) opt.dataset.name = data._itemName || data.text;
+      if (opt) {
+        opt.dataset.name = data._itemName || data.text;
+        // Which pool bucket this row draws from, when the operator picked
+        // one. Read straight back out by serializeColorMatrix -- see
+        // production_service._pool_bucket_color for what the server does
+        // with it. Blank for an ITEM row and for a free-typed pool name.
+        if (data._poolColor) opt.dataset.poolColor = data._poolColor;
+        else delete opt.dataset.poolColor;
+      }
 
       const row = selectEl.closest('tr');
       const sizeInput = row?.querySelector('.prod-comp-size');
@@ -5988,6 +6066,14 @@ App.Production = {
       color: row.querySelector('.prod-comp-color')?.value.trim() || '',
       sourceType: row.querySelector('.prod-comp-source')?.value === 'POOL' ? 'POOL' : 'ITEM',
       qty: toNumber(row.querySelector('.prod-comp-qty')?.value),
+      // Same picker as the matrix, so a Common row can name its bucket
+      // too. This is what makes an off-recipe pool item debit the color it
+      // actually came from: colorGroup here is COMMON, which the server
+      // reads as "draw against the item's total" and settles by a greedy
+      // drain across arbitrary buckets. The free-text Color field beside
+      // it is NOT this -- it stays the descriptive value it has always
+      // been, so no existing lot is re-attributed.
+      poolColor: itemOpt.dataset.poolColor || '',
       colorGroup: row.dataset.colorScope || 'COMMON',
       unit: row.dataset.unit || ''
     };
