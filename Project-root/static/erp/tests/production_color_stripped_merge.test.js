@@ -45,7 +45,7 @@ const COLOR_MASTER = [
 ].map(name => ({ name }));
 
 function mount(colors = COLOR_MASTER) {
-  global.App = { State: { globalColors: colors }, Utils: {} };
+  global.App = { State: { globalColors: colors }, Utils: { isCommonColorGroup: g => String(g ?? '').trim().toUpperCase() === 'COMMON' } };
   loadProductionAsGlobal();
 }
 

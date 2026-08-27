@@ -3027,12 +3027,24 @@ App.Production = {
   // name is not unique to an axis, so several counting rows can legitimately
   // carry it (see renderColorwiseSummary). It degrades to that single row's
   // own qty in the ordinary case where the name appears once.
+  //
+  // Counting rows are only PREFERRED, though, not required. A Color
+  // Sub-Group ('KIT BAG 26"', 'SMALL KIT 26"') is non-counting by
+  // definition -- it records how many bags a lot packs, not how many units
+  // it outputs -- so no counting row ever carries its name, and requiring
+  // one left every sub-group column multiplied by zero: the operator saw
+  // the sub-group's components arrive with their item pickers filled in and
+  // a quantity of 0 in every cell, on a column that had a perfectly good
+  // quantity of its own sitting in the checklist beside it. Falling back to
+  // the non-counting rows only when NO counting row claims the name keeps
+  // the double-count above impossible -- that case is precisely the one
+  // where a counting row does claim it, and the fallback never runs.
   _totalQtyForColorName(color) {
     const colorLower = String(color || '').trim().toLowerCase();
-    return this.getCheckedColorQtys()
-      .filter(cc => cc.countsTowardTotal)
-      .filter(cc => String(cc.color || '').trim().toLowerCase() === colorLower)
-      .reduce((sum, cc) => sum + cc.qty, 0);
+    const named = this.getCheckedColorQtys()
+      .filter(cc => String(cc.color || '').trim().toLowerCase() === colorLower);
+    const counting = named.filter(cc => cc.countsTowardTotal);
+    return (counting.length > 0 ? counting : named).reduce((sum, cc) => sum + cc.qty, 0);
   },
 
   onColorQtyChanged(row, isUserEdit = true) {
@@ -3269,7 +3281,19 @@ App.Production = {
   _stripColorSubstring(itemName, color) {
     if (!color || !itemName) return itemName;
     const lowerName = itemName.toLowerCase();
-    const candidates = [color, ...color.split(/[\s\-_]+/)].filter(Boolean);
+    // Only a real COLOR may be broken into its own words. A composite has
+    // to be: a row scoped to "Blue-White" is named "Frame Blue" as often as
+    // "Frame Blue-White", and the whole composite is never found inside the
+    // short form. A SUB-GROUP bucket ('KIT BAG 24"', 'SMALL KIT 20"') is not
+    // a color, and its words are ordinary nouns -- splitting one turned the
+    // "Poly Bag" filed under it into "Poly", and a second bucket's "Small
+    // Poly" into "Poly" as well, so two different bags arrived on the
+    // Per-Color Components table under one indistinguishable name. The full
+    // bucket name is still stripped, so an item that literally repeats its
+    // own group's name is tidied up exactly as a color's is.
+    const candidates = this._isColorGroupName(color)
+      ? [color, ...color.split(/[\s\-_]+/)].filter(Boolean)
+      : [color];
 
     for (const candidate of candidates) {
       const idx = lowerName.indexOf(candidate.toLowerCase());
@@ -4886,6 +4910,15 @@ App.Production = {
       // non-primary row is doing.
       .filter(color => !checked.some(r =>
         r.dataset.primary !== 'false' && App.Utils.sameColor(r.dataset.color, color)))
+      // ...and only for a row that names a real COLOR. A genuine sub-group
+      // bucket ('BLUE KIT BAG', 'BLACK RIM SET') is not a second name for
+      // the primary color's own units, however much of that color's name it
+      // happens to repeat -- it is its own line of consumption, and unlike a
+      // color axis it has no Per-Process Pool Components table to be
+      // recorded in instead. Pruning its column therefore deleted the only
+      // place its components could go: the recipe rows tagged to the
+      // sub-group still appeared, with no column left to carry a quantity.
+      .filter(color => this._isColorGroupName(color))
       .filter(color => this._matchingPrimaryColorQty(color) !== null)
       .forEach(color => {
         const idx = this.getMatrixColumnIndex(color);

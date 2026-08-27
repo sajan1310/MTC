@@ -96,7 +96,16 @@
 // do nothing. activity.js itself is deliberately NOT precached, for the same
 // reason users.js is not: it is admin-only, and the fetch handler caches it
 // on demand on the first admin visit.
-const CACHE_NAME = 'erp-shell-v36';
+// v37: production.js fixes the Create/Edit Production Lot form's Color
+// Sub-Group columns (every cell scaled to 0, the column pruned away when its
+// name repeated a checked color's, and the bucket's own words deleted out of
+// its items' names), and core.js stops the record-nav shortcut throwing on a
+// synthetic keydown that carries no `key`. Both are precached and served
+// cache-first, so without the bump an installed client keeps running the old
+// copy no matter how many times the server restarts or the page is reloaded
+// -- which is exactly how the sub-group fixes first appeared to have had no
+// effect at all.
+const CACHE_NAME = 'erp-shell-v37';
 
 const PRECACHE_URLS = [
   '/erp/offline.html',

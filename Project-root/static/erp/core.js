@@ -133,7 +133,13 @@ document.addEventListener('hidden.bs.modal', (e) => {
 // arrows already have a native job there, so firing on those would
 // hijack normal typing instead of navigating.
 document.addEventListener('keydown', (e) => {
-  const key = e.key.toLowerCase();
+  // `key` is only guaranteed on a real keystroke. A synthetic keydown --
+  // dispatched by a widget library, a password manager, or any extension
+  // injected into the page -- can arrive as a bare Event with no `key` at
+  // all, and this listener sees every keydown in the app, so reading it
+  // unguarded threw a TypeError into the console on each one.
+  const key = String(e.key || '').toLowerCase();
+  if (!key) return;
   const delta = (key === 'n' || key === 'arrowright') ? 1
     : (key === 'p' || key === 'arrowleft') ? -1
     : null;

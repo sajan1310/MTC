@@ -27,7 +27,7 @@ function loadProductionAsGlobal() {
 
 describe('App.Production._rowDisplayName', () => {
   beforeEach(() => {
-    global.App = { State: {}, Utils: {} };
+    global.App = { State: {}, Utils: { isCommonColorGroup: g => String(g ?? '').trim().toUpperCase() === 'COMMON' } };
     loadProductionAsGlobal();
   });
 
