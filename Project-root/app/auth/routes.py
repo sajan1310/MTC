@@ -24,7 +24,9 @@ from flask import (
 from flask_login import current_user, login_required, login_user, logout_user
 from itsdangerous import BadSignature, SignatureExpired, URLSafeTimedSerializer
 from oauthlib.oauth2 import WebApplicationClient
+from requests.adapters import HTTPAdapter
 from requests.exceptions import HTTPError, RequestException
+from urllib3.util.retry import Retry
 
 from flask_limiter.util import get_remote_address
 from flask_mail import Connection as FlaskMailConnection
@@ -93,6 +95,46 @@ RESET_TOKEN_MAX_AGE = 3600  # 1 hour
 # above a multiple of 3 (TCP retransmit windows); 10s to read is generous for
 # Google and still bounded.
 _HTTP_TIMEOUT = (3.05, 10)
+
+# One retry, and ONLY for a connection that was never established (REL-001
+# follow-up). The uplink dropping for the three seconds it takes to reach
+# oauth2.googleapis.com is enough to fail a sign-in outright, and on a
+# factory LAN with intermittent internet that is the common case, not the
+# rare one -- a single re-attempt costs at most one more connect timeout and
+# carries the blip.
+#
+# read=0 and status=0 are the safety half, and are not negotiable: a read
+# timeout means the request DID reach Google, so re-sending a token exchange
+# would present an authorization code Google has already consumed and turn a
+# recoverable timeout into a hard invalid_grant. Only `connect` -- where
+# nothing was ever sent -- may be retried, which is also why POST can be
+# allowed here when urllib3 would normally exclude it as non-idempotent.
+_GOOGLE_HTTP = requests.Session()
+_GOOGLE_HTTP.mount(
+    "https://",
+    HTTPAdapter(
+        max_retries=Retry(
+            total=1,
+            connect=1,
+            read=0,
+            status=0,
+            redirect=0,
+            backoff_factor=0.3,
+            allowed_methods=frozenset({"GET", "POST"}),
+        )
+    ),
+)
+
+# What the login page tells an operator whose Google sign-in died before it
+# could finish. Codes rather than free text: the value travels back in a
+# query string, and reflecting an arbitrary caller-supplied string into the
+# page is how an error banner becomes an injection vector. An unrecognised
+# code renders nothing.
+_OAUTH_ERROR_MESSAGES = {
+    "network": "Could not reach Google to complete sign-in. Check the server's internet connection, then try again.",
+    "google": "Google rejected that sign-in attempt. Please try signing in again.",
+    "unexpected": "Something went wrong while completing Google sign-in. Please try again.",
+}
 
 # Google's OpenID discovery document, cached per process.
 # (fetched_at_monotonic, document) or None.
@@ -378,7 +420,7 @@ def _google_cfg():
     if cached is not None and (time.monotonic() - cached[0]) < _GOOGLE_CFG_TTL_SECONDS:
         return cached[1]
 
-    response = requests.get(
+    response = _GOOGLE_HTTP.get(
         current_app.config["GOOGLE_DISCOVERY_URL"],
         timeout=_HTTP_TIMEOUT,
     )
@@ -400,7 +442,13 @@ def login():
         return jsonify({"error": "Use /auth/api/login for JSON login"}), 401
     if current_user.is_authenticated:
         return redirect(url_for("main.dashboard"))
-    return render_template("login.html")
+    # oauth_error is a CODE looked up in _OAUTH_ERROR_MESSAGES, never the
+    # message itself -- see that dict. An unknown or absent code renders
+    # nothing, which is the ordinary case.
+    return render_template(
+        "login.html",
+        oauth_error=_OAUTH_ERROR_MESSAGES.get(request.args.get("oauth_error", "")),
+    )
 
 
 @auth_bp.route("/signup")
@@ -837,6 +885,33 @@ def auth_google():
     return redirect(request_uri)
 
 
+def _oauth_retry(code: str, state: str | None):
+    """Send the operator back to the login page with something they can act
+    on, and put the CSRF state back where the callback found it.
+
+    The state matters as much as the message. `expected_state` is consumed
+    with session.pop BEFORE the token exchange is attempted, so a failure
+    DURING that exchange -- the uplink dropping for the three seconds it
+    takes to connect to oauth2.googleapis.com -- left the session with no
+    oauth_state at all. The operator's natural next move, reloading the
+    callback URL, then hit the fail-closed SEC-003 branch and was told
+    "Invalid OAuth state": a CSRF error reported for what was a network
+    timeout, and an unrecoverable one, since no amount of reloading could
+    put back a value only /auth/google can mint. One real failure became
+    three misleading ones and a dead end.
+
+    Restoring it does not weaken SEC-003. That check asks whether the
+    returned state matches THIS session's own; the attack it exists to stop
+    -- inducing a victim to open a callback URL carrying the ATTACKER's code
+    and state -- still fails on the comparison, because the victim's session
+    holds the victim's own state and never the attacker's. What the restore
+    permits is strictly the operator retrying their own interrupted flow.
+    """
+    if state:
+        session["oauth_state"] = state
+    return redirect(url_for("auth.login", oauth_error=code))
+
+
 @auth_bp.route("/google/callback")
 def auth_google_callback():
     current_app.logger.info(f"[OAuth] Callback received at {request.url}")
@@ -930,7 +1005,7 @@ def auth_google_callback():
             redirect_url=redirect_uri,
             code=code,
         )
-        token_response = requests.post(
+        token_response = _GOOGLE_HTTP.post(
             token_url,
             headers=headers,
             data=body,
@@ -945,7 +1020,7 @@ def auth_google_callback():
 
         userinfo_endpoint = google_cfg["userinfo_endpoint"]
         uri, headers, body = client.add_token(userinfo_endpoint)
-        userinfo_response = requests.get(
+        userinfo_response = _GOOGLE_HTTP.get(
             uri, headers=headers, data=body, timeout=_HTTP_TIMEOUT  # REL-001
         )
         userinfo_response.raise_for_status()
@@ -989,21 +1064,26 @@ def auth_google_callback():
                 return redirect(url_for("main.home"))
         return "User email not available or not verified by Google.", 400
 
+    # Each of these used to answer with a bare string and a 5xx, which left
+    # the operator on a blank error page with no way back and nothing to do.
+    # The diagnosis stays in the log, where it belongs and where it is
+    # complete; what reaches the browser is a route back to the login page
+    # and a sentence naming what failed. See _oauth_retry on the state.
     except HTTPError as e:
         current_app.logger.error(
             f"[OAuth] HTTP error during token exchange: {e.response.status_code} - {e.response.text}"
         )
-        return f"An error occurred during authentication: {e.response.status_code}", 500
+        return _oauth_retry("google", expected_state)
     except RequestException as e:
         current_app.logger.error(
             f"[OAuth] Request error during token/userinfo exchange: {type(e).__name__}: {e}"
         )
-        return "A network error occurred during authentication.", 502
+        return _oauth_retry("network", expected_state)
     except Exception as e:
         current_app.logger.error(
             f"[OAuth] Unexpected error in callback: {type(e).__name__}: {e}"
         )
-        return "An error occurred during the authentication process.", 500
+        return _oauth_retry("unexpected", expected_state)
 
 
 @auth_bp.route("/logout", methods=["GET", "POST"])
