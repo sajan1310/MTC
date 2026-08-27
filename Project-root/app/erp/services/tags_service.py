@@ -209,6 +209,30 @@ def _rename_color_token_in_either_column(cur, table: str, column_a: str, column_
             cur.execute(f"UPDATE {table} SET {column_a} = %s, {column_b} = %s WHERE id = %s", (renamed_a, renamed_b, row["id"]))
 
 
+def _rename_color_token_in_json_entries(entries, keys: tuple, old_lower: str, new: str) -> bool:
+    """Renames a color token inside every dict of a JSONB array column,
+    across each of `keys`. Mutates `entries` in place; returns True when
+    anything actually changed, so the caller can skip a no-op UPDATE.
+
+    Same _rename_color_token per value as the flat columns use, so a
+    composite ("BCP / Blue-White") has just its matching token replaced
+    rather than needing a whole-value exact match.
+    """
+    changed = False
+    for entry in entries or []:
+        if not isinstance(entry, dict):
+            continue
+        for key in keys:
+            value = entry.get(key)
+            if not value or not isinstance(value, str):
+                continue
+            renamed = _rename_color_token(value, old_lower, new)
+            if renamed != value:
+                entry[key] = renamed
+                changed = True
+    return changed
+
+
 def _rename_color_everywhere(cur, old_name: str, new_name: str) -> None:
     old = (old_name or "").strip()
     new = (new_name or "").strip()
@@ -240,7 +264,28 @@ def _rename_color_everywhere(cur, old_name: str, new_name: str) -> None:
     # that's only one axis of a composite entry like "BCP / Blue-White".
     if (table := config_maps.TABLE_NAMES.get("PRODUCTION")) and rename_utils._table_exists(cur, table):
         old_lower = old.lower()
-        cur.execute(f"SELECT id, color, color_breakdown FROM {table} WHERE deleted_at IS NULL")
+        # components_consumed and custom_components are renamed alongside
+        # the two flat columns, in the same pass. They were missed until
+        # now, and the omission was not cosmetic: _recalculate_warehouse_
+        # pool runs at the end of this function and reads every completed
+        # lot's components_consumed for its Pass 2 debit, keying each
+        # bucket off that component's own colorGroup. Renaming color and
+        # color_breakdown but not components_consumed therefore left the
+        # CREDIT under the new name and the DEBIT under the old one --
+        # opening a debit-only bucket that goes straight to negative,
+        # exactly the class of defect 40d5140 fixed four of. The next
+        # edit-save of such a lot then silently dropped those components
+        # at save_production's own filter, since their colorGroup no
+        # longer matched any of the (renamed) color_breakdown colors.
+        #
+        # custom_components is a Production Sheet's own customized
+        # component list, whose `color` is what the printed sheet groups
+        # by (production.js#_resolveSheetColorKey) -- stale there means a
+        # sheet printing a color the master no longer has.
+        cur.execute(
+            f"SELECT id, color, color_breakdown, components_consumed, custom_components "
+            f"FROM {table} WHERE deleted_at IS NULL"
+        )
         for row in cur.fetchall():
             new_color = row["color"]
             color_changed = False
@@ -263,10 +308,28 @@ def _rename_color_everywhere(cur, old_name: str, new_name: str) -> None:
                         entry["color"] = renamed
                         breakdown_changed = True
 
-            if color_changed or breakdown_changed:
+            consumed = row["components_consumed"]
+            # `color` alongside `colorGroup`: the Common Components table
+            # already writes a component's own color there, and the
+            # per-color pool-bucket work builds on the same field.
+            consumed_changed = _rename_color_token_in_json_entries(
+                consumed, ("colorGroup", "color"), old_lower, new
+            )
+
+            custom = row["custom_components"]
+            custom_changed = _rename_color_token_in_json_entries(custom, ("color",), old_lower, new)
+
+            if color_changed or breakdown_changed or consumed_changed or custom_changed:
                 cur.execute(
-                    f"UPDATE {table} SET color = %s, color_breakdown = %s WHERE id = %s",
-                    (new_color, psycopg2.extras.Json(breakdown) if breakdown is not None else None, row["id"]),
+                    f"UPDATE {table} SET color = %s, color_breakdown = %s, "
+                    f"components_consumed = %s, custom_components = %s WHERE id = %s",
+                    (
+                        new_color,
+                        psycopg2.extras.Json(breakdown) if breakdown is not None else None,
+                        psycopg2.extras.Json(consumed) if consumed is not None else None,
+                        psycopg2.extras.Json(custom) if custom is not None else None,
+                        row["id"],
+                    ),
                 )
 
     # Warehouse Pool bucket colors are always DERIVED (rebuilt from scratch

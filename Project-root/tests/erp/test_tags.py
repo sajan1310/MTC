@@ -160,6 +160,117 @@ def test_color_rename_updates_one_token_in_a_composite_process_component(erp_cli
     assert components[0]["colorGroup"] == f"{new_color} / {other_color}"
 
 
+def _save_lot_with_component_color(erp_client, color_group: str):
+    """A Production lot whose componentsConsumed carries `color_group`, via a
+    custom sub-group so no Process colour configuration is needed. Returns
+    its lotNumber.
+    """
+    process_payload = {
+        "processName": _unique_name("RenameProcess"),
+        "lotPrefix": uuid.uuid4().hex[:6].upper(),
+        "outputItemName": _unique_name("RenameOutput"),
+        "sequence": 1,
+        "isFinalStage": False,
+        "active": True,
+        "remarks": "",
+        "processType": "",
+        "primaryColorAxis": "",
+        "components": [],
+        "colorLinks": [],
+    }
+    create = _rpc(erp_client, "saveProcess", [process_payload], mutation=True)
+    process_id = create.get_json()["data"]["processId"]
+
+    saved = _rpc(
+        erp_client,
+        "saveProduction",
+        [
+            {
+                "processId": process_id,
+                "assignedTo": "Worker A",
+                "colorBreakdown": [{"color": color_group, "qty": 5, "isCustom": True}],
+                "componentsConsumed": [
+                    {
+                        "itemName": _unique_name("RenameItem"),
+                        "qty": 5,
+                        "sourceType": "POOL",
+                        "colorGroup": color_group,
+                    }
+                ],
+            }
+        ],
+        mutation=True,
+    )
+    body = saved.get_json()
+    assert body["success"] is True, body["message"]
+    return body["data"]["row"]["lotNumber"]
+
+
+def _lot_by_number(erp_client, lot_number: str) -> dict:
+    lots = _rpc(erp_client, "getProductionData").get_json()["data"]
+    match = next((l for l in lots if l["lotNumber"] == lot_number), None)
+    assert match is not None, f"lot {lot_number} not found"
+    return match
+
+
+def test_color_rename_reaches_a_lots_components_consumed(erp_client):
+    """The rename cascade updated production.color and color_breakdown but
+    never components_consumed, and _rename_color_everywhere recalculates the
+    Warehouse Pool on its way out -- so a rename left the lot's CREDIT under
+    the new colour name and its POOL DEBIT under the old one, opening a
+    debit-only bucket that goes straight to negative. The next edit-save of
+    that lot then silently dropped those components at save_production's own
+    filter, their colorGroup no longer matching any (renamed) breakdown
+    colour.
+    """
+    old_color = _unique_word("ConsumedOld")
+    new_color = _unique_word("ConsumedNew")
+    _rpc(erp_client, "saveColor", [{"name": old_color}], mutation=True)
+
+    lot_number = _save_lot_with_component_color(erp_client, old_color)
+
+    rename = _rpc(erp_client, "saveColor", [{"name": new_color, "originalName": old_color}], mutation=True)
+    assert rename.get_json()["success"] is True
+
+    lot = _lot_by_number(erp_client, lot_number)
+    # Both halves, so they can never again be renamed out of step.
+    assert [e["color"] for e in lot["colorBreakdown"]] == [new_color]
+    assert [c["colorGroup"] for c in lot["componentsConsumed"]] == [new_color]
+
+
+def test_color_rename_updates_one_token_of_a_composite_component_colorgroup(erp_client):
+    """Same per-token rejoin the flat columns already got: a component
+    scoped to a composite must have only its matching axis replaced.
+    """
+    old_color = _unique_word("CompCompOld")
+    new_color = _unique_word("CompCompNew")
+    other_color = _unique_word("CompCompOther")
+    _rpc(erp_client, "saveColor", [{"name": old_color}], mutation=True)
+    _rpc(erp_client, "saveColor", [{"name": other_color}], mutation=True)
+
+    composite = f"{old_color} / {other_color}"
+    lot_number = _save_lot_with_component_color(erp_client, composite)
+
+    _rpc(erp_client, "saveColor", [{"name": new_color, "originalName": old_color}], mutation=True)
+
+    lot = _lot_by_number(erp_client, lot_number)
+    assert lot["componentsConsumed"][0]["colorGroup"] == f"{new_color} / {other_color}"
+
+
+def test_color_rename_leaves_an_unrelated_components_colorgroup_alone(erp_client):
+    unrelated = _unique_word("UntouchedColor")
+    renamed_from = _unique_word("SomeOther")
+    renamed_to = _unique_word("SomeOtherNew")
+    _rpc(erp_client, "saveColor", [{"name": unrelated}], mutation=True)
+    _rpc(erp_client, "saveColor", [{"name": renamed_from}], mutation=True)
+
+    lot_number = _save_lot_with_component_color(erp_client, unrelated)
+    _rpc(erp_client, "saveColor", [{"name": renamed_to, "originalName": renamed_from}], mutation=True)
+
+    lot = _lot_by_number(erp_client, lot_number)
+    assert lot["componentsConsumed"][0]["colorGroup"] == unrelated
+
+
 def _unique_word(prefix: str) -> str:
     """Like _unique_name but with no hyphen in the result -- needed for
     color-combo tests, since a hyphen inside a single color's own name
