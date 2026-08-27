@@ -4192,3 +4192,38 @@
       max-height: 40vh;
     }
   }
+/* ── Skip link (A11Y-002) ────────────────────────────────────────────────
+   The sidebar carries 14 tab buttons, so without a skip link a keyboard or
+   screen-reader user traverses all of them on every page before reaching any
+   content.
+
+   Positioned off-screen rather than display:none or visibility:hidden --
+   both of those remove an element from the focus order entirely, which would
+   make the link unreachable by the very keyboard users it exists for. It
+   moves into view on :focus and nowhere else. */
+.skip-link {
+  position: absolute;
+  left: -9999px;
+  top: 0;
+  z-index: 2000;
+  padding: 0.6rem 1rem;
+  background: #0d6efd;
+  color: #fff;
+  font-weight: 600;
+  text-decoration: none;
+  border-radius: 0 0 0.35rem 0;
+}
+
+.skip-link:focus,
+.skip-link:focus-visible {
+  left: 0;
+  outline: 3px solid #fff;
+  outline-offset: -3px;
+}
+
+/* The skip link's target. Focusing a container with tabindex="-1" draws a
+   default outline in some browsers, which reads as a stray box around the
+   whole page; the link has already moved focus, so the ring adds nothing. */
+.tab-content-wrapper:focus {
+  outline: none;
+}

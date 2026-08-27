@@ -33,8 +33,7 @@ App.PO = {
   async loadData() {
     const tbody = document.getElementById('poTableBody');
     if (tbody)
-      tbody.innerHTML =
-        '<tr><td colspan="9" class="text-center p-4">Loading Database…</td></tr>';
+      App.Utils.tableLoading(tbody, 9, 'Loading Database…');
 
     try {
       const res = await Api.call('getPOData');
@@ -63,6 +62,7 @@ App.PO = {
       if (App.Vendor) await App.Vendor.ensureLoaded();
       this.populateVendorSelects();
     } catch (err) {
+      App.Utils.tableError(tbody, err && err.message);
       App.Utils.showToast(
         err.message || 'Failed to load purchase orders.',
         true

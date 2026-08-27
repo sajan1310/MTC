@@ -59,7 +59,7 @@ function _mergedRoleLabels() {
 App.Users = {
   async loadData() {
     const tbody = document.getElementById('usersTableBody');
-    if (tbody) tbody.innerHTML = '<tr><td colspan="6" class="text-center p-4">Loading users…</td></tr>';
+    if (tbody) App.Utils.tableLoading(tbody, 6, 'Loading users…');
 
     try {
       // Custom roles fetched alongside users (not only when Manage Roles
@@ -79,6 +79,7 @@ App.Users = {
       App.State.globalUsers = res.data || [];
       this.filterData(App.State.usersSearchTerm || '');
     } catch (err) {
+      App.Utils.tableError(tbody, err && err.message);
       App.Utils.showToast(err.message || 'Failed to load users.', true);
     }
   },
@@ -282,7 +283,7 @@ App.Users = {
 
   async loadRoles() {
     const tbody = document.getElementById('customRolesTableBody');
-    if (tbody) tbody.innerHTML = '<tr><td colspan="3" class="text-center p-3">Loading roles…</td></tr>';
+    if (tbody) App.Utils.tableLoading(tbody, 3, 'Loading roles…');
     try {
       const res = await Api.call('getCustomRoles');
       if (!res?.success) {
@@ -292,6 +293,7 @@ App.Users = {
       App.State.globalCustomRoles = res.data || [];
       this.renderRolesTable();
     } catch (err) {
+      App.Utils.tableError(tbody, err && err.message);
       App.Utils.showToast(err.message || 'Failed to load roles.', true);
     }
   },

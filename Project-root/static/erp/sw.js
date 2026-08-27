@@ -87,7 +87,16 @@
 // restored tab carried it off the screen on every single load -- it was only
 // ever visible if you happened to scroll back to the very top. styles.css is
 // precached too, and the fix needs both files.
-const CACHE_NAME = 'erp-shell-v35';
+// v36: core.js gained the Activity Log tab's load branch and its four
+// delegated actions (AUDIT-001). core.js is precached and served
+// cache-first, so without the bump an installed admin client keeps the old
+// copy: the sidebar entry renders from the server-side template and is
+// therefore present, but showTab has no branch for it and the four
+// data-action handlers do not exist -- the tab opens empty and its buttons
+// do nothing. activity.js itself is deliberately NOT precached, for the same
+// reason users.js is not: it is admin-only, and the fetch handler caches it
+// on demand on the first admin visit.
+const CACHE_NAME = 'erp-shell-v36';
 
 const PRECACHE_URLS = [
   '/erp/offline.html',

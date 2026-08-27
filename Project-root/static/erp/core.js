@@ -47,9 +47,39 @@ function loadScript(src, integrity) {
   return _scriptLoadPromises[src];
 }
 
+// The element focus should return to when the modal closes (A11Y-005).
+//
+// Bootstrap's focus trap restores focus to whatever was focused when it
+// activated, which works for a modal opened by a data-bs-toggle button. Every
+// modal here is opened programmatically from a click handler, an async
+// callback or a keyboard shortcut, so what was focused at activate time is
+// often the <body> -- and focus lands at the top of the document on close,
+// dropping a keyboard user back past fourteen nav buttons from wherever they
+// actually were.
+let _focusBeforeModal = null;
+
+function rememberFocusForModal(el) {
+  const active = document.activeElement;
+  if (active && active !== document.body && !el.contains(active)) {
+    _focusBeforeModal = active;
+  }
+  if (el.dataset.focusRestoreBound === '1') return;
+  el.dataset.focusRestoreBound = '1';
+  el.addEventListener('hidden.bs.modal', () => {
+    const target = _focusBeforeModal;
+    _focusBeforeModal = null;
+    // Still in the document: it may have been re-rendered away while the
+    // modal was open, which is exactly when blindly focusing it would throw.
+    if (target && document.contains(target) && typeof target.focus === 'function') {
+      target.focus();
+    }
+  });
+}
+
 function safeModalShow(id) {
   const el = document.getElementById(id);
   if (!el || typeof bootstrap === 'undefined') return;
+  rememberFocusForModal(el);
   const isNested = Array.from(document.querySelectorAll('.modal.show')).some(m => m !== el);
   if (isNested) {
     const existing = bootstrap.Modal.getInstance(el);
@@ -1086,6 +1116,237 @@ const App = {
 
   // ── Shared UX primitives ─────────────────────────────────────────────
   Utils: {
+    // ── Announcements to assistive technology (A11Y-005, A11Y-006) ───────
+    //
+    // Everything on these tabs happens without a page load: data arrives,
+    // tables re-render, a filter narrows 1,600 rows to 3, a sort reverses
+    // the order. A sighted user sees all of it. A screen-reader user was
+    // told none of it -- the DOM changed silently beneath a cursor that had
+    // not moved, so the only way to discover the result was to navigate the
+    // whole table again and infer it.
+    //
+    // A polite live region, NOT a focus jump. Moving focus to the table
+    // after an async load sounds helpful and is hostile in practice: loads
+    // finish while the user is still typing in the search box, and yanking
+    // the caret out mid-word is worse than saying nothing. "polite" waits
+    // for a pause in speech instead of interrupting.
+    _lastAnnouncement: null,
+
+    announce(message) {
+      const text = String(message || '').trim();
+      if (!text) return;
+      const region = document.getElementById('a11y-announcer');
+      if (!region) return;
+      // A re-render that changed nothing should say nothing: tables re-render
+      // for reasons the user did not cause, and repeating "Showing 1 to 25 of
+      // 40 Items" every time is noise that trains people to ignore the region.
+      if (App.Utils._lastAnnouncement === text) return;
+      App.Utils._lastAnnouncement = text;
+      // Same string twice in a row is not re-announced by most screen
+      // readers, and "3 results" after a different search is worth hearing
+      // again. Clearing first forces it to count as a change.
+      region.textContent = '';
+      window.setTimeout(() => { region.textContent = text; }, 50);
+    },
+
+    /** "Showing 12 of 1,633 items" -- the sentence a sighted user reads off the table. */
+    announceRowCount(shown, total, noun) {
+      const label = noun || 'rows';
+      if (total === undefined || total === null || shown === total) {
+        App.Utils.announce(`${shown} ${label}`);
+      } else {
+        App.Utils.announce(`Showing ${shown} of ${total} ${label}`);
+      }
+    },
+
+    // ── Form validation, programmatically associated (A11Y-007) ──────────
+    //
+    // Validation failures surfaced as toasts: "Every ticked process needs a
+    // Qty per Unit greater than 0". The toast names the rule but not the
+    // field, appears in a corner unrelated to the form, and removes itself
+    // after a few seconds. A sighted user scans the form and guesses. A
+    // screen-reader user gets nothing at all -- no aria-invalid anywhere, so
+    // no field announces itself as the problem, and by the time they have
+    // navigated to the form the toast is gone.
+    //
+    // These attach the message TO the field: aria-invalid marks it, and
+    // aria-describedby ties the text to it so it is read as part of the
+    // field rather than as unrelated page content.
+
+    /** Mark one field invalid and attach `message` to it. */
+    markFieldInvalid(field, message) {
+      const el = typeof field === 'string' ? document.getElementById(field) : field;
+      if (!el) return;
+
+      el.classList.add('is-invalid');
+      el.setAttribute('aria-invalid', 'true');
+
+      const id = `${el.id || `field-${Math.random().toString(36).slice(2)}`}-error`;
+      let feedback = document.getElementById(id);
+      if (!feedback) {
+        feedback = document.createElement('div');
+        feedback.id = id;
+        feedback.className = 'invalid-feedback';
+        // After the field, so the reading order matches the visual order.
+        el.insertAdjacentElement('afterend', feedback);
+      }
+      feedback.textContent = String(message || 'This value is not valid.');
+
+      // Appended rather than replacing: a field may already point at help
+      // text, and clobbering that would trade one lost message for another.
+      const described = (el.getAttribute('aria-describedby') || '')
+        .split(/\s+/).filter(Boolean);
+      if (!described.includes(id)) {
+        described.push(id);
+        el.setAttribute('aria-describedby', described.join(' '));
+      }
+    },
+
+    /** Clear every invalid mark inside `scope` (a form element or its id). */
+    clearFieldErrors(scope) {
+      const root = typeof scope === 'string' ? document.getElementById(scope) : scope;
+      if (!root) return;
+      root.querySelectorAll('[aria-invalid="true"]').forEach(el => {
+        el.classList.remove('is-invalid');
+        el.removeAttribute('aria-invalid');
+        const id = `${el.id}-error`;
+        const described = (el.getAttribute('aria-describedby') || '')
+          .split(/\s+/).filter(Boolean).filter(x => x !== id);
+        if (described.length) el.setAttribute('aria-describedby', described.join(' '));
+        else el.removeAttribute('aria-describedby');
+      });
+      root.querySelectorAll('.invalid-feedback').forEach(el => { el.textContent = ''; });
+    },
+
+    /**
+     * Run the browser's own constraint validation over a form.
+     *
+     * The forms already carry `required`, `maxlength`, `min` and `step`, and
+     * none of it was ever checked: every save is a button click against a
+     * form that is never submitted, so the browser had no reason to
+     * validate. Constraints that had been written down were simply not
+     * enforced.
+     *
+     * Returns true when the form is valid. When it is not, the first
+     * offending field is marked, described, announced and focused -- focus
+     * last, because moving it before the message exists means a screen
+     * reader announces the field without the reason.
+     */
+    validateForm(form) {
+      const el = typeof form === 'string' ? document.getElementById(form) : form;
+      if (!el || typeof el.checkValidity !== 'function') return true;
+
+      App.Utils.clearFieldErrors(el);
+      if (el.checkValidity()) return true;
+
+      const invalid = Array.from(el.elements || []).filter(
+        f => typeof f.checkValidity === 'function' && !f.checkValidity() && !f.disabled,
+      );
+      invalid.forEach(field => {
+        App.Utils.markFieldInvalid(field, field.validationMessage);
+      });
+
+      const first = invalid[0];
+      if (first) {
+        const label = (
+          el.querySelector(`label[for="${first.id}"]`)?.textContent
+          || first.getAttribute('aria-label')
+          || first.name
+          || 'A field'
+        ).replace(/\s*\*\s*$/, '').trim();
+        App.Utils.announce(`${label}: ${first.validationMessage}`);
+        if (typeof first.focus === 'function') first.focus();
+      }
+      return false;
+    },
+
+    // ── Search debounce (UX-002) ─────────────────────────────────────────
+    //
+    // The 28 desktop search boxes were wired `onkeyup="App.X.filterY(this.value)"`,
+    // so every keystroke re-filtered the dataset and re-rendered the whole
+    // table. On Stock -- 1,633 rows in production -- typing a six-character
+    // item name did that six times, and the typing itself stutters because
+    // the render blocks the main thread between keystrokes. The mobile shell
+    // has had a debounce since it was written; the desktop never got one.
+    //
+    // A WeakMap keyed on the input element, so each box has its own timer and
+    // two open dialogs cannot cancel each other's. WeakMap rather than a
+    // plain object because entries then disappear with the elements when a
+    // dialog's markup is replaced, instead of accumulating.
+    _filterTimers: new WeakMap(),
+
+    debouncedFilter(el, fn, wait) {
+      if (typeof fn !== 'function') return;
+      if (!el) { fn(); return; }
+      clearTimeout(App.Utils._filterTimers.get(el));
+      App.Utils._filterTimers.set(el, setTimeout(fn, wait || 200));
+    },
+
+    // ── Table load states (UX-001) ───────────────────────────────────────
+    //
+    // Twenty-four table loaders wrote a "Loading ..." row into a tbody and
+    // then, on failure, showed a toast and returned. The toast vanishes after
+    // a few seconds; the row does not. So a failed load left a table saying
+    // it was loading, permanently, and the only visible evidence of the
+    // failure disappeared on its own. A user could sit in front of "Loading
+    // Clients..." indefinitely with nothing to click and no reason to think
+    // anything was wrong.
+    //
+    // These two helpers make the failure state as durable as the loading
+    // state, and give it the one thing the user actually wants: a way to try
+    // again without reloading the page.
+
+    /** Placeholder row while a table's data is in flight. */
+    tableLoading(tbody, colspan, label) {
+      const el = typeof tbody === 'string' ? document.getElementById(tbody) : tbody;
+      if (!el) return;
+      // Remembered so tableError can span the same columns without every
+      // caller having to pass the count a second time -- and get it wrong.
+      el.dataset.loadColspan = String(colspan);
+      el.innerHTML =
+        `<tr><td colspan="${colspan}" class="text-center p-4 text-muted">` +
+        `<span class="spinner-border spinner-border-sm me-2" role="status" aria-hidden="true"></span>` +
+        `${escapeHtml(label || 'Loading…')}</td></tr>`;
+    },
+
+    /**
+     * Error row replacing the placeholder, with a Retry button.
+     *
+     * `retry` is stored rather than inlined into an onclick attribute: the
+     * markup here interpolates a server-supplied message, and an inline
+     * handler beside interpolated text is the shape that turns a message into
+     * script (SEC-004).
+     */
+    tableError(tbody, message, retry) {
+      const el = typeof tbody === 'string' ? document.getElementById(tbody) : tbody;
+      if (!el) return;
+      const colspan = el.dataset.loadColspan || 1;
+      const text = escapeHtml(
+        message || 'Could not load this data.',
+      );
+      el.innerHTML =
+        `<tr><td colspan="${colspan}" class="text-center p-4">` +
+        `<div class="text-danger mb-2">` +
+        `<i class="bi bi-exclamation-triangle me-1" aria-hidden="true"></i>${text}</div>` +
+        `<button type="button" class="btn btn-sm btn-outline-secondary" ` +
+        `data-action="retry-table-load">Retry</button></td></tr>`;
+      // role="alert" so a screen reader is told the load failed rather than
+      // being left on a table that silently stopped changing.
+      const cell = el.querySelector('td');
+      if (cell) cell.setAttribute('role', 'alert');
+
+      const button = el.querySelector('[data-action="retry-table-load"]');
+      if (button && typeof retry === 'function') {
+        button.addEventListener('click', () => {
+          App.Utils.tableLoading(el, colspan, 'Retrying…');
+          retry();
+        });
+      } else if (button) {
+        // No retry available: do not show a button that does nothing.
+        button.remove();
+      }
+    },
+
     // `link` -- {type, value?} per App.Notify.NAV -- makes the resulting
     // bell notification clickable-to-navigate straight to the form/list
     // the action affected.
@@ -1123,6 +1384,7 @@ const App = {
       const existing = bootstrap.Modal.getInstance(el);
       if (existing) existing.dispose();
 
+      rememberFocusForModal(el);
       const isNested = Array.from(document.querySelectorAll('.modal.show')).some(m => m !== el);
       new bootstrap.Modal(el, { backdrop: isNested ? false : true, keyboard: !isNested }).show();
     },
@@ -1404,12 +1666,22 @@ const App = {
 
       if (!totalItems) {
         container.innerHTML = '';
+        // The case most worth announcing: a filter that matched nothing
+        // leaves an empty table and, without this, complete silence.
+        App.Utils.announce(`No ${label.toLowerCase()} found`);
         return;
       }
 
       const totalPages = Math.ceil(totalItems / rowsPerPage);
       const startItem = (currentPage - 1) * rowsPerPage + 1;
       const endItem = Math.min(currentPage * rowsPerPage, totalItems);
+
+      // The same sentence the sighted user reads off the summary line, said
+      // out loud (A11Y-005). Every module funnels through here, so one call
+      // covers loads, filters, sorts and page changes across all 12 tables
+      // -- and it cannot drift from what is on screen, because it IS what is
+      // on screen.
+      App.Utils.announce(`Showing ${startItem} to ${endItem} of ${totalItems} ${label}`);
 
       let html = `<span class="text-secondary fw-bold">Showing ${startItem}–${endItem} of ${totalItems} ${label}</span>`;
 
@@ -1756,8 +2028,24 @@ const App = {
         tab.style.display = tab.id === id ? 'block' : 'none';
       });
 
-      $$('#mainTabs .nav-link').forEach(btn => btn.classList.remove('active'));
-      document.getElementById(`btn-${id}`)?.classList.add('active');
+      // aria-selected and roving tabindex, not just the visual class
+      // (A11Y-001). The markup ships aria-selected="true" on the Dashboard
+      // button and nothing ever changed it, so a screen reader announced
+      // "Dashboard, selected" on every tab of the application no matter what
+      // was actually on screen -- the one piece of state a tablist exists to
+      // convey was permanently wrong.
+      //
+      // tabindex moves with it (the roving-tabindex pattern): a tablist
+      // should be ONE stop in the page's tab order, with the arrow keys
+      // moving between tabs. Leaving all 14 focusable meant tabbing to the
+      // content took 14 presses, which is what the skip link had to work
+      // around.
+      $$('#mainTabs .nav-link').forEach(btn => {
+        const selected = btn.id === `btn-${id}`;
+        btn.classList.toggle('active', selected);
+        btn.setAttribute('aria-selected', selected ? 'true' : 'false');
+        btn.setAttribute('tabindex', selected ? '0' : '-1');
+      });
 
       this.current = id;
       this.syncHash(id, !!(opts && opts.replace));
@@ -1798,6 +2086,8 @@ const App = {
         loadPromise = App.Dispatch.enterTab();
       } else if (id === 'usersTab' && typeof App.Users !== 'undefined') {
         loadPromise = App.Users.loadData();
+      } else if (id === 'activityTab' && typeof App.Activity !== 'undefined') {
+        loadPromise = App.Activity.loadData();
       }
       // Every other module's own `else if (id === '<tab>') loadPromise =
       // App.<Module>.loadData();` branch lands here in that module's own
@@ -2034,6 +2324,23 @@ function bindGlobalEvents() {
       case 'po-page':
         App.PO.changePage(toNumber(btn.dataset.page, 1));
         break;
+      // Activity Log (AUDIT-001). Guarded on App.Activity existing: the
+      // module's <script> tag is admin-only, so for everyone else these
+      // actions never render in the first place -- but a stale cached shell
+      // could still carry the markup, and a TypeError here would break every
+      // other delegated action on the page, not just this one.
+      case 'activity-page':
+        if (typeof App.Activity !== 'undefined') App.Activity.changePage(toNumber(btn.dataset.page, 1));
+        break;
+      case 'activity-refresh':
+        if (typeof App.Activity !== 'undefined') App.Activity.loadData();
+        break;
+      case 'activity-clear':
+        if (typeof App.Activity !== 'undefined') App.Activity.clearFilters();
+        break;
+      case 'activity-detail':
+        if (typeof App.Activity !== 'undefined') App.Activity.openDetail(btn.dataset.id);
+        break;
       case 'bill-print':
         App.Bill.print(toNumber(btn.dataset.index));
         break;
@@ -2197,6 +2504,45 @@ document.addEventListener('DOMContentLoaded', async () => {
   // true} keeps this first write out of the history stack, so Back leaves
   // the app instead of bouncing off a synthetic entry.
   window.addEventListener('hashchange', () => App.Navigation.handleHashChange());
+
+  // Arrow-key navigation for the sidebar tablist (A11Y-003).
+  //
+  // role="tablist" is a promise about keyboard behaviour, not only a label:
+  // assistive technology tells the user the arrow keys move between tabs,
+  // because that is what the role means. Here they did nothing, so a
+  // screen-reader user was told to press a key that had no effect.
+  //
+  // Home/End included because they are part of the same pattern, and cheap.
+  // Vertical keys first (this list is a column) but horizontal ones work
+  // too, since the same list becomes a horizontal bar on narrow screens.
+  document.getElementById('mainTabs')?.addEventListener('keydown', (e) => {
+    const keys = ['ArrowDown', 'ArrowUp', 'ArrowRight', 'ArrowLeft', 'Home', 'End'];
+    if (!keys.includes(e.key)) return;
+
+    // Every rendered nav-link. No visibility filtering: the sidebar is
+    // server-rendered per role, so a tab the user may not open is not in the
+    // DOM at all -- and `current === -1` below already covers focus being
+    // somewhere else entirely.
+    const tabs = Array.from(document.querySelectorAll('#mainTabs .nav-link'))
+      .filter(btn => !btn.disabled && !btn.hasAttribute('hidden'));
+    if (!tabs.length) return;
+
+    const current = tabs.indexOf(document.activeElement);
+    if (current === -1) return;
+
+    let next;
+    if (e.key === 'Home') next = 0;
+    else if (e.key === 'End') next = tabs.length - 1;
+    else if (e.key === 'ArrowDown' || e.key === 'ArrowRight') next = (current + 1) % tabs.length;
+    else next = (current - 1 + tabs.length) % tabs.length;
+
+    e.preventDefault();
+    // Move focus only. Activating on arrow would load a module's data on
+    // every keypress while someone is simply moving through the list --
+    // Enter and Space (which a <button> handles natively) activate.
+    tabs[next].focus();
+  });
+
   await App.Init(App.Navigation.resolveInitialTab(), { replace: true });
 
   // Register the shell service worker (Phase 5: PWA installability).

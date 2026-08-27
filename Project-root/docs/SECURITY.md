@@ -322,22 +322,66 @@ app.logger.info(f"User {user_id} logged in successfully")  # OK
 app.logger.debug(f"Password: {password}")  # NEVER DO THIS
 ```
 
-### Audit Log (Database)
+### Activity Log (Database)
 
-**Table:** `audit_log`
-- Tracks critical actions: user creation, role changes, process modifications
-- Fields: `user_id`, `action`, `entity_type`, `entity_id`, `timestamp`, `ip_address`, `changes` (JSON)
+**Table:** `erp.activity_log` (migration `041_activity_log.sql`)
+**Service:** `app/erp/services/activity_service.py`
 
-**Example:**
-```python
-AuditService.log(
-    user_id=current_user.id,
-    action='update',
-    entity_type='process',
-    entity_id=process_id,
-    changes={'name': {'old': 'Old Name', 'new': 'New Name'}}
-)
-```
+Records who did what, when, and from where. Note this section previously
+documented a `public.audit_log` table and an `AuditService.log()` call that
+had not existed since commit `cbd1c80` — the table, the service and every
+call site were removed with the rest of the pre-port UI, and nothing replaced
+them until AUDIT-001.
+
+**What is recorded**
+
+| Category | Actions |
+|---|---|
+| `rpc` | Every mutating RPC method — success, business-rule rejection, and unhandled error alike — plus every authorization refusal (`403`), on reads as well as writes |
+| `auth` | `login` (success and failure), `logout`, `signup`, `password_reset_requested`, `password_reset` |
+
+**Fields:** `logged_at`, `user_id`, `user_email`, `user_role`, `category`,
+`action`, `entity_type` (the service module), `status`, `detail`, `args`
+(JSONB), `ip_address`, `user_agent`, `request_id`, `duration_ms`.
+
+**You do not call it by hand.** The writes are wired into `app/erp/rpc.py`'s
+dispatcher and the auth routes, which every user action already passes
+through, so a newly registered `@rpc_method(..., mutation=True)` is logged
+from the day it exists. That is the difference from the old `AuditService`,
+whose coverage depended on someone remembering to add a line, and mostly
+nobody did.
+
+**Three properties worth knowing:**
+
+- **It never breaks the action it describes.** A failed audit write degrades
+  to a `WARNING` in the application log; it cannot turn a saved bill into an
+  error the user sees. Both `record()` and each of its call sites guard this.
+- **It never stores a password.** Redaction is driven by the *parameter name*
+  in the service's own signature (`password`, `token`, `secret`, …), so it
+  covers methods added later. Argument blobs are truncated and capped at 8 KB.
+- **Reads are deliberately not logged** — `getDashboardData` alone is polled
+  on a timer by every open tab.
+
+**Reading it:** the **Activity Log** tab in the sidebar, admin-only, with
+filters (search, category, outcome, date range) and a row-detail modal
+carrying the arguments, request id and duration. Backed by the
+`getActivityLog` RPC (`roles=frozenset({"admin"})`), which also accepts
+`userId` and `entityType` filters the UI does not surface yet.
+
+Paging is **server-side**, unlike every other table in this app: the others
+fetch the whole set and slice it in the browser, which is right for a few
+thousand vendors and wrong for a table that gains a row per mutation.
+
+The tab is gated the same three ways User Management is — the partial is only
+included when `current_user.is_admin`, the sidebar entry and `activity.js`
+`<script>` are hidden the same way, and the RPC enforces it server-side
+regardless of what the client shows. A non-admin calling the method directly
+gets a 403 that is itself recorded in the table they were trying to read.
+
+**Retention:** 90 days (`ACTIVITY_LOG_RETENTION_DAYS`), pruned by the nightly
+job in `backup_service.py`. Excluded from the Google Sheets mirror — the
+`pg_dump` snapshot in `db_backup.py` covers it, which is the right place for
+an audit trail.
 
 ---
 
@@ -395,7 +439,7 @@ pip-audit
 - [ ] Dependencies audited (`pip-audit`)
 
 ### Ongoing Monitoring
-- [ ] Review `audit_log` table weekly for suspicious activity
+- [ ] Review `erp.activity_log` weekly for suspicious activity (`status IN ('denied','error')` is the partial index built for exactly this)
 - [ ] Monitor failed login attempts (potential brute force)
 - [ ] Check Redis health (rate limiter uptime)
 - [ ] Rotate `SECRET_KEY` annually (invalidates sessions—plan maintenance window)

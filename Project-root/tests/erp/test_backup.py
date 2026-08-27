@@ -154,6 +154,14 @@ _KNOWN_EXCLUDED_FROM_BACKUP = {
     "erp.bom_access_tokens",
     "erp.rpc_mutations",  # replay-idempotency cache, not business data
     "erp.dispatch_legacy",  # only exists on some databases, see comment
+    # The activity log (AUDIT-001). Excluded from the SHEETS mirror
+    # specifically, not from backups: db_backup.py's pg_dump snapshot takes
+    # the whole database with no --schema filter, so the audit trail is
+    # captured there -- which is the right place for it. This path re-uploads
+    # every listed table in full each night, and a row-per-mutation table with
+    # a 90-day window would dominate the spreadsheet's cell budget while
+    # telling a business-data restore nothing.
+    "erp.activity_log",
 }
 
 

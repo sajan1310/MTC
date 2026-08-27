@@ -57,12 +57,13 @@ App.Client = {
   // ── Clients Master CRUD ───────────────────────────────────
   async loadClientsData() {
     const tbody = document.getElementById('clientsTableBody');
-    if (tbody) tbody.innerHTML = '<tr><td colspan="6" class="text-center p-4">Loading Clients...</td></tr>';
+    if (tbody) App.Utils.tableLoading(tbody, 6, 'Loading Clients...');
 
     try {
       const response = await Api.call('getClientsData');
       if (!response.success) {
         App.Utils.showToast(response.message, true);
+        App.Utils.tableError(tbody, response.message);
         return;
       }
       App.State.globalClients = response.data;
@@ -71,6 +72,7 @@ App.Client = {
       App.State.selectedClients = [];
       this.renderClientsTable();
     } catch (err) {
+      App.Utils.tableError(tbody, err && err.message);
       App.Utils.showToast(err.message || 'Failed to load clients', true);
     }
   },
@@ -267,12 +269,13 @@ App.Client = {
   // ── PI / Estimates CRUD ────────────────────────────────────
   async loadOrdersData() {
     const tbody = document.getElementById('clientOrdersTableBody');
-    if (tbody) tbody.innerHTML = '<tr><td colspan="7" class="text-center p-4">Loading PI / Estimates...</td></tr>';
+    if (tbody) App.Utils.tableLoading(tbody, 7, 'Loading PI / Estimates...');
 
     try {
       const response = await Api.call('getClientOrdersData');
       if (!response.success) {
         App.Utils.showToast(response.message, true);
+        App.Utils.tableError(tbody, response.message);
         return;
       }
       App.State.globalOrders = response.data;
@@ -281,6 +284,7 @@ App.Client = {
       App.State.selectedOrders = [];
       this.renderOrdersTable();
     } catch (err) {
+      App.Utils.tableError(tbody, err && err.message);
       App.Utils.showToast(err.message || 'Failed to load PI / Estimates', true);
     }
   },

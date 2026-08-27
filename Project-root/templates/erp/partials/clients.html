@@ -22,7 +22,7 @@
   <div id="clientsListSubTab" class="clients-sub-tab">
     <div class="d-flex justify-content-between flex-wrap gap-2 mb-3">
       <div class="d-flex w-50 align-items-center">
-        <input type="text" id="searchClients" class="form-control me-2" placeholder="Search Client Name, Contact, or GSTIN..." aria-label="Search clients" autocomplete="off" onkeyup="App.Client.filterClients(this.value)">
+        <input type="text" id="searchClients" class="form-control me-2" placeholder="Search Client Name, Contact, or GSTIN..." aria-label="Search clients" autocomplete="off" oninput="App.Utils.debouncedFilter(this, () => App.Client.filterClients(this.value))">
       </div>
       <div class="d-flex gap-2 flex-wrap justify-content-end">
         <button class="btn btn-danger fw-bold shadow-sm d-none" id="btnBulkDeleteClients" type="button" onclick="App.Client.bulkDeleteClients()" style="white-space: nowrap;">
@@ -64,7 +64,7 @@
   <div id="clientOrdersSubTab" class="clients-sub-tab" style="display: none;">
     <div class="d-flex justify-content-between flex-wrap gap-2 mb-3">
       <div class="d-flex w-50 align-items-center">
-        <input type="text" id="searchClientOrders" class="form-control me-2" placeholder="Search PI #, Client, or Product..." aria-label="Search client orders" autocomplete="off" onkeyup="App.Client.filterOrders(this.value)">
+        <input type="text" id="searchClientOrders" class="form-control me-2" placeholder="Search PI #, Client, or Product..." aria-label="Search client orders" autocomplete="off" oninput="App.Utils.debouncedFilter(this, () => App.Client.filterOrders(this.value))">
       </div>
       <div class="d-flex gap-2 flex-wrap justify-content-end">
         <button class="btn btn-danger fw-bold shadow-sm d-none" id="btnBulkDeleteOrders" type="button" onclick="App.Client.bulkDeleteOrders()" style="white-space: nowrap;">
@@ -325,7 +325,7 @@
       </div>
       <div class="modal-body bg-light">
         <div class="d-flex w-50 align-items-center mb-3">
-          <input type="text" id="searchPendingOrders" class="form-control" placeholder="Search PI #, Client, or Product..." aria-label="Search pending orders" autocomplete="off" onkeyup="App.Client.filterPendingOrders(this.value)">
+          <input type="text" id="searchPendingOrders" class="form-control" placeholder="Search PI #, Client, or Product..." aria-label="Search pending orders" autocomplete="off" oninput="App.Utils.debouncedFilter(this, () => App.Client.filterPendingOrders(this.value))">
         </div>
         <div class="table-responsive">
           <table class="table table-bordered bg-white shadow-sm table-hover mb-0">

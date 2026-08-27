@@ -14,7 +14,7 @@
                placeholder="Search by Bill#, PO, Vendor, or Item…"
                autocomplete="off"
                aria-label="Search Bills"
-               onkeyup="App.Bill.filterData(this.value)">
+               oninput="App.Utils.debouncedFilter(this, () => App.Bill.filterData(this.value))">
         <small class="text-muted" style="display: block; margin-top: 4px;">
           Filter by bill number, PO, vendor, or item
         </small>

@@ -6,6 +6,7 @@ import os
 import re
 import secrets
 import time
+from concurrent.futures import ThreadPoolExecutor
 
 import database
 import psycopg2.extras
@@ -26,11 +27,57 @@ from oauthlib.oauth2 import WebApplicationClient
 from requests.exceptions import HTTPError, RequestException
 
 from flask_limiter.util import get_remote_address
+from flask_mail import Connection as FlaskMailConnection
 
 from .. import limiter, mail
 from ..models import User
 
+# The activity log (AUDIT-001). Sign-in, sign-out and password events are
+# recorded here rather than in app/erp/rpc.py because they never travel over
+# the RPC bridge -- and they are the rows an account-compromise question is
+# actually answered from.
+from ..erp.services import activity_service
+
 auth_bp = Blueprint("auth", __name__)
+
+
+def _record_auth(
+    action: str,
+    status: str,
+    *,
+    email: str = "",
+    user=None,
+    user_id_override: int | None = None,
+    detail: str = "",
+    cur=None,
+) -> None:
+    """One activity row for an auth event (AUDIT-001).
+
+    A thin wrapper over activity_service.record() because these call sites
+    share an awkward property: identity cannot be taken from `current_user`
+    at any of them. At a failed sign-in there is no session; at a successful
+    one flask-login has only just created it; at sign-out the row has to be
+    built BEFORE logout_user() tears it down. So every caller passes what it
+    knows -- a User object once there is one, otherwise just the address that
+    was typed, which for a failure is the only identity that exists.
+    """
+    try:
+        activity_service.record(
+            category=activity_service.CATEGORY_AUTH,
+            action=action,
+            status=status,
+            detail=detail or None,
+            user_id=getattr(user, "id", None) if user is not None else user_id_override,
+            user_email=(getattr(user, "email", None) or email or "").strip().lower() or None,
+            user_role=getattr(user, "role", None),
+            cur=cur,
+        )
+    except Exception:  # noqa: BLE001
+        # record() guards its own body, but not the identity extraction above
+        # it. Nobody may be locked out of a working sign-in, or left with a
+        # live session after a "failed" sign-out, because the audit log is
+        # unwell.
+        current_app.logger.warning("Activity logging failed for auth/%s", action)
 
 # Password-reset tokens are signed+timed (itsdangerous), not stored in the
 # DB -- no schema migration needed, and an expired/tampered token fails to
@@ -173,9 +220,85 @@ def verify_reset_token(token: str) -> str | None:
     return email
 
 
+# Outbound mail runs off the request thread, on a deliberately small pool
+# (REL-004).
+#
+# `mail.send()` is synchronous, and flask-mail builds its connection as
+# `smtplib.SMTP(server, port)` with NO timeout argument -- so it inherits
+# socket.getdefaulttimeout(), which Python leaves at None. A hung SMTP server
+# therefore blocked the gunicorn worker *forever*, not merely for a while.
+# Four such requests and every worker is gone: the application stops
+# responding entirely, and nothing in its logs points at the mail server.
+#
+# max_workers=2 is the bound that matters. Unbounded threads would let a
+# broken relay accumulate one stuck thread per reset request; this way two
+# get stuck, the rest of the queue waits, and the web workers stay free
+# either way -- which is the whole point.
+_MAIL_POOL = ThreadPoolExecutor(max_workers=2, thread_name_prefix="mtc-mail")
+
+# Generous enough for a slow-but-working relay, finite enough that a black
+# hole is not indistinguishable from one.
+_SMTP_TIMEOUT_SECONDS = 20
+
+
+class _TimeoutConnection(FlaskMailConnection):
+    """flask-mail's Connection, with a socket timeout.
+
+    flask-mail 0.10 exposes no setting for this and hard-codes the two-argument
+    smtplib constructor. Subclassing is the smallest change that fixes it
+    without reimplementing message construction or vendoring the library --
+    and without touching socket.setdefaulttimeout(), which is process-global
+    and would silently apply to every other socket the application opens.
+    """
+
+    def configure_host(self):
+        import smtplib
+
+        if self.mail.use_ssl:
+            host = smtplib.SMTP_SSL(
+                self.mail.server, self.mail.port, timeout=_SMTP_TIMEOUT_SECONDS
+            )
+        else:
+            host = smtplib.SMTP(
+                self.mail.server, self.mail.port, timeout=_SMTP_TIMEOUT_SECONDS
+            )
+        # `or 0`: upstream writes int(self.mail.debug), which raises when
+        # MAIL_DEBUG was never configured. Costs nothing to be safe here.
+        host.set_debuglevel(int(self.mail.debug or 0))
+        if self.mail.use_tls:
+            host.starttls()
+        if self.mail.username and self.mail.password:
+            host.login(self.mail.username, self.mail.password)
+        return host
+
+
+def _deliver(app, to_email: str, message) -> bool:
+    """Runs on the pool. Owns its own app context -- the request's is gone."""
+    with app.app_context():
+        try:
+            with _TimeoutConnection(mail) as connection:
+                connection.send(message)
+            app.logger.info("[ForgotPassword] Reset email delivered to %s", to_email)
+            return True
+        except Exception as e:  # noqa: BLE001 -- a broken relay must not kill the pool thread
+            app.logger.error(
+                "[ForgotPassword] SMTP send failed for %s: %s: %s",
+                to_email,
+                type(e).__name__,
+                e,
+            )
+            return False
+
+
 def send_reset_email(to_email: str, reset_url: str) -> bool:
-    """Returns True on send success, False on failure (never raises -- a
-    broken SMTP config should log loudly, not 500 the request)."""
+    """Queue a reset email. True means accepted for delivery, not delivered.
+
+    That distinction is deliberate and costs the caller nothing:
+    api_forgot_password already replies with the same generic message whether
+    or not delivery succeeds, precisely so that submitting an address cannot
+    reveal whether it has an account. Delivery failures go to the log, which
+    is where the old return value's only real consumer sent them anyway.
+    """
     from flask_mail import Message
 
     try:
@@ -188,10 +311,20 @@ def send_reset_email(to_email: str, reset_url: str) -> bool:
                 "This link expires in 1 hour. If you didn't request this, you can ignore this email."
             ),
         )
-        mail.send(msg)
+        app = current_app._get_current_object()
+        if app.config.get("MAIL_SEND_SYNCHRONOUSLY"):
+            # Lets a test assert on what was sent rather than on thread
+            # scheduling.
+            return _deliver(app, to_email, msg)
+        _MAIL_POOL.submit(_deliver, app, to_email, msg)
         return True
-    except Exception as e:
-        current_app.logger.error(f"[ForgotPassword] SMTP send failed for {to_email}: {type(e).__name__}: {e}")
+    except Exception as e:  # noqa: BLE001 -- never 500 a reset over a mail problem
+        current_app.logger.error(
+            "[ForgotPassword] Could not queue reset email for %s: %s: %s",
+            to_email,
+            type(e).__name__,
+            e,
+        )
         return False
 
 # Sentinel id for the dev/test demo account -- never a real row in `users`,
@@ -366,6 +499,12 @@ def api_login():
                 # later password reset invalidates it (SEC-006). Checked on
                 # every request by load_user().
                 session["cred_fp"] = credential_fingerprint(row["password_hash"])
+                _record_auth(
+                    "login",
+                    activity_service.STATUS_SUCCESS,
+                    user=user_obj,
+                    detail="Password sign-in",
+                )
                 return jsonify({"success": True, "redirect_url": url_for("main.home")})
         except Exception as e:
             current_app.logger.error(f"[AUTH] Password check failed: {e}")
@@ -378,8 +517,27 @@ def api_login():
             user_obj = build_demo_user()
             login_user(user_obj, remember=remember)
             session.permanent = bool(remember)
+            _record_auth(
+                "login",
+                activity_service.STATUS_SUCCESS,
+                user=user_obj,
+                detail="Demo account sign-in",
+            )
             return jsonify({"success": True, "redirect_url": url_for("main.home")})
 
+    # Every way of getting here is a rejected sign-in. Recorded with the
+    # address that was typed and WITHOUT saying whether that address exists --
+    # the row is for the operator reading the log, not the caller, who still
+    # gets the same opaque 401 either way. `user_id` is the real account's id
+    # when the address matched one, so a burst against a single account is
+    # visible as such rather than as a set of unrelated failures.
+    _record_auth(
+        "login",
+        activity_service.STATUS_FAILURE,
+        email=email,
+        user_id_override=(row.get("user_id") if row else None),
+        detail="Invalid credentials",
+    )
     return jsonify({"error": "Invalid credentials"}), 401
 
 
@@ -450,6 +608,16 @@ def api_signup():
             session.permanent = False
             current_app.logger.info(
                 "[Signup] New account %s created awaiting admin approval", email
+            )
+            # cur=, not a second connection: this is inside the INSERT's own
+            # transaction (see activity_service.record's `cur` note), so the
+            # row rolls back with the account if the commit never happens.
+            _record_auth(
+                "signup",
+                activity_service.STATUS_SUCCESS,
+                user=user_obj,
+                detail=f"Self-registered; awaiting approval (role={NEW_ACCOUNT_ROLE})",
+                cur=cur,
             )
             # /erp/pending-approval, not main.home. The account is real and the
             # session is real, but the role grants nothing until an admin acts
@@ -522,6 +690,22 @@ def api_forgot_password():
                 user_exists = cur.fetchone() is not None
         except Exception as e:
             current_app.logger.warning(f"[ForgotPassword] DB lookup failed: {e}")
+
+        # Recorded whether or not the address resolves to an account. The
+        # RESPONSE stays identical either way (that is the anti-enumeration
+        # property this route is built around) -- but the log is read by an
+        # operator who already has the user table, so withholding it there
+        # protects nobody and hides a password-reset flood.
+        _record_auth(
+            "password_reset_requested",
+            activity_service.STATUS_SUCCESS
+            if user_exists
+            else activity_service.STATUS_FAILURE,
+            email=email,
+            detail="Reset link issued"
+            if user_exists
+            else "No resettable account for this address",
+        )
 
         if user_exists:
             token = generate_reset_token(email)
@@ -620,6 +804,15 @@ def api_reset_password():
     current_app.logger.info(
         "[ResetPassword] Password reset for %s; all sessions invalidated", email
     )
+    # After logout_user()/session.clear(), so current_user is gone -- hence
+    # the explicit identity from the UPDATE's RETURNING.
+    _record_auth(
+        "password_reset",
+        activity_service.STATUS_SUCCESS,
+        email=email,
+        user_id_override=updated["user_id"],
+        detail="Password changed via reset link; all sessions invalidated",
+    )
     return jsonify({"success": True, "redirect_url": url_for("auth.login")})
 
 
@@ -717,6 +910,12 @@ def auth_google_callback():
             current_app.logger.info(
                 f"[OAuth] (Test) User {user_obj.email} logged in successfully (new={is_new})"
             )
+            _record_auth(
+                "signup" if is_new else "login",
+                activity_service.STATUS_SUCCESS,
+                user=user_obj,
+                detail="Google sign-in (test mode)",
+            )
             return redirect(url_for("main.home"))
         return "User creation failed", 500
 
@@ -778,6 +977,15 @@ def auth_google_callback():
                 current_app.logger.info(
                     f"[OAuth] User {user_obj.email} logged in successfully (new={is_new})"
                 )
+                # is_new distinguishes "signed in" from "this account came
+                # into existence just now", which for a provider that creates
+                # accounts on first sight is the more important of the two.
+                _record_auth(
+                    "signup" if is_new else "login",
+                    activity_service.STATUS_SUCCESS,
+                    user=user_obj,
+                    detail="Google sign-in",
+                )
                 return redirect(url_for("main.home"))
         return "User email not available or not verified by Google.", 400
 
@@ -817,6 +1025,10 @@ def logout():
     """
     if request.method == "GET":
         return render_template("logout_confirm.html")
+
+    # Before logout_user(): after it, current_user is the anonymous user and
+    # the row would name nobody.
+    _record_auth("logout", activity_service.STATUS_SUCCESS, user=current_user)
 
     logout_user()
     session.clear()

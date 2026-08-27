@@ -88,6 +88,20 @@
 </head>
 <body>
 
+  <!-- Skip link (A11Y-002). The sidebar is 14 tab buttons; without this a
+       keyboard or screen-reader user tabs through all of them on every page
+       to reach the content. Visually hidden until focused, which is the one
+       time it should be visible. -->
+  <a href="#content" class="skip-link">Skip to main content</a>
+
+  <!-- Live region (A11Y-005/A11Y-006). Everything on these tabs happens
+       without a page load -- data arrives, tables re-render, a filter narrows
+       1,600 rows to 3 -- and a screen reader was told none of it. App.Utils.
+       announce() writes here. "polite" so it waits for a pause rather than
+       interrupting; aria-atomic so the whole sentence is read, not the diff. -->
+  <div id="a11y-announcer" class="visually-hidden" role="status"
+       aria-live="polite" aria-atomic="true"></div>
+
   <!-- Global datalists, populated by JS (App.Item.populateDatalists() etc.) -->
   <datalist id="itemList" style="display: none;"></datalist>
   <datalist id="vendorList" style="display: none;"></datalist>
@@ -419,6 +433,11 @@
               <i class="bi bi-people-fill me-2"></i>Manage Users
             </button>
           </li>
+          <li>
+            <button type="button" class="dropdown-item" data-action="show-tab" data-tab="activityTab">
+              <i class="bi bi-clock-history me-2"></i>Activity Log
+            </button>
+          </li>
           {% endif %}
           <li><hr class="dropdown-divider"></li>
           <li><a class="dropdown-item text-danger" href="{{ url_for('auth.logout') }}"><i class="bi bi-box-arrow-right me-2"></i>Sign Out</a></li>
@@ -464,11 +483,21 @@
               <i class="bi bi-people-fill"></i><span class="nav-label">Users</span>
             </button>
           </li>
+          <li class="nav-item" role="presentation">
+            <button class="nav-link fw-500" id="btn-activityTab" type="button" role="tab" aria-controls="activityTab" aria-selected="false" data-action="show-tab" data-tab="activityTab" title="Activity Log">
+              <i class="bi bi-clock-history"></i><span class="nav-label">Activity Log</span>
+            </button>
+          </li>
           {% endif %}
         </ul>
       </aside>
 
-      <div id="content" class="tab-content-wrapper">
+      <!-- <main> (A11Y-002): the page had no landmark at all, so "jump to
+           main content" had nothing to jump to and every screen-reader user
+           navigated the whole document linearly. tabindex="-1" makes it a
+           valid target for the skip link above without putting it in the tab
+           order itself. -->
+      <main id="content" class="tab-content-wrapper" tabindex="-1">
 
         {% include "erp/partials/dashboard.html" %}
         {% include "erp/partials/vendors.html" %}
@@ -484,6 +513,7 @@
         {% include "erp/partials/dispatch.html" %}
         {% if current_user.is_admin %}
         {% include "erp/partials/users.html" %}
+        {% include "erp/partials/activity.html" %}
         {% endif %}
         <!-- Tab-content partials above are always included regardless of a
              custom role's permitted_tabs -- some (stock.html) also carry
@@ -496,7 +526,7 @@
              sitting inert in the DOM costs nothing a determined user
              couldn't already see via view-source anyway. -->
 
-      </div>
+      </main>
     </div>
   </div>
 
@@ -564,6 +594,7 @@
   <script src="{{ url_for('static', filename='erp/dispatch-plan.js') }}?v=6"></script>
   {% if current_user.is_admin %}
   <script src="{{ url_for('static', filename='erp/users.js') }}"></script>
+  <script src="{{ url_for('static', filename='erp/activity.js') }}"></script>
   {% endif %}
 
 </body>

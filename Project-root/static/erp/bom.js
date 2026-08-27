@@ -151,7 +151,7 @@ App.BOM = {
     }
 
     const tbody = document.getElementById('bomTableBody');
-    if (tbody) tbody.innerHTML = '<tr><td colspan="7" class="text-center p-4">Loading BOM Database...</td></tr>';
+    if (tbody) App.Utils.tableLoading(tbody, 7, 'Loading BOM Database...');
 
     try {
       const response = await Api.call('getBOMData', token);
@@ -159,9 +159,11 @@ App.BOM = {
         if (response.message && response.message.indexOf('password-protected') !== -1) {
           this.clearToken();
           this.promptForAccess();
-          return;
+          App.Utils.tableError(tbody, response.message);
+        return;
         }
         App.Utils.showToast(response.message, true);
+        App.Utils.tableError(tbody, response.message);
         return;
       }
       App.State.globalBOMs = response.data;
@@ -174,6 +176,7 @@ App.BOM = {
         App.Production.populateProductSelect();
       }
     } catch (err) {
+      App.Utils.tableError(tbody, err && err.message);
       App.Utils.showToast(err.message || 'Failed to load BOM database', true);
     }
   },

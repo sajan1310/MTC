@@ -729,6 +729,45 @@ pytest tests/test_smoke.py -v
 
 ## Monitoring & Maintenance
 
+### Metrics (`/metrics`)
+
+Prometheus exposition format. **Not public**: it answers an admin session or a
+bearer token, and returns 404 to anything else so a prober cannot confirm it
+exists.
+
+```bash
+# .env
+METRICS_TOKEN=$(python -c "import secrets; print(secrets.token_urlsafe(32))")
+```
+
+```yaml
+# prometheus.yml
+scrape_configs:
+  - job_name: mtc
+    authorization:
+      credentials: <METRICS_TOKEN>
+    static_configs:
+      - targets: ['mtc.internal:8000']
+```
+
+Worth alerting on:
+
+| Metric | Why it matters |
+|---|---|
+| `mtc_database_up == 0` | the application cannot reach Postgres |
+| `mtc_db_connections{state="idle in transaction"}` rising | a leaked transaction holding locks |
+| `mtc_db_connections` approaching `mtc_db_max_connections` | pool exhaustion — this pool raises `PoolError`, it does not queue |
+| `mtc_mutations_in_progress` rising | requests dying mid-mutation |
+| `mtc_warehouse_pool_negative_rows` increasing | new over-allocation despite the DATA-002 locks |
+| `mtc_admin_accounts` changing unexpectedly | an admin created outside the approval flow |
+
+**There are no request-rate metrics, deliberately.** With 4 workers behind one
+port, a scrape reaches one worker, so a per-worker counter would report a
+random fraction of traffic. Use the reverse proxy's access log, which sees
+every request exactly once. Adding real request metrics means configuring
+`prometheus_client` multiprocess mode — a dependency, a shared writable
+directory, `PROMETHEUS_MULTIPROC_DIR`, and a gunicorn `child_exit` hook.
+
 ### Application Logs
 
 **Railway:**

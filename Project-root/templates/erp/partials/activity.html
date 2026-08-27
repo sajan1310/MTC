@@ -1,0 +1,117 @@
+<!-- Activity Log -- admin-only tab (AUDIT-001). Gated the same three ways
+     usersTab is: this partial is only included by index.html when
+     current_user.is_admin, the sidebar entry is hidden the same way, and
+     getActivityLog carries roles=frozenset({"admin"}) so the server refuses
+     it regardless of what the client shows -- see
+     app/erp/services/activity_service.py.
+
+     Note the refusal is itself logged, so a non-admin poking at this method
+     directly turns up in the very table they were trying to read. -->
+
+<div id="activityTab" class="tab-content table-container" role="tabpanel" aria-labelledby="btn-activityTab">
+
+  <div class="d-flex justify-content-between flex-wrap gap-2 mb-3">
+    <div>
+      <h5 class="fw-bold mb-1">Activity Log</h5>
+      <p class="text-muted small mb-0">
+        Every save, every sign-in, and every refused action. Reads aren't
+        recorded. Kept for 90 days.
+      </p>
+    </div>
+    <div class="d-flex gap-2 align-items-start">
+      <button type="button" class="btn btn-outline-secondary" data-action="activity-refresh">
+        <i class="bi bi-arrow-clockwise me-1"></i>Refresh
+      </button>
+    </div>
+  </div>
+
+  <div class="row g-2 mb-3">
+    <div class="col-12 col-md-4 col-lg-3">
+      <label class="form-label small fw-bold mb-1" for="activitySearch">Search</label>
+      <input type="text"
+             id="activitySearch"
+             class="form-control"
+             placeholder="Email or message…"
+             autocomplete="off"
+             oninput="App.Utils.debouncedFilter(this, () => App.Activity.applyFilters())">
+    </div>
+    <div class="col-6 col-md-4 col-lg-2">
+      <label class="form-label small fw-bold mb-1" for="activityCategory">Category</label>
+      <select id="activityCategory" class="form-select" onchange="App.Activity.applyFilters()">
+        <option value="">All</option>
+        <option value="rpc">Actions</option>
+        <option value="auth">Sign-in / account</option>
+      </select>
+    </div>
+    <div class="col-6 col-md-4 col-lg-2">
+      <label class="form-label small fw-bold mb-1" for="activityStatus">Outcome</label>
+      <select id="activityStatus" class="form-select" onchange="App.Activity.applyFilters()">
+        <option value="">All</option>
+        <option value="success">Succeeded</option>
+        <option value="failure">Rejected</option>
+        <option value="denied">Not authorized</option>
+        <option value="error">Server error</option>
+      </select>
+    </div>
+    <div class="col-6 col-md-4 col-lg-2">
+      <label class="form-label small fw-bold mb-1" for="activityFrom">From</label>
+      <input type="date" id="activityFrom" class="form-control" onchange="App.Activity.applyFilters()">
+    </div>
+    <div class="col-6 col-md-4 col-lg-2">
+      <label class="form-label small fw-bold mb-1" for="activityTo">To</label>
+      <input type="date" id="activityTo" class="form-control" onchange="App.Activity.applyFilters()">
+    </div>
+    <div class="col-12 col-lg-1 d-flex align-items-end">
+      <button type="button" class="btn btn-outline-secondary w-100" data-action="activity-clear" title="Clear all filters">
+        Clear
+      </button>
+    </div>
+  </div>
+
+  <div class="table-responsive">
+    <table class="table table-hover table-bordered align-middle mb-0">
+      <caption class="visually-hidden">
+        Recorded user activity: when, who, what action, the outcome, and where from
+      </caption>
+      <thead class="table-dark">
+        <tr>
+          <th scope="col" style="width: 15%;">When</th>
+          <th scope="col" style="width: 18%;">Who</th>
+          <th scope="col" style="width: 20%;">Action</th>
+          <th scope="col" style="width: 11%; text-align: center;">Outcome</th>
+          <th scope="col">Details</th>
+          <th scope="col" style="width: 10%;">From</th>
+        </tr>
+      </thead>
+      <tbody id="activityTableBody">
+        <tr><td colspan="6" class="text-center p-4">Loading activity…</td></tr>
+      </tbody>
+    </table>
+  </div>
+
+  <div id="activityPagination" class="d-flex justify-content-between align-items-center flex-wrap gap-2 mt-3"></div>
+
+  <div id="activityEmptyState" class="text-center p-5 border rounded-3 bg-white shadow-sm mt-3" style="display: none;">
+    <i class="bi bi-clipboard-x fs-1 text-muted d-block mb-3"></i>
+    <h5 class="fw-bold text-dark">Nothing recorded for these filters</h5>
+    <p class="text-muted mb-0">Try widening the date range, or clearing the filters.</p>
+  </div>
+</div>
+
+<!-- One row's full record. The table shows the readable summary; this is
+     where the argument payload, request id and user agent live -- the fields
+     you want when reconstructing an incident, and only then. -->
+<div class="modal fade" id="activityDetailModal" tabindex="-1" aria-hidden="true">
+  <div class="modal-dialog modal-lg modal-dialog-centered modal-dialog-scrollable">
+    <div class="modal-content shadow-lg">
+      <div class="modal-header bg-dark text-white">
+        <h5 class="modal-title fw-bold">Activity Detail</h5>
+        <button type="button" class="btn-close btn-close-white" data-bs-dismiss="modal" aria-label="Close"></button>
+      </div>
+      <div class="modal-body bg-light" id="activityDetailBody"></div>
+      <div class="modal-footer">
+        <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Close</button>
+      </div>
+    </div>
+  </div>
+</div>

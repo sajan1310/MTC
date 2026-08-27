@@ -6,6 +6,7 @@ functions into app.erp.registry.RPC_METHODS.
 
 from __future__ import annotations
 
+from . import activity_service  # noqa: F401
 from . import system_service  # noqa: F401
 from . import company_settings_service  # noqa: F401
 from . import units_service  # noqa: F401
@@ -34,6 +35,7 @@ from . import roles_service  # noqa: F401
 from . import remarks_service  # noqa: F401
 
 __all__ = [
+    "activity_service",
     "system_service",
     "company_settings_service",
     "units_service",

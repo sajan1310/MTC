@@ -34,7 +34,7 @@ App.Vendor = {
 
   async loadData() {
     const vTbody = document.getElementById('vendorTableBody');
-    if (vTbody) vTbody.innerHTML = '<tr><td colspan="6" class="text-center p-4">Loading Vendor Database...</td></tr>';
+    if (vTbody) App.Utils.tableLoading(vTbody, 6, 'Loading Vendor Database...');
 
     try {
       // renderTable's own per-row "Pending" badge (see calculateLedgerAndPending)
@@ -50,6 +50,7 @@ App.Vendor = {
       ]);
       if (!response.success) {
         App.Utils.showToast(response.message, true);
+        App.Utils.tableError(vTbody, response.message);
         return;
       }
       App.State.globalVendors = response.data;
@@ -61,6 +62,7 @@ App.Vendor = {
         App.PO.populateVendorSelects();
       }
     } catch (err) {
+      App.Utils.tableError(vTbody, err && err.message);
       App.Utils.showToast(err.message || 'Failed to load vendors', true);
     }
   },

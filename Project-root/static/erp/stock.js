@@ -62,12 +62,13 @@ App.Unit = {
 
   async loadData() {
     const tbody = document.getElementById('unitTableBody');
-    if (tbody) tbody.innerHTML = '<tr><td colspan="5" class="text-center p-3">Loading units...</td></tr>';
+    if (tbody) App.Utils.tableLoading(tbody, 5, 'Loading units...');
 
     try {
       const response = await Api.call('getUnitsData');
       if (!response.success) {
         App.Utils.showToast(response.message, true);
+        App.Utils.tableError(tbody, response.message);
         return;
       }
       App.State.globalUnits = response.data || [];
@@ -75,6 +76,7 @@ App.Unit = {
       this.populateDatalists();
       this.renderTable();
     } catch (err) {
+      App.Utils.tableError(tbody, err && err.message);
       App.Utils.showToast(err.message || 'Failed to load units', true);
     }
   },
@@ -245,12 +247,13 @@ App.Color = {
 
   async loadData() {
     const tbody = document.getElementById('colorMasterTableBody');
-    if (tbody) tbody.innerHTML = '<tr><td colspan="4" class="text-center p-3">Loading colors...</td></tr>';
+    if (tbody) App.Utils.tableLoading(tbody, 4, 'Loading colors...');
 
     try {
       const response = await Api.call('getColors');
       if (!response.success) {
         App.Utils.showToast(response.message, true);
+        App.Utils.tableError(tbody, response.message);
         return;
       }
       App.State.globalColors = response.data || [];
@@ -258,6 +261,7 @@ App.Color = {
       this.populateDatalist();
       this.renderTable();
     } catch (err) {
+      App.Utils.tableError(tbody, err && err.message);
       App.Utils.showToast(err.message || 'Failed to load colors', true);
     }
   },
@@ -449,12 +453,13 @@ App.Model = {
 
   async loadData() {
     const tbody = document.getElementById('modelMasterTableBody');
-    if (tbody) tbody.innerHTML = '<tr><td colspan="3" class="text-center p-3">Loading models...</td></tr>';
+    if (tbody) App.Utils.tableLoading(tbody, 3, 'Loading models...');
 
     try {
       const response = await Api.call('getModels');
       if (!response.success) {
         App.Utils.showToast(response.message, true);
+        App.Utils.tableError(tbody, response.message);
         return;
       }
       App.State.globalModels = response.data || [];
@@ -468,6 +473,7 @@ App.Model = {
       // until that round lands.
       if (App.Process && App.Process.renderTable) App.Process.renderTable();
     } catch (err) {
+      App.Utils.tableError(tbody, err && err.message);
       App.Utils.showToast(err.message || 'Failed to load models', true);
     }
   },
@@ -621,12 +627,13 @@ App.ProcessType = {
 
   async loadData() {
     const tbody = document.getElementById('processTypeMasterTableBody');
-    if (tbody) tbody.innerHTML = '<tr><td colspan="3" class="text-center p-3">Loading process types...</td></tr>';
+    if (tbody) App.Utils.tableLoading(tbody, 3, 'Loading process types...');
 
     try {
       const response = await Api.call('getProcessTypes');
       if (!response.success) {
         App.Utils.showToast(response.message, true);
+        App.Utils.tableError(tbody, response.message);
         return;
       }
       App.State.globalProcessTypes = response.data || [];
@@ -635,6 +642,7 @@ App.ProcessType = {
       this.renderTable();
       if (App.Process && App.Process.renderTable) App.Process.renderTable();
     } catch (err) {
+      App.Utils.tableError(tbody, err && err.message);
       App.Utils.showToast(err.message || 'Failed to load process types', true);
     }
   },
@@ -821,7 +829,7 @@ App.Stock = {
   async loadData() {
     const tbody = document.getElementById('stockTableBody');
     if (tbody) {
-      tbody.innerHTML = '<tr><td colspan="9" class="text-center p-4">Loading Stock Database…</td></tr>';
+      App.Utils.tableLoading(tbody, 9, 'Loading Stock Database…');
     }
 
     try {
@@ -835,6 +843,8 @@ App.Stock = {
       const res = await Api.call('getStockData');
       if (!res?.success) {
         App.Utils.showToast(res?.message || 'Failed to load stock data.', true);
+        App.Utils.tableError(tbody, res?.message || 'Failed to load stock data.',
+          () => this.loadData());
         return;
       }
 
@@ -858,6 +868,7 @@ App.Stock = {
       }
     } catch (err) {
       App.Utils.showToast(err.message || 'Failed to load stock data.', true);
+      App.Utils.tableError(tbody, err && err.message, () => this.loadData());
     }
   },
 
@@ -925,7 +936,7 @@ App.Stock = {
   async loadWarehousePoolData() {
     this.initGroupDropdowns();
     const tbody = document.getElementById('warehousePoolTableBody');
-    if (tbody) tbody.innerHTML = '<tr><td colspan="11" class="text-center p-4">Loading Warehouse Pool...</td></tr>';
+    if (tbody) App.Utils.tableLoading(tbody, 11, 'Loading Warehouse Pool...');
 
     try {
       const [poolRes, colorsRes] = await Promise.all([
@@ -941,6 +952,7 @@ App.Stock = {
       App.State.selectedWarehousePool = [];
       this.renderWarehousePoolTable();
     } catch (err) {
+      App.Utils.tableError(tbody, err && err.message);
       App.Utils.showToast(err.message || 'Failed to load Warehouse Pool data.', true);
     }
   },
@@ -1738,13 +1750,14 @@ App.Stock = {
 
   async loadWarehouseOpeningData() {
     const tbody = document.getElementById('warehouseOpeningTableBody');
-    if (tbody) tbody.innerHTML = '<tr><td colspan="8" class="text-center p-3">Loading...</td></tr>';
+    if (tbody) App.Utils.tableLoading(tbody, 8, 'Loading...');
 
     try {
       const res = await Api.call('getWarehousePoolOpeningData');
       App.State.globalWarehousePoolOpening = res?.success ? (res.data || []) : [];
       this.renderWarehouseOpeningTable();
     } catch (err) {
+      App.Utils.tableError(tbody, err && err.message);
       if (tbody) tbody.innerHTML = '<tr><td colspan="8" class="text-center p-3 text-danger">Failed to load opening stock.</td></tr>';
     }
   },

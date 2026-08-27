@@ -118,6 +118,13 @@ class Config:
     # writable only because the container ran as root. It no longer does
     # (DEPLOY-001), so the image sets this explicitly.
     BACKUP_DIR = os.getenv("BACKUP_DIR")
+
+    # Bearer token for /metrics (OBS-002). Unset means the endpoint is
+    # reachable only by an admin session -- which is the safe default, since
+    # the body names internal tables and counts and an unauthenticated
+    # endpoint reporting whether the mutation backlog is growing is a
+    # reconnaissance gift. Set this to let a scraper in without a login.
+    METRICS_TOKEN = os.getenv("METRICS_TOKEN")
     # Example: 'redis://:password@localhost:6379/0?max_connections=50&decode_responses=True'
 
     # Outbound email (password-reset links). MAIL_SERVER unset means "no SMTP

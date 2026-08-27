@@ -60,6 +60,11 @@ function installGlobals() {
       setFormButtonsForMode: () => {},
       renderPagination: () => {},
       showToast: () => {},
+      // Table load/error states (UX-001). Real implementations live in
+      // core.js, which this suite does not load; the loaders under test call
+      // them, so the stub has to carry them or every load throws.
+      tableLoading: () => {},
+      tableError: () => {},
       confirmAction: (_msg, onConfirm) => onConfirm(),
     },
     Selection: {

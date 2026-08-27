@@ -12,6 +12,7 @@ envelope stored from its first execution instead of re-running the method
 
 from __future__ import annotations
 
+import time
 import uuid
 
 from flask import current_app, jsonify, request
@@ -22,7 +23,8 @@ from app.middleware.request_id import get_request_id
 from . import erp_rpc_bp
 from .envelope import build_response
 from . import mutations
-from .registry import RPC_METHODS
+from .registry import RPC_METHODS, RpcSpec
+from .services import activity_service
 from .services.roles_service import TAB_BY_SERVICE_MODULE, get_effective_tab_level
 
 # The service layer's own vocabulary for "expected, user-correctable"
@@ -31,6 +33,33 @@ from .services.roles_service import TAB_BY_SERVICE_MODULE, get_effective_tab_lev
 # Anything else reaching this handler is a bug, not a validation message,
 # and must not be shown to the user verbatim -- see the except block below.
 _DOMAIN_ERROR_TYPES = (ValueError, RuntimeError)
+
+
+def _deny(spec: RpcSpec, reason: str, message: str):
+    """Refuse a call with 403, and record the refusal (AUDIT-001).
+
+    Every one of these is a user asking for something their role does not
+    allow. Individually that is usually a stale browser tab holding a UI a
+    demotion has since taken away; in a pattern it is the only signal this
+    application has that someone is probing what they can reach. Neither is
+    visible if the refusal only ever produces an HTTP status.
+
+    Recorded for reads as well as mutations -- unlike the success path below,
+    which covers mutations only -- because a refused read is exactly as
+    interesting as a refused write and there is no volume problem: a refusal
+    is rare by construction.
+    """
+    try:
+        activity_service.record(
+            category=activity_service.CATEGORY_RPC,
+            action=spec.name,
+            status=activity_service.STATUS_DENIED,
+            entity_type=spec.module or None,
+            detail=reason,
+        )
+    except Exception:  # noqa: BLE001 -- a refusal must still be a 403, not a 500
+        current_app.logger.warning("Activity logging failed for denied %s", spec.name)
+    return jsonify(build_response(False, None, message)), 403
 
 
 @erp_rpc_bp.route("/rpc/<method>", methods=["POST"])
@@ -50,16 +79,21 @@ def call(method: str):
     # account blocked", not "does it have permission X"). The only way out
     # is an admin's updateUserRole (users_service.py).
     if getattr(current_user, "role", None) == "pending_approval":
-        return jsonify(build_response(
-            False, None,
+        return _deny(
+            spec,
+            "Account is pending admin approval",
             "Your account is awaiting admin approval. You'll get access once an admin approves it.",
-        )), 403
+        )
 
     # Authorization (see RpcSpec.roles in registry.py). spec.roles is None
     # for most methods -- current_user is guaranteed authenticated here by
     # @login_required.
     if spec.roles is not None and not any(current_user.has_role(r) for r in spec.roles):
-        return jsonify(build_response(False, None, f"Not authorized to call {method}.")), 403
+        return _deny(
+            spec,
+            f"Role '{getattr(current_user, 'role', None)}' is not one of {sorted(spec.roles)}",
+            f"Not authorized to call {method}.",
+        )
 
     # Custom-role per-tab permission gate (see roles_service.py). Only ever
     # runs for a role outside the 4 built-in ones -- user/admin/super_admin
@@ -75,13 +109,21 @@ def call(method: str):
         if tab is not None:
             level = get_effective_tab_level(current_user.role, tab)
             if level is None:
-                return jsonify(build_response(False, None, f"Not authorized to call {method}.")), 403
+                return _deny(
+                    spec,
+                    f"Custom role '{current_user.role}' has no grant on tab '{tab}'",
+                    f"Not authorized to call {method}.",
+                )
             if spec.mutation and level != "editor":
                 # Viewer can't mutate at all; Commenter's one narrow
                 # exception (updateEntityRemarks) lives in remarks_service.py,
                 # outside TAB_BY_SERVICE_MODULE, so it never reaches this
                 # branch in the first place.
-                return jsonify(build_response(False, None, f"Not authorized to call {method}.")), 403
+                return _deny(
+                    spec,
+                    f"Custom role '{current_user.role}' is '{level}', not 'editor', on tab '{tab}'",
+                    f"Not authorized to call {method}.",
+                )
 
     mutation_id = request.headers.get("X-Mutation-Id")
     if spec.mutation:
@@ -122,6 +164,12 @@ def call(method: str):
     # finally block drops the claim, so a legitimate retry is not made to wait
     # out STALE_CLAIM_SECONDS for nothing.
     claim_settled = False
+    # AUDIT-001 bookkeeping. `unhandled` distinguishes "the user was told no"
+    # (a domain error -- expected, their input) from "this is broken" (any
+    # other exception -- a bug), which the {success:false} envelope alone
+    # cannot: both produce the same shape on the wire.
+    unhandled = False
+    started_at = time.perf_counter()
     try:
         try:
             result = spec.func(*args)
@@ -138,6 +186,7 @@ def call(method: str):
             # with no server-side trace of why. Log with enough context to find
             # it, tell the user only that something went wrong plus a reference
             # id they can quote to support.
+            unhandled = True
             request_id = get_request_id()
             current_app.logger.exception(
                 "RPC method %s failed unexpectedly (user=%s, request_id=%s)",
@@ -166,5 +215,43 @@ def call(method: str):
                 current_app.logger.warning(
                     "Failed to release mutation claim %s after an error", mutation_id
                 )
+
+    # The activity log (AUDIT-001). Mutations only: reads are polled on a
+    # timer by every open tab and logging them would bury the actions that
+    # matter. Written AFTER mutations.complete() so the idempotency envelope
+    # -- the thing a retry depends on -- is durable first, and outside the
+    # try/finally above so it can play no part in claim handling.
+    #
+    # A replayed X-Mutation-Id returns from the cache further up and so
+    # records nothing, which is correct: the row describes the action, and the
+    # action happened once.
+    #
+    # The try/except is not redundant with record()'s own: record() can only
+    # guard what happens INSIDE it, and by this point the mutation has already
+    # committed. Summarising the arguments, or anything else evaluated on the
+    # way in, would otherwise turn a saved bill into a 500 the user sees and
+    # retries -- the exact failure this whole feature must never cause.
+    if spec.mutation:
+        try:
+            activity_service.record(
+                category=activity_service.CATEGORY_RPC,
+                action=method,
+                status=(
+                    activity_service.STATUS_ERROR
+                    if unhandled
+                    else activity_service.STATUS_SUCCESS
+                    if isinstance(result, dict) and result.get("success")
+                    else activity_service.STATUS_FAILURE
+                ),
+                entity_type=spec.module or None,
+                detail=result.get("message") if isinstance(result, dict) else None,
+                args=activity_service.describe_args(spec.func, args),
+                duration_ms=(time.perf_counter() - started_at) * 1000,
+            )
+        except Exception:  # noqa: BLE001 -- see above
+            current_app.logger.warning(
+                "Activity logging failed for %s -- the mutation itself succeeded",
+                method,
+            )
 
     return jsonify(result), 200

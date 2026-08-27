@@ -29,7 +29,7 @@
       <div class="d-flex w-50 align-items-center gap-2">
         <input type="text" id="searchProduction" class="form-control"
           placeholder="Search Lot #, Date, Product, Assigned By/To, or Status..." aria-label="Search production log" autocomplete="off"
-          onkeyup="App.Production.filterData(this.value)">
+          oninput="App.Utils.debouncedFilter(this, () => App.Production.filterData(this.value))">
         <select id="productionSortBy" class="form-select" style="max-width: 220px;" aria-label="Sort Production Logs"
           onchange="App.Production.sortBy(this.value)">
           <option value="dateDesc">Date (Newest first)</option>
@@ -137,7 +137,7 @@
       <div class="d-flex flex-wrap gap-2 align-items-center" style="max-width: 900px;">
         <input type="text" id="searchIssue" class="form-control" style="min-width:220px;"
           placeholder="Search by Issue #, Issued To, Reference, or item…" aria-label="Search issued stock" autocomplete="off"
-          onkeyup="App.Issue.filterData(this.value)">
+          oninput="App.Utils.debouncedFilter(this, () => App.Issue.filterData(this.value))">
         <input type="date" id="issueDateFilter" class="form-control" style="min-width:150px;"
           aria-label="Filter by date" onchange="App.Issue.filterByDate(this.value)">
       </div>
@@ -198,7 +198,7 @@
     <div class="d-flex justify-content-between flex-wrap gap-2 mb-3">
       <input type="text" id="searchProductionAll" class="form-control w-50"
         placeholder="Search across Production Log and Issued Stock…" aria-label="Search all production activity" autocomplete="off"
-        onkeyup="App.Production.filterAllActivity(this.value)">
+        oninput="App.Utils.debouncedFilter(this, () => App.Production.filterAllActivity(this.value))">
     </div>
 
     <div class="table-responsive">

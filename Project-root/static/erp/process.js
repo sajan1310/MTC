@@ -175,12 +175,13 @@ App.Process = {
   async loadData() {
     this.initGroupDropdowns();
     const tbody = document.getElementById('processTableBody');
-    if (tbody) tbody.innerHTML = '<tr><td colspan="11" class="text-center p-4">Loading Processes...</td></tr>';
+    if (tbody) App.Utils.tableLoading(tbody, 11, 'Loading Processes...');
 
     try {
       const response = await Api.call('getProcessData');
       if (!response.success) {
         App.Utils.showToast(response.message, true);
+        App.Utils.tableError(tbody, response.message);
         return;
       }
       App.State.globalProcesses = response.data;
@@ -188,6 +189,7 @@ App.Process = {
       this.updateColumnFilterIcons();
       this.filterData(App.State.processSearchTerm || '');
     } catch (err) {
+      App.Utils.tableError(tbody, err && err.message);
       App.Utils.showToast(err.message || 'Failed to load processes', true);
     }
   },
@@ -1146,7 +1148,7 @@ App.Process = {
   // with every other process under that same Type + Size combination.
   async loadContractorRatesForProcess(processType, size, seq) {
     const tbody = document.getElementById('processContractorRatesBody');
-    if (tbody) tbody.innerHTML = '<tr><td colspan="4" class="text-center p-3">Loading rates...</td></tr>';
+    if (tbody) App.Utils.tableLoading(tbody, 4, 'Loading rates...');
 
     try {
       const res = await Api.call('getContractorRatesData');
@@ -1161,6 +1163,7 @@ App.Process = {
       if (tbody) tbody.innerHTML = '';
       rates.forEach(r => this.addContractorRateRow(r));
     } catch (err) {
+      App.Utils.tableError(tbody, err && err.message);
       App.Utils.showToast(err.message || 'Failed to load contractor rates', true);
     }
   },

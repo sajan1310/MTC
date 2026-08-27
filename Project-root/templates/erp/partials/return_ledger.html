@@ -16,7 +16,7 @@
                placeholder="Search by Return#, Bill#, Vendor, or Item…"
                autocomplete="off"
                aria-label="Search Returns"
-               onkeyup="App.Return.filterData(this.value)">
+               oninput="App.Utils.debouncedFilter(this, () => App.Return.filterData(this.value))">
         <small class="text-muted" style="display: block; margin-top: 4px;">
           Filter by return number, bill reference, vendor, or item
         </small>
@@ -140,7 +140,7 @@
                placeholder="Search by item, vendor, reason…"
                style="min-width: 220px;"
                autocomplete="off"
-               onkeyup="App.Wastage.filterData(this.value)">
+               oninput="App.Utils.debouncedFilter(this, () => App.Wastage.filterData(this.value))">
         <input type="date"
                id="wastageDateFilter"
                class="form-control form-control-sm"

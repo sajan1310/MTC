@@ -33,7 +33,7 @@
 App.Issue = {
   async loadData() {
     const tbody = document.getElementById('issueTableBody');
-    if (tbody) tbody.innerHTML = '<tr><td colspan="8" class="text-center p-4">Loading Issued Stock…</td></tr>';
+    if (tbody) App.Utils.tableLoading(tbody, 8, 'Loading Issued Stock…');
 
     try {
       const res = await Api.call('getIssueData');
@@ -49,6 +49,7 @@ App.Issue = {
       App.State.selectedIssues = [];
       this.renderTable();
     } catch (err) {
+      App.Utils.tableError(tbody, err && err.message);
       App.Utils.showToast(err.message || 'Failed to load issued stock records.', true);
     }
   },

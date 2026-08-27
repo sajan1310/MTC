@@ -8,7 +8,7 @@
 <div id="vendorMaster" class="tab-content table-container" role="tabpanel" aria-labelledby="btn-vendorMaster">
   <div class="d-flex justify-content-between flex-wrap gap-2 mb-3">
     <input type="text" id="searchVendorMaster" class="form-control w-50"
-      placeholder="Search Vendors by Name, Contact, or GSTIN..." aria-label="Search vendors" autocomplete="off" onkeyup="App.Vendor.filterData(this.value)">
+      placeholder="Search Vendors by Name, Contact, or GSTIN..." aria-label="Search vendors" autocomplete="off" oninput="App.Utils.debouncedFilter(this, () => App.Vendor.filterData(this.value))">
     <div class="d-flex gap-2 flex-wrap justify-content-end">
       <button class="btn btn-outline-dark fw-bold shadow-sm d-none" id="btnBulkPrintVendors" type="button"
         onclick="App.Vendor.bulkPrint()" style="white-space: nowrap;">

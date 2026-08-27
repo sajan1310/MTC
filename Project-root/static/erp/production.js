@@ -350,7 +350,7 @@ App.Production = {
 
   async loadData() {
     const tbody = document.getElementById('productionTableBody');
-    if (tbody) tbody.innerHTML = '<tr><td colspan="10" class="text-center p-4">Loading Production Logs...</td></tr>';
+    if (tbody) App.Utils.tableLoading(tbody, 10, 'Loading Production Logs...');
 
     try {
       // Items Master is needed for more than the item pickers: component
@@ -376,6 +376,7 @@ App.Production = {
       ]);
       if (!response.success) {
         App.Utils.showToast(response.message, true);
+        App.Utils.tableError(tbody, response.message);
         return;
       }
       App.State.globalProduction = response.data;
@@ -386,6 +387,7 @@ App.Production = {
       this.filterData(App.State.productionSearchTerm || '');
       this.renderAllActivity();
     } catch (err) {
+      App.Utils.tableError(tbody, err && err.message);
       App.Utils.showToast(err.message || 'Failed to load production logs', true);
     }
   },

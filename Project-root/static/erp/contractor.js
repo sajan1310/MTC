@@ -29,7 +29,7 @@
 App.Contractor = {
   async loadData() {
     const tbody = document.getElementById('contractorTableBody');
-    if (tbody) tbody.innerHTML = '<tr><td colspan="5" class="text-center p-4">Loading Contractors...</td></tr>';
+    if (tbody) App.Utils.tableLoading(tbody, 5, 'Loading Contractors...');
 
     try {
       const [, contractorsRes, ledgerRes] = await Promise.all([
@@ -40,6 +40,7 @@ App.Contractor = {
 
       if (!contractorsRes.success) {
         App.Utils.showToast(contractorsRes.message, true);
+        App.Utils.tableError(tbody, contractorsRes.message);
         return;
       }
 
@@ -49,6 +50,7 @@ App.Contractor = {
       App.State.selectedContractors = [];
       this.renderTable();
     } catch (err) {
+      App.Utils.tableError(tbody, err && err.message);
       App.Utils.showToast(err.message || 'Failed to load contractors', true);
     }
   },
@@ -260,7 +262,7 @@ App.Contractor = {
 
   async loadRateCard(contractorName) {
     const tbody = document.getElementById('contractorRatesBody');
-    if (tbody) tbody.innerHTML = '<tr><td colspan="6" class="text-center p-3">Loading rate card...</td></tr>';
+    if (tbody) App.Utils.tableLoading(tbody, 6, 'Loading rate card...');
 
     try {
       const res = await Api.call('getContractorRatesData', contractorName);
@@ -275,6 +277,7 @@ App.Contractor = {
       tbody.innerHTML = rates.map(r => this.renderRateRow(r)).join('');
       this.updateRatesBulkButton();
     } catch (err) {
+      App.Utils.tableError(tbody, err && err.message);
       App.Utils.showToast(err.message || 'Failed to load rate card', true);
     }
   },
@@ -461,7 +464,7 @@ App.Contractor = {
 
   async loadServiceCharges(contractorName) {
     const tbody = document.getElementById('contractorServiceChargesBody');
-    if (tbody) tbody.innerHTML = '<tr><td colspan="5" class="text-center p-3">Loading extra charges...</td></tr>';
+    if (tbody) App.Utils.tableLoading(tbody, 5, 'Loading extra charges...');
 
     try {
       const res = await Api.call('getContractorServiceChargesData', contractorName);
@@ -476,6 +479,7 @@ App.Contractor = {
       tbody.innerHTML = charges.map(c => this.renderServiceChargeRow(c)).join('');
       this.updateServiceChargesBulkButton();
     } catch (err) {
+      App.Utils.tableError(tbody, err && err.message);
       App.Utils.showToast(err.message || 'Failed to load extra charges', true);
     }
   },
@@ -635,7 +639,7 @@ App.Contractor = {
 
   async renderLedgerTab(contractorName) {
     const tbody = document.getElementById('contractorLedgerBody');
-    if (tbody) tbody.innerHTML = '<tr><td colspan="8" class="text-center p-3">Loading ledger...</td></tr>';
+    if (tbody) App.Utils.tableLoading(tbody, 8, 'Loading ledger...');
 
     App.State.currentAccountLedgerContractor = contractorName;
     document.getElementById('paymentFormDate').value = todayIso();
@@ -647,6 +651,7 @@ App.Contractor = {
       const res = await Api.call('getContractorAccountLedger', contractorName);
       if (!res.success) {
         App.Utils.showToast(res.message, true);
+        App.Utils.tableError(tbody, res.message);
         return;
       }
 
@@ -691,6 +696,7 @@ App.Contractor = {
       }).join('');
       this.updatePaymentsBulkButton();
     } catch (err) {
+      App.Utils.tableError(tbody, err && err.message);
       App.Utils.showToast(err.message || 'Failed to load account ledger', true);
     }
   },

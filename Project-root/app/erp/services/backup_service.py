@@ -440,6 +440,23 @@ def _run_scheduled_backup_safely() -> None:
                 except Exception:
                     logger.exception("[backup_service] Mutation pruning failed")
 
+                # Same reasoning for the activity log (AUDIT-001): it gains a
+                # row per mutation and per auth event and nothing else deletes
+                # from it, so without this it is a disk outage on a schedule.
+                # Separately guarded again -- one prune failing must not skip
+                # the other or mark the backup failed.
+                try:
+                    from .activity_service import prune_old_activity
+
+                    removed = prune_old_activity()
+                    if removed:
+                        logger.info(
+                            "[backup_service] Pruned %d expired activity log row(s)",
+                            removed,
+                        )
+                except Exception:
+                    logger.exception("[backup_service] Activity log pruning failed")
+
             # Release the advisory lock explicitly
             cur.execute("SELECT pg_advisory_unlock(%s)", (_BACKUP_LOCK_KEY,))
             lock_acquired = False

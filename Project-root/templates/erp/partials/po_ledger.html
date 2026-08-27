@@ -33,7 +33,7 @@
                placeholder="Search by Party, PO#, or Item…"
                autocomplete="off"
                aria-label="Search Purchase Orders"
-               onkeyup="App.PO.filterData(this.value)">
+               oninput="App.Utils.debouncedFilter(this, () => App.PO.filterData(this.value))">
         <small class="text-muted" style="display: block; margin-top: 4px;">
           Filter by vendor name, PO number, or item
         </small>
@@ -226,7 +226,7 @@
       </div>
       <div class="modal-body bg-light">
         <div class="d-flex w-50 align-items-center mb-3">
-          <input type="text" id="searchPendingPOs" class="form-control" placeholder="Search PO #, Vendor, or Item..." aria-label="Search pending purchase orders" autocomplete="off" onkeyup="App.PO.filterPendingPOs(this.value)">
+          <input type="text" id="searchPendingPOs" class="form-control" placeholder="Search PO #, Vendor, or Item..." aria-label="Search pending purchase orders" autocomplete="off" oninput="App.Utils.debouncedFilter(this, () => App.PO.filterPendingPOs(this.value))">
         </div>
         <div class="table-responsive">
           <table class="table table-bordered bg-white shadow-sm table-hover mb-0">

@@ -90,18 +90,20 @@ App.Dispatch = {
   // ── Ready to Dispatch ──────────────────────────────────────
   async loadReadyData() {
     const tbody = document.getElementById('readyToDispatchTableBody');
-    if (tbody) tbody.innerHTML = '<tr><td colspan="6" class="text-center p-4">Loading Ready to Dispatch Data...</td></tr>';
+    if (tbody) App.Utils.tableLoading(tbody, 6, 'Loading Ready to Dispatch Data...');
 
     try {
       const response = await Api.call('getReadyToDispatchData');
       if (!response.success) {
         App.Utils.showToast(response.message, true);
+        App.Utils.tableError(tbody, response.message);
         return;
       }
       App.State.globalReadyToDispatch = response.data;
       App.State.filteredReadyToDispatch = response.data;
       this.renderReadyTable();
     } catch (err) {
+      App.Utils.tableError(tbody, err && err.message);
       App.Utils.showToast(err.message || 'Failed to load Ready to Dispatch data', true);
     }
   },
@@ -195,12 +197,13 @@ App.Dispatch = {
   // ── Dispatched Goods ───────────────────────────────────────
   async loadDispatchData() {
     const tbody = document.getElementById('dispatchTableBody');
-    if (tbody) tbody.innerHTML = '<tr><td colspan="11" class="text-center p-4">Loading Dispatched Goods...</td></tr>';
+    if (tbody) App.Utils.tableLoading(tbody, 11, 'Loading Dispatched Goods...');
 
     try {
       const response = await Api.call('getDispatchData');
       if (!response.success) {
         App.Utils.showToast(response.message, true);
+        App.Utils.tableError(tbody, response.message);
         return;
       }
       // Flat, one entry per line -- see module header. Other modules
@@ -214,6 +217,7 @@ App.Dispatch = {
       this.sortFilteredDispatch();
       this.renderDispatchTable();
     } catch (err) {
+      App.Utils.tableError(tbody, err && err.message);
       App.Utils.showToast(err.message || 'Failed to load dispatch data', true);
     }
   },

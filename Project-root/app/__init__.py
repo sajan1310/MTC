@@ -888,6 +888,16 @@ def create_app(config_name: str | None = None) -> Flask:
     app.register_blueprint(erp_bp)
     app.register_blueprint(erp_rpc_bp, url_prefix="/api/erp")
 
+    # Operational metrics (OBS-002). Exempt from the rate limiter for the
+    # same reason /health is: RATELIMIT_DEFAULT is "200 per day" and a scrape
+    # every 15s is 5,760 requests/day, so the limiter would start returning
+    # 429 within the hour and the metrics would go dark exactly when a
+    # deployment is busy enough to be worth watching.
+    from .metrics import metrics_bp
+
+    app.register_blueprint(metrics_bp)
+    limiter.exempt(metrics_bp)
+
     # Tiered, per-USER rate limiting on the RPC surface (SEC-005).
     #
     # This line used to read `limiter.exempt(erp_rpc_bp)`, which removed rate
