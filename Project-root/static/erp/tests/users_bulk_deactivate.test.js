@@ -54,51 +54,39 @@ function mountPartial(viewerRole) {
     `<meta name="current-user-role" content="${viewerRole}">` + html;
 }
 
+// Loads the REAL api.js and core.js before users.js, the same
+// const-rewrite/eval technique nav.test.js and notify.test.js established.
+//
+// core.js is loaded rather than stubbed on purpose: App.Selection and
+// App.State.selectedUsers are the shipped implementations of exactly what
+// these tests assert. An earlier version of this file hand-copied
+// App.Selection, which meant the selection semantics under test were a
+// transcription of the real ones rather than the real ones -- fine while the
+// two agreed, worthless the moment they drifted.
 function loadUsersAsGlobal() {
   global.escapeHtml = v => String(v).replace(/[&<>"']/g, ch => HTML_ESCAPE_MAP[ch]);
-  global.$$ = (sel, root = document) => Array.from(root.querySelectorAll(sel));
   global.safeModalShow = () => {};
   global.safeModalHide = () => {};
   global.Api = { call: jest.fn(), mutate: jest.fn() };
 
-  global.App = {
-    State: { globalUsers: [], filteredUsers: [], usersSearchTerm: '', selectedUsers: [], globalCustomRoles: [] },
-    Utils: {
-      formatNameCase: v => String(v ?? ''),
-      showToast: jest.fn(),
-      confirmAction: jest.fn(),
-      tableLoading: () => {},
-      tableError: () => {},
-      debouncedFilter: () => {},
-    },
-    // The real shared helpers from core.js -- copied rather than stubbed so
-    // the selection semantics under test are the ones that actually ship.
-    Selection: {
-      toggle(arr, key, isSelected) {
-        const idx = arr.indexOf(key);
-        if (isSelected) { if (idx === -1) arr.push(key); } else if (idx !== -1) arr.splice(idx, 1);
-      },
-      isSelected(arr, key) { return arr.indexOf(key) !== -1; },
-      toggleAll(arr, chkClass, masterChk) {
-        $$('.' + chkClass).forEach(chk => {
-          chk.checked = masterChk.checked;
-          this.toggle(arr, chk.dataset.key, masterChk.checked);
-        });
-      },
-      syncFromRows(arr, chkClass, selectAllId) {
-        const boxes = $$('.' + chkClass);
-        boxes.forEach(chk => this.toggle(arr, chk.dataset.key, chk.checked));
-        const master = document.getElementById(selectAllId);
-        if (master) master.checked = boxes.length > 0 && boxes.every(c => c.checked);
-      },
-      updateButton(btnId, count, label) {
-        const btn = document.getElementById(btnId);
-        if (!btn) return;
-        if (count > 0) { btn.classList.remove('d-none'); btn.innerHTML = `${label} (${count})`; }
-        else btn.classList.add('d-none');
-      },
-    },
-  };
+  const core = fs
+    .readFileSync(path.join(__dirname, '..', 'core.js'), 'utf8')
+    .replace(/^const App = /m, 'global.App = ')
+    // Function form, not a string: "$$" in a replacement STRING is the
+    // escape for a literal "$", so 'global.$$ = ' would silently produce
+    // "global.$ = " and leave $$ undefined.
+    .replace(/^const \$\$ = /m, () => 'global.$$ = ');
+  // eslint-disable-next-line no-eval
+  eval(core);
+
+  // Only the surface these tests need to observe or silence -- everything
+  // else, App.Selection and App.State included, stays the real thing.
+  App.Utils.showToast = jest.fn();
+  App.Utils.confirmAction = jest.fn();
+  App.Utils.tableLoading = () => {};
+  App.Utils.tableError = () => {};
+  App.Utils.debouncedFilter = () => {};
+  App.Utils.formatNameCase = v => String(v ?? '');
 
   // eslint-disable-next-line no-eval
   eval(fs.readFileSync(path.join(__dirname, '..', 'users.js'), 'utf8'));

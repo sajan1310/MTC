@@ -156,3 +156,46 @@ describe.each([
     await expect(install(worker)).resolves.toBeUndefined();  // i.e. it resolves
   });
 });
+
+// ── Cache version discipline ──────────────────────────────────────────────
+// /static/erp/* is served CACHE-FIRST with no revalidation, so an installed
+// client keeps whatever copy of a JS or CSS file it already has until
+// CACHE_NAME changes. Shipping a static-asset change without bumping it is
+// therefore invisible in every test and every local reload, and shows up
+// only as "the feature does nothing" for users who already had the app open.
+// That has now happened repeatedly -- see the v32/v36/v37/v43 entries in
+// sw.js, each of which documents the same incident.
+//
+// Nothing here can know whether the CURRENT commit touched a cached asset;
+// that is a review question. What these do pin is that the constant and the
+// bump log stay in step, so a bump can never be silently half-done.
+describe('service worker cache version', () => {
+  const SW = fs.readFileSync(path.join(__dirname, '..', 'sw.js'), 'utf8');
+
+  const CONSTANT = /const CACHE_NAME = 'erp-shell-v(\d+)'/;
+  const LOG_ENTRY = /^\/\/ v(\d+): *(.*)$/gm;
+
+  const logEntries = () => [...SW.matchAll(LOG_ENTRY)];
+
+  test('CACHE_NAME matches the highest version in the bump log', () => {
+    const versions = logEntries().map(m => Number(m[1]));
+    expect(versions.length).toBeGreaterThan(0);
+    expect(Number(CONSTANT.exec(SW)[1])).toBe(Math.max(...versions));
+  });
+
+  test('every bump is logged once, with a reason', () => {
+    // A bare version bump tells the next person nothing about what went
+    // stale or why, which is precisely what these entries are for.
+    const entries = logEntries();
+    const versions = entries.map(m => Number(m[1]));
+
+    expect(new Set(versions).size).toBe(versions.length);
+    entries.forEach(m => expect(m[2].trim().length).toBeGreaterThan(20));
+  });
+
+  test('core.js is precached, so a change to it always needs a bump', () => {
+    // The file most likely to be edited without anyone thinking about the
+    // service worker, and the one whose staleness breaks the most.
+    expect(SW).toContain("'/static/erp/core.js'");
+  });
+});

@@ -123,7 +123,18 @@
 // stored copy. Both are precached.
 // v42: the WIP pipeline's ranked lists became card grids. dashboard.js and
 // styles.css are both precached, and v41 has already been committed.
-const CACHE_NAME = 'erp-shell-v42';
+// v43: the Users tab gained Super Admin-only bulk deactivation. This is the
+// v36 failure mode exactly, and it was reported as "there's no deactivate
+// bulk button when multiple selections are done": navigations are
+// network-first, so the SERVER-rendered half of the feature arrives fresh --
+// the header select-all checkbox and the Deactivate Selected button are both
+// in the DOM -- while /static/erp/* is cache-first and never revalidated, so
+// users.js is still the old copy with no per-row checkbox cell and no
+// toggleSelectAll/onRowSelectChange/bulkDeactivate at all. The two halves of
+// this feature come from two different renderers, and only the cached half
+// went stale. core.js also changed (App.State.selectedUsers) and IS
+// precached.
+const CACHE_NAME = 'erp-shell-v43';
 
 const PRECACHE_URLS = [
   '/erp/offline.html',
