@@ -823,12 +823,17 @@ App.Dashboard = {
       return;
     }
 
-    // Was a wrapping flex of full-size cards with a "->" between each: at a
-    // dozen active processes that ran past a full screen, and the arrows
-    // pointed off the end of every wrapped line at nothing. A ranked list
-    // reads top-to-bottom in the same sequence order, in a fraction of the
-    // height, and adds the two things the card wall could not show at all:
-    // how the stages compare, and where the most material is sitting.
+    // A card grid, not the full-width ranked list this replaced. That list
+    // gave every stage a whole row of a ~860px section to carry a name and
+    // three short numbers, so the name sat at the far left and its own
+    // figures at the far right with a quarter-metre of empty rule between
+    // them -- and a long process name still had to truncate, because the
+    // name column had to leave room for the numbers beside it.
+    //
+    // A card gives each stage a column instead of a row: the numbers sit
+    // directly under the name they belong to, the name gets two lines of
+    // its own to wrap into rather than an ellipsis, and three to five
+    // stages occupy one band of vertical space instead of five.
     const qtyOf = p => toNumber(p.totalQty);
     const totalQty = stages.reduce((sum, p) => sum + qtyOf(p), 0);
     const totalLots = stages.reduce((sum, p) => sum + toNumber(p.totalLotCount), 0);
@@ -841,7 +846,7 @@ App.Dashboard = {
          <span>across <strong>${stages.length}</strong> stage${stages.length === 1 ? '' : 's'}</span>
        </div>`;
 
-    const rows = stages.map((p, i) => {
+    const cards = stages.map((p, i) => {
       const qty = qtyOf(p);
       const isPeak = qty === peakQty && peakQty > 0;
       const groups = this._informativeGroups(p);
@@ -858,8 +863,6 @@ App.Dashboard = {
           ${hidden > 0 ? `<span class="dash-wip-chip dash-wip-chip-more">+${hidden} more</span>` : ''}
         </span>`;
 
-      // Both badges share one grid cell, so a row carrying neither collapses
-      // it to nothing rather than leaving a ragged hole mid-row.
       const flags = `
         <span class="dash-wip-flags">
           ${isPeak && stages.length > 1
@@ -869,19 +872,23 @@ App.Dashboard = {
         </span>`;
 
       return `
-        <button type="button" class="dash-wip-row" data-action="dash-pipeline-stage"
+        <button type="button" class="dash-wip-card" data-action="dash-pipeline-stage"
                 data-processid="${encodeURIComponent(p.processId)}"
                 title="View ${escapeHtml(p.processName)} in Production">
-          <span class="dash-wip-seq">${i + 1}</span>
-          <span class="dash-wip-name">${escapeHtml(p.processName)}</span>
-          <span class="dash-wip-qty">${formatQty(qty)}<small> units</small></span>
-          <span class="dash-wip-lots">${p.totalLotCount} lot${p.totalLotCount === 1 ? '' : 's'}</span>
+          <span class="dash-wip-card-head">
+            <span class="dash-wip-seq">${i + 1}</span>
+            <span class="dash-wip-name">${escapeHtml(p.processName)}</span>
+          </span>
+          <span class="dash-wip-card-figure">
+            <span class="dash-wip-qty">${formatQty(qty)}<small> units</small></span>
+            <span class="dash-wip-lots">${p.totalLotCount} lot${p.totalLotCount === 1 ? '' : 's'}</span>
+          </span>
           ${flags}
           ${chips}
         </button>`;
     }).join('');
 
-    el.innerHTML = summary + `<div class="dash-wip-list" data-variant="${config.variant}">${rows}</div>`;
+    el.innerHTML = summary + `<div class="dash-wip-grid" data-variant="${config.variant}">${cards}</div>`;
   },
 
   async openPipelineStage(processId) {

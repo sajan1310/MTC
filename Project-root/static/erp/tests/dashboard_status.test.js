@@ -17,11 +17,17 @@
  *      tile survives greyscale, colour-blindness and a screen reader
  *      (WCAG 1.4.1 -- colour is never the only carrier).
  *
- *   3. The WIP pipeline is a ranked list whose rows survive any process
- *      name length, and whose per-stage breakdown renders only when it
- *      says something the stage total does not. The card wall this
- *      replaced overflowed on long names and spent most of its height
- *      restating each total as a lone "Unspecified" row.
+ *   3. The WIP pipeline is a stage-load column chart over a grid of stage
+ *      cards, split so the pipeline draws only In Progress lots and
+ *      Upcoming Lots draws the Pending ones. Each card renders its
+ *      per-stage breakdown only when that says something the stage total
+ *      does not, and its name is never truncated. What this went through
+ *      to get here is worth knowing, because each step fixed the last
+ *      one's defect: a wall of content-sized cards that overflowed on
+ *      long names, then full-width rows that fixed the overflow but left
+ *      most of each row empty and still ellipsised the name, and now
+ *      cards on a real grid with the cross-stage comparison lifted out
+ *      into the chart above them.
  *
  *   4. Refresh is scheduled off how stale the data actually is, so a tab
  *      returning from hours hidden reloads at once instead of showing
@@ -297,11 +303,11 @@ describe('dashboard WIP pipeline', () => {
     ]);
     const marks = el.querySelectorAll('.dash-wip-peak');
     expect(marks).toHaveLength(1);
-    const peakRow = marks[0].closest('.dash-wip-row');
-    expect(peakRow.querySelector('.dash-wip-name').textContent).toBe('Biggest');
+    const peakCard = marks[0].closest('.dash-wip-card');
+    expect(peakCard.querySelector('.dash-wip-name').textContent).toBe('Biggest');
   });
 
-  test('rows carry no inline bar -- that comparison belongs to the column chart', () => {
+  test('cards carry no inline bar -- that comparison belongs to the column chart', () => {
     // A per-row bar could only scale against its OWN list's maximum, so a
     // stage's running and queued totals were drawn against two different
     // maxima and could not be read against each other at all.
@@ -330,15 +336,15 @@ describe('dashboard WIP pipeline', () => {
     expect(text).toContain('2 stages');
   });
 
-  test('a long process name stays in its own cell rather than overflowing', () => {
-    // The old card wall sized each card to its content, so a name this long
-    // spilled over the neighbouring card. The name now owns a grid column
-    // that truncates.
+  test('a long process name is rendered in full, not truncated', () => {
+    // The full-width row this replaced had to ellipsise the name, because
+    // its column had to leave room for the numbers sitting beside it. On a
+    // card the numbers are BELOW the name, so the name can simply wrap.
     const long = 'Fitting Frame 20 inch Valcano Shocker Tyre Packing Extra Long Name';
     const el = render([stage({ processName: long }), stage({ processId: 'B' })]);
     const nameEl = el.querySelector('.dash-wip-name');
     expect(nameEl.textContent).toBe(long);
-    expect(nameEl.parentElement.classList.contains('dash-wip-row')).toBe(true);
+    expect(nameEl.closest('.dash-wip-card')).not.toBeNull();
   });
 
   test('escapes process names rather than trusting them as markup', () => {
@@ -350,7 +356,7 @@ describe('dashboard WIP pipeline', () => {
   test('empty pipeline says so instead of rendering an empty frame', () => {
     const el = render([]);
     expect(el.textContent).toMatch(/nothing is in progress/i);
-    expect(el.querySelectorAll('.dash-wip-row')).toHaveLength(0);
+    expect(el.querySelectorAll('.dash-wip-card')).toHaveLength(0);
   });
 
   test('a stage carries the age of its oldest lot, coloured by the same thresholds', () => {
@@ -408,10 +414,23 @@ describe('dashboard Upcoming Lots', () => {
     expect(text).not.toContain('in progress');
   });
 
-  test('is marked as the upcoming variant so its bars read as not-yet-started', () => {
+  test('is marked as the upcoming variant so its cards read as not-yet-started', () => {
     const el = render([stage({})]);
-    expect(el.querySelector('.dash-wip-list').getAttribute('data-variant')).toBe('upcoming');
-    expect(document.querySelector('#dashboardPipeline .dash-wip-list')).toBeNull();
+    expect(el.querySelector('.dash-wip-grid').getAttribute('data-variant')).toBe('upcoming');
+    expect(document.querySelector('#dashboardPipeline .dash-wip-grid')).toBeNull();
+  });
+
+  test('lays the stages out as a grid of cards, not one full-width row each', () => {
+    const el = render([
+      stage({ processId: 'A' }), stage({ processId: 'B' }), stage({ processId: 'C' }),
+    ]);
+    expect(el.querySelectorAll('.dash-wip-grid')).toHaveLength(1);
+    expect(el.querySelectorAll('.dash-wip-card')).toHaveLength(3);
+    // Each card carries its own figures rather than sharing a row's columns.
+    el.querySelectorAll('.dash-wip-card').forEach(card => {
+      expect(card.querySelector('.dash-wip-card-figure')).not.toBeNull();
+      expect(card.querySelector('.dash-wip-qty')).not.toBeNull();
+    });
   });
 
   test('the busiest queue is labelled as a queue, not as WIP', () => {
@@ -425,7 +444,7 @@ describe('dashboard Upcoming Lots', () => {
   test('empty upcoming list says nothing is queued', () => {
     const el = render([]);
     expect(el.textContent).toMatch(/no pending lots/i);
-    expect(el.querySelectorAll('.dash-wip-row')).toHaveLength(0);
+    expect(el.querySelectorAll('.dash-wip-card')).toHaveLength(0);
   });
 
   test('focus on an upcoming row is not restored onto the pipeline row for the same stage', () => {
@@ -434,8 +453,8 @@ describe('dashboard Upcoming Lots', () => {
     App.Dashboard.renderPipeline([stage({ processId: 'P1' })]);
     render([stage({ processId: 'P1' })]);
 
-    const upcomingRow = document.querySelector('#dashboardUpcoming .dash-wip-row');
-    upcomingRow.focus();
+    const upcomingCard = document.querySelector('#dashboardUpcoming .dash-wip-card');
+    upcomingCard.focus();
     const token = App.Dashboard._captureFocus();
 
     App.Dashboard.renderPipeline([stage({ processId: 'P1' })]);
@@ -570,6 +589,59 @@ describe('dashboard stage load chart', () => {
   });
 });
 
+// jsdom has no layout engine, so these assert the DECLARATIONS rather than
+// the rendered result. That is the right level here: the defect was never in
+// the component's own CSS, it was a global rule reaching into it, and what
+// protects against that is the presence of the explicit reset.
+describe('stage cards override the global button rule', () => {
+  const CSS = fs.readFileSync(path.join(__dirname, '..', 'styles.css'), 'utf8');
+
+  const ruleFor = selector => {
+    const at = CSS.indexOf(`\n  ${selector} {`);
+    expect(at).toBeGreaterThan(-1);
+    return CSS.slice(at, CSS.indexOf('}', at));
+  };
+
+  test('the global `button, .btn` rule still sets the things being reset', () => {
+    // If this fails, the global rule changed and the resets below may have
+    // become dead weight -- or may now need to cover something new.
+    const global = ruleFor('button,\n  .btn');
+    expect(global).toContain('white-space: nowrap');
+    expect(global).toContain('justify-content: center');
+    expect(global).toContain('gap: 8px');
+  });
+
+  test('.dash-wip-card resets white-space so long process names wrap', () => {
+    // Without this the name could not wrap AT ALL: nowrap was inherited from
+    // the global button rule, past min-width and overflow-wrap alike, so
+    // "Frame Painting Jungle King 14 inch Sports 2.4" ran out of its card
+    // and over its neighbour.
+    expect(ruleFor('.dash-wip-card')).toContain('white-space: normal');
+  });
+
+  test('.dash-wip-card top-aligns its content instead of centring it', () => {
+    // Cards stretch to their row's height, so the inherited
+    // justify-content: center pushed a short card's heading into the middle
+    // while its taller neighbours started at the top.
+    expect(ruleFor('.dash-wip-card')).toContain('justify-content: flex-start');
+  });
+
+  test('.dash-stage-col zeroes the inherited gap', () => {
+    // 8px was silently sitting between the plot and the x-axis label.
+    expect(ruleFor('.dash-stage-col')).toContain('gap: 0');
+  });
+
+  test('the peak value label is not double-shifted off the top of the plot', () => {
+    // `bottom: <pct>` already puts the box entirely above that line, so a
+    // translateY(-100%) on top of it moved the label a second full
+    // label-height up -- clipping it the first time a bar reached the axis
+    // maximum exactly.
+    const rule = ruleFor('.dash-stage-col-value');
+    expect(rule).toContain('transform: translateX(-50%)');
+    expect(rule).not.toContain('-100%');
+  });
+});
+
 describe('dashboard refresh scheduling', () => {
   beforeEach(() => {
     mountPartial();
@@ -617,8 +689,8 @@ describe('dashboard focus preservation across refresh', () => {
 
   test('a re-render does destroy focus -- this is what is being repaired', () => {
     App.Dashboard.renderPipeline(stages(['Rim Fitting', 'Packing']));
-    document.querySelector('.dash-wip-row').focus();
-    expect(document.activeElement.classList.contains('dash-wip-row')).toBe(true);
+    document.querySelector('.dash-wip-card').focus();
+    expect(document.activeElement.classList.contains('dash-wip-card')).toBe(true);
 
     App.Dashboard.renderPipeline(stages(['Rim Fitting', 'Packing']));
     expect(document.activeElement).toBe(document.body);
@@ -626,7 +698,7 @@ describe('dashboard focus preservation across refresh', () => {
 
   test('focus returns to the same pipeline stage after a refresh', () => {
     App.Dashboard.renderPipeline(stages(['Rim Fitting', 'Mudguard Paint', 'Packing']));
-    const rows = document.querySelectorAll('.dash-wip-row');
+    const rows = document.querySelectorAll('.dash-wip-card');
     rows[1].focus();
 
     const token = App.Dashboard._captureFocus();
@@ -638,7 +710,7 @@ describe('dashboard focus preservation across refresh', () => {
 
   test('focus follows the stage even when the list reorders around it', () => {
     App.Dashboard.renderPipeline(stages(['Rim Fitting', 'Mudguard Paint', 'Packing']));
-    document.querySelectorAll('.dash-wip-row')[2].focus();
+    document.querySelectorAll('.dash-wip-card')[2].focus();
     const token = App.Dashboard._captureFocus();
 
     // Same three stages, different order: P2 is now first.
@@ -654,7 +726,7 @@ describe('dashboard focus preservation across refresh', () => {
 
   test('a stage that disappears leaves focus on body rather than moving it somewhere arbitrary', () => {
     App.Dashboard.renderPipeline(stages(['Rim Fitting', 'Packing']));
-    document.querySelectorAll('.dash-wip-row')[1].focus();
+    document.querySelectorAll('.dash-wip-card')[1].focus();
     const token = App.Dashboard._captureFocus();
 
     App.Dashboard.renderPipeline(stages(['Rim Fitting']));
@@ -670,7 +742,7 @@ describe('dashboard focus preservation across refresh', () => {
     App.Dashboard.renderPipeline([
       { processId: nasty, processName: 'Odd Id', sequence: 1, totalQty: 5, totalLotCount: 1, groups: [] },
     ]);
-    document.querySelector('.dash-wip-row').focus();
+    document.querySelector('.dash-wip-card').focus();
     const token = App.Dashboard._captureFocus();
 
     App.Dashboard.renderPipeline([

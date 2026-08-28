@@ -204,13 +204,18 @@
        painting", which is rarely the question, and it destroys the
        sequence that makes this a pipeline at all.
 
-       The per-row horizontal bars the lists used to carry are gone -- the
-       chart above does that comparison better, and the reclaimed column
-       goes to the process name, which is the field that was truncating.
+       Below the chart each status is a GRID OF CARDS, not the full-width
+       rows this used to be. A row gave every stage the whole width of the
+       section to carry a name and three short numbers -- name hard left,
+       figures hard right, nothing in between -- and the name still had to
+       ellipsise, because its column had to reserve room for the numbers
+       beside it. A card puts the figures under the name instead: the name
+       wraps in full, and three to five stages fit in the vertical space
+       one row used to take.
 
-       Both lists keep their own summary line and empty state, and every
+       Both grids keep their own summary line and empty state, and every
        exact number lives in them: the chart deliberately labels only its
-       tallest column, so the lists are also the chart's table view. -->
+       tallest column, so the cards are also the chart's table view. -->
   <section class="dash-section mb-4" aria-labelledby="dashPipelineHeading">
     <h2 class="dash-section-title" id="dashPipelineHeading">Process WIP Pipeline</h2>
 

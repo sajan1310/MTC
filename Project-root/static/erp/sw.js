@@ -121,7 +121,9 @@
 // production.js and process.js stop treating it as identity or as an input
 // on an ITEM row, and resolve it live instead of falling back to a stale
 // stored copy. Both are precached.
-const CACHE_NAME = 'erp-shell-v41';
+// v42: the WIP pipeline's ranked lists became card grids. dashboard.js and
+// styles.css are both precached, and v41 has already been committed.
+const CACHE_NAME = 'erp-shell-v42';
 
 const PRECACHE_URLS = [
   '/erp/offline.html',

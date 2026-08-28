@@ -1965,7 +1965,7 @@
      y-axis gutter and the columns must agree on the plot height exactly. */
   .dash-stage-chart {
     --dash-stage-plot-h: 132px;
-    --dash-stage-label-h: 24px;
+    --dash-stage-label-h: 32px;
 
     /* Headroom above the plot for the peak column's value label. It lives
        INSIDE .dash-stage-bands rather than as padding on the grid, because
@@ -2082,11 +2082,18 @@
     background: var(--border-color);
   }
 
+  /* gap: 0 is a reset, not a default: the global `button, .btn` rule sets
+     gap: 8px, and this column is a <button>, so that gap was silently
+     sitting between the plot and the x-axis label and inflating the bands'
+     height. The gridlines are sized from --dash-stage-plot-h rather than by
+     insetting off that height, so it never misaligned them -- but it was an
+     accident either way, and the label carries its own padding instead. */
   .dash-stage-col {
     display: flex;
     flex: 1 1 46px;
     flex-direction: column;
     align-items: center;
+    gap: 0;
     width: 46px;
     min-width: 46px;
     padding: 0;
@@ -2109,10 +2116,16 @@
      top of the plot -- which floated the number a long way above a short
      column and read as belonging to nothing. `bottom` is set inline to the
      column's own total. */
+  /* translateX only. `bottom: <pct>` already places the box ENTIRELY above
+     that line -- it sets the bottom edge, and the box grows upward -- so an
+     additional translateY(-100%) shifted it a second full label-height up.
+     That went unnoticed while the tallest bar was well short of the axis
+     maximum, and clipped the label against the top of the plot the first
+     time a bar reached it exactly. */
   .dash-stage-col-value {
     position: absolute;
     left: 50%;
-    transform: translate(-50%, -100%);
+    transform: translateX(-50%);
     margin-bottom: 4px;
     font-family: Outfit, sans-serif;
     font-size: 11.5px;
@@ -2163,7 +2176,7 @@
     display: block;
     height: var(--dash-stage-label-h);
     width: 100%;
-    padding-top: 7px;
+    padding-top: 15px;
     overflow: hidden;
     font-size: 10.5px;
     line-height: 1.3;
@@ -2173,21 +2186,21 @@
     white-space: nowrap;
   }
 
-  /* ── Process stage lists (WIP pipeline + Upcoming Lots) ────────────────
-     ONE row component, rendered twice: the WIP pipeline (lots In Progress)
-     and Upcoming Lots (lots Pending). Identical grid, identical sequence
-     order, so the same stage lands in the same horizontal position in both
-     and the two lists can be read against each other. The only difference
-     is [data-variant="upcoming"] on the list, which mutes the bars -- queued
-     work should not compete visually with work actually running.
+  /* ── Process stage cards (WIP pipeline + Upcoming Lots) ────────────────
+     ONE card component, rendered twice: the WIP pipeline (lots In Progress)
+     and Upcoming Lots (lots Pending). Only [data-variant] differs, and all
+     it changes is which series colour the card's left edge carries -- the
+     same two colours the stage chart's legend uses, so a card and its
+     column read as the same thing.
 
-     A ranked list, not the wrapping wall of equal-size cards this replaced.
-     That layout cost a full screen at a dozen active processes, put a "->"
-     at the end of every wrapped line pointing at nothing, and -- because
-     each card sized itself to its content -- let a long process name
-     ("Fitting Frame 20 inch Valcano Shocker Tyre") spill straight over its
-     neighbour. Here the name owns a fixed grid column and truncates, so no
-     amount of process-name length can break the row. */
+     These were full-width rows before. Each stage got an entire row of a
+     ~860px section to carry a name and three short numbers: the name sat
+     hard left, its own figures hard right, and the space between them did
+     nothing. Worse, the name still had to truncate, because its column had
+     to reserve room for the numbers sitting beside it. Turning each stage
+     from a row into a column fixes both at once -- the figures sit under
+     the name they describe, the name gets two lines to wrap into, and the
+     grid fits three to five stages in the vertical space one row used. */
   .dash-wip-block + .dash-wip-block {
     margin-top: 18px;
   }
@@ -2219,72 +2232,120 @@
     color: var(--text-primary);
   }
 
-  .dash-wip-list {
+  /* auto-fill, not auto-fit: with two or three stages, auto-fit would
+     stretch each card across a third of a metre of screen and undo the
+     whole point of the change. auto-fill keeps a card card-sized and lets
+     the row end early. */
+  .dash-wip-grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fill, minmax(228px, 1fr));
+    gap: 10px;
+  }
+
+  /* The three resets below undo the app's global `button, .btn` rule (see
+     BUTTONS, further up) -- this card IS a <button>, so it inherited the
+     lot:
+
+       white-space: nowrap   the process name could never wrap. It ran
+                             straight out of the card and over its
+                             neighbour, and no amount of min-width: 0 or
+                             overflow-wrap on the name could help, because
+                             nowrap was inherited past both of them.
+       justify-content       cards stretch to their row's height, so
+         : center            `center` pushed a short card's contents into
+                             the middle while its taller neighbours started
+                             at the top -- headings on a row did not line up.
+       text-align: center    figures and chips read left-aligned here.
+
+     Reset here rather than by narrowing the global rule, which every other
+     button on the page relies on. */
+  .dash-wip-card {
     display: flex;
     flex-direction: column;
-    gap: 2px;
-  }
-
-  .dash-wip-row {
-    display: grid;
-    /* seq | name | qty | lots | flags | (chips wrap to row 2)
-       The name column used to be capped at 200px to leave room for a bar;
-       with the bar's job moved to the column chart above, it takes the
-       slack instead -- process names here run to "Fitting Frame 20 inch
-       Valcano Shocker Tyre" and truncating them was the original defect.
-       `flags` is auto so a row carrying neither badge collapses it away
-       instead of leaving a ragged hole where the badges line up. */
-    grid-template-columns: 22px minmax(0, 1fr) 76px 56px auto;
-    align-items: center;
-    gap: 10px;
-    width: 100%;
-    padding: 7px 8px;
+    align-items: flex-start;
+    justify-content: flex-start;
+    gap: 7px;
+    padding: 11px 13px;
+    white-space: normal;
     text-align: left;
-    background: none;
-    border: 1px solid transparent;
-    border-radius: var(--border-radius-sm);
+    background: var(--bg-color);
+    border: 1px solid var(--border-light);
+    border-left: 3px solid var(--dash-stage-wip);
+    border-radius: var(--border-radius);
     cursor: pointer;
-    transition: background var(--transition-fast), border-color var(--transition-fast);
+    transition: border-color var(--transition-fast), box-shadow var(--transition-fast);
   }
 
-  .dash-wip-row:hover {
-    background: var(--bg-muted);
+  .dash-wip-grid[data-variant="upcoming"] .dash-wip-card {
+    border-left-color: var(--dash-stage-queued);
+  }
+
+  .dash-wip-card:hover {
     border-color: var(--border-color);
+    border-left-color: var(--dash-stage-wip);
+    box-shadow: var(--shadow-sm);
   }
 
-  .dash-wip-row:focus-visible {
+  .dash-wip-grid[data-variant="upcoming"] .dash-wip-card:hover {
+    border-left-color: var(--dash-stage-queued);
+  }
+
+  .dash-wip-card:focus-visible {
     outline: 2px solid var(--secondary-color);
-    outline-offset: -2px;
+    outline-offset: -1px;
+  }
+
+  .dash-wip-card-head {
+    display: flex;
+    align-items: baseline;
+    gap: 7px;
+    width: 100%;
   }
 
   .dash-wip-seq {
+    flex: none;
     font-family: Outfit, sans-serif;
-    font-size: 11px;
+    font-size: 10.5px;
     font-weight: 700;
     color: var(--text-muted);
-    text-align: center;
   }
 
+  /* Wraps freely instead of ellipsising. A card is tall enough to afford
+     it, and "Fitting Frame 20 inch Valcano Shocker Tyre" reading in full is
+     worth more than a rigidly uniform card height.
+
+     min-width: 0 is what actually makes that work: a flex item's automatic
+     minimum size is its content, so without this the name refuses to shrink
+     below its single-line width and runs straight out of the card. */
   .dash-wip-name {
+    min-width: 0;
     font-size: 12.5px;
     font-weight: 600;
+    line-height: 1.3;
     color: var(--text-primary);
-    white-space: nowrap;
-    overflow: hidden;
-    text-overflow: ellipsis;
+    overflow-wrap: anywhere;
+  }
+
+  /* The stage total and its lot count, on one baseline: the number is the
+     point of the card, so it is the biggest thing on it. */
+  .dash-wip-card-figure {
+    display: flex;
+    align-items: baseline;
+    flex-wrap: wrap;
+    gap: 3px 8px;
   }
 
   .dash-wip-qty {
     font-family: Outfit, sans-serif;
-    font-size: 13px;
+    font-size: 21px;
     font-weight: 700;
+    line-height: 1.1;
     color: var(--text-primary);
-    text-align: right;
   }
 
   .dash-wip-qty small {
     font-family: Inter, sans-serif;
-    font-size: 10px;
+    font-size: 10.5px;
     font-weight: 400;
     color: var(--text-muted);
   }
@@ -2292,7 +2353,24 @@
   .dash-wip-lots {
     font-size: 11px;
     color: var(--text-muted);
-    text-align: right;
+  }
+
+  .dash-wip-grid[data-variant="upcoming"] .dash-wip-qty {
+    color: var(--text-secondary);
+  }
+
+  /* Empty for a stage carrying neither badge; it collapses to nothing
+     rather than leaving a gap, because the card is a flex column with a
+     gap rather than fixed slots. */
+  .dash-wip-flags {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: 5px;
+  }
+
+  .dash-wip-flags:empty {
+    display: none;
   }
 
   .dash-wip-peak {
@@ -2307,11 +2385,9 @@
     white-space: nowrap;
   }
 
-  .dash-wip-flags {
-    display: inline-flex;
-    align-items: center;
-    gap: 5px;
-    justify-self: end;
+  .dash-wip-grid[data-variant="upcoming"] .dash-wip-peak {
+    color: var(--text-secondary);
+    border-color: var(--border-color);
   }
 
   /* Age of the stage's oldest lot. The number of units says how much is
@@ -2334,7 +2410,7 @@
 
   /* Same amber-700 the hero tiles use, for the same reason: --warning-color
      (#ffc107) is only ever safe against dark text here and fails 1.4.3 badly
-     as small text on a light row. Dark mode takes the lighter end of the
+     as small text on a light card. Dark mode takes the lighter end of the
      ramp, matching .dash-hero[data-status="warn"]. */
   .dash-wip-age[data-status="warn"] {
     color: #b45309;
@@ -2352,37 +2428,19 @@
     color: var(--warning-color);
   }
 
-  /* Upcoming Lots: the same rows, deliberately quieter -- queued work should
-     not compete visually with work actually running. */
-  .dash-wip-list[data-variant="upcoming"] .dash-wip-qty,
-  .dash-wip-list[data-variant="upcoming"] .dash-wip-peak {
-    color: var(--text-secondary);
-  }
-
-  .dash-wip-list[data-variant="upcoming"] .dash-wip-peak {
-    border-color: var(--border-color);
-  }
-
-  .dash-wip-list[data-variant="upcoming"] .dash-wip-chip-qty {
-    color: var(--text-secondary);
-  }
-
-  /* Per-colour / per-size split, on its own line under the row. Rendered
-     only when it says something the stage total does not -- see
-     App.Dashboard._informativeGroups. */
+  /* Per-colour / per-size split. Rendered only when it says something the
+     stage total does not -- see App.Dashboard._informativeGroups. */
   .dash-wip-chips {
-    grid-column: 2 / -1;
     display: flex;
     flex-wrap: wrap;
     gap: 4px;
-    margin-top: 2px;
   }
 
   .dash-wip-chip {
     display: inline-flex;
     align-items: baseline;
     gap: 5px;
-    max-width: 220px;
+    max-width: 100%;
     padding: 1px 7px;
     font-size: 10.5px;
     background: var(--bg-muted);
@@ -2403,29 +2461,24 @@
     color: var(--secondary-color);
   }
 
+  .dash-wip-grid[data-variant="upcoming"] .dash-wip-chip-qty {
+    color: var(--text-secondary);
+  }
+
   .dash-wip-chip-more {
     color: var(--text-muted);
     font-style: italic;
   }
 
-  /* Below ~600px the "most WIP" label is the first thing that stops paying
-     for its width. The age badge stays -- at this width it is the only
-     thing left in the row saying whether a stage is moving. */
   @media (max-width: 600px) {
-    .dash-wip-row {
-      grid-template-columns: 20px minmax(0, 1fr) 70px 46px auto;
+    /* One card per row rather than two cramped ones -- below this width a
+       228px minimum would leave the name wrapping to four lines. */
+    .dash-wip-grid {
+      grid-template-columns: 1fr;
     }
 
-    .dash-wip-peak {
-      display: none;
-    }
-
-    .dash-wip-chips {
-      grid-column: 2 / -1;
-    }
-
-    /* A shorter plot and narrower bands: the chart keeps its shape, and the
-       bands scroll rather than crushing every column into a sliver. */
+    /* A shorter plot: the chart keeps its shape, and the bands scroll
+       rather than crushing every column into a sliver. */
     .dash-stage-chart {
       --dash-stage-plot-h: 104px;
     }
