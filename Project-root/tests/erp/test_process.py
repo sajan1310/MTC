@@ -715,3 +715,67 @@ def test_refresh_process_components_from_items_master_is_idempotent(erp_client):
     second = _rpc(erp_client, "refreshProcessComponentsFromItemsMaster", mutation=True).get_json()
     assert second["success"] is True
     assert second["data"]["componentsUpdated"] == 0
+
+
+# ── Narration is a derived projection of Items Master (blank included) ───
+
+
+def _rpc_n(client, method, args=None, mutation=False):
+    import uuid as _uuid
+    headers = {"X-Mutation-Id": str(_uuid.uuid4())} if mutation else {}
+    return client.post(f"/api/erp/rpc/{method}", json={"args": args or []}, headers=headers)
+
+
+def test_refresh_clears_a_narration_items_master_no_longer_sets(erp_client):
+    """The transformation this completes: item descriptions were moved out
+    of Items Master's Narration into Remarks so they would stop leaking into
+    Process and Production. Emptying the source was not enough -- the copies
+    already pushed into process_components survived, because the refresh
+    skipped every item whose master narration was blank ("absent" could not
+    be told apart from "unknown item"). They were unreachable and unfixable.
+    """
+    import uuid as _uuid
+    item_name = f"NarrItem-{_uuid.uuid4().hex[:8]}"
+    _rpc_n(erp_client, "saveItem", [{"itemName": item_name, "itemNarration": "old description"}], mutation=True)
+
+    proc = {
+        "processName": f"NarrProc-{_uuid.uuid4().hex[:8]}",
+        "lotPrefix": _uuid.uuid4().hex[:6].upper(),
+        "outputItemName": f"NarrOut-{_uuid.uuid4().hex[:8]}",
+        "sequence": 1, "isFinalStage": False, "active": True,
+        "remarks": "", "processType": "", "primaryColorAxis": "", "colorLinks": [],
+        "components": [{"itemName": item_name, "qtyPerUnit": 1, "sourceType": "ITEM", "colorGroup": "COMMON"}],
+    }
+    created = _rpc_n(erp_client, "saveProcess", [proc], mutation=True).get_json()
+    assert created["success"] is True, created["message"]
+    process_id = created["data"]["processId"]
+
+    stored = _rpc_n(erp_client, "getProcessComponentsData", [process_id]).get_json()["data"]
+    assert stored[0]["narration"] == "old description"
+
+    # The move: description out of Narration, into Remarks.
+    moved = _rpc_n(erp_client, "saveItem",
+                   [{"itemName": item_name, "originalName": item_name,
+                     "itemNarration": "", "itemRemarks": "old description"}], mutation=True).get_json()
+    assert moved["success"] is True, moved["message"]
+
+    res = _rpc_n(erp_client, "refreshProcessComponentsFromItemsMaster", mutation=True).get_json()
+    assert res["success"] is True, res["message"]
+
+    after = _rpc_n(erp_client, "getProcessComponentsData", [process_id]).get_json()["data"]
+    assert after[0]["narration"] == ""
+
+
+def test_refresh_reports_what_it_skipped_instead_of_claiming_a_match(erp_client):
+    """"All N process component(s) already match Items Master -- nothing to
+    change" counted only the rows it looked at and silently excluded every
+    row it skipped, so the button looked like it had finished a job it had
+    never started. That one sentence is why this went unnoticed.
+    """
+    res = _rpc_n(erp_client, "refreshProcessComponentsFromItemsMaster", mutation=True).get_json()
+    assert res["success"] is True
+    data = res["data"]
+    for field in ("componentsScanned", "componentsUpdated", "componentsCleared", "componentsUnknown"):
+        assert field in data, f"{field} missing from {data}"
+    if data["componentsUnknown"] or data["componentsCleared"]:
+        assert "already match" not in res["message"], res["message"]

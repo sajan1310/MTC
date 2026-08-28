@@ -1258,7 +1258,16 @@ def refresh_production_components_from_items_master(conn, cur):
             if master["canonicalName"] and comp["itemName"] != master["canonicalName"]:
                 comp["itemName"] = master["canonicalName"]
                 fields_changed += 1
-            if master["narration"] and str(comp.get("narration") or "").strip() != master["narration"]:
+            # No `master["narration"] and` guard: narration is a DERIVED
+            # projection of Items Master, never typed into a lot, so a
+            # blank one there must blank the copy stored here. The guard
+            # made clearing impossible, which is how already-logged lots
+            # kept printing text Items Master no longer holds. An item
+            # Items Master has never heard of is a different case and is
+            # already handled above by `if not master: continue` -- that is
+            # what protects a Warehouse Pool component's hand-written
+            # narration, which has no Items Master entry to derive from.
+            if str(comp.get("narration") or "").strip() != master["narration"]:
                 comp["narration"] = master["narration"]
                 fields_changed += 1
             if has_unit and "unit" in comp and master["baseUnit"] and str(comp.get("unit") or "").strip() != master["baseUnit"]:

@@ -117,7 +117,11 @@
 // v40: the WIP pipeline splits Pending from In Progress and gains a
 // per-stage stacked column chart. dashboard.js and styles.css are both
 // precached, and v39 has already shipped, so they need their own bump.
-const CACHE_NAME = 'erp-shell-v40';
+// v41: narration is a derived, read-only projection of Items Master --
+// production.js and process.js stop treating it as identity or as an input
+// on an ITEM row, and resolve it live instead of falling back to a stale
+// stored copy. Both are precached.
+const CACHE_NAME = 'erp-shell-v41';
 
 const PRECACHE_URLS = [
   '/erp/offline.html',

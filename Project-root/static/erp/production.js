@@ -3572,12 +3572,73 @@ App.Production = {
     const counts = colorKeys.map(c => byColor.get(c).length);
     const evenCoverage = colorKeys.length > 1 && counts.every(n => n === counts[0]);
 
-    const positionalRows = evenCoverage
-      ? Array.from({ length: counts[0] }, (_, i) => rowFrom(colorKeys.map(c => byColor.get(c)[i])))
-      : this._reconstructPerColorRowsByName(remainingOrdered).map(row => ({ ...row, firstIndex: firstIndexOf(row.cells) }));
+    const rowsByName = () => this._reconstructPerColorRowsByName(remainingOrdered)
+      .map(row => ({ ...row, firstIndex: firstIndexOf(row.cells) }));
+
+    // PASS 2 -- zip the i-th entry of every colour into one row. This is a
+    // guess from SAVE ORDER, and it is a good one: serializeColorMatrix
+    // writes row-major, so for anything this form saved, position and names
+    // agree and the zip is exact where name-parsing would be fragile.
+    //
+    // It was applied unconditionally, though, and that is the defect. Save
+    // order is only trustworthy while it holds; once one colour's entries
+    // are stored in a different order from the others, the zip pairs every
+    // row with the wrong item, names that would expose it are never
+    // consulted, and re-saving writes the same wrong pairing back. Silent,
+    // and self-perpetuating: on LOT-PKG012-0018 all nine rows showed the
+    // wrong Red item, and 20 other lots carry the same shape.
+    //
+    // So the zip is now checked before it is trusted. The check compares
+    // what is left of each cell's item name once EVERY Color Master colour
+    // is stripped out (_stripAllColorTokens), not just the row's own
+    // colour: an item is deliberately allowed to be paired with a lot
+    // colour other than its own (a Red accessory under the Blue column for
+    // contrast -- see groupComponentsForSheet), and stripping only the
+    // row's colour would read that legitimate pairing as a scramble.
+    // Residues agreeing means position and names tell the same story and
+    // the zip stands, which is every healthy lot. Residues disagreeing
+    // means position is contradicting the names, and the names are the
+    // better evidence -- they survived the scramble, the save order did
+    // not.
+    //
+    // Falling back can leave a corrupted lot's rows fragmented (a displaced
+    // entry sits on its own row until someone re-files it). That is the
+    // right trade: fragmented-but-honest shows the operator exactly which
+    // entries are misplaced, where confidently-wrong states that a colour
+    // consumed an item it never did.
+    let positionalRows;
+    if (evenCoverage) {
+      const zipped = Array.from({ length: counts[0] }, (_, i) => rowFrom(colorKeys.map(c => byColor.get(c)[i])));
+      positionalRows = this._positionalRowsAgreeWithNames(zipped) ? zipped : rowsByName();
+    } else {
+      positionalRows = rowsByName();
+    }
 
     const allRows = this._mergeRowsByColorStrippedName([...sharedRows, ...positionalRows]);
     return allRows.sort((a, b) => a.firstIndex - b.firstIndex);
+  },
+
+  // Does the positional zip tell the same story the item names do? A row
+  // whose cells all reduce to the same colour-stripped residue is one
+  // physical component under several colours, which is what a row is. Two
+  // different residues in one row means the zip has paired unrelated items,
+  // and it can only have done that because the saved order of one colour
+  // diverged from the others.
+  //
+  // _stripAllColorTokens never strips a name down to nothing -- it declines
+  // rather than leave an empty residue (the same guard that stops "Petrol
+  // Tank" becoming "Petrol k"). So an item named entirely out of colour
+  // words compares by its full name, and two such cells in one row are
+  // judged different unless they are spelled the same. That is the
+  // conservative direction: it sends an already-odd row down the by-name
+  // path rather than trusting a zip nothing corroborates.
+  _positionalRowsAgreeWithNames(rows) {
+    return (rows || []).every(row => {
+      const residues = new Set((row.cells || [])
+        .map(c => this._stripAllColorTokens(c.itemName || '').trim().toLowerCase())
+        .filter(Boolean));
+      return residues.size <= 1;
+    });
   },
 
   // PASS 4 -- consolidate rows that are the same physical component named
@@ -3728,7 +3789,17 @@ App.Production = {
       const displayName = sharedKeys.has(this._itemSlotKey(e.itemName, e.size))
         ? (e.itemName || '').trim()
         : this._stripColorSubstring(e.itemName || '', e.colorKey);
-      const rowKey = [displayName, e.size || '', e.narration || ''].join('|').toLowerCase();
+      // Item name + size only. Narration is a DERIVED projection of Items
+      // Master, not something an operator types per row, so it cannot
+      // identify anything -- and using it as identity actively broke this:
+      // serializeColorMatrix writes ONE narration per row across all its
+      // colour cells, so a cell that had been misfiled inherited the host
+      // row's narration and then could never be grouped back with its own
+      // siblings. Two components of the same item+size differing only in
+      // narration are the same component; the server has always agreed
+      // (_consolidate_duplicate_components keys on item+size+colour and
+      // has never looked at narration).
+      const rowKey = [displayName, e.size || ''].join('|').toLowerCase();
       let row = rowIndex.get(rowKey);
       if (!row) {
         row = { size: e.size, narration: e.narration, unit: e.unit, cells: [] };
@@ -4844,6 +4915,35 @@ App.Production = {
   // with step="0.0001" while the row-built one used step="any", so whether
   // the same column accepted a given quantity depended on nothing but when
   // that column happened to be created.
+  // Narration is DERIVED from Items Master and refreshed live, so on an
+  // ITEM row there is nothing for an operator to type: anything they did
+  // type was overwritten by the next resolve, and while it survived it
+  // acted as row identity and split the row away from its own siblings.
+  //
+  // A POOL row is the deliberate exception. Its "item" is an upstream
+  // process's output, which has no Items Master entry to derive from, so
+  // the hand-written description is the only one there will ever be.
+  // Source can be flipped after the row exists, so the readonly state has
+  // to follow it rather than being fixed at build time.
+  _syncNarrationEditability(row) {
+    if (!row) return;
+    const isPool = row.querySelector('.prod-comp-source')?.value === 'POOL';
+    const input = row.querySelector('.prod-comp-narration');
+    if (!input) return;
+    input.readOnly = !isPool;
+    input.title = isPool
+      ? 'Describe this pool component for the printed sheet — it has no Items Master entry to inherit from'
+      : 'Comes from Items Master and refreshes automatically — edit it on the Item, not here';
+    if (!isPool) input.value = '';
+  },
+
+  _narrationInputAttrs(sourceType) {
+    if (sourceType === 'POOL') {
+      return ' title="Describe this pool component for the printed sheet — it has no Items Master entry to inherit from"';
+    }
+    return ' readonly title="Comes from Items Master and refreshes automatically — edit it on the Item, not here"';
+  },
+
   _matrixColorCellHtml(isMerged) {
     if (isMerged) {
       return '<td><select class="form-select form-select-sm prod-comp-item-select mb-1"><option value=""></option></select>'
@@ -5189,7 +5289,7 @@ App.Production = {
         ${this._dragCellHtml()}
         <td><input type="text" class="form-control prod-comp-display-name" value="${escapeHtml(itemName)}" readonly title="Merged across colors — each color cell below has its own item picker"></td>
         <td><input type="text" class="form-control prod-comp-size" value="${escapeHtml(size)}" placeholder="-"></td>
-        <td><input type="text" class="form-control prod-comp-narration" value="${escapeHtml(narration)}" placeholder="-" title="Shared across this row's colors, even though each color cell may secretly use a different literal item"></td>
+        <td><input type="text" class="form-control prod-comp-narration" value="${escapeHtml(narration)}" placeholder="-"${this._narrationInputAttrs(sourceType)}></td>
         <td>
           <select class="form-select prod-comp-source" onchange="App.Production.handleMergedSourceChange(this)">
             <option value="ITEM" ${sourceType === 'ITEM' ? 'selected' : ''}>Item (Stock)</option>
@@ -5231,6 +5331,7 @@ App.Production = {
 
   handleMergedSourceChange(selectEl) {
     const row = selectEl.closest('tr');
+    this._syncNarrationEditability(row);
     row?.querySelectorAll('.prod-comp-item-select').forEach(sel => {
       if (window.jQuery?.fn?.select2) window.jQuery(sel).val(null).trigger('change');
     });
@@ -5265,7 +5366,7 @@ App.Production = {
           </select>
         </td>
         <td><input type="text" class="form-control prod-comp-size" value="${escapeHtml(size)}" placeholder="-" onchange="App.Production.handleProdSizeChange(this)"></td>
-        <td><input type="text" class="form-control prod-comp-narration" value="${escapeHtml(narration)}" placeholder="-"></td>
+        <td><input type="text" class="form-control prod-comp-narration" value="${escapeHtml(narration)}" placeholder="-"${this._narrationInputAttrs(sourceType)}></td>
         <td>
           <select class="form-select prod-comp-source" onchange="App.Production.handleMatrixSourceChange(this)">
             <option value="ITEM" ${sourceType === 'ITEM' ? 'selected' : ''}>Item (Stock)</option>
@@ -5297,6 +5398,7 @@ App.Production = {
 
   handleMatrixSourceChange(selectEl) {
     const row = selectEl.closest('tr');
+    this._syncNarrationEditability(row);
     const itemSelect = row?.querySelector('.prod-comp-item-select');
     if (itemSelect && window.jQuery?.fn?.select2) {
       window.jQuery(itemSelect).val(null).trigger('change');
@@ -5809,7 +5911,7 @@ App.Production = {
           </select>
         </td>
         <td><input type="text" class="form-control prod-comp-size" value="${escapeHtml(size)}" placeholder="-" onchange="App.Production.handleProdSizeChange(this)"></td>
-        <td><input type="text" class="form-control prod-comp-narration" value="${escapeHtml(narration)}" placeholder="-"></td>
+        <td><input type="text" class="form-control prod-comp-narration" value="${escapeHtml(narration)}" placeholder="-"${this._narrationInputAttrs(sourceType)}></td>
         <td><input type="text" class="form-control prod-comp-color" list="colorList" value="${escapeHtml(color)}" placeholder="All colors"${colorReadonlyAttrs}></td>
         <td>
           <select class="form-select prod-comp-source" onchange="App.Production.handleSourceChange(this)">
@@ -5837,6 +5939,7 @@ App.Production = {
 
   handleSourceChange(selectEl) {
     const row = selectEl.closest('tr');
+    this._syncNarrationEditability(row);
     const itemSelect = row?.querySelector('.prod-comp-item-select');
     if (itemSelect && window.jQuery?.fn?.select2) window.jQuery(itemSelect).val(null).trigger('change');
     const sizeInput = row?.querySelector('.prod-comp-size');
@@ -6783,8 +6886,15 @@ App.Production = {
   _resolveDisplayNarration(itemName, size, fallback) {
     const stored = String(fallback || '').trim();
     const match = this._lookupSheetItem(itemName, size);
+    // No Items Master entry -- a Warehouse Pool WIP item, or an ad-hoc row
+    // typed straight into the sheet. There is nothing to derive from, so
+    // the hand-written value stands. This is the ONLY case that keeps it.
     if (!match) return stored;
-    return String(match.narration || '').trim() || stored;
+    // Items Master knows this item, so its narration is the answer --
+    // including when it is blank. Falling back to the stored value there
+    // is what kept components displaying text Items Master no longer
+    // holds, long after it had been deliberately cleared.
+    return String(match.narration || '').trim();
   },
 
   // Splits a lot's components into the Common table (no color, shown
@@ -6861,7 +6971,9 @@ App.Production = {
     });
 
     const matrixIndex = new Map();
-    matrixSlots.forEach(s => matrixIndex.set([s.itemName, s.size, s.narration].join('|').toLowerCase(), s));
+    // Same reasoning as the row key above -- item name + size identify a
+    // slot; narration only describes it.
+    matrixSlots.forEach(s => matrixIndex.set([s.itemName, s.size].join('|').toLowerCase(), s));
 
     const allColors = Array.from(colors);
     pendingCommonOverrides.forEach(({ comp, qty, narration, unit, overriddenColors }) => {
@@ -6869,7 +6981,7 @@ App.Production = {
       if (fallbackColors.length === 0) return;
       const perColorQty = qty / fallbackColors.length;
       const displayName = comp.itemName || '';
-      const slotKey = [displayName, comp.size || '', narration].join('|').toLowerCase();
+      const slotKey = [displayName, comp.size || ''].join('|').toLowerCase();
       let slot = matrixIndex.get(slotKey);
       if (!slot) {
         slot = { itemName: displayName, size: comp.size || '', narration, unit, colors: {}, cellItems: {}, cellPoolColors: {} };

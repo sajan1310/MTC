@@ -921,10 +921,19 @@ def refresh_process_components_from_items_master(conn, cur):
     untouched, and a row is only written when its narration actually
     changes.
     """
-    narration_map = items_service.get_item_narration_map(cur)
-    if not narration_map:
+    # get_item_master_refresh_map, NOT get_item_narration_map. The latter
+    # omits every item whose narration is blank, so "absent" conflated two
+    # different situations -- an item Items Master has never heard of, and
+    # an item whose narration is deliberately empty -- and both were
+    # skipped. Narration is a DERIVED projection of Items Master now, never
+    # typed into a recipe, so a blank one there has to blank the copy here;
+    # skipping it is what let 973 components keep text nobody could reach.
+    # This map carries every item, narration blank included, which is
+    # exactly the distinction that was missing.
+    master_map = items_service.get_item_master_refresh_map(cur)
+    if not master_map:
         return build_response(
-            True, {"componentsScanned": 0, "componentsUpdated": 0}, "Items Master has no narrations set -- nothing to sync."
+            True, {"componentsScanned": 0, "componentsUpdated": 0}, "Items Master is empty -- nothing to sync."
         )
 
     cur.execute(
@@ -938,22 +947,55 @@ def refresh_process_components_from_items_master(conn, cur):
     rows = cur.fetchall()
 
     updated = 0
+    cleared = 0
+    unknown = 0
     for row in rows:
         name = str(row["item_name"] or "").strip()
         if not name:
             continue
-        master = narration_map.get(f'{name.lower()}|{str(row["size"] or "").strip().lower()}')
-        if not master or master == str(row["narration"] or "").strip():
+        master = master_map.get(f'{name.lower()}|{str(row["size"] or "").strip().lower()}')
+        if master is None:
+            # Items Master has no such name+size at all. Nothing to derive
+            # from, so the stored value stands -- the one case where
+            # "keep what you have" is still right.
+            unknown += 1
             continue
-        cur.execute("UPDATE erp.process_components SET narration = %s WHERE id = %s", (master, row["id"]))
-        updated += 1
+        target = master["narration"]
+        if target == str(row["narration"] or "").strip():
+            continue
+        cur.execute("UPDATE erp.process_components SET narration = %s WHERE id = %s", (target, row["id"]))
+        if target:
+            updated += 1
+        else:
+            cleared += 1
 
-    if updated == 0:
+    # Reported separately, because rolling them together is what hid this.
+    # "All N already match Items Master -- nothing to change" was true of
+    # the rows it counted and silently excluded every row it had skipped,
+    # so the button looked like it had finished a job it had not started.
+    changed = updated + cleared
+    parts = []
+    if updated:
+        parts.append(f"{updated} narration(s) updated")
+    if cleared:
+        parts.append(f"{cleared} cleared (Items Master has none set)")
+    if unknown:
+        parts.append(f"{unknown} left as-is (no matching Items Master entry)")
+    if changed == 0 and not unknown:
         message = f"All {len(rows)} process component(s) already match Items Master -- nothing to change."
     else:
-        message = f"Refreshed narration on {updated} of {len(rows)} process component(s)."
+        message = f"Scanned {len(rows)} process component(s): " + ", ".join(parts) + "."
 
-    return build_response(True, {"componentsScanned": len(rows), "componentsUpdated": updated}, message)
+    return build_response(
+        True,
+        {
+            "componentsScanned": len(rows),
+            "componentsUpdated": changed,
+            "componentsCleared": cleared,
+            "componentsUnknown": unknown,
+        },
+        message,
+    )
 
 
 # ─────────────────────────────────────────────────────────────────────────

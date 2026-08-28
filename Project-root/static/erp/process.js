@@ -1375,7 +1375,7 @@ App.Process = {
         ${this.buildSizeOptionsHtml(compData && compData.itemName ? compData.itemName : '', compData && compData.size ? compData.size : '')}
       </select>
     </td>
-    <td><input type="text" class="form-control proc-comp-narration" placeholder="-" value="${escapeHtml(displayNarration)}"></td>
+    <td><input type="text" class="form-control proc-comp-narration" placeholder="-" value="${escapeHtml(displayNarration)}"${App.Process._narrationInputAttrs(compData && compData.sourceType === 'POOL' ? 'POOL' : 'ITEM')}></td>
     <td>
       <select class="form-select proc-comp-source" title="ITEM = raw material from Stock. POOL = an upstream process's Output Item Name from the Warehouse Pool." onchange="App.Process.handleSourceChange(this)">
         <option value="ITEM" ${(!compData || compData.sourceType !== 'POOL') ? 'selected' : ''}>Item (Stock)</option>
@@ -1585,7 +1585,32 @@ App.Process = {
     if (sizeSelect) sizeSelect.innerHTML = this.buildSizeOptionsHtml('', '');
     const narrationInput = row?.querySelector('.proc-comp-narration');
     if (narrationInput) narrationInput.value = '';
+    this._syncNarrationEditability(row);
     App.Process.showPoolColorHint(row, '');
+  },
+
+  // Narration is DERIVED from Items Master and refreshed live, so an ITEM
+  // row has nothing for an operator to type -- whatever they typed was
+  // overwritten by the next resolve anyway, and while it survived it
+  // travelled into every lot logged against this recipe. A POOL row keeps
+  // its input: its "item" is an upstream process's output, which has no
+  // Items Master entry to inherit a narration from.
+  _narrationInputAttrs(sourceType) {
+    if (sourceType === 'POOL') {
+      return ' title="Describe this pool component — it has no Items Master entry to inherit from"';
+    }
+    return ' readonly title="Comes from Items Master and refreshes automatically — edit it on the Item, not here"';
+  },
+
+  _syncNarrationEditability(row) {
+    if (!row) return;
+    const isPool = row.querySelector('.proc-comp-source')?.value === 'POOL';
+    const input = row.querySelector('.proc-comp-narration');
+    if (!input) return;
+    input.readOnly = !isPool;
+    input.title = isPool
+      ? 'Describe this pool component — it has no Items Master entry to inherit from'
+      : 'Comes from Items Master and refreshes automatically — edit it on the Item, not here';
   },
 
   // Searchable Select2 for a component row's item picker. Source list
