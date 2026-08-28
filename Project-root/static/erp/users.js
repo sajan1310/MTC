@@ -45,6 +45,32 @@ function _currentUserRole() {
   return document.querySelector('meta[name="current-user-role"]')?.getAttribute('content') || '';
 }
 
+// Bulk deactivation is Super Admin-only. This hides the checkbox column and
+// the action button for everyone else; users_service.bulk_deactivate_users
+// is what actually enforces it (an ordinary admin calling the method
+// directly is refused there, not here).
+function _canBulkDeactivate() {
+  return _currentUserRole() === 'super_admin';
+}
+
+// Six columns, or seven with the Super Admin-only select column -- every
+// full-width row this file renders has to agree with the <thead> the
+// partial built, or it overhangs the table or leaves a gap.
+function _colCount() {
+  return _canBulkDeactivate() ? 7 : 6;
+}
+
+// Which rows a bulk deactivation may target. Mirrors the server's own
+// filters (bulk_deactivate_users) so the UI never offers a checkbox for a
+// row the server would skip: an already-inactive account has nothing to
+// deactivate, and the caller's own account and any other Super Admin are
+// both refused there.
+function _isBulkSelectable(u, selfId) {
+  return u.active
+    && !(selfId != null && selfId === Number(u.id))
+    && u.role !== 'super_admin';
+}
+
 // ROLE_LABELS plus whatever custom roles are currently loaded (see
 // App.Users.loadData, which fetches getCustomRoles alongside getUsersData)
 // -- used by the per-row role <select> so a user already on a custom role
@@ -59,7 +85,12 @@ function _mergedRoleLabels() {
 App.Users = {
   async loadData() {
     const tbody = document.getElementById('usersTableBody');
-    if (tbody) App.Utils.tableLoading(tbody, 6, 'Loading users…');
+    if (tbody) App.Utils.tableLoading(tbody, _colCount(), 'Loading users…');
+    // Every reload re-renders the rows, and anything selected before it may
+    // no longer exist or no longer be selectable (it may be exactly what was
+    // just deactivated). Carrying keys across would leave the count showing
+    // a selection the user can no longer see.
+    this.clearSelection();
 
     try {
       // Custom roles fetched alongside users (not only when Manage Roles
@@ -73,7 +104,7 @@ App.Users = {
 
       if (!res?.success) {
         App.Utils.showToast(res?.message || 'Failed to load users.', true);
-        if (tbody) tbody.innerHTML = '<tr><td colspan="6" class="text-center p-4 text-danger">Failed to load users.</td></tr>';
+        if (tbody) tbody.innerHTML = `<tr><td colspan="${_colCount()}" class="text-center p-4 text-danger">Failed to load users.</td></tr>`;
         return;
       }
       App.State.globalUsers = res.data || [];
@@ -141,6 +172,11 @@ App.Users = {
   },
 
   filterData(term) {
+    // Deliberately NOT the persist-across-filters behaviour the paginated
+    // tabs use (see bill.js). Deactivation is destructive and irreversible
+    // from this screen, so the selection is only ever what is visible --
+    // "Deactivate Selected" must never act on a row the search has hidden.
+    this.clearSelection();
     App.State.usersSearchTerm = String(term || '');
     const q = App.State.usersSearchTerm.toLowerCase().trim();
     App.State.filteredUsers = !q
@@ -161,12 +197,14 @@ App.Users = {
       tbody.innerHTML = '';
       if (emptyState) emptyState.style.display = App.State.globalUsers.length ? '' : 'none';
       if (!App.State.globalUsers.length) {
-        tbody.innerHTML = '<tr><td colspan="6" class="text-center p-4 text-muted">No users found.</td></tr>';
+        tbody.innerHTML = `<tr><td colspan="${_colCount()}" class="text-center p-4 text-muted">No users found.</td></tr>`;
       }
+      this.refreshSelectionUi();
       return;
     }
     if (emptyState) emptyState.style.display = 'none';
     tbody.innerHTML = rows.map(u => this.rowHtml(u)).join('');
+    this.refreshSelectionUi();
   },
 
   rowHtml(u) {
@@ -213,8 +251,23 @@ App.Users = {
         ? `<button class="btn btn-sm btn-outline-danger btn-action" data-action="user-deactivate" data-id="${u.id}">Deactivate</button>`
         : `<button class="btn btn-sm btn-outline-success btn-action" data-action="user-reactivate" data-id="${u.id}">Reactivate</button>`;
 
+    // An empty cell, not a missing one: a row that cannot be bulk-selected
+    // still has to occupy the column, or every cell after it shifts left by
+    // one and the row stops lining up with the header.
+    const selectCell = !_canBulkDeactivate()
+      ? ''
+      : _isBulkSelectable(u, selfId)
+        ? `<td class="text-center">
+            <input type="checkbox" class="form-check-input user-select-chk" data-key="${u.id}"
+                   aria-label="Select ${escapeHtml(u.name || u.email || 'user')} for deactivation"
+                   ${App.Selection.isSelected(App.State.selectedUsers, String(u.id)) ? 'checked' : ''}
+                   onchange="App.Users.onRowSelectChange()">
+          </td>`
+        : '<td></td>';
+
     return `
       <tr>
+        ${selectCell}
         <td>${escapeHtml(App.Utils.formatNameCase(u.name) || '-')}</td>
         <td>${escapeHtml(u.email || '-')}</td>
         <td>
@@ -255,6 +308,78 @@ App.Users = {
           if (res?.success) await this.loadData();
         } catch (err) {
           App.Utils.showToast(err.message || 'Failed to deactivate user.', true);
+        }
+      }
+    );
+  },
+
+  // ── Bulk deactivation (Super Admin only) ──────────────────────────────
+  // Selection state is an array of user-id STRINGS, matching the shared
+  // App.Selection helpers every other tab's checkbox column uses.
+
+  toggleSelectAll(masterChk) {
+    App.Selection.toggleAll(App.State.selectedUsers, 'user-select-chk', masterChk);
+    this.refreshSelectionUi();
+  },
+
+  onRowSelectChange() {
+    App.Selection.syncFromRows(App.State.selectedUsers, 'user-select-chk', 'selectAllUsers');
+    this.refreshSelectionUi();
+  },
+
+  clearSelection() {
+    App.State.selectedUsers = [];
+    const master = document.getElementById('selectAllUsers');
+    if (master) master.checked = false;
+  },
+
+  // Drops any key whose checkbox is no longer on screen, then repaints the
+  // button and the master checkbox. Called after every render so the count
+  // can never claim more than the rows actually offer.
+  refreshSelectionUi() {
+    const onScreen = $$('.user-select-chk').map(chk => chk.dataset.key);
+    App.State.selectedUsers = (App.State.selectedUsers || []).filter(key => onScreen.includes(key));
+
+    const master = document.getElementById('selectAllUsers');
+    if (master) {
+      master.checked = onScreen.length > 0 && onScreen.length === App.State.selectedUsers.length;
+    }
+    App.Selection.updateButton(
+      'btnBulkDeactivateUsers',
+      App.State.selectedUsers.length,
+      '<i class="bi bi-person-slash"></i> Deactivate Selected'
+    );
+  },
+
+  bulkDeactivate() {
+    const ids = (App.State.selectedUsers || []).map(Number).filter(Number.isFinite);
+    if (!ids.length) {
+      App.Utils.showToast('Select at least one user to deactivate.', true);
+      return;
+    }
+    // Names, not just a count: the whole risk of a bulk action is acting on
+    // more than you meant to, and a bare "Deactivate 9 users?" gives the
+    // reader nothing to check that against.
+    const names = ids
+      .map(id => (App.State.globalUsers.find(u => Number(u.id) === id) || {}).name)
+      .filter(Boolean);
+    const listed = names.slice(0, 5).join(', ');
+    const andMore = names.length > 5 ? `, and ${names.length - 5} more` : '';
+
+    App.Utils.confirmAction(
+      `Deactivate ${ids.length} user${ids.length === 1 ? '' : 's'} (${listed}${andMore})? ` +
+      'They will be signed out and unable to sign in again until reactivated.',
+      async () => {
+        const btn = document.getElementById('btnBulkDeactivateUsers');
+        if (btn) btn.disabled = true;
+        try {
+          const res = await Api.mutate('bulkDeactivateUsers', ids);
+          App.Utils.showToast(res?.message || 'Users deactivated.', !res?.success);
+          if (res?.success) await this.loadData();
+        } catch (err) {
+          App.Utils.showToast(err.message || 'Failed to deactivate users.', true);
+        } finally {
+          if (btn) btn.disabled = false;
         }
       }
     );

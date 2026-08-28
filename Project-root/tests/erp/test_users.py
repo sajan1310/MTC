@@ -13,6 +13,7 @@ import psycopg2.extras
 import pytest
 
 import database
+from app.erp.services.users_service import BULK_DEACTIVATE_LIMIT
 
 
 def _rpc(client, method, args=None, mutation=False):
@@ -185,6 +186,162 @@ def test_deactivated_user_session_is_rejected(erp_app, erp_admin_client):
     resp = client.post("/api/erp/rpc/testConnection", json={"args": []})
     # load_user's WHERE deleted_at IS NULL now returns None for this user_id
     # -> flask-login treats the session as unauthenticated.
+    assert resp.status_code in (302, 401)
+
+
+# ── bulkDeactivateUsers (Super Admin only) ───────────────────────────────
+
+def _active(client, user_id):
+    listed = _rpc(client, "getUsersData").get_json()["data"]
+    return next(u for u in listed if u["id"] == user_id)["active"]
+
+
+def test_bulk_deactivate_denied_for_plain_user(erp_client, erp_test_user):
+    resp = _rpc(erp_client, "bulkDeactivateUsers", [[erp_test_user]], mutation=True)
+    assert resp.status_code == 403
+
+
+def test_bulk_deactivate_denied_for_ordinary_admin(erp_app, erp_admin_client):
+    """The decorator's roles=frozenset({"admin"}) CANNOT express this.
+
+    rpc.py checks it with User.has_role, which returns True for any role
+    check at all when the caller is admin or super_admin -- so the gate that
+    actually keeps an ordinary admin out is the explicit role comparison in
+    the method body. If that comparison is ever dropped in favour of a
+    roles= declaration, this is the test that fails.
+    """
+    target_id = _insert_user(erp_app, name="Bulk Denied", email=_unique_email("bulkdenied"), role="user")
+
+    resp = _rpc(erp_admin_client, "bulkDeactivateUsers", [[target_id]], mutation=True)
+    body = resp.get_json()
+    assert body["success"] is False
+    assert "Super Admin" in body["message"]
+    assert _active(erp_admin_client, target_id) is True
+
+
+def test_bulk_deactivate_happy_path(erp_app, erp_super_admin_client):
+    ids = [
+        _insert_user(erp_app, name=f"Bulk Target {n}", email=_unique_email(f"bulk{n}"), role="user")
+        for n in range(3)
+    ]
+
+    body = _rpc(erp_super_admin_client, "bulkDeactivateUsers", [ids], mutation=True).get_json()
+    assert body["success"] is True, body["message"]
+    assert body["data"]["deactivated"] == 3
+
+    for user_id in ids:
+        assert _active(erp_super_admin_client, user_id) is False
+
+
+def test_bulk_deactivate_skips_the_caller_and_deactivates_the_rest(
+    erp_app, erp_super_admin_client, erp_super_admin_user
+):
+    """A "select all" that swept up the caller must not fail wholesale."""
+    target_id = _insert_user(erp_app, name="Bulk With Self", email=_unique_email("bulkself"), role="user")
+
+    body = _rpc(
+        erp_super_admin_client,
+        "bulkDeactivateUsers",
+        [[target_id, erp_super_admin_user]],
+        mutation=True,
+    ).get_json()
+
+    assert body["success"] is True, body["message"]
+    assert body["data"]["deactivated"] == 1
+    assert body["data"]["skippedSelf"] is True
+    assert "your own account was skipped" in body["message"]
+    assert _active(erp_super_admin_client, target_id) is False
+    assert _active(erp_super_admin_client, erp_super_admin_user) is True
+
+
+def test_bulk_deactivate_skips_other_super_admins(erp_app, erp_super_admin_client):
+    """super_admin is assigned directly in the database, so deactivating
+    every super_admin is not recoverable from inside the app. Single
+    deactivation has no such rule -- bulk is where one click could do it."""
+    peer_id = _insert_user(erp_app, name="Peer Super", email=_unique_email("peersuper"), role="super_admin")
+    target_id = _insert_user(erp_app, name="Ordinary", email=_unique_email("ordinary"), role="user")
+
+    body = _rpc(
+        erp_super_admin_client, "bulkDeactivateUsers", [[peer_id, target_id]], mutation=True
+    ).get_json()
+
+    assert body["success"] is True, body["message"]
+    assert body["data"]["deactivated"] == 1
+    assert body["data"]["skippedSuperAdmins"] == 1
+    assert _active(erp_super_admin_client, peer_id) is True
+    assert _active(erp_super_admin_client, target_id) is False
+
+
+def test_bulk_deactivate_counts_already_inactive_ids(erp_app, erp_super_admin_client):
+    already = _insert_user(erp_app, name="Already Off", email=_unique_email("alreadyoff"), role="user")
+    _rpc(erp_super_admin_client, "deactivateUser", [already], mutation=True)
+    target_id = _insert_user(erp_app, name="Still On", email=_unique_email("stillon"), role="user")
+
+    body = _rpc(
+        erp_super_admin_client, "bulkDeactivateUsers", [[already, target_id]], mutation=True
+    ).get_json()
+
+    assert body["success"] is True, body["message"]
+    assert body["data"]["deactivated"] == 1
+    assert body["data"]["alreadyInactive"] == 1
+    assert "already inactive or not found" in body["message"]
+
+
+def test_bulk_deactivate_errors_when_nothing_survives_the_filters(
+    erp_super_admin_client, erp_super_admin_user
+):
+    """Selecting only your own account deactivates nothing. A success
+    envelope reading "0 deactivated" would render as a green toast for an
+    action that did nothing."""
+    body = _rpc(
+        erp_super_admin_client, "bulkDeactivateUsers", [[erp_super_admin_user]], mutation=True
+    ).get_json()
+
+    assert body["success"] is False
+    assert "No users were deactivated" in body["message"]
+    assert "your own account was skipped" in body["message"]
+
+
+def test_bulk_deactivate_rejects_an_empty_selection(erp_super_admin_client):
+    body = _rpc(erp_super_admin_client, "bulkDeactivateUsers", [[]], mutation=True).get_json()
+    assert body["success"] is False
+    assert "at least one user" in body["message"]
+
+
+def test_bulk_deactivate_caps_the_batch_size(erp_super_admin_client):
+    """A blast-radius limit, not a performance one."""
+    too_many = list(range(1, BULK_DEACTIVATE_LIMIT + 2))
+    body = _rpc(erp_super_admin_client, "bulkDeactivateUsers", [too_many], mutation=True).get_json()
+    assert body["success"] is False
+    assert f"at most {BULK_DEACTIVATE_LIMIT}" in body["message"]
+
+
+def test_bulk_deactivate_is_atomic_across_the_batch(erp_app, erp_super_admin_client):
+    """One UPDATE, one transaction: a partial batch would leave half a team
+    signed out with no record of where it stopped."""
+    ids = [
+        _insert_user(erp_app, name=f"Atomic {n}", email=_unique_email(f"atomic{n}"), role="user")
+        for n in range(4)
+    ]
+    _rpc(erp_super_admin_client, "bulkDeactivateUsers", [ids], mutation=True)
+
+    listed = _rpc(erp_super_admin_client, "getUsersData").get_json()["data"]
+    states = {u["id"]: u["active"] for u in listed if u["id"] in ids}
+    assert set(states.values()) == {False}
+
+
+def test_bulk_deactivated_user_cannot_sign_in(erp_app, erp_super_admin_client):
+    """Same closing of the loop as the single-deactivation case: an EXISTING
+    session must stop working, not just future logins."""
+    target_id = _insert_user(erp_app, name="Bulk Session Kill", email=_unique_email("bulkkill"), role="user")
+    _rpc(erp_super_admin_client, "bulkDeactivateUsers", [[target_id]], mutation=True)
+
+    client = erp_app.test_client()
+    with client.session_transaction() as sess:
+        sess["_user_id"] = str(target_id)
+        sess["_fresh"] = True
+
+    resp = client.post("/api/erp/rpc/testConnection", json={"args": []})
     assert resp.status_code in (302, 401)
 
 

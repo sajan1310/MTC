@@ -17,10 +17,21 @@ update_user_role, which together are what actually close that gap.
 A fourth value, "super_admin", exists above these three (assigned directly
 in the database, not through this file's ROLES/CREATE_ROLES -- see
 User.has_role()/is_admin in app/models/user.py) and is a strict superset of
-admin everywhere EXCEPT one place: only a super_admin can hand out the
-"admin" role itself (both here in create_user and in update_user_role),
-so an ordinary admin can't mint unlimited peer admins with nothing above
-them to revoke it.
+admin everywhere EXCEPT where a method says otherwise: only a super_admin
+can hand out the "admin" role itself (create_user, update_user_role), so an
+ordinary admin can't mint unlimited peer admins with nothing above them to
+revoke it -- and only a super_admin can deactivate users in BULK
+(bulk_deactivate_users).
+
+Each of those three spells that rule out as an explicit
+`get_current_user_role() != "super_admin"` comparison in the body rather
+than declaring it on the decorator, and it has to. RpcSpec.roles CANNOT
+express "super_admin only": rpc.py tests it with User.has_role, which
+returns True for any role check at all when the caller is admin or
+super_admin. That wildcard is the point of the mechanism elsewhere, but it
+means roles=frozenset({"super_admin"}) would happily admit an ordinary
+admin. The decorator stays frozenset({"admin"}) as the outer gate; the body
+comparison is the actual restriction.
 
 A fifth kind of value -- an admin/super_admin-defined custom role (see
 roles_service.py, is_valid_custom_role) -- is also accepted here alongside
@@ -187,6 +198,120 @@ def deactivate_user(conn, cur, user_id):
     # references on items/POs/etc.) stay intact.
     cur.execute("UPDATE users SET deleted_at = NOW(), updated_at = NOW() WHERE user_id = %s", (user_id,))
     return build_response(True, None, f'"{row["name"]}" deactivated. They can no longer sign in.')
+
+
+# Blast-radius cap on a single call. Not a performance limit: bulk
+# deactivation is the most destructive thing this module exposes, and a
+# bounded batch keeps a mis-scripted or replayed call from taking out an
+# entire user table in one statement.
+BULK_DEACTIVATE_LIMIT = 100
+
+
+@rpc_method("bulkDeactivateUsers", mutation=True, roles=frozenset({"admin"}))
+@database.transactional
+def bulk_deactivate_users(conn, cur, user_ids):
+    """Deactivate several users at once. Super Admin only.
+
+    The same soft delete as deactivate_user applied to a set of ids, and
+    deliberately ONE UPDATE rather than a loop: the batch lands whole or not
+    at all, so a failure partway cannot leave half a team signed out with no
+    record of where it stopped.
+
+    Two kinds of account are skipped rather than refused, because a "select
+    all" that included either would otherwise fail the whole call and tell
+    the caller nothing about the rest:
+
+      * the caller's own account -- deactivate_user's rule, which exists so
+        nobody can lock themselves out mid-action;
+      * any OTHER super_admin -- this one has no equivalent in single
+        deactivation, and is here because bulk changes the stakes.
+        super_admin is assigned directly in the database (see the module
+        docstring), so deactivating every super_admin cannot be undone from
+        inside the app at all. One careless "select all" should not be able
+        to do it.
+
+    Skips, and ids that were already inactive, are counted back in the
+    message rather than silently dropped: the caller asked for N accounts
+    and needs to know it got fewer, and why.
+    """
+    # See the module docstring: the decorator above is the outer admin gate,
+    # NOT this restriction. roles= cannot express "super_admin only".
+    if get_current_user_role() != "super_admin":
+        raise ValueError("Only a Super Admin can deactivate users in bulk.")
+
+    if not isinstance(user_ids, (list, tuple)):
+        raise ValueError("Select at least one user to deactivate.")
+    try:
+        ids = {int(uid) for uid in user_ids}
+    except (TypeError, ValueError):
+        raise ValueError("Invalid user selection.")
+    if not ids:
+        raise ValueError("Select at least one user to deactivate.")
+    if len(ids) > BULK_DEACTIVATE_LIMIT:
+        raise ValueError(
+            f"Select at most {BULK_DEACTIVATE_LIMIT} users at a time ({len(ids)} selected)."
+        )
+
+    cur.execute(
+        "SELECT user_id, name, role FROM users WHERE user_id = ANY(%s) AND deleted_at IS NULL",
+        (list(ids),),
+    )
+    rows = cur.fetchall()
+
+    self_id = get_current_user_id()
+    targets, skipped_self, skipped_super_admins = [], False, []
+    for row in rows:
+        if row["user_id"] == self_id:
+            skipped_self = True
+        elif row["role"] == "super_admin":
+            skipped_super_admins.append(row["name"])
+        else:
+            targets.append(row)
+
+    # Asked for but matched no ACTIVE row: already deactivated, or never
+    # existed. Both mean "nothing to do", and neither is worth failing the
+    # rest of the batch over.
+    already_inactive = len(ids) - len(rows)
+
+    notes = []
+    if skipped_self:
+        notes.append("your own account was skipped")
+    if skipped_super_admins:
+        n = len(skipped_super_admins)
+        notes.append(f"{n} Super Admin account{'s were' if n != 1 else ' was'} skipped")
+    if already_inactive:
+        notes.append(f"{already_inactive} already inactive or not found")
+
+    # Nothing survived the filters -- a success envelope reading "0
+    # deactivated" would render as a green toast for an action that did
+    # nothing, so this is an error with the reason attached.
+    if not targets:
+        raise ValueError(
+            "No users were deactivated" + (f" -- {', '.join(notes)}." if notes else ".")
+        )
+
+    cur.execute(
+        "UPDATE users SET deleted_at = NOW(), updated_at = NOW() WHERE user_id = ANY(%s)",
+        ([row["user_id"] for row in targets],),
+    )
+
+    message = (
+        f"{len(targets)} user{'s' if len(targets) != 1 else ''} deactivated. "
+        "They can no longer sign in."
+    )
+    if notes:
+        message += f" ({', '.join(notes)}.)"
+
+    return build_response(
+        True,
+        {
+            "deactivated": len(targets),
+            "skippedSelf": skipped_self,
+            "skippedSuperAdmins": len(skipped_super_admins),
+            "alreadyInactive": already_inactive,
+        },
+        message,
+    )
 
 
 @rpc_method("reactivateUser", mutation=True, roles=frozenset({"admin"}))

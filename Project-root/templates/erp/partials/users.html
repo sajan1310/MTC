@@ -17,6 +17,17 @@
              oninput="App.Utils.debouncedFilter(this, () => App.Users.filterData(this.value))">
     </div>
     <div class="d-flex gap-2">
+      {% if current_user.role == 'super_admin' %}
+      <!-- Bulk deactivation is Super Admin-only. Gated here so an ordinary
+           admin is never shown a control that would only come back as an
+           error, and again in users.js (which renders the per-row
+           checkboxes) -- but bulkDeactivateUsers enforces it server-side
+           regardless of what either shows. -->
+      <button class="btn btn-danger fw-bold shadow-sm d-none" id="btnBulkDeactivateUsers" type="button"
+              onclick="App.Users.bulkDeactivate()" style="white-space: nowrap;">
+        <i class="bi bi-person-slash"></i> Deactivate Selected
+      </button>
+      {% endif %}
       <button type="button" class="btn btn-primary fw-bold shadow-sm" onclick="App.Users.openCreateModal()">
         <i class="bi bi-person-plus-fill me-1"></i>Create User
       </button>
@@ -34,6 +45,13 @@
       <caption class="visually-hidden">Registered users, their role, and account status</caption>
       <thead class="table-dark">
         <tr>
+          {% if current_user.role == 'super_admin' %}
+          <th scope="col" style="width: 4%; text-align: center;">
+            <input type="checkbox" id="selectAllUsers" class="form-check-input"
+                   aria-label="Select all deactivatable users"
+                   onclick="App.Users.toggleSelectAll(this)">
+          </th>
+          {% endif %}
           <th scope="col">Name</th>
           <th scope="col">Email</th>
           <th scope="col" style="width: 16%;">Role</th>
@@ -43,7 +61,11 @@
         </tr>
       </thead>
       <tbody id="usersTableBody">
-        <tr><td colspan="6" class="text-center p-4">Loading users…</td></tr>
+        <!-- Six columns, or seven when the Super Admin-only select column is
+             rendered. A fixed number here would overhang the table for one
+             viewer or leave a gap for the other. users.js's _colCount() is
+             the same rule for every row it renders after this one. -->
+        <tr><td colspan="{{ 7 if current_user.role == 'super_admin' else 6 }}" class="text-center p-4">Loading users…</td></tr>
       </tbody>
     </table>
   </div>

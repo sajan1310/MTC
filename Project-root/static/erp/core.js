@@ -382,6 +382,9 @@ const App = {
     globalUsers: [],
     filteredUsers: [],
     usersSearchTerm: '',
+    // Bulk deactivation's checkbox column (Super Admin only) -- user-id
+    // strings, same shape as every other tab's selection array.
+    selectedUsers: [],
     // Custom roles (roles_service.py) -- fetched alongside globalUsers.
     globalCustomRoles: []
   },
