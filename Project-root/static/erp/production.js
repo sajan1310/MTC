@@ -1049,12 +1049,26 @@ App.Production = {
         <tr>
           ${band.map(([, qty]) => `<td style="width:${colWidthPct};${cellBox}padding:3px 4px;border:1px solid #ddd;text-align:center;font-weight:700;color:${INK};">${this.formatQty(qty)}</td>`).join('')}
         </tr>`).join('');
-      // table-layout:fixed derives each column's width from the FIRST
-      // row's cell count -- the Total row (only ever 2 cells) needs an
-      // explicit colspan matching that width, or it renders as two
-      // slivers at the left instead of spanning the full table.
+      // table-layout:fixed derives each column's width from the FIRST row's
+      // cell count, so the Total row has to add up to exactly that width or
+      // it does not line up with the colour columns above it.
+      //
+      // With two or more colours that is a label cell spanning all but the
+      // last column plus the figure in the last one. With a SINGLE colour --
+      // which is most lots -- there is no second column to put the figure
+      // in, and `Math.max(widestBandCols - 1, 1)` still emitted a colspan-1
+      // label AND a figure cell beside it: two cells in a one-column table.
+      // The figure was laid out past the table's right edge and printed in
+      // the page margin, outside the border, on every single-colour lot on
+      // the sheet. One cell carrying both label and figure is the only
+      // arrangement a one-column table has room for.
       const widestBandCols = bands.length > 0 ? bands[0].length : 1;
-      const totalLabelSpan = Math.max(widestBandCols - 1, 1);
+      const totalLabelSpan = widestBandCols - 1;
+      const totalCell = `${cellBox}padding:3px 6px;border:1px solid #ddd;font-weight:700;text-align:right;color:${INK};`;
+      const totalRowHtml = totalLabelSpan > 0
+        ? `<td colspan="${totalLabelSpan}" style="${totalCell}">Total</td>
+            <td style="width:${colWidthPct};${totalCell}">${this.formatQty(totalQty)}</td>`
+        : `<td style="width:${colWidthPct};${totalCell}">Total <span style="margin-left:10px;">${this.formatQty(totalQty)}</span></td>`;
 
       return `
     <div style="margin-bottom:8px;page-break-inside:avoid;">
@@ -1070,8 +1084,7 @@ App.Production = {
         <tbody>
           ${bandsHtml}
           <tr>
-            <td colspan="${totalLabelSpan}" style="${cellBox}padding:3px 6px;border:1px solid #ddd;font-weight:700;text-align:right;color:${INK};">Total</td>
-            <td style="width:${colWidthPct};${cellBox}padding:3px 6px;border:1px solid #ddd;font-weight:700;text-align:right;color:${INK};">${this.formatQty(totalQty)}</td>
+            ${totalRowHtml}
           </tr>
         </tbody>
       </table>

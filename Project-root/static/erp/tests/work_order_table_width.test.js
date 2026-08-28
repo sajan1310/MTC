@@ -123,6 +123,54 @@ describe('Work Order colour table geometry', () => {
     expect(figureCell.textContent.trim()).toBe('60');
   });
 
+  // The overwhelmingly common shape on a real sheet: a lot made in one
+  // colour. Five of the six cards on the reported Work Order were this.
+  const ONE_COLOR_LOT = [{
+    ...FIVE_COLOR_LOT[0],
+    outputItemName: '(FITTING FRAME) FITTED FRAME 20 INCH CRYSTA S/RIM (PINK ONLY)',
+    colorBreakdown: [{ color: 'PINK-WHITE', qty: 20 }],
+  }];
+
+  test('a single-colour item keeps its Total figure inside the table', () => {
+    // A one-column table has no second column to put the figure in. The
+    // Total row used to emit a colspan-1 label AND a figure cell anyway --
+    // two cells in a one-column table -- so the figure was laid out past
+    // the right edge and printed in the page margin, outside the border.
+    render(ONE_COLOR_LOT);
+
+    const totalRow = Array.from(document.querySelectorAll('tr'))
+      .find(tr => tr.textContent.includes('Total'));
+    const cells = Array.from(totalRow.children);
+    const spanned = cells.reduce((n, td) => n + (parseInt(td.getAttribute('colspan'), 10) || 1), 0);
+
+    // One column above means one cell wide below. This is the assertion
+    // that was false: spanned was 2 against a 1-column table.
+    expect(document.querySelectorAll('th[style*="width"]')).toHaveLength(1);
+    expect(spanned).toBe(1);
+
+    // The label and the figure both survive -- the fix is to merge them
+    // into the one cell there is room for, not to drop either.
+    expect(totalRow.textContent.replace(/\s+/g, ' ').trim()).toBe('Total 20');
+    expect(pctOf(cells[0])).toBe(100);
+  });
+
+  test('a two-colour item still splits label and figure across two cells', () => {
+    // The merge is ONLY for the single-column case; two columns have room
+    // for the ordinary layout and must keep it.
+    render([{ ...FIVE_COLOR_LOT[0], colorBreakdown: [
+      { color: 'PINK-WHITE', qty: 20 }, { color: 'BLUE-WHITE', qty: 5 },
+    ] }]);
+
+    const totalRow = Array.from(document.querySelectorAll('tr'))
+      .find(tr => tr.textContent.includes('Total'));
+    const cells = Array.from(totalRow.children);
+
+    expect(cells).toHaveLength(2);
+    expect(cells[cells.length - 1].textContent.trim()).toBe('25');
+    const spanned = cells.reduce((n, td) => n + (parseInt(td.getAttribute('colspan'), 10) || 1), 0);
+    expect(spanned).toBe(2);
+  });
+
   test('a wrapped item keeps both bands within the page', () => {
     // Seven colours split 4+3 (_evenBands). The widest band sets the column
     // width, so 4 columns at 25% -- still 100%, still border-box.
