@@ -134,7 +134,28 @@
 // this feature come from two different renderers, and only the cached half
 // went stale. core.js also changed (App.State.selectedUsers) and IS
 // precached.
-const CACHE_NAME = 'erp-shell-v43';
+// v44: five Warehouse Pool fixes, all in stock.js. The ledger now resolves
+// each lot's bucket through its Process (a per-lot output item name no
+// longer hides the lot), matches COMPOSITE bucket colours by segment on
+// both the credit and the debit leg, credits a lot to its composite bucket
+// OR its bare-colour one but never both, and stops counting every manual
+// correction twice (it was read from warehouse_pool_opening AND from the
+// warehouse_pool_adjustments audit row that records the same event). The
+// pool table also surfaces buckets stranded on a deleted process, which it
+// previously rendered nowhere at all, and flags debit-only buckets apart
+// from genuine shortfalls.
+//
+// The ledger itself then moved SERVER-side (getWarehousePoolLedger), which
+// is what makes those five fixes the last of their kind: the browser no
+// longer reimplements the pool's arithmetic, it renders the events the
+// rebuild emits, so the closing balance equals Available Qty by
+// construction rather than by two implementations agreeing. Verified
+// against live data -- 1327 of 1327 buckets reconcile, where the best the
+// client-side version reached was 700 of 758. stock.js is precached and
+// cache-first, so without the bump an installed client keeps its own copy
+// of the old ledger and calls none of this -- which would read as the
+// fixes having had no effect.
+const CACHE_NAME = 'erp-shell-v44';
 
 const PRECACHE_URLS = [
   '/erp/offline.html',

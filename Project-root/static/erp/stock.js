@@ -1103,6 +1103,43 @@ App.Stock = {
     };
   },
 
+  // Pool buckets whose Process is not in globalProcesses -- deleted, or an
+  // id that never matched one. The table is built by walking the LIVE
+  // process list (see renderWarehousePoolTable), so these are rendered
+  // nowhere at all, while getWarehousePoolData still returns them and every
+  // total derived from it still counts them: a stranded balance no operator
+  // can see, let alone correct. "14 inch Ford D/Gaddi Steel Rim" [Blue] sat
+  // at -19 on deleted process PRC-1017 exactly this way.
+  //
+  // Surfaced as a banner rather than folded into a synthetic process row:
+  // the row machinery below reads sequence/active/GROUP_DIMENSIONS off a
+  // real Process record, and inventing one to satisfy a sort comparator
+  // would be a worse lie than naming the problem outright.
+  orphanedPoolBuckets() {
+    const liveProcessIds = new Set((App.State.globalProcesses || []).map(p => p.processId));
+    return (App.State.globalWarehousePool || []).filter(r => !liveProcessIds.has(r.processId));
+  },
+
+  renderOrphanedPoolBanner(colSpan) {
+    const orphans = this.orphanedPoolBuckets();
+    if (!orphans.length) return '';
+    const items = orphans
+      .slice()
+      .sort((a, b) => (a.availableQty || 0) - (b.availableQty || 0))
+      .map(r => `<li>${escapeHtml(r.outputItemName || '(no item name)')}`
+        + (r.color ? ` <span class="badge bg-info text-dark">${escapeHtml(r.color)}</span>` : '')
+        + ` &mdash; available <strong>${App.Production.formatQty(r.availableQty)}</strong>`
+        + `, on missing process <code>${escapeHtml(r.processId || '(blank)')}</code></li>`)
+      .join('');
+    return `<tr><td colspan="${colSpan}" class="p-0">
+      <div class="alert alert-warning border-0 rounded-0 mb-0">
+        <strong><i class="bi bi-exclamation-octagon-fill me-2"></i>${orphans.length} pool bucket(s) are stranded on a process that no longer exists.</strong>
+        <div class="small mt-1">These balances are still counted in the Warehouse Pool but cannot be reached from any process row below, so they can never be corrected from this table. Restore the process, or record the physical count against a live one.</div>
+        <ul class="small mb-0 mt-2">${items}</ul>
+      </div>
+    </td></tr>`;
+  },
+
   renderWarehousePoolTable() {
     const tbody = document.getElementById('warehousePoolTableBody');
     if (!tbody) return;
@@ -1113,9 +1150,14 @@ App.Stock = {
       .map(p => ({ process: p, leafRows: this.computeLeafRowsForProcess(p, term) }))
       .filter(e => e.leafRows.length > 0);
 
+    const tiersForSpan = (App.State.warehousePoolGroupOrder || []).filter(dim => dim && App.Process.GROUP_DIMENSIONS[dim]);
+    const orphanBanner = this.renderOrphanedPoolBanner(tiersForSpan.length + 6);
+
     if (entries.length === 0) {
-      tbody.innerHTML = '';
-      if (emptyState) emptyState.style.display = 'block';
+      // The banner still renders with no process rows -- a pool whose only
+      // remaining content is stranded is exactly when it must be seen.
+      tbody.innerHTML = orphanBanner;
+      if (emptyState) emptyState.style.display = orphanBanner ? 'none' : 'block';
       this.updateWarehousePoolBulkButtons();
       return;
     }
@@ -1165,7 +1207,7 @@ App.Stock = {
     // Produced/Consumed/Available summed across every leaf row (Color/
     // Product-Tag combination) computed above. The row opens
     // openWarehousePoolProcessModal() for the per-combination breakdown.
-    let html = '';
+    let html = orphanBanner;
     sorted.forEach(entry => {
       const p = entry.process;
       const tierValues = tiers.map(dim => App.Process.GROUP_DIMENSIONS[dim].getValue(p));
@@ -1424,6 +1466,33 @@ App.Stock = {
       ? ` <i class="bi bi-exclamation-triangle-fill text-danger" title="Negative available quantity"></i>`
       : '';
 
+    // A bucket with nothing EVER produced but real consumption against it
+    // was opened by the debit side alone -- consumption naming a colour no
+    // credit ever used. That is an ATTRIBUTION problem (the units are
+    // almost always sitting in a sibling bucket under a fuller composite
+    // name) and not stock consumed but never entered. Both look identical
+    // once they are just a red negative, so a genuine "a count is owed"
+    // signal gets lost among misfiled ones -- 189 of the 241 negative units
+    // in this pool are this shape. Flagged apart, naming the sibling
+    // buckets whose colour contains this one, so the two can be told apart
+    // at a glance without deleting or zeroing anything.
+    const isUnattributed = r.producedQty === 0 && r.consumedQty > 0 && !!r.color;
+    const siblingBuckets = isUnattributed
+      ? (App.State.globalWarehousePool || [])
+        .filter(x => String(x.outputItemName || '').trim().toLowerCase() === String(r.outputItemName || '').trim().toLowerCase()
+          && x.producedQty > 0
+          && this.poolColorSegments(x.color).some(s => s.toLowerCase() === String(r.color || '').trim().toLowerCase()))
+        .map(x => x.color)
+      : [];
+    const unattributedWarning = isUnattributed
+      ? ` <i class="bi bi-question-circle-fill text-warning" title="${escapeHtml(
+        `Never produced in this colour, yet ${App.Production.formatQty(r.consumedQty)} consumed. `
+        + (siblingBuckets.length
+          ? `Likely belongs to: ${siblingBuckets.join(', ')}. Attribution issue, not a stock shortage.`
+          : 'No sibling bucket carries this colour -- check the consuming recipe.')
+      )}"></i>`
+      : '';
+
     // `removable` (see getAllProcessColorGroups) already folds in BOTH of
     // excludeWarehousePoolColors' server-side rejection reasons -- configured
     // on this process's own recipe, or carrying real (non-manual)
@@ -1462,7 +1531,7 @@ App.Stock = {
     <td class="text-center" data-pool-field="produced">${App.Production.formatQty(r.producedQty)}</td>
     <td class="text-center">${App.Production.formatQty(r.consumedQty)}</td>
     <td>${r.color ? `<span class="badge bg-info text-dark">${escapeHtml(r.color)}</span>` : '<span class="text-muted">—</span>'}</td>
-    <td class="text-center fw-bold">${availableCell}${negativeWarning}</td>
+    <td class="text-center fw-bold">${availableCell}${negativeWarning}${unattributedWarning}</td>
     <td class="text-center d-flex gap-1 justify-content-center">
       <button type="button" class="btn btn-outline-info btn-sm" title="View Ledger"
               onclick="App.Stock.openPoolLedgerModal('${encName}', '${encTag}', '${encColor}')">
@@ -1547,8 +1616,6 @@ App.Stock = {
           }
           return;
         }
-        App.State.globalWarehousePoolAdjustments = [];
-
         // Patch this one bucket locally instead of re-fetching --
         // recalculateWarehousePool only ever touches the single bucket
         // we just adjusted (it adds the delta to producedQty;
@@ -1814,177 +1881,22 @@ App.Stock = {
   // debits, Opening Stock seeds, and manual corrections) for one
   // specific bucket (Output Item Name + Product Tag + Color), mirroring
   // the Item Ledger's "Transaction Ledger History" for raw-material Stock.
-  async ensurePoolLedgerSourceDataLoaded() {
-    const fetches = [];
-    if (!App.State.globalProduction?.length) {
-      fetches.push(Api.call('getProductionData').then(res => {
-        if (res?.success) App.State.globalProduction = Array.isArray(res.data) ? res.data : [];
-      }));
-    }
-    if (!App.State.globalDispatch?.length) {
-      fetches.push(Api.call('getDispatchData').then(res => {
-        if (res?.success) App.State.globalDispatch = Array.isArray(res.data) ? res.data : [];
-      }));
-    }
-    if (!App.State.globalWarehousePoolOpening?.length) {
-      fetches.push(Api.call('getWarehousePoolOpeningData').then(res => {
-        if (res?.success) App.State.globalWarehousePoolOpening = Array.isArray(res.data) ? res.data : [];
-      }));
-    }
-    if (!App.State.globalWarehousePoolAdjustments?.length) {
-      fetches.push(Api.call('getWarehousePoolAdjustmentHistory').then(res => {
-        if (res?.success) App.State.globalWarehousePoolAdjustments = Array.isArray(res.data) ? res.data : [];
-      }));
-    }
-    if (fetches.length) await Promise.all(fetches);
+  // The individual axis values of a composite bucket color -- "Purple-Wine
+  // / Black" -> ["Purple-Wine", "Black"]. Mirrors
+  // warehouse_service.color_segments (COLOR_COMBO_DELIMITER = " / ").
+  poolColorSegments(color) {
+    return String(color || '').split(' / ').map(s => s.trim()).filter(Boolean);
   },
 
-  buildPoolLedgerRows(outputItemName, productTag, color) {
-    const nameLower = (outputItemName || '').toLowerCase();
-    const tagLower = (productTag || '').toLowerCase();
-    const colorLower = (color || '').toLowerCase();
-    const entries = [];
-
-    // Opening Stock seeds (credits)
-    (App.State.globalWarehousePoolOpening || []).forEach(o => {
-      if ((o.outputItemName || '').toLowerCase() !== nameLower) return;
-      if ((o.productTag || '').toLowerCase() !== tagLower) return;
-      if ((o.color || '').toLowerCase() !== colorLower) return;
-      entries.push({
-        dateObj: o.dateRaw ? new Date(o.dateRaw) : new Date(0),
-        dateStr: o.date,
-        type: 'Opening Stock',
-        badgeClass: 'bg-info',
-        ref: '-',
-        remarks: o.remarks || '-',
-        inQty: o.qty,
-        outQty: 0
-      });
-    });
-
-    // Production lots: credit this bucket's own output, debit POOL-sourced
-    // consumption of an untagged/uncolored upstream bucket sharing this name.
-    (App.State.globalProduction || []).forEach(lot => {
-      if (String(lot.status || '').trim().toLowerCase() !== 'completed') return;
-
-      if ((lot.outputItemName || '').toLowerCase() === nameLower && (lot.productId || '').toLowerCase() === tagLower) {
-        let credited = false;
-        (lot.colorBreakdown || []).forEach(entry => {
-          if ((entry.color || '').toLowerCase() !== colorLower) return;
-          const qty = Number(entry.qty) || 0;
-          // A negative colorBreakdown qty is a legitimate correction/
-          // reversal lot (already folded into the real Total Available by
-          // warehouse_service._recalculate_warehouse_pool) -- only an
-          // exact zero is dropped here. Split by sign instead of always
-          // crediting inQty, so a reversal shows as an Out like the Manual
-          // Correction rows below instead of a negative "Incoming Qty".
-          if (qty === 0) return;
-          credited = true;
-          entries.push({
-            dateObj: lot.dateRaw ? new Date(lot.dateRaw) : new Date(0),
-            dateStr: lot.date,
-            type: 'Production Credit',
-            badgeClass: 'bg-success',
-            ref: lot.lotNumber || '-',
-            remarks: lot.remarks || '-',
-            inQty: qty > 0 ? qty : 0,
-            outQty: qty < 0 ? -qty : 0
-          });
-        });
-        if (!credited && !colorLower && !(lot.colorBreakdown || []).length) {
-          const flatQty = Number(lot.qty) || 0;
-          entries.push({
-            dateObj: lot.dateRaw ? new Date(lot.dateRaw) : new Date(0),
-            dateStr: lot.date,
-            type: 'Production Credit',
-            badgeClass: 'bg-success',
-            ref: lot.lotNumber || '-',
-            remarks: lot.remarks || '-',
-            inQty: flatQty > 0 ? flatQty : 0,
-            outQty: flatQty < 0 ? -flatQty : 0
-          });
-        }
-      }
-
-      if (!tagLower) {
-        (lot.componentsConsumed || []).forEach(comp => {
-          if (String(comp.sourceType || '').trim().toUpperCase() !== 'POOL') return;
-          if ((comp.itemName || '').toLowerCase() !== nameLower) return;
-          const colorGroup = String(comp.colorGroup || '').trim();
-          const compColor = colorGroup && colorGroup.toUpperCase() !== 'COMMON' ? colorGroup.toLowerCase() : '';
-          if (compColor !== colorLower) return;
-          const qty = Number(comp.qty) || 0;
-          // A negative consumption qty is a correction that credits the
-          // pool back (already summed into the real total by
-          // stock_service._get_billed_and_consumed_qty_maps and
-          // warehouse_service._recalculate_warehouse_pool) -- split by
-          // sign so it shows as an In here, not a negative Out.
-          if (qty === 0) return;
-          entries.push({
-            dateObj: lot.dateRaw ? new Date(lot.dateRaw) : new Date(0),
-            dateStr: lot.date,
-            type: 'Production Consumption',
-            badgeClass: 'bg-danger',
-            ref: lot.lotNumber || '-',
-            remarks: lot.remarks || '-',
-            inQty: qty < 0 ? -qty : 0,
-            outQty: qty > 0 ? qty : 0
-          });
-        });
-      }
-    });
-
-    // Dispatch debits (final-stage tagged or untagged buckets only)
-    const process = (App.State.globalProcesses || []).find(p =>
-      (p.outputItemName || '').toLowerCase() === nameLower && p.isFinalStage
-    );
-    const dispatchKey = tagLower || (process ? nameLower : null);
-    if (dispatchKey) {
-      (App.State.globalDispatch || []).forEach(d => {
-        if ((d.productId || '').toLowerCase() !== dispatchKey) return;
-        const qty = Number(d.qty) || 0;
-        if (qty <= 0) return;
-        entries.push({
-          dateObj: d.dateRaw ? new Date(d.dateRaw) : new Date(0),
-          dateStr: d.dispatchDate,
-          type: 'Dispatch',
-          badgeClass: 'bg-danger',
-          ref: d.dispatchNumber || '-',
-          remarks: d.clientName || '-',
-          inQty: 0,
-          outQty: qty
-        });
-      });
-    }
-
-    // Manual corrections
-    (App.State.globalWarehousePoolAdjustments || []).forEach(adj => {
-      if ((adj.outputItemName || '').toLowerCase() !== nameLower) return;
-      if ((adj.productTag || '').toLowerCase() !== tagLower) return;
-      if ((adj.color || '').toLowerCase() !== colorLower) return;
-      const delta = adj.newValue - adj.oldValue;
-      entries.push({
-        dateObj: new Date(adj.date),
-        dateStr: new Date(adj.date).toLocaleDateString('en-GB'),
-        type: 'Manual Correction',
-        badgeClass: 'bg-warning text-dark',
-        ref: '-',
-        remarks: adj.reason || '-',
-        inQty: delta > 0 ? delta : 0,
-        outQty: delta < 0 ? -delta : 0
-      });
-    });
-
-    entries.sort((a, b) => a.dateObj - b.dateObj);
-
-    let balance = 0;
-    entries.forEach(e => {
-      balance += (e.inQty || 0) - (e.outQty || 0);
-      e.balance = balance;
-    });
-
-    entries.reverse();
-    return entries;
+  // Badge per entry type. The server names the type; the colour is a
+  // presentation choice and stays here.
+  POOL_LEDGER_BADGES: {
+    'Opening Stock': 'bg-info',
+    'Manual Correction': 'bg-warning text-dark',
+    'Production Credit': 'bg-success',
+    'Production Consumption': 'bg-danger',
+    'Colour-agnostic Consumption': 'bg-danger',
+    Dispatch: 'bg-danger',
   },
 
   async openPoolLedgerModal(encName, encTag, encColor) {
@@ -2000,25 +1912,38 @@ App.Stock = {
       titleEl.innerHTML = `<i class="bi bi-journal-text me-2"></i>Warehouse Pool Ledger: ${escapeHtml(label)}`;
     }
 
-    await this.ensurePoolLedgerSourceDataLoaded();
-    const entries = this.buildPoolLedgerRows(outputItemName, productTag, color);
-
+    // getWarehousePoolLedger replays the pool's OWN passes and reports what
+    // they did, so this closes on the bucket's real Available Qty by
+    // construction. Assembling it here from getProductionData and friends
+    // meant maintaining a second implementation of the pool arithmetic,
+    // which had drifted from the real one in five separate ways.
     const body = document.getElementById('poolLedgerBody');
+    App.Utils.tableLoading(body, 7, 'Loading ledger…');
+    safeModalShow('poolLedgerModal');
+
+    let entries;
+    try {
+      const res = await Api.call('getWarehousePoolLedger', [outputItemName, productTag, color]);
+      entries = res?.success && Array.isArray(res.data) ? res.data : [];
+    } catch (err) {
+      App.Utils.tableError(body, 7, err.message || 'Could not load this ledger.',
+        () => this.openPoolLedgerModal(encName, encTag, encColor));
+      return;
+    }
+
     if (body) {
       body.innerHTML = entries.length
         ? entries.map(e => `<tr>
-          <td>${escapeHtml(e.dateStr || '-')}</td>
-          <td><span class="badge ${e.badgeClass}">${e.type}</span></td>
-          <td><strong class="text-dark">${escapeHtml(e.ref)}</strong></td>
-          <td><small class="text-muted">${escapeHtml(e.remarks)}</small></td>
+          <td>${escapeHtml(e.date || '-')}</td>
+          <td><span class="badge ${this.POOL_LEDGER_BADGES[e.type] || 'bg-secondary'}">${escapeHtml(e.type)}</span></td>
+          <td><strong class="text-dark">${escapeHtml(e.ref || '-')}</strong></td>
+          <td><small class="text-muted">${escapeHtml(e.remarks || '-')}</small></td>
           <td class="text-center text-success fw-bold">${e.inQty ? App.Production.formatQty(e.inQty) : '-'}</td>
           <td class="text-center text-danger fw-bold">${e.outQty ? App.Production.formatQty(e.outQty) : '-'}</td>
           <td class="text-center fw-bold">${App.Production.formatQty(e.balance)}</td>
         </tr>`).join('')
         : '<tr><td colspan="7" class="text-center text-muted p-4">No transaction history found for this bucket.</td></tr>';
     }
-
-    safeModalShow('poolLedgerModal');
   },
 
   setDeadSortMode(mode) {

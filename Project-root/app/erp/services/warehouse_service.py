@@ -230,7 +230,10 @@ def _resolve_composite_color_token(candidate_colors: list, token_lower: str) -> 
 
 
 def _get_warehouse_pool_opening_rows(cur) -> list:
-    cur.execute("SELECT output_item_name, process_id, product_tag, color, qty FROM erp.warehouse_pool_opening")
+    cur.execute(
+        "SELECT output_item_name, process_id, product_tag, color, qty, opening_date, remarks "
+        "FROM erp.warehouse_pool_opening"
+    )
     rows = []
     for row in cur.fetchall():
         name = str(row["output_item_name"] or "").strip()
@@ -249,12 +252,25 @@ def _get_warehouse_pool_opening_rows(cur) -> list:
                 "productTag": str(row["product_tag"] or "").strip(),
                 "color": str(row["color"] or "").strip(),
                 "qty": qty,
+                # Carried for the ledger only -- the bucket maths ignores both.
+                "date": row["opening_date"],
+                "remarks": str(row["remarks"] or ""),
             }
         )
     return rows
 
 
-def _build_warehouse_pool_buckets(cur, include_opening: bool = True) -> dict:
+_COMMON_DRAIN_NOTE = (
+    "Allocated from colour-agnostic (COMMON) consumption across this item's buckets"
+)
+_COMMON_DRAIN_SHORTFALL_NOTE = (
+    "Colour-agnostic (COMMON) consumption beyond everything this item had available"
+)
+_DISPATCH_DRAIN_NOTE = "Allocated from dispatched quantity across this product's colour buckets"
+_DISPATCH_SHORTFALL_NOTE = "Dispatched beyond everything this product had available"
+
+
+def _build_warehouse_pool_buckets(cur, include_opening: bool = True, events: list | None = None) -> dict:
     """Core of _recalculate_warehouse_pool, factored out so
     _get_real_history_colors_by_process can replay the same Pass 1-3
     credit/debit logic with include_opening=False -- i.e. everything
@@ -264,8 +280,41 @@ def _build_warehouse_pool_buckets(cur, include_opening: bool = True) -> dict:
     Passes 1-2 are guarded via TABLE_NAMES.get("PRODUCTION"); Pass 3
     (Dispatch debit) via TABLE_NAMES.get("DISPATCH_HEADERS"/"DISPATCH_
     LINES") -- both real and live, not deferred.
+
+    Pass `events` (a list) to have every credit and debit appended to it as
+    it happens -- this is what get_warehouse_pool_ledger renders. Recording
+    here rather than reconstructing the same arithmetic somewhere else is
+    the whole point: a ledger built by a second implementation agrees with
+    the pool only until the two drift, and the client-side one it replaces
+    had drifted in five separate ways (per-lot output names, composite
+    bucket colours on both legs, double-counted manual corrections, and a
+    lot credited to its composite AND its bare bucket). With no `events`
+    argument nothing is recorded and this function behaves exactly as before.
     """
     buckets: dict = {}
+
+    def record(bucket: dict, date, entry_type: str, ref: str, remarks: str, qty: float) -> None:
+        """One ledger line. `qty` is signed the way the pool sees it --
+        positive adds to the bucket, negative takes away -- and is split
+        into in/out here so a reversal lot or a downward correction reads as
+        an Out rather than as a negative In."""
+        if events is None or not qty:
+            return
+        events.append(
+            {
+                "bucketKey": (
+                    bucket["outputItemName"].strip().lower(),
+                    bucket["productTag"].strip().lower(),
+                    bucket["color"].strip().lower(),
+                ),
+                "date": date,
+                "type": entry_type,
+                "ref": ref or "",
+                "remarks": remarks or "",
+                "inQty": qty if qty > 0 else 0.0,
+                "outQty": -qty if qty < 0 else 0.0,
+            }
+        )
 
     def get_bucket(output_item_name: str, process_id: str, product_tag: str, color: str) -> dict:
         key = (
@@ -325,6 +374,19 @@ def _build_warehouse_pool_buckets(cur, include_opening: bool = True) -> dict:
                 name = process_output_item_map.get(proc_id) or r["outputItemName"]
             bucket = get_bucket(name, r["processId"], r["productTag"], r["color"])
             bucket["producedQty"] += r["qty"]
+            # adjustWarehousePoolManually records a correction as a delta row
+            # here AND as an audit row in erp.warehouse_pool_adjustments. Only
+            # this one is arithmetic, so only this one becomes a ledger line;
+            # reading both is what used to count every correction twice.
+            is_correction = r["remarks"].startswith("Correction: ")
+            record(
+                bucket,
+                r["date"],
+                "Manual Correction" if is_correction else "Opening Stock",
+                "",
+                r["remarks"][len("Correction: "):] if is_correction else r["remarks"],
+                r["qty"],
+            )
 
     if table := config_maps.TABLE_NAMES.get("PRODUCTION"):
         # Pass 1: credit every Completed lot's own output to its pool
@@ -355,12 +417,16 @@ def _build_warehouse_pool_buckets(cur, include_opening: bool = True) -> dict:
 
         cur.execute(
             f"""
-            SELECT process_id, output_item_name, product_id, color_breakdown, qty
+            SELECT process_id, output_item_name, product_id, color_breakdown, qty,
+                   lot_number, production_date, remarks
             FROM {table}
             WHERE deleted_at IS NULL AND lower(status) = 'completed'
             """
         )
         for row in cur.fetchall():
+            lot_ref = str(row["lot_number"] or "")
+            lot_date = row["production_date"]
+            lot_remarks = str(row["remarks"] or "")
             process_id = str(row["process_id"] or "").strip()
             own_output_item_name = str(row["output_item_name"] or "").strip()
             if process_id.lower() in final_stage_ids:
@@ -392,7 +458,9 @@ def _build_warehouse_pool_buckets(cur, include_opening: bool = True) -> dict:
                     color = str(color or "").strip()
                     if not color:
                         return
-                    get_bucket(output_item_name, process_id, product_tag, color)["producedQty"] += float(qty or 0)
+                    bucket = get_bucket(output_item_name, process_id, product_tag, color)
+                    bucket["producedQty"] += float(qty or 0)
+                    record(bucket, lot_date, "Production Credit", lot_ref, lot_remarks, float(qty or 0))
 
                 primary_entries = [
                     e for e in color_breakdown if e and e.get("countsTowardTotal") is not False and str(e.get("color") or "").strip()
@@ -509,7 +577,9 @@ def _build_warehouse_pool_buckets(cur, include_opening: bool = True) -> dict:
                         credit_color(entry.get("color"), entry.get("qty"))
             else:
                 qty = float(row["qty"] or 0)
-                get_bucket(output_item_name, process_id, product_tag, "")["producedQty"] += qty
+                bucket = get_bucket(output_item_name, process_id, product_tag, "")
+                bucket["producedQty"] += qty
+                record(bucket, lot_date, "Production Credit", lot_ref, lot_remarks, qty)
 
         # Pass 2: debit POOL-sourced components consumed by Completed lots
         # from the (untagged, intermediate) bucket of the upstream item. A
@@ -523,7 +593,8 @@ def _build_warehouse_pool_buckets(cur, include_opening: bool = True) -> dict:
         # whatever that row's conversion factor is (e.g. a Dozen row
         # debiting as if it were 1 Pcs).
         cur.execute(
-            f"SELECT components_consumed FROM {table} WHERE deleted_at IS NULL AND lower(status) = 'completed'"
+            f"SELECT components_consumed, lot_number, production_date, remarks FROM {table} "
+            f"WHERE deleted_at IS NULL AND lower(status) = 'completed'"
         )
         pool_item_unit_map = None
         pool_units_map = None
@@ -532,6 +603,9 @@ def _build_warehouse_pool_buckets(cur, include_opening: bool = True) -> dict:
         # for why it cannot be decided one component at a time.
         common_consumption_by_item: dict = {}
         for row in cur.fetchall():
+            lot_ref = str(row["lot_number"] or "")
+            lot_date = row["production_date"]
+            lot_remarks = str(row["remarks"] or "")
             for comp in row["components_consumed"] or []:
                 comp = comp or {}
                 if str(comp.get("sourceType") or "").strip().upper() != "POOL":
@@ -650,9 +724,9 @@ def _build_warehouse_pool_buckets(cur, include_opening: bool = True) -> dict:
                 # process and could never be rendered at all: real
                 # consumption, permanently invisible instead of showing as
                 # the negative balance it is.
-                get_bucket(item_name, producing_process_by_item.get(item_name.lower(), ""), "", color)[
-                    "consumedQty"
-                ] += qty
+                debited = get_bucket(item_name, producing_process_by_item.get(item_name.lower(), ""), "", color)
+                debited["consumedQty"] += qty
+                record(debited, lot_date, "Production Consumption", lot_ref, lot_remarks, -qty)
 
         # Settle the COMMON-scoped consumption held back above.
         #
@@ -683,6 +757,13 @@ def _build_warehouse_pool_buckets(cur, include_opening: bool = True) -> dict:
             take = min(remaining, available_blank)
             blank_bucket["consumedQty"] += take
             remaining -= take
+            # A COMMON draw says "this recipe consumes the item whatever
+            # colour it is", so which bucket pays is decided by this
+            # settlement and not by any single lot. One summarising line per
+            # bucket is therefore the honest rendering -- apportioning it
+            # back across the contributing lots would invent a precision the
+            # data does not have.
+            record(blank_bucket, None, "Colour-agnostic Consumption", "", _COMMON_DRAIN_NOTE, -take)
 
             if remaining > 0:
                 colored = [
@@ -701,9 +782,11 @@ def _build_warehouse_pool_buckets(cur, include_opening: bool = True) -> dict:
                     take = min(remaining, available)
                     bucket["consumedQty"] += take
                     remaining -= take
+                    record(bucket, None, "Colour-agnostic Consumption", "", _COMMON_DRAIN_NOTE, -take)
 
             if remaining > 0:
                 blank_bucket["consumedQty"] += remaining
+                record(blank_bucket, None, "Colour-agnostic Consumption", "", _COMMON_DRAIN_SHORTFALL_NOTE, -remaining)
 
     if (headers_table := config_maps.TABLE_NAMES.get("DISPATCH_HEADERS")) and (
         lines_table := config_maps.TABLE_NAMES.get("DISPATCH_LINES")
@@ -762,9 +845,11 @@ def _build_warehouse_pool_buckets(cur, include_opening: bool = True) -> dict:
                 take = min(remaining, available)
                 bucket["consumedQty"] += take
                 remaining -= take
+                record(bucket, None, "Dispatch", "", _DISPATCH_DRAIN_NOTE, -take)
 
             if remaining > 0:
                 matching[0]["consumedQty"] += remaining
+                record(matching[0], None, "Dispatch", "", _DISPATCH_SHORTFALL_NOTE, -remaining)
 
     return buckets
 
@@ -848,6 +933,55 @@ def _get_warehouse_pool_bucket_available_qty(cur, output_item_name: str, product
     )
     row = cur.fetchone()
     return float(row["available_qty"]) if row else 0.0
+
+
+def _get_warehouse_pool_bucket_produced_qty(cur, output_item_name: str, product_tag: str, color: str) -> float:
+    cur.execute(
+        """
+        SELECT produced_qty FROM erp.warehouse_pool
+        WHERE lower(output_item_name) = lower(%s) AND lower(COALESCE(product_tag, '')) = lower(%s)
+              AND lower(COALESCE(color, '')) = lower(%s)
+        """,
+        (str(output_item_name or "").strip(), str(product_tag or "").strip(), str(color or "").strip()),
+    )
+    row = cur.fetchone()
+    return float(row["produced_qty"]) if row else 0.0
+
+
+def _assert_produced_stays_nonnegative(cur, output_item_name: str, product_tag: str, color: str, delta: float) -> None:
+    """Rejects a manual entry that would drive a bucket's produced_qty below
+    zero. produced_qty is the SUM OF CREDITS -- opening balances plus
+    Completed lot output -- so a negative one is not a stock shortage, it is
+    arithmetically impossible: it says the bucket was produced a negative
+    number of times.
+
+    A negative AVAILABLE qty is left entirely alone by this check. That is
+    the legitimate over-consumption signal (a lot was completed drawing more
+    than the pool held -- see production_service._validate_pool_availability,
+    which warns and proceeds by design) and it must stay visible so the
+    shortfall gets counted and entered. This guards only the arithmetic that
+    cannot be true, never the balance that is merely unwelcome.
+
+    Both manual write paths funnel through here, because both append a delta
+    row to erp.warehouse_pool_opening and neither had a floor: an inline
+    correction typed as a negative Available Qty went straight in.
+    "14 inch Ford D/Gaddi Steel Rim" [Blue] reached produced = -19 that way
+    -- +20, then -20 ("no stock entered yet"), then -19 whose own remark
+    reads "bug" -- and, its process since deleted, became uncorrectable.
+    """
+    current = _get_warehouse_pool_bucket_produced_qty(cur, output_item_name, product_tag, color)
+    if current + delta < -0.0001:
+        label = f'"{output_item_name}"'
+        if color:
+            label += f' in color "{color}"'
+        raise ValueError(
+            f"This correction would take {label} to a produced quantity of "
+            f"{current + delta:g}, which cannot happen -- produced stock is the sum of opening "
+            f"balances and completed lots, so it can never be negative. Its current produced "
+            f"quantity is {current:g}. Record the physical count you actually have instead; if "
+            f"stock was consumed that was never entered, leave the negative Available Qty "
+            f"standing -- that is the signal that a count is owed."
+        )
 
 
 def _get_pool_available_qty_map(cur) -> dict:
@@ -1021,6 +1155,11 @@ def save_warehouse_pool_opening(conn, cur, form_data):
     if qty == 0:
         raise ValueError("Opening Quantity cannot be zero.")
 
+    # A downward opening entry is a correction and may legitimately be
+    # negative -- but only down to zero produced, never past it.
+    if qty < 0:
+        _assert_produced_stays_nonnegative(cur, output_item_name, product_tag, color, qty)
+
     opening_date = date_utils.to_safe_date(form_data.get("date")) or date.today()
     # No MAX_REMARKS_LENGTH truncation here -- a genuine inconsistency in
     # the source (Process/BOM/Contractor Rate all truncate, this doesn't),
@@ -1116,6 +1255,9 @@ def adjust_warehouse_pool_manually(conn, cur, output_item_name, process_id, prod
             "message": "New quantity is the same as the current value -- nothing to adjust.",
         }
 
+    if delta < 0:
+        _assert_produced_stays_nonnegative(cur, item_name, tag, color_val, delta)
+
     process_master_id = _find_process_master_id(cur, proc_id)
     user_id = get_current_user_id()
 
@@ -1204,6 +1346,63 @@ def get_warehouse_pool_data():
         if row["output_item_name"]
     ]
     records.sort(key=lambda r: (r["outputItemName"].lower(), r["color"].lower()))
+    return build_response(True, records)
+
+
+@rpc_method("getWarehousePoolLedger")
+def get_warehouse_pool_ledger(output_item_name, product_tag=None, color=None):
+    """Every movement in and out of ONE Warehouse Pool bucket, in date order,
+    with a running balance that closes on that bucket's real Available Qty.
+
+    Built by replaying _build_warehouse_pool_buckets with an event sink, so
+    the ledger IS the pool's own arithmetic rather than a second reading of
+    it. The client used to assemble this itself from getProductionData +
+    getWarehousePoolOpeningData + getWarehousePoolAdjustmentHistory, and had
+    drifted from the backend in five separate ways -- a per-lot output item
+    name hid a lot entirely, neither leg could match a COMPOSITE bucket
+    colour, a lot was credited to its composite AND its bare bucket, and
+    every manual correction was counted twice because it is recorded in two
+    tables. Buckets fed by the colour-agnostic (COMMON) or Dispatch drains
+    could not be reproduced client-side at all, those being settlements
+    across an item rather than per-lot lines.
+    """
+    name = str(output_item_name or "").strip()
+    if not name:
+        raise ValueError("Output Item Name is required.")
+    tag = str(product_tag or "").strip()
+    col = str(color or "").strip()
+
+    events: list = []
+    with database.get_conn(cursor_factory=psycopg2.extras.RealDictCursor) as (_conn, cur):
+        _build_warehouse_pool_buckets(cur, include_opening=True, events=events)
+
+    want = (name.lower(), tag.lower(), col.lower())
+    rows = [e for e in events if e["bucketKey"] == want]
+
+    # Settlement lines (the COMMON and Dispatch drains) carry no date -- they
+    # are an allocation across the item, not something that happened on a
+    # day. They sort last so the dated history reads straight down and the
+    # closing balance still lands on Available Qty.
+    rows.sort(key=lambda e: (e["date"] is None, e["date"] or date.min))
+
+    records = []
+    balance = 0.0
+    for e in rows:
+        balance += e["inQty"] - e["outQty"]
+        records.append(
+            {
+                "date": date_utils.to_display_string(e["date"]) if e["date"] else "",
+                "dateRaw": date_utils.to_iso_string(e["date"]) if e["date"] else "",
+                "type": e["type"],
+                "ref": e["ref"],
+                "remarks": e["remarks"],
+                "inQty": e["inQty"],
+                "outQty": e["outQty"],
+                "balance": balance,
+            }
+        )
+
+    records.reverse()  # newest first, as the modal renders it
     return build_response(True, records)
 
 

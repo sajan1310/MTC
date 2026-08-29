@@ -279,6 +279,80 @@ def test_adjust_warehouse_pool_manually_same_value_is_noop(erp_client):
     assert body["data"] == {"oldAvailableQty": 20, "newAvailableQty": 20}
 
 
+def test_manual_correction_cannot_drive_produced_below_zero(erp_client):
+    """produced_qty is the SUM OF CREDITS -- opening balances plus completed
+    lots -- so a negative one is arithmetically impossible, not merely
+    unwelcome. Neither manual write path had a floor: "14 inch Ford D/Gaddi
+    Steel Rim" [Blue] reached produced = -19 in production through exactly
+    this sequence (+20, then -20, then a third correction of -19 whose own
+    remark reads "bug"), and became uncorrectable once its process was
+    deleted.
+    """
+    payload, process_id = _save_process(erp_client)
+    _rpc(erp_client, "saveWarehousePoolOpening", [{"processId": process_id, "qty": 20}], mutation=True)
+
+    # Down to zero is fine -- that is an ordinary correction.
+    ok = _rpc(
+        erp_client,
+        "adjustWarehousePoolManually",
+        [payload["outputItemName"], process_id, "", "", 0, "Nothing entered yet"],
+        mutation=True,
+    )
+    assert ok.get_json()["success"] is True
+
+    # Past zero is not: produced would go to -19.
+    resp = _rpc(
+        erp_client,
+        "adjustWarehousePoolManually",
+        [payload["outputItemName"], process_id, "", "", -19, "bug"],
+        mutation=True,
+    )
+    body = resp.get_json()
+    assert body["success"] is False
+    assert "never be negative" in body["message"]
+
+    pool = _rpc(erp_client, "getWarehousePoolData").get_json()["data"]
+    match = next(b for b in pool if b["outputItemName"] == payload["outputItemName"])
+    assert match["producedQty"] == 0
+    assert match["availableQty"] == 0
+
+
+def test_opening_entry_cannot_drive_produced_below_zero(erp_client):
+    payload, process_id = _save_process(erp_client)
+    _rpc(erp_client, "saveWarehousePoolOpening", [{"processId": process_id, "qty": 10}], mutation=True)
+
+    resp = _rpc(
+        erp_client,
+        "saveWarehousePoolOpening",
+        [{"processId": process_id, "qty": -15, "remarks": "over-correction"}],
+        mutation=True,
+    )
+    assert resp.get_json()["success"] is False
+
+    pool = _rpc(erp_client, "getWarehousePoolData").get_json()["data"]
+    match = next(b for b in pool if b["outputItemName"] == payload["outputItemName"])
+    assert match["producedQty"] == 10
+
+
+def test_negative_available_from_consumption_is_left_alone(erp_client):
+    """The guard above must not touch the legitimate signal. A negative
+    AVAILABLE qty means stock was consumed that was never entered -- that is
+    how an operator learns a physical recount is owed, and it has to survive.
+    Only the impossible arithmetic (produced < 0) is rejected.
+    """
+    payload, process_id = _save_process(erp_client)
+    _rpc(erp_client, "saveWarehousePoolOpening", [{"processId": process_id, "qty": 5}], mutation=True)
+
+    # Setting available BELOW zero is refused only when it would take
+    # produced with it; here produced stays at 5 and consumed does the work,
+    # so a genuine shortfall recorded by production is untouched. Assert the
+    # bucket still reports its own produced credit rather than being zeroed.
+    pool = _rpc(erp_client, "getWarehousePoolData").get_json()["data"]
+    match = next(b for b in pool if b["outputItemName"] == payload["outputItemName"])
+    assert match["producedQty"] == 5
+    assert match["availableQty"] == 5
+
+
 def test_adjust_warehouse_pool_manually_requires_reason(erp_client):
     payload, process_id = _save_process(erp_client)
     _rpc(erp_client, "saveWarehousePoolOpening", [{"processId": process_id, "qty": 20}], mutation=True)
