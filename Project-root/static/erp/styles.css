@@ -79,23 +79,15 @@
     --border-color: #e2e8f0;
     --border-light: #f1f5f9;
 
-    /* Stage load chart. Two series that are NOT peer categories: "running"
-       is the subject and "queued" is context, so this is one accent plus a
-       de-emphasis grey rather than two categorical hues.
-
-       Checked with the dataviz palette validator against this surface:
-       adjacent OKLab dE 16.9 for normal vision and 16.8 under deuteranopia,
-       both comfortably clear, but 7.3 under tritanopia -- inside the floor
-       band where colour alone is not enough. That is why the queued series
-       also carries a hatch, why the legend is never optional, and why the
-       lists below the chart hold every exact number.
-
-       --dash-stage-hatch is the SURFACE showing through the queued fill,
-       not white: painting white stripes on a dark page would lighten that
-       series until it closed the gap with the accent again. */
-    --dash-stage-wip: #6366f1;
-    --dash-stage-queued: #64748b;
-    --dash-stage-hatch: rgb(255 255 255 / 55%);
+    /* The two WIP series, used by the treemap tiles AND the stage cards'
+       left edge so a card and its tile read as the same thing. Fixed rather
+       than theme-swapped: a tile is its own surface and does not follow the
+       page. Both are paired with white text and were measured for it --
+       #4f46e5 at 6.29:1 and #64748b at 4.76:1. --secondary-color (#6366f1)
+       is what this would otherwise have used; it lands at 4.47:1, just
+       under AA, which is why the darker step is here instead. */
+    --dash-wip-fill: #4f46e5;
+    --dash-queued-fill: #64748b;
   }
 
   /* ─────────────────────────────────────────────────────────────────────
@@ -131,12 +123,6 @@
     --border-color: #253044;
     --border-light: #1a2438;
 
-    /* Accent follows --secondary-color into dark; the grey holds, which
-       keeps the pair at dE 20.1 for normal vision against this surface
-       (the lighter --text-muted grey drops it to 13.2 -- a hard fail). */
-    --dash-stage-wip: #a78bfa;
-    --dash-stage-queued: #64748b;
-    --dash-stage-hatch: rgb(22 27 39 / 55%);
 
     --shadow-sm: 0 2px 4px rgb(0 0 0 / 40%);
     --shadow-md: 0 4px 12px rgb(0 0 0 / 50%);
@@ -1952,238 +1938,120 @@
     margin-bottom: 16px;
   }
 
-  /* ── Stage load column chart ───────────────────────────────────────────
-     Stacked columns, one per process stage, left-to-right in the order
-     material flows: running on the baseline, queued hatched above it. This
-     replaced a horizontal bar drawn inside every list row -- those compared
-     stages within ONE list, so a stage's running and queued totals were
-     scaled against two different maxima and could not be read against each
-     other at all. One shared axis fixes that, and the reclaimed row column
-     went to the process name.
+  /* ── WIP treemaps ──────────────────────────────────────────────────────
+     One per status. Tile AREA is the stage's share of its own panel, which
+     is what a treemap is good at -- and the reason each panel prints its
+     absolute total above itself, since areas cannot be compared across the
+     two panels.
 
-     Geometry is three custom properties, because the gridline layer, the
-     y-axis gutter and the columns must agree on the plot height exactly. */
-  .dash-stage-chart {
-    --dash-stage-plot-h: 132px;
-    --dash-stage-label-h: 32px;
+     Replaced a single stacked column chart. That had one virtue these do
+     not (a shared axis, so running and queued were directly comparable) and
+     one weakness these fix: at a dozen stages every column was a sliver
+     with a truncated label, and a treemap gives the big stages the room.
 
-    /* Headroom above the plot for the peak column's value label. It lives
-       INSIDE .dash-stage-bands rather than as padding on the grid, because
-       that element scrolls horizontally -- and `overflow-x: auto` makes
-       overflow-y compute to auto too, so anything drawn above the bands'
-       content box is clipped rather than overflowing. That is what sliced
-       the peak label in half at narrow widths. */
-    --dash-stage-head-h: 20px;
-
-    margin-bottom: 18px;
-  }
-
-  .dash-stage-legend {
-    display: flex;
-    flex-wrap: wrap;
-    gap: 4px 16px;
-    margin-bottom: 10px;
+     Layout is percentages computed in JS against TREEMAP_ASPECT, so the box
+     MUST hold that same aspect-ratio or every tile is stretched. Nothing
+     measures the container and nothing listens for resize. */
+  .dash-tm-total {
     font-size: 11.5px;
-    color: var(--text-secondary);
-  }
-
-  .dash-stage-legend-item {
-    display: inline-flex;
-    align-items: center;
-    gap: 6px;
-  }
-
-  .dash-stage-swatch {
-    width: 11px;
-    height: 11px;
-    border-radius: 2px;
-    background: var(--dash-stage-wip, #6366f1);
-  }
-
-  /* The two series are one accent plus a de-emphasis grey: "queued" is
-     context for "running", not a peer category. Their OKLab separation is
-     comfortable for normal vision but sits in the floor band for tritanopia,
-     so the hatch below is a required second channel, not decoration -- as
-     are the legend above and the exact numbers in the lists underneath. */
-  .dash-stage-swatch[data-series="queued"],
-  .dash-stage-seg[data-series="queued"] {
-    background: var(--dash-stage-queued, #64748b);
-    background-image: repeating-linear-gradient(
-      135deg,
-      var(--dash-stage-hatch) 0,
-      var(--dash-stage-hatch) 2px,
-      transparent 2px,
-      transparent 5px
-    );
-  }
-
-  /* align-items:start, not the default stretch: the two cells are
-     deliberately different heights (the bands carry the x-axis labels, the
-     y-axis gutter does not) and they must share a TOP edge for the ticks and
-     the gridlines to line up. The padding is headroom for the peak column's
-     value label, which rides the top of its bar. */
-  .dash-stage-plot {
-    display: grid;
-    grid-template-columns: auto minmax(0, 1fr);
-    align-items: start;
-    gap: 0 10px;
-  }
-
-  /* Ticks are positioned from the baseline rather than spaced by flexbox so
-     they line up with the gridlines to the pixel. */
-  .dash-stage-yaxis {
-    position: relative;
-    width: 34px;
-    height: var(--dash-stage-plot-h);
-    margin-top: var(--dash-stage-head-h);
-  }
-
-  .dash-stage-tick {
-    position: absolute;
-    right: 0;
-    transform: translateY(50%);
-    font-size: 10px;
-    line-height: 1;
     color: var(--text-muted);
-    white-space: nowrap;
+    margin-bottom: 6px;
   }
 
-  /* Horizontal scroll rather than columns thinning to slivers: at a dozen
-     stages the labels are what break first, and a scrolling plot keeps every
-     column readable instead of making all of them illegible. */
-  .dash-stage-bands {
-    position: relative;
-    display: flex;
-    align-items: flex-end;
-    gap: 6px;
-    overflow-x: auto;
-    padding-top: var(--dash-stage-head-h);
-    padding-bottom: 1px;
-  }
-
-  /* Sized to the plot height directly, NOT by insetting the label row off
-     the bands' total height -- the bands are as tall as their tallest
-     column, so anything the label row costs beyond its own height (line-box
-     rounding, a scrollbar) dropped the whole grid below the bars. */
-  .dash-stage-gridlines {
-    position: absolute;
-    top: var(--dash-stage-head-h);
-    right: 0;
-    left: 0;
-    height: var(--dash-stage-plot-h);
-    pointer-events: none;
-  }
-
-  .dash-stage-gridline {
-    position: absolute;
-    left: 0;
-    right: 0;
-    height: 1px;
-    background: var(--border-color);
-  }
-
-  /* gap: 0 is a reset, not a default: the global `button, .btn` rule sets
-     gap: 8px, and this column is a <button>, so that gap was silently
-     sitting between the plot and the x-axis label and inflating the bands'
-     height. The gridlines are sized from --dash-stage-plot-h rather than by
-     insetting off that height, so it never misaligned them -- but it was an
-     accident either way, and the label carries its own padding instead. */
-  .dash-stage-col {
-    display: flex;
-    flex: 1 1 46px;
-    flex-direction: column;
-    align-items: center;
-    gap: 0;
-    width: 46px;
-    min-width: 46px;
-    padding: 0;
-    background: none;
-    border: 0;
-    border-radius: var(--border-radius-sm);
-    cursor: pointer;
-  }
-
-  .dash-stage-col:hover .dash-stage-col-label {
-    color: var(--text-primary);
-  }
-
-  .dash-stage-col:focus-visible {
-    outline: 2px solid var(--secondary-color);
-    outline-offset: 2px;
-  }
-
-  /* Rides the top of its own bar rather than sitting in a fixed row at the
-     top of the plot -- which floated the number a long way above a short
-     column and read as belonging to nothing. `bottom` is set inline to the
-     column's own total. */
-  /* translateX only. `bottom: <pct>` already places the box ENTIRELY above
-     that line -- it sets the bottom edge, and the box grows upward -- so an
-     additional translateY(-100%) shifted it a second full label-height up.
-     That went unnoticed while the tallest bar was well short of the axis
-     maximum, and clipped the label against the top of the plot the first
-     time a bar reached it exactly. */
-  .dash-stage-col-value {
-    position: absolute;
-    left: 50%;
-    transform: translateX(-50%);
-    margin-bottom: 4px;
+  .dash-tm-total strong {
     font-family: Outfit, sans-serif;
-    font-size: 11.5px;
-    font-weight: 700;
-    line-height: 1;
+    font-size: 13px;
     color: var(--text-primary);
-    white-space: nowrap;
   }
 
-  /* column-reverse so segments stack up from the baseline in DOM order
-     (running first, queued above it). The 2px gap is the surface doing the
-     separating -- no stroke around the segments. */
-  .dash-stage-col-stack {
+  .dash-tm-box {
     position: relative;
-    display: flex;
-    flex-direction: column-reverse;
-    gap: 2px;
     width: 100%;
-    height: var(--dash-stage-plot-h);
-  }
-
-  .dash-stage-col-stack .dash-stage-seg {
-    align-self: center;
-    max-width: 24px;
-  }
-
-  .dash-stage-seg {
-    display: block;
-    width: 100%;
-    background: var(--dash-stage-wip, #6366f1);
-  }
-
-  /* Rounded at the data end, square at the baseline. :last-child is the
-     topmost segment because the stack is column-reverse. */
-  .dash-stage-col-stack .dash-stage-seg:last-child {
-    border-radius: 3px 3px 0 0;
-  }
-
-  /* One line, then ellipsis. Deliberately NOT -webkit-line-clamp: two
-     wrapped lines would read better, but the clamp did not hold here and
-     silently degraded to a hard mid-character cut with no ellipsis at all.
-     One nowrap line is deterministic in every browser, and it costs
-     nothing: the full name is in the column's title, in its
-     visually-hidden description, and spelled out in the list below.
-     Letting the name size the column instead would push every other
-     column out of shape. */
-  .dash-stage-col-label {
-    display: block;
-    height: var(--dash-stage-label-h);
-    width: 100%;
-    padding-top: 15px;
+    aspect-ratio: 16 / 9;
+    background: var(--bg-muted);
+    border-radius: var(--border-radius-sm);
     overflow: hidden;
-    font-size: 10.5px;
-    line-height: 1.3;
-    color: var(--text-muted);
-    text-align: center;
-    text-overflow: ellipsis;
-    white-space: nowrap;
+  }
+
+  .dash-tm-tile {
+    --dash-tm-fill: var(--dash-wip-fill);
+
+    position: absolute;
+    display: flex;
+    flex-direction: column;
+    align-items: flex-start;
+    justify-content: flex-start;
+    gap: 1px;
+    padding: 5px 7px;
+    overflow: hidden;
+    text-align: left;
+    white-space: normal;
+    color: #fff;
+    background: var(--dash-tm-fill);
+    border: 0;
+    border-radius: 3px;
+    cursor: pointer;
+    /* The 2px surface gap the mark specs call for, without shrinking the
+       computed geometry: the outline is drawn in the box's own background,
+       so touching tiles are separated by surface rather than by a stroke. */
+    box-shadow: 0 0 0 1.5px var(--bg-muted);
+    transition: filter var(--transition-fast);
+  }
+
+  .dash-tm-box[data-variant="queued"] .dash-tm-tile {
+    --dash-tm-fill: var(--dash-queued-fill);
+  }
+
+  .dash-tm-tile:hover {
+    filter: brightness(1.12);
+  }
+
+  .dash-tm-tile:focus-visible {
+    outline: 2px solid var(--text-primary);
+    outline-offset: -3px;
+  }
+
+  /* Both labels are rendered only when the tile is big enough to hold them
+     (see TREEMAP_NAME_MIN_W / _MIN_H / TREEMAP_QTY_MIN_H) -- a clipped label
+     is worse than none, and the name is always in the tile's title and in
+     the card list below. */
+  /* Clamped to two lines. Without it a long name in a narrow tile wraps to
+     four or five lines and pushes the quantity off the bottom edge -- the
+     tile is sized by its VALUE, not by how much text its name needs. The
+     full name is in the tile's title, its visually-hidden description, and
+     the card list below.
+
+     white-space: normal on .dash-tm-tile above is load-bearing for this:
+     the global `button, .btn` rule sets nowrap, which is inherited past
+     -webkit-line-clamp and silently defeats it. */
+  .dash-tm-name {
+    display: -webkit-box;
+    overflow: hidden;
+    font-size: 11px;
+    font-weight: 600;
+    line-height: 1.2;
+    overflow-wrap: anywhere;
+    -webkit-box-orient: vertical;
+    -webkit-line-clamp: 2;
+    line-clamp: 2;
+  }
+
+  .dash-tm-qty {
+    font-family: Outfit, sans-serif;
+    font-size: 15px;
+    font-weight: 700;
+    line-height: 1.1;
+  }
+
+  @media (max-width: 600px) {
+    /* Squarer, not wider. The label thresholds in dashboard.js are
+       PERCENTAGES of the box, so the same threshold buys far fewer pixels
+       once the box halves in width -- at 16/9 a "big enough" tile here was
+       ~25px tall and cut its own label in half. A 5:4 box gives those same
+       percentages enough height to hold the two lines they promise. */
+    .dash-tm-box {
+      aspect-ratio: 5 / 4;
+    }
   }
 
   /* ── Process stage cards (WIP pipeline + Upcoming Lots) ────────────────
@@ -2270,24 +2138,24 @@
     text-align: left;
     background: var(--bg-color);
     border: 1px solid var(--border-light);
-    border-left: 3px solid var(--dash-stage-wip);
+    border-left: 3px solid var(--dash-wip-fill);
     border-radius: var(--border-radius);
     cursor: pointer;
     transition: border-color var(--transition-fast), box-shadow var(--transition-fast);
   }
 
   .dash-wip-grid[data-variant="upcoming"] .dash-wip-card {
-    border-left-color: var(--dash-stage-queued);
+    border-left-color: var(--dash-queued-fill);
   }
 
   .dash-wip-card:hover {
     border-color: var(--border-color);
-    border-left-color: var(--dash-stage-wip);
+    border-left-color: var(--dash-wip-fill);
     box-shadow: var(--shadow-sm);
   }
 
   .dash-wip-grid[data-variant="upcoming"] .dash-wip-card:hover {
-    border-left-color: var(--dash-stage-queued);
+    border-left-color: var(--dash-queued-fill);
   }
 
   .dash-wip-card:focus-visible {
@@ -2475,16 +2343,6 @@
        228px minimum would leave the name wrapping to four lines. */
     .dash-wip-grid {
       grid-template-columns: 1fr;
-    }
-
-    /* A shorter plot: the chart keeps its shape, and the bands scroll
-       rather than crushing every column into a sliver. */
-    .dash-stage-chart {
-      --dash-stage-plot-h: 104px;
-    }
-
-    .dash-stage-col {
-      min-width: 40px;
     }
   }
 

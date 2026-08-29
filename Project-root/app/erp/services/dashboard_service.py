@@ -348,6 +348,12 @@ def _get_stage_rollups(production_lots: list) -> dict:
                 {
                     "processId": p["processId"],
                     "processName": p["processName"],
+                    # The stage chart bands its columns by this. Six distinct
+                    # values across 262 processes, so it is the one grouping
+                    # here with a low enough cardinality to label an axis --
+                    # a process NAME cannot be labelled under a thin column,
+                    # but "Packing" over a band of them can.
+                    "processType": p.get("processType") or "",
                     "sequence": p["sequence"],
                     "totalQty": _round2(sum(g["qty"] for g in groups)),
                     "totalLotCount": total_lot_count,

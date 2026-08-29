@@ -128,7 +128,8 @@ App.Dashboard = {
 
   // Regions rebuilt wholesale by a refresh. Anything focused inside one of
   // them is destroyed by that rebuild.
-  REDRAWN_REGIONS: '#dashboardStageChart, #dashboardPipeline, #dashboardUpcoming, ' +
+  REDRAWN_REGIONS: '#dashboardTreemapWip, #dashboardTreemapQueued, ' +
+    '#dashboardPipeline, #dashboardUpcoming, ' +
     '#dashLowStockBody, #dashReadyToDispatchBody, #dashContractorPayablesBody, ' +
     '.dash-table-footer',
 
@@ -206,7 +207,7 @@ App.Dashboard = {
       const focused = this._captureFocus();
 
       this.renderKpis(data.kpis);
-      this.renderStageChart(data.pipeline, data.upcoming);
+      this.renderStageTreemaps(data.pipeline, data.upcoming);
       this.renderPipeline(data.pipeline);
       this.renderUpcoming(data.upcoming);
       this.renderLowStock(data.lowStockItems, data.lowStockTotalCount);
@@ -419,8 +420,10 @@ App.Dashboard = {
       const el = document.getElementById(config.containerId);
       if (el) el.innerHTML = `<div class="text-danger small">${config.error}</div>`;
     });
-    const chartEl = document.getElementById('dashboardStageChart');
-    if (chartEl) chartEl.innerHTML = '<div class="text-danger small">Failed to load stage load.</div>';
+    Object.values(this.TREEMAPS).forEach(config => {
+      const el = document.getElementById(config.containerId);
+      if (el) el.innerHTML = `<div class="text-danger small">${config.error}</div>`;
+    });
 
     this.renderTableError('dashLowStockBody', 4);
     this.renderTableError('dashReadyToDispatchBody', 3);
@@ -664,147 +667,179 @@ App.Dashboard = {
       `${n}d<span class="visually-hidden"> ${escapeHtml(config.ageSrText(n))}</span></span>`;
   },
 
-  // Height of the plot area, in px. Kept in JS as well as CSS only because
-  // the gridline layer and the y-axis gutter must agree with it exactly;
-  // both read the same custom property, so this constant just documents it.
-  STAGE_CHART_PLOT_PX: 132,
+  // The treemap box's width:height. Layout happens in a space of this same
+  // ratio and is emitted as percentages, so the tiles stay squarish without
+  // any JS measuring the container or listening for resize -- the CSS holds
+  // the box to the same aspect-ratio.
+  TREEMAP_ASPECT: 16 / 9,
 
-  // Axis maximum, rounded UP to a 1 / 2 / 2.5 / 5 x 10^n step. Gridlines
-  // landing on 500 and 1,000 read as a scale; gridlines landing on 437 and
-  // 874 read as an accident.
-  _niceMax(value) {
-    if (!(value > 0)) return 0;
-    const magnitude = Math.pow(10, Math.floor(Math.log10(value)));
-    const normalized = value / magnitude;
-    const step = [1, 2, 2.5, 5, 10].find(x => normalized <= x + 1e-9) || 10;
-    return step * magnitude;
-  },
+  // A tile only gets a label when the label actually fits. The skill's rule
+  // -- a label that will not fit does not get clipped -- and the reason
+  // these are percentages of the box rather than px is that the box's size
+  // is set by CSS, not known here.
+  TREEMAP_NAME_MIN_W: 15,
+  TREEMAP_NAME_MIN_H: 13,
+  TREEMAP_QTY_MIN_H: 26,
 
-  // One row per process that has ANY open work, in sequence order, carrying
-  // both statuses. Merged here rather than server-side because the two
-  // lists are independently useful and the server sends each in the shape
-  // its own list renders from.
-  _stageChartRows(pipeline, upcoming) {
-    const byProcess = new Map();
-    const merge = (stages, key) => (stages || []).forEach(stage => {
-      const id = stage.processId;
-      const row = byProcess.get(id) || {
-        processId: id, processName: stage.processName,
-        sequence: toNumber(stage.sequence), wip: 0, queued: 0, lots: 0,
-      };
-      row.processName = row.processName || stage.processName;
-      row[key] = toNumber(stage.totalQty);
-      row.lots += toNumber(stage.totalLotCount);
-      byProcess.set(id, row);
-    });
-    merge(pipeline, 'wip');
-    merge(upcoming, 'queued');
-    return Array.from(byProcess.values()).sort((a, b) => a.sequence - b.sequence);
-  },
-
-  // Stacked columns: running on the baseline, queued hatched above it, one
-  // column per stage in the order material flows through them.
+  // Squarified treemap (Bruls, Huizing & van Wijk). Lays `values` into the
+  // rectangle (x, y, w, h), returning one box per value in input order.
   //
-  // Hand-built rather than handed to Chart.js, for three reasons that all
-  // apply to this block specifically. It renders instantly instead of
-  // waiting on the Chart.js CDN -- loadData deliberately draws this block
-  // before awaiting the library, because it is the most operationally
-  // useful thing on the page. Every column is a real <button>, so the
-  // drill-down is reachable by keyboard, which a <canvas> is not. And its
-  // colours are CSS custom properties, so the dark-mode toggle re-themes it
-  // for free rather than through the MutationObserver + re-render dance the
-  // two Chart.js charts below need.
-  renderStageChart(pipeline, upcoming) {
-    const el = document.getElementById('dashboardStageChart');
+  // The algorithm builds a row along the SHORTER side of whatever rectangle
+  // is left, adding tiles while the row's worst aspect ratio keeps
+  // improving; when the next tile would make it worse, the row is fixed in
+  // place and the remainder recursed on. Rows along the shorter side is what
+  // keeps tiles near-square -- laying them along the longer side produces
+  // the slivers a naive treemap is notorious for.
+  //
+  // Values must be positive; callers filter zeroes out first, since a
+  // zero-area tile has nothing to draw and would divide by zero in `worst`.
+  _squarify(values, x, y, w, h) {
+    const out = [];
+    const total = values.reduce((sum, v) => sum + v, 0);
+    if (!(total > 0) || !(w > 0) || !(h > 0)) return out;
+
+    // Scale values to areas so the tiles exactly fill the rectangle.
+    const scale = (w * h) / total;
+    const queue = values.map((v, i) => ({ i, area: v * scale }));
+
+    let rect = { x, y, w, h };
+    let row = [];
+
+    const worst = (candidate, side) => {
+      const sum = candidate.reduce((s, r) => s + r.area, 0);
+      if (!(sum > 0) || !(side > 0)) return Infinity;
+      const max = Math.max(...candidate.map(r => r.area));
+      const min = Math.min(...candidate.map(r => r.area));
+      const side2 = side * side;
+      const sum2 = sum * sum;
+      return Math.max((side2 * max) / sum2, sum2 / (side2 * min));
+    };
+
+    const layoutRow = () => {
+      const sum = row.reduce((s, r) => s + r.area, 0);
+      if (!(sum > 0)) { row = []; return; }
+      if (rect.w >= rect.h) {
+        // Shorter side is the height: the row is a vertical band on the left.
+        const bandW = sum / rect.h;
+        let cursor = rect.y;
+        row.forEach(r => {
+          const cellH = r.area / bandW;
+          out.push({ i: r.i, x: rect.x, y: cursor, w: bandW, h: cellH });
+          cursor += cellH;
+        });
+        rect = { x: rect.x + bandW, y: rect.y, w: rect.w - bandW, h: rect.h };
+      } else {
+        // Shorter side is the width: the row is a horizontal band on top.
+        const bandH = sum / rect.w;
+        let cursor = rect.x;
+        row.forEach(r => {
+          const cellW = r.area / bandH;
+          out.push({ i: r.i, x: cursor, y: rect.y, w: cellW, h: bandH });
+          cursor += cellW;
+        });
+        rect = { x: rect.x, y: rect.y + bandH, w: rect.w, h: rect.h - bandH };
+      }
+      row = [];
+    };
+
+    while (queue.length) {
+      const side = Math.min(rect.w, rect.h);
+      const next = queue[0];
+      if (row.length === 0 || worst(row.concat(next), side) <= worst(row, side)) {
+        row.push(queue.shift());
+      } else {
+        layoutRow();
+      }
+    }
+    if (row.length) layoutRow();
+
+    // Back into input order: the caller pairs these with its own rows.
+    return out.sort((a, b) => a.i - b.i);
+  },
+
+  // One treemap per status. Area is the stage's share of THAT panel's total,
+  // so a tile can be read against its neighbours but NOT against a tile in
+  // the other panel -- each panel fills its own box whatever its total. The
+  // panel heading carries the absolute total for exactly that reason.
+  //
+  // Hand-built for the same three reasons the rest of this block is: it
+  // renders without waiting on the Chart.js CDN, every tile is a real
+  // <button> so the drill-down is keyboard-reachable, and its colours are
+  // CSS custom properties so the dark-mode toggle re-themes it for free.
+  TREEMAPS: {
+    wip: {
+      containerId: 'dashboardTreemapWip',
+      variant: 'wip',
+      empty: 'Nothing is in progress right now.',
+      error: 'Failed to load in-progress stages.',
+      unitsLabel: 'in progress',
+    },
+    queued: {
+      containerId: 'dashboardTreemapQueued',
+      variant: 'queued',
+      empty: 'No pending lots waiting to start.',
+      error: 'Failed to load upcoming stages.',
+      unitsLabel: 'queued',
+    },
+  },
+
+  renderStageTreemaps(pipeline, upcoming) {
+    this._renderTreemap(pipeline, this.TREEMAPS.wip);
+    this._renderTreemap(upcoming, this.TREEMAPS.queued);
+  },
+
+  _renderTreemap(stages, config) {
+    const el = document.getElementById(config.containerId);
     if (!el) return;
 
-    const rows = this._stageChartRows(pipeline, upcoming);
-    if (rows.length === 0) {
-      el.innerHTML = '<div class="text-muted small">No open production lots at any stage.</div>';
+    // Largest first: squarify requires descending input to produce squarish
+    // tiles, and it also puts the biggest stage top-left where the eye lands.
+    const rows = (stages || [])
+      .map(s => ({ stage: s, qty: toNumber(s.totalQty) }))
+      .filter(r => r.qty > 0)
+      .sort((a, b) => b.qty - a.qty);
+
+    const total = rows.reduce((sum, r) => sum + r.qty, 0);
+    if (rows.length === 0 || !(total > 0)) {
+      el.innerHTML =
+        `<div class="dash-tm-total">&nbsp;</div>` +
+        `<div class="text-muted small">${escapeHtml(config.empty)}</div>`;
       return;
     }
 
-    const totalOf = r => r.wip + r.queued;
-    const axisMax = this._niceMax(Math.max(...rows.map(totalOf)));
-    if (axisMax <= 0) {
-      el.innerHTML = '<div class="text-muted small">No open production lots at any stage.</div>';
-      return;
-    }
-    const peakTotal = Math.max(...rows.map(totalOf));
+    const boxW = 100 * this.TREEMAP_ASPECT;
+    const boxes = this._squarify(rows.map(r => r.qty), 0, 0, boxW, 100);
 
-    // A legend, always -- two series must never be told apart by colour
-    // alone. The hatch on "Pending" is the second channel behind it.
-    const legend = `
-      <div class="dash-stage-legend">
-        <span class="dash-stage-legend-item">
-          <span class="dash-stage-swatch" data-series="wip" aria-hidden="true"></span>In Progress
-        </span>
-        <span class="dash-stage-legend-item">
-          <span class="dash-stage-swatch" data-series="queued" aria-hidden="true"></span>Pending
-        </span>
-      </div>`;
+    const tiles = boxes.map(box => {
+      const { stage, qty } = rows[box.i];
+      const share = (qty / total) * 100;
+      // Percentages of the box, which is what the style below needs.
+      const wPct = (box.w / boxW) * 100;
+      const hPct = box.h;
 
-    // Three ticks, three hairlines. More would be noise at this height.
-    const ticks = [axisMax, axisMax / 2, 0];
-    const yAxis = `
-      <div class="dash-stage-yaxis" aria-hidden="true">
-        ${ticks.map((t, i) => `<span class="dash-stage-tick" style="bottom:${100 - (i * 50)}%">${formatQty(t)}</span>`).join('')}
-      </div>`;
-    const gridlines = `
-      <div class="dash-stage-gridlines" aria-hidden="true">
-        ${ticks.map((_t, i) => `<span class="dash-stage-gridline" style="bottom:${100 - (i * 50)}%"></span>`).join('')}
-      </div>`;
-
-    const columns = rows.map(r => {
-      const total = totalOf(r);
-      // Only segments with something in them: an empty one would still take
-      // the 2px surface gap and draw a hairline of colour at the baseline.
-      const segments = [
-        { key: 'wip', qty: r.wip },
-        { key: 'queued', qty: r.queued },
-      ].filter(seg => seg.qty > 0).map(seg => {
-        // Floor the height so a token 1-unit segment is still visible
-        // rather than sub-pixel, without letting it read as a real
-        // quantity.
-        const pct = Math.max((seg.qty / axisMax) * 100, 1.5);
-        return `<span class="dash-stage-seg" data-series="${seg.key}" style="height:${pct.toFixed(2)}%"></span>`;
-      }).join('');
-
-      // Label the tallest column only. Every exact number is in the lists
-      // below, which are this chart's table view -- a value over every
-      // column is the flood that stops direct labels working.
-      const isPeak = total === peakTotal;
-      const parts = [
-        `${formatQty(r.wip)} in progress`,
-        `${formatQty(r.queued)} pending`,
-        `${r.lots} lot${r.lots === 1 ? '' : 's'}`,
-      ];
-      const description = `${r.processName}: ${parts.join(', ')}`;
+      const showName = wPct >= this.TREEMAP_NAME_MIN_W && hPct >= this.TREEMAP_NAME_MIN_H;
+      const showQty = showName && hPct >= this.TREEMAP_QTY_MIN_H;
+      const description =
+        `${stage.processName}: ${formatQty(qty)} units ${config.unitsLabel}, ` +
+        `${stage.totalLotCount} lot${stage.totalLotCount === 1 ? '' : 's'}, ` +
+        `${share.toFixed(share < 10 ? 1 : 0)}% of this panel`;
 
       return `
-        <button type="button" class="dash-stage-col" data-action="dash-pipeline-stage"
-                data-processid="${encodeURIComponent(r.processId)}"
-                title="${escapeHtml(description)}">
-          <span class="dash-stage-col-stack">
-            ${isPeak ? `<span class="dash-stage-col-value" style="bottom:${((total / axisMax) * 100).toFixed(2)}%">${formatQty(total)}</span>` : ''}
-            ${segments}
-          </span>
-          <span class="dash-stage-col-label">${escapeHtml(r.processName)}</span>
+        <button type="button" class="dash-tm-tile" data-action="dash-pipeline-stage"
+                data-processid="${encodeURIComponent(stage.processId)}"
+                title="${escapeHtml(description)}"
+                style="left:${(box.x / boxW * 100).toFixed(3)}%;top:${box.y.toFixed(3)}%;width:${wPct.toFixed(3)}%;height:${hPct.toFixed(3)}%">
+          ${showName ? `<span class="dash-tm-name">${escapeHtml(stage.processName)}</span>` : ''}
+          ${showQty ? `<span class="dash-tm-qty">${formatQty(qty)}</span>` : ''}
           <span class="visually-hidden">${escapeHtml(description)}</span>
         </button>`;
     }).join('');
 
-    el.innerHTML = `
-      <div class="dash-stage-chart">
-        ${legend}
-        <div class="dash-stage-plot">
-          ${yAxis}
-          <div class="dash-stage-bands">
-            ${gridlines}
-            ${columns}
-          </div>
-        </div>
-      </div>`;
+    el.innerHTML =
+      `<div class="dash-tm-total"><strong>${formatQty(total)}</strong> units ` +
+      `${escapeHtml(config.unitsLabel)} across <strong>${rows.length}</strong> ` +
+      `stage${rows.length === 1 ? '' : 's'}</div>` +
+      `<div class="dash-tm-box" data-variant="${config.variant}">${tiles}</div>`;
   },
 
   renderPipeline(pipeline) {

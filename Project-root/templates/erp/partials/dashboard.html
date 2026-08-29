@@ -219,8 +219,28 @@
   <section class="dash-section mb-4" aria-labelledby="dashPipelineHeading">
     <h2 class="dash-section-title" id="dashPipelineHeading">Process WIP Pipeline</h2>
 
-    <div id="dashboardStageChart">
-      <div class="text-muted small">Loading stage load&hellip;</div>
+    <!-- Two treemaps, one per status. Tile area is the stage's share of
+         its OWN panel, so tiles compare within a panel but NOT across the
+         two -- each panel fills its box whatever its total. That is the
+         trade for the shape a treemap gives you, and it is why each panel
+         prints its absolute total above itself: the cross-panel comparison
+         the old shared-axis column chart did for free is carried by those
+         two numbers instead. -->
+    <div class="row g-3 mb-1">
+      <!-- No heading above either panel: the totals line each one renders
+           already reads "N units in progress" / "N units queued", and the
+           card lists below carry their own IN PROGRESS / UPCOMING headings.
+           A heading here made the section say "In Progress" twice. -->
+      <div class="col-lg-6">
+        <div id="dashboardTreemapWip" role="group" aria-label="In progress, by stage">
+          <div class="text-muted small">Loading in-progress stages&hellip;</div>
+        </div>
+      </div>
+      <div class="col-lg-6">
+        <div id="dashboardTreemapQueued" role="group" aria-label="Upcoming pending lots, by stage">
+          <div class="text-muted small">Loading upcoming stages&hellip;</div>
+        </div>
+      </div>
     </div>
 
     <div class="dash-wip-block">
