@@ -1117,7 +1117,12 @@ App.Stock = {
   // would be a worse lie than naming the problem outright.
   orphanedPoolBuckets() {
     const liveProcessIds = new Set((App.State.globalProcesses || []).map(p => p.processId));
-    return (App.State.globalWarehousePool || []).filter(r => !liveProcessIds.has(r.processId));
+    return (App.State.globalWarehousePool || []).filter(r =>
+      // A stranded bucket only matters while it still holds a BALANCE. One
+      // that nets to zero has nothing to correct and no stock to account
+      // for, so flagging it is noise -- and the banner exists to be acted
+      // on, which means everything in it has to be actionable.
+      !liveProcessIds.has(r.processId) && Number(r.availableQty) !== 0);
   },
 
   renderOrphanedPoolBanner(colSpan) {

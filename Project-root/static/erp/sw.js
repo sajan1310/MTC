@@ -174,7 +174,10 @@
 // ledger: HTTP 200, success true, zero rows, over a bucket holding 19 real
 // movements. Its error path was also mis-called (tableError takes no colspan),
 // so a genuine failure would have displayed "7" instead of a message.
-const CACHE_NAME = 'erp-shell-v47';
+// v48: the stranded-bucket banner only carries buckets that still hold a
+// balance. A stranded bucket netting to zero has no stock to account for and
+// nothing to correct, so listing it trains people to ignore the banner.
+const CACHE_NAME = 'erp-shell-v48';
 
 const PRECACHE_URLS = [
   '/erp/offline.html',
