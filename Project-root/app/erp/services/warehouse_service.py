@@ -1366,6 +1366,21 @@ def get_warehouse_pool_ledger(output_item_name, product_tag=None, color=None):
     could not be reproduced client-side at all, those being settlements
     across an item rather than per-lot lines.
     """
+    # Reject a non-string rather than str()-ing it into a name no bucket can
+    # have. A caller that passes its arguments as one list (Api.call is
+    # variadic -- call(method, ...args) -- so an array arrives as a single
+    # argument) otherwise gets HTTP 200, success true and an empty ledger,
+    # which is indistinguishable from a bucket that genuinely has no history.
+    # That cost a long hunt over a bucket with 19 movements in it.
+    for label, value in (("Output Item Name", output_item_name),
+                         ("Product Tag", product_tag),
+                         ("Colour", color)):
+        if value is not None and not isinstance(value, str):
+            raise ValueError(
+                f"{label} must be text, got {type(value).__name__}. "
+                f"Pass the ledger's arguments individually, not as one list."
+            )
+
     name = str(output_item_name or "").strip()
     if not name:
         raise ValueError("Output Item Name is required.")

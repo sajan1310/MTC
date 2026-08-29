@@ -167,7 +167,14 @@
 // no effect because installed clients never refetched the file -- and the
 // v44/v45 round hit it a fifth time. Bumps still matter for same-load
 // delivery; this bounds a missed one to a single stale load.
-const CACHE_NAME = 'erp-shell-v46';
+// v47: the ledger modal called Api.call with its three arguments packed into
+// one array. Api.call is variadic -- call(method, ...args) -- so the server
+// received a single argument that happened to be a list, stringified it into
+// an output item name no bucket has, and answered honestly with an empty
+// ledger: HTTP 200, success true, zero rows, over a bucket holding 19 real
+// movements. Its error path was also mis-called (tableError takes no colspan),
+// so a genuine failure would have displayed "7" instead of a message.
+const CACHE_NAME = 'erp-shell-v47';
 
 const PRECACHE_URLS = [
   '/erp/offline.html',

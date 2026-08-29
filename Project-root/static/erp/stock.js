@@ -1923,7 +1923,13 @@ App.Stock = {
 
     let entries;
     try {
-      const res = await Api.call('getWarehousePoolLedger', [outputItemName, productTag, color]);
+      // Api.call is variadic -- call(method, ...args) -- so the three
+      // arguments go in as three arguments. Passing them as ONE array sent
+      // the server a single argument that happened to be a list, which it
+      // stringified into an output item name no bucket has, and answered
+      // honestly with an empty ledger: HTTP 200, success true, zero rows,
+      // over a bucket with 19 real movements.
+      const res = await Api.call('getWarehousePoolLedger', outputItemName, productTag, color);
       // A refused call is NOT an empty ledger. Folding {success:false} into
       // [] rendered "No transaction history found for this bucket" over a
       // bucket with 19 real movements, which reads as data loss and hides
@@ -1932,7 +1938,11 @@ App.Stock = {
       if (!res?.success) throw new Error(res?.message || 'The server refused this ledger request.');
       entries = Array.isArray(res.data) ? res.data : [];
     } catch (err) {
-      App.Utils.tableError(body, 7, err.message || 'Could not load this ledger.',
+      // tableError(tbody, message, retry) -- no colspan argument; it reads
+      // the one tableLoading recorded on the element. Passing one shifted
+      // every argument along, so the row displayed the colspan as its
+      // message and the retry handler was dropped for not being a function.
+      App.Utils.tableError(body, err.message || 'Could not load this ledger.',
         () => this.openPoolLedgerModal(encName, encTag, encColor));
       return;
     }
