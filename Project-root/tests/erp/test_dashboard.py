@@ -419,6 +419,17 @@ def test_dashboard_pipeline_group_title_keeps_size_alongside_color(erp_client):
     assert stage["groups"][0]["title"] == "DashSizedGreen 14 inch"
 
 
+def test_dashboard_stage_carries_its_process_type(erp_client):
+    """The stage chart bands its columns by processType, so a stage without
+    one lands in "Other" and the banding silently stops meaning anything."""
+    payload, process_id = _save_process(erp_client, processType="Fitting Frame")
+    _save_lot(erp_client, process_id, "In Progress")
+
+    dash = _rpc(erp_client, "getDashboardData").get_json()["data"]
+    stage = next(p for p in dash["pipeline"] if p["processId"] == process_id)
+    assert stage["processType"] == payload["processType"]
+
+
 def test_dashboard_pipeline_omits_process_with_no_active_lots(erp_client):
     _payload, process_id = _save_process(erp_client)
     dash = _rpc(erp_client, "getDashboardData").get_json()["data"]

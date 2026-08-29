@@ -219,28 +219,19 @@
   <section class="dash-section mb-4" aria-labelledby="dashPipelineHeading">
     <h2 class="dash-section-title" id="dashPipelineHeading">Process WIP Pipeline</h2>
 
-    <!-- Two treemaps, one per status. Tile area is the stage's share of
-         its OWN panel, so tiles compare within a panel but NOT across the
-         two -- each panel fills its box whatever its total. That is the
-         trade for the shape a treemap gives you, and it is why each panel
-         prints its absolute total above itself: the cross-panel comparison
-         the old shared-axis column chart did for free is carried by those
-         two numbers instead. -->
-    <div class="row g-3 mb-1">
-      <!-- No heading above either panel: the totals line each one renders
-           already reads "N units in progress" / "N units queued", and the
-           card lists below carry their own IN PROGRESS / UPCOMING headings.
-           A heading here made the section say "In Progress" twice. -->
-      <div class="col-lg-6">
-        <div id="dashboardTreemapWip" role="group" aria-label="In progress, by stage">
-          <div class="text-muted small">Loading in-progress stages&hellip;</div>
-        </div>
-      </div>
-      <div class="col-lg-6">
-        <div id="dashboardTreemapQueued" role="group" aria-label="Upcoming pending lots, by stage">
-          <div class="text-muted small">Loading upcoming stages&hellip;</div>
-        </div>
-      </div>
+    <!-- One stacked column per process, banded by Process Type, stacked by
+         status. Three levels, and each earns its place: the BAND is the
+         process type -- six values across 262 processes, the only grouping
+         here with a low enough cardinality to label an axis -- the COLUMN is
+         the process, and the STACK is In Progress over Pending.
+
+         A process NAME cannot be labelled under a ~35px column, so it lives
+         in the column's tooltip and in the cards below; the band label is
+         what the axis carries. That is the trade for the reading this adds
+         over the treemaps it replaced: which part of the shop is loaded, on
+         one shared axis so running and queued compare directly. -->
+    <div id="dashboardStageChart">
+      <div class="text-muted small">Loading stage load&hellip;</div>
     </div>
 
     <div class="dash-wip-block">

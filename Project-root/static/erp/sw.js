@@ -177,14 +177,13 @@
 // v48: the stranded-bucket banner only carries buckets that still hold a
 // balance. A stranded bucket netting to zero has no stock to account for and
 // nothing to correct, so listing it trains people to ignore the banner.
-// v49: the WIP stage-load column chart became two treemaps, one per
-// status. dashboard.js and styles.css are both precached. Since v46 this
-// would heal itself on the following load rather than persisting, so the
-// bump is not load-bearing the way v32/v36/v37/v43 were -- but the
+// v49: the WIP stage load is one chart of stacked columns, banded by
+// Process Type. dashboard.js and styles.css are both precached, and the
 // markup half arrives fresh (navigations are network-first) while the
-// cached half is a load behind, and for this change that window renders
-// the two new treemap containers with code that only knows how to fill
-// the chart element they replaced: two empty boxes until the next load.
+// cached half is a load behind -- for this change that window renders the
+// chart container with code that does not know it. Since v46 that heals
+// itself on the following load rather than persisting, so this is not
+// load-bearing the way v32/v36/v37/v43 were.
 const CACHE_NAME = 'erp-shell-v49';
 
 const PRECACHE_URLS = [

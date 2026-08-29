@@ -128,8 +128,7 @@ App.Dashboard = {
 
   // Regions rebuilt wholesale by a refresh. Anything focused inside one of
   // them is destroyed by that rebuild.
-  REDRAWN_REGIONS: '#dashboardTreemapWip, #dashboardTreemapQueued, ' +
-    '#dashboardPipeline, #dashboardUpcoming, ' +
+  REDRAWN_REGIONS: '#dashboardStageChart, #dashboardPipeline, #dashboardUpcoming, ' +
     '#dashLowStockBody, #dashReadyToDispatchBody, #dashContractorPayablesBody, ' +
     '.dash-table-footer',
 
@@ -207,7 +206,7 @@ App.Dashboard = {
       const focused = this._captureFocus();
 
       this.renderKpis(data.kpis);
-      this.renderStageTreemaps(data.pipeline, data.upcoming);
+      this.renderStageChart(data.pipeline, data.upcoming);
       this.renderPipeline(data.pipeline);
       this.renderUpcoming(data.upcoming);
       this.renderLowStock(data.lowStockItems, data.lowStockTotalCount);
@@ -420,10 +419,8 @@ App.Dashboard = {
       const el = document.getElementById(config.containerId);
       if (el) el.innerHTML = `<div class="text-danger small">${config.error}</div>`;
     });
-    Object.values(this.TREEMAPS).forEach(config => {
-      const el = document.getElementById(config.containerId);
-      if (el) el.innerHTML = `<div class="text-danger small">${config.error}</div>`;
-    });
+    const chartEl = document.getElementById('dashboardStageChart');
+    if (chartEl) chartEl.innerHTML = '<div class="text-danger small">Failed to load stage load.</div>';
 
     this.renderTableError('dashLowStockBody', 4);
     this.renderTableError('dashReadyToDispatchBody', 3);
@@ -667,179 +664,164 @@ App.Dashboard = {
       `${n}d<span class="visually-hidden"> ${escapeHtml(config.ageSrText(n))}</span></span>`;
   },
 
-  // The treemap box's width:height. Layout happens in a space of this same
-  // ratio and is emitted as percentages, so the tiles stay squarish without
-  // any JS measuring the container or listening for resize -- the CSS holds
-  // the box to the same aspect-ratio.
-  TREEMAP_ASPECT: 16 / 9,
+  // Plot geometry. The gridline layer, the y-axis gutter and the columns all
+  // have to agree on these, so they are one set of numbers rather than three.
+  STAGE_PLOT_H: 150,
+  STAGE_HEAD_H: 20,
 
-  // A tile only gets a label when the label actually fits. The skill's rule
-  // -- a label that will not fit does not get clipped -- and the reason
-  // these are percentages of the box rather than px is that the box's size
-  // is set by CSS, not known here.
-  TREEMAP_NAME_MIN_W: 15,
-  TREEMAP_NAME_MIN_H: 13,
-  TREEMAP_QTY_MIN_H: 26,
-
-  // Squarified treemap (Bruls, Huizing & van Wijk). Lays `values` into the
-  // rectangle (x, y, w, h), returning one box per value in input order.
-  //
-  // The algorithm builds a row along the SHORTER side of whatever rectangle
-  // is left, adding tiles while the row's worst aspect ratio keeps
-  // improving; when the next tile would make it worse, the row is fixed in
-  // place and the remainder recursed on. Rows along the shorter side is what
-  // keeps tiles near-square -- laying them along the longer side produces
-  // the slivers a naive treemap is notorious for.
-  //
-  // Values must be positive; callers filter zeroes out first, since a
-  // zero-area tile has nothing to draw and would divide by zero in `worst`.
-  _squarify(values, x, y, w, h) {
-    const out = [];
-    const total = values.reduce((sum, v) => sum + v, 0);
-    if (!(total > 0) || !(w > 0) || !(h > 0)) return out;
-
-    // Scale values to areas so the tiles exactly fill the rectangle.
-    const scale = (w * h) / total;
-    const queue = values.map((v, i) => ({ i, area: v * scale }));
-
-    let rect = { x, y, w, h };
-    let row = [];
-
-    const worst = (candidate, side) => {
-      const sum = candidate.reduce((s, r) => s + r.area, 0);
-      if (!(sum > 0) || !(side > 0)) return Infinity;
-      const max = Math.max(...candidate.map(r => r.area));
-      const min = Math.min(...candidate.map(r => r.area));
-      const side2 = side * side;
-      const sum2 = sum * sum;
-      return Math.max((side2 * max) / sum2, sum2 / (side2 * min));
-    };
-
-    const layoutRow = () => {
-      const sum = row.reduce((s, r) => s + r.area, 0);
-      if (!(sum > 0)) { row = []; return; }
-      if (rect.w >= rect.h) {
-        // Shorter side is the height: the row is a vertical band on the left.
-        const bandW = sum / rect.h;
-        let cursor = rect.y;
-        row.forEach(r => {
-          const cellH = r.area / bandW;
-          out.push({ i: r.i, x: rect.x, y: cursor, w: bandW, h: cellH });
-          cursor += cellH;
-        });
-        rect = { x: rect.x + bandW, y: rect.y, w: rect.w - bandW, h: rect.h };
-      } else {
-        // Shorter side is the width: the row is a horizontal band on top.
-        const bandH = sum / rect.w;
-        let cursor = rect.x;
-        row.forEach(r => {
-          const cellW = r.area / bandH;
-          out.push({ i: r.i, x: cursor, y: rect.y, w: cellW, h: bandH });
-          cursor += cellW;
-        });
-        rect = { x: rect.x, y: rect.y + bandH, w: rect.w, h: rect.h - bandH };
-      }
-      row = [];
-    };
-
-    while (queue.length) {
-      const side = Math.min(rect.w, rect.h);
-      const next = queue[0];
-      if (row.length === 0 || worst(row.concat(next), side) <= worst(row, side)) {
-        row.push(queue.shift());
-      } else {
-        layoutRow();
-      }
-    }
-    if (row.length) layoutRow();
-
-    // Back into input order: the caller pairs these with its own rows.
-    return out.sort((a, b) => a.i - b.i);
+  // Axis maximum, rounded UP to a 1 / 2 / 2.5 / 5 x 10^n step. Gridlines
+  // landing on 500 and 1,000 read as a scale; gridlines landing on 437 and
+  // 874 read as an accident.
+  _niceMax(value) {
+    if (!(value > 0)) return 0;
+    const magnitude = Math.pow(10, Math.floor(Math.log10(value)));
+    const step = [1, 2, 2.5, 5, 10].find(x => value / magnitude <= x + 1e-9) || 10;
+    return step * magnitude;
   },
 
-  // One treemap per status. Area is the stage's share of THAT panel's total,
-  // so a tile can be read against its neighbours but NOT against a tile in
-  // the other panel -- each panel fills its own box whatever its total. The
-  // panel heading carries the absolute total for exactly that reason.
+  // Merge the two status payloads into one row per process, then group those
+  // rows into bands by Process Type.
   //
-  // Hand-built for the same three reasons the rest of this block is: it
-  // renders without waiting on the Chart.js CDN, every tile is a real
-  // <button> so the drill-down is keyboard-reachable, and its colours are
-  // CSS custom properties so the dark-mode toggle re-themes it for free.
-  TREEMAPS: {
-    wip: {
-      containerId: 'dashboardTreemapWip',
-      variant: 'wip',
-      empty: 'Nothing is in progress right now.',
-      error: 'Failed to load in-progress stages.',
-      unitsLabel: 'in progress',
-    },
-    queued: {
-      containerId: 'dashboardTreemapQueued',
-      variant: 'queued',
-      empty: 'No pending lots waiting to start.',
-      error: 'Failed to load upcoming stages.',
-      unitsLabel: 'queued',
-    },
+  // Three levels, which is what makes this chart worth its space: the BAND is
+  // the process type (six of them across 262 processes -- low enough
+  // cardinality to label an axis), the COLUMN is the process, and the STACK
+  // is the status. A process name cannot be labelled under a ~35px column,
+  // but "Packing" over a band of them can, and that is the reading this adds
+  // over anything the dashboard showed before: which part of the shop is
+  // carrying the load, not just which single stage.
+  _stageBands(pipeline, upcoming) {
+    const byProcess = new Map();
+    const merge = (stages, key) => (stages || []).forEach(stage => {
+      const row = byProcess.get(stage.processId) || {
+        processId: stage.processId,
+        processName: stage.processName,
+        processType: (stage.processType || '').trim(),
+        sequence: toNumber(stage.sequence),
+        wip: 0, queued: 0, lots: 0,
+      };
+      row.processType = row.processType || (stage.processType || '').trim();
+      row[key] = toNumber(stage.totalQty);
+      row.lots += toNumber(stage.totalLotCount);
+      byProcess.set(stage.processId, row);
+    });
+    merge(pipeline, 'wip');
+    merge(upcoming, 'queued');
+
+    // A process whose type was never set still has to appear -- dropping it
+    // would silently lose stock from the chart's totals.
+    const UNTYPED = 'Other';
+    const bands = new Map();
+    Array.from(byProcess.values())
+      .filter(r => r.wip + r.queued > 0)
+      .sort((a, b) => a.sequence - b.sequence)
+      .forEach(row => {
+        const name = row.processType || UNTYPED;
+        if (!bands.has(name)) bands.set(name, { name, columns: [], total: 0 });
+        const band = bands.get(name);
+        band.columns.push(row);
+        band.total += row.wip + row.queued;
+      });
+
+    // Busiest band first: the question this chart answers is which part of
+    // the shop is loaded, so the answer belongs where the eye starts.
+    return Array.from(bands.values()).sort((a, b) => b.total - a.total);
   },
 
-  renderStageTreemaps(pipeline, upcoming) {
-    this._renderTreemap(pipeline, this.TREEMAPS.wip);
-    this._renderTreemap(upcoming, this.TREEMAPS.queued);
-  },
-
-  _renderTreemap(stages, config) {
-    const el = document.getElementById(config.containerId);
+  renderStageChart(pipeline, upcoming) {
+    const el = document.getElementById('dashboardStageChart');
     if (!el) return;
 
-    // Largest first: squarify requires descending input to produce squarish
-    // tiles, and it also puts the biggest stage top-left where the eye lands.
-    const rows = (stages || [])
-      .map(s => ({ stage: s, qty: toNumber(s.totalQty) }))
-      .filter(r => r.qty > 0)
-      .sort((a, b) => b.qty - a.qty);
-
-    const total = rows.reduce((sum, r) => sum + r.qty, 0);
-    if (rows.length === 0 || !(total > 0)) {
-      el.innerHTML =
-        `<div class="dash-tm-total">&nbsp;</div>` +
-        `<div class="text-muted small">${escapeHtml(config.empty)}</div>`;
+    const bands = this._stageBands(pipeline, upcoming);
+    if (bands.length === 0) {
+      el.innerHTML = '<div class="text-muted small">No open production lots at any stage.</div>';
       return;
     }
 
-    const boxW = 100 * this.TREEMAP_ASPECT;
-    const boxes = this._squarify(rows.map(r => r.qty), 0, 0, boxW, 100);
+    const columnTotal = c => c.wip + c.queued;
+    const axisMax = this._niceMax(Math.max(...bands.flatMap(b => b.columns.map(columnTotal))));
+    if (!(axisMax > 0)) {
+      el.innerHTML = '<div class="text-muted small">No open production lots at any stage.</div>';
+      return;
+    }
 
-    const tiles = boxes.map(box => {
-      const { stage, qty } = rows[box.i];
-      const share = (qty / total) * 100;
-      // Percentages of the box, which is what the style below needs.
-      const wPct = (box.w / boxW) * 100;
-      const hPct = box.h;
+    const totals = bands.reduce((acc, b) => {
+      b.columns.forEach(c => { acc.wip += c.wip; acc.queued += c.queued; });
+      return acc;
+    }, { wip: 0, queued: 0 });
 
-      const showName = wPct >= this.TREEMAP_NAME_MIN_W && hPct >= this.TREEMAP_NAME_MIN_H;
-      const showQty = showName && hPct >= this.TREEMAP_QTY_MIN_H;
-      const description =
-        `${stage.processName}: ${formatQty(qty)} units ${config.unitsLabel}, ` +
-        `${stage.totalLotCount} lot${stage.totalLotCount === 1 ? '' : 's'}, ` +
-        `${share.toFixed(share < 10 ? 1 : 0)}% of this panel`;
+    // A legend, always, for two series -- identity is never colour alone.
+    const legend = `
+      <div class="dash-band-legend">
+        <span class="dash-band-legend-item">
+          <span class="dash-band-swatch" data-series="wip" aria-hidden="true"></span>
+          In Progress <strong>${formatQty(totals.wip)}</strong>
+        </span>
+        <span class="dash-band-legend-item">
+          <span class="dash-band-swatch" data-series="queued" aria-hidden="true"></span>
+          Pending <strong>${formatQty(totals.queued)}</strong>
+        </span>
+      </div>`;
+
+    const ticks = [axisMax, axisMax / 2, 0];
+    const yAxis = `
+      <div class="dash-band-yaxis" aria-hidden="true">
+        ${ticks.map((t, i) => `<span class="dash-band-tick" style="bottom:${100 - i * 50}%">${formatQty(t)}</span>`).join('')}
+      </div>`;
+    const gridlines = `
+      <div class="dash-band-gridlines" aria-hidden="true">
+        ${ticks.map((_t, i) => `<span class="dash-band-gridline" style="bottom:${100 - i * 50}%"></span>`).join('')}
+      </div>`;
+
+    // Bands are flex-sized by their column count, so every column across the
+    // whole chart comes out the same width -- a 15-process band next to a
+    // 2-process one must not make its columns five times thinner.
+    const bandsHtml = bands.map(band => {
+      const columns = band.columns.map(col => {
+        const total = columnTotal(col);
+        const segments = [
+          { key: 'wip', qty: col.wip },
+          { key: 'queued', qty: col.queued },
+        ].filter(seg => seg.qty > 0).map(seg => {
+          // Floor the height so a token 1-unit segment stays visible without
+          // reading as a real quantity.
+          const pct = Math.max((seg.qty / axisMax) * 100, 1.2);
+          return `<span class="dash-band-seg" data-series="${seg.key}" style="height:${pct.toFixed(2)}%"></span>`;
+        }).join('');
+
+        const description =
+          `${col.processName} (${band.name}): ${formatQty(col.wip)} in progress, ` +
+          `${formatQty(col.queued)} pending, ${col.lots} lot${col.lots === 1 ? '' : 's'}`;
+
+        return `
+          <button type="button" class="dash-band-col" data-action="dash-pipeline-stage"
+                  data-processid="${encodeURIComponent(col.processId)}"
+                  title="${escapeHtml(description)}">
+            <span class="dash-band-col-stack">${segments}</span>
+            <span class="visually-hidden">${escapeHtml(description)}</span>
+          </button>`;
+      }).join('');
 
       return `
-        <button type="button" class="dash-tm-tile" data-action="dash-pipeline-stage"
-                data-processid="${encodeURIComponent(stage.processId)}"
-                title="${escapeHtml(description)}"
-                style="left:${(box.x / boxW * 100).toFixed(3)}%;top:${box.y.toFixed(3)}%;width:${wPct.toFixed(3)}%;height:${hPct.toFixed(3)}%">
-          ${showName ? `<span class="dash-tm-name">${escapeHtml(stage.processName)}</span>` : ''}
-          ${showQty ? `<span class="dash-tm-qty">${formatQty(qty)}</span>` : ''}
-          <span class="visually-hidden">${escapeHtml(description)}</span>
-        </button>`;
+        <div class="dash-band" style="flex-grow:${band.columns.length}">
+          <div class="dash-band-cols">${columns}</div>
+          <div class="dash-band-label">
+            <span class="dash-band-name">${escapeHtml(band.name)}</span>
+            <span class="dash-band-total">${formatQty(band.total)}</span>
+          </div>
+        </div>`;
     }).join('');
 
-    el.innerHTML =
-      `<div class="dash-tm-total"><strong>${formatQty(total)}</strong> units ` +
-      `${escapeHtml(config.unitsLabel)} across <strong>${rows.length}</strong> ` +
-      `stage${rows.length === 1 ? '' : 's'}</div>` +
-      `<div class="dash-tm-box" data-variant="${config.variant}">${tiles}</div>`;
+    el.innerHTML = `
+      <div class="dash-band-chart">
+        ${legend}
+        <div class="dash-band-plot">
+          ${yAxis}
+          <div class="dash-band-area">
+            ${gridlines}
+            <div class="dash-band-bands">${bandsHtml}</div>
+          </div>
+        </div>
+      </div>`;
   },
 
   renderPipeline(pipeline) {

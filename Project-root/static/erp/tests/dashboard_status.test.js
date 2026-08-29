@@ -17,26 +17,26 @@
  *      tile survives greyscale, colour-blindness and a screen reader
  *      (WCAG 1.4.1 -- colour is never the only carrier).
  *
- *   3. The WIP pipeline is two treemaps over a grid of stage cards, split
- *      so one treemap draws In Progress lots and the other the Pending
- *      ones. Each card renders its per-stage breakdown only when that says
- *      something the stage total does not, and its name is never
- *      truncated.
+ *   3. The WIP pipeline is a stage-load chart over a grid of stage cards,
+ *      split so the cards draw In Progress and Upcoming separately. Each
+ *      card renders its per-stage breakdown only when that says something
+ *      the stage total does not, and its name is never truncated.
  *
- *      The treemap layout is the part with real arithmetic in it, and a
- *      wrong treemap does not LOOK wrong -- it looks like a treemap of the
- *      wrong numbers -- so the geometry is pinned directly: proportional
- *      areas, no overlaps, nothing outside the box, input order preserved.
+ *      The chart is three levels: a BAND per Process Type, a COLUMN per
+ *      process, and a STACK of In Progress over Pending. Process Type is
+ *      the only one of the three with a low enough cardinality to label an
+ *      axis (six values across 262 processes), which is why the band
+ *      carries the label and the process name lives in the tooltip.
  *
  *      What this went through to get here is worth knowing, because each
  *      step fixed the last one's defect: a wall of content-sized cards
  *      that overflowed on long names, then full-width rows that fixed the
  *      overflow but left most of each row empty and still ellipsised the
- *      name, then cards on a grid with a shared-axis column chart above
- *      them, and now treemaps in place of that chart. The chart's one
- *      virtue went with it -- a shared axis made running and queued
- *      directly comparable, where two treemaps each fill their own box --
- *      which is why each panel prints its absolute total.
+ *      name, then cards on a grid under a flat column chart, then two
+ *      treemaps -- which showed each status's share of its own panel but
+ *      could not be read against each other, since each filled its own box
+ *      whatever its total. The single shared axis here is what restores
+ *      that comparison.
  *
  *   4. Refresh is scheduled off how stale the data actually is, so a tab
  *      returning from hours hidden reloads at once instead of showing
@@ -474,189 +474,160 @@ describe('dashboard Upcoming Lots', () => {
   });
 });
 
-// The squarify layout is the one piece here with real arithmetic in it, and
-// a wrong treemap does not LOOK wrong -- it looks like a treemap, just of
-// the wrong numbers. These assert the three properties that make it one:
-// every tile's area is proportional to its value, the tiles tile (no gaps,
-// no overlaps), and nothing escapes the box.
-describe('treemap layout', () => {
-  beforeEach(() => {
-    mountPartial();
-    loadDashboardAsGlobal();
-  });
-
-  const W = 160, H = 90;
-  const lay = values => App.Dashboard._squarify(values, 0, 0, W, H);
-
-  test('tile area is proportional to its value', () => {
-    const values = [400, 250, 180, 90, 50, 30];
-    const boxes = lay(values);
-    const total = values.reduce((a, b) => a + b, 0);
-
-    expect(boxes).toHaveLength(values.length);
-    boxes.forEach((b, i) => {
-      const expected = (values[i] / total) * W * H;
-      // Within a thousandth -- this is float arithmetic, not rounding.
-      expect(Math.abs(b.w * b.h - expected) / expected).toBeLessThan(0.001);
-    });
-  });
-
-  test('the tiles exactly fill the box, with no gaps', () => {
-    const boxes = lay([500, 300, 120, 60, 20]);
-    const covered = boxes.reduce((sum, b) => sum + b.w * b.h, 0);
-    expect(Math.abs(covered - W * H) / (W * H)).toBeLessThan(0.001);
-  });
-
-  test('no two tiles overlap', () => {
-    const boxes = lay([300, 220, 170, 130, 90, 60, 40, 25, 15, 10]);
-    for (let a = 0; a < boxes.length; a++) {
-      for (let b = a + 1; b < boxes.length; b++) {
-        const A = boxes[a], B = boxes[b];
-        const overlapW = Math.min(A.x + A.w, B.x + B.w) - Math.max(A.x, B.x);
-        const overlapH = Math.min(A.y + A.h, B.y + B.h) - Math.max(A.y, B.y);
-        // Touching edges are fine; overlapping area is not.
-        expect(Math.min(overlapW, overlapH)).toBeLessThan(0.001);
-      }
-    }
-  });
-
-  test('every tile stays inside the box', () => {
-    lay([700, 200, 60, 25, 10, 5]).forEach(b => {
-      expect(b.x).toBeGreaterThanOrEqual(-0.001);
-      expect(b.y).toBeGreaterThanOrEqual(-0.001);
-      expect(b.x + b.w).toBeLessThanOrEqual(W + 0.001);
-      expect(b.y + b.h).toBeLessThanOrEqual(H + 0.001);
-    });
-  });
-
-  test('boxes come back in input order, not layout order', () => {
-    // The caller pairs boxes[i] with its own rows[i]; if the sort were
-    // dropped, every tile would carry another stage's name and quantity.
-    const boxes = lay([100, 90, 80, 70]);
-    expect(boxes.map(b => b.i)).toEqual([0, 1, 2, 3]);
-  });
-
-  test('tiles are squarish rather than slivers', () => {
-    // The whole point of squarify over a naive slice-and-dice. A 10:1 tile
-    // is unreadable and unclickable; this holds the worst well inside that.
-    const boxes = lay([300, 260, 220, 180, 140, 100, 70, 40]);
-    const worst = Math.max(...boxes.map(b => Math.max(b.w / b.h, b.h / b.w)));
-    expect(worst).toBeLessThan(6);
-  });
-
-  test('degenerate inputs return nothing rather than throwing', () => {
-    expect(App.Dashboard._squarify([], 0, 0, W, H)).toEqual([]);
-    expect(App.Dashboard._squarify([0, 0], 0, 0, W, H)).toEqual([]);
-    expect(App.Dashboard._squarify([10], 0, 0, 0, H)).toEqual([]);
-  });
-});
-
-describe('dashboard WIP treemaps', () => {
+describe('dashboard stage load chart', () => {
   beforeEach(() => {
     mountPartial();
     loadDashboardAsGlobal();
   });
 
   const stage = (over) => Object.assign({
-    processId: 'P1', processName: 'Rim Fitting', sequence: 1,
-    totalQty: 100, totalLotCount: 2, oldestDays: 1, groups: [],
+    processId: 'P1', processName: 'Rim Fitting 14 inch', processType: 'Rim Fitting',
+    sequence: 1, totalQty: 100, totalLotCount: 1, oldestDays: 0, groups: [],
   }, over);
 
-  const wipEl = () => document.getElementById('dashboardTreemapWip');
-  const queuedEl = () => document.getElementById('dashboardTreemapQueued');
+  const el = () => document.getElementById('dashboardStageChart');
+  // Not $$: that is a core.js global and this suite loads only api.js
+  // and dashboard.js.
+  const all = sel => Array.from(document.querySelectorAll(sel));
+  const bandNames = () => all('.dash-band-name').map(n => n.textContent);
 
-  test('each status renders into its own panel', () => {
-    App.Dashboard.renderStageTreemaps(
-      [stage({ processId: 'A', processName: 'Running Stage' })],
-      [stage({ processId: 'B', processName: 'Queued Stage' })]
+  test('columns are grouped into one band per process type', () => {
+    App.Dashboard.renderStageChart([
+      stage({ processId: 'A', processType: 'Packing', totalQty: 40 }),
+      stage({ processId: 'B', processType: 'Rim Fitting', totalQty: 30 }),
+      stage({ processId: 'C', processType: 'Packing', totalQty: 20 }),
+    ], []);
+
+    expect(el().querySelectorAll('.dash-band')).toHaveLength(2);
+    expect(el().querySelectorAll('.dash-band-col')).toHaveLength(3);
+    expect(bandNames()).toContain('Packing');
+    expect(bandNames()).toContain('Rim Fitting');
+  });
+
+  test('the busiest band comes first', () => {
+    // The chart's question is which part of the shop is loaded, so the
+    // answer belongs where the eye starts, not in process order.
+    App.Dashboard.renderStageChart([
+      stage({ processId: 'A', processType: 'Small Type', sequence: 1, totalQty: 10 }),
+      stage({ processId: 'B', processType: 'Big Type', sequence: 2, totalQty: 900 }),
+      stage({ processId: 'C', processType: 'Mid Type', sequence: 3, totalQty: 200 }),
+    ], []);
+    expect(bandNames()).toEqual(['Big Type', 'Mid Type', 'Small Type']);
+  });
+
+  test('a band grows by its column count, so columns stay one width', () => {
+    // Without this a 15-process band beside a 2-process one would draw its
+    // columns five times thinner and the areas would stop being comparable.
+    App.Dashboard.renderStageChart([
+      stage({ processId: 'A', processType: 'Wide', totalQty: 10 }),
+      stage({ processId: 'B', processType: 'Wide', totalQty: 10 }),
+      stage({ processId: 'C', processType: 'Wide', totalQty: 10 }),
+      stage({ processId: 'D', processType: 'Narrow', totalQty: 10 }),
+    ], []);
+    const grows = all('.dash-band').map(b => b.style.flexGrow);
+    expect(grows).toEqual(['3', '1']);
+  });
+
+  test('one process in both statuses is one column with two segments', () => {
+    App.Dashboard.renderStageChart(
+      [stage({ processId: 'A', totalQty: 100, totalLotCount: 2 })],
+      [stage({ processId: 'A', totalQty: 300, totalLotCount: 3 })]
     );
-    expect(wipEl().textContent).toContain('Running Stage');
-    expect(wipEl().textContent).not.toContain('Queued Stage');
-    expect(queuedEl().textContent).toContain('Queued Stage');
+    expect(el().querySelectorAll('.dash-band-col')).toHaveLength(1);
+    expect(all('.dash-band-seg').map(s => s.dataset.series)).toEqual(['wip', 'queued']);
+    // Lot counts from both statuses add up on the one column.
+    expect(el().querySelector('.dash-band-col').getAttribute('title')).toContain('5 lots');
   });
 
-  test('the two panels are told apart by variant, not by position', () => {
-    App.Dashboard.renderStageTreemaps([stage({})], [stage({})]);
-    expect(wipEl().querySelector('.dash-tm-box').dataset.variant).toBe('wip');
-    expect(queuedEl().querySelector('.dash-tm-box').dataset.variant).toBe('queued');
-  });
-
-  test('each panel states its own absolute total', () => {
-    // Areas are a share of their own panel, so they cannot be compared
-    // across the two. These numbers are what carries that comparison.
-    App.Dashboard.renderStageTreemaps(
-      [stage({ processId: 'A', totalQty: 300 }), stage({ processId: 'B', totalQty: 200 })],
-      [stage({ processId: 'C', totalQty: 40 })]
+  test('both series share one axis, so segment heights are comparable', () => {
+    // 100 running + 300 queued = 400, and _niceMax rounds that to 500.
+    App.Dashboard.renderStageChart(
+      [stage({ processId: 'A', totalQty: 100 })],
+      [stage({ processId: 'A', totalQty: 300 })]
     );
-    expect(wipEl().querySelector('.dash-tm-total').textContent).toContain('500');
-    expect(wipEl().querySelector('.dash-tm-total').textContent).toContain('in progress');
-    expect(queuedEl().querySelector('.dash-tm-total').textContent).toContain('40');
-    expect(queuedEl().querySelector('.dash-tm-total').textContent).toContain('queued');
+    expect(all('.dash-band-seg').map(s => s.style.height)).toEqual(['20.00%', '60.00%']);
   });
 
-  test('tile widths and heights are percentages that sum across the box', () => {
-    App.Dashboard.renderStageTreemaps([
-      stage({ processId: 'A', totalQty: 600 }),
-      stage({ processId: 'B', totalQty: 300 }),
-      stage({ processId: 'C', totalQty: 100 }),
+  test('the axis maximum is a round number, not the raw peak', () => {
+    App.Dashboard.renderStageChart([stage({ processId: 'A', totalQty: 437 })], []);
+    expect(all('.dash-band-tick').map(t => t.textContent)).toEqual(['500', '250', '0']);
+  });
+
+  test('a status with nothing in it renders no segment', () => {
+    // An empty segment would still take the 2px surface gap and draw a
+    // hairline of colour along the baseline.
+    App.Dashboard.renderStageChart([stage({ processId: 'A', totalQty: 100 })], []);
+    expect(all('.dash-band-seg').map(s => s.dataset.series)).toEqual(['wip']);
+  });
+
+  test('a process with no type still appears, under Other', () => {
+    // Dropping it would silently lose stock from the chart's totals.
+    App.Dashboard.renderStageChart([
+      stage({ processId: 'A', processType: '', totalQty: 55 }),
     ], []);
-    const tiles = [...wipEl().querySelectorAll('.dash-tm-tile')];
-    expect(tiles).toHaveLength(3);
-    tiles.forEach(t => {
-      ['left', 'top', 'width', 'height'].forEach(prop => {
-        expect(t.style[prop]).toMatch(/^-?[\d.]+%$/);
-      });
-    });
+    expect(bandNames()).toEqual(['Other']);
+    expect(el().querySelectorAll('.dash-band-col')).toHaveLength(1);
   });
 
-  test('a stage with no quantity gets no tile', () => {
-    // A zero-area tile draws nothing and would divide by zero in the layout.
-    App.Dashboard.renderStageTreemaps([
-      stage({ processId: 'A', totalQty: 100 }),
-      stage({ processId: 'B', totalQty: 0 }),
+  test('the legend carries both series and their totals', () => {
+    App.Dashboard.renderStageChart(
+      [stage({ processId: 'A', totalQty: 120 }), stage({ processId: 'B', totalQty: 80 })],
+      [stage({ processId: 'A', totalQty: 45 })]
+    );
+    const legend = el().querySelector('.dash-band-legend').textContent.replace(/\s+/g, ' ');
+    expect(legend).toContain('In Progress 200');
+    expect(legend).toContain('Pending 45');
+  });
+
+  test('each band label states its own total', () => {
+    App.Dashboard.renderStageChart([
+      stage({ processId: 'A', processType: 'Packing', totalQty: 40 }),
+      stage({ processId: 'B', processType: 'Packing', totalQty: 60 }),
     ], []);
-    expect(wipEl().querySelectorAll('.dash-tm-tile')).toHaveLength(1);
+    expect(el().querySelector('.dash-band-total').textContent).toBe('100');
   });
 
-  test('a tile too small for a label gets none, rather than a clipped one', () => {
-    // One dominant stage and a long tail: the tail tiles are slivers and
-    // must not carry text that would be cut mid-word.
-    App.Dashboard.renderStageTreemaps([
-      stage({ processId: 'A', processName: 'Dominant', totalQty: 5000 }),
-      ...Array.from({ length: 12 }, (_, i) =>
-        stage({ processId: `T${i}`, processName: `Tail ${i}`, totalQty: 2 })),
-    ], []);
-
-    const tiles = [...wipEl().querySelectorAll('.dash-tm-tile')];
-    const labelled = tiles.filter(t => t.querySelector('.dash-tm-name'));
-    expect(labelled.length).toBeGreaterThan(0);
-    expect(labelled.length).toBeLessThan(tiles.length);
-    // Every tile still names itself to a screen reader and on hover.
-    tiles.forEach(t => {
-      expect(t.querySelector('.visually-hidden').textContent).toMatch(/units/);
-      expect(t.getAttribute('title')).toMatch(/units/);
-    });
+  test('every column names itself in text, not only in bar height', () => {
+    // The process name cannot be labelled under a ~35px column, so this is
+    // the only place it is available to a screen reader or on hover.
+    App.Dashboard.renderStageChart(
+      [stage({ processId: 'A', processName: 'Packing Orbit 16 inch', processType: 'Packing', totalQty: 120, totalLotCount: 2 })],
+      []
+    );
+    const col = el().querySelector('.dash-band-col');
+    expect(col.querySelector('.visually-hidden').textContent)
+      .toBe('Packing Orbit 16 inch (Packing): 120 in progress, 0 pending, 2 lots');
+    expect(col.getAttribute('title')).toContain('Packing Orbit 16 inch');
   });
 
-  test('tiles are real buttons carrying the stage drill-down', () => {
-    App.Dashboard.renderStageTreemaps([stage({ processId: 'P/1' })], []);
-    const tile = wipEl().querySelector('.dash-tm-tile');
-    expect(tile.tagName).toBe('BUTTON');
-    expect(tile.dataset.action).toBe('dash-pipeline-stage');
-    expect(decodeURIComponent(tile.dataset.processid)).toBe('P/1');
+  test('columns are real buttons carrying the stage drill-down', () => {
+    App.Dashboard.renderStageChart([stage({ processId: 'P/1' })], []);
+    const col = el().querySelector('.dash-band-col');
+    expect(col.tagName).toBe('BUTTON');
+    expect(col.dataset.action).toBe('dash-pipeline-stage');
+    expect(decodeURIComponent(col.dataset.processid)).toBe('P/1');
   });
 
-  test('escapes process names rather than trusting them as markup', () => {
-    App.Dashboard.renderStageTreemaps([stage({ processName: '<img src=x onerror=alert(1)>' })], []);
-    expect(wipEl().querySelector('img')).toBeNull();
-    expect(wipEl().querySelector('.dash-tm-name').textContent).toBe('<img src=x onerror=alert(1)>');
+  test('escapes process names and types rather than trusting them as markup', () => {
+    App.Dashboard.renderStageChart([stage({
+      processName: '<img src=x onerror=alert(1)>',
+      processType: '<script>alert(2)</script>',
+    })], []);
+    expect(el().querySelector('img')).toBeNull();
+    expect(el().querySelector('script')).toBeNull();
+    expect(el().querySelector('.dash-band-name').textContent).toBe('<script>alert(2)</script>');
   });
 
-  test('an empty panel says so instead of drawing an empty box', () => {
-    App.Dashboard.renderStageTreemaps([], []);
-    expect(wipEl().textContent).toMatch(/nothing is in progress/i);
-    expect(queuedEl().textContent).toMatch(/no pending lots/i);
-    expect(document.querySelectorAll('.dash-tm-tile')).toHaveLength(0);
+  test('no open work anywhere says so instead of drawing an empty axis', () => {
+    App.Dashboard.renderStageChart([], []);
+    expect(el().textContent).toMatch(/no open production lots/i);
+    expect(el().querySelectorAll('.dash-band-col')).toHaveLength(0);
+  });
+
+  test('stages that are all zero do not divide by a zero axis', () => {
+    App.Dashboard.renderStageChart([stage({ processId: 'A', totalQty: 0 })], []);
+    expect(el().querySelectorAll('.dash-band-col')).toHaveLength(0);
+    expect(el().textContent).toMatch(/no open production lots/i);
   });
 });
 

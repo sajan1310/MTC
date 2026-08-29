@@ -1938,119 +1938,262 @@
     margin-bottom: 16px;
   }
 
-  /* ── WIP treemaps ──────────────────────────────────────────────────────
-     One per status. Tile AREA is the stage's share of its own panel, which
-     is what a treemap is good at -- and the reason each panel prints its
-     absolute total above itself, since areas cannot be compared across the
-     two panels.
+  /* ── Stage load chart: Process Type bands of stacked columns ───────────
+     One column per process, stacked In Progress over Pending, grouped into
+     labelled bands by Process Type.
 
-     Replaced a single stacked column chart. That had one virtue these do
-     not (a shared axis, so running and queued were directly comparable) and
-     one weakness these fix: at a dozen stages every column was a sliver
-     with a truncated label, and a treemap gives the big stages the room.
+     Replaced two treemaps, which showed each status's share of its own panel
+     but could not be read against each other -- each filled its own box
+     whatever its total. A single shared axis restores that comparison, and
+     the Process Type band adds a reading neither the treemaps nor the plain
+     column chart before them had: which part of the shop is carrying the
+     load.
 
-     Layout is percentages computed in JS against TREEMAP_ASPECT, so the box
-     MUST hold that same aspect-ratio or every tile is stretched. Nothing
-     measures the container and nothing listens for resize. */
-  .dash-tm-total {
-    font-size: 11.5px;
-    color: var(--text-muted);
-    margin-bottom: 6px;
+     Geometry lives in these two custom properties because the gridline
+     layer, the y-axis gutter and the columns must agree on it exactly. */
+  .dash-band-chart {
+    --dash-band-plot-h: 150px;
+
+    /* Headroom above the plot, INSIDE the scrolling element: it scrolls
+       horizontally, and overflow-x: auto makes overflow-y compute to auto
+       too, so anything drawn above the content box is clipped rather than
+       overflowing. */
+    --dash-band-head-h: 20px;
+    --dash-band-label-h: 42px;
+
+    margin-bottom: 18px;
   }
 
-  .dash-tm-total strong {
+  .dash-band-legend {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 4px 18px;
+    margin-bottom: 10px;
+    font-size: 11.5px;
+    color: var(--text-secondary);
+  }
+
+  .dash-band-legend-item {
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+  }
+
+  .dash-band-legend-item strong {
     font-family: Outfit, sans-serif;
-    font-size: 13px;
     color: var(--text-primary);
   }
 
-  .dash-tm-box {
-    position: relative;
-    width: 100%;
-    aspect-ratio: 16 / 9;
-    background: var(--bg-muted);
-    border-radius: var(--border-radius-sm);
-    overflow: hidden;
+  .dash-band-swatch {
+    width: 11px;
+    height: 11px;
+    border-radius: 2px;
+    background: var(--dash-wip-fill);
   }
 
-  .dash-tm-tile {
-    --dash-tm-fill: var(--dash-wip-fill);
+  .dash-band-swatch[data-series="queued"],
+  .dash-band-seg[data-series="queued"] {
+    background: var(--dash-queued-fill);
+  }
 
+  /* align-items: start, not the default stretch: the two cells are
+     deliberately different heights (the plot area carries the band labels,
+     the y-axis gutter does not) and must share a TOP edge for the ticks and
+     the gridlines to line up. */
+  .dash-band-plot {
+    display: grid;
+    grid-template-columns: auto minmax(0, 1fr);
+    align-items: start;
+    gap: 0 10px;
+  }
+
+  /* Ticks are positioned from the baseline rather than spaced by flexbox, so
+     they line up with the gridlines to the pixel. */
+  .dash-band-yaxis {
+    position: relative;
+    width: 34px;
+    height: var(--dash-band-plot-h);
+    margin-top: var(--dash-band-head-h);
+  }
+
+  .dash-band-tick {
     position: absolute;
+    right: 0;
+    transform: translateY(50%);
+    font-size: 10px;
+    line-height: 1;
+    color: var(--text-muted);
+    white-space: nowrap;
+  }
+
+  .dash-band-area {
+    position: relative;
+    overflow-x: auto;
+    padding-top: var(--dash-band-head-h);
+  }
+
+  /* Sized from --dash-band-plot-h directly rather than by insetting the
+     label row off the area's total height: the area is as tall as its
+     tallest band, so anything the labels cost beyond their own height would
+     drop the whole grid below the columns. */
+  .dash-band-gridlines {
+    position: absolute;
+    top: var(--dash-band-head-h);
+    right: 0;
+    left: 0;
+    height: var(--dash-band-plot-h);
+    pointer-events: none;
+  }
+
+  .dash-band-gridline {
+    position: absolute;
+    left: 0;
+    right: 0;
+    height: 1px;
+    background: var(--border-color);
+  }
+
+  .dash-band-bands {
+    display: flex;
+    align-items: flex-start;
+    gap: 14px;
+    min-width: min-content;
+  }
+
+  /* flex-grow is set inline to the band's COLUMN COUNT, so every column in
+     the chart ends up the same width -- a 15-process band beside a
+     2-process one must not draw its columns five times thinner. */
+  /* flex-basis 0 is what makes flex-grow mean "share of the WIDTH". With
+     the default `auto` basis a band starts at its content width and only
+     the LEFTOVER is shared by grow, so a 4-column band came out with wider
+     columns than a 12-column one and the two stopped being comparable.
+     min-content keeps a band from being crushed below its own columns --
+     that is what makes the chart scroll on a narrow screen instead. */
+  .dash-band {
     display: flex;
     flex-direction: column;
-    align-items: flex-start;
-    justify-content: flex-start;
-    gap: 1px;
-    padding: 5px 7px;
-    overflow: hidden;
-    text-align: left;
-    white-space: normal;
-    color: #fff;
-    background: var(--dash-tm-fill);
+    flex-basis: 0;
+    flex-shrink: 0;
+    min-width: min-content;
+  }
+
+  .dash-band-cols {
+    display: flex;
+    align-items: flex-end;
+    justify-content: center;
+    gap: 3px;
+    height: var(--dash-band-plot-h);
+  }
+
+  .dash-band-col {
+    display: flex;
+    flex: 1 1 22px;
+    flex-direction: column;
+    justify-content: flex-end;
+    gap: 0;
+    align-items: stretch;
+    min-width: 14px;
+    max-width: 38px;
+    height: 100%;
+    padding: 0;
+    background: none;
     border: 0;
-    border-radius: 3px;
+    border-radius: 0;
     cursor: pointer;
-    /* The 2px surface gap the mark specs call for, without shrinking the
-       computed geometry: the outline is drawn in the box's own background,
-       so touching tiles are separated by surface rather than by a stroke. */
-    box-shadow: 0 0 0 1.5px var(--bg-muted);
-    transition: filter var(--transition-fast);
   }
 
-  .dash-tm-box[data-variant="queued"] .dash-tm-tile {
-    --dash-tm-fill: var(--dash-queued-fill);
-  }
-
-  .dash-tm-tile:hover {
+  .dash-band-col:hover .dash-band-seg {
     filter: brightness(1.12);
   }
 
-  .dash-tm-tile:focus-visible {
-    outline: 2px solid var(--text-primary);
-    outline-offset: -3px;
+  .dash-band-col:focus-visible {
+    outline: 2px solid var(--secondary-color);
+    outline-offset: 2px;
   }
 
-  /* Both labels are rendered only when the tile is big enough to hold them
-     (see TREEMAP_NAME_MIN_W / _MIN_H / TREEMAP_QTY_MIN_H) -- a clipped label
-     is worse than none, and the name is always in the tile's title and in
-     the card list below. */
-  /* Clamped to two lines. Without it a long name in a narrow tile wraps to
-     four or five lines and pushes the quantity off the bottom edge -- the
-     tile is sized by its VALUE, not by how much text its name needs. The
-     full name is in the tile's title, its visually-hidden description, and
-     the card list below.
+  /* column-reverse so the segments stack up from the baseline in DOM order
+     (running first, queued above it). The 2px gap is the surface doing the
+     separating -- no stroke around the segments. */
+  .dash-band-col-stack {
+    display: flex;
+    flex-direction: column-reverse;
+    gap: 2px;
+    width: 100%;
+    height: 100%;
+    justify-content: flex-start;
+  }
 
-     white-space: normal on .dash-tm-tile above is load-bearing for this:
-     the global `button, .btn` rule sets nowrap, which is inherited past
-     -webkit-line-clamp and silently defeats it. */
-  .dash-tm-name {
-    display: -webkit-box;
+  .dash-band-seg {
+    display: block;
+    width: 100%;
+    background: var(--dash-wip-fill);
+  }
+
+  /* Rounded at the data end, square at the baseline. :last-child is the
+     topmost segment because the stack is column-reverse. */
+  .dash-band-col-stack .dash-band-seg:last-child {
+    border-radius: 3px 3px 0 0;
+  }
+
+  /* min-width: 0 keeps the LABEL out of the band's min-content width. A
+     band's width should come from its columns; without this a one-column
+     band was as wide as the words "Frame Painting", which stole width from
+     the busy bands and left their columns visibly thinner. The label
+     ellipsises instead -- the full type name is also on every column's
+     tooltip. */
+  /* Deliberately IN flow. The band's min-width is min-content, so a label
+     here floors its band at the label's own width -- "Mudguard Paint" is
+     ~87px, which makes a one-column band wider than its column needs.
+     Pulling the label out of flow fixes that and makes every column exactly
+     one width (measured: 33.7px across bands of 3, 4, 8 and 12) -- but it
+     also truncates the label on the narrow bands, and the band label is the
+     entire reason this chart is banded at all.
+     Column WIDTH carries no meaning here; height does. So the floor stays
+     and the slack becomes whitespace: .dash-band-cols centres its columns
+     and .dash-band-col caps its width, rather than one column growing fat. */
+  .dash-band-label {
+    display: flex;
+    margin-top: 4px;
+    flex-direction: column;
+    align-items: center;
+    gap: 1px;
+    height: var(--dash-band-label-h);
+    padding: 7px 4px 0;
+    border-top: 2px solid var(--border-color);
     overflow: hidden;
-    font-size: 11px;
-    font-weight: 600;
-    line-height: 1.2;
-    overflow-wrap: anywhere;
-    -webkit-box-orient: vertical;
-    -webkit-line-clamp: 2;
-    line-clamp: 2;
+    text-align: center;
   }
 
-  .dash-tm-qty {
-    font-family: Outfit, sans-serif;
-    font-size: 15px;
+  /* One line, ellipsised. Deliberately NOT a two-line clamp: the global
+     `button, .btn` rule sets white-space: nowrap and that is inherited past
+     -webkit-line-clamp, which silently degrades it to a hard mid-character
+     cut with no ellipsis. These labels are not inside a button, but the
+     single line is deterministic either way and the full name is short
+     enough that it rarely truncates. */
+  .dash-band-name {
+    max-width: 100%;
+    overflow: hidden;
+    font-size: 10.5px;
     font-weight: 700;
-    line-height: 1.1;
+    line-height: 1.2;
+    color: var(--text-secondary);
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+
+  .dash-band-total {
+    font-family: Outfit, sans-serif;
+    font-size: 10px;
+    color: var(--text-muted);
   }
 
   @media (max-width: 600px) {
-    /* Squarer, not wider. The label thresholds in dashboard.js are
-       PERCENTAGES of the box, so the same threshold buys far fewer pixels
-       once the box halves in width -- at 16/9 a "big enough" tile here was
-       ~25px tall and cut its own label in half. A 5:4 box gives those same
-       percentages enough height to hold the two lines they promise. */
-    .dash-tm-box {
-      aspect-ratio: 5 / 4;
+    .dash-band-chart {
+      --dash-band-plot-h: 118px;
+    }
+
+    .dash-band-bands {
+      gap: 10px;
     }
   }
 
