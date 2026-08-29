@@ -155,7 +155,12 @@
 // cache-first, so without the bump an installed client keeps its own copy
 // of the old ledger and calls none of this -- which would read as the
 // fixes having had no effect.
-const CACHE_NAME = 'erp-shell-v44';
+// v45: the ledger modal rendered a REFUSED request as "No transaction
+// history found for this bucket" -- {success:false} was folded into an
+// empty list -- so a bucket with 19 real movements looked empty and the
+// actual cause (a server predating getWarehousePoolLedger) stayed hidden.
+// A refused call now surfaces its message with a retry.
+const CACHE_NAME = 'erp-shell-v45';
 
 const PRECACHE_URLS = [
   '/erp/offline.html',

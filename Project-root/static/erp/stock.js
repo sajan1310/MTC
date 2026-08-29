@@ -1924,7 +1924,13 @@ App.Stock = {
     let entries;
     try {
       const res = await Api.call('getWarehousePoolLedger', [outputItemName, productTag, color]);
-      entries = res?.success && Array.isArray(res.data) ? res.data : [];
+      // A refused call is NOT an empty ledger. Folding {success:false} into
+      // [] rendered "No transaction history found for this bucket" over a
+      // bucket with 19 real movements, which reads as data loss and hides
+      // the actual cause (most often a server still running the code from
+      // before getWarehousePoolLedger existed).
+      if (!res?.success) throw new Error(res?.message || 'The server refused this ledger request.');
+      entries = Array.isArray(res.data) ? res.data : [];
     } catch (err) {
       App.Utils.tableError(body, 7, err.message || 'Could not load this ledger.',
         () => this.openPoolLedgerModal(encName, encTag, encColor));
