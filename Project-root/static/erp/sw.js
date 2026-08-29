@@ -160,7 +160,14 @@
 // empty list -- so a bucket with 19 real movements looked empty and the
 // actual cause (a server predating getWarehousePoolLedger) stayed hidden.
 // A refused call now surfaces its message with a retry.
-const CACHE_NAME = 'erp-shell-v45';
+// v46: /static/erp/ is stale-while-revalidate rather than cache-first with
+// no revalidation, so a cached asset is refreshed by the next load instead
+// of persisting until a CACHE_NAME bump wipes it. Four entries in this log
+// (v32, v36, v37, v43) are the same incident -- a fix that shipped and had
+// no effect because installed clients never refetched the file -- and the
+// v44/v45 round hit it a fifth time. Bumps still matter for same-load
+// delivery; this bounds a missed one to a single stale load.
+const CACHE_NAME = 'erp-shell-v46';
 
 const PRECACHE_URLS = [
   '/erp/offline.html',
@@ -292,20 +299,50 @@ self.addEventListener('fetch', event => {
     return;
   }
 
-  // Same-origin static shell assets: cache-first, filling in anything
-  // not already precached (e.g. a JS file added after this SW installed).
+  // Same-origin static shell assets: STALE-WHILE-REVALIDATE. Serve the
+  // cached copy immediately (so the shell still opens instantly and still
+  // works offline), and refetch in the background every time so the cache
+  // holds the current file by the next load.
+  //
+  // This was cache-first with NO revalidation, which meant an installed
+  // client kept its copy of every /static/erp/ file indefinitely -- the only
+  // thing that could dislodge it was a CACHE_NAME bump wiping the old cache.
+  // A bump that was forgotten, or that landed in the same commit as the code
+  // it was meant to ship, therefore stranded users on old JavaScript with no
+  // way back short of unregistering the worker by hand. That is not a
+  // hypothetical: v32, v36, v37 and v43 in the log below are all the same
+  // incident, and the v44/v45 round hit it again -- a Warehouse Pool ledger
+  // that had been fixed and verified server-side still rendered empty in the
+  // browser, because the browser was running neither the old file nor the
+  // new one but a cached copy from in between.
+  //
+  // Revalidating does NOT make the bump optional: the current load is still
+  // served from cache, so a bump is what makes a fix land in the same load
+  // rather than the one after. What it does is bound the damage -- a missed
+  // bump now costs one stale load instead of stranding an installed client
+  // indefinitely.
   const url = new URL(req.url);
   if (url.origin === self.location.origin && url.pathname.startsWith('/static/erp/')) {
     event.respondWith(
       caches.match(req).then(cached => {
-        if (cached) return cached;
-        return fetch(req).then(res => {
+        const revalidated = fetch(req).then(res => {
           if (res.ok) {
             const clone = res.clone();
             caches.open(CACHE_NAME).then(cache => cache.put(req, clone));
           }
           return res;
         });
+
+        if (!cached) return revalidated;
+
+        // Hold the worker alive until the refetch settles. Without this the
+        // browser may terminate the SW as soon as the cached response is
+        // returned, and the update it was the whole point of never lands.
+        // The catch keeps a failed revalidation (offline, server down) from
+        // rejecting waitUntil -- serving the cached copy is the correct
+        // outcome there, not an error.
+        event.waitUntil(revalidated.catch(() => {}));
+        return cached;
       })
     );
     return;

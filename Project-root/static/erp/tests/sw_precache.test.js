@@ -29,10 +29,16 @@ const path = require('path');
  *
  * `failing` is the set of URLs whose cache.add should reject.
  */
-function loadWorker(file, failing = new Set()) {
+function loadWorker(file, failing = new Set(), cached = new Map()) {
   const listeners = {};
   const added = [];
+  const put = [];
+  const fetched = [];
   const cache = {
+    put(req, res) {
+      put.push(req.url || req);
+      return Promise.resolve(res);
+    },
     add(url) {
       added.push(url);
       return failing.has(url)
@@ -55,6 +61,7 @@ function loadWorker(file, failing = new Set()) {
     skipWaiting: () => Promise.resolve(),
     clients: { claim: () => Promise.resolve() },
     registration: {},
+    location: { origin: 'https://erp.test' },
   };
 
   const src = fs.readFileSync(path.join(__dirname, '..', file), 'utf8');
@@ -64,14 +71,20 @@ function loadWorker(file, failing = new Set()) {
       open: () => Promise.resolve(cache),
       keys: () => Promise.resolve([]),
       delete: () => Promise.resolve(true),
-      match: () => Promise.resolve(undefined),
+      match: req => Promise.resolve(cached.get(req.url || req)),
     },
     console: { warn: jest.fn(), log: jest.fn(), error: jest.fn() },
     // mobile-sw.js pulls in offline-cache.js and api.js at the top. Neither
     // participates in install, and evaluating them here would drag the whole
     // outbox into a test about precaching -- so it is a no-op.
     importScripts: () => {},
-    fetch: () => Promise.resolve({ ok: true }),
+    fetch: req => {
+      const url = (req && req.url) || req;
+      fetched.push(url);
+      return failing.has(url)
+        ? Promise.reject(new Error('offline'))
+        : Promise.resolve({ ok: true, url, clone: () => ({ body: url }) });
+    },
     Response: function Response() {},
     URL: global.URL,
     Promise,
@@ -85,7 +98,7 @@ function loadWorker(file, failing = new Set()) {
     sandbox.Response, sandbox.URL, sandbox.importScripts,
   );
 
-  return { listeners, added, cache, warn: sandbox.console.warn };
+  return { listeners, added, cache, put, fetched, warn: sandbox.console.warn };
 }
 
 /** Drive an install event and report whether waitUntil's promise settled. */
@@ -197,5 +210,76 @@ describe('service worker cache version', () => {
     // The file most likely to be edited without anyone thinking about the
     // service worker, and the one whose staleness breaks the most.
     expect(SW).toContain("'/static/erp/core.js'");
+  });
+});
+
+
+/** Drive a fetch event and hand back what the worker did with it. */
+function fireFetch(worker, url, { method = 'GET', mode = 'no-cors' } = {}) {
+  let responded;
+  const waited = [];
+  worker.listeners.fetch({
+    request: { url, method, mode },
+    respondWith: p => { responded = p; },
+    waitUntil: p => { waited.push(p); },
+  });
+  return { responded, waited };
+}
+
+/**
+ * /static/erp/ is stale-while-revalidate, not cache-first-forever.
+ *
+ * It used to be the latter: an installed client kept its copy of every shell
+ * asset until a CACHE_NAME bump wiped the cache, so a forgotten or mistimed
+ * bump stranded users on old JavaScript indefinitely. v32, v36, v37 and v43
+ * in the bump log are all that same incident, and the v44/v45 round hit it
+ * again -- a Warehouse Pool ledger fixed and verified server-side still came
+ * up empty in the browser, which was running neither the old file nor the new
+ * one but a cached copy from in between.
+ */
+describe('sw.js static assets are revalidated', () => {
+  const ASSET = 'https://erp.test/static/erp/stock.js';
+
+  test('a cached asset is still served from cache', async () => {
+    const worker = loadWorker('sw.js', new Set(), new Map([[ASSET, { body: 'cached' }]]));
+    const { responded } = fireFetch(worker, ASSET);
+    await expect(responded).resolves.toEqual({ body: 'cached' });
+  });
+
+  test('...and is refetched in the background so the next load is current', async () => {
+    const worker = loadWorker('sw.js', new Set(), new Map([[ASSET, { body: 'cached' }]]));
+    const { responded, waited } = fireFetch(worker, ASSET);
+    await responded;
+    // The revalidation must be held open by waitUntil, or the browser is
+    // free to kill the worker the moment the cached copy is returned and
+    // the update never lands.
+    expect(waited).toHaveLength(1);
+    await Promise.all(waited);
+    expect(worker.fetched).toContain(ASSET);
+    expect(worker.put).toContain(ASSET);
+  });
+
+  test('a cache miss is served from the network and cached', async () => {
+    const worker = loadWorker('sw.js');
+    const { responded } = fireFetch(worker, ASSET);
+    await responded;
+    expect(worker.fetched).toContain(ASSET);
+    expect(worker.put).toContain(ASSET);
+  });
+
+  test('a failed revalidation still serves the cached copy', async () => {
+    // Offline, or the server down: serving what we have is the right
+    // outcome, so waitUntil must not reject either.
+    const worker = loadWorker('sw.js', new Set([ASSET]), new Map([[ASSET, { body: 'cached' }]]));
+    const { responded, waited } = fireFetch(worker, ASSET);
+    await expect(responded).resolves.toEqual({ body: 'cached' });
+    await expect(Promise.all(waited)).resolves.toBeDefined();
+  });
+
+  test('RPC posts are never intercepted', () => {
+    const worker = loadWorker('sw.js');
+    const { responded } = fireFetch(worker, 'https://erp.test/api/erp/rpc/getWarehousePoolLedger',
+      { method: 'POST' });
+    expect(responded).toBeUndefined();
   });
 });
