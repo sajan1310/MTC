@@ -237,6 +237,79 @@ App.Dashboard = {
     closeHeaderBtn.style.display = 'block';
   },
 
+  // How long to keep polling before giving up on a run we started. A backup
+  // is ~2 minutes of Google Sheets round trips; ten gives generous room for
+  // a slow link and the API's own retry backoff without leaving the modal
+  // spinning indefinitely if the worker running it was recycled mid-job.
+  BACKUP_POLL_TIMEOUT_MS: 10 * 60 * 1000,
+  BACKUP_POLL_INTERVAL_MS: 3000,
+
+  // Poll getBackupStatus until OUR run reaches a terminal state, reporting
+  // progress through `setProgress` as it goes.
+  //
+  // Every check is gated on run_id matching the run we started. Without
+  // that, a status read arriving before the run's first record was written
+  // would show the PREVIOUS run's terminal state -- so a backup that never
+  // started would report yesterday's success and the operator would believe
+  // they had a backup they do not have.
+  //
+  // Resolves with the run's result rather than throwing on a failed backup:
+  // FAILED is an outcome the caller renders, with the server's explanation
+  // of what went wrong. It throws only when the outcome cannot be learned.
+  async _pollBackupUntilDone(runId, setProgress) {
+    const deadline = Date.now() + this.BACKUP_POLL_TIMEOUT_MS;
+    let watching = runId;
+
+    while (Date.now() < deadline) {
+      await new Promise(r => setTimeout(r, this.BACKUP_POLL_INTERVAL_MS));
+
+      let d;
+      try {
+        const response = await Api.call('getBackupStatus');
+        d = (response && response.data) ? response.data : null;
+      } catch {
+        // A single failed poll is not a failed backup -- the run lives in a
+        // server-side thread and carries on regardless of whether this one
+        // request made it. Keep polling until the deadline.
+        continue;
+      }
+      if (!d) continue;
+
+      if (watching && d.run_id !== watching) {
+        // A different run holds the server's single backup slot: our thread
+        // lost the race for the advisory lock, or the nightly job was already
+        // going. Adopt it rather than waiting out the deadline for a run_id
+        // that will never be published -- the user asked for a backup, one is
+        // running, and its result is the honest answer to give them.
+        if (d.run_state === 'RUNNING') {
+          watching = d.run_id;
+        } else {
+          // Anything else with a foreign id is a PREVIOUS run's leftover
+          // record. Ignoring it is the point of the id check: reporting it
+          // would show an old success for a backup that never started.
+          continue;
+        }
+      }
+
+      if (d.run_state === 'RUNNING') {
+        setProgress(d.run_percent || 20, d.run_phase_label || 'Backing up...');
+        continue;
+      }
+      if (d.run_state === 'STALE') {
+        throw new Error(d.run_phase_label || 'The backup stopped without reporting a result.');
+      }
+      if (['SUCCESS', 'PARTIAL', 'FAILED'].includes(d.run_state)) {
+        setProgress(100, 'Done');
+        return d;
+      }
+    }
+
+    throw new Error(
+      'The backup is taking longer than expected. It may still be running -- ' +
+      'reopen this dialog in a few minutes to check before starting another.'
+    );
+  },
+
   async triggerBackup() {
     const modalEl = document.getElementById('backupProgressModal');
     if (!modalEl) return;
@@ -274,41 +347,38 @@ App.Dashboard = {
       progressBar.style.width = '20%';
       progressBar.className = 'progress-bar progress-bar-striped progress-bar-animated bg-primary';
     }
-    if (progressStep) progressStep.textContent = 'Creating local database snapshot...';
-    if (progressSubtext) progressSubtext.textContent = 'Dumping PostgreSQL tables to backups directory...';
+    if (progressStep) progressStep.textContent = 'Starting backup...';
+    // The subtext is set once and left alone: it says the one thing that is
+    // true for the whole run and that the user needs in order not to give up
+    // on it. The step line above carries the phase, from the server.
+    if (progressSubtext) {
+      progressSubtext.textContent =
+        'This usually takes a couple of minutes. The backup continues on the ' +
+        'server even if you close this dialog.';
+    }
     if (percentText) percentText.textContent = '20%';
     if (triggerBtn) triggerBtn.disabled = true;
 
     bsModal.show();
 
-    // Simulated progress step timer while waiting for backend response
-    let progressTimer = setInterval(() => {
-      if (!progressBar) return;
-      let currentWidth = parseInt(progressBar.style.width || '20', 10);
-      if (currentWidth < 85) {
-        let nextWidth = currentWidth + 15;
-        progressBar.style.width = nextWidth + '%';
-        if (percentText) percentText.textContent = nextWidth + '%';
-        if (nextWidth >= 50 && progressStep) {
-          progressStep.textContent = 'Formatting & syncing to Google Sheets...';
-          if (progressSubtext) progressSubtext.textContent = 'Exporting erp.* tables into dated spreadsheet tabs...';
-        }
-      }
-    }, 800);
+    const setProgress = (percent, step, subtext) => {
+      if (progressBar) progressBar.style.width = percent + '%';
+      if (percentText) percentText.textContent = percent + '%';
+      if (step && progressStep) progressStep.textContent = step;
+      if (subtext && progressSubtext) progressSubtext.textContent = subtext;
+    };
 
     try {
-      const response = await Api.mutate('triggerBackup');
+      // triggerBackup only STARTS the run -- a full backup is ~2 minutes of
+      // Google Sheets round trips, far past both Api's 45s abort and
+      // gunicorn's 120s worker timeout, so it cannot be awaited inline. The
+      // server publishes progress to a record every worker shares; we poll
+      // it. See backup_service.rpc_trigger_backup.
+      const started = await Api.mutate('triggerBackup');
+      const runId = (started && started.data) ? started.data.run_id : null;
 
-      clearInterval(progressTimer);
-
-      if (progressBar) progressBar.style.width = '100%';
-      if (percentText) percentText.textContent = '100%';
-
-      await new Promise(resolve => setTimeout(resolve, 400));
-
-      const isOk = response && response.success;
-      const data = (response && response.data) ? response.data : {};
-      const statusStr = data.status || (isOk ? 'SUCCESS' : 'FAILED');
+      const data = await this._pollBackupUntilDone(runId, setProgress);
+      const statusStr = data.status || 'FAILED';
 
       this._showBackupResultState(progressState, resultState, doneBtn, closeHeaderBtn);
 
@@ -321,7 +391,7 @@ App.Dashboard = {
         resultTitle.textContent = 'Backup Completed Successfully!';
         resultTitle.className = 'fw-bold text-success mb-1';
         detailStatus.className = 'fw-bold text-success';
-        resultMessage.textContent = response.message || 'Database snapshot created and synced to Google Sheets.';
+        resultMessage.textContent = data.message || 'Database snapshot created and synced to Google Sheets.';
         
         if (data.spreadsheet_url) {
           openSheetBtn.href = data.spreadsheet_url;
@@ -332,18 +402,17 @@ App.Dashboard = {
         resultTitle.textContent = 'Local Snapshot Backup Created';
         resultTitle.className = 'fw-bold text-warning mb-1';
         detailStatus.className = 'fw-bold text-warning';
-        resultMessage.textContent = response.message || 'Local database snapshot was saved. Google Sheets sync was skipped or requires credentials.';
+        resultMessage.textContent = data.message || 'Local database snapshot was saved. Google Sheets sync was skipped or requires credentials.';
       } else {
         resultIcon.innerHTML = '<i class="bi bi-x-circle-fill text-danger" style="font-size: 3rem;"></i>';
         resultTitle.textContent = 'Backup Failed';
         resultTitle.className = 'fw-bold text-danger mb-1';
         detailStatus.className = 'fw-bold text-danger';
-        resultMessage.textContent = (response && response.message) ? response.message : 'An unexpected error occurred while creating the backup.';
+        resultMessage.textContent = data.message || 'An unexpected error occurred while creating the backup.';
       }
 
       await this.loadBackupStatus();
     } catch (err) {
-      clearInterval(progressTimer);
       this._showBackupResultState(progressState, resultState, doneBtn, closeHeaderBtn);
 
       resultIcon.innerHTML = '<i class="bi bi-x-circle-fill text-danger" style="font-size: 3rem;"></i>';

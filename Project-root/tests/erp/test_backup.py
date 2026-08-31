@@ -2,7 +2,7 @@
 
 import os
 import unittest
-from unittest.mock import patch
+from unittest.mock import MagicMock, patch
 
 import database
 from app.erp.services import backup_service
@@ -119,26 +119,124 @@ class TestBackupService(unittest.TestCase):
         self.assertGreaterEqual(res["consecutive_failures"], 1)
         self.assertIn("SNAPSHOT FAILED", res["message"])
 
-    def test_trigger_backup_rpc_reports_failure_to_the_caller(self):
-        """A failed backup must not come back as success:true."""
-        with patch.dict(os.environ, {}, clear=True):
-            envelope = backup_service.rpc_trigger_backup()
-        self.assertFalse(envelope["success"])
+    @patch("app.erp.services.backup_service.threading.Thread")
+    @patch("app.erp.services.backup_service._read_run_state", return_value=None)
+    def test_rpc_trigger_backup_returns_without_running_the_backup(
+        self, _mock_read, mock_thread
+    ):
+        """triggerBackup starts the work; it must not wait for it.
 
-    @patch("app.erp.services.backup_service.perform_full_backup")
-    def test_rpc_trigger_backup(self, mock_perform):
-        mock_perform.return_value = {
-            "status": "SUCCESS",
-            "message": "Synced to Google Sheets successfully.",
-            "spreadsheet_id": "test_sheet_id_123",
-            "spreadsheet_url": "https://docs.google.com/spreadsheets/d/test_sheet_id_123",
-            "timestamp": "2026-08-03T12:00:00",
-            "local_file": "/path/to/backup.sql",
-        }
-
+        This is the fix for the dashboard's "The server did not respond
+        within 45s" error. A full run is ~2 minutes of Google Sheets round
+        trips, past both static/erp/api.js's 45s abort and gunicorn's
+        --timeout 120, so the request can only ever start the job and hand
+        back an id to poll on.
+        """
         res = backup_service.rpc_trigger_backup()
+
         self.assertTrue(res["success"])
-        self.assertEqual(res["data"]["spreadsheet_id"], "test_sheet_id_123")
+        self.assertEqual(res["data"]["status"], "STARTED")
+        self.assertTrue(res["data"]["run_id"])
+        # The run happens on a thread, and the id handed to the client is the
+        # id that thread will publish under -- otherwise the client polls for
+        # a run that never reports.
+        mock_thread.assert_called_once()
+        self.assertEqual(
+            mock_thread.call_args.kwargs["args"][1], res["data"]["run_id"]
+        )
+        mock_thread.return_value.start.assert_called_once()
+
+    @patch("app.erp.services.backup_service.threading.Thread")
+    def test_rpc_trigger_backup_watches_a_run_already_in_flight(self, mock_thread):
+        """A second click must not start a second concurrent backup.
+
+        It returns the RUNNING run's own id, not a fresh one: the client
+        polls for the id it is given, and this is the run whose result it
+        will actually see.
+        """
+        with patch.object(
+            backup_service,
+            "_read_run_state",
+            return_value={"state": "RUNNING", "run_id": "abc123"},
+        ):
+            res = backup_service.rpc_trigger_backup()
+
+        self.assertTrue(res["success"])
+        self.assertEqual(res["data"]["run_id"], "abc123")
+        self.assertTrue(res["data"]["already_running"])
+        mock_thread.assert_not_called()
+
+    def test_failed_run_publishes_a_terminal_failed_state(self):
+        """A failed backup must still reach the operator.
+
+        The trigger envelope no longer carries the outcome, so the guarantee
+        that a failure is visible now rests entirely on the run publishing a
+        terminal state for the browser to poll. If this record were missing
+        or left RUNNING, the dashboard would spin and then time out -- which
+        looks identical to a backup that is merely slow, and would let a
+        genuinely broken backup pass for a working one.
+        """
+        writes = []
+        cur = MagicMock()
+        with patch.object(
+            backup_service, "_write_run_state", side_effect=lambda c, doc: writes.append(doc)
+        ):
+            # Clearing PATH makes pg_dump unfindable -- a faithful stand-in
+            # for every way the dump can fail.
+            with patch.dict(os.environ, {}, clear=True):
+                backup_service._execute_backup_run(cur, "run-1")
+
+        self.assertTrue(writes, "the run published no state at all")
+        self.assertTrue(all(d["run_id"] == "run-1" for d in writes))
+        self.assertEqual(writes[0]["state"], "RUNNING")
+        self.assertEqual(writes[-1]["state"], "FAILED")
+        self.assertEqual(writes[-1]["percent"], 100)
+        self.assertIn("SNAPSHOT FAILED", writes[-1]["result"]["message"])
+
+    def test_run_publishes_progress_for_each_phase(self):
+        """The browser's progress bar reflects real phases, not a timer.
+
+        It used to be a setInterval in dashboard.js that advanced 15% every
+        800ms regardless of what the server was doing, so it reported
+        progress on runs that had already died.
+        """
+        writes = []
+        cur = MagicMock()
+        with patch.object(
+            backup_service, "_write_run_state", side_effect=lambda c, doc: writes.append(doc)
+        ):
+            with patch.object(
+                backup_service, "perform_full_backup"
+            ) as mock_perform:
+                def _run(config=None, on_phase=None):
+                    for phase in ("snapshot", "sheets", "mirror"):
+                        on_phase(phase)
+                    return {"status": "SUCCESS", "message": "ok"}
+
+                mock_perform.side_effect = _run
+                backup_service._execute_backup_run(cur, "run-2")
+
+        phases = [d["phase"] for d in writes]
+        self.assertEqual(phases, ["snapshot", "snapshot", "sheets", "mirror", "done"])
+        # Monotonic: a bar that goes backwards reads as a restart.
+        percents = [d["percent"] for d in writes]
+        self.assertEqual(percents, sorted(percents))
+        self.assertEqual(writes[-1]["state"], "SUCCESS")
+
+    def test_progress_callback_failure_cannot_fail_the_backup(self):
+        """A broken progress sink is a cosmetic problem, not a backup failure."""
+        with patch.object(backup_service, "db_backup") as mock_db_backup:
+            mock_db_backup.create_snapshot.return_value = MagicMock(
+                path="/tmp/x.dump", size_bytes=1, sha256="a" * 64,
+                table_count=1, verified=True, filename="x.dump",
+            )
+            mock_db_backup.prune_snapshots.return_value = []
+            res = backup_service.perform_full_backup(
+                on_phase=MagicMock(side_effect=RuntimeError("sink is down"))
+            )
+
+        self.assertNotEqual(res["status"], "FAILED")
+        self.assertTrue(res["snapshot_verified"])
 
     def test_rpc_get_backup_status(self):
         res = backup_service.rpc_get_backup_status()

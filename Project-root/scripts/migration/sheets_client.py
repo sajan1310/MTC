@@ -71,6 +71,13 @@ def with_retry(fn, *, attempts=6, base_delay=1.5):
                 raise
         except (TimeoutError, ConnectionError, socket.timeout, OSError) as exc:
             last_exc = exc
+        # No sleep after the final attempt -- there is nothing left to wait
+        # for. With attempts=6 and base_delay=1.5 the last backoff is 48s, so
+        # a call that was going to fail anyway used to burn 48 idle seconds
+        # first. A backup makes ~180 of these calls; one unlucky table was
+        # enough to push the whole run past the caller's timeout.
+        if attempt == attempts - 1:
+            break
         time.sleep(base_delay * (2**attempt))
     assert last_exc is not None
     raise last_exc

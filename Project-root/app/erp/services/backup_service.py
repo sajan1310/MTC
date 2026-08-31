@@ -10,12 +10,14 @@ Handles:
 from __future__ import annotations
 
 import datetime
+import json
 import logging
 import os
 import sys
 import threading
 import time
-from typing import Any, Dict
+import uuid
+from typing import Any, Callable, Dict, Optional
 
 from flask import current_app
 
@@ -61,6 +63,127 @@ _LAST_BACKUP_STATUS: Dict[str, Any] = {
 }
 
 _STATUS_LOCK = threading.Lock()
+
+# ── Durable, cross-worker run state ───────────────────────────────────────
+# _LAST_BACKUP_STATUS above is per-process, and gunicorn runs four workers
+# (Procfile / deploy/mtc.service) recycled every ~1000 requests. That was
+# survivable while the dashboard only read a "last backup at" line off it.
+# It is not survivable now that triggerBackup returns before the work is
+# done and the browser polls getBackupStatus for the outcome: consecutive
+# polls land on different workers, so three polls in four would answer from
+# a process that knows nothing about the run.
+#
+# The authoritative record therefore lives in erp.app_settings, which every
+# worker shares, as a JSON document under this key. The in-memory dict is
+# kept in step for the process that ran the backup, but it is no longer the
+# thing the UI believes.
+_RUN_STATE_KEY = "backup:last_run"
+
+# A RUNNING record whose updated_at is older than this is reported as
+# abandoned rather than in-flight. Needed because --max-requests 1000 can
+# recycle the worker whose thread is mid-backup, and a killed thread writes
+# no terminal state; without a staleness rule the dashboard would show a
+# backup running forever and refuse to start another one.
+_RUN_STALE_AFTER_SECONDS = int(os.getenv("BACKUP_RUN_STALE_AFTER", "1800"))
+
+# Phase -> (label, percent) for the progress the browser renders. The
+# percentages are the share of wall-clock each phase actually takes on this
+# dataset, not even thirds: the snapshot is ~1.5s while the two Sheets
+# phases are ~90s and ~40s, so a bar that jumped to 33% on snapshot
+# completion would sit there for two minutes.
+_PHASES = {
+    "snapshot": ("Creating local database snapshot...", 5),
+    "sheets": ("Formatting & syncing to Google Sheets...", 20),
+    "mirror": ("Mirroring into the app spreadsheet...", 75),
+    "done": ("Finishing up...", 100),
+}
+
+
+def _run_state_doc(
+    run_id: str, state: str, phase: str, result: Optional[Dict[str, Any]] = None
+) -> Dict[str, Any]:
+    label, percent = _PHASES.get(phase, ("Working...", 0))
+    return {
+        # Identifies WHICH run this record describes. The browser polls for
+        # the run it started, and without an id it cannot tell a terminal
+        # state belonging to its own click from one left behind by the
+        # previous run -- so a backup that failed to start at all would show
+        # the last successful run's result and report success.
+        "run_id": run_id,
+        "state": state,
+        "phase": phase,
+        "phase_label": label,
+        "percent": percent,
+        "updated_at": datetime.datetime.now().isoformat(),
+        "result": result,
+    }
+
+
+def _write_run_state(cur, doc: Dict[str, Any]) -> None:
+    """Persist `doc` under _RUN_STATE_KEY using a caller-supplied cursor.
+
+    Takes a cursor rather than opening its own connection because both
+    callers already hold one -- the advisory-lock session that must stay
+    open for the whole run. database.get_conn() refuses to nest (see its
+    NestedConnectionError), and its own guidance is to pass the cursor down.
+    That cursor's connection is autocommit, so each progress write is
+    immediately visible to the other workers answering the poll.
+    """
+    cur.execute(
+        """
+        INSERT INTO erp.app_settings (key, value, updated_at)
+        VALUES (%s, %s, NOW())
+        ON CONFLICT (key) DO UPDATE
+           SET value = EXCLUDED.value, updated_at = NOW()
+        """,
+        (_RUN_STATE_KEY, json.dumps(doc, default=str)),
+    )
+
+
+def _read_run_state() -> Optional[Dict[str, Any]]:
+    """The shared run record, or None if there is none / it is unreadable.
+
+    Never raises: this is read on the status path, and a status read that
+    throws would take out the dashboard panel whose entire job is to tell
+    an operator whether backups are healthy.
+    """
+    try:
+        with database.get_conn() as (_conn, cur):
+            cur.execute(
+                "SELECT value, updated_at FROM erp.app_settings WHERE key = %s",
+                (_RUN_STATE_KEY,),
+            )
+            row = cur.fetchone()
+    except Exception:  # noqa: BLE001
+        logger.exception("[backup_service] Could not read shared run state")
+        return None
+
+    if not row or not row[0]:
+        return None
+    try:
+        doc = json.loads(row[0])
+    except (TypeError, ValueError):
+        logger.warning("[backup_service] Shared run state is not valid JSON; ignoring")
+        return None
+    if not isinstance(doc, dict):
+        return None
+
+    # Staleness is judged from the row's own updated_at, not from the
+    # timestamp inside the JSON: the column is written by Postgres and is
+    # immune to a worker whose clock has drifted.
+    updated_at = row[1]
+    if doc.get("state") == "RUNNING" and updated_at is not None:
+        try:
+            now = datetime.datetime.now(updated_at.tzinfo)
+            if (now - updated_at).total_seconds() > _RUN_STALE_AFTER_SECONDS:
+                doc["state"] = "STALE"
+                doc["phase_label"] = (
+                    "The backup process stopped without reporting a result. "
+                    "It is safe to start another one."
+                )
+        except (TypeError, AttributeError):
+            pass
+    return doc
 
 
 def get_backup_dir() -> str:
@@ -109,7 +232,9 @@ def _mirror_module():
     return mirror_db_to_gas_sheets
 
 
-def perform_full_backup(config=None) -> Dict[str, Any]:
+def perform_full_backup(
+    config=None, on_phase: Optional[Callable[[str], None]] = None
+) -> Dict[str, Any]:
     """Performs a verified local database snapshot plus the Google Sheets sync.
 
     The local snapshot is now produced by db_backup.create_snapshot(), which
@@ -117,9 +242,25 @@ def perform_full_backup(config=None) -> Dict[str, Any]:
     before returning. See db_backup's module docstring for what the previous
     hand-rolled INSERT writer got wrong -- in short, it produced files that
     could not be restored and reported them as successful backups.
+
+    `on_phase` is called with 'snapshot' / 'sheets' / 'mirror' as each begins,
+    so the caller can publish progress somewhere the browser can poll. It is
+    advisory only: this function's contract is unchanged when it is None, and
+    an exception from it is swallowed, because a broken progress sink must
+    never be able to fail a backup that is otherwise succeeding.
     """
     now_iso = datetime.datetime.now().isoformat()
     backup_dir = get_backup_dir()
+
+    def _phase(name: str) -> None:
+        if on_phase is None:
+            return
+        try:
+            on_phase(name)
+        except Exception:  # noqa: BLE001 -- see docstring
+            logger.exception("[backup_service] Progress callback failed for phase %s", name)
+
+    _phase("snapshot")
 
     # 1. Local Postgres snapshot -- dumped AND verified, or not a backup.
     local_success = False
@@ -163,6 +304,7 @@ def perform_full_backup(config=None) -> Dict[str, Any]:
         logger.error("[backup_service] Local snapshot FAILED: %s", exc)
 
     # 2. Google Sheets sync via scripts/migration/backup_db_to_sheets.py
+    _phase("sheets")
     sheets_success = False
     spreadsheet_id = None
     spreadsheet_url = None
@@ -204,6 +346,7 @@ def perform_full_backup(config=None) -> Dict[str, Any]:
     # Independent of step 2's dated-backup spreadsheet -- a different,
     # fixed destination -- so it gets its own success/error tracking rather
     # than overloading spreadsheet_id/spreadsheet_url above.
+    _phase("mirror")
     mirror_success = False
     mirror_error = None
 
@@ -313,20 +456,144 @@ def perform_full_backup(config=None) -> Dict[str, Any]:
     return result_data
 
 
+def _execute_backup_run(cur, run_id: str, config=None) -> Optional[Dict[str, Any]]:
+    """Run a full backup, publishing progress through `cur` as it goes.
+
+    `cur` must belong to an autocommit session that already holds
+    _BACKUP_LOCK_KEY and stays open for the duration -- both callers
+    (the manual trigger thread and the nightly scheduler) hold exactly that.
+    """
+    _write_run_state(cur, _run_state_doc(run_id, "RUNNING", "snapshot"))
+
+    def publish(phase: str) -> None:
+        _write_run_state(cur, _run_state_doc(run_id, "RUNNING", phase))
+
+    try:
+        res = perform_full_backup(config=config, on_phase=publish)
+    except Exception as exc:
+        # perform_full_backup already reports a failed snapshot as a FAILED
+        # result rather than raising, so reaching here means something
+        # further out broke. Either way a terminal state MUST be written:
+        # the browser is polling for one, and the alternative is a modal
+        # that spins until its own timeout with nothing to show for it.
+        logger.exception("[backup_service] Backup run failed")
+        _write_run_state(
+            cur,
+            _run_state_doc(
+                run_id,
+                "FAILED",
+                "done",
+                {"status": "FAILED", "message": f"Failed to run backup: {exc}"},
+            ),
+        )
+        return None
+
+    _write_run_state(cur, _run_state_doc(run_id, res["status"], "done", res))
+    return res
+
+
+def _backup_worker(app, run_id: str, config=None) -> None:
+    """Body of the thread started by rpc_trigger_backup.
+
+    Pushes an app context because db_backup._resolve_config() prefers
+    current_app.config over config.Config, and that preference is what keeps
+    a backup pointed at the database the running app is actually using.
+    """
+    ctx = app.app_context() if app is not None else None
+    if ctx is not None:
+        ctx.push()
+    lock_acquired = False
+    try:
+        # Session-level, not transaction-level: the lock has to outlive the
+        # statement that took it and cover the whole run, which opens its own
+        # connections. Same reasoning as _run_scheduled_backup_safely.
+        with database.get_conn() as (conn, cur):
+            conn.autocommit = True
+            cur.execute("SELECT pg_try_advisory_lock(%s)", (_BACKUP_LOCK_KEY,))
+            lock_acquired = cur.fetchone()[0]
+            if not lock_acquired:
+                # Someone else -- another admin's click on another worker, or
+                # the nightly job -- got there first between rpc_trigger_backup's
+                # check and this thread being scheduled. Exit WITHOUT writing
+                # anything: this run_id's record must not overwrite the record
+                # the in-flight run is publishing to, or that run's own watcher
+                # would lose its result. The client handles this by adopting
+                # whichever run it finds RUNNING -- see _pollBackupUntilDone.
+                logger.info(
+                    "[backup_service] Manual trigger skipped: a backup is already running"
+                )
+                return
+            _execute_backup_run(cur, run_id, config=config)
+            cur.execute("SELECT pg_advisory_unlock(%s)", (_BACKUP_LOCK_KEY,))
+            lock_acquired = False
+    except Exception:
+        logger.exception("[backup_service] Backup worker crashed")
+    finally:
+        if lock_acquired:
+            try:
+                with database.get_conn() as (_conn, cur):
+                    cur.execute("SELECT pg_advisory_unlock(%s)", (_BACKUP_LOCK_KEY,))
+            except Exception:
+                logger.warning("[backup_service] Failed to release advisory lock in finally")
+        if ctx is not None:
+            ctx.pop()
+
+
 @rpc_method("triggerBackup", mutation=True, roles=frozenset({"admin"}))
 def rpc_trigger_backup() -> Dict[str, Any]:
-    """RPC method to manually trigger a database backup & Google Sheets upload."""
+    """Start a backup and return immediately; the client polls getBackupStatus.
+
+    This used to run the whole backup inline and return its result. It could
+    not work, and had two independent ceilings below the time the job needs:
+
+      * static/erp/api.js aborts any RPC after REQUEST_TIMEOUT_MS (45s) and
+        reports the abort as "The server did not respond within 45s" -- which
+        is what the dashboard has been showing.
+      * gunicorn runs with --timeout 120, so even without the client abort
+        the worker is killed at two minutes and nginx answers 502.
+
+    A full run on this dataset is comfortably past both. The snapshot itself
+    is ~1.5s; the cost is the Sheets work, which makes four API round trips
+    per table (tab lookup, grid resize, clear, update) across the 46 tables
+    in backup_db_to_sheets.TABLES, plus the 28 sheets of the GAS mirror, at
+    roughly half a second per round trip. That is ~2 minutes of latency-bound
+    work, and no amount of raising the two timeouts turns it into something
+    that belongs inside a request.
+
+    So the request now only starts the work. The run publishes its progress
+    and its result to erp.app_settings (see _RUN_STATE_KEY), which every
+    worker can read, and dashboard.js polls getBackupStatus until it reaches
+    a terminal state.
+    """
+    existing = _read_run_state()
+    if existing and existing.get("state") == "RUNNING":
+        # Report the id of the run that is ALREADY going, not a new one: the
+        # client polls for the id it is given, and this is the run whose
+        # result it will actually receive.
+        return build_response(
+            True,
+            {"status": "RUNNING", "run_id": existing.get("run_id"), "already_running": True},
+            "A backup is already running. Watching that one instead of starting another.",
+        )
+
     try:
-        res = perform_full_backup()
-        # PARTIAL still counts as success here because, per perform_full_backup,
-        # PARTIAL can now only mean "the verified snapshot exists but a
-        # convenience export did not". A failed snapshot is FAILED and reports
-        # as a failure to the caller.
-        is_ok = res["status"] in ("SUCCESS", "PARTIAL")
-        return build_response(is_ok, res, res["message"])
-    except Exception as exc:
-        logger.exception("[backup_service] Manual backup trigger error")
-        return build_response(False, None, f"Failed to run backup: {exc}")
+        app = current_app._get_current_object()
+    except RuntimeError:
+        app = None
+
+    run_id = uuid.uuid4().hex
+    threading.Thread(
+        target=_backup_worker,
+        args=(app, run_id),
+        daemon=True,
+        name="manual-backup",
+    ).start()
+
+    return build_response(
+        True,
+        {"status": "STARTED", "run_id": run_id},
+        "Backup started. This takes a couple of minutes; progress is shown below.",
+    )
 
 
 @rpc_method("getBackupStatus")
@@ -342,6 +609,26 @@ def rpc_get_backup_status() -> Dict[str, Any]:
     """
     with _STATUS_LOCK:
         status_copy = dict(_LAST_BACKUP_STATUS)
+
+    # The shared record first: it is the only source that can answer for a
+    # run happening in ANOTHER worker's thread, which -- with four workers
+    # and a browser polling this endpoint -- is the usual case.
+    run = _read_run_state()
+    if run:
+        status_copy["run_id"] = run.get("run_id")
+        status_copy["run_state"] = run.get("state")
+        status_copy["run_phase"] = run.get("phase")
+        status_copy["run_phase_label"] = run.get("phase_label")
+        status_copy["run_percent"] = run.get("percent")
+        status_copy["run_updated_at"] = run.get("updated_at")
+        result = run.get("result")
+        if isinstance(result, dict):
+            # A finished run's own fields win over this process's memory of
+            # whatever it last did itself, which may be nothing at all.
+            status_copy.update(result)
+    else:
+        status_copy["run_id"] = None
+        status_copy["run_state"] = None
 
     try:
         newest = db_backup.latest_snapshot(get_backup_dir())
@@ -399,8 +686,19 @@ def _run_scheduled_backup_safely() -> None:
             if not lock_acquired:
                 return
 
-            with _STATUS_LOCK:
-                last_time_str = _LAST_BACKUP_STATUS.get("timestamp")
+            # "When did a backup last run?" must be answered from the shared
+            # record, not from this process's memory. Every worker starts
+            # this scheduler, and _LAST_BACKUP_STATUS is empty in a freshly
+            # recycled one -- so a worker restart made the answer "never",
+            # and the next holder of the advisory lock ran a full backup
+            # regardless of the one an hour earlier.
+            run = _read_run_state()
+            last_time_str = None
+            if run and isinstance(run.get("result"), dict):
+                last_time_str = run["result"].get("timestamp")
+            if not last_time_str:
+                with _STATUS_LOCK:
+                    last_time_str = _LAST_BACKUP_STATUS.get("timestamp")
 
             should_run = False
             if not last_time_str:
@@ -416,7 +714,10 @@ def _run_scheduled_backup_safely() -> None:
 
             if should_run:
                 logger.info("[backup_service] Nightly automated backup triggered")
-                perform_full_backup()
+                # Same publishing path as the manual trigger, so the
+                # dashboard reflects a scheduled run too rather than only
+                # ever showing runs somebody clicked.
+                _execute_backup_run(cur, uuid.uuid4().hex)
 
                 # DATA-005. erp.rpc_mutations had no pruning anywhere, so a
                 # full JSONB result envelope -- sometimes a whole result set --
