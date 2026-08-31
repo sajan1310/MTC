@@ -364,3 +364,145 @@ def test_item_ledger_reports_base_unit_qty_not_as_entered(erp_client):
     assert bill_rows[0]["enteredQty"] == 2
     assert bill_rows[0]["unit"] == "Dozen"
     assert data["reconciliation"][0]["balanced"] is True
+
+
+# ─────────────────────────────────────────────────────────────────────────
+# Running balance column
+# ─────────────────────────────────────────────────────────────────────────
+
+
+def test_item_ledger_balance_runs_from_initial_stock_to_current_stock(erp_client):
+    """The balance column's whole claim is that you can read it top-down and
+    land on the number the Stock page shows.
+
+    That only holds if it starts at the same initial_stock, counts the same
+    rows and applies the same signs as the Current Stock formula -- which is
+    why it is computed beside `reconciliation` rather than in the browser.
+    Asserted end-to-end here: the oldest row's balance is the opening stock
+    plus its own movement, every step matches that row's incoming/outgoing,
+    and the newest row closes on currentStock.
+    """
+    name = _unique_name("LedgerBalance")
+    _create_item_with_stock(erp_client, name, initial_stock=100)
+
+    _rpc(
+        erp_client,
+        "saveBill",
+        [
+            {
+                "vendor": _unique_name("BalVendor"),
+                "billNumber": _unique_name("BINV"),
+                "billDate": "01/01/2026",
+                "items": [{"name": name, "qty": 20, "price": 5}],
+            }
+        ],
+        mutation=True,
+    )
+    _rpc(
+        erp_client,
+        "saveWastage",
+        [{"date": "02/01/2026", "items": [{"name": name, "qty": 5, "unit": "Pcs", "reason": "Damaged"}]}],
+        mutation=True,
+    )
+    _rpc(
+        erp_client,
+        "saveIssueStock",
+        [{"date": "03/01/2026", "issuedTo": "Contractor A", "items": [{"name": name, "qty": 3, "unit": "Pcs"}]}],
+        mutation=True,
+    )
+
+    data = _ledger(erp_client, name)
+    # Entries arrive newest-first for display; the balance was accumulated
+    # oldest-first, so read them in that direction to check the steps.
+    counted = [e for e in reversed(data["entries"]) if e["countsTowardStock"]]
+    assert len(counted) == 3
+
+    running = 100.0
+    for entry in counted:
+        running += entry["incomingQty"] - entry["outgoingQty"]
+        assert entry["balance"] == running, entry
+
+    assert [e["balance"] for e in counted] == [120, 115, 112]
+
+    recon = data["reconciliation"][0]
+    assert counted[-1]["balance"] == recon["currentStock"] == 112
+    assert recon["balanced"] is True
+
+
+def test_item_ledger_balance_is_blank_on_rows_that_move_no_stock(erp_client):
+    """A PO is an order, not a movement, and a manual adjustment is already
+    absorbed into initial_stock. Neither settles the stock at a figure, so
+    neither carries a balance -- repeating the previous row's number on them
+    would read as though they did.
+    """
+    name = _unique_name("LedgerBalanceNoop")
+    _create_item_with_stock(erp_client, name, initial_stock=50)
+
+    _rpc(
+        erp_client,
+        "savePO",
+        [
+            {
+                "vendor": _unique_name("BalPOVendor"),
+                "poNumber": _unique_name("BPO"),
+                "poDate": "01/01/2026",
+                "items": [{"name": name, "qty": 30, "price": 4}],
+            }
+        ],
+        mutation=True,
+    )
+
+    data = _ledger(erp_client, name)
+    po_rows = [e for e in data["entries"] if e["kind"] == "PO"]
+    assert po_rows, "the PO should still be shown"
+    for row in po_rows:
+        assert row["countsTowardStock"] is False
+        assert row["balance"] is None
+
+
+def test_item_ledger_balance_is_tracked_per_size_variant(erp_client):
+    """Each size is its own stock line on the Stock page, so each gets its
+    own running balance. Pooling them would produce a column that reconciles
+    with nothing -- the sizes are counted separately everywhere else.
+    """
+    name = _unique_name("LedgerBalanceSizes")
+    for size, initial in (("S", 10), ("L", 70)):
+        resp = _rpc(
+            erp_client,
+            "saveItem",
+            [{"itemName": name, "itemSize": size, "itemInitialStock": initial}],
+            mutation=True,
+        )
+        assert resp.get_json()["success"] is True
+
+    _rpc(
+        erp_client,
+        "saveBill",
+        [
+            {
+                "vendor": _unique_name("SizeVendor"),
+                "billNumber": _unique_name("SINV"),
+                "billDate": "01/01/2026",
+                "items": [
+                    {"name": name, "size": "S", "qty": 5, "price": 2},
+                    {"name": name, "size": "L", "qty": 8, "price": 2},
+                ],
+            }
+        ],
+        mutation=True,
+    )
+
+    data = _ledger(erp_client, name)
+    by_size = {}
+    for entry in data["entries"]:
+        if entry["countsTowardStock"]:
+            by_size.setdefault((entry["size"] or "").strip().upper(), []).append(entry)
+
+    # Each size closed on its OWN opening stock plus its OWN movement.
+    assert by_size["S"][0]["balance"] == 15
+    assert by_size["L"][0]["balance"] == 78
+
+    for recon in data["reconciliation"]:
+        size = (recon["size"] or "").strip().upper()
+        assert by_size[size][0]["balance"] == recon["currentStock"]
+        assert recon["balanced"] is True

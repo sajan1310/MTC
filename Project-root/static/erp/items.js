@@ -747,6 +747,18 @@ App.Item = {
       return String(Math.round(n * 10000) / 10000);
     };
 
+    // Unlike fmtQty, a balance of exactly zero is a real reading -- the
+    // stock ran out on this row -- so it prints "0" rather than the "-"
+    // fmtQty uses for "this column does not apply to this row". A negative
+    // balance is shown in red and never clamped: it means the ledger says
+    // more went out than came in, which is a signal to investigate, not a
+    // number to tidy away.
+    const fmtBalance = v => {
+      const n = toNumber(v);
+      const text = String(Math.round(n * 10000) / 10000);
+      return n < 0 ? `<span class="text-danger">${text}</span>` : text;
+    };
+
     // One entry -> one <tr>. Size itself is no longer a cell here -- entries
     // are grouped into a separate mini-table per size below, so the size is
     // said once in that group's heading instead of repeated down a column.
@@ -771,16 +783,25 @@ App.Item = {
       // movement that failed to land.
       const rowClass = entry.countsTowardStock ? '' : ' class="text-muted fst-italic"';
 
+      // Balance is the stock on hand after this row, from the server (which
+      // starts it at the same initial_stock the Current Stock formula uses).
+      // null on a row that moved no stock -- a PO, a "Ledger only" bill, an
+      // adjustment -- so the column never implies those settled at a figure.
+      const balanceCell = (entry.balance === null || entry.balance === undefined)
+        ? '<span class="text-muted">-</span>'
+        : fmtBalance(entry.balance);
+
       return `<tr${rowClass}>
         <td>${escapeHtml(entry.date || '')}</td>
         <td><span class="badge ${badgeClass}">${escapeHtml(entry.type || '')}</span></td>
         <td><strong class="text-dark">${escapeHtml(entry.ref || '-')}</strong></td>
         <td><strong class="text-primary">${escapeHtml(entry.party || '-')}</strong></td>
         <td><small class="text-muted">${escapeHtml(entry.narration || '-')}</small></td>
+        <td class="text-end">${entry.price !== null && entry.price !== undefined ? formatCurrency(entry.price) : '-'}</td>
         <td class="text-center text-primary fw-bold">${fmtQty(entry.orderQty)}</td>
         <td class="text-center text-success fw-bold">${fmtQty(entry.incomingQty)}${entry.incomingQty ? enteredNote : ''}</td>
         <td class="text-center text-danger fw-bold">${fmtQty(entry.outgoingQty)}${entry.outgoingQty ? enteredNote : ''}</td>
-        <td class="text-end">${entry.price !== null && entry.price !== undefined ? formatCurrency(entry.price) : '-'}</td>
+        <td class="text-center fw-bold">${balanceCell}</td>
       </tr>`;
     };
 
@@ -819,15 +840,16 @@ App.Item = {
             <table class="table table-hover table-striped align-middle mb-0">
               <thead class="table-light">
                 <tr>
-                  <th scope="col" style="width: 9%;">Date</th>
-                  <th scope="col" style="width: 12%;">Type</th>
-                  <th scope="col" style="width: 11%;">Ref #</th>
-                  <th scope="col" style="width: 18%;">Vendor / Source</th>
-                  <th scope="col" style="width: 15%;">Narration</th>
-                  <th scope="col" style="width: 10%; text-align: center;">Order Qty</th>
-                  <th scope="col" style="width: 10%; text-align: center;">Incoming Qty</th>
-                  <th scope="col" style="width: 10%; text-align: center;">Outgoing Qty</th>
-                  <th scope="col" style="width: 9%; text-align: right;">Price</th>
+                  <th scope="col" style="width: 8%;">Date</th>
+                  <th scope="col" style="width: 11%;">Type</th>
+                  <th scope="col" style="width: 10%;">Ref #</th>
+                  <th scope="col" style="width: 16%;">Vendor / Source</th>
+                  <th scope="col" style="width: 13%;">Narration</th>
+                  <th scope="col" style="width: 8%; text-align: right;">Price</th>
+                  <th scope="col" style="width: 9%; text-align: center;">Order Qty</th>
+                  <th scope="col" style="width: 9%; text-align: center;">Incoming Qty</th>
+                  <th scope="col" style="width: 9%; text-align: center;">Outgoing Qty</th>
+                  <th scope="col" style="width: 7%; text-align: center;">Balance</th>
                 </tr>
               </thead>
               <tbody>${rows}</tbody>

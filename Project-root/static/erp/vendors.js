@@ -365,6 +365,29 @@ App.Vendor = {
       });
     });
 
+    // Running qty balance: net units taken from this vendor to date.
+    //
+    // Accumulated over a CHRONOLOGICAL copy while the display order stays
+    // newest-first below -- the entries are the same objects, so writing
+    // .balance here lands on the rows the table renders. Same shape as the
+    // Item Ledger, the Pool Ledger and the Contractor Account Ledger, all of
+    // which accumulate oldest-first and display newest-first.
+    //
+    // A PO moves nothing -- it is an intent to buy, and the goods arrive as
+    // a Bill that has its own row -- so it leaves the balance untouched and
+    // reports null rather than the carried-forward figure. Counting a PO
+    // here would double every order: once when placed, once when received.
+    // This mirrors countsTowardStock in get_item_ledger_data.
+    let runningQty = 0;
+    [...ledger].sort((a, b) => a.dateObj - b.dateObj).forEach(entry => {
+      if (entry.type === 'PO Issued') {
+        entry.balance = null;
+        return;
+      }
+      runningQty += toNumber(entry.incomingQty) - toNumber(entry.outgoingQty);
+      entry.balance = runningQty;
+    });
+
     ledger.sort((a, b) => b.dateObj - a.dateObj);
 
     let itemMap = {};
@@ -401,6 +424,19 @@ App.Vendor = {
 
     const lBody = document.getElementById('vendorLedgerBody');
     if (lBody) {
+      // Zero is a real balance here (everything received has gone back),
+      // so it prints "0" -- unlike the qty columns above, where "-" means
+      // "this document had no quantity of that kind". Negative means more
+      // was returned or issued than ever came in, which is worth seeing
+      // rather than clamping.
+      const balanceCell = entry => {
+        if (entry.balance === null || entry.balance === undefined) {
+          return '<span class="text-muted">-</span>';
+        }
+        const n = Math.round(toNumber(entry.balance) * 10000) / 10000;
+        return n < 0 ? `<span class="text-danger">${n}</span>` : String(n);
+      };
+
       let lHtml = '';
       ledger.forEach(entry => {
         lHtml += `<tr>
@@ -411,10 +447,11 @@ App.Vendor = {
           <td class="text-center text-primary fw-bold">${entry.orderQty || '-'}</td>
           <td class="text-center text-success fw-bold">${entry.incomingQty || '-'}</td>
           <td class="text-center text-danger fw-bold">${entry.outgoingQty || '-'}</td>
+          <td class="text-center fw-bold">${balanceCell(entry)}</td>
           <td class="fw-bold text-end">${formatCurrency(entry.value)}</td>
         </tr>`;
       });
-      lBody.innerHTML = lHtml || '<tr><td colspan="8" class="text-center text-muted p-4">No transaction history found.</td></tr>';
+      lBody.innerHTML = lHtml || '<tr><td colspan="9" class="text-center text-muted p-4">No transaction history found.</td></tr>';
     }
 
     const pBody = document.getElementById('vendorPendingBody');

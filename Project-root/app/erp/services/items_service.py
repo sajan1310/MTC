@@ -1328,6 +1328,10 @@ def _ledger_entry(date_value, entry_type, kind, ref, party, size, narration, **k
         "price": None,
         "unit": "",
         "enteredQty": None,
+        # Stock on hand for this size immediately after this row, filled in
+        # by get_item_ledger_data once every entry is known and ordered.
+        # None on rows that move no stock -- see countsTowardStock below.
+        "balance": None,
         # Whether this row is part of the Current Stock arithmetic. False for
         # rows that are informational only (a PO is an intent to buy, not a
         # receipt; a manual adjustment is already absorbed into initial_stock
@@ -1601,6 +1605,48 @@ def get_item_ledger_data(item_name):
                 "balanced": abs(computed - current) < 0.0001,
             }
         )
+
+    # Running stock balance, per size variant.
+    #
+    # Computed here rather than in items.js for the reason the whole ledger
+    # moved server-side: the balance has to start from the same
+    # initial_stock, count the same rows and apply the same signs as the
+    # Current Stock formula, or it is a second implementation that merely
+    # happens to agree. Doing it beside `reconciliation` -- which already
+    # holds each size's initial_stock and proves initial + in - out ==
+    # currentStock -- makes the last row's balance the same arithmetic that
+    # block asserts, so a drift shows up as `balanced: false` rather than as
+    # a quietly wrong column.
+    #
+    # Accumulated oldest-first, then re-sorted newest-first for display,
+    # matching get_contractor_account_ledger and get_warehouse_pool_ledger.
+    initial_by_size = {
+        (row["size"] or "").strip().lower(): float(row["initial_stock"])
+        for row in stock_rows_found
+    }
+    entries_by_size: dict = {}
+    for entry in entries:
+        entries_by_size.setdefault(
+            (entry["size"] or "").strip().lower(), []
+        ).append(entry)
+
+    for size_lower, group in entries_by_size.items():
+        group.sort(key=lambda e: (e["dateRaw"] or "", e["type"]))
+        # A size with movements but no erp.stock row opens at zero rather
+        # than being skipped: its rows still need a balance, and starting
+        # from nothing is the honest reading of "no opening stock recorded".
+        running = initial_by_size.get(size_lower, 0.0)
+        for entry in group:
+            if entry["countsTowardStock"]:
+                running += entry["incomingQty"] - entry["outgoingQty"]
+                entry["balance"] = running
+            else:
+                # A PO, a "Ledger only" bill or a manual adjustment moved no
+                # stock, so it has no balance to report. Deliberately None
+                # and not the carried-forward figure: repeating the previous
+                # row's number here reads as "this row settled at that
+                # balance", which is the one thing these rows did not do.
+                entry["balance"] = None
 
     entries.sort(key=lambda e: (e["dateRaw"] or "", e["type"]), reverse=True)
 
