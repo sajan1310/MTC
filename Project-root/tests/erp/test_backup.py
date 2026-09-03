@@ -110,10 +110,19 @@ class TestBackupService(unittest.TestCase):
         dashboard. Nothing about "a convenience export was skipped" may ever
         make a missing snapshot look survivable.
 
-        Clearing PATH makes pg_dump unfindable, which is a faithful stand-in
-        for every way the dump can fail.
+        Emptying PATH makes pg_dump unfindable, which is a faithful
+        stand-in for every way the dump can fail.
         """
-        with patch.dict(os.environ, {}, clear=True):
+        # PATH is set EMPTY, not removed. shutil.which() -- which
+        # db_backup._require_tool uses -- falls back to os.defpath when
+        # PATH is ABSENT from the environment, and on Linux that is
+        # ":/bin:/usr/bin". CI installs postgresql-client, so clear=True
+        # alone left /usr/bin/pg_dump perfectly findable: the snapshot
+        # succeeded and the run reported PARTIAL, not FAILED. It passed on
+        # Windows only because os.defpath there is ".;C:\bin".
+        # An empty string takes the bpo-35755 path, which does not fall
+        # back, so the tool is unfindable on every platform.
+        with patch.dict(os.environ, {"PATH": ""}, clear=True):
             res = backup_service.perform_full_backup()
 
         self.assertEqual(res["status"], "FAILED")
@@ -185,9 +194,12 @@ class TestBackupService(unittest.TestCase):
             "_write_run_state",
             side_effect=lambda c, doc: writes.append(doc),
         ):
-            # Clearing PATH makes pg_dump unfindable -- a faithful stand-in
-            # for every way the dump can fail.
-            with patch.dict(os.environ, {}, clear=True):
+            # Emptying PATH makes pg_dump unfindable -- a faithful
+            # stand-in for every way the dump can fail. Empty, not
+            # removed: shutil.which() falls back to os.defpath when
+            # PATH is absent, and on Linux that finds /usr/bin/pg_dump,
+            # so the dump succeeded in CI and the run reported PARTIAL.
+            with patch.dict(os.environ, {"PATH": ""}, clear=True):
                 backup_service._execute_backup_run(cur, "run-1")
 
         self.assertTrue(writes, "the run published no state at all")

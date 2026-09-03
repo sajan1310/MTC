@@ -33,7 +33,7 @@ self-healing column backfill -- Postgres has every column from day one).
 from __future__ import annotations
 
 import json
-from datetime import datetime
+from . import document_numbers
 
 import psycopg2.extras
 
@@ -262,8 +262,13 @@ def save_issue_stock(conn, cur, form_data):
         )
         cur.execute("DELETE FROM erp.issue_lines WHERE header_id = %s", (header_id,))
     else:
-        now = datetime.now()
-        issue_id = f"ISS-{now.strftime('%Y%m%d')}-{now.strftime('%H%M%S')}"
+        # Was a bare PFX-YYYYMMDD-HHMMSS. With no unique index and no check
+        # (see 011_wastage_and_issue.sql), two saves in the same second wrote
+        # two documents sharing one issue_id, silently. 042 adds the index;
+        # this picks a free number so the index never has to reject anything.
+        issue_id = document_numbers.next_document_number(
+            cur, prefix="ISS", table="issue_headers", column="issue_id"
+        )
         cur.execute(
             """
             INSERT INTO erp.issue_headers (issue_id, issue_date, issued_to, reference, vendor, vendor_id, remarks, updated_by)

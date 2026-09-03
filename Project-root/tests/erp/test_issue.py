@@ -127,7 +127,11 @@ def test_save_issue_stock_computes_base_qty_rate_and_value(erp_client):
     body = resp.get_json()
     assert body["success"] is True
     issue_id = body["data"]["issueId"]
-    assert re.match(r"^ISS-\d{8}-\d{6}$", issue_id)
+    # The -N tail appears only when a same-second save already took the
+    # base; see services/document_numbers.py. Not the normal shape, but a
+    # legal one -- asserting it away would fail exactly when the collision
+    # handling works.
+    assert re.match(r"^ISS-\d{8}-\d{6}(-\d+)?$", issue_id)
 
     listed = _rpc(erp_client, "getIssueData").get_json()["data"]
     match = next(r for r in listed if r["issueId"] == issue_id)

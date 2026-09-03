@@ -119,7 +119,11 @@ def test_save_wastage_computes_base_qty_and_totals(erp_client):
     body = resp.get_json()
     assert body["success"] is True
     wastage_id = body["data"]["wastageId"]
-    assert re.match(r"^WST-\d{8}-\d{6}$", wastage_id)
+    # The -N tail appears only when a same-second save already took the
+    # base; see services/document_numbers.py. Not the normal shape, but a
+    # legal one -- asserting it away would fail exactly when the collision
+    # handling works.
+    assert re.match(r"^WST-\d{8}-\d{6}(-\d+)?$", wastage_id)
 
     listed = _rpc(erp_client, "getWastageData").get_json()["data"]
     match = next(w for w in listed if w["wastageId"] == wastage_id)

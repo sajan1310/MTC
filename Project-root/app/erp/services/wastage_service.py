@@ -37,7 +37,7 @@ architecture), nothing to recalculate.
 from __future__ import annotations
 
 import json
-from datetime import datetime
+from . import document_numbers
 
 import psycopg2.extras
 
@@ -224,8 +224,11 @@ def save_wastage(conn, cur, form_data):
         )
         cur.execute("DELETE FROM erp.wastage_lines WHERE header_id = %s", (header_id,))
     else:
-        now = datetime.now()
-        wastage_id = f"WST-{now.strftime('%Y%m%d')}-{now.strftime('%H%M%S')}"
+        # See the note in issue_service: same generator, same silent-duplicate
+        # failure before 042_unique_document_ids.sql.
+        wastage_id = document_numbers.next_document_number(
+            cur, prefix="WST", table="wastage_headers", column="wastage_id"
+        )
         cur.execute(
             """
             INSERT INTO erp.wastage_headers (wastage_id, wastage_date, vendor, vendor_id, remarks, updated_by)

@@ -19,7 +19,7 @@ from __future__ import annotations
 
 import json
 import math
-from datetime import datetime
+from . import document_numbers
 
 import psycopg2.extras
 
@@ -172,8 +172,9 @@ def save_return(conn, cur, form_data):
 
     return_number = str(form_data.get("returnNumber") or "").strip()
     if not return_number:
-        now = datetime.now()
-        return_number = f"RET-{now.strftime('%Y%m%d')}-{now.strftime('%H%M%S')}"
+        return_number = document_numbers.next_document_number(
+            cur, prefix="RET", table="return_headers", column="return_number"
+        )
 
     # Global uniqueness (return_number alone, unlike Bill's (vendor,
     # billNumber) composite), excluding self on edit.

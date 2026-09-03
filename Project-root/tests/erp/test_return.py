@@ -53,7 +53,11 @@ def test_save_return_auto_generates_return_number(erp_client):
     )
     body = resp.get_json()
     assert body["success"] is True
-    assert re.match(r"^RET-\d{8}-\d{6}$", body["data"]["returnNumber"])
+    # The -N tail appears only when a same-second save already took the
+    # base number; see return_service._free_return_number. It is not the
+    # normal shape, but it is a legal one and asserting it away would
+    # make this test fail exactly when the collision handling works.
+    assert re.match(r"^RET-\d{8}-\d{6}(-\d+)?$", body["data"]["returnNumber"])
 
 
 def test_save_return_returns_fresh_row_for_in_place_patch(erp_client):
