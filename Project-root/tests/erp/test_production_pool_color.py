@@ -195,7 +195,7 @@ def test_pool_color_survives_save_and_reload(erp_client):
     lot_number = body["data"]["row"]["lotNumber"]
 
     lots = _rpc(erp_client, "getProductionData").get_json()["data"]
-    lot = next(l for l in lots if l["lotNumber"] == lot_number)
+    lot = next(row for row in lots if row["lotNumber"] == lot_number)
     assert lot["componentsConsumed"][0]["poolColor"] == "Blue"
 
 
@@ -219,7 +219,7 @@ def test_an_item_sourced_component_carries_no_bucket(erp_client):
     lot_number = body["data"]["row"]["lotNumber"]
 
     lots = _rpc(erp_client, "getProductionData").get_json()["data"]
-    lot = next(l for l in lots if l["lotNumber"] == lot_number)
+    lot = next(row for row in lots if row["lotNumber"] == lot_number)
     assert lot["componentsConsumed"][0]["poolColor"] == ""
 
 
@@ -274,7 +274,7 @@ def test_save_reports_a_component_scoped_to_an_unproduced_colour(erp_client):
     assert "Mudguard 26 (Blue)" in body["message"]
 
     lots = _rpc(erp_client, "getProductionData").get_json()["data"]
-    lot = next(l for l in lots if l["lotNumber"] == body["data"]["row"]["lotNumber"])
+    lot = next(row for row in lots if row["lotNumber"] == body["data"]["row"]["lotNumber"])
     assert [c["itemName"] for c in lot["componentsConsumed"]] == ["Frame Tube"]
 
 
@@ -310,7 +310,7 @@ def test_a_clean_save_says_nothing_extra(erp_client):
     assert "NOT recorded" not in body["message"]
 
     lots = _rpc(erp_client, "getProductionData").get_json()["data"]
-    lot = next(l for l in lots if l["lotNumber"] == body["data"]["row"]["lotNumber"])
+    lot = next(row for row in lots if row["lotNumber"] == body["data"]["row"]["lotNumber"])
     mudguard = next(c for c in lot["componentsConsumed"] if c["itemName"] == "Mudguard 26")
     assert mudguard["colorGroup"] == "Purple-Wine"
     assert mudguard["poolColor"] == "Blue"

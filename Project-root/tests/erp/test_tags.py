@@ -208,7 +208,7 @@ def _save_lot_with_component_color(erp_client, color_group: str):
 
 def _lot_by_number(erp_client, lot_number: str) -> dict:
     lots = _rpc(erp_client, "getProductionData").get_json()["data"]
-    match = next((l for l in lots if l["lotNumber"] == lot_number), None)
+    match = next((row for row in lots if row["lotNumber"] == lot_number), None)
     assert match is not None, f"lot {lot_number} not found"
     return match
 
