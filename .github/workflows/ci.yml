@@ -385,57 +385,21 @@ jobs:
             -c "CREATE DATABASE testuser;"
           
           echo "✅ Test databases created successfully"
-
-      # CI-002: this step was continue-on-error and swallowed psql's exit code
-      # with `|| echo`, so a broken base schema let the suite run anyway. The
-      # failure then surfaced as a scatter of confusing test errors instead of
-      # one clear "the schema did not build" -- and a missing init_schema.sql
-      # printed a warning and carried on. Both are now fatal: every statement
-      # in init_schema.sql is CREATE ... IF NOT EXISTS, so a genuine re-run is
-      # a no-op and any error it reports is real.
-      - name: Initialize database schema
-        run: |
-          if [ ! -f Project-root/migrations/init_schema.sql ]; then
-            echo "::error::migrations/init_schema.sql is missing -- cannot build the test schema"
-            exit 1
-          fi
-          for db in testdb testuser; do
-            echo "Initializing database schema for $db..."
-            psql "postgresql://postgres:testpass@127.0.0.1:5432/$db" \
-              -v ON_ERROR_STOP=1 -q -f Project-root/migrations/init_schema.sql
-          done
-          echo "Database schema initialization completed"
-
-      - name: Run database migrations
-        working-directory: Project-root
-        run: |
-          echo "::group::Applying database migrations"
-          echo "Running Python migration scripts to create processes, production_lots, etc..."
-          python migrations/migrations.py || echo "⚠️ Migrations completed with warnings"
-          echo "::endgroup::"
-        env:
-          DATABASE_URL: postgresql://postgres:testpass@127.0.0.1:5432/testdb
-          DB_USER: postgres
-          DB_PASS: testpass
-          DB_NAME: testdb
-          DB_HOST: 127.0.0.1
-          DB_PORT: 5432
-        continue-on-error: false
-
-      - name: Apply schema fix (Python)
-        working-directory: Project-root
-        run: |
-          echo "::group::Applying unified schema fix (Python)"
-          python migrations/migration_fix_schema_nov2025.py
-          echo "::endgroup::"
-        env:
-          DATABASE_URL: postgresql://postgres:testpass@127.0.0.1:5432/testdb
-          DB_USER: postgres
-          DB_PASS: testpass
-          DB_NAME: testdb
-          DB_HOST: 127.0.0.1
-          DB_PORT: 5432
-        continue-on-error: false
+      # NOTE: the test database schema is NOT built here.
+      #
+      # tests/conftest.py's session-scoped setup_test_db fixture creates the
+      # database if absent and runs migrations/erp/runner.py -- the single
+      # migration path (MIG-001), the same code the deploy scripts run. Doing
+      # it again here would be a second, divergent definition of the schema,
+      # which is exactly the problem MIG-001 removed.
+      #
+      # Three steps stood here and had to go: they ran
+      # migrations/init_schema.sql, migrations/migrations.py and
+      # migrations/migration_fix_schema_nov2025.py, all of which moved into
+      # migrations/legacy/ and are no longer executed by anything. The first
+      # of them did `exit 1` on the file being absent, so this job could not
+      # pass at all -- and because `build` gates `test`, the Python suite was
+      # never reached in CI even once lint was fixed.
 
       - name: Run tests with coverage
         working-directory: Project-root

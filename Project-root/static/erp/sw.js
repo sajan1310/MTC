@@ -184,7 +184,19 @@
 // chart container with code that does not know it. Since v46 that heals
 // itself on the following load rather than persisting, so this is not
 // load-bearing the way v32/v36/v37/v43 were.
-const CACHE_NAME = 'erp-shell-v49';
+//
+// v50: production.js -- a pool item with exactly one colour is now carried
+// as a fixed input `poolColor` with colorGroup left COMMON, rather than
+// having its colorGroup locked to that colour. The lot consumes it whatever
+// it produces, so the lot's own colours must not gate it.
+//
+// The bump is late. That change rode into commit 2499f73e, whose subject
+// says "apply ruff format across the tree": it was uncommitted work picked
+// up by a `git add -A`, and that commit's own AST verification only walked
+// .py files, so a .js logic change passed through it unexamined.
+// scripts/check_sw_cache_bump.py caught it in CI, which is exactly the
+// reason that check exists.
+const CACHE_NAME = 'erp-shell-v50';
 
 const PRECACHE_URLS = [
   '/erp/offline.html',

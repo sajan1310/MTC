@@ -192,44 +192,17 @@ jobs:
           
           echo "✅ Test databases created successfully"
 
-      - name: Initialize database schema
-        run: |
-          echo "Initializing database schema for testdb..."
-          psql "postgresql://postgres:testpass@127.0.0.1:5432/testdb" \
-            -f Project-root/migrations/init_schema.sql || echo "⚠️ Schema init for testdb may have warnings"
-          
-          echo "Initializing database schema for testuser..."
-          psql "postgresql://postgres:testpass@127.0.0.1:5432/testuser" \
-            -f Project-root/migrations/init_schema.sql || echo "⚠️ Schema init for testuser may have warnings"
-          
-          echo "✅ Database schemas initialized successfully"
-        continue-on-error: true
-
-      - name: Run database migrations
-        working-directory: Project-root
-        run: |
-          echo "::group::Applying database migrations"
-          python migrations/migrations.py || echo "⚠️ Migrations completed with warnings"
-          echo "::endgroup:;"
-        env:
-          DATABASE_URL: postgresql://postgres:testpass@127.0.0.1:5432/testdb
-          DB_USER: postgres
-          DB_PASS: testpass
-          DB_NAME: testdb
-        continue-on-error: true
-
-      - name: Apply schema fix
-        working-directory: Project-root
-        run: |
-          echo "::group::Applying schema fix"
-          python migrations/migration_fix_schema_nov2025.py
-          echo "::endgroup:;"
-        env:
-          DATABASE_URL: postgresql://postgres:testpass@127.0.0.1:5432/testdb
-          DB_USER: postgres
-          DB_PASS: testpass
-          DB_NAME: testdb
-        continue-on-error: true
+      # NOTE: the test database schema is NOT built here.
+      #
+      # tests/conftest.py's setup_test_db fixture creates the database if
+      # absent and runs migrations/erp/runner.py -- the single migration
+      # path (MIG-001), the same code the deploy scripts run.
+      #
+      # Three steps stood here (init_schema.sql, migrations.py,
+      # migration_fix_schema_nov2025.py). All three moved into
+      # migrations/legacy/ and nothing executes them any more, so these
+      # steps referenced files that do not exist and this job could not
+      # pass.
 
       - name: Run integration tests
         working-directory: Project-root
@@ -334,44 +307,17 @@ jobs:
           
           echo "✅ Test databases created successfully"
 
-      - name: Initialize database schema
-        run: |
-          echo "Initializing database schema for testdb..."
-          psql "postgresql://postgres:testpass@127.0.0.1:5432/testdb" \
-            -f Project-root/migrations/init_schema.sql || echo "⚠️ Schema init for testdb may have warnings"
-          
-          echo "Initializing database schema for testuser..."
-          psql "postgresql://postgres:testpass@127.0.0.1:5432/testuser" \
-            -f Project-root/migrations/init_schema.sql || echo "⚠️ Schema init for testuser may have warnings"
-          
-          echo "✅ Database schemas initialized successfully"
-        continue-on-error: true
-
-      - name: Run database migrations
-        working-directory: Project-root
-        run: |
-          echo "::group::Applying database migrations"
-          python migrations/migrations.py || echo "⚠️ Migrations completed with warnings"
-          echo "::endgroup:;"
-        env:
-          DATABASE_URL: postgresql://postgres:testpass@127.0.0.1:5432/testdb
-          DB_USER: postgres
-          DB_PASS: testpass
-          DB_NAME: testdb
-        continue-on-error: true
-
-      - name: Apply schema fix
-        working-directory: Project-root
-        run: |
-          echo "::group::Applying schema fix"
-          python migrations/migration_fix_schema_nov2025.py
-          echo "::endgroup:;"
-        env:
-          DATABASE_URL: postgresql://postgres:testpass@127.0.0.1:5432/testdb
-          DB_USER: postgres
-          DB_PASS: testpass
-          DB_NAME: testdb
-        continue-on-error: true
+      # NOTE: the test database schema is NOT built here.
+      #
+      # tests/conftest.py's setup_test_db fixture creates the database if
+      # absent and runs migrations/erp/runner.py -- the single migration
+      # path (MIG-001), the same code the deploy scripts run.
+      #
+      # Three steps stood here (init_schema.sql, migrations.py,
+      # migration_fix_schema_nov2025.py). All three moved into
+      # migrations/legacy/ and nothing executes them any more, so these
+      # steps referenced files that do not exist and this job could not
+      # pass.
 
       - name: Run full test suite with coverage
         working-directory: Project-root
