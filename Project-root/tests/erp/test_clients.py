@@ -19,7 +19,9 @@ from app.erp.services import bom_service
 
 def _rpc(client, method, args=None, mutation=False):
     headers = {"X-Mutation-Id": str(uuid.uuid4())} if mutation else {}
-    return client.post(f"/api/erp/rpc/{method}", json={"args": args or []}, headers=headers)
+    return client.post(
+        f"/api/erp/rpc/{method}", json={"args": args or []}, headers=headers
+    )
 
 
 def _unique_name(prefix: str) -> str:
@@ -73,7 +75,14 @@ def _save_final_stage_process_with_recipe(client):
     payload, process_id = _save_process(
         client,
         isFinalStage=True,
-        components=[{"itemName": item, "qtyPerUnit": 2, "sourceType": "ITEM", "colorGroup": "COMMON"}],
+        components=[
+            {
+                "itemName": item,
+                "qtyPerUnit": 2,
+                "sourceType": "ITEM",
+                "colorGroup": "COMMON",
+            }
+        ],
     )
     return payload, process_id
 
@@ -86,7 +95,13 @@ def _save_pushable_bom_product(client, token, process_id):
         [
             {
                 "productName": product_name,
-                "components": [{"itemName": _unique_name("BomItem"), "qtyPerProduct": 1, "processId": process_id}],
+                "components": [
+                    {
+                        "itemName": _unique_name("BomItem"),
+                        "qtyPerProduct": 1,
+                        "processId": process_id,
+                    }
+                ],
             },
             token,
         ],
@@ -101,7 +116,9 @@ def _item_component(item_name="RawMat", qty=1):
     return {"itemName": item_name, "qty": qty, "sourceType": "ITEM"}
 
 
-def _complete_production_lot(client, process_id, product_id, qty, contractor="Worker A", **overrides):
+def _complete_production_lot(
+    client, process_id, product_id, qty, contractor="Worker A", **overrides
+):
     form = {
         "processId": process_id,
         "assignedTo": contractor,
@@ -166,7 +183,12 @@ def test_save_client_rejects_case_insensitive_duplicate(erp_client):
 def test_save_client_rename_via_original_name(erp_client):
     _payload, original = _save_client(erp_client)
     renamed = _unique_name("RenamedClient")
-    edit = _rpc(erp_client, "saveClient", [{"clientName": renamed, "originalClientName": original}], mutation=True)
+    edit = _rpc(
+        erp_client,
+        "saveClient",
+        [{"clientName": renamed, "originalClientName": original}],
+        mutation=True,
+    )
     body = edit.get_json()
     assert body["success"] is True
     assert body["data"]["name"] == renamed
@@ -182,7 +204,14 @@ def test_save_client_returns_fresh_row_for_in_place_patch(erp_client):
     edit = _rpc(
         erp_client,
         "saveClient",
-        [{"clientName": name, "originalClientName": name, "contact": "New Contact", "gstin": payload["gstin"]}],
+        [
+            {
+                "clientName": name,
+                "originalClientName": name,
+                "contact": "New Contact",
+                "gstin": payload["gstin"],
+            }
+        ],
         mutation=True,
     )
     body = edit.get_json()
@@ -226,7 +255,14 @@ def test_delete_client_blocked_by_dispatch_reference(erp_app, erp_client):
     _rpc(
         erp_client,
         "saveDispatch",
-        [{"lines": [{"productId": product_id, "productName": product_name, "qty": 2}], "clientName": name}],
+        [
+            {
+                "lines": [
+                    {"productId": product_id, "productName": product_name, "qty": 2}
+                ],
+                "clientName": name,
+            }
+        ],
         mutation=True,
     )
 
@@ -255,7 +291,9 @@ def test_client_rename_cascades_into_client_orders_and_dispatch(erp_app, erp_cli
     _payload, old_name = _save_client(erp_client)
     new_name = _unique_name("RenamedCascadeClient")
 
-    order = _save_client_order(erp_client, old_name, [{"productId": product_id, "qty": 5}])
+    order = _save_client_order(
+        erp_client, old_name, [{"productId": product_id, "qty": 5}]
+    )
     assert order["success"] is True
 
     _proc_payload, process_id = _save_process(erp_client, isFinalStage=True)
@@ -263,11 +301,23 @@ def test_client_rename_cascades_into_client_orders_and_dispatch(erp_app, erp_cli
     _rpc(
         erp_client,
         "saveDispatch",
-        [{"lines": [{"productId": product_id, "productName": product_name, "qty": 2}], "clientName": old_name}],
+        [
+            {
+                "lines": [
+                    {"productId": product_id, "productName": product_name, "qty": 2}
+                ],
+                "clientName": old_name,
+            }
+        ],
         mutation=True,
     )
 
-    rename = _rpc(erp_client, "saveClient", [{"clientName": new_name, "originalClientName": old_name}], mutation=True)
+    rename = _rpc(
+        erp_client,
+        "saveClient",
+        [{"clientName": new_name, "originalClientName": old_name}],
+        mutation=True,
+    )
     assert rename.get_json()["success"] is True
 
     orders = _rpc(erp_client, "getClientOrdersData").get_json()["data"]
@@ -290,7 +340,12 @@ def test_get_client_orders_data_returns_success_envelope(erp_client):
 def test_save_client_order_requires_client(erp_app, erp_client):
     token = _get_bom_token(erp_app, erp_client)
     _product_name, product_id = _save_bom_product(erp_client, token)
-    resp = _rpc(erp_client, "saveClientOrder", [{"lines": [{"productId": product_id, "qty": 5}]}], mutation=True)
+    resp = _rpc(
+        erp_client,
+        "saveClientOrder",
+        [{"lines": [{"productId": product_id, "qty": 5}]}],
+        mutation=True,
+    )
     body = resp.get_json()
     assert body["success"] is False
     assert "Client is required" in body["message"]
@@ -304,7 +359,13 @@ def test_save_client_order_rejects_invalid_status(erp_app, erp_client):
     resp = _rpc(
         erp_client,
         "saveClientOrder",
-        [{"clientName": name, "status": "NotAStatus", "lines": [{"productId": product_id, "qty": 5}]}],
+        [
+            {
+                "clientName": name,
+                "status": "NotAStatus",
+                "lines": [{"productId": product_id, "qty": 5}],
+            }
+        ],
         mutation=True,
     )
     body = resp.get_json()
@@ -325,7 +386,9 @@ def test_save_client_order_rejects_product_not_in_bom(erp_client):
     assert "not defined in BOM" in body["message"]
 
 
-def test_save_client_order_drops_zero_qty_lines_requires_at_least_one_valid(erp_app, erp_client):
+def test_save_client_order_drops_zero_qty_lines_requires_at_least_one_valid(
+    erp_app, erp_client
+):
     token = _get_bom_token(erp_app, erp_client)
     _product_name, product_id = _save_bom_product(erp_client, token)
     _payload, name = _save_client(erp_client)
@@ -346,7 +409,9 @@ def test_save_client_order_creates_and_lists_grouped(erp_app, erp_client):
     product_name, product_id = _save_bom_product(erp_client, token)
     _payload, name = _save_client(erp_client)
 
-    result = _save_client_order(erp_client, name, [{"productId": product_id, "qty": 5, "lineRemarks": "note"}])
+    result = _save_client_order(
+        erp_client, name, [{"productId": product_id, "qty": 5, "lineRemarks": "note"}]
+    )
     assert result["success"] is True
     order_number = result["data"]["orderNumber"]
     assert order_number.startswith("ORD-")
@@ -375,7 +440,12 @@ def test_save_client_order_returns_fresh_row_for_in_place_patch(erp_app, erp_cli
     assert fresh_order["clientName"] == name
     assert fresh_order["lines"][0]["productId"] == product_id
 
-    edit = _save_client_order(erp_client, name, [{"productId": product_id, "qty": 9}], orderNumber=order_number)
+    edit = _save_client_order(
+        erp_client,
+        name,
+        [{"productId": product_id, "qty": 9}],
+        orderNumber=order_number,
+    )
     fresh_order = edit["data"]["order"]
     assert fresh_order["orderNumber"] == order_number
     assert fresh_order["lines"][0]["qty"] == 9
@@ -384,7 +454,9 @@ def test_save_client_order_returns_fresh_row_for_in_place_patch(erp_app, erp_cli
 def test_save_client_order_edit_preserves_pushed_count_per_product(erp_app, erp_client):
     token = _get_bom_token(erp_app, erp_client)
     _proc_payload, process_id = _save_final_stage_process_with_recipe(erp_client)
-    _product_name, product_id = _save_pushable_bom_product(erp_client, token, process_id)
+    _product_name, product_id = _save_pushable_bom_product(
+        erp_client, token, process_id
+    )
     _payload, client_name = _save_client(erp_client)
 
     create = _save_client_order(
@@ -396,7 +468,11 @@ def test_save_client_order_edit_preserves_pushed_count_per_product(erp_app, erp_
     assert create["success"] is True
     order_number = create["data"]["orderNumber"]
 
-    lots_after_create = [r for r in _rpc(erp_client, "getProductionData").get_json()["data"] if r["productId"] == product_id]
+    lots_after_create = [
+        r
+        for r in _rpc(erp_client, "getProductionData").get_json()["data"]
+        if r["productId"] == product_id
+    ]
     assert len(lots_after_create) == 2
 
     # Edit: the same two lines plus one genuinely new line for the same
@@ -423,17 +499,30 @@ def test_save_client_order_edit_preserves_pushed_count_per_product(erp_app, erp_
     )
     assert edit.get_json()["success"] is True
 
-    lots_after_edit = [r for r in _rpc(erp_client, "getProductionData").get_json()["data"] if r["productId"] == product_id]
+    lots_after_edit = [
+        r
+        for r in _rpc(erp_client, "getProductionData").get_json()["data"]
+        if r["productId"] == product_id
+    ]
     assert len(lots_after_edit) == 3
 
 
-def test_save_client_order_pushes_unambiguous_final_stage_line_into_production(erp_app, erp_client):
+def test_save_client_order_pushes_unambiguous_final_stage_line_into_production(
+    erp_app, erp_client
+):
     token = _get_bom_token(erp_app, erp_client)
     proc_payload, process_id = _save_final_stage_process_with_recipe(erp_client)
-    _product_name, product_id = _save_pushable_bom_product(erp_client, token, process_id)
+    _product_name, product_id = _save_pushable_bom_product(
+        erp_client, token, process_id
+    )
     _payload, client_name = _save_client(erp_client)
 
-    result = _save_client_order(erp_client, client_name, [{"productId": product_id, "qty": 5}], status="Order Confirmed")
+    result = _save_client_order(
+        erp_client,
+        client_name,
+        [{"productId": product_id, "qty": 5}],
+        status="Order Confirmed",
+    )
     assert result["success"] is True
     assert "queued into Production" in result["message"]
     order_number = result["data"]["orderNumber"]
@@ -452,7 +541,9 @@ def test_save_client_order_pushes_unambiguous_final_stage_line_into_production(e
     assert "Auto-queued from PI" in lot["remarks"]
 
 
-def test_save_client_order_push_to_production_matches_lowercase_common_color_group(erp_app, erp_client):
+def test_save_client_order_push_to_production_matches_lowercase_common_color_group(
+    erp_app, erp_client
+):
     """GAS e37529e: a recipe's Color Sub-Group of "Common"/"common" was
     compared exactly against the COMMON sentinel in
     _pushOrderLinesToProduction, so a lowercase spelling silently dropped
@@ -466,28 +557,53 @@ def test_save_client_order_push_to_production_matches_lowercase_common_color_gro
     _proc_payload, process_id = _save_process(
         erp_client,
         isFinalStage=True,
-        components=[{"itemName": item, "qtyPerUnit": 2, "sourceType": "ITEM", "colorGroup": "common"}],
+        components=[
+            {
+                "itemName": item,
+                "qtyPerUnit": 2,
+                "sourceType": "ITEM",
+                "colorGroup": "common",
+            }
+        ],
     )
-    _product_name, product_id = _save_pushable_bom_product(erp_client, token, process_id)
+    _product_name, product_id = _save_pushable_bom_product(
+        erp_client, token, process_id
+    )
     _payload, client_name = _save_client(erp_client)
 
-    result = _save_client_order(erp_client, client_name, [{"productId": product_id, "qty": 5}], status="Order Confirmed")
+    result = _save_client_order(
+        erp_client,
+        client_name,
+        [{"productId": product_id, "qty": 5}],
+        status="Order Confirmed",
+    )
     assert result["success"] is True
     assert "queued into Production" in result["message"]
 
     prod = _rpc(erp_client, "getProductionData").get_json()["data"]
     lot = next(r for r in prod if r["productId"] == product_id)
-    assert lot["componentsConsumed"], "lowercase 'common' colorGroup should still be consumed"
+    assert lot["componentsConsumed"], (
+        "lowercase 'common' colorGroup should still be consumed"
+    )
     assert lot["componentsConsumed"][0]["itemName"] == item
     assert lot["componentsConsumed"][0]["qty"] == 10  # qtyPerUnit(2) * lineQty(5)
 
 
-def test_save_client_order_needs_manual_production_when_unresolvable(erp_app, erp_client):
+def test_save_client_order_needs_manual_production_when_unresolvable(
+    erp_app, erp_client
+):
     token = _get_bom_token(erp_app, erp_client)
-    _product_name, product_id = _save_bom_product(erp_client, token)  # no processId -> unresolvable
+    _product_name, product_id = _save_bom_product(
+        erp_client, token
+    )  # no processId -> unresolvable
 
     _payload, client_name = _save_client(erp_client)
-    result = _save_client_order(erp_client, client_name, [{"productId": product_id, "qty": 5}], status="Order Confirmed")
+    result = _save_client_order(
+        erp_client,
+        client_name,
+        [{"productId": product_id, "qty": 5}],
+        status="Order Confirmed",
+    )
     assert result["success"] is True
     assert "manual Production setup" in result["message"]
 
@@ -500,18 +616,42 @@ def test_save_client_order_needs_manual_production_when_unresolvable(erp_app, er
 def test_save_client_order_needs_manual_production_when_multicolor(erp_app, erp_client):
     token = _get_bom_token(erp_app, erp_client)
     upstream_payload, upstream_id = _save_process(erp_client)
-    _rpc(erp_client, "saveWarehousePoolOpening", [{"processId": upstream_id, "qty": 10, "color": "Black"}], mutation=True)
-    _rpc(erp_client, "saveWarehousePoolOpening", [{"processId": upstream_id, "qty": 10, "color": "Blue"}], mutation=True)
+    _rpc(
+        erp_client,
+        "saveWarehousePoolOpening",
+        [{"processId": upstream_id, "qty": 10, "color": "Black"}],
+        mutation=True,
+    )
+    _rpc(
+        erp_client,
+        "saveWarehousePoolOpening",
+        [{"processId": upstream_id, "qty": 10, "color": "Blue"}],
+        mutation=True,
+    )
 
     _downstream_payload, downstream_id = _save_process(
         erp_client,
         isFinalStage=True,
-        components=[{"itemName": upstream_payload["outputItemName"], "qtyPerUnit": 1, "sourceType": "POOL", "colorGroup": "COMMON"}],
+        components=[
+            {
+                "itemName": upstream_payload["outputItemName"],
+                "qtyPerUnit": 1,
+                "sourceType": "POOL",
+                "colorGroup": "COMMON",
+            }
+        ],
     )
-    _product_name, product_id = _save_pushable_bom_product(erp_client, token, downstream_id)
+    _product_name, product_id = _save_pushable_bom_product(
+        erp_client, token, downstream_id
+    )
 
     _payload, client_name = _save_client(erp_client)
-    result = _save_client_order(erp_client, client_name, [{"productId": product_id, "qty": 5}], status="Order Confirmed")
+    result = _save_client_order(
+        erp_client,
+        client_name,
+        [{"productId": product_id, "qty": 5}],
+        status="Order Confirmed",
+    )
     assert result["success"] is True
     assert "manual Production setup" in result["message"]
 
@@ -521,7 +661,9 @@ def test_delete_client_order_blocked_by_dispatch_reference(erp_app, erp_client):
     product_name, product_id = _save_bom_product(erp_client, token)
     _payload, client_name = _save_client(erp_client)
 
-    order = _save_client_order(erp_client, client_name, [{"productId": product_id, "qty": 5}])
+    order = _save_client_order(
+        erp_client, client_name, [{"productId": product_id, "qty": 5}]
+    )
     order_number = order["data"]["orderNumber"]
 
     _proc_payload, process_id = _save_process(erp_client, isFinalStage=True)
@@ -529,7 +671,14 @@ def test_delete_client_order_blocked_by_dispatch_reference(erp_app, erp_client):
     _rpc(
         erp_client,
         "saveDispatch",
-        [{"lines": [{"productId": product_id, "productName": product_name, "qty": 2}], "orderNumber": order_number}],
+        [
+            {
+                "lines": [
+                    {"productId": product_id, "productName": product_name, "qty": 2}
+                ],
+                "orderNumber": order_number,
+            }
+        ],
         mutation=True,
     )
 
@@ -542,10 +691,17 @@ def test_delete_client_order_blocked_by_dispatch_reference(erp_app, erp_client):
 def test_delete_client_order_blocked_by_production_reference(erp_app, erp_client):
     token = _get_bom_token(erp_app, erp_client)
     _proc_payload, process_id = _save_final_stage_process_with_recipe(erp_client)
-    _product_name, product_id = _save_pushable_bom_product(erp_client, token, process_id)
+    _product_name, product_id = _save_pushable_bom_product(
+        erp_client, token, process_id
+    )
     _payload, client_name = _save_client(erp_client)
 
-    order = _save_client_order(erp_client, client_name, [{"productId": product_id, "qty": 5}], status="Order Confirmed")
+    order = _save_client_order(
+        erp_client,
+        client_name,
+        [{"productId": product_id, "qty": 5}],
+        status="Order Confirmed",
+    )
     order_number = order["data"]["orderNumber"]
 
     resp = _rpc(erp_client, "deleteClientOrder", [order_number], mutation=True)
@@ -559,8 +715,12 @@ def test_delete_client_orders_bulk_skip_and_report(erp_app, erp_client):
     product_name, product_id = _save_bom_product(erp_client, token)
     _payload, client_name = _save_client(erp_client)
 
-    a = _save_client_order(erp_client, client_name, [{"productId": product_id, "qty": 5}])
-    b = _save_client_order(erp_client, client_name, [{"productId": product_id, "qty": 3}])
+    a = _save_client_order(
+        erp_client, client_name, [{"productId": product_id, "qty": 5}]
+    )
+    b = _save_client_order(
+        erp_client, client_name, [{"productId": product_id, "qty": 3}]
+    )
     order_a = a["data"]["orderNumber"]
     order_b = b["data"]["orderNumber"]
 
@@ -569,11 +729,20 @@ def test_delete_client_orders_bulk_skip_and_report(erp_app, erp_client):
     _rpc(
         erp_client,
         "saveDispatch",
-        [{"lines": [{"productId": product_id, "productName": product_name, "qty": 1}], "orderNumber": order_a}],
+        [
+            {
+                "lines": [
+                    {"productId": product_id, "productName": product_name, "qty": 1}
+                ],
+                "orderNumber": order_a,
+            }
+        ],
         mutation=True,
     )
 
-    resp = _rpc(erp_client, "deleteClientOrdersBulk", [[order_a, order_b]], mutation=True)
+    resp = _rpc(
+        erp_client, "deleteClientOrdersBulk", [[order_a, order_b]], mutation=True
+    )
     body = resp.get_json()
     assert body["success"] is True
     assert "Deleted 1" in body["message"]
@@ -602,11 +771,15 @@ def test_save_dispatch_blocks_over_fulfilling_specific_order_line(erp_app, erp_c
     product_name, product_id = _save_bom_product(erp_client, token)
     _payload, client_name = _save_client(erp_client)
 
-    order = _save_client_order(erp_client, client_name, [{"productId": product_id, "qty": 3}])
+    order = _save_client_order(
+        erp_client, client_name, [{"productId": product_id, "qty": 3}]
+    )
     order_number = order["data"]["orderNumber"]
 
     _proc_payload, process_id = _save_process(erp_client, isFinalStage=True)
-    _complete_production_lot(erp_client, process_id, product_id, 100)  # plenty of aggregate stock
+    _complete_production_lot(
+        erp_client, process_id, product_id, 100
+    )  # plenty of aggregate stock
 
     # Aggregate Ready-to-Dispatch has 100 available, but this specific PI
     # line only ordered 3 -- the per-order-line guard (now real, since
@@ -614,7 +787,14 @@ def test_save_dispatch_blocks_over_fulfilling_specific_order_line(erp_app, erp_c
     resp = _rpc(
         erp_client,
         "saveDispatch",
-        [{"lines": [{"productId": product_id, "productName": product_name, "qty": 5}], "orderNumber": order_number}],
+        [
+            {
+                "lines": [
+                    {"productId": product_id, "productName": product_name, "qty": 5}
+                ],
+                "orderNumber": order_number,
+            }
+        ],
         mutation=True,
     )
     body = resp.get_json()
@@ -626,7 +806,14 @@ def test_save_dispatch_blocks_over_fulfilling_specific_order_line(erp_app, erp_c
     ok = _rpc(
         erp_client,
         "saveDispatch",
-        [{"lines": [{"productId": product_id, "productName": product_name, "qty": 3}], "orderNumber": order_number}],
+        [
+            {
+                "lines": [
+                    {"productId": product_id, "productName": product_name, "qty": 3}
+                ],
+                "orderNumber": order_number,
+            }
+        ],
         mutation=True,
     )
     ok_body = ok.get_json()

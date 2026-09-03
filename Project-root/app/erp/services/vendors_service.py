@@ -58,7 +58,9 @@ def _rename_vendor_everywhere(cur, old_name: str, new_name: str) -> None:
         table = config_maps.TABLE_NAMES.get(sheet_key)
         if not table:
             continue
-        rename_utils.rename_in_column(cur, table, config_maps.to_snake_case(field), old, new)
+        rename_utils.rename_in_column(
+            cur, table, config_maps.to_snake_case(field), old, new
+        )
 
     # Items Master's vendor list is a normal relational column here (not the
     # source's JSON-in-a-cell), and it's real today -- unlike every target
@@ -92,12 +94,17 @@ def ensure_vendor(cur, name: str, contact: str) -> None:
             (name, contact, "Auto-extracted on save"),
         )
     elif contact and not (row["contact"] or "").strip():
-        cur.execute("UPDATE erp.vendors SET contact = %s WHERE id = %s", (contact, row["id"]))
+        cur.execute(
+            "UPDATE erp.vendors SET contact = %s WHERE id = %s", (contact, row["id"])
+        )
 
 
 @rpc_method("getVendorsData")
 def get_vendors_data():
-    with database.get_conn(cursor_factory=psycopg2.extras.RealDictCursor) as (_conn, cur):
+    with database.get_conn(cursor_factory=psycopg2.extras.RealDictCursor) as (
+        _conn,
+        cur,
+    ):
         cur.execute(
             """
             SELECT vendor_name, contact, address, gstin, remarks
@@ -136,7 +143,9 @@ def save_vendor(conn, cur, form_data):
     remarks = str(form_data.get("remarks") or "").strip()
 
     is_edit = bool(form_data.get("originalVendorName"))
-    original_name = str(form_data.get("originalVendorName")).strip() if is_edit else new_name
+    original_name = (
+        str(form_data.get("originalVendorName")).strip() if is_edit else new_name
+    )
 
     cur.execute(
         "SELECT id FROM erp.vendors WHERE lower(vendor_name) = lower(%s) AND deleted_at IS NULL",
@@ -178,7 +187,11 @@ def save_vendor(conn, cur, form_data):
             (new_name, contact, address, gstin, remarks, user_id),
         )
 
-    message = f'Vendor "{new_name}" updated.' if is_edit else f'Vendor "{new_name}" registered.'
+    message = (
+        f'Vendor "{new_name}" updated.'
+        if is_edit
+        else f'Vendor "{new_name}" registered.'
+    )
     return build_response(True, {"name": new_name}, message)
 
 
@@ -207,7 +220,11 @@ def delete_vendor(conn, cur, vendor_name):
 @rpc_method("deleteVendorsBulk", mutation=True)
 @database.transactional
 def delete_vendors_bulk(conn, cur, vendor_names):
-    targets = {str(n or "").strip().lower() for n in (vendor_names or []) if str(n or "").strip()}
+    targets = {
+        str(n or "").strip().lower()
+        for n in (vendor_names or [])
+        if str(n or "").strip()
+    }
     if not targets:
         return build_response(True, None, "No vendors selected.")
 
@@ -254,9 +271,23 @@ def sync_vendors_from_po_history(conn, cur):
 
         item_name = (row["item_name"] or "").strip()
         rate = row["base_rate"]
-        if item_name and rate is not None and float(rate) >= items_service.MIN_VENDOR_RATE:
-            items_service._auto_extract_item(cur, item_name, row["size"], row["narration"], row["unit"], vendor_name, rate)
+        if (
+            item_name
+            and rate is not None
+            and float(rate) >= items_service.MIN_VENDOR_RATE
+        ):
+            items_service._auto_extract_item(
+                cur,
+                item_name,
+                row["size"],
+                row["narration"],
+                row["unit"],
+                vendor_name,
+                rate,
+            )
             items_synced += 1
 
     message = f"Synced {len(synced_vendors)} vendor(s) and {items_synced} item-vendor rate(s) from PO history."
-    return build_response(True, {"vendors": len(synced_vendors), "items": items_synced}, message)
+    return build_response(
+        True, {"vendors": len(synced_vendors), "items": items_synced}, message
+    )

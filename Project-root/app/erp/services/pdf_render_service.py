@@ -175,7 +175,8 @@ def _document(body_html: str, landscape: bool, density: str = "") -> str:
     density = density if density in _FIT_TIERS else ""
     tier_css = (
         f"body.{density} th, body.{density} td {{ {_FIT_TIERS[density]} }}"
-        if density else ""
+        if density
+        else ""
     )
     return (
         "<!doctype html><html><head><meta charset='utf-8'>"
@@ -220,7 +221,10 @@ def probe() -> tuple[bool, str]:
     try:
         import weasyprint
     except ImportError:
-        return False, "the 'weasyprint' package is not installed (pip install -r requirements.txt)"
+        return (
+            False,
+            "the 'weasyprint' package is not installed (pip install -r requirements.txt)",
+        )
     except OSError as exc:
         return False, (
             "weasyprint is installed but its system libraries are missing "
@@ -294,7 +298,7 @@ def safe_filename(name: str, fallback: str = "Document") -> str:
     separators and parent traversal -- rather than sanitising around them.
     """
     name = str(name or "").strip().replace("\\", "/")
-    name = name.rsplit("/", 1)[-1]              # drop any path component
+    name = name.rsplit("/", 1)[-1]  # drop any path component
     name = re.sub(r'[<>:"|?*\x00-\x1f]', "-", name)
     name = name.strip(". ") or fallback
     if not name.lower().endswith(".pdf"):
@@ -350,8 +354,10 @@ def render_batch(documents: list[dict]) -> tuple[bytes, list[str]]:
         raise ValueError("This export is too large to render in one request.")
 
     names = dedupe_filenames(
-        [safe_filename(d.get("filename"), f"Document_{i + 1}")
-         for i, d in enumerate(documents)]
+        [
+            safe_filename(d.get("filename"), f"Document_{i + 1}")
+            for i, d in enumerate(documents)
+        ]
     )
 
     buffer = io.BytesIO()
@@ -379,10 +385,12 @@ if __name__ == "__main__":  # pragma: no cover - operational tool
         print("output  : FAILED -- not a PDF")
         raise SystemExit(1)
 
-    blob, names = render_batch([
-        {"filename": "PO_1204_Mahadev.pdf", "html": "<h1>One</h1>"},
-        {"filename": "PO_1204_Mahadev.pdf", "html": "<h1>Two</h1>"},
-    ])
+    blob, names = render_batch(
+        [
+            {"filename": "PO_1204_Mahadev.pdf", "html": "<h1>One</h1>"},
+            {"filename": "PO_1204_Mahadev.pdf", "html": "<h1>Two</h1>"},
+        ]
+    )
     print(f"batch   : ok -- {len(blob):,} bytes, entries={names}")
 
     # The check that matters for A4: a wide table must keep every column.
@@ -408,7 +416,9 @@ if __name__ == "__main__":  # pragma: no cover - operational tool
             f" x {float(page.mediabox.height) * mm:.0f} mm"
         )
         if lost:
-            print(f"columns : FAILED -- {len(lost)} of {columns} cut from the page: {lost}")
+            print(
+                f"columns : FAILED -- {len(lost)} of {columns} cut from the page: {lost}"
+            )
             raise SystemExit(1)
         print(f"columns : ok -- all {columns} survived on A4")
         print(f"text    : ok -- {len(text)} extractable characters")

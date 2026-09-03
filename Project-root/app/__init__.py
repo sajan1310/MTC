@@ -66,22 +66,24 @@ _DEPRECATION_WARNED: set[str] = set()
 # config.py's base class used to fall back to; it stays listed so that
 # selecting DevelopmentConfig in a production environment is still rejected
 # rather than silently accepted.
-WEAK_SECRET_KEYS = frozenset({
-    "dev-insecure-key",
-    "dev",
-    "development",
-    "changeme",
-    "change-me",
-    "secret",
-    "secret-key",
-    "supersecret",
-    "password",
-    "test",
-    "testing",
-    "test-secret-key-for-ci",
-    "your-secret-key",
-    "please-change-this",
-})
+WEAK_SECRET_KEYS = frozenset(
+    {
+        "dev-insecure-key",
+        "dev",
+        "development",
+        "changeme",
+        "change-me",
+        "secret",
+        "secret-key",
+        "supersecret",
+        "password",
+        "test",
+        "testing",
+        "test-secret-key-for-ci",
+        "your-secret-key",
+        "please-change-this",
+    }
+)
 
 # 32 characters is the floor for a value that signs session cookies and
 # password-reset tokens. `secrets.token_urlsafe(48)` produces 64.
@@ -185,7 +187,7 @@ def _load_config(app: Flask, config_name: str) -> None:
     cfg_cls = CONFIG_MAP.get(config_name) or CONFIG_MAP.get("production")
     if cfg_cls is None:
         raise RuntimeError(f"Unknown config name: {config_name}")
-    
+
     # PHASE 1C: For TestingConfig, instantiate to trigger __init__ validation
     # that prevents test DB from being set to production DB name
     if config_name == "testing":
@@ -213,9 +215,7 @@ def _load_config(app: Flask, config_name: str) -> None:
     }
     if config_name == "testing":
         override_keys.discard("DATABASE_URL")
-    app.config.update(
-        {k: v for k, v in os.environ.items() if k in override_keys}
-    )
+    app.config.update({k: v for k, v in os.environ.items() if k in override_keys})
 
     app.config.setdefault("RATELIMIT_STORAGE_URL", "redis://localhost:6379/0")
     app.config.setdefault("RATELIMIT_STRATEGY", "fixed-window")
@@ -272,8 +272,8 @@ def _load_config(app: Flask, config_name: str) -> None:
             "Refusing to start: invalid or missing configuration -- "
             + ", ".join(missing)
             + ". Set these in the environment (see deploy/mtc.env.example). "
-            "Generate a secret with: python -c \"import secrets; "
-            "print(secrets.token_urlsafe(48))\""
+            'Generate a secret with: python -c "import secrets; '
+            'print(secrets.token_urlsafe(48))"'
         )
 
 
@@ -302,9 +302,15 @@ def _init_logging(app: Flask) -> None:
     root_logger = logging.getLogger()
     werk_logger = logging.getLogger("werkzeug")
 
-    root_has_stream = any(isinstance(h, logging.StreamHandler) for h in root_logger.handlers)
-    werk_has_stream = any(isinstance(h, logging.StreamHandler) for h in werk_logger.handlers)
-    app_has_stream = any(isinstance(h, logging.StreamHandler) for h in app.logger.handlers)
+    root_has_stream = any(
+        isinstance(h, logging.StreamHandler) for h in root_logger.handlers
+    )
+    werk_has_stream = any(
+        isinstance(h, logging.StreamHandler) for h in werk_logger.handlers
+    )
+    app_has_stream = any(
+        isinstance(h, logging.StreamHandler) for h in app.logger.handlers
+    )
     if not app_has_stream and not (root_has_stream or werk_has_stream):
         app.logger.addHandler(sh)
     if not root_has_stream:
@@ -359,7 +365,13 @@ def _register_error_handlers(app: Flask) -> None:
     @app.errorhandler(CSRFError)
     def handle_csrf_error(e):
         if request.path.startswith("/api/"):
-            return jsonify({"success": False, "message": f"CSRF error: {e.description}", "error": e.description}), 400
+            return jsonify(
+                {
+                    "success": False,
+                    "message": f"CSRF error: {e.description}",
+                    "error": e.description,
+                }
+            ), 400
         return render_template("500.html"), 400
 
 
@@ -370,19 +382,21 @@ def _register_error_handlers(app: Flask) -> None:
 # three more of these plus its own aggregates. A loop over any one of them
 # saturates all four gunicorn workers. Until PERF-002 makes them cheap, they
 # get a much lower ceiling than ordinary calls.
-EXPENSIVE_RPC_METHODS = frozenset({
-    "getStockData",
-    "getDashboardData",
-    "getMobileDashboard",
-    "getStockAdjustmentHistory",
-    "getItemLedgerData",
-    "getProductionData",
-    "getReadyToDispatchData",
-    "getContractorLedgerData",
-    "getBOMProductionData",
-    "getItemIdentityDriftReport",
-    "getBomProcessComponentsDrift",
-})
+EXPENSIVE_RPC_METHODS = frozenset(
+    {
+        "getStockData",
+        "getDashboardData",
+        "getMobileDashboard",
+        "getStockAdjustmentHistory",
+        "getItemLedgerData",
+        "getProductionData",
+        "getReadyToDispatchData",
+        "getContractorLedgerData",
+        "getBOMProductionData",
+        "getItemIdentityDriftReport",
+        "getBomProcessComponentsDrift",
+    }
+)
 
 
 def _rpc_rate_limit_key() -> str:
@@ -444,13 +458,20 @@ def _verify_schema_is_current(app: Flask) -> None:
         # tests/conftest.py builds its own schema and applies migrations
         # itself, and constructs ~150 apps per session.
         return
-    if os.getenv("SKIP_MIGRATION_CHECK", "").strip().lower() in ("1", "true", "yes", "on"):
+    if os.getenv("SKIP_MIGRATION_CHECK", "").strip().lower() in (
+        "1",
+        "true",
+        "yes",
+        "on",
+    ):
         app.logger.warning("[SCHEMA] Migration check skipped by SKIP_MIGRATION_CHECK.")
         return
 
     import pathlib
 
-    migrations_dir = pathlib.Path(__file__).resolve().parent.parent / "migrations" / "erp"
+    migrations_dir = (
+        pathlib.Path(__file__).resolve().parent.parent / "migrations" / "erp"
+    )
     if not migrations_dir.is_dir():
         return
 
@@ -496,8 +517,7 @@ def _verify_schema_is_current(app: Flask) -> None:
             "Refusing to start: %d database migration(s) have not been applied, so "
             "this code is newer than the schema it is running against -- mutations "
             "will fail at runtime with column-not-found errors. Pending: %s. "
-            "Run: python migrations/erp/runner.py"
-            % (len(pending), ", ".join(pending))
+            "Run: python migrations/erp/runner.py" % (len(pending), ", ".join(pending))
         )
 
 
@@ -540,7 +560,9 @@ def _register_process_cleanup(app: Flask) -> None:
             pool = app.extensions.get("ratelimit_redis_pool")
             if pool is not None and hasattr(pool, "disconnect"):
                 pool.disconnect()
-                logger.info("[RATE LIMIT] Redis connection pool closed at process exit.")
+                logger.info(
+                    "[RATE LIMIT] Redis connection pool closed at process exit."
+                )
         except Exception:  # noqa: BLE001
             pass
 
@@ -597,8 +619,12 @@ def create_app(config_name: str | None = None) -> Flask:
 
     # Configure rate limiter via app.config before init_app
     # Keep defaults in a config key so we don't reassign limiter objects
-    app.config.setdefault("RATELIMIT_STORAGE_URL", app.config.get("RATELIMIT_STORAGE_URL"))
-    app.config.setdefault("RATELIMIT_STRATEGY", app.config.get("RATELIMIT_STRATEGY", "fixed-window"))
+    app.config.setdefault(
+        "RATELIMIT_STORAGE_URL", app.config.get("RATELIMIT_STORAGE_URL")
+    )
+    app.config.setdefault(
+        "RATELIMIT_STRATEGY", app.config.get("RATELIMIT_STRATEGY", "fixed-window")
+    )
     # Set default limits via config so limiter picks them up on init.
     # Use a comma-separated string by default because some config loaders
     # may coerce lists to strings; we also normalise any list/tuple values
@@ -609,18 +635,25 @@ def create_app(config_name: str | None = None) -> Flask:
     # PHASE 1B: Harden rate limiter - in production, fail-fast if Redis is misconfigured
     storage = str(app.config.get("RATELIMIT_STORAGE_URL", "")).strip()
     is_production = config_name == "production" or app.config.get("ENV") == "production"
-    
+
     if storage and not storage.startswith("memory://"):
         try:
             from redis import Redis, ConnectionPool  # type: ignore
 
-            pool = ConnectionPool.from_url(storage, max_connections=50, decode_responses=True,
-                                            socket_connect_timeout=1, socket_timeout=1)
+            pool = ConnectionPool.from_url(
+                storage,
+                max_connections=50,
+                decode_responses=True,
+                socket_connect_timeout=1,
+                socket_timeout=1,
+            )
             client = Redis(connection_pool=pool)
             client.ping()
             # Store pool on app so we can close it in teardown
             app.extensions["ratelimit_redis_pool"] = pool
-            app.logger.info("[RATE LIMIT] Redis connectivity validated; rate limiter using Redis backend.")
+            app.logger.info(
+                "[RATE LIMIT] Redis connectivity validated; rate limiter using Redis backend."
+            )
         except ImportError:
             # Optional dependency missing
             if is_production:
@@ -628,7 +661,9 @@ def create_app(config_name: str | None = None) -> Flask:
                     "FATAL: redis package required for production rate limiting but not installed. "
                     "Install redis package or set RATELIMIT_STORAGE_URL=memory:// to fallback (not recommended for production)."
                 )
-            app.logger.warning("[RATE LIMIT] redis package not installed; falling back to in-memory rate limit (development only)")
+            app.logger.warning(
+                "[RATE LIMIT] redis package not installed; falling back to in-memory rate limit (development only)"
+            )
             app.config["RATELIMIT_STORAGE_URL"] = "memory://"
         except Exception as e:
             # Connection failed
@@ -637,7 +672,10 @@ def create_app(config_name: str | None = None) -> Flask:
                     f"FATAL: Redis rate limiter backend unreachable in production: {e}. "
                     f"Verify RATELIMIT_STORAGE_URL={storage} is correct and Redis is running."
                 )
-            app.logger.warning("[RATE LIMIT] Redis unavailable in development, falling back to in-memory: %s", e)
+            app.logger.warning(
+                "[RATE LIMIT] Redis unavailable in development, falling back to in-memory: %s",
+                e,
+            )
             app.config["RATELIMIT_STORAGE_URL"] = "memory://"
 
     # Initialize limiter with the configured app-level settings (single instance)
@@ -719,13 +757,21 @@ def create_app(config_name: str | None = None) -> Flask:
 
     # CORS: restrict to development origins when in debug
     if app.debug:
-        CORS(app, supports_credentials=True, origins=["http://127.0.0.1:5000"],
-             allow_headers=["Content-Type", "X-CSRFToken"],
-             methods=["GET", "POST", "PUT", "DELETE", "OPTIONS"])
+        CORS(
+            app,
+            supports_credentials=True,
+            origins=["http://127.0.0.1:5000"],
+            allow_headers=["Content-Type", "X-CSRFToken"],
+            methods=["GET", "POST", "PUT", "DELETE", "OPTIONS"],
+        )
     else:
-        CORS(app, supports_credentials=True, origins=[app.config.get("BASE_URL", "https://yourdomain.com")],
-             allow_headers=["Content-Type", "X-CSRFToken"],
-             methods=["GET", "POST", "PUT", "DELETE", "OPTIONS"])
+        CORS(
+            app,
+            supports_credentials=True,
+            origins=[app.config.get("BASE_URL", "https://yourdomain.com")],
+            allow_headers=["Content-Type", "X-CSRFToken"],
+            methods=["GET", "POST", "PUT", "DELETE", "OPTIONS"],
+        )
 
     # Security headers (CSP/HSTS/X-Frame-Options/etc). Skipped under TESTING:
     # force_https redirects every plain-http request (the test client's
@@ -836,12 +882,18 @@ def create_app(config_name: str | None = None) -> Flask:
         if (app.debug or app.config.get("TESTING")) and user_id == str(DEMO_USER_ID):
             return build_demo_user()
         try:
-            with database.get_conn(cursor_factory=psycopg2.extras.DictCursor) as (conn, cur):
+            with database.get_conn(cursor_factory=psycopg2.extras.DictCursor) as (
+                conn,
+                cur,
+            ):
                 # deleted_at IS NULL: a deactivated user (users_service.py's
                 # deactivateUser) must not keep an existing session alive --
                 # otherwise "deactivate" only blocked future logins, not the
                 # session already in the browser.
-                cur.execute("SELECT * FROM users WHERE user_id = %s AND deleted_at IS NULL", (user_id,))
+                cur.execute(
+                    "SELECT * FROM users WHERE user_id = %s AND deleted_at IS NULL",
+                    (user_id,),
+                )
                 row = cur.fetchone()
                 if row:
                     # Credential-fingerprint check (SEC-006). A session pinned
@@ -950,9 +1002,7 @@ def create_app(config_name: str | None = None) -> Flask:
         "/dashboard", endpoint="main.dashboard", view_func=_erp_home_redirect
     )
     app.add_url_rule("/", endpoint="home", view_func=_erp_home_redirect)
-    app.add_url_rule(
-        "/dashboard", endpoint="dashboard", view_func=_erp_home_redirect
-    )
+    app.add_url_rule("/dashboard", endpoint="dashboard", view_func=_erp_home_redirect)
 
     # /health -- the endpoint DEPLOYMENT.md's post-deployment step 1, its
     # Kubernetes livenessProbe example and PRODUCTION_READINESS.md's
@@ -970,7 +1020,10 @@ def create_app(config_name: str | None = None) -> Flask:
         from datetime import datetime, timezone
 
         timestamp = (
-            datetime.now(timezone.utc).replace(microsecond=0).isoformat().replace("+00:00", "Z")
+            datetime.now(timezone.utc)
+            .replace(microsecond=0)
+            .isoformat()
+            .replace("+00:00", "Z")
         )
         try:
             with database.get_conn() as (_conn, cur):
@@ -1018,7 +1071,6 @@ def create_app(config_name: str | None = None) -> Flask:
     ledger_audit_service.start_ledger_audit_scheduler(app)
     backup_service.start_backup_scheduler(app)
 
-
     # If specific view function names need exemption but are only available
     # after registration, we try to exempt them but log missing keys.
     # Only exempt explicit endpoints that require CSRF exemption:
@@ -1029,7 +1081,10 @@ def create_app(config_name: str | None = None) -> Flask:
             func = app.view_functions.get(view_name)
             if func:
                 csrf.exempt(func)
-                app.logger.debug("CSRF exemption applied to view: %s (authenticated API endpoint)", view_name)
+                app.logger.debug(
+                    "CSRF exemption applied to view: %s (authenticated API endpoint)",
+                    view_name,
+                )
         except Exception as e:
             app.logger.debug("Failed to exempt view %s from CSRF: %s", view_name, e)
 
@@ -1045,16 +1100,20 @@ def create_app(config_name: str | None = None) -> Flask:
     @app.before_request
     def _underscore_api_deprecation_check():
         from .middleware.error_handling import request_id_middleware
-        
+
         # PHASE 5: Initialize request ID middleware for tracking
         request_id_middleware()
-        
+
         path = request.path or ""
         if path.startswith("/api/") and "_" in path:
             if path in _DEPRECATION_WARNED:
                 return
             suggested = path.replace("_", "-")
-            app.logger.warning("Deprecated API path used: %s — prefer %s (hyphenated).", path, suggested)
+            app.logger.warning(
+                "Deprecated API path used: %s — prefer %s (hyphenated).",
+                path,
+                suggested,
+            )
             _DEPRECATION_WARNED.add(path)
             # Store suggestion to attach to the response later
             g._api_deprecation_suggestion = suggested
@@ -1062,14 +1121,14 @@ def create_app(config_name: str | None = None) -> Flask:
     @app.after_request
     def _attach_deprecation_header(response):
         from .middleware.error_handling import log_response_handler
-        
+
         try:
             suggestion = getattr(g, "_api_deprecation_suggestion", None)
             if suggestion and response.status_code < 400:
                 response.headers.setdefault("X-API-Deprecation", suggestion)
         except Exception:
             app.logger.debug("Error attaching deprecation header", exc_info=True)
-        
+
         # PHASE 5: Log response with request tracking
         return log_response_handler()(response)
 
@@ -1098,14 +1157,24 @@ def create_app(config_name: str | None = None) -> Flask:
     _register_process_cleanup(app)
 
     # Production debug mode sanity check: do not allow app.debug in production
-    if (config_name == "production" or app.config.get("ENV") == "production") and app.debug:
-        raise RuntimeError("Application running with debug=True in production environment")
+    if (
+        config_name == "production" or app.config.get("ENV") == "production"
+    ) and app.debug:
+        raise RuntimeError(
+            "Application running with debug=True in production environment"
+        )
 
     return app
 
 
 # Backwards-compatible exports
-from .utils import get_or_create_user  # re-export for backward compatibility in tests  # noqa: E402
+# noqa must sit on the line the diagnostic is reported on -- the `from`, not
+# the closing paren. It was a single line with both comments trailing until
+# ruff format split it to fit the line limit, which moved the suppression two
+# lines down and let E402 through.
+from .utils import (  # noqa: E402  -- re-export kept for backward compatibility in tests
+    get_or_create_user,
+)
 
 __all__ = [
     "create_app",

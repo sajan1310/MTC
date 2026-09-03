@@ -119,7 +119,12 @@ def test_zzz_debug_no_login(app):
     print("ZZZDEBUG CONFIG LOGIN_DISABLED:", app.config.get("LOGIN_DISABLED"))
     with app.test_client() as client:
         r = client.get("/erp")
-        print("ZZZDEBUG no-login /erp status:", r.status_code, "location:", r.headers.get("Location"))
+        print(
+            "ZZZDEBUG no-login /erp status:",
+            r.status_code,
+            "location:",
+            r.headers.get("Location"),
+        )
 
 
 # ── Offline password for Google-created accounts ──────────────────────────

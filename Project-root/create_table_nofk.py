@@ -1,7 +1,8 @@
 #!/usr/bin/env python
 import os
 import sys
-os.chdir('c:\\Users\\erkar\\OneDrive\\Desktop\\MTC\\Project-root')
+
+os.chdir("c:\\Users\\erkar\\OneDrive\\Desktop\\MTC\\Project-root")
 sys.path.insert(0, os.getcwd())
 from app import create_app  # noqa: E402
 from database import get_conn  # noqa: E402
@@ -18,7 +19,7 @@ with app.app_context():
         """)
         for row in cur.fetchall():
             print(f"  {row}")
-        
+
         # Try to create the table without FK constraints first
         print("\nAttempting to create table without FKs...")
         try:
@@ -36,7 +37,7 @@ with app.app_context():
             """)
             conn.commit()
             print("SUCCESS: Table created without FKs")
-            
+
             # Now add FKs one by one
             print("\nAdding FK constraints...")
             fks = [
@@ -45,7 +46,7 @@ with app.app_context():
                 ("variant_usage_id", "variant_usage", "id"),
                 ("created_by", "users", "id"),
             ]
-            
+
             for col, ref_table, ref_col in fks:
                 try:
                     cur.execute(f"""

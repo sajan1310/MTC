@@ -9,7 +9,9 @@ import database
 
 def _rpc(client, method, args=None, mutation=False):
     headers = {"X-Mutation-Id": str(uuid.uuid4())} if mutation else {}
-    return client.post(f"/api/erp/rpc/{method}", json={"args": args or []}, headers=headers)
+    return client.post(
+        f"/api/erp/rpc/{method}", json={"args": args or []}, headers=headers
+    )
 
 
 def _unique_name(prefix: str) -> str:
@@ -46,7 +48,9 @@ def test_save_item_creates_with_vendors_and_lists_it(erp_client):
     # data.item is the freshly-written row, for the client's in-place
     # row-patch instead of a full reload.
     assert body["data"]["item"]["baseUnit"] == "Pcs"
-    assert body["data"]["item"]["vendors"] == [{"vendor": "Acme Co", "rate": 12.5, "ratePerBaseUnit": 12.5}]
+    assert body["data"]["item"]["vendors"] == [
+        {"vendor": "Acme Co", "rate": 12.5, "ratePerBaseUnit": 12.5}
+    ]
     # The success toast names the item so it's unambiguous on a page that
     # just patched one row into an already-loaded list of many (reference:
     # module_items.js saveItem, commit e37529e).
@@ -55,7 +59,9 @@ def test_save_item_creates_with_vendors_and_lists_it(erp_client):
     listed = _rpc(erp_client, "getItemsData").get_json()["data"]
     match = next(i for i in listed if i["name"] == name and i["size"] == "Standard")
     assert match["baseUnit"] == "Pcs"
-    assert match["vendors"] == [{"vendor": "Acme Co", "rate": 12.5, "ratePerBaseUnit": 12.5}]
+    assert match["vendors"] == [
+        {"vendor": "Acme Co", "rate": 12.5, "ratePerBaseUnit": 12.5}
+    ]
 
 
 def test_save_item_stores_and_returns_image(erp_client):
@@ -67,7 +73,14 @@ def test_save_item_stores_and_returns_image(erp_client):
     resp = _rpc(
         erp_client,
         "saveItem",
-        [{"itemName": name, "itemSize": "42T", "itemBaseUnit": "Pcs", "itemImage": fake_data_url}],
+        [
+            {
+                "itemName": name,
+                "itemSize": "42T",
+                "itemBaseUnit": "Pcs",
+                "itemImage": fake_data_url,
+            }
+        ],
         mutation=True,
     )
     body = resp.get_json()
@@ -81,7 +94,12 @@ def test_save_item_stores_and_returns_image(erp_client):
 
 def test_save_item_without_image_defaults_to_empty_string(erp_client):
     name = _unique_name("PlainBolt")
-    resp = _rpc(erp_client, "saveItem", [{"itemName": name, "itemBaseUnit": "Pcs"}], mutation=True)
+    resp = _rpc(
+        erp_client,
+        "saveItem",
+        [{"itemName": name, "itemBaseUnit": "Pcs"}],
+        mutation=True,
+    )
     assert resp.get_json()["data"]["item"]["image"] == ""
 
 
@@ -160,7 +178,9 @@ def test_get_items_data_hides_zero_rate_vendors(erp_client):
 
     listed = _rpc(erp_client, "getItemsData").get_json()["data"]
     match = next(i for i in listed if i["name"] == name and i["size"] == "")
-    assert match["vendors"] == [{"vendor": "Real Vendor", "rate": 8, "ratePerBaseUnit": 8}]
+    assert match["vendors"] == [
+        {"vendor": "Real Vendor", "rate": 8, "ratePerBaseUnit": 8}
+    ]
 
 
 def test_save_item_vendor_rate_converted_to_base_unit(erp_client):
@@ -199,10 +219,14 @@ def test_save_item_vendor_rate_converted_to_base_unit(erp_client):
 
 def test_save_item_rejects_duplicate_name_and_size(erp_client):
     name = _unique_name("Duplicate")
-    first = _rpc(erp_client, "saveItem", [{"itemName": name, "itemSize": "M"}], mutation=True)
+    first = _rpc(
+        erp_client, "saveItem", [{"itemName": name, "itemSize": "M"}], mutation=True
+    )
     assert first.get_json()["success"] is True
 
-    dupe = _rpc(erp_client, "saveItem", [{"itemName": name, "itemSize": "M"}], mutation=True)
+    dupe = _rpc(
+        erp_client, "saveItem", [{"itemName": name, "itemSize": "M"}], mutation=True
+    )
     body = dupe.get_json()
     assert body["success"] is False
     assert "already exists" in body["message"]
@@ -212,7 +236,12 @@ def test_save_item_rename_moves_paired_stock_row(erp_client):
     original = _unique_name("Original")
     renamed = _unique_name("Renamed")
 
-    _rpc(erp_client, "saveItem", [{"itemName": original, "itemInitialStock": 25}], mutation=True)
+    _rpc(
+        erp_client,
+        "saveItem",
+        [{"itemName": original, "itemInitialStock": 25}],
+        mutation=True,
+    )
 
     edit = _rpc(
         erp_client,
@@ -294,20 +323,38 @@ def test_unit_rename_cascades_into_items_base_and_purchase_unit(erp_client):
     """
     old_unit = _unique_name("OldUnit")
     new_unit = _unique_name("NewUnit")
-    _rpc(erp_client, "saveUnit", [{"unitName": old_unit, "family": "Count", "factorToBase": 1}], mutation=True)
+    _rpc(
+        erp_client,
+        "saveUnit",
+        [{"unitName": old_unit, "family": "Count", "factorToBase": 1}],
+        mutation=True,
+    )
 
     item_name = _unique_name("UnitCascadeItem")
     _rpc(
         erp_client,
         "saveItem",
-        [{"itemName": item_name, "itemBaseUnit": old_unit, "itemPurchaseUnit": old_unit}],
+        [
+            {
+                "itemName": item_name,
+                "itemBaseUnit": old_unit,
+                "itemPurchaseUnit": old_unit,
+            }
+        ],
         mutation=True,
     )
 
     rename = _rpc(
         erp_client,
         "saveUnit",
-        [{"unitName": new_unit, "family": "Count", "factorToBase": 1, "originalUnitName": old_unit}],
+        [
+            {
+                "unitName": new_unit,
+                "family": "Count",
+                "factorToBase": 1,
+                "originalUnitName": old_unit,
+            }
+        ],
         mutation=True,
     )
     assert rename.get_json()["success"] is True
@@ -343,7 +390,9 @@ def test_keep_orphan_item_creates_stock_row(erp_client):
 
 
 def test_keep_orphan_item_rejects_unknown_item(erp_client):
-    resp = _rpc(erp_client, "keepOrphanItem", [_unique_name("NoSuchItem"), "", 1], mutation=True)
+    resp = _rpc(
+        erp_client, "keepOrphanItem", [_unique_name("NoSuchItem"), "", 1], mutation=True
+    )
     assert resp.get_json()["success"] is False
 
 
@@ -358,7 +407,12 @@ def test_keep_orphan_items_bulk_creates_stock_rows(erp_client):
     resp = _rpc(
         erp_client,
         "keepOrphanItemsBulk",
-        [[{"name": a, "size": "", "initialStock": 3}, {"name": b, "size": "", "initialStock": 4}]],
+        [
+            [
+                {"name": a, "size": "", "initialStock": 3},
+                {"name": b, "size": "", "initialStock": 4},
+            ]
+        ],
         mutation=True,
     )
     body = resp.get_json()
@@ -366,25 +420,43 @@ def test_keep_orphan_items_bulk_creates_stock_rows(erp_client):
     assert body["data"]["created"] == 2
 
     stock = _rpc(erp_client, "getStockData").get_json()["data"]
-    assert {s["name"]: s["initialStock"] for s in stock if s["name"] in (a, b)} == {a: 3, b: 4}
+    assert {s["name"]: s["initialStock"] for s in stock if s["name"] in (a, b)} == {
+        a: 3,
+        b: 4,
+    }
 
 
 def test_merge_selected_items_combines_stock_vendors_and_deletes_loser(erp_client):
     keep = _unique_name("KeepItem")
     remove = _unique_name("RemoveItem")
     _rpc(
-        erp_client, "saveItem",
-        [{"itemName": keep, "itemInitialStock": 10, "vendors": [{"vendor": "Vendor Keep", "rate": 5}]}],
+        erp_client,
+        "saveItem",
+        [
+            {
+                "itemName": keep,
+                "itemInitialStock": 10,
+                "vendors": [{"vendor": "Vendor Keep", "rate": 5}],
+            }
+        ],
         mutation=True,
     )
     _rpc(
-        erp_client, "saveItem",
-        [{"itemName": remove, "itemInitialStock": 4, "vendors": [{"vendor": "Vendor Remove", "rate": 8}]}],
+        erp_client,
+        "saveItem",
+        [
+            {
+                "itemName": remove,
+                "itemInitialStock": 4,
+                "vendors": [{"vendor": "Vendor Remove", "rate": 8}],
+            }
+        ],
         mutation=True,
     )
 
     resp = _rpc(
-        erp_client, "mergeSelectedItems",
+        erp_client,
+        "mergeSelectedItems",
         [[{"name": keep, "size": ""}, {"name": remove, "size": ""}]],
         mutation=True,
     )
@@ -411,17 +483,24 @@ def test_merge_selected_items_converts_vendor_rate_across_purchase_units(erp_cli
     the rate (120/Dozen -> 10/Pcs), not carry the raw number across.
     """
     dozen = _unique_name("Dozen")
-    _rpc(erp_client, "saveUnit", [{"unitName": dozen, "family": "Count", "factorToBase": 12}], mutation=True)
+    _rpc(
+        erp_client,
+        "saveUnit",
+        [{"unitName": dozen, "family": "Count", "factorToBase": 12}],
+        mutation=True,
+    )
 
     keep = _unique_name("KeepPcsItem")
     remove = _unique_name("RemoveDozenItem")
     _rpc(
-        erp_client, "saveItem",
+        erp_client,
+        "saveItem",
         [{"itemName": keep, "itemBaseUnit": "Pcs", "itemPurchaseUnit": "Pcs"}],
         mutation=True,
     )
     _rpc(
-        erp_client, "saveItem",
+        erp_client,
+        "saveItem",
         [
             {
                 "itemName": remove,
@@ -434,7 +513,8 @@ def test_merge_selected_items_converts_vendor_rate_across_purchase_units(erp_cli
     )
 
     resp = _rpc(
-        erp_client, "mergeSelectedItems",
+        erp_client,
+        "mergeSelectedItems",
         [[{"name": keep, "size": ""}, {"name": remove, "size": ""}]],
         mutation=True,
     )
@@ -453,23 +533,31 @@ def test_merge_selected_items_converts_stock_across_purchase_units(erp_client):
     numbers together.
     """
     dozen = _unique_name("StockDozen")
-    _rpc(erp_client, "saveUnit", [{"unitName": dozen, "family": "Count", "factorToBase": 12}], mutation=True)
+    _rpc(
+        erp_client,
+        "saveUnit",
+        [{"unitName": dozen, "family": "Count", "factorToBase": 12}],
+        mutation=True,
+    )
 
     keep = _unique_name("KeepPcsStockItem")
     remove = _unique_name("RemoveDozenStockItem")
     _rpc(
-        erp_client, "saveItem",
+        erp_client,
+        "saveItem",
         [{"itemName": keep, "itemBaseUnit": "Pcs", "itemInitialStock": 10}],
         mutation=True,
     )
     _rpc(
-        erp_client, "saveItem",
+        erp_client,
+        "saveItem",
         [{"itemName": remove, "itemBaseUnit": dozen, "itemInitialStock": 2}],
         mutation=True,
     )
 
     resp = _rpc(
-        erp_client, "mergeSelectedItems",
+        erp_client,
+        "mergeSelectedItems",
         [[{"name": keep, "size": ""}, {"name": remove, "size": ""}]],
         mutation=True,
     )
@@ -483,19 +571,42 @@ def test_merge_selected_items_converts_stock_across_purchase_units(erp_client):
 def test_merge_selected_items_rejects_wrong_count(erp_client):
     only_one = _unique_name("Solo")
     _rpc(erp_client, "saveItem", [{"itemName": only_one}], mutation=True)
-    resp = _rpc(erp_client, "mergeSelectedItems", [[{"name": only_one, "size": ""}]], mutation=True)
+    resp = _rpc(
+        erp_client,
+        "mergeSelectedItems",
+        [[{"name": only_one, "size": ""}]],
+        mutation=True,
+    )
     assert resp.get_json()["success"] is False
 
 
 def test_merge_item_edit_after_duplicate_rejection(erp_client):
     target = _unique_name("MergeTarget")
     original = _unique_name("MergeOriginal")
-    _rpc(erp_client, "saveItem", [{"itemName": target, "itemInitialStock": 6}], mutation=True)
-    _rpc(erp_client, "saveItem", [{"itemName": original, "itemInitialStock": 2}], mutation=True)
+    _rpc(
+        erp_client,
+        "saveItem",
+        [{"itemName": target, "itemInitialStock": 6}],
+        mutation=True,
+    )
+    _rpc(
+        erp_client,
+        "saveItem",
+        [{"itemName": original, "itemInitialStock": 2}],
+        mutation=True,
+    )
 
     collide = _rpc(
-        erp_client, "saveItem",
-        [{"itemName": target, "originalName": original, "originalSize": "", "vendors": [{"vendor": "Edit Vendor", "rate": 9}]}],
+        erp_client,
+        "saveItem",
+        [
+            {
+                "itemName": target,
+                "originalName": original,
+                "originalSize": "",
+                "vendors": [{"vendor": "Edit Vendor", "rate": 9}],
+            }
+        ],
         mutation=True,
     )
     body = collide.get_json()
@@ -503,8 +614,17 @@ def test_merge_item_edit_after_duplicate_rejection(erp_client):
     assert body["data"]["mergeable"] is True
 
     merge = _rpc(
-        erp_client, "mergeItemEdit",
-        [{"itemName": target, "itemSize": "", "originalName": original, "originalSize": "", "vendors": [{"vendor": "Edit Vendor", "rate": 9}]}],
+        erp_client,
+        "mergeItemEdit",
+        [
+            {
+                "itemName": target,
+                "itemSize": "",
+                "originalName": original,
+                "originalSize": "",
+                "vendors": [{"vendor": "Edit Vendor", "rate": 9}],
+            }
+        ],
         mutation=True,
     )
     merge_body = merge.get_json()
@@ -558,13 +678,20 @@ def test_run_scheduled_item_cleanup_merges_exact_duplicates(erp_admin_client):
     assert matches[0]["remarks"] == "first remark"
 
 
-def test_run_scheduled_item_cleanup_autofixes_unambiguous_truncated_pair(erp_admin_client):
+def test_run_scheduled_item_cleanup_autofixes_unambiguous_truncated_pair(
+    erp_admin_client,
+):
     size = _unique_name("CleanupSize")
     short_name = _unique_name("Trunc")
     long_name = short_name + "Full"
     with database.get_conn() as (_conn, cur):
-        cur.execute("INSERT INTO erp.items (item_name, size) VALUES (%s, %s)", (short_name, size))
-        cur.execute("INSERT INTO erp.items (item_name, size) VALUES (%s, %s)", (long_name, size))
+        cur.execute(
+            "INSERT INTO erp.items (item_name, size) VALUES (%s, %s)",
+            (short_name, size),
+        )
+        cur.execute(
+            "INSERT INTO erp.items (item_name, size) VALUES (%s, %s)", (long_name, size)
+        )
 
     resp = _rpc(erp_admin_client, "runScheduledItemCleanup", [], mutation=True)
     body = resp.get_json()
@@ -602,7 +729,14 @@ def test_get_item_identity_drift_report_finds_stale_bill_reference(erp_client):
     _rpc(
         erp_client,
         "saveBill",
-        [{"vendor": vendor, "billNumber": bill_number, "billDate": "01/01/2026", "items": [{"name": item, "qty": 1, "price": 10}]}],
+        [
+            {
+                "vendor": vendor,
+                "billNumber": bill_number,
+                "billDate": "01/01/2026",
+                "items": [{"name": item, "qty": 1, "price": 10}],
+            }
+        ],
         mutation=True,
     )
     # Auto-extraction creates the item in Items Master on save -- delete it
@@ -623,7 +757,10 @@ def test_get_item_identity_drift_report_finds_stale_po_reference(erp_client):
     item = _unique_name("DriftPoItem")
 
     create = _rpc(
-        erp_client, "savePO", [{"vendor": vendor, "items": [{"name": item, "qty": 1, "price": 10}]}], mutation=True
+        erp_client,
+        "savePO",
+        [{"vendor": vendor, "items": [{"name": item, "qty": 1, "price": 10}]}],
+        mutation=True,
     ).get_json()
     po_number = create["data"]["poNumber"]
 
@@ -635,7 +772,9 @@ def test_get_item_identity_drift_report_finds_stale_po_reference(erp_client):
     assert po_number in match["context"]
 
 
-def test_get_item_identity_drift_report_finds_return_wastage_and_issue_references(erp_client):
+def test_get_item_identity_drift_report_finds_return_wastage_and_issue_references(
+    erp_client,
+):
     """Return/Wastage/Issue never auto-extract into Items Master (a genuine
     behavioral difference from PO/Bill -- see return_service.py's module
     docstring), so an item name that was never registered at all drifts
@@ -648,19 +787,40 @@ def test_get_item_identity_drift_report_finds_return_wastage_and_issue_reference
     _rpc(
         erp_client,
         "saveReturn",
-        [{"vendor": "V", "returnDate": "01/01/2026", "items": [{"name": return_item, "qty": 1, "price": 1, "reason": "Defective"}]}],
+        [
+            {
+                "vendor": "V",
+                "returnDate": "01/01/2026",
+                "items": [
+                    {"name": return_item, "qty": 1, "price": 1, "reason": "Defective"}
+                ],
+            }
+        ],
         mutation=True,
     )
     _rpc(
         erp_client,
         "saveWastage",
-        [{"date": "01/01/2026", "items": [{"name": wastage_item, "qty": 1, "unit": "Pcs", "reason": "Damaged"}]}],
+        [
+            {
+                "date": "01/01/2026",
+                "items": [
+                    {"name": wastage_item, "qty": 1, "unit": "Pcs", "reason": "Damaged"}
+                ],
+            }
+        ],
         mutation=True,
     )
     _rpc(
         erp_client,
         "saveIssueStock",
-        [{"date": "01/01/2026", "issuedTo": "Contractor A", "items": [{"name": issue_item, "qty": 1, "unit": "Pcs"}]}],
+        [
+            {
+                "date": "01/01/2026",
+                "issuedTo": "Contractor A",
+                "items": [{"name": issue_item, "qty": 1, "unit": "Pcs"}],
+            }
+        ],
         mutation=True,
     )
 
@@ -671,7 +831,9 @@ def test_get_item_identity_drift_report_finds_return_wastage_and_issue_reference
     assert sheets_by_item.get(issue_item) == "Issued Stock Log"
 
 
-def test_get_item_identity_drift_report_finds_production_components_consumed_but_skips_pool(erp_client):
+def test_get_item_identity_drift_report_finds_production_components_consumed_but_skips_pool(
+    erp_client,
+):
     item_drift = _unique_name("DriftProdItem")
     pool_shared_name = _unique_name("DriftPoolOutput")
 
@@ -688,7 +850,9 @@ def test_get_item_identity_drift_report_finds_production_components_consumed_but
         "components": [],
         "colorLinks": [],
     }
-    process_resp = _rpc(erp_client, "saveProcess", [process_payload], mutation=True).get_json()
+    process_resp = _rpc(
+        erp_client, "saveProcess", [process_payload], mutation=True
+    ).get_json()
     assert process_resp["success"] is True, process_resp["message"]
     process_id = process_resp["data"]["processId"]
 
@@ -728,13 +892,25 @@ def test_fix_item_identity_drift_reference_repoints_bill_ledger_row(erp_client):
     _rpc(
         erp_client,
         "saveBill",
-        [{"vendor": vendor, "billNumber": bill_number, "billDate": "01/01/2026", "items": [{"name": stale_item, "qty": 1, "price": 10}]}],
+        [
+            {
+                "vendor": vendor,
+                "billNumber": bill_number,
+                "billDate": "01/01/2026",
+                "items": [{"name": stale_item, "qty": 1, "price": 10}],
+            }
+        ],
         mutation=True,
     )
     _rpc(erp_client, "deleteItem", [stale_item, ""], mutation=True)
     _rpc(erp_client, "saveItem", [{"itemName": target_item}], mutation=True)
 
-    fix = _rpc(erp_client, "fixItemIdentityDriftReference", [stale_item, "", target_item, ""], mutation=True)
+    fix = _rpc(
+        erp_client,
+        "fixItemIdentityDriftReference",
+        [stale_item, "", target_item, ""],
+        mutation=True,
+    )
     body = fix.get_json()
     assert body["success"] is True
     assert stale_item in body["message"]
@@ -749,14 +925,24 @@ def test_fix_item_identity_drift_reference_repoints_bill_ledger_row(erp_client):
 
 
 def test_fix_item_identity_drift_reference_rejects_unknown_target(erp_client):
-    resp = _rpc(erp_client, "fixItemIdentityDriftReference", ["SomeStaleItem", "", "NoSuchTarget", ""], mutation=True)
+    resp = _rpc(
+        erp_client,
+        "fixItemIdentityDriftReference",
+        ["SomeStaleItem", "", "NoSuchTarget", ""],
+        mutation=True,
+    )
     body = resp.get_json()
     assert body["success"] is False
     assert "not found in Items Master" in body["message"]
 
 
 def test_fix_item_identity_drift_reference_requires_stale_name(erp_client):
-    resp = _rpc(erp_client, "fixItemIdentityDriftReference", ["", "", "AnyTarget", ""], mutation=True)
+    resp = _rpc(
+        erp_client,
+        "fixItemIdentityDriftReference",
+        ["", "", "AnyTarget", ""],
+        mutation=True,
+    )
     body = resp.get_json()
     assert body["success"] is False
     assert "required" in body["message"]

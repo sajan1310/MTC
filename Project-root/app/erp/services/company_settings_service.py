@@ -23,7 +23,10 @@ from ..registry import rpc_method
 
 @rpc_method("getLogo")
 def get_logo():
-    with database.get_conn(cursor_factory=psycopg2.extras.RealDictCursor) as (_conn, cur):
+    with database.get_conn(cursor_factory=psycopg2.extras.RealDictCursor) as (
+        _conn,
+        cur,
+    ):
         cur.execute("SELECT logo_data_url FROM erp.company_settings WHERE id = 1")
         row = cur.fetchone()
     return build_response(True, row["logo_data_url"] if row else None)

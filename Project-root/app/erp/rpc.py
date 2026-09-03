@@ -128,11 +128,17 @@ def call(method: str):
     mutation_id = request.headers.get("X-Mutation-Id")
     if spec.mutation:
         if not mutation_id:
-            return jsonify(build_response(False, None, "X-Mutation-Id header is required for this method")), 400
+            return jsonify(
+                build_response(
+                    False, None, "X-Mutation-Id header is required for this method"
+                )
+            ), 400
         try:
             uuid.UUID(mutation_id)
         except ValueError:
-            return jsonify(build_response(False, None, "X-Mutation-Id must be a UUID")), 400
+            return jsonify(
+                build_response(False, None, "X-Mutation-Id must be a UUID")
+            ), 400
 
         # Claim the id BEFORE executing (DATA-003). This used to be a
         # SELECT-then-execute-then-INSERT, so two requests with the same id
@@ -146,11 +152,14 @@ def call(method: str):
             # honestly rather than executing again or pretending success --
             # the client can retry the same id once the first one lands, and
             # will then get its stored envelope.
-            return jsonify(build_response(
-                False, None,
-                "This action is already being processed. Give it a moment, "
-                "then check whether it completed before trying again.",
-            )), 409
+            return jsonify(
+                build_response(
+                    False,
+                    None,
+                    "This action is already being processed. Give it a moment, "
+                    "then check whether it completed before trying again.",
+                )
+            ), 409
 
         if cached is not None:
             return jsonify(cached), 200
@@ -191,11 +200,14 @@ def call(method: str):
             current_app.logger.exception(
                 "RPC method %s failed unexpectedly (user=%s, request_id=%s)",
                 method,
-                getattr(current_user, "id", None) if current_user and current_user.is_authenticated else None,
+                getattr(current_user, "id", None)
+                if current_user and current_user.is_authenticated
+                else None,
                 request_id,
             )
             result = build_response(
-                False, None,
+                False,
+                None,
                 f"Something went wrong on our end. If this keeps happening, "
                 f"quote reference {request_id} to support.",
             )

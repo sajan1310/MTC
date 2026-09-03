@@ -4,7 +4,7 @@
 import os
 import sys
 
-os.chdir('c:\\Users\\erkar\\OneDrive\\Desktop\\MTC\\Project-root')
+os.chdir("c:\\Users\\erkar\\OneDrive\\Desktop\\MTC\\Project-root")
 sys.path.insert(0, os.getcwd())
 
 from app import create_app  # noqa: E402
@@ -12,11 +12,11 @@ from database import get_conn  # noqa: E402
 
 try:
     app = create_app()
-    
+
     with app.app_context():
         with get_conn() as (conn, cur):
             print("[1] Creating production_lot_subprocess_variants table...")
-            
+
             # Create without FK first
             try:
                 cur.execute("""
@@ -36,7 +36,7 @@ try:
             except Exception as e:
                 conn.rollback()
                 print(f"    Table creation: {e}")
-            
+
             # Add indexes
             try:
                 cur.execute("""
@@ -46,7 +46,7 @@ try:
                 conn.commit()
             except Exception:
                 conn.rollback()
-            
+
             try:
                 cur.execute("""
                     CREATE INDEX IF NOT EXISTS idx_psl_subprocess_variants_process_subprocess_id 
@@ -56,14 +56,18 @@ try:
             except Exception:
                 conn.rollback()
             print("    OK - Indexes created")
-            
+
             # Add FK constraints - each in separate transaction
             fks = [
                 ("fk_pslsv_lot_id", "lot_id", "production_lots(id)"),
-                ("fk_pslsv_process_subprocess_id", "process_subprocess_id", "process_subprocesses(id)"),
+                (
+                    "fk_pslsv_process_subprocess_id",
+                    "process_subprocess_id",
+                    "process_subprocesses(id)",
+                ),
                 ("fk_pslsv_variant_usage_id", "variant_usage_id", "variant_usage(id)"),
             ]
-            
+
             for fk_name, col, ref in fks:
                 try:
                     cur.execute(f"""
@@ -76,9 +80,9 @@ try:
                     conn.rollback()
                     # FK might already exist, that's OK
                     pass
-            
+
             print("    OK - Foreign keys configured")
-            
+
             # Add columns to inventory_alerts table - fresh connection
             print("[2] Adding columns to production_lot_inventory_alerts...")
             with get_conn() as (conn2, cur2):
@@ -93,18 +97,20 @@ try:
                 except Exception as e:
                     print(f"    Error checking columns: {e}")
                     existing_cols = set()
-                
+
                 cols_to_add = [
                     ("user_acknowledged", "BOOLEAN DEFAULT false"),
                     ("user_action", "VARCHAR(50)"),
                     ("action_notes", "TEXT"),
                     ("acknowledged_at", "TIMESTAMP"),
                 ]
-                
+
                 for col_name, col_def in cols_to_add:
                     if col_name not in existing_cols:
                         try:
-                            cur2.execute(f"ALTER TABLE production_lot_inventory_alerts ADD COLUMN {col_name} {col_def}")
+                            cur2.execute(
+                                f"ALTER TABLE production_lot_inventory_alerts ADD COLUMN {col_name} {col_def}"
+                            )
                             conn2.commit()
                             print(f"    OK - Added {col_name}")
                         except Exception as e:
@@ -112,7 +118,7 @@ try:
                             print(f"    ERROR - {col_name}: {e}")
                     else:
                         print(f"    SKIP - {col_name} already exists")
-                
+
                 # For acknowledged_by, need special handling due to FK
                 if "acknowledged_by" not in existing_cols:
                     try:
@@ -127,11 +133,12 @@ try:
                         print(f"    SKIP/ERROR - acknowledged_by: {e}")
                 else:
                     print("    SKIP - acknowledged_by already exists")
-            
+
             print("\nSUCCESS: All migrations completed!")
-        
+
 except Exception as e:
     print(f"ERROR: {e}")
     import traceback
+
     traceback.print_exc()
     sys.exit(1)

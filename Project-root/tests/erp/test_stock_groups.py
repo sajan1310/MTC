@@ -9,7 +9,9 @@ import uuid
 
 def _rpc(client, method, args=None, mutation=False):
     headers = {"X-Mutation-Id": str(uuid.uuid4())} if mutation else {}
-    return client.post(f"/api/erp/rpc/{method}", json={"args": args or []}, headers=headers)
+    return client.post(
+        f"/api/erp/rpc/{method}", json={"args": args or []}, headers=headers
+    )
 
 
 def _unique_name(prefix: str) -> str:
@@ -17,7 +19,9 @@ def _unique_name(prefix: str) -> str:
 
 
 def _create_group(client, name: str, remarks: str = ""):
-    resp = _rpc(client, "saveStockGroup", [{"name": name, "remarks": remarks}], mutation=True)
+    resp = _rpc(
+        client, "saveStockGroup", [{"name": name, "remarks": remarks}], mutation=True
+    )
     body = resp.get_json()
     assert body["success"] is True, body
     return body["data"]["id"]
@@ -57,7 +61,12 @@ def test_save_stock_group_edit_renames(erp_client):
     group_id = _create_group(erp_client, name)
 
     new_name = _unique_name("Frames-Renamed")
-    resp = _rpc(erp_client, "saveStockGroup", [{"id": group_id, "name": new_name}], mutation=True)
+    resp = _rpc(
+        erp_client,
+        "saveStockGroup",
+        [{"id": group_id, "name": new_name}],
+        mutation=True,
+    )
     assert resp.get_json()["success"] is True
 
     listed = _rpc(erp_client, "getStockGroupsData").get_json()["data"]
@@ -68,8 +77,16 @@ def test_save_stock_group_edit_renames(erp_client):
 def test_set_stock_group_items_bulk_replaces_membership(erp_client):
     group_id = _create_group(erp_client, _unique_name("Mudguards"))
 
-    items = [{"name": "Mudguard Bolt", "size": "26 inch"}, {"name": "Mudguard Bolt", "size": "20 inch"}]
-    resp = _rpc(erp_client, "setStockGroupItems", [{"groupId": group_id, "items": items}], mutation=True)
+    items = [
+        {"name": "Mudguard Bolt", "size": "26 inch"},
+        {"name": "Mudguard Bolt", "size": "20 inch"},
+    ]
+    resp = _rpc(
+        erp_client,
+        "setStockGroupItems",
+        [{"groupId": group_id, "items": items}],
+        mutation=True,
+    )
     body = resp.get_json()
     assert body["success"] is True
     assert body["data"]["count"] == 2
@@ -83,7 +100,12 @@ def test_set_stock_group_items_bulk_replaces_membership(erp_client):
     resp2 = _rpc(
         erp_client,
         "setStockGroupItems",
-        [{"groupId": group_id, "items": [{"name": "Mudguard Bolt", "size": "26 inch"}]}],
+        [
+            {
+                "groupId": group_id,
+                "items": [{"name": "Mudguard Bolt", "size": "26 inch"}],
+            }
+        ],
         mutation=True,
     )
     assert resp2.get_json()["data"]["count"] == 1
@@ -101,7 +123,12 @@ def test_set_stock_group_items_deduplicates_case_insensitively(erp_client):
         {"name": "widget", "size": "large"},
         {"name": "Widget", "size": "Large"},
     ]
-    resp = _rpc(erp_client, "setStockGroupItems", [{"groupId": group_id, "items": items}], mutation=True)
+    resp = _rpc(
+        erp_client,
+        "setStockGroupItems",
+        [{"groupId": group_id, "items": items}],
+        mutation=True,
+    )
     assert resp.get_json()["data"]["count"] == 1
 
 

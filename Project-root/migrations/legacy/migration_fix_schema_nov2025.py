@@ -34,14 +34,20 @@ import psycopg2
 # TEST_DB_* takes priority so this migration never touches the production
 # database when invoked from the test harness (tests/conftest.py), which
 # runs migrations against a dedicated test database.
-DB_NAME = os.getenv("TEST_DB_NAME", os.getenv("DB_NAME", os.getenv("POSTGRES_DB", "MTC")))
-DB_USER = os.getenv("TEST_DB_USER", os.getenv("DB_USER", os.getenv("POSTGRES_USER", "postgres")))
+DB_NAME = os.getenv(
+    "TEST_DB_NAME", os.getenv("DB_NAME", os.getenv("POSTGRES_DB", "MTC"))
+)
+DB_USER = os.getenv(
+    "TEST_DB_USER", os.getenv("DB_USER", os.getenv("POSTGRES_USER", "postgres"))
+)
 DB_HOST = os.getenv("TEST_DB_HOST", os.getenv("DB_HOST", "127.0.0.1"))
 DB_PORT = os.getenv("DB_PORT", "5432")
 # No terminal "abcd" fallback (SEC-010). A guessable default here meant this
 # script, run without an environment, would attempt the production database
 # name with a known password rather than saying what was missing.
-DB_PASSWORD = os.getenv("TEST_DB_PASS") or os.getenv("DB_PASS") or os.getenv("POSTGRES_PASSWORD")
+DB_PASSWORD = (
+    os.getenv("TEST_DB_PASS") or os.getenv("DB_PASS") or os.getenv("POSTGRES_PASSWORD")
+)
 
 
 def get_conn():

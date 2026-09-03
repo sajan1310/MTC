@@ -8,7 +8,9 @@ import uuid
 
 def _rpc(client, method, args=None, mutation=False):
     headers = {"X-Mutation-Id": str(uuid.uuid4())} if mutation else {}
-    return client.post(f"/api/erp/rpc/{method}", json={"args": args or []}, headers=headers)
+    return client.post(
+        f"/api/erp/rpc/{method}", json={"args": args or []}, headers=headers
+    )
 
 
 def _unique_name(prefix: str) -> str:
@@ -24,7 +26,12 @@ def test_get_return_data_returns_success_envelope(erp_client):
 
 
 def test_save_return_rejects_zero_items(erp_client):
-    resp = _rpc(erp_client, "saveReturn", [{"vendor": "V", "returnDate": "01/01/2026", "items": []}], mutation=True)
+    resp = _rpc(
+        erp_client,
+        "saveReturn",
+        [{"vendor": "V", "returnDate": "01/01/2026", "items": []}],
+        mutation=True,
+    )
     body = resp.get_json()
     assert body["success"] is False
     assert "zero items" in body["message"]
@@ -35,7 +42,13 @@ def test_save_return_auto_generates_return_number(erp_client):
     resp = _rpc(
         erp_client,
         "saveReturn",
-        [{"vendor": vendor, "returnDate": "01/01/2026", "items": [{"name": "X", "qty": 2, "price": 5, "reason": "Defective"}]}],
+        [
+            {
+                "vendor": vendor,
+                "returnDate": "01/01/2026",
+                "items": [{"name": "X", "qty": 2, "price": 5, "reason": "Defective"}],
+            }
+        ],
         mutation=True,
     )
     body = resp.get_json()
@@ -52,7 +65,14 @@ def test_save_return_returns_fresh_row_for_in_place_patch(erp_client):
     create = _rpc(
         erp_client,
         "saveReturn",
-        [{"vendor": vendor, "returnNumber": return_number, "returnDate": "01/01/2026", "items": [{"name": item1, "qty": 5, "price": 2}]}],
+        [
+            {
+                "vendor": vendor,
+                "returnNumber": return_number,
+                "returnDate": "01/01/2026",
+                "items": [{"name": item1, "qty": 5, "price": 2}],
+            }
+        ],
         mutation=True,
     )
     create_body = create.get_json()
@@ -95,7 +115,15 @@ def test_save_return_with_explicit_number_and_computes_totals(erp_client):
                 "returnNumber": return_number,
                 "returnDate": "15/03/2026",
                 "billNumber": "INV-100",
-                "items": [{"name": item, "size": "L", "qty": 3, "price": 10, "reason": "Excess"}],
+                "items": [
+                    {
+                        "name": item,
+                        "size": "L",
+                        "qty": 3,
+                        "price": 10,
+                        "reason": "Excess",
+                    }
+                ],
             }
         ],
         mutation=True,
@@ -121,7 +149,14 @@ def test_save_return_qty_zero_rejected_but_price_zero_allowed(erp_client):
     zero_qty_resp = _rpc(
         erp_client,
         "saveReturn",
-        [{"vendor": vendor, "returnNumber": _unique_name("ZeroQty"), "returnDate": "01/01/2026", "items": [{"name": "X", "qty": 0, "price": 5}]}],
+        [
+            {
+                "vendor": vendor,
+                "returnNumber": _unique_name("ZeroQty"),
+                "returnDate": "01/01/2026",
+                "items": [{"name": "X", "qty": 0, "price": 5}],
+            }
+        ],
         mutation=True,
     )
     assert zero_qty_resp.get_json()["success"] is False
@@ -129,7 +164,14 @@ def test_save_return_qty_zero_rejected_but_price_zero_allowed(erp_client):
     zero_price_resp = _rpc(
         erp_client,
         "saveReturn",
-        [{"vendor": vendor, "returnNumber": _unique_name("ZeroPrice"), "returnDate": "01/01/2026", "items": [{"name": "X", "qty": 1, "price": 0}]}],
+        [
+            {
+                "vendor": vendor,
+                "returnNumber": _unique_name("ZeroPrice"),
+                "returnDate": "01/01/2026",
+                "items": [{"name": "X", "qty": 1, "price": 0}],
+            }
+        ],
         mutation=True,
     )
     assert zero_price_resp.get_json()["success"] is True
@@ -143,7 +185,14 @@ def test_save_return_rejects_duplicate_return_number_globally(erp_client):
     first = _rpc(
         erp_client,
         "saveReturn",
-        [{"vendor": vendor_a, "returnNumber": return_number, "returnDate": "01/01/2026", "items": [{"name": "X", "qty": 1, "price": 1}]}],
+        [
+            {
+                "vendor": vendor_a,
+                "returnNumber": return_number,
+                "returnDate": "01/01/2026",
+                "items": [{"name": "X", "qty": 1, "price": 1}],
+            }
+        ],
         mutation=True,
     )
     assert first.get_json()["success"] is True
@@ -153,7 +202,14 @@ def test_save_return_rejects_duplicate_return_number_globally(erp_client):
     dupe = _rpc(
         erp_client,
         "saveReturn",
-        [{"vendor": vendor_b, "returnNumber": return_number, "returnDate": "01/01/2026", "items": [{"name": "Y", "qty": 1, "price": 1}]}],
+        [
+            {
+                "vendor": vendor_b,
+                "returnNumber": return_number,
+                "returnDate": "01/01/2026",
+                "items": [{"name": "Y", "qty": 1, "price": 1}],
+            }
+        ],
         mutation=True,
     )
     body = dupe.get_json()
@@ -165,7 +221,13 @@ def test_save_return_requires_date(erp_client):
     resp = _rpc(
         erp_client,
         "saveReturn",
-        [{"vendor": "V", "returnDate": "not a date", "items": [{"name": "X", "qty": 1, "price": 1}]}],
+        [
+            {
+                "vendor": "V",
+                "returnDate": "not a date",
+                "items": [{"name": "X", "qty": 1, "price": 1}],
+            }
+        ],
         mutation=True,
     )
     body = resp.get_json()
@@ -179,7 +241,14 @@ def test_delete_return_success_and_not_found(erp_client):
     _rpc(
         erp_client,
         "saveReturn",
-        [{"vendor": vendor, "returnNumber": return_number, "returnDate": "01/01/2026", "items": [{"name": "X", "qty": 1, "price": 1}]}],
+        [
+            {
+                "vendor": vendor,
+                "returnNumber": return_number,
+                "returnDate": "01/01/2026",
+                "items": [{"name": "X", "qty": 1, "price": 1}],
+            }
+        ],
         mutation=True,
     )
 
@@ -197,8 +266,32 @@ def test_delete_returns_bulk(erp_client):
     vendor = _unique_name("BulkReturnVendor")
     a = _unique_name("BulkReturnA")
     b = _unique_name("BulkReturnB")
-    _rpc(erp_client, "saveReturn", [{"vendor": vendor, "returnNumber": a, "returnDate": "01/01/2026", "items": [{"name": "X", "qty": 1, "price": 1}]}], mutation=True)
-    _rpc(erp_client, "saveReturn", [{"vendor": vendor, "returnNumber": b, "returnDate": "01/01/2026", "items": [{"name": "Y", "qty": 1, "price": 1}]}], mutation=True)
+    _rpc(
+        erp_client,
+        "saveReturn",
+        [
+            {
+                "vendor": vendor,
+                "returnNumber": a,
+                "returnDate": "01/01/2026",
+                "items": [{"name": "X", "qty": 1, "price": 1}],
+            }
+        ],
+        mutation=True,
+    )
+    _rpc(
+        erp_client,
+        "saveReturn",
+        [
+            {
+                "vendor": vendor,
+                "returnNumber": b,
+                "returnDate": "01/01/2026",
+                "items": [{"name": "Y", "qty": 1, "price": 1}],
+            }
+        ],
+        mutation=True,
+    )
 
     resp = _rpc(erp_client, "deleteReturnsBulk", [[a, b]], mutation=True)
     assert resp.get_json()["success"] is True
@@ -213,7 +306,9 @@ def test_item_rename_cascades_into_return_lines(erp_client):
     old_item = _unique_name("OldReturnItem")
     new_item = _unique_name("NewReturnItem")
     vendor = _unique_name("ItemCascadeReturnVendor")
-    _rpc(erp_client, "saveItem", [{"itemName": old_item, "itemSize": "M"}], mutation=True)
+    _rpc(
+        erp_client, "saveItem", [{"itemName": old_item, "itemSize": "M"}], mutation=True
+    )
 
     return_number = _unique_name("ItemCascadeReturn")
     _rpc(
@@ -231,8 +326,16 @@ def test_item_rename_cascades_into_return_lines(erp_client):
     )
 
     rename = _rpc(
-        erp_client, "saveItem",
-        [{"itemName": new_item, "itemSize": "M", "originalName": old_item, "originalSize": "M"}],
+        erp_client,
+        "saveItem",
+        [
+            {
+                "itemName": new_item,
+                "itemSize": "M",
+                "originalName": old_item,
+                "originalSize": "M",
+            }
+        ],
         mutation=True,
     )
     assert rename.get_json()["success"] is True
@@ -251,11 +354,23 @@ def test_vendor_rename_cascades_into_return_headers(erp_client):
     _rpc(
         erp_client,
         "saveReturn",
-        [{"vendor": old_vendor, "returnNumber": return_number, "returnDate": "01/01/2026", "items": [{"name": "X", "qty": 1, "price": 1}]}],
+        [
+            {
+                "vendor": old_vendor,
+                "returnNumber": return_number,
+                "returnDate": "01/01/2026",
+                "items": [{"name": "X", "qty": 1, "price": 1}],
+            }
+        ],
         mutation=True,
     )
 
-    rename = _rpc(erp_client, "saveVendor", [{"vendorName": new_vendor, "originalVendorName": old_vendor}], mutation=True)
+    rename = _rpc(
+        erp_client,
+        "saveVendor",
+        [{"vendorName": new_vendor, "originalVendorName": old_vendor}],
+        mutation=True,
+    )
     assert rename.get_json()["success"] is True
 
     listed = _rpc(erp_client, "getReturnData").get_json()["data"]

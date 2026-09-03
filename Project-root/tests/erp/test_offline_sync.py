@@ -60,15 +60,27 @@ def test_replayed_mutation_id_ignores_changed_args_on_success(erp_client):
     _create_item_with_stock(erp_client, name, initial_stock=20)
 
     mutation_id = str(uuid.uuid4())
-    first = _rpc(erp_client, "adjustStockManually", [name, "", 15, "Physical recount"], mutation_id)
+    first = _rpc(
+        erp_client,
+        "adjustStockManually",
+        [name, "", 15, "Physical recount"],
+        mutation_id,
+    )
     assert first.get_json()["success"] is True
     assert first.get_json()["data"] == {"oldCurrentStock": 20, "newCurrentStock": 15}
 
     # Same id, deliberately different newValue/reason -- must be ignored.
-    second = _rpc(erp_client, "adjustStockManually", [name, "", 999, "A completely different reason"], mutation_id)
+    second = _rpc(
+        erp_client,
+        "adjustStockManually",
+        [name, "", 999, "A completely different reason"],
+        mutation_id,
+    )
     assert second.get_json() == first.get_json()
 
-    listed = erp_client.post("/api/erp/rpc/getStockData", json={"args": []}).get_json()["data"]
+    listed = erp_client.post("/api/erp/rpc/getStockData", json={"args": []}).get_json()[
+        "data"
+    ]
     match = next(r for r in listed if r["name"] == name)
     assert match["currentStock"] == 15  # not 999 -- the replay never actually ran
 
@@ -96,13 +108,23 @@ def test_replayed_mutation_id_ignores_changed_args_on_business_failure(erp_clien
 
     # Same id, now with a valid reason -- must still return the ORIGINAL
     # failure, proving a naive same-id retry can never actually recover.
-    second = _rpc(erp_client, "adjustStockManually", [name, "", 15, "Physical recount"], mutation_id)
+    second = _rpc(
+        erp_client,
+        "adjustStockManually",
+        [name, "", 15, "Physical recount"],
+        mutation_id,
+    )
     assert second.get_json() == first_body
 
     # A genuinely fresh id (what a correct client-side "Retry" must mint)
     # succeeds normally against the same, still-unadjusted item.
     retry_mutation_id = str(uuid.uuid4())
-    retried = _rpc(erp_client, "adjustStockManually", [name, "", 15, "Physical recount"], retry_mutation_id)
+    retried = _rpc(
+        erp_client,
+        "adjustStockManually",
+        [name, "", 15, "Physical recount"],
+        retry_mutation_id,
+    )
     assert retried.get_json()["success"] is True
 
 
@@ -124,23 +146,43 @@ def test_two_devices_racing_the_same_item_last_write_wins_no_corruption(erp_clie
     device_a_id = str(uuid.uuid4())
     device_b_id = str(uuid.uuid4())
 
-    resp_a = _rpc(erp_client, "adjustStockManually", [name, "", 30, "Device A recount"], device_a_id)
+    resp_a = _rpc(
+        erp_client,
+        "adjustStockManually",
+        [name, "", 30, "Device A recount"],
+        device_a_id,
+    )
     assert resp_a.get_json()["success"] is True
     assert resp_a.get_json()["data"] == {"oldCurrentStock": 50, "newCurrentStock": 30}
 
-    resp_b = _rpc(erp_client, "adjustStockManually", [name, "", 45, "Device B recount"], device_b_id)
+    resp_b = _rpc(
+        erp_client,
+        "adjustStockManually",
+        [name, "", 45, "Device B recount"],
+        device_b_id,
+    )
     assert resp_b.get_json()["success"] is True
     # Device B's replay reads whatever device A just committed as "old".
     assert resp_b.get_json()["data"] == {"oldCurrentStock": 30, "newCurrentStock": 45}
 
-    listed = erp_client.post("/api/erp/rpc/getStockData", json={"args": []}).get_json()["data"]
+    listed = erp_client.post("/api/erp/rpc/getStockData", json={"args": []}).get_json()[
+        "data"
+    ]
     match = next(r for r in listed if r["name"] == name)
     assert match["currentStock"] == 45  # device B (the later replay) wins, cleanly
 
-    history = erp_client.post("/api/erp/rpc/getStockAdjustmentHistory", json={"args": []}).get_json()["data"]
-    reasons = [h["reason"] for h in history if h.get("itemName") == name or h.get("item") == name]
+    history = erp_client.post(
+        "/api/erp/rpc/getStockAdjustmentHistory", json={"args": []}
+    ).get_json()["data"]
+    reasons = [
+        h["reason"]
+        for h in history
+        if h.get("itemName") == name or h.get("item") == name
+    ]
     assert "Device A recount" in reasons
-    assert "Device B recount" in reasons  # both writes actually landed, not one clobbering the audit trail
+    assert (
+        "Device B recount" in reasons
+    )  # both writes actually landed, not one clobbering the audit trail
 
 
 def test_stale_process_reference_on_replay_is_ordinary_rejection_not_crash(erp_client):
@@ -166,7 +208,9 @@ def test_stale_process_reference_on_replay_is_ordinary_rejection_not_crash(erp_c
     assert resp.status_code == 200
     body = resp.get_json()
     assert body["success"] is False
-    assert "not found" in body["message"].lower() or "deleted" in body["message"].lower()
+    assert (
+        "not found" in body["message"].lower() or "deleted" in body["message"].lower()
+    )
 
     # A same-id replay (the outbox's automatic retry path) is just as
     # clean -- the cached rejection, not a re-run that could throw again.

@@ -105,7 +105,10 @@ def _validate_number(value, min_value: float, max_value: float) -> float:
 
 
 def _natural_sort_key(s: str) -> list:
-    return [int(chunk) if chunk.isdigit() else chunk.lower() for chunk in re.split(r"(\d+)", s or "")]
+    return [
+        int(chunk) if chunk.isdigit() else chunk.lower()
+        for chunk in re.split(r"(\d+)", s or "")
+    ]
 
 
 def _find_bom_product_id(cur, product_id_str: str):
@@ -171,8 +174,13 @@ def _rename_client_everywhere(cur, old_name: str, new_name: str) -> None:
 
 @rpc_method("getClientsData")
 def get_clients_data():
-    with database.get_conn(cursor_factory=psycopg2.extras.RealDictCursor) as (_conn, cur):
-        cur.execute("SELECT client_name, contact, address, gstin, remarks FROM erp.clients WHERE deleted_at IS NULL")
+    with database.get_conn(cursor_factory=psycopg2.extras.RealDictCursor) as (
+        _conn,
+        cur,
+    ):
+        cur.execute(
+            "SELECT client_name, contact, address, gstin, remarks FROM erp.clients WHERE deleted_at IS NULL"
+        )
         rows = cur.fetchall()
 
     clients = [
@@ -204,7 +212,9 @@ def save_client(conn, cur, form_data):
     remarks = str(form_data.get("remarks") or "").strip()
 
     is_edit = bool(form_data.get("originalClientName"))
-    original_name = str(form_data.get("originalClientName")).strip() if is_edit else new_name
+    original_name = (
+        str(form_data.get("originalClientName")).strip() if is_edit else new_name
+    )
 
     cur.execute(
         "SELECT id FROM erp.clients WHERE lower(client_name) = lower(%s) AND deleted_at IS NULL",
@@ -245,11 +255,21 @@ def save_client(conn, cur, form_data):
             (new_name, contact, address, gstin, remarks, user_id),
         )
 
-    message = f'Client "{new_name}" updated.' if is_edit else f'Client "{new_name}" registered.'
+    message = (
+        f'Client "{new_name}" updated.'
+        if is_edit
+        else f'Client "{new_name}" registered.'
+    )
 
     # The client can patch this into an already-loaded list in place
     # instead of a full reload.
-    fresh_client = {"name": new_name, "contact": contact, "address": address, "gstin": gstin, "remarks": remarks}
+    fresh_client = {
+        "name": new_name,
+        "contact": contact,
+        "address": address,
+        "gstin": gstin,
+        "remarks": remarks,
+    }
 
     return build_response(True, {"name": new_name, "client": fresh_client}, message)
 
@@ -283,7 +303,9 @@ def delete_client(conn, cur, client_name):
 @rpc_method("deleteClientsBulk", mutation=True)
 @database.transactional
 def delete_clients_bulk(conn, cur, client_names):
-    requested = [str(n or "").strip() for n in (client_names or []) if str(n or "").strip()]
+    requested = [
+        str(n or "").strip() for n in (client_names or []) if str(n or "").strip()
+    ]
     if not requested:
         return build_response(True, None, "No clients selected.")
 
@@ -293,7 +315,8 @@ def delete_clients_bulk(conn, cur, client_names):
     if not deletable:
         if in_use:
             return build_response(
-                False, None,
+                False,
+                None,
                 f"No clients deleted -- all selected have PI/Estimate or Dispatch history: {', '.join(in_use)}.",
             )
         return build_response(True, None, "No clients to delete.")
@@ -328,7 +351,10 @@ def get_next_order_number():
 
 @rpc_method("getClientOrdersData")
 def get_client_orders_data():
-    with database.get_conn(cursor_factory=psycopg2.extras.RealDictCursor) as (_conn, cur):
+    with database.get_conn(cursor_factory=psycopg2.extras.RealDictCursor) as (
+        _conn,
+        cur,
+    ):
         cur.execute(
             """
             SELECT h.id AS header_id, h.order_number, h.order_date, h.client_name, h.status, h.order_remarks,
@@ -377,7 +403,9 @@ def get_client_orders_data():
     return build_response(True, orders)
 
 
-def _push_order_lines_to_production(cur, order_number: str, client_name: str, lines: list) -> dict:
+def _push_order_lines_to_production(
+    cur, order_number: str, client_name: str, lines: list
+) -> dict:
     """Appends a new Pending Production lot for each line whose product
     resolves to exactly one final-stage Process that isn't itself
     multi-color. Raw INSERT, deliberately bypassing
@@ -394,11 +422,15 @@ def _push_order_lines_to_production(cur, order_number: str, client_name: str, li
         if process is None:
             continue
 
-        color_groups = process_service._fetch_process_color_groups(cur, process["processId"])
+        color_groups = process_service._fetch_process_color_groups(
+            cur, process["processId"]
+        )
         if color_groups:
             continue
 
-        recipe_components = process_service._fetch_process_components(cur, process["processId"])
+        recipe_components = process_service._fetch_process_components(
+            cur, process["processId"]
+        )
         components_consumed = []
         for c in recipe_components:
             if not process_service._is_common_color_group(c["colorGroup"]):
@@ -421,7 +453,9 @@ def _push_order_lines_to_production(cur, order_number: str, client_name: str, li
 
         lot_number = production_service._generate_lot_number(cur, process["lotPrefix"])
         bom_product_id = _find_bom_product_id(cur, line["productId"])
-        process_master_id = production_service._find_process_master_id(cur, process["processId"])
+        process_master_id = production_service._find_process_master_id(
+            cur, process["processId"]
+        )
 
         cur.execute(
             """
@@ -432,10 +466,21 @@ def _push_order_lines_to_production(cur, order_number: str, client_name: str, li
             VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
             """,
             (
-                date.today(), line["productId"], bom_product_id, line["productName"], line["qty"], "",
-                "Pending", f"Auto-queued from PI {order_number} - {client_name}",
-                process["processId"], process_master_id, lot_number, process["outputItemName"],
-                json.dumps(components_consumed), order_number, user_id,
+                date.today(),
+                line["productId"],
+                bom_product_id,
+                line["productName"],
+                line["qty"],
+                "",
+                "Pending",
+                f"Auto-queued from PI {order_number} - {client_name}",
+                process["processId"],
+                process_master_id,
+                lot_number,
+                process["outputItemName"],
+                json.dumps(components_consumed),
+                order_number,
+                user_id,
             ),
         )
         auto_queued.add(line["productId"].lower())
@@ -458,7 +503,9 @@ def save_client_order(conn, cur, form_data):
         raise ValueError("Invalid status value.")
 
     order_date = date_utils.to_safe_date(form_data.get("orderDate")) or date.today()
-    order_remarks = str(form_data.get("orderRemarks") or "").strip()[:_MAX_REMARKS_LENGTH]
+    order_remarks = str(form_data.get("orderRemarks") or "").strip()[
+        :_MAX_REMARKS_LENGTH
+    ]
 
     raw_lines = form_data.get("lines")
     if isinstance(raw_lines, str):
@@ -489,7 +536,10 @@ def save_client_order(conn, cur, form_data):
             raise ValueError(f'PI / Estimate "{order_number}" not found.')
         header_id = existing["id"]
 
-        cur.execute("SELECT product_id, production_pushed FROM erp.client_orders_lines WHERE header_id = %s", (header_id,))
+        cur.execute(
+            "SELECT product_id, production_pushed FROM erp.client_orders_lines WHERE header_id = %s",
+            (header_id,),
+        )
         for row in cur.fetchall():
             pid = str(row["product_id"] or "").strip().lower()
             pushed = str(row["production_pushed"] or "").strip().lower() == "yes"
@@ -502,9 +552,18 @@ def save_client_order(conn, cur, form_data):
                 updated_by = %s
             WHERE id = %s
             """,
-            (order_date, client_name, status, order_remarks, get_current_user_id(), header_id),
+            (
+                order_date,
+                client_name,
+                status,
+                order_remarks,
+                get_current_user_id(),
+                header_id,
+            ),
         )
-        cur.execute("DELETE FROM erp.client_orders_lines WHERE header_id = %s", (header_id,))
+        cur.execute(
+            "DELETE FROM erp.client_orders_lines WHERE header_id = %s", (header_id,)
+        )
     else:
         cur.execute("SELECT nextval('erp.order_number_seq') AS n")
         order_number = f"ORD-{cur.fetchone()['n']}"
@@ -513,7 +572,14 @@ def save_client_order(conn, cur, form_data):
             INSERT INTO erp.client_orders_headers (order_number, order_date, client_name, status, order_remarks, updated_by)
             VALUES (%s, %s, %s, %s, %s, %s) RETURNING id
             """,
-            (order_number, order_date, client_name, status, order_remarks, get_current_user_id()),
+            (
+                order_number,
+                order_date,
+                client_name,
+                status,
+                order_remarks,
+                get_current_user_id(),
+            ),
         )
         header_id = cur.fetchone()["id"]
 
@@ -525,7 +591,9 @@ def save_client_order(conn, cur, form_data):
             continue
 
         if product_id.lower() not in valid_product_ids:
-            raise ValueError(f'Product "{product_id}" is not defined in BOM and cannot be added to a PI / Estimate.')
+            raise ValueError(
+                f'Product "{product_id}" is not defined in BOM and cannot be added to a PI / Estimate.'
+            )
 
         qty = _validate_number(line.get("qty"), 0.001, 10000000)
         if qty <= 0:
@@ -540,7 +608,8 @@ def save_client_order(conn, cur, form_data):
         clean_lines.append(
             {
                 "productId": product_id,
-                "productName": product_name_map.get(pid_key) or str(line.get("productName") or "").strip(),
+                "productName": product_name_map.get(pid_key)
+                or str(line.get("productName") or "").strip(),
                 "qty": qty,
                 "lineRemarks": str(line.get("lineRemarks") or "").strip(),
                 "productionPushed": already_pushed,
@@ -549,14 +618,18 @@ def save_client_order(conn, cur, form_data):
         )
 
     if not clean_lines:
-        raise ValueError("Please specify at least one valid product line with quantity greater than zero.")
+        raise ValueError(
+            "Please specify at least one valid product line with quantity greater than zero."
+        )
 
     pushed_count = 0
     manual_count = 0
     if status == "Order Confirmed":
         lines_to_push = [line for line in clean_lines if not line["productionPushed"]]
         if lines_to_push:
-            push_result = _push_order_lines_to_production(cur, order_number, client_name, lines_to_push)
+            push_result = _push_order_lines_to_production(
+                cur, order_number, client_name, lines_to_push
+            )
             for line in lines_to_push:
                 if line["productId"].lower() in push_result["autoQueued"]:
                     line["productionPushed"] = True
@@ -567,17 +640,33 @@ def save_client_order(conn, cur, form_data):
 
     for line in clean_lines:
         bom_product_id = _find_bom_product_id(cur, line["productId"])
-        pushed_value = "Yes" if line["productionPushed"] else ("Manual" if line["needsManualProduction"] else "")
+        pushed_value = (
+            "Yes"
+            if line["productionPushed"]
+            else ("Manual" if line["needsManualProduction"] else "")
+        )
         cur.execute(
             """
             INSERT INTO erp.client_orders_lines
                 (header_id, product_id, bom_product_id, product_name, qty, line_remarks, production_pushed)
             VALUES (%s, %s, %s, %s, %s, %s, %s)
             """,
-            (header_id, line["productId"], bom_product_id, line["productName"], line["qty"], line["lineRemarks"], pushed_value),
+            (
+                header_id,
+                line["productId"],
+                bom_product_id,
+                line["productName"],
+                line["qty"],
+                line["lineRemarks"],
+                pushed_value,
+            ),
         )
 
-    message = f'PI / Estimate "{order_number}" updated.' if is_edit else f'PI / Estimate "{order_number}" saved.'
+    message = (
+        f'PI / Estimate "{order_number}" updated.'
+        if is_edit
+        else f'PI / Estimate "{order_number}" saved.'
+    )
     if pushed_count > 0:
         message += f" {pushed_count} product line(s) queued into Production."
     if manual_count > 0:
@@ -598,7 +687,9 @@ def save_client_order(conn, cur, form_data):
         "lines": clean_lines,
     }
 
-    return build_response(True, {"orderNumber": order_number, "order": fresh_order}, message)
+    return build_response(
+        True, {"orderNumber": order_number, "order": fresh_order}, message
+    )
 
 
 @rpc_method("deleteClientOrder", mutation=True)
@@ -614,7 +705,9 @@ def delete_client_order(conn, cur, order_number):
             (order_clean,),
         )
         if cur.fetchone():
-            raise ValueError(f'Cannot delete PI / Estimate "{order_clean}": it has dispatch records against it.')
+            raise ValueError(
+                f'Cannot delete PI / Estimate "{order_clean}": it has dispatch records against it.'
+            )
 
     if table := config_maps.TABLE_NAMES.get("PRODUCTION"):
         cur.execute(
@@ -622,7 +715,9 @@ def delete_client_order(conn, cur, order_number):
             (order_clean,),
         )
         if cur.fetchone():
-            raise ValueError(f'Cannot delete PI / Estimate "{order_clean}": it already has a Production lot queued from it.')
+            raise ValueError(
+                f'Cannot delete PI / Estimate "{order_clean}": it already has a Production lot queued from it.'
+            )
 
     cur.execute(
         "SELECT id FROM erp.client_orders_headers WHERE lower(order_number) = lower(%s) AND deleted_at IS NULL",
@@ -632,7 +727,10 @@ def delete_client_order(conn, cur, order_number):
     if row is None:
         raise ValueError(f'PI / Estimate "{order_clean}" not found.')
 
-    cur.execute("SELECT COUNT(*) AS n FROM erp.client_orders_lines WHERE header_id = %s", (row["id"],))
+    cur.execute(
+        "SELECT COUNT(*) AS n FROM erp.client_orders_lines WHERE header_id = %s",
+        (row["id"],),
+    )
     line_count = cur.fetchone()["n"]
 
     cur.execute(
@@ -640,27 +738,37 @@ def delete_client_order(conn, cur, order_number):
         (get_current_user_id(), row["id"]),
     )
 
-    return build_response(True, None, f'PI / Estimate "{order_clean}" deleted ({line_count} line(s) removed).')
+    return build_response(
+        True,
+        None,
+        f'PI / Estimate "{order_clean}" deleted ({line_count} line(s) removed).',
+    )
 
 
 @rpc_method("deleteClientOrdersBulk", mutation=True)
 @database.transactional
 def delete_client_orders_bulk(conn, cur, order_numbers):
-    requested = [str(o or "").strip() for o in (order_numbers or []) if str(o or "").strip()]
+    requested = [
+        str(o or "").strip() for o in (order_numbers or []) if str(o or "").strip()
+    ]
     if not requested:
         return build_response(True, None, "No PI / Estimates selected.")
 
     in_use: set = set()
 
     if table := config_maps.TABLE_NAMES.get("DISPATCH_HEADERS"):
-        cur.execute(f"SELECT DISTINCT order_number FROM {table} WHERE deleted_at IS NULL AND order_number IS NOT NULL AND order_number != ''")
+        cur.execute(
+            f"SELECT DISTINCT order_number FROM {table} WHERE deleted_at IS NULL AND order_number IS NOT NULL AND order_number != ''"
+        )
         used = {str(r["order_number"]).strip().lower() for r in cur.fetchall()}
         for o in requested:
             if o.lower() in used:
                 in_use.add(o)
 
     if table := config_maps.TABLE_NAMES.get("PRODUCTION"):
-        cur.execute(f"SELECT DISTINCT order_number FROM {table} WHERE deleted_at IS NULL AND order_number IS NOT NULL AND order_number != ''")
+        cur.execute(
+            f"SELECT DISTINCT order_number FROM {table} WHERE deleted_at IS NULL AND order_number IS NOT NULL AND order_number != ''"
+        )
         used = {str(r["order_number"]).strip().lower() for r in cur.fetchall()}
         for o in requested:
             if o.lower() in used:
@@ -679,14 +787,19 @@ def delete_client_orders_bulk(conn, cur, order_numbers):
         ids = [r["id"] for r in matched]
         deleted_ids = [r["order_number"] for r in matched]
         if ids:
-            cur.execute("SELECT COUNT(*) AS n FROM erp.client_orders_lines WHERE header_id = ANY(%s)", (ids,))
+            cur.execute(
+                "SELECT COUNT(*) AS n FROM erp.client_orders_lines WHERE header_id = ANY(%s)",
+                (ids,),
+            )
             lines_removed = cur.fetchone()["n"]
             cur.execute(
                 "UPDATE erp.client_orders_headers SET deleted_at = NOW(), updated_by = %s WHERE id = ANY(%s)",
                 (get_current_user_id(), ids),
             )
 
-    message = f"Deleted {len(to_delete)} PI / Estimate(s) ({lines_removed} line(s) removed)."
+    message = (
+        f"Deleted {len(to_delete)} PI / Estimate(s) ({lines_removed} line(s) removed)."
+    )
     if in_use:
         message += (
             f" Skipped {len(in_use)} PI / Estimate(s) with dispatch records or a queued Production lot against them: "
@@ -694,5 +807,7 @@ def delete_client_orders_bulk(conn, cur, order_numbers):
         )
 
     return build_response(
-        len(to_delete) > 0, {"deletedIds": deleted_ids, "skipped": sorted(in_use)}, message
+        len(to_delete) > 0,
+        {"deletedIds": deleted_ids, "skipped": sorted(in_use)},
+        message,
     )

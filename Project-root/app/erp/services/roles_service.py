@@ -110,12 +110,19 @@ def get_role_permissions(role_key: str, cur=None) -> dict[str, str] | None:
     it a role check opened a second pooled connection mid-write.
     """
     if cur is not None:
-        cur.execute("SELECT permissions FROM custom_roles WHERE role_key = %s", (role_key,))
+        cur.execute(
+            "SELECT permissions FROM custom_roles WHERE role_key = %s", (role_key,)
+        )
         row = cur.fetchone()
         return None if row is None else dict(row["permissions"] or {})
 
-    with database.get_conn(cursor_factory=psycopg2.extras.RealDictCursor) as (_conn, own):
-        own.execute("SELECT permissions FROM custom_roles WHERE role_key = %s", (role_key,))
+    with database.get_conn(cursor_factory=psycopg2.extras.RealDictCursor) as (
+        _conn,
+        own,
+    ):
+        own.execute(
+            "SELECT permissions FROM custom_roles WHERE role_key = %s", (role_key,)
+        )
         row = own.fetchone()
     if row is None:
         return None
@@ -152,14 +159,19 @@ def _validate_permissions(permissions) -> dict[str, str]:
         if tab not in _ASSIGNABLE_TAB_KEYS:
             raise ValueError(f'Unknown tab "{tab}".')
         if level not in _LEVELS:
-            raise ValueError(f'Invalid access level "{level}" for {tab}. Must be one of: {", ".join(_LEVELS)}.')
+            raise ValueError(
+                f'Invalid access level "{level}" for {tab}. Must be one of: {", ".join(_LEVELS)}.'
+            )
         cleaned[tab] = level
     return cleaned
 
 
 @rpc_method("getCustomRoles", roles=frozenset({"admin"}))
 def get_custom_roles():
-    with database.get_conn(cursor_factory=psycopg2.extras.RealDictCursor) as (_conn, cur):
+    with database.get_conn(cursor_factory=psycopg2.extras.RealDictCursor) as (
+        _conn,
+        cur,
+    ):
         cur.execute(
             """
             SELECT r.role_key, r.role_name, r.permissions,
@@ -171,15 +183,18 @@ def get_custom_roles():
             """
         )
         rows = cur.fetchall()
-    return build_response(True, [
-        {
-            "roleKey": r["role_key"],
-            "roleName": r["role_name"],
-            "permissions": dict(r["permissions"] or {}),
-            "userCount": r["user_count"],
-        }
-        for r in rows
-    ])
+    return build_response(
+        True,
+        [
+            {
+                "roleKey": r["role_key"],
+                "roleName": r["role_name"],
+                "permissions": dict(r["permissions"] or {}),
+                "userCount": r["user_count"],
+            }
+            for r in rows
+        ],
+    )
 
 
 @rpc_method("createCustomRole", mutation=True, roles=frozenset({"admin"}))
@@ -192,7 +207,9 @@ def create_custom_role(conn, cur, role_name, permissions):
     if not role_key:
         raise ValueError("Role name must contain at least one letter or number.")
     if role_key in _BUILTIN_ROLES:
-        raise ValueError(f'"{role_name}" collides with a built-in role. Choose a different name.')
+        raise ValueError(
+            f'"{role_name}" collides with a built-in role. Choose a different name.'
+        )
 
     cleaned_permissions = _validate_permissions(permissions)
 
@@ -208,7 +225,11 @@ def create_custom_role(conn, cur, role_name, permissions):
     row = cur.fetchone()
     return build_response(
         True,
-        {"roleKey": row["role_key"], "roleName": row["role_name"], "permissions": dict(row["permissions"] or {})},
+        {
+            "roleKey": row["role_key"],
+            "roleName": row["role_name"],
+            "permissions": dict(row["permissions"] or {}),
+        },
         f'Role "{role_name}" created.',
     )
 
@@ -244,7 +265,10 @@ def delete_custom_role(conn, cur, role_key):
     if row is None:
         raise ValueError("Role not found.")
 
-    cur.execute("SELECT COUNT(*) AS n FROM users WHERE role = %s AND deleted_at IS NULL", (role_key,))
+    cur.execute(
+        "SELECT COUNT(*) AS n FROM users WHERE role = %s AND deleted_at IS NULL",
+        (role_key,),
+    )
     in_use = cur.fetchone()["n"]
     if in_use > 0:
         raise ValueError(

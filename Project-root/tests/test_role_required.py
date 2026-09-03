@@ -72,7 +72,9 @@ def test_super_admin_bypasses_the_allow_list(guarded_app):
 # ── Authenticated, wrong role ────────────────────────────────────────────
 
 
-@pytest.mark.parametrize("role", ["user", "pending_approval", "viewer", "store_keeper", ""])
+@pytest.mark.parametrize(
+    "role", ["user", "pending_approval", "viewer", "store_keeper", ""]
+)
 def test_a_role_outside_the_allow_list_gets_403(guarded_app, role):
     response = _call(guarded_app, _FakeUser(role))
     assert response.status_code == 403
@@ -82,7 +84,7 @@ def test_a_role_outside_the_allow_list_gets_403(guarded_app, role):
 
 
 def test_plain_admin_is_not_admitted_to_a_manager_only_route(guarded_app):
-    """"admin" is NOT a wildcard here -- only super_admin is. This differs
+    """ "admin" is NOT a wildcard here -- only super_admin is. This differs
     from User.has_role(), where admin also matches any check, so the two are
     easy to conflate. Pinned so the difference is deliberate rather than
     discovered."""

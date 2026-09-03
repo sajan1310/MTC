@@ -97,9 +97,13 @@ def _iter_completed_production_components(cur):
             qty = entered_qty
             unit = str(comp.get("unit") or "").strip()
             if unit:
-                unit_info = items_service.lookup_item_unit_info(item_unit_map, item_name, size)
+                unit_info = items_service.lookup_item_unit_info(
+                    item_unit_map, item_name, size
+                )
                 try:
-                    qty = units_service.convert_qty_to_base_unit(qty, unit, unit_info, units_map)
+                    qty = units_service.convert_qty_to_base_unit(
+                        qty, unit, unit_info, units_map
+                    )
                 except ValueError:
                     pass
 
@@ -249,6 +253,7 @@ _MOVEMENT_SQL_FOR_ITEMS = """
     GROUP BY 1, 2
 """
 
+
 def _movement_map(cur, keys: list | None = None) -> dict:
     """Net bill/return/wastage/issue movement, optionally for `keys` only.
 
@@ -261,7 +266,7 @@ def _movement_map(cur, keys: list | None = None) -> dict:
     else:
         cur.execute(_MOVEMENT_SQL_FOR_ITEMS, {"keys": tuple(keys)})
     return {
-        f'{row["name_k"]}|{row["size_k"]}': float(row["net"] or 0)
+        f"{row['name_k']}|{row['size_k']}": float(row["net"] or 0)
         for row in cur.fetchall()
     }
 
@@ -315,17 +320,21 @@ def _production_consumed_map(cur, keys: list | None = None) -> dict:
                 item_unit_map, row["name_k"], row["size_k"]
             )
             try:
-                qty = units_service.convert_qty_to_base_unit(qty, unit, unit_info, units_map)
+                qty = units_service.convert_qty_to_base_unit(
+                    qty, unit, unit_info, units_map
+                )
             except ValueError:
                 # An unconvertible unit must never block a Stock read -- fall
                 # back to the as-entered qty, exactly as before.
                 pass
-        key = f'{row["name_k"]}|{row["size_k"]}'
+        key = f"{row['name_k']}|{row['size_k']}"
         consumed[key] = consumed.get(key, 0) + qty
     return consumed
 
 
-def _get_billed_and_consumed_qty_maps(cur, keys: list | None = None) -> tuple[dict, dict]:
+def _get_billed_and_consumed_qty_maps(
+    cur, keys: list | None = None
+) -> tuple[dict, dict]:
     """Returns (bill_qty_map, consumed_qty_map), each keyed by
     "item_name_lower|size_lower" -> net base-unit qty affecting Current Stock.
 
@@ -388,7 +397,7 @@ _MAX_PAGE_SIZE = 500
 
 
 def _stock_record(row, bill_qty_map, consumed_qty_map) -> dict:
-    key = f'{row["item_name"].strip().lower()}|{(row["size"] or "").strip().lower()}'
+    key = f"{row['item_name'].strip().lower()}|{(row['size'] or '').strip().lower()}"
     initial = float(row["initial_stock"])
     current = initial + bill_qty_map.get(key, 0) - consumed_qty_map.get(key, 0)
     threshold = float(row["threshold"])
@@ -428,7 +437,10 @@ def get_stock_data(page=None, page_size=None, search=None, sort=None, direction=
     """
     if page is None:
         # ── Unpaginated: unchanged behaviour ──────────────────────────────
-        with database.get_conn(cursor_factory=psycopg2.extras.RealDictCursor) as (_conn, cur):
+        with database.get_conn(cursor_factory=psycopg2.extras.RealDictCursor) as (
+            _conn,
+            cur,
+        ):
             bill_qty_map, consumed_qty_map = _get_billed_and_consumed_qty_maps(cur)
             cur.execute(
                 """
@@ -439,7 +451,9 @@ def get_stock_data(page=None, page_size=None, search=None, sort=None, direction=
                 """
             )
             rows = cur.fetchall()
-        return build_response(True, [_stock_record(r, bill_qty_map, consumed_qty_map) for r in rows])
+        return build_response(
+            True, [_stock_record(r, bill_qty_map, consumed_qty_map) for r in rows]
+        )
 
     # ── Paginated ─────────────────────────────────────────────────────────
     try:
@@ -465,11 +479,16 @@ def get_stock_data(page=None, page_size=None, search=None, sort=None, direction=
         # Matches the client-side filter the desktop already applies to the
         # full list, so moving a module to the paginated form does not change
         # what a search finds.
-        where.append("(lower(item_name) LIKE %(term)s OR lower(COALESCE(size, '')) LIKE %(term)s)")
+        where.append(
+            "(lower(item_name) LIKE %(term)s OR lower(COALESCE(size, '')) LIKE %(term)s)"
+        )
         params["term"] = f"%{term}%"
     where_sql = " AND ".join(where)
 
-    with database.get_conn(cursor_factory=psycopg2.extras.RealDictCursor) as (_conn, cur):
+    with database.get_conn(cursor_factory=psycopg2.extras.RealDictCursor) as (
+        _conn,
+        cur,
+    ):
         cur.execute(f"SELECT count(*) AS n FROM erp.stock WHERE {where_sql}", params)
         total = int(cur.fetchone()["n"])
 
@@ -483,9 +502,11 @@ def get_stock_data(page=None, page_size=None, search=None, sort=None, direction=
                 f"FROM erp.stock WHERE {where_sql}",
                 params,
             )
-            records = [_stock_record(r, bill_qty_map, consumed_qty_map) for r in cur.fetchall()]
+            records = [
+                _stock_record(r, bill_qty_map, consumed_qty_map) for r in cur.fetchall()
+            ]
             records.sort(key=lambda r: r[sort_key], reverse=descending)
-            window = records[(page - 1) * size: (page - 1) * size + size]
+            window = records[(page - 1) * size : (page - 1) * size + size]
         else:
             column = _STOCK_SORTABLE[sort_key]
             order = "DESC" if descending else "ASC"
@@ -504,16 +525,20 @@ def get_stock_data(page=None, page_size=None, search=None, sort=None, direction=
                 (r["item_name"].strip().lower(), (r["size"] or "").strip().lower())
                 for r in rows
             ]
-            bill_qty_map, consumed_qty_map = _get_billed_and_consumed_qty_maps(cur, keys)
+            bill_qty_map, consumed_qty_map = _get_billed_and_consumed_qty_maps(
+                cur, keys
+            )
             window = [_stock_record(r, bill_qty_map, consumed_qty_map) for r in rows]
 
-    return build_response(True, {
-        "rows": window,
-        "page": page,
-        "pageSize": size,
-        "total": total,
-    })
-
+    return build_response(
+        True,
+        {
+            "rows": window,
+            "page": page,
+            "pageSize": size,
+            "total": total,
+        },
+    )
 
 
 @rpc_method("updateThreshold", mutation=True)
@@ -541,7 +566,9 @@ def update_threshold(conn, cur, item_name, size, threshold):
 @rpc_method("updateDeadStock", mutation=True)
 @database.transactional
 def update_dead_stock(conn, cur, item_name, size, is_dead_stock):
-    dead_stock_val = is_dead_stock is True or str(is_dead_stock).strip().lower() == "true"
+    dead_stock_val = (
+        is_dead_stock is True or str(is_dead_stock).strip().lower() == "true"
+    )
 
     row_id = _find_stock_row(cur, item_name, size)
     if row_id is None:
@@ -552,7 +579,11 @@ def update_dead_stock(conn, cur, item_name, size, is_dead_stock):
         (dead_stock_val, get_current_user_id(), row_id),
     )
     item_label = f'"{item_name}"' + (f" ({size})" if size else "")
-    dead_stock_message = f"{item_label} marked as dead stock." if dead_stock_val else f"{item_label} removed from dead stock."
+    dead_stock_message = (
+        f"{item_label} marked as dead stock."
+        if dead_stock_val
+        else f"{item_label} removed from dead stock."
+    )
     return build_response(True, {"deadStock": dead_stock_val}, dead_stock_message)
 
 
@@ -589,7 +620,7 @@ def adjust_stock_manually(conn, cur, item_name, size, new_current_stock, reason)
         raise ValueError("Item not found in Stock database.")
 
     bill_qty_map, consumed_qty_map = _get_billed_and_consumed_qty_maps(cur)
-    key = f'{row["item_name"].strip().lower()}|{(row["size"] or "").strip().lower()}'
+    key = f"{row['item_name'].strip().lower()}|{(row['size'] or '').strip().lower()}"
     billed = bill_qty_map.get(key, 0)
     consumed = consumed_qty_map.get(key, 0)
     old_current_stock = float(row["initial_stock"]) + billed - consumed
@@ -600,7 +631,10 @@ def adjust_stock_manually(conn, cur, item_name, size, new_current_stock, reason)
         # value instead of being stuck re-submitting a rejected no-op edit.
         return {
             "success": False,
-            "data": {"oldCurrentStock": old_current_stock, "newCurrentStock": old_current_stock},
+            "data": {
+                "oldCurrentStock": old_current_stock,
+                "newCurrentStock": old_current_stock,
+            },
             "message": "New stock value is the same as the current value -- nothing to adjust.",
         }
 
@@ -691,12 +725,17 @@ def import_stock_data(conn, cur, items):
     items_service._import_items_from_stock(cur)
 
     message = f"Stock import completed. Items updated: {updated_count}, Items added: {added_count}."
-    return build_response(True, {"updatedCount": updated_count, "addedCount": added_count}, message)
+    return build_response(
+        True, {"updatedCount": updated_count, "addedCount": added_count}, message
+    )
 
 
 @rpc_method("getStockAdjustmentHistory")
 def get_stock_adjustment_history():
-    with database.get_conn(cursor_factory=psycopg2.extras.RealDictCursor) as (_conn, cur):
+    with database.get_conn(cursor_factory=psycopg2.extras.RealDictCursor) as (
+        _conn,
+        cur,
+    ):
         cur.execute(
             """
             SELECT sa.item_name, sa.size, sa.action, sa.old_value, sa.new_value, sa.reason,
@@ -755,7 +794,10 @@ def check_stock_adjustment_conflicts(items, bill_date):
             return build_response(True, [])
 
         latest_by_key: dict = {}
-        with database.get_conn(cursor_factory=psycopg2.extras.RealDictCursor) as (_conn, cur):
+        with database.get_conn(cursor_factory=psycopg2.extras.RealDictCursor) as (
+            _conn,
+            cur,
+        ):
             cur.execute(
                 """
                 SELECT DISTINCT ON (lower(item_name), lower(COALESCE(size, '')))
@@ -770,7 +812,7 @@ def check_stock_adjustment_conflicts(items, bill_date):
                 (tuple(keys),),
             )
             for row in cur.fetchall():
-                latest_by_key[f'{row["name_k"]}|{row["size_k"]}'] = {
+                latest_by_key[f"{row['name_k']}|{row['size_k']}"] = {
                     "date": row["created_at"].date(),
                     "reason": row["reason"] or "",
                 }
@@ -779,7 +821,7 @@ def check_stock_adjustment_conflicts(items, bill_date):
         seen_keys = set()
         for item in items:
             item = item or {}
-            key = f'{str(item.get("name") or "").strip().lower()}|{str(item.get("size") or "").strip().lower()}'
+            key = f"{str(item.get('name') or '').strip().lower()}|{str(item.get('size') or '').strip().lower()}"
             if key in seen_keys:
                 continue
             latest = latest_by_key.get(key)

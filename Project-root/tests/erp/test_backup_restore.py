@@ -149,7 +149,9 @@ def seeded_account():
     try:
         with conn, conn.cursor() as cur:
             cur.execute("DELETE FROM public.users WHERE email = %s", (email,))
-            cur.execute("DELETE FROM public.custom_roles WHERE role_key = %s", (role_key,))
+            cur.execute(
+                "DELETE FROM public.custom_roles WHERE role_key = %s", (role_key,)
+            )
     finally:
         conn.close()
 
@@ -416,7 +418,9 @@ def test_retention_keeps_recent_snapshots_and_prunes_the_rest(tmp_path):
     assert len(remaining) < len(made)
     # The most recent RETAIN_DAILY are always kept.
     for path in made[: db_backup.RETAIN_DAILY]:
-        assert path.name in remaining, f"{path.name} was pruned but is within daily retention"
+        assert path.name in remaining, (
+            f"{path.name} was pruned but is within daily retention"
+        )
 
 
 def test_retention_never_removes_the_only_snapshot(tmp_path):

@@ -95,10 +95,10 @@ def test_two_transactions_cannot_hold_the_same_advisory_lock(app):
         with conn.cursor() as cur:
             locks.lock_keys(cur, locks.DISPATCH, [key])
             order.append("a-locked")
-            barrier.wait()          # let B start trying
+            barrier.wait()  # let B start trying
             import time
 
-            time.sleep(0.3)         # hold it while B is definitely waiting
+            time.sleep(0.3)  # hold it while B is definitely waiting
             order.append("a-commit")
         conn.commit()
         return "ok"
@@ -130,7 +130,7 @@ def test_different_keys_do_not_block_each_other(app):
         def _inner(conn, barrier):
             with conn.cursor() as cur:
                 locks.lock_keys(cur, locks.DISPATCH, [key])
-                barrier.wait()      # only reachable if BOTH got their lock
+                barrier.wait()  # only reachable if BOTH got their lock
                 both_held.set()
             conn.commit()
             return "ok"
@@ -231,7 +231,9 @@ def test_lock_keys_normalises_and_deduplicates():
     conn = _connect()
     try:
         with conn.cursor() as cur:
-            got = locks.lock_keys(cur, locks.DISPATCH, ["  PROD-1 ", "prod-1", "PROD-2", "", "   "])
+            got = locks.lock_keys(
+                cur, locks.DISPATCH, ["  PROD-1 ", "prod-1", "PROD-2", "", "   "]
+            )
         assert got == ["prod-1", "prod-2"]
         conn.commit()
     finally:
@@ -295,7 +297,9 @@ def _clear_mutation(mutation_id):
     import database
 
     with database.get_conn() as (_c, cur):
-        cur.execute("DELETE FROM erp.rpc_mutations WHERE mutation_id = %s", (mutation_id,))
+        cur.execute(
+            "DELETE FROM erp.rpc_mutations WHERE mutation_id = %s", (mutation_id,)
+        )
 
 
 @pytest.fixture
@@ -383,7 +387,7 @@ def test_release_does_not_discard_a_completed_result(app, mutation_id):
     with app.app_context():
         mutations.claim(mutation_id, "saveThing")
         mutations.complete(mutation_id, envelope)
-        mutations.release(mutation_id)          # must be a no-op here
+        mutations.release(mutation_id)  # must be a no-op here
         assert mutations.claim(mutation_id, "saveThing") == envelope
 
 

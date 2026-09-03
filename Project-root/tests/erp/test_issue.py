@@ -9,7 +9,9 @@ import uuid
 
 def _rpc(client, method, args=None, mutation=False):
     headers = {"X-Mutation-Id": str(uuid.uuid4())} if mutation else {}
-    return client.post(f"/api/erp/rpc/{method}", json={"args": args or []}, headers=headers)
+    return client.post(
+        f"/api/erp/rpc/{method}", json={"args": args or []}, headers=headers
+    )
 
 
 def _unique_name(prefix: str) -> str:
@@ -38,7 +40,12 @@ def test_get_issue_data_returns_success_envelope(erp_client):
 
 
 def test_save_issue_stock_rejects_zero_items(erp_client):
-    resp = _rpc(erp_client, "saveIssueStock", [{"date": "01/01/2026", "issuedTo": "Contractor A", "items": []}], mutation=True)
+    resp = _rpc(
+        erp_client,
+        "saveIssueStock",
+        [{"date": "01/01/2026", "issuedTo": "Contractor A", "items": []}],
+        mutation=True,
+    )
     body = resp.get_json()
     assert body["success"] is False
     assert "zero items" in body["message"]
@@ -48,7 +55,13 @@ def test_save_issue_stock_requires_issued_to(erp_client):
     resp = _rpc(
         erp_client,
         "saveIssueStock",
-        [{"date": "01/01/2026", "issuedTo": "", "items": [{"name": "X", "qty": 1, "unit": "Pcs"}]}],
+        [
+            {
+                "date": "01/01/2026",
+                "issuedTo": "",
+                "items": [{"name": "X", "qty": 1, "unit": "Pcs"}],
+            }
+        ],
         mutation=True,
     )
     body = resp.get_json()
@@ -60,7 +73,13 @@ def test_save_issue_stock_requires_date(erp_client):
     resp = _rpc(
         erp_client,
         "saveIssueStock",
-        [{"date": "not a date", "issuedTo": "Contractor A", "items": [{"name": "X", "qty": 1, "unit": "Pcs"}]}],
+        [
+            {
+                "date": "not a date",
+                "issuedTo": "Contractor A",
+                "items": [{"name": "X", "qty": 1, "unit": "Pcs"}],
+            }
+        ],
         mutation=True,
     )
     body = resp.get_json()
@@ -72,7 +91,13 @@ def test_save_issue_stock_rejects_zero_qty(erp_client):
     resp = _rpc(
         erp_client,
         "saveIssueStock",
-        [{"date": "01/01/2026", "issuedTo": "Contractor A", "items": [{"name": "X", "qty": 0, "unit": "Pcs"}]}],
+        [
+            {
+                "date": "01/01/2026",
+                "issuedTo": "Contractor A",
+                "items": [{"name": "X", "qty": 0, "unit": "Pcs"}],
+            }
+        ],
         mutation=True,
     )
     assert resp.get_json()["success"] is False
@@ -92,7 +117,9 @@ def test_save_issue_stock_computes_base_qty_rate_and_value(erp_client):
                 "issuedTo": issued_to,
                 "reference": "LOT-42",
                 "remarks": "For frame welding",
-                "items": [{"name": item, "size": "M", "qty": 5, "unit": "Pcs", "rate": 10}],
+                "items": [
+                    {"name": item, "size": "M", "qty": 5, "unit": "Pcs", "rate": 10}
+                ],
             }
         ],
         mutation=True,
@@ -125,7 +152,13 @@ def test_save_issue_stock_matches_issued_to_against_vendor_master(erp_client):
         erp_client,
         "saveIssueStock",
         # Case-insensitive match, canonical stored name is snapshotted.
-        [{"date": "01/01/2026", "issuedTo": vendor.upper(), "items": [{"name": item, "qty": 1, "unit": "Pcs"}]}],
+        [
+            {
+                "date": "01/01/2026",
+                "issuedTo": vendor.upper(),
+                "items": [{"name": item, "qty": 1, "unit": "Pcs"}],
+            }
+        ],
         mutation=True,
     )
     issue_id = resp.get_json()["data"]["issueId"]
@@ -172,7 +205,13 @@ def test_delete_issue_bulk(erp_client):
     save_a = _rpc(
         erp_client,
         "saveIssueStock",
-        [{"date": "01/01/2026", "issuedTo": "Contractor A", "items": [{"name": a_item, "qty": 1, "unit": "Pcs"}]}],
+        [
+            {
+                "date": "01/01/2026",
+                "issuedTo": "Contractor A",
+                "items": [{"name": a_item, "qty": 1, "unit": "Pcs"}],
+            }
+        ],
         mutation=True,
     )
     a_id = save_a.get_json()["data"]["issueId"]
@@ -183,7 +222,13 @@ def test_delete_issue_bulk(erp_client):
     save_b = _rpc(
         erp_client,
         "saveIssueStock",
-        [{"date": "01/01/2026", "issuedTo": "Contractor A", "items": [{"name": b_item, "qty": 1, "unit": "Pcs"}]}],
+        [
+            {
+                "date": "01/01/2026",
+                "issuedTo": "Contractor A",
+                "items": [{"name": b_item, "qty": 1, "unit": "Pcs"}],
+            }
+        ],
         mutation=True,
     )
     b_id = save_b.get_json()["data"]["issueId"]
@@ -278,19 +323,35 @@ def test_item_rename_cascades_into_issue_lines(erp_client):
     _settle()
     old_item = _unique_name("OldIssueItem")
     new_item = _unique_name("NewIssueItem")
-    _rpc(erp_client, "saveItem", [{"itemName": old_item, "itemSize": "S"}], mutation=True)
+    _rpc(
+        erp_client, "saveItem", [{"itemName": old_item, "itemSize": "S"}], mutation=True
+    )
 
     save = _rpc(
         erp_client,
         "saveIssueStock",
-        [{"date": "01/01/2026", "issuedTo": "Contractor A", "items": [{"name": old_item, "size": "S", "qty": 1, "unit": "Pcs"}]}],
+        [
+            {
+                "date": "01/01/2026",
+                "issuedTo": "Contractor A",
+                "items": [{"name": old_item, "size": "S", "qty": 1, "unit": "Pcs"}],
+            }
+        ],
         mutation=True,
     )
     issue_id = save.get_json()["data"]["issueId"]
 
     rename = _rpc(
-        erp_client, "saveItem",
-        [{"itemName": new_item, "itemSize": "S", "originalName": old_item, "originalSize": "S"}],
+        erp_client,
+        "saveItem",
+        [
+            {
+                "itemName": new_item,
+                "itemSize": "S",
+                "originalName": old_item,
+                "originalSize": "S",
+            }
+        ],
         mutation=True,
     )
     assert rename.get_json()["success"] is True
@@ -304,18 +365,41 @@ def test_unit_rename_cascades_into_issue_lines(erp_client):
     _settle()
     old_unit = _unique_name("OldIssueUnit")
     new_unit = _unique_name("NewIssueUnit")
-    _rpc(erp_client, "saveUnit", [{"unitName": old_unit, "family": "Count", "factorToBase": 1}], mutation=True)
+    _rpc(
+        erp_client,
+        "saveUnit",
+        [{"unitName": old_unit, "family": "Count", "factorToBase": 1}],
+        mutation=True,
+    )
 
     item = _unique_name("UnitCascadeIssueItem")
     save = _rpc(
         erp_client,
         "saveIssueStock",
-        [{"date": "01/01/2026", "issuedTo": "Contractor A", "items": [{"name": item, "qty": 1, "unit": old_unit}]}],
+        [
+            {
+                "date": "01/01/2026",
+                "issuedTo": "Contractor A",
+                "items": [{"name": item, "qty": 1, "unit": old_unit}],
+            }
+        ],
         mutation=True,
     )
     issue_id = save.get_json()["data"]["issueId"]
 
-    rename = _rpc(erp_client, "saveUnit", [{"unitName": new_unit, "family": "Count", "factorToBase": 1, "originalUnitName": old_unit}], mutation=True)
+    rename = _rpc(
+        erp_client,
+        "saveUnit",
+        [
+            {
+                "unitName": new_unit,
+                "family": "Count",
+                "factorToBase": 1,
+                "originalUnitName": old_unit,
+            }
+        ],
+        mutation=True,
+    )
     assert rename.get_json()["success"] is True
 
     listed = _rpc(erp_client, "getIssueData").get_json()["data"]
@@ -326,13 +410,24 @@ def test_unit_rename_cascades_into_issue_lines(erp_client):
 def test_issue_subtracts_from_current_stock(erp_client):
     _settle()
     name = _unique_name("IssueStockItem")
-    resp = _rpc(erp_client, "saveItem", [{"itemName": name, "itemInitialStock": 10}], mutation=True)
+    resp = _rpc(
+        erp_client,
+        "saveItem",
+        [{"itemName": name, "itemInitialStock": 10}],
+        mutation=True,
+    )
     assert resp.get_json()["success"] is True
 
     _rpc(
         erp_client,
         "saveIssueStock",
-        [{"date": "01/01/2026", "issuedTo": "Contractor A", "items": [{"name": name, "qty": 4, "unit": "Pcs"}]}],
+        [
+            {
+                "date": "01/01/2026",
+                "issuedTo": "Contractor A",
+                "items": [{"name": name, "qty": 4, "unit": "Pcs"}],
+            }
+        ],
         mutation=True,
     )
 

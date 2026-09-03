@@ -60,21 +60,52 @@ except ImportError:
 # needs a corresponding entry here or its data silently never gets backed
 # up (nothing errors; the table is just absent from the backup spreadsheet).
 TABLES = [
-    "erp.units", "erp.color_master", "erp.model_master", "erp.process_type_master",
-    "erp.vendors", "erp.contractors", "erp.contractor_rates", "erp.contractor_service_charges",
+    "erp.units",
+    "erp.color_master",
+    "erp.model_master",
+    "erp.process_type_master",
+    "erp.vendors",
+    "erp.contractors",
+    "erp.contractor_rates",
+    "erp.contractor_service_charges",
     "erp.contractor_payments",
-    "erp.clients", "erp.items", "erp.item_vendors", "erp.stock", "erp.stock_adjustments",
-    "erp.stock_group_master", "erp.stock_group_items",
-    "erp.rate_history", "erp.process_master", "erp.process_components",
-    "erp.process_color_links", "erp.process_color_overrides",
-    "erp.warehouse_pool_opening", "erp.warehouse_pool", "erp.warehouse_pool_adjustments",
-    "erp.po_headers", "erp.po_lines", "erp.bill_headers", "erp.bill_lines",
-    "erp.return_headers", "erp.return_lines", "erp.wastage_headers", "erp.wastage_lines",
-    "erp.issue_headers", "erp.issue_lines", "erp.bom_products", "erp.bom_lines",
-    "erp.bom_additional_costs", "erp.client_orders_headers",
-    "erp.client_orders_lines", "erp.production",
-    "erp.dispatch_headers", "erp.dispatch_lines", "erp.dispatch_plan_lines",
-    "erp.company_settings", "erp.ledger_audit_log", "erp.app_settings",
+    "erp.clients",
+    "erp.items",
+    "erp.item_vendors",
+    "erp.stock",
+    "erp.stock_adjustments",
+    "erp.stock_group_master",
+    "erp.stock_group_items",
+    "erp.rate_history",
+    "erp.process_master",
+    "erp.process_components",
+    "erp.process_color_links",
+    "erp.process_color_overrides",
+    "erp.warehouse_pool_opening",
+    "erp.warehouse_pool",
+    "erp.warehouse_pool_adjustments",
+    "erp.po_headers",
+    "erp.po_lines",
+    "erp.bill_headers",
+    "erp.bill_lines",
+    "erp.return_headers",
+    "erp.return_lines",
+    "erp.wastage_headers",
+    "erp.wastage_lines",
+    "erp.issue_headers",
+    "erp.issue_lines",
+    "erp.bom_products",
+    "erp.bom_lines",
+    "erp.bom_additional_costs",
+    "erp.client_orders_headers",
+    "erp.client_orders_lines",
+    "erp.production",
+    "erp.dispatch_headers",
+    "erp.dispatch_lines",
+    "erp.dispatch_plan_lines",
+    "erp.company_settings",
+    "erp.ledger_audit_log",
+    "erp.app_settings",
 ]
 
 
@@ -116,8 +147,11 @@ def fetch_table_rows(cur, table: str) -> tuple[list[str], list[list]]:
 _cell = sheets_client.to_cell_value
 
 
-
-def run_backup(database_url: str, drive_folder_id: str | None = None, existing_spreadsheet_id: str | None = None) -> str:
+def run_backup(
+    database_url: str,
+    drive_folder_id: str | None = None,
+    existing_spreadsheet_id: str | None = None,
+) -> str:
     import psycopg2
 
     today = datetime.date.today().isoformat()
@@ -130,7 +164,9 @@ def run_backup(database_url: str, drive_folder_id: str | None = None, existing_s
         spreadsheet_id = existing_spreadsheet_id
         print(f"Updating existing backup spreadsheet: {spreadsheet_id}")
     else:
-        spreadsheet_id = sheets_client.create_spreadsheet(sheets, drive, title, drive_folder_id)
+        spreadsheet_id = sheets_client.create_spreadsheet(
+            sheets, drive, title, drive_folder_id
+        )
         print(f"Created backup spreadsheet: {title} ({spreadsheet_id})")
 
     conn = psycopg2.connect(database_url)
@@ -141,9 +177,17 @@ def run_backup(database_url: str, drive_folder_id: str | None = None, existing_s
                 for table in TABLES:
                     columns, rows = fetch_table_rows(cur, table)
                     tab_name = table.split(".", 1)[1][:99]  # Sheets tab-name length cap
-                    actual_tab, is_fresh = _ensure_sheet_tab(sheets, spreadsheet_id, tab_name, first)
+                    actual_tab, is_fresh = _ensure_sheet_tab(
+                        sheets, spreadsheet_id, tab_name, first
+                    )
                     first = False
-                    sheets_client.write_values(sheets, spreadsheet_id, actual_tab, [columns] + rows, fresh=is_fresh)
+                    sheets_client.write_values(
+                        sheets,
+                        spreadsheet_id,
+                        actual_tab,
+                        [columns] + rows,
+                        fresh=is_fresh,
+                    )
                     print(f"  {table} -> tab '{actual_tab}': {len(rows)} rows")
     finally:
         conn.close()
@@ -151,12 +195,16 @@ def run_backup(database_url: str, drive_folder_id: str | None = None, existing_s
     return spreadsheet_id
 
 
-def _ensure_sheet_tab(sheets, spreadsheet_id: str, tab_name: str, first: bool) -> tuple[str, bool]:
+def _ensure_sheet_tab(
+    sheets, spreadsheet_id: str, tab_name: str, first: bool
+) -> tuple[str, bool]:
     """Returns (actual_tab_name, is_fresh) -- is_fresh is True when the tab was
     just created/renamed into existence this call, so callers know it's
     already empty and don't need to clear it before writing."""
     meta = sheets_client.with_retry(
-        lambda: sheets.spreadsheets().get(spreadsheetId=spreadsheet_id, fields="sheets.properties").execute()
+        lambda: sheets.spreadsheets()
+        .get(spreadsheetId=spreadsheet_id, fields="sheets.properties")
+        .execute()
     )
     existing_tabs = [s["properties"]["title"] for s in meta.get("sheets", [])]
     lower_map = {t.lower(): t for t in existing_tabs}
@@ -164,7 +212,11 @@ def _ensure_sheet_tab(sheets, spreadsheet_id: str, tab_name: str, first: bool) -
     if tab_name.lower() in lower_map:
         return lower_map[tab_name.lower()], False
 
-    if first and len(existing_tabs) == 1 and existing_tabs[0].lower().startswith("sheet"):
+    if (
+        first
+        and len(existing_tabs) == 1
+        and existing_tabs[0].lower().startswith("sheet")
+    ):
         _rename_first_tab(sheets, spreadsheet_id, tab_name)
         return tab_name, True
 
@@ -172,34 +224,55 @@ def _ensure_sheet_tab(sheets, spreadsheet_id: str, tab_name: str, first: bool) -
     return tab_name, True
 
 
-
-
 def _rename_first_tab(client, spreadsheet_id: str, new_title: str):
     meta = sheets_client.with_retry(
-        lambda: client.spreadsheets().get(spreadsheetId=spreadsheet_id, fields="sheets.properties").execute()
+        lambda: client.spreadsheets()
+        .get(spreadsheetId=spreadsheet_id, fields="sheets.properties")
+        .execute()
     )
     sheet_id = meta["sheets"][0]["properties"]["sheetId"]
-    body = {"requests": [{"updateSheetProperties": {"properties": {"sheetId": sheet_id, "title": new_title}, "fields": "title"}}]}
-    sheets_client.with_retry(lambda: client.spreadsheets().batchUpdate(spreadsheetId=spreadsheet_id, body=body).execute())
+    body = {
+        "requests": [
+            {
+                "updateSheetProperties": {
+                    "properties": {"sheetId": sheet_id, "title": new_title},
+                    "fields": "title",
+                }
+            }
+        ]
+    }
+    sheets_client.with_retry(
+        lambda: client.spreadsheets()
+        .batchUpdate(spreadsheetId=spreadsheet_id, body=body)
+        .execute()
+    )
 
 
 def apply_retention(drive_folder_id: str, retention_days: int):
     drive = sheets_client.drive_client()
-    cutoff = (datetime.datetime.utcnow() - datetime.timedelta(days=retention_days)).isoformat("T") + "Z"
+    cutoff = (
+        datetime.datetime.utcnow() - datetime.timedelta(days=retention_days)
+    ).isoformat("T") + "Z"
     query = (
         f"'{drive_folder_id}' in parents and name contains 'MTC-backup-' "
         f"and mimeType = 'application/vnd.google-apps.spreadsheet' and createdTime < '{cutoff}'"
     )
     results = sheets_client.with_retry(
-        lambda: drive.files().list(q=query, fields="files(id, name, createdTime)").execute()
+        lambda: drive.files()
+        .list(q=query, fields="files(id, name, createdTime)")
+        .execute()
     )
     for f in results.get("files", []):
         print(f"Retention: deleting {f['name']} ({f['createdTime']})")
-        sheets_client.with_retry(lambda fid=f["id"]: drive.files().delete(fileId=fid).execute())
+        sheets_client.with_retry(
+            lambda fid=f["id"]: drive.files().delete(fileId=fid).execute()
+        )
 
 
 def main():
-    parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
+    parser = argparse.ArgumentParser(
+        description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter
+    )
     parser.add_argument("--database-url", default=os.environ.get("DATABASE_URL"))
     parser.add_argument("--drive-folder-id", default=os.environ.get("DRIVE_FOLDER_ID"))
     parser.add_argument("--retention-days", type=int, default=90)
@@ -212,7 +285,9 @@ def main():
 
     try:
         spreadsheet_id = run_backup(args.database_url, args.drive_folder_id)
-        print(f"Backup complete: https://docs.google.com/spreadsheets/d/{spreadsheet_id}")
+        print(
+            f"Backup complete: https://docs.google.com/spreadsheets/d/{spreadsheet_id}"
+        )
     except Exception as exc:
         print(f"BACKUP FAILED: {exc}", file=sys.stderr)
         sys.exit(1)
@@ -220,7 +295,9 @@ def main():
     if args.drive_folder_id and not args.no_retention:
         apply_retention(args.drive_folder_id, args.retention_days)
     elif not args.drive_folder_id:
-        print("No --drive-folder-id / DRIVE_FOLDER_ID set -- skipping retention cleanup (can't scope it safely).")
+        print(
+            "No --drive-folder-id / DRIVE_FOLDER_ID set -- skipping retention cleanup (can't scope it safely)."
+        )
 
 
 if __name__ == "__main__":

@@ -58,6 +58,7 @@ def _build_po_line_key(po_number, name, size, narration) -> str:
     identical key for the same (PO, item, size, narration), so this lives
     in exactly one place, not re-built per caller.
     """
+
     def part(v) -> str:
         return str(v if v is not None else "").strip().lower()
 
@@ -110,7 +111,10 @@ def _aggregate_billed_base_qty_by_po(cur) -> dict:
 
 
 def _find_vendor_id(cur, name: str):
-    cur.execute("SELECT id FROM erp.vendors WHERE lower(vendor_name) = lower(%s) AND deleted_at IS NULL", (name,))
+    cur.execute(
+        "SELECT id FROM erp.vendors WHERE lower(vendor_name) = lower(%s) AND deleted_at IS NULL",
+        (name,),
+    )
     row = cur.fetchone()
     return row["id"] if row else None
 
@@ -151,7 +155,9 @@ def _compute_bill_overage_warnings(cur, items: list) -> list[str]:
             return []
 
         billed_map = _aggregate_billed_base_qty_by_po(cur)
-        pos_by_number = {po["poNumber"]: po for po in po_service._load_po_list(cur, billed_map)}
+        pos_by_number = {
+            po["poNumber"]: po for po in po_service._load_po_list(cur, billed_map)
+        }
 
         warnings = []
         seen_keys = set()
@@ -160,7 +166,9 @@ def _compute_bill_overage_warnings(cur, items: list) -> list[str]:
             if not po_num or po_num.upper() == "DIRECT":
                 continue
 
-            key = _build_po_line_key(po_num, it.get("name"), it.get("size") or "", it.get("narration") or "")
+            key = _build_po_line_key(
+                po_num, it.get("name"), it.get("size") or "", it.get("narration") or ""
+            )
             if key in seen_keys:
                 continue
             seen_keys.add(key)
@@ -170,7 +178,14 @@ def _compute_bill_overage_warnings(cur, items: list) -> list[str]:
                 continue
 
             po_item = next(
-                (pi for pi in po["items"] if _build_po_line_key(po_num, pi["name"], pi["size"], pi["narration"]) == key),
+                (
+                    pi
+                    for pi in po["items"]
+                    if _build_po_line_key(
+                        po_num, pi["name"], pi["size"], pi["narration"]
+                    )
+                    == key
+                ),
                 None,
             )
             if po_item is None:
@@ -182,7 +197,7 @@ def _compute_bill_overage_warnings(cur, items: list) -> list[str]:
                 over_by = billed_base_qty - ordered_base_qty
                 warnings.append(
                     f'"{it.get("name")}" on PO {po_num} is now billed {billed_base_qty:.2f} vs '
-                    f'ordered {ordered_base_qty:.2f} ({over_by:.2f} over).'
+                    f"ordered {ordered_base_qty:.2f} ({over_by:.2f} over)."
                 )
         return warnings
     except Exception:
@@ -217,7 +232,7 @@ def _load_bill_list(cur, only_header_id=None) -> list:
 
     bill_map: dict = {}
     for row in rows:
-        key = f'{row["vendor"].strip().lower()}|{row["bill_number"].strip().lower()}'
+        key = f"{row['vendor'].strip().lower()}|{row['bill_number'].strip().lower()}"
         bill = bill_map.get(key)
         if bill is None:
             bill = {
@@ -254,7 +269,11 @@ def _load_bill_list(cur, only_header_id=None) -> list:
         totals = _compute_line_totals(qty, price, gst_rate_pct)
 
         # Blank (legacy rows predating migration 022) reads as a goods bill.
-        line_bill_type = "LABOR" if str(row["bill_type"] or "").strip().upper() == "LABOR" else "GOODS"
+        line_bill_type = (
+            "LABOR"
+            if str(row["bill_type"] or "").strip().upper() == "LABOR"
+            else "GOODS"
+        )
         if line_bill_type == "LABOR":
             bill["billType"] = "LABOR"
 
@@ -283,7 +302,11 @@ def _load_bill_list(cur, only_header_id=None) -> list:
         bill["totalAmount"] += totals["lineTotal"]
 
     # Newest bill date first; ties broken by most-recently-created bill first.
-    bills = sorted(bill_map.values(), key=lambda b: (b["billDateRaw"] or "", b["_headerId"]), reverse=True)
+    bills = sorted(
+        bill_map.values(),
+        key=lambda b: (b["billDateRaw"] or "", b["_headerId"]),
+        reverse=True,
+    )
     for b in bills:
         del b["_headerId"]
 
@@ -292,7 +315,10 @@ def _load_bill_list(cur, only_header_id=None) -> list:
 
 @rpc_method("getBillData")
 def get_bill_data():
-    with database.get_conn(cursor_factory=psycopg2.extras.RealDictCursor) as (_conn, cur):
+    with database.get_conn(cursor_factory=psycopg2.extras.RealDictCursor) as (
+        _conn,
+        cur,
+    ):
         bills = _load_bill_list(cur)
     return build_response(True, bills)
 
@@ -331,11 +357,19 @@ def save_bill(conn, cur, form_data):
         (vendor, bill_number),
     )
     existing_match = cur.fetchone()
-    is_self = is_edit and vendor.lower() == old_vendor.lower() and bill_number.lower() == old_bill_number.lower()
+    is_self = (
+        is_edit
+        and vendor.lower() == old_vendor.lower()
+        and bill_number.lower() == old_bill_number.lower()
+    )
     if existing_match and not is_self:
         if is_edit:
-            raise ValueError(f'Bill #{bill_number} for vendor "{vendor}" already exists in another record. Edit aborted.')
-        raise ValueError(f'Bill #{bill_number} already exists for vendor "{vendor}". Please use a unique bill number for this vendor.')
+            raise ValueError(
+                f'Bill #{bill_number} for vendor "{vendor}" already exists in another record. Edit aborted.'
+            )
+        raise ValueError(
+            f'Bill #{bill_number} already exists for vendor "{vendor}". Please use a unique bill number for this vendor.'
+        )
 
     header_id = None
     if is_edit:
@@ -368,11 +402,15 @@ def save_bill(conn, cur, form_data):
         po_numbers_array = raw_po
     else:
         po_numbers_array = []
-    default_po_number = (str(po_numbers_array[0]).strip() if po_numbers_array else "") or "DIRECT"
+    default_po_number = (
+        str(po_numbers_array[0]).strip() if po_numbers_array else ""
+    ) or "DIRECT"
 
     bill_date = date_utils.to_safe_date(form_data.get("billDate"))
     if not bill_date:
-        raise ValueError("Invalid bill date. Accepted formats: DD/MM/YYYY or YYYY-MM-DD.")
+        raise ValueError(
+            "Invalid bill date. Accepted formats: DD/MM/YYYY or YYYY-MM-DD."
+        )
 
     contact = str(form_data.get("contact") or "").strip()
     remarks = str(form_data.get("remarks") or "").strip()
@@ -382,7 +420,11 @@ def save_bill(conn, cur, form_data):
     issuing_party = str(form_data.get("issuingParty") or "").strip()
     manufacturing_vendor = str(form_data.get("manufacturingVendor") or "").strip()
 
-    bill_type = "LABOR" if str(form_data.get("billType") or "GOODS").strip().upper() == "LABOR" else "GOODS"
+    bill_type = (
+        "LABOR"
+        if str(form_data.get("billType") or "GOODS").strip().upper() == "LABOR"
+        else "GOODS"
+    )
 
     # Labor Job bills carry a Process per line (item_name is then forced to
     # that process's Output Item Name, not whatever the client sent) -- build
@@ -422,7 +464,18 @@ def save_bill(conn, cur, form_data):
                 issuing_party = %s, manufacturing_vendor = %s, updated_by = %s
             WHERE id = %s
             """,
-            (bill_number, vendor, vendor_id, contact, bill_date, remarks, issuing_party, manufacturing_vendor, user_id, header_id),
+            (
+                bill_number,
+                vendor,
+                vendor_id,
+                contact,
+                bill_date,
+                remarks,
+                issuing_party,
+                manufacturing_vendor,
+                user_id,
+                header_id,
+            ),
         )
         cur.execute("DELETE FROM erp.bill_lines WHERE header_id = %s", (header_id,))
     else:
@@ -433,7 +486,17 @@ def save_bill(conn, cur, form_data):
             VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s)
             RETURNING id
             """,
-            (bill_number, vendor, vendor_id, contact, bill_date, remarks, issuing_party, manufacturing_vendor, user_id),
+            (
+                bill_number,
+                vendor,
+                vendor_id,
+                contact,
+                bill_date,
+                remarks,
+                issuing_party,
+                manufacturing_vendor,
+                user_id,
+            ),
         )
         header_id = cur.fetchone()["id"]
 
@@ -451,8 +514,14 @@ def save_bill(conn, cur, form_data):
         line_process_name = ""
         line_color = ""
         if bill_type == "LABOR":
-            raw_process_name = str(item.get("processName") or item.get("process") or "").strip()
-            process = process_by_name.get(raw_process_name.lower()) if raw_process_name else None
+            raw_process_name = str(
+                item.get("processName") or item.get("process") or ""
+            ).strip()
+            process = (
+                process_by_name.get(raw_process_name.lower())
+                if raw_process_name
+                else None
+            )
             if not process:
                 raise ValueError(
                     f'"{raw_process_name or "(blank)"}" is not a recognized active Process. '
@@ -488,14 +557,20 @@ def save_bill(conn, cur, form_data):
         if gst_rate_pct < 0 or gst_rate_pct > 100:
             raise ValueError("GST rate must be between 0 and 100 percent.")
 
-        item_po_number = (str(item.get("po") or item.get("poNumber") or "").strip()) or default_po_number
+        item_po_number = (
+            str(item.get("po") or item.get("poNumber") or "").strip()
+        ) or default_po_number
         unit = str(item.get("unit") or "Pcs").strip() or "Pcs"
 
         # An unconvertible unit must never block saving the bill.
         unit_info = items_service.lookup_item_unit_info(item_unit_map, name, size)
         try:
-            base_qty = units_service.convert_qty_to_base_unit(qty, unit, unit_info, units_map)
-            base_rate = units_service.convert_rate_to_base_unit(price, unit, unit_info, units_map)
+            base_qty = units_service.convert_qty_to_base_unit(
+                qty, unit, unit_info, units_map
+            )
+            base_rate = units_service.convert_rate_to_base_unit(
+                price, unit, unit_info, units_map
+            )
         except ValueError:
             base_qty = qty
             base_rate = price
@@ -531,7 +606,14 @@ def save_bill(conn, cur, form_data):
         )
 
         extraction_items.append(
-            {"name": name, "size": size, "narration": narration, "unit": unit, "baseRate": base_rate, "poNumber": item_po_number}
+            {
+                "name": name,
+                "size": size,
+                "narration": narration,
+                "unit": unit,
+                "baseRate": base_rate,
+                "poNumber": item_po_number,
+            }
         )
 
     # Auto-extract vendor/items/rates -- same as PO's autoExtractFromPoOrBill.
@@ -540,16 +622,37 @@ def save_bill(conn, cur, form_data):
         rate = item["baseRate"]
         if rate < _MIN_VENDOR_RATE:
             continue
-        items_service._auto_extract_item(cur, item["name"], item["size"], item["narration"], item["unit"], vendor, rate)
+        items_service._auto_extract_item(
+            cur,
+            item["name"],
+            item["size"],
+            item["narration"],
+            item["unit"],
+            vendor,
+            rate,
+        )
         cur.execute(
             """
             INSERT INTO erp.rate_history (rate_date, item_name, size, narration, vendor_name, rate, po_number, bill_number)
             VALUES (%s, %s, %s, %s, %s, %s, %s, %s)
             """,
-            (bill_date, item["name"], item["size"], item["narration"], vendor, rate, item["poNumber"], bill_number),
+            (
+                bill_date,
+                item["name"],
+                item["size"],
+                item["narration"],
+                vendor,
+                rate,
+                item["poNumber"],
+                bill_number,
+            ),
         )
 
-    message = f"Bill #{bill_number} ({vendor}) updated successfully." if is_edit else f"Bill #{bill_number} ({vendor}) recorded successfully."
+    message = (
+        f"Bill #{bill_number} ({vendor}) updated successfully."
+        if is_edit
+        else f"Bill #{bill_number} ({vendor}) recorded successfully."
+    )
 
     overage_warnings = _compute_bill_overage_warnings(cur, extraction_items)
     if overage_warnings:
@@ -560,7 +663,9 @@ def save_bill(conn, cur, form_data):
     fresh_list = _load_bill_list(cur, only_header_id=header_id)
     fresh_bill = fresh_list[0] if fresh_list else None
 
-    return build_response(True, {"billNumber": bill_number, "bill": fresh_bill}, message)
+    return build_response(
+        True, {"billNumber": bill_number, "bill": fresh_bill}, message
+    )
 
 
 @rpc_method("deleteBill", mutation=True)
@@ -577,13 +682,17 @@ def delete_bill(conn, cur, vendor, bill_number):
     )
     row = cur.fetchone()
     if row is None:
-        raise ValueError(f'Bill #{valid_bill_number} for vendor "{valid_vendor}" not found.')
+        raise ValueError(
+            f'Bill #{valid_bill_number} for vendor "{valid_vendor}" not found.'
+        )
 
     cur.execute(
         "UPDATE erp.bill_headers SET deleted_at = NOW(), updated_by = %s WHERE id = %s",
         (get_current_user_id(), row["id"]),
     )
-    return build_response(True, None, f"Bill #{valid_bill_number} deleted successfully.")
+    return build_response(
+        True, None, f"Bill #{valid_bill_number} deleted successfully."
+    )
 
 
 @rpc_method("deleteBillsBulk", mutation=True)
@@ -610,8 +719,13 @@ def delete_bills_bulk(conn, cur, bills):
         row = cur.fetchone()
         if row is None:
             continue
-        cur.execute("UPDATE erp.bill_headers SET deleted_at = NOW(), updated_by = %s WHERE id = %s", (user_id, row["id"]))
+        cur.execute(
+            "UPDATE erp.bill_headers SET deleted_at = NOW(), updated_by = %s WHERE id = %s",
+            (user_id, row["id"]),
+        )
         deleted_keys.append({"vendor": vendor, "billNumber": bill_number})
 
-    message = f"Deleted {len(deleted_keys)} bill(s) ({len(deleted_keys)} row(s) removed)."
+    message = (
+        f"Deleted {len(deleted_keys)} bill(s) ({len(deleted_keys)} row(s) removed)."
+    )
     return build_response(True, {"deletedKeys": deleted_keys}, message)

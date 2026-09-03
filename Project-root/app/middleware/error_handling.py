@@ -168,9 +168,7 @@ class StructuredLogger:
         )
         self.logger.error(log_entry)
 
-    def debug(
-        self, message: str, context: Optional[Dict[str, Any]] = None
-    ) -> None:
+    def debug(self, message: str, context: Optional[Dict[str, Any]] = None) -> None:
         """Log debug level message."""
         log_entry = self._build_log_entry("DEBUG", message, context=context)
         self.logger.debug(log_entry)
@@ -265,7 +263,9 @@ def request_id_middleware():
 
         # Sanitised (SEC-011): this value reaches the log, and a raw header
         # can carry newlines and forge entries.
-        rid = _sanitize_request_id(request.headers.get("X-Request-ID")) or str(uuid.uuid4())
+        rid = _sanitize_request_id(request.headers.get("X-Request-ID")) or str(
+            uuid.uuid4()
+        )
 
     RequestContext.initialize(rid)
     g.request_id = rid

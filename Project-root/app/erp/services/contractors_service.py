@@ -114,17 +114,26 @@ def _contractor_in_use_message(cur, contractor_name: str):
 
     if table := config_maps.TABLE_NAMES.get("PRODUCTION"):
         col = config_maps.to_snake_case("assignedTo")
-        cur.execute(f"SELECT 1 FROM {table} WHERE deleted_at IS NULL AND lower({col}) = lower(%s) LIMIT 1", (name,))
+        cur.execute(
+            f"SELECT 1 FROM {table} WHERE deleted_at IS NULL AND lower({col}) = lower(%s) LIMIT 1",
+            (name,),
+        )
         if cur.fetchone():
             return f'Cannot delete "{contractor_name}": referenced by Production lots.'
 
     if table := config_maps.TABLE_NAMES.get("DISPATCH_HEADERS"):
         col = config_maps.to_snake_case("logisticsContractor")
-        cur.execute(f"SELECT 1 FROM {table} WHERE deleted_at IS NULL AND lower({col}) = lower(%s) LIMIT 1", (name,))
+        cur.execute(
+            f"SELECT 1 FROM {table} WHERE deleted_at IS NULL AND lower({col}) = lower(%s) LIMIT 1",
+            (name,),
+        )
         if cur.fetchone():
             return f'Cannot delete "{contractor_name}": referenced by Dispatch logistics entries.'
 
-    cur.execute("SELECT 1 FROM erp.contractor_payments WHERE lower(contractor_name) = lower(%s) LIMIT 1", (name,))
+    cur.execute(
+        "SELECT 1 FROM erp.contractor_payments WHERE lower(contractor_name) = lower(%s) LIMIT 1",
+        (name,),
+    )
     if cur.fetchone():
         return f'Cannot delete "{contractor_name}": has recorded payments.'
 
@@ -151,10 +160,14 @@ def _rename_contractor_everywhere(cur, old_name: str, new_name: str) -> None:
     )
 
     if table := config_maps.TABLE_NAMES.get("PRODUCTION"):
-        rename_utils.rename_in_column(cur, table, config_maps.to_snake_case("assignedTo"), old, new)
+        rename_utils.rename_in_column(
+            cur, table, config_maps.to_snake_case("assignedTo"), old, new
+        )
 
     if table := config_maps.TABLE_NAMES.get("DISPATCH_HEADERS"):
-        rename_utils.rename_in_column(cur, table, config_maps.to_snake_case("logisticsContractor"), old, new)
+        rename_utils.rename_in_column(
+            cur, table, config_maps.to_snake_case("logisticsContractor"), old, new
+        )
 
     # Display-only "sourced from" snapshot on a Product's Additional Cost
     # line -- never used in a lookup or balance calc, but still a
@@ -179,7 +192,9 @@ def _get_size_from_output_item_name(text: str) -> str:
     return config_maps.PROCESS_SIZE_FALLBACK
 
 
-def _get_contractor_rate(cur, contractor_name: str, process_type: str, size: str) -> float:
+def _get_contractor_rate(
+    cur, contractor_name: str, process_type: str, size: str
+) -> float:
     c_name = str(contractor_name or "").strip()
     p_type = str(process_type or "").strip()
     p_size = str(size or "").strip()
@@ -208,7 +223,9 @@ def _get_extra_charge(cur, contractor_name: str, service_type: str) -> float:
     return float(row["charge_amount"]) if row else 0.0
 
 
-def _get_dispatch_logistics_payable_rows(cur, contractor_name_filter: str = None) -> list:
+def _get_dispatch_logistics_payable_rows(
+    cur, contractor_name_filter: str = None
+) -> list:
     """Dispatch lines with a recorded (header-level) Logistics Contractor +
     positive (line-level) Logistics Cost -- the "Dispatch / Logistics"
     virtual process category's payable entries. One row per LINE, same
@@ -278,7 +295,10 @@ def _get_total_paid_map(cur) -> dict:
 
 @rpc_method("getContractorsData")
 def get_contractors_data():
-    with database.get_conn(cursor_factory=psycopg2.extras.RealDictCursor) as (_conn, cur):
+    with database.get_conn(cursor_factory=psycopg2.extras.RealDictCursor) as (
+        _conn,
+        cur,
+    ):
         cur.execute(
             """
             SELECT contractor_name, contact, address, gst_pan, remarks
@@ -310,7 +330,9 @@ def save_contractor(conn, cur, form_data):
         raise ValueError("Contractor name cannot be empty.")
 
     is_edit = bool(form_data.get("originalContractorName"))
-    original_name = str(form_data.get("originalContractorName")).strip() if is_edit else new_name
+    original_name = (
+        str(form_data.get("originalContractorName")).strip() if is_edit else new_name
+    )
 
     cur.execute(
         "SELECT id FROM erp.contractors WHERE lower(contractor_name) = lower(%s) AND deleted_at IS NULL",
@@ -387,8 +409,14 @@ def delete_contractor(conn, cur, contractor_name):
     # matches the source's own deleteRowsById cleanup exactly, and neither
     # erp.contractor_rates nor erp.contractor_service_charges has a
     # deleted_at of its own to soft-delete with.
-    cur.execute("DELETE FROM erp.contractor_rates WHERE lower(contractor_name) = lower(%s)", (target,))
-    cur.execute("DELETE FROM erp.contractor_service_charges WHERE lower(contractor_name) = lower(%s)", (target,))
+    cur.execute(
+        "DELETE FROM erp.contractor_rates WHERE lower(contractor_name) = lower(%s)",
+        (target,),
+    )
+    cur.execute(
+        "DELETE FROM erp.contractor_service_charges WHERE lower(contractor_name) = lower(%s)",
+        (target,),
+    )
 
     return build_response(True, None, f'Contractor "{target}" deleted.')
 
@@ -396,7 +424,9 @@ def delete_contractor(conn, cur, contractor_name):
 @rpc_method("deleteContractorsBulk", mutation=True)
 @database.transactional
 def delete_contractors_bulk(conn, cur, contractor_names):
-    requested = [str(n or "").strip() for n in (contractor_names or []) if str(n or "").strip()]
+    requested = [
+        str(n or "").strip() for n in (contractor_names or []) if str(n or "").strip()
+    ]
     if not requested:
         return build_response(True, None, "No contractors selected.")
 
@@ -406,7 +436,8 @@ def delete_contractors_bulk(conn, cur, contractor_names):
     if not deletable:
         if in_use:
             return build_response(
-                False, None,
+                False,
+                None,
                 f"No contractors deleted -- all selected have Production, Dispatch, or payment history: {', '.join(in_use)}.",
             )
         return build_response(True, None, "No contractors to delete.")
@@ -417,8 +448,14 @@ def delete_contractors_bulk(conn, cur, contractor_names):
         (user_id, [n.lower() for n in deletable]),
     )
     rows_deleted = cur.rowcount
-    cur.execute("DELETE FROM erp.contractor_rates WHERE lower(contractor_name) = ANY(%s)", ([n.lower() for n in deletable],))
-    cur.execute("DELETE FROM erp.contractor_service_charges WHERE lower(contractor_name) = ANY(%s)", ([n.lower() for n in deletable],))
+    cur.execute(
+        "DELETE FROM erp.contractor_rates WHERE lower(contractor_name) = ANY(%s)",
+        ([n.lower() for n in deletable],),
+    )
+    cur.execute(
+        "DELETE FROM erp.contractor_service_charges WHERE lower(contractor_name) = ANY(%s)",
+        ([n.lower() for n in deletable],),
+    )
 
     message = f"Deleted {rows_deleted} contractor(s)."
     if in_use:
@@ -441,7 +478,10 @@ def get_contractor_rates_data(contractor_name=""):
         params.append(filter_name)
     sql += " ORDER BY lower(contractor_name), lower(process_type), lower(size)"
 
-    with database.get_conn(cursor_factory=psycopg2.extras.RealDictCursor) as (_conn, cur):
+    with database.get_conn(cursor_factory=psycopg2.extras.RealDictCursor) as (
+        _conn,
+        cur,
+    ):
         cur.execute(sql, params)
         rows = cur.fetchall()
 
@@ -461,7 +501,10 @@ def get_contractor_rates_data(contractor_name=""):
 
 @rpc_method("getContractorRateForProcessType")
 def get_contractor_rate_for_process_type(contractor_name, process_type, size):
-    with database.get_conn(cursor_factory=psycopg2.extras.RealDictCursor) as (_conn, cur):
+    with database.get_conn(cursor_factory=psycopg2.extras.RealDictCursor) as (
+        _conn,
+        cur,
+    ):
         rate = _get_contractor_rate(cur, contractor_name, process_type, size)
     return build_response(True, {"ratePerUnit": rate})
 
@@ -495,15 +538,32 @@ def save_contractor_rate(conn, cur, form_data):
             UPDATE erp.contractor_rates SET contractor_name = %s, process_type = %s, size = %s, rate_per_unit = %s,
                 remarks = %s, contractor_id = %s WHERE id = %s
             """,
-            (contractor_name, process_type, size, rate_per_unit, remarks, contractor_id, existing["id"]),
+            (
+                contractor_name,
+                process_type,
+                size,
+                rate_per_unit,
+                remarks,
+                contractor_id,
+                existing["id"],
+            ),
         )
     else:
         cur.execute(
             "INSERT INTO erp.contractor_rates (contractor_name, contractor_id, process_type, size, rate_per_unit, remarks) VALUES (%s, %s, %s, %s, %s, %s)",
-            (contractor_name, contractor_id, process_type, size, rate_per_unit, remarks),
+            (
+                contractor_name,
+                contractor_id,
+                process_type,
+                size,
+                rate_per_unit,
+                remarks,
+            ),
         )
 
-    return build_response(True, None, f'Rate for "{contractor_name}" ({process_type} / {size}) saved.')
+    return build_response(
+        True, None, f'Rate for "{contractor_name}" ({process_type} / {size}) saved.'
+    )
 
 
 @rpc_method("deleteContractorRate", mutation=True)
@@ -515,7 +575,11 @@ def delete_contractor_rate(conn, cur, contractor_name, process_type, size):
 
     cur.execute(
         "DELETE FROM erp.contractor_rates WHERE lower(contractor_name) = lower(%s) AND lower(process_type) = lower(%s) AND lower(size) = lower(%s)",
-        (str(contractor_name or "").strip(), str(process_type or "").strip(), str(size or "").strip()),
+        (
+            str(contractor_name or "").strip(),
+            str(process_type or "").strip(),
+            str(size or "").strip(),
+        ),
     )
     if cur.rowcount == 0:
         raise ValueError("Rate card entry not found.")
@@ -566,7 +630,10 @@ def get_contractor_service_charges_data(contractor_name=""):
         params.append(filter_name)
     sql += " ORDER BY lower(contractor_name), lower(service_type)"
 
-    with database.get_conn(cursor_factory=psycopg2.extras.RealDictCursor) as (_conn, cur):
+    with database.get_conn(cursor_factory=psycopg2.extras.RealDictCursor) as (
+        _conn,
+        cur,
+    ):
         cur.execute(sql, params)
         rows = cur.fetchall()
 
@@ -589,7 +656,10 @@ def get_contractor_service_charges_for_contractor(contractor_name):
     only that contractor's own service types/charges should ever show up,
     since they vary contractor to contractor.
     """
-    with database.get_conn(cursor_factory=psycopg2.extras.RealDictCursor) as (_conn, cur):
+    with database.get_conn(cursor_factory=psycopg2.extras.RealDictCursor) as (
+        _conn,
+        cur,
+    ):
         cur.execute(
             "SELECT service_type, charge_amount FROM erp.contractor_service_charges "
             "WHERE lower(contractor_name) = lower(%s) ORDER BY lower(service_type)",
@@ -597,7 +667,13 @@ def get_contractor_service_charges_for_contractor(contractor_name):
         )
         rows = cur.fetchall()
 
-    charges = [{"serviceType": row["service_type"], "chargeAmount": float(row["charge_amount"])} for row in rows]
+    charges = [
+        {
+            "serviceType": row["service_type"],
+            "chargeAmount": float(row["charge_amount"]),
+        }
+        for row in rows
+    ]
     return build_response(True, charges)
 
 
@@ -629,7 +705,14 @@ def save_contractor_service_charge(conn, cur, form_data):
             UPDATE erp.contractor_service_charges SET contractor_name = %s, service_type = %s, charge_amount = %s,
                 remarks = %s, contractor_id = %s WHERE id = %s
             """,
-            (contractor_name, service_type, charge_amount, remarks, contractor_id, existing["id"]),
+            (
+                contractor_name,
+                service_type,
+                charge_amount,
+                remarks,
+                contractor_id,
+                existing["id"],
+            ),
         )
     else:
         cur.execute(
@@ -637,7 +720,9 @@ def save_contractor_service_charge(conn, cur, form_data):
             (contractor_name, contractor_id, service_type, charge_amount, remarks),
         )
 
-    return build_response(True, None, f'Extra charge for "{contractor_name}" ({service_type}) saved.')
+    return build_response(
+        True, None, f'Extra charge for "{contractor_name}" ({service_type}) saved.'
+    )
 
 
 @rpc_method("deleteContractorServiceCharge", mutation=True)
@@ -695,7 +780,10 @@ def get_contractor_payments_data(contractor_name=""):
         params.append(filter_name)
     sql += " ORDER BY payment_date ASC, id ASC"
 
-    with database.get_conn(cursor_factory=psycopg2.extras.RealDictCursor) as (_conn, cur):
+    with database.get_conn(cursor_factory=psycopg2.extras.RealDictCursor) as (
+        _conn,
+        cur,
+    ):
         cur.execute(sql, params)
         rows = cur.fetchall()
 
@@ -742,18 +830,25 @@ def record_contractor_payment(conn, cur, form_data):
         (payment_date, contractor_name, contractor_id, amount, mode_reference, remarks),
     )
 
-    return build_response(True, None, f'Payment of {amount:,.2f} recorded for "{contractor_name}".')
+    return build_response(
+        True, None, f'Payment of {amount:,.2f} recorded for "{contractor_name}".'
+    )
 
 
 @rpc_method("deleteContractorPayment", mutation=True)
 @database.transactional
-def delete_contractor_payment(conn, cur, row_idx, expected_contractor_name=None, expected_amount=None):
+def delete_contractor_payment(
+    conn, cur, row_idx, expected_contractor_name=None, expected_amount=None
+):
     try:
         target_id = int(row_idx)
     except (TypeError, ValueError):
         raise ValueError("Invalid payment record selected for deletion.")
 
-    cur.execute("SELECT contractor_name, amount FROM erp.contractor_payments WHERE id = %s", (target_id,))
+    cur.execute(
+        "SELECT contractor_name, amount FROM erp.contractor_payments WHERE id = %s",
+        (target_id,),
+    )
     row = cur.fetchone()
     if row is None:
         raise ValueError("Invalid payment record selected for deletion.")
@@ -764,10 +859,13 @@ def delete_contractor_payment(conn, cur, row_idx, expected_contractor_name=None,
     # wrong row.
     if expected_contractor_name is not None and expected_amount is not None:
         if (
-            str(row["contractor_name"] or "").strip().lower() != str(expected_contractor_name or "").strip().lower()
+            str(row["contractor_name"] or "").strip().lower()
+            != str(expected_contractor_name or "").strip().lower()
             or abs(float(row["amount"]) - float(expected_amount)) > 0.0001
         ):
-            raise ValueError("Data mismatch: The record has been modified or shifted. Please refresh.")
+            raise ValueError(
+                "Data mismatch: The record has been modified or shifted. Please refresh."
+            )
 
     cur.execute("DELETE FROM erp.contractor_payments WHERE id = %s", (target_id,))
     return build_response(True, None, "Payment record deleted successfully.")
@@ -800,10 +898,14 @@ def delete_contractor_payments_bulk(conn, cur, row_idxs):
 def get_contractor_ledger_data():
     result: dict = {}
 
-    with database.get_conn(cursor_factory=psycopg2.extras.RealDictCursor) as (_conn, cur):
+    with database.get_conn(cursor_factory=psycopg2.extras.RealDictCursor) as (
+        _conn,
+        cur,
+    ):
         if table := config_maps.TABLE_NAMES.get("PRODUCTION"):
             process_name_by_id = {
-                p["processId"].strip().lower(): p["processName"] for p in process_service._get_all_processes(cur)
+                p["processId"].strip().lower(): p["processName"]
+                for p in process_service._get_all_processes(cur)
             }
             status_col = config_maps.to_snake_case("status")
             assigned_col = config_maps.to_snake_case("assignedTo")
@@ -829,7 +931,10 @@ def get_contractor_ledger_data():
                 # a legitimate negative payable that must still be summed,
                 # not dropped) and not on contractor_rate alone (a lot can
                 # carry only an extra charge with no Layer 1 rate card entry).
-                if float(row["contractor_rate"] or 0) == 0 and float(row["extra_charge_amount"] or 0) == 0:
+                if (
+                    float(row["contractor_rate"] or 0) == 0
+                    and float(row["extra_charge_amount"] or 0) == 0
+                ):
                     continue
                 payable = float(row["payable"] or 0)
                 qty = float(row["qty"] or 0)
@@ -838,13 +943,25 @@ def get_contractor_ledger_data():
 
                 entry = result.setdefault(
                     contractor_name.lower(),
-                    {"contractorName": contractor_name, "lotCount": 0, "totalQty": 0.0, "totalPayable": 0.0, "byProcess": {}},
+                    {
+                        "contractorName": contractor_name,
+                        "lotCount": 0,
+                        "totalQty": 0.0,
+                        "totalPayable": 0.0,
+                        "byProcess": {},
+                    },
                 )
                 entry["lotCount"] += 1
                 entry["totalQty"] += qty
                 entry["totalPayable"] += payable
                 bucket = entry["byProcess"].setdefault(
-                    process_name, {"processName": process_name, "lotCount": 0, "qty": 0.0, "payable": 0.0}
+                    process_name,
+                    {
+                        "processName": process_name,
+                        "lotCount": 0,
+                        "qty": 0.0,
+                        "payable": 0.0,
+                    },
                 )
                 bucket["lotCount"] += 1
                 bucket["qty"] += qty
@@ -853,14 +970,25 @@ def get_contractor_ledger_data():
         for d in _get_dispatch_logistics_payable_rows(cur):
             entry = result.setdefault(
                 d["contractorName"].lower(),
-                {"contractorName": d["contractorName"], "lotCount": 0, "totalQty": 0.0, "totalPayable": 0.0, "byProcess": {}},
+                {
+                    "contractorName": d["contractorName"],
+                    "lotCount": 0,
+                    "totalQty": 0.0,
+                    "totalPayable": 0.0,
+                    "byProcess": {},
+                },
             )
             entry["lotCount"] += 1
             entry["totalQty"] += d["qty"]
             entry["totalPayable"] += d["payable"]
             bucket = entry["byProcess"].setdefault(
                 config_maps.LOGISTICS_PROCESS_NAME,
-                {"processName": config_maps.LOGISTICS_PROCESS_NAME, "lotCount": 0, "qty": 0.0, "payable": 0.0},
+                {
+                    "processName": config_maps.LOGISTICS_PROCESS_NAME,
+                    "lotCount": 0,
+                    "qty": 0.0,
+                    "payable": 0.0,
+                },
             )
             bucket["lotCount"] += 1
             bucket["qty"] += d["qty"]
@@ -901,10 +1029,14 @@ def get_contractor_account_ledger(contractor_name):
 
     entries = []
 
-    with database.get_conn(cursor_factory=psycopg2.extras.RealDictCursor) as (_conn, cur):
+    with database.get_conn(cursor_factory=psycopg2.extras.RealDictCursor) as (
+        _conn,
+        cur,
+    ):
         if table := config_maps.TABLE_NAMES.get("PRODUCTION"):
             process_name_by_id = {
-                p["processId"].strip().lower(): p["processName"] for p in process_service._get_all_processes(cur)
+                p["processId"].strip().lower(): p["processName"]
+                for p in process_service._get_all_processes(cur)
             }
             status_col = config_maps.to_snake_case("status")
             assigned_col = config_maps.to_snake_case("assignedTo")
@@ -930,7 +1062,10 @@ def get_contractor_account_ledger(contractor_name):
                     continue
                 # Gate on whether a rate card OR an extra charge applied --
                 # see get_contractor_ledger_data's identical comment.
-                if float(row["contractor_rate"] or 0) == 0 and float(row["extra_charge_amount"] or 0) == 0:
+                if (
+                    float(row["contractor_rate"] or 0) == 0
+                    and float(row["extra_charge_amount"] or 0) == 0
+                ):
                     continue
                 payable = float(row["payable"] or 0)
                 process_id = str(row["process_id"] or "").strip().lower()

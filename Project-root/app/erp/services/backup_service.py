@@ -206,7 +206,9 @@ def get_backup_dir() -> str:
         pass
     backup_dir = configured or os.getenv("BACKUP_DIR")
     if not backup_dir:
-        base_dir = os.path.abspath(os.path.join(os.path.dirname(__file__), "../../../.."))
+        base_dir = os.path.abspath(
+            os.path.join(os.path.dirname(__file__), "../../../..")
+        )
         backup_dir = os.path.join(base_dir, "backups")
     os.makedirs(backup_dir, exist_ok=True)
     return backup_dir
@@ -214,7 +216,9 @@ def get_backup_dir() -> str:
 
 def _migration_module():
     """Imports scripts/migration/backup_db_to_sheets, adding it to sys.path first."""
-    migration_dir = os.path.abspath(os.path.join(os.path.dirname(__file__), "../../../scripts/migration"))
+    migration_dir = os.path.abspath(
+        os.path.join(os.path.dirname(__file__), "../../../scripts/migration")
+    )
     if migration_dir not in sys.path:
         sys.path.insert(0, migration_dir)
     import backup_db_to_sheets  # type: ignore
@@ -224,7 +228,9 @@ def _migration_module():
 
 def _mirror_module():
     """Imports scripts/migration/mirror_db_to_gas_sheets, adding it to sys.path first."""
-    migration_dir = os.path.abspath(os.path.join(os.path.dirname(__file__), "../../../scripts/migration"))
+    migration_dir = os.path.abspath(
+        os.path.join(os.path.dirname(__file__), "../../../scripts/migration")
+    )
     if migration_dir not in sys.path:
         sys.path.insert(0, migration_dir)
     import mirror_db_to_gas_sheets  # type: ignore
@@ -258,7 +264,9 @@ def perform_full_backup(
         try:
             on_phase(name)
         except Exception:  # noqa: BLE001 -- see docstring
-            logger.exception("[backup_service] Progress callback failed for phase %s", name)
+            logger.exception(
+                "[backup_service] Progress callback failed for phase %s", name
+            )
 
     _phase("snapshot")
 
@@ -317,8 +325,12 @@ def perform_full_backup(
     creds_path = os.environ.get("GOOGLE_APPLICATION_CREDENTIALS")
 
     if not creds_path or not os.path.exists(creds_path):
-        sheets_error = "GOOGLE_APPLICATION_CREDENTIALS is not configured or file not found."
-        logger.warning("[backup_service] Google Sheets backup skipped: %s", sheets_error)
+        sheets_error = (
+            "GOOGLE_APPLICATION_CREDENTIALS is not configured or file not found."
+        )
+        logger.warning(
+            "[backup_service] Google Sheets backup skipped: %s", sheets_error
+        )
 
     else:
         try:
@@ -330,12 +342,20 @@ def perform_full_backup(
             )
 
             drive_folder_id = os.environ.get("DRIVE_FOLDER_ID")
-            existing_sid = os.environ.get("BACKUP_SPREADSHEET_ID") or os.environ.get("SPREADSHEET_ID")
+            existing_sid = os.environ.get("BACKUP_SPREADSHEET_ID") or os.environ.get(
+                "SPREADSHEET_ID"
+            )
 
-            spreadsheet_id = backup_db_to_sheets.run_backup(db_url, drive_folder_id, existing_sid)
+            spreadsheet_id = backup_db_to_sheets.run_backup(
+                db_url, drive_folder_id, existing_sid
+            )
             spreadsheet_url = f"https://docs.google.com/spreadsheets/d/{spreadsheet_id}"
             sheets_success = True
-            logger.info("[backup_service] Google Sheets backup created/updated: %s (%s)", spreadsheet_id, spreadsheet_url)
+            logger.info(
+                "[backup_service] Google Sheets backup created/updated: %s (%s)",
+                spreadsheet_id,
+                spreadsheet_url,
+            )
 
         except Exception as exc:
             sheets_error = str(exc)
@@ -350,10 +370,14 @@ def perform_full_backup(
     mirror_success = False
     mirror_error = None
 
-    gas_spreadsheet_id = os.environ.get("GAS_MIRROR_SPREADSHEET_ID") or os.environ.get("BACKUP_SPREADSHEET_ID")
+    gas_spreadsheet_id = os.environ.get("GAS_MIRROR_SPREADSHEET_ID") or os.environ.get(
+        "BACKUP_SPREADSHEET_ID"
+    )
 
     if not creds_path or not os.path.exists(creds_path):
-        mirror_error = "GOOGLE_APPLICATION_CREDENTIALS is not configured or file not found."
+        mirror_error = (
+            "GOOGLE_APPLICATION_CREDENTIALS is not configured or file not found."
+        )
         logger.warning("[backup_service] GAS sheet mirror skipped: %s", mirror_error)
     elif not gas_spreadsheet_id:
         mirror_error = "GAS_MIRROR_SPREADSHEET_ID is not configured."
@@ -367,15 +391,25 @@ def perform_full_backup(
                 f"{Config.DB_HOST}:{os.environ.get('DB_PORT', '5432')}/{Config.DB_NAME}"
             )
 
-            mapping = mirror_mod.load_mapping(mirror_mod.SCRIPT_DIR / "gas_sheet_mapping.yaml")
-            results = mirror_mod.run_mirror(db_url, gas_spreadsheet_id, mapping["sheets"], dry_run=False)
+            mapping = mirror_mod.load_mapping(
+                mirror_mod.SCRIPT_DIR / "gas_sheet_mapping.yaml"
+            )
+            results = mirror_mod.run_mirror(
+                db_url, gas_spreadsheet_id, mapping["sheets"], dry_run=False
+            )
             failed = [r for r in results if r.status in ("error", "skipped_guard")]
             if failed:
                 mirror_error = f"{len(failed)}/{len(results)} sheet(s) failed or were guard-skipped"
-                logger.error("[backup_service] GAS sheet mirror partial failure: %s", mirror_error)
+                logger.error(
+                    "[backup_service] GAS sheet mirror partial failure: %s",
+                    mirror_error,
+                )
             else:
                 mirror_success = True
-                logger.info("[backup_service] GAS sheet mirror updated %d sheet(s)", len(results))
+                logger.info(
+                    "[backup_service] GAS sheet mirror updated %d sheet(s)",
+                    len(results),
+                )
 
         except Exception as exc:
             mirror_error = str(exc)
@@ -406,7 +440,9 @@ def perform_full_backup(
         if pruned:
             messages.append(f"Pruned {len(pruned)} snapshot(s) past retention")
     else:
-        messages.append(f"DB SNAPSHOT FAILED -- no recoverable backup was produced ({local_error})")
+        messages.append(
+            f"DB SNAPSHOT FAILED -- no recoverable backup was produced ({local_error})"
+        )
 
     if sheets_success:
         messages.append("Synced to Google Sheets successfully.")
@@ -428,7 +464,9 @@ def perform_full_backup(
         "spreadsheet_url": spreadsheet_url,
         "local_file": local_backup_file,
         "mirror_status": "SUCCESS" if mirror_success else "FAILED",
-        "mirror_message": "GAS app spreadsheet mirrored successfully." if mirror_success else mirror_error,
+        "mirror_message": "GAS app spreadsheet mirrored successfully."
+        if mirror_success
+        else mirror_error,
         # Health surface (DATA-001). "A file was written" is not evidence of a
         # backup; these are. snapshot_verified is the one an operator should
         # look at, and it is only ever True when pg_restore has read the file
@@ -446,11 +484,15 @@ def perform_full_backup(
         # four nights" is visible, rather than each night independently
         # reporting one failure that nobody correlates.
         previous_failures = int(_LAST_BACKUP_STATUS.get("consecutive_failures") or 0)
-        result_data["consecutive_failures"] = 0 if local_success else previous_failures + 1
+        result_data["consecutive_failures"] = (
+            0 if local_success else previous_failures + 1
+        )
         if local_success:
             result_data["last_verified_at"] = now_iso
         else:
-            result_data["last_verified_at"] = _LAST_BACKUP_STATUS.get("last_verified_at")
+            result_data["last_verified_at"] = _LAST_BACKUP_STATUS.get(
+                "last_verified_at"
+            )
         _LAST_BACKUP_STATUS.update(result_data)
 
     return result_data
@@ -534,7 +576,9 @@ def _backup_worker(app, run_id: str, config=None) -> None:
                 with database.get_conn() as (_conn, cur):
                     cur.execute("SELECT pg_advisory_unlock(%s)", (_BACKUP_LOCK_KEY,))
             except Exception:
-                logger.warning("[backup_service] Failed to release advisory lock in finally")
+                logger.warning(
+                    "[backup_service] Failed to release advisory lock in finally"
+                )
         if ctx is not None:
             ctx.pop()
 
@@ -572,7 +616,11 @@ def rpc_trigger_backup() -> Dict[str, Any]:
         # result it will actually receive.
         return build_response(
             True,
-            {"status": "RUNNING", "run_id": existing.get("run_id"), "already_running": True},
+            {
+                "status": "RUNNING",
+                "run_id": existing.get("run_id"),
+                "already_running": True,
+            },
             "A backup is already running. Watching that one instead of starting another.",
         )
 
@@ -736,7 +784,8 @@ def _run_scheduled_backup_safely() -> None:
                     removed = prune_old_mutations()
                     if removed:
                         logger.info(
-                            "[backup_service] Pruned %d expired mutation record(s)", removed
+                            "[backup_service] Pruned %d expired mutation record(s)",
+                            removed,
                         )
                 except Exception:
                     logger.exception("[backup_service] Mutation pruning failed")
@@ -771,7 +820,9 @@ def _run_scheduled_backup_safely() -> None:
                 with database.get_conn() as (_conn, cur):
                     cur.execute("SELECT pg_advisory_unlock(%s)", (_BACKUP_LOCK_KEY,))
             except Exception:
-                logger.warning("[backup_service] Failed to release advisory lock in finally")
+                logger.warning(
+                    "[backup_service] Failed to release advisory lock in finally"
+                )
 
 
 def _scheduler_loop(stop_event: threading.Event) -> None:
@@ -794,7 +845,10 @@ def start_backup_scheduler(app) -> None:
 
     stop_event = threading.Event()
     thread = threading.Thread(
-        target=_scheduler_loop, args=(stop_event,), daemon=True, name="nightly-backup-scheduler"
+        target=_scheduler_loop,
+        args=(stop_event,),
+        daemon=True,
+        name="nightly-backup-scheduler",
     )
     thread.start()
     app.logger.info("[backup_service] Automated nightly backup scheduler started.")

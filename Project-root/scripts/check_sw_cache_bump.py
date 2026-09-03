@@ -42,7 +42,11 @@ def _git(*args: str) -> str | None:
     """Run a git command, returning None instead of raising on any failure."""
     try:
         out = subprocess.run(
-            ["git", *args], capture_output=True, text=True, encoding="utf-8", check=False
+            ["git", *args],
+            capture_output=True,
+            text=True,
+            encoding="utf-8",
+            check=False,
         )
     except OSError:
         return None
@@ -71,7 +75,7 @@ def _precached_repo_paths(source: str | None) -> set[str]:
         return set()
     code = re.sub(r"//[^\n]*", "", block.group(1))
     return {
-        REPO_STATIC_PREFIX + url[len(STATIC_PREFIX):]
+        REPO_STATIC_PREFIX + url[len(STATIC_PREFIX) :]
         for url in re.findall(r"'([^']+)'", code)
         if url.startswith(STATIC_PREFIX)
     }
@@ -79,8 +83,12 @@ def _precached_repo_paths(source: str | None) -> set[str]:
 
 def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("files", nargs="*", help="changed files (pre-commit passes these)")
-    parser.add_argument("--range", dest="rng", help="git range, e.g. origin/main...HEAD")
+    parser.add_argument(
+        "files", nargs="*", help="changed files (pre-commit passes these)"
+    )
+    parser.add_argument(
+        "--range", dest="rng", help="git range, e.g. origin/main...HEAD"
+    )
     args = parser.parse_args()
 
     if args.rng:

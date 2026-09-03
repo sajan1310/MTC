@@ -18,7 +18,6 @@ from dotenv import load_dotenv
 load_dotenv(override=True)
 
 
-
 def _static_asset_fingerprint() -> str:
     """Newest mtime under static/, as a compact token.
 

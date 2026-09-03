@@ -108,7 +108,10 @@ def _require_bom_access(cur, token) -> None:
             token = ""
     valid = False
     if token:
-        cur.execute("SELECT 1 FROM erp.bom_access_tokens WHERE token = %s AND expires_at > NOW()", (token,))
+        cur.execute(
+            "SELECT 1 FROM erp.bom_access_tokens WHERE token = %s AND expires_at > NOW()",
+            (token,),
+        )
         valid = cur.fetchone() is not None
     if not valid:
         raise ValueError("This section is password-protected.")
@@ -140,7 +143,10 @@ def _parse_json_array(raw, error_message: str) -> list:
 def _find_vendor_id(cur, name: str):
     if not name:
         return None
-    cur.execute("SELECT id FROM erp.vendors WHERE lower(vendor_name) = lower(%s) AND deleted_at IS NULL", (name,))
+    cur.execute(
+        "SELECT id FROM erp.vendors WHERE lower(vendor_name) = lower(%s) AND deleted_at IS NULL",
+        (name,),
+    )
     row = cur.fetchone()
     return row["id"] if row else None
 
@@ -157,7 +163,10 @@ def _find_process_master_id(cur, process_id_str: str):
 
 
 def _process_name_by_id_lower(cur) -> dict:
-    return {p["processId"].strip().lower(): p["processName"] for p in process_service._get_all_processes(cur)}
+    return {
+        p["processId"].strip().lower(): p["processName"]
+        for p in process_service._get_all_processes(cur)
+    }
 
 
 def _resolve_process_group_label(process_name_by_id: dict, process_id: str) -> str:
@@ -186,15 +195,21 @@ def _get_bom_final_stage_process_map(cur) -> dict:
     process_ids_by_product: dict = {}
     for row in cur.fetchall():
         key = row["product_id"].strip().lower()
-        process_ids_by_product.setdefault(key, set()).add(row["process_group"].strip().lower())
+        process_ids_by_product.setdefault(key, set()).add(
+            row["process_group"].strip().lower()
+        )
 
     final_stage_by_id = {
-        p["processId"].strip().lower(): p for p in process_service._get_all_processes(cur) if p["isFinalStage"]
+        p["processId"].strip().lower(): p
+        for p in process_service._get_all_processes(cur)
+        if p["isFinalStage"]
     }
 
     result = {}
     for product_key, process_id_set in process_ids_by_product.items():
-        matches = [final_stage_by_id[pid] for pid in process_id_set if pid in final_stage_by_id]
+        matches = [
+            final_stage_by_id[pid] for pid in process_id_set if pid in final_stage_by_id
+        ]
         if len(matches) == 1:
             result[product_key] = matches[0]
     return result
@@ -206,7 +221,9 @@ def _get_product_ids_in_use(cur, product_ids: list) -> set:
     config_maps.TABLE_NAMES exactly like process_service.
     _get_process_ids_in_use.
     """
-    requested = {str(p or "").strip().lower() for p in product_ids if str(p or "").strip()}
+    requested = {
+        str(p or "").strip().lower() for p in product_ids if str(p or "").strip()
+    }
     in_use: set = set()
     if not requested:
         return in_use
@@ -215,7 +232,9 @@ def _get_product_ids_in_use(cur, product_ids: list) -> set:
 
     table = config_maps.TABLE_NAMES.get("PRODUCTION")
     if table:
-        cur.execute(f"SELECT DISTINCT {col} AS product_id FROM {table} WHERE deleted_at IS NULL")
+        cur.execute(
+            f"SELECT DISTINCT {col} AS product_id FROM {table} WHERE deleted_at IS NULL"
+        )
         for row in cur.fetchall():
             pid = str(row["product_id"] or "").strip().lower()
             if pid in requested:
@@ -252,7 +271,10 @@ def _get_product_ids_in_use(cur, product_ids: list) -> set:
 @rpc_method("verifyBOMAccess")
 @database.transactional
 def verify_bom_access(conn, cur, password):
-    cur.execute("SELECT value FROM erp.app_settings WHERE key = %s", (_BOM_PASSWORD_SETTING_KEY,))
+    cur.execute(
+        "SELECT value FROM erp.app_settings WHERE key = %s",
+        (_BOM_PASSWORD_SETTING_KEY,),
+    )
     row = cur.fetchone()
     if row is None or not row["value"]:
         return build_response(False, None, "BOM password has not been configured yet.")
@@ -382,7 +404,9 @@ def _load_bom_list(cur, only_product_id=None) -> list:
                 "qtyPerProduct": qty,
                 "lineCost": line_cost,
                 "processId": process_id,
-                "processGroup": _resolve_process_group_label(process_name_by_id, process_id),
+                "processGroup": _resolve_process_group_label(
+                    process_name_by_id, process_id
+                ),
                 "color": color,
             }
         )
@@ -431,7 +455,10 @@ def _load_bom_list(cur, only_product_id=None) -> list:
 
 @rpc_method("getBOMData")
 def get_bom_data(token=None):
-    with database.get_conn(cursor_factory=psycopg2.extras.RealDictCursor) as (_conn, cur):
+    with database.get_conn(cursor_factory=psycopg2.extras.RealDictCursor) as (
+        _conn,
+        cur,
+    ):
         _require_bom_access(cur, token)
         products = _load_bom_list(cur)
     return build_response(True, products)
@@ -493,7 +520,9 @@ def _fetch_bom_production_data(cur) -> list:
                 "vendor": row["vendor"] or "",
                 "qtyPerProduct": float(row["qty_per_product"] or 0),
                 "processId": process_id,
-                "processGroup": _resolve_process_group_label(process_name_by_id, process_id),
+                "processGroup": _resolve_process_group_label(
+                    process_name_by_id, process_id
+                ),
                 "color": color,
             }
         )
@@ -508,7 +537,10 @@ def _fetch_bom_production_data(cur) -> list:
 
 @rpc_method("getBOMProductionData")
 def get_bom_production_data():
-    with database.get_conn(cursor_factory=psycopg2.extras.RealDictCursor) as (_conn, cur):
+    with database.get_conn(cursor_factory=psycopg2.extras.RealDictCursor) as (
+        _conn,
+        cur,
+    ):
         return build_response(True, _fetch_bom_production_data(cur))
 
 
@@ -516,7 +548,10 @@ def get_bom_production_data():
 def get_next_product_id(token=None):
     # Bare string return, not build_response(...) -- see module docstring.
     try:
-        with database.get_conn(cursor_factory=psycopg2.extras.RealDictCursor) as (_conn, cur):
+        with database.get_conn(cursor_factory=psycopg2.extras.RealDictCursor) as (
+            _conn,
+            cur,
+        ):
             _require_bom_access(cur, token)
             cur.execute("SELECT nextval('erp.product_id_seq') AS n")
             n = cur.fetchone()["n"]
@@ -540,11 +575,15 @@ def save_bom(conn, cur, form_data, token=None):
 
     remarks = str(form_data.get("remarks") or "").strip()[:_MAX_REMARKS_LENGTH]
 
-    components = _parse_json_array(form_data.get("components"), "Invalid components data format.")
+    components = _parse_json_array(
+        form_data.get("components"), "Invalid components data format."
+    )
     if not components:
         raise ValueError("BOM must contain at least one component.")
 
-    additional_costs = _parse_json_array(form_data.get("additionalCosts"), "Invalid additional costs data format.")
+    additional_costs = _parse_json_array(
+        form_data.get("additionalCosts"), "Invalid additional costs data format."
+    )
 
     product_id_input = str(form_data.get("productId") or "").strip()
     is_edit = bool(product_id_input)
@@ -568,11 +607,15 @@ def save_bom(conn, cur, form_data, token=None):
             (product_name, remarks, user_id, header_id),
         )
         cur.execute("DELETE FROM erp.bom_lines WHERE header_id = %s", (header_id,))
-        cur.execute("DELETE FROM erp.bom_additional_costs WHERE header_id = %s", (header_id,))
+        cur.execute(
+            "DELETE FROM erp.bom_additional_costs WHERE header_id = %s", (header_id,)
+        )
     else:
         cur.execute("SELECT nextval('erp.product_id_seq') AS n")
         product_id = f"PRD-{cur.fetchone()['n']}"
-        cur.execute("SELECT COALESCE(MAX(sequence), 0) AS max_seq FROM erp.bom_products WHERE deleted_at IS NULL")
+        cur.execute(
+            "SELECT COALESCE(MAX(sequence), 0) AS max_seq FROM erp.bom_products WHERE deleted_at IS NULL"
+        )
         sequence = (cur.fetchone()["max_seq"] or 0) + 1
 
         cur.execute(
@@ -612,8 +655,18 @@ def save_bom(conn, cur, form_data, token=None):
             VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
             """,
             (
-                header_id, item_name, size, narration, rate, vendor, vendor_id, qty_per_product,
-                process_id_str, process_master_id, color, item_id,
+                header_id,
+                item_name,
+                size,
+                narration,
+                rate,
+                vendor,
+                vendor_id,
+                qty_per_product,
+                process_id_str,
+                process_master_id,
+                color,
+                item_id,
             ),
         )
         rows_written += 1
@@ -637,7 +690,11 @@ def save_bom(conn, cur, form_data, token=None):
             (header_id, description, rate, process_name, contractor_name),
         )
 
-    message = f'BOM for "{product_name}" updated.' if is_edit else f'BOM for "{product_name}" saved.'
+    message = (
+        f'BOM for "{product_name}" updated.'
+        if is_edit
+        else f'BOM for "{product_name}" saved.'
+    )
 
     # Read this product's own just-written rows back so the client can
     # patch it into an already-loaded list in place instead of a full
@@ -645,7 +702,15 @@ def save_bom(conn, cur, form_data, token=None):
     fresh_list = _load_bom_list(cur, only_product_id=product_id)
     fresh_product = fresh_list[0] if fresh_list else None
 
-    return build_response(True, {"productId": product_id, "productName": product_name, "product": fresh_product}, message)
+    return build_response(
+        True,
+        {
+            "productId": product_id,
+            "productName": product_name,
+            "product": fresh_product,
+        },
+        message,
+    )
 
 
 @rpc_method("deleteBOM", mutation=True)
@@ -678,7 +743,9 @@ def delete_bom(conn, cur, product_id, token=None):
     # bom_lines/bom_additional_costs stay physically present, made invisible
     # via the parent's deleted_at at read time -- same soft-delete
     # treatment every header+lines table in this schema gets.
-    return build_response(True, None, f'BOM for Product ID "{target}" deleted successfully.')
+    return build_response(
+        True, None, f'BOM for Product ID "{target}" deleted successfully.'
+    )
 
 
 @rpc_method("deleteBOMsBulk", mutation=True)
@@ -686,7 +753,9 @@ def delete_bom(conn, cur, product_id, token=None):
 def delete_boms_bulk(conn, cur, product_ids, token=None):
     _require_bom_access(cur, token)
 
-    requested = [str(p or "").strip() for p in (product_ids or []) if str(p or "").strip()]
+    requested = [
+        str(p or "").strip() for p in (product_ids or []) if str(p or "").strip()
+    ]
     if not requested:
         return build_response(True, None, "No BOMs selected.")
 
@@ -721,7 +790,11 @@ def delete_boms_bulk(conn, cur, product_ids, token=None):
 def reorder_bom(conn, cur, ordered_product_ids, token=None):
     _require_bom_access(cur, token)
 
-    order = [str(p or "").strip() for p in (ordered_product_ids or []) if str(p or "").strip()]
+    order = [
+        str(p or "").strip()
+        for p in (ordered_product_ids or [])
+        if str(p or "").strip()
+    ]
     if not order:
         raise ValueError("No product order provided.")
 
@@ -741,8 +814,13 @@ def reorder_bom(conn, cur, ordered_product_ids, token=None):
 
 @rpc_method("getBomProcessComponentsDrift")
 def get_bom_process_components_drift():
-    with database.get_conn(cursor_factory=psycopg2.extras.RealDictCursor) as (_conn, cur):
-        cur.execute("SELECT COUNT(*) AS n FROM erp.bom_products WHERE deleted_at IS NULL")
+    with database.get_conn(cursor_factory=psycopg2.extras.RealDictCursor) as (
+        _conn,
+        cur,
+    ):
+        cur.execute(
+            "SELECT COUNT(*) AS n FROM erp.bom_products WHERE deleted_at IS NULL"
+        )
         if cur.fetchone()["n"] == 0:
             return build_response(True, [], "No BOM data to check.")
 
@@ -765,7 +843,11 @@ def get_bom_process_components_drift():
         key = product_id.lower()
         product = by_product.get(key)
         if product is None:
-            product = {"productId": product_id, "productName": row["product_name"] or "", "rows": []}
+            product = {
+                "productId": product_id,
+                "productName": row["product_name"] or "",
+                "rows": [],
+            }
             by_product[key] = product
         product["rows"].append(
             {
@@ -784,9 +866,15 @@ def get_bom_process_components_drift():
             comps = resp.get("data") or []
             recipe = {}
             for c in comps:
-                if c["sourceType"] != "ITEM" or not process_service._is_common_color_group(c["colorGroup"]):
+                if c[
+                    "sourceType"
+                ] != "ITEM" or not process_service._is_common_color_group(
+                    c["colorGroup"]
+                ):
                     continue
-                recipe[f'{c["itemName"].lower()}|{(c["size"] or "").lower()}'] = c["qtyPerUnit"]
+                recipe[f"{c['itemName'].lower()}|{(c['size'] or '').lower()}"] = c[
+                    "qtyPerUnit"
+                ]
             recipe_cache[key] = recipe
         return recipe_cache[key]
 
@@ -798,7 +886,7 @@ def get_bom_process_components_drift():
         recipe = get_recipe(process["processId"])
 
         for row in product["rows"]:
-            recipe_qty = recipe.get(f'{row["itemName"].lower()}|{row["size"].lower()}')
+            recipe_qty = recipe.get(f"{row['itemName'].lower()}|{row['size'].lower()}")
             if recipe_qty is None:
                 continue
             if abs(recipe_qty - row["qtyPerProduct"]) > 0.0001:

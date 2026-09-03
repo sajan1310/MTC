@@ -15,7 +15,9 @@ import os
 import importlib.util
 
 # Load the root app.py directly to avoid naming conflicts
-root_app_path = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "app.py")
+root_app_path = os.path.join(
+    os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "app.py"
+)
 spec = importlib.util.spec_from_file_location("root_app", root_app_path)
 root_app = importlib.util.module_from_spec(spec)
 spec.loader.exec_module(root_app)

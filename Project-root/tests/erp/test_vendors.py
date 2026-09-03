@@ -9,7 +9,9 @@ import database
 
 def _rpc(client, method, args=None, mutation=False):
     headers = {"X-Mutation-Id": str(uuid.uuid4())} if mutation else {}
-    return client.post(f"/api/erp/rpc/{method}", json={"args": args or []}, headers=headers)
+    return client.post(
+        f"/api/erp/rpc/{method}", json={"args": args or []}, headers=headers
+    )
 
 
 def _unique_name(prefix: str) -> str:
@@ -29,7 +31,15 @@ def test_save_vendor_creates_and_lists_it(erp_client):
     resp = _rpc(
         erp_client,
         "saveVendor",
-        [{"vendorName": name, "contact": "9876543210", "address": "1 Main St", "gstin": "GST123", "remarks": "test"}],
+        [
+            {
+                "vendorName": name,
+                "contact": "9876543210",
+                "address": "1 Main St",
+                "gstin": "GST123",
+                "remarks": "test",
+            }
+        ],
         mutation=True,
     )
     body = resp.get_json()

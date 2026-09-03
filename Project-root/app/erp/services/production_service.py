@@ -100,7 +100,9 @@ def _coerce_json_list(value, message: str) -> list:
     return value if isinstance(value, list) else []
 
 
-def _matches_expected(product_id: str, qty: float, expected_product_id, expected_qty) -> bool:
+def _matches_expected(
+    product_id: str, qty: float, expected_product_id, expected_qty
+) -> bool:
     """The optimistic-concurrency comparison shared by delete_production,
     delete_production_bulk and save_production_sheet. Both expectations
     must be supplied to be checked at all -- a caller that sends neither
@@ -139,7 +141,10 @@ def _pool_bucket_color(component) -> str:
     unchanged.
     """
     component = component or {}
-    return str(component.get("poolColor") or "").strip() or str(component.get("colorGroup") or "").strip()
+    return (
+        str(component.get("poolColor") or "").strip()
+        or str(component.get("colorGroup") or "").strip()
+    )
 
 
 def _pool_available_qty(pool_entry, color_group: str) -> float:
@@ -288,7 +293,9 @@ def _with_master_narration(cur, components: list) -> list:
         name = str(comp.get("itemName") or "").strip()
         if not name:
             continue
-        master = narration_map.get(f'{name.lower()}|{str(comp.get("size") or "").strip().lower()}')
+        master = narration_map.get(
+            f"{name.lower()}|{str(comp.get('size') or '').strip().lower()}"
+        )
         if master:
             comp["narration"] = master
     return components
@@ -367,7 +374,7 @@ def _dropped_component_warning(dropped: list) -> str | None:
     """
     if not dropped:
         return None
-    labels = [f'{c["itemName"]} ({c["colorGroup"]})' for c in dropped[:3]]
+    labels = [f"{c['itemName']} ({c['colorGroup']})" for c in dropped[:3]]
     listed = ", ".join(labels)
     if len(dropped) > 3:
         listed = f"{listed} and {len(dropped) - 3} more"
@@ -391,13 +398,20 @@ def _build_pool_needed_map(components: list) -> dict:
         key = _poolneed_key(item_name.lower(), color_group)
         entry = pool_needed.setdefault(
             key,
-            {"itemName": item_name, "colorGroup": color_group if is_color_scoped else "", "isColorScoped": is_color_scoped, "qty": 0.0},
+            {
+                "itemName": item_name,
+                "colorGroup": color_group if is_color_scoped else "",
+                "isColorScoped": is_color_scoped,
+                "qty": 0.0,
+            },
         )
         entry["qty"] += float(c.get("qty") or 0)
     return pool_needed
 
 
-def _validate_pool_availability(cur, pool_needed: dict, already_consumed: dict = None) -> str | None:
+def _validate_pool_availability(
+    cur, pool_needed: dict, already_consumed: dict = None
+) -> str | None:
     # DATA-002. Same check-then-act as dispatch, one level up the process:
     # two operators completing lots that draw the same pooled component both
     # read the same availability and both pass, and the pool goes negative.
@@ -418,16 +432,23 @@ def _validate_pool_availability(cur, pool_needed: dict, already_consumed: dict =
     already_consumed = already_consumed or {}
     for key, need in pool_needed.items():
         current_available_qty = _pool_available_qty(
-            pool_available_map.get(need["itemName"].lower()), need["colorGroup"] if need["isColorScoped"] else ""
+            pool_available_map.get(need["itemName"].lower()),
+            need["colorGroup"] if need["isColorScoped"] else "",
         )
         available_for_this_lot = current_available_qty + already_consumed.get(key, 0)
         if need["qty"] > available_for_this_lot + 0.0001:
-            label = f'{need["itemName"]}" in color "{need["colorGroup"]}' if need["isColorScoped"] else need["itemName"]
+            label = (
+                f'{need["itemName"]}" in color "{need["colorGroup"]}'
+                if need["isColorScoped"]
+                else need["itemName"]
+            )
             return f'Only {available_for_this_lot} unit(s) of "{label}" are available in the Warehouse Pool.'
     return None
 
 
-def backfill_production_consumed_item_refs(cur, old_name: str, old_size: str, new_name: str, new_size: str) -> None:
+def backfill_production_consumed_item_refs(
+    cur, old_name: str, old_size: str, new_name: str, new_size: str
+) -> None:
     """Repoints an Items Master rename/merge into every lot's saved
     components_consumed/custom_components JSON -- called from
     items_service._propagate_item_identity_change. Ports
@@ -446,21 +467,33 @@ def backfill_production_consumed_item_refs(cur, old_name: str, old_size: str, ne
             return None
         changed = False
         for comp in components:
-            if match_source_type and str(comp.get("sourceType") or "").strip().upper() == "POOL":
+            if (
+                match_source_type
+                and str(comp.get("sourceType") or "").strip().upper() == "POOL"
+            ):
                 continue
             row_name = str(comp.get("itemName") or "").strip().lower()
             row_size = str(comp.get("size") or "").strip().lower()
-            if row_name == old_name.strip().lower() and row_size == old_size.strip().lower():
+            if (
+                row_name == old_name.strip().lower()
+                and row_size == old_size.strip().lower()
+            ):
                 comp["itemName"] = new_name
                 comp["size"] = new_size
                 changed = True
         return components if changed else None
 
-    cur.execute("SELECT id, components_consumed, custom_components FROM erp.production WHERE deleted_at IS NULL")
+    cur.execute(
+        "SELECT id, components_consumed, custom_components FROM erp.production WHERE deleted_at IS NULL"
+    )
     rows = cur.fetchall()
     for row in rows:
-        rewritten_consumed = _repoint(row["components_consumed"] or [], match_source_type=True)
-        rewritten_custom = _repoint(row["custom_components"] or [], match_source_type=False)
+        rewritten_consumed = _repoint(
+            row["components_consumed"] or [], match_source_type=True
+        )
+        rewritten_custom = _repoint(
+            row["custom_components"] or [], match_source_type=False
+        )
         if rewritten_consumed is None and rewritten_custom is None:
             continue
         _write_component_json(cur, row["id"], rewritten_consumed, rewritten_custom)
@@ -503,8 +536,13 @@ def _row_to_production_record(row) -> dict:
 
 @rpc_method("getProductionData")
 def get_production_data():
-    with database.get_conn(cursor_factory=psycopg2.extras.RealDictCursor) as (_conn, cur):
-        cur.execute(f"SELECT {_PRODUCTION_SELECT_COLS} FROM erp.production WHERE deleted_at IS NULL")
+    with database.get_conn(cursor_factory=psycopg2.extras.RealDictCursor) as (
+        _conn,
+        cur,
+    ):
+        cur.execute(
+            f"SELECT {_PRODUCTION_SELECT_COLS} FROM erp.production WHERE deleted_at IS NULL"
+        )
         rows = cur.fetchall()
 
     records = [_row_to_production_record(row) for row in rows]
@@ -516,7 +554,10 @@ def _fetch_production_record(cur, row_idx):
     """Reads one freshly-written production row back by id, so
     save_production can hand it to the client for an in-place row-patch
     instead of a full reload."""
-    cur.execute(f"SELECT {_PRODUCTION_SELECT_COLS} FROM erp.production WHERE id = %s", (row_idx,))
+    cur.execute(
+        f"SELECT {_PRODUCTION_SELECT_COLS} FROM erp.production WHERE id = %s",
+        (row_idx,),
+    )
     row = cur.fetchone()
     return _row_to_production_record(row) if row else None
 
@@ -524,7 +565,10 @@ def _fetch_production_record(cur, row_idx):
 @rpc_method("getProcessWipData")
 def get_process_wip_data(process_id):
     components = process_service.get_process_components_data(process_id)["data"]
-    with database.get_conn(cursor_factory=psycopg2.extras.RealDictCursor) as (_conn, cur):
+    with database.get_conn(cursor_factory=psycopg2.extras.RealDictCursor) as (
+        _conn,
+        cur,
+    ):
         pool_qty_map = warehouse_service._get_pool_available_qty_map(cur)
 
     records = []
@@ -532,7 +576,8 @@ def get_process_wip_data(process_id):
         if c["sourceType"] != "POOL":
             continue
         available_qty = _pool_available_qty(
-            pool_qty_map.get(str(c["itemName"] or "").strip().lower()), str(c.get("colorGroup") or "").strip()
+            pool_qty_map.get(str(c["itemName"] or "").strip().lower()),
+            str(c.get("colorGroup") or "").strip(),
         )
         records.append({"outputItemName": c["itemName"], "availableQty": available_qty})
 
@@ -555,7 +600,9 @@ def save_production(conn, cur, form_data):
     all_processes = process_service._get_all_processes(cur)
     process = warehouse_service._find_process_record(process_id, all_processes)
     if process is None:
-        raise ValueError(f'Process "{process_id}" was not found. It may have been deleted.')
+        raise ValueError(
+            f'Process "{process_id}" was not found. It may have been deleted.'
+        )
 
     # Output Item Name defaults to the process's own -- editable per lot
     # (e.g. this run actually produced a variant/rework SKU) without
@@ -564,7 +611,9 @@ def save_production(conn, cur, form_data):
     # per production row (see _recalculate_warehouse_pool), so a custom
     # name here simply lands in its own pool bucket instead of the
     # process's usual one -- exactly scoped to this lot.
-    output_item_name = str(form_data.get("outputItemName") or "").strip() or process["outputItemName"]
+    output_item_name = (
+        str(form_data.get("outputItemName") or "").strip() or process["outputItemName"]
+    )
 
     # Read once, reused for both color-group validation and Primary Axis
     # qty resolution below -- avoids doubling reads on the busiest write path.
@@ -572,7 +621,9 @@ def save_production(conn, cur, form_data):
     pool_rows = process_service._get_all_warehouse_pool_rows_for_color_axes(cur)
     color_links = process_service._get_all_process_color_links(cur)
     color_master_names = process_service._get_color_master_names(cur)
-    color_overrides = process_service._get_all_process_color_overrides(cur).get(process_id.lower())
+    color_overrides = process_service._get_all_process_color_overrides(cur).get(
+        process_id.lower()
+    )
     # Logged colors are passed in for the same reason the checklist the
     # operator filled in includes them (getProcessColorGroups ->
     # _compute_known_colors_for_process): without them a process whose
@@ -580,12 +631,24 @@ def save_production(conn, cur, form_data):
     # as non-color here, the else branch below reads the plain `qty` the
     # client already deleted, and the lot lands with qty 0. See
     # _compute_color_groups_with_overrides_for_process's own docstring.
-    logged_colors = process_service._get_production_logged_colors_by_process(cur, process_id).get(process_id.lower(), [])
-    available_color_groups = process_service._compute_color_groups_with_overrides_for_process(
-        process_id, color_components, pool_rows, color_links, color_master_names, color_overrides, logged_colors
+    logged_colors = process_service._get_production_logged_colors_by_process(
+        cur, process_id
+    ).get(process_id.lower(), [])
+    available_color_groups = (
+        process_service._compute_color_groups_with_overrides_for_process(
+            process_id,
+            color_components,
+            pool_rows,
+            color_links,
+            color_master_names,
+            color_overrides,
+            logged_colors,
+        )
     )
 
-    raw_breakdown = _coerce_json_list(form_data.get("colorBreakdown"), "Invalid color breakdown data format.")
+    raw_breakdown = _coerce_json_list(
+        form_data.get("colorBreakdown"), "Invalid color breakdown data format."
+    )
 
     has_custom_breakdown = any((c or {}).get("isCustom") for c in raw_breakdown)
 
@@ -617,7 +680,10 @@ def save_production(conn, cur, form_data):
             (
                 c
                 for c in color_breakdown
-                if not c["isCustom"] and not any(ag.lower() == c["color"].lower() for ag in available_color_groups)
+                if not c["isCustom"]
+                and not any(
+                    ag.lower() == c["color"].lower() for ag in available_color_groups
+                )
             ),
             None,
         )
@@ -635,7 +701,10 @@ def save_production(conn, cur, form_data):
         if custom_color_names:
             tags_service.ensure_color_master_entries(cur, custom_color_names)
 
-        color = ", ".join(f'{c["color"]} ({c["size"]})' if c["size"] else c["color"] for c in color_breakdown)
+        color = ", ".join(
+            f"{c['color']} ({c['size']})" if c["size"] else c["color"]
+            for c in color_breakdown
+        )
 
         # The operator can pick (or change) the Primary Axis directly on the
         # Production Lot form -- that choice arrives as
@@ -649,10 +718,16 @@ def save_production(conn, cur, form_data):
         # resolves the identical default at save and read time). A process
         # with no axes at all resolves to none of this and keeps the legacy
         # branch below, unchanged.
-        submitted_primary_color_axis = str(form_data.get("primaryColorAxis") or "").strip()
+        submitted_primary_color_axis = str(
+            form_data.get("primaryColorAxis") or ""
+        ).strip()
         stored_primary_color_axis = str(process.get("primaryColorAxis") or "").strip()
-        requested_primary_color_axis = submitted_primary_color_axis or stored_primary_color_axis
-        axes = process_service._compute_color_axes_for_process(process_id, color_components, pool_rows, color_links)
+        requested_primary_color_axis = (
+            submitted_primary_color_axis or stored_primary_color_axis
+        )
+        axes = process_service._compute_color_axes_for_process(
+            process_id, color_components, pool_rows, color_links
+        )
 
         # 2+ axes with NEITHER a per-lot pick NOR a process-level default is
         # the one case with nothing a human has ever actually decided --
@@ -667,12 +742,19 @@ def save_production(conn, cur, form_data):
         # blocks a given process's first lot post-migration.
         if not requested_primary_color_axis and len(axes) >= 2:
             raise ValueError(
-                "This process has more than one independent Color Axis. Pick which group is \"Primary\" on this "
+                'This process has more than one independent Color Axis. Pick which group is "Primary" on this '
                 "lot (or set a default Primary Axis for this process in the Process editor) before saving."
             )
 
         primary_axis = (
-            next((a for a in axes if a["label"].lower() == requested_primary_color_axis.lower()), None)
+            next(
+                (
+                    a
+                    for a in axes
+                    if a["label"].lower() == requested_primary_color_axis.lower()
+                ),
+                None,
+            )
             if requested_primary_color_axis
             else None
         ) or (axes[0] if axes else None)
@@ -714,7 +796,9 @@ def save_production(conn, cur, form_data):
             # -- that's an operator forgetting to address the primary axis,
             # not a deliberate zero.
             if not any(_is_primary_axis_row(c) for c in color_breakdown):
-                raise ValueError(f'At least one "{primary_color_axis}" color is required for this lot.')
+                raise ValueError(
+                    f'At least one "{primary_color_axis}" color is required for this lot.'
+                )
         else:
             qty = sum(c["qty"] for c in color_breakdown if c["countsTowardTotal"])
 
@@ -730,15 +814,19 @@ def save_production(conn, cur, form_data):
         # overwritten here: this lot falls back to the default for its own
         # quantity, but a stale client payload shouldn't silently rewrite a
         # configured choice.
-        submitted_resolved = bool(submitted_primary_color_axis) and bool(primary_axis) and (
-            submitted_primary_color_axis.lower() == primary_color_axis.lower()
+        submitted_resolved = (
+            bool(submitted_primary_color_axis)
+            and bool(primary_axis)
+            and (submitted_primary_color_axis.lower() == primary_color_axis.lower())
         )
         if (
             primary_axis
             and primary_color_axis.lower() != stored_primary_color_axis.lower()
             and (submitted_resolved or not stored_primary_color_axis)
         ):
-            process_service._set_process_primary_color_axis(cur, process_id, primary_color_axis)
+            process_service._set_process_primary_color_axis(
+                cur, process_id, primary_color_axis
+            )
     else:
         # Zero and negative quantities are both allowed -- a lot can be
         # logged as a correction/reversal (e.g. a prior over-count) without
@@ -746,7 +834,9 @@ def save_production(conn, cur, form_data):
         # adjust_warehouse_pool_manually.
         qty = _validate_number(form_data.get("qty"), -10000000, 10000000)
 
-    raw_components = _coerce_json_list(form_data.get("componentsConsumed"), "Invalid components consumed data format.")
+    raw_components = _coerce_json_list(
+        form_data.get("componentsConsumed"), "Invalid components consumed data format."
+    )
 
     clean_components = []
     for c in raw_components:
@@ -763,9 +853,12 @@ def save_production(conn, cur, form_data):
                     "size": str(c.get("size") or "").strip(),
                     "narration": str(c.get("narration") or "").strip(),
                     "color": str(c.get("color") or "").strip(),
-                    "sourceType": "POOL" if str(c.get("sourceType") or "").strip().upper() == "POOL" else "ITEM",
+                    "sourceType": "POOL"
+                    if str(c.get("sourceType") or "").strip().upper() == "POOL"
+                    else "ITEM",
                     "qty": qty_c,
-                    "colorGroup": str(c.get("colorGroup") or "").strip() or _COLOR_GROUP_COMMON,
+                    "colorGroup": str(c.get("colorGroup") or "").strip()
+                    or _COLOR_GROUP_COMMON,
                     # Which pool bucket a POOL row draws from, when that is
                     # NOT the lot colour above -- see _pool_bucket_color.
                     # Blank for every ITEM row and for any POOL row taking
@@ -825,7 +918,9 @@ def save_production(conn, cur, form_data):
                 process_service._is_common_color_group(c["colorGroup"])
                 or c["colorGroup"].lower() in breakdown_colors_lower
                 or any(
-                    warehouse_service._color_names_match(breakdown_color, c["colorGroup"])
+                    warehouse_service._color_names_match(
+                        breakdown_color, c["colorGroup"]
+                    )
                     for breakdown_color in breakdown_colors_lower
                 )
             ):
@@ -842,7 +937,9 @@ def save_production(conn, cur, form_data):
 
     is_final_stage = bool(process.get("isFinalStage"))
     product_id = str(form_data.get("productId") or "").strip() if is_final_stage else ""
-    product_name = str(form_data.get("productName") or "").strip() if is_final_stage else ""
+    product_name = (
+        str(form_data.get("productName") or "").strip() if is_final_stage else ""
+    )
 
     production_date = date_utils.to_safe_date(form_data.get("date")) or date.today()
     assigned_by = str(form_data.get("assignedBy") or "").strip()
@@ -868,7 +965,9 @@ def save_production(conn, cur, form_data):
 
     existing = None
     if is_edit:
-        target_id = _coerce_row_id(row_idx, "Invalid production record selected for edit.")
+        target_id = _coerce_row_id(
+            row_idx, "Invalid production record selected for edit."
+        )
         cur.execute(
             "SELECT id, process_id, lot_number, status, components_consumed FROM erp.production WHERE id = %s AND deleted_at IS NULL",
             (target_id,),
@@ -879,9 +978,13 @@ def save_production(conn, cur, form_data):
 
         current_process_id = str(existing["process_id"] or "").strip()
         if current_process_id and current_process_id.lower() != process_id.lower():
-            raise ValueError("Process cannot be changed on an existing lot. Delete and recreate it under the new process instead.")
+            raise ValueError(
+                "Process cannot be changed on an existing lot. Delete and recreate it under the new process instead."
+            )
 
-        lot_number = str(existing["lot_number"] or "").strip() or _generate_lot_number(cur, process["lotPrefix"])
+        lot_number = str(existing["lot_number"] or "").strip() or _generate_lot_number(
+            cur, process["lotPrefix"]
+        )
     else:
         lot_number = _generate_lot_number(cur, process["lotPrefix"])
 
@@ -901,7 +1004,9 @@ def save_production(conn, cur, form_data):
                 # a different bucket than the one it is about to re-claim.
                 color_group = _pool_bucket_color(c)
                 key = _poolneed_key(item_name_lower, color_group)
-                original_pool_consumed[key] = original_pool_consumed.get(key, 0) + float(c.get("qty") or 0)
+                original_pool_consumed[key] = original_pool_consumed.get(
+                    key, 0
+                ) + float(c.get("qty") or 0)
 
     # Only run the pool-availability check when this save will leave the
     # lot Completed -- a Pending save never touches the pool, so checking
@@ -917,12 +1022,18 @@ def save_production(conn, cur, form_data):
     # Process outputItemName, mirroring the client's own Size cascade
     # dropdown (App.Utils.getSizeFromOutputItemName), so Layer 1's rate key
     # falls out of the single Process the operator already picked.
-    size = contractors_service._get_size_from_output_item_name(process["outputItemName"])
-    contractor_rate = contractors_service._get_contractor_rate(cur, assigned_to, process["processType"], size)
+    size = contractors_service._get_size_from_output_item_name(
+        process["outputItemName"]
+    )
+    contractor_rate = contractors_service._get_contractor_rate(
+        cur, assigned_to, process["processType"], size
+    )
 
     extra_charge_type = str(form_data.get("extraChargeType") or "").strip()
     extra_charge_amount = (
-        contractors_service._get_extra_charge(cur, assigned_to, extra_charge_type) if extra_charge_type else 0.0
+        contractors_service._get_extra_charge(cur, assigned_to, extra_charge_type)
+        if extra_charge_type
+        else 0.0
     )
 
     contractor_payable = (contractor_rate + extra_charge_amount) * qty
@@ -930,7 +1041,9 @@ def save_production(conn, cur, form_data):
     components_json = json.dumps(clean_components)
     color_breakdown_json = json.dumps(color_breakdown) if color_breakdown else None
     resolved_process_master_id = _find_process_master_id(cur, process_id)
-    resolved_bom_product_id = _find_bom_product_id(cur, product_id) if product_id else None
+    resolved_bom_product_id = (
+        _find_bom_product_id(cur, product_id) if product_id else None
+    )
     resolved_contractor_id = _find_contractor_id_by_name(cur, assigned_to)
     user_id = get_current_user_id()
 
@@ -947,12 +1060,28 @@ def save_production(conn, cur, form_data):
             WHERE id = %s
             """,
             (
-                production_date, product_id, product_name, resolved_bom_product_id,
-                qty, assigned_by, assigned_to, resolved_contractor_id, status, remarks,
-                process_id, resolved_process_master_id, lot_number,
-                contractor_rate, contractor_payable, extra_charge_type or None, extra_charge_amount,
+                production_date,
+                product_id,
+                product_name,
+                resolved_bom_product_id,
+                qty,
+                assigned_by,
+                assigned_to,
+                resolved_contractor_id,
+                status,
+                remarks,
+                process_id,
+                resolved_process_master_id,
+                lot_number,
+                contractor_rate,
+                contractor_payable,
+                extra_charge_type or None,
+                extra_charge_amount,
                 output_item_name,
-                components_json, color, color_breakdown_json, user_id,
+                components_json,
+                color,
+                color_breakdown_json,
+                user_id,
                 existing["id"],
             ),
         )
@@ -970,11 +1099,28 @@ def save_production(conn, cur, form_data):
             RETURNING id
             """,
             (
-                production_date, product_id, product_name, resolved_bom_product_id, qty, assigned_by, assigned_to,
-                resolved_contractor_id, status, remarks, process_id, resolved_process_master_id, lot_number,
-                contractor_rate, contractor_payable, extra_charge_type or None, extra_charge_amount,
-                output_item_name, components_json, color,
-                color_breakdown_json, user_id,
+                production_date,
+                product_id,
+                product_name,
+                resolved_bom_product_id,
+                qty,
+                assigned_by,
+                assigned_to,
+                resolved_contractor_id,
+                status,
+                remarks,
+                process_id,
+                resolved_process_master_id,
+                lot_number,
+                contractor_rate,
+                contractor_payable,
+                extra_charge_type or None,
+                extra_charge_amount,
+                output_item_name,
+                components_json,
+                color,
+                color_breakdown_json,
+                user_id,
             ),
         )
         new_row_idx = cur.fetchone()["id"]
@@ -997,7 +1143,9 @@ def save_production(conn, cur, form_data):
 @rpc_method("deleteProduction", mutation=True)
 @database.transactional
 def delete_production(conn, cur, row_idx, expected_product_id=None, expected_qty=None):
-    target_id = _coerce_row_id(row_idx, "Invalid production record selected for deletion.")
+    target_id = _coerce_row_id(
+        row_idx, "Invalid production record selected for deletion."
+    )
 
     cur.execute(
         "SELECT product_id, qty, output_item_name, color_breakdown, lot_number FROM erp.production WHERE id = %s AND deleted_at IS NULL",
@@ -1011,7 +1159,9 @@ def delete_production(conn, cur, row_idx, expected_product_id=None, expected_qty
     qty = float(row["qty"] or 0)
 
     if not _matches_expected(product_id, qty, expected_product_id, expected_qty):
-        raise ValueError("Data mismatch: The record has been modified or shifted. Please refresh.")
+        raise ValueError(
+            "Data mismatch: The record has been modified or shifted. Please refresh."
+        )
 
     pool_credit_warning = None
     if not product_id:
@@ -1019,11 +1169,14 @@ def delete_production(conn, cur, row_idx, expected_product_id=None, expected_qty
             cur, row["output_item_name"], row["color_breakdown"], qty
         )
 
-    cur.execute("UPDATE erp.production SET deleted_at = NOW(), updated_by = %s WHERE id = %s", (get_current_user_id(), target_id))
+    cur.execute(
+        "UPDATE erp.production SET deleted_at = NOW(), updated_by = %s WHERE id = %s",
+        (get_current_user_id(), target_id),
+    )
 
     warehouse_service._recalculate_warehouse_pool(cur)
 
-    message = f'Lot #{row["lot_number"]} deleted.'
+    message = f"Lot #{row['lot_number']} deleted."
     if pool_credit_warning:
         message = f"{message} {pool_credit_warning}"
     return build_response(True, None, message)
@@ -1068,22 +1221,36 @@ def delete_production_bulk(conn, cur, row_idxs, expected_rows=None):
         qty = float(row["qty"] or 0)
 
         expected = expected_by_id.get(target_id) or {}
-        if not _matches_expected(product_id, qty, expected.get("expectedProductId"), expected.get("expectedQty")):
+        if not _matches_expected(
+            product_id,
+            qty,
+            expected.get("expectedProductId"),
+            expected.get("expectedQty"),
+        ):
             skipped_mismatch += 1
             continue
 
         if not product_id:
-            warning = warehouse_service._check_pool_credit_removal_warning(cur, row["output_item_name"], row["color_breakdown"], qty)
+            warning = warehouse_service._check_pool_credit_removal_warning(
+                cur, row["output_item_name"], row["color_breakdown"], qty
+            )
             if warning:
                 pool_credit_warnings.append(warning)
 
         deletable_ids.append(target_id)
 
     if not deletable_ids:
-        return build_response(False, None, "Data mismatch: the selected record(s) have been modified or shifted. Please refresh.")
+        return build_response(
+            False,
+            None,
+            "Data mismatch: the selected record(s) have been modified or shifted. Please refresh.",
+        )
 
     user_id = get_current_user_id()
-    cur.execute("UPDATE erp.production SET deleted_at = NOW(), updated_by = %s WHERE id = ANY(%s)", (user_id, deletable_ids))
+    cur.execute(
+        "UPDATE erp.production SET deleted_at = NOW(), updated_by = %s WHERE id = ANY(%s)",
+        (user_id, deletable_ids),
+    )
     rows_deleted = cur.rowcount
 
     warehouse_service._recalculate_warehouse_pool(cur)
@@ -1120,14 +1287,21 @@ def update_production_status(conn, cur, row_idx, expected_qty, new_status):
 
     qty = float(row["qty"] or 0)
     if expected_qty is not None and abs(qty - float(expected_qty)) > 0.0001:
-        raise ValueError("Data mismatch: The record has been modified or shifted. Please refresh.")
+        raise ValueError(
+            "Data mismatch: The record has been modified or shifted. Please refresh."
+        )
 
     previous_status = str(row["status"] or "").strip().lower()
     pool_warning = None
     if status.lower() == "completed" and previous_status != "completed":
-        pool_warning = _validate_pool_availability(cur, _build_pool_needed_map(row["components_consumed"] or []))
+        pool_warning = _validate_pool_availability(
+            cur, _build_pool_needed_map(row["components_consumed"] or [])
+        )
 
-    cur.execute("UPDATE erp.production SET status = %s, updated_by = %s WHERE id = %s", (status, get_current_user_id(), target_id))
+    cur.execute(
+        "UPDATE erp.production SET status = %s, updated_by = %s WHERE id = %s",
+        (status, get_current_user_id(), target_id),
+    )
 
     warehouse_service._recalculate_warehouse_pool(cur)
 
@@ -1139,10 +1313,21 @@ def update_production_status(conn, cur, row_idx, expected_qty, new_status):
 
 @rpc_method("saveProductionSheet", mutation=True)
 @database.transactional
-def save_production_sheet(conn, cur, row_idx, expected_product_id, expected_qty, custom_components, sheet_remarks):
+def save_production_sheet(
+    conn,
+    cur,
+    row_idx,
+    expected_product_id,
+    expected_qty,
+    custom_components,
+    sheet_remarks,
+):
     target_id = _coerce_row_id(row_idx, "Invalid production record selected.")
 
-    cur.execute("SELECT product_id, qty, lot_number FROM erp.production WHERE id = %s AND deleted_at IS NULL", (target_id,))
+    cur.execute(
+        "SELECT product_id, qty, lot_number FROM erp.production WHERE id = %s AND deleted_at IS NULL",
+        (target_id,),
+    )
     row = cur.fetchone()
     if row is None:
         raise ValueError("Invalid production record selected.")
@@ -1150,7 +1335,9 @@ def save_production_sheet(conn, cur, row_idx, expected_product_id, expected_qty,
     product_id = str(row["product_id"] or "").strip()
     qty = float(row["qty"] or 0)
     if not _matches_expected(product_id, qty, expected_product_id, expected_qty):
-        raise ValueError("Data mismatch: The record has been modified or shifted. Please refresh.")
+        raise ValueError(
+            "Data mismatch: The record has been modified or shifted. Please refresh."
+        )
 
     components = _coerce_json_list(custom_components, "Invalid component data format.")
 
@@ -1184,7 +1371,11 @@ def save_production_sheet(conn, cur, row_idx, expected_product_id, expected_qty,
         (json.dumps(clean_components), remarks, get_current_user_id(), target_id),
     )
 
-    return build_response(True, {"customComponents": clean_components, "sheetRemarks": remarks}, f'Production sheet for Lot #{row["lot_number"]} saved.')
+    return build_response(
+        True,
+        {"customComponents": clean_components, "sheetRemarks": remarks},
+        f"Production sheet for Lot #{row['lot_number']} saved.",
+    )
 
 
 @rpc_method("refreshProductionComponentsFromItemsMaster", mutation=True)
@@ -1237,7 +1428,9 @@ def refresh_production_components_from_items_master(conn, cur):
     master_map = items_service.get_item_master_refresh_map(cur)
     if not master_map:
         return build_response(
-            True, {"lotsScanned": 0, "lotsUpdated": 0, "fieldsUpdated": 0, "details": []}, "Items Master is empty -- nothing to sync."
+            True,
+            {"lotsScanned": 0, "lotsUpdated": 0, "fieldsUpdated": 0, "details": []},
+            "Items Master is empty -- nothing to sync.",
         )
 
     def _resync(components: list, has_unit: bool) -> tuple:
@@ -1251,7 +1444,9 @@ def refresh_production_components_from_items_master(conn, cur):
             name = str(comp.get("itemName") or "").strip()
             if not name:
                 continue
-            master = master_map.get(f'{name.lower()}|{str(comp.get("size") or "").strip().lower()}')
+            master = master_map.get(
+                f"{name.lower()}|{str(comp.get('size') or '').strip().lower()}"
+            )
             if not master:
                 continue  # unknown item -- keep stored as-is
 
@@ -1270,7 +1465,12 @@ def refresh_production_components_from_items_master(conn, cur):
             if str(comp.get("narration") or "").strip() != master["narration"]:
                 comp["narration"] = master["narration"]
                 fields_changed += 1
-            if has_unit and "unit" in comp and master["baseUnit"] and str(comp.get("unit") or "").strip() != master["baseUnit"]:
+            if (
+                has_unit
+                and "unit" in comp
+                and master["baseUnit"]
+                and str(comp.get("unit") or "").strip() != master["baseUnit"]
+            ):
                 comp["unit"] = master["baseUnit"]
                 fields_changed += 1
         return (components if fields_changed else None), fields_changed
@@ -1285,8 +1485,12 @@ def refresh_production_components_from_items_master(conn, cur):
     lots_updated = 0
 
     for row in rows:
-        rewritten_consumed, consumed_fields = _resync(row["components_consumed"] or [], has_unit=True)
-        rewritten_custom, custom_fields = _resync(row["custom_components"] or [], has_unit=False)
+        rewritten_consumed, consumed_fields = _resync(
+            row["components_consumed"] or [], has_unit=True
+        )
+        rewritten_custom, custom_fields = _resync(
+            row["custom_components"] or [], has_unit=False
+        )
         fields_updated += consumed_fields + custom_fields
         if rewritten_consumed is None and rewritten_custom is None:
             continue
@@ -1304,6 +1508,11 @@ def refresh_production_components_from_items_master(conn, cur):
 
     return build_response(
         True,
-        {"lotsScanned": len(rows), "lotsUpdated": lots_updated, "fieldsUpdated": fields_updated, "details": details},
+        {
+            "lotsScanned": len(rows),
+            "lotsUpdated": lots_updated,
+            "fieldsUpdated": fields_updated,
+            "details": details,
+        },
         message,
     )

@@ -33,17 +33,19 @@ class TestBackupService(unittest.TestCase):
     def setUp(self):
         # Reset last backup status for predictable test state
         with backup_service._STATUS_LOCK:
-            backup_service._LAST_BACKUP_STATUS.update({
-                "timestamp": None,
-                "status": "NEVER",
-                "message": "No backup has been executed yet.",
-                "spreadsheet_id": None,
-                "spreadsheet_url": None,
-                "local_file": None,
-                "mirror_status": None,
-                "mirror_message": None,
-                "nightly_scheduler_active": False,
-            })
+            backup_service._LAST_BACKUP_STATUS.update(
+                {
+                    "timestamp": None,
+                    "status": "NEVER",
+                    "message": "No backup has been executed yet.",
+                    "spreadsheet_id": None,
+                    "spreadsheet_url": None,
+                    "local_file": None,
+                    "mirror_status": None,
+                    "mirror_message": None,
+                    "nightly_scheduler_active": False,
+                }
+            )
 
     def test_get_backup_dir(self):
         backup_dir = backup_service.get_backup_dir()
@@ -89,7 +91,9 @@ class TestBackupService(unittest.TestCase):
         self.assertEqual(len(res["snapshot_sha256"]), 64)
         self.assertEqual(res["consecutive_failures"], 0)
         self.assertIn("Verified DB snapshot created", res["message"])
-        self.assertIn("GOOGLE_APPLICATION_CREDENTIALS is not configured", res["message"])
+        self.assertIn(
+            "GOOGLE_APPLICATION_CREDENTIALS is not configured", res["message"]
+        )
 
         for path in (res["local_file"], res["local_file"] + ".sha256"):
             try:
@@ -141,9 +145,7 @@ class TestBackupService(unittest.TestCase):
         # id that thread will publish under -- otherwise the client polls for
         # a run that never reports.
         mock_thread.assert_called_once()
-        self.assertEqual(
-            mock_thread.call_args.kwargs["args"][1], res["data"]["run_id"]
-        )
+        self.assertEqual(mock_thread.call_args.kwargs["args"][1], res["data"]["run_id"])
         mock_thread.return_value.start.assert_called_once()
 
     @patch("app.erp.services.backup_service.threading.Thread")
@@ -179,7 +181,9 @@ class TestBackupService(unittest.TestCase):
         writes = []
         cur = MagicMock()
         with patch.object(
-            backup_service, "_write_run_state", side_effect=lambda c, doc: writes.append(doc)
+            backup_service,
+            "_write_run_state",
+            side_effect=lambda c, doc: writes.append(doc),
         ):
             # Clearing PATH makes pg_dump unfindable -- a faithful stand-in
             # for every way the dump can fail.
@@ -203,11 +207,12 @@ class TestBackupService(unittest.TestCase):
         writes = []
         cur = MagicMock()
         with patch.object(
-            backup_service, "_write_run_state", side_effect=lambda c, doc: writes.append(doc)
+            backup_service,
+            "_write_run_state",
+            side_effect=lambda c, doc: writes.append(doc),
         ):
-            with patch.object(
-                backup_service, "perform_full_backup"
-            ) as mock_perform:
+            with patch.object(backup_service, "perform_full_backup") as mock_perform:
+
                 def _run(config=None, on_phase=None):
                     for phase in ("snapshot", "sheets", "mirror"):
                         on_phase(phase)
@@ -227,8 +232,12 @@ class TestBackupService(unittest.TestCase):
         """A broken progress sink is a cosmetic problem, not a backup failure."""
         with patch.object(backup_service, "db_backup") as mock_db_backup:
             mock_db_backup.create_snapshot.return_value = MagicMock(
-                path="/tmp/x.dump", size_bytes=1, sha256="a" * 64,
-                table_count=1, verified=True, filename="x.dump",
+                path="/tmp/x.dump",
+                size_bytes=1,
+                sha256="a" * 64,
+                table_count=1,
+                verified=True,
+                filename="x.dump",
             )
             mock_db_backup.prune_snapshots.return_value = []
             res = backup_service.perform_full_backup(

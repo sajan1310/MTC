@@ -91,7 +91,7 @@ def test_signing_in_with_the_spelling_you_signed_up_with_works(app, account):
         str.upper,
         lambda e: e.capitalize(),
         lambda e: e.replace("@", "@").swapcase(),
-        lambda e: f"  {e}  ",          # leading/trailing whitespace
+        lambda e: f"  {e}  ",  # leading/trailing whitespace
     ],
 )
 def test_any_casing_of_the_same_address_signs_in(app, account, transform):

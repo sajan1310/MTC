@@ -78,7 +78,10 @@ def _row_to_user_record(row) -> dict:
 
 @rpc_method("getUsersData", roles=frozenset({"admin"}))
 def get_users_data():
-    with database.get_conn(cursor_factory=psycopg2.extras.RealDictCursor) as (_conn, cur):
+    with database.get_conn(cursor_factory=psycopg2.extras.RealDictCursor) as (
+        _conn,
+        cur,
+    ):
         cur.execute(
             """
             SELECT user_id, name, email, role, company, mobile, created_at, deleted_at
@@ -105,7 +108,9 @@ def create_user(conn, cur, name, email, password, confirm_password, role):
     role = str(role or "").strip().lower()
 
     if not name or not email or not password or not confirm_password:
-        raise ValueError("Name, email, password, and confirm password are all required.")
+        raise ValueError(
+            "Name, email, password, and confirm password are all required."
+        )
     if not _EMAIL_RE.match(email):
         raise ValueError("Please enter a valid email address.")
     if password != confirm_password:
@@ -118,7 +123,9 @@ def create_user(conn, cur, name, email, password, confirm_password, role):
         raise ValueError(msg)
 
     if role not in CREATE_ROLES and not is_valid_custom_role(role, cur):
-        raise ValueError(f"Invalid role \"{role}\". Must be one of: {', '.join(CREATE_ROLES)}, or a custom role.")
+        raise ValueError(
+            f'Invalid role "{role}". Must be one of: {", ".join(CREATE_ROLES)}, or a custom role.'
+        )
     # Same rule as update_user_role: only a Super Admin can hand out Admin.
     if role == "admin" and get_current_user_role() != "super_admin":
         raise ValueError("Only a Super Admin can create a user with the Admin role.")
@@ -137,7 +144,9 @@ def create_user(conn, cur, name, email, password, confirm_password, role):
         (name, email, role, password_hash),
     )
     row = cur.fetchone()
-    return build_response(True, _row_to_user_record(row), f'"{name}" created as {role}.')
+    return build_response(
+        True, _row_to_user_record(row), f'"{name}" created as {role}.'
+    )
 
 
 @rpc_method("updateUserRole", mutation=True, roles=frozenset({"admin"}))
@@ -146,7 +155,9 @@ def update_user_role(conn, cur, user_id, role):
     user_id = int(user_id)
     role = str(role or "").strip().lower()
     if role not in ROLES and not is_valid_custom_role(role, cur):
-        raise ValueError(f"Invalid role \"{role}\". Must be one of: {', '.join(ROLES)}, or a custom role.")
+        raise ValueError(
+            f'Invalid role "{role}". Must be one of: {", ".join(ROLES)}, or a custom role.'
+        )
 
     # Creating new admins is a Super Admin-only power -- an ordinary admin
     # could otherwise mint an unlimited number of peer admins with no one
@@ -166,15 +177,24 @@ def update_user_role(conn, cur, user_id, role):
         # not just the admin -> non-admin direction.
         raise ValueError("You cannot change your own role. Ask another admin.")
 
-    cur.execute("SELECT user_id, name, role FROM users WHERE user_id = %s AND deleted_at IS NULL", (user_id,))
+    cur.execute(
+        "SELECT user_id, name, role FROM users WHERE user_id = %s AND deleted_at IS NULL",
+        (user_id,),
+    )
     row = cur.fetchone()
     if row is None:
         raise ValueError("User not found or already deactivated.")
 
-    if row["role"] in ("admin", "super_admin") and get_current_user_role() != "super_admin":
+    if (
+        row["role"] in ("admin", "super_admin")
+        and get_current_user_role() != "super_admin"
+    ):
         raise ValueError("Only a Super Admin can change another Admin's role.")
 
-    cur.execute("UPDATE users SET role = %s, updated_at = NOW() WHERE user_id = %s", (role, user_id))
+    cur.execute(
+        "UPDATE users SET role = %s, updated_at = NOW() WHERE user_id = %s",
+        (role, user_id),
+    )
     return build_response(True, None, f'"{row["name"]}" is now {role}.')
 
 
@@ -196,8 +216,13 @@ def deactivate_user(conn, cur, user_id):
     # Soft delete, same convention as every other entity in this app
     # (erp.*'s deleted_at) -- the row and its history (updated_by
     # references on items/POs/etc.) stay intact.
-    cur.execute("UPDATE users SET deleted_at = NOW(), updated_at = NOW() WHERE user_id = %s", (user_id,))
-    return build_response(True, None, f'"{row["name"]}" deactivated. They can no longer sign in.')
+    cur.execute(
+        "UPDATE users SET deleted_at = NOW(), updated_at = NOW() WHERE user_id = %s",
+        (user_id,),
+    )
+    return build_response(
+        True, None, f'"{row["name"]}" deactivated. They can no longer sign in.'
+    )
 
 
 # Blast-radius cap on a single call. Not a performance limit: bulk
@@ -326,5 +351,8 @@ def reactivate_user(conn, cur, user_id):
     if row is None:
         raise ValueError("User not found or already active.")
 
-    cur.execute("UPDATE users SET deleted_at = NULL, updated_at = NOW() WHERE user_id = %s", (user_id,))
+    cur.execute(
+        "UPDATE users SET deleted_at = NULL, updated_at = NOW() WHERE user_id = %s",
+        (user_id,),
+    )
     return build_response(True, None, f'"{row["name"]}" reactivated.')

@@ -17,7 +17,9 @@ from app.erp.services import process_service
 
 def _rpc(client, method, args=None, mutation=False):
     headers = {"X-Mutation-Id": str(uuid.uuid4())} if mutation else {}
-    return client.post(f"/api/erp/rpc/{method}", json={"args": args or []}, headers=headers)
+    return client.post(
+        f"/api/erp/rpc/{method}", json={"args": args or []}, headers=headers
+    )
 
 
 def _unique_name(prefix: str) -> str:
@@ -55,7 +57,10 @@ def _edit_process(client, payload, process_id, **overrides):
 
 def _seed_pool(client, process_id, qty, color=""):
     resp = _rpc(
-        client, "saveWarehousePoolOpening", [{"processId": process_id, "qty": qty, "color": color}], mutation=True
+        client,
+        "saveWarehousePoolOpening",
+        [{"processId": process_id, "qty": qty, "color": color}],
+        mutation=True,
     )
     assert resp.get_json()["success"] is True
 
@@ -66,13 +71,22 @@ def test_no_axis_when_zero_pool_colors(erp_client):
 
     downstream_payload, downstream_id = _save_process(
         erp_client,
-        components=[{"itemName": upstream_output, "qtyPerUnit": 1, "sourceType": "POOL", "colorGroup": "COMMON"}],
+        components=[
+            {
+                "itemName": upstream_output,
+                "qtyPerUnit": 1,
+                "sourceType": "POOL",
+                "colorGroup": "COMMON",
+            }
+        ],
     )
 
     axes = _rpc(erp_client, "getProcessColorAxes", [downstream_id]).get_json()["data"]
     assert axes["axes"] == []
 
-    groups = _rpc(erp_client, "getProcessColorGroups", [downstream_id]).get_json()["data"]
+    groups = _rpc(erp_client, "getProcessColorGroups", [downstream_id]).get_json()[
+        "data"
+    ]
     assert groups == []
 
 
@@ -83,14 +97,21 @@ def test_no_axis_when_single_pool_color(erp_client):
     _downstream_payload, downstream_id = _save_process(
         erp_client,
         components=[
-            {"itemName": upstream_payload["outputItemName"], "qtyPerUnit": 1, "sourceType": "POOL", "colorGroup": "COMMON"}
+            {
+                "itemName": upstream_payload["outputItemName"],
+                "qtyPerUnit": 1,
+                "sourceType": "POOL",
+                "colorGroup": "COMMON",
+            }
         ],
     )
 
     axes = _rpc(erp_client, "getProcessColorAxes", [downstream_id]).get_json()["data"]
     assert axes["axes"] == []
 
-    groups = _rpc(erp_client, "getProcessColorGroups", [downstream_id]).get_json()["data"]
+    groups = _rpc(erp_client, "getProcessColorGroups", [downstream_id]).get_json()[
+        "data"
+    ]
     assert groups == []
 
 
@@ -117,8 +138,18 @@ def test_single_composite_pool_color_is_still_an_axis(erp_client):
         erp_client,
         primaryColorAxis=frame_payload["outputItemName"],
         components=[
-            {"itemName": frame_payload["outputItemName"], "qtyPerUnit": 1, "sourceType": "POOL", "colorGroup": "COMMON"},
-            {"itemName": rim_payload["outputItemName"], "qtyPerUnit": 1, "sourceType": "POOL", "colorGroup": "COMMON"},
+            {
+                "itemName": frame_payload["outputItemName"],
+                "qtyPerUnit": 1,
+                "sourceType": "POOL",
+                "colorGroup": "COMMON",
+            },
+            {
+                "itemName": rim_payload["outputItemName"],
+                "qtyPerUnit": 1,
+                "sourceType": "POOL",
+                "colorGroup": "COMMON",
+            },
         ],
     )
     _rpc(
@@ -134,7 +165,9 @@ def test_single_composite_pool_color_is_still_an_axis(erp_client):
                     {"color": "Black", "qty": 10, "countsTowardTotal": True},
                     {"color": "Red", "qty": 10, "countsTowardTotal": False},
                 ],
-                "componentsConsumed": [{"itemName": "RawMat", "qty": 1, "sourceType": "ITEM"}],
+                "componentsConsumed": [
+                    {"itemName": "RawMat", "qty": 1, "sourceType": "ITEM"}
+                ],
             }
         ],
         mutation=True,
@@ -143,15 +176,26 @@ def test_single_composite_pool_color_is_still_an_axis(erp_client):
     _downstream_payload, downstream_id = _save_process(
         erp_client,
         components=[
-            {"itemName": parent_payload["outputItemName"], "qtyPerUnit": 1, "sourceType": "POOL", "colorGroup": "COMMON"}
+            {
+                "itemName": parent_payload["outputItemName"],
+                "qtyPerUnit": 1,
+                "sourceType": "POOL",
+                "colorGroup": "COMMON",
+            }
         ],
     )
 
-    axes = _rpc(erp_client, "getProcessColorAxes", [downstream_id]).get_json()["data"]["axes"]
-    assert len(axes) == 1, f"parent's single composite color was dropped as a non-axis: {axes}"
+    axes = _rpc(erp_client, "getProcessColorAxes", [downstream_id]).get_json()["data"][
+        "axes"
+    ]
+    assert len(axes) == 1, (
+        f"parent's single composite color was dropped as a non-axis: {axes}"
+    )
     assert axes[0]["colors"] == ["Black / Red"]
 
-    groups = _rpc(erp_client, "getProcessColorGroups", [downstream_id]).get_json()["data"]
+    groups = _rpc(erp_client, "getProcessColorGroups", [downstream_id]).get_json()[
+        "data"
+    ]
     assert groups == ["Black / Red"]
 
 
@@ -179,12 +223,24 @@ def test_axis_order_follows_recipe_row_order_not_pool_table_order(erp_client):
         erp_client,
         primaryColorAxis=frame_payload["outputItemName"],
         components=[
-            {"itemName": frame_payload["outputItemName"], "qtyPerUnit": 1, "sourceType": "POOL", "colorGroup": "COMMON"},
-            {"itemName": rim_payload["outputItemName"], "qtyPerUnit": 1, "sourceType": "POOL", "colorGroup": "COMMON"},
+            {
+                "itemName": frame_payload["outputItemName"],
+                "qtyPerUnit": 1,
+                "sourceType": "POOL",
+                "colorGroup": "COMMON",
+            },
+            {
+                "itemName": rim_payload["outputItemName"],
+                "qtyPerUnit": 1,
+                "sourceType": "POOL",
+                "colorGroup": "COMMON",
+            },
         ],
     )
 
-    axes = _rpc(erp_client, "getProcessColorAxes", [downstream_id]).get_json()["data"]["axes"]
+    axes = _rpc(erp_client, "getProcessColorAxes", [downstream_id]).get_json()["data"][
+        "axes"
+    ]
     assert len(axes) == 2
     assert axes[0]["label"] == frame_payload["outputItemName"]
     assert axes[1]["label"] == rim_payload["outputItemName"]
@@ -203,12 +259,24 @@ def test_two_independent_axes_kept_separate_but_groups_are_flat_union(erp_client
         erp_client,
         primaryColorAxis=frame_payload["outputItemName"],
         components=[
-            {"itemName": frame_payload["outputItemName"], "qtyPerUnit": 1, "sourceType": "POOL", "colorGroup": "COMMON"},
-            {"itemName": rim_payload["outputItemName"], "qtyPerUnit": 1, "sourceType": "POOL", "colorGroup": "COMMON"},
+            {
+                "itemName": frame_payload["outputItemName"],
+                "qtyPerUnit": 1,
+                "sourceType": "POOL",
+                "colorGroup": "COMMON",
+            },
+            {
+                "itemName": rim_payload["outputItemName"],
+                "qtyPerUnit": 1,
+                "sourceType": "POOL",
+                "colorGroup": "COMMON",
+            },
         ],
     )
 
-    axes = _rpc(erp_client, "getProcessColorAxes", [downstream_id]).get_json()["data"]["axes"]
+    axes = _rpc(erp_client, "getProcessColorAxes", [downstream_id]).get_json()["data"][
+        "axes"
+    ]
     assert len(axes) == 2
     color_sets = [set(a["colors"]) for a in axes]
     assert {"Black", "Blue"} in color_sets
@@ -216,7 +284,9 @@ def test_two_independent_axes_kept_separate_but_groups_are_flat_union(erp_client
     labels = {a["label"] for a in axes}
     assert labels == {frame_payload["outputItemName"], rim_payload["outputItemName"]}
 
-    groups = _rpc(erp_client, "getProcessColorGroups", [downstream_id]).get_json()["data"]
+    groups = _rpc(erp_client, "getProcessColorGroups", [downstream_id]).get_json()[
+        "data"
+    ]
     # Flat union, NOT cross-multiplied (that's the legacy-fallback behavior,
     # only used when fewer than 2 axes resolve).
     assert set(groups) == {"Black", "Blue", "Red", "Green"}
@@ -245,17 +315,31 @@ def test_explicit_color_link_merges_two_axes_into_one(erp_client):
     _downstream_payload, downstream_id = _save_process(
         erp_client,
         components=[
-            {"itemName": frame_payload["outputItemName"], "qtyPerUnit": 1, "sourceType": "POOL", "colorGroup": "COMMON"},
-            {"itemName": rim_payload["outputItemName"], "qtyPerUnit": 1, "sourceType": "POOL", "colorGroup": "COMMON"},
+            {
+                "itemName": frame_payload["outputItemName"],
+                "qtyPerUnit": 1,
+                "sourceType": "POOL",
+                "colorGroup": "COMMON",
+            },
+            {
+                "itemName": rim_payload["outputItemName"],
+                "qtyPerUnit": 1,
+                "sourceType": "POOL",
+                "colorGroup": "COMMON",
+            },
         ],
     )
 
-    axes = _rpc(erp_client, "getProcessColorAxes", [downstream_id]).get_json()["data"]["axes"]
+    axes = _rpc(erp_client, "getProcessColorAxes", [downstream_id]).get_json()["data"][
+        "axes"
+    ]
     assert len(axes) == 1
     merged_colors = set(axes[0]["colors"])
     assert merged_colors == {"Black / Red", "Blue / Green"}
 
-    groups = _rpc(erp_client, "getProcessColorGroups", [downstream_id]).get_json()["data"]
+    groups = _rpc(erp_client, "getProcessColorGroups", [downstream_id]).get_json()[
+        "data"
+    ]
     assert set(groups) == {"Black / Red", "Blue / Green"}
 
 
@@ -269,16 +353,42 @@ def test_same_process_axis_key_link_merges_two_tag_axes(erp_client):
         erp_client,
         primaryColorAxis="Rim Color",
         components=[
-            {"itemName": "RimPart", "qtyPerUnit": 1, "sourceType": "ITEM", "colorGroup": "Red", "colorAxis": "Rim Color"},
-            {"itemName": "RimPart", "qtyPerUnit": 1, "sourceType": "ITEM", "colorGroup": "Blue", "colorAxis": "Rim Color"},
-            {"itemName": "MudguardPart", "qtyPerUnit": 1, "sourceType": "ITEM", "colorGroup": "X", "colorAxis": "Mudguard Color"},
-            {"itemName": "MudguardPart", "qtyPerUnit": 1, "sourceType": "ITEM", "colorGroup": "Y", "colorAxis": "Mudguard Color"},
+            {
+                "itemName": "RimPart",
+                "qtyPerUnit": 1,
+                "sourceType": "ITEM",
+                "colorGroup": "Red",
+                "colorAxis": "Rim Color",
+            },
+            {
+                "itemName": "RimPart",
+                "qtyPerUnit": 1,
+                "sourceType": "ITEM",
+                "colorGroup": "Blue",
+                "colorAxis": "Rim Color",
+            },
+            {
+                "itemName": "MudguardPart",
+                "qtyPerUnit": 1,
+                "sourceType": "ITEM",
+                "colorGroup": "X",
+                "colorAxis": "Mudguard Color",
+            },
+            {
+                "itemName": "MudguardPart",
+                "qtyPerUnit": 1,
+                "sourceType": "ITEM",
+                "colorGroup": "Y",
+                "colorAxis": "Mudguard Color",
+            },
         ],
     )
 
     # Before linking: two independent tag axes, cross-multiplied in the
     # flat group list, kept separate in the axis breakdown.
-    axes_before = _rpc(erp_client, "getProcessColorAxes", [process_id]).get_json()["data"]["axes"]
+    axes_before = _rpc(erp_client, "getProcessColorAxes", [process_id]).get_json()[
+        "data"
+    ]["axes"]
     assert len(axes_before) == 2
 
     _edit_process(
@@ -303,13 +413,21 @@ def test_same_process_axis_key_link_merges_two_tag_axes(erp_client):
         ],
     )
 
-    axes_after = _rpc(erp_client, "getProcessColorAxes", [process_id]).get_json()["data"]["axes"]
+    axes_after = _rpc(erp_client, "getProcessColorAxes", [process_id]).get_json()[
+        "data"
+    ]["axes"]
     assert len(axes_after) == 1
     assert set(axes_after[0]["colors"]) == {"Red / X", "Blue / Y"}
 
-    links = _rpc(erp_client, "getProcessColorLinksData", [process_id]).get_json()["data"]
+    links = _rpc(erp_client, "getProcessColorLinksData", [process_id]).get_json()[
+        "data"
+    ]
     assert len(links) == 2
-    assert all(link["myAxisKey"] == "tag:rim color" and link["theirAxisKey"] == "tag:mudguard color" for link in links)
+    assert all(
+        link["myAxisKey"] == "tag:rim color"
+        and link["theirAxisKey"] == "tag:mudguard color"
+        for link in links
+    )
 
 
 def test_same_process_link_dropped_without_distinct_axis_keys(erp_client):
@@ -321,8 +439,20 @@ def test_same_process_link_dropped_without_distinct_axis_keys(erp_client):
     payload, process_id = _save_process(
         erp_client,
         components=[
-            {"itemName": "RimPart2", "qtyPerUnit": 1, "sourceType": "ITEM", "colorGroup": "Red", "colorAxis": "Rim Color"},
-            {"itemName": "RimPart2", "qtyPerUnit": 1, "sourceType": "ITEM", "colorGroup": "Blue", "colorAxis": "Rim Color"},
+            {
+                "itemName": "RimPart2",
+                "qtyPerUnit": 1,
+                "sourceType": "ITEM",
+                "colorGroup": "Red",
+                "colorAxis": "Rim Color",
+            },
+            {
+                "itemName": "RimPart2",
+                "qtyPerUnit": 1,
+                "sourceType": "ITEM",
+                "colorGroup": "Blue",
+                "colorAxis": "Rim Color",
+            },
         ],
     )
 
@@ -330,10 +460,14 @@ def test_same_process_link_dropped_without_distinct_axis_keys(erp_client):
         erp_client,
         payload,
         process_id,
-        colorLinks=[{"otherProcessId": process_id, "myColor": "Red", "theirColor": "Blue"}],
+        colorLinks=[
+            {"otherProcessId": process_id, "myColor": "Red", "theirColor": "Blue"}
+        ],
     )
 
-    links = _rpc(erp_client, "getProcessColorLinksData", [process_id]).get_json()["data"]
+    links = _rpc(erp_client, "getProcessColorLinksData", [process_id]).get_json()[
+        "data"
+    ]
     assert links == []
 
 
@@ -372,13 +506,30 @@ def test_transitive_link_chain_merges_three_processes(erp_client):
     _downstream_payload, downstream_id = _save_process(
         erp_client,
         components=[
-            {"itemName": b_payload["outputItemName"], "qtyPerUnit": 1, "sourceType": "POOL", "colorGroup": "COMMON"},
-            {"itemName": d_payload["outputItemName"], "qtyPerUnit": 1, "sourceType": "POOL", "colorGroup": "COMMON"},
-            {"itemName": a_payload["outputItemName"], "qtyPerUnit": 1, "sourceType": "POOL", "colorGroup": "COMMON"},
+            {
+                "itemName": b_payload["outputItemName"],
+                "qtyPerUnit": 1,
+                "sourceType": "POOL",
+                "colorGroup": "COMMON",
+            },
+            {
+                "itemName": d_payload["outputItemName"],
+                "qtyPerUnit": 1,
+                "sourceType": "POOL",
+                "colorGroup": "COMMON",
+            },
+            {
+                "itemName": a_payload["outputItemName"],
+                "qtyPerUnit": 1,
+                "sourceType": "POOL",
+                "colorGroup": "COMMON",
+            },
         ],
     )
 
-    axes = _rpc(erp_client, "getProcessColorAxes", [downstream_id]).get_json()["data"]["axes"]
+    axes = _rpc(erp_client, "getProcessColorAxes", [downstream_id]).get_json()["data"][
+        "axes"
+    ]
     assert len(axes) == 1
     colors = axes[0]["colors"]
     assert len(colors) == 2
@@ -397,12 +548,26 @@ def test_tag_based_axis_independent_of_pool_detection(erp_client):
     _payload, process_id = _save_process(
         erp_client,
         components=[
-            {"itemName": item_a, "qtyPerUnit": 1, "sourceType": "ITEM", "colorGroup": "Red", "colorAxis": "Mudguard Color"},
-            {"itemName": item_b, "qtyPerUnit": 1, "sourceType": "ITEM", "colorGroup": "Blue", "colorAxis": "Mudguard Color"},
+            {
+                "itemName": item_a,
+                "qtyPerUnit": 1,
+                "sourceType": "ITEM",
+                "colorGroup": "Red",
+                "colorAxis": "Mudguard Color",
+            },
+            {
+                "itemName": item_b,
+                "qtyPerUnit": 1,
+                "sourceType": "ITEM",
+                "colorGroup": "Blue",
+                "colorAxis": "Mudguard Color",
+            },
         ],
     )
 
-    axes = _rpc(erp_client, "getProcessColorAxes", [process_id]).get_json()["data"]["axes"]
+    axes = _rpc(erp_client, "getProcessColorAxes", [process_id]).get_json()["data"][
+        "axes"
+    ]
     assert len(axes) == 1
     assert axes[0]["label"] == "Mudguard Color"
     assert axes[0]["source"] == "tag"
@@ -421,11 +586,18 @@ def test_case_insensitive_color_dedup(erp_client):
     _downstream_payload, downstream_id = _save_process(
         erp_client,
         components=[
-            {"itemName": upstream_payload["outputItemName"], "qtyPerUnit": 1, "sourceType": "POOL", "colorGroup": "COMMON"}
+            {
+                "itemName": upstream_payload["outputItemName"],
+                "qtyPerUnit": 1,
+                "sourceType": "POOL",
+                "colorGroup": "COMMON",
+            }
         ],
     )
 
-    axes = _rpc(erp_client, "getProcessColorAxes", [downstream_id]).get_json()["data"]["axes"]
+    axes = _rpc(erp_client, "getProcessColorAxes", [downstream_id]).get_json()["data"][
+        "axes"
+    ]
     assert len(axes) == 1
     # First-seen casing kept, "red" collapsed into "Red" -- 2 distinct
     # colors, not 3.
@@ -445,12 +617,27 @@ def test_primary_axis_key_resolves_from_process_own_field(erp_client):
         erp_client,
         primaryColorAxis=rim_payload["outputItemName"],
         components=[
-            {"itemName": frame_payload["outputItemName"], "qtyPerUnit": 1, "sourceType": "POOL", "colorGroup": "COMMON"},
-            {"itemName": rim_payload["outputItemName"], "qtyPerUnit": 1, "sourceType": "POOL", "colorGroup": "COMMON"},
+            {
+                "itemName": frame_payload["outputItemName"],
+                "qtyPerUnit": 1,
+                "sourceType": "POOL",
+                "colorGroup": "COMMON",
+            },
+            {
+                "itemName": rim_payload["outputItemName"],
+                "qtyPerUnit": 1,
+                "sourceType": "POOL",
+                "colorGroup": "COMMON",
+            },
         ],
     )
 
-    _edit_process(erp_client, downstream_payload, downstream_id, primaryColorAxis=frame_payload["outputItemName"])
+    _edit_process(
+        erp_client,
+        downstream_payload,
+        downstream_id,
+        primaryColorAxis=frame_payload["outputItemName"],
+    )
 
     data = _rpc(erp_client, "getProcessColorAxes", [downstream_id]).get_json()["data"]
     assert data["primaryColorAxis"] == frame_payload["outputItemName"]
@@ -466,20 +653,31 @@ def test_include_warehouse_pool_color_force_adds_a_known_combination(erp_client)
     """
     payload, process_id = _save_process(
         erp_client,
-        components=[{"itemName": "OverrideItem", "qtyPerUnit": 1, "sourceType": "ITEM", "colorGroup": "BaseColor"}],
+        components=[
+            {
+                "itemName": "OverrideItem",
+                "qtyPerUnit": 1,
+                "sourceType": "ITEM",
+                "colorGroup": "BaseColor",
+            }
+        ],
     )
 
     before = _rpc(erp_client, "getProcessColorGroups", [process_id]).get_json()["data"]
     assert "Extra" not in before
 
-    resp = _rpc(erp_client, "includeWarehousePoolColor", [process_id, "Extra"], mutation=True)
+    resp = _rpc(
+        erp_client, "includeWarehousePoolColor", [process_id, "Extra"], mutation=True
+    )
     assert resp.get_json()["success"] is True
 
     after = _rpc(erp_client, "getProcessColorGroups", [process_id]).get_json()["data"]
     assert "Extra" in after
     assert "BaseColor" in after
 
-    dupe = _rpc(erp_client, "includeWarehousePoolColor", [process_id, "Extra"], mutation=True)
+    dupe = _rpc(
+        erp_client, "includeWarehousePoolColor", [process_id, "Extra"], mutation=True
+    )
     assert dupe.get_json()["success"] is False
     assert "already a known combination" in dupe.get_json()["message"]
 
@@ -491,11 +689,28 @@ def test_exclude_warehouse_pool_colors_hides_only_zero_data_placeholder(erp_clie
     """
     payload, process_id = _save_process(
         erp_client,
-        components=[{"itemName": "ProtectedItem", "qtyPerUnit": 1, "sourceType": "ITEM", "colorGroup": "BaseColor"}],
+        components=[
+            {
+                "itemName": "ProtectedItem",
+                "qtyPerUnit": 1,
+                "sourceType": "ITEM",
+                "colorGroup": "BaseColor",
+            }
+        ],
     )
-    _rpc(erp_client, "includeWarehousePoolColor", [process_id, "RemovableExtra"], mutation=True)
+    _rpc(
+        erp_client,
+        "includeWarehousePoolColor",
+        [process_id, "RemovableExtra"],
+        mutation=True,
+    )
 
-    resp = _rpc(erp_client, "excludeWarehousePoolColors", [process_id, ["BaseColor", "RemovableExtra"]], mutation=True)
+    resp = _rpc(
+        erp_client,
+        "excludeWarehousePoolColors",
+        [process_id, ["BaseColor", "RemovableExtra"]],
+        mutation=True,
+    )
     body = resp.get_json()
     assert body["data"]["removed"] == ["RemovableExtra"]
     assert len(body["data"]["blocked"]) == 1
@@ -512,16 +727,29 @@ def test_exclude_then_include_undoes_the_exclusion(erp_client):
     state, never a growing log.
     """
     payload, process_id = _save_process(erp_client)
-    _rpc(erp_client, "includeWarehousePoolColor", [process_id, "Toggled"], mutation=True)
-    _rpc(erp_client, "excludeWarehousePoolColors", [process_id, ["Toggled"]], mutation=True)
+    _rpc(
+        erp_client, "includeWarehousePoolColor", [process_id, "Toggled"], mutation=True
+    )
+    _rpc(
+        erp_client,
+        "excludeWarehousePoolColors",
+        [process_id, ["Toggled"]],
+        mutation=True,
+    )
 
-    excluded = _rpc(erp_client, "getProcessColorGroups", [process_id]).get_json()["data"]
+    excluded = _rpc(erp_client, "getProcessColorGroups", [process_id]).get_json()[
+        "data"
+    ]
     assert "Toggled" not in excluded
 
-    resp = _rpc(erp_client, "includeWarehousePoolColor", [process_id, "Toggled"], mutation=True)
+    resp = _rpc(
+        erp_client, "includeWarehousePoolColor", [process_id, "Toggled"], mutation=True
+    )
     assert resp.get_json()["success"] is True
 
-    included = _rpc(erp_client, "getProcessColorGroups", [process_id]).get_json()["data"]
+    included = _rpc(erp_client, "getProcessColorGroups", [process_id]).get_json()[
+        "data"
+    ]
     assert "Toggled" in included
 
 
@@ -539,7 +767,12 @@ def test_get_all_process_color_groups_bulk_shape(erp_client):
     _downstream_payload, downstream_id = _save_process(
         erp_client,
         components=[
-            {"itemName": upstream_payload["outputItemName"], "qtyPerUnit": 1, "sourceType": "POOL", "colorGroup": "COMMON"}
+            {
+                "itemName": upstream_payload["outputItemName"],
+                "qtyPerUnit": 1,
+                "sourceType": "POOL",
+                "colorGroup": "COMMON",
+            }
         ],
     )
 
@@ -591,15 +824,32 @@ def _two_axis_downstream(erp_client, **overrides):
     downstream_payload, downstream_id = _save_process(
         erp_client,
         components=[
-            {"itemName": frame_payload["outputItemName"], "qtyPerUnit": 1, "sourceType": "POOL", "colorGroup": "COMMON"},
-            {"itemName": rim_payload["outputItemName"], "qtyPerUnit": 1, "sourceType": "POOL", "colorGroup": "COMMON"},
+            {
+                "itemName": frame_payload["outputItemName"],
+                "qtyPerUnit": 1,
+                "sourceType": "POOL",
+                "colorGroup": "COMMON",
+            },
+            {
+                "itemName": rim_payload["outputItemName"],
+                "qtyPerUnit": 1,
+                "sourceType": "POOL",
+                "colorGroup": "COMMON",
+            },
         ],
         **kwargs,
     )
-    return downstream_payload, downstream_id, frame_payload["outputItemName"], rim_payload["outputItemName"]
+    return (
+        downstream_payload,
+        downstream_id,
+        frame_payload["outputItemName"],
+        rim_payload["outputItemName"],
+    )
 
 
-def test_save_process_requires_explicit_primary_axis_when_two_or_more_axes_exist(erp_client):
+def test_save_process_requires_explicit_primary_axis_when_two_or_more_axes_exist(
+    erp_client,
+):
     """The replacement for the old default-when-blank behavior: 2+
     independent axes is a real choice (which one's checked quantities
     become the lot's total), so saveProcess now rejects a blank Primary
@@ -630,8 +880,18 @@ def test_save_process_requires_explicit_primary_axis_when_two_or_more_axes_exist
                 "primaryColorAxis": "",
                 "colorLinks": [],
                 "components": [
-                    {"itemName": frame_payload["outputItemName"], "qtyPerUnit": 1, "sourceType": "POOL", "colorGroup": "COMMON"},
-                    {"itemName": rim_payload["outputItemName"], "qtyPerUnit": 1, "sourceType": "POOL", "colorGroup": "COMMON"},
+                    {
+                        "itemName": frame_payload["outputItemName"],
+                        "qtyPerUnit": 1,
+                        "sourceType": "POOL",
+                        "colorGroup": "COMMON",
+                    },
+                    {
+                        "itemName": rim_payload["outputItemName"],
+                        "qtyPerUnit": 1,
+                        "sourceType": "POOL",
+                        "colorGroup": "COMMON",
+                    },
                 ],
             }
         ],
@@ -662,8 +922,18 @@ def test_save_process_does_not_override_an_explicitly_set_primary_axis(erp_clien
         erp_client,
         primaryColorAxis=rim_payload["outputItemName"],
         components=[
-            {"itemName": frame_payload["outputItemName"], "qtyPerUnit": 1, "sourceType": "POOL", "colorGroup": "COMMON"},
-            {"itemName": rim_payload["outputItemName"], "qtyPerUnit": 1, "sourceType": "POOL", "colorGroup": "COMMON"},
+            {
+                "itemName": frame_payload["outputItemName"],
+                "qtyPerUnit": 1,
+                "sourceType": "POOL",
+                "colorGroup": "COMMON",
+            },
+            {
+                "itemName": rim_payload["outputItemName"],
+                "qtyPerUnit": 1,
+                "sourceType": "POOL",
+                "colorGroup": "COMMON",
+            },
         ],
     )
 
@@ -672,14 +942,18 @@ def test_save_process_does_not_override_an_explicitly_set_primary_axis(erp_clien
     assert saved["primaryColorAxis"] == rim_payload["outputItemName"]
 
 
-def test_save_production_defaults_unconfigured_primary_axis_prevents_double_counting(erp_client):
+def test_save_production_defaults_unconfigured_primary_axis_prevents_double_counting(
+    erp_client,
+):
     """Regression for the exact bug the Color Axes feature exists to fix:
     with a Primary Color Axis configured on the process (via
     _two_axis_downstream's explicit choice at save time) but nothing
     resubmitted on this particular lot, a multi-axis lot must count only
     its primary-axis rows, not every checked row across every axis.
     """
-    downstream_payload, downstream_id, frame_output, rim_output = _two_axis_downstream(erp_client)
+    downstream_payload, downstream_id, frame_output, rim_output = _two_axis_downstream(
+        erp_client
+    )
     frame_key = f"pool:{frame_output.lower()}"
     rim_key = f"pool:{rim_output.lower()}"
 
@@ -693,10 +967,22 @@ def test_save_production_defaults_unconfigured_primary_axis_prevents_double_coun
                 # No primaryColorAxis submitted -- and the process's own
                 # cell is still blank at the time this save resolves it.
                 "colorBreakdown": [
-                    {"color": "Black", "qty": 5, "countsTowardTotal": True, "axisKey": frame_key},
-                    {"color": "Red", "qty": 7, "countsTowardTotal": True, "axisKey": rim_key},
+                    {
+                        "color": "Black",
+                        "qty": 5,
+                        "countsTowardTotal": True,
+                        "axisKey": frame_key,
+                    },
+                    {
+                        "color": "Red",
+                        "qty": 7,
+                        "countsTowardTotal": True,
+                        "axisKey": rim_key,
+                    },
                 ],
-                "componentsConsumed": [{"itemName": "RawMat", "qty": 1, "sourceType": "ITEM"}],
+                "componentsConsumed": [
+                    {"itemName": "RawMat", "qty": 1, "sourceType": "ITEM"}
+                ],
             }
         ],
         mutation=True,
@@ -711,7 +997,9 @@ def test_save_production_defaults_unconfigured_primary_axis_prevents_double_coun
     assert lot["qty"] == 5
 
 
-def test_save_production_writes_resolved_default_axis_back_onto_process(erp_app, erp_client):
+def test_save_production_writes_resolved_default_axis_back_onto_process(
+    erp_app, erp_client
+):
     """When the process's own Primary Color Axis cell is genuinely blank
     at production-save time (e.g. a process created before this feature
     existed, simulated here by clearing it directly via SQL after
@@ -722,12 +1010,20 @@ def test_save_production_writes_resolved_default_axis_back_onto_process(erp_app,
     Process editor's own picker see it filled in without needing a
     Process-editor save first.
     """
-    downstream_payload, downstream_id, frame_output, rim_output = _two_axis_downstream(erp_client)
+    downstream_payload, downstream_id, frame_output, rim_output = _two_axis_downstream(
+        erp_client
+    )
     with erp_app.app_context(), database.get_conn() as (_conn, cur):
-        cur.execute("UPDATE erp.process_master SET primary_color_axis = '' WHERE lower(process_id) = lower(%s)", (downstream_id,))
+        cur.execute(
+            "UPDATE erp.process_master SET primary_color_axis = '' WHERE lower(process_id) = lower(%s)",
+            (downstream_id,),
+        )
 
     before = _rpc(erp_client, "getProcessData").get_json()["data"]
-    assert next(p for p in before if p["processId"] == downstream_id)["primaryColorAxis"] == ""
+    assert (
+        next(p for p in before if p["processId"] == downstream_id)["primaryColorAxis"]
+        == ""
+    )
 
     resp = _rpc(
         erp_client,
@@ -738,10 +1034,22 @@ def test_save_production_writes_resolved_default_axis_back_onto_process(erp_app,
                 "assignedTo": "Worker A",
                 "primaryColorAxis": frame_output,
                 "colorBreakdown": [
-                    {"color": "Black", "qty": 4, "countsTowardTotal": True, "axisKey": f"pool:{frame_output.lower()}"},
-                    {"color": "Red", "qty": 3, "countsTowardTotal": True, "axisKey": f"pool:{rim_output.lower()}"},
+                    {
+                        "color": "Black",
+                        "qty": 4,
+                        "countsTowardTotal": True,
+                        "axisKey": f"pool:{frame_output.lower()}",
+                    },
+                    {
+                        "color": "Red",
+                        "qty": 3,
+                        "countsTowardTotal": True,
+                        "axisKey": f"pool:{rim_output.lower()}",
+                    },
                 ],
-                "componentsConsumed": [{"itemName": "RawMat", "qty": 1, "sourceType": "ITEM"}],
+                "componentsConsumed": [
+                    {"itemName": "RawMat", "qty": 1, "sourceType": "ITEM"}
+                ],
             }
         ],
         mutation=True,
@@ -749,19 +1057,29 @@ def test_save_production_writes_resolved_default_axis_back_onto_process(erp_app,
     assert resp.get_json()["success"] is True, resp.get_json()["message"]
 
     after = _rpc(erp_client, "getProcessData").get_json()["data"]
-    assert next(p for p in after if p["processId"] == downstream_id)["primaryColorAxis"] == frame_output
+    assert (
+        next(p for p in after if p["processId"] == downstream_id)["primaryColorAxis"]
+        == frame_output
+    )
 
 
-def test_save_production_requires_primary_axis_pick_when_process_has_no_default(erp_app, erp_client):
+def test_save_production_requires_primary_axis_pick_when_process_has_no_default(
+    erp_app, erp_client
+):
     """The other half of the write-back test above: with the process's own
     cell genuinely blank AND nothing picked on this lot either, saveProduction
     now rejects the save instead of silently defaulting to the first axis in
     recipe order -- closing the one gap left after save_process started
     requiring an explicit choice (a process saved before that existed).
     """
-    downstream_payload, downstream_id, frame_output, rim_output = _two_axis_downstream(erp_client)
+    downstream_payload, downstream_id, frame_output, rim_output = _two_axis_downstream(
+        erp_client
+    )
     with erp_app.app_context(), database.get_conn() as (_conn, cur):
-        cur.execute("UPDATE erp.process_master SET primary_color_axis = '' WHERE lower(process_id) = lower(%s)", (downstream_id,))
+        cur.execute(
+            "UPDATE erp.process_master SET primary_color_axis = '' WHERE lower(process_id) = lower(%s)",
+            (downstream_id,),
+        )
 
     resp = _rpc(
         erp_client,
@@ -771,10 +1089,22 @@ def test_save_production_requires_primary_axis_pick_when_process_has_no_default(
                 "processId": downstream_id,
                 "assignedTo": "Worker A",
                 "colorBreakdown": [
-                    {"color": "Black", "qty": 4, "countsTowardTotal": True, "axisKey": f"pool:{frame_output.lower()}"},
-                    {"color": "Red", "qty": 3, "countsTowardTotal": True, "axisKey": f"pool:{rim_output.lower()}"},
+                    {
+                        "color": "Black",
+                        "qty": 4,
+                        "countsTowardTotal": True,
+                        "axisKey": f"pool:{frame_output.lower()}",
+                    },
+                    {
+                        "color": "Red",
+                        "qty": 3,
+                        "countsTowardTotal": True,
+                        "axisKey": f"pool:{rim_output.lower()}",
+                    },
                 ],
-                "componentsConsumed": [{"itemName": "RawMat", "qty": 1, "sourceType": "ITEM"}],
+                "componentsConsumed": [
+                    {"itemName": "RawMat", "qty": 1, "sourceType": "ITEM"}
+                ],
             }
         ],
         mutation=True,
@@ -784,7 +1114,9 @@ def test_save_production_requires_primary_axis_pick_when_process_has_no_default(
     assert "Primary" in body["message"]
 
 
-def test_refresh_process_primary_color_axes_backfills_unconfigured_process(erp_app, erp_client):
+def test_refresh_process_primary_color_axes_backfills_unconfigured_process(
+    erp_app, erp_client
+):
     frame_payload, frame_id = _save_process(erp_client)
     _seed_pool(erp_client, frame_id, 10, color="Black")
     _seed_pool(erp_client, frame_id, 10, color="Blue")
@@ -795,12 +1127,28 @@ def test_refresh_process_primary_color_axes_backfills_unconfigured_process(erp_a
     # before this feature existed would be in.
     _downstream_payload, downstream_id = _save_process(
         erp_client,
-        components=[{"itemName": frame_payload["outputItemName"], "qtyPerUnit": 1, "sourceType": "POOL", "colorGroup": "COMMON"}],
+        components=[
+            {
+                "itemName": frame_payload["outputItemName"],
+                "qtyPerUnit": 1,
+                "sourceType": "POOL",
+                "colorGroup": "COMMON",
+            }
+        ],
     )
     with erp_app.app_context(), database.get_conn() as (_conn, cur):
-        cur.execute("UPDATE erp.process_master SET primary_color_axis = '' WHERE lower(process_id) = lower(%s)", (downstream_id,))
+        cur.execute(
+            "UPDATE erp.process_master SET primary_color_axis = '' WHERE lower(process_id) = lower(%s)",
+            (downstream_id,),
+        )
 
-    with erp_app.app_context(), database.get_conn(cursor_factory=psycopg2.extras.RealDictCursor) as (_conn, cur):
+    with (
+        erp_app.app_context(),
+        database.get_conn(cursor_factory=psycopg2.extras.RealDictCursor) as (
+            _conn,
+            cur,
+        ),
+    ):
         result = process_service.refresh_process_primary_color_axes(cur)
 
     assert result["filled"] >= 1
@@ -825,10 +1173,12 @@ def test_axis_link_ref_lowercases_process_id():
     axes cross-multiply instead of merging (GAS e37529e fixed this; before
     that fix only the axis key was lowercased).
     """
-    assert process_service._axis_link_ref("PRC-1001", "tag:rim color") == process_service._axis_link_ref(
-        "prc-1001", "TAG:RIM COLOR"
+    assert process_service._axis_link_ref(
+        "PRC-1001", "tag:rim color"
+    ) == process_service._axis_link_ref("prc-1001", "TAG:RIM COLOR")
+    assert process_service._axis_link_ref("PRC-1001") == process_service._axis_link_ref(
+        "prc-1001"
     )
-    assert process_service._axis_link_ref("PRC-1001") == process_service._axis_link_ref("prc-1001")
 
 
 def test_duplicate_component_message_labels_common_case_insensitively(erp_client):
@@ -854,8 +1204,18 @@ def test_duplicate_component_message_labels_common_case_insensitively(erp_client
                 "primaryColorAxis": "",
                 "colorLinks": [],
                 "components": [
-                    {"itemName": "DupPart", "qtyPerUnit": 1, "sourceType": "ITEM", "colorGroup": "common"},
-                    {"itemName": "DupPart", "qtyPerUnit": 1, "sourceType": "ITEM", "colorGroup": "Common"},
+                    {
+                        "itemName": "DupPart",
+                        "qtyPerUnit": 1,
+                        "sourceType": "ITEM",
+                        "colorGroup": "common",
+                    },
+                    {
+                        "itemName": "DupPart",
+                        "qtyPerUnit": 1,
+                        "sourceType": "ITEM",
+                        "colorGroup": "Common",
+                    },
                 ],
             }
         ],
@@ -876,7 +1236,14 @@ def test_common_color_group_is_case_insensitive_in_legacy_list(erp_client):
     """
     _payload, process_id = _save_process(
         erp_client,
-        components=[{"itemName": "BasePart", "qtyPerUnit": 1, "sourceType": "ITEM", "colorGroup": "Common"}],
+        components=[
+            {
+                "itemName": "BasePart",
+                "qtyPerUnit": 1,
+                "sourceType": "ITEM",
+                "colorGroup": "Common",
+            }
+        ],
     )
 
     groups = _rpc(erp_client, "getProcessColorGroups", [process_id]).get_json()["data"]
@@ -899,15 +1266,24 @@ def test_chained_composite_single_color_still_counts_as_axis(erp_client):
     _downstream_payload, downstream_id = _save_process(
         erp_client,
         components=[
-            {"itemName": upstream_payload["outputItemName"], "qtyPerUnit": 1, "sourceType": "POOL", "colorGroup": "COMMON"}
+            {
+                "itemName": upstream_payload["outputItemName"],
+                "qtyPerUnit": 1,
+                "sourceType": "POOL",
+                "colorGroup": "COMMON",
+            }
         ],
     )
 
-    axes = _rpc(erp_client, "getProcessColorAxes", [downstream_id]).get_json()["data"]["axes"]
+    axes = _rpc(erp_client, "getProcessColorAxes", [downstream_id]).get_json()["data"][
+        "axes"
+    ]
     assert len(axes) == 1
     assert axes[0]["colors"] == ["Black / Red"]
 
-    groups = _rpc(erp_client, "getProcessColorGroups", [downstream_id]).get_json()["data"]
+    groups = _rpc(erp_client, "getProcessColorGroups", [downstream_id]).get_json()[
+        "data"
+    ]
     assert groups == ["Black / Red"]
 
 
@@ -936,12 +1312,24 @@ def test_axis_order_follows_recipe_row_order_not_pool_seed_order(erp_client):
         erp_client,
         primaryColorAxis=rim_payload["outputItemName"],
         components=[
-            {"itemName": rim_payload["outputItemName"], "qtyPerUnit": 1, "sourceType": "POOL", "colorGroup": "COMMON"},
-            {"itemName": frame_payload["outputItemName"], "qtyPerUnit": 1, "sourceType": "POOL", "colorGroup": "COMMON"},
+            {
+                "itemName": rim_payload["outputItemName"],
+                "qtyPerUnit": 1,
+                "sourceType": "POOL",
+                "colorGroup": "COMMON",
+            },
+            {
+                "itemName": frame_payload["outputItemName"],
+                "qtyPerUnit": 1,
+                "sourceType": "POOL",
+                "colorGroup": "COMMON",
+            },
         ],
     )
 
-    axes = _rpc(erp_client, "getProcessColorAxes", [downstream_id]).get_json()["data"]["axes"]
+    axes = _rpc(erp_client, "getProcessColorAxes", [downstream_id]).get_json()["data"][
+        "axes"
+    ]
     assert len(axes) == 2
     assert axes[0]["label"] == rim_payload["outputItemName"]
     assert axes[1]["label"] == frame_payload["outputItemName"]
@@ -951,23 +1339,34 @@ def test_axis_order_follows_recipe_row_order_not_pool_seed_order(erp_client):
     assert saved["primaryColorAxis"] == rim_payload["outputItemName"]
 
 
-def test_get_process_color_axes_reports_primary_is_default_when_unsaved(erp_app, erp_client):
+def test_get_process_color_axes_reports_primary_is_default_when_unsaved(
+    erp_app, erp_client
+):
     """getProcessColorAxes falls back to axes[0] (recipe order) as the
     primary when the process's own cell is genuinely blank, and flags it
     via primaryIsDefault so the Process editor can tell a resolved default
     apart from an operator's own explicit choice (GAS 6a22f0e).
     """
-    downstream_payload, downstream_id, frame_output, _rim_output = _two_axis_downstream(erp_client)
+    downstream_payload, downstream_id, frame_output, _rim_output = _two_axis_downstream(
+        erp_client
+    )
     with erp_app.app_context(), database.get_conn() as (_conn, cur):
-        cur.execute("UPDATE erp.process_master SET primary_color_axis = '' WHERE lower(process_id) = lower(%s)", (downstream_id,))
+        cur.execute(
+            "UPDATE erp.process_master SET primary_color_axis = '' WHERE lower(process_id) = lower(%s)",
+            (downstream_id,),
+        )
 
     data = _rpc(erp_client, "getProcessColorAxes", [downstream_id]).get_json()["data"]
     assert data["savedPrimaryColorAxis"] == ""
     assert data["primaryIsDefault"] is True
     assert data["primaryColorAxis"] == frame_output
 
-    _edit_process(erp_client, downstream_payload, downstream_id, primaryColorAxis=frame_output)
+    _edit_process(
+        erp_client, downstream_payload, downstream_id, primaryColorAxis=frame_output
+    )
 
-    data_after = _rpc(erp_client, "getProcessColorAxes", [downstream_id]).get_json()["data"]
+    data_after = _rpc(erp_client, "getProcessColorAxes", [downstream_id]).get_json()[
+        "data"
+    ]
     assert data_after["primaryIsDefault"] is False
     assert data_after["savedPrimaryColorAxis"] == frame_output

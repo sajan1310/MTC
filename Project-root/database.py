@@ -111,8 +111,13 @@ def init_app(app):
 # performance bug, not a reason to fail a user's request.
 _nesting = threading.local()
 
-STRICT_NESTED_CONNECTIONS = os.getenv("STRICT_NESTED_CONNECTIONS", "").strip().lower() in (
-    "1", "true", "yes", "on",
+STRICT_NESTED_CONNECTIONS = os.getenv(
+    "STRICT_NESTED_CONNECTIONS", ""
+).strip().lower() in (
+    "1",
+    "true",
+    "yes",
+    "on",
 )
 
 

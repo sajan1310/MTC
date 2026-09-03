@@ -81,8 +81,16 @@ def test_every_sheet_entry_builds_rows_without_error(app):
 
 
 def test_build_flat_row_maps_columns_and_fills_gaps():
-    entry = {"columns": [{"col": 1, "db": "unit_name"}, {"col": 2, "db": "family"}, {"col": 4, "db": "remarks"}]}
-    row = mirror.build_flat_row(entry, {"unit_name": "Pcs", "family": "count", "remarks": "note"})
+    entry = {
+        "columns": [
+            {"col": 1, "db": "unit_name"},
+            {"col": 2, "db": "family"},
+            {"col": 4, "db": "remarks"},
+        ]
+    }
+    row = mirror.build_flat_row(
+        entry, {"unit_name": "Pcs", "family": "count", "remarks": "note"}
+    )
     assert row == ["Pcs", "count", "", "note"]
 
 
@@ -97,8 +105,15 @@ def test_build_flat_row_coerces_none_and_decimal():
 def test_build_header_lines_rows_repeats_header_and_computes_totals():
     entry = {
         "header_columns": [{"col": 1, "db": "po_number"}, {"col": 3, "db": "vendor"}],
-        "line_columns": [{"col": 5, "db": "item_name"}, {"col": 8, "db": "qty"}, {"col": 12, "db": "price"}],
-        "computed": [{"col": 13, "fn": "line_total"}, {"col": 14, "fn": "po_header_total_qty"}],
+        "line_columns": [
+            {"col": 5, "db": "item_name"},
+            {"col": 8, "db": "qty"},
+            {"col": 12, "db": "price"},
+        ],
+        "computed": [
+            {"col": 13, "fn": "line_total"},
+            {"col": 14, "fn": "po_header_total_qty"},
+        ],
     }
     groups = [
         (
@@ -115,8 +130,8 @@ def test_build_header_lines_rows_repeats_header_and_computes_totals():
     assert rows[0][0] == "PO-1" and rows[1][0] == "PO-1"
     assert rows[0][2] == "Acme" and rows[1][2] == "Acme"
     # per-line total (qty * price)
-    assert rows[0][12] == 25.0   # Bolt: 10 * 2.5
-    assert rows[1][12] == 5.0    # Nut: 5 * 1.0
+    assert rows[0][12] == 25.0  # Bolt: 10 * 2.5
+    assert rows[1][12] == 5.0  # Nut: 5 * 1.0
     # group total qty, same on every line of the group
     assert rows[0][13] == 15.0
     assert rows[1][13] == 15.0
@@ -125,7 +140,11 @@ def test_build_header_lines_rows_repeats_header_and_computes_totals():
 def test_bill_line_total_includes_gst():
     entry = {
         "header_columns": [{"col": 4, "db": "vendor"}],
-        "line_columns": [{"col": 9, "db": "qty"}, {"col": 11, "db": "price"}, {"col": 12, "db": "gst_rate_pct"}],
+        "line_columns": [
+            {"col": 9, "db": "qty"},
+            {"col": 11, "db": "price"},
+            {"col": 12, "db": "gst_rate_pct"},
+        ],
         "computed": [{"col": 13, "fn": "bill_line_total"}],
     }
     groups = [({"vendor": "Acme"}, [{"qty": 2, "price": 100, "gst_rate_pct": 18}])]
@@ -142,7 +161,7 @@ def test_build_items_master_rows_flattens_vendor_pairs():
     pairs = {1: [("VendorA", 10.5), ("VendorB", 11.0)]}
     rows = mirror.build_items_master_rows(entry, items, pairs)
     assert rows[0][0] == "Frame"
-    assert rows[0][8] == "VendorA"   # col 9 (0-indexed 8)
+    assert rows[0][8] == "VendorA"  # col 9 (0-indexed 8)
     assert rows[0][9] == 10.5
     assert rows[0][10] == "VendorB"
     assert rows[0][11] == 11.0
@@ -152,8 +171,16 @@ def test_build_items_master_rows_handles_zero_vendor_pairs():
     # base columns go up to col 8 (weight_per_base_unit), matching the real
     # ITEMS entry -- the row is padded out to that width even with zero
     # vendor pairs, it just never gets a col-9+ vendor/rate value.
-    entry = {"columns": [{"col": 1, "db": "item_name"}, {"col": 8, "db": "weight_per_base_unit"}], "vendor_pairs": {"start_col": 9}}
-    rows = mirror.build_items_master_rows(entry, [{"id": 1, "item_name": "Widget", "weight_per_base_unit": 0}], {})
+    entry = {
+        "columns": [
+            {"col": 1, "db": "item_name"},
+            {"col": 8, "db": "weight_per_base_unit"},
+        ],
+        "vendor_pairs": {"start_col": 9},
+    }
+    rows = mirror.build_items_master_rows(
+        entry, [{"id": 1, "item_name": "Widget", "weight_per_base_unit": 0}], {}
+    )
     assert rows == [["Widget", "", "", "", "", "", "", 0]]
 
 
@@ -183,7 +210,10 @@ def test_build_stock_rows_reuses_service_current_stock():
 
 def test_date_columns_collects_flagged_cols_across_column_kinds():
     entry = {
-        "header_columns": [{"col": 2, "db": "po_date", "type": "date"}, {"col": 3, "db": "vendor"}],
+        "header_columns": [
+            {"col": 2, "db": "po_date", "type": "date"},
+            {"col": 3, "db": "vendor"},
+        ],
         "line_columns": [{"col": 5, "db": "item_name"}],
     }
     assert mirror.date_columns(entry) == [2]
@@ -273,10 +303,14 @@ def test_clear_values_from_row_uses_row_scoped_range():
 def test_write_values_from_row_anchors_at_start_row_and_clears_below_header():
     client = _mock_sheets_client()
     rows = [["Pcs", "count"], ["Kg", "weight"]]
-    sheets_client.write_values_from_row(client, "SHEET_ID", "Unit Master", rows, start_row=2)
+    sheets_client.write_values_from_row(
+        client, "SHEET_ID", "Unit Master", rows, start_row=2
+    )
 
     clear_call = client.spreadsheets.return_value.values.return_value.clear
-    clear_call.assert_called_once_with(spreadsheetId="SHEET_ID", range="'Unit Master'!A2:ZZ")
+    clear_call.assert_called_once_with(
+        spreadsheetId="SHEET_ID", range="'Unit Master'!A2:ZZ"
+    )
 
     update_call = client.spreadsheets.return_value.values.return_value.update
     update_call.assert_called_once()
@@ -288,7 +322,9 @@ def test_write_values_from_row_anchors_at_start_row_and_clears_below_header():
 
 def test_write_values_from_row_noop_on_empty_rows():
     client = MagicMock()
-    sheets_client.write_values_from_row(client, "SHEET_ID", "Unit Master", [], start_row=2)
+    sheets_client.write_values_from_row(
+        client, "SHEET_ID", "Unit Master", [], start_row=2
+    )
     client.spreadsheets.return_value.values.return_value.update.assert_not_called()
     client.spreadsheets.return_value.values.return_value.clear.assert_not_called()
 
@@ -298,7 +334,9 @@ def test_write_date_columns_user_entered_targets_only_flagged_columns():
     # DISPATCH-shaped rows: col 1 dispatch_number, col 2 dispatch_date (ISO
     # text from to_cell_value), col 3 something else entirely.
     rows = [["DSP-1", "2026-08-09", "Acme"], ["DSP-2", "2026-08-10", "Beta"]]
-    sheets_client.write_date_columns_user_entered(client, "SHEET_ID", "Dispatch", rows, start_row=2, date_cols=[2])
+    sheets_client.write_date_columns_user_entered(
+        client, "SHEET_ID", "Dispatch", rows, start_row=2, date_cols=[2]
+    )
 
     batch_call = client.spreadsheets.return_value.values.return_value.batchUpdate
     batch_call.assert_called_once()
@@ -313,7 +351,9 @@ def test_write_date_columns_user_entered_targets_only_flagged_columns():
 
 def test_write_date_columns_user_entered_noop_on_no_date_cols():
     client = MagicMock()
-    sheets_client.write_date_columns_user_entered(client, "SHEET_ID", "Dispatch", [["a", "b"]], 2, [])
+    sheets_client.write_date_columns_user_entered(
+        client, "SHEET_ID", "Dispatch", [["a", "b"]], 2, []
+    )
     client.spreadsheets.return_value.values.return_value.batchUpdate.assert_not_called()
 
 

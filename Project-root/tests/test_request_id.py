@@ -110,7 +110,9 @@ def test_a_valid_client_uuid_is_honoured_by_every_accessor(probe):
 def test_a_hostile_header_is_discarded_not_sanitised(probe, hostile):
     """Rejected outright and replaced with a fresh UUID -- never trimmed into
     something 'safe enough' to log."""
-    body = probe.get("/__request_id_probe", headers={"X-Request-ID": hostile}).get_json()
+    body = probe.get(
+        "/__request_id_probe", headers={"X-Request-ID": hostile}
+    ).get_json()
     assert UUID_RE.match(body["g"]), body["g"]
     assert hostile not in body["g"]
     # And still consistent across all three.

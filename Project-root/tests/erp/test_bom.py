@@ -19,7 +19,9 @@ _TEST_BOM_PASSWORD = "test-only-bom-password"
 
 def _rpc(client, method, args=None, mutation=False):
     headers = {"X-Mutation-Id": str(uuid.uuid4())} if mutation else {}
-    return client.post(f"/api/erp/rpc/{method}", json={"args": args or []}, headers=headers)
+    return client.post(
+        f"/api/erp/rpc/{method}", json={"args": args or []}, headers=headers
+    )
 
 
 def _unique_name(prefix: str) -> str:
@@ -85,7 +87,10 @@ def test_save_bom_requires_token(erp_client):
     resp = _rpc(
         erp_client,
         "saveBOM",
-        [{"productName": "X", "components": [{"itemName": "Y", "qtyPerProduct": 1}]}, "bad-token"],
+        [
+            {"productName": "X", "components": [{"itemName": "Y", "qtyPerProduct": 1}]},
+            "bad-token",
+        ],
         mutation=True,
     )
     body = resp.get_json()
@@ -166,7 +171,14 @@ def test_save_bom_returns_fresh_row_for_in_place_patch(erp_app, erp_client):
         [
             {
                 "productName": product_name,
-                "components": [{"itemName": item1, "qtyPerProduct": 1, "rate": 10, "processId": process_id}],
+                "components": [
+                    {
+                        "itemName": item1,
+                        "qtyPerProduct": 1,
+                        "rate": 10,
+                        "processId": process_id,
+                    }
+                ],
             },
             token,
         ],
@@ -183,7 +195,14 @@ def test_save_bom_returns_fresh_row_for_in_place_patch(erp_app, erp_client):
             {
                 "productId": product_id,
                 "productName": product_name,
-                "components": [{"itemName": item2, "qtyPerProduct": 3, "rate": 20, "processId": process_id}],
+                "components": [
+                    {
+                        "itemName": item2,
+                        "qtyPerProduct": 3,
+                        "rate": 20,
+                        "processId": process_id,
+                    }
+                ],
             },
             token,
         ],
@@ -260,7 +279,12 @@ def test_bom_multi_color_cost_is_not_additive_across_colors(erp_app, erp_client)
 
 def test_save_bom_rejects_zero_components(erp_app, erp_client):
     token = _get_bom_token(erp_app, erp_client)
-    resp = _rpc(erp_client, "saveBOM", [{"productName": "X", "components": []}, token], mutation=True)
+    resp = _rpc(
+        erp_client,
+        "saveBOM",
+        [{"productName": "X", "components": []}, token],
+        mutation=True,
+    )
     body = resp.get_json()
     assert body["success"] is False
     assert "at least one component" in body["message"]
@@ -271,7 +295,13 @@ def test_save_bom_all_blank_component_names_rejected(erp_app, erp_client):
     resp = _rpc(
         erp_client,
         "saveBOM",
-        [{"productName": _unique_name("BlankProduct"), "components": [{"itemName": "", "qtyPerProduct": 1}]}, token],
+        [
+            {
+                "productName": _unique_name("BlankProduct"),
+                "components": [{"itemName": "", "qtyPerProduct": 1}],
+            },
+            token,
+        ],
         mutation=True,
     )
     body = resp.get_json()
@@ -287,13 +317,21 @@ def test_save_bom_edit_replaces_wholesale_and_preserves_sequence(erp_app, erp_cl
     create = _rpc(
         erp_client,
         "saveBOM",
-        [{"productName": _unique_name("EditProduct"), "components": [{"itemName": item1, "qtyPerProduct": 1}]}, token],
+        [
+            {
+                "productName": _unique_name("EditProduct"),
+                "components": [{"itemName": item1, "qtyPerProduct": 1}],
+            },
+            token,
+        ],
         mutation=True,
     )
     product_id = create.get_json()["data"]["productId"]
 
     listed = _rpc(erp_client, "getBOMData", [token]).get_json()["data"]
-    original_sequence = next(p for p in listed if p["productId"] == product_id)["sequence"]
+    original_sequence = next(p for p in listed if p["productId"] == product_id)[
+        "sequence"
+    ]
 
     edit = _rpc(
         erp_client,
@@ -317,7 +355,9 @@ def test_save_bom_edit_replaces_wholesale_and_preserves_sequence(erp_app, erp_cl
     assert match["sequence"] == original_sequence
 
 
-def test_get_bom_production_data_no_token_needed_and_omits_cost_fields(erp_app, erp_client):
+def test_get_bom_production_data_no_token_needed_and_omits_cost_fields(
+    erp_app, erp_client
+):
     token = _get_bom_token(erp_app, erp_client)
     item = _unique_name("ProdDataItem")
     create = _rpc(
@@ -360,7 +400,13 @@ def test_delete_bom_success_and_not_found(erp_app, erp_client):
     create = _rpc(
         erp_client,
         "saveBOM",
-        [{"productName": _unique_name("DeleteBomProduct"), "components": [{"itemName": item, "qtyPerProduct": 1}]}, token],
+        [
+            {
+                "productName": _unique_name("DeleteBomProduct"),
+                "components": [{"itemName": item, "qtyPerProduct": 1}],
+            },
+            token,
+        ],
         mutation=True,
     )
     product_id = create.get_json()["data"]["productId"]
@@ -382,13 +428,25 @@ def test_delete_boms_bulk(erp_app, erp_client):
     a = _rpc(
         erp_client,
         "saveBOM",
-        [{"productName": _unique_name("BulkBomProductA"), "components": [{"itemName": item_a, "qtyPerProduct": 1}]}, token],
+        [
+            {
+                "productName": _unique_name("BulkBomProductA"),
+                "components": [{"itemName": item_a, "qtyPerProduct": 1}],
+            },
+            token,
+        ],
         mutation=True,
     ).get_json()["data"]["productId"]
     b = _rpc(
         erp_client,
         "saveBOM",
-        [{"productName": _unique_name("BulkBomProductB"), "components": [{"itemName": item_b, "qtyPerProduct": 1}]}, token],
+        [
+            {
+                "productName": _unique_name("BulkBomProductB"),
+                "components": [{"itemName": item_b, "qtyPerProduct": 1}],
+            },
+            token,
+        ],
         mutation=True,
     ).get_json()["data"]["productId"]
 
@@ -408,13 +466,25 @@ def test_reorder_bom(erp_app, erp_client):
     a = _rpc(
         erp_client,
         "saveBOM",
-        [{"productName": _unique_name("ReorderProductA"), "components": [{"itemName": item_a, "qtyPerProduct": 1}]}, token],
+        [
+            {
+                "productName": _unique_name("ReorderProductA"),
+                "components": [{"itemName": item_a, "qtyPerProduct": 1}],
+            },
+            token,
+        ],
         mutation=True,
     ).get_json()["data"]["productId"]
     b = _rpc(
         erp_client,
         "saveBOM",
-        [{"productName": _unique_name("ReorderProductB"), "components": [{"itemName": item_b, "qtyPerProduct": 1}]}, token],
+        [
+            {
+                "productName": _unique_name("ReorderProductB"),
+                "components": [{"itemName": item_b, "qtyPerProduct": 1}],
+            },
+            token,
+        ],
         mutation=True,
     ).get_json()["data"]["productId"]
 
@@ -427,7 +497,9 @@ def test_reorder_bom(erp_app, erp_client):
     assert by_id[a]["sequence"] == 2
 
 
-def test_get_bom_process_components_drift_no_token_and_detects_mismatch(erp_app, erp_client):
+def test_get_bom_process_components_drift_no_token_and_detects_mismatch(
+    erp_app, erp_client
+):
     token = _get_bom_token(erp_app, erp_client)
     item = _unique_name("DriftItem")
 
@@ -435,7 +507,14 @@ def test_get_bom_process_components_drift_no_token_and_detects_mismatch(erp_app,
     _proc_payload, process_id = _save_process(
         erp_client,
         isFinalStage=True,
-        components=[{"itemName": item, "qtyPerUnit": 5, "sourceType": "ITEM", "colorGroup": "COMMON"}],
+        components=[
+            {
+                "itemName": item,
+                "qtyPerUnit": 5,
+                "sourceType": "ITEM",
+                "colorGroup": "COMMON",
+            }
+        ],
     )
 
     # A BOM costing the same item at a DIFFERENT qty (3) -> should drift.
@@ -445,7 +524,9 @@ def test_get_bom_process_components_drift_no_token_and_detects_mismatch(erp_app,
         [
             {
                 "productName": _unique_name("DriftProduct"),
-                "components": [{"itemName": item, "qtyPerProduct": 3, "processId": process_id}],
+                "components": [
+                    {"itemName": item, "qtyPerProduct": 3, "processId": process_id}
+                ],
             },
             token,
         ],
@@ -462,7 +543,9 @@ def test_get_bom_process_components_drift_no_token_and_detects_mismatch(erp_app,
     assert match["recipeQtyPerUnit"] == 5
 
 
-def test_get_bom_process_components_drift_matches_lowercase_common_color_group(erp_app, erp_client):
+def test_get_bom_process_components_drift_matches_lowercase_common_color_group(
+    erp_app, erp_client
+):
     """GAS e37529e: a Color Sub-Group of "Common"/"common" was compared
     exactly against the COMMON sentinel, dropping the row out of the
     recipe cache entirely -- a lowercase "common" (or any other casing) on
@@ -476,7 +559,14 @@ def test_get_bom_process_components_drift_matches_lowercase_common_color_group(e
     _proc_payload, process_id = _save_process(
         erp_client,
         isFinalStage=True,
-        components=[{"itemName": item, "qtyPerUnit": 5, "sourceType": "ITEM", "colorGroup": "common"}],
+        components=[
+            {
+                "itemName": item,
+                "qtyPerUnit": 5,
+                "sourceType": "ITEM",
+                "colorGroup": "common",
+            }
+        ],
     )
 
     create = _rpc(
@@ -485,7 +575,9 @@ def test_get_bom_process_components_drift_matches_lowercase_common_color_group(e
         [
             {
                 "productName": _unique_name("DriftProductLower"),
-                "components": [{"itemName": item, "qtyPerProduct": 3, "processId": process_id}],
+                "components": [
+                    {"itemName": item, "qtyPerProduct": 3, "processId": process_id}
+                ],
             },
             token,
         ],
@@ -511,12 +603,23 @@ def test_item_rename_cascades_into_bom_lines(erp_app, erp_client):
     create = _rpc(
         erp_client,
         "saveBOM",
-        [{"productName": _unique_name("ItemCascadeProduct"), "components": [{"itemName": old_item, "qtyPerProduct": 1}]}, token],
+        [
+            {
+                "productName": _unique_name("ItemCascadeProduct"),
+                "components": [{"itemName": old_item, "qtyPerProduct": 1}],
+            },
+            token,
+        ],
         mutation=True,
     )
     product_id = create.get_json()["data"]["productId"]
 
-    rename = _rpc(erp_client, "saveItem", [{"itemName": new_item, "originalName": old_item}], mutation=True)
+    rename = _rpc(
+        erp_client,
+        "saveItem",
+        [{"itemName": new_item, "originalName": old_item}],
+        mutation=True,
+    )
     assert rename.get_json()["success"] is True
 
     listed = _rpc(erp_client, "getBOMData", [token]).get_json()["data"]
@@ -537,7 +640,9 @@ def test_vendor_rename_cascades_into_bom_lines(erp_app, erp_client):
         [
             {
                 "productName": _unique_name("VendorCascadeProduct"),
-                "components": [{"itemName": item, "qtyPerProduct": 1, "vendor": old_vendor}],
+                "components": [
+                    {"itemName": item, "qtyPerProduct": 1, "vendor": old_vendor}
+                ],
             },
             token,
         ],
@@ -545,7 +650,12 @@ def test_vendor_rename_cascades_into_bom_lines(erp_app, erp_client):
     )
     product_id = create.get_json()["data"]["productId"]
 
-    rename = _rpc(erp_client, "saveVendor", [{"vendorName": new_vendor, "originalVendorName": old_vendor}], mutation=True)
+    rename = _rpc(
+        erp_client,
+        "saveVendor",
+        [{"vendorName": new_vendor, "originalVendorName": old_vendor}],
+        mutation=True,
+    )
     assert rename.get_json()["success"] is True
 
     listed = _rpc(erp_client, "getBOMData", [token]).get_json()["data"]
@@ -566,7 +676,9 @@ def test_color_rename_cascades_into_bom_lines(erp_app, erp_client):
         [
             {
                 "productName": _unique_name("ColorCascadeProduct"),
-                "components": [{"itemName": item, "qtyPerProduct": 1, "color": old_color}],
+                "components": [
+                    {"itemName": item, "qtyPerProduct": 1, "color": old_color}
+                ],
             },
             token,
         ],
@@ -574,7 +686,12 @@ def test_color_rename_cascades_into_bom_lines(erp_app, erp_client):
     )
     product_id = create.get_json()["data"]["productId"]
 
-    rename = _rpc(erp_client, "saveColor", [{"name": new_color, "originalName": old_color}], mutation=True)
+    rename = _rpc(
+        erp_client,
+        "saveColor",
+        [{"name": new_color, "originalName": old_color}],
+        mutation=True,
+    )
     assert rename.get_json()["success"] is True
 
     listed = _rpc(erp_client, "getBOMData", [token]).get_json()["data"]

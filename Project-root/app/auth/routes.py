@@ -70,7 +70,8 @@ def _record_auth(
             status=status,
             detail=detail or None,
             user_id=getattr(user, "id", None) if user is not None else user_id_override,
-            user_email=(getattr(user, "email", None) or email or "").strip().lower() or None,
+            user_email=(getattr(user, "email", None) or email or "").strip().lower()
+            or None,
             user_role=getattr(user, "role", None),
             cur=cur,
         )
@@ -80,6 +81,7 @@ def _record_auth(
         # live session after a "failed" sign-out, because the audit log is
         # unwell.
         current_app.logger.warning("Activity logging failed for auth/%s", action)
+
 
 # Password-reset tokens are signed+timed (itsdangerous), not stored in the
 # DB -- no schema migration needed, and an expired/tampered token fails to
@@ -208,7 +210,10 @@ def _current_fingerprint_for(email: str) -> str | None:
     password even though every login path would still refuse them.
     """
     try:
-        with database.get_conn(cursor_factory=psycopg2.extras.DictCursor) as (_conn, cur):
+        with database.get_conn(cursor_factory=psycopg2.extras.DictCursor) as (
+            _conn,
+            cur,
+        ):
             cur.execute(
                 # lower(email) (AUTH-001) -- identity is case-insensitive.
                 "SELECT password_hash FROM users WHERE lower(email) = %s AND deleted_at IS NULL",
@@ -369,6 +374,7 @@ def send_reset_email(to_email: str, reset_url: str) -> bool:
         )
         return False
 
+
 # Sentinel id for the dev/test demo account -- never a real row in `users`,
 # so load_user() below must special-case it rather than querying the DB.
 DEMO_USER_ID = -1
@@ -386,6 +392,7 @@ def build_demo_user() -> User:
             "mobile": None,
         }
     )
+
 
 # Lazy OAuth client
 
@@ -758,7 +765,9 @@ def api_forgot_password():
         if user_exists:
             token = generate_reset_token(email)
             reset_url = url_for("auth.reset_password", token=token, _external=True)
-            current_app.logger.info(f"[ForgotPassword] Reset link for {email}: {reset_url}")
+            current_app.logger.info(
+                f"[ForgotPassword] Reset link for {email}: {reset_url}"
+            )
 
             if current_app.config.get("MAIL_SERVER"):
                 if not send_reset_email(email, reset_url):
@@ -766,7 +775,9 @@ def api_forgot_password():
                     # return the generic success message (don't leak
                     # delivery failures to the caller), but log loudly since
                     # this means a real user's reset attempt silently failed.
-                    current_app.logger.error(f"[ForgotPassword] Email send FAILED for {email} -- see above")
+                    current_app.logger.error(
+                        f"[ForgotPassword] Email send FAILED for {email} -- see above"
+                    )
             else:
                 # No SMTP configured -- surface the link directly in
                 # dev/test so the flow is testable end to end. NEVER do this
@@ -779,14 +790,19 @@ def api_forgot_password():
                 # FLASK_ENV=development -- confirmed live, not theoretical.
                 # os.getenv("FLASK_ENV") is what wsgi.py itself already uses
                 # reliably to detect this.
-                if current_app.config.get("TESTING") or os.getenv("FLASK_ENV") == "development":
+                if (
+                    current_app.config.get("TESTING")
+                    or os.getenv("FLASK_ENV") == "development"
+                ):
                     response["reset_url"] = reset_url
                 else:
                     current_app.logger.warning(
                         f"[ForgotPassword] No MAIL_SERVER configured -- {email} cannot receive their reset link."
                     )
         else:
-            current_app.logger.info(f"[ForgotPassword] No resettable account for {email}")
+            current_app.logger.info(
+                f"[ForgotPassword] No resettable account for {email}"
+            )
 
     return jsonify(response), 200
 
@@ -794,7 +810,9 @@ def api_forgot_password():
 @auth_bp.route("/reset-password/<token>")
 def reset_password(token):
     email = verify_reset_token(token)
-    return render_template("reset_password.html", token_valid=email is not None, token=token)
+    return render_template(
+        "reset_password.html", token_valid=email is not None, token=token
+    )
 
 
 @auth_bp.route("/api/reset-password", methods=["POST"])
@@ -807,7 +825,9 @@ def api_reset_password():
 
     email = verify_reset_token(token)
     if not email:
-        return jsonify({"error": "This reset link is invalid or has expired. Request a new one."}), 400
+        return jsonify(
+            {"error": "This reset link is invalid or has expired. Request a new one."}
+        ), 400
     if not password or not confirm:
         return jsonify({"error": "Please enter and confirm your new password."}), 400
     if password != confirm:
@@ -822,7 +842,10 @@ def api_reset_password():
     from werkzeug.security import generate_password_hash
 
     try:
-        with database.get_conn(cursor_factory=psycopg2.extras.DictCursor) as (conn, cur):
+        with database.get_conn(cursor_factory=psycopg2.extras.DictCursor) as (
+            conn,
+            cur,
+        ):
             # deleted_at IS NULL (SEC-007): a deactivated account must not be
             # able to change its password. Without the filter, deactivation
             # meant different things on different routes -- login refused
@@ -840,7 +863,9 @@ def api_reset_password():
         # Token was valid but the account no longer exists (deleted since
         # the link was issued) -- same message as an invalid token, no need
         # to distinguish for the user.
-        return jsonify({"error": "This reset link is invalid or has expired. Request a new one."}), 400
+        return jsonify(
+            {"error": "This reset link is invalid or has expired. Request a new one."}
+        ), 400
 
     # Drop the session doing the reset, and -- because the credential
     # fingerprint stored at login no longer matches -- every other session for
@@ -1021,7 +1046,10 @@ def auth_google_callback():
         userinfo_endpoint = google_cfg["userinfo_endpoint"]
         uri, headers, body = client.add_token(userinfo_endpoint)
         userinfo_response = _GOOGLE_HTTP.get(
-            uri, headers=headers, data=body, timeout=_HTTP_TIMEOUT  # REL-001
+            uri,
+            headers=headers,
+            data=body,
+            timeout=_HTTP_TIMEOUT,  # REL-001
         )
         userinfo_response.raise_for_status()
         user_info = userinfo_response.json()

@@ -33,8 +33,20 @@ _FALSE_STRINGS = {"false", "no", "n", "0", "", "unchecked"}
 # on the first migration pass). Default is "mdy"; pass date_style="dmy" for
 # the one confirmed exception.
 _DATE_FORMATS = {
-    "mdy": ("%m/%d/%Y", "%Y-%m-%d", "%m/%d/%Y %H:%M:%S", "%d/%m/%Y", "%d/%m/%Y %H:%M:%S"),
-    "dmy": ("%d/%m/%Y", "%Y-%m-%d", "%d/%m/%Y %H:%M:%S", "%m/%d/%Y", "%m/%d/%Y %H:%M:%S"),
+    "mdy": (
+        "%m/%d/%Y",
+        "%Y-%m-%d",
+        "%m/%d/%Y %H:%M:%S",
+        "%d/%m/%Y",
+        "%d/%m/%Y %H:%M:%S",
+    ),
+    "dmy": (
+        "%d/%m/%Y",
+        "%Y-%m-%d",
+        "%d/%m/%Y %H:%M:%S",
+        "%m/%d/%Y",
+        "%m/%d/%Y %H:%M:%S",
+    ),
 }
 
 _CURRENCY_STRIP_RE = re.compile(r"[₹$,\s]")
@@ -92,7 +104,9 @@ def _to_date(raw: str, date_style: str) -> datetime.date:
             return datetime.datetime.strptime(raw, fmt).date()
         except ValueError:
             continue
-    raise ValueError(f"Cannot parse {raw!r} as a date (style={date_style}, tried {formats})")
+    raise ValueError(
+        f"Cannot parse {raw!r} as a date (style={date_style}, tried {formats})"
+    )
 
 
 def _to_json(raw: str):

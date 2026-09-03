@@ -9,7 +9,6 @@ app = create_app()
 
 with app.app_context():
     with get_conn(cursor_factory=psycopg2.extras.RealDictCursor) as (conn, cur):
-
         # Check critical tables
         tables_to_check = [
             "process_subprocesses",

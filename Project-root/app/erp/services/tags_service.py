@@ -32,7 +32,10 @@ def _table(sheet_key: str) -> str:
 
 
 def _get_tag_data(sheet_key: str, label: str):
-    with database.get_conn(cursor_factory=psycopg2.extras.RealDictCursor) as (_conn, cur):
+    with database.get_conn(cursor_factory=psycopg2.extras.RealDictCursor) as (
+        _conn,
+        cur,
+    ):
         cur.execute(
             f"""
             SELECT name, remarks FROM {_table(sheet_key)}
@@ -75,7 +78,9 @@ def _save_tag(conn, cur, sheet_key: str, label: str, form_data):
             (new_name, existing["id"]),
         )
         if cur.fetchone():
-            raise ValueError(f'Another entry named "{new_name}" already exists in {label}.')
+            raise ValueError(
+                f'Another entry named "{new_name}" already exists in {label}.'
+            )
 
     user_id = get_current_user_id()
 
@@ -100,7 +105,11 @@ def _save_tag(conn, cur, sheet_key: str, label: str, form_data):
         # MODEL_MASTER: no cascade -- Model Master's name isn't stored as a
         # reference anywhere else in the schema (see module_tags.js).
 
-    message = f'"{new_name}" updated in {label}.' if is_edit else f'"{new_name}" added to {label}.'
+    message = (
+        f'"{new_name}" updated in {label}.'
+        if is_edit
+        else f'"{new_name}" added to {label}.'
+    )
     return build_response(True, {"name": new_name}, message)
 
 
@@ -127,7 +136,9 @@ def _delete_tag(conn, cur, sheet_key: str, label: str, name):
 
 def _delete_tags_bulk(conn, cur, sheet_key: str, label: str, names: list):
     table = _table(sheet_key)
-    targets = {str(n or "").strip().lower() for n in (names or []) if str(n or "").strip()}
+    targets = {
+        str(n or "").strip().lower() for n in (names or []) if str(n or "").strip()
+    }
     if not targets:
         return build_response(True, None, f"No {label} entries selected.")
 
@@ -139,7 +150,11 @@ def _delete_tags_bulk(conn, cur, sheet_key: str, label: str, names: list):
         (get_current_user_id(), list(targets)),
     )
     rows_deleted = cur.rowcount
-    return build_response(True, None, f"Deleted {rows_deleted} {label} entr{'y' if rows_deleted == 1 else 'ies'}.")
+    return build_response(
+        True,
+        None,
+        f"Deleted {rows_deleted} {label} entr{'y' if rows_deleted == 1 else 'ies'}.",
+    )
 
 
 # ─────────────────────────────────────────────────────────────────────────
@@ -181,23 +196,35 @@ def _rename_color_token(value, old_lower: str, new: str) -> str:
     return delimiter.join(renamed_tokens) if token_changed else s
 
 
-def _rename_color_token_in_column(cur, table: str, column: str, old: str, new: str) -> None:
+def _rename_color_token_in_column(
+    cur, table: str, column: str, old: str, new: str
+) -> None:
     if not rename_utils._table_exists(cur, table):
         return
     old_lower = old.lower()
-    where_extra = " AND deleted_at IS NULL" if rename_utils._has_deleted_at(cur, table) else ""
-    cur.execute(f"SELECT id, {column} AS value FROM {table} WHERE {column} IS NOT NULL AND {column} != ''{where_extra}")
+    where_extra = (
+        " AND deleted_at IS NULL" if rename_utils._has_deleted_at(cur, table) else ""
+    )
+    cur.execute(
+        f"SELECT id, {column} AS value FROM {table} WHERE {column} IS NOT NULL AND {column} != ''{where_extra}"
+    )
     for row in cur.fetchall():
         renamed = _rename_color_token(row["value"], old_lower, new)
         if renamed != row["value"]:
-            cur.execute(f"UPDATE {table} SET {column} = %s WHERE id = %s", (renamed, row["id"]))
+            cur.execute(
+                f"UPDATE {table} SET {column} = %s WHERE id = %s", (renamed, row["id"])
+            )
 
 
-def _rename_color_token_in_either_column(cur, table: str, column_a: str, column_b: str, old: str, new: str) -> None:
+def _rename_color_token_in_either_column(
+    cur, table: str, column_a: str, column_b: str, old: str, new: str
+) -> None:
     if not rename_utils._table_exists(cur, table):
         return
     old_lower = old.lower()
-    where_extra = " AND deleted_at IS NULL" if rename_utils._has_deleted_at(cur, table) else ""
+    where_extra = (
+        " AND deleted_at IS NULL" if rename_utils._has_deleted_at(cur, table) else ""
+    )
     cur.execute(
         f"SELECT id, {column_a} AS a, {column_b} AS b FROM {table} "
         f"WHERE ({column_a} IS NOT NULL AND {column_a} != '') OR ({column_b} IS NOT NULL AND {column_b} != ''){where_extra}"
@@ -206,10 +233,15 @@ def _rename_color_token_in_either_column(cur, table: str, column_a: str, column_
         renamed_a = _rename_color_token(row["a"], old_lower, new)
         renamed_b = _rename_color_token(row["b"], old_lower, new)
         if renamed_a != row["a"] or renamed_b != row["b"]:
-            cur.execute(f"UPDATE {table} SET {column_a} = %s, {column_b} = %s WHERE id = %s", (renamed_a, renamed_b, row["id"]))
+            cur.execute(
+                f"UPDATE {table} SET {column_a} = %s, {column_b} = %s WHERE id = %s",
+                (renamed_a, renamed_b, row["id"]),
+            )
 
 
-def _rename_color_token_in_json_entries(entries, keys: tuple, old_lower: str, new: str) -> bool:
+def _rename_color_token_in_json_entries(
+    entries, keys: tuple, old_lower: str, new: str
+) -> bool:
     """Renames a color token inside every dict of a JSONB array column,
     across each of `keys`. Mutates `entries` in place; returns True when
     anything actually changed, so the caller can skip a no-op UPDATE.
@@ -240,7 +272,9 @@ def _rename_color_everywhere(cur, old_name: str, new_name: str) -> None:
         return
 
     if table := config_maps.TABLE_NAMES.get("PROCESS_COMPONENTS"):
-        _rename_color_token_in_column(cur, table, config_maps.to_snake_case("colorGroup"), old, new)
+        _rename_color_token_in_column(
+            cur, table, config_maps.to_snake_case("colorGroup"), old, new
+        )
 
     if table := config_maps.TABLE_NAMES.get("BOM_LINES"):
         _rename_color_token_in_column(cur, table, "color", old, new)
@@ -250,7 +284,12 @@ def _rename_color_everywhere(cur, old_name: str, new_name: str) -> None:
 
     if table := config_maps.TABLE_NAMES.get("PROCESS_COLOR_LINKS"):
         _rename_color_token_in_either_column(
-            cur, table, config_maps.to_snake_case("colorA"), config_maps.to_snake_case("colorB"), old, new
+            cur,
+            table,
+            config_maps.to_snake_case("colorA"),
+            config_maps.to_snake_case("colorB"),
+            old,
+            new,
         )
 
     # Production's COLOR (comma-joined display string, one segment per
@@ -262,7 +301,9 @@ def _rename_color_everywhere(cur, old_name: str, new_name: str) -> None:
     # is renamed via _rename_color_token, not a whole-segment exact
     # match -- a plain per-entry exact match would miss a renamed color
     # that's only one axis of a composite entry like "BCP / Blue-White".
-    if (table := config_maps.TABLE_NAMES.get("PRODUCTION")) and rename_utils._table_exists(cur, table):
+    if (
+        table := config_maps.TABLE_NAMES.get("PRODUCTION")
+    ) and rename_utils._table_exists(cur, table):
         old_lower = old.lower()
         # components_consumed and custom_components are renamed alongside
         # the two flat columns, in the same pass. They were missed until
@@ -317,7 +358,9 @@ def _rename_color_everywhere(cur, old_name: str, new_name: str) -> None:
             )
 
             custom = row["custom_components"]
-            custom_changed = _rename_color_token_in_json_entries(custom, ("color",), old_lower, new)
+            custom_changed = _rename_color_token_in_json_entries(
+                custom, ("color",), old_lower, new
+            )
 
             if color_changed or breakdown_changed or consumed_changed or custom_changed:
                 cur.execute(
@@ -325,8 +368,12 @@ def _rename_color_everywhere(cur, old_name: str, new_name: str) -> None:
                     f"components_consumed = %s, custom_components = %s WHERE id = %s",
                     (
                         new_color,
-                        psycopg2.extras.Json(breakdown) if breakdown is not None else None,
-                        psycopg2.extras.Json(consumed) if consumed is not None else None,
+                        psycopg2.extras.Json(breakdown)
+                        if breakdown is not None
+                        else None,
+                        psycopg2.extras.Json(consumed)
+                        if consumed is not None
+                        else None,
                         psycopg2.extras.Json(custom) if custom is not None else None,
                         row["id"],
                     ),
@@ -348,7 +395,9 @@ def _rename_process_type_everywhere(cur, old_name: str, new_name: str) -> None:
         return
 
     if table := config_maps.TABLE_NAMES.get("PROCESS_MASTER"):
-        rename_utils.rename_in_column(cur, table, config_maps.to_snake_case("processType"), old, new)
+        rename_utils.rename_in_column(
+            cur, table, config_maps.to_snake_case("processType"), old, new
+        )
 
     # Contractor Rates (Layer 1) keys its rate card on Process Type as a
     # free string, not a Process Type Master ID -- see
@@ -375,7 +424,9 @@ def ensure_color_master_entries(cur, color_names: list) -> list:
 
     try:
         cur.execute("SELECT name FROM erp.color_master WHERE deleted_at IS NULL")
-        existing_lower = {row["name"].strip().lower() for row in cur.fetchall() if row["name"]}
+        existing_lower = {
+            row["name"].strip().lower() for row in cur.fetchall() if row["name"]
+        }
 
         seen_lower: set = set()
         to_add = []
@@ -387,7 +438,10 @@ def ensure_color_master_entries(cur, color_names: list) -> list:
             to_add.append(name)
 
         for name in to_add:
-            cur.execute("INSERT INTO erp.color_master (name, remarks) VALUES (%s, %s)", (name, ""))
+            cur.execute(
+                "INSERT INTO erp.color_master (name, remarks) VALUES (%s, %s)",
+                (name, ""),
+            )
 
         return to_add
     except Exception:
@@ -465,7 +519,9 @@ def delete_models_bulk(conn, cur, names):
 @rpc_method("deleteProcessTypesBulk", mutation=True)
 @database.transactional
 def delete_process_types_bulk(conn, cur, names):
-    return _delete_tags_bulk(conn, cur, "PROCESS_TYPE_MASTER", "Process Type Master", names)
+    return _delete_tags_bulk(
+        conn, cur, "PROCESS_TYPE_MASTER", "Process Type Master", names
+    )
 
 
 # ─────────────────────────────────────────────────────────────────────────
@@ -489,17 +545,28 @@ def extract_colors_from_item_master():
     own doc comment exactly. Read-only: the frontend confirms and calls
     saveColor itself for each accepted suggestion.
     """
-    with database.get_conn(cursor_factory=psycopg2.extras.RealDictCursor) as (_conn, cur):
+    with database.get_conn(cursor_factory=psycopg2.extras.RealDictCursor) as (
+        _conn,
+        cur,
+    ):
         cur.execute("SELECT name FROM erp.color_master WHERE deleted_at IS NULL")
-        colors_by_lower = {(row["name"] or "").strip().lower(): (row["name"] or "").strip() for row in cur.fetchall()}
+        colors_by_lower = {
+            (row["name"] or "").strip().lower(): (row["name"] or "").strip()
+            for row in cur.fetchall()
+        }
         colors_by_lower.pop("", None)
 
-        cur.execute("SELECT item_name, narration, specification FROM erp.items WHERE deleted_at IS NULL")
+        cur.execute(
+            "SELECT item_name, narration, specification FROM erp.items WHERE deleted_at IS NULL"
+        )
         item_rows = cur.fetchall()
 
     new_combos: dict = {}
     for row in item_rows:
-        text = " ".join(str(row.get(field) or "") for field in ("item_name", "narration", "specification"))
+        text = " ".join(
+            str(row.get(field) or "")
+            for field in ("item_name", "narration", "specification")
+        )
         for token in _HYPHEN_COMBO_RE.findall(text):
             parts = token.split("-")
             if len(parts) != 2:
@@ -520,7 +587,9 @@ def extract_colors_from_item_master():
         if new_colors
         else f"Scanned {scanned_count} item(s) — no new color combinations found."
     )
-    return build_response(True, {"newColors": new_colors, "scannedCount": scanned_count}, message)
+    return build_response(
+        True, {"newColors": new_colors, "scannedCount": scanned_count}, message
+    )
 
 
 @rpc_method("importProcessTypesFromProcessNames", mutation=True)
@@ -533,9 +602,15 @@ def import_process_types_from_process_names(conn, cur):
     App.ProcessType.importFromProcessNames's confirm-dialog copy exactly.
     """
     cur.execute("SELECT name FROM erp.process_type_master WHERE deleted_at IS NULL")
-    type_names = [(row["name"] or "").strip() for row in cur.fetchall() if (row["name"] or "").strip()]
+    type_names = [
+        (row["name"] or "").strip()
+        for row in cur.fetchall()
+        if (row["name"] or "").strip()
+    ]
 
-    cur.execute("SELECT id, process_name, process_type FROM erp.process_master WHERE deleted_at IS NULL")
+    cur.execute(
+        "SELECT id, process_name, process_type FROM erp.process_master WHERE deleted_at IS NULL"
+    )
     process_rows = cur.fetchall()
 
     updated = 0
@@ -549,8 +624,13 @@ def import_process_types_from_process_names(conn, cur):
             new_type = "General"
 
         if new_type != (row["process_type"] or ""):
-            cur.execute("UPDATE erp.process_master SET process_type = %s WHERE id = %s", (new_type, row["id"]))
+            cur.execute(
+                "UPDATE erp.process_master SET process_type = %s WHERE id = %s",
+                (new_type, row["id"]),
+            )
             updated += 1
 
     message = f"Updated Process Type on {updated} of {len(process_rows)} process(es)."
-    return build_response(True, {"updated": updated, "total": len(process_rows)}, message)
+    return build_response(
+        True, {"updated": updated, "total": len(process_rows)}, message
+    )

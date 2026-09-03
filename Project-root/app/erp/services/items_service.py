@@ -158,7 +158,9 @@ def get_item_unit_info_map(cur) -> dict:
     for PO/Bill's _normalizeItems-equivalent to resolve an item's Base Unit
     for qty/rate conversion.
     """
-    cur.execute("SELECT item_name, size, base_unit, purchase_unit, weight_per_base_unit FROM erp.items WHERE deleted_at IS NULL")
+    cur.execute(
+        "SELECT item_name, size, base_unit, purchase_unit, weight_per_base_unit FROM erp.items WHERE deleted_at IS NULL"
+    )
     result = {}
     for row in cur.fetchall():
         name = (row["item_name"] or "").strip()
@@ -179,8 +181,12 @@ def lookup_item_unit_info(unit_map: dict, name: str, size: str) -> dict:
     """Falls back to Pcs/Pcs/0 for an item not yet registered -- matches
     _lookupItemUnitInfo.
     """
-    key = f'{str(name or "").strip().lower()}|{str(size or "").strip().lower()}'
-    return unit_map.get(key) or {"baseUnit": "Pcs", "purchaseUnit": "Pcs", "weightPerBaseUnit": 0}
+    key = f"{str(name or '').strip().lower()}|{str(size or '').strip().lower()}"
+    return unit_map.get(key) or {
+        "baseUnit": "Pcs",
+        "purchaseUnit": "Pcs",
+        "weightPerBaseUnit": 0,
+    }
 
 
 def get_item_narration_map(cur) -> dict:
@@ -191,7 +197,9 @@ def get_item_narration_map(cur) -> dict:
     reads as "keep what you have" everywhere this is used, with no second
     check needed.
     """
-    cur.execute("SELECT item_name, size, narration FROM erp.items WHERE deleted_at IS NULL")
+    cur.execute(
+        "SELECT item_name, size, narration FROM erp.items WHERE deleted_at IS NULL"
+    )
     result = {}
     for row in cur.fetchall():
         name = (row["item_name"] or "").strip()
@@ -213,7 +221,9 @@ def get_item_master_refresh_map(cur) -> dict:
     when Items Master has none, same non-blank-wins semantics as
     get_item_narration_map.
     """
-    cur.execute("SELECT item_name, size, narration, base_unit FROM erp.items WHERE deleted_at IS NULL")
+    cur.execute(
+        "SELECT item_name, size, narration, base_unit FROM erp.items WHERE deleted_at IS NULL"
+    )
     result = {}
     for row in cur.fetchall():
         name = (row["item_name"] or "").strip()
@@ -228,14 +238,23 @@ def get_item_master_refresh_map(cur) -> dict:
     return result
 
 
-def _propagate_item_identity_change(cur, old_name: str, old_size: str, new_name: str, new_size: str) -> None:
+def _propagate_item_identity_change(
+    cur, old_name: str, old_size: str, new_name: str, new_size: str
+) -> None:
     for sheet_key in (
-        "PO_LINES", "BILL_LINES", "BOM_LINES", "RETURN_LINES", "WASTAGE_LINES", "ISSUE_LINES",
+        "PO_LINES",
+        "BILL_LINES",
+        "BOM_LINES",
+        "RETURN_LINES",
+        "WASTAGE_LINES",
+        "ISSUE_LINES",
         "STOCK_GROUP_ITEMS",
     ):
         table = config_maps.TABLE_NAMES.get(sheet_key)
         if table:
-            rename_utils.rename_composite_key(cur, table, "item_name", "size", old_name, old_size, new_name, new_size)
+            rename_utils.rename_composite_key(
+                cur, table, "item_name", "size", old_name, old_size, new_name, new_size
+            )
 
     # Process Components: only ITEM-sourced rows -- a POOL row's item_name is
     # a different identity space (an upstream process's Output Item Name),
@@ -245,7 +264,14 @@ def _propagate_item_identity_change(cur, old_name: str, old_size: str, new_name:
     comp_table = config_maps.TABLE_NAMES.get("PROCESS_COMPONENTS")
     if comp_table:
         rename_utils.rename_composite_key(
-            cur, comp_table, "item_name", "size", old_name, old_size, new_name, new_size,
+            cur,
+            comp_table,
+            "item_name",
+            "size",
+            old_name,
+            old_size,
+            new_name,
+            new_size,
             extra_where=" AND source_type != 'POOL'",
         )
 
@@ -254,18 +280,20 @@ def _propagate_item_identity_change(cur, old_name: str, old_size: str, new_name:
     # SQL-only helpers. Guarded the same way as every other target here:
     # a no-op until erp.production exists.
     if config_maps.TABLE_NAMES.get("PRODUCTION"):
-        production_service.backfill_production_consumed_item_refs(cur, old_name, old_size, new_name, new_size)
+        production_service.backfill_production_consumed_item_refs(
+            cur, old_name, old_size, new_name, new_size
+        )
 
 
 def _get_item_keys_in_use(cur, items: list) -> set:
-    """"nameLower|sizeLower" keys referenced by a BOM component row, an
+    """ "nameLower|sizeLower" keys referenced by a BOM component row, an
     ITEM-sourced Process Components row, or a saved Stock Group -- unsafe to
     delete. Guarded via config_maps.TABLE_NAMES exactly like Phase 1a's
     rename cascades; all three targets are real as of Phase 3c (BOM),
     Phase 3a (Process Components), and this round (Stock Groups).
     """
     requested = {
-        f'{str(it.get("name") or "").strip().lower()}|{str(it.get("size") or "").strip().lower()}'
+        f"{str(it.get('name') or '').strip().lower()}|{str(it.get('size') or '').strip().lower()}"
         for it in items
         if str(it.get("name") or "").strip()
     }
@@ -287,7 +315,7 @@ def _get_item_keys_in_use(cur, items: list) -> set:
             """
         )
         for row in cur.fetchall():
-            key = f'{(row["item_name"] or "").strip().lower()}|{(row["size"] or "").strip().lower()}'
+            key = f"{(row['item_name'] or '').strip().lower()}|{(row['size'] or '').strip().lower()}"
             if key in requested:
                 in_use.add(key)
 
@@ -307,7 +335,7 @@ def _get_item_keys_in_use(cur, items: list) -> set:
             """
         )
         for row in cur.fetchall():
-            key = f'{(row["item_name"] or "").strip().lower()}|{(row["size"] or "").strip().lower()}'
+            key = f"{(row['item_name'] or '').strip().lower()}|{(row['size'] or '').strip().lower()}"
             if key in requested:
                 in_use.add(key)
 
@@ -325,7 +353,7 @@ def _get_item_keys_in_use(cur, items: list) -> set:
             """
         )
         for row in cur.fetchall():
-            key = f'{(row["item_name"] or "").strip().lower()}|{(row["size"] or "").strip().lower()}'
+            key = f"{(row['item_name'] or '').strip().lower()}|{(row['size'] or '').strip().lower()}"
             if key in requested:
                 in_use.add(key)
 
@@ -375,12 +403,22 @@ def get_item_identity_drift_report():
         name = str(item_name or "").strip()
         if not name:
             return
-        key = f'{name.lower()}|{str(size or "").strip().lower()}'
+        key = f"{name.lower()}|{str(size or '').strip().lower()}"
         if key in valid_keys:
             return
-        findings.append({"sheet": sheet_label, "context": context, "itemName": name, "size": str(size or "").strip()})
+        findings.append(
+            {
+                "sheet": sheet_label,
+                "context": context,
+                "itemName": name,
+                "size": str(size or "").strip(),
+            }
+        )
 
-    with database.get_conn(cursor_factory=psycopg2.extras.RealDictCursor) as (_conn, cur):
+    with database.get_conn(cursor_factory=psycopg2.extras.RealDictCursor) as (
+        _conn,
+        cur,
+    ):
         valid_keys = _get_valid_item_identity_keys(cur)
 
         cur.execute(
@@ -391,7 +429,13 @@ def get_item_identity_drift_report():
             """
         )
         for row in cur.fetchall():
-            check("Bill Ledger", f'Bill #{row["bill_number"] or ""}', row["item_name"], row["size"], valid_keys)
+            check(
+                "Bill Ledger",
+                f"Bill #{row['bill_number'] or ''}",
+                row["item_name"],
+                row["size"],
+                valid_keys,
+            )
 
         cur.execute(
             """
@@ -401,7 +445,13 @@ def get_item_identity_drift_report():
             """
         )
         for row in cur.fetchall():
-            check("PO Tracker", f'PO #{row["po_number"] or ""}', row["item_name"], row["size"], valid_keys)
+            check(
+                "PO Tracker",
+                f"PO #{row['po_number'] or ''}",
+                row["item_name"],
+                row["size"],
+                valid_keys,
+            )
 
         cur.execute(
             """
@@ -411,7 +461,7 @@ def get_item_identity_drift_report():
             """
         )
         for row in cur.fetchall():
-            context = f'{row["product_name"] or ""} ({row["product_id"] or ""})'
+            context = f"{row['product_name'] or ''} ({row['product_id'] or ''})"
             check("BOM", context, row["item_name"], row["size"], valid_keys)
 
         cur.execute(
@@ -422,7 +472,13 @@ def get_item_identity_drift_report():
             """
         )
         for row in cur.fetchall():
-            check("Process Components", f'Process {row["process_id"] or ""}', row["item_name"], row["size"], valid_keys)
+            check(
+                "Process Components",
+                f"Process {row['process_id'] or ''}",
+                row["item_name"],
+                row["size"],
+                valid_keys,
+            )
 
         cur.execute(
             """
@@ -432,7 +488,13 @@ def get_item_identity_drift_report():
             """
         )
         for row in cur.fetchall():
-            check("Return Ledger", f'Return #{row["return_number"] or ""}', row["item_name"], row["size"], valid_keys)
+            check(
+                "Return Ledger",
+                f"Return #{row['return_number'] or ''}",
+                row["item_name"],
+                row["size"],
+                valid_keys,
+            )
 
         cur.execute(
             """
@@ -442,7 +504,13 @@ def get_item_identity_drift_report():
             """
         )
         for row in cur.fetchall():
-            check("Wastage Log", f'Wastage {row["wastage_id"] or ""}', row["item_name"], row["size"], valid_keys)
+            check(
+                "Wastage Log",
+                f"Wastage {row['wastage_id'] or ''}",
+                row["item_name"],
+                row["size"],
+                valid_keys,
+            )
 
         cur.execute(
             """
@@ -452,7 +520,13 @@ def get_item_identity_drift_report():
             """
         )
         for row in cur.fetchall():
-            check("Issued Stock Log", f'Issue {row["issue_id"] or ""}', row["item_name"], row["size"], valid_keys)
+            check(
+                "Issued Stock Log",
+                f"Issue {row['issue_id'] or ''}",
+                row["item_name"],
+                row["size"],
+                valid_keys,
+            )
 
         cur.execute(
             """
@@ -465,13 +539,19 @@ def get_item_identity_drift_report():
             components = row["components_consumed"] or []
             if not isinstance(components, list):
                 continue
-            lot_label = row["lot_number"] or f'(row id {row["id"]})'
+            lot_label = row["lot_number"] or f"(row id {row['id']})"
             context = f"Lot {lot_label}"
             for comp in components:
                 comp = comp or {}
                 if str(comp.get("sourceType") or "").strip().upper() == "POOL":
                     continue
-                check("Production (Components Consumed)", context, comp.get("itemName"), comp.get("size"), valid_keys)
+                check(
+                    "Production (Components Consumed)",
+                    context,
+                    comp.get("itemName"),
+                    comp.get("size"),
+                    valid_keys,
+                )
 
         cur.execute(
             """
@@ -481,7 +561,13 @@ def get_item_identity_drift_report():
             """
         )
         for row in cur.fetchall():
-            check("Stock Groups", f'Group "{row["group_name"] or ""}"', row["item_name"], row["size"], valid_keys)
+            check(
+                "Stock Groups",
+                f'Group "{row["group_name"] or ""}"',
+                row["item_name"],
+                row["size"],
+                valid_keys,
+            )
 
     counts: dict = {}
     for f in findings:
@@ -489,7 +575,8 @@ def get_item_identity_drift_report():
     message = (
         "No drift found -- every Item Name/Size reference resolves to a current Items Master row."
         if not findings
-        else f"{len(findings)} stale reference(s) found: " + ", ".join(f"{v} in {k}" for k, v in counts.items())
+        else f"{len(findings)} stale reference(s) found: "
+        + ", ".join(f"{v} in {k}" for k, v in counts.items())
     )
 
     return build_response(True, findings, message)
@@ -497,7 +584,9 @@ def get_item_identity_drift_report():
 
 @rpc_method("fixItemIdentityDriftReference", mutation=True)
 @database.transactional
-def fix_item_identity_drift_reference(conn, cur, stale_name, stale_size="", target_name="", target_size=""):
+def fix_item_identity_drift_reference(
+    conn, cur, stale_name, stale_size="", target_name="", target_size=""
+):
     """Repairs one distinct stale reference surfaced by
     getItemIdentityDriftReport by repointing EVERY row across EVERY
     referencing table from the stale (name, size) to a real,
@@ -531,7 +620,9 @@ def fix_item_identity_drift_reference(conn, cur, stale_name, stale_size="", targ
             "Pick an item that currently exists."
         )
 
-    _propagate_item_identity_change(cur, valid_stale_name, valid_stale_size, valid_target_name, valid_target_size)
+    _propagate_item_identity_change(
+        cur, valid_stale_name, valid_stale_size, valid_target_name, valid_target_size
+    )
 
     stale_display = f" ({valid_stale_size})" if valid_stale_size else ""
     target_display = f" ({valid_target_size})" if valid_target_size else ""
@@ -548,7 +639,10 @@ def _row_to_item_record(row, vendor_rows, units_map) -> dict:
     base_unit = row["base_unit"] or "Pcs"
     purchase_unit = row["purchase_unit"] or base_unit
     weight_per_base_unit = float(row["weight_per_base_unit"] or 0)
-    item_for_conversion = {"baseUnit": base_unit, "weightPerBaseUnit": weight_per_base_unit}
+    item_for_conversion = {
+        "baseUnit": base_unit,
+        "weightPerBaseUnit": weight_per_base_unit,
+    }
 
     vendors = []
     for v in vendor_rows:
@@ -561,7 +655,9 @@ def _row_to_item_record(row, vendor_rows, units_map) -> dict:
             )
         except ValueError:
             rate_per_base_unit = rate
-        vendors.append({"vendor": v["vendor"], "rate": rate, "ratePerBaseUnit": rate_per_base_unit})
+        vendors.append(
+            {"vendor": v["vendor"], "rate": rate, "ratePerBaseUnit": rate_per_base_unit}
+        )
 
     return {
         "name": row["item_name"],
@@ -579,7 +675,10 @@ def _row_to_item_record(row, vendor_rows, units_map) -> dict:
 
 @rpc_method("getItemsData")
 def get_items_data():
-    with database.get_conn(cursor_factory=psycopg2.extras.RealDictCursor) as (_conn, cur):
+    with database.get_conn(cursor_factory=psycopg2.extras.RealDictCursor) as (
+        _conn,
+        cur,
+    ):
         cur.execute(
             """
             SELECT id, item_name, size, remarks, narration, specification,
@@ -604,7 +703,10 @@ def get_items_data():
         # (PERF-003 -- this used to open a second connection out here).
         units_map = units_service.get_units_map(cur)
 
-    items = [_row_to_item_record(row, vendors_by_item.get(row["id"], []), units_map) for row in item_rows]
+    items = [
+        _row_to_item_record(row, vendors_by_item.get(row["id"], []), units_map)
+        for row in item_rows
+    ]
     return build_response(True, items)
 
 
@@ -623,7 +725,10 @@ def _fetch_item_record(cur, item_id):
     row = cur.fetchone()
     if row is None:
         return None
-    cur.execute("SELECT item_id, vendor, rate FROM erp.item_vendors WHERE item_id = %s ORDER BY id", (item_id,))
+    cur.execute(
+        "SELECT item_id, vendor, rate FROM erp.item_vendors WHERE item_id = %s ORDER BY id",
+        (item_id,),
+    )
     vendor_rows = cur.fetchall()
     units_map = units_service.get_units_map(cur)
     return _row_to_item_record(row, vendor_rows, units_map)
@@ -664,12 +769,20 @@ def save_item(conn, cur, form_data):
         raise ValueError("Item photo is not a valid image.")
     initial_stock = _validate_initial_stock(form_data.get("itemInitialStock"))
     base_unit = _validate_base_unit(form_data.get("itemBaseUnit"))
-    purchase_unit = _validate_purchase_unit(form_data.get("itemPurchaseUnit"), base_unit)
-    weight_per_base_unit = _validate_weight_per_base_unit(form_data.get("itemWeightPerBaseUnit"))
+    purchase_unit = _validate_purchase_unit(
+        form_data.get("itemPurchaseUnit"), base_unit
+    )
+    weight_per_base_unit = _validate_weight_per_base_unit(
+        form_data.get("itemWeightPerBaseUnit")
+    )
 
     is_edit = bool(form_data.get("originalName"))
-    original_name = _validate_item_name(form_data.get("originalName")) if is_edit else new_name
-    original_size = str(form_data.get("originalSize") or "").strip() if is_edit else new_size
+    original_name = (
+        _validate_item_name(form_data.get("originalName")) if is_edit else new_name
+    )
+    original_size = (
+        str(form_data.get("originalSize") or "").strip() if is_edit else new_size
+    )
 
     existing_id = _find_item(cur, original_name, original_size)
 
@@ -703,7 +816,9 @@ def save_item(conn, cur, form_data):
                 }
             raise ValueError(dupe_msg)
     elif not is_edit and existing_id is not None:
-        raise ValueError(f'Duplicate: "{new_name}" with size "{new_size}" already exists.')
+        raise ValueError(
+            f'Duplicate: "{new_name}" with size "{new_size}" already exists.'
+        )
 
     if is_edit and existing_id is None:
         raise ValueError(
@@ -722,7 +837,19 @@ def save_item(conn, cur, form_data):
                 base_unit = %s, purchase_unit = %s, weight_per_base_unit = %s, image = %s, updated_by = %s
             WHERE id = %s
             """,
-            (new_name, new_size, remarks, narration, spec, base_unit, purchase_unit, weight_per_base_unit, image, user_id, item_id),
+            (
+                new_name,
+                new_size,
+                remarks,
+                narration,
+                spec,
+                base_unit,
+                purchase_unit,
+                weight_per_base_unit,
+                image,
+                user_id,
+                item_id,
+            ),
         )
         cur.execute("DELETE FROM erp.item_vendors WHERE item_id = %s", (item_id,))
     else:
@@ -733,7 +860,18 @@ def save_item(conn, cur, form_data):
             VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
             RETURNING id
             """,
-            (new_name, new_size, remarks, narration, spec, base_unit, purchase_unit, weight_per_base_unit, image, user_id),
+            (
+                new_name,
+                new_size,
+                remarks,
+                narration,
+                spec,
+                base_unit,
+                purchase_unit,
+                weight_per_base_unit,
+                image,
+                user_id,
+            ),
         )
         item_id = cur.fetchone()["id"]
 
@@ -751,25 +889,38 @@ def save_item(conn, cur, form_data):
     # Keep Stock in sync (Item Name + Size as common key).
     if not is_edit:
         stock_rows.sync_stock_for_item(
-            cur, "ensure", {"name": new_name, "size": new_size, "initialStock": initial_stock}
+            cur,
+            "ensure",
+            {"name": new_name, "size": new_size, "initialStock": initial_stock},
         )
     elif identity_changed:
         if _item_name_size_still_exists(cur, original_name, original_size):
             stock_rows.sync_stock_for_item(
-                cur, "ensure", {"name": new_name, "size": new_size, "initialStock": initial_stock}
+                cur,
+                "ensure",
+                {"name": new_name, "size": new_size, "initialStock": initial_stock},
             )
         else:
             stock_rows.sync_stock_for_item(
                 cur,
                 "rename",
-                {"oldName": original_name, "oldSize": original_size, "newName": new_name, "newSize": new_size},
+                {
+                    "oldName": original_name,
+                    "oldSize": original_size,
+                    "newName": new_name,
+                    "newSize": new_size,
+                },
             )
-            _propagate_item_identity_change(cur, original_name, original_size, new_name, new_size)
+            _propagate_item_identity_change(
+                cur, original_name, original_size, new_name, new_size
+            )
     else:
         # Plain edit (identity unchanged) -- backfills a missing Stock row
         # for orphaned items. No-ops if a Stock row already exists.
         stock_rows.sync_stock_for_item(
-            cur, "ensure", {"name": new_name, "size": new_size, "initialStock": initial_stock}
+            cur,
+            "ensure",
+            {"name": new_name, "size": new_size, "initialStock": initial_stock},
         )
 
     # Include the item's identity in the toast so the user can tell which row
@@ -777,13 +928,19 @@ def save_item(conn, cur, form_data):
     # page with a freshly-patched list of many items (reference: module_items.js
     # saveItem, commit e37529e).
     item_label = f'"{new_name}"' + (f" ({new_size})" if new_size else "")
-    message = f"Item {item_label} updated successfully." if is_edit else f"Item {item_label} added successfully."
+    message = (
+        f"Item {item_label} updated successfully."
+        if is_edit
+        else f"Item {item_label} added successfully."
+    )
 
     # Read this item's own just-written row back so the client can patch it
     # into an already-loaded list in place instead of a full reload.
     fresh_item = _fetch_item_record(cur, item_id)
 
-    return build_response(True, {"name": new_name, "size": new_size, "item": fresh_item}, message)
+    return build_response(
+        True, {"name": new_name, "size": new_size, "item": fresh_item}, message
+    )
 
 
 @rpc_method("deleteItem", mutation=True)
@@ -797,9 +954,13 @@ def delete_item(conn, cur, name, size=""):
         raise ValueError(f'Item "{valid_name}" (size: "{valid_size}") not found.')
 
     in_use_key = f"{valid_name.lower()}|{valid_size.lower()}"
-    if in_use_key in _get_item_keys_in_use(cur, [{"name": valid_name, "size": valid_size}]):
+    if in_use_key in _get_item_keys_in_use(
+        cur, [{"name": valid_name, "size": valid_size}]
+    ):
         size_suffix = f" ({valid_size})" if valid_size else ""
-        raise ValueError(f'Cannot delete "{valid_name}"{size_suffix}: referenced by a Product\'s BOM, a Process recipe, or a Stock Group.')
+        raise ValueError(
+            f'Cannot delete "{valid_name}"{size_suffix}: referenced by a Product\'s BOM, a Process recipe, or a Stock Group.'
+        )
 
     cur.execute(
         "UPDATE erp.items SET deleted_at = NOW(), updated_by = %s WHERE id = %s",
@@ -807,7 +968,9 @@ def delete_item(conn, cur, name, size=""):
     )
 
     if not _item_name_size_still_exists(cur, valid_name, valid_size):
-        stock_rows.sync_stock_for_item(cur, "remove", {"name": valid_name, "size": valid_size})
+        stock_rows.sync_stock_for_item(
+            cur, "remove", {"name": valid_name, "size": valid_size}
+        )
 
     return build_response(True, None, f'Item "{valid_name}" deleted successfully.')
 
@@ -816,7 +979,10 @@ def delete_item(conn, cur, name, size=""):
 @database.transactional
 def delete_items_bulk(conn, cur, items):
     requested = [
-        {"name": str((it or {}).get("name") or "").strip(), "size": str((it or {}).get("size") or "").strip()}
+        {
+            "name": str((it or {}).get("name") or "").strip(),
+            "size": str((it or {}).get("size") or "").strip(),
+        }
         for it in (items or [])
     ]
     requested = [it for it in requested if it["name"]]
@@ -825,7 +991,7 @@ def delete_items_bulk(conn, cur, items):
         return build_response(True, None, "No items to delete.")
 
     def key_of(it: dict) -> str:
-        return f'{it["name"].lower()}|{it["size"].lower()}'
+        return f"{it['name'].lower()}|{it['size'].lower()}"
 
     in_use_keys = _get_item_keys_in_use(cur, requested)
     skipped = [it for it in requested if key_of(it) in in_use_keys]
@@ -837,22 +1003,32 @@ def delete_items_bulk(conn, cur, items):
         item_id = _find_item(cur, it["name"], it["size"])
         if item_id is None:
             continue
-        cur.execute("UPDATE erp.items SET deleted_at = NOW(), updated_by = %s WHERE id = %s", (user_id, item_id))
+        cur.execute(
+            "UPDATE erp.items SET deleted_at = NOW(), updated_by = %s WHERE id = %s",
+            (user_id, item_id),
+        )
         deleted_items.append(it)
 
     for it in deleted_items:
         if not _item_name_size_still_exists(cur, it["name"], it["size"]):
-            stock_rows.sync_stock_for_item(cur, "remove", {"name": it["name"], "size": it["size"]})
+            stock_rows.sync_stock_for_item(
+                cur, "remove", {"name": it["name"], "size": it["size"]}
+            )
 
     message = f"Successfully deleted {len(deleted_items)} item(s) from master."
     if skipped:
-        labels = [f'{it["name"]} ({it["size"]})' if it["size"] else it["name"] for it in skipped]
+        labels = [
+            f"{it['name']} ({it['size']})" if it["size"] else it["name"]
+            for it in skipped
+        ]
         message += (
             f" Skipped {len(skipped)} item(s) referenced by a Product's BOM, a Process recipe, or a Stock Group: "
             f"{', '.join(labels)}."
         )
 
-    return build_response(True, {"deletedItems": deleted_items, "skipped": skipped}, message)
+    return build_response(
+        True, {"deletedItems": deleted_items, "skipped": skipped}, message
+    )
 
 
 def _import_items_from_stock(cur) -> dict:
@@ -869,8 +1045,10 @@ def _import_items_from_stock(cur) -> dict:
     cur.execute("SELECT item_name, size FROM erp.stock WHERE deleted_at IS NULL")
     stock_rows_ = cur.fetchall()
 
-    cur.execute("SELECT lower(item_name) AS name, lower(size) AS size FROM erp.items WHERE deleted_at IS NULL")
-    existing_keys = {f'{r["name"]}|{r["size"]}' for r in cur.fetchall()}
+    cur.execute(
+        "SELECT lower(item_name) AS name, lower(size) AS size FROM erp.items WHERE deleted_at IS NULL"
+    )
+    existing_keys = {f"{r['name']}|{r['size']}" for r in cur.fetchall()}
 
     added = 0
     skipped = 0
@@ -908,7 +1086,9 @@ def import_items_from_stock(conn, cur):
     return _import_items_from_stock(cur)
 
 
-def _auto_extract_item(cur, name: str, size: str, narration: str, unit: str, vendor_name: str, rate) -> int:
+def _auto_extract_item(
+    cur, name: str, size: str, narration: str, unit: str, vendor_name: str, rate
+) -> int:
     """The item-upsert half of module_vendors.js's autoExtractFromPoOrBill.
     Plain cur-based helper (not its own transaction) -- callers (PO/Bill
     save) run this inside their own transaction.
@@ -948,12 +1128,18 @@ def _auto_extract_item(cur, name: str, size: str, narration: str, unit: str, ven
         item_id = cur.fetchone()["id"]
         stock_rows.sync_stock_for_item(cur, "ensure", {"name": name, "size": size})
     else:
-        cur.execute("SELECT remarks, purchase_unit FROM erp.items WHERE id = %s", (item_id,))
+        cur.execute(
+            "SELECT remarks, purchase_unit FROM erp.items WHERE id = %s", (item_id,)
+        )
         row = cur.fetchone()
         if narration and narration != (row["remarks"] or "").strip():
-            cur.execute("UPDATE erp.items SET remarks = %s WHERE id = %s", (narration, item_id))
+            cur.execute(
+                "UPDATE erp.items SET remarks = %s WHERE id = %s", (narration, item_id)
+            )
         if unit and unit != (row["purchase_unit"] or ""):
-            cur.execute("UPDATE erp.items SET purchase_unit = %s WHERE id = %s", (unit, item_id))
+            cur.execute(
+                "UPDATE erp.items SET purchase_unit = %s WHERE id = %s", (unit, item_id)
+            )
 
     if vendor_name:
         cur.execute(
@@ -967,7 +1153,10 @@ def _auto_extract_item(cur, name: str, size: str, narration: str, unit: str, ven
                 (item_id, vendor_name, rate),
             )
         else:
-            cur.execute("UPDATE erp.item_vendors SET rate = %s WHERE id = %s", (rate, vendor_row["id"]))
+            cur.execute(
+                "UPDATE erp.item_vendors SET rate = %s WHERE id = %s",
+                (rate, vendor_row["id"]),
+            )
 
 
 # ─────────────────────────────────────────────────────────────────────────
@@ -975,7 +1164,9 @@ def _auto_extract_item(cur, name: str, size: str, narration: str, unit: str, ven
 # ─────────────────────────────────────────────────────────────────────────
 
 
-def _convert_vendor_rate_across_items(rate, source_info: dict, target_info: dict, units_map: dict) -> float:
+def _convert_vendor_rate_across_items(
+    rate, source_info: dict, target_info: dict, units_map: dict
+) -> float:
     """A vendor rate is quoted per the item's Purchase Unit -- carrying it
     across a merge/edit-collision without conversion silently misreads it
     when the two items don't share a Purchase Unit (e.g. a per-Dozen rate
@@ -995,7 +1186,12 @@ def _convert_vendor_rate_across_items(rate, source_info: dict, target_info: dict
 
 
 def _add_vendors_skip_existing(
-    cur, item_id, vendors: list, *, source_info: dict | None = None, target_info: dict | None = None
+    cur,
+    item_id,
+    vendors: list,
+    *,
+    source_info: dict | None = None,
+    target_info: dict | None = None,
 ) -> None:
     """Adds each of `vendors` ({"vendor", "rate"}) to `item_id`, skipping any
     vendor name already present (case-insensitive) -- shared by every merge
@@ -1009,7 +1205,9 @@ def _add_vendors_skip_existing(
     """
     cur.execute("SELECT vendor FROM erp.item_vendors WHERE item_id = %s", (item_id,))
     existing = {(row["vendor"] or "").strip().lower() for row in cur.fetchall()}
-    units_map = units_service.get_units_map(cur) if source_info and target_info else None
+    units_map = (
+        units_service.get_units_map(cur) if source_info and target_info else None
+    )
     for v in vendors or []:
         v = v or {}
         vendor_name = str(v.get("vendor") or "").strip()
@@ -1018,7 +1216,9 @@ def _add_vendors_skip_existing(
         rate = _validate_vendor_rate(v.get("rate") or 0)
         if source_info and target_info:
             rate = _validate_vendor_rate(
-                _convert_vendor_rate_across_items(rate, source_info, target_info, units_map)
+                _convert_vendor_rate_across_items(
+                    rate, source_info, target_info, units_map
+                )
             )
         cur.execute(
             "INSERT INTO erp.item_vendors (item_id, vendor, rate) VALUES (%s, %s, %s)",
@@ -1027,15 +1227,23 @@ def _add_vendors_skip_existing(
         existing.add(vendor_name.lower())
 
 
-def _merge_stock_and_delete(cur, keep_name: str, keep_size: str, remove_name: str, remove_size: str, remove_id) -> None:
+def _merge_stock_and_delete(
+    cur, keep_name: str, keep_size: str, remove_name: str, remove_size: str, remove_id
+) -> None:
     """The tail every merge shares once vendors/text fields are settled:
     combine Stock (stock_rows' own "merge" action), re-point PO/Bill/BOM/
     Process Component references via the same cascade saveItem's own
     identity-change path uses, then soft-delete the losing item row.
     """
     stock_rows.sync_stock_for_item(
-        cur, "merge",
-        {"oldName": remove_name, "oldSize": remove_size, "newName": keep_name, "newSize": keep_size},
+        cur,
+        "merge",
+        {
+            "oldName": remove_name,
+            "oldSize": remove_size,
+            "newName": keep_name,
+            "newSize": keep_size,
+        },
     )
     _propagate_item_identity_change(cur, remove_name, remove_size, keep_name, keep_size)
     cur.execute(
@@ -1045,17 +1253,30 @@ def _merge_stock_and_delete(cur, keep_name: str, keep_size: str, remove_name: st
 
 
 def _merge_item_records(
-    cur, keep_id, keep_name: str, keep_size: str, remove_id, remove_name: str, remove_size: str,
-    *, merge_text_fields: bool,
+    cur,
+    keep_id,
+    keep_name: str,
+    keep_size: str,
+    remove_id,
+    remove_name: str,
+    remove_size: str,
+    *,
+    merge_text_fields: bool,
 ) -> None:
     """Folds `remove` into `keep`: optionally fills any of keep's blank
     remarks/narration/specification from remove's, merges vendors, merges
     Stock, re-points references, then soft-deletes `remove`.
     """
     if merge_text_fields:
-        cur.execute("SELECT remarks, narration, specification FROM erp.items WHERE id = %s", (keep_id,))
+        cur.execute(
+            "SELECT remarks, narration, specification FROM erp.items WHERE id = %s",
+            (keep_id,),
+        )
         keep_row = cur.fetchone()
-        cur.execute("SELECT remarks, narration, specification FROM erp.items WHERE id = %s", (remove_id,))
+        cur.execute(
+            "SELECT remarks, narration, specification FROM erp.items WHERE id = %s",
+            (remove_id,),
+        )
         remove_row = cur.fetchone()
         cur.execute(
             """
@@ -1063,9 +1284,12 @@ def _merge_item_records(
             WHERE id = %s
             """,
             (
-                (keep_row["remarks"] or "").strip() or (remove_row["remarks"] or "").strip(),
-                (keep_row["narration"] or "").strip() or (remove_row["narration"] or "").strip(),
-                (keep_row["specification"] or "").strip() or (remove_row["specification"] or "").strip(),
+                (keep_row["remarks"] or "").strip()
+                or (remove_row["remarks"] or "").strip(),
+                (keep_row["narration"] or "").strip()
+                or (remove_row["narration"] or "").strip(),
+                (keep_row["specification"] or "").strip()
+                or (remove_row["specification"] or "").strip(),
                 get_current_user_id(),
                 keep_id,
             ),
@@ -1075,10 +1299,16 @@ def _merge_item_records(
     source_info = lookup_item_unit_info(unit_map, remove_name, remove_size)
     target_info = lookup_item_unit_info(unit_map, keep_name, keep_size)
 
-    cur.execute("SELECT vendor, rate FROM erp.item_vendors WHERE item_id = %s", (remove_id,))
-    _add_vendors_skip_existing(cur, keep_id, cur.fetchall(), source_info=source_info, target_info=target_info)
+    cur.execute(
+        "SELECT vendor, rate FROM erp.item_vendors WHERE item_id = %s", (remove_id,)
+    )
+    _add_vendors_skip_existing(
+        cur, keep_id, cur.fetchall(), source_info=source_info, target_info=target_info
+    )
 
-    _merge_stock_and_delete(cur, keep_name, keep_size, remove_name, remove_size, remove_id)
+    _merge_stock_and_delete(
+        cur, keep_name, keep_size, remove_name, remove_size, remove_id
+    )
 
 
 @rpc_method("keepOrphanItem", mutation=True)
@@ -1091,11 +1321,18 @@ def keep_orphan_item(conn, cur, name, size="", initial_stock=0):
     valid_name = _validate_item_name(name)
     valid_size = str(size or "").strip()
     if _find_item(cur, valid_name, valid_size) is None:
-        raise ValueError(f'Item "{valid_name}" (size: "{valid_size}") not found in Item Master.')
+        raise ValueError(
+            f'Item "{valid_name}" (size: "{valid_size}") not found in Item Master.'
+        )
 
     stock_rows.sync_stock_for_item(
-        cur, "ensure",
-        {"name": valid_name, "size": valid_size, "initialStock": _validate_initial_stock(initial_stock)},
+        cur,
+        "ensure",
+        {
+            "name": valid_name,
+            "size": valid_size,
+            "initialStock": _validate_initial_stock(initial_stock),
+        },
     )
     return build_response(True, None, f'Stock row created for "{valid_name}".')
 
@@ -1122,7 +1359,9 @@ def keep_orphan_items_bulk(conn, cur, rows):
         stock_rows.sync_stock_for_item(cur, "ensure", r)
         created += 1
 
-    return build_response(True, {"created": created}, f"Created {created} Stock row(s).")
+    return build_response(
+        True, {"created": created}, f"Created {created} Stock row(s)."
+    )
 
 
 @rpc_method("mergeSelectedItems", mutation=True)
@@ -1152,9 +1391,22 @@ def merge_selected_items(conn, cur, selected):
     if keep_id == remove_id:
         raise ValueError("Cannot merge an item into itself.")
 
-    _merge_item_records(cur, keep_id, keep_name, keep_size, remove_id, remove_name, remove_size, merge_text_fields=True)
+    _merge_item_records(
+        cur,
+        keep_id,
+        keep_name,
+        keep_size,
+        remove_id,
+        remove_name,
+        remove_size,
+        merge_text_fields=True,
+    )
 
-    return build_response(True, {"name": keep_name, "size": keep_size}, f'Merged "{remove_name}" into "{keep_name}".')
+    return build_response(
+        True,
+        {"name": keep_name, "size": keep_size},
+        f'Merged "{remove_name}" into "{keep_name}".',
+    )
 
 
 @rpc_method("mergeItemEdit", mutation=True)
@@ -1200,10 +1452,18 @@ def merge_item_edit(conn, cur, form_data):
     source_info = lookup_item_unit_info(unit_map, original_name, original_size)
     target_info = lookup_item_unit_info(unit_map, target_name, target_size)
 
-    _add_vendors_skip_existing(cur, target_id, vendors, source_info=source_info, target_info=target_info)
-    _merge_stock_and_delete(cur, target_name, target_size, original_name, original_size, original_id)
+    _add_vendors_skip_existing(
+        cur, target_id, vendors, source_info=source_info, target_info=target_info
+    )
+    _merge_stock_and_delete(
+        cur, target_name, target_size, original_name, original_size, original_id
+    )
 
-    return build_response(True, {"name": target_name, "size": target_size}, f'Merged into "{target_name}".')
+    return build_response(
+        True,
+        {"name": target_name, "size": target_size},
+        f'Merged into "{target_name}".',
+    )
 
 
 # Truncated/typo auto-fix only folds a shorter name into a longer one when
@@ -1244,7 +1504,10 @@ def _find_unambiguous_truncated_pairs(cur) -> list:
                 if a["id"] == b["id"]:
                     continue
                 name_b = (b["item_name"] or "").strip()
-                if len(name_b) <= len(name_a) or len(name_b) - len(name_a) > _TRUNCATION_MAX_LENGTH_GAP:
+                if (
+                    len(name_b) <= len(name_a)
+                    or len(name_b) - len(name_a) > _TRUNCATION_MAX_LENGTH_GAP
+                ):
                     continue
                 if not name_b.lower().startswith(name_a.lower()):
                     continue
@@ -1275,7 +1538,16 @@ def run_scheduled_item_cleanup(conn, cur):
         short_name = (short_row["item_name"] or "").strip()
         long_name = (long_row["item_name"] or "").strip()
         size = (long_row["size"] or "").strip()
-        _merge_item_records(cur, long_row["id"], long_name, size, short_row["id"], short_name, size, merge_text_fields=True)
+        _merge_item_records(
+            cur,
+            long_row["id"],
+            long_name,
+            size,
+            short_row["id"],
+            short_name,
+            size,
+            merge_text_fields=True,
+        )
         fixed += 1
 
     # Ordered by id (creation order), not name -- a whitespace-padded
@@ -1283,18 +1555,25 @@ def run_scheduled_item_cleanup(conn, cur):
     # untrimmed unique index but the same item once app-level .strip() is
     # applied) must never win survivorship over the clean original just
     # because leading whitespace sorts first alphabetically.
-    cur.execute("SELECT id, item_name, size FROM erp.items WHERE deleted_at IS NULL ORDER BY id")
+    cur.execute(
+        "SELECT id, item_name, size FROM erp.items WHERE deleted_at IS NULL ORDER BY id"
+    )
     merged = 0
     seen: dict = {}
     for row in cur.fetchall():
-        key = f'{(row["item_name"] or "").strip().lower()}|{(row["size"] or "").strip().lower()}'
+        key = f"{(row['item_name'] or '').strip().lower()}|{(row['size'] or '').strip().lower()}"
         if key not in seen:
             seen[key] = row
             continue
         keep = seen[key]
         _merge_item_records(
-            cur, keep["id"], keep["item_name"], keep["size"] or "",
-            row["id"], row["item_name"], row["size"] or "",
+            cur,
+            keep["id"],
+            keep["item_name"],
+            keep["size"] or "",
+            row["id"],
+            row["item_name"],
+            row["size"] or "",
             merge_text_fields=True,
         )
         merged += 1
@@ -1312,7 +1591,9 @@ def run_scheduled_item_cleanup(conn, cur):
 # ─────────────────────────────────────────────────────────────────────────
 
 
-def _ledger_entry(date_value, entry_type, kind, ref, party, size, narration, **kwargs) -> dict:
+def _ledger_entry(
+    date_value, entry_type, kind, ref, party, size, narration, **kwargs
+) -> dict:
     entry = {
         "date": date_utils.to_display_string(date_value) or "",
         "dateRaw": date_utils.to_iso_string(date_value) or "",
@@ -1388,12 +1669,17 @@ def get_item_ledger_data(item_name):
 
     target = str(item_name or "").strip()
     if not target:
-        return build_response(True, {"itemName": "", "entries": [], "reconciliation": []})
+        return build_response(
+            True, {"itemName": "", "entries": [], "reconciliation": []}
+        )
     target_lower = target.lower()
 
     entries: list = []
 
-    with database.get_conn(cursor_factory=psycopg2.extras.RealDictCursor) as (_conn, cur):
+    with database.get_conn(cursor_factory=psycopg2.extras.RealDictCursor) as (
+        _conn,
+        cur,
+    ):
         # Bill: the one term that ADDS to stock.
         cur.execute(
             """
@@ -1438,8 +1724,13 @@ def get_item_ledger_data(item_name):
         for row in cur.fetchall():
             entries.append(
                 _ledger_entry(
-                    row["return_date"], "Goods Returned", "RETURN",
-                    row["return_number"], row["vendor"], row["size"], row["narration"],
+                    row["return_date"],
+                    "Goods Returned",
+                    "RETURN",
+                    row["return_number"],
+                    row["vendor"],
+                    row["size"],
+                    row["narration"],
                     outgoingQty=float(row["base_qty"] or 0),
                     price=float(row["base_rate"] or 0),
                     unit=row["unit"] or "",
@@ -1460,8 +1751,13 @@ def get_item_ledger_data(item_name):
         for row in cur.fetchall():
             entries.append(
                 _ledger_entry(
-                    row["wastage_date"], "Wastage", "WASTAGE",
-                    row["wastage_id"], row["vendor"], row["size"], row["reason"],
+                    row["wastage_date"],
+                    "Wastage",
+                    "WASTAGE",
+                    row["wastage_id"],
+                    row["vendor"],
+                    row["size"],
+                    row["reason"],
                     outgoingQty=float(row["base_qty"] or 0),
                     unit=row["unit"] or "",
                     enteredQty=float(row["qty"] or 0),
@@ -1481,8 +1777,13 @@ def get_item_ledger_data(item_name):
         for row in cur.fetchall():
             entries.append(
                 _ledger_entry(
-                    row["issue_date"], "Stock Issued", "ISSUE",
-                    row["issue_id"], row["issued_to"], row["size"], row["reference"],
+                    row["issue_date"],
+                    "Stock Issued",
+                    "ISSUE",
+                    row["issue_id"],
+                    row["issued_to"],
+                    row["size"],
+                    row["reference"],
                     outgoingQty=float(row["base_qty"] or 0),
                     price=float(row["rate"] or 0),
                     unit=row["unit"] or "",
@@ -1495,11 +1796,21 @@ def get_item_ledger_data(item_name):
         for comp in stock_service._iter_completed_production_components(cur):
             if comp["itemName"].strip().lower() != target_lower:
                 continue
-            source = comp["productName"] or comp["outputItemName"] or comp["processId"] or "Production"
+            source = (
+                comp["productName"]
+                or comp["outputItemName"]
+                or comp["processId"]
+                or "Production"
+            )
             entries.append(
                 _ledger_entry(
-                    comp["productionDate"], "Production Consumption", "PRODUCTION",
-                    comp["lotNumber"], source, comp["size"], comp["processId"],
+                    comp["productionDate"],
+                    "Production Consumption",
+                    "PRODUCTION",
+                    comp["lotNumber"],
+                    source,
+                    comp["size"],
+                    comp["processId"],
                     outgoingQty=comp["baseQty"],
                     unit=comp["unit"],
                     enteredQty=comp["enteredQty"],
@@ -1519,8 +1830,13 @@ def get_item_ledger_data(item_name):
         for row in cur.fetchall():
             entries.append(
                 _ledger_entry(
-                    row["po_date"], "PO Issued", "PO",
-                    f'PO-{row["po_number"]}', row["vendor"], row["size"], row["narration"],
+                    row["po_date"],
+                    "PO Issued",
+                    "PO",
+                    f"PO-{row['po_number']}",
+                    row["vendor"],
+                    row["size"],
+                    row["narration"],
                     orderQty=float(row["base_qty"] or 0),
                     price=float(row["base_rate"] or 0),
                     unit=row["unit"] or "",
@@ -1561,7 +1877,9 @@ def get_item_ledger_data(item_name):
 
         # Reconciliation, per size variant, against the very same maps
         # get_stock_data renders from.
-        bill_qty_map, consumed_qty_map = stock_service._get_billed_and_consumed_qty_maps(cur)
+        bill_qty_map, consumed_qty_map = (
+            stock_service._get_billed_and_consumed_qty_maps(cur)
+        )
         cur.execute(
             """
             SELECT item_name, size, initial_stock, threshold
@@ -1576,14 +1894,16 @@ def get_item_ledger_data(item_name):
     reconciliation = []
     for row in stock_rows_found:
         size = (row["size"] or "").strip()
-        key = f'{row["item_name"].strip().lower()}|{size.lower()}'
+        key = f"{row['item_name'].strip().lower()}|{size.lower()}"
         initial = float(row["initial_stock"])
         current = initial + bill_qty_map.get(key, 0) - consumed_qty_map.get(key, 0)
 
         size_lower = size.lower()
         counted = [
-            e for e in entries
-            if e["countsTowardStock"] and (e["size"] or "").strip().lower() == size_lower
+            e
+            for e in entries
+            if e["countsTowardStock"]
+            and (e["size"] or "").strip().lower() == size_lower
         ]
         incoming = sum(e["incomingQty"] for e in counted)
         outgoing = sum(e["outgoingQty"] for e in counted)
@@ -1626,9 +1946,9 @@ def get_item_ledger_data(item_name):
     }
     entries_by_size: dict = {}
     for entry in entries:
-        entries_by_size.setdefault(
-            (entry["size"] or "").strip().lower(), []
-        ).append(entry)
+        entries_by_size.setdefault((entry["size"] or "").strip().lower(), []).append(
+            entry
+        )
 
     for size_lower, group in entries_by_size.items():
         group.sort(key=lambda e: (e["dateRaw"] or "", e["type"]))
@@ -1650,4 +1970,6 @@ def get_item_ledger_data(item_name):
 
     entries.sort(key=lambda e: (e["dateRaw"] or "", e["type"]), reverse=True)
 
-    return build_response(True, {"itemName": target, "entries": entries, "reconciliation": reconciliation})
+    return build_response(
+        True, {"itemName": target, "entries": entries, "reconciliation": reconciliation}
+    )

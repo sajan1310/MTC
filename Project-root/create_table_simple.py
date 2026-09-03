@@ -1,7 +1,8 @@
 #!/usr/bin/env python
 import os
 import sys
-os.chdir('c:\\Users\\erkar\\OneDrive\\Desktop\\MTC\\Project-root')
+
+os.chdir("c:\\Users\\erkar\\OneDrive\\Desktop\\MTC\\Project-root")
 sys.path.insert(0, os.getcwd())
 from app import create_app  # noqa: E402
 from database import get_conn  # noqa: E402
@@ -18,7 +19,7 @@ with app.app_context():
         """)
         exists = cur.fetchone()[0]
         print(f"production_lot_subprocess_variants exists: {exists}")
-        
+
         if not exists:
             print("\nCreating table...")
             try:

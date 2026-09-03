@@ -75,7 +75,8 @@ def _run_guard(monkeypatch, app, applied, table_present=True):
     import database
 
     monkeypatch.setattr(
-        database, "get_conn",
+        database,
+        "get_conn",
         lambda *a, **k: _FakeConnCtx(_FakeCursor(applied, table_present)),
     )
     _verify_schema_is_current(app)
@@ -84,10 +85,12 @@ def _run_guard(monkeypatch, app, applied, table_present=True):
 # ── The incident ─────────────────────────────────────────────────────────
 
 
-def test_refuses_to_start_when_a_migration_is_missing(monkeypatch, app, migration_names):
+def test_refuses_to_start_when_a_migration_is_missing(
+    monkeypatch, app, migration_names
+):
     """THE regression test: one unapplied migration must stop the app."""
     app.config["TESTING"] = False
-    applied = migration_names[:-1]          # everything except the newest
+    applied = migration_names[:-1]  # everything except the newest
     with pytest.raises(RuntimeError) as exc:
         _run_guard(monkeypatch, app, applied)
 
@@ -123,7 +126,7 @@ def test_starts_when_the_schema_is_current(monkeypatch, app, migration_names):
     """Without this, the tests above would pass if the guard rejected
     everything."""
     app.config["TESTING"] = False
-    _run_guard(monkeypatch, app, migration_names)          # must not raise
+    _run_guard(monkeypatch, app, migration_names)  # must not raise
 
 
 def test_extra_applied_rows_are_not_an_error(monkeypatch, app, migration_names):
@@ -140,14 +143,14 @@ def test_extra_applied_rows_are_not_an_error(monkeypatch, app, migration_names):
 def test_skipped_under_testing(monkeypatch, app, migration_names):
     """conftest builds its own schema and constructs ~150 apps per session."""
     app.config["TESTING"] = True
-    _run_guard(monkeypatch, app, [])                       # must not raise
+    _run_guard(monkeypatch, app, [])  # must not raise
 
 
 def test_escape_hatch_is_explicit_and_logged(monkeypatch, app, migration_names, caplog):
     app.config["TESTING"] = False
     monkeypatch.setenv("SKIP_MIGRATION_CHECK", "1")
     with caplog.at_level("WARNING"):
-        _run_guard(monkeypatch, app, [])                   # must not raise
+        _run_guard(monkeypatch, app, [])  # must not raise
     assert any("SKIP_MIGRATION_CHECK" in r.message for r in caplog.records), (
         "overriding the guard must leave a trace"
     )

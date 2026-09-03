@@ -68,7 +68,7 @@ def _authorised() -> bool:
             # compare_digest: a plain == leaks the token's length and its
             # matching prefix through timing, and this endpoint is reachable
             # by anyone who can route to the app.
-            if hmac.compare_digest(header[len(prefix):], token):
+            if hmac.compare_digest(header[len(prefix) :], token):
                 return True
 
     try:
@@ -111,7 +111,9 @@ def _database_gauges() -> list[str]:
             out.append("# HELP mtc_db_connections Server-side connections by state.")
             out.append("# TYPE mtc_db_connections gauge")
             for state, count in cur.fetchall():
-                out.append(_line("mtc_db_connections", count, {"state": state or "unknown"}))
+                out.append(
+                    _line("mtc_db_connections", count, {"state": state or "unknown"})
+                )
 
             cur.execute("SHOW max_connections")
             out.append("# HELP mtc_db_max_connections Postgres max_connections.")
@@ -154,17 +156,23 @@ def _database_gauges() -> list[str]:
                 "# HELP mtc_warehouse_pool_shortfall_units Total units over-allocated."
             )
             out.append("# TYPE mtc_warehouse_pool_shortfall_units gauge")
-            out.append(_line("mtc_warehouse_pool_shortfall_units", abs(float(shortfall))))
+            out.append(
+                _line("mtc_warehouse_pool_shortfall_units", abs(float(shortfall)))
+            )
 
             cur.execute(
                 "SELECT count(*) FROM users WHERE deleted_at IS NULL "
                 "AND role IN ('admin', 'super_admin')"
             )
-            out.append("# HELP mtc_admin_accounts Active admin and super_admin accounts.")
+            out.append(
+                "# HELP mtc_admin_accounts Active admin and super_admin accounts."
+            )
             out.append("# TYPE mtc_admin_accounts gauge")
             out.append(_line("mtc_admin_accounts", cur.fetchone()[0]))
 
-            out.append("# HELP mtc_database_up Whether the database answered this scrape.")
+            out.append(
+                "# HELP mtc_database_up Whether the database answered this scrape."
+            )
             out.append("# TYPE mtc_database_up gauge")
             out.append(_line("mtc_database_up", 1))
     except Exception as exc:  # noqa: BLE001
@@ -183,12 +191,18 @@ def _process_gauges() -> list[str]:
     out = [
         "# HELP mtc_worker_uptime_seconds Seconds since this worker started.",
         "# TYPE mtc_worker_uptime_seconds gauge",
-        _line("mtc_worker_uptime_seconds", round(time.time() - _PROCESS_START, 1),
-              {"worker": worker}),
+        _line(
+            "mtc_worker_uptime_seconds",
+            round(time.time() - _PROCESS_START, 1),
+            {"worker": worker},
+        ),
         "# HELP mtc_worker_pool_initialised Whether this worker holds a connection pool.",
         "# TYPE mtc_worker_pool_initialised gauge",
-        _line("mtc_worker_pool_initialised", 1 if database.db_pool else 0,
-              {"worker": worker}),
+        _line(
+            "mtc_worker_pool_initialised",
+            1 if database.db_pool else 0,
+            {"worker": worker},
+        ),
     ]
 
     pool = database.db_pool

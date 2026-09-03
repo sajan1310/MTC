@@ -19,7 +19,9 @@ from app.erp.services import bom_service
 
 def _rpc(client, method, args=None, mutation=False):
     headers = {"X-Mutation-Id": str(uuid.uuid4())} if mutation else {}
-    return client.post(f"/api/erp/rpc/{method}", json={"args": args or []}, headers=headers)
+    return client.post(
+        f"/api/erp/rpc/{method}", json={"args": args or []}, headers=headers
+    )
 
 
 def _unique_name(prefix: str) -> str:
@@ -77,7 +79,9 @@ def _item_component(item_name="RawMat", qty=1):
     return {"itemName": item_name, "qty": qty, "sourceType": "ITEM"}
 
 
-def _complete_production_lot(client, process_id, product_id, qty, contractor="Worker A", **overrides):
+def _complete_production_lot(
+    client, process_id, product_id, qty, contractor="Worker A", **overrides
+):
     form = {
         "processId": process_id,
         "assignedTo": contractor,
@@ -122,7 +126,14 @@ def test_dashboard_open_po_summary_reflects_unbilled_po(erp_client):
     po = _rpc(
         erp_client,
         "savePO",
-        [{"vendor": vendor, "items": [{"name": item, "size": "Std", "qty": 10, "unit": "Pcs", "price": 5}]}],
+        [
+            {
+                "vendor": vendor,
+                "items": [
+                    {"name": item, "size": "Std", "qty": 10, "unit": "Pcs", "price": 5}
+                ],
+            }
+        ],
         mutation=True,
     ).get_json()
     po_number = po["data"]["poNumber"]
@@ -135,7 +146,9 @@ def test_dashboard_open_po_summary_reflects_unbilled_po(erp_client):
                 "vendor": vendor,
                 "billNumber": _unique_name("DashBill"),
                 "billDate": "01/01/2026",
-                "items": [{"name": item, "size": "Std", "qty": 4, "price": 5, "po": po_number}],
+                "items": [
+                    {"name": item, "size": "Std", "qty": 4, "price": 5, "po": po_number}
+                ],
             }
         ],
         mutation=True,
@@ -143,7 +156,9 @@ def test_dashboard_open_po_summary_reflects_unbilled_po(erp_client):
 
     after = _dashboard_kpis(erp_client)
     assert after["openPoCount"] == before["openPoCount"] + 1
-    assert after["openPoValue"] == round(before["openPoValue"] + 30, 2)  # remaining 6 * rate 5
+    assert after["openPoValue"] == round(
+        before["openPoValue"] + 30, 2
+    )  # remaining 6 * rate 5
 
 
 def test_dashboard_bills_this_month_kpi(erp_client):
@@ -167,14 +182,21 @@ def test_dashboard_bills_this_month_kpi(erp_client):
 
     after = _dashboard_kpis(erp_client)
     assert after["billsThisMonthCount"] == before["billsThisMonthCount"] + 1
-    assert after["billsThisMonthValue"] == round(before["billsThisMonthValue"] + 118, 2)  # 100 + default 18% GST
+    assert after["billsThisMonthValue"] == round(
+        before["billsThisMonthValue"] + 118, 2
+    )  # 100 + default 18% GST
 
 
 def test_dashboard_low_stock_deficit_kpi(erp_client):
     before = _dashboard_kpis(erp_client)
 
     item = _unique_name("DashLowStockDeficit")
-    _rpc(erp_client, "saveItem", [{"itemName": item, "itemInitialStock": 2}], mutation=True)
+    _rpc(
+        erp_client,
+        "saveItem",
+        [{"itemName": item, "itemInitialStock": 2}],
+        mutation=True,
+    )
     _rpc(erp_client, "updateThreshold", [item, "", 10], mutation=True)
 
     after = _dashboard_kpis(erp_client)
@@ -185,7 +207,12 @@ def test_dashboard_low_stock_deficit_kpi(erp_client):
 def test_dashboard_low_stock_items_capped_at_ten(erp_client):
     for i in range(11):
         item = _unique_name(f"CapLowStock{i}")
-        _rpc(erp_client, "saveItem", [{"itemName": item, "itemInitialStock": 1}], mutation=True)
+        _rpc(
+            erp_client,
+            "saveItem",
+            [{"itemName": item, "itemInitialStock": 1}],
+            mutation=True,
+        )
         _rpc(erp_client, "updateThreshold", [item, "", 5], mutation=True)
 
     dash = _rpc(erp_client, "getDashboardData").get_json()["data"]
@@ -200,7 +227,15 @@ def test_dashboard_pending_production_count(erp_client):
     _rpc(
         erp_client,
         "saveProduction",
-        [{"processId": process_id, "assignedTo": "Worker A", "qty": 5, "status": "Pending", "componentsConsumed": [_item_component()]}],
+        [
+            {
+                "processId": process_id,
+                "assignedTo": "Worker A",
+                "qty": 5,
+                "status": "Pending",
+                "componentsConsumed": [_item_component()],
+            }
+        ],
         mutation=True,
     )
 
@@ -221,7 +256,15 @@ def test_dashboard_in_progress_count_tracks_the_in_progress_status(erp_client):
     _rpc(
         erp_client,
         "saveProduction",
-        [{"processId": process_id, "assignedTo": "Worker A", "qty": 5, "status": "In Progress", "componentsConsumed": [_item_component()]}],
+        [
+            {
+                "processId": process_id,
+                "assignedTo": "Worker A",
+                "qty": 5,
+                "status": "In Progress",
+                "componentsConsumed": [_item_component()],
+            }
+        ],
         mutation=True,
     )
 
@@ -242,7 +285,10 @@ def test_dashboard_ready_to_dispatch_kpi(erp_app, erp_client):
 
     after = _dashboard_kpis(erp_client)
     assert after["readyToDispatchUnits"] == round(before["readyToDispatchUnits"] + 7, 2)
-    assert after["readyToDispatchProductCount"] == before["readyToDispatchProductCount"] + 1
+    assert (
+        after["readyToDispatchProductCount"]
+        == before["readyToDispatchProductCount"] + 1
+    )
 
 
 def test_dashboard_contractor_payables_kpi(erp_client):
@@ -254,13 +300,22 @@ def test_dashboard_contractor_payables_kpi(erp_client):
     _rpc(
         erp_client,
         "saveContractorRate",
-        [{"contractorName": contractor, "processType": process_type, "size": "General", "ratePerUnit": 20}],
+        [
+            {
+                "contractorName": contractor,
+                "processType": process_type,
+                "size": "General",
+                "ratePerUnit": 20,
+            }
+        ],
         mutation=True,
     )
     _complete_production_lot(erp_client, process_id, "", 5, contractor=contractor)
 
     after = _dashboard_kpis(erp_client)
-    assert after["contractorPayablesDue"] == round(before["contractorPayablesDue"] + 100, 2)  # 20 rate * 5 qty
+    assert after["contractorPayablesDue"] == round(
+        before["contractorPayablesDue"] + 100, 2
+    )  # 20 rate * 5 qty
     assert after["contractorPayablesCount"] == before["contractorPayablesCount"] + 1
 
 
@@ -287,7 +342,9 @@ def test_dashboard_pipeline_groups_by_model_and_size(erp_client):
     stage = next(p for p in dash["pipeline"] if p["processId"] == process_id)
     assert stage["totalLotCount"] == 1
     assert stage["totalQty"] == 5
-    assert stage["groups"][0]["title"] == "Unspecified"  # non-final-stage lot: no product tag, no size
+    assert (
+        stage["groups"][0]["title"] == "Unspecified"
+    )  # non-final-stage lot: no product tag, no size
 
 
 def test_dashboard_pipeline_shows_only_in_progress_lots(erp_client):
@@ -377,8 +434,18 @@ def test_dashboard_pipeline_group_title_includes_color(erp_client):
                 "status": "In Progress",
                 "componentsConsumed": [_item_component()],
                 "colorBreakdown": [
-                    {"color": "DashPipelineRed", "size": "", "qty": 7, "isCustom": True},
-                    {"color": "DashPipelineBlue", "size": "", "qty": 3, "isCustom": True},
+                    {
+                        "color": "DashPipelineRed",
+                        "size": "",
+                        "qty": 7,
+                        "isCustom": True,
+                    },
+                    {
+                        "color": "DashPipelineBlue",
+                        "size": "",
+                        "qty": 3,
+                        "isCustom": True,
+                    },
                 ],
             }
         ],
@@ -406,7 +473,12 @@ def test_dashboard_pipeline_group_title_keeps_size_alongside_color(erp_client):
                 "status": "In Progress",
                 "componentsConsumed": [_item_component()],
                 "colorBreakdown": [
-                    {"color": "DashSizedGreen", "size": "14 inch", "qty": 5, "isCustom": True},
+                    {
+                        "color": "DashSizedGreen",
+                        "size": "14 inch",
+                        "qty": 5,
+                        "isCustom": True,
+                    },
                 ],
             }
         ],
@@ -442,7 +514,15 @@ def test_dashboard_production_status_breakdown(erp_client):
     _rpc(
         erp_client,
         "saveProduction",
-        [{"processId": process_id, "assignedTo": "Worker A", "qty": 5, "status": "Cancelled", "componentsConsumed": [_item_component()]}],
+        [
+            {
+                "processId": process_id,
+                "assignedTo": "Worker A",
+                "qty": 5,
+                "status": "Cancelled",
+                "componentsConsumed": [_item_component()],
+            }
+        ],
         mutation=True,
     )
 
@@ -456,7 +536,12 @@ def test_dashboard_dispatch_trend_covers_30_days(erp_app, erp_client):
     product_name, product_id = _save_bom_product(erp_client, token)
     _payload, process_id = _save_process(erp_client, isFinalStage=True)
     _complete_production_lot(erp_client, process_id, product_id, 20)
-    _rpc(erp_client, "saveDispatch", [{"lines": [{"productId": product_id, "productName": product_name, "qty": 3}]}], mutation=True)
+    _rpc(
+        erp_client,
+        "saveDispatch",
+        [{"lines": [{"productId": product_id, "productName": product_name, "qty": 3}]}],
+        mutation=True,
+    )
 
     dash = _rpc(erp_client, "getDashboardData").get_json()["data"]
     trend = dash["dispatchTrend"]
@@ -483,15 +568,24 @@ def test_get_mobile_dashboard_returns_success_envelope_and_shape(erp_client):
 
 
 def test_mobile_dashboard_todays_dispatch_count(erp_app, erp_client):
-    before = _rpc(erp_client, "getMobileDashboard").get_json()["data"]["todaysDispatchCount"]
+    before = _rpc(erp_client, "getMobileDashboard").get_json()["data"][
+        "todaysDispatchCount"
+    ]
 
     token = _get_bom_token(erp_app, erp_client)
     product_name, product_id = _save_bom_product(erp_client, token)
     _payload, process_id = _save_process(erp_client, isFinalStage=True)
     _complete_production_lot(erp_client, process_id, product_id, 5)
-    _rpc(erp_client, "saveDispatch", [{"lines": [{"productId": product_id, "productName": product_name, "qty": 2}]}], mutation=True)
+    _rpc(
+        erp_client,
+        "saveDispatch",
+        [{"lines": [{"productId": product_id, "productName": product_name, "qty": 2}]}],
+        mutation=True,
+    )
 
-    after = _rpc(erp_client, "getMobileDashboard").get_json()["data"]["todaysDispatchCount"]
+    after = _rpc(erp_client, "getMobileDashboard").get_json()["data"][
+        "todaysDispatchCount"
+    ]
     assert after == before + 1
 
 

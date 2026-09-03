@@ -37,13 +37,18 @@ def _fetch_group_items(cur, group_ids: list[int]) -> dict[int, list[dict]]:
     )
     by_group: dict[int, list[dict]] = {gid: [] for gid in group_ids}
     for row in cur.fetchall():
-        by_group[row["group_id"]].append({"name": row["item_name"], "size": row["size"] or ""})
+        by_group[row["group_id"]].append(
+            {"name": row["item_name"], "size": row["size"] or ""}
+        )
     return by_group
 
 
 @rpc_method("getStockGroupsData")
 def get_stock_groups_data():
-    with database.get_conn(cursor_factory=psycopg2.extras.RealDictCursor) as (_conn, cur):
+    with database.get_conn(cursor_factory=psycopg2.extras.RealDictCursor) as (
+        _conn,
+        cur,
+    ):
         cur.execute(
             """
             SELECT id, name, remarks

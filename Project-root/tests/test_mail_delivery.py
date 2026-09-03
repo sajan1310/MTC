@@ -172,7 +172,9 @@ def test_a_broken_relay_does_not_reach_the_user(mail_app, monkeypatch, caplog):
 
     with mail_app.app_context():
         with caplog.at_level("ERROR"):
-            delivered = routes.send_reset_email("someone@example.invalid", "https://x/reset")
+            delivered = routes.send_reset_email(
+                "someone@example.invalid", "https://x/reset"
+            )
 
     assert delivered is False
     assert any("SMTP send failed" in r.getMessage() for r in caplog.records)
@@ -182,13 +184,18 @@ def test_a_queueing_failure_never_raises(mail_app, monkeypatch, caplog):
     """A mail problem must not turn a reset request into a 500."""
     import app.auth.routes as routes
 
-    monkeypatch.setattr(routes._MAIL_POOL, "submit", lambda *a, **k: (_ for _ in ()).throw(
-        RuntimeError("pool is shut down")
-    ))
+    monkeypatch.setattr(
+        routes._MAIL_POOL,
+        "submit",
+        lambda *a, **k: (_ for _ in ()).throw(RuntimeError("pool is shut down")),
+    )
 
     with mail_app.app_context():
         with caplog.at_level("ERROR"):
-            assert routes.send_reset_email("someone@example.invalid", "https://x/reset") is False
+            assert (
+                routes.send_reset_email("someone@example.invalid", "https://x/reset")
+                is False
+            )
     assert any("Could not queue" in r.getMessage() for r in caplog.records)
 
 
@@ -199,6 +206,8 @@ def test_the_forgot_password_endpoint_still_answers_generically(mail_app, monkey
     monkeypatch.setattr(routes, "_deliver", lambda *a, **k: True)
     client = mail_app.test_client()
 
-    known = client.post("/auth/api/forgot-password", json={"email": "nobody@example.invalid"})
+    known = client.post(
+        "/auth/api/forgot-password", json={"email": "nobody@example.invalid"}
+    )
     assert known.status_code == 200
     assert "reset" in known.get_json().get("message", "").lower()

@@ -27,6 +27,7 @@ needs_renderer = pytest.mark.skipif(
 
 # ── Filenames ────────────────────────────────────────────────────────
 
+
 class TestSafeFilename:
     def test_appends_pdf_extension(self):
         assert svc.safe_filename("PO_1204_Mahadev") == "PO_1204_Mahadev.pdf"
@@ -75,6 +76,7 @@ class TestDedupeFilenames:
 
 # ── Input validation (no renderer needed) ────────────────────────────
 
+
 class TestValidation:
     @pytest.mark.parametrize("bad", ["", "   ", None, 123, []])
     def test_render_pdf_rejects_empty_html(self, bad):
@@ -91,8 +93,10 @@ class TestValidation:
             svc.render_batch(bad)
 
     def test_render_batch_rejects_too_many_documents(self):
-        docs = [{"filename": f"{i}.pdf", "html": "<p>x</p>"}
-                for i in range(svc.MAX_BATCH_DOCUMENTS + 1)]
+        docs = [
+            {"filename": f"{i}.pdf", "html": "<p>x</p>"}
+            for i in range(svc.MAX_BATCH_DOCUMENTS + 1)
+        ]
         with pytest.raises(ValueError, match="Too many"):
             svc.render_batch(docs)
 
@@ -105,21 +109,25 @@ class TestValidation:
 
 # ── The URL fetcher is the whole security story ──────────────────────
 
+
 class TestUrlFetcherBlocksEverything:
     """The renderer is handed HTML by an authenticated browser, and
     'authenticated' is not 'trusted'. A renderer that resolves arbitrary URLs
     is an SSRF primitive and a local file reader.
     """
 
-    @pytest.mark.parametrize("url", [
-        "http://169.254.169.254/latest/meta-data/",   # cloud metadata
-        "https://example.com/x.png",
-        "file:///etc/passwd",
-        "file://C:/Windows/win.ini",
-        "ftp://example.com/x",
-        "//example.com/protocol-relative.png",
-        "x.png",                                      # relative
-    ])
+    @pytest.mark.parametrize(
+        "url",
+        [
+            "http://169.254.169.254/latest/meta-data/",  # cloud metadata
+            "https://example.com/x.png",
+            "file:///etc/passwd",
+            "file://C:/Windows/win.ini",
+            "ftp://example.com/x",
+            "//example.com/protocol-relative.png",
+            "x.png",  # relative
+        ],
+    )
     def test_refuses_every_scheme(self, url):
         with pytest.raises(ValueError, match="not fetched"):
             svc._blocked_url_fetcher(url)
@@ -136,6 +144,7 @@ class TestUrlFetcherBlocksEverything:
 
 
 # ── Rendering (needs the system libraries) ───────────────────────────
+
 
 @needs_renderer
 class TestRendering:
@@ -194,7 +203,8 @@ class TestRendering:
         html = "<p>x</p>"
         portrait = pypdf.PdfReader(io.BytesIO(svc.render_pdf(html))).pages[0]
         landscape = pypdf.PdfReader(
-            io.BytesIO(svc.render_pdf(html, landscape=True))).pages[0]
+            io.BytesIO(svc.render_pdf(html, landscape=True))
+        ).pages[0]
         assert landscape.mediabox.width > portrait.mediabox.width
         assert landscape.mediabox.width > landscape.mediabox.height
 
@@ -202,11 +212,13 @@ class TestRendering:
 @needs_renderer
 class TestBatch:
     def test_returns_a_zip_of_one_pdf_per_document(self):
-        blob, names = svc.render_batch([
-            {"filename": "PO_1.pdf", "html": "<p>One</p>"},
-            {"filename": "PO_2.pdf", "html": "<p>Two</p>"},
-            {"filename": "PO_3.pdf", "html": "<p>Three</p>"},
-        ])
+        blob, names = svc.render_batch(
+            [
+                {"filename": "PO_1.pdf", "html": "<p>One</p>"},
+                {"filename": "PO_2.pdf", "html": "<p>Two</p>"},
+                {"filename": "PO_3.pdf", "html": "<p>Three</p>"},
+            ]
+        )
         archive = zipfile.ZipFile(io.BytesIO(blob))
         assert archive.namelist() == names == ["PO_1.pdf", "PO_2.pdf", "PO_3.pdf"]
         for name in names:
@@ -227,6 +239,7 @@ class TestBatch:
 
 
 # ── Endpoints ────────────────────────────────────────────────────────
+
 
 class TestEndpointsRequireAuth:
     """Uses erp_app rather than the base `client` fixture: that one sets
@@ -255,6 +268,7 @@ class TestEndpointErrors:
     def test_unavailable_renderer_is_503(self, erp_client, monkeypatch):
         """A 503 is the contract the client keys on to stop asking and fall
         back to the print dialog for the rest of the session."""
+
         def unavailable(*a, **k):
             raise svc.PdfRenderUnavailable("no libraries here")
 
@@ -267,20 +281,24 @@ class TestEndpointErrors:
 class TestEndpointSuccess:
     def test_single_returns_a_named_pdf(self, erp_client):
         res = erp_client.post(
-            "/erp/render-pdf", json={"html": "<p>PO-1</p>", "filename": "PO_1.pdf"})
+            "/erp/render-pdf", json={"html": "<p>PO-1</p>", "filename": "PO_1.pdf"}
+        )
         assert res.status_code == 200
         assert res.mimetype == "application/pdf"
         assert "PO_1.pdf" in res.headers["Content-Disposition"]
         assert res.data.startswith(b"%PDF-")
 
     def test_batch_returns_a_named_zip(self, erp_client):
-        res = erp_client.post("/erp/render-pdf-batch", json={
-            "documents": [
-                {"filename": "A.pdf", "html": "<p>A</p>"},
-                {"filename": "B.pdf", "html": "<p>B</p>"},
-            ],
-            "zipName": "Purchase_Orders_190826.zip",
-        })
+        res = erp_client.post(
+            "/erp/render-pdf-batch",
+            json={
+                "documents": [
+                    {"filename": "A.pdf", "html": "<p>A</p>"},
+                    {"filename": "B.pdf", "html": "<p>B</p>"},
+                ],
+                "zipName": "Purchase_Orders_190826.zip",
+            },
+        )
         assert res.status_code == 200
         assert res.mimetype == "application/zip"
         assert "Purchase_Orders_190826.zip" in res.headers["Content-Disposition"]
@@ -292,6 +310,7 @@ class TestEndpointSuccess:
 
 
 # ── The page shell mirrors the print stylesheet ──────────────────────
+
 
 class TestPageFitting:
     """A table wider than the printable box is CUT by a print engine, not
@@ -313,11 +332,14 @@ class TestPageFitting:
         assert "display: table-header-group" in html
         assert "break-inside: avoid" in html
 
-    @pytest.mark.parametrize("density,marker", [
-        ("print-fit-compact", "font-size: 10px"),
-        ("print-fit-dense", "font-size: 9px"),
-        ("print-fit-xdense", "font-size: 8px"),
-    ])
+    @pytest.mark.parametrize(
+        "density,marker",
+        [
+            ("print-fit-compact", "font-size: 10px"),
+            ("print-fit-dense", "font-size: 9px"),
+            ("print-fit-xdense", "font-size: 8px"),
+        ],
+    )
     def test_applies_the_density_tier_the_client_picked(self, density, marker):
         html = svc._document("<p>x</p>", landscape=False, density=density)
         assert marker in html
@@ -329,9 +351,16 @@ class TestPageFitting:
         assert "body class=''" in html
 
     # density arrives in the request body, so it is a value from outside.
-    @pytest.mark.parametrize("bad", [
-        "print-fit-nope", "", None, "a{}b", "</style><script>alert(1)</script>",
-    ])
+    @pytest.mark.parametrize(
+        "bad",
+        [
+            "print-fit-nope",
+            "",
+            None,
+            "a{}b",
+            "</style><script>alert(1)</script>",
+        ],
+    )
     def test_an_unknown_density_is_ignored_not_interpolated(self, bad):
         html = svc._document("<p>x</p>", landscape=False, density=bad)
         assert "<script>" not in html
@@ -355,8 +384,7 @@ class TestWideTablesStayOnThePage:
             density="print-fit-xdense",
         )
         text = "".join(
-            page.extract_text() or ""
-            for page in pypdf.PdfReader(io.BytesIO(pdf)).pages
+            page.extract_text() or "" for page in pypdf.PdfReader(io.BytesIO(pdf)).pages
         )
         # Whitespace is stripped before matching: fitting the table to the page
         # is precisely what breaks a long cell value across lines, so
@@ -379,7 +407,6 @@ class TestWideTablesStayOnThePage:
             f"<table><tr><td>{long_token}</td><td>LASTCOLUMN</td></tr></table>"
         )
         text = "".join(
-            page.extract_text() or ""
-            for page in pypdf.PdfReader(io.BytesIO(pdf)).pages
+            page.extract_text() or "" for page in pypdf.PdfReader(io.BytesIO(pdf)).pages
         )
         assert "LASTCOLUMN" in "".join(text.split())

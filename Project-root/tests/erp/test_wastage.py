@@ -9,7 +9,9 @@ import uuid
 
 def _rpc(client, method, args=None, mutation=False):
     headers = {"X-Mutation-Id": str(uuid.uuid4())} if mutation else {}
-    return client.post(f"/api/erp/rpc/{method}", json={"args": args or []}, headers=headers)
+    return client.post(
+        f"/api/erp/rpc/{method}", json={"args": args or []}, headers=headers
+    )
 
 
 def _unique_name(prefix: str) -> str:
@@ -38,7 +40,9 @@ def test_get_wastage_data_returns_success_envelope(erp_client):
 
 
 def test_save_wastage_rejects_zero_items(erp_client):
-    resp = _rpc(erp_client, "saveWastage", [{"date": "01/01/2026", "items": []}], mutation=True)
+    resp = _rpc(
+        erp_client, "saveWastage", [{"date": "01/01/2026", "items": []}], mutation=True
+    )
     body = resp.get_json()
     assert body["success"] is False
     assert "zero items" in body["message"]
@@ -48,7 +52,12 @@ def test_save_wastage_requires_date(erp_client):
     resp = _rpc(
         erp_client,
         "saveWastage",
-        [{"date": "not a date", "items": [{"name": "X", "qty": 1, "unit": "Pcs", "reason": "Damaged"}]}],
+        [
+            {
+                "date": "not a date",
+                "items": [{"name": "X", "qty": 1, "unit": "Pcs", "reason": "Damaged"}],
+            }
+        ],
         mutation=True,
     )
     body = resp.get_json()
@@ -60,7 +69,12 @@ def test_save_wastage_rejects_zero_qty(erp_client):
     resp = _rpc(
         erp_client,
         "saveWastage",
-        [{"date": "01/01/2026", "items": [{"name": "X", "qty": 0, "unit": "Pcs", "reason": "Damaged"}]}],
+        [
+            {
+                "date": "01/01/2026",
+                "items": [{"name": "X", "qty": 0, "unit": "Pcs", "reason": "Damaged"}],
+            }
+        ],
         mutation=True,
     )
     assert resp.get_json()["success"] is False
@@ -89,7 +103,15 @@ def test_save_wastage_computes_base_qty_and_totals(erp_client):
                 "date": "15/03/2026",
                 "vendor": vendor,
                 "remarks": "Batch defect",
-                "items": [{"name": item, "size": "L", "qty": 3, "unit": "Pcs", "reason": "Damaged in transit"}],
+                "items": [
+                    {
+                        "name": item,
+                        "size": "L",
+                        "qty": 3,
+                        "unit": "Pcs",
+                        "reason": "Damaged in transit",
+                    }
+                ],
             }
         ],
         mutation=True,
@@ -148,7 +170,12 @@ def test_delete_wastage_bulk(erp_client):
     save_a = _rpc(
         erp_client,
         "saveWastage",
-        [{"date": "01/01/2026", "items": [{"name": a_item, "qty": 1, "unit": "Pcs", "reason": "R"}]}],
+        [
+            {
+                "date": "01/01/2026",
+                "items": [{"name": a_item, "qty": 1, "unit": "Pcs", "reason": "R"}],
+            }
+        ],
         mutation=True,
     )
     a_id = save_a.get_json()["data"]["wastageId"]
@@ -159,7 +186,12 @@ def test_delete_wastage_bulk(erp_client):
     save_b = _rpc(
         erp_client,
         "saveWastage",
-        [{"date": "01/01/2026", "items": [{"name": b_item, "qty": 1, "unit": "Pcs", "reason": "R"}]}],
+        [
+            {
+                "date": "01/01/2026",
+                "items": [{"name": b_item, "qty": 1, "unit": "Pcs", "reason": "R"}],
+            }
+        ],
         mutation=True,
     )
     b_id = save_b.get_json()["data"]["wastageId"]
@@ -178,19 +210,42 @@ def test_item_rename_cascades_into_wastage_lines(erp_client):
     _settle()
     old_item = _unique_name("OldWastageItem")
     new_item = _unique_name("NewWastageItem")
-    _rpc(erp_client, "saveItem", [{"itemName": old_item, "itemSize": "L"}], mutation=True)
+    _rpc(
+        erp_client, "saveItem", [{"itemName": old_item, "itemSize": "L"}], mutation=True
+    )
 
     save = _rpc(
         erp_client,
         "saveWastage",
-        [{"date": "01/01/2026", "items": [{"name": old_item, "size": "L", "qty": 1, "unit": "Pcs", "reason": "R"}]}],
+        [
+            {
+                "date": "01/01/2026",
+                "items": [
+                    {
+                        "name": old_item,
+                        "size": "L",
+                        "qty": 1,
+                        "unit": "Pcs",
+                        "reason": "R",
+                    }
+                ],
+            }
+        ],
         mutation=True,
     )
     wastage_id = save.get_json()["data"]["wastageId"]
 
     rename = _rpc(
-        erp_client, "saveItem",
-        [{"itemName": new_item, "itemSize": "L", "originalName": old_item, "originalSize": "L"}],
+        erp_client,
+        "saveItem",
+        [
+            {
+                "itemName": new_item,
+                "itemSize": "L",
+                "originalName": old_item,
+                "originalSize": "L",
+            }
+        ],
         mutation=True,
     )
     assert rename.get_json()["success"] is True
@@ -210,12 +265,23 @@ def test_vendor_rename_cascades_into_wastage_headers(erp_client):
     save = _rpc(
         erp_client,
         "saveWastage",
-        [{"date": "01/01/2026", "vendor": old_vendor, "items": [{"name": item, "qty": 1, "unit": "Pcs", "reason": "R"}]}],
+        [
+            {
+                "date": "01/01/2026",
+                "vendor": old_vendor,
+                "items": [{"name": item, "qty": 1, "unit": "Pcs", "reason": "R"}],
+            }
+        ],
         mutation=True,
     )
     wastage_id = save.get_json()["data"]["wastageId"]
 
-    rename = _rpc(erp_client, "saveVendor", [{"vendorName": new_vendor, "originalVendorName": old_vendor}], mutation=True)
+    rename = _rpc(
+        erp_client,
+        "saveVendor",
+        [{"vendorName": new_vendor, "originalVendorName": old_vendor}],
+        mutation=True,
+    )
     assert rename.get_json()["success"] is True
 
     listed = _rpc(erp_client, "getWastageData").get_json()["data"]
@@ -227,18 +293,40 @@ def test_unit_rename_cascades_into_wastage_lines(erp_client):
     _settle()
     old_unit = _unique_name("OldWastageUnit")
     new_unit = _unique_name("NewWastageUnit")
-    _rpc(erp_client, "saveUnit", [{"unitName": old_unit, "family": "Count", "factorToBase": 1}], mutation=True)
+    _rpc(
+        erp_client,
+        "saveUnit",
+        [{"unitName": old_unit, "family": "Count", "factorToBase": 1}],
+        mutation=True,
+    )
 
     item = _unique_name("UnitCascadeWastageItem")
     save = _rpc(
         erp_client,
         "saveWastage",
-        [{"date": "01/01/2026", "items": [{"name": item, "qty": 1, "unit": old_unit, "reason": "R"}]}],
+        [
+            {
+                "date": "01/01/2026",
+                "items": [{"name": item, "qty": 1, "unit": old_unit, "reason": "R"}],
+            }
+        ],
         mutation=True,
     )
     wastage_id = save.get_json()["data"]["wastageId"]
 
-    rename = _rpc(erp_client, "saveUnit", [{"unitName": new_unit, "family": "Count", "factorToBase": 1, "originalUnitName": old_unit}], mutation=True)
+    rename = _rpc(
+        erp_client,
+        "saveUnit",
+        [
+            {
+                "unitName": new_unit,
+                "family": "Count",
+                "factorToBase": 1,
+                "originalUnitName": old_unit,
+            }
+        ],
+        mutation=True,
+    )
     assert rename.get_json()["success"] is True
 
     listed = _rpc(erp_client, "getWastageData").get_json()["data"]
@@ -265,7 +353,14 @@ def test_save_wastage_edits_existing_record_in_place(erp_client):
             {
                 "date": "01/01/2026",
                 "vendor": old_vendor,
-                "items": [{"name": original_item, "qty": 2, "unit": "Pcs", "reason": "Damaged"}],
+                "items": [
+                    {
+                        "name": original_item,
+                        "qty": 2,
+                        "unit": "Pcs",
+                        "reason": "Damaged",
+                    }
+                ],
             }
         ],
         mutation=True,
@@ -283,7 +378,9 @@ def test_save_wastage_edits_existing_record_in_place(erp_client):
                 "date": "02/01/2026",
                 "vendor": new_vendor,
                 "remarks": "Corrected",
-                "items": [{"name": updated_item, "qty": 5, "unit": "Pcs", "reason": "Expired"}],
+                "items": [
+                    {"name": updated_item, "qty": 5, "unit": "Pcs", "reason": "Expired"}
+                ],
             }
         ],
         mutation=True,
@@ -327,13 +424,23 @@ def test_save_wastage_edit_rejects_unknown_wastage_id(erp_client):
 def test_wastage_subtracts_from_current_stock(erp_client):
     _settle()
     name = _unique_name("WastageStockItem")
-    resp = _rpc(erp_client, "saveItem", [{"itemName": name, "itemInitialStock": 10}], mutation=True)
+    resp = _rpc(
+        erp_client,
+        "saveItem",
+        [{"itemName": name, "itemInitialStock": 10}],
+        mutation=True,
+    )
     assert resp.get_json()["success"] is True
 
     _rpc(
         erp_client,
         "saveWastage",
-        [{"date": "01/01/2026", "items": [{"name": name, "qty": 4, "unit": "Pcs", "reason": "Damaged"}]}],
+        [
+            {
+                "date": "01/01/2026",
+                "items": [{"name": name, "qty": 4, "unit": "Pcs", "reason": "Damaged"}],
+            }
+        ],
         mutation=True,
     )
 

@@ -52,7 +52,8 @@ def sync_stock_for_item(cur, action: str, payload: dict) -> None:
         if old_id is None:
             if not new_exists:
                 cur.execute(
-                    "INSERT INTO erp.stock (item_name, size) VALUES (%s, %s)", (new_name, new_size)
+                    "INSERT INTO erp.stock (item_name, size) VALUES (%s, %s)",
+                    (new_name, new_size),
                 )
         elif not new_exists:
             cur.execute(
@@ -71,7 +72,8 @@ def sync_stock_for_item(cur, action: str, payload: dict) -> None:
         if old_id is None:
             if new_id is None:
                 cur.execute(
-                    "INSERT INTO erp.stock (item_name, size) VALUES (%s, %s)", (new_name, new_size)
+                    "INSERT INTO erp.stock (item_name, size) VALUES (%s, %s)",
+                    (new_name, new_size),
                 )
         elif new_id is None:
             cur.execute(
@@ -93,12 +95,19 @@ def sync_stock_for_item(cur, action: str, payload: dict) -> None:
             from . import units_service
 
             unit_info_map = items_service.get_item_unit_info_map(cur)
-            old_info = items_service.lookup_item_unit_info(unit_info_map, old_name, old_size)
-            new_info = items_service.lookup_item_unit_info(unit_info_map, new_name, new_size)
+            old_info = items_service.lookup_item_unit_info(
+                unit_info_map, old_name, old_size
+            )
+            new_info = items_service.lookup_item_unit_info(
+                unit_info_map, new_name, new_size
+            )
             if old_info["baseUnit"] != new_info["baseUnit"]:
                 try:
                     old_initial = units_service.convert_qty_to_base_unit(
-                        old_initial, old_info["baseUnit"], new_info, units_service.get_units_map(cur)
+                        old_initial,
+                        old_info["baseUnit"],
+                        new_info,
+                        units_service.get_units_map(cur),
                     )
                 except ValueError:
                     # Unconvertible (e.g. no Weight-per-Base-Unit set) --
@@ -114,13 +123,17 @@ def sync_stock_for_item(cur, action: str, payload: dict) -> None:
             # row_version trigger and would leave no tombstone for offline
             # sync clients to learn the row is gone (see architecture's
             # deleted_at convention).
-            cur.execute("UPDATE erp.stock SET deleted_at = NOW() WHERE id = %s", (old_id,))
+            cur.execute(
+                "UPDATE erp.stock SET deleted_at = NOW() WHERE id = %s", (old_id,)
+            )
 
     elif action == "remove":
         name, size = payload["name"], payload.get("size", "")
         row_id = _find_row(cur, name, size)
         if row_id is not None:
-            cur.execute("UPDATE erp.stock SET deleted_at = NOW() WHERE id = %s", (row_id,))
+            cur.execute(
+                "UPDATE erp.stock SET deleted_at = NOW() WHERE id = %s", (row_id,)
+            )
 
     else:
         raise ValueError(f"Unknown sync_stock_for_item action: {action}")

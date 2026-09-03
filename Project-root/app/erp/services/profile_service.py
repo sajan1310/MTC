@@ -34,7 +34,10 @@ def update_my_profile(conn, cur, name, email):
         raise ValueError("Please enter a valid email address.")
 
     # lower(email) (AUTH-001): identity is case-insensitive.
-    cur.execute("SELECT user_id FROM users WHERE lower(email) = %s AND user_id != %s", (email, user_id))
+    cur.execute(
+        "SELECT user_id FROM users WHERE lower(email) = %s AND user_id != %s",
+        (email, user_id),
+    )
     if cur.fetchone():
         raise ValueError("An account with this email already exists.")
 
@@ -48,7 +51,12 @@ def update_my_profile(conn, cur, name, email):
         raise ValueError("User not found.")
     return build_response(
         True,
-        {"id": row["user_id"], "name": row["name"], "email": row["email"], "role": row["role"]},
+        {
+            "id": row["user_id"],
+            "name": row["name"],
+            "email": row["email"],
+            "role": row["role"],
+        },
         "Profile updated.",
     )
 

@@ -28,7 +28,9 @@ from app.erp.services import ledger_audit_service
 
 def _rpc(client, method, args=None, mutation=False):
     headers = {"X-Mutation-Id": str(uuid.uuid4())} if mutation else {}
-    return client.post(f"/api/erp/rpc/{method}", json={"args": args or []}, headers=headers)
+    return client.post(
+        f"/api/erp/rpc/{method}", json={"args": args or []}, headers=headers
+    )
 
 
 def _unique_name(prefix: str) -> str:
@@ -42,7 +44,12 @@ def test_over_billed_po_line_detected(erp_app, erp_client):
     po = _rpc(
         erp_client,
         "savePO",
-        [{"vendor": vendor, "items": [{"name": item, "qty": 5, "unit": "Pcs", "price": 10}]}],
+        [
+            {
+                "vendor": vendor,
+                "items": [{"name": item, "qty": 5, "unit": "Pcs", "price": 10}],
+            }
+        ],
         mutation=True,
     )
     po_number = po.get_json()["data"]["poNumber"]
@@ -55,7 +62,15 @@ def test_over_billed_po_line_detected(erp_app, erp_client):
                 "vendor": vendor,
                 "billNumber": _unique_name("BILL"),
                 "billDate": "01/01/2026",
-                "items": [{"name": item, "qty": 8, "unit": "Pcs", "price": 10, "po": po_number}],
+                "items": [
+                    {
+                        "name": item,
+                        "qty": 8,
+                        "unit": "Pcs",
+                        "price": 10,
+                        "po": po_number,
+                    }
+                ],
             }
         ],
         mutation=True,
@@ -64,7 +79,11 @@ def test_over_billed_po_line_detected(erp_app, erp_client):
     with erp_app.app_context():
         result = ledger_audit_service.compute_internal_ledger_audit_findings()
 
-    match = next(f for f in result["findings"] if f["type"] == "over_billed_po_line" and f["poNumber"] == po_number)
+    match = next(
+        f
+        for f in result["findings"]
+        if f["type"] == "over_billed_po_line" and f["poNumber"] == po_number
+    )
     assert match["vendor"] == vendor
     assert match["itemName"] == item
     assert match["orderedQty"] == 5
@@ -129,13 +148,19 @@ def test_return_bill_reference_checks(erp_app, erp_client):
         result = ledger_audit_service.compute_internal_ledger_audit_findings()
 
     orphan = next(
-        f for f in result["findings"] if f["type"] == "orphaned_return_bill_ref" and f["returnNumber"] == orphan_return_number
+        f
+        for f in result["findings"]
+        if f["type"] == "orphaned_return_bill_ref"
+        and f["returnNumber"] == orphan_return_number
     )
     assert orphan["billNumber"] == "NO-SUCH-BILL"
     assert orphan["vendor"] == vendor
 
     mismatch = next(
-        f for f in result["findings"] if f["type"] == "return_item_not_on_bill" and f["returnNumber"] == mismatched_return_number
+        f
+        for f in result["findings"]
+        if f["type"] == "return_item_not_on_bill"
+        and f["returnNumber"] == mismatched_return_number
     )
     assert mismatch["itemName"] == unbilled_item
     assert mismatch["billNumber"] == bill_number
@@ -143,7 +168,8 @@ def test_return_bill_reference_checks(erp_app, erp_client):
     # The bill's own actually-billed item must NOT be flagged as a mismatch
     # for either return referencing it.
     assert not any(
-        f["type"] == "return_item_not_on_bill" and f["itemName"] == billed_item for f in result["findings"]
+        f["type"] == "return_item_not_on_bill" and f["itemName"] == billed_item
+        for f in result["findings"]
     )
 
 
@@ -167,26 +193,48 @@ def test_over_consumed_item_detected(erp_app, erp_client):
     _rpc(
         erp_client,
         "saveReturn",
-        [{"vendor": vendor, "returnDate": "01/01/2026", "items": [{"name": item, "qty": 2, "price": 10, "reason": "Excess"}]}],
+        [
+            {
+                "vendor": vendor,
+                "returnDate": "01/01/2026",
+                "items": [{"name": item, "qty": 2, "price": 10, "reason": "Excess"}],
+            }
+        ],
         mutation=True,
     )
     _rpc(
         erp_client,
         "saveWastage",
-        [{"date": "01/01/2026", "vendor": vendor, "items": [{"name": item, "qty": 2, "unit": "Pcs", "reason": "Damaged"}]}],
+        [
+            {
+                "date": "01/01/2026",
+                "vendor": vendor,
+                "items": [{"name": item, "qty": 2, "unit": "Pcs", "reason": "Damaged"}],
+            }
+        ],
         mutation=True,
     )
     _rpc(
         erp_client,
         "saveIssueStock",
-        [{"date": "01/01/2026", "issuedTo": "Contractor A", "items": [{"name": item, "qty": 2, "unit": "Pcs"}]}],
+        [
+            {
+                "date": "01/01/2026",
+                "issuedTo": "Contractor A",
+                "items": [{"name": item, "qty": 2, "unit": "Pcs"}],
+            }
+        ],
         mutation=True,
     )
 
     with erp_app.app_context():
         result = ledger_audit_service.compute_internal_ledger_audit_findings()
 
-    match = next(f for f in result["findings"] if f["type"] == "over_consumed_item" and f["itemName"] == item)
+    match = next(
+        f
+        for f in result["findings"]
+        if f["type"] == "over_consumed_item" and f["itemName"] == item
+    )
     assert match["totalBilledBaseQty"] == 5
     assert match["totalReturnedBaseQty"] == 2
     assert match["totalWastedBaseQty"] == 2
@@ -202,7 +250,9 @@ def test_run_internal_ledger_audit_writes_summary_row(erp_app):
     assert "findingsCount" in result
 
     with database.get_conn() as (_conn, cur):
-        cur.execute("SELECT status, details FROM erp.ledger_audit_log WHERE action = 'LEDGER_AUDIT_SUMMARY' ORDER BY id DESC LIMIT 1")
+        cur.execute(
+            "SELECT status, details FROM erp.ledger_audit_log WHERE action = 'LEDGER_AUDIT_SUMMARY' ORDER BY id DESC LIMIT 1"
+        )
         row = cur.fetchone()
     assert row is not None
     assert row[0] == "SUCCESS"
@@ -215,7 +265,10 @@ def test_run_internal_ledger_audit_skips_when_lock_already_held(erp_app):
     must make this call skip instead of racing it.
     """
     with database.get_conn() as (_conn, holder_cur):
-        holder_cur.execute("SELECT pg_try_advisory_xact_lock(%s)", (ledger_audit_service._AUDIT_LOCK_KEY,))
+        holder_cur.execute(
+            "SELECT pg_try_advisory_xact_lock(%s)",
+            (ledger_audit_service._AUDIT_LOCK_KEY,),
+        )
         assert holder_cur.fetchone()[0] is True  # this connection now holds it
 
         # This test needs two connections BY DESIGN -- "another worker already
@@ -244,7 +297,13 @@ def test_get_recent_notification_logs_returns_success_envelope(erp_client):
 def test_get_recent_notification_logs_surfaces_a_written_finding(erp_app, erp_client):
     marker = _unique_name("NotifyMarker")
     with erp_app.app_context(), database.get_conn() as (_conn, cur):
-        ledger_audit_service._log(cur, "LEDGER_AUDIT_FINDING", marker, f"over_billed_po_line: {marker} test finding", "WARNING")
+        ledger_audit_service._log(
+            cur,
+            "LEDGER_AUDIT_FINDING",
+            marker,
+            f"over_billed_po_line: {marker} test finding",
+            "WARNING",
+        )
 
     listed = _rpc(erp_client, "getRecentNotificationLogs").get_json()["data"]
     match = next((row for row in listed if row["recordId"] == marker), None)
@@ -264,7 +323,9 @@ def test_get_recent_notification_logs_excludes_success_status(erp_app, erp_clien
     """
     marker = _unique_name("SuccessMarker")
     with erp_app.app_context(), database.get_conn() as (_conn, cur):
-        ledger_audit_service._log(cur, "LEDGER_AUDIT_SUMMARY", marker, "all clear", "SUCCESS")
+        ledger_audit_service._log(
+            cur, "LEDGER_AUDIT_SUMMARY", marker, "all clear", "SUCCESS"
+        )
 
     listed = _rpc(erp_client, "getRecentNotificationLogs").get_json()["data"]
     assert not any(row["recordId"] == marker for row in listed)

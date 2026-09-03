@@ -7,7 +7,9 @@ import uuid
 
 def _rpc(client, method, args=None, mutation=False):
     headers = {"X-Mutation-Id": str(uuid.uuid4())} if mutation else {}
-    return client.post(f"/api/erp/rpc/{method}", json={"args": args or []}, headers=headers)
+    return client.post(
+        f"/api/erp/rpc/{method}", json={"args": args or []}, headers=headers
+    )
 
 
 def _unique_name(prefix: str) -> str:
@@ -23,7 +25,9 @@ def test_get_po_data_returns_success_envelope(erp_client):
 
 
 def test_save_po_rejects_zero_items(erp_client):
-    resp = _rpc(erp_client, "savePO", [{"vendor": "Anyone", "items": []}], mutation=True)
+    resp = _rpc(
+        erp_client, "savePO", [{"vendor": "Anyone", "items": []}], mutation=True
+    )
     body = resp.get_json()
     assert body["success"] is False
     assert "zero items" in body["message"]
@@ -35,7 +39,15 @@ def test_save_po_creates_with_sequence_generated_number(erp_client):
     resp = _rpc(
         erp_client,
         "savePO",
-        [{"vendor": vendor, "contact": "Ludhiana", "items": [{"name": item, "size": "Std", "qty": 10, "unit": "Pcs", "price": 5}]}],
+        [
+            {
+                "vendor": vendor,
+                "contact": "Ludhiana",
+                "items": [
+                    {"name": item, "size": "Std", "qty": 10, "unit": "Pcs", "price": 5}
+                ],
+            }
+        ],
         mutation=True,
     )
     body = resp.get_json()
@@ -60,7 +72,13 @@ def test_save_po_edit_replaces_lines_and_preserves_date_when_omitted(erp_client)
     create = _rpc(
         erp_client,
         "savePO",
-        [{"vendor": vendor, "poDate": "01/01/2026", "items": [{"name": item1, "qty": 5, "price": 2}]}],
+        [
+            {
+                "vendor": vendor,
+                "poDate": "01/01/2026",
+                "items": [{"name": item1, "qty": 5, "price": 2}],
+            }
+        ],
         mutation=True,
     )
     po_number = create.get_json()["data"]["poNumber"]
@@ -68,7 +86,13 @@ def test_save_po_edit_replaces_lines_and_preserves_date_when_omitted(erp_client)
     edit = _rpc(
         erp_client,
         "savePO",
-        [{"existingPoNumber": po_number, "vendor": vendor, "items": [{"name": item2, "qty": 3, "price": 4}]}],
+        [
+            {
+                "existingPoNumber": po_number,
+                "vendor": vendor,
+                "items": [{"name": item2, "qty": 3, "price": 4}],
+            }
+        ],
         mutation=True,
     )
     body = edit.get_json()
@@ -100,7 +124,13 @@ def test_save_po_returns_fresh_row_for_in_place_patch(erp_client):
     edit = _rpc(
         erp_client,
         "savePO",
-        [{"existingPoNumber": po_number, "vendor": vendor, "items": [{"name": item2, "qty": 3, "price": 4}]}],
+        [
+            {
+                "existingPoNumber": po_number,
+                "vendor": vendor,
+                "items": [{"name": item2, "qty": 3, "price": 4}],
+            }
+        ],
         mutation=True,
     )
     edit_body = edit.get_json()
@@ -114,15 +144,32 @@ def test_save_po_returns_fresh_row_for_in_place_patch(erp_client):
 
 def test_save_po_renumber_collision_is_rejected(erp_client):
     vendor = _unique_name("Vendor")
-    first = _rpc(erp_client, "savePO", [{"vendor": vendor, "items": [{"name": "A", "qty": 1, "price": 1}]}], mutation=True)
-    second = _rpc(erp_client, "savePO", [{"vendor": vendor, "items": [{"name": "B", "qty": 1, "price": 1}]}], mutation=True)
+    first = _rpc(
+        erp_client,
+        "savePO",
+        [{"vendor": vendor, "items": [{"name": "A", "qty": 1, "price": 1}]}],
+        mutation=True,
+    )
+    second = _rpc(
+        erp_client,
+        "savePO",
+        [{"vendor": vendor, "items": [{"name": "B", "qty": 1, "price": 1}]}],
+        mutation=True,
+    )
     first_num = first.get_json()["data"]["poNumber"]
     second_num = second.get_json()["data"]["poNumber"]
 
     collide = _rpc(
         erp_client,
         "savePO",
-        [{"existingPoNumber": second_num, "poNumber": first_num, "vendor": vendor, "items": [{"name": "B", "qty": 1, "price": 1}]}],
+        [
+            {
+                "existingPoNumber": second_num,
+                "poNumber": first_num,
+                "vendor": vendor,
+                "items": [{"name": "B", "qty": 1, "price": 1}],
+            }
+        ],
         mutation=True,
     )
     body = collide.get_json()
@@ -137,7 +184,15 @@ def test_save_po_auto_extracts_vendor_and_item(erp_client):
     _rpc(
         erp_client,
         "savePO",
-        [{"vendor": vendor, "contact": "9999999999", "items": [{"name": item, "size": "L", "qty": 2, "unit": "Pcs", "price": 25}]}],
+        [
+            {
+                "vendor": vendor,
+                "contact": "9999999999",
+                "items": [
+                    {"name": item, "size": "L", "qty": 2, "unit": "Pcs", "price": 25}
+                ],
+            }
+        ],
         mutation=True,
     )
 
@@ -183,7 +238,12 @@ def test_save_po_skips_extraction_for_line_below_min_vendor_rate(erp_client):
 
 def test_delete_po_success_and_not_found(erp_client):
     vendor = _unique_name("DeleteVendor")
-    create = _rpc(erp_client, "savePO", [{"vendor": vendor, "items": [{"name": "X", "qty": 1, "price": 1}]}], mutation=True)
+    create = _rpc(
+        erp_client,
+        "savePO",
+        [{"vendor": vendor, "items": [{"name": "X", "qty": 1, "price": 1}]}],
+        mutation=True,
+    )
     po_number = create.get_json()["data"]["poNumber"]
 
     deleted = _rpc(erp_client, "deletePO", [po_number], mutation=True)
@@ -198,8 +258,18 @@ def test_delete_po_success_and_not_found(erp_client):
 
 def test_delete_pos_bulk(erp_client):
     vendor = _unique_name("BulkVendor")
-    a = _rpc(erp_client, "savePO", [{"vendor": vendor, "items": [{"name": "A", "qty": 1, "price": 1}]}], mutation=True)
-    b = _rpc(erp_client, "savePO", [{"vendor": vendor, "items": [{"name": "B", "qty": 1, "price": 1}]}], mutation=True)
+    a = _rpc(
+        erp_client,
+        "savePO",
+        [{"vendor": vendor, "items": [{"name": "A", "qty": 1, "price": 1}]}],
+        mutation=True,
+    )
+    b = _rpc(
+        erp_client,
+        "savePO",
+        [{"vendor": vendor, "items": [{"name": "B", "qty": 1, "price": 1}]}],
+        mutation=True,
+    )
     a_num = a.get_json()["data"]["poNumber"]
     b_num = b.get_json()["data"]["poNumber"]
 
@@ -217,10 +287,20 @@ def test_vendor_rename_cascades_into_po_headers(erp_client):
     new_vendor = _unique_name("NewPoVendor")
     _rpc(erp_client, "saveVendor", [{"vendorName": old_vendor}], mutation=True)
 
-    create = _rpc(erp_client, "savePO", [{"vendor": old_vendor, "items": [{"name": "X", "qty": 1, "price": 1}]}], mutation=True)
+    create = _rpc(
+        erp_client,
+        "savePO",
+        [{"vendor": old_vendor, "items": [{"name": "X", "qty": 1, "price": 1}]}],
+        mutation=True,
+    )
     po_number = create.get_json()["data"]["poNumber"]
 
-    rename = _rpc(erp_client, "saveVendor", [{"vendorName": new_vendor, "originalVendorName": old_vendor}], mutation=True)
+    rename = _rpc(
+        erp_client,
+        "saveVendor",
+        [{"vendorName": new_vendor, "originalVendorName": old_vendor}],
+        mutation=True,
+    )
     assert rename.get_json()["success"] is True
 
     listed = _rpc(erp_client, "getPOData").get_json()["data"]
@@ -231,12 +311,19 @@ def test_vendor_rename_cascades_into_po_headers(erp_client):
 def test_item_rename_cascades_into_po_lines(erp_client):
     old_item = _unique_name("OldPoItem")
     new_item = _unique_name("NewPoItem")
-    _rpc(erp_client, "saveItem", [{"itemName": old_item, "itemSize": "M"}], mutation=True)
+    _rpc(
+        erp_client, "saveItem", [{"itemName": old_item, "itemSize": "M"}], mutation=True
+    )
 
     create = _rpc(
         erp_client,
         "savePO",
-        [{"vendor": _unique_name("V"), "items": [{"name": old_item, "size": "M", "qty": 1, "price": 1}]}],
+        [
+            {
+                "vendor": _unique_name("V"),
+                "items": [{"name": old_item, "size": "M", "qty": 1, "price": 1}],
+            }
+        ],
         mutation=True,
     )
     po_number = create.get_json()["data"]["poNumber"]
@@ -244,7 +331,14 @@ def test_item_rename_cascades_into_po_lines(erp_client):
     rename = _rpc(
         erp_client,
         "saveItem",
-        [{"itemName": new_item, "itemSize": "M", "originalName": old_item, "originalSize": "M"}],
+        [
+            {
+                "itemName": new_item,
+                "itemSize": "M",
+                "originalName": old_item,
+                "originalSize": "M",
+            }
+        ],
         mutation=True,
     )
     assert rename.get_json()["success"] is True
@@ -265,7 +359,14 @@ def test_bill_against_po_line_flips_status(erp_client):
     create = _rpc(
         erp_client,
         "savePO",
-        [{"vendor": vendor, "items": [{"name": item, "size": "", "qty": 10, "unit": "Pcs", "price": 1}]}],
+        [
+            {
+                "vendor": vendor,
+                "items": [
+                    {"name": item, "size": "", "qty": 10, "unit": "Pcs", "price": 1}
+                ],
+            }
+        ],
         mutation=True,
     )
     po_number = create.get_json()["data"]["poNumber"]
@@ -282,7 +383,9 @@ def test_bill_against_po_line_flips_status(erp_client):
                 "vendor": vendor,
                 "billNumber": _unique_name("PartialBill"),
                 "billDate": "01/01/2026",
-                "items": [{"name": item, "size": "", "qty": 4, "price": 1, "po": po_number}],
+                "items": [
+                    {"name": item, "size": "", "qty": 4, "price": 1, "po": po_number}
+                ],
             }
         ],
         mutation=True,
@@ -302,7 +405,9 @@ def test_bill_against_po_line_flips_status(erp_client):
                 "vendor": vendor,
                 "billNumber": _unique_name("FinalBill"),
                 "billDate": "02/01/2026",
-                "items": [{"name": item, "size": "", "qty": 6, "price": 1, "po": po_number}],
+                "items": [
+                    {"name": item, "size": "", "qty": 6, "price": 1, "po": po_number}
+                ],
             }
         ],
         mutation=True,
@@ -326,7 +431,14 @@ def test_pending_qty_goes_negative_when_billed_beyond_ordered(erp_client):
     create = _rpc(
         erp_client,
         "savePO",
-        [{"vendor": vendor, "items": [{"name": item, "size": "", "qty": 5, "unit": "Pcs", "price": 1}]}],
+        [
+            {
+                "vendor": vendor,
+                "items": [
+                    {"name": item, "size": "", "qty": 5, "unit": "Pcs", "price": 1}
+                ],
+            }
+        ],
         mutation=True,
     )
     po_number = create.get_json()["data"]["poNumber"]
@@ -339,7 +451,9 @@ def test_pending_qty_goes_negative_when_billed_beyond_ordered(erp_client):
                 "vendor": vendor,
                 "billNumber": _unique_name("OverBill"),
                 "billDate": "01/01/2026",
-                "items": [{"name": item, "size": "", "qty": 8, "price": 1, "po": po_number}],
+                "items": [
+                    {"name": item, "size": "", "qty": 8, "price": 1, "po": po_number}
+                ],
             }
         ],
         mutation=True,
@@ -357,16 +471,26 @@ def test_pending_qty_goes_negative_when_billed_beyond_ordered(erp_client):
 
 
 def test_suggest_po_allocations_no_vendor_or_items_returns_empty(erp_client):
-    resp = _rpc(erp_client, "suggestPoAllocations", ["", [{"name": "X", "qty": 1}], "01/01/2026"])
+    resp = _rpc(
+        erp_client,
+        "suggestPoAllocations",
+        ["", [{"name": "X", "qty": 1}], "01/01/2026"],
+    )
     assert resp.get_json()["data"] == []
 
-    resp2 = _rpc(erp_client, "suggestPoAllocations", [_unique_name("V"), [], "01/01/2026"])
+    resp2 = _rpc(
+        erp_client, "suggestPoAllocations", [_unique_name("V"), [], "01/01/2026"]
+    )
     assert resp2.get_json()["data"] == []
 
 
 def test_suggest_po_allocations_no_open_pos_for_vendor_returns_empty(erp_client):
     vendor = _unique_name("NoPoVendor")
-    resp = _rpc(erp_client, "suggestPoAllocations", [vendor, [{"name": "X", "qty": 1, "price": 1}], None])
+    resp = _rpc(
+        erp_client,
+        "suggestPoAllocations",
+        [vendor, [{"name": "X", "qty": 1, "price": 1}], None],
+    )
     body = resp.get_json()
     assert body["success"] is True
     assert body["data"] == []
@@ -378,7 +502,13 @@ def test_suggest_po_allocations_excludes_po_dated_after_bill_date(erp_client):
     create = _rpc(
         erp_client,
         "savePO",
-        [{"vendor": vendor, "poDate": "01/06/2026", "items": [{"name": item, "qty": 10, "price": 5}]}],
+        [
+            {
+                "vendor": vendor,
+                "poDate": "01/06/2026",
+                "items": [{"name": item, "qty": 10, "price": 5}],
+            }
+        ],
         mutation=True,
     )
     assert create.get_json()["success"] is True
@@ -403,7 +533,13 @@ def test_suggest_po_allocations_exact_match_single_po(erp_client):
     create = _rpc(
         erp_client,
         "savePO",
-        [{"vendor": vendor, "poDate": "01/01/2026", "items": [{"name": item, "qty": 10, "unit": "Pcs", "price": 5}]}],
+        [
+            {
+                "vendor": vendor,
+                "poDate": "01/01/2026",
+                "items": [{"name": item, "qty": 10, "unit": "Pcs", "price": 5}],
+            }
+        ],
         mutation=True,
     )
     po_number = create.get_json()["data"]["poNumber"]
@@ -411,7 +547,11 @@ def test_suggest_po_allocations_exact_match_single_po(erp_client):
     resp = _rpc(
         erp_client,
         "suggestPoAllocations",
-        [vendor, [{"rowIndex": 0, "name": item, "qty": 10, "unit": "Pcs", "price": 5}], "02/01/2026"],
+        [
+            vendor,
+            [{"rowIndex": 0, "name": item, "qty": 10, "unit": "Pcs", "price": 5}],
+            "02/01/2026",
+        ],
     )
     result = resp.get_json()["data"][0]
     assert result["allocations"] == [{"poNumber": po_number, "qty": 10}]
@@ -425,13 +565,25 @@ def test_suggest_po_allocations_splits_across_two_pos_oldest_first(erp_client):
     first = _rpc(
         erp_client,
         "savePO",
-        [{"vendor": vendor, "poDate": "01/01/2026", "items": [{"name": item, "qty": 4, "price": 5}]}],
+        [
+            {
+                "vendor": vendor,
+                "poDate": "01/01/2026",
+                "items": [{"name": item, "qty": 4, "price": 5}],
+            }
+        ],
         mutation=True,
     )
     second = _rpc(
         erp_client,
         "savePO",
-        [{"vendor": vendor, "poDate": "05/01/2026", "items": [{"name": item, "qty": 10, "price": 5}]}],
+        [
+            {
+                "vendor": vendor,
+                "poDate": "05/01/2026",
+                "items": [{"name": item, "qty": 10, "price": 5}],
+            }
+        ],
         mutation=True,
     )
     first_num = first.get_json()["data"]["poNumber"]
@@ -456,7 +608,13 @@ def test_suggest_po_allocations_excludes_fully_billed_po_lines(erp_client):
     create = _rpc(
         erp_client,
         "savePO",
-        [{"vendor": vendor, "poDate": "01/01/2026", "items": [{"name": item, "qty": 5, "price": 5}]}],
+        [
+            {
+                "vendor": vendor,
+                "poDate": "01/01/2026",
+                "items": [{"name": item, "qty": 5, "price": 5}],
+            }
+        ],
         mutation=True,
     )
     po_number = create.get_json()["data"]["poNumber"]
@@ -492,13 +650,25 @@ def test_suggest_po_allocations_narration_disambiguates(erp_client):
     po_a = _rpc(
         erp_client,
         "savePO",
-        [{"vendor": vendor, "poDate": "01/01/2026", "items": [{"name": item, "narration": "Red", "qty": 5, "price": 5}]}],
+        [
+            {
+                "vendor": vendor,
+                "poDate": "01/01/2026",
+                "items": [{"name": item, "narration": "Red", "qty": 5, "price": 5}],
+            }
+        ],
         mutation=True,
     )
     po_b = _rpc(
         erp_client,
         "savePO",
-        [{"vendor": vendor, "poDate": "01/01/2026", "items": [{"name": item, "narration": "Blue", "qty": 5, "price": 5}]}],
+        [
+            {
+                "vendor": vendor,
+                "poDate": "01/01/2026",
+                "items": [{"name": item, "narration": "Blue", "qty": 5, "price": 5}],
+            }
+        ],
         mutation=True,
     )
     po_b_num = po_b.get_json()["data"]["poNumber"]
@@ -507,19 +677,31 @@ def test_suggest_po_allocations_narration_disambiguates(erp_client):
     resp = _rpc(
         erp_client,
         "suggestPoAllocations",
-        [vendor, [{"rowIndex": 0, "name": item, "narration": "Blue", "qty": 5, "price": 5}], "02/01/2026"],
+        [
+            vendor,
+            [{"rowIndex": 0, "name": item, "narration": "Blue", "qty": 5, "price": 5}],
+            "02/01/2026",
+        ],
     )
     result = resp.get_json()["data"][0]
     assert result["allocations"] == [{"poNumber": po_b_num, "qty": 5}]
 
 
-def test_suggest_po_allocations_price_mismatch_flags_rate_conflict_but_still_allocates(erp_client):
+def test_suggest_po_allocations_price_mismatch_flags_rate_conflict_but_still_allocates(
+    erp_client,
+):
     vendor = _unique_name("RateConflictVendor")
     item = _unique_name("RateConflictItem")
     create = _rpc(
         erp_client,
         "savePO",
-        [{"vendor": vendor, "poDate": "01/01/2026", "items": [{"name": item, "qty": 5, "price": 20}]}],
+        [
+            {
+                "vendor": vendor,
+                "poDate": "01/01/2026",
+                "items": [{"name": item, "qty": 5, "price": 20}],
+            }
+        ],
         mutation=True,
     )
     po_number = create.get_json()["data"]["poNumber"]
@@ -532,7 +714,12 @@ def test_suggest_po_allocations_price_mismatch_flags_rate_conflict_but_still_all
     result = resp.get_json()["data"][0]
     assert result["allocations"][0]["poNumber"] == po_number
     assert result["allocations"][0]["qty"] == 5
-    assert result["allocations"][0]["rateConflict"] == {"poRate": 20, "poUnit": "Pcs", "billRate": 25, "billUnit": "Pcs"}
+    assert result["allocations"][0]["rateConflict"] == {
+        "poRate": 20,
+        "poUnit": "Pcs",
+        "billRate": 25,
+        "billUnit": "Pcs",
+    }
 
 
 def test_suggest_po_allocations_shared_candidate_not_double_allocated(erp_client):
@@ -541,7 +728,13 @@ def test_suggest_po_allocations_shared_candidate_not_double_allocated(erp_client
     create = _rpc(
         erp_client,
         "savePO",
-        [{"vendor": vendor, "poDate": "01/01/2026", "items": [{"name": item, "qty": 5, "price": 5}]}],
+        [
+            {
+                "vendor": vendor,
+                "poDate": "01/01/2026",
+                "items": [{"name": item, "qty": 5, "price": 5}],
+            }
+        ],
         mutation=True,
     )
     po_number = create.get_json()["data"]["poNumber"]
@@ -582,7 +775,15 @@ def test_po_line_narration_seeds_narration_on_new_item(erp_client):
     _rpc(
         erp_client,
         "savePO",
-        [{"vendor": vendor, "poDate": "01/01/2026", "items": [{"name": item, "narration": "Initial desc", "qty": 5, "price": 5}]}],
+        [
+            {
+                "vendor": vendor,
+                "poDate": "01/01/2026",
+                "items": [
+                    {"name": item, "narration": "Initial desc", "qty": 5, "price": 5}
+                ],
+            }
+        ],
         mutation=True,
     )
 
@@ -592,7 +793,9 @@ def test_po_line_narration_seeds_narration_on_new_item(erp_client):
     assert match["remarks"] == ""
 
 
-def test_po_line_narration_overwrites_remarks_not_narration_on_existing_item(erp_client):
+def test_po_line_narration_overwrites_remarks_not_narration_on_existing_item(
+    erp_client,
+):
     """A later PO line's narration for an item that already exists
     overwrites Items Master REMARKS (so Remarks tracks the latest
     purchase-side description) but leaves NARRATION -- the
@@ -605,22 +808,53 @@ def test_po_line_narration_overwrites_remarks_not_narration_on_existing_item(erp
     _rpc(
         erp_client,
         "savePO",
-        [{"vendor": vendor, "poDate": "01/01/2026", "items": [{"name": item, "narration": "First desc", "qty": 5, "price": 5}]}],
+        [
+            {
+                "vendor": vendor,
+                "poDate": "01/01/2026",
+                "items": [
+                    {"name": item, "narration": "First desc", "qty": 5, "price": 5}
+                ],
+            }
+        ],
         mutation=True,
     )
-    original = next(i for i in _rpc(erp_client, "getItemsData").get_json()["data"] if i["name"] == item)
+    original = next(
+        i
+        for i in _rpc(erp_client, "getItemsData").get_json()["data"]
+        if i["name"] == item
+    )
     assert original["narration"] == "First desc"
 
     _rpc(
         erp_client,
         "savePO",
-        [{"vendor": vendor, "poDate": "02/01/2026", "items": [{"name": item, "narration": "Updated vendor desc", "qty": 3, "price": 5}]}],
+        [
+            {
+                "vendor": vendor,
+                "poDate": "02/01/2026",
+                "items": [
+                    {
+                        "name": item,
+                        "narration": "Updated vendor desc",
+                        "qty": 3,
+                        "price": 5,
+                    }
+                ],
+            }
+        ],
         mutation=True,
     )
 
-    updated = next(i for i in _rpc(erp_client, "getItemsData").get_json()["data"] if i["name"] == item)
+    updated = next(
+        i
+        for i in _rpc(erp_client, "getItemsData").get_json()["data"]
+        if i["name"] == item
+    )
     assert updated["remarks"] == "Updated vendor desc"
-    assert updated["narration"] == "First desc", "hand-maintained Narration must survive a later purchase description"
+    assert updated["narration"] == "First desc", (
+        "hand-maintained Narration must survive a later purchase description"
+    )
 
 
 def test_bill_line_narration_also_redirects_to_remarks(erp_client):
@@ -633,7 +867,16 @@ def test_bill_line_narration_also_redirects_to_remarks(erp_client):
     _rpc(
         erp_client,
         "saveBill",
-        [{"vendor": vendor, "billNumber": _unique_name("BILL"), "billDate": "01/01/2026", "items": [{"name": item, "narration": "Bill desc", "qty": 2, "price": 5}]}],
+        [
+            {
+                "vendor": vendor,
+                "billNumber": _unique_name("BILL"),
+                "billDate": "01/01/2026",
+                "items": [
+                    {"name": item, "narration": "Bill desc", "qty": 2, "price": 5}
+                ],
+            }
+        ],
         mutation=True,
     )
 
@@ -645,9 +888,22 @@ def test_bill_line_narration_also_redirects_to_remarks(erp_client):
     _rpc(
         erp_client,
         "saveBill",
-        [{"vendor": vendor, "billNumber": _unique_name("BILL"), "billDate": "02/01/2026", "items": [{"name": item, "narration": "Revised desc", "qty": 2, "price": 5}]}],
+        [
+            {
+                "vendor": vendor,
+                "billNumber": _unique_name("BILL"),
+                "billDate": "02/01/2026",
+                "items": [
+                    {"name": item, "narration": "Revised desc", "qty": 2, "price": 5}
+                ],
+            }
+        ],
         mutation=True,
     )
-    updated = next(i for i in _rpc(erp_client, "getItemsData").get_json()["data"] if i["name"] == item)
+    updated = next(
+        i
+        for i in _rpc(erp_client, "getItemsData").get_json()["data"]
+        if i["name"] == item
+    )
     assert updated["remarks"] == "Revised desc"
     assert updated["narration"] == "Bill desc"

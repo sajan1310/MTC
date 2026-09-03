@@ -53,7 +53,11 @@ def client_as(erp_app):
                     cur.execute(
                         "INSERT INTO custom_roles (role_key, role_name, permissions) "
                         "VALUES (%s, %s, %s)",
-                        (role, f"Gate Role {suffix}", psycopg2.extras.Json(permissions)),
+                        (
+                            role,
+                            f"Gate Role {suffix}",
+                            psycopg2.extras.Json(permissions),
+                        ),
                     )
                     roles_created.append(role)
                 cur.execute(
@@ -79,10 +83,13 @@ def client_as(erp_app):
     with erp_app.app_context():
         with database.get_conn() as (_conn, cur):
             if users_created:
-                cur.execute("DELETE FROM users WHERE user_id = ANY(%s)", (users_created,))
+                cur.execute(
+                    "DELETE FROM users WHERE user_id = ANY(%s)", (users_created,)
+                )
             if roles_created:
                 cur.execute(
-                    "DELETE FROM custom_roles WHERE role_key = ANY(%s)", (roles_created,)
+                    "DELETE FROM custom_roles WHERE role_key = ANY(%s)",
+                    (roles_created,),
                 )
 
 
@@ -134,7 +141,7 @@ def test_builtin_roles_are_never_gated(client_as, role):
 
 
 def test_a_custom_role_without_the_tab_is_refused_a_read(client_as):
-    client = client_as(None, {"billLedger": "editor"})   # a DIFFERENT tab
+    client = client_as(None, {"billLedger": "editor"})  # a DIFFERENT tab
     assert _forbidden(_read(client))
 
 
@@ -201,7 +208,9 @@ def test_a_module_outside_the_tab_map_stays_reachable(client_as):
     those forms for no security benefit."""
     assert "units_service" not in roles_service.TAB_BY_SERVICE_MODULE
     client = client_as(None, {"stockTab": "viewer"})
-    assert client.post("/api/erp/rpc/getUnitsData", json={"args": []}).status_code == 200
+    assert (
+        client.post("/api/erp/rpc/getUnitsData", json={"args": []}).status_code == 200
+    )
 
 
 # -- Ordering against the other two gates --------------------------------

@@ -52,7 +52,10 @@ from ..registry import rpc_method
 
 
 def _find_vendor_id(cur, name: str):
-    cur.execute("SELECT id FROM erp.vendors WHERE lower(vendor_name) = lower(%s) AND deleted_at IS NULL", (name,))
+    cur.execute(
+        "SELECT id FROM erp.vendors WHERE lower(vendor_name) = lower(%s) AND deleted_at IS NULL",
+        (name,),
+    )
     row = cur.fetchone()
     return row["id"] if row else None
 
@@ -68,7 +71,10 @@ def _find_item_id(cur, name: str, size: str):
 
 @rpc_method("getWastageData")
 def get_wastage_data():
-    with database.get_conn(cursor_factory=psycopg2.extras.RealDictCursor) as (_conn, cur):
+    with database.get_conn(cursor_factory=psycopg2.extras.RealDictCursor) as (
+        _conn,
+        cur,
+    ):
         cur.execute(
             """
             SELECT h.id AS header_id, h.wastage_id, h.wastage_date, h.vendor, h.remarks,
@@ -116,7 +122,11 @@ def get_wastage_data():
         )
         w["totalQty"] += qty
 
-    records = sorted(wastage_map.values(), key=lambda w: (w["dateRaw"] or "", w["_headerId"]), reverse=True)
+    records = sorted(
+        wastage_map.values(),
+        key=lambda w: (w["dateRaw"] or "", w["_headerId"]),
+        reverse=True,
+    )
     for w in records:
         del w["_headerId"]
 
@@ -150,12 +160,16 @@ def save_wastage(conn, cur, form_data):
         )
         existing = cur.fetchone()
         if existing is None:
-            raise ValueError(f"Original wastage record {existing_wastage_id} not found. Edit aborted.")
+            raise ValueError(
+                f"Original wastage record {existing_wastage_id} not found. Edit aborted."
+            )
         header_id = existing["id"]
 
     wastage_date = date_utils.to_safe_date(form_data.get("date"))
     if not wastage_date:
-        raise ValueError("Invalid wastage date. Accepted formats: DD/MM/YYYY or YYYY-MM-DD.")
+        raise ValueError(
+            "Invalid wastage date. Accepted formats: DD/MM/YYYY or YYYY-MM-DD."
+        )
 
     vendor = str(form_data.get("vendor") or "").strip()
     remarks = str(form_data.get("remarks") or "").strip()
@@ -174,11 +188,22 @@ def save_wastage(conn, cur, form_data):
 
         unit_info = items_service.lookup_item_unit_info(item_unit_map, name, size)
         try:
-            base_qty = units_service.convert_qty_to_base_unit(qty, unit, unit_info, units_map)
+            base_qty = units_service.convert_qty_to_base_unit(
+                qty, unit, unit_info, units_map
+            )
         except ValueError:
             base_qty = qty
 
-        normalized.append({"name": name, "size": size, "qty": qty, "unit": unit, "reason": reason, "baseQty": base_qty})
+        normalized.append(
+            {
+                "name": name,
+                "size": size,
+                "qty": qty,
+                "unit": unit,
+                "reason": reason,
+                "baseQty": base_qty,
+            }
+        )
 
     normalized = [n for n in normalized if n["name"]]
     if not normalized:
@@ -218,17 +243,34 @@ def save_wastage(conn, cur, form_data):
             INSERT INTO erp.wastage_lines (header_id, item_name, size, qty, unit, reason, base_qty, item_id)
             VALUES (%s, %s, %s, %s, %s, %s, %s, %s)
             """,
-            (header_id, n["name"], n["size"], n["qty"], n["unit"], n["reason"], n["baseQty"], item_id),
+            (
+                header_id,
+                n["name"],
+                n["size"],
+                n["qty"],
+                n["unit"],
+                n["reason"],
+                n["baseQty"],
+                item_id,
+            ),
         )
 
-    message = f"Wastage {wastage_id} updated successfully." if is_edit else f"Wastage {wastage_id} logged successfully."
+    message = (
+        f"Wastage {wastage_id} updated successfully."
+        if is_edit
+        else f"Wastage {wastage_id} logged successfully."
+    )
     return build_response(True, {"wastageId": wastage_id}, message)
 
 
 @rpc_method("deleteWastageBulk", mutation=True)
 @database.transactional
 def delete_wastage_bulk(conn, cur, wastage_ids):
-    targets = {str(w or "").strip().lower() for w in (wastage_ids or []) if str(w or "").strip()}
+    targets = {
+        str(w or "").strip().lower()
+        for w in (wastage_ids or [])
+        if str(w or "").strip()
+    }
     if not targets:
         return build_response(True, None, "No wastage records selected.")
 
@@ -242,4 +284,8 @@ def delete_wastage_bulk(conn, cur, wastage_ids):
     )
     rows_deleted = cur.rowcount
 
-    return build_response(True, {"deletedIds": list(targets)}, f"Deleted {rows_deleted} wastage record(s).")
+    return build_response(
+        True,
+        {"deletedIds": list(targets)},
+        f"Deleted {rows_deleted} wastage record(s).",
+    )

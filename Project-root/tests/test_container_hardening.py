@@ -140,7 +140,9 @@ def test_backups_are_on_a_volume():
     mounts = compose["services"]["app"].get("volumes") or []
     assert any(str(m).endswith(":/app/backups") for m in mounts), mounts
 
-    named = str(next(m for m in mounts if str(m).endswith(":/app/backups"))).split(":")[0]
+    named = str(next(m for m in mounts if str(m).endswith(":/app/backups"))).split(":")[
+        0
+    ]
     assert named in (compose.get("volumes") or {}), (
         f"{named} is mounted but not declared under top-level volumes"
     )

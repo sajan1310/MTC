@@ -27,7 +27,9 @@ STRONG_PASSWORD = "Str0ng!Passw0rd"
 
 def _rpc(client, method, args=None, mutation=False):
     headers = {"X-Mutation-Id": str(uuid.uuid4())} if mutation else {}
-    return client.post(f"/api/erp/rpc/{method}", json={"args": args or []}, headers=headers)
+    return client.post(
+        f"/api/erp/rpc/{method}", json={"args": args or []}, headers=headers
+    )
 
 
 def _has_password_meta(client):
@@ -69,7 +71,9 @@ def google_client(erp_app, google_user):
     return client
 
 
-def test_prompt_shows_then_stops_showing_once_a_password_is_set(erp_app, google_user, google_client):
+def test_prompt_shows_then_stops_showing_once_a_password_is_set(
+    erp_app, google_user, google_client
+):
     """The whole point of the banner: it must appear for a Google-only
     account, and must be gone on the next load once that account has a
     password -- no dismissal, no stale meta."""
@@ -77,7 +81,12 @@ def test_prompt_shows_then_stops_showing_once_a_password_is_set(erp_app, google_
 
     # Empty current password: this account never had one, and
     # change_my_password skips the check when password_hash IS NULL.
-    resp = _rpc(google_client, "changeMyPassword", ["", STRONG_PASSWORD, STRONG_PASSWORD], mutation=True)
+    resp = _rpc(
+        google_client,
+        "changeMyPassword",
+        ["", STRONG_PASSWORD, STRONG_PASSWORD],
+        mutation=True,
+    )
     assert resp.status_code == 200
     assert resp.get_json()["success"] is True
 
@@ -85,7 +94,9 @@ def test_prompt_shows_then_stops_showing_once_a_password_is_set(erp_app, google_
 
     with erp_app.app_context():
         with database.get_conn() as (_conn, cur):
-            cur.execute("SELECT password_hash FROM users WHERE user_id = %s", (google_user,))
+            cur.execute(
+                "SELECT password_hash FROM users WHERE user_id = %s", (google_user,)
+            )
             assert cur.fetchone()[0] is not None
 
 
@@ -119,10 +130,20 @@ def test_the_user_id_meta_is_emitted_for_a_non_admin(erp_client):
 def test_an_existing_password_still_requires_the_current_one(google_client):
     """The NULL-hash exemption must close behind the first password: once
     set, a wrong current password is rejected like anyone else's."""
-    ok = _rpc(google_client, "changeMyPassword", ["", STRONG_PASSWORD, STRONG_PASSWORD], mutation=True)
+    ok = _rpc(
+        google_client,
+        "changeMyPassword",
+        ["", STRONG_PASSWORD, STRONG_PASSWORD],
+        mutation=True,
+    )
     assert ok.get_json()["success"] is True
 
-    resp = _rpc(google_client, "changeMyPassword", ["wrong", "An0ther!Passw0rd", "An0ther!Passw0rd"], mutation=True)
+    resp = _rpc(
+        google_client,
+        "changeMyPassword",
+        ["wrong", "An0ther!Passw0rd", "An0ther!Passw0rd"],
+        mutation=True,
+    )
     body = resp.get_json()
     assert body["success"] is False
     assert "current password" in body["message"].lower()

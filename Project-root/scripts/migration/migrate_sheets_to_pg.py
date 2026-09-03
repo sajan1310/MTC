@@ -89,7 +89,9 @@ def parse_row(raw_row: list[str], col_defs: list[dict]) -> tuple[dict, list[str]
             and col_def.get("required")
             and values.get(col_def["sheet"]) in (None, "")
         ):
-            errors.append(f"col {col_def['col']} ({col_def['sheet']}) is required but blank")
+            errors.append(
+                f"col {col_def['col']} ({col_def['sheet']}) is required but blank"
+            )
     return values, errors
 
 
@@ -118,7 +120,9 @@ class SheetReport:
         self.skipped_blank = 0
         self.errors: list[str] = []
         self.duplicate_keys: list[str] = []
-        self.distinct_groups: int | None = None  # split entries only: distinct header keys
+        self.distinct_groups: int | None = (
+            None  # split entries only: distinct header keys
+        )
         self.sample_row: dict | None = None
         self.status = "ok"
 
@@ -142,16 +146,37 @@ def all_column_defs(entry: dict) -> list[dict]:
     entry, used to parse a raw row into one flat dict keyed by sheet field."""
     defs = list(entry.get("columns", []))
     if "split" in entry:
-        defs = list(entry["split"]["header"]["columns"]) + list(entry["split"]["lines"]["columns"])
+        defs = list(entry["split"]["header"]["columns"]) + list(
+            entry["split"]["lines"]["columns"]
+        )
     if "external_parent" in entry:
-        defs = defs + [{"col": entry["external_parent"]["col"], "sheet": entry["external_parent"]["sheet_field"], "type": "text", "required": True}]
+        defs = defs + [
+            {
+                "col": entry["external_parent"]["col"],
+                "sheet": entry["external_parent"]["sheet_field"],
+                "type": "text",
+                "required": True,
+            }
+        ]
     if "key_columns" in entry:
-        defs = defs + [{"col": kc["col"], "sheet": kc["sheet"], "type": "text", "required": True} for kc in entry["key_columns"]]
+        defs = defs + [
+            {"col": kc["col"], "sheet": kc["sheet"], "type": "text", "required": True}
+            for kc in entry["key_columns"]
+        ]
     if "child" in entry and "pairs" in entry["child"]:
         for i, pair in enumerate(entry["child"]["pairs"]):
             defs = defs + [
-                {"col": pair["vendor_col"], "sheet": _pair_field(i, "vendor"), "type": "text"},
-                {"col": pair["rate_col"], "sheet": _pair_field(i, "rate"), "type": "numeric", "default": 0},
+                {
+                    "col": pair["vendor_col"],
+                    "sheet": _pair_field(i, "vendor"),
+                    "type": "text",
+                },
+                {
+                    "col": pair["rate_col"],
+                    "sheet": _pair_field(i, "rate"),
+                    "type": "numeric",
+                    "default": 0,
+                },
             ]
     return defs
 
@@ -183,7 +208,9 @@ def dry_run_entry(client, spreadsheet_id: str, entry: dict) -> SheetReport:
     group_by = entry["split"]["group_by"] if "split" in entry else None
 
     try:
-        for row_number, raw_row in fetch_entry_rows(client, spreadsheet_id, entry, report):
+        for row_number, raw_row in fetch_entry_rows(
+            client, spreadsheet_id, entry, report
+        ):
             values, errors = parse_row(raw_row, col_defs)
             if errors:
                 report.errors.extend(f"row {row_number}: {e}" for e in errors)
@@ -192,7 +219,9 @@ def dry_run_entry(client, spreadsheet_id: str, entry: dict) -> SheetReport:
             if report.sample_row is None:
                 report.sample_row = values
             if unique_on:
-                key = tuple(values.get(_sheet_field_for_db(entry, c)) for c in unique_on)
+                key = tuple(
+                    values.get(_sheet_field_for_db(entry, c)) for c in unique_on
+                )
                 if key in seen_keys:
                     report.duplicate_keys.append(f"row {row_number}: {key}")
                 seen_keys.add(key)
@@ -221,9 +250,13 @@ def print_dry_run_report(reports: list[SheetReport]):
     total_errors = 0
     for r in reports:
         print(f"\n[{r.key}] status={r.status}")
-        print(f"  raw data rows: {r.raw_row_count}  blank skipped: {r.skipped_blank}  parsed ok: {r.parsed_row_count}")
+        print(
+            f"  raw data rows: {r.raw_row_count}  blank skipped: {r.skipped_blank}  parsed ok: {r.parsed_row_count}"
+        )
         if r.distinct_groups is not None:
-            print(f"  -> {r.distinct_groups} distinct header(s) (e.g. PO/bill/return numbers) across {r.parsed_row_count} line rows")
+            print(
+                f"  -> {r.distinct_groups} distinct header(s) (e.g. PO/bill/return numbers) across {r.parsed_row_count} line rows"
+            )
         if r.duplicate_keys:
             print(f"  DUPLICATE unique_on keys ({len(r.duplicate_keys)}):")
             for d in r.duplicate_keys[:10]:
@@ -291,12 +324,19 @@ def insert_row(cur, table: str, col_values: dict) -> int:
     )
     # transforms.coerce(..., "json") returns a plain dict/list -- psycopg2
     # can't adapt those on its own for a JSONB column without this wrapper.
-    params = [Json(col_values[c]) if isinstance(col_values[c], (dict, list)) else col_values[c] for c in cols]
+    params = [
+        Json(col_values[c])
+        if isinstance(col_values[c], (dict, list))
+        else col_values[c]
+        for c in cols
+    ]
     cur.execute(query, params)
     return cur.fetchone()[0]
 
 
-def load_flat_entry(cur, client, spreadsheet_id: str, entry: dict, counts: dict, report: SheetReport):
+def load_flat_entry(
+    cur, client, spreadsheet_id: str, entry: dict, counts: dict, report: SheetReport
+):
     col_defs = list(entry["columns"])
     child_cache = None
     if "external_parent" in entry:
@@ -314,7 +354,9 @@ def load_flat_entry(cur, client, spreadsheet_id: str, entry: dict, counts: dict,
         if "external_parent" in entry:
             ep = entry["external_parent"]
             raw_key = values.get(ep["sheet_field"])
-            norm_key = (raw_key or "").strip().lower() if isinstance(raw_key, str) else raw_key
+            norm_key = (
+                (raw_key or "").strip().lower() if isinstance(raw_key, str) else raw_key
+            )
             parent_id = child_cache.get((norm_key,))
             if parent_id is None:
                 report.errors.append(
@@ -330,7 +372,9 @@ def load_flat_entry(cur, client, spreadsheet_id: str, entry: dict, counts: dict,
             load_child_pair_rows(cur, entry["child"], values, new_id, counts)
 
 
-def load_child_pair_rows(cur, child_cfg: dict, values: dict, parent_id: int, counts: dict):
+def load_child_pair_rows(
+    cur, child_cfg: dict, values: dict, parent_id: int, counts: dict
+):
     """Repeating (vendor name, rate) column pairs -> one erp.item_vendors row
     per populated pair (see ITEMS.child.pairs in mapping.yaml). A pair with
     a blank vendor name is silently skipped -- that's just an item with
@@ -340,11 +384,17 @@ def load_child_pair_rows(cur, child_cfg: dict, values: dict, parent_id: int, cou
         if not vendor:
             continue
         rate = values.get(_pair_field(i, "rate")) or 0
-        insert_row(cur, child_cfg["table"], {child_cfg["parent_fk"]: parent_id, "vendor": vendor, "rate": rate})
+        insert_row(
+            cur,
+            child_cfg["table"],
+            {child_cfg["parent_fk"]: parent_id, "vendor": vendor, "rate": rate},
+        )
         counts[child_cfg["table"]] += 1
 
 
-def load_split_entry(cur, client, spreadsheet_id: str, entry: dict, counts: dict, report: SheetReport):
+def load_split_entry(
+    cur, client, spreadsheet_id: str, entry: dict, counts: dict, report: SheetReport
+):
     header_cfg, lines_cfg = entry["split"]["header"], entry["split"]["lines"]
     group_by = entry["split"]["group_by"]
     all_defs = all_column_defs(entry)
@@ -384,7 +434,9 @@ def load_lookup_map(cur, table: str, key_columns) -> dict:
     result = {}
     for row in cur.fetchall():
         row_id, *vals = row
-        norm = tuple((v or "").strip().lower() if isinstance(v, str) else v for v in vals)
+        norm = tuple(
+            (v or "").strip().lower() if isinstance(v, str) else v for v in vals
+        )
         result[norm] = row_id
     return result
 
@@ -398,14 +450,30 @@ def resolve_foreign_keys(cur, entry: dict):
     for fk in fk_list:
         scope = fk.get("scope")
         if "split" in entry:
-            target_table = entry["split"]["header"]["table"] if scope == "header" else entry["split"]["lines"]["table"]
-            col_defs = entry["split"]["header"]["columns"] if scope == "header" else entry["split"]["lines"]["columns"]
+            target_table = (
+                entry["split"]["header"]["table"]
+                if scope == "header"
+                else entry["split"]["lines"]["table"]
+            )
+            col_defs = (
+                entry["split"]["header"]["columns"]
+                if scope == "header"
+                else entry["split"]["lines"]["columns"]
+            )
         else:
             target_table = entry["table"]
             col_defs = entry["columns"]
 
-        source_fields = fk["source_field"] if isinstance(fk["source_field"], list) else [fk["source_field"]]
-        lookup_keys = fk["lookup_key"] if isinstance(fk["lookup_key"], list) else [fk["lookup_key"]]
+        source_fields = (
+            fk["source_field"]
+            if isinstance(fk["source_field"], list)
+            else [fk["source_field"]]
+        )
+        lookup_keys = (
+            fk["lookup_key"]
+            if isinstance(fk["lookup_key"], list)
+            else [fk["lookup_key"]]
+        )
         local_cols = []
         for sf in source_fields:
             match = next((c["db"] for c in col_defs if c["sheet"] == sf), None)
@@ -421,7 +489,9 @@ def resolve_foreign_keys(cur, entry: dict):
         l_ident = sql.SQL(".").join([sql.Identifier(l_schema), sql.Identifier(l_name)])
 
         join_clauses = [
-            sql.SQL("lower(t.{lc}) = lower(l.{lk})").format(lc=sql.Identifier(lc), lk=sql.Identifier(lk))
+            sql.SQL("lower(t.{lc}) = lower(l.{lk})").format(
+                lc=sql.Identifier(lc), lk=sql.Identifier(lk)
+            )
             for lc, lk in zip(local_cols, lookup_keys)
         ]
         query = sql.SQL(
@@ -441,13 +511,29 @@ def resolve_foreign_keys(cur, entry: dict):
 
 
 def main():
-    parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
+    parser = argparse.ArgumentParser(
+        description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter
+    )
     parser.add_argument("--mapping", default=str(SCRIPT_DIR / "mapping.yaml"))
-    parser.add_argument("--only", help="Comma-separated sheet keys to restrict to (e.g. ITEMS,VENDORS)")
-    parser.add_argument("--skip-needs-review", action="store_true", help="Skip entries marked status: needs_review")
+    parser.add_argument(
+        "--only", help="Comma-separated sheet keys to restrict to (e.g. ITEMS,VENDORS)"
+    )
+    parser.add_argument(
+        "--skip-needs-review",
+        action="store_true",
+        help="Skip entries marked status: needs_review",
+    )
     parser.add_argument("--database-url", default=os.environ.get("DATABASE_URL"))
-    parser.add_argument("--execute", action="store_true", help="Actually write to Postgres (default is dry-run)")
-    parser.add_argument("--yes-really-truncate", action="store_true", help="Required alongside --execute to confirm the TRUNCATE")
+    parser.add_argument(
+        "--execute",
+        action="store_true",
+        help="Actually write to Postgres (default is dry-run)",
+    )
+    parser.add_argument(
+        "--yes-really-truncate",
+        action="store_true",
+        help="Required alongside --execute to confirm the TRUNCATE",
+    )
     args = parser.parse_args()
 
     mapping = load_mapping(Path(args.mapping))
@@ -467,7 +553,10 @@ def main():
     for entry in entries:
         sid = spreadsheet_id_for(entry)
         if not sid:
-            print(f"[{entry['key']}] SKIPPED -- no spreadsheet_id configured", file=sys.stderr)
+            print(
+                f"[{entry['key']}] SKIPPED -- no spreadsheet_id configured",
+                file=sys.stderr,
+            )
             continue
         runnable.append((entry, sid))
 
@@ -477,7 +566,10 @@ def main():
         return
 
     if not args.yes_really_truncate:
-        print("Refusing to --execute without --yes-really-truncate as well. Aborting.", file=sys.stderr)
+        print(
+            "Refusing to --execute without --yes-really-truncate as well. Aborting.",
+            file=sys.stderr,
+        )
         sys.exit(1)
     if not args.database_url:
         print("No --database-url / DATABASE_URL set. Aborting.", file=sys.stderr)
@@ -493,7 +585,9 @@ def main():
                 dbname, host = cur.fetchone()
                 cur.execute("SELECT count(*) FROM public.users")
                 user_count = cur.fetchone()[0]
-                print(f"Target DB: {dbname} @ {host or 'local'}  (public.users has {user_count} accounts -- confirm this is NOT production)")
+                print(
+                    f"Target DB: {dbname} @ {host or 'local'}  (public.users has {user_count} accounts -- confirm this is NOT production)"
+                )
 
                 print("Truncating erp.* tables (public schema untouched)...")
                 truncate_erp_schema(cur)
@@ -501,7 +595,9 @@ def main():
                 counts: dict[str, int] = defaultdict(int)
                 for entry, sid in runnable:
                     report = SheetReport(entry["key"])
-                    print(f"[{entry['key']}] loading from spreadsheet {sid} sheet '{entry['sheet_name']}'...")
+                    print(
+                        f"[{entry['key']}] loading from spreadsheet {sid} sheet '{entry['sheet_name']}'..."
+                    )
                     if "split" in entry:
                         load_split_entry(cur, client, sid, entry, counts, report)
                     else:
@@ -511,16 +607,23 @@ def main():
                         for e in report.errors[:20]:
                             print(f"    {e}")
 
-                print("Resolving foreign keys (vendor_id / item_id / contractor_id / process_master_id / bom_product_id)...")
+                print(
+                    "Resolving foreign keys (vendor_id / item_id / contractor_id / process_master_id / bom_product_id)..."
+                )
                 for entry, _sid in runnable:
                     resolve_foreign_keys(cur, entry)
 
                 print("\nRows inserted per table:")
                 for table, n in sorted(counts.items()):
                     print(f"  {table}: {n}")
-        print("\nCOMMITTED. Next: advance sequences, trigger a warehouse-pool recompute, run ANALYZE -- see README.md.")
+        print(
+            "\nCOMMITTED. Next: advance sequences, trigger a warehouse-pool recompute, run ANALYZE -- see README.md."
+        )
     except Exception:
-        print("\nERROR -- transaction rolled back, no partial data was committed.", file=sys.stderr)
+        print(
+            "\nERROR -- transaction rolled back, no partial data was committed.",
+            file=sys.stderr,
+        )
         raise
     finally:
         conn.close()

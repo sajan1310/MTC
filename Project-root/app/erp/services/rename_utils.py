@@ -44,7 +44,9 @@ def _deleted_at_clause(cur, table: str) -> str:
     return " AND deleted_at IS NULL" if _has_deleted_at(cur, table) else ""
 
 
-def rename_in_column(cur, table: str, column: str, old: str, new: str, extra_where: str = "") -> None:
+def rename_in_column(
+    cur, table: str, column: str, old: str, new: str, extra_where: str = ""
+) -> None:
     """UPDATE table SET column = new WHERE lower(column) = lower(old).
 
     No-ops silently if `table` doesn't exist yet in this phase. `extra_where`
@@ -93,7 +95,9 @@ def rename_composite_key(
     )
 
 
-def rename_in_either_column(cur, table: str, column_a: str, column_b: str, old: str, new: str) -> None:
+def rename_in_either_column(
+    cur, table: str, column_a: str, column_b: str, old: str, new: str
+) -> None:
     """Like rename_in_column, but for a value that may live in either of two
     columns on the same row (module_tags.js's PROCESS_COLOR_LINKS_COL: a
     paired color lives in COLOR_A or COLOR_B depending on which side of the

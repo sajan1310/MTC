@@ -34,7 +34,10 @@ def custom_role():
     def _make(permissions, name=None):
         role_name = name or f"Test Role {uuid.uuid4().hex[:8]}"
         key = roles_service._slugify(role_name)
-        with database.get_conn(cursor_factory=psycopg2.extras.RealDictCursor) as (_c, cur):
+        with database.get_conn(cursor_factory=psycopg2.extras.RealDictCursor) as (
+            _c,
+            cur,
+        ):
             cur.execute(
                 "INSERT INTO custom_roles (role_key, role_name, permissions) "
                 "VALUES (%s, %s, %s) RETURNING role_key",
@@ -72,7 +75,9 @@ def test_an_unknown_role_gets_no_access_anywhere():
 
 
 def test_a_custom_role_gets_exactly_the_levels_it_was_granted(custom_role):
-    key = custom_role({"stockTab": "editor", "billLedger": "viewer", "poLedger": "commenter"})
+    key = custom_role(
+        {"stockTab": "editor", "billLedger": "viewer", "poLedger": "commenter"}
+    )
     assert roles_service.get_effective_tab_level(key, "stockTab") == "editor"
     assert roles_service.get_effective_tab_level(key, "billLedger") == "viewer"
     assert roles_service.get_effective_tab_level(key, "poLedger") == "commenter"
@@ -160,7 +165,9 @@ def test_every_assignable_tab_is_reachable_from_some_service_module():
     permission that silently does nothing."""
     mapped = set(roles_service.TAB_BY_SERVICE_MODULE.values())
     for tab, label in roles_service.ASSIGNABLE_TABS:
-        assert tab in mapped, f"{label} ({tab}) is grantable but gates no service module"
+        assert tab in mapped, (
+            f"{label} ({tab}) is grantable but gates no service module"
+        )
 
 
 def test_users_and_roles_services_map_to_the_ungrantable_tab():
@@ -271,6 +278,7 @@ def test_slug_is_length_capped_to_the_column():
     """users.role and custom_roles.role_key are VARCHAR(50); a longer slug
     would be truncated by the database and stop matching."""
     assert len(roles_service._slugify("x" * 200)) <= 50
+
 
 @pytest.mark.parametrize(
     "role_key, role_name",

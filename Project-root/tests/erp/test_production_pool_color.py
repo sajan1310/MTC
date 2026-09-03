@@ -29,7 +29,9 @@ from app.erp.services import production_service
 
 def _rpc(client, method, args=None, mutation=False):
     headers = {"X-Mutation-Id": str(uuid.uuid4())} if mutation else {}
-    return client.post(f"/api/erp/rpc/{method}", json={"args": args or []}, headers=headers)
+    return client.post(
+        f"/api/erp/rpc/{method}", json={"args": args or []}, headers=headers
+    )
 
 
 def _unique_name(prefix: str) -> str:
@@ -60,9 +62,12 @@ def _save_process(client):
 
 
 def test_pool_color_wins_when_present():
-    assert production_service._pool_bucket_color(
-        {"colorGroup": "Purple-Wine", "poolColor": "Blue"}
-    ) == "Blue"
+    assert (
+        production_service._pool_bucket_color(
+            {"colorGroup": "Purple-Wine", "poolColor": "Blue"}
+        )
+        == "Blue"
+    )
 
 
 def test_falls_back_to_colorgroup_when_absent():
@@ -71,8 +76,16 @@ def test_falls_back_to_colorgroup_when_absent():
     than reinterpreting one.
     """
     assert production_service._pool_bucket_color({"colorGroup": "Blue"}) == "Blue"
-    assert production_service._pool_bucket_color({"colorGroup": "Blue", "poolColor": ""}) == "Blue"
-    assert production_service._pool_bucket_color({"colorGroup": "Blue", "poolColor": "   "}) == "Blue"
+    assert (
+        production_service._pool_bucket_color({"colorGroup": "Blue", "poolColor": ""})
+        == "Blue"
+    )
+    assert (
+        production_service._pool_bucket_color(
+            {"colorGroup": "Blue", "poolColor": "   "}
+        )
+        == "Blue"
+    )
 
 
 def test_a_components_free_text_color_is_not_a_bucket():
@@ -80,7 +93,10 @@ def test_a_components_free_text_color_is_not_a_bucket():
     live lots carry a value in it. Reading it as a bucket would silently
     re-attribute them.
     """
-    assert production_service._pool_bucket_color({"colorGroup": "COMMON", "color": "Red"}) == "COMMON"
+    assert (
+        production_service._pool_bucket_color({"colorGroup": "COMMON", "color": "Red"})
+        == "COMMON"
+    )
 
 
 # ── The need map the availability check and the debit both key off ───────
@@ -88,7 +104,15 @@ def test_a_components_free_text_color_is_not_a_bucket():
 
 def test_pool_need_is_scoped_to_the_bucket_not_the_lot_colour():
     needed = production_service._build_pool_needed_map(
-        [{"itemName": "Mudguard", "sourceType": "POOL", "qty": 50, "colorGroup": "Purple-Wine", "poolColor": "Blue"}]
+        [
+            {
+                "itemName": "Mudguard",
+                "sourceType": "POOL",
+                "qty": 50,
+                "colorGroup": "Purple-Wine",
+                "poolColor": "Blue",
+            }
+        ]
     )
     (need,) = needed.values()
     assert need["colorGroup"] == "Blue"
@@ -98,7 +122,15 @@ def test_pool_need_is_scoped_to_the_bucket_not_the_lot_colour():
 def test_a_common_row_naming_a_bucket_becomes_colour_scoped():
     """The Case-2 shape that used to fall into the greedy COMMON drain."""
     needed = production_service._build_pool_needed_map(
-        [{"itemName": "Mudguard", "sourceType": "POOL", "qty": 50, "colorGroup": "COMMON", "poolColor": "Blue"}]
+        [
+            {
+                "itemName": "Mudguard",
+                "sourceType": "POOL",
+                "qty": 50,
+                "colorGroup": "COMMON",
+                "poolColor": "Blue",
+            }
+        ]
     )
     (need,) = needed.values()
     assert need["colorGroup"] == "Blue"
@@ -107,7 +139,14 @@ def test_a_common_row_naming_a_bucket_becomes_colour_scoped():
 
 def test_a_common_row_without_one_still_draws_on_the_total():
     needed = production_service._build_pool_needed_map(
-        [{"itemName": "Mudguard", "sourceType": "POOL", "qty": 50, "colorGroup": "COMMON"}]
+        [
+            {
+                "itemName": "Mudguard",
+                "sourceType": "POOL",
+                "qty": 50,
+                "colorGroup": "COMMON",
+            }
+        ]
     )
     (need,) = needed.values()
     assert need["isColorScoped"] is False
@@ -116,8 +155,20 @@ def test_a_common_row_without_one_still_draws_on_the_total():
 def test_two_buckets_of_one_item_are_separate_needs():
     needed = production_service._build_pool_needed_map(
         [
-            {"itemName": "Mudguard", "sourceType": "POOL", "qty": 20, "colorGroup": "Purple-Wine", "poolColor": "Blue"},
-            {"itemName": "Mudguard", "sourceType": "POOL", "qty": 30, "colorGroup": "Purple-Wine", "poolColor": "Red"},
+            {
+                "itemName": "Mudguard",
+                "sourceType": "POOL",
+                "qty": 20,
+                "colorGroup": "Purple-Wine",
+                "poolColor": "Blue",
+            },
+            {
+                "itemName": "Mudguard",
+                "sourceType": "POOL",
+                "qty": 30,
+                "colorGroup": "Purple-Wine",
+                "poolColor": "Red",
+            },
         ]
     )
     assert sorted(n["colorGroup"] for n in needed.values()) == ["Blue", "Red"]
@@ -135,8 +186,22 @@ def test_consolidation_keeps_two_buckets_of_the_same_item_apart():
     """
     merged = production_service._consolidate_duplicate_components(
         [
-            {"itemName": "Mudguard", "size": "", "sourceType": "POOL", "qty": 20, "colorGroup": "Purple-Wine", "poolColor": "Blue"},
-            {"itemName": "Mudguard", "size": "", "sourceType": "POOL", "qty": 30, "colorGroup": "Purple-Wine", "poolColor": "Red"},
+            {
+                "itemName": "Mudguard",
+                "size": "",
+                "sourceType": "POOL",
+                "qty": 20,
+                "colorGroup": "Purple-Wine",
+                "poolColor": "Blue",
+            },
+            {
+                "itemName": "Mudguard",
+                "size": "",
+                "sourceType": "POOL",
+                "qty": 30,
+                "colorGroup": "Purple-Wine",
+                "poolColor": "Red",
+            },
         ]
     )
     assert len(merged) == 2
@@ -146,8 +211,22 @@ def test_consolidation_keeps_two_buckets_of_the_same_item_apart():
 def test_consolidation_still_sums_two_rows_of_the_same_bucket():
     merged = production_service._consolidate_duplicate_components(
         [
-            {"itemName": "Mudguard", "size": "", "sourceType": "POOL", "qty": 20, "colorGroup": "Purple-Wine", "poolColor": "Blue"},
-            {"itemName": "Mudguard", "size": "", "sourceType": "POOL", "qty": 30, "colorGroup": "Purple-Wine", "poolColor": "Blue"},
+            {
+                "itemName": "Mudguard",
+                "size": "",
+                "sourceType": "POOL",
+                "qty": 20,
+                "colorGroup": "Purple-Wine",
+                "poolColor": "Blue",
+            },
+            {
+                "itemName": "Mudguard",
+                "size": "",
+                "sourceType": "POOL",
+                "qty": 30,
+                "colorGroup": "Purple-Wine",
+                "poolColor": "Blue",
+            },
         ]
     )
     assert len(merged) == 1
@@ -157,8 +236,20 @@ def test_consolidation_still_sums_two_rows_of_the_same_bucket():
 def test_consolidation_of_pre_existing_components_is_unchanged():
     merged = production_service._consolidate_duplicate_components(
         [
-            {"itemName": "Rib", "size": "", "sourceType": "POOL", "qty": 4, "colorGroup": "Blue"},
-            {"itemName": "Rib", "size": "", "sourceType": "POOL", "qty": 6, "colorGroup": "Blue"},
+            {
+                "itemName": "Rib",
+                "size": "",
+                "sourceType": "POOL",
+                "qty": 4,
+                "colorGroup": "Blue",
+            },
+            {
+                "itemName": "Rib",
+                "size": "",
+                "sourceType": "POOL",
+                "qty": 6,
+                "colorGroup": "Blue",
+            },
         ]
     )
     assert len(merged) == 1
@@ -184,7 +275,12 @@ def test_pool_color_survives_save_and_reload(erp_client):
                 "assignedTo": "Worker A",
                 "qty": 10,
                 "componentsConsumed": [
-                    {"itemName": "Mudguard 26", "qty": 10, "sourceType": "POOL", "poolColor": "Blue"}
+                    {
+                        "itemName": "Mudguard 26",
+                        "qty": 10,
+                        "sourceType": "POOL",
+                        "poolColor": "Blue",
+                    }
                 ],
             }
         ],
@@ -209,7 +305,9 @@ def test_an_item_sourced_component_carries_no_bucket(erp_client):
                 "processId": process_id,
                 "assignedTo": "Worker A",
                 "qty": 10,
-                "componentsConsumed": [{"itemName": "Bolt", "qty": 10, "sourceType": "ITEM"}],
+                "componentsConsumed": [
+                    {"itemName": "Bolt", "qty": 10, "sourceType": "ITEM"}
+                ],
             }
         ],
         mutation=True,
@@ -260,10 +358,17 @@ def test_save_reports_a_component_scoped_to_an_unproduced_colour(erp_client):
             {
                 "processId": process_id,
                 "assignedTo": "Worker A",
-                "colorBreakdown": [{"color": "Purple-Wine", "qty": 5, "isCustom": True}],
+                "colorBreakdown": [
+                    {"color": "Purple-Wine", "qty": 5, "isCustom": True}
+                ],
                 "componentsConsumed": [
                     {"itemName": "Frame Tube", "qty": 5, "sourceType": "ITEM"},
-                    {"itemName": "Mudguard 26", "qty": 5, "sourceType": "POOL", "colorGroup": "Blue"},
+                    {
+                        "itemName": "Mudguard 26",
+                        "qty": 5,
+                        "sourceType": "POOL",
+                        "colorGroup": "Blue",
+                    },
                 ],
             }
         ],
@@ -274,7 +379,9 @@ def test_save_reports_a_component_scoped_to_an_unproduced_colour(erp_client):
     assert "Mudguard 26 (Blue)" in body["message"]
 
     lots = _rpc(erp_client, "getProductionData").get_json()["data"]
-    lot = next(row for row in lots if row["lotNumber"] == body["data"]["row"]["lotNumber"])
+    lot = next(
+        row for row in lots if row["lotNumber"] == body["data"]["row"]["lotNumber"]
+    )
     assert [c["itemName"] for c in lot["componentsConsumed"]] == ["Frame Tube"]
 
 
@@ -287,7 +394,9 @@ def test_a_clean_save_says_nothing_extra(erp_client):
             {
                 "processId": process_id,
                 "assignedTo": "Worker A",
-                "colorBreakdown": [{"color": "Purple-Wine", "qty": 5, "isCustom": True}],
+                "colorBreakdown": [
+                    {"color": "Purple-Wine", "qty": 5, "isCustom": True}
+                ],
                 "componentsConsumed": [
                     {"itemName": "Frame Tube", "qty": 5, "sourceType": "ITEM"},
                     # Scoped to the lot's own colour, drawn from a different
@@ -310,7 +419,11 @@ def test_a_clean_save_says_nothing_extra(erp_client):
     assert "NOT recorded" not in body["message"]
 
     lots = _rpc(erp_client, "getProductionData").get_json()["data"]
-    lot = next(row for row in lots if row["lotNumber"] == body["data"]["row"]["lotNumber"])
-    mudguard = next(c for c in lot["componentsConsumed"] if c["itemName"] == "Mudguard 26")
+    lot = next(
+        row for row in lots if row["lotNumber"] == body["data"]["row"]["lotNumber"]
+    )
+    mudguard = next(
+        c for c in lot["componentsConsumed"] if c["itemName"] == "Mudguard 26"
+    )
     assert mudguard["colorGroup"] == "Purple-Wine"
     assert mudguard["poolColor"] == "Blue"

@@ -47,7 +47,10 @@ def _to_valid_number(value, field_label: str, allow_zero: bool = True) -> float:
 
 
 def _find_vendor_id(cur, name: str):
-    cur.execute("SELECT id FROM erp.vendors WHERE lower(vendor_name) = lower(%s) AND deleted_at IS NULL", (name,))
+    cur.execute(
+        "SELECT id FROM erp.vendors WHERE lower(vendor_name) = lower(%s) AND deleted_at IS NULL",
+        (name,),
+    )
     row = cur.fetchone()
     return row["id"] if row else None
 
@@ -127,7 +130,11 @@ def _load_return_list(cur, only_header_id=None) -> list:
         r["totalAmount"] += line_total
 
     # Newest return date first; ties broken by most-recently-created first.
-    returns = sorted(return_map.values(), key=lambda r: (r["returnDateRaw"] or "", r["_headerId"]), reverse=True)
+    returns = sorted(
+        return_map.values(),
+        key=lambda r: (r["returnDateRaw"] or "", r["_headerId"]),
+        reverse=True,
+    )
     for r in returns:
         del r["_headerId"]
 
@@ -136,7 +143,10 @@ def _load_return_list(cur, only_header_id=None) -> list:
 
 @rpc_method("getReturnData")
 def get_return_data():
-    with database.get_conn(cursor_factory=psycopg2.extras.RealDictCursor) as (_conn, cur):
+    with database.get_conn(cursor_factory=psycopg2.extras.RealDictCursor) as (
+        _conn,
+        cur,
+    ):
         returns = _load_return_list(cur)
     return build_response(True, returns)
 
@@ -175,8 +185,12 @@ def save_return(conn, cur, form_data):
     is_self = is_edit and return_number.lower() == old_return_number.lower()
     if existing_match and not is_self:
         if is_edit:
-            raise ValueError(f'The return number "{return_number}" already exists in another record. Edit aborted.')
-        raise ValueError(f'Return number "{return_number}" already exists. Please use a unique return number.')
+            raise ValueError(
+                f'The return number "{return_number}" already exists in another record. Edit aborted.'
+            )
+        raise ValueError(
+            f'Return number "{return_number}" already exists. Please use a unique return number.'
+        )
 
     header_id = None
     if is_edit:
@@ -186,12 +200,16 @@ def save_return(conn, cur, form_data):
         )
         old_header = cur.fetchone()
         if old_header is None:
-            raise ValueError(f"Original Return #{old_return_number} not found in sheet. Edit aborted to prevent data corruption.")
+            raise ValueError(
+                f"Original Return #{old_return_number} not found in sheet. Edit aborted to prevent data corruption."
+            )
         header_id = old_header["id"]
 
     return_date = date_utils.to_safe_date(form_data.get("returnDate"))
     if not return_date:
-        raise ValueError("Invalid return date. Accepted formats: DD/MM/YYYY or YYYY-MM-DD.")
+        raise ValueError(
+            "Invalid return date. Accepted formats: DD/MM/YYYY or YYYY-MM-DD."
+        )
 
     vendor = str(form_data.get("vendor") or "").strip()
     if not vendor:
@@ -213,7 +231,17 @@ def save_return(conn, cur, form_data):
                 bill_number = %s, remarks = %s, updated_by = %s
             WHERE id = %s
             """,
-            (return_number, return_date, vendor, vendor_id, contact, bill_number, remarks, user_id, header_id),
+            (
+                return_number,
+                return_date,
+                vendor,
+                vendor_id,
+                contact,
+                bill_number,
+                remarks,
+                user_id,
+                header_id,
+            ),
         )
         cur.execute("DELETE FROM erp.return_lines WHERE header_id = %s", (header_id,))
     else:
@@ -224,7 +252,16 @@ def save_return(conn, cur, form_data):
             VALUES (%s, %s, %s, %s, %s, %s, %s, %s)
             RETURNING id
             """,
-            (return_number, return_date, vendor, vendor_id, contact, bill_number, remarks, user_id),
+            (
+                return_number,
+                return_date,
+                vendor,
+                vendor_id,
+                contact,
+                bill_number,
+                remarks,
+                user_id,
+            ),
         )
         header_id = cur.fetchone()["id"]
 
@@ -247,8 +284,12 @@ def save_return(conn, cur, form_data):
         # An unconvertible unit must never block saving the return.
         unit_info = items_service.lookup_item_unit_info(item_unit_map, name, size)
         try:
-            base_qty = units_service.convert_qty_to_base_unit(qty, unit, unit_info, units_map)
-            base_rate = units_service.convert_rate_to_base_unit(price, unit, unit_info, units_map)
+            base_qty = units_service.convert_qty_to_base_unit(
+                qty, unit, unit_info, units_map
+            )
+            base_rate = units_service.convert_rate_to_base_unit(
+                price, unit, unit_info, units_map
+            )
         except ValueError:
             base_qty = qty
             base_rate = price
@@ -260,10 +301,26 @@ def save_return(conn, cur, form_data):
                 reason, base_qty, base_rate, item_id)
             VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
             """,
-            (header_id, name, size, narration, qty, unit, price, reason, base_qty, base_rate, item_id),
+            (
+                header_id,
+                name,
+                size,
+                narration,
+                qty,
+                unit,
+                price,
+                reason,
+                base_qty,
+                base_rate,
+                item_id,
+            ),
         )
 
-    message = f"Return #{return_number} updated successfully." if is_edit else f"Return #{return_number} recorded successfully."
+    message = (
+        f"Return #{return_number} updated successfully."
+        if is_edit
+        else f"Return #{return_number} recorded successfully."
+    )
 
     # Read this return's own just-written rows back so the client can patch
     # it into an already-loaded Return Ledger in place instead of a full
@@ -271,7 +328,9 @@ def save_return(conn, cur, form_data):
     fresh_list = _load_return_list(cur, only_header_id=header_id)
     fresh_return = fresh_list[0] if fresh_list else None
 
-    return build_response(True, {"returnNumber": return_number, "ret": fresh_return}, message)
+    return build_response(
+        True, {"returnNumber": return_number, "ret": fresh_return}, message
+    )
 
 
 @rpc_method("deleteReturn", mutation=True)
@@ -299,7 +358,11 @@ def delete_return(conn, cur, return_number):
 @rpc_method("deleteReturnsBulk", mutation=True)
 @database.transactional
 def delete_returns_bulk(conn, cur, return_numbers):
-    targets = {str(r or "").strip().lower() for r in (return_numbers or []) if str(r or "").strip()}
+    targets = {
+        str(r or "").strip().lower()
+        for r in (return_numbers or [])
+        if str(r or "").strip()
+    }
     if not targets:
         return build_response(True, None, "No returns selected.")
 
@@ -313,4 +376,6 @@ def delete_returns_bulk(conn, cur, return_numbers):
     )
     rows_deleted = cur.rowcount
 
-    return build_response(True, {"deletedIds": list(targets)}, f"Deleted {rows_deleted} return(s).")
+    return build_response(
+        True, {"deletedIds": list(targets)}, f"Deleted {rows_deleted} return(s)."
+    )

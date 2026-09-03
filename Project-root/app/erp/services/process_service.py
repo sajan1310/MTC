@@ -150,9 +150,14 @@ def _process_lookup_by_id(cur) -> dict:
     non-deleted process -- internal FK resolution for color-link saves, not
     the RPC-facing shape _get_all_processes returns.
     """
-    cur.execute("SELECT id, process_id, process_name FROM erp.process_master WHERE deleted_at IS NULL")
+    cur.execute(
+        "SELECT id, process_id, process_name FROM erp.process_master WHERE deleted_at IS NULL"
+    )
     return {
-        row["process_id"].strip().lower(): {"id": row["id"], "processName": row["process_name"]}
+        row["process_id"].strip().lower(): {
+            "id": row["id"],
+            "processName": row["process_name"],
+        }
         for row in cur.fetchall()
         if row["process_id"]
     }
@@ -167,14 +172,18 @@ def _get_process_ids_in_use(cur, process_ids: list) -> set:
     nothing can reference a process through them yet either); BOM is real
     as of Phase 3c.
     """
-    requested = {str(p or "").strip().lower() for p in process_ids if str(p or "").strip()}
+    requested = {
+        str(p or "").strip().lower() for p in process_ids if str(p or "").strip()
+    }
     in_use: set = set()
     if not requested:
         return in_use
 
     if table := config_maps.TABLE_NAMES.get("PRODUCTION"):
         col = config_maps.to_snake_case("processId")
-        cur.execute(f"SELECT DISTINCT {col} AS process_id FROM {table} WHERE deleted_at IS NULL")
+        cur.execute(
+            f"SELECT DISTINCT {col} AS process_id FROM {table} WHERE deleted_at IS NULL"
+        )
         for row in cur.fetchall():
             pid = str(row["process_id"] or "").strip().lower()
             if pid in requested:
@@ -227,7 +236,9 @@ def _rename_pool_output_item_name_everywhere(cur, old_name: str, new_name: str) 
         )
 
     if table := config_maps.TABLE_NAMES.get("WAREHOUSE_POOL_OPENING"):
-        rename_utils.rename_in_column(cur, table, config_maps.to_snake_case("outputItemName"), old, new)
+        rename_utils.rename_in_column(
+            cur, table, config_maps.to_snake_case("outputItemName"), old, new
+        )
 
     if table := config_maps.TABLE_NAMES.get("PRODUCTION"):
         # Credit side: any lot's own output_item_name.
@@ -237,7 +248,9 @@ def _rename_pool_output_item_name_everywhere(cur, old_name: str, new_name: str) 
         # this item as a POOL-sourced component. A structured rewrite, not
         # a plain column rename -- rename_utils has nothing for a value
         # nested inside a JSON array.
-        cur.execute(f"SELECT id, components_consumed FROM {table} WHERE deleted_at IS NULL AND components_consumed IS NOT NULL")
+        cur.execute(
+            f"SELECT id, components_consumed FROM {table} WHERE deleted_at IS NULL AND components_consumed IS NOT NULL"
+        )
         for row in cur.fetchall():
             components = row["components_consumed"] or []
             changed = False
@@ -317,7 +330,7 @@ def _rename_pool_output_item_name_everywhere(cur, old_name: str, new_name: str) 
                 if current_lower == old_lower:
                     updated_name = new
                 elif current_lower.startswith(old_lower + " / "):
-                    updated_name = new + current[len(old):]
+                    updated_name = new + current[len(old) :]
                 else:
                     continue
                 cur.execute(
@@ -339,7 +352,9 @@ def _rename_pool_output_item_name_everywhere(cur, old_name: str, new_name: str) 
     warehouse_service._recalculate_warehouse_pool(cur)
 
 
-def _set_process_primary_color_axis(cur, process_id: str, primary_color_axis: str) -> None:
+def _set_process_primary_color_axis(
+    cur, process_id: str, primary_color_axis: str
+) -> None:
     """Updates just one process's Primary Color Axis cell, without touching
     its recipe/components/color links -- used when the operator picks or
     changes the Primary Axis directly on the Production Lot form instead of
@@ -386,7 +401,9 @@ def _with_master_narration(cur, components: list) -> list:
         name = str(comp.get("itemName") or "").strip()
         if not name:
             continue
-        master = narration_map.get(f'{name.lower()}|{str(comp.get("size") or "").strip().lower()}')
+        master = narration_map.get(
+            f"{name.lower()}|{str(comp.get('size') or '').strip().lower()}"
+        )
         if master:
             comp["narration"] = master
     return components
@@ -424,7 +441,11 @@ def _save_process_components_for_process(cur, master_id: int, components: list) 
         narration = str(comp.get("narration") or "").strip()
         qty_per_unit = _validate_number(comp.get("qtyPerUnit"), 0.0001, 1000000) or 1
         remarks = str(comp.get("remarks") or "").strip()
-        source_type = "POOL" if str(comp.get("sourceType") or "").strip().upper() == "POOL" else "ITEM"
+        source_type = (
+            "POOL"
+            if str(comp.get("sourceType") or "").strip().upper() == "POOL"
+            else "ITEM"
+        )
         color_group = str(comp.get("colorGroup") or "").strip() or _COLOR_GROUP_COMMON
         color_axis = str(comp.get("colorAxis") or "").strip()
         # Blank = "already in the item's Base Unit" -- see PROCESS_COMPONENTS_COL.UNIT.
@@ -433,7 +454,11 @@ def _save_process_components_for_process(cur, master_id: int, components: list) 
         # A POOL row's item_name is a Process's Output Item Name, a
         # different identity space than Items Master -- never resolved
         # against erp.items.
-        item_id = items_service._find_item(cur, item_name, size) if source_type == "ITEM" else None
+        item_id = (
+            items_service._find_item(cur, item_name, size)
+            if source_type == "ITEM"
+            else None
+        )
 
         cur.execute(
             """
@@ -441,11 +466,25 @@ def _save_process_components_for_process(cur, master_id: int, components: list) 
                 (master_id, item_name, size, narration, qty_per_unit, remarks, source_type, color_group, color_axis, unit, item_id)
             VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
             """,
-            (master_id, item_name, size, narration, qty_per_unit, remarks, source_type, color_group, color_axis, unit, item_id),
+            (
+                master_id,
+                item_name,
+                size,
+                narration,
+                qty_per_unit,
+                remarks,
+                source_type,
+                color_group,
+                color_axis,
+                unit,
+                item_id,
+            ),
         )
 
 
-def _save_process_color_links_for_process(cur, master_id: int, process_id: str, links: list, process_lookup: dict) -> None:
+def _save_process_color_links_for_process(
+    cur, master_id: int, process_id: str, links: list, process_lookup: dict
+) -> None:
     """Replaces every color-link row touching one process -- delete-then-
     append, mirrors _save_process_components_for_process. This process is
     always re-written as Process A regardless of which side originally
@@ -459,7 +498,10 @@ def _save_process_color_links_for_process(cur, master_id: int, process_id: str, 
     dropped, matching the original behavior from before axis keys existed
     (self-links were rejected unconditionally).
     """
-    cur.execute("DELETE FROM erp.process_color_links WHERE process_a_id = %s OR process_b_id = %s", (master_id, master_id))
+    cur.execute(
+        "DELETE FROM erp.process_color_links WHERE process_a_id = %s OR process_b_id = %s",
+        (master_id, master_id),
+    )
 
     self_lower = str(process_id or "").strip().lower()
     for link in links or []:
@@ -474,7 +516,11 @@ def _save_process_color_links_for_process(cur, master_id: int, process_id: str, 
 
         is_self = other_process_id.lower() == self_lower
         if is_self:
-            if not (my_axis_key and their_axis_key and my_axis_key.lower() != their_axis_key.lower()):
+            if not (
+                my_axis_key
+                and their_axis_key
+                and my_axis_key.lower() != their_axis_key.lower()
+            ):
                 continue
             other_id = master_id
         else:
@@ -499,7 +545,10 @@ def _save_process_color_links_for_process(cur, master_id: int, process_id: str, 
 
 @rpc_method("getProcessData")
 def get_process_data(active_only=False):
-    with database.get_conn(cursor_factory=psycopg2.extras.RealDictCursor) as (_conn, cur):
+    with database.get_conn(cursor_factory=psycopg2.extras.RealDictCursor) as (
+        _conn,
+        cur,
+    ):
         processes = _get_all_processes(cur)
     if active_only:
         processes = [p for p in processes if p["active"]]
@@ -531,7 +580,9 @@ def save_process(conn, cur, form_data):
 
     output_item_name = str(form_data.get("outputItemName") or "").strip()
     if not output_item_name:
-        raise ValueError("Output Item Name is required (the Warehouse Pool item this process produces).")
+        raise ValueError(
+            "Output Item Name is required (the Warehouse Pool item this process produces)."
+        )
 
     # Optional -- categorizes the process for grouping (see Process Type
     # Master). Blank is allowed.
@@ -558,8 +609,12 @@ def save_process(conn, cur, form_data):
     # dispatch_service._compute_ready_to_dispatch_map), never a failed save.
     dispatch_differentiator = str(form_data.get("dispatchDifferentiator") or "").strip()
 
-    components = _parse_json_array(form_data.get("components"), "Invalid component data format.")
-    color_links = _parse_json_array(form_data.get("colorLinks"), "Invalid color link data format.")
+    components = _parse_json_array(
+        form_data.get("components"), "Invalid component data format."
+    )
+    color_links = _parse_json_array(
+        form_data.get("colorLinks"), "Invalid color link data format."
+    )
 
     # Uses the already-PERSISTED color links (_get_all_process_color_links),
     # not the just-submitted `color_links` above -- those arrive in a
@@ -583,15 +638,21 @@ def save_process(conn, cur, form_data):
         axis_components = [
             {
                 "itemName": str((c or {}).get("itemName") or "").strip(),
-                "sourceType": "POOL" if str((c or {}).get("sourceType") or "").strip().upper() == "POOL" else "ITEM",
-                "colorGroup": str((c or {}).get("colorGroup") or "").strip() or _COLOR_GROUP_COMMON,
+                "sourceType": "POOL"
+                if str((c or {}).get("sourceType") or "").strip().upper() == "POOL"
+                else "ITEM",
+                "colorGroup": str((c or {}).get("colorGroup") or "").strip()
+                or _COLOR_GROUP_COMMON,
                 "colorAxis": str((c or {}).get("colorAxis") or "").strip(),
             }
             for c in components
             if str((c or {}).get("itemName") or "").strip()
         ]
         axes = _compute_color_axes_for_process(
-            str(form_data.get("processId") or "").strip(), axis_components, pool_rows, saved_color_links
+            str(form_data.get("processId") or "").strip(),
+            axis_components,
+            pool_rows,
+            saved_color_links,
         )
         # 2+ independent axes (this process pool-sources 2+ upstream
         # processes/items that each carry their own color history, and/or
@@ -607,7 +668,7 @@ def save_process(conn, cur, form_data):
         if len(axes) >= 2:
             raise ValueError(
                 "This process has more than one independent Color Axis (e.g. a Base plus a separate Mudguard "
-                'Color, or 2+ Pool-sourced components each carrying their own color history) -- pick which one '
+                "Color, or 2+ Pool-sourced components each carrying their own color history) -- pick which one "
                 'is "Primary Axis" before saving.'
             )
         primary_color_axis = axes[0]["label"] if axes else ""
@@ -651,7 +712,9 @@ def save_process(conn, cur, form_data):
         lot_prefix_params.append(existing_id)
     cur.execute(lot_prefix_sql, lot_prefix_params)
     if cur.fetchone():
-        raise ValueError(f'Lot Prefix "{lot_prefix}" is already used by another process.')
+        raise ValueError(
+            f'Lot Prefix "{lot_prefix}" is already used by another process.'
+        )
 
     # Duplicate Output Item Name -- only among ACTIVE processes, and only
     # enforced when this save itself leaves the process active. An inactive
@@ -692,9 +755,18 @@ def save_process(conn, cur, form_data):
             WHERE id = %s
             """,
             (
-                process_name, sequence, lot_prefix, is_final_stage, active, remarks,
-                output_item_name, process_type, primary_color_axis, dispatch_differentiator,
-                user_id, master_id,
+                process_name,
+                sequence,
+                lot_prefix,
+                is_final_stage,
+                active,
+                remarks,
+                output_item_name,
+                process_type,
+                primary_color_axis,
+                dispatch_differentiator,
+                user_id,
+                master_id,
             ),
         )
         result_process_id = process_id_input
@@ -710,8 +782,18 @@ def save_process(conn, cur, form_data):
             RETURNING id
             """,
             (
-                result_process_id, process_name, sequence, lot_prefix, is_final_stage, active, remarks,
-                output_item_name, process_type, primary_color_axis, dispatch_differentiator, user_id,
+                result_process_id,
+                process_name,
+                sequence,
+                lot_prefix,
+                is_final_stage,
+                active,
+                remarks,
+                output_item_name,
+                process_type,
+                primary_color_axis,
+                dispatch_differentiator,
+                user_id,
             ),
         )
         master_id = cur.fetchone()["id"]
@@ -719,7 +801,9 @@ def save_process(conn, cur, form_data):
     _save_process_components_for_process(cur, master_id, components)
 
     process_lookup = _process_lookup_by_id(cur)
-    _save_process_color_links_for_process(cur, master_id, result_process_id, color_links, process_lookup)
+    _save_process_color_links_for_process(
+        cur, master_id, result_process_id, color_links, process_lookup
+    )
 
     if is_edit:
         # Renaming the Output Item Name doesn't retroactively touch
@@ -727,9 +811,14 @@ def save_process(conn, cur, form_data):
         # de-normalized onto each lot at save time), so without this, old
         # completed lots would keep crediting the pool under the stale name
         # while new recipes look up the new name and see zero stock.
-        output_item_name_changed = bool(old_output_item_name) and old_output_item_name.lower() != output_item_name.lower()
+        output_item_name_changed = (
+            bool(old_output_item_name)
+            and old_output_item_name.lower() != output_item_name.lower()
+        )
         if output_item_name_changed:
-            _rename_pool_output_item_name_everywhere(cur, old_output_item_name, output_item_name)
+            _rename_pool_output_item_name_everywhere(
+                cur, old_output_item_name, output_item_name
+            )
 
         message = f'Process "{process_name}" updated.'
     else:
@@ -739,11 +828,17 @@ def save_process(conn, cur, form_data):
     # patch it into an already-loaded list in place instead of a full
     # reload.
     fresh_process = next(
-        (p for p in _get_all_processes(cur) if p["processId"].lower() == result_process_id.lower()),
+        (
+            p
+            for p in _get_all_processes(cur)
+            if p["processId"].lower() == result_process_id.lower()
+        ),
         None,
     )
 
-    return build_response(True, {"processId": result_process_id, "process": fresh_process}, message)
+    return build_response(
+        True, {"processId": result_process_id, "process": fresh_process}, message
+    )
 
 
 @rpc_method("deleteProcess", mutation=True)
@@ -786,7 +881,9 @@ def delete_process(conn, cur, process_id):
 @rpc_method("deleteProcessesBulk", mutation=True)
 @database.transactional
 def delete_processes_bulk(conn, cur, process_ids):
-    requested = [str(p or "").strip() for p in (process_ids or []) if str(p or "").strip()]
+    requested = [
+        str(p or "").strip() for p in (process_ids or []) if str(p or "").strip()
+    ]
     if not requested:
         return build_response(True, None, "No processes selected.")
 
@@ -819,7 +916,11 @@ def delete_processes_bulk(conn, cur, process_ids):
 @rpc_method("reorderProcesses", mutation=True)
 @database.transactional
 def reorder_processes(conn, cur, ordered_process_ids):
-    order = [str(p or "").strip() for p in (ordered_process_ids or []) if str(p or "").strip()]
+    order = [
+        str(p or "").strip()
+        for p in (ordered_process_ids or [])
+        if str(p or "").strip()
+    ]
     if not order:
         raise ValueError("No process order provided.")
 
@@ -889,7 +990,10 @@ def _fetch_process_components(cur, process_id="") -> list:
 
 @rpc_method("getProcessComponentsData")
 def get_process_components_data(process_id=""):
-    with database.get_conn(cursor_factory=psycopg2.extras.RealDictCursor) as (_conn, cur):
+    with database.get_conn(cursor_factory=psycopg2.extras.RealDictCursor) as (
+        _conn,
+        cur,
+    ):
         return build_response(True, _fetch_process_components(cur, process_id))
 
 
@@ -933,7 +1037,9 @@ def refresh_process_components_from_items_master(conn, cur):
     master_map = items_service.get_item_master_refresh_map(cur)
     if not master_map:
         return build_response(
-            True, {"componentsScanned": 0, "componentsUpdated": 0}, "Items Master is empty -- nothing to sync."
+            True,
+            {"componentsScanned": 0, "componentsUpdated": 0},
+            "Items Master is empty -- nothing to sync.",
         )
 
     cur.execute(
@@ -953,7 +1059,9 @@ def refresh_process_components_from_items_master(conn, cur):
         name = str(row["item_name"] or "").strip()
         if not name:
             continue
-        master = master_map.get(f'{name.lower()}|{str(row["size"] or "").strip().lower()}')
+        master = master_map.get(
+            f"{name.lower()}|{str(row['size'] or '').strip().lower()}"
+        )
         if master is None:
             # Items Master has no such name+size at all. Nothing to derive
             # from, so the stored value stands -- the one case where
@@ -963,7 +1071,10 @@ def refresh_process_components_from_items_master(conn, cur):
         target = master["narration"]
         if target == str(row["narration"] or "").strip():
             continue
-        cur.execute("UPDATE erp.process_components SET narration = %s WHERE id = %s", (target, row["id"]))
+        cur.execute(
+            "UPDATE erp.process_components SET narration = %s WHERE id = %s",
+            (target, row["id"]),
+        )
         if target:
             updated += 1
         else:
@@ -1064,7 +1175,9 @@ def _load_processes_for_item(cur, item_name: str, size: str) -> list:
     for proc in processes:
         pid = (proc["processId"] or "").strip().lower()
         common = common_by_process.get(pid)
-        color_variants = sorted(colors_by_process.get(pid, []), key=lambda c: c["colorGroup"].lower())
+        color_variants = sorted(
+            colors_by_process.get(pid, []), key=lambda c: c["colorGroup"].lower()
+        )
         records.append(
             {
                 "processId": proc["processId"],
@@ -1090,7 +1203,10 @@ def get_processes_for_item(item_name, size=""):
     if not target_name:
         return build_response(False, None, "Item name is required.")
 
-    with database.get_conn(cursor_factory=psycopg2.extras.RealDictCursor) as (_conn, cur):
+    with database.get_conn(cursor_factory=psycopg2.extras.RealDictCursor) as (
+        _conn,
+        cur,
+    ):
         records = _load_processes_for_item(cur, target_name, size)
     return build_response(True, records)
 
@@ -1133,7 +1249,7 @@ def save_item_process_mappings(conn, cur, item_name, size="", mappings=None):
 
     item_id = items_service._find_item(cur, clean_name, clean_size)
     if item_id is None:
-        size_suffix = f' ({clean_size})' if clean_size else ""
+        size_suffix = f" ({clean_size})" if clean_size else ""
         raise ValueError(f'"{clean_name}"{size_suffix} is not in the Items Master.')
 
     if isinstance(mappings, str):
@@ -1162,7 +1278,9 @@ def save_item_process_mappings(conn, cur, item_name, size="", mappings=None):
 
         proc = process_lookup.get(pid_key)
         if not proc:
-            raise ValueError(f'Process "{pid}" no longer exists. Reopen the item and try again.')
+            raise ValueError(
+                f'Process "{pid}" no longer exists. Reopen the item and try again.'
+            )
         if pid_key in seen_keys:
             raise ValueError(f'Process "{proc["processName"]}" was submitted twice.')
         seen_keys.add(pid_key)
@@ -1201,7 +1319,12 @@ def save_item_process_mappings(conn, cur, item_name, size="", mappings=None):
           AND upper(color_group) = %s
           AND master_id = ANY(%s)
         """,
-        (clean_name.lower(), clean_size.lower(), _COLOR_GROUP_COMMON.upper(), master_ids),
+        (
+            clean_name.lower(),
+            clean_size.lower(),
+            _COLOR_GROUP_COMMON.upper(),
+            master_ids,
+        ),
     )
     existing_row_by_master_id: dict = {}
     pool_master_ids: set = set()
@@ -1216,7 +1339,11 @@ def save_item_process_mappings(conn, cur, item_name, size="", mappings=None):
     # no longer save: _find_duplicate_component keys on item+size+colorGroup
     # WITHOUT sourceType, so it would reject the pair as a duplicate.
     for m in cleaned:
-        if m["inRecipe"] and m["masterId"] not in existing_row_by_master_id and m["masterId"] in pool_master_ids:
+        if (
+            m["inRecipe"]
+            and m["masterId"] not in existing_row_by_master_id
+            and m["masterId"] in pool_master_ids
+        ):
             raise ValueError(
                 f'"{clean_name}" already exists in "{m["processName"]}" as a Warehouse Pool component. '
                 "Add it from the Products & Processes tab instead, so the pool/item choice stays explicit."
@@ -1242,7 +1369,19 @@ def save_item_process_mappings(conn, cur, item_name, size="", mappings=None):
                     (master_id, item_name, size, narration, qty_per_unit, remarks, source_type, color_group, color_axis, unit, item_id)
                 VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
                 """,
-                (m["masterId"], clean_name, clean_size, "", m["qtyPerUnit"], m["remarks"], "ITEM", _COLOR_GROUP_COMMON, "", m["unit"], item_id),
+                (
+                    m["masterId"],
+                    clean_name,
+                    clean_size,
+                    "",
+                    m["qtyPerUnit"],
+                    m["remarks"],
+                    "ITEM",
+                    _COLOR_GROUP_COMMON,
+                    "",
+                    m["unit"],
+                    item_id,
+                ),
             )
             added += 1
         elif not m["inRecipe"] and existing_id:
@@ -1251,19 +1390,39 @@ def save_item_process_mappings(conn, cur, item_name, size="", mappings=None):
             removed += 1
 
     if rows_to_delete:
-        cur.execute("DELETE FROM erp.process_components WHERE id = ANY(%s)", (rows_to_delete,))
+        cur.execute(
+            "DELETE FROM erp.process_components WHERE id = ANY(%s)", (rows_to_delete,)
+        )
 
     if added == 0 and updated == 0 and removed == 0:
         fresh = _load_processes_for_item(cur, clean_name, clean_size)
-        return build_response(True, {"added": 0, "updated": 0, "removed": 0, "warnings": [], "processes": fresh}, "No changes to save.")
+        return build_response(
+            True,
+            {
+                "added": 0,
+                "updated": 0,
+                "removed": 0,
+                "warnings": [],
+                "processes": fresh,
+            },
+            "No changes to save.",
+        )
 
     # Removing an item from a process that has already produced lots is
     # allowed -- those lots keep their own snapshotted consumption -- but
     # the operator should know the recipe they just changed is live.
     warnings = []
     if removed_process_ids:
-        live_keys = _get_process_id_keys_with_production_lots(cur, {pid.lower() for pid in removed_process_ids})
-        live_names = [m["processName"] for m in cleaned if not m["inRecipe"] and m["processIdKey"] in live_keys and m["processId"] in removed_process_ids]
+        live_keys = _get_process_id_keys_with_production_lots(
+            cur, {pid.lower() for pid in removed_process_ids}
+        )
+        live_names = [
+            m["processName"]
+            for m in cleaned
+            if not m["inRecipe"]
+            and m["processIdKey"] in live_keys
+            and m["processId"] in removed_process_ids
+        ]
         if live_names:
             warnings.append(
                 f"Removed from {', '.join(live_names)}, which already "
@@ -1283,7 +1442,13 @@ def save_item_process_mappings(conn, cur, item_name, size="", mappings=None):
     fresh = _load_processes_for_item(cur, clean_name, clean_size)
     return build_response(
         True,
-        {"added": added, "updated": updated, "removed": removed, "warnings": warnings, "processes": fresh},
+        {
+            "added": added,
+            "updated": updated,
+            "removed": removed,
+            "warnings": warnings,
+            "processes": fresh,
+        },
         message,
     )
 
@@ -1299,10 +1464,22 @@ def get_process_color_links_data(process_id):
     if not target:
         return build_response(True, [])
 
-    with database.get_conn(cursor_factory=psycopg2.extras.RealDictCursor) as (_conn, cur):
-        cur.execute("SELECT id, process_id, process_name FROM erp.process_master WHERE deleted_at IS NULL")
+    with database.get_conn(cursor_factory=psycopg2.extras.RealDictCursor) as (
+        _conn,
+        cur,
+    ):
+        cur.execute(
+            "SELECT id, process_id, process_name FROM erp.process_master WHERE deleted_at IS NULL"
+        )
         by_db_id = {row["id"]: row for row in cur.fetchall()}
-        target_id = next((db_id for db_id, row in by_db_id.items() if (row["process_id"] or "").lower() == target.lower()), None)
+        target_id = next(
+            (
+                db_id
+                for db_id, row in by_db_id.items()
+                if (row["process_id"] or "").lower() == target.lower()
+            ),
+            None,
+        )
 
         records = []
         if target_id is not None:
@@ -1390,7 +1567,10 @@ def _is_common_color_group(color_group) -> bool:
     GROUP_COMMON` (the pre-fix comparison) only matched the one spelling
     the app itself writes.
     """
-    return str(color_group if color_group is not None else "").strip().upper() == _COLOR_GROUP_COMMON
+    return (
+        str(color_group if color_group is not None else "").strip().upper()
+        == _COLOR_GROUP_COMMON
+    )
 
 
 def _pool_item_is_color_axis(item_colors) -> bool:
@@ -1588,7 +1768,9 @@ def _merge_linked_axes(axes: list, color_links: list) -> list:
 
         anchor_ref = component_refs[0]
         for r in component_refs:
-            if len(axes[axis_index_by_ref[r]]["colors"]) > len(axes[axis_index_by_ref[anchor_ref]]["colors"]):
+            if len(axes[axis_index_by_ref[r]]["colors"]) > len(
+                axes[axis_index_by_ref[anchor_ref]]["colors"]
+            ):
                 anchor_ref = r
         other_refs = [r for r in component_refs if r != anchor_ref]
 
@@ -1597,7 +1779,9 @@ def _merge_linked_axes(axes: list, color_links: list) -> list:
             parts = [anchor_color]
             unresolved = False
             for other_ref in other_refs:
-                resolved = _resolve_linked_color(anchor_ref, anchor_color, other_ref, adjacency)
+                resolved = _resolve_linked_color(
+                    anchor_ref, anchor_color, other_ref, adjacency
+                )
                 if resolved is None:
                     unresolved = True
                     break
@@ -1609,7 +1793,11 @@ def _merge_linked_axes(axes: list, color_links: list) -> list:
         # A descriptive label for the merge, built from whichever
         # constituent axes carry one of their own (every tag axis does; a
         # plain pool axis gets one too now via its own itemNames join).
-        label_parts = [axes[axis_index_by_ref[r]].get("label") for r in component_refs if axes[axis_index_by_ref[r]].get("label")]
+        label_parts = [
+            axes[axis_index_by_ref[r]].get("label")
+            for r in component_refs
+            if axes[axis_index_by_ref[r]].get("label")
+        ]
 
         if merged_colors:
             # A merged axis inherits the earliest recipe position of the
@@ -1641,7 +1829,9 @@ def _merge_linked_axes(axes: list, color_links: list) -> list:
     return result + merged_axes
 
 
-def _legacy_color_group_list(components: list, pool_rows: list, color_links: list) -> list:
+def _legacy_color_group_list(
+    components: list, pool_rows: list, color_links: list
+) -> list:
     """The original, byte-for-byte unmodified pre-Color-Axes algorithm --
     pool axes ARE cross-multiplied into composite delimiter-joined
     strings when 2+ exist (unlike _compute_color_axes_for_process, which
@@ -1680,7 +1870,9 @@ def _legacy_color_group_list(components: list, pool_rows: list, color_links: lis
                 continue
             sorted_colors = sorted(item_colors.values(), key=lambda x: x.lower())
             signature = "|".join(c.lower() for c in sorted_colors)
-            entry = axes_by_signature.setdefault(signature, {"colors": sorted_colors, "processIds": set()})
+            entry = axes_by_signature.setdefault(
+                signature, {"colors": sorted_colors, "processIds": set()}
+            )
             pid = process_id_by_item.get(item_key)
             if pid:
                 entry["processIds"].add(pid)
@@ -1698,7 +1890,11 @@ def _legacy_color_group_list(components: list, pool_rows: list, color_links: lis
                 next_combos = []
                 for prefix in combos:
                     for color in axis["colors"]:
-                        next_combos.append(f"{prefix}{_COLOR_COMBO_DELIMITER}{color}" if prefix else color)
+                        next_combos.append(
+                            f"{prefix}{_COLOR_COMBO_DELIMITER}{color}"
+                            if prefix
+                            else color
+                        )
                 combos = next_combos
             for combo in combos:
                 _add_unique_case_insensitive(colors, combo)
@@ -1706,7 +1902,9 @@ def _legacy_color_group_list(components: list, pool_rows: list, color_links: lis
     return sorted(colors.values(), key=lambda x: x.lower())
 
 
-def _compute_color_axes_for_process(process_id: str, components: list, pool_rows: list, color_links: list) -> list:
+def _compute_color_axes_for_process(
+    process_id: str, components: list, pool_rows: list, color_links: list
+) -> list:
     """The independent "Color Axes" breakdown for a process -- one entry
     per contributing axis, NEVER cross-multiplied into composite strings.
     Two independent sources feed this: Warehouse Pool axes (auto-detected
@@ -1798,7 +1996,13 @@ def _compute_color_axes_for_process(process_id: str, components: list, pool_rows
             sorted_colors = sorted(item_colors.values(), key=lambda x: x.lower())
             signature = "|".join(c.lower() for c in sorted_colors)
             entry = axes_by_signature.setdefault(
-                signature, {"colors": sorted_colors, "processIds": set(), "itemNames": set(), "itemKeys": set()}
+                signature,
+                {
+                    "colors": sorted_colors,
+                    "processIds": set(),
+                    "itemNames": set(),
+                    "itemKeys": set(),
+                },
             )
             entry["itemKeys"].add(item_key)
             pid = process_id_by_item.get(item_key)
@@ -1818,7 +2022,10 @@ def _compute_color_axes_for_process(process_id: str, components: list, pool_rows
             # An axis fed by several recipe rows takes the EARLIEST of
             # them, so it sits where the operator first introduced it.
             recipe_index = min(
-                (recipe_index_by_pool_item.get(k, max_recipe_index) for k in axis["itemKeys"]),
+                (
+                    recipe_index_by_pool_item.get(k, max_recipe_index)
+                    for k in axis["itemKeys"]
+                ),
                 default=max_recipe_index,
             )
             raw_axes.append(
@@ -1857,7 +2064,9 @@ def _compute_color_axes_for_process(process_id: str, components: list, pool_rows
                 "processIds": {process_id} if process_id else set(),
                 "axisKey": f"tag:{label_lower}",
                 "label": group["label"],
-                "recipeIndex": recipe_index_by_tag_axis.get(label_lower, max_recipe_index),
+                "recipeIndex": recipe_index_by_tag_axis.get(
+                    label_lower, max_recipe_index
+                ),
                 "source": "tag",
             }
         )
@@ -1866,7 +2075,11 @@ def _compute_color_axes_for_process(process_id: str, components: list, pool_rows
     # cross-process case), pool<->tag, and tag<->tag (same process,
     # different axis key) -- an axis with no link touching it passes
     # through completely unchanged.
-    merged_axes = _merge_linked_axes(raw_axes, color_links) if len(raw_axes) > 1 and color_links else raw_axes
+    merged_axes = (
+        _merge_linked_axes(raw_axes, color_links)
+        if len(raw_axes) > 1 and color_links
+        else raw_axes
+    )
 
     # Recipe order is the app's ONE canonical axis order: it drives the
     # checklist the operator sees and the composite color key the lot is
@@ -1875,7 +2088,9 @@ def _compute_color_axes_for_process(process_id: str, components: list, pool_rows
     ordered_axes = sorted(
         merged_axes,
         key=lambda a: (
-            a.get("recipeIndex") if isinstance(a.get("recipeIndex"), (int, float)) else max_recipe_index,
+            a.get("recipeIndex")
+            if isinstance(a.get("recipeIndex"), (int, float))
+            else max_recipe_index,
             str(a.get("label") or "").lower(),
         ),
     )
@@ -1884,23 +2099,41 @@ def _compute_color_axes_for_process(process_id: str, components: list, pool_rows
     pool_axis_counter = 0
     for axis in ordered_axes:
         if axis.get("source") == "tag":
-            result.append({"key": f"tag:{axis['label'].lower()}", "label": axis["label"], "colors": axis["colors"], "source": "tag"})
+            result.append(
+                {
+                    "key": f"tag:{axis['label'].lower()}",
+                    "label": axis["label"],
+                    "colors": axis["colors"],
+                    "source": "tag",
+                }
+            )
             continue
         pool_axis_counter += 1
         label = axis.get("label") or f"Color Group {pool_axis_counter}"
         key_prefix = "merged:" if axis.get("source") == "merged" else "pool:"
-        result.append({"key": f"{key_prefix}{label.lower()}", "label": label, "colors": axis["colors"], "source": axis.get("source", "pool")})
+        result.append(
+            {
+                "key": f"{key_prefix}{label.lower()}",
+                "label": label,
+                "colors": axis["colors"],
+                "source": axis.get("source", "pool"),
+            }
+        )
 
     return result
 
 
-def _compute_color_groups_for_process(process_id: str, components: list, pool_rows: list, color_links: list) -> list:
+def _compute_color_groups_for_process(
+    process_id: str, components: list, pool_rows: list, color_links: list
+) -> list:
     """A process with 2+ independent color axes still gets the exact
     original _legacy_color_group_list behavior when fewer than 2 axes
     resolve -- colors explicitly tagged on recipe rows plus any single
     pool axis's own colors, unchanged.
     """
-    axes = _compute_color_axes_for_process(process_id, components, pool_rows, color_links)
+    axes = _compute_color_axes_for_process(
+        process_id, components, pool_rows, color_links
+    )
     if len(axes) < 2:
         return _legacy_color_group_list(components, pool_rows, color_links)
 
@@ -1970,7 +2203,9 @@ def _compute_color_groups_with_overrides_for_process(
     applied last, after every union -- same order _compute_known_colors_
     for_process applies it, so an excluded color is off both lists.
     """
-    base_colors = _compute_color_groups_for_process(process_id, components, pool_rows, color_links)
+    base_colors = _compute_color_groups_for_process(
+        process_id, components, pool_rows, color_links
+    )
     included_overrides = list((overrides or {}).get("included", {}).values())
     logged = [c for c in (logged_colors or []) if str(c or "").strip()]
     if not base_colors and not included_overrides and not logged:
@@ -2045,7 +2280,9 @@ def _get_production_logged_colors_by_process(cur, process_id: str = None) -> dic
             (wanted,),
         )
     else:
-        cur.execute(f"SELECT process_id, color, color_breakdown FROM {table} WHERE deleted_at IS NULL")
+        cur.execute(
+            f"SELECT process_id, color, color_breakdown FROM {table} WHERE deleted_at IS NULL"
+        )
     for row in cur.fetchall():
         process_id = str(row["process_id"] or "").strip()
         if not process_id:
@@ -2085,7 +2322,9 @@ def _get_all_process_color_overrides(cur) -> dict:
         action = str(row["action"] or "").strip().upper()
         if not process_id or not color:
             continue
-        entry = result.setdefault(process_id.lower(), {"included": {}, "excluded": set()})
+        entry = result.setdefault(
+            process_id.lower(), {"included": {}, "excluded": set()}
+        )
         color_lower = color.lower()
         if action == "EXCLUDE":
             entry["excluded"].add(color_lower)
@@ -2097,7 +2336,12 @@ def _get_all_process_color_overrides(cur) -> dict:
 
 
 def _compute_known_colors_for_process(
-    process_id: str, components: list, pool_rows: list, color_links: list, logged_colors: list, overrides: dict = None
+    process_id: str,
+    components: list,
+    pool_rows: list,
+    color_links: list,
+    logged_colors: list,
+    overrides: dict = None,
 ) -> dict:
     """Shared core of get_process_color_groups (singular) and
     get_all_process_color_groups (bulk) -- the one definition of "known
@@ -2111,7 +2355,9 @@ def _compute_known_colors_for_process(
     exposed so callers can derive their own "removable" (NOT in
     baseColors) set.
     """
-    base_colors = _compute_color_groups_for_process(process_id, components, pool_rows, color_links)
+    base_colors = _compute_color_groups_for_process(
+        process_id, components, pool_rows, color_links
+    )
 
     color_map: dict = {}
     for c in base_colors:
@@ -2127,10 +2373,15 @@ def _compute_known_colors_for_process(
             if key in excluded:
                 del color_map[key]
 
-    return {"colors": sorted(color_map.values(), key=lambda x: x.lower()), "baseColors": base_colors}
+    return {
+        "colors": sorted(color_map.values(), key=lambda x: x.lower()),
+        "baseColors": base_colors,
+    }
 
 
-def _default_primary_color_axis_label(process_id: str, components: list, pool_rows: list, color_links: list) -> str:
+def _default_primary_color_axis_label(
+    process_id: str, components: list, pool_rows: list, color_links: list
+) -> str:
     """The Primary Color Axis a process uses when its own cell is still
     blank: the FIRST axis in that process's canonical recipe order (see
     _compute_color_axes_for_process). Every process that has at least one
@@ -2155,7 +2406,9 @@ def _default_primary_color_axis_label(process_id: str, components: list, pool_ro
     """
     if not components:
         return ""
-    axes = _compute_color_axes_for_process(process_id or "", components, pool_rows, color_links)
+    axes = _compute_color_axes_for_process(
+        process_id or "", components, pool_rows, color_links
+    )
     return str(axes[0].get("label") or "").strip() if axes else ""
 
 
@@ -2202,7 +2455,10 @@ def refresh_process_primary_color_axes(cur) -> dict:
             continue
 
         label = _default_primary_color_axis_label(
-            p["processId"], components_by_process.get(p["processId"].strip().lower(), []), pool_rows, color_links
+            p["processId"],
+            components_by_process.get(p["processId"].strip().lower(), []),
+            pool_rows,
+            color_links,
         )
         if not label:
             skipped += 1
@@ -2229,7 +2485,9 @@ def _fetch_process_color_groups(cur, process_id) -> list:
     pool_rows = _get_all_warehouse_pool_rows_for_color_axes(cur)
     color_links = _get_all_process_color_links(cur)
     overrides = _get_all_process_color_overrides(cur).get(key)
-    logged_colors = list(_get_production_logged_colors_by_process(cur, process_id).get(key, []))
+    logged_colors = list(
+        _get_production_logged_colors_by_process(cur, process_id).get(key, [])
+    )
     known = _compute_known_colors_for_process(
         process_id, components, pool_rows, color_links, logged_colors, overrides
     )
@@ -2238,29 +2496,47 @@ def _fetch_process_color_groups(cur, process_id) -> list:
 
 @rpc_method("getProcessColorGroups")
 def get_process_color_groups(process_id):
-    with database.get_conn(cursor_factory=psycopg2.extras.RealDictCursor) as (_conn, cur):
+    with database.get_conn(cursor_factory=psycopg2.extras.RealDictCursor) as (
+        _conn,
+        cur,
+    ):
         return build_response(True, _fetch_process_color_groups(cur, process_id))
 
 
 @rpc_method("getProcessColorAxes")
 def get_process_color_axes(process_id):
-    with database.get_conn(cursor_factory=psycopg2.extras.RealDictCursor) as (_conn, cur):
+    with database.get_conn(cursor_factory=psycopg2.extras.RealDictCursor) as (
+        _conn,
+        cur,
+    ):
         # Read inside the connection this function already opens, rather than
         # through the RPC reader that opens another (PERF-003).
         components = _fetch_process_components(cur, process_id)
         pool_rows = _get_all_warehouse_pool_rows_for_color_axes(cur)
         color_links = _get_all_process_color_links(cur)
         process = next(
-            (p for p in _get_all_processes(cur) if p["processId"].strip().lower() == str(process_id or "").strip().lower()),
+            (
+                p
+                for p in _get_all_processes(cur)
+                if p["processId"].strip().lower()
+                == str(process_id or "").strip().lower()
+            ),
             None,
         )
 
-    saved_primary_color_axis = str((process or {}).get("primaryColorAxis") or "").strip()
-    axes = _compute_color_axes_for_process(process_id, components, pool_rows, color_links)
+    saved_primary_color_axis = str(
+        (process or {}).get("primaryColorAxis") or ""
+    ).strip()
+    axes = _compute_color_axes_for_process(
+        process_id, components, pool_rows, color_links
+    )
 
     saved_axis = None
     if saved_primary_color_axis:
-        saved_axis = next((a for a in axes if a["label"].lower() == saved_primary_color_axis.lower()), None)
+        saved_axis = next(
+            (a for a in axes if a["label"].lower() == saved_primary_color_axis.lower()),
+            None,
+        )
 
     # Every process with an axis reports a primary one, even before anything
     # has been written to its Primary Color Axis cell -- the first axis in
@@ -2293,7 +2569,9 @@ def get_process_color_axes(process_id):
             # know it's showing a default the operator has never explicitly
             # confirmed.
             "primaryIsDefault": saved_axis is None and primary_axis is not None,
-            "dispatchDifferentiator": str((process or {}).get("dispatchDifferentiator") or "").strip(),
+            "dispatchDifferentiator": str(
+                (process or {}).get("dispatchDifferentiator") or ""
+            ).strip(),
         },
     )
 
@@ -2326,12 +2604,17 @@ def get_axis_order_by_process(cur) -> dict:
     result: dict = {}
     for pid, components in components_by_process.items():
         try:
-            axes = _compute_color_axes_for_process(pid, components, pool_rows, color_links) or []
+            axes = (
+                _compute_color_axes_for_process(pid, components, pool_rows, color_links)
+                or []
+            )
         except Exception:
             continue
         if not axes:
             continue
-        result[pid.lower()] = {str(a.get("key") or "").lower(): i for i, a in enumerate(axes)}
+        result[pid.lower()] = {
+            str(a.get("key") or "").lower(): i for i, a in enumerate(axes)
+        }
     return result
 
 
@@ -2349,13 +2632,18 @@ def get_all_process_color_groups():
 
     all_components = get_process_components_data()["data"]
 
-    with database.get_conn(cursor_factory=psycopg2.extras.RealDictCursor) as (_conn, cur):
+    with database.get_conn(cursor_factory=psycopg2.extras.RealDictCursor) as (
+        _conn,
+        cur,
+    ):
         processes = _get_all_processes(cur)
         pool_rows = _get_all_warehouse_pool_rows_for_color_axes(cur)
         color_links = _get_all_process_color_links(cur)
         overrides_by_process = _get_all_process_color_overrides(cur)
         logged_colors_by_process = _get_production_logged_colors_by_process(cur)
-        real_history_by_process = warehouse_service._get_real_history_colors_by_process(cur)
+        real_history_by_process = warehouse_service._get_real_history_colors_by_process(
+            cur
+        )
 
     components_by_process: dict = {}
     for c in all_components:
@@ -2366,12 +2654,18 @@ def get_all_process_color_groups():
         components = components_by_process.get(p["processId"], [])
         overrides = overrides_by_process.get(p["processId"].lower())
         logged_colors = list(logged_colors_by_process.get(p["processId"].lower(), []))
-        known = _compute_known_colors_for_process(p["processId"], components, pool_rows, color_links, logged_colors, overrides)
+        known = _compute_known_colors_for_process(
+            p["processId"], components, pool_rows, color_links, logged_colors, overrides
+        )
         base_lower = {c.lower() for c in known["baseColors"]}
         real_history_lower = real_history_by_process.get(p["processId"].lower(), set())
         result[p["processId"]] = {
             "colors": known["colors"],
-            "removable": [c for c in known["colors"] if c.lower() not in base_lower and c.lower() not in real_history_lower],
+            "removable": [
+                c
+                for c in known["colors"]
+                if c.lower() not in base_lower and c.lower() not in real_history_lower
+            ],
         }
 
     return build_response(True, result)
@@ -2403,7 +2697,9 @@ def exclude_warehouse_pool_colors(conn, cur, process_id, colors):
     pid = str(process_id or "").strip()
     if not pid:
         raise ValueError("Process ID is required.")
-    color_list = [str(c or "").strip() for c in (colors if isinstance(colors, list) else [colors])]
+    color_list = [
+        str(c or "").strip() for c in (colors if isinstance(colors, list) else [colors])
+    ]
     color_list = [c for c in color_list if c]
     if not color_list:
         raise ValueError("No colors specified.")
@@ -2411,10 +2707,17 @@ def exclude_warehouse_pool_colors(conn, cur, process_id, colors):
     components = _fetch_process_components(cur, pid)
     pool_rows = _get_all_warehouse_pool_rows_for_color_axes(cur)
     color_links = _get_all_process_color_links(cur)
-    base_colors = {c.lower() for c in _compute_color_groups_for_process(pid, components, pool_rows, color_links)}
+    base_colors = {
+        c.lower()
+        for c in _compute_color_groups_for_process(
+            pid, components, pool_rows, color_links
+        )
+    }
 
     pid_lower = pid.lower()
-    bucket_has_history = warehouse_service._get_real_history_colors_by_process(cur).get(pid_lower, set())
+    bucket_has_history = warehouse_service._get_real_history_colors_by_process(cur).get(
+        pid_lower, set()
+    )
 
     removed = []
     blocked = []
@@ -2457,7 +2760,9 @@ def exclude_warehouse_pool_colors(conn, cur, process_id, colors):
     else:
         message = f"Nothing removed -- can't be removed: {'; '.join(blocked)}."
 
-    return build_response(bool(removed) or not blocked, {"removed": removed, "blocked": blocked}, message)
+    return build_response(
+        bool(removed) or not blocked, {"removed": removed, "blocked": blocked}, message
+    )
 
 
 @rpc_method("includeWarehousePoolColor", mutation=True)
@@ -2475,7 +2780,9 @@ def include_warehouse_pool_color(conn, cur, process_id, color):
     if not c:
         raise ValueError("Color name is required.")
 
-    if not any(p["processId"].strip().lower() == pid.lower() for p in _get_all_processes(cur)):
+    if not any(
+        p["processId"].strip().lower() == pid.lower() for p in _get_all_processes(cur)
+    ):
         raise ValueError(f'Process "{pid}" was not found.')
 
     cur.execute(
@@ -2497,4 +2804,6 @@ def include_warehouse_pool_color(conn, cur, process_id, color):
         (pid, c, user_id),
     )
 
-    return build_response(True, {"color": c}, f'"{c}" added as a known combination for this process.')
+    return build_response(
+        True, {"color": c}, f'"{c}" added as a known combination for this process.'
+    )

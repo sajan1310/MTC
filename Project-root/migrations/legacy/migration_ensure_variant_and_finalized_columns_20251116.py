@@ -83,7 +83,9 @@ def downgrade():
     with get_conn() as (conn, cur):
         print("Rolling back ensured columns (if they exist)...")
         try:
-            cur.execute("ALTER TABLE production_lots DROP COLUMN IF EXISTS finalized_at;")
+            cur.execute(
+                "ALTER TABLE production_lots DROP COLUMN IF EXISTS finalized_at;"
+            )
             cur.execute("DROP INDEX IF EXISTS idx_production_lots_finalized_at;")
 
             cur.execute("ALTER TABLE variant_usage DROP COLUMN IF EXISTS item_id;")

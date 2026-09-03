@@ -326,7 +326,9 @@ def verify_snapshot(path: str, password: str | None = None) -> int:
     return len(tables)
 
 
-def create_snapshot(backup_dir: str, *, config=None, now: dt.datetime | None = None) -> Snapshot:
+def create_snapshot(
+    backup_dir: str, *, config=None, now: dt.datetime | None = None
+) -> Snapshot:
     """Produce and verify one snapshot. Raises BackupError on any failure.
 
     The file is written to a ``.partial`` name and only renamed into place

@@ -116,7 +116,11 @@ def color_segments(color) -> list:
     mirror axes are folded away and unchecked axes contribute nothing, so a
     composite has no fixed slot per axis.
     """
-    return [s.strip() for s in str(color or "").split(config_maps.COLOR_COMBO_DELIMITER) if s.strip()]
+    return [
+        s.strip()
+        for s in str(color or "").split(config_maps.COLOR_COMBO_DELIMITER)
+        if s.strip()
+    ]
 
 
 def _color_order_key(color) -> str:
@@ -133,7 +137,9 @@ def _color_order_key(color) -> str:
     return "\0".join(sorted(s.lower() for s in color_segments(color)))
 
 
-def _compose_lot_color_key(primary_entry: dict, independent_entries: list, axis_order: dict | None) -> str:
+def _compose_lot_color_key(
+    primary_entry: dict, independent_entries: list, axis_order: dict | None
+) -> str:
     """A lot's composite bucket color in a CANONICAL, repeatable segment
     order, so the same real combination always keys the same bucket. Ported
     from module_warehouse.js#_composeLotColorKey.
@@ -173,16 +179,26 @@ def _compose_lot_color_key(primary_entry: dict, independent_entries: list, axis_
 
     def sort_key(entry):
         axis_key = str(entry.get("axisKey") or "").strip().lower()
-        position = order.get(axis_key, _UNORDERED_AXIS_POSITION) if axis_key else _UNORDERED_AXIS_POSITION
+        position = (
+            order.get(axis_key, _UNORDERED_AXIS_POSITION)
+            if axis_key
+            else _UNORDERED_AXIS_POSITION
+        )
         # Same (or absent) axis key -- fall back to the color itself so the
         # result is still fully determined rather than input-order dependent.
         return (position, axis_key, str(entry.get("color") or "").strip().lower())
 
     ordered = sorted(
-        (e for e in [primary_entry, *(independent_entries or [])] if e and str(e.get("color") or "").strip()),
+        (
+            e
+            for e in [primary_entry, *(independent_entries or [])]
+            if e and str(e.get("color") or "").strip()
+        ),
         key=sort_key,
     )
-    return config_maps.COLOR_COMBO_DELIMITER.join(str(e["color"]).strip() for e in ordered)
+    return config_maps.COLOR_COMBO_DELIMITER.join(
+        str(e["color"]).strip() for e in ordered
+    )
 
 
 def _color_names_match(a, b) -> bool:
@@ -203,7 +219,9 @@ def _color_names_match(a, b) -> bool:
     return re.search(rf"(^|[-/\s]){escaped}($|[-/\s])", longer) is not None
 
 
-def _resolve_composite_color_token(candidate_colors: list, token_lower: str) -> str | None:
+def _resolve_composite_color_token(
+    candidate_colors: list, token_lower: str
+) -> str | None:
     """Resolves a single-axis-token colorGroup (e.g. "BCP") against a set of
     live bucket color strings for the same item, one of which may be a
     composite of 2+ independent pool axes (e.g. "BCP / Blue-White" -- see
@@ -224,7 +242,8 @@ def _resolve_composite_color_token(candidate_colors: list, token_lower: str) -> 
     matches = {
         c
         for c in candidate_colors
-        if delimiter in c and any(part.strip() == token_lower for part in c.split(delimiter))
+        if delimiter in c
+        and any(part.strip() == token_lower for part in c.split(delimiter))
     }
     return next(iter(matches)) if len(matches) == 1 else None
 
@@ -266,11 +285,15 @@ _COMMON_DRAIN_NOTE = (
 _COMMON_DRAIN_SHORTFALL_NOTE = (
     "Colour-agnostic (COMMON) consumption beyond everything this item had available"
 )
-_DISPATCH_DRAIN_NOTE = "Allocated from dispatched quantity across this product's colour buckets"
+_DISPATCH_DRAIN_NOTE = (
+    "Allocated from dispatched quantity across this product's colour buckets"
+)
 _DISPATCH_SHORTFALL_NOTE = "Dispatched beyond everything this product had available"
 
 
-def _build_warehouse_pool_buckets(cur, include_opening: bool = True, events: list | None = None) -> dict:
+def _build_warehouse_pool_buckets(
+    cur, include_opening: bool = True, events: list | None = None
+) -> dict:
     """Core of _recalculate_warehouse_pool, factored out so
     _get_real_history_colors_by_process can replay the same Pass 1-3
     credit/debit logic with include_opening=False -- i.e. everything
@@ -293,7 +316,9 @@ def _build_warehouse_pool_buckets(cur, include_opening: bool = True, events: lis
     """
     buckets: dict = {}
 
-    def record(bucket: dict, date, entry_type: str, ref: str, remarks: str, qty: float) -> None:
+    def record(
+        bucket: dict, date, entry_type: str, ref: str, remarks: str, qty: float
+    ) -> None:
         """One ledger line. `qty` is signed the way the pool sees it --
         positive adds to the bucket, negative takes away -- and is split
         into in/out here so a reversal lot or a downward correction reads as
@@ -316,7 +341,9 @@ def _build_warehouse_pool_buckets(cur, include_opening: bool = True, events: lis
             }
         )
 
-    def get_bucket(output_item_name: str, process_id: str, product_tag: str, color: str) -> dict:
+    def get_bucket(
+        output_item_name: str, process_id: str, product_tag: str, color: str
+    ) -> dict:
         key = (
             str(output_item_name or "").strip().lower(),
             str(product_tag or "").strip().lower(),
@@ -351,12 +378,18 @@ def _build_warehouse_pool_buckets(cur, include_opening: bool = True, events: lis
     producing_process_by_item: dict = {}
     for p in all_processes:
         item_key = str(p.get("outputItemName") or "").strip().lower()
-        if item_key and item_key not in producing_process_by_item and p.get("processId"):
+        if (
+            item_key
+            and item_key not in producing_process_by_item
+            and p.get("processId")
+        ):
             producing_process_by_item[item_key] = p["processId"].strip()
 
     # Only used to decide Pass 1's per-final-stage-lot naming below; Pass 3
     # reuses this same set rather than re-querying processes a second time.
-    final_stage_ids = {p["processId"].strip().lower() for p in all_processes if p["isFinalStage"]}
+    final_stage_ids = {
+        p["processId"].strip().lower() for p in all_processes if p["isFinalStage"]
+    }
 
     # Pass 0: seed buckets from manually-recorded Opening Balances -- the
     # one durable source of "stock that didn't come from a Production lot".
@@ -384,7 +417,7 @@ def _build_warehouse_pool_buckets(cur, include_opening: bool = True, events: lis
                 r["date"],
                 "Manual Correction" if is_correction else "Opening Stock",
                 "",
-                r["remarks"][len("Correction: "):] if is_correction else r["remarks"],
+                r["remarks"][len("Correction: ") :] if is_correction else r["remarks"],
                 r["qty"],
             )
 
@@ -441,9 +474,14 @@ def _build_warehouse_pool_buckets(cur, include_opening: bool = True, events: lis
                 # untagged Ready-to-Dispatch rows off this same name, so each
                 # distinct per-lot name surfaces there as its own trackable
                 # row/qty.
-                output_item_name = own_output_item_name or process_output_item_map.get(process_id.lower(), "")
+                output_item_name = own_output_item_name or process_output_item_map.get(
+                    process_id.lower(), ""
+                )
             else:
-                output_item_name = process_output_item_map.get(process_id.lower()) or own_output_item_name
+                output_item_name = (
+                    process_output_item_map.get(process_id.lower())
+                    or own_output_item_name
+                )
             if not output_item_name:
                 continue
             product_tag = str(row["product_id"] or "").strip()
@@ -458,15 +496,32 @@ def _build_warehouse_pool_buckets(cur, include_opening: bool = True, events: lis
                     color = str(color or "").strip()
                     if not color:
                         return
-                    bucket = get_bucket(output_item_name, process_id, product_tag, color)
+                    bucket = get_bucket(
+                        output_item_name, process_id, product_tag, color
+                    )
                     bucket["producedQty"] += float(qty or 0)
-                    record(bucket, lot_date, "Production Credit", lot_ref, lot_remarks, float(qty or 0))
+                    record(
+                        bucket,
+                        lot_date,
+                        "Production Credit",
+                        lot_ref,
+                        lot_remarks,
+                        float(qty or 0),
+                    )
 
                 primary_entries = [
-                    e for e in color_breakdown if e and e.get("countsTowardTotal") is not False and str(e.get("color") or "").strip()
+                    e
+                    for e in color_breakdown
+                    if e
+                    and e.get("countsTowardTotal") is not False
+                    and str(e.get("color") or "").strip()
                 ]
                 other_entries = [
-                    e for e in color_breakdown if e and e.get("countsTowardTotal") is False and str(e.get("color") or "").strip()
+                    e
+                    for e in color_breakdown
+                    if e
+                    and e.get("countsTowardTotal") is False
+                    and str(e.get("color") or "").strip()
                 ]
 
                 combined = False
@@ -481,7 +536,9 @@ def _build_warehouse_pool_buckets(cur, include_opening: bool = True, events: lis
                     # segments verbatim ("Blue" against "Blue-White"). Only
                     # composite primaries get this exception, so a plain
                     # single-axis primary keeps exactly its old behavior.
-                    primary_colors = [str(e.get("color") or "").strip() for e in primary_entries]
+                    primary_colors = [
+                        str(e.get("color") or "").strip() for e in primary_entries
+                    ]
                     inherited_segments_lower = set()
                     for primary_color in primary_colors:
                         segments = color_segments(primary_color)
@@ -518,7 +575,10 @@ def _build_warehouse_pool_buckets(cur, include_opening: bool = True, events: lis
                     # "independent". Coverage is what separates the two.
                     axis_entries: dict = {}
                     for entry in other_entries:
-                        axis_key = str(entry.get("axisKey") or "").strip().lower() or "__no_axis_key__"
+                        axis_key = (
+                            str(entry.get("axisKey") or "").strip().lower()
+                            or "__no_axis_key__"
+                        )
                         axis_entries.setdefault(axis_key, []).append(entry)
 
                     def _axis_is_mirror(entries) -> bool:
@@ -527,13 +587,20 @@ def _build_warehouse_pool_buckets(cur, include_opening: bool = True, events: lis
                             for pc in primary_colors
                         )
 
-                    mirror_axis_keys = {k for k, entries in axis_entries.items() if _axis_is_mirror(entries)}
+                    mirror_axis_keys = {
+                        k
+                        for k, entries in axis_entries.items()
+                        if _axis_is_mirror(entries)
+                    }
 
                     def _is_independent(entry):
                         color_lower = str(entry.get("color") or "").strip().lower()
                         if color_lower in inherited_segments_lower:
                             return True  # collision, keep as its own axis
-                        axis_key = str(entry.get("axisKey") or "").strip().lower() or "__no_axis_key__"
+                        axis_key = (
+                            str(entry.get("axisKey") or "").strip().lower()
+                            or "__no_axis_key__"
+                        )
                         return axis_key not in mirror_axis_keys
 
                     independent = [e for e in other_entries if _is_independent(e)]
@@ -553,7 +620,10 @@ def _build_warehouse_pool_buckets(cur, include_opening: bool = True, events: lis
                     # which" case this whole block is guarding.
                     axis_counts: dict = {}
                     for entry in independent:
-                        axis_key = str(entry.get("axisKey") or "").strip().lower() or "__no_axis_key__"
+                        axis_key = (
+                            str(entry.get("axisKey") or "").strip().lower()
+                            or "__no_axis_key__"
+                        )
                         axis_counts[axis_key] = axis_counts.get(axis_key, 0) + 1
 
                     if not any(count > 1 for count in axis_counts.values()):
@@ -566,7 +636,9 @@ def _build_warehouse_pool_buckets(cur, include_opening: bool = True, events: lis
                         axis_order = axis_order_by_process.get(process_id.lower())
                         for primary_entry in primary_entries:
                             credit_color(
-                                _compose_lot_color_key(primary_entry, independent, axis_order),
+                                _compose_lot_color_key(
+                                    primary_entry, independent, axis_order
+                                ),
                                 primary_entry.get("qty"),
                             )
                         combined = True
@@ -621,9 +693,13 @@ def _build_warehouse_pool_buckets(cur, include_opening: bool = True, events: lis
                         pool_item_unit_map = items_service.get_item_unit_info_map(cur)
                     if pool_units_map is None:
                         pool_units_map = units_service.get_units_map(cur)
-                    unit_info = items_service.lookup_item_unit_info(pool_item_unit_map, item_name, "")
+                    unit_info = items_service.lookup_item_unit_info(
+                        pool_item_unit_map, item_name, ""
+                    )
                     try:
-                        qty = units_service.convert_qty_to_base_unit(qty, unit, unit_info, pool_units_map)
+                        qty = units_service.convert_qty_to_base_unit(
+                            qty, unit, unit_info, pool_units_map
+                        )
                     except ValueError:
                         # Unconvertible (e.g. no Weight-per-Base-Unit set
                         # yet) -- fall back to the as-entered qty rather
@@ -637,8 +713,15 @@ def _build_warehouse_pool_buckets(cur, include_opening: bool = True, events: lis
                 # -- and note _build_pool_needed_map resolves it the same
                 # way, so the availability check and this debit cannot
                 # disagree about which bucket is being spent.
-                color_group = str(comp.get("poolColor") or "").strip() or str(comp.get("colorGroup") or "").strip()
-                color = color_group if color_group and color_group.upper() != _COLOR_GROUP_COMMON else ""
+                color_group = (
+                    str(comp.get("poolColor") or "").strip()
+                    or str(comp.get("colorGroup") or "").strip()
+                )
+                color = (
+                    color_group
+                    if color_group and color_group.upper() != _COLOR_GROUP_COMMON
+                    else ""
+                )
 
                 if not color:
                     # Held back for the post-loop settlement. Colour-specific
@@ -649,7 +732,10 @@ def _build_warehouse_pool_buckets(cur, include_opening: bool = True, events: lis
                     key = item_name.lower()
                     entry = common_consumption_by_item.get(key)
                     if entry is None:
-                        common_consumption_by_item[key] = {"itemName": item_name, "qty": qty}
+                        common_consumption_by_item[key] = {
+                            "itemName": item_name,
+                            "qty": qty,
+                        }
                     else:
                         entry["qty"] += qty
                     continue
@@ -665,7 +751,8 @@ def _build_warehouse_pool_buckets(cur, include_opening: bool = True, events: lis
                     candidates = [
                         b
                         for b in buckets.values()
-                        if b["outputItemName"].lower() == item_name_lower and not b["productTag"]
+                        if b["outputItemName"].lower() == item_name_lower
+                        and not b["productTag"]
                     ]
 
                     # A consumption recorded before _compose_lot_color_key
@@ -678,7 +765,11 @@ def _build_warehouse_pool_buckets(cur, include_opening: bool = True, events: lis
                     # one bucket carries that segment set -- otherwise there
                     # is nothing to disambiguate with.
                     want_order_key = _color_order_key(color)
-                    order_matches = [b for b in candidates if _color_order_key(b["color"]) == want_order_key]
+                    order_matches = [
+                        b
+                        for b in candidates
+                        if _color_order_key(b["color"]) == want_order_key
+                    ]
                     if len(order_matches) == 1:
                         color = order_matches[0]["color"]
                     else:
@@ -704,7 +795,11 @@ def _build_warehouse_pool_buckets(cur, include_opening: bool = True, events: lis
                             # when EXACTLY one candidate matches -- an
                             # ambiguous token is left alone deliberately, as
                             # before.
-                            name_matches = [b for b in candidates if _color_names_match(b["color"], color)]
+                            name_matches = [
+                                b
+                                for b in candidates
+                                if _color_names_match(b["color"], color)
+                            ]
                             if len(name_matches) == 1:
                                 resolved = name_matches[0]["color"]
                         if resolved:
@@ -724,9 +819,21 @@ def _build_warehouse_pool_buckets(cur, include_opening: bool = True, events: lis
                 # process and could never be rendered at all: real
                 # consumption, permanently invisible instead of showing as
                 # the negative balance it is.
-                debited = get_bucket(item_name, producing_process_by_item.get(item_name.lower(), ""), "", color)
+                debited = get_bucket(
+                    item_name,
+                    producing_process_by_item.get(item_name.lower(), ""),
+                    "",
+                    color,
+                )
                 debited["consumedQty"] += qty
-                record(debited, lot_date, "Production Consumption", lot_ref, lot_remarks, -qty)
+                record(
+                    debited,
+                    lot_date,
+                    "Production Consumption",
+                    lot_ref,
+                    lot_remarks,
+                    -qty,
+                )
 
         # Settle the COMMON-scoped consumption held back above.
         #
@@ -753,7 +860,9 @@ def _build_warehouse_pool_buckets(cur, include_opening: bool = True, events: lis
             blank_bucket = get_bucket(item_name, process_id_for_item, "", "")
 
             remaining = entry["qty"]
-            available_blank = max(blank_bucket["producedQty"] - blank_bucket["consumedQty"], 0)
+            available_blank = max(
+                blank_bucket["producedQty"] - blank_bucket["consumedQty"], 0
+            )
             take = min(remaining, available_blank)
             blank_bucket["consumedQty"] += take
             remaining -= take
@@ -763,13 +872,22 @@ def _build_warehouse_pool_buckets(cur, include_opening: bool = True, events: lis
             # bucket is therefore the honest rendering -- apportioning it
             # back across the contributing lots would invent a precision the
             # data does not have.
-            record(blank_bucket, None, "Colour-agnostic Consumption", "", _COMMON_DRAIN_NOTE, -take)
+            record(
+                blank_bucket,
+                None,
+                "Colour-agnostic Consumption",
+                "",
+                _COMMON_DRAIN_NOTE,
+                -take,
+            )
 
             if remaining > 0:
                 colored = [
                     b
                     for b in buckets.values()
-                    if b["outputItemName"].lower() == key and not b["productTag"] and b["color"]
+                    if b["outputItemName"].lower() == key
+                    and not b["productTag"]
+                    and b["color"]
                 ]
                 # Stable order so a rebuild is repeatable rather than
                 # dependent on dict insertion order, which follows whichever
@@ -782,11 +900,25 @@ def _build_warehouse_pool_buckets(cur, include_opening: bool = True, events: lis
                     take = min(remaining, available)
                     bucket["consumedQty"] += take
                     remaining -= take
-                    record(bucket, None, "Colour-agnostic Consumption", "", _COMMON_DRAIN_NOTE, -take)
+                    record(
+                        bucket,
+                        None,
+                        "Colour-agnostic Consumption",
+                        "",
+                        _COMMON_DRAIN_NOTE,
+                        -take,
+                    )
 
             if remaining > 0:
                 blank_bucket["consumedQty"] += remaining
-                record(blank_bucket, None, "Colour-agnostic Consumption", "", _COMMON_DRAIN_SHORTFALL_NOTE, -remaining)
+                record(
+                    blank_bucket,
+                    None,
+                    "Colour-agnostic Consumption",
+                    "",
+                    _COMMON_DRAIN_SHORTFALL_NOTE,
+                    -remaining,
+                )
 
     if (headers_table := config_maps.TABLE_NAMES.get("DISPATCH_HEADERS")) and (
         lines_table := config_maps.TABLE_NAMES.get("DISPATCH_LINES")
@@ -813,7 +945,9 @@ def _build_warehouse_pool_buckets(cur, include_opening: bool = True, events: lis
             if not product_id:
                 continue
             key = product_id.lower()
-            dispatch_qty_by_key[key] = dispatch_qty_by_key.get(key, 0) + float(row["qty"] or 0)
+            dispatch_qty_by_key[key] = dispatch_qty_by_key.get(key, 0) + float(
+                row["qty"] or 0
+            )
 
         # Dispatch carries no color of its own, so a Product Tag (or
         # untagged Output Item Name) credited across multiple color
@@ -825,7 +959,11 @@ def _build_warehouse_pool_buckets(cur, include_opening: bool = True, events: lis
         # qty.
         for key, dispatched_qty in dispatch_qty_by_key.items():
             remaining = dispatched_qty
-            matching = [b for b in buckets.values() if b["productTag"] and b["productTag"].lower() == key]
+            matching = [
+                b
+                for b in buckets.values()
+                if b["productTag"] and b["productTag"].lower() == key
+            ]
             if not matching:
                 matching = [
                     b
@@ -849,7 +987,14 @@ def _build_warehouse_pool_buckets(cur, include_opening: bool = True, events: lis
 
             if remaining > 0:
                 matching[0]["consumedQty"] += remaining
-                record(matching[0], None, "Dispatch", "", _DISPATCH_SHORTFALL_NOTE, -remaining)
+                record(
+                    matching[0],
+                    None,
+                    "Dispatch",
+                    "",
+                    _DISPATCH_SHORTFALL_NOTE,
+                    -remaining,
+                )
 
     return buckets
 
@@ -922,33 +1067,47 @@ def _get_real_history_colors_by_process(cur) -> dict:
     return result
 
 
-def _get_warehouse_pool_bucket_available_qty(cur, output_item_name: str, product_tag: str, color: str) -> float:
+def _get_warehouse_pool_bucket_available_qty(
+    cur, output_item_name: str, product_tag: str, color: str
+) -> float:
     cur.execute(
         """
         SELECT available_qty FROM erp.warehouse_pool
         WHERE lower(output_item_name) = lower(%s) AND lower(COALESCE(product_tag, '')) = lower(%s)
               AND lower(COALESCE(color, '')) = lower(%s)
         """,
-        (str(output_item_name or "").strip(), str(product_tag or "").strip(), str(color or "").strip()),
+        (
+            str(output_item_name or "").strip(),
+            str(product_tag or "").strip(),
+            str(color or "").strip(),
+        ),
     )
     row = cur.fetchone()
     return float(row["available_qty"]) if row else 0.0
 
 
-def _get_warehouse_pool_bucket_produced_qty(cur, output_item_name: str, product_tag: str, color: str) -> float:
+def _get_warehouse_pool_bucket_produced_qty(
+    cur, output_item_name: str, product_tag: str, color: str
+) -> float:
     cur.execute(
         """
         SELECT produced_qty FROM erp.warehouse_pool
         WHERE lower(output_item_name) = lower(%s) AND lower(COALESCE(product_tag, '')) = lower(%s)
               AND lower(COALESCE(color, '')) = lower(%s)
         """,
-        (str(output_item_name or "").strip(), str(product_tag or "").strip(), str(color or "").strip()),
+        (
+            str(output_item_name or "").strip(),
+            str(product_tag or "").strip(),
+            str(color or "").strip(),
+        ),
     )
     row = cur.fetchone()
     return float(row["produced_qty"]) if row else 0.0
 
 
-def _assert_produced_stays_nonnegative(cur, output_item_name: str, product_tag: str, color: str, delta: float) -> None:
+def _assert_produced_stays_nonnegative(
+    cur, output_item_name: str, product_tag: str, color: str, delta: float
+) -> None:
     """Rejects a manual entry that would drive a bucket's produced_qty below
     zero. produced_qty is the SUM OF CREDITS -- opening balances plus
     Completed lot output -- so a negative one is not a stock shortage, it is
@@ -969,7 +1128,9 @@ def _assert_produced_stays_nonnegative(cur, output_item_name: str, product_tag: 
     -- +20, then -20 ("no stock entered yet"), then -19 whose own remark
     reads "bug" -- and, its process since deleted, became uncorrectable.
     """
-    current = _get_warehouse_pool_bucket_produced_qty(cur, output_item_name, product_tag, color)
+    current = _get_warehouse_pool_bucket_produced_qty(
+        cur, output_item_name, product_tag, color
+    )
     if current + delta < -0.0001:
         label = f'"{output_item_name}"'
         if color:
@@ -992,7 +1153,9 @@ def _get_pool_available_qty_map(cur) -> dict:
     see module docstring.
     """
     result: dict = {}
-    cur.execute("SELECT output_item_name, product_tag, color, available_qty FROM erp.warehouse_pool")
+    cur.execute(
+        "SELECT output_item_name, product_tag, color, available_qty FROM erp.warehouse_pool"
+    )
     for row in cur.fetchall():
         item_name = str(row["output_item_name"] or "").strip().lower()
         product_tag = str(row["product_tag"] or "").strip()
@@ -1007,7 +1170,9 @@ def _get_pool_available_qty_map(cur) -> dict:
     return result
 
 
-def _check_pool_credit_removal_warning(cur, output_item_name: str, color_breakdown, flat_qty) -> str | None:
+def _check_pool_credit_removal_warning(
+    cur, output_item_name: str, color_breakdown, flat_qty
+) -> str | None:
     """Warns (never blocks) when removing a Completed lot's own credit to
     the Warehouse Pool -- via un-completing its status or deleting it
     outright -- would leave a bucket negative, i.e. a downstream lot
@@ -1027,7 +1192,10 @@ def _check_pool_credit_removal_warning(cur, output_item_name: str, color_breakdo
 
     if color_breakdown:
         credits = [
-            {"color": str((e or {}).get("color") or "").strip(), "qty": float((e or {}).get("qty") or 0)}
+            {
+                "color": str((e or {}).get("color") or "").strip(),
+                "qty": float((e or {}).get("qty") or 0),
+            }
             for e in color_breakdown
         ]
     else:
@@ -1040,7 +1208,7 @@ def _check_pool_credit_removal_warning(cur, output_item_name: str, color_breakdo
         current_available = entry["byColor"].get(c["color"].lower(), 0)
         would_be = current_available - c["qty"]
         if would_be < -0.0001:
-            label = f'"{name}"' + (f' ({c["color"]})' if c["color"] else "")
+            label = f'"{name}"' + (f" ({c['color']})" if c["color"] else "")
             shortfalls.append(f"{label}: {would_be:.2f}")
 
     if not shortfalls:
@@ -1058,9 +1226,13 @@ def _check_pool_credit_removal_warning(cur, output_item_name: str, color_breakdo
 
 @rpc_method("getWarehousePoolOpeningData")
 def get_warehouse_pool_opening_data():
-    with database.get_conn(cursor_factory=psycopg2.extras.RealDictCursor) as (_conn, cur):
+    with database.get_conn(cursor_factory=psycopg2.extras.RealDictCursor) as (
+        _conn,
+        cur,
+    ):
         process_name_by_id = {
-            p["processId"].strip().lower(): p["processName"] for p in process_service._get_all_processes(cur)
+            p["processId"].strip().lower(): p["processName"]
+            for p in process_service._get_all_processes(cur)
         }
         cur.execute(
             """
@@ -1109,12 +1281,18 @@ def save_warehouse_pool_opening(conn, cur, form_data):
     if process is None:
         raise ValueError("Selected Process was not found.")
     if not process["outputItemName"]:
-        raise ValueError(f'Process "{process["processName"]}" has no Output Item Name configured.')
+        raise ValueError(
+            f'Process "{process["processName"]}" has no Output Item Name configured.'
+        )
 
     # Product Tag is meaningful only for a final-stage process's own
     # finished output -- silently blanked (not rejected) for any other
     # process, matching the source exactly.
-    product_tag = str(form_data.get("productTag") or "").strip() if process["isFinalStage"] else ""
+    product_tag = (
+        str(form_data.get("productTag") or "").strip()
+        if process["isFinalStage"]
+        else ""
+    )
     color = str(form_data.get("color") or "").strip()
 
     # A per-entry Output Item Name override -- same final-stage-only
@@ -1139,17 +1317,30 @@ def save_warehouse_pool_opening(conn, cur, form_data):
     # "the dropdown showed choices" and "a color is required" always agree.
     if not color:
         components = process_service._fetch_process_components(cur, process_id)
-        pool_rows_for_axes = process_service._get_all_warehouse_pool_rows_for_color_axes(cur)
+        pool_rows_for_axes = (
+            process_service._get_all_warehouse_pool_rows_for_color_axes(cur)
+        )
         color_links = process_service._get_all_process_color_links(cur)
-        overrides = process_service._get_all_process_color_overrides(cur).get(process_id.lower())
+        overrides = process_service._get_all_process_color_overrides(cur).get(
+            process_id.lower()
+        )
         logged_colors = list(
-            process_service._get_production_logged_colors_by_process(cur, process_id).get(process_id.lower(), [])
+            process_service._get_production_logged_colors_by_process(
+                cur, process_id
+            ).get(process_id.lower(), [])
         )
         known = process_service._compute_known_colors_for_process(
-            process_id, components, pool_rows_for_axes, color_links, logged_colors, overrides
+            process_id,
+            components,
+            pool_rows_for_axes,
+            color_links,
+            logged_colors,
+            overrides,
         )
         if known["colors"]:
-            raise ValueError(f'Process "{process["processName"]}" tracks stock per-color -- choose a Color for this opening balance.')
+            raise ValueError(
+                f'Process "{process["processName"]}" tracks stock per-color -- choose a Color for this opening balance.'
+            )
 
     qty = _validate_number(form_data.get("qty"), -10000000, 10000000)
     if qty == 0:
@@ -1158,7 +1349,9 @@ def save_warehouse_pool_opening(conn, cur, form_data):
     # A downward opening entry is a correction and may legitimately be
     # negative -- but only down to zero produced, never past it.
     if qty < 0:
-        _assert_produced_stays_nonnegative(cur, output_item_name, product_tag, color, qty)
+        _assert_produced_stays_nonnegative(
+            cur, output_item_name, product_tag, color, qty
+        )
 
     opening_date = date_utils.to_safe_date(form_data.get("date")) or date.today()
     # No MAX_REMARKS_LENGTH truncation here -- a genuine inconsistency in
@@ -1176,25 +1369,39 @@ def save_warehouse_pool_opening(conn, cur, form_data):
         VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s)
         """,
         (
-            output_item_name, process["processId"], process_master_id, product_tag, color,
-            qty, opening_date, remarks, user_id,
+            output_item_name,
+            process["processId"],
+            process_master_id,
+            product_tag,
+            color,
+            qty,
+            opening_date,
+            remarks,
+            user_id,
         ),
     )
 
     _recalculate_warehouse_pool(cur)
 
-    return build_response(True, None, f'Opening stock for "{output_item_name}" recorded.')
+    return build_response(
+        True, None, f'Opening stock for "{output_item_name}" recorded.'
+    )
 
 
 @rpc_method("deleteWarehousePoolOpening", mutation=True)
 @database.transactional
-def delete_warehouse_pool_opening(conn, cur, row_idx, expected_output_item_name=None, expected_qty=None):
+def delete_warehouse_pool_opening(
+    conn, cur, row_idx, expected_output_item_name=None, expected_qty=None
+):
     try:
         target_id = int(row_idx)
     except (TypeError, ValueError):
         raise ValueError("Invalid opening stock entry selected for deletion.")
 
-    cur.execute("SELECT output_item_name, qty FROM erp.warehouse_pool_opening WHERE id = %s", (target_id,))
+    cur.execute(
+        "SELECT output_item_name, qty FROM erp.warehouse_pool_opening WHERE id = %s",
+        (target_id,),
+    )
     row = cur.fetchone()
     if row is None:
         raise ValueError("Invalid opening stock entry selected for deletion.")
@@ -1203,10 +1410,13 @@ def delete_warehouse_pool_opening(conn, cur, row_idx, expected_output_item_name=
     # were provided -- matches delete_contractor_payment's precedent.
     if expected_output_item_name is not None and expected_qty is not None:
         if (
-            str(row["output_item_name"] or "").strip().lower() != str(expected_output_item_name or "").strip().lower()
+            str(row["output_item_name"] or "").strip().lower()
+            != str(expected_output_item_name or "").strip().lower()
             or abs(float(row["qty"]) - float(expected_qty)) > 0.0001
         ):
-            raise ValueError("Data mismatch: The entry has been modified or shifted. Please refresh.")
+            raise ValueError(
+                "Data mismatch: The entry has been modified or shifted. Please refresh."
+            )
 
     cur.execute("DELETE FROM erp.warehouse_pool_opening WHERE id = %s", (target_id,))
     _recalculate_warehouse_pool(cur)
@@ -1216,7 +1426,16 @@ def delete_warehouse_pool_opening(conn, cur, row_idx, expected_output_item_name=
 
 @rpc_method("adjustWarehousePoolManually", mutation=True)
 @database.transactional
-def adjust_warehouse_pool_manually(conn, cur, output_item_name, process_id, product_tag, color, new_available_qty, reason):
+def adjust_warehouse_pool_manually(
+    conn,
+    cur,
+    output_item_name,
+    process_id,
+    product_tag,
+    color,
+    new_available_qty,
+    reason,
+):
     item_name = str(output_item_name or "").strip()
     if not item_name:
         raise ValueError("Output Item Name is required.")
@@ -1267,7 +1486,17 @@ def adjust_warehouse_pool_manually(conn, cur, output_item_name, process_id, prod
             (output_item_name, process_id, process_master_id, product_tag, color, qty, opening_date, remarks, created_by)
         VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s)
         """,
-        (item_name, proc_id, process_master_id, tag, color_val, delta, date.today(), f"Correction: {reason_text}", user_id),
+        (
+            item_name,
+            proc_id,
+            process_master_id,
+            tag,
+            color_val,
+            delta,
+            date.today(),
+            f"Correction: {reason_text}",
+            user_id,
+        ),
     )
 
     _recalculate_warehouse_pool(cur)
@@ -1281,13 +1510,18 @@ def adjust_warehouse_pool_manually(conn, cur, output_item_name, process_id, prod
     )
 
     return build_response(
-        True, {"oldAvailableQty": old_qty, "newAvailableQty": new_qty}, "Warehouse Pool stock adjusted successfully."
+        True,
+        {"oldAvailableQty": old_qty, "newAvailableQty": new_qty},
+        "Warehouse Pool stock adjusted successfully.",
     )
 
 
 @rpc_method("getWarehousePoolAdjustmentHistory")
 def get_warehouse_pool_adjustment_history():
-    with database.get_conn(cursor_factory=psycopg2.extras.RealDictCursor) as (_conn, cur):
+    with database.get_conn(cursor_factory=psycopg2.extras.RealDictCursor) as (
+        _conn,
+        cur,
+    ):
         cur.execute(
             """
             SELECT wpa.output_item_name, wpa.product_tag, wpa.color, wpa.old_value, wpa.new_value,
@@ -1322,7 +1556,10 @@ def get_warehouse_pool_adjustment_history():
 
 @rpc_method("getWarehousePoolData")
 def get_warehouse_pool_data():
-    with database.get_conn(cursor_factory=psycopg2.extras.RealDictCursor) as (_conn, cur):
+    with database.get_conn(cursor_factory=psycopg2.extras.RealDictCursor) as (
+        _conn,
+        cur,
+    ):
         cur.execute(
             """
             SELECT id, output_item_name, process_id, product_tag, produced_qty, consumed_qty, available_qty, color
@@ -1372,9 +1609,11 @@ def get_warehouse_pool_ledger(output_item_name, product_tag=None, color=None):
     # argument) otherwise gets HTTP 200, success true and an empty ledger,
     # which is indistinguishable from a bucket that genuinely has no history.
     # That cost a long hunt over a bucket with 19 movements in it.
-    for label, value in (("Output Item Name", output_item_name),
-                         ("Product Tag", product_tag),
-                         ("Colour", color)):
+    for label, value in (
+        ("Output Item Name", output_item_name),
+        ("Product Tag", product_tag),
+        ("Colour", color),
+    ):
         if value is not None and not isinstance(value, str):
             raise ValueError(
                 f"{label} must be text, got {type(value).__name__}. "
@@ -1388,7 +1627,10 @@ def get_warehouse_pool_ledger(output_item_name, product_tag=None, color=None):
     col = str(color or "").strip()
 
     events: list = []
-    with database.get_conn(cursor_factory=psycopg2.extras.RealDictCursor) as (_conn, cur):
+    with database.get_conn(cursor_factory=psycopg2.extras.RealDictCursor) as (
+        _conn,
+        cur,
+    ):
         _build_warehouse_pool_buckets(cur, include_opening=True, events=events)
 
     want = (name.lower(), tag.lower(), col.lower())
@@ -1427,6 +1669,9 @@ def get_pool_available_qty(output_item_name):
     target = str(output_item_name or "").strip().lower()
     if not target:
         return 0
-    with database.get_conn(cursor_factory=psycopg2.extras.RealDictCursor) as (_conn, cur):
+    with database.get_conn(cursor_factory=psycopg2.extras.RealDictCursor) as (
+        _conn,
+        cur,
+    ):
         entry = _get_pool_available_qty_map(cur).get(target)
     return entry["total"] if entry else 0

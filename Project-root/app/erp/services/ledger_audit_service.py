@@ -109,12 +109,16 @@ def compute_internal_ledger_audit_findings() -> dict:
 
     wastage_response = wastage_service.get_wastage_data()
     if not wastage_response["success"]:
-        raise RuntimeError(f"Failed to load Wastage data: {wastage_response['message']}")
+        raise RuntimeError(
+            f"Failed to load Wastage data: {wastage_response['message']}"
+        )
     wastage_records = wastage_response["data"] or []
 
     issue_response = issue_service.get_issue_data()
     if not issue_response["success"]:
-        raise RuntimeError(f"Failed to load Issued Stock data: {issue_response['message']}")
+        raise RuntimeError(
+            f"Failed to load Issued Stock data: {issue_response['message']}"
+        )
     issue_records = issue_response["data"] or []
 
     findings = []
@@ -187,7 +191,9 @@ def compute_internal_ledger_audit_findings() -> dict:
     for bill in bills:
         for item in bill["items"]:
             key = _item_key(item["name"], item["size"])
-            billed_base_qty_by_item[key] = billed_base_qty_by_item.get(key, 0) + float(item.get("baseQty") or 0)
+            billed_base_qty_by_item[key] = billed_base_qty_by_item.get(key, 0) + float(
+                item.get("baseQty") or 0
+            )
 
     consumed_by_item: dict = {}
 
@@ -213,8 +219,12 @@ def compute_internal_ledger_audit_findings() -> dict:
     _add_consumption(issue_records, "issuedBaseQty")
 
     for entry in consumed_by_item.values():
-        total_consumed_base_qty = entry["returnedBaseQty"] + entry["wastedBaseQty"] + entry["issuedBaseQty"]
-        billed_base_qty = billed_base_qty_by_item.get(_item_key(entry["name"], entry["size"]), 0)
+        total_consumed_base_qty = (
+            entry["returnedBaseQty"] + entry["wastedBaseQty"] + entry["issuedBaseQty"]
+        )
+        billed_base_qty = billed_base_qty_by_item.get(
+            _item_key(entry["name"], entry["size"]), 0
+        )
         over_by = total_consumed_base_qty - billed_base_qty
         if over_by > 0.0001:
             findings.append(
@@ -298,7 +308,10 @@ def get_recent_notification_logs():
     entry isn't re-notified on every reload -- mirrors source's own
     `${ts}|${action}|${recordId}` composition exactly.
     """
-    with database.get_conn(cursor_factory=psycopg2.extras.RealDictCursor) as (_conn, cur):
+    with database.get_conn(cursor_factory=psycopg2.extras.RealDictCursor) as (
+        _conn,
+        cur,
+    ):
         cur.execute(
             """
             SELECT logged_at, action, record_id, details, status
@@ -362,18 +375,39 @@ def run_internal_ledger_audit() -> dict:
                 result = compute_internal_ledger_audit_findings()
         except Exception as exc:  # noqa: BLE001 -- logged below, never raised further
             logger.error("[ledger_audit] Audit run failed: %s", exc)
-            _log(cur, "LEDGER_AUDIT_SUMMARY", "ALL", f"Audit run failed: {exc}", "ERROR")
-            return {"success": False, "message": f"Failed to run internal ledger audit: {exc}"}
+            _log(
+                cur, "LEDGER_AUDIT_SUMMARY", "ALL", f"Audit run failed: {exc}", "ERROR"
+            )
+            return {
+                "success": False,
+                "message": f"Failed to run internal ledger audit: {exc}",
+            }
 
         for f in result["findings"]:
-            record_id = f.get("poNumber") or f.get("returnNumber") or (
-                f"{f['itemName']} ({f['size']})" if f.get("size") else f.get("itemName", "N/A")
+            record_id = (
+                f.get("poNumber")
+                or f.get("returnNumber")
+                or (
+                    f"{f['itemName']} ({f['size']})"
+                    if f.get("size")
+                    else f.get("itemName", "N/A")
+                )
             )
-            _log(cur, "LEDGER_AUDIT_FINDING", record_id, f"{f['type']}: {describe_audit_finding(f)}", "WARNING")
+            _log(
+                cur,
+                "LEDGER_AUDIT_FINDING",
+                record_id,
+                f"{f['type']}: {describe_audit_finding(f)}",
+                "WARNING",
+            )
 
         _log(cur, "LEDGER_AUDIT_SUMMARY", "ALL", result["message"], "SUCCESS")
 
-    return {"success": True, "findingsCount": len(result["findings"]), "message": result["message"]}
+    return {
+        "success": True,
+        "findingsCount": len(result["findings"]),
+        "message": result["message"],
+    }
 
 
 def _run_audit_safely() -> None:
@@ -406,7 +440,10 @@ def start_ledger_audit_scheduler(app) -> None:
 
     stop_event = threading.Event()
     thread = threading.Thread(
-        target=_scheduler_loop, args=(stop_event,), daemon=True, name="ledger-audit-scheduler"
+        target=_scheduler_loop,
+        args=(stop_event,),
+        daemon=True,
+        name="ledger-audit-scheduler",
     )
     thread.start()
     app.logger.info("[ledger_audit] Hourly internal ledger audit scheduler started")

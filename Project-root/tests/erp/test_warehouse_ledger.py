@@ -22,7 +22,9 @@ import uuid
 
 def _rpc(client, method, args=None, mutation=False):
     headers = {"X-Mutation-Id": str(uuid.uuid4())} if mutation else {}
-    return client.post(f"/api/erp/rpc/{method}", json={"args": args or []}, headers=headers)
+    return client.post(
+        f"/api/erp/rpc/{method}", json={"args": args or []}, headers=headers
+    )
 
 
 def _unique_name(prefix: str) -> str:
@@ -52,7 +54,8 @@ def _save_process(client, **overrides):
 def _bucket(client, output_item_name, color=""):
     rows = _rpc(client, "getWarehousePoolData").get_json()["data"]
     return next(
-        b for b in rows
+        b
+        for b in rows
         if b["outputItemName"] == output_item_name and (b["color"] or "") == color
     )
 
@@ -71,11 +74,19 @@ def _closing(rows):
 
 def test_ledger_closes_on_the_buckets_available_qty(erp_client):
     payload, process_id = _save_process(erp_client)
-    _rpc(erp_client, "saveWarehousePoolOpening",
-         [{"processId": process_id, "qty": 25, "remarks": "Initial seed"}], mutation=True)
+    _rpc(
+        erp_client,
+        "saveWarehousePoolOpening",
+        [{"processId": process_id, "qty": 25, "remarks": "Initial seed"}],
+        mutation=True,
+    )
 
     rows = _ledger(erp_client, payload["outputItemName"])
-    assert _closing(rows) == _bucket(erp_client, payload["outputItemName"])["availableQty"] == 25
+    assert (
+        _closing(rows)
+        == _bucket(erp_client, payload["outputItemName"])["availableQty"]
+        == 25
+    )
     assert [r["type"] for r in rows] == ["Opening Stock"]
     assert rows[0]["remarks"] == "Initial seed"
 
@@ -87,9 +98,18 @@ def test_a_manual_correction_is_counted_once_not_twice(erp_client):
     correction twice and drift the running balance by the correction total.
     """
     payload, process_id = _save_process(erp_client)
-    _rpc(erp_client, "saveWarehousePoolOpening", [{"processId": process_id, "qty": 20}], mutation=True)
-    _rpc(erp_client, "adjustWarehousePoolManually",
-         [payload["outputItemName"], process_id, "", "", 12, "Physical recount"], mutation=True)
+    _rpc(
+        erp_client,
+        "saveWarehousePoolOpening",
+        [{"processId": process_id, "qty": 20}],
+        mutation=True,
+    )
+    _rpc(
+        erp_client,
+        "adjustWarehousePoolManually",
+        [payload["outputItemName"], process_id, "", "", 12, "Physical recount"],
+        mutation=True,
+    )
 
     rows = _ledger(erp_client, payload["outputItemName"])
     corrections = [r for r in rows if r["type"] == "Manual Correction"]
@@ -99,7 +119,11 @@ def test_a_manual_correction_is_counted_once_not_twice(erp_client):
     assert corrections[0]["inQty"] == 0
     assert corrections[0]["remarks"] == "Physical recount"
 
-    assert _closing(rows) == _bucket(erp_client, payload["outputItemName"])["availableQty"] == 12
+    assert (
+        _closing(rows)
+        == _bucket(erp_client, payload["outputItemName"])["availableQty"]
+        == 12
+    )
 
 
 def test_a_lot_with_its_own_output_item_name_still_appears(erp_client):
@@ -113,16 +137,20 @@ def test_a_lot_with_its_own_output_item_name_still_appears(erp_client):
     saved = _rpc(
         erp_client,
         "saveProduction",
-        [{
-            "processId": process_id,
-            "assignedTo": "Worker A",
-            "qty": 15,
-            "status": "Completed",
-            "outputItemName": _unique_name("A-Different-Name"),
-            # saveProduction requires at least one component; an ITEM one
-            # keeps this fixture about the OUTPUT name and nothing else.
-            "componentsConsumed": [{"itemName": "Bolt", "qty": 15, "sourceType": "ITEM"}],
-        }],
+        [
+            {
+                "processId": process_id,
+                "assignedTo": "Worker A",
+                "qty": 15,
+                "status": "Completed",
+                "outputItemName": _unique_name("A-Different-Name"),
+                # saveProduction requires at least one component; an ITEM one
+                # keeps this fixture about the OUTPUT name and nothing else.
+                "componentsConsumed": [
+                    {"itemName": "Bolt", "qty": 15, "sourceType": "ITEM"}
+                ],
+            }
+        ],
         mutation=True,
     )
     body = saved.get_json()
@@ -133,27 +161,41 @@ def test_a_lot_with_its_own_output_item_name_still_appears(erp_client):
     credits = [r for r in rows if r["type"] == "Production Credit"]
     assert [r["ref"] for r in credits] == [lot_number]
     assert credits[0]["inQty"] == 15
-    assert _closing(rows) == _bucket(erp_client, payload["outputItemName"])["availableQty"] == 15
+    assert (
+        _closing(rows)
+        == _bucket(erp_client, payload["outputItemName"])["availableQty"]
+        == 15
+    )
 
 
 def test_consumption_shows_as_an_out_and_the_balance_still_closes(erp_client):
     upstream, upstream_id = _save_process(erp_client)
-    _rpc(erp_client, "saveWarehousePoolOpening",
-         [{"processId": upstream_id, "qty": 30}], mutation=True)
+    _rpc(
+        erp_client,
+        "saveWarehousePoolOpening",
+        [{"processId": upstream_id, "qty": 30}],
+        mutation=True,
+    )
 
     downstream, downstream_id = _save_process(erp_client, sequence=2)
     saved = _rpc(
         erp_client,
         "saveProduction",
-        [{
-            "processId": downstream_id,
-            "assignedTo": "Worker B",
-            "qty": 10,
-            "status": "Completed",
-            "componentsConsumed": [
-                {"itemName": upstream["outputItemName"], "qty": 10, "sourceType": "POOL"}
-            ],
-        }],
+        [
+            {
+                "processId": downstream_id,
+                "assignedTo": "Worker B",
+                "qty": 10,
+                "status": "Completed",
+                "componentsConsumed": [
+                    {
+                        "itemName": upstream["outputItemName"],
+                        "qty": 10,
+                        "sourceType": "POOL",
+                    }
+                ],
+            }
+        ],
         mutation=True,
     )
     assert saved.get_json()["success"] is True, saved.get_json()["message"]
@@ -162,11 +204,17 @@ def test_consumption_shows_as_an_out_and_the_balance_still_closes(erp_client):
     outs = [r for r in rows if r["outQty"]]
     assert outs, "the draw should appear as an Out"
     assert sum(r["outQty"] for r in outs) == 10
-    assert _closing(rows) == _bucket(erp_client, upstream["outputItemName"])["availableQty"] == 20
+    assert (
+        _closing(rows)
+        == _bucket(erp_client, upstream["outputItemName"])["availableQty"]
+        == 20
+    )
 
 
 def test_unknown_bucket_returns_an_empty_ledger_not_an_error(erp_client):
-    body = _rpc(erp_client, "getWarehousePoolLedger", ["No Such Item", "", ""]).get_json()
+    body = _rpc(
+        erp_client, "getWarehousePoolLedger", ["No Such Item", "", ""]
+    ).get_json()
     assert body["success"] is True
     assert body["data"] == []
 

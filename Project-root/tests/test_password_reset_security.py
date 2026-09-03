@@ -27,7 +27,11 @@ import pytest
 from werkzeug.security import generate_password_hash
 
 import database
-from app.auth.routes import credential_fingerprint, generate_reset_token, verify_reset_token
+from app.auth.routes import (
+    credential_fingerprint,
+    generate_reset_token,
+    verify_reset_token,
+)
 
 OLD_PASSWORD = "0ldP@ssw0rd!2026"
 NEW_PASSWORD = "N3wP@ssw0rd!2026"
@@ -98,7 +102,9 @@ def test_replay_does_not_change_the_password(client, app, account):
     assert _hash_of(account["user_id"]) == after_first
 
 
-def test_an_outstanding_token_is_invalidated_by_any_password_change(client, app, account):
+def test_an_outstanding_token_is_invalidated_by_any_password_change(
+    client, app, account
+):
     """Two links requested, one used: the other must die with it. Otherwise a
     link mailed to a compromised inbox outlives the reset it prompted."""
     with app.test_request_context():
@@ -154,7 +160,8 @@ def test_a_deactivated_account_cannot_reset_its_password(client, app, account):
 
     with database.get_conn() as (_c, cur):
         cur.execute(
-            "UPDATE users SET deleted_at = NOW() WHERE user_id = %s", (account["user_id"],)
+            "UPDATE users SET deleted_at = NOW() WHERE user_id = %s",
+            (account["user_id"],),
         )
 
     before = _hash_of(account["user_id"])
@@ -166,7 +173,8 @@ def test_a_deactivated_account_cannot_reset_its_password(client, app, account):
 def test_no_token_is_issued_for_a_deactivated_account(app, account):
     with database.get_conn() as (_c, cur):
         cur.execute(
-            "UPDATE users SET deleted_at = NOW() WHERE user_id = %s", (account["user_id"],)
+            "UPDATE users SET deleted_at = NOW() WHERE user_id = %s",
+            (account["user_id"],),
         )
     with app.test_request_context():
         assert verify_reset_token(generate_reset_token(account["email"])) is None
@@ -228,9 +236,13 @@ def test_sessions_without_a_fingerprint_keep_working(app, account):
 
 
 def test_reset_clears_the_session_that_performed_it(client, app, account):
-    assert client.post(
-        "/auth/api/login", json={"email": account["email"], "password": OLD_PASSWORD}
-    ).status_code == 200
+    assert (
+        client.post(
+            "/auth/api/login",
+            json={"email": account["email"], "password": OLD_PASSWORD},
+        ).status_code
+        == 200
+    )
     with client.session_transaction() as sess:
         assert sess.get("_user_id") is not None
 
@@ -244,11 +256,17 @@ def test_reset_clears_the_session_that_performed_it(client, app, account):
 
 
 def test_login_pins_the_session_to_the_current_credential(client, app, account):
-    assert client.post(
-        "/auth/api/login", json={"email": account["email"], "password": OLD_PASSWORD}
-    ).status_code == 200
+    assert (
+        client.post(
+            "/auth/api/login",
+            json={"email": account["email"], "password": OLD_PASSWORD},
+        ).status_code
+        == 200
+    )
     with client.session_transaction() as sess:
-        assert sess.get("cred_fp") == credential_fingerprint(_hash_of(account["user_id"]))
+        assert sess.get("cred_fp") == credential_fingerprint(
+            _hash_of(account["user_id"])
+        )
 
 
 # ── The fingerprint itself ───────────────────────────────────────────────
@@ -270,4 +288,6 @@ def test_fingerprint_is_stable_for_one_hash(app):
 def test_fingerprint_handles_accounts_with_no_password(app):
     """Google-created accounts have password_hash NULL."""
     assert credential_fingerprint(None) == credential_fingerprint(None)
-    assert credential_fingerprint(None) != credential_fingerprint(generate_password_hash("x"))
+    assert credential_fingerprint(None) != credential_fingerprint(
+        generate_password_hash("x")
+    )

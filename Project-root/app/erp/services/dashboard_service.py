@@ -176,7 +176,9 @@ def _get_open_po_summary(cur) -> dict:
     for po in pos:
         has_open_line = False
         for item in po["items"]:
-            key = bill_service._build_po_line_key(po["poNumber"], item["name"], item["size"], item["narration"])
+            key = bill_service._build_po_line_key(
+                po["poNumber"], item["name"], item["size"], item["narration"]
+            )
             billed_base_qty = billed_map.get(key, 0)
             remaining_base_qty = item["baseQty"] - billed_base_qty
             if remaining_base_qty > 0.0001:
@@ -315,8 +317,12 @@ def _get_stage_rollups(production_lots: list) -> dict:
             if seen is None or lot_date < seen:
                 oldest_by_status[status][process_key] = lot_date
 
-        def add_to_group(color, size, qty, bucket=bucket, model_name=model_name, lot_id=lot_id):
-            entry = bucket.setdefault(_stage_group_title(model_name, color, size), {"qty": 0.0, "lots": set()})
+        def add_to_group(
+            color, size, qty, bucket=bucket, model_name=model_name, lot_id=lot_id
+        ):
+            entry = bucket.setdefault(
+                _stage_group_title(model_name, color, size), {"qty": 0.0, "lots": set()}
+            )
             entry["qty"] += qty
             entry["lots"].add(lot_id)
 
@@ -337,8 +343,14 @@ def _get_stage_rollups(production_lots: list) -> dict:
                 continue
             groups = sorted(
                 (
-                    {"title": title, "qty": _round2(entry["qty"]), "lotCount": len(entry["lots"])}
-                    for title, entry in groups_by_status[status].get(process_key, {}).items()
+                    {
+                        "title": title,
+                        "qty": _round2(entry["qty"]),
+                        "lotCount": len(entry["lots"]),
+                    }
+                    for title, entry in groups_by_status[status]
+                    .get(process_key, {})
+                    .items()
                 ),
                 key=lambda g: g["qty"],
                 reverse=True,
@@ -418,7 +430,10 @@ def _get_active_production_kpis(cur) -> dict:
     )
 
     kpis = dict(empty)
-    by_status = {_STATUS_IN_PROGRESS: "inProgressCount", _STATUS_PENDING: "pendingCount"}
+    by_status = {
+        _STATUS_IN_PROGRESS: "inProgressCount",
+        _STATUS_PENDING: "pendingCount",
+    }
     oldest_dates = []
     for row in cur.fetchall():
         n = int(row["n"] or 0)
@@ -545,7 +560,11 @@ def get_dashboard_data():
     ready_to_dispatch_units = sum(max(r["readyQty"], 0) for r in ready_records)
     ready_to_dispatch_full = sorted(
         (
-            {"productId": r["productId"], "productName": r["productName"], "readyQty": _round2(r["readyQty"])}
+            {
+                "productId": r["productId"],
+                "productName": r["productName"],
+                "readyQty": _round2(r["readyQty"]),
+            }
             for r in ready_records
             if r["readyQty"] > 0.0001
         ),
@@ -556,7 +575,10 @@ def get_dashboard_data():
 
     contractor_payables_full = sorted(
         (
-            {"contractorName": c["contractorName"], "balanceDue": _round2(c["balanceDue"])}
+            {
+                "contractorName": c["contractorName"],
+                "balanceDue": _round2(c["balanceDue"]),
+            }
             for c in contractor_ledger
             if c["balanceDue"] > 0.0001
         ),
@@ -566,7 +588,10 @@ def get_dashboard_data():
     contractor_payables_due = contractor_payables_full[:10]
 
     # One connection for every aggregate that can be expressed as SQL.
-    with database.get_conn(cursor_factory=psycopg2.extras.RealDictCursor) as (_conn, cur):
+    with database.get_conn(cursor_factory=psycopg2.extras.RealDictCursor) as (
+        _conn,
+        cur,
+    ):
         open_po_summary = _get_open_po_summary(cur)
         bills_months = _summarize_two_months(cur, _BILLS_TWO_MONTH_SQL)
         returns_months = _summarize_two_months(cur, _RETURNS_TWO_MONTH_SQL)
@@ -585,14 +610,18 @@ def get_dashboard_data():
         production_status_breakdown = _get_production_status_breakdown(cur)
         active_production_lots = _get_active_production_lots(cur)
 
-    total_contractor_payable_due = sum(max(c["balanceDue"], 0) for c in contractor_ledger)
+    total_contractor_payable_due = sum(
+        max(c["balanceDue"], 0) for c in contractor_ledger
+    )
 
     stage_rollups = _get_stage_rollups(active_production_lots)
 
     return build_response(
         True,
         {
-            "generatedAt": datetime.now(timezone.utc).isoformat(timespec="milliseconds").replace("+00:00", "Z"),
+            "generatedAt": datetime.now(timezone.utc)
+            .isoformat(timespec="milliseconds")
+            .replace("+00:00", "Z"),
             "kpis": {
                 "openPoCount": open_po_summary["count"],
                 "openPoValue": open_po_summary["value"],
@@ -646,8 +675,14 @@ def get_mobile_dashboard():
 
     today_key = date.today().isoformat()
 
-    pending_production_count = sum(1 for lot in production_lots if lot["status"] in _ACTIVE_PRODUCTION_STATUSES)
-    todays_dispatch_count = sum(1 for d in dispatch_records if d.get("dateRaw") and d["dateRaw"][:10] == today_key)
+    pending_production_count = sum(
+        1 for lot in production_lots if lot["status"] in _ACTIVE_PRODUCTION_STATUSES
+    )
+    todays_dispatch_count = sum(
+        1
+        for d in dispatch_records
+        if d.get("dateRaw") and d["dateRaw"][:10] == today_key
+    )
     low_stock_count = sum(1 for s in stock_records if s["isLowStock"])
 
     activity = []
@@ -658,7 +693,7 @@ def get_mobile_dashboard():
             {
                 "type": "production",
                 "title": lot.get("lotNumber") or lot.get("processId"),
-                "subtitle": f'{lot["qty"]} unit(s) · {lot["status"]}',
+                "subtitle": f"{lot['qty']} unit(s) · {lot['status']}",
                 "dateRaw": lot["dateRaw"],
             }
         )
@@ -669,7 +704,7 @@ def get_mobile_dashboard():
             {
                 "type": "dispatch",
                 "title": d["dispatchNumber"],
-                "subtitle": f'{d.get("clientName") or "Direct supply"} · {d["qty"]} unit(s)',
+                "subtitle": f"{d.get('clientName') or 'Direct supply'} · {d['qty']} unit(s)",
                 "dateRaw": d["dateRaw"],
             }
         )

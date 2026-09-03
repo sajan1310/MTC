@@ -101,8 +101,12 @@ def _normalize_items(cur, raw_items) -> list:
         # to treating the as-entered qty/price as already in the Base Unit.
         unit_info = items_service.lookup_item_unit_info(item_unit_map, name, size)
         try:
-            base_qty = units_service.convert_qty_to_base_unit(qty, unit, unit_info, units_map)
-            base_rate = units_service.convert_rate_to_base_unit(price, unit, unit_info, units_map)
+            base_qty = units_service.convert_qty_to_base_unit(
+                qty, unit, unit_info, units_map
+            )
+            base_rate = units_service.convert_rate_to_base_unit(
+                price, unit, unit_info, units_map
+            )
         except ValueError:
             base_qty = qty
             base_rate = price
@@ -134,7 +138,9 @@ def _attach_po_status(po: dict, billed_map: dict) -> None:
     all_lines_complete = len(items) > 0
 
     for item in items:
-        key = bill_service._build_po_line_key(po["poNumber"], item["name"], item["size"], item["narration"])
+        key = bill_service._build_po_line_key(
+            po["poNumber"], item["name"], item["size"], item["narration"]
+        )
         billed_base_qty = billed_map.get(key, 0)
 
         # Legacy/unconverted rows (baseQty 0) are treated as 1:1 with the
@@ -176,7 +182,10 @@ def _po_sort_num(po_number: str) -> int:
 
 
 def _find_vendor_id(cur, name: str):
-    cur.execute("SELECT id FROM erp.vendors WHERE lower(vendor_name) = lower(%s) AND deleted_at IS NULL", (name,))
+    cur.execute(
+        "SELECT id FROM erp.vendors WHERE lower(vendor_name) = lower(%s) AND deleted_at IS NULL",
+        (name,),
+    )
     row = cur.fetchone()
     return row["id"] if row else None
 
@@ -195,7 +204,9 @@ def _find_item_id(cur, name: str, size: str):
 # ─────────────────────────────────────────────────────────────────────────
 
 
-def _auto_extract_from_po(cur, vendor_name: str, contact: str, items: list, po_number: str, doc_date) -> None:
+def _auto_extract_from_po(
+    cur, vendor_name: str, contact: str, items: list, po_number: str, doc_date
+) -> None:
     vendor_name = (vendor_name or "").strip()
     if not vendor_name:
         return
@@ -209,14 +220,25 @@ def _auto_extract_from_po(cur, vendor_name: str, contact: str, items: list, po_n
         if rate < _MIN_VENDOR_RATE:
             continue
 
-        items_service._auto_extract_item(cur, name, item["size"], item["narration"], item["unit"], vendor_name, rate)
+        items_service._auto_extract_item(
+            cur, name, item["size"], item["narration"], item["unit"], vendor_name, rate
+        )
 
         cur.execute(
             """
             INSERT INTO erp.rate_history (rate_date, item_name, size, narration, vendor_name, rate, po_number, bill_number)
             VALUES (%s, %s, %s, %s, %s, %s, %s, %s)
             """,
-            (doc_date, name, item["size"], item["narration"], vendor_name, rate, po_number, ""),
+            (
+                doc_date,
+                name,
+                item["size"],
+                item["narration"],
+                vendor_name,
+                rate,
+                po_number,
+                "",
+            ),
         )
 
 
@@ -292,12 +314,17 @@ def _load_po_list(cur, billed_map: dict, only_po_number: str | None = None) -> l
     for po in po_map.values():
         _attach_po_status(po, billed_map)
 
-    return sorted(po_map.values(), key=lambda p: _po_sort_num(p["poNumber"]), reverse=True)
+    return sorted(
+        po_map.values(), key=lambda p: _po_sort_num(p["poNumber"]), reverse=True
+    )
 
 
 @rpc_method("getPOData")
 def get_po_data():
-    with database.get_conn(cursor_factory=psycopg2.extras.RealDictCursor) as (_conn, cur):
+    with database.get_conn(cursor_factory=psycopg2.extras.RealDictCursor) as (
+        _conn,
+        cur,
+    ):
         billed_map = bill_service._aggregate_billed_base_qty_by_po(cur)
         pos = _load_po_list(cur, billed_map)
     return build_response(True, pos)
@@ -335,7 +362,9 @@ def save_po(conn, cur, form_data):
             (old_po_number,),
         )
         existing = cur.fetchone()
-        po_date = existing["po_date"] if existing and existing["po_date"] else date.today()
+        po_date = (
+            existing["po_date"] if existing and existing["po_date"] else date.today()
+        )
     else:
         po_date = date.today()
 
@@ -357,7 +386,9 @@ def save_po(conn, cur, form_data):
         )
         header_row = cur.fetchone()
         if header_row is None:
-            raise ValueError(f"Original PO #{old_po_number} not found in sheet. Edit aborted to prevent data corruption.")
+            raise ValueError(
+                f"Original PO #{old_po_number} not found in sheet. Edit aborted to prevent data corruption."
+            )
         header_id = header_row["id"]
 
         # The source allows renumbering a PO with no duplicate check -- a
@@ -379,7 +410,18 @@ def save_po(conn, cur, form_data):
                 po_description = %s, po_remarks = %s, supplier_remarks = %s, updated_by = %s
             WHERE id = %s
             """,
-            (po_number, po_date, vendor, vendor_id, contact, po_description, po_remarks, supplier_remarks, user_id, header_id),
+            (
+                po_number,
+                po_date,
+                vendor,
+                vendor_id,
+                contact,
+                po_description,
+                po_remarks,
+                supplier_remarks,
+                user_id,
+                header_id,
+            ),
         )
         cur.execute("DELETE FROM erp.po_lines WHERE header_id = %s", (header_id,))
     else:
@@ -390,7 +432,17 @@ def save_po(conn, cur, form_data):
             VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s)
             RETURNING id
             """,
-            (po_number, po_date, vendor, vendor_id, contact, po_description, po_remarks, supplier_remarks, user_id),
+            (
+                po_number,
+                po_date,
+                vendor,
+                vendor_id,
+                contact,
+                po_description,
+                po_remarks,
+                supplier_remarks,
+                user_id,
+            ),
         )
         header_id = cur.fetchone()["id"]
 
@@ -417,7 +469,11 @@ def save_po(conn, cur, form_data):
 
     _auto_extract_from_po(cur, vendor, contact, items, po_number, po_date)
 
-    message = f"PO #{po_number} ({vendor}) updated successfully." if is_edit else f"PO #{po_number} ({vendor}) created successfully."
+    message = (
+        f"PO #{po_number} ({vendor}) updated successfully."
+        if is_edit
+        else f"PO #{po_number} ({vendor}) created successfully."
+    )
 
     # Read this PO's own just-written rows back so the client can patch it
     # into an already-loaded list in place instead of a full reload.
@@ -456,7 +512,9 @@ def delete_po(conn, cur, po_number):
 @rpc_method("deletePOsBulk", mutation=True)
 @database.transactional
 def delete_pos_bulk(conn, cur, po_numbers):
-    targets = {str(p or "").strip().lower() for p in (po_numbers or []) if str(p or "").strip()}
+    targets = {
+        str(p or "").strip().lower() for p in (po_numbers or []) if str(p or "").strip()
+    }
     if not targets:
         return build_response(True, None, "No purchase orders selected.")
 
@@ -470,7 +528,9 @@ def delete_pos_bulk(conn, cur, po_numbers):
     )
     rows_deleted = cur.rowcount
 
-    return build_response(True, {"deletedIds": list(targets)}, f"Deleted {rows_deleted} PO(s).")
+    return build_response(
+        True, {"deletedIds": list(targets)}, f"Deleted {rows_deleted} PO(s)."
+    )
 
 
 @rpc_method("suggestPoAllocations")
@@ -486,7 +546,10 @@ def suggest_po_allocations(vendor, items, bill_date=None):
         if not vendor_name or not isinstance(items, list) or len(items) == 0:
             return build_response(True, [])
 
-        with database.get_conn(cursor_factory=psycopg2.extras.RealDictCursor) as (_conn, cur):
+        with database.get_conn(cursor_factory=psycopg2.extras.RealDictCursor) as (
+            _conn,
+            cur,
+        ):
             billed_map = bill_service._aggregate_billed_base_qty_by_po(cur)
             all_pos = _load_po_list(cur, billed_map)
             item_unit_map = items_service.get_item_unit_info_map(cur)
@@ -494,7 +557,9 @@ def suggest_po_allocations(vendor, items, bill_date=None):
             # (PERF-003 -- this used to open a second connection out here).
             units_map = units_service.get_units_map(cur)
 
-        vendor_pos = [po for po in all_pos if po["vendor"].strip().lower() == vendor_name.lower()]
+        vendor_pos = [
+            po for po in all_pos if po["vendor"].strip().lower() == vendor_name.lower()
+        ]
         if not vendor_pos:
             return build_response(True, [])
 
@@ -503,7 +568,8 @@ def suggest_po_allocations(vendor, items, bill_date=None):
             vendor_pos = [
                 po
                 for po in vendor_pos
-                if not po["poDateRaw"] or date_utils.to_safe_date(po["poDateRaw"]) <= bill_date_obj
+                if not po["poDateRaw"]
+                or date_utils.to_safe_date(po["poDateRaw"]) <= bill_date_obj
             ]
         if not vendor_pos:
             return build_response(True, [])
@@ -512,7 +578,12 @@ def suggest_po_allocations(vendor, items, bill_date=None):
         candidates = []
         for po in vendor_pos:
             for po_item in po["items"]:
-                key = bill_service._build_po_line_key(po["poNumber"], po_item["name"], po_item["size"], po_item["narration"])
+                key = bill_service._build_po_line_key(
+                    po["poNumber"],
+                    po_item["name"],
+                    po_item["size"],
+                    po_item["narration"],
+                )
                 billed_base_qty = billed_map.get(key, 0)
                 remaining_base_qty = po_item["baseQty"] - billed_base_qty
                 if remaining_base_qty > 0.0001:
@@ -530,7 +601,9 @@ def suggest_po_allocations(vendor, items, bill_date=None):
                         }
                     )
 
-        candidates.sort(key=lambda c: (c["poDateRaw"] or "", _po_sort_num(c["poNumber"])))
+        candidates.sort(
+            key=lambda c: (c["poDateRaw"] or "", _po_sort_num(c["poNumber"]))
+        )
 
         # Grouped once by (name,size) so each bill line's lookup is O(1).
         # Each group holds the SAME candidate dicts (not copies), so
@@ -538,7 +611,7 @@ def suggest_po_allocations(vendor, items, bill_date=None):
         # for every other bill row sharing this key.
         candidates_by_key: dict = {}
         for c in candidates:
-            key = f'{c["name"].lower()}|{c["size"].lower()}'
+            key = f"{c['name'].lower()}|{c['size'].lower()}"
             candidates_by_key.setdefault(key, []).append(c)
 
         results = []
@@ -558,13 +631,19 @@ def suggest_po_allocations(vendor, items, bill_date=None):
             unit = str(item.get("unit") or "Pcs")
 
             if not name or qty <= 0:
-                results.append({"rowIndex": row_index, "allocations": [], "unmatchedQty": qty})
+                results.append(
+                    {"rowIndex": row_index, "allocations": [], "unmatchedQty": qty}
+                )
                 continue
 
             unit_info = items_service.lookup_item_unit_info(item_unit_map, name, size)
             try:
-                base_qty = units_service.convert_qty_to_base_unit(qty, unit, unit_info, units_map)
-                base_rate = units_service.convert_rate_to_base_unit(price, unit, unit_info, units_map)
+                base_qty = units_service.convert_qty_to_base_unit(
+                    qty, unit, unit_info, units_map
+                )
+                base_rate = units_service.convert_rate_to_base_unit(
+                    price, unit, unit_info, units_map
+                )
             except ValueError:
                 base_qty = qty
                 base_rate = price
@@ -574,19 +653,33 @@ def suggest_po_allocations(vendor, items, bill_date=None):
             ratio = (qty / base_qty) if base_qty > 0 else 1
 
             same_name_size = [
-                c for c in candidates_by_key.get(f"{name.lower()}|{size.lower()}", []) if c["remainingBaseQty"] > 0.0001
+                c
+                for c in candidates_by_key.get(f"{name.lower()}|{size.lower()}", [])
+                if c["remainingBaseQty"] > 0.0001
             ]
 
             # Narration/price are preferences, not hard requirements -- a
             # missing/mismatched value never forces a fallback to unmatched.
             narration = str(item.get("narration") or "").strip().lower()
             narration_matched = (
-                [c for c in same_name_size if c["narration"].strip().lower() == narration] if narration else []
+                [
+                    c
+                    for c in same_name_size
+                    if c["narration"].strip().lower() == narration
+                ]
+                if narration
+                else []
             )
             narration_pool = narration_matched if narration_matched else same_name_size
 
             price_matched = (
-                [c for c in narration_pool if abs(c["baseRate"] - base_rate) <= _PO_PRICE_MATCH_EPSILON] if price > 0 else []
+                [
+                    c
+                    for c in narration_pool
+                    if abs(c["baseRate"] - base_rate) <= _PO_PRICE_MATCH_EPSILON
+                ]
+                if price > 0
+                else []
             )
             matching = price_matched if price_matched else narration_pool
 
@@ -603,7 +696,10 @@ def suggest_po_allocations(vendor, items, bill_date=None):
                 # disagreement so the UI can offer to keep the PO's rate
                 # instead, rather than silently overwriting it.
                 allocation = {"poNumber": c["poNumber"], "qty": round(take * ratio, 4)}
-                if price > 0 and abs(c["baseRate"] - base_rate) > _PO_PRICE_MATCH_EPSILON:
+                if (
+                    price > 0
+                    and abs(c["baseRate"] - base_rate) > _PO_PRICE_MATCH_EPSILON
+                ):
                     allocation["rateConflict"] = {
                         "poRate": c["price"],
                         "poUnit": c["unit"],

@@ -4,7 +4,7 @@
 import os
 import sys
 
-os.chdir('c:\\Users\\erkar\\OneDrive\\Desktop\\MTC\\Project-root')
+os.chdir("c:\\Users\\erkar\\OneDrive\\Desktop\\MTC\\Project-root")
 sys.path.insert(0, os.getcwd())
 
 from app import create_app  # noqa: E402
@@ -13,7 +13,7 @@ from database import get_conn  # noqa: E402
 try:
     # Create app context
     app = create_app()
-    
+
     with app.app_context():
         with get_conn() as (conn, cur):
             # Check all tables
@@ -26,9 +26,10 @@ try:
             """)
             for row in cur.fetchall():
                 print(f"  - {row[0]}")
-        
+
 except Exception as e:
     print(f"✗ Error: {e}")
     import traceback
+
     traceback.print_exc()
     sys.exit(1)

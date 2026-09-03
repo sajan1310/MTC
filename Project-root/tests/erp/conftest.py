@@ -107,7 +107,11 @@ def erp_admin_user(erp_app):
                 ON CONFLICT (email) DO UPDATE SET name = EXCLUDED.name, role = 'admin'
                 RETURNING user_id
                 """,
-                ("ERP Admin Test User", "erp-admin-test-user@example.invalid", "not-a-real-hash"),
+                (
+                    "ERP Admin Test User",
+                    "erp-admin-test-user@example.invalid",
+                    "not-a-real-hash",
+                ),
             )
             return cur.fetchone()[0]
 
@@ -136,7 +140,11 @@ def erp_super_admin_user(erp_app):
                 ON CONFLICT (email) DO UPDATE SET name = EXCLUDED.name, role = 'super_admin'
                 RETURNING user_id
                 """,
-                ("ERP Super Admin Test User", "erp-super-admin-test-user@example.invalid", "not-a-real-hash"),
+                (
+                    "ERP Super Admin Test User",
+                    "erp-super-admin-test-user@example.invalid",
+                    "not-a-real-hash",
+                ),
             )
             return cur.fetchone()[0]
 

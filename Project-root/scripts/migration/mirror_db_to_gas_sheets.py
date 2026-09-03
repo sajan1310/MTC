@@ -130,7 +130,9 @@ def build_flat_sheet_rows(entry: dict, db_rows: list[dict]) -> list[list]:
     return [build_flat_row(entry, r) for r in db_rows]
 
 
-def build_header_lines_rows(entry: dict, groups: list[tuple[dict, list[dict]]]) -> list[list]:
+def build_header_lines_rows(
+    entry: dict, groups: list[tuple[dict, list[dict]]]
+) -> list[list]:
     """groups: ordered list of (header_values, [line_values, ...]) --
     header_values/line_values are dicts keyed by db column name. Returns one
     output row per line, with header columns repeated on every line row of
@@ -146,9 +148,13 @@ def build_header_lines_rows(entry: dict, groups: list[tuple[dict, list[dict]]]) 
         for line_values in lines:
             row = [""] * width
             for c in header_defs:
-                row[c["col"] - 1] = sheets_client.to_cell_value(header_values.get(c["db"]))
+                row[c["col"] - 1] = sheets_client.to_cell_value(
+                    header_values.get(c["db"])
+                )
             for c in line_defs:
-                row[c["col"] - 1] = sheets_client.to_cell_value(line_values.get(c["db"]))
+                row[c["col"] - 1] = sheets_client.to_cell_value(
+                    line_values.get(c["db"])
+                )
             for c in computed_defs:
                 fn = COMPUTED_FNS[c["fn"]]
                 row[c["col"] - 1] = sheets_client.to_cell_value(fn(line_values, lines))
@@ -156,7 +162,9 @@ def build_header_lines_rows(entry: dict, groups: list[tuple[dict, list[dict]]]) 
     return rows
 
 
-def build_items_master_rows(entry: dict, items: list[dict], pairs_by_item_id: dict[int, list[tuple]]) -> list[list]:
+def build_items_master_rows(
+    entry: dict, items: list[dict], pairs_by_item_id: dict[int, list[tuple]]
+) -> list[list]:
     """items: list of dicts (id + entry['columns']' db fields). pairs_by_item_id:
     item id -> ordered list of (vendor, rate) tuples from erp.item_vendors."""
     col_defs = entry["columns"]
@@ -233,7 +241,9 @@ def fetch_flat_db_rows(conn, entry: dict) -> list[dict]:
             cur.execute(entry["query"])
         else:
             where = "WHERE deleted_at IS NULL" if entry.get("has_soft_delete") else ""
-            cur.execute(f"SELECT * FROM {entry['table']} {where} ORDER BY {entry['order_by']}")
+            cur.execute(
+                f"SELECT * FROM {entry['table']} {where} ORDER BY {entry['order_by']}"
+            )
         return [dict(r) for r in cur.fetchall()]
 
 
@@ -267,7 +277,9 @@ def fetch_header_lines_groups(conn, entry: dict) -> list[tuple[dict, list[dict]]
     return [groups[hid] for hid in order]
 
 
-def fetch_items_master_data(conn, entry: dict) -> tuple[list[dict], dict[int, list[tuple]]]:
+def fetch_items_master_data(
+    conn, entry: dict
+) -> tuple[list[dict], dict[int, list[tuple]]]:
     col_dbs = sorted({c["db"] for c in entry["columns"]})
     with _dict_cursor(conn) as cur:
         cur.execute(
@@ -282,7 +294,9 @@ def fetch_items_master_data(conn, entry: dict) -> tuple[list[dict], dict[int, li
         )
         pairs_by_item_id: dict[int, list[tuple]] = {}
         for r in cur.fetchall():
-            pairs_by_item_id.setdefault(r["item_id"], []).append((r["vendor"], r["rate"]))
+            pairs_by_item_id.setdefault(r["item_id"], []).append(
+                (r["vendor"], r["rate"])
+            )
     return items, pairs_by_item_id
 
 
@@ -315,7 +329,9 @@ def fetch_stock_records() -> list[dict]:
     with _stock_app_context():
         resp = stock_service.get_stock_data()
     if not resp.get("success"):
-        raise RuntimeError(f"stock_service.get_stock_data() failed: {resp.get('message')}")
+        raise RuntimeError(
+            f"stock_service.get_stock_data() failed: {resp.get('message')}"
+        )
     return resp["data"]
 
 
@@ -333,13 +349,19 @@ class SheetMirrorResult:
         self.error: str | None = None
 
 
-def _current_data_row_count(sheets, spreadsheet_id: str, sheet_name: str, data_start_row: int) -> int:
+def _current_data_row_count(
+    sheets, spreadsheet_id: str, sheet_name: str, data_start_row: int
+) -> int:
     try:
         raw = sheets_client.fetch_sheet_values(sheets, spreadsheet_id, sheet_name)
     except Exception:
         return 0
     data_rows = raw[data_start_row - 1 :]
-    return sum(1 for row in data_rows if any((cell or "").strip() if isinstance(cell, str) else cell for cell in row))
+    return sum(
+        1
+        for row in data_rows
+        if any((cell or "").strip() if isinstance(cell, str) else cell for cell in row)
+    )
 
 
 def build_rows_for_entry(conn, entry: dict) -> list[list]:
@@ -368,11 +390,17 @@ def date_columns(entry: dict) -> list[int]:
     cell actually being a Date object -- a literal-text cell reads back as
     a plain string, silently nulling `dateRaw` and breaking that sheet's
     date-sort order in the GAS app."""
-    col_defs = [*entry.get("columns", []), *entry.get("header_columns", []), *entry.get("line_columns", [])]
+    col_defs = [
+        *entry.get("columns", []),
+        *entry.get("header_columns", []),
+        *entry.get("line_columns", []),
+    ]
     return sorted({c["col"] for c in col_defs if c.get("type") == "date"})
 
 
-def mirror_sheet(conn, sheets, spreadsheet_id: str, entry: dict, dry_run: bool) -> SheetMirrorResult:
+def mirror_sheet(
+    conn, sheets, spreadsheet_id: str, entry: dict, dry_run: bool
+) -> SheetMirrorResult:
     result = SheetMirrorResult(entry["key"])
     try:
         new_rows = build_rows_for_entry(conn, entry)
@@ -381,7 +409,9 @@ def mirror_sheet(conn, sheets, spreadsheet_id: str, entry: dict, dry_run: bool) 
             sheets, spreadsheet_id, entry["sheet_name"], entry["data_start_row"]
         )
 
-        if not entry.get("skip_guard") and would_wipe_unsafely(result.old_row_count, result.new_row_count):
+        if not entry.get("skip_guard") and would_wipe_unsafely(
+            result.old_row_count, result.new_row_count
+        ):
             result.status = "skipped_guard"
             return result
 
@@ -391,12 +421,21 @@ def mirror_sheet(conn, sheets, spreadsheet_id: str, entry: dict, dry_run: bool) 
 
         if new_rows:
             sheets_client.write_values_from_row(
-                sheets, spreadsheet_id, entry["sheet_name"], new_rows, entry["data_start_row"]
+                sheets,
+                spreadsheet_id,
+                entry["sheet_name"],
+                new_rows,
+                entry["data_start_row"],
             )
             cols = date_columns(entry)
             if cols:
                 sheets_client.write_date_columns_user_entered(
-                    sheets, spreadsheet_id, entry["sheet_name"], new_rows, entry["data_start_row"], cols
+                    sheets,
+                    spreadsheet_id,
+                    entry["sheet_name"],
+                    new_rows,
+                    entry["data_start_row"],
+                    cols,
                 )
         elif result.old_row_count:
             # write_values_from_row no-ops on an empty list (nothing to
@@ -413,7 +452,9 @@ def mirror_sheet(conn, sheets, spreadsheet_id: str, entry: dict, dry_run: bool) 
     return result
 
 
-def run_mirror(database_url: str, spreadsheet_id: str, entries: list[dict], dry_run: bool) -> list[SheetMirrorResult]:
+def run_mirror(
+    database_url: str, spreadsheet_id: str, entries: list[dict], dry_run: bool
+) -> list[SheetMirrorResult]:
     import psycopg2
 
     sheets = sheets_client.sheets_write_client()
@@ -432,7 +473,9 @@ def run_mirror(database_url: str, spreadsheet_id: str, entries: list[dict], dry_
 def _print_result(entry: dict, result: SheetMirrorResult):
     label = f"[{entry['key']}] {entry['sheet_name']}"
     if result.status == "dry_run":
-        print(f"{label}: would write {result.new_row_count} row(s) (currently {result.old_row_count})")
+        print(
+            f"{label}: would write {result.new_row_count} row(s) (currently {result.old_row_count})"
+        )
     elif result.status == "ok":
         print(f"{label}: {result.old_row_count} -> {result.new_row_count} rows")
     elif result.status == "skipped_guard":
@@ -449,11 +492,19 @@ def _print_result(entry: dict, result: SheetMirrorResult):
 
 
 def main():
-    parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
+    parser = argparse.ArgumentParser(
+        description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter
+    )
     parser.add_argument("--mapping", default=str(SCRIPT_DIR / "gas_sheet_mapping.yaml"))
-    parser.add_argument("--only", help="Comma-separated sheet keys to restrict to (e.g. UNITS,ITEMS)")
+    parser.add_argument(
+        "--only", help="Comma-separated sheet keys to restrict to (e.g. UNITS,ITEMS)"
+    )
     parser.add_argument("--database-url", default=os.environ.get("DATABASE_URL"))
-    parser.add_argument("--execute", action="store_true", help="Actually write to the spreadsheet (default is dry-run)")
+    parser.add_argument(
+        "--execute",
+        action="store_true",
+        help="Actually write to the spreadsheet (default is dry-run)",
+    )
     args = parser.parse_args()
 
     if not args.database_url:
@@ -467,7 +518,9 @@ def main():
         entries = [e for e in entries if e["key"] in wanted]
 
     spreadsheet_id = mapping["gas_spreadsheet_id"]
-    results = run_mirror(args.database_url, spreadsheet_id, entries, dry_run=not args.execute)
+    results = run_mirror(
+        args.database_url, spreadsheet_id, entries, dry_run=not args.execute
+    )
 
     failed = [r for r in results if r.status in ("error", "skipped_guard")]
     print(f"\n{len(results)} sheet(s) processed, {len(failed)} failed/skipped.")

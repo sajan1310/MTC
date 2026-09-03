@@ -52,7 +52,9 @@ def test_unexpected_exception_is_logged_and_not_leaked_to_client(erp_client, cap
     import logging
 
     with caplog.at_level(logging.ERROR, logger="app.erp.rpc"):
-        resp = erp_client.post("/api/erp/rpc/getUnitsData", json={"args": ["unexpected_extra_arg"]})
+        resp = erp_client.post(
+            "/api/erp/rpc/getUnitsData", json={"args": ["unexpected_extra_arg"]}
+        )
 
     assert resp.status_code == 200
     body = resp.get_json()
@@ -102,7 +104,9 @@ def test_role_gated_method_denies_user_without_the_role(erp_app, erp_client):
         assert resp.status_code == 403
         body = resp.get_json()
         assert body["success"] is False
-        assert "manager" not in body["message"]  # don't leak which role would have worked
+        assert (
+            "manager" not in body["message"]
+        )  # don't leak which role would have worked
     finally:
         del RPC_METHODS["__testRoleGatedMethod"]
 
@@ -116,7 +120,9 @@ def test_role_gated_method_allows_matching_role(erp_app, erp_test_user):
 
     with erp_app.app_context():
         with database.get_conn() as (_conn, cur):
-            cur.execute("UPDATE users SET role = 'manager' WHERE user_id = %s", (erp_test_user,))
+            cur.execute(
+                "UPDATE users SET role = 'manager' WHERE user_id = %s", (erp_test_user,)
+            )
 
     client = erp_app.test_client()
     with client.session_transaction() as sess:
@@ -136,11 +142,17 @@ def test_role_gated_method_allows_matching_role(erp_app, erp_test_user):
         del RPC_METHODS["__testRoleGatedMethod"]
         with erp_app.app_context():
             with database.get_conn() as (_conn, cur):
-                cur.execute("UPDATE users SET role = 'user' WHERE user_id = %s", (erp_test_user,))
+                cur.execute(
+                    "UPDATE users SET role = 'user' WHERE user_id = %s",
+                    (erp_test_user,),
+                )
 
 
 def test_mutation_missing_mutation_id_header_is_rejected(erp_client):
-    resp = erp_client.post("/api/erp/rpc/saveUnit", json={"args": [{"unitName": "x", "family": "Count", "factorToBase": 1}]})
+    resp = erp_client.post(
+        "/api/erp/rpc/saveUnit",
+        json={"args": [{"unitName": "x", "family": "Count", "factorToBase": 1}]},
+    )
     assert resp.status_code == 400
     assert resp.get_json()["success"] is False
 
@@ -163,7 +175,10 @@ def test_replayed_mutation_id_does_not_re_execute(erp_client):
     assert first.get_json() == second.get_json()
     assert first.get_json()["success"] is True
 
-    with database.get_conn(cursor_factory=psycopg2.extras.RealDictCursor) as (_conn, cur):
+    with database.get_conn(cursor_factory=psycopg2.extras.RealDictCursor) as (
+        _conn,
+        cur,
+    ):
         cur.execute(
             "SELECT COUNT(*) AS n FROM erp.units WHERE lower(unit_name) = lower(%s) AND deleted_at IS NULL",
             (unit_name,),
@@ -174,28 +189,39 @@ def test_replayed_mutation_id_does_not_re_execute(erp_client):
 # ── Real methods gated via RpcSpec.roles (first non-synthetic uses of the
 # mechanism proven generically above) ────────────────────────────────────
 
+
 def test_trigger_backup_is_admin_only(erp_client):
     """Asserts only the 403 -- deliberately does not call this as an admin
     here, since a real triggerBackup attempts an actual backup/Sheets
     upload; that path is covered by test_backup.py's mocked tests."""
-    resp = erp_client.post("/api/erp/rpc/triggerBackup", json={"args": []}, headers={"X-Mutation-Id": str(uuid.uuid4())})
+    resp = erp_client.post(
+        "/api/erp/rpc/triggerBackup",
+        json={"args": []},
+        headers={"X-Mutation-Id": str(uuid.uuid4())},
+    )
     assert resp.status_code == 403
     assert resp.get_json()["success"] is False
 
 
 def test_run_scheduled_item_cleanup_is_admin_only(erp_client, erp_admin_client):
     denied = erp_client.post(
-        "/api/erp/rpc/runScheduledItemCleanup", json={"args": []}, headers={"X-Mutation-Id": str(uuid.uuid4())}
+        "/api/erp/rpc/runScheduledItemCleanup",
+        json={"args": []},
+        headers={"X-Mutation-Id": str(uuid.uuid4())},
     )
     assert denied.status_code == 403
 
     allowed = erp_admin_client.post(
-        "/api/erp/rpc/runScheduledItemCleanup", json={"args": []}, headers={"X-Mutation-Id": str(uuid.uuid4())}
+        "/api/erp/rpc/runScheduledItemCleanup",
+        json={"args": []},
+        headers={"X-Mutation-Id": str(uuid.uuid4())},
     )
     assert allowed.status_code == 200
     assert allowed.get_json()["success"] is True
 
+
 # ── X-Mutation-Id validation (TEST-001) ──────────────────────────────────
+
 
 @pytest.mark.parametrize(
     "bad_id",
@@ -204,8 +230,8 @@ def test_run_scheduled_item_cleanup_is_admin_only(erp_client, erp_admin_client):
         "12345",
         "'; DROP TABLE erp.rpc_mutations; --",
         "../../etc/passwd",
-        "550e8400-e29b-41d4-a716",              # truncated
-        "550e8400e29b41d4a716446655440000ff",   # too long
+        "550e8400-e29b-41d4-a716",  # truncated
+        "550e8400e29b41d4a716446655440000ff",  # too long
     ],
 )
 def test_a_non_uuid_mutation_id_is_rejected(erp_client, bad_id):
@@ -241,6 +267,7 @@ def test_a_rejected_mutation_id_is_never_stored(erp_client):
 
 # ── The in-flight duplicate (DATA-003) ───────────────────────────────────
 
+
 def test_a_duplicate_arriving_while_the_first_is_in_flight_gets_409(erp_client):
     """The double-submit case DATA-003 exists for. The second request must not
     execute the method a second time, and must not be told it succeeded -- 409
@@ -264,7 +291,10 @@ def test_a_duplicate_arriving_while_the_first_is_in_flight_gets_409(erp_client):
         # The 409 left the first request's claim intact. Releasing it here
         # would let a third request execute concurrently after all, which is
         # the whole thing this mechanism prevents.
-        with database.get_conn(cursor_factory=psycopg2.extras.DictCursor) as (_conn, cur):
+        with database.get_conn(cursor_factory=psycopg2.extras.DictCursor) as (
+            _conn,
+            cur,
+        ):
             cur.execute(
                 "SELECT status FROM erp.rpc_mutations WHERE mutation_id = %s",
                 (mutation_id,),
@@ -291,7 +321,9 @@ def test_the_id_becomes_usable_again_once_the_holder_releases_it(erp_client):
     assert "not found in Stock" in resp.get_json()["message"]
 
 
-def test_a_failed_release_is_logged_and_never_masks_the_real_error(erp_client, caplog, monkeypatch):
+def test_a_failed_release_is_logged_and_never_masks_the_real_error(
+    erp_client, caplog, monkeypatch
+):
     """The cleanup branch in the dispatcher's `finally`.
 
     An unexpected exception inside the method is already caught and converted
@@ -326,10 +358,13 @@ def test_a_failed_release_is_logged_and_never_masks_the_real_error(erp_client, c
     ), [r.getMessage() for r in caplog.records]
 
     with database.get_conn() as (_conn, cur):
-        cur.execute("DELETE FROM erp.rpc_mutations WHERE mutation_id = %s", (mutation_id,))
+        cur.execute(
+            "DELETE FROM erp.rpc_mutations WHERE mutation_id = %s", (mutation_id,)
+        )
 
 
 # ── mutations.claim: the row-vanishes-underneath-it retry ────────────────
+
 
 class _PruningCursor:
     """Wraps a real cursor and deletes `mutation_id` from a SEPARATE
@@ -350,8 +385,12 @@ class _PruningCursor:
         self._delete_conn_factory = delete_conn_factory
 
     def execute(self, sql, params=None):
-        if not self._state["done"] and "FROM erp.rpc_mutations" in sql and "SELECT" in sql:
-            self._state["done"] = True   # one-shot, or the retry recurses forever
+        if (
+            not self._state["done"]
+            and "FROM erp.rpc_mutations" in sql
+            and "SELECT" in sql
+        ):
+            self._state["done"] = True  # one-shot, or the retry recurses forever
             # Deliberately nested, so PERF-003's guard has to be opted out of
             # explicitly -- that is what allow_nested_connections() is for, and
             # needing it here is the guard working, not a problem with it.

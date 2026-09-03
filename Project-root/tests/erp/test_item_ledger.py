@@ -19,7 +19,9 @@ import uuid
 
 def _rpc(client, method, args=None, mutation=False):
     headers = {"X-Mutation-Id": str(uuid.uuid4())} if mutation else {}
-    return client.post(f"/api/erp/rpc/{method}", json={"args": args or []}, headers=headers)
+    return client.post(
+        f"/api/erp/rpc/{method}", json={"args": args or []}, headers=headers
+    )
 
 
 def _unique_name(prefix: str) -> str:
@@ -27,7 +29,12 @@ def _unique_name(prefix: str) -> str:
 
 
 def _create_item_with_stock(client, name: str, initial_stock: float = 10):
-    resp = _rpc(client, "saveItem", [{"itemName": name, "itemInitialStock": initial_stock}], mutation=True)
+    resp = _rpc(
+        client,
+        "saveItem",
+        [{"itemName": name, "itemInitialStock": initial_stock}],
+        mutation=True,
+    )
     assert resp.get_json()["success"] is True
 
 
@@ -85,7 +92,9 @@ def test_item_ledger_shows_production_consumption_for_non_final_stage_lot(erp_cl
                 "assignedTo": "Worker A",
                 "qty": 10,
                 "status": "Completed",
-                "componentsConsumed": [{"itemName": name, "qty": 6, "sourceType": "ITEM", "unit": "Pcs"}],
+                "componentsConsumed": [
+                    {"itemName": name, "qty": 6, "sourceType": "ITEM", "unit": "Pcs"}
+                ],
             }
         ],
         mutation=True,
@@ -119,7 +128,9 @@ def test_item_ledger_ignores_non_completed_lots(erp_client):
                 "assignedTo": "Worker A",
                 "qty": 5,
                 "status": "Pending",
-                "componentsConsumed": [{"itemName": name, "qty": 8, "sourceType": "ITEM", "unit": "Pcs"}],
+                "componentsConsumed": [
+                    {"itemName": name, "qty": 8, "sourceType": "ITEM", "unit": "Pcs"}
+                ],
             }
         ],
         mutation=True,
@@ -168,13 +179,24 @@ def test_item_ledger_reconciles_with_current_stock_across_every_term(erp_client)
     _rpc(
         erp_client,
         "saveWastage",
-        [{"date": "03/01/2026", "items": [{"name": name, "qty": 5, "unit": "Pcs", "reason": "Damaged"}]}],
+        [
+            {
+                "date": "03/01/2026",
+                "items": [{"name": name, "qty": 5, "unit": "Pcs", "reason": "Damaged"}],
+            }
+        ],
         mutation=True,
     )
     _rpc(
         erp_client,
         "saveIssueStock",
-        [{"date": "04/01/2026", "issuedTo": "Contractor A", "items": [{"name": name, "qty": 3, "unit": "Pcs"}]}],
+        [
+            {
+                "date": "04/01/2026",
+                "issuedTo": "Contractor A",
+                "items": [{"name": name, "qty": 3, "unit": "Pcs"}],
+            }
+        ],
         mutation=True,
     )
 
@@ -188,7 +210,9 @@ def test_item_ledger_reconciles_with_current_stock_across_every_term(erp_client)
                 "assignedTo": "Worker A",
                 "qty": 10,
                 "status": "Completed",
-                "componentsConsumed": [{"itemName": name, "qty": 7, "sourceType": "ITEM", "unit": "Pcs"}],
+                "componentsConsumed": [
+                    {"itemName": name, "qty": 7, "sourceType": "ITEM", "unit": "Pcs"}
+                ],
             }
         ],
         mutation=True,
@@ -234,7 +258,9 @@ def test_item_ledger_excludes_ledger_only_bill_from_the_balance(erp_client):
     )
 
     listed = _rpc(erp_client, "getStockData").get_json()["data"]
-    assert next(r for r in listed if r["name"] == name)["currentStock"] == 30  # bill excluded
+    assert (
+        next(r for r in listed if r["name"] == name)["currentStock"] == 30
+    )  # bill excluded
 
     data = _ledger(erp_client, name)
     bill_rows = [e for e in data["entries"] if e["kind"] == "BILL"]
@@ -256,7 +282,12 @@ def test_item_ledger_manual_adjustment_is_shown_but_not_double_counted(erp_clien
     name = _unique_name("LedgerAdjusted")
     _create_item_with_stock(erp_client, name, initial_stock=20)
 
-    resp = _rpc(erp_client, "adjustStockManually", [name, "", 35, "Physical recount"], mutation=True)
+    resp = _rpc(
+        erp_client,
+        "adjustStockManually",
+        [name, "", 35, "Physical recount"],
+        mutation=True,
+    )
     assert resp.get_json()["success"] is True
 
     listed = _rpc(erp_client, "getStockData").get_json()["data"]
@@ -283,7 +314,12 @@ def test_item_ledger_pool_sourced_component_never_touches_items_stock(erp_client
     _create_item_with_stock(erp_client, name, initial_stock=25)
 
     upstream_id, upstream_output = _save_non_final_process(erp_client)
-    _rpc(erp_client, "saveWarehousePoolOpening", [{"processId": upstream_id, "qty": 40}], mutation=True)
+    _rpc(
+        erp_client,
+        "saveWarehousePoolOpening",
+        [{"processId": upstream_id, "qty": 40}],
+        mutation=True,
+    )
 
     downstream_id, _output = _save_non_final_process(erp_client)
     _rpc(
@@ -305,7 +341,9 @@ def test_item_ledger_pool_sourced_component_never_touches_items_stock(erp_client
     )
 
     listed = _rpc(erp_client, "getStockData").get_json()["data"]
-    assert next(r for r in listed if r["name"] == name)["currentStock"] == 23  # 25 - 2, POOL untouched
+    assert (
+        next(r for r in listed if r["name"] == name)["currentStock"] == 23
+    )  # 25 - 2, POOL untouched
 
     # The POOL component's own name must not surface as an Items Stock movement.
     pool_ledger = _ledger(erp_client, upstream_output)
@@ -327,7 +365,14 @@ def test_item_ledger_reports_base_unit_qty_not_as_entered(erp_client):
     resp = _rpc(
         erp_client,
         "saveItem",
-        [{"itemName": name, "itemInitialStock": 0, "itemBaseUnit": "Pcs", "itemPurchaseUnit": "Dozen"}],
+        [
+            {
+                "itemName": name,
+                "itemInitialStock": 0,
+                "itemBaseUnit": "Pcs",
+                "itemPurchaseUnit": "Dozen",
+            }
+        ],
         mutation=True,
     )
     assert resp.get_json()["success"] is True
@@ -401,13 +446,24 @@ def test_item_ledger_balance_runs_from_initial_stock_to_current_stock(erp_client
     _rpc(
         erp_client,
         "saveWastage",
-        [{"date": "02/01/2026", "items": [{"name": name, "qty": 5, "unit": "Pcs", "reason": "Damaged"}]}],
+        [
+            {
+                "date": "02/01/2026",
+                "items": [{"name": name, "qty": 5, "unit": "Pcs", "reason": "Damaged"}],
+            }
+        ],
         mutation=True,
     )
     _rpc(
         erp_client,
         "saveIssueStock",
-        [{"date": "03/01/2026", "issuedTo": "Contractor A", "items": [{"name": name, "qty": 3, "unit": "Pcs"}]}],
+        [
+            {
+                "date": "03/01/2026",
+                "issuedTo": "Contractor A",
+                "items": [{"name": name, "qty": 3, "unit": "Pcs"}],
+            }
+        ],
         mutation=True,
     )
 

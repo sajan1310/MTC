@@ -7,7 +7,9 @@ import uuid
 
 def _rpc(client, method, args=None, mutation=False):
     headers = {"X-Mutation-Id": str(uuid.uuid4())} if mutation else {}
-    return client.post(f"/api/erp/rpc/{method}", json={"args": args or []}, headers=headers)
+    return client.post(
+        f"/api/erp/rpc/{method}", json={"args": args or []}, headers=headers
+    )
 
 
 def _unique_name(prefix: str) -> str:
@@ -27,7 +29,14 @@ def test_save_unit_creates_and_lists_it(erp_client):
     resp = _rpc(
         erp_client,
         "saveUnit",
-        [{"unitName": name, "family": "Count", "factorToBase": 144, "remarks": "12 dozen"}],
+        [
+            {
+                "unitName": name,
+                "family": "Count",
+                "factorToBase": 144,
+                "remarks": "12 dozen",
+            }
+        ],
         mutation=True,
     )
     assert resp.status_code == 200
@@ -42,11 +51,19 @@ def test_save_unit_creates_and_lists_it(erp_client):
 
 def test_save_unit_rejects_case_insensitive_duplicate(erp_client):
     name = _unique_name("Dozen")
-    first = _rpc(erp_client, "saveUnit", [{"unitName": name, "family": "Count", "factorToBase": 12}], mutation=True)
+    first = _rpc(
+        erp_client,
+        "saveUnit",
+        [{"unitName": name, "family": "Count", "factorToBase": 12}],
+        mutation=True,
+    )
     assert first.get_json()["success"] is True
 
     dupe = _rpc(
-        erp_client, "saveUnit", [{"unitName": name.upper(), "family": "Count", "factorToBase": 12}], mutation=True
+        erp_client,
+        "saveUnit",
+        [{"unitName": name.upper(), "family": "Count", "factorToBase": 12}],
+        mutation=True,
     )
     body = dupe.get_json()
     assert body["success"] is False
@@ -57,13 +74,25 @@ def test_save_unit_rename_via_original_unit_name(erp_client):
     original = _unique_name("Box")
     renamed = _unique_name("Carton")
 
-    create = _rpc(erp_client, "saveUnit", [{"unitName": original, "family": "Count", "factorToBase": 50}], mutation=True)
+    create = _rpc(
+        erp_client,
+        "saveUnit",
+        [{"unitName": original, "family": "Count", "factorToBase": 50}],
+        mutation=True,
+    )
     assert create.get_json()["success"] is True
 
     edit = _rpc(
         erp_client,
         "saveUnit",
-        [{"unitName": renamed, "family": "Count", "factorToBase": 50, "originalUnitName": original}],
+        [
+            {
+                "unitName": renamed,
+                "family": "Count",
+                "factorToBase": 50,
+                "originalUnitName": original,
+            }
+        ],
         mutation=True,
     )
     body = edit.get_json()
@@ -78,7 +107,12 @@ def test_save_unit_rename_via_original_unit_name(erp_client):
 
 def test_delete_unit_soft_deletes(erp_client):
     name = _unique_name("Pallet")
-    _rpc(erp_client, "saveUnit", [{"unitName": name, "family": "Count", "factorToBase": 200}], mutation=True)
+    _rpc(
+        erp_client,
+        "saveUnit",
+        [{"unitName": name, "family": "Count", "factorToBase": 200}],
+        mutation=True,
+    )
 
     deleted = _rpc(erp_client, "deleteUnit", [name], mutation=True)
     assert deleted.get_json()["success"] is True
@@ -94,8 +128,18 @@ def test_delete_unit_soft_deletes(erp_client):
 def test_delete_units_bulk_soft_deletes_multiple(erp_client):
     name_a = _unique_name("Roll")
     name_b = _unique_name("Bundle")
-    _rpc(erp_client, "saveUnit", [{"unitName": name_a, "family": "Count", "factorToBase": 1}], mutation=True)
-    _rpc(erp_client, "saveUnit", [{"unitName": name_b, "family": "Count", "factorToBase": 1}], mutation=True)
+    _rpc(
+        erp_client,
+        "saveUnit",
+        [{"unitName": name_a, "family": "Count", "factorToBase": 1}],
+        mutation=True,
+    )
+    _rpc(
+        erp_client,
+        "saveUnit",
+        [{"unitName": name_b, "family": "Count", "factorToBase": 1}],
+        mutation=True,
+    )
 
     resp = _rpc(erp_client, "deleteUnitsBulk", [[name_a, name_b]], mutation=True)
     body = resp.get_json()

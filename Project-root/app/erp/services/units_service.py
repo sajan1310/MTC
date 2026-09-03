@@ -52,17 +52,24 @@ def _rename_unit_everywhere(cur, old_name: str, new_name: str) -> None:
         table = config_maps.TABLE_NAMES.get(sheet_key)
         if not table:
             continue
-        rename_utils.rename_in_column(cur, table, config_maps.to_snake_case(field), old, new)
+        rename_utils.rename_in_column(
+            cur, table, config_maps.to_snake_case(field), old, new
+        )
 
     items_table = config_maps.TABLE_NAMES.get("ITEMS")
     if items_table:
         for field in _ITEMS_UNIT_FIELDS:
-            rename_utils.rename_in_column(cur, items_table, config_maps.to_snake_case(field), old, new)
+            rename_utils.rename_in_column(
+                cur, items_table, config_maps.to_snake_case(field), old, new
+            )
 
 
 @rpc_method("getUnitsData")
 def get_units_data():
-    with database.get_conn(cursor_factory=psycopg2.extras.RealDictCursor) as (_conn, cur):
+    with database.get_conn(cursor_factory=psycopg2.extras.RealDictCursor) as (
+        _conn,
+        cur,
+    ):
         cur.execute(
             """
             SELECT unit_name, family, factor_to_base, remarks
@@ -108,7 +115,9 @@ def save_unit(conn, cur, form_data):
     remarks = str(form_data.get("remarks") or "").strip()
 
     is_edit = bool(form_data.get("originalUnitName"))
-    original_name = str(form_data.get("originalUnitName")).strip() if is_edit else new_name
+    original_name = (
+        str(form_data.get("originalUnitName")).strip() if is_edit else new_name
+    )
 
     cur.execute(
         "SELECT id FROM erp.units WHERE lower(unit_name) = lower(%s) AND deleted_at IS NULL",
@@ -181,7 +190,9 @@ def delete_unit(conn, cur, unit_name):
 @rpc_method("deleteUnitsBulk", mutation=True)
 @database.transactional
 def delete_units_bulk(conn, cur, unit_names):
-    targets = {str(n or "").strip().lower() for n in (unit_names or []) if str(n or "").strip()}
+    targets = {
+        str(n or "").strip().lower() for n in (unit_names or []) if str(n or "").strip()
+    }
     if not targets:
         return build_response(True, None, "No units selected.")
 
@@ -203,7 +214,9 @@ def delete_units_bulk(conn, cur, unit_names):
 
 
 def _units_map_from(cur) -> dict:
-    cur.execute("SELECT unit_name, family, factor_to_base FROM erp.units WHERE deleted_at IS NULL")
+    cur.execute(
+        "SELECT unit_name, family, factor_to_base FROM erp.units WHERE deleted_at IS NULL"
+    )
     return {
         row["unit_name"].strip().lower(): {
             "unitName": row["unit_name"],
@@ -246,7 +259,10 @@ def get_units_map(cur=None) -> dict:
     """
     if cur is not None:
         return _units_map_from(cur)
-    with database.get_conn(cursor_factory=psycopg2.extras.RealDictCursor) as (_conn, own):
+    with database.get_conn(cursor_factory=psycopg2.extras.RealDictCursor) as (
+        _conn,
+        own,
+    ):
         return _units_map_from(own)
 
 
@@ -261,7 +277,9 @@ def lookup_unit(unit_name: str, fallback_family: str, units_map: dict) -> dict:
     return {"unitName": unit_name, "family": fallback_family, "factorToBase": 1}
 
 
-def convert_qty_to_base_unit(qty, from_unit: str, item: dict, units_map: dict | None = None) -> float:
+def convert_qty_to_base_unit(
+    qty, from_unit: str, item: dict, units_map: dict | None = None
+) -> float:
     """Converts `qty` in `from_unit` into item['baseUnit'].
 
     Same family (e.g. Gross -> Pcs, both 'Count'): factor ratio.
@@ -282,17 +300,21 @@ def convert_qty_to_base_unit(qty, from_unit: str, item: dict, units_map: dict | 
     if weight_per_base_unit <= 0:
         raise ValueError(
             f'Cannot convert "{from_unit}" ({from_entry["family"]}) to "{base_unit_name}" '
-            f'({base_entry["family"]}) -- set a Weight per {base_unit_name} on this item first.'
+            f"({base_entry['family']}) -- set a Weight per {base_unit_name} on this item first."
         )
 
     if from_entry["family"] == "Weight" and base_entry["family"] == "Count":
         qty_in_grams = q * from_entry["factorToBase"]
         return qty_in_grams / weight_per_base_unit
 
-    raise ValueError(f'Unsupported unit conversion from "{from_unit}" to "{base_unit_name}".')
+    raise ValueError(
+        f'Unsupported unit conversion from "{from_unit}" to "{base_unit_name}".'
+    )
 
 
-def convert_rate_to_base_unit(rate, from_unit: str, item: dict, units_map: dict | None = None) -> float:
+def convert_rate_to_base_unit(
+    rate, from_unit: str, item: dict, units_map: dict | None = None
+) -> float:
     """Inverse of convert_qty_to_base_unit: rate per `from_unit` -> rate per item's Base Unit."""
     units_map = units_map if units_map is not None else get_units_map()
     base_units_per_from_unit = convert_qty_to_base_unit(1, from_unit, item, units_map)

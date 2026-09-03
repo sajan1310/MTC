@@ -39,7 +39,10 @@ def test_connection():
 @rpc_method("getSystemStatus")
 def get_system_status():
     try:
-        with database.get_conn(cursor_factory=psycopg2.extras.DictCursor) as (_conn, cur):
+        with database.get_conn(cursor_factory=psycopg2.extras.DictCursor) as (
+            _conn,
+            cur,
+        ):
             cur.execute(
                 """
                 SELECT table_name

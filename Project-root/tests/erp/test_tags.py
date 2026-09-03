@@ -12,7 +12,9 @@ import pytest
 
 def _rpc(client, method, args=None, mutation=False):
     headers = {"X-Mutation-Id": str(uuid.uuid4())} if mutation else {}
-    return client.post(f"/api/erp/rpc/{method}", json={"args": args or []}, headers=headers)
+    return client.post(
+        f"/api/erp/rpc/{method}", json={"args": args or []}, headers=headers
+    )
 
 
 def _unique_name(prefix: str) -> str:
@@ -33,11 +35,15 @@ TAG_BULK_TYPES = [
 
 
 @pytest.mark.parametrize("get_method,save_method,delete_method,prefix", TAG_TYPES)
-def test_tag_create_list_rename_delete(erp_client, get_method, save_method, delete_method, prefix):
+def test_tag_create_list_rename_delete(
+    erp_client, get_method, save_method, delete_method, prefix
+):
     original = _unique_name(prefix)
     renamed = _unique_name(prefix)
 
-    created = _rpc(erp_client, save_method, [{"name": original, "remarks": "test"}], mutation=True)
+    created = _rpc(
+        erp_client, save_method, [{"name": original, "remarks": "test"}], mutation=True
+    )
     body = created.get_json()
     assert body["success"] is True
     assert body["data"]["name"] == original
@@ -45,7 +51,12 @@ def test_tag_create_list_rename_delete(erp_client, get_method, save_method, dele
     listed = _rpc(erp_client, get_method).get_json()["data"]
     assert original in [t["name"] for t in listed]
 
-    edited = _rpc(erp_client, save_method, [{"name": renamed, "originalName": original}], mutation=True)
+    edited = _rpc(
+        erp_client,
+        save_method,
+        [{"name": renamed, "originalName": original}],
+        mutation=True,
+    )
     edit_body = edited.get_json()
     assert edit_body["success"] is True
     assert edit_body["data"]["name"] == renamed
@@ -63,7 +74,9 @@ def test_tag_create_list_rename_delete(erp_client, get_method, save_method, dele
 
 
 @pytest.mark.parametrize("get_method,save_method,delete_method,prefix", TAG_TYPES)
-def test_tag_rejects_case_insensitive_duplicate(erp_client, get_method, save_method, delete_method, prefix):
+def test_tag_rejects_case_insensitive_duplicate(
+    erp_client, get_method, save_method, delete_method, prefix
+):
     name = _unique_name(prefix)
     first = _rpc(erp_client, save_method, [{"name": name}], mutation=True)
     assert first.get_json()["success"] is True
@@ -74,13 +87,22 @@ def test_tag_rejects_case_insensitive_duplicate(erp_client, get_method, save_met
     assert "already exists" in body["message"]
 
 
-@pytest.mark.parametrize("get_method,save_method,bulk_delete_method,prefix", TAG_BULK_TYPES)
-def test_tag_bulk_delete_removes_selected_only(erp_client, get_method, save_method, bulk_delete_method, prefix):
+@pytest.mark.parametrize(
+    "get_method,save_method,bulk_delete_method,prefix", TAG_BULK_TYPES
+)
+def test_tag_bulk_delete_removes_selected_only(
+    erp_client, get_method, save_method, bulk_delete_method, prefix
+):
     name_a = _unique_name(prefix)
     name_b = _unique_name(prefix)
     name_keep = _unique_name(prefix)
     for n in (name_a, name_b, name_keep):
-        assert _rpc(erp_client, save_method, [{"name": n}], mutation=True).get_json()["success"] is True
+        assert (
+            _rpc(erp_client, save_method, [{"name": n}], mutation=True).get_json()[
+                "success"
+            ]
+            is True
+        )
 
     resp = _rpc(erp_client, bulk_delete_method, [[name_a, name_b]], mutation=True)
     body = resp.get_json()
@@ -93,8 +115,12 @@ def test_tag_bulk_delete_removes_selected_only(erp_client, get_method, save_meth
     assert name_keep in names
 
 
-@pytest.mark.parametrize("get_method,save_method,bulk_delete_method,prefix", TAG_BULK_TYPES)
-def test_tag_bulk_delete_no_selection_is_a_success_noop(erp_client, get_method, save_method, bulk_delete_method, prefix):
+@pytest.mark.parametrize(
+    "get_method,save_method,bulk_delete_method,prefix", TAG_BULK_TYPES
+)
+def test_tag_bulk_delete_no_selection_is_a_success_noop(
+    erp_client, get_method, save_method, bulk_delete_method, prefix
+):
     resp = _rpc(erp_client, bulk_delete_method, [[]], mutation=True)
     body = resp.get_json()
     assert body["success"] is True
@@ -111,7 +137,12 @@ def test_color_rename_cascade_is_a_noop_when_target_tables_dont_exist_yet(erp_cl
     renamed = _unique_name("Cascade")
     _rpc(erp_client, "saveColor", [{"name": original}], mutation=True)
 
-    edited = _rpc(erp_client, "saveColor", [{"name": renamed, "originalName": original}], mutation=True)
+    edited = _rpc(
+        erp_client,
+        "saveColor",
+        [{"name": renamed, "originalName": original}],
+        mutation=True,
+    )
     body = edited.get_json()
     assert body["success"] is True
     assert body["data"]["name"] == renamed
@@ -153,10 +184,17 @@ def test_color_rename_updates_one_token_in_a_composite_process_component(erp_cli
     create = _rpc(erp_client, "saveProcess", [process_payload], mutation=True)
     process_id = create.get_json()["data"]["processId"]
 
-    rename = _rpc(erp_client, "saveColor", [{"name": new_color, "originalName": old_color}], mutation=True)
+    rename = _rpc(
+        erp_client,
+        "saveColor",
+        [{"name": new_color, "originalName": old_color}],
+        mutation=True,
+    )
     assert rename.get_json()["success"] is True
 
-    components = _rpc(erp_client, "getProcessComponentsData", [process_id]).get_json()["data"]
+    components = _rpc(erp_client, "getProcessComponentsData", [process_id]).get_json()[
+        "data"
+    ]
     assert components[0]["colorGroup"] == f"{new_color} / {other_color}"
 
 
@@ -229,7 +267,12 @@ def test_color_rename_reaches_a_lots_components_consumed(erp_client):
 
     lot_number = _save_lot_with_component_color(erp_client, old_color)
 
-    rename = _rpc(erp_client, "saveColor", [{"name": new_color, "originalName": old_color}], mutation=True)
+    rename = _rpc(
+        erp_client,
+        "saveColor",
+        [{"name": new_color, "originalName": old_color}],
+        mutation=True,
+    )
     assert rename.get_json()["success"] is True
 
     lot = _lot_by_number(erp_client, lot_number)
@@ -251,7 +294,12 @@ def test_color_rename_updates_one_token_of_a_composite_component_colorgroup(erp_
     composite = f"{old_color} / {other_color}"
     lot_number = _save_lot_with_component_color(erp_client, composite)
 
-    _rpc(erp_client, "saveColor", [{"name": new_color, "originalName": old_color}], mutation=True)
+    _rpc(
+        erp_client,
+        "saveColor",
+        [{"name": new_color, "originalName": old_color}],
+        mutation=True,
+    )
 
     lot = _lot_by_number(erp_client, lot_number)
     assert lot["componentsConsumed"][0]["colorGroup"] == f"{new_color} / {other_color}"
@@ -265,7 +313,12 @@ def test_color_rename_leaves_an_unrelated_components_colorgroup_alone(erp_client
     _rpc(erp_client, "saveColor", [{"name": renamed_from}], mutation=True)
 
     lot_number = _save_lot_with_component_color(erp_client, unrelated)
-    _rpc(erp_client, "saveColor", [{"name": renamed_to, "originalName": renamed_from}], mutation=True)
+    _rpc(
+        erp_client,
+        "saveColor",
+        [{"name": renamed_to, "originalName": renamed_from}],
+        mutation=True,
+    )
 
     lot = _lot_by_number(erp_client, lot_number)
     assert lot["componentsConsumed"][0]["colorGroup"] == unrelated
@@ -287,7 +340,8 @@ def test_extract_colors_from_item_master_finds_new_hyphen_combo(erp_client):
 
     item_name = _unique_name("ComboItem")
     _rpc(
-        erp_client, "saveItem",
+        erp_client,
+        "saveItem",
         [{"itemName": item_name, "itemNarration": f"Frame {color_a}-{color_b} finish"}],
         mutation=True,
     )
@@ -307,7 +361,12 @@ def test_extract_colors_from_item_master_skips_combo_already_registered(erp_clie
     _rpc(erp_client, "saveColor", [{"name": combo}], mutation=True)
 
     item_name = _unique_name("AlreadyComboItem")
-    _rpc(erp_client, "saveItem", [{"itemName": item_name, "itemNarration": combo}], mutation=True)
+    _rpc(
+        erp_client,
+        "saveItem",
+        [{"itemName": item_name, "itemNarration": combo}],
+        mutation=True,
+    )
 
     resp = _rpc(erp_client, "extractColorsFromItemMaster")
     assert combo not in resp.get_json()["data"]["newColors"]
@@ -339,7 +398,9 @@ def test_import_process_types_defaults_to_general_when_no_match(erp_client):
     from tests.erp.test_process import _base_process_payload
 
     process_name = _unique_name("NoTypeMatchProcess")
-    payload = _base_process_payload(processName=process_name, processType=_unique_name("StaleType"))
+    payload = _base_process_payload(
+        processName=process_name, processType=_unique_name("StaleType")
+    )
     saved = _rpc(erp_client, "saveProcess", [payload], mutation=True).get_json()
     assert saved["success"] is True
     process_id = saved["data"]["processId"]

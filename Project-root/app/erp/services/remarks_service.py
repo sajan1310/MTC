@@ -67,9 +67,9 @@ def update_entity_remarks(conn, cur, tab, entity_id, remarks):
 
     remarks = str(remarks or "").strip()
 
-    query = sql.SQL("UPDATE {table} SET {col} = %s, updated_by = %s WHERE id = %s AND deleted_at IS NULL").format(
-        table=sql.SQL(table), col=sql.Identifier(remarks_col)
-    )
+    query = sql.SQL(
+        "UPDATE {table} SET {col} = %s, updated_by = %s WHERE id = %s AND deleted_at IS NULL"
+    ).format(table=sql.SQL(table), col=sql.Identifier(remarks_col))
     cur.execute(query, (remarks, get_current_user_id(), entity_id))
     if cur.rowcount == 0:
         raise ValueError("Record not found.")

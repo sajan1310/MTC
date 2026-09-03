@@ -80,14 +80,19 @@ def _docstring_lines(source):
         return set()
     spans = set()
     for node in ast.walk(tree):
-        if not isinstance(node, (ast.Module, ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef)):
+        if not isinstance(
+            node, (ast.Module, ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef)
+        ):
             continue
         body = getattr(node, "body", None)
         if not body:
             continue
         first = body[0]
-        if isinstance(first, ast.Expr) and isinstance(first.value, ast.Constant) \
-                and isinstance(first.value.value, str):
+        if (
+            isinstance(first, ast.Expr)
+            and isinstance(first.value, ast.Constant)
+            and isinstance(first.value.value, str)
+        ):
             spans.update(range(first.lineno, (first.end_lineno or first.lineno) + 1))
     return spans
 
@@ -117,7 +122,11 @@ def _source_files(*suffixes):
         if not path.is_file():
             continue
         rel = path.relative_to(PROJECT_ROOT).as_posix()
-        if rel.startswith("migrations/legacy/") or "node_modules" in rel or ".venv" in rel:
+        if (
+            rel.startswith("migrations/legacy/")
+            or "node_modules" in rel
+            or ".venv" in rel
+        ):
             continue
         if rel == "tests/test_migration_path.py":
             continue
@@ -220,7 +229,10 @@ def test_the_deploy_path_runs_the_runner_and_nothing_else(script):
     # status query -- would be fine; applying schema is what must not happen
     # outside the runner.)
     applies_sql = [
-        line for line in _executable_lines(path)
+        line
+        for line in _executable_lines(path)
         if re.search(r"\bpsql\b.*-f\b.*\.sql", line)
     ]
-    assert applies_sql == [], f"{script} applies a .sql file outside the runner: {applies_sql}"
+    assert applies_sql == [], (
+        f"{script} applies a .sql file outside the runner: {applies_sql}"
+    )

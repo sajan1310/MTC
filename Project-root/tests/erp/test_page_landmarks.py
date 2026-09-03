@@ -89,7 +89,7 @@ def test_the_skip_link_points_at_the_landmark(shell):
     assert match, "skip link has no fragment href"
     target = match.group(1)
     assert re.search(rf'<main id="{re.escape(target)}"', shell), (
-        f'skip link points at #{target}, which is not the <main> element'
+        f"skip link points at #{target}, which is not the <main> element"
     )
 
 
@@ -106,10 +106,10 @@ def test_the_skip_link_is_reachable_by_keyboard():
     link unreachable by the only people it is for."""
     from pathlib import Path
 
-    css = (Path(__file__).parent.parent.parent / "static" / "erp" / "styles.css").read_text(
-        encoding="utf-8"
-    )
-    block = css[css.index(".skip-link {"):]
+    css = (
+        Path(__file__).parent.parent.parent / "static" / "erp" / "styles.css"
+    ).read_text(encoding="utf-8")
+    block = css[css.index(".skip-link {") :]
     rule = block[: block.index("}")]
     assert "position: absolute" in rule
     assert "display: none" not in rule

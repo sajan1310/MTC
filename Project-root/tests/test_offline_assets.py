@@ -62,8 +62,9 @@ def test_no_asset_is_loaded_from_a_remote_host(path):
     text = _text(path)
     offenders = re.findall(r"""(?:src|href)=["']https?://[^"']+""", text)
     offenders += re.findall(r"""loadScript\(\s*["']https?://[^"']+""", text)
-    offenders += re.findall(r"""^\s*import\s+\w+\s+from\s+["']https?://[^"']+""",
-                            text, re.M)
+    offenders += re.findall(
+        r"""^\s*import\s+\w+\s+from\s+["']https?://[^"']+""", text, re.M
+    )
     assert not offenders, (
         f"{path.relative_to(ROOT)} loads an asset from a remote host: {offenders}. "
         "Vendor it into static/erp/vendor/ instead -- a CDN asset cannot be "

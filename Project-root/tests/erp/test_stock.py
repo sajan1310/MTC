@@ -7,7 +7,9 @@ import uuid
 
 def _rpc(client, method, args=None, mutation=False):
     headers = {"X-Mutation-Id": str(uuid.uuid4())} if mutation else {}
-    return client.post(f"/api/erp/rpc/{method}", json={"args": args or []}, headers=headers)
+    return client.post(
+        f"/api/erp/rpc/{method}", json={"args": args or []}, headers=headers
+    )
 
 
 def _unique_name(prefix: str) -> str:
@@ -83,7 +85,12 @@ def test_adjust_stock_manually_records_adjustment(erp_client):
     name = _unique_name("Adjustable")
     _create_item_with_stock(erp_client, name, initial_stock=20)
 
-    resp = _rpc(erp_client, "adjustStockManually", [name, "", 15, "Physical recount"], mutation=True)
+    resp = _rpc(
+        erp_client,
+        "adjustStockManually",
+        [name, "", 15, "Physical recount"],
+        mutation=True,
+    )
     body = resp.get_json()
     assert body["success"] is True
     assert body["data"] == {"oldCurrentStock": 20, "newCurrentStock": 15}
@@ -111,7 +118,9 @@ def test_adjust_stock_manually_same_value_is_a_noop(erp_client):
     name = _unique_name("SameValue")
     _create_item_with_stock(erp_client, name, initial_stock=20)
 
-    resp = _rpc(erp_client, "adjustStockManually", [name, "", 20, "No change"], mutation=True)
+    resp = _rpc(
+        erp_client, "adjustStockManually", [name, "", 20, "No change"], mutation=True
+    )
     body = resp.get_json()
     assert body["success"] is False
     assert body["data"] == {"oldCurrentStock": 20, "newCurrentStock": 20}
@@ -125,7 +134,12 @@ def test_import_stock_data_adds_new_and_updates_existing(erp_client):
     resp = _rpc(
         erp_client,
         "importStockData",
-        [[{"name": existing_name, "size": "", "initialStock": 50}, {"name": new_name, "size": "", "initialStock": 8}]],
+        [
+            [
+                {"name": existing_name, "size": "", "initialStock": 50},
+                {"name": new_name, "size": "", "initialStock": 8},
+            ]
+        ],
         mutation=True,
     )
     body = resp.get_json()
@@ -143,7 +157,9 @@ def test_import_stock_data_adds_new_and_updates_existing(erp_client):
     assert new_name in [i["name"] for i in items]
 
 
-def test_check_stock_adjustment_conflicts_flags_adjustment_on_or_after_bill_date(erp_client):
+def test_check_stock_adjustment_conflicts_flags_adjustment_on_or_after_bill_date(
+    erp_client,
+):
     name = _unique_name("ConflictItem")
     _create_item_with_stock(erp_client, name, initial_stock=20)
     _rpc(erp_client, "adjustStockManually", [name, "", 15, "Recount"], mutation=True)
@@ -152,7 +168,11 @@ def test_check_stock_adjustment_conflicts_flags_adjustment_on_or_after_bill_date
     import datetime as _dt
 
     today_iso = _dt.date.today().isoformat()
-    conflict_resp = _rpc(erp_client, "checkStockAdjustmentConflicts", [[{"name": name, "size": ""}], today_iso])
+    conflict_resp = _rpc(
+        erp_client,
+        "checkStockAdjustmentConflicts",
+        [[{"name": name, "size": ""}], today_iso],
+    )
     conflicts = conflict_resp.get_json()["data"]
     assert any(c["itemName"] == name for c in conflicts)
 
@@ -160,7 +180,11 @@ def test_check_stock_adjustment_conflicts_flags_adjustment_on_or_after_bill_date
     # conflict. (A bill dated *before* the adjustment IS a conflict -- it may
     # represent goods the recount already counted -- so the "no conflict"
     # case here is a future-dated bill, not a past-dated one.)
-    future_resp = _rpc(erp_client, "checkStockAdjustmentConflicts", [[{"name": name, "size": ""}], "01/01/2099"])
+    future_resp = _rpc(
+        erp_client,
+        "checkStockAdjustmentConflicts",
+        [[{"name": name, "size": ""}], "01/01/2099"],
+    )
     future_conflicts = future_resp.get_json()["data"]
     assert not any(c["itemName"] == name for c in future_conflicts)
 
@@ -168,7 +192,11 @@ def test_check_stock_adjustment_conflicts_flags_adjustment_on_or_after_bill_date
 def test_check_stock_adjustment_conflicts_empty_when_no_history(erp_client):
     name = _unique_name("NeverAdjusted")
     _create_item_with_stock(erp_client, name)
-    resp = _rpc(erp_client, "checkStockAdjustmentConflicts", [[{"name": name, "size": ""}], "15/07/2026"])
+    resp = _rpc(
+        erp_client,
+        "checkStockAdjustmentConflicts",
+        [[{"name": name, "size": ""}], "15/07/2026"],
+    )
     body = resp.get_json()
     assert body["success"] is True
     assert body["data"] == []
@@ -186,7 +214,14 @@ def test_bill_moves_current_stock_away_from_initial(erp_client):
     _rpc(
         erp_client,
         "saveBill",
-        [{"vendor": vendor, "billNumber": _unique_name("StockBill"), "billDate": "01/01/2026", "items": [{"name": name, "qty": 5, "price": 1}]}],
+        [
+            {
+                "vendor": vendor,
+                "billNumber": _unique_name("StockBill"),
+                "billDate": "01/01/2026",
+                "items": [{"name": name, "qty": 5, "price": 1}],
+            }
+        ],
         mutation=True,
     )
 
@@ -232,7 +267,13 @@ def test_return_subtracts_from_current_stock(erp_client):
     _rpc(
         erp_client,
         "saveReturn",
-        [{"vendor": vendor, "returnDate": "01/01/2026", "items": [{"name": name, "qty": 3, "price": 1}]}],
+        [
+            {
+                "vendor": vendor,
+                "returnDate": "01/01/2026",
+                "items": [{"name": name, "qty": 3, "price": 1}],
+            }
+        ],
         mutation=True,
     )
 

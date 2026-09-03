@@ -30,25 +30,33 @@ def _credentials(scopes: list[str]):
             "GOOGLE_APPLICATION_CREDENTIALS is not set. Point it at a service "
             "account JSON key with access to the target spreadsheet(s)."
         )
-    return service_account.Credentials.from_service_account_file(key_path, scopes=scopes)
+    return service_account.Credentials.from_service_account_file(
+        key_path, scopes=scopes
+    )
 
 
 def sheets_read_client():
     from googleapiclient.discovery import build
 
-    return build("sheets", "v4", credentials=_credentials(READ_SCOPES), cache_discovery=False)
+    return build(
+        "sheets", "v4", credentials=_credentials(READ_SCOPES), cache_discovery=False
+    )
 
 
 def sheets_write_client():
     from googleapiclient.discovery import build
 
-    return build("sheets", "v4", credentials=_credentials(WRITE_SCOPES), cache_discovery=False)
+    return build(
+        "sheets", "v4", credentials=_credentials(WRITE_SCOPES), cache_discovery=False
+    )
 
 
 def drive_client():
     from googleapiclient.discovery import build
 
-    return build("drive", "v3", credentials=_credentials(WRITE_SCOPES), cache_discovery=False)
+    return build(
+        "drive", "v3", credentials=_credentials(WRITE_SCOPES), cache_discovery=False
+    )
 
 
 def with_retry(fn, *, attempts=6, base_delay=1.5):
@@ -125,7 +133,12 @@ def fetch_sheet_values(client, spreadsheet_id: str, sheet_name: str) -> list[lis
 def _reparent_into_folder(drive, spreadsheet_id: str, folder_id: str) -> None:
     with_retry(
         lambda: drive.files()
-        .update(fileId=spreadsheet_id, addParents=folder_id, fields="id, parents", supportsAllDrives=True)
+        .update(
+            fileId=spreadsheet_id,
+            addParents=folder_id,
+            fields="id, parents",
+            supportsAllDrives=True,
+        )
         .execute()
     )
 
@@ -136,20 +149,23 @@ def create_spreadsheet(client, drive, title: str, folder_id: str | None) -> str:
         body["parents"] = [folder_id]
     try:
         file_res = with_retry(
-            lambda: drive.files().create(body=body, fields="id", supportsAllDrives=True).execute()
+            lambda: drive.files()
+            .create(body=body, fields="id", supportsAllDrives=True)
+            .execute()
         )
         return file_res["id"]
     except Exception:
         # Fallback to Sheets API create if Drive API fails
         body_sheets = {"properties": {"title": title}}
         spreadsheet = with_retry(
-            lambda: client.spreadsheets().create(body=body_sheets, fields="spreadsheetId").execute()
+            lambda: client.spreadsheets()
+            .create(body=body_sheets, fields="spreadsheetId")
+            .execute()
         )
         spreadsheet_id = spreadsheet["spreadsheetId"]
         if folder_id:
             _reparent_into_folder(drive, spreadsheet_id, folder_id)
         return spreadsheet_id
-
 
 
 def add_sheet_tab(client, spreadsheet_id: str, title: str):
@@ -187,7 +203,12 @@ def clear_values_from_row(client, spreadsheet_id: str, sheet_name: str, start_ro
 
 
 def write_values_from_row(
-    client, spreadsheet_id: str, sheet_name: str, rows: list[list], start_row: int, fresh: bool = False
+    client,
+    spreadsheet_id: str,
+    sheet_name: str,
+    rows: list[list],
+    start_row: int,
+    fresh: bool = False,
 ):
     """Like `write_values`, but anchored at `A{start_row}` instead of `A1`,
     and clears only from `start_row` onward (via `clear_values_from_row`)
@@ -232,7 +253,12 @@ def _col_letter(n: int) -> str:
 
 
 def write_date_columns_user_entered(
-    client, spreadsheet_id: str, sheet_name: str, rows: list[list], start_row: int, date_cols: list[int]
+    client,
+    spreadsheet_id: str,
+    sheet_name: str,
+    rows: list[list],
+    start_row: int,
+    date_cols: list[int],
 ):
     """Re-writes just `date_cols` (1-indexed column numbers already present
     in `rows`, holding to_cell_value()'s ISO 'YYYY-MM-DD' strings) using
@@ -267,17 +293,24 @@ def write_date_columns_user_entered(
             idx = col - 1
             col_values = [[row[idx] if idx < len(row) else ""] for row in chunk]
             letter = _col_letter(col)
-            value_ranges.append({
-                "range": f"'{sheet_name}'!{letter}{row0}:{letter}{row0 + len(chunk) - 1}",
-                "values": col_values,
-            })
+            value_ranges.append(
+                {
+                    "range": f"'{sheet_name}'!{letter}{row0}:{letter}{row0 + len(chunk) - 1}",
+                    "values": col_values,
+                }
+            )
         body = {"valueInputOption": "USER_ENTERED", "data": value_ranges}
         with_retry(
-            lambda body=body: client.spreadsheets().values().batchUpdate(spreadsheetId=spreadsheet_id, body=body).execute()
+            lambda body=body: client.spreadsheets()
+            .values()
+            .batchUpdate(spreadsheetId=spreadsheet_id, body=body)
+            .execute()
         )
 
 
-def write_values(client, spreadsheet_id: str, sheet_name: str, rows: list[list], fresh: bool = False):
+def write_values(
+    client, spreadsheet_id: str, sheet_name: str, rows: list[list], fresh: bool = False
+):
     """Overwrite `sheet_name!A1` onward with `rows`. Chunked to stay under the
     Sheets API's per-request cell-count limits for very large tables.
 
@@ -313,9 +346,13 @@ def write_values(client, spreadsheet_id: str, sheet_name: str, rows: list[list],
         )
 
 
-def ensure_grid_size(client, spreadsheet_id: str, sheet_name: str, required_rows: int, required_cols: int):
+def ensure_grid_size(
+    client, spreadsheet_id: str, sheet_name: str, required_rows: int, required_cols: int
+):
     meta = with_retry(
-        lambda: client.spreadsheets().get(spreadsheetId=spreadsheet_id, fields="sheets.properties").execute()
+        lambda: client.spreadsheets()
+        .get(spreadsheetId=spreadsheet_id, fields="sheets.properties")
+        .execute()
     )
     for sheet in meta.get("sheets", []):
         props = sheet.get("properties", {})
@@ -327,31 +364,33 @@ def ensure_grid_size(client, spreadsheet_id: str, sheet_name: str, required_rows
 
             reqs = []
             if required_rows > current_rows:
-                reqs.append({
-                    "updateSheetProperties": {
-                        "properties": {
-                            "sheetId": sheet_id,
-                            "gridProperties": {"rowCount": required_rows + 500}
-                        },
-                        "fields": "gridProperties.rowCount"
+                reqs.append(
+                    {
+                        "updateSheetProperties": {
+                            "properties": {
+                                "sheetId": sheet_id,
+                                "gridProperties": {"rowCount": required_rows + 500},
+                            },
+                            "fields": "gridProperties.rowCount",
+                        }
                     }
-                })
+                )
             if required_cols > current_cols:
-                reqs.append({
-                    "updateSheetProperties": {
-                        "properties": {
-                            "sheetId": sheet_id,
-                            "gridProperties": {"columnCount": required_cols + 5}
-                        },
-                        "fields": "gridProperties.columnCount"
+                reqs.append(
+                    {
+                        "updateSheetProperties": {
+                            "properties": {
+                                "sheetId": sheet_id,
+                                "gridProperties": {"columnCount": required_cols + 5},
+                            },
+                            "fields": "gridProperties.columnCount",
+                        }
                     }
-                })
+                )
             if reqs:
                 with_retry(
-                    lambda: client.spreadsheets().batchUpdate(
-                        spreadsheetId=spreadsheet_id,
-                        body={"requests": reqs}
-                    ).execute()
+                    lambda: client.spreadsheets()
+                    .batchUpdate(spreadsheetId=spreadsheet_id, body={"requests": reqs})
+                    .execute()
                 )
             break
-

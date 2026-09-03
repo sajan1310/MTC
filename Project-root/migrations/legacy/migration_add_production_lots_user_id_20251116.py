@@ -22,7 +22,9 @@ from database import init_app, get_conn  # noqa: E402
 
 def upgrade():
     with get_conn() as (conn, cur):
-        print("Ensuring production_lots.user_id exists and populating from created_by...")
+        print(
+            "Ensuring production_lots.user_id exists and populating from created_by..."
+        )
         try:
             cur.execute(
                 """
@@ -70,18 +72,29 @@ def downgrade():
             raise
 
 
-if __name__ == '__main__':
+if __name__ == "__main__":
     try:
         cfg_class = get_config()
+
         class _MockApp:
             def __init__(self, cfg):
                 self.config = {k: getattr(cfg, k) for k in dir(cfg) if k.isupper()}
+
                 class _Logger:
-                    def info(self, *a, **k): print('INFO:', *a)
-                    def warning(self, *a, **k): print('WARN:', *a)
-                    def error(self, *a, **k): print('ERROR:', *a)
-                    def critical(self, *a, **k): print('CRITICAL:', *a)
+                    def info(self, *a, **k):
+                        print("INFO:", *a)
+
+                    def warning(self, *a, **k):
+                        print("WARN:", *a)
+
+                    def error(self, *a, **k):
+                        print("ERROR:", *a)
+
+                    def critical(self, *a, **k):
+                        print("CRITICAL:", *a)
+
                 self.logger = _Logger()
+
         init_app(_MockApp(cfg_class))
     except Exception as e:
         print(f"WARNING: Could not init DB pool: {e}")

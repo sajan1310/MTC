@@ -3241,7 +3241,27 @@ App.Production = {
   // Warehouse Pool is routed into its own Per-Process Pool Components
   // table instead (see renderPoolColorSplitGroups); one with just ONE
   // pool color (e.g. "Fitted Rim" is always Black) stays here as a
-  // normal row with its colorGroup locked to that one color.
+  // normal row whose BUCKET is that one color -- carried as `poolColor`,
+  // with colorGroup left COMMON.
+  //
+  // That single color is not a per-output-color choice, it is a fixed
+  // input -- exactly what process_service._pool_item_is_color_axis
+  // already says of it ("a Fitted Rim that is always Black ... is a fixed
+  // input, not a per-output-color choice"). The lot consumes it whatever
+  // it produces, so nothing about the lot's own colors may gate it.
+  //
+  // This row used to lock its colorGroup to that color instead, which
+  // asserts the opposite -- that the consumption belongs to an OUTPUT
+  // color named "Black" -- and save_production's filter then dropped the
+  // component outright from every lot not producing a "Black" (i.e.
+  // nearly all of them), because a component scoped to a color the lot
+  // does not produce would debit a bucket the lot has no claim on. The
+  // material was simply never recorded. colorGroup and poolColor are the
+  // two different questions _pool_bucket_color exists to separate, and
+  // this path was answering the wrong one.
+  //
+  // A pool item with 2+ live colors is a genuine axis and is untouched --
+  // it still goes down the per-color path (renderPoolColorSplitGroups).
   async populateCommonComponentsFromProcess(processId, seq) {
     this.clearComponentsTable();
     if (!processId) return;
@@ -3273,7 +3293,8 @@ App.Production = {
           narration: this._resolveDisplayNarration(c.itemName, c.size, c.narration),
           sourceType: c.sourceType,
           color: singleColor,
-          colorScope: singleColor || undefined,
+          poolColor: singleColor,
+          poolScope: singleColor || undefined,
           qty: totalQty > 0 ? totalQty * c.qtyPerUnit : c.qtyPerUnit,
           qtyPerUnit: c.qtyPerUnit,
           unit: c.unit
@@ -5747,6 +5768,16 @@ App.Production = {
           qtyPerUnit: derivedQtyPerUnit,
           color: isLockedPoolColor ? colorGroup : c.color,
           colorScope: isLockedPoolColor ? colorGroup : undefined,
+          // The bucket this row drew from has to survive the round trip --
+          // without it, reopening a lot and pressing Save with no edits
+          // rebuilds the item <option> with no data-pool-color and silently
+          // re-attributes the debit (see _buildItemPreselectOption). Every
+          // component written before poolColor existed has none, and is
+          // unaffected. isLockedPoolColor above is the LEGACY shape, where
+          // the bucket was (wrongly) stored as colorGroup; it keeps reading
+          // exactly as it did, so no already-saved lot is re-attributed.
+          poolColor: c.poolColor,
+          poolScope: (!isLockedPoolColor && c.sourceType === 'POOL' && c.poolColor) ? c.poolColor : undefined,
           unit: c.unit
         });
         return;
@@ -5877,11 +5908,20 @@ App.Production = {
     return `<option value="custom:${escapeHtml(itemName)}" selected data-name="${escapeHtml(itemName)}">${escapeHtml(label)}</option>`;
   },
 
-  // `comp.colorScope`, when set, locks this row's Color field to a
-  // single real Color Master name (e.g. a Pool-sourced item that only
-  // ever exists in one color, like "Fitted Rim" -> "Black") so the row
-  // debits that exact Warehouse Pool bucket instead of the blank/COMMON
-  // one -- see _readProdComponentRow, which reads it via dataset.colorScope.
+  // `comp.colorScope`, when set, locks this row's Color field AND becomes
+  // this row's colorGroup on save (see _readProdComponentRow, which reads
+  // it via dataset.colorScope) -- i.e. it declares which of the LOT's own
+  // output colors this consumption belongs to. Only a caller that means
+  // that may set it; populateComponentsConsumedDirect does, reconstructing
+  // a saved lot's stored colorGroup.
+  //
+  // `comp.poolScope` locks the same field for DISPLAY only, and says
+  // nothing about the lot's output colors: it marks a POOL row whose
+  // Warehouse Pool bucket is fixed because the item exists in exactly one
+  // color. The bucket itself rides on `comp.poolColor` into the item
+  // <option> (_buildItemPreselectOption) and is read back from there. The
+  // two must not be conflated -- doing so is what silently dropped every
+  // such component; see populateCommonComponentsFromProcess.
   addComponentRow(comp = null) {
     const tbody = document.getElementById('productionComponentsBody');
     if (!tbody) return;
@@ -5893,6 +5933,7 @@ App.Production = {
     const sourceType = (comp && comp.sourceType === 'POOL') ? 'POOL' : 'ITEM';
     const color = (comp && comp.color) || '';
     const colorScope = (comp && comp.colorScope) || '';
+    const poolScope = (comp && comp.poolScope) || '';
     // comp === null means a brand-new row from "+ Add Component" -- no
     // recipe or saved data behind it. Assume it consumes 1 unit of itself
     // per unit of lot output (same shape as a qtyPerUnit=1 recipe row) so
@@ -5912,7 +5953,9 @@ App.Production = {
     const unitAttr = (comp && comp.unit) ? ` data-unit="${escapeHtml(comp.unit)}"` : '';
     const colorScopeAttr = colorScope ? ` data-color-scope="${escapeHtml(colorScope)}"` : '';
     const preSelectedOption = this._buildItemPreselectOption(itemName, size, sourceType, comp && comp.poolColor);
-    const colorReadonlyAttrs = colorScope ? ' readonly title="This item only exists in this one Warehouse Pool color — fixed automatically"' : '';
+    const colorReadonlyAttrs = (colorScope || poolScope)
+      ? ' readonly title="This item only exists in this one Warehouse Pool color — fixed automatically"'
+      : '';
 
     const rowHtml = `
       <tr id="${rowId}" ${qtyPerUnitAttr}${unitAttr}${colorScopeAttr}>

@@ -70,9 +70,12 @@ def test_a_prefix_of_the_token_is_refused(app):
     and the length through timing."""
     app.config["METRICS_TOKEN"] = "scrape-me-please"
     client = app.test_client()
-    assert client.get(
-        "/metrics", headers={"Authorization": "Bearer scrape-me"}
-    ).status_code == 404
+    assert (
+        client.get(
+            "/metrics", headers={"Authorization": "Bearer scrape-me"}
+        ).status_code
+        == 404
+    )
 
 
 def test_the_right_token_is_accepted(scraper):
@@ -130,7 +133,9 @@ def test_it_reports_the_things_this_application_actually_fails_at(scraper):
 
 
 def test_the_database_is_reported_up(scraper):
-    assert _parse(scraper.get("/metrics").get_data(as_text=True))["mtc_database_up"] == 1
+    assert (
+        _parse(scraper.get("/metrics").get_data(as_text=True))["mtc_database_up"] == 1
+    )
 
 
 def test_per_worker_gauges_carry_a_worker_label(scraper):
@@ -138,7 +143,8 @@ def test_per_worker_gauges_carry_a_worker_label(scraper):
     were global."""
     body = scraper.get("/metrics").get_data(as_text=True)
     worker_lines = [
-        line for line in body.splitlines()
+        line
+        for line in body.splitlines()
         if line.startswith("mtc_worker_") and not line.startswith("#")
     ]
     assert worker_lines
@@ -177,7 +183,9 @@ def test_a_database_failure_is_reported_not_raised(app, monkeypatch):
     app.config["METRICS_TOKEN"] = "scrape-me-please"
     client = app.test_client()
 
-    response = client.get("/metrics", headers={"Authorization": "Bearer scrape-me-please"})
+    response = client.get(
+        "/metrics", headers={"Authorization": "Bearer scrape-me-please"}
+    )
     assert response.status_code == 200
     assert _parse(response.get_data(as_text=True))["mtc_database_up"] == 0
 
@@ -194,9 +202,11 @@ def test_a_database_failure_does_not_leak_connection_details(app, monkeypatch):
 
     monkeypatch.setattr(metrics_module.database, "get_conn", _explode)
     app.config["METRICS_TOKEN"] = "scrape-me-please"
-    body = app.test_client().get(
-        "/metrics", headers={"Authorization": "Bearer scrape-me-please"}
-    ).get_data(as_text=True)
+    body = (
+        app.test_client()
+        .get("/metrics", headers={"Authorization": "Bearer scrape-me-please"})
+        .get_data(as_text=True)
+    )
 
     assert "db.internal" not in body
     assert "mtc_prod" not in body

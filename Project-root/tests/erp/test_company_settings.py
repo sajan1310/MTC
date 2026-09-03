@@ -14,7 +14,9 @@ import uuid
 
 def _rpc(client, method, args=None, mutation=False):
     headers = {"X-Mutation-Id": str(uuid.uuid4())} if mutation else {}
-    return client.post(f"/api/erp/rpc/{method}", json={"args": args or []}, headers=headers)
+    return client.post(
+        f"/api/erp/rpc/{method}", json={"args": args or []}, headers=headers
+    )
 
 
 def test_save_then_get_logo_round_trips(erp_client):
@@ -27,7 +29,9 @@ def test_save_then_get_logo_round_trips(erp_client):
     assert fetched.status_code == 200
     body = fetched.get_json()
     assert body["success"] is True
-    assert body["data"] == "data:image/png;base64,AAAABBBBCCCC"  # chunks rejoined, not chunked server-side
+    assert (
+        body["data"] == "data:image/png;base64,AAAABBBBCCCC"
+    )  # chunks rejoined, not chunked server-side
 
 
 def test_save_logo_overwrites_previous_value(erp_client):
@@ -35,7 +39,9 @@ def test_save_logo_overwrites_previous_value(erp_client):
     _rpc(erp_client, "saveLogo", [["second-value"]], mutation=True)
 
     fetched = _rpc(erp_client, "getLogo").get_json()
-    assert fetched["data"] == "second-value"  # singleton row -- second save replaces, doesn't append
+    assert (
+        fetched["data"] == "second-value"
+    )  # singleton row -- second save replaces, doesn't append
 
 
 def test_save_logo_rejects_empty_chunks(erp_client):
@@ -55,7 +61,9 @@ def test_clear_logo_removes_it(erp_client):
 
 
 def test_get_logo_before_any_save_is_null_not_an_error(erp_client):
-    _rpc(erp_client, "clearLogo", mutation=True)  # guarantee a clean slate regardless of test order
+    _rpc(
+        erp_client, "clearLogo", mutation=True
+    )  # guarantee a clean slate regardless of test order
 
     fetched = _rpc(erp_client, "getLogo").get_json()
     assert fetched["success"] is True

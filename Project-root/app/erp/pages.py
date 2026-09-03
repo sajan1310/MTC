@@ -134,7 +134,9 @@ def mobile_service_worker():
     /static/erp/mobile-sw.js) so its default scope covers /erp/mobile/*.
     """
     static_dir = os.path.join(current_app.static_folder, "erp")
-    resp = send_from_directory(static_dir, "mobile-sw.js", mimetype="application/javascript")
+    resp = send_from_directory(
+        static_dir, "mobile-sw.js", mimetype="application/javascript"
+    )
     resp.headers["Cache-Control"] = "no-cache"
     # Same reasoning as /erp/sw.js's Service-Worker-Allowed -- without it,
     # a SW at /erp/mobile/sw.js could only register scopes starting with
@@ -187,19 +189,25 @@ def render_pdf():
         return jsonify({"success": False, "message": str(exc)}), 400
     except pdf_render_service.PdfRenderUnavailable as exc:
         current_app.logger.warning("[PDF] server rendering unavailable: %s", exc)
-        return jsonify({
-            "success": False,
-            "message": "Server-side PDF rendering is not available.",
-        }), 503
+        return jsonify(
+            {
+                "success": False,
+                "message": "Server-side PDF rendering is not available.",
+            }
+        ), 503
     except Exception:
         current_app.logger.exception("[PDF] render failed")
         return jsonify({"success": False, "message": "Failed to render PDF."}), 500
 
     name = pdf_render_service.safe_filename(payload.get("filename"), "Document")
-    return Response(pdf, mimetype="application/pdf", headers={
-        "Content-Disposition": f'attachment; filename="{name}"',
-        "Cache-Control": "no-store",
-    })
+    return Response(
+        pdf,
+        mimetype="application/pdf",
+        headers={
+            "Content-Disposition": f'attachment; filename="{name}"',
+            "Cache-Control": "no-store",
+        },
+    )
 
 
 @erp_bp.route("/erp/render-pdf-batch", methods=["POST"])
@@ -229,10 +237,12 @@ def render_pdf_batch():
         return jsonify({"success": False, "message": str(exc)}), 400
     except pdf_render_service.PdfRenderUnavailable as exc:
         current_app.logger.warning("[PDF] server rendering unavailable: %s", exc)
-        return jsonify({
-            "success": False,
-            "message": "Server-side PDF rendering is not available.",
-        }), 503
+        return jsonify(
+            {
+                "success": False,
+                "message": "Server-side PDF rendering is not available.",
+            }
+        ), 503
     except Exception:
         current_app.logger.exception("[PDF] batch render failed")
         return jsonify({"success": False, "message": "Failed to render PDFs."}), 500
@@ -243,7 +253,11 @@ def render_pdf_batch():
     if not zip_name.lower().endswith(".zip"):
         zip_name += ".zip"
 
-    return Response(blob, mimetype="application/zip", headers={
-        "Content-Disposition": f'attachment; filename="{zip_name}"',
-        "Cache-Control": "no-store",
-    })
+    return Response(
+        blob,
+        mimetype="application/zip",
+        headers={
+            "Content-Disposition": f'attachment; filename="{zip_name}"',
+            "Cache-Control": "no-store",
+        },
+    )

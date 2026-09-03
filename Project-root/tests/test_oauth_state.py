@@ -175,7 +175,9 @@ def test_auth_google_sets_a_state_in_the_session(client, monkeypatch):
     monkeypatch.setattr(
         routes,
         "_google_cfg",
-        lambda: {"authorization_endpoint": "https://accounts.google.com/o/oauth2/v2/auth"},
+        lambda: {
+            "authorization_endpoint": "https://accounts.google.com/o/oauth2/v2/auth"
+        },
     )
 
     response = client.get("/auth/google")
