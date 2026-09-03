@@ -79,7 +79,13 @@ waitress==3.0.0                 # run_production.py, the Windows path
 # ── Testing & tooling (invoked, not imported) ────────────────────────
 pytest==8.1.1
 pytest-cov>=4.0                 # pytest.ini: addopts = --cov=app
-ruff>=0.1
+# Pinned exactly, not >=. There is no ruff config here, so `ruff check` runs
+# ruff's DEFAULT rule set -- and that set grows between releases, which makes
+# an open range a lint gate whose strictness changes on its own. It did:
+# 0.16.5 reported 591 errors on a tree 0.14.3 passes clean, failing CI's lint
+# job and skipping `build` and `test` with it. Keep in step with the pin in
+# .github/workflows/ci.yml, and bump both together and deliberately.
+ruff==0.14.3
 # Reads rendered PDFs back in tests/erp/test_pdf_render.py to assert the output
 # really is extractable text and that no column was cut off the page. Without
 # it those assertions importorskip and pass silently -- worse than failing,

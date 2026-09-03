@@ -124,7 +124,17 @@ jobs:
       - name: Install linting dependencies
         run: |
           python -m pip install --upgrade pip
-          pip install ruff
+          # PINNED, and it has to stay pinned. There is no ruff config in this
+          # repo, so `ruff check` uses whatever ruff's DEFAULT rule set happens
+          # to be -- which grows between releases. Unpinned, this step installed
+          # 0.16.5 and reported 591 errors (FURB167, PIE810, SIM103, BLE001,
+          # UP031, I001...) on a tree that 0.14.3 passes clean. Nothing in the
+          # code had changed; the gate had.
+          #
+          # That failure also skipped `build` and `test`, which depend on this
+          # job -- so the Python suite silently stopped running in CI at all.
+          # Keep this in step with requirements.txt, and bump both deliberately.
+          pip install ruff==0.14.3
 
       - name: Run Ruff linter
         run: |
