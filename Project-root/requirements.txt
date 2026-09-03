@@ -18,7 +18,13 @@
 
 # ── Core framework ───────────────────────────────────────────────────
 Flask==3.0.0
-Werkzeug==3.0.1                 # also provides the password hashing (auth/routes.py)
+# 3.0.6, not 3.0.1: PYSEC-2026-3417, a multipart/form-data parse that can
+# bypass Request.max_form_memory_size and exhaust memory. Patch-level bump
+# inside 3.0.x, so Flask 3.0.0's `Werkzeug>=3.0.0` is satisfied unchanged.
+# The four other werkzeug advisories are safe_join on WINDOWS only; this
+# deploys on Linux. The debugger-PIN one needs debug mode, which production
+# refuses to start with.
+Werkzeug==3.0.6                 # also provides the password hashing (auth/routes.py)
 
 # ── Database ─────────────────────────────────────────────────────────
 # psycopg2 only. `psycopg[binary]` (v3) was pinned here for a migration that
@@ -70,10 +76,21 @@ PyYAML==6.0.1
 Flask-Limiter==3.5.0
 flask-talisman==1.1.0
 redis==5.0.1                    # rate-limit storage in production
-Flask-CORS==4.0.0
+# 4.0.2, not 4.0.0: PYSEC-2024-71 / PYSEC-2024-260 -- 4.0.0 sets
+# Access-Control-Allow-Private-Network: true by DEFAULT, with no way to turn
+# it off. That header exists to let a public page reach a private-network
+# host, which is precisely what this deployment is, so it matters here more
+# than the CVSS suggests. Deliberately NOT 6.0.0: that is a major bump whose
+# path-matching semantics changed, and this app pins CORS to one origin.
+Flask-CORS==4.0.2
 
 # ── WSGI servers (invoked, not imported) ─────────────────────────────
-gunicorn==21.2.0                # Procfile, docker-entrypoint.sh
+# 22.0.0, not 21.2.0: PYSEC-2026-1433 / PYSEC-2026-1434, HTTP request
+# smuggling via conflicting Transfer-Encoding headers, which has been shown
+# to reach endpoints gunicorn was meant to restrict. nginx in front filters
+# most of it and the LAN is not hostile, but this is the process serving
+# every request and the fix is a minor version.
+gunicorn==22.0.0                # Procfile, docker-entrypoint.sh
 waitress==3.0.0                 # run_production.py, the Windows path
 
 # ── Testing & tooling (invoked, not imported) ────────────────────────

@@ -183,29 +183,66 @@ jobs:
           pip-audit -r Project-root/requirements.txt --desc --format json > security-report.json || true
           echo "::endgroup::"
 
-      - name: Fail on high-severity advisories
+      # Fails on any advisory that has NOT been explicitly triaged below.
+      #
+      # The previous version was named "Fail on high-severity advisories" but
+      # never looked at severity -- `if affected: sys.exit(1)` failed on every
+      # finding. With 21 open advisories, most of them inapplicable, it could
+      # never go green, and a gate that is permanently red is one people learn
+      # to scroll past. That is how this job spent its earlier life behind
+      # `|| true`.
+      #
+      # So: fix what applies, and write down why the rest does not. A NEW
+      # advisory is not on this list and turns the job red, which is the only
+      # behaviour that makes the gate worth having. Re-triage the list when
+      # bumping anything, and delete an entry the moment its bump lands.
+      - name: Fail on untriaged advisories
         run: |
           echo "::group::Evaluating advisories"
-          python - <<'EOF'
-          import json, sys
-          try:
-              report = json.load(open("security-report.json"))
-          except Exception as exc:
-              print(f"::error::could not read pip-audit report: {exc}")
-              sys.exit(1)
 
-          deps = report.get("dependencies", report if isinstance(report, list) else [])
-          affected = [d for d in deps if d.get("vulns")]
-          for dep in affected:
-              for vuln in dep["vulns"]:
-                  print(f"::error::{dep.get('name')} {dep.get('version')} -- "
-                        f"{vuln.get('id')}: {(vuln.get('description') or '')[:160]}")
-          if affected:
-              print(f"::error::{len(affected)} vulnerable dependency(ies) found")
-              sys.exit(1)
-          print("No known vulnerabilities in requirements.txt")
-          EOF
-          echo "::endgroup::" 
+          # One entry per advisory, each with the reason it does not apply.
+          # Delete an entry the moment a bump makes it moot -- a stale ignore
+          # is how a real finding gets waved through later.
+          TRIAGED=(
+            # werkzeug safe_join: Windows device names and UNC paths. This
+            # deploys on Ubuntu, where that code path cannot be reached.
+            # The fixes live in werkzeug 3.1.x, which requires Flask 3.1.
+            --ignore-vuln PYSEC-2026-2044
+            --ignore-vuln PYSEC-2026-2046
+            --ignore-vuln PYSEC-2026-2320
+
+            # flask Vary: Cookie. Needs a caching proxy that caches responses
+            # carrying cookies. The nginx in front of this does not cache.
+            --ignore-vuln PYSEC-2026-2151
+
+            # requests extract_zipped_paths(). Never called: requests is used
+            # only for the OAuth token/userinfo exchange.
+            --ignore-vuln PYSEC-2026-2275
+
+            # python-dotenv set_key()/unset_key() symlink handling. The app
+            # only ever calls load_dotenv().
+            --ignore-vuln PYSEC-2026-2270
+
+            # flask-cors path matching. Fixed only in the 6.0.0 major bump,
+            # whose matching semantics changed. This app passes one explicit
+            # origin and no path patterns, so none of the three apply.
+            --ignore-vuln PYSEC-2026-1383
+            --ignore-vuln PYSEC-2026-1384
+            --ignore-vuln PYSEC-2026-1385
+
+            # waitress. Used only by run_production.py, the Windows
+            # development path; Linux serves through gunicorn.
+            --ignore-vuln PYSEC-2024-210
+            --ignore-vuln PYSEC-2024-211
+
+            # pytest /tmp/pytest-of-{user} permissions on shared UNIX hosts.
+            # Test-only, and the fix is the pytest 9 major bump.
+            --ignore-vuln PYSEC-2026-1845
+          )
+
+          pip-audit -r Project-root/requirements.txt --desc \
+                    --progress-spinner off "${TRIAGED[@]}"
+          echo "::endgroup::"
 
       - name: Upload security report
         if: always()
