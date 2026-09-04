@@ -70,6 +70,15 @@ const Api = (() => {
     _inflight.clear();
   }
 
+  // Let the dashboard (and any other listener) know that server state
+  // has changed so it can refresh live graphs without waiting out a
+  // full polling interval. Detail carries the method name in case a
+  // listener wants to filter (e.g. ignore profile-only mutations).
+  function _notifyMutation(method) {
+    try { document.dispatchEvent(new CustomEvent('app:mutation', { detail: { method } })); }
+    catch (_) { /* IE11 / jsdom: not worth failing a save over */ }
+  }
+
   async function _cachedRequest(method, args) {
     if (NO_CACHE_METHODS.has(method)) return _request(method, args, null);
 
@@ -268,7 +277,7 @@ const Api = (() => {
     mutate(method, ...args) {
       const mutationId = _actionMutationId(method, args);
       return _request(method, args, mutationId).then(
-        res => { _invalidateCache(); return res; },
+        res => { _invalidateCache(); _notifyMutation(method); return res; },
         err => {
           _invalidateCache();
           // A request that never reached the server did not consume its id.
@@ -290,7 +299,7 @@ const Api = (() => {
 
     mutateWithId(method, mutationId, ...args) {
       return _request(method, args, mutationId).then(
-        res => { _invalidateCache(); return res; },
+        res => { _invalidateCache(); _notifyMutation(method); return res; },
         err => { _invalidateCache(); throw err; }
       );
     },

@@ -649,11 +649,11 @@ describe('dashboard refresh scheduling', () => {
   });
 
   test('time spent hidden counts toward the interval', () => {
-    // Away for two minutes of a five-minute interval: three left, not five.
-    App.Dashboard._lastLoadAt = Date.now() - (2 * 60 * 1000);
+    // Away for 30 s of a 60 s interval: ~30 s left, not 60 s.
+    App.Dashboard._lastLoadAt = Date.now() - (30 * 1000);
     const due = App.Dashboard._msUntilDue();
-    expect(due).toBeGreaterThan(2.9 * 60 * 1000);
-    expect(due).toBeLessThan(3.1 * 60 * 1000);
+    expect(due).toBeGreaterThan(29 * 1000);
+    expect(due).toBeLessThan(31 * 1000);
   });
 
   test('a tab left hidden past the interval is due at once, not an interval later', () => {

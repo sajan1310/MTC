@@ -37,7 +37,15 @@ App.Dashboard = {
   refreshTimer: null,
   isLoading: false,
   hasLoadedOnce: false,
-  REFRESH_INTERVAL_MS: 5 * 60 * 1000,
+  // 60 s keeps the WIP graph close to real-time for a factory floor
+  // without putting meaningful load on the server (one lightweight
+  // aggregate query per open browser tab per minute).
+  REFRESH_INTERVAL_MS: 60 * 1000,
+  // When a mutation has happened since the last load, the NEXT scheduled
+  // refresh fires after this shorter delay instead of waiting out the
+  // full interval. Short enough to feel instant, long enough to batch
+  // a burst of saves (e.g. bulk status change) into one fetch.
+  REFRESH_AFTER_MUTATION_MS: 2 * 1000,
 
   async ensureChartLib() {
     if (this.chartLibLoaded || typeof Chart !== 'undefined') {
@@ -85,6 +93,24 @@ App.Dashboard = {
     }, delayMs);
   },
 
+  // Called by Api.mutate's post-mutation event. If the dashboard is the
+  // active tab, reschedule the next refresh to fire in
+  // REFRESH_AFTER_MUTATION_MS rather than whenever the current interval
+  // would have elapsed -- so the WIP chart picks up the change almost
+  // immediately without the user pressing Refresh.
+  //
+  // If we are on a DIFFERENT tab, just clear _lastLoadAt so that
+  // showTab's loadData() and startAutoRefresh() will fetch fresh data
+  // the moment the user returns to the dashboard.
+  invalidate() {
+    this._lastLoadAt = 0;
+    if (!this._autoRefreshActive) return;
+    if (document.visibilityState === 'hidden') return;
+    // Already loading -- the in-flight request will land fresh data.
+    if (this.isLoading) return;
+    this._scheduleRefresh(this.REFRESH_AFTER_MUTATION_MS);
+  },
+
   startAutoRefresh() {
     this.stopAutoRefresh();
     this._autoRefreshActive = true;
@@ -106,7 +132,13 @@ App.Dashboard = {
         if (!this.refreshTimer) this._scheduleRefresh(this._msUntilDue());
       };
     }
+    // Listen for mutations from ANY module (production, dispatch, stock,
+    // etc.) so the dashboard refreshes promptly after data changes.
+    if (!this._mutationHandler) {
+      this._mutationHandler = () => this.invalidate();
+    }
     document.addEventListener('visibilitychange', this._visibilityHandler);
+    document.addEventListener('app:mutation', this._mutationHandler);
     if (document.visibilityState !== 'hidden') {
       this._scheduleRefresh(this._msUntilDue());
     }
@@ -123,6 +155,15 @@ App.Dashboard = {
     }
     if (this._visibilityHandler && !(options && options.keepVisibilityHandler)) {
       document.removeEventListener('visibilitychange', this._visibilityHandler);
+    }
+    // Torn down on a full stop, kept across the internal stop that
+    // _scheduleRefresh does when it re-arms its own timer (keepActive).
+    // So while the user is on another tab there is no listener and
+    // invalidate() does not run -- that costs nothing, because showTab
+    // calls loadData() unconditionally on the way back in, which is a
+    // stronger guarantee than a stale flag would have been.
+    if (this._mutationHandler && !(options && options.keepActive)) {
+      document.removeEventListener('app:mutation', this._mutationHandler);
     }
   },
 
