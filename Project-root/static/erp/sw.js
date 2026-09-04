@@ -197,9 +197,12 @@
 // scripts/check_sw_cache_bump.py caught it in CI, which is exactly the
 // reason that check exists.
 // v51: api.js and dashboard.js -- the dashboard no longer waits out its
-// polling interval to show a change. Api.mutate now dispatches an
-// `app:mutation` event and the dashboard refreshes ~2 s later; the interval
-// itself drops from 5 min to 60 s.
+// polling interval to show a change. Api.mutate dispatches an `app:mutation`
+// event and the dashboard refreshes ~2 s later. The polling interval STAYS
+// at 5 min: with the event in place it only has to catch other users'
+// changes, and getDashboardData is on EXPENSIVE_RPC_METHODS, so shortening
+// it would multiply full-table scans across every open tablet for data
+// nobody asked for.
 //
 // Load-bearing, and in the plainest way: both halves are precached, so
 // without this bump an installed tablet keeps the old api.js that dispatches

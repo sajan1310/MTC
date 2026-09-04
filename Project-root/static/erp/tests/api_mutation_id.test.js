@@ -223,3 +223,55 @@ describe('API-001: only successful envelopes are cached', () => {
     expect(seen).toHaveLength(1);
   });
 });
+
+/**
+ * The `app:mutation` event (dashboard live refresh).
+ *
+ * This is the dispatch half of the contract; dashboard_status.test.js owns
+ * the listening half. Kept apart because the failure that made the feature
+ * inert on first attempt was in the WIRING, not in either half: the event
+ * fired correctly into a document that had no listener attached.
+ */
+describe('app:mutation event', () => {
+  // Every app:mutation seen during the current test. jsdom keeps ONE
+  // document per file, so the listener is torn down after each test rather
+  // than left to leak into the ones after it.
+  let seen;
+  let handler;
+
+  beforeEach(() => {
+    seen = [];
+    handler = e => seen.push(e.detail);
+    document.addEventListener('app:mutation', handler);
+  });
+
+  afterEach(() => document.removeEventListener('app:mutation', handler));
+
+  test('a successful mutate announces itself, naming the method', async () => {
+    stubFetch();
+    await Api.mutate('saveProduction', { qty: 1 });
+    expect(seen).toEqual([{ method: 'saveProduction' }]);
+  });
+
+  test('mutateWithId announces itself too -- the outbox replay path', async () => {
+    stubFetch();
+    await Api.mutateWithId('saveIssue', 'fixed-id-1', { qty: 2 });
+    expect(seen).toEqual([{ method: 'saveIssue' }]);
+  });
+
+  test('a FAILED mutate still announces, because the write may have landed', async () => {
+    global.fetch = jest.fn(() => Promise.reject(Object.assign(
+      new Error('offline'), { isNetworkError: true }
+    )));
+    await expect(Api.mutate('saveProduction', { qty: 1 })).rejects.toThrow();
+    // Same reasoning as _invalidateCache on the error path: an unnecessary
+    // refresh costs one read, a missed commit shows stale data.
+    expect(seen).toEqual([{ method: 'saveProduction' }]);
+  });
+
+  test('a plain read announces nothing', async () => {
+    stubFetch();
+    await Api.call('getDashboardData');
+    expect(seen).toEqual([]);
+  });
+});

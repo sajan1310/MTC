@@ -37,10 +37,18 @@ App.Dashboard = {
   refreshTimer: null,
   isLoading: false,
   hasLoadedOnce: false,
-  // 60 s keeps the WIP graph close to real-time for a factory floor
-  // without putting meaningful load on the server (one lightweight
-  // aggregate query per open browser tab per minute).
-  REFRESH_INTERVAL_MS: 60 * 1000,
+  // Stays at 5 min, deliberately. This poll is NOT the thing that keeps
+  // the WIP graph current -- `app:mutation` does that, within
+  // REFRESH_AFTER_MUTATION_MS of any save this browser makes. What is
+  // left for the interval to catch is changes made by OTHER users, where
+  // minutes is the honest resolution anyway.
+  //
+  // Shortening it was tempting and wrong: getDashboardData is on
+  // EXPENSIVE_RPC_METHODS (app/__init__.py), whose comment records that
+  // these scan whole tables into Python and that a loop over one of them
+  // saturates all four gunicorn workers. Per-minute polling from every
+  // open tablet spends that on data nobody asked for.
+  REFRESH_INTERVAL_MS: 5 * 60 * 1000,
   // When a mutation has happened since the last load, the NEXT scheduled
   // refresh fires after this shorter delay instead of waiting out the
   // full interval. Short enough to feel instant, long enough to batch
@@ -87,7 +95,11 @@ App.Dashboard = {
         // timer for the tab they just left: showTab calls stopAutoRefresh
         // synchronously, but it cannot cancel this pending .then().
         if (this._autoRefreshActive && document.visibilityState !== 'hidden') {
-          this._scheduleRefresh(this.REFRESH_INTERVAL_MS);
+          // A mutation that arrived mid-load left _dirty set; that load may
+          // predate it, so come back at the mutation delay, not the interval.
+          const dirty = this._dirty;
+          this._dirty = false;
+          this._scheduleRefresh(dirty ? this.REFRESH_AFTER_MUTATION_MS : this.REFRESH_INTERVAL_MS);
         }
       });
     }, delayMs);
@@ -106,8 +118,15 @@ App.Dashboard = {
     this._lastLoadAt = 0;
     if (!this._autoRefreshActive) return;
     if (document.visibilityState === 'hidden') return;
-    // Already loading -- the in-flight request will land fresh data.
-    if (this.isLoading) return;
+    // A load already in flight cannot be trusted to show this mutation: it
+    // may have read the database before the write committed. Marking the
+    // dashboard dirty makes the post-load re-arm come back promptly instead
+    // of waiting out a full interval -- which, at 5 min, would otherwise
+    // hide the user's own save for the whole of it.
+    if (this.isLoading) {
+      this._dirty = true;
+      return;
+    }
     this._scheduleRefresh(this.REFRESH_AFTER_MUTATION_MS);
   },
 
@@ -132,13 +151,7 @@ App.Dashboard = {
         if (!this.refreshTimer) this._scheduleRefresh(this._msUntilDue());
       };
     }
-    // Listen for mutations from ANY module (production, dispatch, stock,
-    // etc.) so the dashboard refreshes promptly after data changes.
-    if (!this._mutationHandler) {
-      this._mutationHandler = () => this.invalidate();
-    }
     document.addEventListener('visibilitychange', this._visibilityHandler);
-    document.addEventListener('app:mutation', this._mutationHandler);
     if (document.visibilityState !== 'hidden') {
       this._scheduleRefresh(this._msUntilDue());
     }
@@ -155,15 +168,6 @@ App.Dashboard = {
     }
     if (this._visibilityHandler && !(options && options.keepVisibilityHandler)) {
       document.removeEventListener('visibilitychange', this._visibilityHandler);
-    }
-    // Torn down on a full stop, kept across the internal stop that
-    // _scheduleRefresh does when it re-arms its own timer (keepActive).
-    // So while the user is on another tab there is no listener and
-    // invalidate() does not run -- that costs nothing, because showTab
-    // calls loadData() unconditionally on the way back in, which is a
-    // stronger guarantee than a stale flag would have been.
-    if (this._mutationHandler && !(options && options.keepActive)) {
-      document.removeEventListener('app:mutation', this._mutationHandler);
     }
   },
 
@@ -1239,3 +1243,19 @@ App.Dashboard = {
     });
   },
 };
+
+// Bound ONCE, at load, for the life of the page -- deliberately not inside
+// startAutoRefresh().
+//
+// It lived there first, and that made the whole mechanism dead code:
+// core.js's showTab calls stopAutoRefresh() on EVERY tab switch, so the
+// listener existed only while the Dashboard tab was the active one. Every
+// save that moves the WIP graph is made from another tab (production,
+// dispatch, stock), which is precisely when nothing was listening. The
+// event fired into an empty room and the graph waited out the interval,
+// exactly as before.
+//
+// Page-lifetime registration is also all the teardown story we need: one
+// listener, added once, never removed. invalidate() is the part that knows
+// whether the dashboard is currently on screen.
+document.addEventListener('app:mutation', () => App.Dashboard.invalidate());

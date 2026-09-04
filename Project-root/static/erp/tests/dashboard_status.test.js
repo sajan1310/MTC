@@ -649,11 +649,11 @@ describe('dashboard refresh scheduling', () => {
   });
 
   test('time spent hidden counts toward the interval', () => {
-    // Away for 30 s of a 60 s interval: ~30 s left, not 60 s.
-    App.Dashboard._lastLoadAt = Date.now() - (30 * 1000);
+    // Away for two minutes of a five-minute interval: three left, not five.
+    App.Dashboard._lastLoadAt = Date.now() - (2 * 60 * 1000);
     const due = App.Dashboard._msUntilDue();
-    expect(due).toBeGreaterThan(29 * 1000);
-    expect(due).toBeLessThan(31 * 1000);
+    expect(due).toBeGreaterThan(2.9 * 60 * 1000);
+    expect(due).toBeLessThan(3.1 * 60 * 1000);
   });
 
   test('a tab left hidden past the interval is due at once, not an interval later', () => {
@@ -661,6 +661,77 @@ describe('dashboard refresh scheduling', () => {
     // five-minute interval and keep showing three-hour-old numbers.
     App.Dashboard._lastLoadAt = Date.now() - (3 * 60 * 60 * 1000);
     expect(App.Dashboard._msUntilDue()).toBe(0);
+  });
+
+  // ── app:mutation ────────────────────────────────────────────────────
+  // The listening half of the contract api_mutation_id.test.js dispatches.
+  //
+  // The first version of this feature registered the listener inside
+  // startAutoRefresh(), which made it dead code: core.js's showTab calls
+  // stopAutoRefresh() on EVERY tab switch, so the listener only existed
+  // while the Dashboard tab was active -- and every save that moves the
+  // WIP graph is made from a different tab. CI went green on a feature
+  // that could never fire, because nothing tested the wiring.
+  //
+  // The first test below is the one that would have caught it.
+
+  test('the listener SURVIVES a tab switch -- the whole point of the feature', () => {
+    App.Dashboard.startAutoRefresh();
+    // The user leaves the dashboard for Production. This is what showTab does.
+    App.Dashboard.stopAutoRefresh();
+
+    const invalidate = jest.spyOn(App.Dashboard, 'invalidate');
+    // ...and saves a production lot from there.
+    document.dispatchEvent(new CustomEvent('app:mutation', { detail: { method: 'saveProduction' } }));
+
+    expect(invalidate).toHaveBeenCalled();
+    invalidate.mockRestore();
+  });
+
+  test('a mutation from another tab marks the dashboard stale', () => {
+    App.Dashboard.startAutoRefresh();
+    App.Dashboard.stopAutoRefresh();
+    App.Dashboard._lastLoadAt = Date.now();
+
+    App.Dashboard.invalidate();
+
+    // _msUntilDue() of 0 is what makes showTab's loadData() fetch rather
+    // than serve numbers from before the save.
+    expect(App.Dashboard._msUntilDue()).toBe(0);
+  });
+
+  test('a mutation while the dashboard is open refreshes soon, not an interval later', () => {
+    jest.useFakeTimers();
+    App.Dashboard.loadData = jest.fn(() => Promise.resolve());
+    App.Dashboard.startAutoRefresh();
+    App.Dashboard._lastLoadAt = Date.now();
+
+    App.Dashboard.invalidate();
+    jest.advanceTimersByTime(App.Dashboard.REFRESH_AFTER_MUTATION_MS + 50);
+
+    expect(App.Dashboard.loadData).toHaveBeenCalled();
+    jest.useRealTimers();
+  });
+
+  test('a mutation arriving mid-load does not wait out a full interval', () => {
+    App.Dashboard.startAutoRefresh();
+    App.Dashboard.isLoading = true;
+
+    App.Dashboard.invalidate();
+
+    // The in-flight read may predate the write's commit, so it cannot be
+    // trusted to show it. _dirty is what makes the post-load re-arm come
+    // back at REFRESH_AFTER_MUTATION_MS instead of REFRESH_INTERVAL_MS.
+    expect(App.Dashboard._dirty).toBe(true);
+    App.Dashboard.isLoading = false;
+  });
+
+  test('polling stays at 5 min -- app:mutation is what makes it feel live', () => {
+    // Guards the load side: getDashboardData is on EXPENSIVE_RPC_METHODS
+    // (app/__init__.py), so shortening this multiplies full-table scans
+    // across every open tablet. The mutation event is the cheap way to be
+    // current; the interval only exists to catch OTHER users' changes.
+    expect(App.Dashboard.REFRESH_INTERVAL_MS).toBe(5 * 60 * 1000);
   });
 });
 

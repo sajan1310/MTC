@@ -280,6 +280,11 @@ const Api = (() => {
         res => { _invalidateCache(); _notifyMutation(method); return res; },
         err => {
           _invalidateCache();
+          // Notified on failure for the same reason the cache is cleared on
+          // failure: a network error may have masked a write that actually
+          // landed. A refresh that turns out to have been unnecessary costs
+          // one read; missing a save that did commit shows stale data.
+          _notifyMutation(method);
           // A request that never reached the server did not consume its id.
           // Forgetting it lets an immediate retry start cleanly instead of
           // colliding with a claim that was never taken.
@@ -300,7 +305,7 @@ const Api = (() => {
     mutateWithId(method, mutationId, ...args) {
       return _request(method, args, mutationId).then(
         res => { _invalidateCache(); _notifyMutation(method); return res; },
-        err => { _invalidateCache(); throw err; }
+        err => { _invalidateCache(); _notifyMutation(method); throw err; }
       );
     },
 
