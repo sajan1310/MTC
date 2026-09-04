@@ -62,8 +62,21 @@ def setup_logging(app):
         setup_logging(app)
     """
 
-    # Create logs directory
-    log_dir = Path(app.root_path) / "logs"
+    # Create logs directory.
+    #
+    # CWD-relative, NOT app.root_path-relative, because app/__init__.py
+    # already does os.makedirs("logs") relative to the working directory and
+    # the two have to agree. app.root_path is the PACKAGE directory, so this
+    # used to resolve to Project-root/app/logs while everything else -- that
+    # makedirs, deploy/mtc.service's ReadWritePaths, DEPLOYMENT.md -- meant
+    # Project-root/logs.
+    #
+    # Under the systemd unit that is not a cosmetic split: ProtectSystem=strict
+    # mounts the tree read-only apart from the paths named in ReadWritePaths,
+    # so the app/logs mkdir raised OSError(30) inside create_app() and the
+    # service never started. The unit's WorkingDirectory is what makes this
+    # correct, and its comment already calls that out as load-bearing.
+    log_dir = Path("logs")
     log_dir.mkdir(exist_ok=True)
 
     # Get log level from environment
