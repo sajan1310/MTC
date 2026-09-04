@@ -202,9 +202,11 @@ def _ensure_sheet_tab(
     just created/renamed into existence this call, so callers know it's
     already empty and don't need to clear it before writing."""
     meta = sheets_client.with_retry(
-        lambda: sheets.spreadsheets()
-        .get(spreadsheetId=spreadsheet_id, fields="sheets.properties")
-        .execute()
+        lambda: (
+            sheets.spreadsheets()
+            .get(spreadsheetId=spreadsheet_id, fields="sheets.properties")
+            .execute()
+        )
     )
     existing_tabs = [s["properties"]["title"] for s in meta.get("sheets", [])]
     lower_map = {t.lower(): t for t in existing_tabs}
@@ -226,9 +228,11 @@ def _ensure_sheet_tab(
 
 def _rename_first_tab(client, spreadsheet_id: str, new_title: str):
     meta = sheets_client.with_retry(
-        lambda: client.spreadsheets()
-        .get(spreadsheetId=spreadsheet_id, fields="sheets.properties")
-        .execute()
+        lambda: (
+            client.spreadsheets()
+            .get(spreadsheetId=spreadsheet_id, fields="sheets.properties")
+            .execute()
+        )
     )
     sheet_id = meta["sheets"][0]["properties"]["sheetId"]
     body = {
@@ -242,9 +246,11 @@ def _rename_first_tab(client, spreadsheet_id: str, new_title: str):
         ]
     }
     sheets_client.with_retry(
-        lambda: client.spreadsheets()
-        .batchUpdate(spreadsheetId=spreadsheet_id, body=body)
-        .execute()
+        lambda: (
+            client.spreadsheets()
+            .batchUpdate(spreadsheetId=spreadsheet_id, body=body)
+            .execute()
+        )
     )
 
 
@@ -258,9 +264,9 @@ def apply_retention(drive_folder_id: str, retention_days: int):
         f"and mimeType = 'application/vnd.google-apps.spreadsheet' and createdTime < '{cutoff}'"
     )
     results = sheets_client.with_retry(
-        lambda: drive.files()
-        .list(q=query, fields="files(id, name, createdTime)")
-        .execute()
+        lambda: (
+            drive.files().list(q=query, fields="files(id, name, createdTime)").execute()
+        )
     )
     for f in results.get("files", []):
         print(f"Retention: deleting {f['name']} ({f['createdTime']})")
