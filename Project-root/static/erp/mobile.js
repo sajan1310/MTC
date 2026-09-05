@@ -618,29 +618,96 @@ document.addEventListener('DOMContentLoaded', () => {
 // SHEET — full-screen form overlays (Log Lot, New Dispatch, ...)
 // ================================================================
 MApp.Sheet = {
+  // Entries are { id, onDismiss } -- onDismiss lets a sheet that owns
+  // more state than its DOM (the Picker, which has a pending promise to
+  // settle) be torn down correctly when something other than its own
+  // close button dismisses it.
   _stack: [],
   _drag: null,
+  // True only while a popstate is being handled. close() reads it to know
+  // the history entry is already gone and must not be popped a second
+  // time -- which matters through indirection like popstate -> onDismiss
+  // -> Picker.cancel() -> Sheet.close().
+  _inPopstate: false,
   DRAG_DISMISS_PX: 110,
 
-  open(sheetId) {
+  open(sheetId, opts) {
     const backdrop = document.getElementById('mapp-sheet-backdrop');
     const sheet = document.getElementById(sheetId);
     if (!sheet) return;
     if (backdrop) backdrop.classList.add('open');
     sheet.classList.add('open');
     document.body.style.overflow = 'hidden';
-    this._stack.push(sheetId);
+    this._stack.push({ id: sheetId, onDismiss: opts && opts.onDismiss });
+
+    // Sheets are this app's entire secondary navigation (Log Lot, New
+    // Dispatch, Log Return, ~20 of them) and none of them used to
+    // participate in history. Android's hardware Back and iOS's back-swipe
+    // therefore fell through to MApp.Shell's hash router, which switched
+    // the tab BEHIND the open sheet -- or, on the first history entry,
+    // exited the PWA. Either way a half-entered lot was gone with no
+    // warning. One entry per sheet, pushed with no URL argument so the
+    // hash is untouched: Back over it fires popstate (which we handle)
+    // and NOT hashchange (which Shell handles), so the two routers never
+    // fight over the same gesture.
+    try {
+      history.pushState({ mappSheet: sheetId }, '');
+    } catch (e) { /* history API unavailable -- Back reverts to old behaviour */ }
   },
 
-  close(sheetId) {
+  // `fromHistory` is set only by the popstate handler below.
+  close(sheetId, fromHistory) {
     const sheet = document.getElementById(sheetId);
+    const wasTop = this._stack.length > 0 && this._stack[this._stack.length - 1].id === sheetId;
     if (sheet) sheet.classList.remove('open');
-    this._stack = this._stack.filter(id => id !== sheetId);
+    this._stack = this._stack.filter(entry => entry.id !== sheetId);
     if (this._stack.length === 0) {
       const backdrop = document.getElementById('mapp-sheet-backdrop');
       if (backdrop) backdrop.classList.remove('open');
       document.body.style.overflow = '';
     }
+
+    // Closing by any route other than Back (the X button, a successful
+    // save, picking a picker option) leaves behind the history entry
+    // open() pushed. Consume it, or the user's next Back press moves over
+    // a stale entry and appears to do nothing. Only for the top sheet:
+    // closing something mid-stack out of order would pop the wrong entry,
+    // and leaving that one behind is the safer of the two failures.
+    if (!fromHistory && !this._inPopstate && wasTop) {
+      try { history.back(); } catch (e) { /* history API unavailable */ }
+    }
+  },
+
+  // Closes the topmost sheet the way a Back press or Escape should:
+  // through its own dismiss handler when it has one, so a Picker's
+  // pending promise still settles.
+  dismissTop(fromHistory) {
+    const top = this._stack[this._stack.length - 1];
+    if (!top) return false;
+    if (typeof top.onDismiss === 'function') top.onDismiss();
+    else this.close(top.id, fromHistory);
+    return true;
+  },
+
+  initHistory() {
+    window.addEventListener('popstate', () => {
+      if (this._stack.length === 0) return; // not ours -- let Shell's hashchange handle it
+      this._inPopstate = true;
+      try {
+        this.dismissTop(true);
+      } finally {
+        this._inPopstate = false;
+      }
+    });
+
+    // Escape closes the top sheet. This app is used with bluetooth
+    // barcode scanners, which present as keyboards, so a hardware Escape
+    // is a real input path here -- and it costs nothing on touch.
+    document.addEventListener('keydown', e => {
+      if (e.key !== 'Escape' || this._stack.length === 0) return;
+      e.preventDefault();
+      this.dismissTop(false);
+    });
   },
 
   // Swipe-down-to-dismiss — drag starting on a sheet's own header (the
@@ -684,6 +751,7 @@ MApp.Sheet = {
   }
 };
 MApp.Sheet.initDrag();
+MApp.Sheet.initHistory();
 
 // ================================================================
 // PICKER — generic full-screen searchable picker (replaces Select2).
@@ -721,7 +789,10 @@ MApp.Picker = {
       if (searchInput) searchInput.value = '';
 
       this._renderList(this._items, '');
-      MApp.Sheet.open('mapp-picker-sheet');
+      // onDismiss so a Back press or Escape settles the pending promise
+      // (as cancel() does) instead of closing the DOM and leaving whoever
+      // awaited open() hanging forever.
+      MApp.Sheet.open('mapp-picker-sheet', { onDismiss: () => this.cancel() });
 
       if (searchable && searchInput) {
         setTimeout(() => searchInput.focus(), 280);

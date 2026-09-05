@@ -3,7 +3,13 @@
 
 <head>
   <meta charset="UTF-8">
-  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <!-- viewport-fit=cover is what makes env(safe-area-inset-*) resolve to
+       anything other than 0px. mobile_styles.css has ten rules that use it
+       (top bar padding, tab bar bottom padding, sheet headers and footers,
+       the toast stack, the FAB); without this they were all evaluating to
+       zero, so on a notched iPhone the top bar sat under the notch and the
+       tab bar under the home indicator. -->
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover" />
   <meta name="csrf-token" content="{{ csrf_token() }}">
   <title>Maharaja Bikes — Mobile</title>
 

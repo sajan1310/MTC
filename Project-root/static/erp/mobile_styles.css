@@ -33,16 +33,32 @@
   --mb-surface:        #fff;
 
   --mb-safety:         #ff6a13;
-  --mb-safety-dark:    #d6540a;
+  /* Lightened from #d6540a: this is the PRESSED fill under an ink label, and
+     the old value dropped ink to 4.36:1. #e05a0d is still visibly darker
+     than the resting fill and keeps ink at 4.79:1. */
+  --mb-safety-dark:    #e05a0d;
   --mb-safety-faint:   #ffe7d6;
+  /* Safety orange is a FILL, never small text on a light ground: #fff on
+     #ff6a13 is 2.87:1 and the orange on white is the same 2.87:1, both
+     under WCAG AA's 4.5:1 for normal text. The fill keeps the brand colour
+     and carries an INK label instead (#14181c on #ff6a13 = 6.22:1 -- which
+     is also how real safety signage works: black on orange, never white).
+     --mb-safety-ink is the same hue darkened for the cases that genuinely
+     need it as text on a light ground (6.22:1 on white). */
+  --mb-safety-ink:     #a33d05;
 
   --mb-enamel-red:     #c81e3a;
   --mb-enamel-red-bg:  #fbe2e6;
   --mb-enamel-blue:    #1d5fa8;
   --mb-enamel-blue-bg: #dfe9f5;
-  --mb-enamel-green:   #1e8a5f;
+  /* Green and amber are darkened from #1e8a5f / #b8790a. Both carry white
+     12-14px bold text (status chips, success toast) and both also appear as
+     text on a white card, and they failed AA in BOTH roles: green 4.32,
+     amber 3.63. Darkening fixes both at once -- green now 6.51, amber 5.24.
+     Red (5.67), blue (6.45) and slate (7.13) already passed and are unchanged. */
+  --mb-enamel-green:   #146b48;
   --mb-enamel-green-bg:#dcf0e6;
-  --mb-enamel-amber:   #b8790a;
+  --mb-enamel-amber:   #94620a;
   --mb-enamel-amber-bg:#fbe9cf;
   --mb-enamel-slate:   #4a5a66;
   --mb-enamel-slate-bg:#e3e8ea;
@@ -170,6 +186,11 @@ textarea:focus-visible,
     box-shadow: 0 0 48px rgb(0 0 0 / 35%);
   }
   .mb-toast-stack { left: 50%; right: auto; width: calc(480px - var(--mb-sp-4) * 2); max-width: calc(100% - var(--mb-sp-4) * 2); transform: translateX(-50%); }
+
+  /* The tab-screen FAB is position:fixed (see .mapp-content > .mb-fab), so
+     without this it anchors to the window edge and floats outside the 480px
+     phone frame on a tablet. Re-anchor it to the frame's own right edge. */
+  .mapp-content > .mb-fab { right: calc(50% - 240px + var(--mb-sp-5)); }
 }
 
 .mapp-topbar {
@@ -228,9 +249,17 @@ textarea:focus-visible,
    changes read as navigation, not a hard content swap. Restarted on every
    switch via a forced reflow in JS (adding the class a second time in a
    row wouldn't otherwise replay the animation). */
+/* Opacity only -- deliberately no transform. A transform with any value
+   other than `none` makes the element a containing block for its
+   position:fixed descendants, and that applies for as long as the
+   animation is RUNNING, not just at its keyframes. The tab-screen FAB
+   (.mapp-content > .mb-fab) is fixed, so a translateY here re-anchored it
+   to the content box for the animation's 200ms and then snapped it back
+   to the viewport -- a visible jump on every switch to Production or
+   Dispatch. The 8px rise was a flourish; the FAB sitting still is not. */
 @keyframes mapp-screen-in {
-  from { opacity: 0; transform: translateY(8px); }
-  to   { opacity: 1; transform: translateY(0); }
+  from { opacity: 0; }
+  to   { opacity: 1; }
 }
 .mapp-content.mapp-screen-enter { animation: mapp-screen-in var(--mb-motion-base); }
 
@@ -250,7 +279,7 @@ textarea:focus-visible,
 }
 .mb-ptr-indicator.mb-ptr-animated { transition: height var(--mb-motion-base); }
 .mb-ptr-indicator svg { width: 22px; height: 22px; }
-.mb-ptr-indicator.mb-ptr-ready { color: var(--mb-safety); }
+.mb-ptr-indicator.mb-ptr-ready { color: var(--mb-safety-ink); }
 .mb-ptr-indicator.mb-ptr-spinning svg { animation: mb-ptr-spin 0.7s linear infinite; }
 
 @keyframes mb-ptr-spin { to { transform: rotate(360deg); } }
@@ -308,7 +337,10 @@ textarea:focus-visible,
   transition: color var(--mb-motion-fast), transform var(--mb-motion-fast);
 }
 .mapp-tab svg { width: 24px; height: 24px; transition: transform var(--mb-motion-fast); }
-.mapp-tab.active { color: var(--mb-safety); }
+/* safety-ink, not safety: this label is 12px on white, where the raw orange
+   is 2.87:1. The orange indicator bar above the tab row is unchanged -- it
+   is a non-text cue and keeps the brand colour at full strength. */
+.mapp-tab.active { color: var(--mb-safety-ink); }
 .mapp-tab.active svg { transform: translateY(-1px) scale(1.08); }
 .mapp-tab:active { background: var(--mb-workshop); transform: scale(0.94); }
 
@@ -434,7 +466,7 @@ textarea:focus-visible,
   cursor: pointer;
   transition: transform var(--mb-motion-fast), background var(--mb-motion-fast);
 }
-.mb-quick-action svg { width: 22px; height: 22px; color: var(--mb-safety); }
+.mb-quick-action svg { width: 22px; height: 22px; color: var(--mb-safety-ink); }
 .mb-quick-action:active { background: var(--mb-ink-soft); transform: scale(0.96); }
 
 @media (prefers-reduced-motion: reduce) {
@@ -558,7 +590,7 @@ textarea:focus-visible,
 .mb-filter-chip.active {
   border-color: var(--mb-safety);
   background: var(--mb-safety);
-  color: #fff;
+  color: var(--mb-ink); /* 6.22:1; white on this fill was 2.87:1 */
 }
 
 /* ── Buttons ─────────────────────────────────────────────────────────── */
@@ -580,7 +612,10 @@ textarea:focus-visible,
 .mb-btn:active { transform: scale(0.98); }
 .mb-btn:disabled { opacity: 0.5; cursor: not-allowed; transform: none; }
 
-.mb-btn-primary { background: var(--mb-safety); color: #fff; }
+/* Ink label, not white -- see --mb-safety-ink's note. 16px bold is NORMAL
+   text under WCAG (large starts at 18.66px bold), so this needs 4.5:1, not
+   the 3.0:1 large-text allowance. White gave 2.87:1; ink gives 6.22:1. */
+.mb-btn-primary { background: var(--mb-safety); color: var(--mb-ink); }
 .mb-btn-primary:active:not(:disabled) { background: var(--mb-safety-dark); }
 
 .mb-btn-secondary { background: var(--mb-steel-faint); color: var(--mb-ink); }
@@ -596,6 +631,13 @@ textarea:focus-visible,
 }
 
 /* ── FAB ─────────────────────────────────────────────────────────────── */
+/* Inside a sheet the FAB is a sibling of .mb-sheet-body, so `absolute`
+   against the fixed sheet keeps it pinned. On a TAB screen it is a child of
+   #mapp-content -- which is both the scroll container and `position:
+   relative` -- so `absolute` positioned it against the scrolling padding box
+   and "Log Lot" / "New Dispatch", the two actions this app exists for,
+   scrolled off the bottom after a handful of rows. The .mapp-content
+   override below pins those two; sheets keep the original behaviour. */
 .mb-fab {
   position: absolute;
   right: var(--mb-sp-5);
@@ -604,7 +646,7 @@ textarea:focus-visible,
   height: 64px;
   border-radius: var(--mb-radius-pill);
   background: var(--mb-safety);
-  color: #fff;
+  color: var(--mb-ink);
   border: none;
   box-shadow: var(--mb-shadow-fab);
   display: flex;
@@ -621,6 +663,15 @@ textarea:focus-visible,
 }
 .mb-fab:active { background: var(--mb-safety-dark); transform: scale(0.97); }
 .mb-fab svg { width: 24px; height: 24px; flex-shrink: 0; }
+
+/* Tab-screen FABs only (Production, Dispatch). Fixed to the viewport and
+   lifted clear of the tab bar, so the primary action stays reachable no
+   matter how far the list is scrolled. The 640px block further down
+   re-anchors `right` to the phone frame's edge rather than the window's. */
+.mapp-content > .mb-fab {
+  position: fixed;
+  bottom: calc(var(--mb-tabbar-h) + var(--mb-sp-4) + env(safe-area-inset-bottom));
+}
 
 /* ── Search bar ──────────────────────────────────────────────────────── */
 .mb-search {
@@ -748,6 +799,15 @@ textarea:focus-visible,
 }
 .mb-sheet-backdrop.open { opacity: 1; pointer-events: auto; }
 
+/* A closed sheet used to be moved offscreen by transform ALONE, which leaves
+   it display:flex -- so every input, button and picker inside all ~20 sheets
+   stayed in the focus order and in the accessibility tree. With the bluetooth
+   barcode scanners this app is used with (see the focus-visible note near the
+   top of this file), a scan could land in an invisible form.
+   `visibility: hidden` removes it from both. Unlike display:none it is
+   transitionable, so the slide still animates: on open, visibility flips to
+   visible immediately (0s delay); on close, it is held until the transform
+   has finished running (delayed by the sheet duration). */
 .mb-sheet {
   position: fixed;
   inset: 0;
@@ -756,9 +816,15 @@ textarea:focus-visible,
   display: flex;
   flex-direction: column;
   transform: translateY(100%);
-  transition: transform var(--mb-motion-sheet);
+  visibility: hidden;
+  transition: transform var(--mb-motion-sheet), visibility 0s linear var(--mb-motion-sheet);
 }
-.mb-sheet.open { transform: translateY(0); }
+
+.mb-sheet.open {
+  transform: translateY(0);
+  visibility: visible;
+  transition: transform var(--mb-motion-sheet), visibility 0s linear 0s;
+}
 /* Dragged state (MApp.Sheet's swipe-to-dismiss) — JS drives translateY
    directly via inline style while the finger moves, so the transition
    above is suspended for the duration of the drag. */
@@ -833,7 +899,7 @@ textarea:focus-visible,
   justify-content: space-between;
 }
 .mb-picker-option:active { background: var(--mb-workshop); }
-.mb-picker-option.selected { color: var(--mb-safety); font-weight: 700; }
+.mb-picker-option.selected { color: var(--mb-safety-ink); font-weight: 700; }
 
 /* ── Color chips + stepper (multi-color process checklist) ──────────── */
 .mb-color-chip-list {
