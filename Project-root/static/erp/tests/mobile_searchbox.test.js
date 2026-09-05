@@ -145,7 +145,10 @@ describe('MApp.SearchBox', () => {
       MApp.SearchBox.setCount('test-search', 50, 312);
 
       expect(count().hidden).toBe(false);
-      expect(count().textContent).toBe('Showing 50 of 312 — refine your search');
+      // No "refine your search" advice any more: MApp.Paging puts a
+      // Show-more button under the list, so the remaining rows are
+      // reachable rather than something to word a better query for.
+      expect(count().textContent).toBe('Showing 50 of 312');
       // A live region: the only way a screen-reader user learns the list
       // changed under a search that never moves focus.
       expect(count().getAttribute('role')).toBe('status');

@@ -602,6 +602,85 @@ MApp.Search = {
 };
 
 // ================================================================
+// PAGING — progressive reveal, replacing thirteen hard caps.
+//
+// Every list rendered `rows.slice(0, N)` with no way to see row N+1.
+// Production and Dispatch cap at 50, so a lot logged three weeks ago was
+// not merely hard to find, it was unreachable: no scroll, no page, no
+// filter got to it. Phase 2 made the cap visible ("Showing 50 of 312");
+// this makes it passable.
+//
+// Deliberately "show more" rather than infinite scroll: an operator on a
+// factory floor with gloves scrolls past things, and an accidental fetch
+// of 300 more rows on a low-end handset is a stall they cannot cancel.
+// A tap is explicit, and it keeps the scroll position stable.
+//
+// Usage, inside a render() -- one call, plus one concatenation:
+//   const page = MApp.Paging.take('production', rows, () => this.render());
+//   listEl.innerHTML = page.rows.map(...).join('') + MApp.Paging.moreHtml(page);
+// and MApp.Paging.reset('production') wherever the result set changes
+// (a load, or a new query).
+// ================================================================
+MApp.Paging = {
+  DEFAULT_SIZE: 50,
+  _shown: {},
+  _rerender: {},
+
+  // Called on every data load and whenever the query changes, so a new
+  // search starts from the first page rather than inheriting however far
+  // the previous one had been expanded.
+  reset(key, size) {
+    this._shown[key] = size || this.DEFAULT_SIZE;
+  },
+
+  // take() also records how to re-render this list, so expanding a page
+  // needs no per-screen click wiring -- one delegated listener (below)
+  // serves all thirteen. Screens call exactly one Paging function.
+  take(key, rows, onRender) {
+    const all = rows || [];
+    if (this._shown[key] == null) this.reset(key);
+    if (typeof onRender === 'function') this._rerender[key] = onRender;
+    const limit = this._shown[key];
+    return {
+      key,
+      rows: all.slice(0, limit),
+      total: all.length,
+      shown: Math.min(limit, all.length),
+      hasMore: all.length > limit,
+      step: this.DEFAULT_SIZE
+    };
+  },
+
+  // Appended to the list's own innerHTML string, so a render stays a
+  // single assignment rather than an assignment plus DOM surgery.
+  moreHtml(page) {
+    if (!page || !page.hasMore) return '';
+    const remaining = page.total - page.shown;
+    const next = Math.min(remaining, page.step);
+    return `
+      <button type="button" class="mb-btn mb-btn-secondary mb-load-more" data-paging-key="${MApp.Util.escapeHtml(page.key)}">
+        Show ${next} more <span class="mb-load-more-sub">(${remaining} not shown)</span>
+      </button>`;
+  },
+
+  // One delegated listener for every list in the app. Bound at boot, so
+  // it survives the innerHTML rebuilds that would drop a per-button
+  // handler, and costs nothing per render.
+  init() {
+    document.addEventListener('click', e => {
+      const btn = e.target.closest && e.target.closest('.mb-load-more');
+      if (!btn) return;
+      const key = btn.dataset.pagingKey;
+      if (!key) return;
+      this._shown[key] = (this._shown[key] || this.DEFAULT_SIZE) + this.DEFAULT_SIZE;
+      const rerender = this._rerender[key];
+      if (rerender) rerender();
+    });
+  }
+};
+MApp.Paging.init();
+
+// ================================================================
 // SEARCH BOX — the one search input, upgraded in place.
 //
 // Every .mb-search input was type="text" with an inline
@@ -721,7 +800,10 @@ MApp.SearchBox = {
     if (shown == null) { el.hidden = true; el.textContent = ''; return; }
     const searching = !!(input.value || '').trim();
     if (total != null && shown < total) {
-      el.textContent = `Showing ${shown} of ${total} — refine your search`;
+      // No "refine your search" any more -- MApp.Paging puts a Show-more
+      // button under the list, so the rest is reachable rather than
+      // something the operator has to word a better query to see.
+      el.textContent = `Showing ${shown} of ${total}`;
     } else if (searching) {
       el.textContent = shown === 1 ? '1 match' : `${shown} matches`;
     } else {
@@ -1934,6 +2016,7 @@ MApp.Production = {
       this.entries = MApp.Search.index(this.lots, this.SEARCH);
       MApp.SearchBox.attach('production-search', term => this.onSearch(term));
       this.searchTerm = '';
+      MApp.Paging.reset('production');
 
       this.render();
     } catch (err) {
@@ -1943,6 +2026,9 @@ MApp.Production = {
 
   onSearch(term) {
     this.searchTerm = term || '';
+    // A new query starts at page one rather than inheriting however far
+    // the previous result set had been expanded.
+    MApp.Paging.reset('production');
     this.render();
   },
 
@@ -1966,9 +2052,9 @@ MApp.Production = {
       lots = lots.filter(l => l.status === 'Pending' || l.status === 'In Progress');
     }
 
-    const CAP = 50;
-    const shown = lots.slice(0, CAP);
-    MApp.SearchBox.setCount('production-search', shown.length, lots.length);
+    const page = MApp.Paging.take('production', lots, () => this.render());
+    const shown = page.rows;
+    MApp.SearchBox.setCount('production-search', page.shown, page.total);
 
     if (lots.length === 0) {
       listEl.innerHTML = banner;
@@ -1999,7 +2085,7 @@ MApp.Production = {
               <button type="button" class="mb-btn-text" style="padding:0;min-height:auto;color:var(--mb-enamel-red);" data-lot-action="delete" data-lot-index="${i}">Delete</button>
             </div>
           </div>`;
-      }).join('');
+      }).join('') + MApp.Paging.moreHtml(page);
 
       listEl.querySelectorAll('[data-lot-action]').forEach(btn => {
         btn.addEventListener('click', () => {
@@ -2013,6 +2099,7 @@ MApp.Production = {
           else this.deleteLot(lot);
         });
       });
+
     }
 
     const clearBtn = listEl.querySelector('[data-clear-filter]');
@@ -2995,6 +3082,7 @@ MApp.Dispatch = {
 
   onSearch(term) {
     this.searchTerm = term || '';
+    MApp.Paging.reset('dispatch');
     this.render();
   },
 
@@ -3028,6 +3116,7 @@ MApp.Dispatch = {
       this.entries = MApp.Search.index(this.dispatches, this.SEARCH);
       MApp.SearchBox.attach('dispatch-search', term => this.onSearch(term));
       this.searchTerm = '';
+      MApp.Paging.reset('dispatch');
 
       this.render();
     } catch (err) {
@@ -3055,9 +3144,9 @@ MApp.Dispatch = {
       list = list.filter(d => MApp.Util.isToday(d.dateRaw));
     }
 
-    const CAP = 50;
-    const shown = list.slice(0, CAP);
-    MApp.SearchBox.setCount('dispatch-search', shown.length, list.length);
+    const page = MApp.Paging.take('dispatch', list, () => this.render());
+    const shown = page.rows;
+    MApp.SearchBox.setCount('dispatch-search', page.shown, page.total);
 
     if (list.length === 0) {
       listEl.innerHTML = banner;
@@ -3086,7 +3175,7 @@ MApp.Dispatch = {
             <button type="button" class="mb-btn-text" style="padding:0;min-height:auto;color:var(--mb-enamel-red);" data-dispatch-action="delete" data-dispatch-number="${MApp.Util.escapeHtml(d.dispatchNumber)}">Delete</button>
           </div>
         </div>
-      `).join('');
+      `).join('') + MApp.Paging.moreHtml(page);
     }
 
     const clearBtn = listEl.querySelector('[data-clear-filter]');
@@ -3111,6 +3200,7 @@ MApp.Dispatch = {
         else this.deleteDispatch(number);
       });
     });
+
   },
 
   print(idx, listRef) {
@@ -3891,6 +3981,7 @@ MApp.PO = {
   },
 
   onSearch(term) {
+    MApp.Paging.reset('po');
     this.searchTerm = String(term || '').trim().toLowerCase();
     this._applyFilters();
   },
@@ -3934,8 +4025,9 @@ MApp.PO = {
       return;
     }
 
-    MApp.SearchBox.setCount('po-ledger-search', Math.min(this.filtered.length, 100), this.filtered.length);
-    listEl.innerHTML = pendingSyncBanner + this.filtered.slice(0, 100).map(po => {
+    const page = MApp.Paging.take('po', this.filtered, () => this.render());
+    MApp.SearchBox.setCount('po-ledger-search', page.shown, page.total);
+    listEl.innerHTML = pendingSyncBanner + page.rows.map(po => {
       const idx = this.pos.indexOf(po);
       const pendingLines = (po.items || [])
         .filter(item => (item.pendingQty || 0) > 0.0001)
@@ -3963,7 +4055,7 @@ MApp.PO = {
           <button type="button" class="mb-btn-text" style="padding:0;min-height:auto;color:var(--mb-enamel-red);" data-po-action="delete" data-po-index="${idx}">Delete</button>
         </div>
       </div>`;
-    }).join('');
+    }).join('') + MApp.Paging.moreHtml(page);
 
     listEl.querySelectorAll('[data-po-action]').forEach(btn => {
       btn.addEventListener('click', () => {
@@ -4386,6 +4478,7 @@ MApp.Bill = {
   },
 
   onSearch(term) {
+    MApp.Paging.reset('bill');
     this.searchTerm = String(term || '').trim().toLowerCase();
     this._applyFilters();
   },
@@ -4407,8 +4500,9 @@ MApp.Bill = {
       return;
     }
 
-    MApp.SearchBox.setCount('bill-ledger-search', Math.min(this.filtered.length, 100), this.filtered.length);
-    listEl.innerHTML = this.filtered.slice(0, 100).map(bill => {
+    const page = MApp.Paging.take('bill', this.filtered, () => this.render());
+    MApp.SearchBox.setCount('bill-ledger-search', page.shown, page.total);
+    listEl.innerHTML = page.rows.map(bill => {
       const idx = this.bills.indexOf(bill);
       const poRef = (bill.poNumbers || []).length
         ? bill.poNumbers.map(p => p === 'DIRECT' ? 'Direct' : `PO-${MApp.Util.escapeHtml(String(p))}`).join(', ')
@@ -4432,7 +4526,7 @@ MApp.Bill = {
           <button type="button" class="mb-btn-text" style="padding:0;min-height:auto;color:var(--mb-enamel-red);" data-bill-action="delete" data-bill-index="${idx}">Delete</button>
         </div>
       </div>`;
-    }).join('');
+    }).join('') + MApp.Paging.moreHtml(page);
 
     listEl.querySelectorAll('[data-bill-action]').forEach(btn => {
       btn.addEventListener('click', () => {
@@ -4814,6 +4908,7 @@ MApp.Issue = {
   },
 
   onSearch(term) {
+    MApp.Paging.reset('issue');
     this.searchTerm = String(term || '').trim().toLowerCase();
     this._applyFilters();
   },
@@ -4835,8 +4930,9 @@ MApp.Issue = {
       return;
     }
 
-    MApp.SearchBox.setCount('issue-log-search', Math.min(this.filtered.length, 100), this.filtered.length);
-    listEl.innerHTML = this.filtered.slice(0, 100).map((r, i) => {
+    const page = MApp.Paging.take('issue', this.filtered, () => this.render());
+    MApp.SearchBox.setCount('issue-log-search', page.shown, page.total);
+    listEl.innerHTML = page.rows.map((r, i) => {
       const itemSummary = (r.items || []).map(it => `${MApp.Util.escapeHtml(it.name)} (${MApp.Util.formatQty(it.qty)} ${MApp.Util.escapeHtml(it.unit || '')})`).join(', ');
       return `
       <div class="mb-card">
@@ -4853,7 +4949,7 @@ MApp.Issue = {
         ${r.reference ? `<div class="mb-card-sub mb-mt-2">Ref: ${MApp.Util.escapeHtml(r.reference)}</div>` : ''}
         <div class="mb-mt-2"><button type="button" class="mb-btn-text" style="padding:0;min-height:auto;color:var(--mb-enamel-red);" data-issue-index="${i}">Delete</button></div>
       </div>`;
-    }).join('');
+    }).join('') + MApp.Paging.moreHtml(page);
 
     listEl.querySelectorAll('[data-issue-index]').forEach(btn => {
       btn.addEventListener('click', () => {
@@ -5066,6 +5162,7 @@ MApp.Wastage = {
   },
 
   onSearch(term) {
+    MApp.Paging.reset('wastage');
     this.searchTerm = String(term || '').trim().toLowerCase();
     this._applyFilters();
   },
@@ -5087,8 +5184,9 @@ MApp.Wastage = {
       return;
     }
 
-    MApp.SearchBox.setCount('wastage-log-search', Math.min(this.filtered.length, 100), this.filtered.length);
-    listEl.innerHTML = this.filtered.slice(0, 100).map((r, i) => {
+    const page = MApp.Paging.take('wastage', this.filtered, () => this.render());
+    MApp.SearchBox.setCount('wastage-log-search', page.shown, page.total);
+    listEl.innerHTML = page.rows.map((r, i) => {
       const itemSummary = (r.items || []).map(it => `${MApp.Util.escapeHtml(it.name)} (${MApp.Util.formatQty(it.qty)} ${MApp.Util.escapeHtml(it.unit || '')})`).join(', ');
       return `
       <div class="mb-card">
@@ -5104,7 +5202,7 @@ MApp.Wastage = {
         </div>
         <div class="mb-mt-2"><button type="button" class="mb-btn-text" style="padding:0;min-height:auto;color:var(--mb-enamel-red);" data-wastage-index="${i}">Delete</button></div>
       </div>`;
-    }).join('');
+    }).join('') + MApp.Paging.moreHtml(page);
 
     listEl.querySelectorAll('[data-wastage-index]').forEach(btn => {
       btn.addEventListener('click', () => {
@@ -5334,6 +5432,7 @@ MApp.Items = {
   },
 
   onSearch(term) {
+    MApp.Paging.reset('items');
     this.searchTerm = term || '';
     this.filtered = MApp.Search.run(MApp.Search.index(this.items, this.SEARCH), this.searchTerm);
     this.render();
@@ -5350,8 +5449,9 @@ MApp.Items = {
 
     // currentStock is null when getStockData() failed or this item/size
     // has no Stock row yet (see openLookupSheet) -- distinct from a real 0.
-    MApp.SearchBox.setCount('items-lookup-search', Math.min(this.filtered.length, 100), this.filtered.length);
-    listEl.innerHTML = this.filtered.slice(0, 100).map((it, i) => `
+    const page = MApp.Paging.take('items', this.filtered, () => this.render());
+    MApp.SearchBox.setCount('items-lookup-search', page.shown, page.total);
+    listEl.innerHTML = page.rows.map((it, i) => `
       <div class="mb-card">
         <div class="mb-card-row">
           <div>
@@ -5367,7 +5467,7 @@ MApp.Items = {
         ${it.isLowStock ? '<div class="mb-mt-2"><span class="mb-chip mb-chip-lowstock">Low stock</span></div>' : ''}
         <div class="mb-mt-2"><button type="button" class="mb-btn-text" style="padding:0;min-height:auto;" data-edit-item="${i}">Edit</button></div>
       </div>
-    `).join('');
+    `).join('') + MApp.Paging.moreHtml(page);
 
     listEl.querySelectorAll('[data-edit-item]').forEach(btn => {
       btn.addEventListener('click', () => {
@@ -5677,6 +5777,7 @@ MApp.Directory = {
   },
 
   onSearch(term) {
+    MApp.Paging.reset('directory');
     this.searchTerm = term || '';
     this.filtered = MApp.Search.run(MApp.Search.index(this.items, this.SEARCH), this.searchTerm);
     this.render();
@@ -5695,8 +5796,9 @@ MApp.Directory = {
       return;
     }
 
-    MApp.SearchBox.setCount('directory-search', Math.min(this.filtered.length, 100), this.filtered.length);
-    listEl.innerHTML = this.filtered.slice(0, 100).map(e => {
+    const page = MApp.Paging.take('directory', this.filtered, () => this.render());
+    MApp.SearchBox.setCount('directory-search', page.shown, page.total);
+    listEl.innerHTML = page.rows.map(e => {
       const contactHtml = e.contact
         ? `<a href="tel:${MApp.Util.escapeHtml(e.contact)}" onclick="event.stopPropagation()">${MApp.Util.escapeHtml(e.contact)}</a>`
         : 'No contact on file';
@@ -5708,7 +5810,7 @@ MApp.Directory = {
         : [['edit', 'Edit']];
       const actionsHtml = actions.map(([action, label]) =>
         `<button type="button" class="mb-btn-text" style="padding:0;min-height:auto;" data-action="${action}" data-name="${MApp.Util.escapeHtml(e.name)}">${label}</button>`
-      ).join('');
+      ).join('') + MApp.Paging.moreHtml(page);
       return `
         <div class="mb-card">
           <div class="mb-card-title">${MApp.Util.escapeHtml(MApp.Util.formatNameCase(e.name))}</div>
@@ -6019,6 +6121,7 @@ MApp.Admin = {
   },
 
   onSearch(term) {
+    MApp.Paging.reset('admin');
     this.searchTerm = String(term || '').trim().toLowerCase();
     this._applyFilters();
   },
@@ -6059,8 +6162,9 @@ MApp.Admin = {
     // row where they'd always fail.
     const myEmail = String((window.MOBILE_CURRENT_USER || {}).email || '').toLowerCase();
 
-    MApp.SearchBox.setCount('admin-users-search', Math.min(this.filtered.length, 200), this.filtered.length);
-    listEl.innerHTML = this.filtered.slice(0, 200).map((u, i) => {
+    const page = MApp.Paging.take('admin', this.filtered, () => this.render());
+    MApp.SearchBox.setCount('admin-users-search', page.shown, page.total);
+    listEl.innerHTML = page.rows.map((u, i) => {
       const isSelf = u.email.toLowerCase() === myEmail;
       const actions = isSelf ? '<div class="mb-mt-2 mb-text-sm mb-text-steel">This is you</div>' : `
         <div class="mb-mt-2" style="display:flex; gap:var(--mb-sp-4);">
@@ -6079,7 +6183,7 @@ MApp.Admin = {
           ${!u.active ? '<div class="mb-mt-2"><span class="mb-chip mb-chip-cancelled">Inactive</span></div>' : ''}
           ${actions}
         </div>`;
-    }).join('');
+    }).join('') + MApp.Paging.moreHtml(page);
 
     listEl.querySelectorAll('[data-admin-action]').forEach(btn => {
       btn.addEventListener('click', () => {
@@ -6250,6 +6354,7 @@ MApp.Process = {
   },
 
   onSearch(term) {
+    MApp.Paging.reset('process');
     this.searchTerm = String(term || '').trim().toLowerCase();
     this._applyFilters();
   },
@@ -6271,9 +6376,9 @@ MApp.Process = {
       return;
     }
 
-    MApp.SearchBox.setCount('process-list-search', Math.min(this.filtered.length, 200), this.filtered.length);
-    MApp.SearchBox.setCount('bom-list-search', Math.min(this.filtered.length, 200), this.filtered.length);
-    listEl.innerHTML = this.filtered.slice(0, 200).map((p, i) => `
+    const page = MApp.Paging.take('process', this.filtered, () => this.render());
+    MApp.SearchBox.setCount('process-list-search', page.shown, page.total);
+    listEl.innerHTML = page.rows.map((p, i) => `
       <div class="mb-card">
         <div class="mb-card-row">
           <div>
@@ -6287,7 +6392,7 @@ MApp.Process = {
         </div>
         ${!p.active ? '<div class="mb-mt-2"><span class="mb-chip mb-chip-cancelled">Inactive</span></div>' : ''}
         <div class="mb-mt-2"><button type="button" class="mb-btn-text" style="padding:0;min-height:auto;" data-process-index="${i}">Edit</button></div>
-      </div>`).join('');
+      </div>`).join('') + MApp.Paging.moreHtml(page);
 
     listEl.querySelectorAll('[data-process-index]').forEach(btn => {
       btn.addEventListener('click', () => {
@@ -6651,6 +6756,7 @@ MApp.BOM = {
   },
 
   onSearch(term) {
+    MApp.Paging.reset('bom');
     this.searchTerm = String(term || '').trim().toLowerCase();
     this._applyFilters();
   },
@@ -6672,7 +6778,9 @@ MApp.BOM = {
       return;
     }
 
-    listEl.innerHTML = this.filtered.slice(0, 200).map((p, i) => `
+    const page = MApp.Paging.take('bom', this.filtered, () => this.render());
+    MApp.SearchBox.setCount('bom-list-search', page.shown, page.total);
+    listEl.innerHTML = page.rows.map((p, i) => `
       <div class="mb-card">
         <div class="mb-card-row">
           <div>
@@ -6685,7 +6793,7 @@ MApp.BOM = {
           </div>
         </div>
         <div class="mb-mt-2"><button type="button" class="mb-btn-text" style="padding:0;min-height:auto;" data-bom-index="${i}">Edit</button></div>
-      </div>`).join('');
+      </div>`).join('') + MApp.Paging.moreHtml(page);
 
     listEl.querySelectorAll('[data-bom-index]').forEach(btn => {
       btn.addEventListener('click', () => {

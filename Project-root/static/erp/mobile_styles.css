@@ -734,6 +734,21 @@ textarea:focus-visible,
 }
 .mb-search-clear:active { color: var(--mb-ink); }
 
+/* Progressive reveal (MApp.Paging). Sits under the last card, full width,
+   at the standard primary tap height -- it is the only way past what used
+   to be a hard cap, so it is not a small link. */
+.mb-load-more {
+  width: 100%;
+  margin: var(--mb-sp-2) 0 var(--mb-sp-6);
+}
+
+.mb-load-more-sub {
+  font-weight: 400;
+  text-transform: none;
+  letter-spacing: 0;
+  opacity: 0.75;
+}
+
 /* "Showing 50 of 312" / "3 matches". Also a live region -- see
    MApp.SearchBox.attach. */
 .mb-search-count {
