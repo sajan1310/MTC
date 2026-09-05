@@ -48,6 +48,29 @@
 </div>
 
 <!-- ═══════════════════════════════════════════════════════════════════
+     GLOBAL SEARCH — one box over every indexed dataset plus every
+     destination in the app. Opened from the top app bar on any tab.
+     Doubles as the More tab's missing filter: its fourteen destinations
+     are indexed as results, so "wastage" jumps straight there.
+     ═══════════════════════════════════════════════════════════════════ -->
+<div class="mb-sheet" id="sheet-global-search" role="dialog" aria-modal="true"
+     aria-labelledby="global-search-title">
+  <div class="mb-sheet-header">
+    <h2 id="global-search-title">Search</h2>
+    <button type="button" class="mapp-topbar-btn" aria-label="Close" onclick="MApp.GlobalSearch.close()">
+      <svg viewBox="0 0 24 24" width="22" height="22" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><path d="M6 6l12 12M18 6L6 18"/></svg>
+    </button>
+  </div>
+  <div class="mb-sheet-body">
+    <div class="mb-search">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="11" cy="11" r="7"/><path d="M20 20l-3.5-3.5"/></svg>
+      <input type="search" id="global-search-input" placeholder="Items, lots, challans, screens…" aria-label="Search everything" autocomplete="off">
+    </div>
+    <div id="global-search-results"></div>
+  </div>
+</div>
+
+<!-- ═══════════════════════════════════════════════════════════════════
      TAB 1 — HOME
      ═══════════════════════════════════════════════════════════════════ -->
 <template id="tpl-home">

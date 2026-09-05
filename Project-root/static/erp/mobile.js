@@ -7342,6 +7342,250 @@ MApp.SyncIssues = {
 };
 
 // ================================================================
+// GLOBAL SEARCH — one box over every dataset and every destination.
+//
+// Reaching the Wastage log used to be More -> scroll -> tap -> search,
+// and any cross-module lookup ("which PO covered this item?") required
+// the operator to already know which module owned the answer. This is
+// one gesture from any tab, and because it indexes DESTINATIONS as well
+// as records it is also the filter the More tab's fourteen entries never
+// had.
+//
+// Records deep-link by navigating to the owning module with its own
+// search prefilled, rather than trying to open one specific record's
+// sheet. That reuses machinery that already works on every screen, and
+// lands the operator on a filtered list they can act on -- a narrower,
+// more honest promise than a per-record router that would need bespoke
+// knowledge of thirteen modules to be correct.
+// ================================================================
+MApp.GlobalSearch = {
+  // Destinations are indexed exactly like records, so "wast", "recipe" or
+  // "roles" all resolve. keywords carries the words an operator would
+  // actually type for a screen whose label they cannot remember.
+  DESTINATIONS: [
+    { label: 'Home', keywords: 'dashboard today activity', run: () => MApp.Shell.showTab('home') },
+    { label: 'Stock', keywords: 'items quantity low stock levels', run: () => MApp.Shell.showTab('stock') },
+    { label: 'Production', keywords: 'lots log lot process', run: () => MApp.Shell.showTab('production') },
+    { label: 'Dispatch', keywords: 'challan client delivery', run: () => MApp.Shell.showTab('dispatch') },
+    { label: 'Log Lot', keywords: 'new production lot create', run: () => MApp.Production.openLogLotSheet() },
+    { label: 'New Dispatch', keywords: 'challan create send', run: () => MApp.Dispatch.openNewDispatchSheet() },
+    { label: 'Log Return', keywords: 'returns vendor create', run: () => MApp.Returns.openNewReturnSheet() },
+    { label: 'Issued Stock', keywords: 'issue contractor material log', run: () => MApp.Issue.open() },
+    { label: 'Wastage', keywords: 'waste loss scrap log', run: () => MApp.Wastage.open() },
+    { label: 'PO Ledger', keywords: 'purchase orders pending', run: () => MApp.PO.openLedgerSheet() },
+    { label: 'Bill Ledger', keywords: 'bills invoices vendor', run: () => MApp.Bill.openLedgerSheet() },
+    { label: 'Items lookup', keywords: 'item master search parts', run: () => MApp.Items.openLookupSheet() },
+    { label: 'Vendors', keywords: 'suppliers directory contact', run: () => MApp.Directory.open('vendor') },
+    { label: 'Clients', keywords: 'customers directory contact', run: () => MApp.Directory.open('client') },
+    { label: 'Contractors', keywords: 'directory contact rates labour', run: () => MApp.Directory.open('contractor') },
+    { label: 'Processes', keywords: 'stages output recipe components', run: () => MApp.Process.open() },
+    { label: 'Product Recipes', keywords: 'bom bill of materials components', run: () => MApp.BOM.open() },
+    { label: 'Users & Roles', keywords: 'admin accounts permissions', run: () => MApp.Admin.open() },
+    { label: 'Sync Issues', keywords: 'offline outbox pending failed queue', run: () => MApp.SyncIssues.open() }
+  ],
+
+  DEST_SPEC: {
+    fields: [
+      { key: 'label', weight: 10, label: 'Screen' },
+      { key: 'keywords', weight: 4, label: 'Screen' }
+    ]
+  },
+
+  // Only the datasets that are already offline-cached, so global search
+  // keeps working on a factory LAN that has dropped -- the condition this
+  // app was built for. Extending this list is one entry per dataset once
+  // that dataset is added to MApp.Api.callCached's set.
+  SOURCES: [
+    {
+      id: 'stock', label: 'Stock', method: 'getStockData', tab: 'stock',
+      searchInput: 'stock-search',
+      spec: { fields: [
+        { key: 'name', weight: 10, label: 'Item' },
+        { key: 'size', weight: 6, label: 'Size' }
+      ] },
+      title: r => r.name,
+      subtitle: r => [r.size, r.currentStock != null ? `${MApp.Util.formatQty(r.currentStock)} in stock` : null].filter(Boolean).join(' · '),
+      term: r => r.name
+    },
+    {
+      id: 'production', label: 'Production', method: 'getProductionData', tab: 'production',
+      searchInput: 'production-search',
+      spec: { fields: [
+        { key: 'lotNumber', weight: 10, label: 'Lot' },
+        { key: 'assignedTo', weight: 5, label: 'Assigned to' },
+        { key: 'status', weight: 4, label: 'Status' }
+      ] },
+      title: r => r.lotNumber,
+      subtitle: r => [r.status, MApp.Util.formatNameCase(r.assignedTo)].filter(Boolean).join(' · '),
+      term: r => r.lotNumber
+    },
+    {
+      id: 'dispatch', label: 'Dispatch', method: 'getDispatchData', tab: 'dispatch',
+      searchInput: 'dispatch-search',
+      spec: { fields: [
+        { key: 'dispatchNumber', weight: 10, label: 'Challan' },
+        { key: 'clientName', weight: 7, label: 'Client' },
+        { key: 'productName', weight: 6, label: 'Product' }
+      ] },
+      title: r => r.dispatchNumber,
+      subtitle: r => [MApp.Util.formatNameCase(r.clientName) || 'Direct supply', r.productName].filter(Boolean).join(' · '),
+      term: r => r.dispatchNumber
+    }
+  ],
+
+  PER_GROUP: 5,
+  _indexes: {},
+  _loaded: false,
+  _term: '',
+
+  open() {
+    this._term = '';
+    MApp.Sheet.open('sheet-global-search');
+    MApp.SearchBox.attach('global-search-input', term => this.onSearch(term));
+    const input = document.getElementById('global-search-input');
+    if (input) {
+      input.value = '';
+      setTimeout(() => input.focus(), 280);
+    }
+    this.render();
+    this._loadSources();
+  },
+
+  close() {
+    MApp.Sheet.close('sheet-global-search');
+  },
+
+  onSearch(term) {
+    this._term = term || '';
+    this.render();
+  },
+
+  // Best-effort and non-blocking: destinations are searchable instantly,
+  // and each dataset joins the index as it arrives. A source that fails
+  // (offline with nothing cached) simply contributes nothing rather than
+  // breaking the whole search.
+  async _loadSources() {
+    this._indexes.destinations = MApp.Search.index(this.DESTINATIONS, this.DEST_SPEC);
+    await Promise.all(this.SOURCES.map(async source => {
+      try {
+        const res = await MApp.Api.callCached(source.method);
+        if (res && res.success) {
+          this._indexes[source.id] = MApp.Search.index(res.data || [], source.spec);
+        }
+      } catch (e) {
+        /* unreachable and uncached -- this group is simply absent */
+      }
+    }));
+    this._loaded = true;
+    this.render();
+  },
+
+  render() {
+    const el = document.getElementById('global-search-results');
+    if (!el) return;
+    const term = this._term.trim();
+
+    if (!term) {
+      el.innerHTML = `
+        <div class="mapp-section-label">Go to</div>
+        ${this._groupHtml('destinations', 'Screens', this.DESTINATIONS.slice(0, 6), null)}`;
+      this._bind(el);
+      return;
+    }
+
+    const destHits = MApp.Search.run(this._indexes.destinations || [], term);
+    const groups = [{ id: 'destinations', label: 'Screens', rows: destHits, source: null }];
+
+    this.SOURCES.forEach(source => {
+      const entries = this._indexes[source.id];
+      if (!entries) return;
+      const hits = MApp.Search.run(entries, term);
+      if (hits.length) groups.push({ id: source.id, label: source.label, rows: hits, source });
+    });
+
+    const total = groups.reduce((n, g) => n + g.rows.length, 0);
+    if (!total) {
+      MApp.Util.renderEmpty(el, {
+        title: 'Nothing found',
+        body: this._loaded
+          ? `Nothing matches “${term}”.`
+          : 'Still loading — results will fill in as data arrives.'
+      });
+      return;
+    }
+
+    el.innerHTML = groups
+      .filter(g => g.rows.length)
+      .map(g => this._groupHtml(g.id, g.label, g.rows, g.source))
+      .join('');
+    this._bind(el);
+  },
+
+  _groupHtml(groupId, label, rows, source) {
+    const shown = rows.slice(0, this.PER_GROUP);
+    const more = rows.length > shown.length
+      ? `<div class="mb-card-sub" style="padding:0 var(--mb-sp-1) var(--mb-sp-3);">+${rows.length - shown.length} more — open ${MApp.Util.escapeHtml(label)} to see them</div>`
+      : '';
+    const cards = shown.map((row, i) => {
+      const title = source ? source.title(row) : row.label;
+      const sub = source ? source.subtitle(row) : 'Screen';
+      return `
+        <button type="button" class="mb-card mb-card-tappable" style="border:none;width:100%;text-align:left;"
+                data-group="${MApp.Util.escapeHtml(groupId)}" data-idx="${i}">
+          <div class="mb-card-row">
+            <span class="mb-card-title">${MApp.Util.escapeHtml(String(title == null ? '' : title))}</span>
+            <svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M9 18l6-6-6-6"/></svg>
+          </div>
+          <div class="mb-card-sub">${MApp.Util.escapeHtml(String(sub == null ? '' : sub))}</div>
+        </button>`;
+    }).join('');
+    // Stashed so the click handler resolves by index rather than
+    // interpolating record values into an inline onclick, where a name
+    // containing a quote would break out of the handler's string.
+    this._lastGroups = this._lastGroups || {};
+    this._lastGroups[groupId] = { rows: shown, source };
+    return `<div class="mapp-section-label">${MApp.Util.escapeHtml(label)}</div>${cards}${more}`;
+  },
+
+  _bind(el) {
+    el.querySelectorAll('[data-group]').forEach(btn => {
+      btn.addEventListener('click', () => {
+        const group = (this._lastGroups || {})[btn.dataset.group];
+        if (!group) return;
+        const row = group.rows[Number(btn.dataset.idx)];
+        if (!row) return;
+        this.close();
+        if (!group.source) { row.run(); return; }
+        this._goToRecord(group.source, row);
+      });
+    });
+  },
+
+  // Navigate to the owning tab and prefill its search with something that
+  // identifies this record, so the operator lands on a list already
+  // filtered to it.
+  _goToRecord(source, row) {
+    MApp.Shell.showTab(source.tab);
+    const term = String(source.term(row) || '');
+    // The tab's mount() is async (it fetches, then attaches its search
+    // box), so the prefill has to wait for the input to exist. Give up
+    // quietly rather than spin: the operator is on the right screen
+    // either way, which is most of the value.
+    let tries = 0;
+    const prefill = () => {
+      const input = document.getElementById(source.searchInput);
+      if (!input) {
+        if (tries++ < 20) setTimeout(prefill, 100);
+        return;
+      }
+      input.value = term;
+      input.dispatchEvent(new Event('input', { bubbles: true }));
+    };
+    setTimeout(prefill, 120);
+  }
+};
+
+// ================================================================
 // MORE — links out to Returns/Items lookup/desktop UI + About row
 // ================================================================
 MApp.More = {
