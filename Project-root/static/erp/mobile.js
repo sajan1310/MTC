@@ -511,6 +511,7 @@ MApp.Util = {
 //   this.filtered = MApp.Search.run(this.entries, term);    // per query
 // ================================================================
 MApp.Search = {
+  // ── Normalisation ──────────────────────────────────────────────────
   // NFKD + combining-mark strip so "Kalpí" and "Kalpi" are one token.
   // Punctuation becomes a SPACE rather than being deleted, so "PO-1042"
   // indexes as "po 1042" and is found by "1042", by "po 1042", and by
@@ -529,75 +530,243 @@ MApp.Search = {
     return normalised ? normalised.split(' ') : [];
   },
 
-  // Reads one field off a row: `get` for derived or nested values (a lot's
-  // process name, a record's items[].name), otherwise the plain key.
-  // Arrays are flattened, which is what lets a query find an issue record
-  // by any of the items on it.
+  // ── Query grammar ──────────────────────────────────────────────────
+  // Parsed from the RAW query, before norm() strips the operators.
+  //
+  //   red kalpi        both tokens must appear, anywhere
+  //   -kalpi           exclude rows containing it
+  //   vendor:acme      match only within that field
+  //   -vendor:acme     exclude rows whose vendor matches
+  //   "26 inch"        the words, adjacent, in that order
+  //
+  // Before this, `-kalpi` normalised to `kalpi` and returned exactly the
+  // rows the operator was trying to exclude, and `vendor:acme` became the
+  // two tokens "vendor" and "acme" -- the first appearing nowhere, so the
+  // whole query silently returned nothing. Both inverted or discarded
+  // intent without saying so.
+  parse(query, fields) {
+    const out = { include: [], exclude: [], phrases: [], excludePhrases: [], scoped: [], unknownFields: [] };
+    // Quoted runs stay whole; everything else splits on whitespace.
+    const parts = String(query || '').match(/-?"[^"]*"|\S+/g) || [];
+
+    for (let part of parts) {
+      let negate = false;
+      if (part.charAt(0) === '-' && part.length > 1) { negate = true; part = part.slice(1); }
+
+      // "quoted phrase"
+      if (part.charAt(0) === '"') {
+        const phrase = this.norm(part.replace(/"/g, ''));
+        if (phrase) (negate ? out.excludePhrases : out.phrases).push(phrase);
+        continue;
+      }
+
+      // field:value -- the field name is matched against the spec's own
+      // keys and labels, so both `vendor:` and `assignedto:` work.
+      const scoped = part.match(/^([A-Za-z][A-Za-z0-9_]*):(.+)$/);
+      if (scoped) {
+        const key = this._resolveField(scoped[1], fields);
+        const valueTokens = this.tokens(scoped[2]);
+        if (key) {
+          valueTokens.forEach(token => out.scoped.push({ key, token, negate }));
+          continue;
+        }
+        // Unknown field: search the VALUE as ordinary text rather than
+        // returning nothing, and record the name so the UI can say the
+        // qualifier was ignored instead of leaving a silent empty list.
+        out.unknownFields.push(scoped[1]);
+        valueTokens.forEach(t => (negate ? out.exclude : out.include).push(t));
+        continue;
+      }
+
+      this.tokens(part).forEach(t => (negate ? out.exclude : out.include).push(t));
+    }
+    return out;
+  },
+
+  _resolveField(name, fields) {
+    const wanted = String(name || '').toLowerCase().replace(/[^a-z0-9]/g, '');
+    const match = (fields || []).find(f =>
+      String(f.key || '').toLowerCase().replace(/[^a-z0-9]/g, '') === wanted ||
+      String(f.label || '').toLowerCase().replace(/[^a-z0-9]/g, '') === wanted);
+    return match ? match.key : null;
+  },
+
+  // ── Indexing ───────────────────────────────────────────────────────
   _fieldText(row, field) {
     const raw = field.get ? field.get(row) : row[field.key];
     return this.norm(Array.isArray(raw) ? raw.join(' ') : raw);
   },
 
   // Precomputes each row's haystacks ONCE per data load. The old code
-  // called .toLowerCase() on every field of every row on every keystroke;
-  // at 200+ rows on the low-end Android hardware this runs on, that was
-  // the bulk of the per-keystroke cost. _hay is the joined blob used for
-  // cheap rejection; _fieldHays keeps the split so scoring and the
-  // "matched on Contractor" hint stay possible.
+  // called .toLowerCase() on every field of every row on every keystroke.
+  // _words is the de-duplicated word list, used only by the fuzzy pass.
   index(rows, spec) {
     const fields = (spec && spec.fields) || [];
     return (rows || []).map(row => {
       const fieldHays = fields.map(f => this._fieldText(row, f));
-      return { row, fields, _fieldHays: fieldHays, _hay: fieldHays.join(' ') };
+      const hay = fieldHays.join(' ');
+      return { row, fields, _fieldHays: fieldHays, _hay: hay, _words: hay ? [...new Set(hay.split(' '))] : [] };
     });
   },
 
-  // Returns the matching entries, best first. An empty query returns
-  // everything in its original order -- lists stay in the server's sort
-  // (newest-first ledgers, for one) until the operator actually searches.
+  // ── Token matching ─────────────────────────────────────────────────
+  // Substring, EXCEPT for tokens of three characters or fewer, which must
+  // sit at a word start. "rim" matching "trimming" is noise on a parts
+  // list; requiring a word start kills it while still letting "kal" find
+  // "kalpi" and "rim" find "Rim 26". Longer tokens keep plain substring
+  // matching, because a document number like "1042" inside "lot1042" has
+  // no word boundary to sit at and must stay findable.
+  _hit(hay, token) {
+    if (!hay) return false;
+    if (token.length > 3) return hay.indexOf(token) !== -1;
+    return hay === token || hay.startsWith(token + '') && hay.charAt(token.length) === ' '
+      ? true
+      : new RegExp('(^| )' + token).test(hay);
+  },
+
+  // ── Fuzzy fallback ─────────────────────────────────────────────────
+  // Edit distance is allowed only in proportion to token length, and
+  // never at all below four characters: "red" and "rod" are two colours,
+  // and guessing between them on a shop floor is worse than finding
+  // nothing. Three characters of slack on a long word is safe; one
+  // character on a short one is not.
+  _maxEdits(token) {
+    if (token.length <= 3) return 0;
+    if (token.length <= 6) return 1;
+    return 2;
+  },
+
+  // Bounded Levenshtein: bails out as soon as the best possible result
+  // exceeds `max`, so a non-match on a long word costs almost nothing.
+  _editDistance(a, b, max) {
+    if (a === b) return 0;
+    if (Math.abs(a.length - b.length) > max) return max + 1;
+    let prev = Array.from({ length: b.length + 1 }, (_, i) => i);
+    for (let i = 1; i <= a.length; i++) {
+      const curr = [i];
+      let best = i;
+      for (let jj = 1; jj <= b.length; jj++) {
+        const cost = a.charAt(i - 1) === b.charAt(jj - 1) ? 0 : 1;
+        curr[jj] = Math.min(prev[jj] + 1, curr[jj - 1] + 1, prev[jj - 1] + cost);
+        if (curr[jj] < best) best = curr[jj];
+      }
+      if (best > max) return max + 1;
+      prev = curr;
+    }
+    return prev[b.length];
+  },
+
+  _fuzzyHit(entry, token) {
+    const max = this._maxEdits(token);
+    if (!max) return false;
+    return entry._words.some(word => this._editDistance(token, word, max) <= max);
+  },
+
+  _tokenInEntry(entry, token, fuzzy) {
+    if (this._hit(entry._hay, token)) return true;
+    return fuzzy ? this._fuzzyHit(entry, token) : false;
+  },
+
+  _scopedHay(entry, key) {
+    const i = entry.fields.findIndex(f => f.key === key);
+    return i === -1 ? '' : entry._fieldHays[i];
+  },
+
+  // ── Matching + ranking ─────────────────────────────────────────────
+  // Returns the matching rows, best first. An empty query returns
+  // everything in its original order.
   //
   // Sorting is by score only, and Array.prototype.sort is stable, so rows
-  // that score EQUALLY keep their original relative order. That gives both
-  // behaviours without a flag: searching a vendor name scores every one of
-  // that vendor's bills the same and they stay newest-first, while
-  // searching a bill number floats the exact match to the top.
+  // that score EQUALLY keep their original relative order: searching a
+  // vendor name leaves that vendor's bills newest-first, while searching
+  // a bill number floats the exact match to the top.
   run(entries, query) {
-    const toks = this.tokens(query);
-    if (!toks.length) return (entries || []).map(e => e.row);
+    const list = entries || [];
+    const fields = (list[0] && list[0].fields) || [];
+    const parsed = this.parse(query, fields);
+    const hasPositive = parsed.include.length || parsed.phrases.length || parsed.scoped.length;
+    const hasNegative = parsed.exclude.length || parsed.excludePhrases.length;
 
-    const hits = [];
-    for (const entry of entries || []) {
-      // Cheap rejection first: one scan of the joined blob per token.
-      if (!toks.every(t => entry._hay.includes(t))) continue;
+    if (!hasPositive && !hasNegative) return this._decorate(list.map(e => e.row), { query: '' });
 
-      let score = 0;
-      const matchedOn = [];
-      entry.fields.forEach((field, i) => {
-        const hay = entry._fieldHays[i];
-        if (!hay) return;
-        for (const token of toks) {
-          if (!hay.includes(token)) continue;
-          // A whole-word hit beats a mid-word one, and a field that STARTS
-          // with the token beats both -- so an exact lot number outranks a
-          // record that merely contains those digits somewhere.
-          const wholeWord = new RegExp(`(^| )${token}( |$)`).test(hay);
-          const startsWith = hay.startsWith(token);
-          score += (field.weight || 1) * (startsWith ? 3 : wholeWord ? 2 : 1);
-          if (field.label && matchedOn.indexOf(field.label) === -1) matchedOn.push(field.label);
-        }
-      });
-      hits.push({ entry, score, matchedOn });
+    // Exact pass first. Fuzzy only ever runs as a FALLBACK, so an
+    // approximate match can never displace, dilute or outrank a real one.
+    let hits = this._collect(list, parsed, false);
+    let fuzzy = false;
+    if (!hits.length && hasPositive) {
+      const candidates = this._collect(list, parsed, true);
+      if (candidates.length) { hits = candidates; fuzzy = true; }
     }
 
     hits.sort((a, b) => b.score - a.score);
-    return hits.map(h => {
-      // Non-enumerable so the hint rides along without altering the shape
-      // of the row objects the render functions already spread/serialise.
+    return this._decorate(hits.map(h => {
       Object.defineProperty(h.entry.row, '_matchedOn', {
         value: h.matchedOn, configurable: true, enumerable: false, writable: true
       });
       return h.entry.row;
+    }), { query: String(query || ''), fuzzy, unknownFields: parsed.unknownFields });
+  },
+
+  _collect(list, parsed, fuzzy) {
+    const hits = [];
+    for (const entry of list) {
+      if (parsed.exclude.some(t => this._hit(entry._hay, t))) continue;
+      if (parsed.excludePhrases.some(p => entry._hay.indexOf(p) !== -1)) continue;
+      if (parsed.phrases.some(p => entry._hay.indexOf(p) === -1)) continue;
+
+      let ok = true;
+      for (const s of parsed.scoped) {
+        const hay = this._scopedHay(entry, s.key);
+        const found = this._hit(hay, s.token) ||
+          (fuzzy && this._maxEdits(s.token) > 0 &&
+            hay.split(' ').some(w => this._editDistance(s.token, w, this._maxEdits(s.token)) <= this._maxEdits(s.token)));
+        if (s.negate ? found : !found) { ok = false; break; }
+      }
+      if (!ok) continue;
+
+      for (const token of parsed.include) {
+        if (!this._tokenInEntry(entry, token, fuzzy)) { ok = false; break; }
+      }
+      if (!ok) continue;
+
+      hits.push(this._score(entry, parsed, fuzzy));
+    }
+    return hits;
+  },
+
+  _score(entry, parsed, fuzzy) {
+    const wanted = parsed.include.concat(parsed.scoped.filter(s => !s.negate).map(s => s.token));
+    let score = 0;
+    const matchedOn = [];
+    entry.fields.forEach((field, i) => {
+      const hay = entry._fieldHays[i];
+      if (!hay) return;
+      for (const token of wanted) {
+        if (!this._hit(hay, token)) continue;
+        // A whole-word hit beats a mid-word one, and a field that STARTS
+        // with the token beats both -- so an exact lot number outranks a
+        // record that merely contains those digits somewhere.
+        const wholeWord = new RegExp('(^| )' + token + '( |$)').test(hay);
+        const startsWith = hay.startsWith(token);
+        score += (field.weight || 1) * (startsWith ? 3 : wholeWord ? 2 : 1);
+        if (field.label && matchedOn.indexOf(field.label) === -1) matchedOn.push(field.label);
+      }
     });
+    // Every fuzzy hit ranks below every exact one within the same result
+    // set; the set is already all-fuzzy or all-exact, so this only keeps
+    // scores honest for the caller.
+    if (fuzzy) score = score / 2;
+    return { entry, score, matchedOn };
+  },
+
+  // Diagnostics ride on the returned array, non-enumerably, so the 13
+  // render call sites keep receiving a plain array of rows.
+  _decorate(rows, meta) {
+    Object.defineProperty(rows, '_meta', {
+      value: { fuzzy: false, unknownFields: [], ...meta },
+      configurable: true, enumerable: false, writable: true
+    });
+    return rows;
   }
 };
 
@@ -647,7 +816,11 @@ MApp.Paging = {
       total: all.length,
       shown: Math.min(limit, all.length),
       hasMore: all.length > limit,
-      step: this.DEFAULT_SIZE
+      step: this.DEFAULT_SIZE,
+      // Carried through from MApp.Search.run so the count line can say
+      // when results are approximate. Undefined for lists that are not
+      // search results.
+      meta: all._meta
     };
   },
 
@@ -791,7 +964,7 @@ MApp.SearchBox = {
   // "Showing 50 of 312" is also how the silent list caps finally become
   // visible: before this, thirteen screens truncated with no indication,
   // so a record past the cap simply appeared not to exist.
-  setCount(inputId, shown, total) {
+  setCount(inputId, shown, total, meta) {
     const input = document.getElementById(inputId);
     const wrap = input && input.closest('.mb-search');
     const el = wrap && wrap.nextElementSibling;
@@ -799,17 +972,30 @@ MApp.SearchBox = {
 
     if (shown == null) { el.hidden = true; el.textContent = ''; return; }
     const searching = !!(input.value || '').trim();
+
+    const notes = [];
+    // The safety half of fuzzy matching: approximate results must never
+    // look like exact ones. Without this the operator has no way to tell
+    // that what they are reading is a guess.
+    if (meta && meta.fuzzy) notes.push('No exact matches — showing near matches');
+    if (meta && meta.unknownFields && meta.unknownFields.length) {
+      const names = meta.unknownFields.join(', ');
+      notes.push(`${names} isn't a field — searched the text instead`);
+    }
+
+    let text = '';
     if (total != null && shown < total) {
       // No "refine your search" any more -- MApp.Paging puts a Show-more
       // button under the list, so the rest is reachable rather than
       // something the operator has to word a better query to see.
-      el.textContent = `Showing ${shown} of ${total}`;
+      text = `Showing ${shown} of ${total}`;
     } else if (searching) {
-      el.textContent = shown === 1 ? '1 match' : `${shown} matches`;
-    } else {
-      el.hidden = true; el.textContent = '';
-      return;
+      text = shown === 1 ? '1 match' : `${shown} matches`;
     }
+
+    if (!text && !notes.length) { el.hidden = true; el.textContent = ''; return; }
+    el.textContent = notes.length ? [text, ...notes].filter(Boolean).join(' · ') : text;
+    el.classList.toggle('mb-search-count-note', notes.length > 0);
     el.hidden = false;
   }
 };
@@ -1618,7 +1804,7 @@ MApp.Stock = {
       : '';
     const banner = offlineBanner + pendingBanner + lowStockBanner;
 
-    MApp.SearchBox.setCount('stock-search', this.filtered.length, this.filtered.length);
+    MApp.SearchBox.setCount('stock-search', this.filtered.length, this.filtered.length, this.filtered._meta);
 
     if (this.filtered.length === 0) {
       listEl.innerHTML = banner;
@@ -2054,7 +2240,7 @@ MApp.Production = {
 
     const page = MApp.Paging.take('production', lots, () => this.render());
     const shown = page.rows;
-    MApp.SearchBox.setCount('production-search', page.shown, page.total);
+    MApp.SearchBox.setCount('production-search', page.shown, page.total, page.meta);
 
     if (lots.length === 0) {
       listEl.innerHTML = banner;
@@ -3146,7 +3332,7 @@ MApp.Dispatch = {
 
     const page = MApp.Paging.take('dispatch', list, () => this.render());
     const shown = page.rows;
-    MApp.SearchBox.setCount('dispatch-search', page.shown, page.total);
+    MApp.SearchBox.setCount('dispatch-search', page.shown, page.total, page.meta);
 
     if (list.length === 0) {
       listEl.innerHTML = banner;
@@ -4026,7 +4212,7 @@ MApp.PO = {
     }
 
     const page = MApp.Paging.take('po', this.filtered, () => this.render());
-    MApp.SearchBox.setCount('po-ledger-search', page.shown, page.total);
+    MApp.SearchBox.setCount('po-ledger-search', page.shown, page.total, page.meta);
     listEl.innerHTML = pendingSyncBanner + page.rows.map(po => {
       const idx = this.pos.indexOf(po);
       const pendingLines = (po.items || [])
@@ -4501,7 +4687,7 @@ MApp.Bill = {
     }
 
     const page = MApp.Paging.take('bill', this.filtered, () => this.render());
-    MApp.SearchBox.setCount('bill-ledger-search', page.shown, page.total);
+    MApp.SearchBox.setCount('bill-ledger-search', page.shown, page.total, page.meta);
     listEl.innerHTML = page.rows.map(bill => {
       const idx = this.bills.indexOf(bill);
       const poRef = (bill.poNumbers || []).length
@@ -4931,7 +5117,7 @@ MApp.Issue = {
     }
 
     const page = MApp.Paging.take('issue', this.filtered, () => this.render());
-    MApp.SearchBox.setCount('issue-log-search', page.shown, page.total);
+    MApp.SearchBox.setCount('issue-log-search', page.shown, page.total, page.meta);
     listEl.innerHTML = page.rows.map((r, i) => {
       const itemSummary = (r.items || []).map(it => `${MApp.Util.escapeHtml(it.name)} (${MApp.Util.formatQty(it.qty)} ${MApp.Util.escapeHtml(it.unit || '')})`).join(', ');
       return `
@@ -5185,7 +5371,7 @@ MApp.Wastage = {
     }
 
     const page = MApp.Paging.take('wastage', this.filtered, () => this.render());
-    MApp.SearchBox.setCount('wastage-log-search', page.shown, page.total);
+    MApp.SearchBox.setCount('wastage-log-search', page.shown, page.total, page.meta);
     listEl.innerHTML = page.rows.map((r, i) => {
       const itemSummary = (r.items || []).map(it => `${MApp.Util.escapeHtml(it.name)} (${MApp.Util.formatQty(it.qty)} ${MApp.Util.escapeHtml(it.unit || '')})`).join(', ');
       return `
@@ -5450,7 +5636,7 @@ MApp.Items = {
     // currentStock is null when getStockData() failed or this item/size
     // has no Stock row yet (see openLookupSheet) -- distinct from a real 0.
     const page = MApp.Paging.take('items', this.filtered, () => this.render());
-    MApp.SearchBox.setCount('items-lookup-search', page.shown, page.total);
+    MApp.SearchBox.setCount('items-lookup-search', page.shown, page.total, page.meta);
     listEl.innerHTML = page.rows.map((it, i) => `
       <div class="mb-card">
         <div class="mb-card-row">
@@ -5797,7 +5983,7 @@ MApp.Directory = {
     }
 
     const page = MApp.Paging.take('directory', this.filtered, () => this.render());
-    MApp.SearchBox.setCount('directory-search', page.shown, page.total);
+    MApp.SearchBox.setCount('directory-search', page.shown, page.total, page.meta);
     listEl.innerHTML = page.rows.map(e => {
       const contactHtml = e.contact
         ? `<a href="tel:${MApp.Util.escapeHtml(e.contact)}" onclick="event.stopPropagation()">${MApp.Util.escapeHtml(e.contact)}</a>`
@@ -6163,7 +6349,7 @@ MApp.Admin = {
     const myEmail = String((window.MOBILE_CURRENT_USER || {}).email || '').toLowerCase();
 
     const page = MApp.Paging.take('admin', this.filtered, () => this.render());
-    MApp.SearchBox.setCount('admin-users-search', page.shown, page.total);
+    MApp.SearchBox.setCount('admin-users-search', page.shown, page.total, page.meta);
     listEl.innerHTML = page.rows.map((u, i) => {
       const isSelf = u.email.toLowerCase() === myEmail;
       const actions = isSelf ? '<div class="mb-mt-2 mb-text-sm mb-text-steel">This is you</div>' : `
@@ -6377,7 +6563,7 @@ MApp.Process = {
     }
 
     const page = MApp.Paging.take('process', this.filtered, () => this.render());
-    MApp.SearchBox.setCount('process-list-search', page.shown, page.total);
+    MApp.SearchBox.setCount('process-list-search', page.shown, page.total, page.meta);
     listEl.innerHTML = page.rows.map((p, i) => `
       <div class="mb-card">
         <div class="mb-card-row">
@@ -6779,7 +6965,7 @@ MApp.BOM = {
     }
 
     const page = MApp.Paging.take('bom', this.filtered, () => this.render());
-    MApp.SearchBox.setCount('bom-list-search', page.shown, page.total);
+    MApp.SearchBox.setCount('bom-list-search', page.shown, page.total, page.meta);
     listEl.innerHTML = page.rows.map((p, i) => `
       <div class="mb-card">
         <div class="mb-card-row">

@@ -170,6 +170,43 @@ describe('MApp.SearchBox', () => {
       MApp.SearchBox.setCount('test-search', 12, 12);
       expect(count().hidden).toBe(true);
     });
+
+    test('says so when results are approximate', () => {
+      // The safety half of fuzzy matching. Without this the operator has
+      // no way to tell that what they are reading is a guess rather than
+      // a record that actually matches what they typed.
+      input().value = 'kalpli';
+      MApp.SearchBox.setCount('test-search', 2, 2, { fuzzy: true, unknownFields: [] });
+
+      expect(count().hidden).toBe(false);
+      expect(count().textContent).toContain('No exact matches');
+      expect(count().classList.contains('mb-search-count-note')).toBe(true);
+    });
+
+    test('says so when a field qualifier was ignored', () => {
+      input().value = 'supplier:acme';
+      MApp.SearchBox.setCount('test-search', 3, 3, { fuzzy: false, unknownFields: ['supplier'] });
+
+      expect(count().textContent).toContain("supplier isn't a field");
+      expect(count().classList.contains('mb-search-count-note')).toBe(true);
+    });
+
+    test('an approximate note shows even on an unsearched-looking count', () => {
+      // Fuzzy with a complete result set would otherwise fall into the
+      // "stay quiet" branch and hide the warning.
+      input().value = 'kalpli';
+      MApp.SearchBox.setCount('test-search', 2, 2, { fuzzy: true, unknownFields: [] });
+      expect(count().hidden).toBe(false);
+    });
+
+    test('drops the note styling once results are exact again', () => {
+      input().value = 'kalpli';
+      MApp.SearchBox.setCount('test-search', 2, 2, { fuzzy: true, unknownFields: [] });
+      MApp.SearchBox.setCount('test-search', 2, 2, { fuzzy: false, unknownFields: [] });
+
+      expect(count().classList.contains('mb-search-count-note')).toBe(false);
+      expect(count().textContent).not.toContain('No exact matches');
+    });
   });
 });
 

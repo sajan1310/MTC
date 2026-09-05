@@ -759,6 +759,18 @@ textarea:focus-visible,
   color: var(--mb-steel);
 }
 
+/* Approximate results, or a query whose field qualifier was ignored.
+   Amber rather than steel because "this is not what you literally asked
+   for" has to be noticeable at arm's length on a shop floor -- a silent
+   fuzzy match reads as an exact one. */
+.mb-search-count-note {
+  color: var(--mb-enamel-amber);
+  background: var(--mb-enamel-amber-bg);
+  border-radius: var(--mb-radius-sm);
+  padding: var(--mb-sp-2) var(--mb-sp-3);
+  margin-bottom: var(--mb-sp-3);
+}
+
 /* ── Form controls ───────────────────────────────────────────────────── */
 .mb-field { margin-bottom: var(--mb-sp-5); }
 
