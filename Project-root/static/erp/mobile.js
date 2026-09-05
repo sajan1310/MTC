@@ -492,6 +492,247 @@ MApp.Util = {
 };
 
 // ================================================================
+// SEARCH — one keyword matcher for every list in the app.
+//
+// Replaces eleven hand-written onSearch() methods, each of which took the
+// whole query as ONE substring and tested it against one to three
+// hard-coded fields. That fails the query shape operators actually use: a
+// bike is identified on the floor by size, model and colour, and those
+// live in three different fields on every record here, so "26 kalpi red"
+// matched nothing anywhere.
+//
+// The rule that fixes it is AND across tokens, OR across fields. Every
+// whitespace-separated token must appear SOMEWHERE in the record; no
+// single token has to be in any particular field.
+//
+// Usage, per module:
+//   SEARCH: { fields: [{ key, weight, label, get }] }
+//   this.entries  = MApp.Search.index(rows, this.SEARCH);   // once, on load
+//   this.filtered = MApp.Search.run(this.entries, term);    // per query
+// ================================================================
+MApp.Search = {
+  // NFKD + combining-mark strip so "Kalpí" and "Kalpi" are one token.
+  // Punctuation becomes a SPACE rather than being deleted, so "PO-1042"
+  // indexes as "po 1042" and is found by "1042", by "po 1042", and by
+  // "po-1042" (which normalises to the same two tokens) alike.
+  norm(value) {
+    return String(value == null ? '' : value)
+      .normalize('NFKD')
+      .replace(/[̀-ͯ]/g, '')
+      .toLowerCase()
+      .replace(/[^a-z0-9]+/g, ' ')
+      .trim();
+  },
+
+  tokens(query) {
+    const normalised = this.norm(query);
+    return normalised ? normalised.split(' ') : [];
+  },
+
+  // Reads one field off a row: `get` for derived or nested values (a lot's
+  // process name, a record's items[].name), otherwise the plain key.
+  // Arrays are flattened, which is what lets a query find an issue record
+  // by any of the items on it.
+  _fieldText(row, field) {
+    const raw = field.get ? field.get(row) : row[field.key];
+    return this.norm(Array.isArray(raw) ? raw.join(' ') : raw);
+  },
+
+  // Precomputes each row's haystacks ONCE per data load. The old code
+  // called .toLowerCase() on every field of every row on every keystroke;
+  // at 200+ rows on the low-end Android hardware this runs on, that was
+  // the bulk of the per-keystroke cost. _hay is the joined blob used for
+  // cheap rejection; _fieldHays keeps the split so scoring and the
+  // "matched on Contractor" hint stay possible.
+  index(rows, spec) {
+    const fields = (spec && spec.fields) || [];
+    return (rows || []).map(row => {
+      const fieldHays = fields.map(f => this._fieldText(row, f));
+      return { row, fields, _fieldHays: fieldHays, _hay: fieldHays.join(' ') };
+    });
+  },
+
+  // Returns the matching entries, best first. An empty query returns
+  // everything in its original order -- lists stay in the server's sort
+  // (newest-first ledgers, for one) until the operator actually searches.
+  //
+  // Sorting is by score only, and Array.prototype.sort is stable, so rows
+  // that score EQUALLY keep their original relative order. That gives both
+  // behaviours without a flag: searching a vendor name scores every one of
+  // that vendor's bills the same and they stay newest-first, while
+  // searching a bill number floats the exact match to the top.
+  run(entries, query) {
+    const toks = this.tokens(query);
+    if (!toks.length) return (entries || []).map(e => e.row);
+
+    const hits = [];
+    for (const entry of entries || []) {
+      // Cheap rejection first: one scan of the joined blob per token.
+      if (!toks.every(t => entry._hay.includes(t))) continue;
+
+      let score = 0;
+      const matchedOn = [];
+      entry.fields.forEach((field, i) => {
+        const hay = entry._fieldHays[i];
+        if (!hay) return;
+        for (const token of toks) {
+          if (!hay.includes(token)) continue;
+          // A whole-word hit beats a mid-word one, and a field that STARTS
+          // with the token beats both -- so an exact lot number outranks a
+          // record that merely contains those digits somewhere.
+          const wholeWord = new RegExp(`(^| )${token}( |$)`).test(hay);
+          const startsWith = hay.startsWith(token);
+          score += (field.weight || 1) * (startsWith ? 3 : wholeWord ? 2 : 1);
+          if (field.label && matchedOn.indexOf(field.label) === -1) matchedOn.push(field.label);
+        }
+      });
+      hits.push({ entry, score, matchedOn });
+    }
+
+    hits.sort((a, b) => b.score - a.score);
+    return hits.map(h => {
+      // Non-enumerable so the hint rides along without altering the shape
+      // of the row objects the render functions already spread/serialise.
+      Object.defineProperty(h.entry.row, '_matchedOn', {
+        value: h.matchedOn, configurable: true, enumerable: false, writable: true
+      });
+      return h.entry.row;
+    });
+  }
+};
+
+// ================================================================
+// SEARCH BOX — the one search input, upgraded in place.
+//
+// Every .mb-search input was type="text" with an inline
+// oninput="MApp.X.onSearch(this.value)". That meant: no native clear
+// button (clearing a query was eleven backspaces with a gloved thumb), a
+// keyboard whose return key said "return" rather than "Search", iOS
+// capitalising the first letter of every query, and a full innerHTML
+// rebuild plus event rebind on every keystroke -- MApp.Util.debounce()
+// existed but was called from nowhere in the file.
+//
+// attach() owns all of that so no screen has to remember any of it.
+// ================================================================
+MApp.SearchBox = {
+  DEBOUNCE_MS: 120,
+
+  // Idempotent: sheets live permanently in the DOM and their open() runs
+  // again on every visit, so attach() must be safe to call repeatedly.
+  attach(inputId, onQuery) {
+    const input = document.getElementById(inputId);
+    if (!input) return null;
+
+    const wrap = input.closest('.mb-search');
+    const api = {
+      input,
+      value: () => input.value,
+      reset: () => { input.value = ''; this._syncClear(input); this.setCount(inputId, null); },
+      setCount: (shown, total) => this.setCount(inputId, shown, total)
+    };
+
+    if (input.dataset.mbSearchBound === '1') {
+      // Re-attaching replaces the callback (the module object is the same,
+      // but its closure may capture fresh state) without stacking listeners.
+      this._handlers[inputId] = onQuery;
+      return api;
+    }
+    input.dataset.mbSearchBound = '1';
+    this._handlers[inputId] = onQuery;
+
+    // type="search" gives the platform clear affordance where one exists;
+    // enterkeyhint relabels the return key; autocapitalize/autocorrect stop
+    // the OS "helping" with item codes and vendor names.
+    input.setAttribute('type', 'search');
+    input.setAttribute('enterkeyhint', 'search');
+    input.setAttribute('autocapitalize', 'none');
+    input.setAttribute('autocorrect', 'off');
+    input.setAttribute('spellcheck', 'false');
+    input.removeAttribute('oninput');
+    input.oninput = null;
+
+    if (wrap) {
+      wrap.classList.add('mb-search-sticky');
+      if (!wrap.querySelector('.mb-search-clear')) {
+        const clear = document.createElement('button');
+        clear.type = 'button';
+        clear.className = 'mb-search-clear';
+        clear.setAttribute('aria-label', 'Clear search');
+        clear.innerHTML = '<svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round"><path d="M6 6l12 12M18 6L6 18"/></svg>';
+        clear.addEventListener('click', () => {
+          input.value = '';
+          this._syncClear(input);
+          this._fire(inputId, '');   // immediate: clearing is not typing
+          input.focus();
+        });
+        wrap.appendChild(clear);
+      }
+      if (!wrap.nextElementSibling || !wrap.nextElementSibling.classList.contains('mb-search-count')) {
+        const count = document.createElement('div');
+        count.className = 'mb-search-count';
+        // The only way a screen-reader user learns the list changed under
+        // a search that never moves focus.
+        count.setAttribute('role', 'status');
+        count.setAttribute('aria-live', 'polite');
+        count.hidden = true;
+        wrap.insertAdjacentElement('afterend', count);
+      }
+    }
+
+    const debounced = MApp.Util.debounce(value => this._fire(inputId, value), this.DEBOUNCE_MS);
+    input.addEventListener('input', () => {
+      this._syncClear(input);
+      debounced(input.value);
+    });
+    // Enter should apply what is typed now, not wait out the debounce.
+    input.addEventListener('keydown', e => {
+      if (e.key !== 'Enter') return;
+      e.preventDefault();
+      this._fire(inputId, input.value);
+      input.blur(); // drops the keyboard so the results are visible
+    });
+
+    this._syncClear(input);
+    return api;
+  },
+
+  _handlers: {},
+
+  _fire(inputId, value) {
+    const handler = this._handlers[inputId];
+    if (handler) handler(value);
+  },
+
+  _syncClear(input) {
+    const wrap = input.closest('.mb-search');
+    const clear = wrap && wrap.querySelector('.mb-search-clear');
+    if (clear) clear.hidden = !input.value;
+  },
+
+  // "Showing 50 of 312" is also how the silent list caps finally become
+  // visible: before this, thirteen screens truncated with no indication,
+  // so a record past the cap simply appeared not to exist.
+  setCount(inputId, shown, total) {
+    const input = document.getElementById(inputId);
+    const wrap = input && input.closest('.mb-search');
+    const el = wrap && wrap.nextElementSibling;
+    if (!el || !el.classList.contains('mb-search-count')) return;
+
+    if (shown == null) { el.hidden = true; el.textContent = ''; return; }
+    const searching = !!(input.value || '').trim();
+    if (total != null && shown < total) {
+      el.textContent = `Showing ${shown} of ${total} — refine your search`;
+    } else if (searching) {
+      el.textContent = shown === 1 ? '1 match' : `${shown} matches`;
+    } else {
+      el.hidden = true; el.textContent = '';
+      return;
+    }
+    el.hidden = false;
+  }
+};
+
+// ================================================================
 // SHELL — tab routing. Each tab root is a <template id="tpl-*"> in
 // mobile_views.html, cloned fresh into #mapp-content on every visit so a
 // tab always starts from its skeleton state rather than stale DOM.
@@ -788,6 +1029,9 @@ MApp.Picker = {
       if (searchWrap) searchWrap.style.display = searchable ? '' : 'none';
       if (searchInput) searchInput.value = '';
 
+      this._entries = MApp.Search.index(this._items, this.SEARCH);
+      MApp.SearchBox.attach('mapp-picker-search', t => this.onSearch(t));
+
       this._renderList(this._items, '');
       // onDismiss so a Back press or Escape settles the pending promise
       // (as cancel() does) instead of closing the DOM and leaving whoever
@@ -800,12 +1044,19 @@ MApp.Picker = {
     });
   },
 
+  // Same matcher as every list, which is what lets a picker find "26 inch
+  // Kalpi" by typing "kalpi 26". The raw term is still passed through to
+  // _renderList for the allowCustom free-text option, which compares
+  // against what was actually typed rather than the normalised form.
+  SEARCH: {
+    fields: [
+      { key: 'label', weight: 10, label: 'Name' },
+      { key: 'sublabel', weight: 4, label: 'Detail' }
+    ]
+  },
+
   onSearch(term) {
-    const lower = String(term || '').toLowerCase();
-    const filtered = !lower ? this._items : this._items.filter(i =>
-      String(i.label || '').toLowerCase().includes(lower) ||
-      String(i.sublabel || '').toLowerCase().includes(lower));
-    this._renderList(filtered, term || '');
+    this._renderList(MApp.Search.run(this._entries || [], term), term || '');
   },
 
   _renderList(items, term) {
@@ -1170,6 +1421,19 @@ MApp.Home = {
 // new server function this app needed, and it already exists).
 // ================================================================
 MApp.Stock = {
+  // Narration and unit were not searchable before; on a 1,600-row stock
+  // list the extra fields are the difference between finding a part and
+  // scrolling for it.
+  SEARCH: {
+    fields: [
+      { key: 'name', weight: 10, label: 'Item' },
+      { key: 'size', weight: 6, label: 'Size' },
+      { key: 'narration', weight: 3, label: 'Narration' },
+      { key: 'unit', weight: 1, label: 'Unit' }
+    ]
+  },
+
+  searchTerm: '',
   all: [],
   filtered: [],
   expandedKey: null,
@@ -1220,7 +1484,10 @@ MApp.Stock = {
       this._lowStockOnly = lowStockOnly;
       this._offlineCachedAt = stockRes._offlineCachedAt || null;
       this._pendingSyncCount = await OfflineCache.outbox.countPendingForMethod('adjustStockManually');
-      this.filtered = lowStockOnly ? this.all.filter(s => s.isLowStock) : this.all;
+
+      this.searchTerm = '';
+      MApp.SearchBox.attach('stock-search', term => this.onSearch(term));
+      this._applyFilters();
 
       this.render();
     } catch (err) {
@@ -1233,18 +1500,23 @@ MApp.Stock = {
   },
 
   onSearch(term) {
-    const lower = String(term || '').toLowerCase();
-    const base = this._lowStockOnly ? this.all.filter(s => s.isLowStock) : this.all;
-    this.filtered = !lower ? base : base.filter(s =>
-      s.name.toLowerCase().includes(lower) || s.size.toLowerCase().includes(lower));
+    this.searchTerm = term || '';
+    this._applyFilters();
     this.render();
+  },
+
+  // One place decides what `filtered` is, so the low-stock filter and the
+  // search term compose instead of each clobbering the other -- clearing
+  // the search inside a low-stock view used to drop you back to the full
+  // list.
+  _applyFilters() {
+    const base = this._lowStockOnly ? this.all.filter(s => s.isLowStock) : this.all;
+    this.filtered = MApp.Search.run(MApp.Search.index(base, this.SEARCH), this.searchTerm);
   },
 
   clearLowStockFilter() {
     this._lowStockOnly = false;
-    this.filtered = this.all;
-    const searchInput = document.getElementById('stock-search');
-    if (searchInput) searchInput.value = '';
+    this._applyFilters();
     this.render();
   },
 
@@ -1264,13 +1536,18 @@ MApp.Stock = {
       : '';
     const banner = offlineBanner + pendingBanner + lowStockBanner;
 
+    MApp.SearchBox.setCount('stock-search', this.filtered.length, this.filtered.length);
+
     if (this.filtered.length === 0) {
       listEl.innerHTML = banner;
       const empty = document.createElement('div');
       listEl.appendChild(empty);
+      const term = (this.searchTerm || '').trim();
       MApp.Util.renderEmpty(empty, {
         title: 'No items found',
-        body: this._lowStockOnly ? 'Nothing is currently below its threshold.' : 'Try a different search term.'
+        body: term
+          ? `Nothing matches “${term}”.`
+          : (this._lowStockOnly ? 'Nothing is currently below its threshold.' : 'No stock records yet.')
       });
       return;
     }
@@ -1563,6 +1840,28 @@ MApp.Stock = {
 MApp.Production = {
   PROCESS_SIZE_LIST: ['12 inch', '14 inch', '16 inch', '20 inch', '24 inch', '26 inch'],
 
+  // Production had no search at all and capped its list at 50 rows, so the
+  // 51st lot was unreachable by any interaction the app offered. Process
+  // name, contractor, status and colour are all searchable here because
+  // that is how a lot is described on the floor -- "26 kalpi red" spans
+  // three of these fields and matched nothing before.
+  SEARCH: {
+    fields: [
+      { key: 'lotNumber', weight: 10, label: 'Lot' },
+      { key: 'process', weight: 6, label: 'Process',
+        get: l => (MApp.Production.processById[l.processId] || {}).processName || l.processId },
+      { key: 'assignedTo', weight: 5, label: 'Assigned to' },
+      { key: 'status', weight: 4, label: 'Status' },
+      { key: 'productName', weight: 4, label: 'Product' },
+      { key: 'colors', weight: 3, label: 'Colour',
+        get: l => (l.colorQty || []).map(c => c && c.color) },
+      { key: 'date', weight: 2, label: 'Date',
+        get: l => MApp.Util.formatDateDisplay(l.dateRaw) }
+    ]
+  },
+
+  entries: [],
+  searchTerm: '',
   lots: [],
   allProcesses: [],
   activeProcesses: [],
@@ -1630,17 +1929,28 @@ MApp.Production = {
       this._offlineCachedAt = lotsRes._offlineCachedAt || null;
       this._pendingSyncCount = await OfflineCache.outbox.countPendingForMethod('saveProduction');
 
+      // Indexed after processById is built -- the Process field resolves
+      // through it, so indexing earlier would bake in raw processIds.
+      this.entries = MApp.Search.index(this.lots, this.SEARCH);
+      MApp.SearchBox.attach('production-search', term => this.onSearch(term));
+      this.searchTerm = '';
+
       this.render();
     } catch (err) {
       MApp.Util.renderError(listEl, err && err.message, () => this.load());
     }
   },
 
+  onSearch(term) {
+    this.searchTerm = term || '';
+    this.render();
+  },
+
   render() {
     const listEl = document.getElementById('production-list');
     if (!listEl) return;
 
-    let lots = this.lots;
+    let lots = MApp.Search.run(this.entries, this.searchTerm);
     const offlineBanner = this._offlineCachedAt ? MApp.Util.offlineBannerHtml(this._offlineCachedAt) : '';
     const pendingSyncBanner = this._pendingSyncCount > 0
       ? MApp.Util.pendingSyncBannerHtml(this._pendingSyncCount, 'lot')
@@ -1656,13 +1966,19 @@ MApp.Production = {
       lots = lots.filter(l => l.status === 'Pending' || l.status === 'In Progress');
     }
 
+    const CAP = 50;
+    const shown = lots.slice(0, CAP);
+    MApp.SearchBox.setCount('production-search', shown.length, lots.length);
+
     if (lots.length === 0) {
       listEl.innerHTML = banner;
       const empty = document.createElement('div');
       listEl.appendChild(empty);
-      MApp.Util.renderEmpty(empty, { title: 'No lots logged today', body: 'Tap + to log the first lot.' });
+      MApp.Util.renderEmpty(empty, this.searchTerm.trim()
+        ? { title: 'No matching lots', body: `Nothing matches “${this.searchTerm.trim()}”.` }
+        : { title: 'No lots logged today', body: 'Tap + to log the first lot.' });
     } else {
-      listEl.innerHTML = banner + lots.slice(0, 50).map((l, i) => {
+      listEl.innerHTML = banner + shown.map((l, i) => {
         const process = this.processById[l.processId];
         const processName = process ? process.processName : l.processId;
         return `
@@ -1687,7 +2003,11 @@ MApp.Production = {
 
       listEl.querySelectorAll('[data-lot-action]').forEach(btn => {
         btn.addEventListener('click', () => {
-          const lot = lots[Number(btn.dataset.lotIndex)];
+          // Index into the array the rows were rendered FROM. It happened
+          // to be safe to index `lots` while mapping `shown` only because
+          // one is a prefix of the other -- but Edit/Delete acting on the
+          // wrong lot is not a bug worth leaving to that coincidence.
+          const lot = shown[Number(btn.dataset.lotIndex)];
           if (!lot) return;
           if (btn.dataset.lotAction === 'edit') this.openEditSheet(lot);
           else this.deleteLot(lot);
@@ -2653,8 +2973,29 @@ MApp.Dispatch = {
   lines: [],
   editingDispatchNumber: null,
 
+  // Dispatch had no search and the same 50-row cap as Production. Client
+  // and product are what an operator actually remembers about a challan.
+  SEARCH: {
+    fields: [
+      { key: 'dispatchNumber', weight: 10, label: 'Challan' },
+      { key: 'clientName', weight: 7, label: 'Client' },
+      { key: 'productName', weight: 6, label: 'Product' },
+      { key: 'logisticsContractor', weight: 4, label: 'Transport' },
+      { key: 'date', weight: 2, label: 'Date',
+        get: d => MApp.Util.formatDateDisplay(d.dateRaw) }
+    ]
+  },
+
+  entries: [],
+  searchTerm: '',
+
   mount() {
     this.load();
+  },
+
+  onSearch(term) {
+    this.searchTerm = term || '';
+    this.render();
   },
 
   async load() {
@@ -2684,6 +3025,10 @@ MApp.Dispatch = {
       this._offlineCachedAt = dispatchRes._offlineCachedAt || null;
       this._pendingSyncCount = await OfflineCache.outbox.countPendingForMethod('saveDispatch');
 
+      this.entries = MApp.Search.index(this.dispatches, this.SEARCH);
+      MApp.SearchBox.attach('dispatch-search', term => this.onSearch(term));
+      this.searchTerm = '';
+
       this.render();
     } catch (err) {
       MApp.Util.renderError(listEl, err && err.message, () => this.load());
@@ -2694,7 +3039,7 @@ MApp.Dispatch = {
     const listEl = document.getElementById('dispatch-list');
     if (!listEl) return;
 
-    let list = this.dispatches;
+    let list = MApp.Search.run(this.entries, this.searchTerm);
     const offlineBanner = this._offlineCachedAt ? MApp.Util.offlineBannerHtml(this._offlineCachedAt) : '';
     const pendingSyncBanner = this._pendingSyncCount > 0
       ? MApp.Util.pendingSyncBannerHtml(this._pendingSyncCount, 'dispatch', 'dispatches')
@@ -2710,13 +3055,19 @@ MApp.Dispatch = {
       list = list.filter(d => MApp.Util.isToday(d.dateRaw));
     }
 
+    const CAP = 50;
+    const shown = list.slice(0, CAP);
+    MApp.SearchBox.setCount('dispatch-search', shown.length, list.length);
+
     if (list.length === 0) {
       listEl.innerHTML = banner;
       const empty = document.createElement('div');
       listEl.appendChild(empty);
-      MApp.Util.renderEmpty(empty, { title: 'No dispatches yet', body: 'Tap + to record the first dispatch.' });
+      MApp.Util.renderEmpty(empty, this.searchTerm.trim()
+        ? { title: 'No matching dispatches', body: `Nothing matches “${this.searchTerm.trim()}”.` }
+        : { title: 'No dispatches yet', body: 'Tap + to record the first dispatch.' });
     } else {
-      listEl.innerHTML = banner + list.slice(0, 50).map((d, idx) => `
+      listEl.innerHTML = banner + shown.map((d, idx) => `
         <div class="mb-card">
           <div class="mb-card-row">
             <div>
@@ -2742,7 +3093,10 @@ MApp.Dispatch = {
     if (clearBtn) clearBtn.addEventListener('click', () => { this._todayOnly = false; this.render(); });
 
     listEl.querySelectorAll('[data-print-idx]').forEach(btn => {
-      btn.addEventListener('click', () => this.print(parseInt(btn.dataset.printIdx, 10), list));
+      // `shown`, not `list` -- the indices were emitted while mapping the
+      // sliced array, and printing the wrong challan is not a mistake to
+      // leave resting on the two arrays sharing a prefix.
+      btn.addEventListener('click', () => this.print(parseInt(btn.dataset.printIdx, 10), shown));
     });
 
     // A dispatch with multiple lines renders as several cards sharing the
@@ -3479,6 +3833,18 @@ MApp.Returns = {
 // Returns): mobile only ever creates new records.
 // ================================================================
 MApp.PO = {
+  // Narration and item names were not searchable before, so a PO could only
+  // be found by its number or vendor -- never by what was ordered.
+  SEARCH: {
+    fields: [
+      { key: 'poNumber', weight: 10, label: 'PO' },
+      { key: 'vendor', weight: 7, label: 'Vendor' },
+      { key: 'status', weight: 4, label: 'Status' },
+      { key: 'items', weight: 5, label: 'Item', get: p => (p.items || []).map(i => i && i.name) },
+      { key: 'date', weight: 2, label: 'Date', get: p => MApp.Util.formatDateDisplay(p.dateRaw) }
+    ]
+  },
+
   pos: [],
   filtered: [],
   statusFilter: 'all',
@@ -3500,6 +3866,7 @@ MApp.PO = {
     const searchInput = document.getElementById('po-ledger-search');
     if (searchInput) searchInput.value = '';
     this.searchTerm = '';
+    MApp.SearchBox.attach('po-ledger-search', term => this.onSearch(term));
     this.statusFilter = 'all';
     this._updateFilterChips();
     MApp.Util.renderSkeleton(listEl, 5);
@@ -3541,17 +3908,10 @@ MApp.PO = {
   },
 
   _applyFilters() {
-    let list = this.pos;
-    if (this.statusFilter !== 'all') {
-      list = list.filter(po => po.status === this.statusFilter);
-    }
-    if (this.searchTerm) {
-      const term = this.searchTerm;
-      list = list.filter(po =>
-        String(po.poNumber || '').toLowerCase().includes(term) ||
-        String(po.vendor || '').toLowerCase().includes(term));
-    }
-    this.filtered = list;
+    const base = this.statusFilter === 'all'
+      ? this.pos
+      : this.pos.filter(po => po.status === this.statusFilter);
+    this.filtered = MApp.Search.run(MApp.Search.index(base, this.SEARCH), this.searchTerm);
     this.render();
   },
 
@@ -3574,6 +3934,7 @@ MApp.PO = {
       return;
     }
 
+    MApp.SearchBox.setCount('po-ledger-search', Math.min(this.filtered.length, 100), this.filtered.length);
     listEl.innerHTML = pendingSyncBanner + this.filtered.slice(0, 100).map(po => {
       const idx = this.pos.indexOf(po);
       const pendingLines = (po.items || [])
@@ -3968,6 +4329,18 @@ MApp.PO = {
 // instead.
 // ================================================================
 MApp.Bill = {
+  // Item names make a bill findable by what was received, not only by its
+  // number or the vendor who sent it.
+  SEARCH: {
+    fields: [
+      { key: 'billNumber', weight: 10, label: 'Bill' },
+      { key: 'vendor', weight: 7, label: 'Vendor' },
+      { key: 'items', weight: 5, label: 'Item', get: b => (b.items || []).map(i => i && i.name) },
+      { key: 'poNumbers', weight: 4, label: 'PO', get: b => b.poNumbers || [] },
+      { key: 'date', weight: 2, label: 'Date', get: b => MApp.Util.formatDateDisplay(b.dateRaw) }
+    ]
+  },
+
   bills: [],
   filtered: [],
   searchTerm: '',
@@ -3991,6 +4364,7 @@ MApp.Bill = {
     const searchInput = document.getElementById('bill-ledger-search');
     if (searchInput) searchInput.value = '';
     this.searchTerm = '';
+    MApp.SearchBox.attach('bill-ledger-search', term => this.onSearch(term));
     MApp.Util.renderSkeleton(listEl, 5);
     MApp.Sheet.open('sheet-bill-ledger');
 
@@ -4017,14 +4391,7 @@ MApp.Bill = {
   },
 
   _applyFilters() {
-    let list = this.bills;
-    if (this.searchTerm) {
-      const term = this.searchTerm;
-      list = list.filter(bill =>
-        String(bill.billNumber || '').toLowerCase().includes(term) ||
-        String(bill.vendor || '').toLowerCase().includes(term));
-    }
-    this.filtered = list;
+    this.filtered = MApp.Search.run(MApp.Search.index(this.bills, this.SEARCH), this.searchTerm);
     this.render();
   },
 
@@ -4040,6 +4407,7 @@ MApp.Bill = {
       return;
     }
 
+    MApp.SearchBox.setCount('bill-ledger-search', Math.min(this.filtered.length, 100), this.filtered.length);
     listEl.innerHTML = this.filtered.slice(0, 100).map(bill => {
       const idx = this.bills.indexOf(bill);
       const poRef = (bill.poNumbers || []).length
@@ -4401,6 +4769,18 @@ MApp.Bill = {
 // matches desktop's actual practice, same call as Wastage below.
 // ================================================================
 MApp.Issue = {
+  // issuedTo and item names were already searchable; size and narration are
+  // what distinguishes two issues of the same part.
+  SEARCH: {
+    fields: [
+      { key: 'issuedTo', weight: 9, label: 'Issued to' },
+      { key: 'items', weight: 8, label: 'Item', get: r => (r.items || []).map(i => i && i.name) },
+      { key: 'sizes', weight: 4, label: 'Size', get: r => (r.items || []).map(i => i && i.size) },
+      { key: 'remarks', weight: 3, label: 'Remarks' },
+      { key: 'date', weight: 2, label: 'Date', get: r => MApp.Util.formatDateDisplay(r.dateRaw) }
+    ]
+  },
+
   records: [],
   filtered: [],
   searchTerm: '',
@@ -4412,6 +4792,7 @@ MApp.Issue = {
     const searchInput = document.getElementById('issue-log-search');
     if (searchInput) searchInput.value = '';
     this.searchTerm = '';
+    MApp.SearchBox.attach('issue-log-search', term => this.onSearch(term));
     MApp.Util.renderSkeleton(listEl, 4);
     MApp.Sheet.open('sheet-issue-log');
 
@@ -4438,14 +4819,7 @@ MApp.Issue = {
   },
 
   _applyFilters() {
-    let list = this.records;
-    if (this.searchTerm) {
-      const term = this.searchTerm;
-      list = list.filter(r =>
-        String(r.issuedTo || '').toLowerCase().includes(term) ||
-        (r.items || []).some(it => String(it.name || '').toLowerCase().includes(term)));
-    }
-    this.filtered = list;
+    this.filtered = MApp.Search.run(MApp.Search.index(this.records, this.SEARCH), this.searchTerm);
     this.render();
   },
 
@@ -4461,6 +4835,7 @@ MApp.Issue = {
       return;
     }
 
+    MApp.SearchBox.setCount('issue-log-search', Math.min(this.filtered.length, 100), this.filtered.length);
     listEl.innerHTML = this.filtered.slice(0, 100).map((r, i) => {
       const itemSummary = (r.items || []).map(it => `${MApp.Util.escapeHtml(it.name)} (${MApp.Util.formatQty(it.qty)} ${MApp.Util.escapeHtml(it.unit || '')})`).join(', ');
       return `
@@ -4647,6 +5022,17 @@ MApp.Issue = {
 // call as Issued Stock above (no edit-existing UI on mobile).
 // ================================================================
 MApp.Wastage = {
+  // Same shape as the issue log: vendor plus the items on the record.
+  SEARCH: {
+    fields: [
+      { key: 'vendor', weight: 9, label: 'Vendor' },
+      { key: 'items', weight: 8, label: 'Item', get: r => (r.items || []).map(i => i && i.name) },
+      { key: 'sizes', weight: 4, label: 'Size', get: r => (r.items || []).map(i => i && i.size) },
+      { key: 'remarks', weight: 3, label: 'Remarks' },
+      { key: 'date', weight: 2, label: 'Date', get: r => MApp.Util.formatDateDisplay(r.dateRaw) }
+    ]
+  },
+
   records: [],
   filtered: [],
   searchTerm: '',
@@ -4658,6 +5044,7 @@ MApp.Wastage = {
     const searchInput = document.getElementById('wastage-log-search');
     if (searchInput) searchInput.value = '';
     this.searchTerm = '';
+    MApp.SearchBox.attach('wastage-log-search', term => this.onSearch(term));
     MApp.Util.renderSkeleton(listEl, 4);
     MApp.Sheet.open('sheet-wastage-log');
 
@@ -4684,14 +5071,7 @@ MApp.Wastage = {
   },
 
   _applyFilters() {
-    let list = this.records;
-    if (this.searchTerm) {
-      const term = this.searchTerm;
-      list = list.filter(r =>
-        String(r.vendor || '').toLowerCase().includes(term) ||
-        (r.items || []).some(it => String(it.name || '').toLowerCase().includes(term)));
-    }
-    this.filtered = list;
+    this.filtered = MApp.Search.run(MApp.Search.index(this.records, this.SEARCH), this.searchTerm);
     this.render();
   },
 
@@ -4707,6 +5087,7 @@ MApp.Wastage = {
       return;
     }
 
+    MApp.SearchBox.setCount('wastage-log-search', Math.min(this.filtered.length, 100), this.filtered.length);
     listEl.innerHTML = this.filtered.slice(0, 100).map((r, i) => {
       const itemSummary = (r.items || []).map(it => `${MApp.Util.escapeHtml(it.name)} (${MApp.Util.formatQty(it.qty)} ${MApp.Util.escapeHtml(it.unit || '')})`).join(', ');
       return `
@@ -4884,6 +5265,18 @@ MApp.Wastage = {
 // master, for a quick "does this item exist / what's it called" check.
 // ================================================================
 MApp.Items = {
+  // Unit and stock group widen a lookup that previously only saw name,
+  // size and narration.
+  SEARCH: {
+    fields: [
+      { key: 'name', weight: 10, label: 'Item' },
+      { key: 'size', weight: 6, label: 'Size' },
+      { key: 'narration', weight: 4, label: 'Narration' },
+      { key: 'baseUnit', weight: 2, label: 'Unit' },
+      { key: 'stockGroup', weight: 2, label: 'Group' }
+    ]
+  },
+
   items: [],
   filtered: [],
   editingItem: null,
@@ -4894,6 +5287,8 @@ MApp.Items = {
     const listEl = document.getElementById('items-lookup-list');
     const searchInput = document.getElementById('items-lookup-search');
     if (searchInput) searchInput.value = '';
+    this.searchTerm = '';
+    MApp.SearchBox.attach('items-lookup-search', term => this.onSearch(term));
     MApp.Util.renderSkeleton(listEl, 5);
     MApp.Sheet.open('sheet-items-lookup');
 
@@ -4939,11 +5334,8 @@ MApp.Items = {
   },
 
   onSearch(term) {
-    const lower = String(term || '').toLowerCase();
-    this.filtered = !lower ? this.items : this.items.filter(it =>
-      it.name.toLowerCase().includes(lower) ||
-      (it.size || '').toLowerCase().includes(lower) ||
-      (it.narration || '').toLowerCase().includes(lower));
+    this.searchTerm = term || '';
+    this.filtered = MApp.Search.run(MApp.Search.index(this.items, this.SEARCH), this.searchTerm);
     this.render();
   },
 
@@ -4958,6 +5350,7 @@ MApp.Items = {
 
     // currentStock is null when getStockData() failed or this item/size
     // has no Stock row yet (see openLookupSheet) -- distinct from a real 0.
+    MApp.SearchBox.setCount('items-lookup-search', Math.min(this.filtered.length, 100), this.filtered.length);
     listEl.innerHTML = this.filtered.slice(0, 100).map((it, i) => `
       <div class="mb-card">
         <div class="mb-card-row">
@@ -5172,6 +5565,17 @@ MApp.Items = {
 // this read-only first pass. Contact renders as a tel: link.
 // ================================================================
 MApp.Directory = {
+  // Address was not searchable, so a vendor could not be found by the town
+  // they are in -- which is often all anyone remembers.
+  SEARCH: {
+    fields: [
+      { key: 'name', weight: 10, label: 'Name' },
+      { key: 'contact', weight: 6, label: 'Contact' },
+      { key: 'address', weight: 3, label: 'Address' },
+      { key: 'gstin', weight: 3, label: 'GSTIN' }
+    ]
+  },
+
   // Phase 1 (mobile-parity): saveMethod/deleteMethod/nameFormKey/identityKey/
   // fields turn this same read-only config into a create+edit+delete driver
   // for sheet-entity-form -- `fields` excludes the name field itself (every
@@ -5239,6 +5643,7 @@ MApp.Directory = {
       searchInput.placeholder = `Search ${cfg.title.toLowerCase()}...`;
     }
     this.searchTerm = '';
+    MApp.SearchBox.attach('directory-search', term => this.onSearch(term));
     MApp.Util.renderSkeleton(listEl, 5);
     MApp.Sheet.open('sheet-directory');
 
@@ -5272,10 +5677,8 @@ MApp.Directory = {
   },
 
   onSearch(term) {
-    this.searchTerm = String(term || '').trim().toLowerCase();
-    this.filtered = !this.searchTerm ? this.items : this.items.filter(e =>
-      e.name.toLowerCase().includes(this.searchTerm) ||
-      (e.contact || '').toLowerCase().includes(this.searchTerm));
+    this.searchTerm = term || '';
+    this.filtered = MApp.Search.run(MApp.Search.index(this.items, this.SEARCH), this.searchTerm);
     this.render();
   },
 
@@ -5292,6 +5695,7 @@ MApp.Directory = {
       return;
     }
 
+    MApp.SearchBox.setCount('directory-search', Math.min(this.filtered.length, 100), this.filtered.length);
     listEl.innerHTML = this.filtered.slice(0, 100).map(e => {
       const contactHtml = e.contact
         ? `<a href="tel:${MApp.Util.escapeHtml(e.contact)}" onclick="event.stopPropagation()">${MApp.Util.escapeHtml(e.contact)}</a>`
@@ -5559,6 +5963,17 @@ MApp.Directory = {
 // strategy plan; this sheet only ASSIGNS existing roles, never creates one.
 // ================================================================
 MApp.Admin = {
+  // Role is searchable so an admin can list everyone with a given role by
+  // typing it, which previously needed a scroll through the whole list.
+  SEARCH: {
+    fields: [
+      { key: 'name', weight: 10, label: 'Name' },
+      { key: 'email', weight: 8, label: 'Email' },
+      { key: 'role', weight: 5, label: 'Role', get: u => MApp.Admin._roleLabel(u.role) },
+      { key: 'status', weight: 3, label: 'Status', get: u => (u.isActive ? 'active' : 'inactive') }
+    ]
+  },
+
   users: [],
   filtered: [],
   searchTerm: '',
@@ -5576,6 +5991,7 @@ MApp.Admin = {
     const searchInput = document.getElementById('admin-users-search');
     if (searchInput) searchInput.value = '';
     this.searchTerm = '';
+    MApp.SearchBox.attach('admin-users-search', term => this.onSearch(term));
     MApp.Util.renderSkeleton(listEl, 5);
     MApp.Sheet.open('sheet-admin-users');
 
@@ -5608,12 +6024,7 @@ MApp.Admin = {
   },
 
   _applyFilters() {
-    let list = this.users;
-    if (this.searchTerm) {
-      const term = this.searchTerm;
-      list = list.filter(u => u.name.toLowerCase().includes(term) || u.email.toLowerCase().includes(term));
-    }
-    this.filtered = list;
+    this.filtered = MApp.Search.run(MApp.Search.index(this.users, this.SEARCH), this.searchTerm);
     this.render();
   },
 
@@ -5648,6 +6059,7 @@ MApp.Admin = {
     // row where they'd always fail.
     const myEmail = String((window.MOBILE_CURRENT_USER || {}).email || '').toLowerCase();
 
+    MApp.SearchBox.setCount('admin-users-search', Math.min(this.filtered.length, 200), this.filtered.length);
     listEl.innerHTML = this.filtered.slice(0, 200).map((u, i) => {
       const isSelf = u.email.toLowerCase() === myEmail;
       const actions = isSelf ? '<div class="mb-mt-2 mb-text-sm mb-text-steel">This is you</div>' : `
@@ -5786,6 +6198,17 @@ MApp.Admin = {
 // server-side, matching desktop's own open access.
 // ================================================================
 MApp.Process = {
+  // Process type and the output item's size/model are how a process is
+  // actually described on the floor.
+  SEARCH: {
+    fields: [
+      { key: 'processName', weight: 10, label: 'Process' },
+      { key: 'outputItemName', weight: 7, label: 'Output' },
+      { key: 'processType', weight: 5, label: 'Type' },
+      { key: 'processId', weight: 4, label: 'ID' }
+    ]
+  },
+
   processes: [],
   filtered: [],
   searchTerm: '',
@@ -5805,6 +6228,7 @@ MApp.Process = {
     const searchInput = document.getElementById('process-list-search');
     if (searchInput) searchInput.value = '';
     this.searchTerm = '';
+    MApp.SearchBox.attach('process-list-search', term => this.onSearch(term));
     MApp.Util.renderSkeleton(listEl, 5);
     MApp.Sheet.open('sheet-process-list');
 
@@ -5831,14 +6255,7 @@ MApp.Process = {
   },
 
   _applyFilters() {
-    let list = this.processes;
-    if (this.searchTerm) {
-      const term = this.searchTerm;
-      list = list.filter(p =>
-        p.processName.toLowerCase().includes(term) ||
-        (p.outputItemName || '').toLowerCase().includes(term));
-    }
-    this.filtered = list;
+    this.filtered = MApp.Search.run(MApp.Search.index(this.processes, this.SEARCH), this.searchTerm);
     this.render();
   },
 
@@ -5854,6 +6271,8 @@ MApp.Process = {
       return;
     }
 
+    MApp.SearchBox.setCount('process-list-search', Math.min(this.filtered.length, 200), this.filtered.length);
+    MApp.SearchBox.setCount('bom-list-search', Math.min(this.filtered.length, 200), this.filtered.length);
     listEl.innerHTML = this.filtered.slice(0, 200).map((p, i) => `
       <div class="mb-card">
         <div class="mb-card-row">
@@ -6132,6 +6551,15 @@ MApp.Process = {
 // instead of just toasting a generic error.
 // ================================================================
 MApp.BOM = {
+  // productId was not searchable at all, so a recipe could not be found by
+  // the code printed on the work order.
+  SEARCH: {
+    fields: [
+      { key: 'productName', weight: 10, label: 'Product' },
+      { key: 'productId', weight: 7, label: 'ID' }
+    ]
+  },
+
   token: null,
   products: [],
   filtered: [],
@@ -6189,6 +6617,7 @@ MApp.BOM = {
     const searchInput = document.getElementById('bom-list-search');
     if (searchInput) searchInput.value = '';
     this.searchTerm = '';
+    MApp.SearchBox.attach('bom-list-search', term => this.onSearch(term));
     MApp.Util.renderSkeleton(listEl, 4);
     MApp.Sheet.open('sheet-bom-list');
 
@@ -6227,12 +6656,7 @@ MApp.BOM = {
   },
 
   _applyFilters() {
-    let list = this.products;
-    if (this.searchTerm) {
-      const term = this.searchTerm;
-      list = list.filter(p => p.productName.toLowerCase().includes(term));
-    }
-    this.filtered = list;
+    this.filtered = MApp.Search.run(MApp.Search.index(this.products, this.SEARCH), this.searchTerm);
     this.render();
   },
 

@@ -685,7 +685,9 @@ textarea:focus-visible,
   border-radius: var(--mb-radius-md);
   border: 2px solid var(--mb-steel-faint);
   background: var(--mb-surface);
-  padding: 0 var(--mb-sp-4) 0 44px;
+  /* Right padding leaves room for the clear button (.mb-search-clear,
+     added by MApp.SearchBox.attach) so a long query never runs under it. */
+  padding: 0 var(--mb-tap-min) 0 44px;
   color: var(--mb-ink);
 }
 
@@ -710,6 +712,36 @@ textarea:focus-visible,
   background: var(--mb-workshop);
   padding-top: var(--mb-sp-1);
   z-index: 10;
+}
+
+/* Clearing a query used to be as many backspaces as the query was long,
+   with a gloved thumb. Padded to the 48px minimum without widening the
+   visual button. */
+.mb-search-clear {
+  position: absolute;
+  right: 0;
+  top: 0;
+  height: 100%;
+  width: var(--mb-tap-min);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  border: none;
+  background: none;
+  color: var(--mb-steel);
+  cursor: pointer;
+  border-radius: var(--mb-radius-md);
+}
+.mb-search-clear:active { color: var(--mb-ink); }
+
+/* "Showing 50 of 312" / "3 matches". Also a live region -- see
+   MApp.SearchBox.attach. */
+.mb-search-count {
+  margin: calc(var(--mb-sp-3) * -1) 0 var(--mb-sp-3);
+  padding: 0 var(--mb-sp-1);
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--mb-steel);
 }
 
 /* ── Form controls ───────────────────────────────────────────────────── */
