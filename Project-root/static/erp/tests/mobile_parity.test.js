@@ -107,11 +107,8 @@ const BACKLOG = {
   bulkDeactivateUsers: 'P7 roles (read-only + handoff)',
   changeMyPassword: 'P4 account + password',
   createCustomRole: 'P7 roles (read-only + handoff)',
-  deleteBOMsBulk: 'P2 multi-select in the shared list renderer',
-  deleteBillsBulk: 'P2 multi-select in the shared list renderer',
   deleteClientOrder: 'P6 client orders',
   deleteClientOrdersBulk: 'P2 multi-select in the shared list renderer',
-  deleteClientsBulk: 'P2 multi-select in the shared list renderer',
   deleteColor: 'P6 master-data registers',
   deleteColorsBulk: 'P2 multi-select in the shared list renderer',
   deleteContractorPayment: 'P5 contractor ledger (descriptor `related`)',
@@ -120,23 +117,16 @@ const BACKLOG = {
   deleteContractorRatesBulk: 'P2 multi-select in the shared list renderer',
   deleteContractorServiceCharge: 'P5 contractor ledger (descriptor `related`)',
   deleteContractorServiceChargesBulk: 'P2 multi-select in the shared list renderer',
-  deleteContractorsBulk: 'P2 multi-select in the shared list renderer',
   deleteCustomRole: 'P7 roles (read-only + handoff)',
-  deleteDispatchBulk: 'P2 multi-select in the shared list renderer',
   deleteDispatchPlanLine: 'P7 dispatch plan checklist',
-  deleteItemsBulk: 'P2 multi-select in the shared list renderer',
   deleteModel: 'P6 master-data registers',
   deleteModelsBulk: 'P2 multi-select in the shared list renderer',
-  deletePOsBulk: 'P2 multi-select in the shared list renderer',
   deleteProcessType: 'P6 master-data registers',
   deleteProcessTypesBulk: 'P2 multi-select in the shared list renderer',
-  deleteProcessesBulk: 'P2 multi-select in the shared list renderer',
-  deleteProductionBulk: 'P2 multi-select in the shared list renderer',
   deleteReturnsBulk: 'P2 multi-select in the shared list renderer',
   deleteStockGroup: 'P6 master-data registers',
   deleteUnit: 'P6 master-data registers',
   deleteUnitsBulk: 'P2 multi-select in the shared list renderer',
-  deleteVendorsBulk: 'P2 multi-select in the shared list renderer',
   deleteWarehousePoolOpening: 'P5 warehouse pool read + ledger, P6 adjust',
   excludeWarehousePoolColors: 'P5 warehouse pool read + ledger, P6 adjust',
   getActivityLog: 'P5 read-only screens',
@@ -184,8 +174,8 @@ const BACKLOG = {
   updateThreshold: 'P6 stock thresholds',
 };
 
-// Phase 1 opened with 81. Lower this line as ports land; never raise it.
-const BACKLOG_BASELINE = 79;
+// Phase 1 opened at 79. Lower this line as ports land; never raise it.
+const BACKLOG_BASELINE = 69;
 
 describe('MApp / desktop feature parity', () => {
   test('the registry is being read at all', () => {

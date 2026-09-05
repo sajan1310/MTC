@@ -146,6 +146,26 @@ describe('every list is paged, and reports its own numbers', () => {
     expect(MOBILE_JS).toContain(`MApp.Paging.reset('${key}')`);
   });
 
+  test('moreHtml closes the innerHTML map, not a nested one', () => {
+    // The Directory render built `actionsHtml` from a nested
+    // `actions.map(...).join('')` -- a statement, so it ends in a
+    // semicolon like the real one. The scripted migration appended the
+    // Show-more button to THAT join, putting a "Show 50 more" button
+    // inside every card's action row and none under the list.
+    //
+    // The tell is the shape of the close. The innerHTML map's callback is
+    // a block or a template literal, so it closes with `}).join('')` or
+    // `` `).join('') ``. A single-expression nested map closes with a
+    // bare `).join('')` -- which is what this rejects.
+    const offenders = MOBILE_JS.split(/\r?\n/)
+      .map((line, i) => ({ line: line.trim(), n: i + 1 }))
+      .filter(({ line }) => line.includes('MApp.Paging.moreHtml(page)'))
+      .filter(({ line }) => !line.startsWith('//') && !line.startsWith('moreHtml('))
+      .filter(({ line }) => !/(\}|`)\)\.join\(''\) \+ MApp\.Paging\.moreHtml\(page\);$/.test(line));
+
+    expect(offenders.map(o => `${o.n}: ${o.line}`)).toEqual([]);
+  });
+
   test('every take() is followed by its own moreHtml before the next take', () => {
     // Guards the failure where a screen slices to a page and then never
     // renders the button, leaving the remaining rows unreachable again.

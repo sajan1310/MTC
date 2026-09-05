@@ -86,6 +86,17 @@
     </nav>
   </div>
 
+  <!-- Selection bar — shown by MApp.Select while a long-press selection is
+       active. Sits above the tab bar and outside #mapp-root so no screen's
+       scroll container can clip it. Delete is the destructive colour and
+       is NOT the rightmost/default-thumb position; Cancel is, because on a
+       one-handed device the easiest target should be the safe one. -->
+  <div class="mb-select-bar" id="mapp-select-bar" role="region" aria-label="Selection actions">
+    <span class="mb-select-count" id="mapp-select-count" aria-live="polite"></span>
+    <button type="button" class="mb-btn mb-btn-danger" onclick="MApp.Select.deleteSelected()">Delete</button>
+    <button type="button" class="mb-btn mb-btn-secondary" onclick="MApp.Select.exit()">Cancel</button>
+  </div>
+
   <!-- Toast stack — lives outside #mapp-root so it isn't clipped by any
        screen's own overflow/scroll container -->
   <div class="mb-toast-stack" id="mapp-toast-stack" aria-live="polite"></div>

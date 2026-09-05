@@ -2128,6 +2128,17 @@ MApp.Production = {
     ]
   },
 
+  // deleteProductionBulk takes production row IDs, which is what
+  // deleteProduction already sends for a single lot (lot.rowIdx).
+  SELECT: {
+    key: 'production',
+    noun: 'lot',
+    plural: 'lots',
+    method: 'deleteProductionBulk',
+    payload: rows => [rows.map(r => r.rowIdx)],
+    onDone: () => MApp.Production.load()
+  },
+
   entries: [],
   searchTerm: '',
   lots: [],
@@ -2286,6 +2297,7 @@ MApp.Production = {
         });
       });
 
+      MApp.Select.enable(listEl, shown, this.SELECT);
     }
 
     const clearBtn = listEl.querySelector('[data-clear-filter]');
@@ -3259,6 +3271,20 @@ MApp.Dispatch = {
     ]
   },
 
+  // getDispatchData is flattened one-row-per-line, so several cards can
+  // share a dispatchNumber. deleteDispatchBulk deletes whole dispatches,
+  // matching deleteDispatch's own contract -- so the payload is
+  // de-duplicated, and selecting two lines of one challan deletes that
+  // challan once rather than erroring on the second.
+  SELECT: {
+    key: 'dispatch',
+    noun: 'dispatch',
+    plural: 'dispatches',
+    method: 'deleteDispatchBulk',
+    payload: rows => [[...new Set(rows.map(r => r.dispatchNumber))]],
+    onDone: () => MApp.Dispatch.load()
+  },
+
   entries: [],
   searchTerm: '',
 
@@ -3387,6 +3413,7 @@ MApp.Dispatch = {
       });
     });
 
+    MApp.Select.enable(listEl, shown, this.SELECT);
   },
 
   print(idx, listRef) {
@@ -4109,6 +4136,14 @@ MApp.Returns = {
 // Returns): mobile only ever creates new records.
 // ================================================================
 MApp.PO = {
+  // deletePOsBulk takes PO numbers, as deletePO does for one.
+  SELECT: {
+    key: 'po', noun: 'purchase order', plural: 'purchase orders',
+    method: 'deletePOsBulk',
+    payload: rows => [rows.map(r => r.poNumber)],
+    onDone: () => MApp.PO.openLedgerSheet()
+  },
+
   // Narration and item names were not searchable before, so a PO could only
   // be found by its number or vendor -- never by what was ordered.
   SEARCH: {
@@ -4251,6 +4286,8 @@ MApp.PO = {
         else this.deletePo(po);
       });
     });
+
+    MApp.Select.enable(listEl, page.rows, this.SELECT);
   },
 
   print(index) {
@@ -4607,6 +4644,15 @@ MApp.PO = {
 // instead.
 // ================================================================
 MApp.Bill = {
+  // deleteBillsBulk keys on (vendor, billNumber) pairs -- the same two
+  // values deleteBill takes as separate arguments.
+  SELECT: {
+    key: 'bill', noun: 'bill', plural: 'bills',
+    method: 'deleteBillsBulk',
+    payload: rows => [rows.map(r => ({ vendor: r.vendor, billNumber: r.billNumber }))],
+    onDone: () => MApp.Bill.openLedgerSheet()
+  },
+
   // Item names make a bill findable by what was received, not only by its
   // number or the vendor who sent it.
   SEARCH: {
@@ -4722,6 +4768,8 @@ MApp.Bill = {
         else this.deleteBillRecord(bill);
       });
     });
+
+    MApp.Select.enable(listEl, page.rows, this.SELECT);
   },
 
   print(index) {
@@ -5049,6 +5097,13 @@ MApp.Bill = {
 // matches desktop's actual practice, same call as Wastage below.
 // ================================================================
 MApp.Issue = {
+  SELECT: {
+    key: 'issue', noun: 'issue record', plural: 'issue records',
+    method: 'deleteIssueBulk',
+    payload: rows => [rows.map(r => r.issueId)],
+    onDone: () => MApp.Issue.open()
+  },
+
   // issuedTo and item names were already searchable; size and narration are
   // what distinguishes two issues of the same part.
   SEARCH: {
@@ -5143,6 +5198,8 @@ MApp.Issue = {
         if (record) this.deleteIssue(record);
       });
     });
+
+    MApp.Select.enable(listEl, page.rows, this.SELECT);
   },
 
   async openForm() {
@@ -5304,6 +5361,13 @@ MApp.Issue = {
 // call as Issued Stock above (no edit-existing UI on mobile).
 // ================================================================
 MApp.Wastage = {
+  SELECT: {
+    key: 'wastage', noun: 'wastage record', plural: 'wastage records',
+    method: 'deleteWastageBulk',
+    payload: rows => [rows.map(r => r.wastageId)],
+    onDone: () => MApp.Wastage.open()
+  },
+
   // Same shape as the issue log: vendor plus the items on the record.
   SEARCH: {
     fields: [
@@ -5396,6 +5460,8 @@ MApp.Wastage = {
         if (record) this.deleteWastage(record);
       });
     });
+
+    MApp.Select.enable(listEl, page.rows, this.SELECT);
   },
 
   async openForm() {
@@ -5549,6 +5615,16 @@ MApp.Wastage = {
 // master, for a quick "does this item exist / what's it called" check.
 // ================================================================
 MApp.Items = {
+  // deleteItemsBulk keys on {name, size} and skips anything still in
+  // use server-side, so a selection that includes a referenced item
+  // deletes the rest and reports the skip rather than failing whole.
+  SELECT: {
+    key: 'items', noun: 'item', plural: 'items',
+    method: 'deleteItemsBulk',
+    payload: rows => [rows.map(r => ({ name: r.name, size: r.size || '' }))],
+    onDone: () => MApp.Items.openLookupSheet()
+  },
+
   // Unit and stock group widen a lookup that previously only saw name,
   // size and narration.
   SEARCH: {
@@ -5661,6 +5737,8 @@ MApp.Items = {
         if (item) this.openForm(item);
       });
     });
+
+    MApp.Select.enable(listEl, page.rows, this.SELECT);
   },
 
   // ── Add/Edit (Phase 1) ──────────────────────────────────────────────
@@ -5958,6 +6036,30 @@ MApp.Directory = {
     return records.map(c => ({ ...c, name: c.contractorName }));
   },
 
+  // One sheet serves vendors, clients and contractors, so unlike every
+  // other screen's static SELECT this one is built per open(): the bulk
+  // method and the noun both depend on which type is showing. All three
+  // RPCs take a plain array of names, which is what deleteVendor /
+  // deleteClient / deleteContractor already send for one.
+  BULK_METHODS: {
+    vendor: 'deleteVendorsBulk',
+    client: 'deleteClientsBulk',
+    contractor: 'deleteContractorsBulk'
+  },
+
+  _selectConfig() {
+    const cfg = this.CONFIGS[this.type] || {};
+    const singular = (cfg.title || 'entry').replace(/s$/, '').toLowerCase();
+    return {
+      key: 'directory-' + this.type,
+      noun: singular,
+      plural: singular + 's',
+      method: this.BULK_METHODS[this.type],
+      payload: rows => [rows.map(r => r.name)],
+      onDone: () => MApp.Directory.open(MApp.Directory.type)
+    };
+  },
+
   close() {
     MApp.Sheet.close('sheet-directory');
   },
@@ -5996,7 +6098,7 @@ MApp.Directory = {
         : [['edit', 'Edit']];
       const actionsHtml = actions.map(([action, label]) =>
         `<button type="button" class="mb-btn-text" style="padding:0;min-height:auto;" data-action="${action}" data-name="${MApp.Util.escapeHtml(e.name)}">${label}</button>`
-      ).join('') + MApp.Paging.moreHtml(page);
+      ).join('');
       return `
         <div class="mb-card">
           <div class="mb-card-title">${MApp.Util.escapeHtml(MApp.Util.formatNameCase(e.name))}</div>
@@ -6005,7 +6107,9 @@ MApp.Directory = {
           <div class="mb-mt-2" style="display:flex; gap:var(--mb-sp-4);">${actionsHtml}</div>
         </div>
       `;
-    }).join('');
+    }).join('') + MApp.Paging.moreHtml(page);
+
+    MApp.Select.enable(listEl, page.rows, this._selectConfig());
 
     listEl.querySelectorAll('[data-action]').forEach(btn => {
       btn.addEventListener('click', () => {
@@ -6488,6 +6592,13 @@ MApp.Admin = {
 // server-side, matching desktop's own open access.
 // ================================================================
 MApp.Process = {
+  SELECT: {
+    key: 'process', noun: 'process', plural: 'processes',
+    method: 'deleteProcessesBulk',
+    payload: rows => [rows.map(r => r.processId)],
+    onDone: () => MApp.Process.open()
+  },
+
   // Process type and the output item's size/model are how a process is
   // actually described on the floor.
   SEARCH: {
@@ -6586,6 +6697,8 @@ MApp.Process = {
         if (process) this.openForm(process);
       });
     });
+
+    MApp.Select.enable(listEl, page.rows, this.SELECT);
   },
 
   async openForm(process) {
@@ -6842,6 +6955,16 @@ MApp.Process = {
 // instead of just toasting a generic error.
 // ================================================================
 MApp.BOM = {
+  // deleteBOMsBulk is password-gated like every other BOM write, so
+  // the unlock token rides along as the second argument exactly as
+  // deleteBOM sends it.
+  SELECT: {
+    key: 'bom', noun: 'recipe', plural: 'recipes',
+    method: 'deleteBOMsBulk',
+    payload: rows => [rows.map(r => r.productId), MApp.BOM.token],
+    onDone: () => MApp.BOM.open()
+  },
+
   // productId was not searchable at all, so a recipe could not be found by
   // the code printed on the work order.
   SEARCH: {
@@ -6987,6 +7110,8 @@ MApp.BOM = {
         if (product) this.openForm(product);
       });
     });
+
+    MApp.Select.enable(listEl, page.rows, this.SELECT);
   },
 
   async openForm(product) {
@@ -7338,6 +7463,164 @@ MApp.SyncIssues = {
     if (!el) return;
     const count = await OfflineCache.outbox.countPendingAndFailed();
     el.textContent = count > 0 ? `${count} item(s) need attention` : 'All synced';
+  }
+};
+
+// ================================================================
+// SELECT — long-press multi-select, and the bulk delete behind it.
+//
+// Desktop selects rows with checkboxes in a table and a mouse. The same
+// capability on a phone is a long press to enter selection mode, then
+// plain taps to add and remove. One component covers every list, so the
+// ~20 *Bulk RPC methods that had no mobile route become one config block
+// per screen rather than twenty implementations.
+//
+// This is the only destructive feature in the app that operates on more
+// than one record at a time, on a device used with gloves, so it is built
+// to fail in the safe direction:
+//
+//  - Entering selection mode takes a deliberate half-second press. A tap
+//    can never start it.
+//  - enable() refuses to arm the feature unless the number of rendered
+//    row elements exactly matches the number of rows it was given. A
+//    markup change that breaks that mapping makes selection quietly
+//    unavailable instead of deleting the wrong records.
+//  - The confirm names the count and the noun ("Delete 7 lots?"), never
+//    a bare "Are you sure?".
+//  - Selection is dropped on every re-render, so a filtered-out row can
+//    never stay silently selected.
+// ================================================================
+MApp.Select = {
+  LONG_PRESS_MS: 500,
+  MOVE_CANCEL_PX: 10,
+
+  // { key, config, rows, nodes, selected:Set<number>, listEl }
+  _state: null,
+  _press: null,
+
+  // Called at the end of a render, with the rows that were rendered.
+  enable(listEl, rows, config) {
+    if (!listEl || !config || !config.method) return;
+    const nodes = [...listEl.querySelectorAll(config.rowSelector || '.mb-card')];
+
+    // The safety interlock. If the DOM and the data have drifted apart --
+    // a banner that matches the row selector, a template edit that adds a
+    // card -- index N in one is no longer index N in the other, and a
+    // bulk delete would act on records the operator never chose. Refuse
+    // rather than guess.
+    if (nodes.length !== rows.length) {
+      if (this._state && this._state.key === config.key) this.exit();
+      return;
+    }
+
+    // A re-render invalidates any previous selection: the rows may have
+    // been filtered, paged or reloaded underneath it.
+    if (this._state && this._state.key === config.key) this.exit();
+
+    this._bindLongPress(listEl, nodes, rows, config);
+  },
+
+  _bindLongPress(listEl, nodes, rows, config) {
+    nodes.forEach((node, idx) => {
+      node.addEventListener('pointerdown', e => {
+        if (e.pointerType === 'mouse' && e.button !== 0) return;
+        if (this.isActive(config.key)) return; // already selecting: taps toggle
+        const start = { x: e.clientX, y: e.clientY };
+        this._press = setTimeout(() => {
+          this._press = null;
+          this._start(listEl, nodes, rows, config, idx);
+        }, this.LONG_PRESS_MS);
+
+        const cancel = ev => {
+          if (ev && ev.type === 'pointermove' &&
+              Math.abs(ev.clientX - start.x) < this.MOVE_CANCEL_PX &&
+              Math.abs(ev.clientY - start.y) < this.MOVE_CANCEL_PX) return;
+          clearTimeout(this._press);
+          this._press = null;
+          node.removeEventListener('pointerup', cancel);
+          node.removeEventListener('pointercancel', cancel);
+          node.removeEventListener('pointermove', cancel);
+        };
+        node.addEventListener('pointerup', cancel);
+        node.addEventListener('pointercancel', cancel);
+        node.addEventListener('pointermove', cancel);
+      });
+
+      node.addEventListener('click', e => {
+        if (!this.isActive(config.key)) return;
+        // Swallow the row's own actions (Edit / Delete / Print) while
+        // selecting -- a tap means "toggle this row" and nothing else.
+        e.preventDefault();
+        e.stopPropagation();
+        this.toggle(idx);
+      }, true);
+    });
+  },
+
+  _start(listEl, nodes, rows, config, idx) {
+    this._state = { key: config.key, config, rows, nodes, listEl, selected: new Set([idx]) };
+    MApp.Haptics.light();
+    document.body.classList.add('mb-selecting');
+    this._paint();
+  },
+
+  isActive(key) {
+    return !!(this._state && this._state.key === key);
+  },
+
+  toggle(idx) {
+    const s = this._state;
+    if (!s) return;
+    if (s.selected.has(idx)) s.selected.delete(idx);
+    else s.selected.add(idx);
+    // Deselecting the last row leaves selection mode, so there is never a
+    // selection bar offering to delete nothing.
+    if (s.selected.size === 0) { this.exit(); return; }
+    this._paint();
+  },
+
+  exit() {
+    if (this._state) {
+      this._state.nodes.forEach(n => n.classList.remove('mb-selected'));
+    }
+    this._state = null;
+    document.body.classList.remove('mb-selecting');
+    const bar = document.getElementById('mapp-select-bar');
+    if (bar) bar.classList.remove('open');
+  },
+
+  _paint() {
+    const s = this._state;
+    if (!s) return;
+    s.nodes.forEach((n, i) => n.classList.toggle('mb-selected', s.selected.has(i)));
+
+    const bar = document.getElementById('mapp-select-bar');
+    const label = document.getElementById('mapp-select-count');
+    if (label) {
+      const n = s.selected.size;
+      const noun = n === 1 ? (s.config.noun || 'item') : (s.config.plural || (s.config.noun || 'item') + 's');
+      label.textContent = `${n} ${noun} selected`;
+    }
+    if (bar) bar.classList.add('open');
+  },
+
+  async deleteSelected() {
+    const s = this._state;
+    if (!s || !s.selected.size) return;
+    const rows = [...s.selected].sort((a, b) => a - b).map(i => s.rows[i]);
+    const n = rows.length;
+    const noun = n === 1 ? (s.config.noun || 'item') : (s.config.plural || (s.config.noun || 'item') + 's');
+
+    // Names the count and the noun. "Are you sure?" on a destructive
+    // multi-record action tells the operator nothing they need.
+    if (!window.confirm(`Delete ${n} ${noun}? This can't be undone.`)) return;
+
+    const config = s.config;
+    const args = config.payload(rows);
+    this.exit();
+
+    const res = await MApp.Util.mutateSimple(config.method, args, `${n} ${noun} deleted.`);
+    if (res && res.success && typeof config.onDone === 'function') config.onDone();
   }
 };
 

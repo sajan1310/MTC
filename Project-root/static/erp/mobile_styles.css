@@ -734,6 +734,48 @@ textarea:focus-visible,
 }
 .mb-search-clear:active { color: var(--mb-ink); }
 
+/* ── Multi-select (MApp.Select) ──────────────────────────────────────── */
+.mb-select-bar {
+  position: fixed;
+  left: 0;
+  right: 0;
+  bottom: calc(var(--mb-tabbar-h) + env(safe-area-inset-bottom));
+  z-index: 90;
+  display: none;
+  align-items: center;
+  gap: var(--mb-sp-3);
+  padding: var(--mb-sp-3) var(--mb-sp-4);
+  background: var(--mb-ink);
+  box-shadow: 0 -4px 16px rgb(20 24 28 / 25%);
+}
+.mb-select-bar.open { display: flex; }
+.mb-select-bar .mb-btn { min-height: var(--mb-tap-min); width: auto; flex: 0 0 auto; }
+
+.mb-select-count {
+  flex: 1;
+  color: #fff;
+  font-weight: 700;
+  font-size: 14px;
+}
+
+/* The selected state has to read at arm's length in glare, so it is a
+   full tint plus a thick rail, not a subtle border. */
+.mb-card.mb-selected {
+  background: var(--mb-safety-faint);
+  box-shadow: inset 4px 0 0 var(--mb-safety), var(--mb-shadow-card);
+}
+
+/* While selecting, a press means "toggle this row" -- suppress the text
+   selection a long press would otherwise start. */
+body.mb-selecting {
+  -webkit-user-select: none;
+  user-select: none;
+}
+
+@media (min-width: 640px) {
+  .mb-select-bar { left: 50%; right: auto; width: 480px; transform: translateX(-50%); }
+}
+
 /* Progressive reveal (MApp.Paging). Sits under the last card, full width,
    at the standard primary tap height -- it is the only way past what used
    to be a hard cap, so it is not a small link. */
