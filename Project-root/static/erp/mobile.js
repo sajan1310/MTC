@@ -965,7 +965,44 @@ MApp.PullToRefresh = {
 // window.print(), restores on 'afterprint'.
 // ================================================================
 MApp.Print = {
+  // Data URL of the company logo, or null for the text fallback. Same
+  // contract as desktop's App.companyLogo.
+  companyLogo: null,
+
+  // A challan printed from the shop floor and the same challan printed
+  // from the office used to be different documents: desktop's
+  // App.Print.trigger() calls injectLogo() and MApp's port deliberately
+  // did not, so every phone-printed challan, PO and bill went to the
+  // customer unbranded. Ported now, including the text fallback, so both
+  // surfaces produce the same document.
+  injectLogo() {
+    document.querySelectorAll('.print-brand-text').forEach(el => {
+      if (this.companyLogo) {
+        el.innerHTML = `<img src="${MApp.Util.escapeHtml(this.companyLogo)}" style="max-height:60px;max-width:220px;object-fit:contain;-webkit-print-color-adjust:exact;print-color-adjust:exact;">`;
+      } else {
+        el.textContent = 'Maharaja Bikes';
+      }
+    });
+  },
+
+  // callCached, not call: printing is a shop-floor action and the factory
+  // LAN is not reliable, so the logo has to survive an outage the same way
+  // Home/Stock/Production/Dispatch data does. Best-effort throughout --
+  // a missing logo prints the brand name, it never blocks a print.
+  async loadLogo() {
+    try {
+      const res = await MApp.Api.callCached('getLogo');
+      if (res && res.success && res.data) {
+        this.companyLogo = res.data;
+        this.injectLogo();
+      }
+    } catch (e) {
+      /* offline with nothing cached -- the text fallback is correct here */
+    }
+  },
+
   trigger(containerId, documentTitle) {
+    this.injectLogo();
     // '.print-container' is the same hook desktop print.js and both
     // stylesheets use. It replaces an '[id^="print-"]' prefix match, which
     // was wrong in a way that only showed up on the PO: that prefix also
@@ -4281,6 +4318,32 @@ MApp.Bill = {
       formData.existingVendor = this.editingBillVendor;
     }
 
+    // Stock-correction conflict check, mirroring desktop's pre-save flow in
+    // bill.js. Without this MApp sent no excludeFromStockKeys at all, which
+    // bill_service.py reads as an empty set -- so every item on a
+    // phone-entered bill hit Stock's Billed Qty even when the bill predates
+    // a physical recount that already counted those goods. Silent double
+    // counting, and exactly the kind of discrepancy a recount is meant to
+    // resolve. Advisory: a failure here must never block the save, same as
+    // desktop.
+    formData.excludeFromStockKeys = '[]';
+    try {
+      // The RPC wants the item array itself, not formData.items' JSON string.
+      const conflictItems = validLines.map(l => ({ name: l.name, size: l.size || '' }));
+      const conflictRes = await MApp.Api.call('checkStockAdjustmentConflicts', conflictItems, formData.billDate);
+      if (conflictRes && conflictRes.success && conflictRes.data && conflictRes.data.length) {
+        const choice = await this.showStockConflictChoice(conflictRes.data);
+        if (choice === 'cancel') return;
+        if (choice === 'ledger') {
+          formData.excludeFromStockKeys = JSON.stringify(
+            conflictRes.data.map(c => `${c.itemName}|${c.size || ''}`.trim().toLowerCase())
+          );
+        }
+      }
+    } catch (err) {
+      /* advisory only -- fall through and save with excludeFromStockKeys '[]' */
+    }
+
     const isEdit = !!this.editingBillNumber;
     const saveBtn = document.getElementById('bill-form-save-btn');
     if (saveBtn) { saveBtn.disabled = true; saveBtn.textContent = 'Saving…'; }
@@ -4292,6 +4355,36 @@ MApp.Bill = {
       return;
     }
     if (saveBtn) { saveBtn.disabled = false; saveBtn.textContent = isEdit ? 'Save Changes' : 'Save Bill'; }
+  },
+
+  // Resolves to 'update' (bill hits Stock normally), 'ledger' (saved but
+  // excluded from Stock's Billed Qty sum) or 'cancel' (abort the save).
+  // Dismissing the sheet -- X, Back or Escape -- means cancel: the safe
+  // default when the operator did not actively choose.
+  _stockConflictResolve: null,
+
+  showStockConflictChoice(conflicts) {
+    const listEl = document.getElementById('bill-stock-conflict-list');
+    if (listEl) {
+      listEl.innerHTML = conflicts.map(c => `
+        <div class="mb-card">
+          <div class="mb-card-title">${MApp.Util.escapeHtml(c.itemName)}${c.size ? ` <span class="mb-card-sub">(${MApp.Util.escapeHtml(c.size)})</span>` : ''}</div>
+          <div class="mb-card-sub">Recounted ${MApp.Util.escapeHtml(MApp.Util.formatDateDisplay(c.adjustmentDate))}${c.reason ? ` — ${MApp.Util.escapeHtml(c.reason)}` : ''}</div>
+        </div>`).join('');
+    }
+    return new Promise(resolve => {
+      this._stockConflictResolve = resolve;
+      MApp.Sheet.open('sheet-bill-stock-conflict', {
+        onDismiss: () => this.resolveStockConflict('cancel')
+      });
+    });
+  },
+
+  resolveStockConflict(choice) {
+    MApp.Sheet.close('sheet-bill-stock-conflict');
+    const resolve = this._stockConflictResolve;
+    this._stockConflictResolve = null;
+    if (resolve) resolve(choice);
   },
 
   async deleteBillRecord(bill) {
@@ -6586,6 +6679,10 @@ MApp.More = {
 document.addEventListener('DOMContentLoaded', () => {
   MApp.PullToRefresh.init();
   MApp.Shell.init();
+
+  // Fire-and-forget: the logo is only needed by the time something is
+  // printed, and a failure here must never delay or block the shell.
+  MApp.Print.loadLogo();
 
   // Register the mobile shell's own service worker (Phase 5: PWA
   // installability). Scoped to /erp/mobile/sw.js, not /static/erp/
