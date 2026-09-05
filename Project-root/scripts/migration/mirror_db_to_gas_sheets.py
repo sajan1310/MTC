@@ -54,6 +54,17 @@ SCRIPT_DIR = Path(__file__).resolve().parent
 if str(SCRIPT_DIR) not in sys.path:
     sys.path.insert(0, str(SCRIPT_DIR))
 
+# The project root, so `from app import create_app` resolves when this script
+# is run standalone. Python sets sys.path[0] to the SCRIPT's directory, not
+# the working directory, so cd-ing to the project root is not enough -- and
+# without this the STOCK sheet is the one sheet a dry run cannot check
+# (fetch_stock_records needs an app context, which it builds by importing
+# app). Appended rather than inserted: the migration scripts import each
+# other by bare name and must keep winning over anything at the root.
+PROJECT_ROOT = SCRIPT_DIR.parents[1]
+if str(PROJECT_ROOT) not in sys.path:
+    sys.path.append(str(PROJECT_ROOT))
+
 try:
     import sheets_client  # type: ignore
 except ImportError:
