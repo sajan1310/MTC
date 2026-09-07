@@ -183,7 +183,10 @@ describe('the service worker no longer activates itself', () => {
       SW_SRC.indexOf("addEventListener('install'"),
       SW_SRC.indexOf("addEventListener('activate'")
     );
-    expect(install).not.toContain('skipWaiting');
+    // Matched on the CALL, not the word: the block carries a comment
+    // explaining why it no longer calls it, and a guard that cannot tell
+    // a comment from code is a guard that fires on its own documentation.
+    expect(install).not.toMatch(/self\.skipWaiting\(\)/);
   });
 
   test('skipWaiting happens only on the skip-waiting message', () => {

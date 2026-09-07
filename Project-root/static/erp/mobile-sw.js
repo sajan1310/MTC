@@ -77,7 +77,15 @@ function precache(cache) {
 // The new worker now waits, the page offers a reload when the operator is
 // between tasks, and skipWaiting only happens when they accept.
 self.addEventListener('install', event => {
-  event.waitUntil(caches.open(CACHE_NAME).then(precache));
+  // The trailing `-> undefined` matters: precache() resolves to the LIST
+  // of assets that failed, which is useful to its callers but must not
+  // become what waitUntil settles with. skipWaiting() used to swallow it
+  // here by accident; now that it is gone, this does it on purpose.
+  event.waitUntil(
+    caches.open(CACHE_NAME)
+      .then(precache)
+      .then(() => undefined)
+  );
 });
 
 self.addEventListener('activate', event => {
