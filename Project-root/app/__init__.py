@@ -382,20 +382,23 @@ def _register_error_handlers(app: Flask) -> None:
         # is deliberate: the behaviour this replaces sent users to the login
         # page, so the first thing they did was sign in again -- which cannot
         # help, and buries the real fault under a fake session problem.
+        # Status code outside the parentheses, matching handle_csrf_error
+        # below. It was explicit either way, but SonarCloud's S6863 ("specify
+        # an explicit HTTP status code for this error handler") does not see
+        # through a parenthesised tuple, and an error handler that returns a
+        # bare body really does answer 200 -- so the rule is worth keeping
+        # green rather than suppressing.
         if _client_wants_json():
-            return (
-                jsonify(
-                    {
-                        "success": False,
-                        "data": None,
-                        "message": (
-                            "The database is unavailable. You have not been "
-                            "signed out -- please try again in a moment."
-                        ),
-                    }
-                ),
-                503,
-            )
+            return jsonify(
+                {
+                    "success": False,
+                    "data": None,
+                    "message": (
+                        "The database is unavailable. You have not been "
+                        "signed out -- please try again in a moment."
+                    ),
+                }
+            ), 503
         return render_template("500.html"), 503
 
     @app.errorhandler(CSRFError)
