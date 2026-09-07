@@ -228,7 +228,35 @@ MApp.Toast = {
     }, type === 'error' ? 4200 : 2600);
   },
   success(message) { this.show(message, 'success'); },
-  error(message) { this.show(message, 'error'); }
+  error(message) { this.show(message, 'error'); },
+
+  // A toast that waits for an answer instead of expiring. Used for the
+  // "new version" prompt: an update the operator missed because it faded
+  // after 2.6 seconds is an update that never happens. Returns a dismiss
+  // function so the caller can take it down itself.
+  action(message, label, onAct) {
+    const stack = document.getElementById('mapp-toast-stack');
+    if (!stack) return () => {};
+    const el = document.createElement('div');
+    el.className = 'mb-toast mb-toast-action';
+    // The stack is pointer-events:none so toasts never block the list
+    // underneath; this one has a button, so it opts back in.
+    el.style.pointerEvents = 'auto';
+
+    const text = document.createElement('span');
+    text.textContent = message;
+    const btn = document.createElement('button');
+    btn.type = 'button';
+    btn.className = 'mb-toast-action-btn';
+    btn.textContent = label;
+
+    const dismiss = () => el.remove();
+    btn.addEventListener('click', () => { dismiss(); if (onAct) onAct(); });
+    el.appendChild(text);
+    el.appendChild(btn);
+    stack.appendChild(el);
+    return dismiss;
+  }
 };
 
 // ================================================================
@@ -487,6 +515,86 @@ MApp.Util = {
         img.src = reader.result;
       };
       reader.readAsDataURL(file);
+    });
+  }
+};
+
+// ================================================================
+// UPDATE — offers a reload when a new version is ready, instead of
+// swapping the app out from under whoever is using it.
+//
+// mobile-sw.js used to call skipWaiting() the moment it finished
+// installing. A deploy while an operator had a half-filled Log Lot form
+// open therefore replaced the cached assets underneath the running page:
+// the page kept the old mobile.js in memory while the worker served new
+// ones to every subsequent request, with nothing on screen to say so.
+//
+// Now the new worker waits. This offers the reload, and only sends
+// skip-waiting when the operator accepts -- and it will not ask at all
+// while a sheet is open, because a sheet is a half-entered record and a
+// reload would discard it.
+// ================================================================
+MApp.Update = {
+  RETRY_MS: 30000,
+  _waiting: null,
+  _dismiss: null,
+  _reloading: false,
+
+  watch(registration) {
+    if (!registration) return;
+
+    // Already waiting when this page loaded (installed during a previous
+    // visit and never accepted).
+    if (registration.waiting && navigator.serviceWorker.controller) {
+      this._offer(registration.waiting);
+    }
+
+    registration.addEventListener('updatefound', () => {
+      const installing = registration.installing;
+      if (!installing) return;
+      installing.addEventListener('statechange', () => {
+        // `controller` being present is what distinguishes an UPDATE from
+        // this app's very first install -- on a first install there is
+        // nothing to reload into and no interruption to warn about.
+        if (installing.state === 'installed' && navigator.serviceWorker.controller) {
+          this._offer(installing);
+        }
+      });
+    });
+  },
+
+  _offer(worker) {
+    this._waiting = worker;
+    // Never interrupt a half-entered record. Ask again once the sheet
+    // stack is empty; the update keeps until then either way.
+    if (MApp.Sheet._stack.length > 0) {
+      setTimeout(() => { if (this._waiting) this._offer(this._waiting); }, this.RETRY_MS);
+      return;
+    }
+    if (this._dismiss) return; // already asking
+
+    this._dismiss = MApp.Toast.action(
+      'A new version is ready.',
+      'Reload',
+      () => this.apply()
+    );
+  },
+
+  apply() {
+    this._dismiss = null;
+    if (!this._waiting) return;
+    this._waiting.postMessage({ type: 'skip-waiting' });
+    this._waiting = null;
+  },
+
+  // The new worker taking control is the signal that the swap is done and
+  // the page can safely reload into it. Guarded so the reload happens
+  // once even if controllerchange fires more than once.
+  initReloadOnActivate() {
+    navigator.serviceWorker.addEventListener('controllerchange', () => {
+      if (this._reloading) return;
+      this._reloading = true;
+      window.location.reload();
     });
   }
 };
@@ -7940,7 +8048,9 @@ document.addEventListener('DOMContentLoaded', () => {
   // without it, just without install/offline-shell support.
   if ('serviceWorker' in navigator) {
     navigator.serviceWorker.register('/erp/mobile/sw.js', { scope: '/erp/mobile' })
+      .then(reg => MApp.Update.watch(reg))
       .catch(err => console.warn('[PWA] Mobile service worker registration failed:', err));
+    MApp.Update.initReloadOnActivate();
   }
 
   // Phase 6 Round 3 -- replay any outbox entries queued in a previous

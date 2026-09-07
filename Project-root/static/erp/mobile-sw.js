@@ -18,7 +18,7 @@
 // a worker.
 importScripts('/static/erp/offline-cache.js', '/static/erp/api.js');
 
-const CACHE_NAME = 'erp-mobile-shell-v14';
+const CACHE_NAME = 'erp-mobile-shell-v15';
 
 
 const PRECACHE_URLS = [
@@ -70,12 +70,14 @@ function precache(cache) {
   });
 }
 
+// No skipWaiting() here any more. It used to activate a new worker the
+// moment it finished installing, which swapped the cached assets out from
+// under a page that was already running -- while an operator had a
+// half-filled Log Lot form open, with no signal that anything had changed.
+// The new worker now waits, the page offers a reload when the operator is
+// between tasks, and skipWaiting only happens when they accept.
 self.addEventListener('install', event => {
-  event.waitUntil(
-    caches.open(CACHE_NAME)
-      .then(precache)
-      .then(() => self.skipWaiting())
-  );
+  event.waitUntil(caches.open(CACHE_NAME).then(precache));
 });
 
 self.addEventListener('activate', event => {
@@ -135,6 +137,11 @@ self.addEventListener('fetch', event => {
 self.addEventListener('message', event => {
   if (event.data && event.data.type === 'csrf-token') {
     Api.setCsrfToken(event.data.token);
+  }
+  // Sent by MApp.Update when the operator accepts the reload prompt. This
+  // is the only route to activation now that install() no longer calls it.
+  if (event.data && event.data.type === 'skip-waiting') {
+    self.skipWaiting();
   }
 });
 

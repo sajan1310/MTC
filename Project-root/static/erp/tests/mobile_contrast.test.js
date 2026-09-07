@@ -215,3 +215,43 @@ describe('MApp colour contrast — dark theme', () => {
     expect(darkToken('mb-safety')).toBe(token('mb-safety'));
   });
 });
+
+describe('the type scale follows the OS text-size setting', () => {
+  // html was pinned to `font-size: 16px`, which makes Android's font-scale
+  // and iOS Dynamic Type do nothing at all -- in a product whose own
+  // stylesheet header cites viewing distance and glare as constraints, and
+  // whose users are not all twenty-five.
+  const rules = CSS.split('}');
+
+  test('the root does not pin a font size', () => {
+    const rootRule = rules.find(r => /(^|\n)html,\s*body\s*\{/.test(r));
+    expect(rootRule).toBeDefined();
+    expect(rootRule).not.toMatch(/font-size:/);
+  });
+
+  test('every font-size is relative, except the deliberate input floor', () => {
+    const absolute = CSS.split(/\r?\n/)
+      .map((line, i) => ({ line: line.trim(), n: i + 1 }))
+      .filter(({ line }) => /font-size:\s*[0-9.]+px/.test(line));
+
+    expect(absolute.map(a => `${a.n}: ${a.line}`)).toEqual([]);
+  });
+
+  test('inputs keep a 16px floor so iOS does not zoom on focus', () => {
+    // Plain 1rem would reintroduce the zoom for anyone who scales text
+    // DOWN; max() keeps the floor while still scaling up.
+    expect(CSS).toMatch(/input,\s*select,\s*textarea,\s*button\s*\{[^}]*font-size:\s*max\(1rem,\s*16px\)/);
+  });
+
+  test('spacing and tap targets stay absolute', () => {
+    // --mb-tap-min must not shrink when text is scaled down, and
+    // --mb-topbar-h is used in calc() with env(safe-area-inset-*), where a
+    // scaling unit would make layout maths depend on a font preference.
+    const flat = CSS.replace(/\s+/g, ' ');
+    ['--mb-tap-min: 48px', '--mb-tap-primary: 56px',
+      '--mb-topbar-h: 56px', '--mb-tabbar-h: 64px',
+      '--mb-sp-4: 16px'].forEach(decl => {
+      expect(flat).toContain(decl);
+    });
+  });
+});

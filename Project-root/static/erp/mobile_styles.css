@@ -51,6 +51,13 @@
      the orange fill deliberately does not -- which would put white back on
      orange at 2.87:1 and undo the whole fix. Fixed in both themes. */
   --mb-on-safety:      #14181c;
+  /* The mirror case: safety orange used AS text, on one of the app's ink
+     surfaces (the toast, the top bar). The same pair that gives 6.22:1
+     with ink on orange gives 6.22:1 with orange on ink -- contrast is
+     symmetric. Named separately from --mb-safety so the "never small text"
+     guard can stay strict about the light-ground case it was written for,
+     and every dark-ground use has to say so. */
+  --mb-safety-on-ink:  #ff6a13;
 
   --mb-enamel-red:     #c81e3a;
   --mb-enamel-red-bg:  #fbe2e6;
@@ -207,8 +214,8 @@
     --mb-tabbar-h: 52px;
   }
 
-  .mapp-topbar-title { font-size: 17px; }
-  .mapp-tab { font-size: 11px; }
+  .mapp-topbar-title { font-size: 1.0625rem; }
+  .mapp-tab { font-size: 0.6875rem; }
   .mapp-tab svg { width: 20px; height: 20px; }
   .mapp-content { padding-top: var(--mb-sp-2); }
   .mapp-screen-title { margin-bottom: var(--mb-sp-2); }
@@ -217,13 +224,23 @@
 /* ── Reset & base ────────────────────────────────────────────────────── */
 *, *::before, *::after { box-sizing: border-box; }
 
+/* No font-size here on purpose. Pinning the root to 16px is what made
+   Android's font-scale setting and iOS Dynamic Type do nothing at all in
+   this app -- in a product whose own stylesheet header cites viewing
+   distance and glare as design constraints, and whose users are not all
+   twenty-five. Leaving it unset lets the root inherit the browser's
+   setting, which is what the OS preference actually adjusts, and the whole
+   type scale below is expressed in rem so it follows.
+   Spacing, radii, chrome heights and tap targets stay in px deliberately:
+   --mb-tap-min must not SHRINK when someone scales text down, and
+   --mb-topbar-h is used inside calc() alongside env(safe-area-inset-*),
+   where a scaling unit would make layout maths depend on a font setting. */
 html, body {
   margin: 0;
   padding: 0;
   background: var(--mb-workshop);
   color: var(--mb-ink);
   font-family: var(--mb-font-body);
-  font-size: 16px;
   line-height: 1.45;
   -webkit-font-smoothing: antialiased;
   -webkit-tap-highlight-color: transparent;
@@ -248,8 +265,13 @@ a { color: var(--mb-enamel-blue-ink); }
 
 ul { list-style: none; margin: 0; padding: 0; }
 
+/* The one place that is NOT purely relative. iOS Safari zooms the whole
+   page when a focused field renders below 16px, which on a form the width
+   of a phone is a jarring shove mid-entry. max() keeps the 16px floor
+   while still letting a user who scales text UP get larger fields --
+   plain 1rem would reintroduce the zoom for anyone scaling down. */
 input, select, textarea, button {
-  font-size: 16px; /* iOS Safari zooms on focus below 16px */
+  font-size: max(1rem, 16px);
 }
 
 /* Visible keyboard focus everywhere — non-negotiable on a device that's
@@ -334,7 +356,7 @@ textarea:focus-visible,
 
 .mapp-topbar-title {
   font-family: var(--mb-font-display);
-  font-size: 20px;
+  font-size: 1.25rem;
   letter-spacing: 0.03em;
   text-transform: uppercase;
   flex: 1;
@@ -451,7 +473,7 @@ textarea:focus-visible,
   border: none;
   color: var(--mb-steel);
   font-family: var(--mb-font-body);
-  font-size: 12px;
+  font-size: 0.75rem;
   font-weight: 600;
   cursor: pointer;
   padding: var(--mb-sp-1) 0;
@@ -482,7 +504,7 @@ textarea:focus-visible,
   border-radius: var(--mb-radius-pill);
   background: var(--mb-enamel-red);
   color: #fff;
-  font-size: 10px;
+  font-size: 0.625rem;
   font-weight: 700;
   line-height: 16px;
   text-align: center;
@@ -490,13 +512,13 @@ textarea:focus-visible,
 
 /* ── Section headings & screen title ────────────────────────────────── */
 .mapp-screen-title {
-  font-size: 24px;
+  font-size: 1.5rem;
   margin-bottom: var(--mb-sp-5);
 }
 
 .mapp-section-label {
   font-family: var(--mb-font-body);
-  font-size: 13px;
+  font-size: 0.8125rem;
   font-weight: 700;
   text-transform: uppercase;
   letter-spacing: 0.06em;
@@ -539,19 +561,19 @@ textarea:focus-visible,
 
 .mb-card-title {
   font-weight: 700;
-  font-size: 16px;
+  font-size: 1rem;
   color: var(--mb-ink);
 }
 
 .mb-card-sub {
-  font-size: 13px;
+  font-size: 0.8125rem;
   color: var(--mb-steel);
   margin-top: 2px;
 }
 
 .mb-card-number {
   font-family: var(--mb-font-display);
-  font-size: 28px;
+  font-size: 1.75rem;
   font-weight: 600;
   color: var(--mb-ink);
   line-height: 1;
@@ -580,7 +602,7 @@ textarea:focus-visible,
   border-radius: var(--mb-radius-md);
   background: var(--mb-ink);
   color: #fff;
-  font-size: 12px;
+  font-size: 0.75rem;
   font-weight: 700;
   text-transform: uppercase;
   letter-spacing: 0.02em;
@@ -643,7 +665,7 @@ textarea:focus-visible,
 }
 
 .mb-stat-tile-label {
-  font-size: 13px;
+  font-size: 0.8125rem;
   font-weight: 700;
   text-transform: uppercase;
   letter-spacing: 0.04em;
@@ -654,7 +676,7 @@ textarea:focus-visible,
 
 .mb-stat-tile-value {
   font-family: var(--mb-font-display);
-  font-size: 36px;
+  font-size: 2.25rem;
   font-weight: 600;
   line-height: 1;
   color: var(--mb-ink);
@@ -668,7 +690,7 @@ textarea:focus-visible,
   align-items: center;
   gap: 6px;
   font-family: var(--mb-font-body);
-  font-size: 12px;
+  font-size: 0.75rem;
   font-weight: 700;
   text-transform: uppercase;
   letter-spacing: 0.03em;
@@ -698,7 +720,7 @@ textarea:focus-visible,
   align-items: center;
   flex-shrink: 0;
   font-family: var(--mb-font-body);
-  font-size: 13px;
+  font-size: 0.8125rem;
   font-weight: 600;
   padding: 8px 14px;
   min-height: var(--mb-tap-min);
@@ -724,7 +746,7 @@ textarea:focus-visible,
   padding: 0 var(--mb-sp-5);
   border-radius: var(--mb-radius-md);
   border: none;
-  font-size: 16px;
+  font-size: 1rem;
   font-weight: 700;
   cursor: pointer;
   transition: transform var(--mb-motion-fast), opacity var(--mb-motion-fast);
@@ -798,7 +820,7 @@ textarea:focus-visible,
   justify-content: center;
   gap: var(--mb-sp-2);
   padding: 0 var(--mb-sp-5);
-  font-size: 15px;
+  font-size: 0.9375rem;
   font-weight: 700;
   text-transform: uppercase;
   letter-spacing: 0.02em;
@@ -899,7 +921,7 @@ textarea:focus-visible,
   flex: 1;
   color: #fff;
   font-weight: 700;
-  font-size: 14px;
+  font-size: 0.875rem;
 }
 
 /* The selected state has to read at arm's length in glare, so it is a
@@ -940,7 +962,7 @@ body.mb-selecting {
 .mb-search-count {
   margin: calc(var(--mb-sp-3) * -1) 0 var(--mb-sp-3);
   padding: 0 var(--mb-sp-1);
-  font-size: 13px;
+  font-size: 0.8125rem;
   font-weight: 600;
   color: var(--mb-steel);
 }
@@ -962,7 +984,7 @@ body.mb-selecting {
 
 .mb-field label {
   display: block;
-  font-size: 13px;
+  font-size: 0.8125rem;
   font-weight: 700;
   text-transform: uppercase;
   letter-spacing: 0.04em;
@@ -1004,7 +1026,7 @@ body.mb-selecting {
 }
 
 .mb-field-hint {
-  font-size: 12px;
+  font-size: 0.75rem;
   color: var(--mb-steel);
   margin-top: var(--mb-sp-1);
 }
@@ -1025,7 +1047,7 @@ body.mb-selecting {
   gap: var(--mb-sp-2);
   cursor: pointer;
   color: var(--mb-ink);
-  font-size: 16px;
+  font-size: 1rem;
   text-align: left;
 }
 .mb-picker-field.mb-placeholder { color: var(--mb-steel); }
@@ -1114,7 +1136,7 @@ body.mb-selecting {
 
 .mb-sheet-header h2 {
   flex: 1;
-  font-size: 18px;
+  font-size: 1.125rem;
   color: #fff;
 }
 
@@ -1147,7 +1169,7 @@ body.mb-selecting {
   border-bottom: 1px solid var(--mb-steel-faint);
   background: var(--mb-surface);
   text-align: left;
-  font-size: 16px;
+  font-size: 1rem;
   color: var(--mb-ink);
   cursor: pointer;
   display: flex;
@@ -1185,7 +1207,7 @@ body.mb-selecting {
   align-items: center;
   justify-content: space-between;
   gap: var(--mb-sp-2);
-  font-size: 15px;
+  font-size: 0.9375rem;
   font-weight: 700;
   color: var(--mb-ink);
   cursor: pointer;
@@ -1215,7 +1237,7 @@ body.mb-selecting {
   border: none;
   background: var(--mb-ink);
   color: #fff;
-  font-size: 20px;
+  font-size: 1.25rem;
   font-weight: 700;
   cursor: pointer;
 }
@@ -1224,7 +1246,7 @@ body.mb-selecting {
 
 .mb-stepper-value {
   font-family: var(--mb-font-display);
-  font-size: 22px;
+  font-size: 1.375rem;
   font-weight: 600;
   min-width: 48px;
   text-align: center;
@@ -1271,13 +1293,13 @@ body.mb-selecting {
 
 .mb-state-title {
   font-family: var(--mb-font-display);
-  font-size: 18px;
+  font-size: 1.125rem;
   color: var(--mb-ink);
   text-transform: none;
   letter-spacing: normal;
   margin-bottom: var(--mb-sp-2);
 }
-.mb-state-body { font-size: 14px; margin-bottom: var(--mb-sp-4); }
+.mb-state-body { font-size: 0.875rem; margin-bottom: var(--mb-sp-4); }
 .mb-state.mb-state-error svg { color: var(--mb-enamel-red-ink); }
 
 .mb-state-retry {
@@ -1312,11 +1334,34 @@ body.mb-selecting {
   color: #fff;
   border-radius: var(--mb-radius-md);
   padding: var(--mb-sp-3) var(--mb-sp-4);
-  font-size: 14px;
+  font-size: 0.875rem;
   font-weight: 600;
   box-shadow: var(--mb-shadow-raised);
   animation: mb-toast-in var(--mb-motion-base);
 }
+/* The one toast that waits for an answer (MApp.Update). Laid out as a row
+   so the action sits beside the message rather than under it. */
+.mb-toast-action {
+  display: flex;
+  align-items: center;
+  gap: var(--mb-sp-3);
+}
+
+.mb-toast-action-btn {
+  flex: 0 0 auto;
+  min-height: var(--mb-tap-min);
+  padding: 0 var(--mb-sp-3);
+  border: none;
+  background: none;
+  color: var(--mb-safety-on-ink);
+  font-family: inherit;
+  font-size: 0.875rem;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  cursor: pointer;
+}
+
 .mb-toast.mb-toast-error { background: var(--mb-enamel-red); }
 .mb-toast.mb-toast-success { background: var(--mb-enamel-green); }
 
@@ -1372,7 +1417,7 @@ body.mb-selecting {
 .mb-mt-4 { margin-top: var(--mb-sp-4); }
 .mb-mb-4 { margin-bottom: var(--mb-sp-4); }
 .mb-text-steel { color: var(--mb-steel); }
-.mb-text-sm { font-size: 13px; }
+.mb-text-sm { font-size: 0.8125rem; }
 .mb-truncate { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 
 /* Offline / no-connection banner injected by MApp.Api on a failed call */
@@ -1381,7 +1426,7 @@ body.mb-selecting {
   color: var(--mb-enamel-red-ink);
   border-radius: var(--mb-radius-md);
   padding: var(--mb-sp-3) var(--mb-sp-4);
-  font-size: 14px;
+  font-size: 0.875rem;
   font-weight: 600;
   margin-bottom: var(--mb-sp-4);
   display: flex;
