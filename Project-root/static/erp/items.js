@@ -1996,8 +1996,13 @@ App.Item = {
             const page = params.data.page || 1;
             const start = (page - 1) * PAGE_SIZE;
 
+            // Matched against the rendered label too, so typing an item
+            // exactly as this list shows it finds it -- the label adds
+            // "(size)", and matchesKeywords needs EVERY whitespace token,
+            // so "(14" and "inch)" used to match nothing at all.
+            const labelFor = it => `${it.name}${it.size ? ' (' + it.size + ')' : ''}`;
             const pool = q
-              ? items.map((it, idx) => ({ idx, it })).filter(({ it }) => App.Utils.matchesKeywords(`${it.name} ${it.size || ''}`, q))
+              ? items.map((it, idx) => ({ idx, it })).filter(({ it }) => App.Utils.matchesKeywords(`${it.name} ${it.size || ''} ${labelFor(it)}`, q))
               : items.map((it, idx) => ({ idx, it }));
 
             const pageSlice = pool.slice(start, start + PAGE_SIZE);

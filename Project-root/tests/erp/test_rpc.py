@@ -37,9 +37,24 @@ def test_test_connection_returns_success_envelope(erp_client):
 def test_rpc_requires_login(erp_app):
     client = erp_app.test_client()  # no session set up -- not logged in
     resp = client.post("/api/erp/rpc/testConnection", json={"args": []})
-    # Flask-Login's default unauthorized handler either redirects to the
-    # login view or aborts 401 depending on the request's Accept header.
-    assert resp.status_code in (302, 401)
+    # An /api/ caller must get a JSON 401, never Flask-Login's default 302
+    # to the login page: fetch() follows that redirect silently and api.js
+    # then tried to parse `<!DOCTYPE html>` as JSON (see create_app's
+    # _unauthorized handler).
+    assert resp.status_code == 401
+    assert resp.mimetype == "application/json"
+    body = resp.get_json()
+    assert body["success"] is False
+    assert "session" in body["message"].lower()
+
+
+def test_unauthenticated_page_still_redirects_to_login(erp_app):
+    """The JSON 401 is for /api/ only -- a browser navigation keeps the
+    redirect-to-login it always had."""
+    client = erp_app.test_client()
+    resp = client.get("/erp", headers={"Accept": "text/html"})
+    assert resp.status_code == 302
+    assert "/login" in resp.headers["Location"]
 
 
 def test_unexpected_exception_is_logged_and_not_leaked_to_client(erp_client, caplog):

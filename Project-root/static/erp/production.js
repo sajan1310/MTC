@@ -6048,8 +6048,16 @@ App.Production = {
             : (App.State.globalItems || []);
           const start = (page - 1) * PAGE_SIZE;
 
+          // Searched against the SAME string the row displays, not just the
+          // raw fields. _poolBucketLabel renders "Name [14 inch] · Black", while
+          // this used to match on "Name 14 inch Black" -- so an operator typing
+          // (or pasting) an item exactly as the list shows it produced tokens
+          // "[14" and "inch]" that appear nowhere in the haystack, and
+          // matchesKeywords requires EVERY token. The picker answered "No
+          // results found" for an item sitting in the list right above it.
+          const searchText = item => `${item.name} ${item.size || ''} ${item.color || ''} ${App.Production._poolBucketLabel(item)}`;
           const pool = q
-            ? items.map((item, idx) => ({ idx, item })).filter(({ item }) => App.Utils.matchesKeywords(`${item.name} ${item.size || ''} ${item.color || ''}`, q))
+            ? items.map((item, idx) => ({ idx, item })).filter(({ item }) => App.Utils.matchesKeywords(searchText(item), q))
             : items.map((item, idx) => ({ idx, item }));
 
           const pageItems = pool.slice(start, start + PAGE_SIZE);

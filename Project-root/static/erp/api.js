@@ -163,6 +163,22 @@ const Api = (() => {
       if (timer) clearTimeout(timer);
     }
 
+    // An expired session used to arrive here as a 200 (see the non-JSON
+    // guard below); the server now answers /api/ with a 401 envelope
+    // instead. Flagged separately from a generic HTTP error because it is
+    // the one HTTP failure the user can actually fix -- callers show
+    // err.message, and "signed out" is a far more useful thing to read
+    // than a parse error. It still travels as an isHttpError, so the
+    // mobile outbox keeps treating it exactly like a stale CSRF token:
+    // marked failed and retryable from Sync Issues after signing back in.
+    if (res.status === 401) {
+      const err = new Error('Your session has expired. Please sign in again.');
+      err.isHttpError = true;
+      err.isAuthError = true;
+      err.status = 401;
+      throw err;
+    }
+
     if (!res.ok && res.status !== 200) {
       // The server WAS reached and responded -- a real HTTP-level failure
       // (a CSRF token that expired since this page loaded, a 500, rate
@@ -180,6 +196,48 @@ const Api = (() => {
       const err = new Error(message);
       err.isHttpError = true;
       err.status = res.status;
+      throw err;
+    }
+
+    // A 200 that is not JSON is an HTML page wearing an RPC's clothes:
+    // a login or SSO page reached through a redirect fetch() followed
+    // silently, a captive portal, or a proxy error page. Parsing it threw
+    // `SyntaxError: Unexpected token '<', "<!DOCTYPE "...` from deep inside
+    // whichever caller happened to fire first, which told the user nothing
+    // about what was actually wrong. The 401 above covers this app's own
+    // expired sessions; this covers everything between the browser and it.
+    const contentType = res.headers?.get?.('content-type') || '';
+    if (contentType && !contentType.includes('json')) {
+      // Capture WHAT came back, not just that it was wrong.
+      //
+      // This failure is intermittent in the field and identical in every
+      // module (they all come through here), so the one question that
+      // matters -- which box between the browser and Flask produced this
+      // page -- was the one thing the error never carried. res.redirected
+      // and res.url settle it without guessing: a followed 302 to the login
+      // page reports redirected:true with /login as the final URL, while a
+      // proxy or captive-portal interstitial reports redirected:false at the
+      // original URL. The body's first line names the rest.
+      let snippet = '';
+      try {
+        snippet = (await res.text()).replace(/\s+/g, ' ').trim().slice(0, 300);
+      } catch (e) { /* body already consumed or unreadable -- diagnostics only */ }
+      const finalUrl = res.url || '';
+      console.error(`[Api] ${method}: expected JSON, got "${contentType}"`, {
+        status: res.status, redirected: res.redirected, finalUrl, bodyStart: snippet
+      });
+
+      const looksLikeLogin = /\/login/i.test(finalUrl) || /sign in|log in|login/i.test(snippet);
+      const err = new Error(
+        looksLikeLogin
+          ? 'Your session has expired. Please sign in again.'
+          : 'The server returned a page instead of data. Check the console for what it sent.'
+      );
+      err.isHttpError = true;
+      err.isAuthError = true;
+      err.status = res.status;
+      err.responseSnippet = snippet;
+      err.finalUrl = finalUrl;
       throw err;
     }
 
