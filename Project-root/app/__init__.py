@@ -31,6 +31,7 @@ from logging.handlers import RotatingFileHandler
 
 from flask import (
     Flask,
+    abort,
     current_app,
     jsonify,
     redirect,
@@ -349,6 +350,19 @@ def _init_logging(app: Flask) -> None:
         root_logger.addHandler(fh)
 
 
+def _client_wants_json() -> bool:
+    """True when the caller is the RPC layer rather than a browser navigation.
+
+    Used by both the unauthorized handler and the 503 handler below, which
+    have to agree: an /api/ caller gets the {success, data, message} envelope
+    every other RPC failure uses, and a page navigation gets HTML.
+    """
+    return (
+        request.path.startswith("/api/")
+        or request.accept_mimetypes.best == "application/json"
+    )
+
+
 def _register_error_handlers(app: Flask) -> None:
     @app.errorhandler(404)
     def not_found(_e):
@@ -361,6 +375,31 @@ def _register_error_handlers(app: Flask) -> None:
     @app.errorhandler(429)
     def ratelimit_handler(_e):
         return render_template("429.html"), 429
+
+    @app.errorhandler(503)
+    def service_unavailable(_e):
+        # Raised by load_user() when the connection pool is gone. The wording
+        # is deliberate: the behaviour this replaces sent users to the login
+        # page, so the first thing they did was sign in again -- which cannot
+        # help, and buries the real fault under a fake session problem.
+        # Status code outside the parentheses, matching handle_csrf_error
+        # below. It was explicit either way, but SonarCloud's S6863 ("specify
+        # an explicit HTTP status code for this error handler") does not see
+        # through a parenthesised tuple, and an error handler that returns a
+        # bare body really does answer 200 -- so the rule is worth keeping
+        # green rather than suppressing.
+        if _client_wants_json():
+            return jsonify(
+                {
+                    "success": False,
+                    "data": None,
+                    "message": (
+                        "The database is unavailable. You have not been "
+                        "signed out -- please try again in a moment."
+                    ),
+                }
+            ), 503
+        return render_template("500.html"), 503
 
     @app.errorhandler(CSRFError)
     def handle_csrf_error(e):
@@ -632,11 +671,7 @@ def create_app(config_name: str | None = None) -> Flask:
         failure, at 401 so api.js can tell this apart from a domain error.
         Browser navigations keep the redirect-to-login they had.
         """
-        wants_json = (
-            request.path.startswith("/api/")
-            or request.accept_mimetypes.best == "application/json"
-        )
-        if wants_json:
+        if _client_wants_json():
             return (
                 jsonify(
                     {
@@ -959,6 +994,41 @@ def create_app(config_name: str | None = None) -> Flask:
                         )
                         return None
                     return User(row)
+        except ConnectionError as e:
+            # The POOL is gone -- infrastructure, not authentication.
+            #
+            # Falling into the generic handler below returns None, which
+            # Flask-Login reads as "no such user": @login_required then
+            # redirects to the login page, fetch() follows that redirect
+            # silently, and the browser reports
+            # `SyntaxError: Unexpected token '<'` on the login HTML. A dead
+            # connection pool therefore presented as an expired session in
+            # every module at once -- which is how the 2026-09-07 incident
+            # stayed hidden for hours behind a JSON parse error while the
+            # actual fault was a worker with no pool.
+            #
+            # 503 says what is true, keeps the user signed in, and reaches
+            # the browser as an ordinary {success:false} envelope carrying a
+            # message worth reading.
+            if getattr(g, "_pool_unavailable", False):
+                # Re-entry, and it must not abort again.
+                #
+                # The 503 handler renders a template, and Flask-Login installs
+                # a template context processor that resolves current_user --
+                # so rendering the error page calls this loader a second time.
+                # A second abort() would raise INSIDE the error handler, which
+                # Flask cannot handle, and the ServiceUnavailable escapes as a
+                # bare unhandled exception instead of the 503 page.
+                #
+                # Anonymous is the right answer for that second call: the
+                # error page needs to render, not to know who is looking at
+                # it. The 503 is already on its way.
+                return None
+            g._pool_unavailable = True
+            app.logger.error(
+                "Database unavailable while loading user %s: %s", user_id, e
+            )
+            abort(503)
         except Exception as e:
             app.logger.error("Error loading user %s: %s", user_id, e)
         return None
