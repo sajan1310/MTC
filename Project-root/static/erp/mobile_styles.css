@@ -46,6 +46,11 @@
      --mb-safety-ink is the same hue darkened for the cases that genuinely
      need it as text on a light ground (6.22:1 on white). */
   --mb-safety-ink:     #a33d05;
+  /* The label colour for anything filled with safety orange. It must NOT
+     be --mb-ink: that token flips to near-white in the dark theme, while
+     the orange fill deliberately does not -- which would put white back on
+     orange at 2.87:1 and undo the whole fix. Fixed in both themes. */
+  --mb-on-safety:      #14181c;
 
   --mb-enamel-red:     #c81e3a;
   --mb-enamel-red-bg:  #fbe2e6;
@@ -62,6 +67,22 @@
   --mb-enamel-amber-bg:#fbe9cf;
   --mb-enamel-slate:   #4a5a66;
   --mb-enamel-slate-bg:#e3e8ea;
+
+  /* Each enamel does two jobs, and they need different values once there
+     is a dark theme:
+       --mb-enamel-X      a FILL, carrying white text (status chips, toasts)
+       --mb-enamel-X-ink  the same colour used AS TEXT (the red "Delete" on
+                          every list row, the amber pending note, alerts)
+     On a light ground the two coincide. On a dark one they cannot: the
+     text role has to lighten or it vanishes -- #c81e3a on #1b2126 is
+     2.87:1, and there are ~20 such usages, most of them the Delete button
+     on a list row. Splitting the roles fixes all of them at the token
+     level rather than with per-rule overrides. */
+  --mb-enamel-red-ink:   var(--mb-enamel-red);
+  --mb-enamel-blue-ink:  var(--mb-enamel-blue);
+  --mb-enamel-green-ink: var(--mb-enamel-green);
+  --mb-enamel-amber-ink: var(--mb-enamel-amber);
+  --mb-enamel-slate-ink: var(--mb-enamel-slate);
 
   /* ── Type ────────────────────────────────────────────────────────── */
   --mb-font-display:   'Oswald', 'Arial Narrow', sans-serif;
@@ -108,6 +129,91 @@
   }
 }
 
+/* ── Dark theme ──────────────────────────────────────────────────────────
+   --mb-workshop is #f3f5f6: a near-white full-screen emitter, held at
+   arm's length, on a shift that starts before dawn and runs past dusk.
+   Because the whole palette is already custom properties consumed through
+   var(), the theme is a redefinition rather than a second stylesheet --
+   no component rule below changes.
+   Every pair here was measured, not eyeballed: body text lands at 14:1,
+   secondary text at 6.5:1, links at 8.2:1, and each status chip keeps the
+   white-on-enamel contrast it has in light (5.2-7.1:1). The enamels
+   themselves are unchanged -- they are the paint-code identity of the app
+   and they already read on a dark ground.
+   Safety orange is unchanged too, and keeps its INK label: black on
+   orange is 6.22:1 in either theme, which is the whole reason that fix
+   was made this way rather than by darkening the brand.
+   ──────────────────────────────────────────────────────────────────────── */
+@media (prefers-color-scheme: dark) {
+  :root {
+    --mb-ink:            #eaf0f3;
+    --mb-ink-soft:       #b6c4cc;
+    --mb-steel:          #93a7b3;
+    --mb-steel-light:    #46555f;
+    --mb-steel-faint:    #2b353c;
+    --mb-workshop:       #12171b;
+    --mb-surface:        #1b2126;
+
+    /* Text-on-light becomes text-on-dark: the darkened orange would
+       disappear against #1b2126, so this role lightens instead. */
+    --mb-safety-ink:     #ffa165;
+
+    /* Chip/toast BACKGROUNDS keep their light-theme enamels so white chip
+       text still passes. Only the two derived roles move: the faint WASH
+       tints (backgrounds for dark text in light mode) become dark tints,
+       and the -ink text role lightens so it reads on them and on cards.
+       Measured on the dark surface #1b2126 and on each wash: 6.7-8.9:1. */
+    --mb-enamel-red-bg:  #3a1620;
+    --mb-enamel-blue-bg: #16283a;
+    --mb-enamel-green-bg:#102b21;
+    --mb-enamel-amber-bg:#33260f;
+    --mb-enamel-slate-bg:#242d34;
+    --mb-safety-faint:   #33200f;
+
+    --mb-enamel-red-ink:   #ff8194;
+    --mb-enamel-blue-ink:  #8dbdec;
+    --mb-enamel-green-ink: #6fd3a5;
+    --mb-enamel-amber-ink: #e9b45c;
+    --mb-enamel-slate-ink: #9fb2bd;
+
+    --mb-shadow-card:   0 1px 3px rgb(0 0 0 / 45%), 0 1px 2px rgb(0 0 0 / 35%);
+    --mb-shadow-raised: 0 6px 20px rgb(0 0 0 / 55%);
+    --mb-shadow-fab:    0 8px 24px rgb(255 106 19 / 30%);
+  }
+
+  /* The top bar and sheet headers are --mb-ink in light, which is now the
+     near-white text colour -- they need to stay the darkest surface, not
+     become the lightest. */
+  .mapp-topbar,
+  .mb-sheet-header,
+  .mb-select-bar,
+  .mb-toast { background: #0c1014; }
+
+  /* Framing colour behind the phone frame on a tablet. */
+  @media (min-width: 640px) {
+    body { background: #05080a; }
+  }
+}
+
+/* ── Landscape on a phone ────────────────────────────────────────────────
+   The 56px top bar plus the 64px tab bar take ~40% of a 320px-tall
+   viewport, and nothing used to compensate: a phone turned sideways -- to
+   read a long item name, or because it is lying on a bench -- lost most of
+   its list to chrome. Trim the two bars and the content padding; the tap
+   targets inside them are untouched. */
+@media (orientation: landscape) and (max-height: 480px) {
+  :root {
+    --mb-topbar-h: 44px;
+    --mb-tabbar-h: 52px;
+  }
+
+  .mapp-topbar-title { font-size: 17px; }
+  .mapp-tab { font-size: 11px; }
+  .mapp-tab svg { width: 20px; height: 20px; }
+  .mapp-content { padding-top: var(--mb-sp-2); }
+  .mapp-screen-title { margin-bottom: var(--mb-sp-2); }
+}
+
 /* ── Reset & base ────────────────────────────────────────────────────── */
 *, *::before, *::after { box-sizing: border-box; }
 
@@ -138,7 +244,7 @@ button {
   font-family: inherit;
 }
 
-a { color: var(--mb-enamel-blue); }
+a { color: var(--mb-enamel-blue-ink); }
 
 ul { list-style: none; margin: 0; padding: 0; }
 
@@ -191,6 +297,21 @@ textarea:focus-visible,
      without this it anchors to the window edge and floats outside the 480px
      phone frame on a tablet. Re-anchor it to the frame's own right edge. */
   .mapp-content > .mb-fab { right: calc(50% - 240px + var(--mb-sp-5)); }
+
+  /* Sheets are position:fixed;inset:0 and this block never touched them,
+     so tapping the FAB on an iPad threw a 1024px-wide form over a
+     480px-wide app -- and every layout number inside that form was tuned
+     for ~390-430px. Constrain them to the same frame.
+     The translate has to carry BOTH axes: X centres the sheet, Y is the
+     slide the open state animates. Keeping them in one transform means
+     the closed and open states differ only in the Y term, so the
+     transition still animates exactly as it does on a phone. */
+  .mb-sheet {
+    left: 50%;
+    right: auto;
+    width: 480px;
+    --mb-sheet-x: -50%;
+  }
 }
 
 .mapp-topbar {
@@ -539,7 +660,7 @@ textarea:focus-visible,
   color: var(--mb-ink);
 }
 
-.mb-stat-tile-value.mb-alert { color: var(--mb-enamel-red); }
+.mb-stat-tile-value.mb-alert { color: var(--mb-enamel-red-ink); }
 
 /* ── Enamel chips / badges — the signature element ──────────────────── */
 .mb-chip {
@@ -590,7 +711,7 @@ textarea:focus-visible,
 .mb-filter-chip.active {
   border-color: var(--mb-safety);
   background: var(--mb-safety);
-  color: var(--mb-ink); /* 6.22:1; white on this fill was 2.87:1 */
+  color: var(--mb-on-safety); /* 6.22:1; white on this fill was 2.87:1 */
 }
 
 /* ── Buttons ─────────────────────────────────────────────────────────── */
@@ -615,19 +736,42 @@ textarea:focus-visible,
 /* Ink label, not white -- see --mb-safety-ink's note. 16px bold is NORMAL
    text under WCAG (large starts at 18.66px bold), so this needs 4.5:1, not
    the 3.0:1 large-text allowance. White gave 2.87:1; ink gives 6.22:1. */
-.mb-btn-primary { background: var(--mb-safety); color: var(--mb-ink); }
+.mb-btn-primary { background: var(--mb-safety); color: var(--mb-on-safety); }
 .mb-btn-primary:active:not(:disabled) { background: var(--mb-safety-dark); }
 
 .mb-btn-secondary { background: var(--mb-steel-faint); color: var(--mb-ink); }
 
-.mb-btn-danger { background: var(--mb-enamel-red-bg); color: var(--mb-enamel-red); }
+.mb-btn-danger { background: var(--mb-enamel-red-bg); color: var(--mb-enamel-red-ink); }
 
 .mb-btn-text {
   background: none;
-  color: var(--mb-enamel-blue);
+  color: var(--mb-enamel-blue-ink);
   min-height: var(--mb-tap-min);
   width: auto;
   padding: 0 var(--mb-sp-3);
+  position: relative;
+}
+
+/* --mb-tap-min is 48px, and then 33 call sites override it away inline
+   with `style="padding:0;min-height:auto;"` to keep list rows compact --
+   seven of them on a Delete sitting ~16px from an Edit, operated with
+   gloves. Inline styles cannot be overridden from here without
+   !important, and shouting at 33 call sites to win a specificity fight is
+   worse than the problem.
+   So: keep the compact LAYOUT and restore the TOUCH TARGET underneath it.
+   The pseudo-element is invisible, does not affect flow, and gives every
+   text button the full 48px height plus 8px of slack each side. Two
+   adjacent buttons separated by a 16px gap each claim 8px of it, so their
+   hit areas meet exactly and never overlap -- a mis-tap lands on nothing
+   rather than on Delete. */
+.mb-btn-text::after {
+  content: '';
+  position: absolute;
+  left: -8px;
+  right: -8px;
+  top: 50%;
+  height: var(--mb-tap-min);
+  transform: translateY(-50%);
 }
 
 /* ── FAB ─────────────────────────────────────────────────────────────── */
@@ -646,7 +790,7 @@ textarea:focus-visible,
   height: 64px;
   border-radius: var(--mb-radius-pill);
   background: var(--mb-safety);
-  color: var(--mb-ink);
+  color: var(--mb-on-safety);
   border: none;
   box-shadow: var(--mb-shadow-fab);
   display: flex;
@@ -806,7 +950,7 @@ body.mb-selecting {
    for" has to be noticeable at arm's length on a shop floor -- a silent
    fuzzy match reads as an exact one. */
 .mb-search-count-note {
-  color: var(--mb-enamel-amber);
+  color: var(--mb-enamel-amber-ink);
   background: var(--mb-enamel-amber-bg);
   border-radius: var(--mb-radius-sm);
   padding: var(--mb-sp-2) var(--mb-sp-3);
@@ -916,13 +1060,24 @@ body.mb-selecting {
   z-index: 101;
   display: flex;
   flex-direction: column;
-  transform: translateY(100%);
+  /* Composed from two variables rather than written literally, because
+     three things move this element and they must not clobber each other:
+       --mb-sheet-x  centring, set only inside the 640px phone-frame block
+       --mb-sheet-y  the slide, and the live offset while a finger drags
+     MApp.Sheet's swipe-to-dismiss used to assign style.transform directly,
+     which on a tablet would drop the centring and throw the sheet at the
+     left edge for the duration of the drag. It sets --mb-sheet-y now. */
+  --mb-sheet-x: 0px;
+  --mb-sheet-y: 100%;
+
+  transform: translateX(var(--mb-sheet-x)) translateY(var(--mb-sheet-y));
   visibility: hidden;
   transition: transform var(--mb-motion-sheet), visibility 0s linear var(--mb-motion-sheet);
 }
 
 .mb-sheet.open {
-  transform: translateY(0);
+  --mb-sheet-y: 0px;
+
   visibility: visible;
   transition: transform var(--mb-motion-sheet), visibility 0s linear 0s;
 }
@@ -1123,7 +1278,7 @@ body.mb-selecting {
   margin-bottom: var(--mb-sp-2);
 }
 .mb-state-body { font-size: 14px; margin-bottom: var(--mb-sp-4); }
-.mb-state.mb-state-error svg { color: var(--mb-enamel-red); }
+.mb-state.mb-state-error svg { color: var(--mb-enamel-red-ink); }
 
 .mb-state-retry {
   display: inline-flex;
@@ -1190,7 +1345,7 @@ body.mb-selecting {
 }
 .mb-activity-icon svg { width: 18px; height: 18px; }
 .mb-activity-icon.mb-accent-safety { background: var(--mb-safety-faint); color: var(--mb-safety-dark); }
-.mb-activity-icon.mb-accent-blue { background: var(--mb-enamel-blue-bg); color: var(--mb-enamel-blue); }
+.mb-activity-icon.mb-accent-blue { background: var(--mb-enamel-blue-bg); color: var(--mb-enamel-blue-ink); }
 .mb-activity-body { flex: 1 1 auto; min-width: 0; }
 
 /* Staggered entrance for list items — each card's `--i` custom property
@@ -1223,7 +1378,7 @@ body.mb-selecting {
 /* Offline / no-connection banner injected by MApp.Api on a failed call */
 .mb-offline-banner {
   background: var(--mb-enamel-red-bg);
-  color: var(--mb-enamel-red);
+  color: var(--mb-enamel-red-ink);
   border-radius: var(--mb-radius-md);
   padding: var(--mb-sp-3) var(--mb-sp-4);
   font-size: 14px;

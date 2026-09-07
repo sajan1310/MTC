@@ -422,7 +422,7 @@ MApp.Util = {
   pendingSyncBannerHtml(count, singular, plural) {
     const noun = count === 1 ? singular : (plural || `${singular}s`);
     return `
-      <div class="mb-offline-banner" style="background:var(--mb-enamel-blue-bg);color:var(--mb-enamel-blue);grid-column:1 / -1;">
+      <div class="mb-offline-banner" style="background:var(--mb-enamel-blue-bg);color:var(--mb-enamel-blue-ink);grid-column:1 / -1;">
         <span>${count} ${noun} waiting to sync</span>
       </div>`;
   },
@@ -1241,7 +1241,10 @@ MApp.Sheet = {
       if (!d || e.pointerId !== d.pointerId) return;
       const dy = Math.max(0, e.clientY - d.startY);
       d.dy = dy;
-      d.sheet.style.transform = `translateY(${dy}px)`;
+      // Sets the Y variable, not transform: the sheet composes its
+      // transform from --mb-sheet-x (frame centring on a tablet) and
+      // --mb-sheet-y, and assigning transform here would discard the X.
+      d.sheet.style.setProperty('--mb-sheet-y', dy + 'px');
     });
 
     const end = e => {
@@ -1249,7 +1252,7 @@ MApp.Sheet = {
       if (!d || e.pointerId !== d.pointerId) return;
       this._drag = null;
       d.sheet.classList.remove('mb-dragging');
-      d.sheet.style.transform = '';
+      d.sheet.style.removeProperty('--mb-sheet-y');
       if (d.dy > MApp.Sheet.DRAG_DISMISS_PX) {
         MApp.Haptics.light();
         MApp.Sheet.close(d.sheet.id);
@@ -1908,7 +1911,7 @@ MApp.Stock = {
         </div>
       `).join('');
     } catch (err) {
-      panel.innerHTML = adjustBtn + `<div class="mb-text-sm" style="color:var(--mb-enamel-red);">Couldn't load movement history: ${MApp.Util.escapeHtml(err.message || '')}</div>`;
+      panel.innerHTML = adjustBtn + `<div class="mb-text-sm" style="color:var(--mb-enamel-red-ink);">Couldn't load movement history: ${MApp.Util.escapeHtml(err.message || '')}</div>`;
     }
   },
 
@@ -2279,7 +2282,7 @@ MApp.Production = {
             <div class="mb-mt-2"><span class="mb-chip ${MApp.Util.statusChipClass(l.status)}">${MApp.Util.escapeHtml(l.status || 'Pending')}</span></div>
             <div class="mb-mt-2" style="display:flex; gap:var(--mb-sp-4);">
               <button type="button" class="mb-btn-text" style="padding:0;min-height:auto;" data-lot-action="edit" data-lot-index="${i}">Edit</button>
-              <button type="button" class="mb-btn-text" style="padding:0;min-height:auto;color:var(--mb-enamel-red);" data-lot-action="delete" data-lot-index="${i}">Delete</button>
+              <button type="button" class="mb-btn-text" style="padding:0;min-height:auto;color:var(--mb-enamel-red-ink);" data-lot-action="delete" data-lot-index="${i}">Delete</button>
             </div>
           </div>`;
       }).join('') + MApp.Paging.moreHtml(page);
@@ -3384,7 +3387,7 @@ MApp.Dispatch = {
           <button type="button" class="mb-btn mb-btn-secondary mb-mt-2" style="min-height:40px;" data-print-idx="${idx}">Print Challan</button>
           <div class="mb-mt-2" style="display:flex; gap:var(--mb-sp-4);">
             <button type="button" class="mb-btn-text" style="padding:0;min-height:auto;" data-dispatch-action="edit" data-dispatch-number="${MApp.Util.escapeHtml(d.dispatchNumber)}">Edit</button>
-            <button type="button" class="mb-btn-text" style="padding:0;min-height:auto;color:var(--mb-enamel-red);" data-dispatch-action="delete" data-dispatch-number="${MApp.Util.escapeHtml(d.dispatchNumber)}">Delete</button>
+            <button type="button" class="mb-btn-text" style="padding:0;min-height:auto;color:var(--mb-enamel-red-ink);" data-dispatch-action="delete" data-dispatch-number="${MApp.Util.escapeHtml(d.dispatchNumber)}">Delete</button>
           </div>
         </div>
       `).join('') + MApp.Paging.moreHtml(page);
@@ -3634,7 +3637,7 @@ MApp.Dispatch = {
           <label>Quantity</label>
           <input type="number" inputmode="decimal" min="0" step="1" value="${line.qty || ''}" oninput="MApp.Dispatch.updateLineQty(${i}, this.value)">
         </div>
-        ${this.lines.length > 1 ? `<button type="button" class="mb-btn-text mb-mt-2" style="padding:0;min-height:auto;color:var(--mb-enamel-red);" onclick="MApp.Dispatch.removeLine(${i})">Remove</button>` : ''}
+        ${this.lines.length > 1 ? `<button type="button" class="mb-btn-text mb-mt-2" style="padding:0;min-height:auto;color:var(--mb-enamel-red-ink);" onclick="MApp.Dispatch.removeLine(${i})">Remove</button>` : ''}
       </div>
     `).join('');
   },
@@ -3833,7 +3836,7 @@ MApp.Returns = {
         </div>
         <div class="mb-mt-2" style="display:flex; gap:var(--mb-sp-4);">
           <button type="button" class="mb-btn-text" style="padding:0;min-height:auto;" data-return-action="edit" data-return-index="${i}">Edit</button>
-          <button type="button" class="mb-btn-text" style="padding:0;min-height:auto;color:var(--mb-enamel-red);" data-return-action="delete" data-return-index="${i}">Delete</button>
+          <button type="button" class="mb-btn-text" style="padding:0;min-height:auto;color:var(--mb-enamel-red-ink);" data-return-action="delete" data-return-index="${i}">Delete</button>
         </div>
       </div>
     `).join('');
@@ -3995,7 +3998,7 @@ MApp.Returns = {
           <label>Reason</label>
           <input type="text" placeholder="e.g. Defective, Excess, Wrong item" value="${MApp.Util.escapeHtml(line.reason || '')}" oninput="MApp.Returns.updateLine(${i}, 'reason', this.value)">
         </div>
-        ${this.lines.length > 1 ? `<button type="button" class="mb-btn-text mb-mt-2" style="padding:0;min-height:auto;color:var(--mb-enamel-red);" onclick="MApp.Returns.removeLine(${i})">Remove</button>` : ''}
+        ${this.lines.length > 1 ? `<button type="button" class="mb-btn-text mb-mt-2" style="padding:0;min-height:auto;color:var(--mb-enamel-red-ink);" onclick="MApp.Returns.removeLine(${i})">Remove</button>` : ''}
       </div>
     `).join('');
   },
@@ -4270,10 +4273,10 @@ MApp.PO = {
           </div>
         </div>
         <div class="mb-card-sub" style="margin-top:4px;">Qty: ${MApp.Util.formatQty(po.totalQty)} · Total: ${MApp.Util.formatCurrency(po.grandTotal)}</div>
-        ${pendingLines ? `<div class="mb-card-sub" style="margin-top:4px;color:var(--mb-enamel-amber);">${pendingLines}</div>` : ''}
+        ${pendingLines ? `<div class="mb-card-sub" style="margin-top:4px;color:var(--mb-enamel-amber-ink);">${pendingLines}</div>` : ''}
         <div class="mb-mt-2" style="display:flex; gap:var(--mb-sp-4);">
           <button type="button" class="mb-btn-text" style="padding:0;min-height:auto;" data-po-action="edit" data-po-index="${idx}">Edit</button>
-          <button type="button" class="mb-btn-text" style="padding:0;min-height:auto;color:var(--mb-enamel-red);" data-po-action="delete" data-po-index="${idx}">Delete</button>
+          <button type="button" class="mb-btn-text" style="padding:0;min-height:auto;color:var(--mb-enamel-red-ink);" data-po-action="delete" data-po-index="${idx}">Delete</button>
         </div>
       </div>`;
     }).join('') + MApp.Paging.moreHtml(page);
@@ -4515,7 +4518,7 @@ MApp.PO = {
           <label>Rate (per unit)</label>
           <input type="number" inputmode="decimal" min="0" step="0.01" value="${line.price || ''}" oninput="MApp.PO.updateLine(${i}, 'price', this.value)">
         </div>
-        ${this.lines.length > 1 ? `<button type="button" class="mb-btn-text mb-mt-2" style="padding:0;min-height:auto;color:var(--mb-enamel-red);" onclick="MApp.PO.removeLine(${i})">Remove</button>` : ''}
+        ${this.lines.length > 1 ? `<button type="button" class="mb-btn-text mb-mt-2" style="padding:0;min-height:auto;color:var(--mb-enamel-red-ink);" onclick="MApp.PO.removeLine(${i})">Remove</button>` : ''}
       </div>
     `).join('');
   },
@@ -4755,7 +4758,7 @@ MApp.Bill = {
         <div class="mb-card-sub" style="margin-top:4px;">${poRef}</div>
         <div class="mb-mt-2" style="display:flex; gap:var(--mb-sp-4);">
           <button type="button" class="mb-btn-text" style="padding:0;min-height:auto;" data-bill-action="edit" data-bill-index="${idx}">Edit</button>
-          <button type="button" class="mb-btn-text" style="padding:0;min-height:auto;color:var(--mb-enamel-red);" data-bill-action="delete" data-bill-index="${idx}">Delete</button>
+          <button type="button" class="mb-btn-text" style="padding:0;min-height:auto;color:var(--mb-enamel-red-ink);" data-bill-action="delete" data-bill-index="${idx}">Delete</button>
         </div>
       </div>`;
     }).join('') + MApp.Paging.moreHtml(page);
@@ -4940,7 +4943,7 @@ MApp.Bill = {
           <label>GST %</label>
           <input type="number" inputmode="decimal" min="0" step="0.01" value="${line.gst != null ? line.gst : 18}" oninput="MApp.Bill.updateLine(${i}, 'gst', this.value)">
         </div>
-        ${this.lines.length > 1 ? `<button type="button" class="mb-btn-text mb-mt-2" style="padding:0;min-height:auto;color:var(--mb-enamel-red);" onclick="MApp.Bill.removeLine(${i})">Remove</button>` : ''}
+        ${this.lines.length > 1 ? `<button type="button" class="mb-btn-text mb-mt-2" style="padding:0;min-height:auto;color:var(--mb-enamel-red-ink);" onclick="MApp.Bill.removeLine(${i})">Remove</button>` : ''}
       </div>
     `).join('');
   },
@@ -5188,7 +5191,7 @@ MApp.Issue = {
           </div>
         </div>
         ${r.reference ? `<div class="mb-card-sub mb-mt-2">Ref: ${MApp.Util.escapeHtml(r.reference)}</div>` : ''}
-        <div class="mb-mt-2"><button type="button" class="mb-btn-text" style="padding:0;min-height:auto;color:var(--mb-enamel-red);" data-issue-index="${i}">Delete</button></div>
+        <div class="mb-mt-2"><button type="button" class="mb-btn-text" style="padding:0;min-height:auto;color:var(--mb-enamel-red-ink);" data-issue-index="${i}">Delete</button></div>
       </div>`;
     }).join('') + MApp.Paging.moreHtml(page);
 
@@ -5274,7 +5277,7 @@ MApp.Issue = {
           <label>Rate (optional)</label>
           <input type="number" inputmode="decimal" min="0" step="0.01" value="${line.rate === '' ? '' : line.rate}" oninput="MApp.Issue.updateLine(${i}, 'rate', this.value)">
         </div>
-        ${this.lines.length > 1 ? `<button type="button" class="mb-btn-text mb-mt-2" style="padding:0;min-height:auto;color:var(--mb-enamel-red);" onclick="MApp.Issue.removeLine(${i})">Remove</button>` : ''}
+        ${this.lines.length > 1 ? `<button type="button" class="mb-btn-text mb-mt-2" style="padding:0;min-height:auto;color:var(--mb-enamel-red-ink);" onclick="MApp.Issue.removeLine(${i})">Remove</button>` : ''}
       </div>
     `).join('');
   },
@@ -5450,7 +5453,7 @@ MApp.Wastage = {
             <div class="mb-card-sub">${MApp.Util.escapeHtml(r.date || '')}</div>
           </div>
         </div>
-        <div class="mb-mt-2"><button type="button" class="mb-btn-text" style="padding:0;min-height:auto;color:var(--mb-enamel-red);" data-wastage-index="${i}">Delete</button></div>
+        <div class="mb-mt-2"><button type="button" class="mb-btn-text" style="padding:0;min-height:auto;color:var(--mb-enamel-red-ink);" data-wastage-index="${i}">Delete</button></div>
       </div>`;
     }).join('') + MApp.Paging.moreHtml(page);
 
@@ -5532,7 +5535,7 @@ MApp.Wastage = {
           <label>Reason</label>
           <input type="text" value="${MApp.Util.escapeHtml(line.reason || '')}" oninput="MApp.Wastage.updateLineText(${i}, 'reason', this.value)">
         </div>
-        ${this.lines.length > 1 ? `<button type="button" class="mb-btn-text mb-mt-2" style="padding:0;min-height:auto;color:var(--mb-enamel-red);" onclick="MApp.Wastage.removeLine(${i})">Remove</button>` : ''}
+        ${this.lines.length > 1 ? `<button type="button" class="mb-btn-text mb-mt-2" style="padding:0;min-height:auto;color:var(--mb-enamel-red-ink);" onclick="MApp.Wastage.removeLine(${i})">Remove</button>` : ''}
       </div>
     `).join('');
   },
@@ -5831,7 +5834,7 @@ MApp.Items = {
           <label>Rate</label>
           <input type="number" inputmode="decimal" step="any" value="${row.rate != null ? row.rate : ''}" oninput="MApp.Items.updateVendorRow(${i}, 'rate', this.value)">
         </div>
-        <button type="button" class="mb-btn-text mb-mt-2" style="padding:0;min-height:auto;color:var(--mb-enamel-red);" onclick="MApp.Items.removeVendorRow(${i})">Remove</button>
+        <button type="button" class="mb-btn-text mb-mt-2" style="padding:0;min-height:auto;color:var(--mb-enamel-red-ink);" onclick="MApp.Items.removeVendorRow(${i})">Remove</button>
       </div>
     `).join('');
   },
@@ -6459,7 +6462,7 @@ MApp.Admin = {
       const actions = isSelf ? '<div class="mb-mt-2 mb-text-sm mb-text-steel">This is you</div>' : `
         <div class="mb-mt-2" style="display:flex; gap:var(--mb-sp-4);">
           <button type="button" class="mb-btn-text" style="padding:0;min-height:auto;" data-admin-action="role" data-admin-index="${i}">Change Role</button>
-          <button type="button" class="mb-btn-text" style="padding:0;min-height:auto;${u.active ? 'color:var(--mb-enamel-red);' : ''}" data-admin-action="${u.active ? 'deactivate' : 'reactivate'}" data-admin-index="${i}">${u.active ? 'Deactivate' : 'Reactivate'}</button>
+          <button type="button" class="mb-btn-text" style="padding:0;min-height:auto;${u.active ? 'color:var(--mb-enamel-red-ink);' : ''}" data-admin-action="${u.active ? 'deactivate' : 'reactivate'}" data-admin-index="${i}">${u.active ? 'Deactivate' : 'Reactivate'}</button>
         </div>`;
       return `
         <div class="mb-card">
@@ -6831,7 +6834,7 @@ MApp.Process = {
           <label>Remarks (optional)</label>
           <input type="text" value="${MApp.Util.escapeHtml(line.remarks || '')}" oninput="MApp.Process.updateLineText(${i}, 'remarks', this.value)">
         </div>
-        ${this.lines.length > 1 ? `<button type="button" class="mb-btn-text mb-mt-2" style="padding:0;min-height:auto;color:var(--mb-enamel-red);" onclick="MApp.Process.removeLine(${i})">Remove</button>` : ''}
+        ${this.lines.length > 1 ? `<button type="button" class="mb-btn-text mb-mt-2" style="padding:0;min-height:auto;color:var(--mb-enamel-red-ink);" onclick="MApp.Process.removeLine(${i})">Remove</button>` : ''}
       </div>
     `).join('');
   },
@@ -7198,7 +7201,7 @@ MApp.BOM = {
           <label>Color (optional)</label>
           <input type="text" value="${MApp.Util.escapeHtml(c.color || '')}" oninput="MApp.BOM.updateComponentText(${i}, 'color', this.value)">
         </div>
-        ${this.components.length > 1 ? `<button type="button" class="mb-btn-text mb-mt-2" style="padding:0;min-height:auto;color:var(--mb-enamel-red);" onclick="MApp.BOM.removeComponent(${i})">Remove</button>` : ''}
+        ${this.components.length > 1 ? `<button type="button" class="mb-btn-text mb-mt-2" style="padding:0;min-height:auto;color:var(--mb-enamel-red-ink);" onclick="MApp.BOM.removeComponent(${i})">Remove</button>` : ''}
       </div>
     `).join('');
   },
@@ -7264,7 +7267,7 @@ MApp.BOM = {
           <label>Contractor (optional)</label>
           <input type="text" value="${MApp.Util.escapeHtml(c.contractorName || '')}" oninput="MApp.BOM.updateCostText(${i}, 'contractorName', this.value)">
         </div>
-        <button type="button" class="mb-btn-text mb-mt-2" style="padding:0;min-height:auto;color:var(--mb-enamel-red);" onclick="MApp.BOM.removeCost(${i})">Remove</button>
+        <button type="button" class="mb-btn-text mb-mt-2" style="padding:0;min-height:auto;color:var(--mb-enamel-red-ink);" onclick="MApp.BOM.removeCost(${i})">Remove</button>
       </div>
     `).join('');
   },
@@ -7416,10 +7419,10 @@ MApp.SyncIssues = {
             </div>
             <span class="mb-chip ${isFailed ? 'mb-chip-cancelled' : 'mb-chip-pending'}">${isFailed ? 'Failed' : 'Waiting'}</span>
           </div>
-          ${isFailed && entry.lastError ? `<div class="mb-card-sub mb-mt-2" style="color:var(--mb-enamel-red);">${MApp.Util.escapeHtml(entry.lastError)}</div>` : ''}
+          ${isFailed && entry.lastError ? `<div class="mb-card-sub mb-mt-2" style="color:var(--mb-enamel-red-ink);">${MApp.Util.escapeHtml(entry.lastError)}</div>` : ''}
           <div class="mb-flex-row mb-mt-2" style="gap:var(--mb-sp-3);">
             ${isFailed ? `<button type="button" class="mb-btn-text" style="padding:0;min-height:auto;" data-retry="${entry.id}">Retry</button>` : ''}
-            <button type="button" class="mb-btn-text" style="padding:0;min-height:auto;color:var(--mb-enamel-red);" data-discard="${entry.id}">Discard</button>
+            <button type="button" class="mb-btn-text" style="padding:0;min-height:auto;color:var(--mb-enamel-red-ink);" data-discard="${entry.id}">Discard</button>
           </div>
         </div>`;
     }).join('');

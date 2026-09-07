@@ -15,7 +15,12 @@
 
   <!-- PWA installability (Phase 5) -->
   <link rel="manifest" href="{{ url_for('static', filename='erp/manifest-mobile.json') }}">
-  <meta name="theme-color" content="#14181c">
+  <!-- Two, so the OS chrome around the PWA follows the theme the app is
+       actually rendering. A single dark value leaves a near-black status
+       bar sitting above a near-white app in light mode. -->
+  <meta name="theme-color" content="#14181c" media="(prefers-color-scheme: light)">
+  <meta name="theme-color" content="#0c1014" media="(prefers-color-scheme: dark)">
+  <meta name="color-scheme" content="light dark">
   <link rel="icon" href="{{ url_for('static', filename='erp/icons/favicon.ico') }}">
   <link rel="apple-touch-icon" href="{{ url_for('static', filename='erp/icons/apple-touch-icon.png') }}">
 
