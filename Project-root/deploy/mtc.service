@@ -36,6 +36,12 @@ Group=mtc
 # never starts. Same for backups/, which backup_service.py resolves to the
 # REPO ROOT (one level up from here), not to Project-root.
 WorkingDirectory=/opt/mtc/src/Project-root
+
+# Declared BEFORE EnvironmentFile so /etc/mtc/mtc.env can override it, and so
+# the unit still starts on a host whose env file predates this setting --
+# systemd substitutes an empty string for an unset variable, and
+# `--threads ""` is a startup failure.
+Environment=WEB_THREADS=4
 EnvironmentFile=/etc/mtc/mtc.env
 
 # Migration scripts print Unicode status characters. systemd gives a service
@@ -53,9 +59,25 @@ Environment=PYTHONUNBUFFERED=1
 # erp.migrations_applied, so a no-op start costs one query.
 ExecStartPre=/opt/mtc/venv/bin/python migrations/erp/runner.py
 
+# --threads is what lets a worker serve more than one request at a time.
+# Without it gunicorn uses sync workers, so WEB_CONCURRENCY alone IS the
+# concurrency limit: four workers meant four requests in flight, and the
+# fifth waited in the socket backlog however idle the machine was.
+#
+# This app waits on Postgres far more than it computes, so threads convert
+# almost directly into concurrency. gunicorn switches to the gthread worker
+# automatically when --threads > 1.
+#
+# The ceiling that matters is per worker: WEB_THREADS must stay <=
+# DB_POOL_MAX (mtc.env.example ships 6, measured), or threads queue on the
+# pool instead of on the socket -- which is worse, because
+# ThreadedConnectionPool.getconn() RAISES when the pool is full rather than
+# waiting. Total connections stay WEB_CONCURRENCY x DB_POOL_MAX and must
+# remain under Postgres max_connections (provision.sh sets 120).
 ExecStart=/opt/mtc/venv/bin/gunicorn wsgi:app \
     --bind 127.0.0.1:8000 \
     --workers ${WEB_CONCURRENCY} \
+    --threads ${WEB_THREADS} \
     --timeout 120 \
     --graceful-timeout 30 \
     --max-requests 1000 \
