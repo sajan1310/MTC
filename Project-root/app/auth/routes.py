@@ -1140,4 +1140,19 @@ def logout():
 
     logout_user()
     session.clear()
-    return redirect(url_for("auth.login"))
+
+    # Build the response explicitly so we can delete the remember-me cookie
+    # on it.  logout_user() marks the session with _remember="clear" so
+    # Flask-Login's after_request hook will remove the cookie -- but
+    # session.clear() above wipes that marker, so the cookie survives and
+    # the user is silently re-authenticated on the very next request.
+    # Deleting it here, on the response object itself, is unconditional and
+    # does not depend on any session state.
+    resp = redirect(url_for("auth.login"))
+    remember_cookie = current_app.config.get("REMEMBER_COOKIE_NAME", "remember_token")
+    resp.delete_cookie(
+        remember_cookie,
+        path=current_app.config.get("REMEMBER_COOKIE_PATH", "/"),
+        domain=current_app.config.get("REMEMBER_COOKIE_DOMAIN"),
+    )
+    return resp
