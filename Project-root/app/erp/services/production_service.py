@@ -100,6 +100,69 @@ def _coerce_json_list(value, message: str) -> list:
     return value if isinstance(value, list) else []
 
 
+def _sanitize_color_splits(raw, color: str) -> list:
+    """One primary colorBreakdown entry's cross-axis allocation cells --
+    the operator's answer to "how much of THIS color went with which
+    value of the other axis". Shape and rationale are documented on
+    warehouse_service._explicit_split_cells, the only consumer.
+
+    Stored verbatim rather than recomputed, because it is recorded fact
+    about a physical run and not something the server can re-derive from
+    the quantities -- which is the entire reason the field exists.
+    """
+    cells = []
+    for raw_cell in _coerce_json_list(raw, f'Invalid colour allocation for "{color}".'):
+        if not isinstance(raw_cell, dict):
+            continue
+        axes = {
+            str(k or "").strip(): str(v or "").strip()
+            for k, v in (raw_cell.get("axes") or {}).items()
+            if str(k or "").strip() and str(v or "").strip()
+        }
+        if not axes:
+            continue
+        cells.append(
+            {
+                "qty": _validate_number(raw_cell.get("qty"), -10000000, 10000000),
+                "axes": axes,
+            }
+        )
+    return cells
+
+
+def _validate_color_splits(color_breakdown: list) -> None:
+    """A cross-axis allocation must describe the WHOLE lot or none of it.
+
+    warehouse_service._lot_split_axis_keys already discards a half-filled
+    allocation and falls back to inference, which keeps the pool safe --
+    but it does so silently, and an operator who filled in most of a grid
+    would never learn their work was dropped. Rejecting here turns that
+    into an error at the point of entry, while the numbers are still on
+    screen and still fixable.
+    """
+    primaries = [c for c in color_breakdown if c["countsTowardTotal"]]
+    with_splits = [c for c in primaries if c.get("splits")]
+    if not with_splits:
+        return
+
+    missing = [c for c in primaries if not c.get("splits")]
+    if missing:
+        listed = ", ".join(f'"{c["color"]}"' for c in missing[:5])
+        raise ValueError(
+            f"Colour allocation is incomplete -- nothing recorded for {listed}. "
+            "Fill in every row of the allocation grid, or clear it entirely."
+        )
+
+    for c in with_splits:
+        total = sum(cell["qty"] for cell in c["splits"])
+        if abs(total - c["qty"]) > 0.0001:
+            raise ValueError(
+                f'Colour allocation for "{c["color"]}" adds up to {total:g}, '
+                f"but that colour's quantity is {c['qty']:g}. "
+                "Adjust the allocation so each row matches its colour's quantity."
+            )
+
+
 def _matches_expected(
     product_id: str, qty: float, expected_product_id, expected_qty
 ) -> bool:
@@ -667,8 +730,18 @@ def save_production(conn, cur, form_data):
                 "countsTowardTotal": c.get("countsTowardTotal") is not False,
                 "axisKey": str(c.get("axisKey") or "").strip(),
             }
+            # Only the quantity-bearing axis carries an allocation: a cell
+            # says how much of ONE primary color went with a given value of
+            # another axis, so the same field on a non-primary entry would
+            # be describing a quantity that never counted toward the lot.
+            if entry["countsTowardTotal"]:
+                cells = _sanitize_color_splits(c.get("splits"), entry["color"])
+                if cells:
+                    entry["splits"] = cells
             if entry["color"]:
                 color_breakdown.append(entry)
+
+        _validate_color_splits(color_breakdown)
 
         if not color_breakdown:
             raise ValueError(

@@ -201,6 +201,86 @@ def _compose_lot_color_key(
     )
 
 
+# A cell quantity is compared against a primary entry's own qty, both of
+# them operator-typed decimals that have made a round trip through JSON.
+_SPLIT_QTY_TOLERANCE = 0.0001
+
+
+def _explicit_split_cells(primary_entry: dict) -> list:
+    """One primary entry's operator-recorded cross-axis allocation, as a
+    list of (qty, {axisKeyLower: color}) cells -- or [] when the entry
+    carries none.
+
+    Shape on the wire (built by production.js#getCheckedColorQtys and
+    preserved verbatim by production_service.save_production):
+
+        {"color": "Blue-White", "qty": 10, "countsTowardTotal": true,
+         "axisKey": "pool:painted frame starlight 16 inch d/gaddi",
+         "splits": [{"qty": 6, "axes": {"pool:fitted rim 16 inch": "BCP"}},
+                    {"qty": 4, "axes": {"pool:fitted rim 16 inch": "Black"}}]}
+
+    A cell's `axes` is a MAP rather than a single color so the one stored
+    shape also describes a lot splitting on 2+ axes at once (such a cell
+    names one color per axis). The Production form only fills one axis
+    today; nothing here assumes that, so widening the form later needs no
+    change on this side.
+    """
+    cells = []
+    for raw in primary_entry.get("splits") or []:
+        raw = raw or {}
+        axes = {
+            str(k or "").strip().lower(): str(v or "").strip()
+            for k, v in (raw.get("axes") or {}).items()
+            if str(k or "").strip() and str(v or "").strip()
+        }
+        if not axes:
+            continue
+        try:
+            qty = float(raw.get("qty") or 0)
+        except (TypeError, ValueError):
+            continue
+        cells.append((qty, axes))
+    return cells
+
+
+def _lot_split_axis_keys(primary_entries: list) -> set | None:
+    """The axis keys a lot's explicit allocation splits on, or None when
+    the lot has no usable allocation and Pass 1 must fall back to
+    inferring one.
+
+    An allocation is usable only when it reconciles with what the lot
+    already claims to have produced: EVERY primary entry carries cells,
+    and each entry's cells sum to that entry's own qty. Anything less --
+    a half-filled grid, a typo'd cell, an allocation left stale when a
+    color was later unchecked -- is discarded whole rather than partly
+    honored.
+
+    Discarding whole is the conservative direction on purpose. A partial
+    allocation credits the pool a different total than the lot says it
+    made, and that discrepancy is invisible at the point it happens: it
+    surfaces later as a bucket nobody can reconcile against a physical
+    count. Falling back to the bare-color inference is recoverable and
+    self-announcing (the bare buckets are visibly wrong); crediting a
+    confidently-wrong composite is neither.
+    """
+    if not primary_entries:
+        return None
+    axis_keys: set = set()
+    for entry in primary_entries:
+        cells = _explicit_split_cells(entry)
+        if not cells:
+            return None
+        try:
+            entry_qty = float(entry.get("qty") or 0)
+        except (TypeError, ValueError):
+            return None
+        if abs(sum(qty for qty, _ in cells) - entry_qty) > _SPLIT_QTY_TOLERANCE:
+            return None
+        for _, axes in cells:
+            axis_keys.update(axes)
+    return axis_keys or None
+
+
 def _color_names_match(a, b) -> bool:
     """Same hyphen/slash/whitespace-segment substring heuristic as
     production.js's client-side _colorNamesMatch ("Red" matches
@@ -618,30 +698,81 @@ def _build_warehouse_pool_buckets(
                     # correctly fall back to per-entry crediting -- the exact
                     # "no stored cross-axis pairing to tell which goes with
                     # which" case this whole block is guarding.
-                    axis_counts: dict = {}
-                    for entry in independent:
-                        axis_key = (
-                            str(entry.get("axisKey") or "").strip().lower()
-                            or "__no_axis_key__"
-                        )
-                        axis_counts[axis_key] = axis_counts.get(axis_key, 0) + 1
+                    axis_order = axis_order_by_process.get(process_id.lower())
 
-                    if not any(count > 1 for count in axis_counts.values()):
-                        # One composite bucket PER primary color, each
-                        # carrying its own primary qty. An independent axis
-                        # holding a single color for the whole lot (Rim =
-                        # Black on all 40 units) pairs with every primary
-                        # color -- which goes with which is not in question
-                        # when that axis only has one.
-                        axis_order = axis_order_by_process.get(process_id.lower())
-                        for primary_entry in primary_entries:
-                            credit_color(
-                                _compose_lot_color_key(
-                                    primary_entry, independent, axis_order
-                                ),
-                                primary_entry.get("qty"),
+                    # An allocation the operator recorded ON THE LOT answers
+                    # the pairing question outright, so it is honored before
+                    # the inference below is attempted at all -- including on
+                    # the shapes that inference deliberately refuses. Four
+                    # primary colors against a two-value rim axis has 745
+                    # distinct readings that all satisfy the row and column
+                    # totals; no rule over the stored quantities can pick the
+                    # right one, because which frame got which rim is a fact
+                    # about the shop floor and not about the numbers. That is
+                    # what this field carries. See _lot_split_axis_keys for
+                    # when a stored allocation counts as usable.
+                    split_axis_keys = _lot_split_axis_keys(primary_entries)
+
+                    if split_axis_keys:
+                        # An independent axis NOT being split still holds one
+                        # value for the whole lot, so it pairs with every
+                        # cell -- the same reasoning the inference branch
+                        # applies to `independent` as a whole.
+                        fixed = [
+                            e
+                            for e in independent
+                            if (
+                                str(e.get("axisKey") or "").strip().lower()
+                                or "__no_axis_key__"
                             )
+                            not in split_axis_keys
+                        ]
+                        for primary_entry in primary_entries:
+                            for cell_qty, cell_axes in _explicit_split_cells(
+                                primary_entry
+                            ):
+                                # Synthesized entries, shaped exactly like a
+                                # colorBreakdown row, so the canonical
+                                # recipe-order segment sort applies to an
+                                # allocated cell identically to an inferred
+                                # one -- an allocated lot and an inferred lot
+                                # of the same real combination must land in
+                                # ONE bucket, not two differently-ordered ones.
+                                cell_entries = [
+                                    {"axisKey": k, "color": v}
+                                    for k, v in cell_axes.items()
+                                ]
+                                credit_color(
+                                    _compose_lot_color_key(
+                                        primary_entry, fixed + cell_entries, axis_order
+                                    ),
+                                    cell_qty,
+                                )
                         combined = True
+                    else:
+                        axis_counts: dict = {}
+                        for entry in independent:
+                            axis_key = (
+                                str(entry.get("axisKey") or "").strip().lower()
+                                or "__no_axis_key__"
+                            )
+                            axis_counts[axis_key] = axis_counts.get(axis_key, 0) + 1
+
+                        if not any(count > 1 for count in axis_counts.values()):
+                            # One composite bucket PER primary color, each
+                            # carrying its own primary qty. An independent axis
+                            # holding a single color for the whole lot (Rim =
+                            # Black on all 40 units) pairs with every primary
+                            # color -- which goes with which is not in question
+                            # when that axis only has one.
+                            for primary_entry in primary_entries:
+                                credit_color(
+                                    _compose_lot_color_key(
+                                        primary_entry, independent, axis_order
+                                    ),
+                                    primary_entry.get("qty"),
+                                )
+                            combined = True
 
                 if not combined:
                     for entry in color_breakdown:

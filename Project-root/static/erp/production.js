@@ -1966,6 +1966,11 @@ App.Production = {
 
     checklistEl.innerHTML = '';
     this._customColorGroupOptions = [];
+    // A different process means different axes, so any allocation typed
+    // against the old checklist describes colors that no longer exist.
+    // The edit path re-seeds this from the saved lot afterwards.
+    this.clearAllocationValues();
+    this.refreshAllocationGrid();
 
     let colors = [];
     if (processId) {
@@ -3016,6 +3021,10 @@ App.Production = {
       // have to be re-evaluated whenever that count changes.
       this._refreshAutoSyncedFallbackRows();
       this._pruneRedundantMatrixColumns();
+      // After the cascade, for the same reason: the allocation grid's rows
+      // and columns ARE the settled checklist, so it must be built from the
+      // finished state rather than a half-synced one.
+      this.refreshAllocationGrid();
       await this.refreshPoolAvailability();
     }
   },
@@ -3146,14 +3155,28 @@ App.Production = {
           this.onColorQtyChanged(r, false);
         });
     }
+
+    // Top-level call only, so the grid is rebuilt once per edit rather
+    // than once per row the cascade above re-synced.
+    if (isUserEdit) this.refreshAllocationGrid();
   },
 
-  // { color, qty, isCustom, countsTowardTotal, axisKey } for every
-  // checked color with a numeric quantity entered. Strict rule: only the
-  // Primary group's checked colors ever count toward the lot total (no
-  // exception for an unclassified "Other" leftover bucket) -- everything
-  // else is recorded per-color but never added in.
-  getCheckedColorQtys() {
+  // ── Cross-axis allocation grid ───────────────────────────────────────
+  // When a lot checks 2+ colors on ONE non-primary axis, its own numbers
+  // no longer say which primary color went with which of them. Four frame
+  // colors of 10 against a rim axis of 24/16 satisfy hundreds of different
+  // pairings, so warehouse_service refuses to guess and credits bare
+  // single-color buckets instead -- phantom stock that then shows up as
+  // pickable colors in the NEXT stage's checklist and drives real buckets
+  // negative when someone picks one. The grid records the pairing the
+  // operator actually ran, which is the only place that fact exists.
+
+  // { color, qty, isCustom, countsTowardTotal, axisKey } for every checked
+  // color with a numeric quantity entered -- the unallocated reading, used
+  // by everything that only cares about per-color quantities. Split out
+  // from getCheckedColorQtys so the allocation shape can be derived from
+  // it without recursing back through the version that embeds allocations.
+  _rawCheckedColorQtys() {
     return $$('#productionColorChecklist .production-color-row')
       .filter(row => row.querySelector('.production-color-check')?.checked)
       .map(row => ({
@@ -3163,6 +3186,248 @@ App.Production = {
         countsTowardTotal: row.dataset.primary !== 'false',
         axisKey: row.dataset.group || ''
       }));
+  },
+
+  // What this lot needs allocated, or null when nothing does:
+  //   { primaries: [...], axisKey, columns: [...] }
+  // `{ tooMany: true }` for the one shape a 2-D grid cannot express --
+  // two separate axes each carrying 2+ values, which needs a cube.
+  _allocationShape() {
+    const checked = this._rawCheckedColorQtys().filter(c => c.qty > 0 && c.color);
+    const primaries = checked.filter(c => c.countsTowardTotal);
+    if (primaries.length === 0) return null;
+    const primaryColors = primaries.map(p => p.color);
+
+    const byAxis = new Map();
+    checked.filter(c => !c.countsTowardTotal).forEach(c => {
+      const key = c.axisKey || '';
+      if (!byAxis.has(key)) byAxis.set(key, []);
+      byAxis.get(key).push(c);
+    });
+
+    // A MIRROR axis is the primary axis restated -- it carries a partner
+    // for EVERY primary color (Blue/Orange/Pink against Blue-White/
+    // Orange-White/Pink-White). The server folds it away rather than
+    // crediting it, so there is nothing to allocate across. Same coverage
+    // rule as warehouse_service._axis_is_mirror, deliberately -- a grid
+    // over an axis the server then folds would collect numbers that go
+    // nowhere.
+    const independent = [...byAxis.entries()].filter(([, entries]) =>
+      !primaryColors.every(pc => entries.some(e => this._colorNamesMatch(pc, e.color))));
+
+    // CO-CONSUMPTION is not a split. An axis whose every value carries the
+    // WHOLE lot quantity is saying each unit got all of them -- 20 bikes
+    // that each took a Kit Bag AND a Small Kit -- not that the lot divided
+    // between them. There is no pairing to record: every value applies to
+    // every unit, so demanding an allocation here would ask for a division
+    // that does not exist and block the save until someone invented one.
+    //
+    // A genuine split reads the other way round: its values SUM to the lot
+    // total (24 BCP + 16 Black across 40 frames), which is exactly the case
+    // the numbers cannot resolve on their own.
+    const lotTotal = primaries.reduce((sum, p) => sum + p.qty, 0);
+    const isCoConsumption = entries =>
+      entries.every(e => Math.abs(e.qty - lotTotal) < 0.0001);
+
+    const splittable = independent.filter(([, entries]) =>
+      entries.length > 1 && !isCoConsumption(entries));
+    if (splittable.length > 1) return { tooMany: true };
+    if (splittable.length === 0) return null;
+
+    const [axisKey, columns] = splittable[0];
+    return { primaries, axisKey, columns };
+  },
+
+  _allocationCellKey(primaryColor, columnColor) {
+    return `${primaryColor}||${columnColor}`;
+  },
+
+  // Typed cell values survive a re-render, which happens on every
+  // checklist edit -- otherwise changing one quantity would silently wipe
+  // a grid the operator had already filled in.
+  onAllocationCellInput(input) {
+    this._allocationValues = this._allocationValues || {};
+    this._allocationValues[input.dataset.cellKey] = input.value;
+    this._paintAllocationTotals();
+  },
+
+  clearAllocationValues() {
+    this._allocationValues = {};
+  },
+
+  // Rebuilds the grid's values from a saved lot's stored splits, so
+  // reopening a lot shows the allocation it was saved with. Without this
+  // an edit would present an empty grid, and -- because an incomplete
+  // grid blocks the save -- the operator would have to retype an
+  // allocation they had already recorded just to change the remarks.
+  //
+  // Only single-axis cells are read back: a cell naming 2+ axes has no
+  // square on a 2-D grid, and _allocationShape reports that shape as
+  // `tooMany` rather than rendering one.
+  loadAllocationValues(breakdown) {
+    this._allocationValues = {};
+    (breakdown || []).forEach(entry => {
+      (entry.splits || []).forEach(cellData => {
+        const colors = Object.values(cellData.axes || {});
+        if (colors.length !== 1) return;
+        this._allocationValues[this._allocationCellKey(entry.color, colors[0])] =
+          String(cellData.qty ?? '');
+      });
+    });
+  },
+
+  refreshAllocationGrid() {
+    const wrapper = document.getElementById('productionAllocationWrapper');
+    const table = document.getElementById('productionAllocationTable');
+    const help = document.getElementById('productionAllocationHelp');
+    if (!wrapper || !table) return;
+
+    const shape = this._allocationShape();
+    this._allocationShapeCache = shape;
+
+    if (!shape) {
+      wrapper.style.display = 'none';
+      return;
+    }
+    wrapper.style.display = '';
+
+    if (shape.tooMany) {
+      table.style.display = 'none';
+      help.innerHTML = '<span class="text-warning fw-bold">Two separate sub-groups each have several colours checked.</span>'
+        + ' This lot cannot be recorded as one combination — split it into separate lots, one per colour of the second sub-group,'
+        + ' or the Warehouse Pool will credit each colour on its own.';
+      document.getElementById('productionAllocationStatus').innerHTML = '';
+      return;
+    }
+    table.style.display = '';
+
+    const axisLabel = this._axisQualifierLabel(shape.axisKey) || 'the second sub-group';
+    help.innerText = `This batch has ${shape.columns.length} ${axisLabel} colours checked, so the quantities alone `
+      + `can't say which went with which. Enter how many of each colour below used each one.`;
+
+    this._allocationValues = this._allocationValues || {};
+    const cell = (p, c) => escapeHtml(this._allocationValues[this._allocationCellKey(p.color, c.color)] ?? '');
+
+    table.querySelector('thead').innerHTML = `
+      <tr>
+        <th scope="col">Colour</th>
+        <th scope="col" class="text-end">Made</th>
+        ${shape.columns.map(c => `<th scope="col" class="text-center">${escapeHtml(c.color)}</th>`).join('')}
+        <th scope="col" class="text-end">Allocated</th>
+      </tr>`;
+
+    table.querySelector('tbody').innerHTML = shape.primaries.map(p => `
+      <tr data-primary-color="${escapeHtml(p.color)}">
+        <td class="fw-bold">${escapeHtml(p.color)}</td>
+        <td class="text-end text-muted">${this.formatQty(p.qty)}</td>
+        ${shape.columns.map(c => `
+          <td>
+            <input type="number" step="any" class="form-control form-control-sm production-allocation-cell"
+              data-cell-key="${escapeHtml(this._allocationCellKey(p.color, c.color))}"
+              value="${cell(p, c)}"
+              oninput="App.Production.onAllocationCellInput(this)">
+          </td>`).join('')}
+        <td class="text-end production-allocation-rowtotal"></td>
+      </tr>`).join('');
+
+    this._paintAllocationTotals();
+  },
+
+  // Row totals must equal that colour's own quantity (the server rejects
+  // a save where they don't); column totals are advisory -- shown because
+  // a column drifting from its checklist quantity is usually the first
+  // sign of a mistyped cell, but the checklist row is not authoritative
+  // over the grid.
+  _paintAllocationTotals() {
+    const shape = this._allocationShapeCache;
+    const statusEl = document.getElementById('productionAllocationStatus');
+    if (!shape || shape.tooMany || !statusEl) return;
+
+    const values = this._allocationValues || {};
+    const problems = [];
+    // Scanned rather than selected: a colour name legitimately contains
+    // "/", spaces and hyphens, none of which survive being interpolated
+    // into an attribute selector.
+    const rows = $$('#productionAllocationTable tbody tr');
+
+    shape.primaries.forEach(p => {
+      const row = rows.find(r => r.dataset.primaryColor === p.color);
+      const total = shape.columns.reduce((sum, c) =>
+        sum + (toNumber(values[this._allocationCellKey(p.color, c.color)]) || 0), 0);
+      const ok = Math.abs(total - p.qty) < 0.0001;
+      if (!ok) problems.push(`${p.color}: ${this.formatQty(total)} of ${this.formatQty(p.qty)}`);
+      const totalCell = row?.querySelector('.production-allocation-rowtotal');
+      if (totalCell) {
+        totalCell.innerText = this.formatQty(total);
+        totalCell.className = `text-end production-allocation-rowtotal fw-bold ${ok ? 'text-success' : 'text-danger'}`;
+      }
+    });
+
+    const colTotals = shape.columns.map(c => ({
+      color: c.color,
+      entered: shape.primaries.reduce((sum, p) =>
+        sum + (toNumber(values[this._allocationCellKey(p.color, c.color)]) || 0), 0),
+      checklist: c.qty
+    }));
+
+    document.getElementById('productionAllocationTable').querySelector('tfoot').innerHTML = `
+      <tr>
+        <th scope="row" class="text-muted fw-normal">Total</th>
+        <th></th>
+        ${colTotals.map(c => `<th class="text-center ${Math.abs(c.entered - c.checklist) < 0.0001 ? 'text-success' : 'text-warning'}">
+            ${this.formatQty(c.entered)} <span class="text-muted fw-normal">/ ${this.formatQty(c.checklist)}</span>
+          </th>`).join('')}
+        <th></th>
+      </tr>`;
+
+    statusEl.innerHTML = problems.length === 0
+      ? '<span class="text-success fw-bold">✓ Allocation complete.</span>'
+      : `<span class="text-danger fw-bold">Each row must add up to that colour's own quantity — ${escapeHtml(problems.join('; '))}.</span>`;
+  },
+
+  // The blocking check saveProduction runs before submitting. Mirrors
+  // production_service._validate_color_splits so the operator is stopped
+  // here, with the grid still on screen, rather than by a server error.
+  allocationBlockingError() {
+    const shape = this._allocationShapeCache;
+    if (!shape || shape.tooMany) return '';
+    const values = this._allocationValues || {};
+    const bad = shape.primaries.filter(p => {
+      const total = shape.columns.reduce((sum, c) =>
+        sum + (toNumber(values[this._allocationCellKey(p.color, c.color)]) || 0), 0);
+      return Math.abs(total - p.qty) >= 0.0001;
+    });
+    if (bad.length === 0) return '';
+    return 'Colour allocation is incomplete: '
+      + bad.map(p => `"${p.color}"`).join(', ')
+      + ' — each row of the allocation grid must add up to that colour\'s own quantity.';
+  },
+
+  _allocationSplitsFor(primaryColor) {
+    const shape = this._allocationShapeCache;
+    if (!shape || shape.tooMany) return null;
+    if (!shape.primaries.some(p => p.color === primaryColor)) return null;
+    const values = this._allocationValues || {};
+    return shape.columns.map(c => ({
+      qty: toNumber(values[this._allocationCellKey(primaryColor, c.color)]) || 0,
+      axes: { [shape.axisKey]: c.color }
+    }));
+  },
+
+  // { color, qty, isCustom, countsTowardTotal, axisKey } for every
+  // checked color with a numeric quantity entered. Strict rule: only the
+  // Primary group's checked colors ever count toward the lot total (no
+  // exception for an unclassified "Other" leftover bucket) -- everything
+  // else is recorded per-color but never added in.
+  //
+  // A primary entry additionally carries `splits` whenever the allocation
+  // grid is showing -- see _allocationSplitsFor.
+  getCheckedColorQtys() {
+    return this._rawCheckedColorQtys().map(entry => {
+      if (!entry.countsTowardTotal) return entry;
+      const splits = this._allocationSplitsFor(entry.color);
+      return splits ? { ...entry, splits } : entry;
+    });
   },
 
   _currentLotTotalQty() {
@@ -6682,6 +6947,10 @@ App.Production = {
       // composite (a "Blue" column beside "BLUE-WHITE / BLACK"). They came
       // back empty on every edit, one collapsed vertical strip each.
       this._pruneRedundantMatrixColumns({ emptyOnly: true });
+      // After the checklist has settled, for the same reason the create
+      // path defers it: the grid's rows and columns ARE the checklist.
+      this.loadAllocationValues(breakdown);
+      this.refreshAllocationGrid();
       await this.refreshPoolAvailability();
     } else {
       // Plain single-quantity lot on a process with no configured color
@@ -7988,6 +8257,14 @@ document.addEventListener('DOMContentLoaded', function () {
       if (document.querySelector('#productionColorChecklist input[name="productionPrimaryAxisPick"]') &&
         !document.querySelector('#productionColorChecklist input[name="productionPrimaryAxisPick"]:checked')) {
         App.Utils.showToast('Pick which group is Primary (its quantities become this lot\'s total) before saving.', true);
+        return;
+      }
+      // Stopped here, with the grid still on screen and the numbers still
+      // editable, rather than by the equivalent server-side check in
+      // production_service._validate_color_splits.
+      const allocationError = App.Production.allocationBlockingError();
+      if (allocationError) {
+        App.Utils.showToast(allocationError, true);
         return;
       }
     }
