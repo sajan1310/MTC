@@ -299,6 +299,16 @@ class TestingConfig(Config):
 class ProductionConfig(Config):
     DEBUG = False
     TESTING = False
+
+    # Production keeps a larger warm pool than the base default of 2.
+    #
+    # database.py used to express this as its own fallback --
+    # `app.config.get("DB_POOL_MIN", 4 if ENV == "production" else 2)` -- which
+    # could never fire, because Config above ALWAYS defines DB_POOL_MIN, so
+    # .get() never reached its second argument. Production therefore ran the
+    # development minimum of 2 while both that code and DEPLOYMENT.md said 4.
+    # The default belongs where it actually takes effect.
+    DB_POOL_MIN = int(os.getenv("DB_POOL_MIN", 4))
     SESSION_COOKIE_SECURE = True
     SESSION_COOKIE_HTTPONLY = True
     SESSION_COOKIE_SAMESITE = "Lax"

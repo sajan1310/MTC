@@ -22,9 +22,12 @@ def init_app(app):
     # Production-optimized pool sizing
     # min_conn: Keep warm connections ready (default: 2 for dev, 4 for prod)
     # max_conn: Handle burst traffic (default: 20)
-    min_conn = int(
-        app.config.get("DB_POOL_MIN", 4 if app.config.get("ENV") == "production" else 2)
-    )
+    # Defaults live in config.py, where they can actually take effect:
+    # Config sets 2, ProductionConfig sets 4. The "4 if production" fallback
+    # that used to sit here was unreachable -- config.py always defines the
+    # key -- so it read as production sizing while delivering development
+    # sizing.
+    min_conn = int(app.config.get("DB_POOL_MIN", 2))
     max_conn = int(app.config.get("DB_POOL_MAX", 20))
 
     # Connection timeout in seconds (fail fast on unreachable DB)

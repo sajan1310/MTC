@@ -414,13 +414,23 @@ def _register_error_handlers(app: Flask) -> None:
         return render_template("500.html"), 400
 
 
-# RPC methods whose cost is dominated by full-table scans rather than by the
-# work the user asked for (SEC-005). Each pulls entire tables into Python:
-# getStockData alone scans bill_lines, return_lines, wastage_lines,
-# issue_lines and every completed production lot, and getDashboardData calls
-# three more of these plus its own aggregates. A loop over any one of them
-# saturates all four gunicorn workers. Until PERF-002 makes them cheap, they
-# get a much lower ceiling than ordinary calls.
+# RPC methods that get a much lower rate-limit ceiling than ordinary calls
+# (SEC-005), because their cost scales with how much data EXISTS rather than
+# with what the user asked for.
+#
+# This is a rate-limit tier, NOT a list of unoptimised methods -- do not read
+# it as one. It used to say each entry "pulls entire tables into Python",
+# which was true when written and is now wrong in at least three places:
+# getStockData aggregates in SQL (one UNION ALL + GROUP BY across the four
+# movement tables -- stock_service._MOVEMENT_SQL) and takes an optional page
+# that restricts even that to one page's keys, and both dashboard methods
+# aggregate in SQL as well. The stale wording sent a reader off to "fix"
+# work that had already been done, twice. Read the function before believing
+# any comment about its cost, this one included.
+#
+# The tier still earns its place: these remain the calls whose cost grows
+# with the table, so a loop over one is still the cheapest way to saturate
+# every worker.
 EXPENSIVE_RPC_METHODS = frozenset(
     {
         "getStockData",
@@ -785,6 +795,41 @@ def create_app(config_name: str | None = None) -> Flask:
     except Exception:
         app.logger.debug("Failed to normalise RATELIMIT_DEFAULT", exc_info=True)
 
+    # Logging is configured HERE, before anything that logs at startup.
+    #
+    # It used to run ~120 lines below database.init_app(), so every message
+    # that function emits was written before any handler existed -- and the
+    # app logger, not yet levelled, inherited root's WARNING, so its two INFO
+    # lines ("Database pool initialized: N-M connections" and "Database
+    # connectivity verified") were discarded outright rather than merely
+    # missing from logs/app.log.
+    #
+    # That is not cosmetic. On 2026-09-07 a worker served requests with no
+    # connection pool, and the question "did this worker's pool ever get
+    # built?" could not be answered, because the only line that would have
+    # said so was never recorded anywhere. Startup diagnostics are worth
+    # nothing if logging starts after startup.
+    # Logging: prefer production logging config but don't silently swallow errors
+    if config_name == "production" or app.config.get("ENV") == "production":
+        try:
+            import logging_config
+
+            logging_config.setup_logging(app)
+            # These helpers may raise if misconfigured; let them surface so ops
+            # can fix configuration rather than failing silently.
+            logging_config.log_request_info(app)
+            logging_config.log_errors(app)
+        except ImportError as e:
+            # Optional structured logging package missing: fallback safe handler
+            app.logger.warning("Optional production logging package missing: %s", e)
+        except Exception:
+            # In production, propagate logging configuration errors to surface
+            # problems to the operator instead of hiding them.
+            raise
+
+    # Local logging handlers
+    _init_logging(app)
+
     # Database initialization
     import database
 
@@ -904,27 +949,6 @@ def create_app(config_name: str | None = None) -> Flask:
             session_cookie_samesite="Strict" if not app.debug else "Lax",
             strict_transport_security=serve_over_https,
         )
-
-    # Logging: prefer production logging config but don't silently swallow errors
-    if config_name == "production" or app.config.get("ENV") == "production":
-        try:
-            import logging_config
-
-            logging_config.setup_logging(app)
-            # These helpers may raise if misconfigured; let them surface so ops
-            # can fix configuration rather than failing silently.
-            logging_config.log_request_info(app)
-            logging_config.log_errors(app)
-        except ImportError as e:
-            # Optional structured logging package missing: fallback safe handler
-            app.logger.warning("Optional production logging package missing: %s", e)
-        except Exception:
-            # In production, propagate logging configuration errors to surface
-            # problems to the operator instead of hiding them.
-            raise
-
-    # Local logging handlers
-    _init_logging(app)
 
     if app.config.get("BASE_URL", "").startswith("https://"):
         app.config["PREFERRED_URL_SCHEME"] = "https"
