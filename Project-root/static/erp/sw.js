@@ -211,7 +211,30 @@
 //
 // The two files always turn over together -- one cache, one bump -- so there
 // is no window where a dispatcher meets a listener that predates it.
-const CACHE_NAME = 'erp-shell-v51';
+// v52: api.js, production.js, items.js, bom.js.
+//
+// api.js -- an expired session used to come back as the login PAGE at
+// HTTP 200 (fetch follows Flask-Login's redirect silently), so res.json()
+// threw `SyntaxError: Unexpected token '<'` and every caller reported a
+// parse error instead of "you are signed out". api.js now treats a 401 as
+// an auth error and refuses to parse any 200 that is not JSON.
+//
+// Load-bearing. api.js is precached and is the seam EVERY module's RPCs go
+// through, so without this bump an installed tablet keeps the copy that
+// parses the login page. The server half (create_app's unauthorized
+// handler) ships regardless, which makes the mismatch harmless but also
+// pointless: the tablet would show the old parse error against a server
+// that is now answering it correctly.
+//
+// production.js / items.js / bom.js -- the item pickers searched the raw
+// fields while DISPLAYING a formatted label ("Name [14 inch] · Black"), so
+// typing an item exactly as the list showed it matched nothing and Select2's
+// `tags: true` silently offered the typed text as a NEW item instead. The
+// row then looked correct -- character-identical label -- while carrying a
+// custom: name with the brackets inside it, and the lot saved a component
+// naming an item that does not exist. Load-bearing for the same reason: a
+// tablet on the old file keeps inventing those components.
+const CACHE_NAME = 'erp-shell-v52';
 
 const PRECACHE_URLS = [
   '/erp/offline.html',

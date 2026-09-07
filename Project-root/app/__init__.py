@@ -615,6 +615,43 @@ def create_app(config_name: str | None = None) -> Flask:
     csrf.init_app(app)
     login_manager.init_app(app)
     login_manager.login_view = "auth.login"
+
+    @login_manager.unauthorized_handler
+    def _unauthorized():
+        """An expired session must fail as JSON on the API, HTML on a page.
+
+        Flask-Login's default is a 302 to the login view. `fetch()` follows
+        redirects transparently, so an RPC issued by a tab whose session has
+        since expired came back as the login PAGE with status 200 -- and
+        api.js, seeing an ok response, called res.json() on `<!DOCTYPE html>`
+        and threw `SyntaxError: Unexpected token '<'`. Every caller then
+        reported that parse error instead of "you are signed out" (the one
+        seen in the wild was App.Logo.load, but it was every RPC in the tab).
+
+        API callers get the same {success:false} envelope as any other
+        failure, at 401 so api.js can tell this apart from a domain error.
+        Browser navigations keep the redirect-to-login they had.
+        """
+        wants_json = (
+            request.path.startswith("/api/")
+            or request.accept_mimetypes.best == "application/json"
+        )
+        if wants_json:
+            return (
+                jsonify(
+                    {
+                        "success": False,
+                        "data": None,
+                        "message": "Your session has expired. Please sign in again.",
+                    }
+                ),
+                401,
+            )
+        # Relative, not request.url: auth.login ignores `next` today, so
+        # this is only ever echoed back -- keep it same-origin so it stays
+        # harmless if a future login view starts honouring it.
+        return redirect(url_for("auth.login", next=request.full_path))
+
     mail.init_app(app)
 
     # Configure rate limiter via app.config before init_app

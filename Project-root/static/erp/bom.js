@@ -1103,7 +1103,11 @@ App.BOM = {
           const filtered = [];
           for (let i = 0; i < items.length; i++) {
             const item = items[i];
-            if (App.Utils.matchesKeywords(`${item.name} ${item.size || ''} ${item.narration || ''}`, q)) {
+            // Includes the rendered label ("Name [size] - narration") so a
+            // term typed exactly as the list shows it still matches; the
+            // bracket and dash tokens are absent from the raw fields.
+            const label = `${item.name}${item.size ? ` [${item.size}]` : ''}${item.narration ? ` - ${item.narration}` : ''}`;
+            if (App.Utils.matchesKeywords(`${item.name} ${item.size || ''} ${item.narration || ''} ${label}`, q)) {
               filtered.push({ idx: i, item });
             }
           }
