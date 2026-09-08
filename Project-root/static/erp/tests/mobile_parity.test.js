@@ -110,11 +110,8 @@ const BACKLOG = {
   deleteClientOrdersBulk: 'P6 client orders',
   deleteColor: 'P6 master-data registers',
   deleteColorsBulk: 'P6 master-data registers',
-  deleteContractorPayment: 'P5 contractor ledger (descriptor `related`)',
   deleteContractorPaymentsBulk: 'P5 contractor ledger (descriptor `related`)',
-  deleteContractorRate: 'P5 contractor ledger (descriptor `related`)',
   deleteContractorRatesBulk: 'P5 contractor ledger (descriptor `related`)',
-  deleteContractorServiceCharge: 'P5 contractor ledger (descriptor `related`)',
   deleteContractorServiceChargesBulk: 'P5 contractor ledger (descriptor `related`)',
   deleteCustomRole: 'P7 roles (read-only + handoff)',
   deleteDispatchPlanLine: 'P7 dispatch plan checklist',
@@ -133,11 +130,8 @@ const BACKLOG = {
   getBackupStatus: 'P5 read-only screens',
   getClientOrdersData: 'P6 client orders',
   getColors: 'P6 master-data registers',
-  getContractorAccountLedger: 'P5 contractor ledger (descriptor `related`)',
   getContractorLedgerData: 'P5 contractor ledger (descriptor `related`)',
   getContractorRateForProcessType: 'P5 contractor ledger (descriptor `related`)',
-  getContractorRatesData: 'P5 contractor ledger (descriptor `related`)',
-  getContractorServiceChargesData: 'P5 contractor ledger (descriptor `related`)',
   getDashboardData: 'P5 read-only screens',
   getDispatchPlans: 'P7 dispatch plan checklist',
   getNextProductId: 'P6 master-data registers',
@@ -171,7 +165,7 @@ const BACKLOG = {
 };
 
 // Phase 1 opened at 79. Lower this line as ports land; never raise it.
-const BACKLOG_BASELINE = 65;
+const BACKLOG_BASELINE = 59;
 
 describe('MApp / desktop feature parity', () => {
   test('the registry is being read at all', () => {

@@ -48,6 +48,25 @@
 </div>
 
 <!-- ═══════════════════════════════════════════════════════════════════
+     CONTRACTOR DETAIL — the read side of the three things MApp could
+     already write. Rates, extra charges and payments were all
+     quick-addable from the Directory and none of them could be read back:
+     an operator recorded a payment and had no way to confirm it landed,
+     see the balance it changed, or correct a mistake. Mirrors desktop's
+     Rate Card / Extra Charges / Ledger panes.
+     ═══════════════════════════════════════════════════════════════════ -->
+<div class="mb-sheet" id="sheet-contractor-detail" role="dialog" aria-modal="true"
+     aria-labelledby="contractor-detail-title">
+  <div class="mb-sheet-header">
+    <h2 id="contractor-detail-title">Contractor</h2>
+    <button type="button" class="mapp-topbar-btn" aria-label="Close" onclick="MApp.ContractorDetail.close()">
+      <svg viewBox="0 0 24 24" width="22" height="22" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><path d="M6 6l12 12M18 6L6 18"/></svg>
+    </button>
+  </div>
+  <div class="mb-sheet-body" id="contractor-detail-body"></div>
+</div>
+
+<!-- ═══════════════════════════════════════════════════════════════════
      ACCOUNT — name/email and password. Two independent forms with their
      own save buttons, matching desktop's own reasoning in core.js: a
      typo in the password fields must not block saving a corrected email.

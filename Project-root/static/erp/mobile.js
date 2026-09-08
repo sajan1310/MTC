@@ -6494,7 +6494,11 @@ MApp.Directory = {
       // Edit; Vendors/Clients just get Edit. Kept as separate <button>s
       // (not a tappable card) so nothing here nests interactive content.
       const actions = this.type === 'contractor'
-        ? [['edit', 'Edit'], ['rate', '+ Rate'], ['charge', '+ Charge'], ['payment', '+ Payment']]
+        // "Account" leads, because reading the balance is what an
+        // operator opens a contractor for -- and until now it was the one
+        // thing they could not do. The three quick-adds stay, but the
+        // detail sheet offers them too, alongside what they produced.
+        ? [['account', 'Account'], ['edit', 'Edit'], ['rate', '+ Rate'], ['charge', '+ Charge'], ['payment', '+ Payment']]
         : [['edit', 'Edit']];
       const actionsHtml = actions.map(([action, label]) =>
         `<button type="button" class="mb-btn-text" style="padding:0;min-height:auto;" data-action="${action}" data-name="${MApp.Util.escapeHtml(e.name)}">${label}</button>`
@@ -6515,7 +6519,8 @@ MApp.Directory = {
       btn.addEventListener('click', () => {
         const record = this.filtered.find(x => x.name === btn.dataset.name);
         if (!record) return;
-        if (btn.dataset.action === 'edit') this.openForm(record);
+        if (btn.dataset.action === 'account') MApp.ContractorDetail.open(record.name);
+        else if (btn.dataset.action === 'edit') this.openForm(record);
         else if (btn.dataset.action === 'rate') this.openRateSheet(record.name);
         else if (btn.dataset.action === 'charge') this.openExtraChargeSheet(record.name);
         else if (btn.dataset.action === 'payment') this.openPaymentSheet(record.name);
@@ -8269,6 +8274,176 @@ MApp.GlobalSearch = {
       input.dispatchEvent(new Event('input', { bubbles: true }));
     };
     setTimeout(prefill, 120);
+  }
+};
+
+// ================================================================
+// CONTRACTOR DETAIL — the read side of what MApp could already write.
+//
+// Rates, extra charges and payments were all quick-addable from the
+// Directory, and none of them could be read back. Write-without-read is
+// the worst asymmetry in the app: an operator records a payment, has no
+// way to confirm it landed, no way to see the balance it changed, and no
+// way to correct a mistake -- so the predictable outcome is a duplicate
+// entry, and the cleanup lands on whoever opens desktop next.
+//
+// Mirrors desktop's Rate Card / Extra Charges / Ledger panes. The three
+// reads run in parallel and each is caught independently, so a slow or
+// failing ledger does not hide the rate card.
+// ================================================================
+MApp.ContractorDetail = {
+  name: null,
+  data: null,
+
+  async open(contractorName) {
+    this.name = contractorName;
+    this.data = null;
+
+    const titleEl = document.getElementById('contractor-detail-title');
+    if (titleEl) titleEl.textContent = MApp.Util.formatNameCase(contractorName) || 'Contractor';
+    const body = document.getElementById('contractor-detail-body');
+    MApp.Util.renderSkeleton(body, 4);
+    MApp.Sheet.open('sheet-contractor-detail');
+
+    const [ledger, rates, charges] = await Promise.all([
+      MApp.Api.call('getContractorAccountLedger', contractorName).catch(() => null),
+      MApp.Api.call('getContractorRatesData', contractorName).catch(() => null),
+      MApp.Api.call('getContractorServiceChargesData', contractorName).catch(() => null)
+    ]);
+
+    // A different contractor was opened while these were in flight.
+    if (this.name !== contractorName) return;
+
+    this.data = {
+      ledger: (ledger && ledger.success) ? (ledger.data || {}) : null,
+      rates: (rates && rates.success) ? (rates.data || []) : null,
+      charges: (charges && charges.success) ? (charges.data || []) : null
+    };
+    this.render();
+  },
+
+  close() {
+    MApp.Sheet.close('sheet-contractor-detail');
+  },
+
+  render() {
+    const body = document.getElementById('contractor-detail-body');
+    if (!body || !this.data) return;
+    const { ledger, rates, charges } = this.data;
+    const money = v => MApp.Util.formatCurrency(v);
+
+    // A section that failed to load says so, rather than rendering as an
+    // empty list -- "no rates on file" and "we could not fetch the rates"
+    // are different answers and must not look the same.
+    const failed = label =>
+      `<div class="mb-text-sm mb-text-steel" style="padding:var(--mb-sp-2) 0;">Couldn't load ${label}.</div>`;
+    const empty = text =>
+      `<div class="mb-text-sm mb-text-steel" style="padding:var(--mb-sp-2) 0;">${text}</div>`;
+
+    const summary = ledger ? `
+      <div class="mb-card">
+        <div class="mb-card-row">
+          <span class="mb-card-sub">Balance due</span>
+          <span class="mb-card-number ${ledger.balanceDue > 0 ? 'mb-alert' : ''}">${money(ledger.balanceDue)}</span>
+        </div>
+        <div class="mb-card-row mb-mt-2">
+          <span class="mb-text-sm mb-text-steel">Payable ${money(ledger.totalPayable)}</span>
+          <span class="mb-text-sm mb-text-steel">Paid ${money(ledger.totalPaid)}</span>
+        </div>
+      </div>` : failed('the account ledger');
+
+    const ledgerRows = !ledger ? '' : ((ledger.entries || []).length === 0
+      ? empty('No ledger entries yet.')
+      : ledger.entries.slice(0, 30).map(e => `
+        <div class="mb-card">
+          <div class="mb-card-row">
+            <div>
+              <div class="mb-card-title">${MApp.Util.escapeHtml(e.type)}${e.ref && e.ref !== '-' ? ' · ' + MApp.Util.escapeHtml(e.ref) : ''}</div>
+              <div class="mb-card-sub">${MApp.Util.formatDateDisplay(e.dateRaw)}${e.description && e.description !== '-' ? ' · ' + MApp.Util.escapeHtml(e.description) : ''}</div>
+            </div>
+            <div style="text-align:right;white-space:nowrap;">
+              <div style="font-weight:700;color:${e.amount < 0 ? 'var(--mb-enamel-green-ink)' : 'var(--mb-ink)'};">${money(e.amount)}</div>
+              <div class="mb-card-sub">bal ${money(e.balance)}</div>
+            </div>
+          </div>
+          ${e.type === 'Payment' ? `<div class="mb-mt-2"><button type="button" class="mb-btn-text" style="padding:0;min-height:auto;color:var(--mb-enamel-red-ink);" data-del-payment="${MApp.Util.escapeHtml(String(e.rowIdx))}" data-amount="${MApp.Util.escapeHtml(String(e.rawAmount))}">Delete payment</button></div>` : ''}
+        </div>`).join(''));
+
+    const rateRows = !rates ? failed('the rate card') : (rates.length === 0
+      ? empty('No rates on file.')
+      : rates.map(r => `
+        <div class="mb-card">
+          <div class="mb-card-row">
+            <div>
+              <div class="mb-card-title">${MApp.Util.escapeHtml(r.processType)}</div>
+              <div class="mb-card-sub">${MApp.Util.escapeHtml(r.size || 'All sizes')}${r.remarks ? ' · ' + MApp.Util.escapeHtml(r.remarks) : ''}</div>
+            </div>
+            <div class="mb-card-number">${money(r.ratePerUnit)}</div>
+          </div>
+          <div class="mb-mt-2"><button type="button" class="mb-btn-text" style="padding:0;min-height:auto;color:var(--mb-enamel-red-ink);" data-del-rate="${MApp.Util.escapeHtml(r.processType)}" data-size="${MApp.Util.escapeHtml(r.size || '')}">Delete rate</button></div>
+        </div>`).join(''));
+
+    const chargeRows = !charges ? failed('the extra charges') : (charges.length === 0
+      ? empty('No extra charges on file.')
+      : charges.map(c => `
+        <div class="mb-card">
+          <div class="mb-card-row">
+            <div>
+              <div class="mb-card-title">${MApp.Util.escapeHtml(c.serviceType)}</div>
+              ${c.remarks ? `<div class="mb-card-sub">${MApp.Util.escapeHtml(c.remarks)}</div>` : ''}
+            </div>
+            <div class="mb-card-number">${money(c.chargeAmount)}</div>
+          </div>
+          <div class="mb-mt-2"><button type="button" class="mb-btn-text" style="padding:0;min-height:auto;color:var(--mb-enamel-red-ink);" data-del-charge="${MApp.Util.escapeHtml(c.serviceType)}">Delete charge</button></div>
+        </div>`).join(''));
+
+    body.innerHTML = `
+      ${summary}
+      <div class="mapp-section-label mb-mt-4">Ledger</div>
+      ${ledgerRows}
+      <div class="mapp-section-label mb-mt-4">Rate Card</div>
+      ${rateRows}
+      <button type="button" class="mb-btn mb-btn-secondary mb-mt-2" onclick="MApp.Directory.openRateSheet(MApp.ContractorDetail.name)">+ Add Rate</button>
+      <div class="mapp-section-label mb-mt-4">Extra Charges</div>
+      ${chargeRows}
+      <button type="button" class="mb-btn mb-btn-secondary mb-mt-2" onclick="MApp.Directory.openExtraChargeSheet(MApp.ContractorDetail.name)">+ Add Charge</button>
+      <button type="button" class="mb-btn mb-btn-secondary mb-mt-4 mb-mb-4" onclick="MApp.Directory.openPaymentSheet(MApp.ContractorDetail.name)">+ Record Payment</button>`;
+
+    this._bind(body);
+  },
+
+  _bind(body) {
+    body.querySelectorAll('[data-del-rate]').forEach(btn => {
+      btn.addEventListener('click', () => this._remove(
+        'deleteContractorRate',
+        [this.name, btn.dataset.delRate, btn.dataset.size || ''],
+        `the ${btn.dataset.delRate} rate`, 'Rate deleted.'
+      ));
+    });
+    body.querySelectorAll('[data-del-charge]').forEach(btn => {
+      btn.addEventListener('click', () => this._remove(
+        'deleteContractorServiceCharge',
+        [this.name, btn.dataset.delCharge],
+        `the ${btn.dataset.delCharge} charge`, 'Charge deleted.'
+      ));
+    });
+    body.querySelectorAll('[data-del-payment]').forEach(btn => {
+      // The expected contractor and amount ride along: the server uses
+      // them to refuse a delete whose row has changed underneath, which
+      // matters most on a phone that may have been showing this list for
+      // a while.
+      btn.addEventListener('click', () => this._remove(
+        'deleteContractorPayment',
+        [btn.dataset.delPayment, this.name, MApp.Util.toNumber(btn.dataset.amount)],
+        `this ${MApp.Util.formatCurrency(btn.dataset.amount)} payment`, 'Payment deleted.'
+      ));
+    });
+  },
+
+  async _remove(method, args, label, successMsg) {
+    if (!MApp.Util.confirmDelete(label)) return;
+    const res = await MApp.Util.mutateSimple(method, args, successMsg);
+    if (res.success) this.open(this.name);
   }
 };
 
