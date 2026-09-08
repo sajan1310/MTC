@@ -707,6 +707,47 @@ textarea:focus-visible,
 .mb-chip-lowstock   { background: var(--mb-enamel-red); }
 
 /* ── Tappable filter chips (status-bar style pickers, e.g. PO Ledger) ── */
+/* ── Segmented view switch ───────────────────────────────────────────
+   Two views of the same question -- "how much of this do we have" --
+   answered by two different records. Deliberately NOT the filter-chip
+   row above: a filter narrows one list, this swaps which list you are
+   reading, and the two must not look alike. Equal halves, one visibly
+   selected, no horizontal scroll. */
+.mb-segmented {
+  display: flex;
+  gap: 2px;
+  padding: 3px;
+  margin-bottom: var(--mb-sp-4);
+  border-radius: var(--mb-radius-lg);
+  background: var(--mb-steel-faint);
+}
+
+.mb-segmented button {
+  flex: 1 1 0;
+  min-width: 0;
+  min-height: var(--mb-tap-min);
+  padding: 8px 10px;
+  border: none;
+  border-radius: calc(var(--mb-radius-lg) - 3px);
+  background: transparent;
+  font-family: var(--mb-font-body);
+  font-size: 0.875rem;
+  font-weight: 700;
+  color: var(--mb-steel);
+  cursor: pointer;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+/* Same fill/ink pair as the FAB and the active filter chip: the label is
+   --mb-on-safety (6.22:1), never --mb-ink, which flips to near-white in
+   dark while this fill does not. */
+.mb-segmented button[aria-selected="true"] {
+  background: var(--mb-safety);
+  color: var(--mb-on-safety);
+}
+
 .mb-filter-chip-row {
   display: flex;
   gap: var(--mb-sp-2);

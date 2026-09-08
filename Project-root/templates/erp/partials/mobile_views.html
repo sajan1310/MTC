@@ -307,37 +307,11 @@
 </div>
 
 <!-- ═══════════════════════════════════════════════════════════════════
-     WAREHOUSE POOL — read-only. Buckets, and one bucket's ledger.
-     Deliberately no adjust/zero/delete here: a negative bucket is a
-     SIGNAL to triage, not a number to correct, and the screen is built to
-     say which kind of signal it is rather than to invite a fix.
+     WAREHOUSE POOL sheets. The bucket list itself is no longer here --
+     it is the second pane of the Stock tab (tpl-stock). These are the
+     things one opens FROM a bucket: its ledger, a correction, the
+     correction history, and the opening balances behind it all.
      ═══════════════════════════════════════════════════════════════════ -->
-<div class="mb-sheet" id="sheet-pool" role="dialog" aria-modal="true" aria-labelledby="pool-title">
-  <div class="mb-sheet-header">
-    <h2 id="pool-title">Warehouse Pool</h2>
-    <button type="button" class="mapp-topbar-btn" aria-label="Close" onclick="MApp.Pool.close()">
-      <svg viewBox="0 0 24 24" width="22" height="22" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><path d="M6 6l12 12M18 6L6 18"/></svg>
-    </button>
-  </div>
-  <div class="mb-sheet-body">
-    <div class="mb-search">
-      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="11" cy="11" r="7"/><path d="M20 20l-3.5-3.5"/></svg>
-      <input type="search" id="pool-search" placeholder="Item, colour, product tag…" aria-label="Search warehouse pool" autocomplete="off">
-    </div>
-    <div class="mb-filter-chip-row" id="pool-filter-bar">
-      <button type="button" class="mb-filter-chip active" data-pool-filter="all" onclick="MApp.Pool.filterBy('all')">All</button>
-      <button type="button" class="mb-filter-chip" data-pool-filter="negative" onclick="MApp.Pool.filterBy('negative')">Negative</button>
-      <button type="button" class="mb-filter-chip" data-pool-filter="attribution" onclick="MApp.Pool.filterBy('attribution')">Attribution</button>
-      <button type="button" class="mb-filter-chip" data-pool-filter="recount" onclick="MApp.Pool.filterBy('recount')">Needs a count</button>
-    </div>
-    <div id="pool-list"></div>
-  </div>
-  <div class="mb-sheet-footer">
-    <button type="button" class="mb-btn mb-btn-secondary" onclick="MApp.PoolOpenings.open()">Opening balances</button>
-    <button type="button" class="mb-btn mb-btn-secondary" onclick="MApp.Pool.openHistory()">Correction history</button>
-  </div>
-</div>
-
 <div class="mb-sheet" id="sheet-pool-ledger" role="dialog" aria-modal="true" aria-labelledby="pool-ledger-title">
   <div class="mb-sheet-header">
     <h2 id="pool-ledger-title">Bucket ledger</h2>
@@ -609,18 +583,58 @@
      TAB 2 — STOCK
      ═══════════════════════════════════════════════════════════════════ -->
 <template id="tpl-stock">
-  <h1 class="mapp-screen-title">Stock</h1>
+  <h1 class="mapp-screen-title" id="stock-screen-title">Stock</h1>
 
-  <div class="mb-search mb-search-sticky">
-    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="11" cy="11" r="7"/><path d="M21 21l-4.3-4.3"/></svg>
-    <input type="search" id="stock-search" placeholder="Search items..." aria-label="Search stock" autocomplete="off">
+  <!-- Two answers to one question -- "how much of this do we have" -- kept
+       on one tab because that is how it gets asked on the floor. Stock is
+       what the item master holds; the Pool is work in progress between
+       process stages. They are different records and a switch, not a
+       filter, is what says so. -->
+  <div class="mb-segmented" role="tablist" aria-label="Which stock to show">
+    <button type="button" role="tab" id="stock-view-tab-stock" aria-selected="true"
+            aria-controls="stock-pane-stock" data-stock-view="stock"
+            onclick="MApp.Stock.showView('stock')">Stock</button>
+    <button type="button" role="tab" id="stock-view-tab-pool" aria-selected="false"
+            aria-controls="stock-pane-pool" data-stock-view="pool"
+            onclick="MApp.Stock.showView('pool')">Warehouse Pool</button>
   </div>
 
-  <div id="stock-list">
-    <div class="mb-skel mb-skel-card"></div>
-    <div class="mb-skel mb-skel-card"></div>
-    <div class="mb-skel mb-skel-card"></div>
-    <div class="mb-skel mb-skel-card"></div>
+  <div id="stock-pane-stock" role="tabpanel" aria-labelledby="stock-view-tab-stock">
+    <div class="mb-search mb-search-sticky">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="11" cy="11" r="7"/><path d="M21 21l-4.3-4.3"/></svg>
+      <input type="search" id="stock-search" placeholder="Search items..." aria-label="Search stock" autocomplete="off">
+    </div>
+
+    <div id="stock-list">
+      <div class="mb-skel mb-skel-card"></div>
+      <div class="mb-skel mb-skel-card"></div>
+      <div class="mb-skel mb-skel-card"></div>
+      <div class="mb-skel mb-skel-card"></div>
+    </div>
+  </div>
+
+  <!-- Was its own sheet off the More tab until the two were merged. The
+       ledger, correction and opening-balance sheets it opens are still
+       sheets; only the list itself moved. -->
+  <div id="stock-pane-pool" role="tabpanel" aria-labelledby="stock-view-tab-pool" hidden>
+    <div class="mb-search mb-search-sticky">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="11" cy="11" r="7"/><path d="M20 20l-3.5-3.5"/></svg>
+      <input type="search" id="pool-search" placeholder="Item, colour, product tag…" aria-label="Search warehouse pool" autocomplete="off">
+    </div>
+    <div class="mb-filter-chip-row" id="pool-filter-bar">
+      <button type="button" class="mb-filter-chip active" data-pool-filter="all" onclick="MApp.Pool.filterBy('all')">All</button>
+      <button type="button" class="mb-filter-chip" data-pool-filter="negative" onclick="MApp.Pool.filterBy('negative')">Negative</button>
+      <button type="button" class="mb-filter-chip" data-pool-filter="attribution" onclick="MApp.Pool.filterBy('attribution')">Attribution</button>
+      <button type="button" class="mb-filter-chip" data-pool-filter="recount" onclick="MApp.Pool.filterBy('recount')">Needs a count</button>
+    </div>
+    <div id="pool-list"></div>
+    <!-- The sheet footer these two lived in went with the sheet. They sit
+         after the list rather than before it: both are occasional, and
+         neither should push the buckets down the screen. -->
+    <div class="mb-mt-4" style="display:flex; gap:var(--mb-sp-3); flex-wrap:wrap;">
+      <button type="button" class="mb-btn mb-btn-secondary" style="flex:1 1 12rem;" onclick="MApp.PoolOpenings.open()">Opening balances</button>
+      <button type="button" class="mb-btn mb-btn-secondary" style="flex:1 1 12rem;" onclick="MApp.Pool.openHistory()">Correction history</button>
+    </div>
   </div>
 </template>
 
@@ -725,7 +739,7 @@
       <span class="mb-card-title">Warehouse Pool</span>
       <svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M9 18l6-6-6-6"/></svg>
     </div>
-    <div class="mb-card-sub">Bucket balances, their ledgers, and corrections</div>
+    <div class="mb-card-sub">In the Stock tab — bucket balances, ledgers and corrections</div>
   </button>
 
   <div class="mapp-section-label mb-mt-4">Logs</div>

@@ -336,15 +336,20 @@ describe('what comes back', () => {
     expect(btn.textContent).toBe('Save correction');
   });
 
-  test('a success reloads the pool so the balances redraw', async () => {
+  test('a success reloads the pool in place, without re-entering the tab', async () => {
+    // load(), not open(): the bucket pane is already on screen behind the
+    // sheet that just closed. Now that the pool is the Stock tab's second
+    // pane, open() navigates there and remounts the whole tab.
     Api.mutateWithId = jest.fn(async () => ({ success: true, data: {}, message: 'Warehouse Pool stock adjusted successfully.' }));
+    MApp.Pool.load = jest.fn();
     MApp.Pool.open = jest.fn();
     MApp.Pool.openAdjust(row(3));
     fill(18, 'recount');
 
     await MApp.Pool.submitAdjust();
 
-    expect(MApp.Pool.open).toHaveBeenCalled();
+    expect(MApp.Pool.load).toHaveBeenCalled();
+    expect(MApp.Pool.open).not.toHaveBeenCalled();
   });
 });
 

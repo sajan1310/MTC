@@ -1838,6 +1838,9 @@ MApp.Print = {
 // cleared by the target tab's own mount().
 MApp.State = {
   stockFilter: '',
+  // 'pool' sends the Stock tab to its Warehouse Pool pane on the next
+  // mount. Read and cleared there, same as the filters below.
+  stockView: '',
   productionFilter: '',
   dispatchFilter: '',
   lastDashboard: null // cached getMobileDashboard() payload, reused by the More tab's About row
@@ -1990,7 +1993,61 @@ MApp.Stock = {
     this._ledgerCache = null;
     const searchInput = document.getElementById('stock-search');
     if (searchInput) searchInput.value = '';
-    this.load();
+
+    // Reset per tab ENTRY, not per view switch: MApp.Shell re-clones the
+    // tab template on every entry, so a pane that was loaded during the
+    // last visit is an empty div now.
+    this._mounted = {};
+
+    // MApp.State.stockView is the handoff from anything that navigates
+    // straight to the pool -- the More tab's card, global search, a pool
+    // write reloading afterwards. Read once and cleared, exactly like
+    // stockFilter below it.
+    const wanted = MApp.State.stockView === 'pool' ? 'pool' : 'stock';
+    MApp.State.stockView = '';
+    this.showView(wanted);
+  },
+
+  // ── The two views ────────────────────────────────────────────────────
+  // Stock and Warehouse Pool answer the same floor question -- how much
+  // of this do we have -- out of two different records: what the item
+  // master holds, and what is in progress between process stages. They
+  // share a tab because that is how the question gets asked, and a
+  // segmented switch rather than a filter chip because swapping which
+  // record you are reading is not the same act as narrowing one list.
+  view: 'stock',
+
+  showView(view) {
+    const target = view === 'pool' ? 'pool' : 'stock';
+    const switched = this.view !== target;
+    this.view = target;
+
+    ['stock', 'pool'].forEach(v => {
+      const pane = document.getElementById('stock-pane-' + v);
+      if (pane) pane.hidden = v !== target;
+      const tab = document.getElementById('stock-view-tab-' + v);
+      if (tab) tab.setAttribute('aria-selected', String(v === target));
+    });
+
+    // Both the screen heading and the top bar follow, so the answer on
+    // screen is never labelled with the other record's name.
+    const label = target === 'pool' ? 'Warehouse Pool' : 'Stock';
+    const titleEl = document.getElementById('stock-screen-title');
+    if (titleEl) titleEl.textContent = label;
+    const topbarEl = document.getElementById('mapp-topbar-title');
+    if (topbarEl) topbarEl.textContent = label;
+
+    // Each side loads the first time it is shown and not again on every
+    // toggle -- flipping back and forth is a normal fidget and should
+    // not cost a round trip. A pool write reloads its own side.
+    this._mounted = this._mounted || {};
+    if (target === 'pool') {
+      if (!this._mounted.pool) { this._mounted.pool = true; MApp.Pool.mount(); }
+    } else if (!this._mounted.stock) {
+      this._mounted.stock = true;
+      this.load();
+    }
+    if (switched) MApp.Haptics.light();
   },
 
   async load() {
@@ -8320,7 +8377,7 @@ MApp.GlobalSearch = {
     { label: 'Users & Roles', keywords: 'admin accounts permissions', run: () => MApp.Admin.open() },
     { label: 'Sync Issues', keywords: 'offline outbox pending failed queue', run: () => MApp.SyncIssues.open() },
     { label: 'Account', keywords: 'profile name email password change my', run: () => MApp.Account.open() },
-    { label: 'Warehouse Pool', keywords: 'pool buckets negative available wip intermediate', run: () => MApp.Pool.open() },
+    { label: 'Warehouse Pool', keywords: 'pool buckets negative available wip intermediate stock tab', run: () => MApp.Pool.open() },
     { label: 'System Status', keywords: 'backup health activity log notifications audit', run: () => MApp.Status.open() },
     { label: 'Full dashboard', keywords: 'kpi totals payables ready low stock overview', run: () => MApp.Dashboard.open() },
     { label: 'Colours', keywords: 'colour color master paint shade', run: () => MApp.Master.open('color') },
@@ -10257,18 +10314,46 @@ MApp.Pool = {
       .map(x => x.color);
   },
 
-  async open() {
+  // Called by MApp.Stock the first time the pool pane is shown in a tab
+  // visit. Resets the query and filter, because the pane's markup came
+  // back fresh from the template and its inputs are blank again.
+  mount() {
     this.searchTerm = '';
     this.filter = 'all';
-    const listEl = document.getElementById('pool-list');
-    MApp.Util.renderSkeleton(listEl, 5);
     MApp.SearchBox.attach('pool-search', term => this.onSearch(term));
-    MApp.Sheet.open('sheet-pool');
+    this.load();
+  },
+
+  // Navigates to the pool rather than opening it: this list is the second
+  // pane of the Stock tab now, not a sheet. Kept under the old name
+  // because every entry point into the pool -- the More tab's card,
+  // global search -- asks for it this way.
+  open() {
+    MApp.State.stockView = 'pool';
+    if (MApp.Shell.current === 'stock') {
+      // Already here: re-mount rather than rely on showTab, which is a
+      // no-op for the tab it is already on and would leave the pane
+      // hidden behind the stock list.
+      MApp.Stock.mount();
+      return;
+    }
+    MApp.Shell.showTab('stock');
+  },
+
+  async load() {
+    const listEl = document.getElementById('pool-list');
+    // The pane is only in the DOM while the Stock tab is showing it, and
+    // several things that recalculate the pool -- an opening balance, a
+    // colour exclusion -- can be done from screens where it is not. They
+    // ask for a refresh unconditionally; this is where that costs
+    // nothing instead of throwing.
+    if (!listEl) return;
+    MApp.Util.renderSkeleton(listEl, 5);
 
     try {
       const res = await MApp.Api.call('getWarehousePoolData');
       if (!res || !res.success) {
-        MApp.Util.renderError(listEl, res && res.message, () => this.open());
+        MApp.Util.renderError(listEl, res && res.message, () => this.load());
         return;
       }
       this.rows = res.data || [];
@@ -10277,11 +10362,9 @@ MApp.Pool = {
       this._applyFilters();
       this.render();
     } catch (err) {
-      MApp.Util.renderError(listEl, err && err.message, () => this.open());
+      MApp.Util.renderError(listEl, err && err.message, () => this.load());
     }
   },
-
-  close() { MApp.Sheet.close('sheet-pool'); },
 
   onSearch(term) {
     this.searchTerm = term || '';
@@ -10565,7 +10648,9 @@ MApp.Pool = {
 
     MApp.Toast.success(res.message || 'Warehouse Pool stock adjusted.');
     this.closeAdjust();
-    this.open();
+    // load(), not open(): the pane is already on screen behind the sheet
+    // that just closed, and open() would re-enter the whole tab.
+    this.load();
   },
 
   // ── Adjustment history ───────────────────────────────────────────────
@@ -10931,6 +11016,9 @@ MApp.PoolOpenings = {
     MApp.Toast.success(res.message || 'Opening stock recorded.');
     this.closeForm();
     this.open();
+    // The server recalculated the pool, so the bucket list behind this
+    // sheet is now wrong. A no-op when that pane is not on screen.
+    MApp.Pool.load();
   },
 
   async remove(row) {
@@ -10950,6 +11038,7 @@ MApp.PoolOpenings = {
     if (res.success) {
       MApp.Toast.success(res.message || 'Opening stock entry deleted.');
       this.open();
+      MApp.Pool.load();
     }
   }
 };
