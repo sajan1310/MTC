@@ -817,6 +817,49 @@ textarea:focus-visible,
 .mb-chip-lowstock   { background: var(--mb-enamel-red); }
 
 /* ── Tappable filter chips (status-bar style pickers, e.g. PO Ledger) ── */
+/* ── Collapsible section (More tab) ──────────────────────────────────
+   Native <details>/<summary>: the keyboard handling, the aria-expanded
+   semantics and the open/closed state are the platform's, not a
+   reimplementation, and the sections still open if the script never
+   runs. MApp.MoreGroups adds only the remembering. */
+.mapp-group {
+  border-bottom: 1px solid var(--mb-steel-faint);
+}
+
+.mapp-group-summary {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--mb-sp-3);
+  min-height: var(--mb-tap-min);
+  padding: var(--mb-sp-2) 0;
+  cursor: pointer;
+  /* Both are needed: the standard property for most engines, the
+     -webkit- pseudo-element for Safari, which ignores it. Without them a
+     default triangle sits beside our own chevron. */
+  list-style: none;
+}
+
+.mapp-group-summary::-webkit-details-marker { display: none; }
+
+/* The label inside a summary is the heading; it keeps the section-label
+   type but loses the margin it carries when standing alone. */
+.mapp-group-summary .mapp-section-label { margin: 0; }
+
+.mapp-group-chevron {
+  flex-shrink: 0;
+  color: var(--mb-steel);
+  /* The token already carries its own easing, and the
+     prefers-reduced-motion block near the top zeroes it. */
+  transition: transform var(--mb-motion-fast);
+}
+
+.mapp-group[open] > .mapp-group-summary .mapp-group-chevron { transform: rotate(180deg); }
+
+/* The last card in an open section would otherwise sit flush against the
+   next section's rule. */
+.mapp-group[open] { padding-bottom: var(--mb-sp-2); }
+
 /* ── Segmented view switch ───────────────────────────────────────────
    Two views of the same question -- "how much of this do we have" --
    answered by two different records. Deliberately NOT the filter-chip

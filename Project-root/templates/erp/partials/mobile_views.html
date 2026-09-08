@@ -686,204 +686,292 @@
 <template id="tpl-more">
   <h1 class="mapp-screen-title">More</h1>
 
-  <!-- System is the default and stays first. The two overrides exist
-       because a phone walks from a dark shed into full glare faster than
-       any OS schedule accounts for. -->
-  <div class="mapp-section-label">Appearance</div>
-  <div class="mb-segmented" role="tablist" aria-label="Theme">
-    <button type="button" role="tab" data-theme-mode="system" aria-selected="true"
-            onclick="MApp.Theme.set('system')">System</button>
-    <button type="button" role="tab" data-theme-mode="light" aria-selected="false"
-            onclick="MApp.Theme.set('light')">Light</button>
-    <button type="button" role="tab" data-theme-mode="dark" aria-selected="false"
-            onclick="MApp.Theme.set('dark')">Dark</button>
+  <!-- Twelve sections and about forty destinations, which as a flat
+       scroll meant hunting. Each section is a <details>: native, so the
+       keyboard and screen-reader behaviour is the platform's rather than
+       something reimplemented here, and it still works if the script
+       never runs. MApp.MoreGroups only remembers which ones were open.
+
+       Collapsed by default -- the point is that the tab opens as an
+       index you can read at a glance. Expand all is there for anyone who
+       wants the flat scroll this used to be. -->
+  <div style="display:flex; gap:var(--mb-sp-4); margin-bottom:var(--mb-sp-2);">
+    <button type="button" class="mb-btn-text" style="padding:0;min-height:auto;" onclick="MApp.MoreGroups.setAll(true)">Expand all</button>
+    <button type="button" class="mb-btn-text" style="padding:0;min-height:auto;" onclick="MApp.MoreGroups.setAll(false)">Collapse all</button>
   </div>
-  <div class="mb-field-hint mb-mb-4" id="theme-hint" aria-live="polite"></div>
 
-  <div class="mapp-section-label">Sync</div>
-  <button type="button" class="mb-card mb-card-tappable" style="border:none;" onclick="MApp.SyncIssues.open()">
-    <div class="mb-card-row">
-      <span class="mb-card-title">Sync Issues</span>
-      <svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M9 18l6-6-6-6"/></svg>
+  <details class="mapp-group" data-group="appearance">
+    <summary class="mapp-group-summary">
+      <span class="mapp-section-label">Appearance</span>
+      <svg class="mapp-group-chevron" viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M6 9l6 6 6-6"/></svg>
+    </summary>
+    <!-- System is the default and stays first. The two overrides exist
+         because a phone walks from a dark shed into full glare faster
+         than any OS schedule accounts for. -->
+    <div class="mb-segmented" role="tablist" aria-label="Theme">
+      <button type="button" role="tab" data-theme-mode="system" aria-selected="true"
+              onclick="MApp.Theme.set('system')">System</button>
+      <button type="button" role="tab" data-theme-mode="light" aria-selected="false"
+              onclick="MApp.Theme.set('light')">Light</button>
+      <button type="button" role="tab" data-theme-mode="dark" aria-selected="false"
+              onclick="MApp.Theme.set('dark')">Dark</button>
     </div>
-    <div class="mb-card-sub" id="sync-issues-summary">Checking…</div>
-  </button>
+    <div class="mb-field-hint" id="theme-hint" aria-live="polite"></div>
+  </details>
 
-  <div class="mapp-section-label mb-mt-4">Returns</div>
-  <div class="mb-list" id="more-returns-list">
-    <div class="mb-skel mb-skel-card"></div>
-  </div>
-  <button type="button" class="mb-btn mb-btn-secondary mb-mb-4" onclick="MApp.Returns.openNewReturnSheet()">Log Return</button>
+  <details class="mapp-group" data-group="sync">
+    <summary class="mapp-group-summary">
+      <span class="mapp-section-label">Sync</span>
+      <svg class="mapp-group-chevron" viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M6 9l6 6 6-6"/></svg>
+    </summary>
+    <button type="button" class="mb-card mb-card-tappable" style="border:none;" onclick="MApp.SyncIssues.open()">
+      <div class="mb-card-row">
+        <span class="mb-card-title">Sync Issues</span>
+        <svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M9 18l6-6-6-6"/></svg>
+      </div>
+      <div class="mb-card-sub" id="sync-issues-summary">Checking…</div>
+    </button>
+  </details>
 
-  <button type="button" class="mb-card mb-card-tappable" style="border:none;" onclick="MApp.Status.open()">
-    <div class="mb-card-row">
-      <span class="mb-card-title">System Status</span>
-      <svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M9 18l6-6-6-6"/></svg>
+  <details class="mapp-group" data-group="returns">
+    <summary class="mapp-group-summary">
+      <span class="mapp-section-label">Returns</span>
+      <svg class="mapp-group-chevron" viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M6 9l6 6 6-6"/></svg>
+    </summary>
+    <div class="mb-list" id="more-returns-list">
+      <div class="mb-skel mb-skel-card"></div>
     </div>
-    <div class="mb-card-sub">Backup health, recent notifications, activity</div>
-  </button>
+    <button type="button" class="mb-btn mb-btn-secondary" onclick="MApp.Returns.openNewReturnSheet()">Log Return</button>
+  </details>
 
-  <div class="mapp-section-label mb-mt-4">Master data</div>
-  <button type="button" class="mb-card mb-card-tappable" style="border:none;" onclick="MApp.Master.open('color')">
-    <div class="mb-card-row"><span class="mb-card-title">Colours</span>
-      <svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M9 18l6-6-6-6"/></svg></div>
-  </button>
-  <button type="button" class="mb-card mb-card-tappable" style="border:none;" onclick="MApp.Master.open('model')">
-    <div class="mb-card-row"><span class="mb-card-title">Models</span>
-      <svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M9 18l6-6-6-6"/></svg></div>
-  </button>
-  <button type="button" class="mb-card mb-card-tappable" style="border:none;" onclick="MApp.Master.open('processType')">
-    <div class="mb-card-row"><span class="mb-card-title">Process Types</span>
-      <svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M9 18l6-6-6-6"/></svg></div>
-  </button>
-  <button type="button" class="mb-card mb-card-tappable" style="border:none;" onclick="MApp.Master.open('unit')">
-    <div class="mb-card-row"><span class="mb-card-title">Units</span>
-      <svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M9 18l6-6-6-6"/></svg></div>
-    <div class="mb-card-sub">Conversion factors</div>
-  </button>
-  <button type="button" class="mb-card mb-card-tappable" style="border:none;" onclick="MApp.StockGroups.open()">
-    <div class="mb-card-row"><span class="mb-card-title">Stock Groups</span>
-      <svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M9 18l6-6-6-6"/></svg></div>
-    <div class="mb-card-sub">Named sets of item/size rows, for the Low Stock Report</div>
-  </button>
+  <!-- System Status used to sit loose under Returns with no heading of
+       its own, which is not what it is. -->
+  <details class="mapp-group" data-group="system">
+    <summary class="mapp-group-summary">
+      <span class="mapp-section-label">System</span>
+      <svg class="mapp-group-chevron" viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M6 9l6 6 6-6"/></svg>
+    </summary>
+    <button type="button" class="mb-card mb-card-tappable" style="border:none;" onclick="MApp.Status.open()">
+      <div class="mb-card-row">
+        <span class="mb-card-title">System Status</span>
+        <svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M9 18l6-6-6-6"/></svg>
+      </div>
+      <div class="mb-card-sub">Backup health, recent notifications, activity</div>
+    </button>
+  </details>
 
-  <div class="mapp-section-label mb-mt-4">Warehouse</div>
-  <button type="button" class="mb-card mb-card-tappable" style="border:none;" onclick="MApp.Pool.open()">
-    <div class="mb-card-row">
-      <span class="mb-card-title">Warehouse Pool</span>
-      <svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M9 18l6-6-6-6"/></svg>
-    </div>
-    <div class="mb-card-sub">In the Stock tab — bucket balances, ledgers and corrections</div>
-  </button>
+  <details class="mapp-group" data-group="master">
+    <summary class="mapp-group-summary">
+      <span class="mapp-section-label">Master data</span>
+      <svg class="mapp-group-chevron" viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M6 9l6 6 6-6"/></svg>
+    </summary>
+    <button type="button" class="mb-card mb-card-tappable" style="border:none;" onclick="MApp.Master.open('color')">
+      <div class="mb-card-row"><span class="mb-card-title">Colours</span>
+        <svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M9 18l6-6-6-6"/></svg></div>
+    </button>
+    <button type="button" class="mb-card mb-card-tappable" style="border:none;" onclick="MApp.Master.open('model')">
+      <div class="mb-card-row"><span class="mb-card-title">Models</span>
+        <svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M9 18l6-6-6-6"/></svg></div>
+    </button>
+    <button type="button" class="mb-card mb-card-tappable" style="border:none;" onclick="MApp.Master.open('processType')">
+      <div class="mb-card-row"><span class="mb-card-title">Process Types</span>
+        <svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M9 18l6-6-6-6"/></svg></div>
+    </button>
+    <button type="button" class="mb-card mb-card-tappable" style="border:none;" onclick="MApp.Master.open('unit')">
+      <div class="mb-card-row"><span class="mb-card-title">Units</span>
+        <svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M9 18l6-6-6-6"/></svg></div>
+      <div class="mb-card-sub">Conversion factors</div>
+    </button>
+    <button type="button" class="mb-card mb-card-tappable" style="border:none;" onclick="MApp.StockGroups.open()">
+      <div class="mb-card-row"><span class="mb-card-title">Stock Groups</span>
+        <svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M9 18l6-6-6-6"/></svg></div>
+      <div class="mb-card-sub">Named sets of item/size rows, for the Low Stock Report</div>
+    </button>
+  </details>
 
-  <div class="mapp-section-label mb-mt-4">Logs</div>
-  <button type="button" class="mb-card mb-card-tappable" style="border:none;" onclick="MApp.Issue.open()">
-    <div class="mb-card-row">
-      <span class="mb-card-title">Issued Stock</span>
-      <svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M9 18l6-6-6-6"/></svg>
-    </div>
-    <div class="mb-card-sub">Material issued to a contractor, outside a process recipe</div>
-  </button>
-  <button type="button" class="mb-card mb-card-tappable" style="border:none;" onclick="MApp.Wastage.open()">
-    <div class="mb-card-row">
-      <span class="mb-card-title">Wastage</span>
-      <svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M9 18l6-6-6-6"/></svg>
-    </div>
-    <div class="mb-card-sub">Material losses, per item</div>
-  </button>
+  <details class="mapp-group" data-group="warehouse">
+    <summary class="mapp-group-summary">
+      <span class="mapp-section-label">Warehouse</span>
+      <svg class="mapp-group-chevron" viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M6 9l6 6 6-6"/></svg>
+    </summary>
+    <button type="button" class="mb-card mb-card-tappable" style="border:none;" onclick="MApp.Pool.open()">
+      <div class="mb-card-row">
+        <span class="mb-card-title">Warehouse Pool</span>
+        <svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M9 18l6-6-6-6"/></svg>
+      </div>
+      <div class="mb-card-sub">In the Stock tab — bucket balances, ledgers and corrections</div>
+    </button>
+  </details>
 
-  <div class="mapp-section-label mb-mt-4">Ledgers</div>
-  <button type="button" class="mb-card mb-card-tappable" style="border:none;" onclick="MApp.PO.openLedgerSheet()">
-    <div class="mb-card-row">
-      <span class="mb-card-title">PO Ledger</span>
-      <svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M9 18l6-6-6-6"/></svg>
-    </div>
-    <div class="mb-card-sub">Status, pending qty &amp; print, per PO</div>
-  </button>
-  <button type="button" class="mb-card mb-card-tappable" style="border:none;" onclick="MApp.Bill.openLedgerSheet()">
-    <div class="mb-card-row">
-      <span class="mb-card-title">Bill Ledger</span>
-      <svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M9 18l6-6-6-6"/></svg>
-    </div>
-    <div class="mb-card-sub">Recorded bills &amp; print, per bill</div>
-  </button>
-  <button type="button" class="mb-card mb-card-tappable" style="border:none;" onclick="MApp.ClientOrders.open()">
-    <div class="mb-card-row">
-      <span class="mb-card-title">PI / Estimates</span>
-      <svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M9 18l6-6-6-6"/></svg>
-    </div>
-    <div class="mb-card-sub">Client orders — confirming one queues Production</div>
-  </button>
+  <details class="mapp-group" data-group="logs">
+    <summary class="mapp-group-summary">
+      <span class="mapp-section-label">Logs</span>
+      <svg class="mapp-group-chevron" viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M6 9l6 6 6-6"/></svg>
+    </summary>
+    <button type="button" class="mb-card mb-card-tappable" style="border:none;" onclick="MApp.Issue.open()">
+      <div class="mb-card-row">
+        <span class="mb-card-title">Issued Stock</span>
+        <svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M9 18l6-6-6-6"/></svg>
+      </div>
+      <div class="mb-card-sub">Material issued to a contractor, outside a process recipe</div>
+    </button>
+    <button type="button" class="mb-card mb-card-tappable" style="border:none;" onclick="MApp.Wastage.open()">
+      <div class="mb-card-row">
+        <span class="mb-card-title">Wastage</span>
+        <svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M9 18l6-6-6-6"/></svg>
+      </div>
+      <div class="mb-card-sub">Material losses, per item</div>
+    </button>
+  </details>
 
-  <div class="mapp-section-label mb-mt-4">Lookup</div>
-  <button type="button" class="mb-card mb-card-tappable" style="border:none;" onclick="MApp.Items.openLookupSheet()">
-    <div class="mb-card-row">
-      <span class="mb-card-title">Items lookup</span>
-      <svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M9 18l6-6-6-6"/></svg>
-    </div>
-    <div class="mb-card-sub">Search the full item master</div>
-  </button>
+  <details class="mapp-group" data-group="ledgers">
+    <summary class="mapp-group-summary">
+      <span class="mapp-section-label">Ledgers</span>
+      <svg class="mapp-group-chevron" viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M6 9l6 6 6-6"/></svg>
+    </summary>
+    <button type="button" class="mb-card mb-card-tappable" style="border:none;" onclick="MApp.PO.openLedgerSheet()">
+      <div class="mb-card-row">
+        <span class="mb-card-title">PO Ledger</span>
+        <svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M9 18l6-6-6-6"/></svg>
+      </div>
+      <div class="mb-card-sub">Status, pending qty &amp; print, per PO</div>
+    </button>
+    <button type="button" class="mb-card mb-card-tappable" style="border:none;" onclick="MApp.Bill.openLedgerSheet()">
+      <div class="mb-card-row">
+        <span class="mb-card-title">Bill Ledger</span>
+        <svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M9 18l6-6-6-6"/></svg>
+      </div>
+      <div class="mb-card-sub">Recorded bills &amp; print, per bill</div>
+    </button>
+    <button type="button" class="mb-card mb-card-tappable" style="border:none;" onclick="MApp.ClientOrders.open()">
+      <div class="mb-card-row">
+        <span class="mb-card-title">PI / Estimates</span>
+        <svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M9 18l6-6-6-6"/></svg>
+      </div>
+      <div class="mb-card-sub">Client orders — confirming one queues Production</div>
+    </button>
+  </details>
 
-  <div class="mapp-section-label mb-mt-4">Directory</div>
-  <button type="button" class="mb-card mb-card-tappable" style="border:none;" onclick="MApp.Directory.open('vendor')">
-    <div class="mb-card-row">
-      <span class="mb-card-title">Vendors</span>
-      <svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M9 18l6-6-6-6"/></svg>
-    </div>
-    <div class="mb-card-sub">Name, tap-to-call contact, address</div>
-  </button>
-  <button type="button" class="mb-card mb-card-tappable" style="border:none;" onclick="MApp.Directory.open('client')">
-    <div class="mb-card-row">
-      <span class="mb-card-title">Clients</span>
-      <svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M9 18l6-6-6-6"/></svg>
-    </div>
-    <div class="mb-card-sub">Name, tap-to-call contact, address</div>
-  </button>
-  <button type="button" class="mb-card mb-card-tappable" style="border:none;" onclick="MApp.Directory.open('contractor')">
-    <div class="mb-card-row">
-      <span class="mb-card-title">Contractors</span>
-      <svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M9 18l6-6-6-6"/></svg>
-    </div>
-    <div class="mb-card-sub">Name, tap-to-call contact, address</div>
-  </button>
+  <details class="mapp-group" data-group="lookup">
+    <summary class="mapp-group-summary">
+      <span class="mapp-section-label">Lookup</span>
+      <svg class="mapp-group-chevron" viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M6 9l6 6 6-6"/></svg>
+    </summary>
+    <button type="button" class="mb-card mb-card-tappable" style="border:none;" onclick="MApp.Items.openLookupSheet()">
+      <div class="mb-card-row">
+        <span class="mb-card-title">Items lookup</span>
+        <svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M9 18l6-6-6-6"/></svg>
+      </div>
+      <div class="mb-card-sub">Search the full item master</div>
+    </button>
+  </details>
 
-  <div class="mapp-section-label mb-mt-4">Products &amp; Processes</div>
-  <button type="button" class="mb-card mb-card-tappable" style="border:none;" onclick="MApp.Process.open()">
-    <div class="mb-card-row">
-      <span class="mb-card-title">Processes</span>
-      <svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M9 18l6-6-6-6"/></svg>
-    </div>
-    <div class="mb-card-sub">Stages, output items, recipe components</div>
-  </button>
-  <button type="button" class="mb-card mb-card-tappable" style="border:none;" onclick="MApp.BOM.open()">
-    <div class="mb-card-row">
-      <span class="mb-card-title">Product Recipes (BOM)</span>
-      <svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M9 18l6-6-6-6"/></svg>
-    </div>
-    <div class="mb-card-sub">Password-protected — components, vendors, costs</div>
-  </button>
+  <details class="mapp-group" data-group="directory">
+    <summary class="mapp-group-summary">
+      <span class="mapp-section-label">Directory</span>
+      <svg class="mapp-group-chevron" viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M6 9l6 6 6-6"/></svg>
+    </summary>
+    <button type="button" class="mb-card mb-card-tappable" style="border:none;" onclick="MApp.Directory.open('vendor')">
+      <div class="mb-card-row">
+        <span class="mb-card-title">Vendors</span>
+        <svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M9 18l6-6-6-6"/></svg>
+      </div>
+      <div class="mb-card-sub">Name, tap-to-call contact, address</div>
+    </button>
+    <button type="button" class="mb-card mb-card-tappable" style="border:none;" onclick="MApp.Directory.open('client')">
+      <div class="mb-card-row">
+        <span class="mb-card-title">Clients</span>
+        <svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M9 18l6-6-6-6"/></svg>
+      </div>
+      <div class="mb-card-sub">Name, tap-to-call contact, address</div>
+    </button>
+    <button type="button" class="mb-card mb-card-tappable" style="border:none;" onclick="MApp.Directory.open('contractor')">
+      <div class="mb-card-row">
+        <span class="mb-card-title">Contractors</span>
+        <svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M9 18l6-6-6-6"/></svg>
+      </div>
+      <div class="mb-card-sub">Name, tap-to-call contact, address</div>
+    </button>
+  </details>
+
+  <details class="mapp-group" data-group="products">
+    <summary class="mapp-group-summary">
+      <span class="mapp-section-label">Products &amp; Processes</span>
+      <svg class="mapp-group-chevron" viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M6 9l6 6 6-6"/></svg>
+    </summary>
+    <button type="button" class="mb-card mb-card-tappable" style="border:none;" onclick="MApp.Process.open()">
+      <div class="mb-card-row">
+        <span class="mb-card-title">Processes</span>
+        <svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M9 18l6-6-6-6"/></svg>
+      </div>
+      <div class="mb-card-sub">Stages, outputs, colours and recipes</div>
+    </button>
+    <button type="button" class="mb-card mb-card-tappable" style="border:none;" onclick="MApp.BOM.open()">
+      <div class="mb-card-row">
+        <span class="mb-card-title">Product Recipes</span>
+        <svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M9 18l6-6-6-6"/></svg>
+      </div>
+      <div class="mb-card-sub">BOM — components and costs, per product</div>
+    </button>
+  </details>
 
   {% if current_user.is_admin %}
-  <div class="mapp-section-label mb-mt-4">Admin</div>
-  <button type="button" class="mb-card mb-card-tappable" style="border:none;" onclick="MApp.Admin.open()">
-    <div class="mb-card-row">
-      <span class="mb-card-title">Users &amp; Roles</span>
-      <svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M9 18l6-6-6-6"/></svg>
-    </div>
-    <div class="mb-card-sub">Accounts, roles, activate/deactivate</div>
-  </button>
+  <details class="mapp-group" data-group="admin">
+    <summary class="mapp-group-summary">
+      <span class="mapp-section-label">Admin</span>
+      <svg class="mapp-group-chevron" viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M6 9l6 6 6-6"/></svg>
+    </summary>
+    <button type="button" class="mb-card mb-card-tappable" style="border:none;" onclick="MApp.Admin.open()">
+      <div class="mb-card-row">
+        <span class="mb-card-title">Users &amp; Roles</span>
+        <svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M9 18l6-6-6-6"/></svg>
+      </div>
+      <div class="mb-card-sub">Accounts, roles, activate/deactivate</div>
+    </button>
+  </details>
   {% endif %}
 
-  <div class="mapp-section-label mb-mt-4">Desktop</div>
-  <a class="mb-card mb-card-tappable" style="border:none;display:block;text-decoration:none;" id="more-desktop-link" href="?" target="_top">
-    <div class="mb-card-row">
-      <span class="mb-card-title">Open desktop UI</span>
-      <svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M9 18l6-6-6-6"/></svg>
-    </div>
-    <div class="mb-card-sub">Bills, BOM, vendor ledgers, settings</div>
-  </a>
-
-  <div class="mapp-section-label mb-mt-4">Account</div>
-  <button type="button" class="mb-card mb-card-tappable" style="border:none;width:100%;text-align:left;" onclick="MApp.Account.open()">
-    <div class="mb-card-row">
-      <div>
-        <div class="mb-card-title" id="more-account-name">{{ current_user.name }}</div>
-        <div class="mb-card-sub" id="more-account-email">{{ current_user.email }}</div>
+  <details class="mapp-group" data-group="desktop">
+    <summary class="mapp-group-summary">
+      <span class="mapp-section-label">Desktop</span>
+      <svg class="mapp-group-chevron" viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M6 9l6 6 6-6"/></svg>
+    </summary>
+    <a class="mb-card mb-card-tappable" style="border:none;display:block;text-decoration:none;" id="more-desktop-link" href="?" target="_top">
+      <div class="mb-card-row">
+        <span class="mb-card-title">Open desktop UI</span>
+        <svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M9 18l6-6-6-6"/></svg>
       </div>
-      <svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M9 18l6-6-6-6"/></svg>
-    </div>
-    <div class="mb-card-sub mb-mt-2">Name, email and password</div>
-  </button>
-  <a class="mb-card mb-card-tappable" style="border:none;display:block;text-decoration:none;color:var(--mb-enamel-red-ink);" href="{{ url_for('auth.logout') }}">
-    <div class="mb-card-row">
-      <span class="mb-card-title" style="color:inherit;">Sign Out</span>
-    </div>
-  </a>
+      <div class="mb-card-sub">Bills, BOM, vendor ledgers, settings</div>
+    </a>
+  </details>
 
-  <div class="mapp-section-label mb-mt-4">About</div>
-  <div class="mb-card">
-    <div class="mb-card-sub" id="more-about-line">Maharaja Bikes ERP — Mobile</div>
-  </div>
+  <!-- Account is the one section that opens by default: signing out is
+       the thing somebody comes to this tab already knowing they want,
+       and hiding it behind a disclosure would be hiding the exit. -->
+  <details class="mapp-group" data-group="account" open>
+    <summary class="mapp-group-summary">
+      <span class="mapp-section-label">Account</span>
+      <svg class="mapp-group-chevron" viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M6 9l6 6 6-6"/></svg>
+    </summary>
+    <button type="button" class="mb-card mb-card-tappable" style="border:none;width:100%;text-align:left;" onclick="MApp.Account.open()">
+      <div class="mb-card-row">
+        <div>
+          <div class="mb-card-title" id="more-account-name">{{ current_user.name }}</div>
+          <div class="mb-card-sub" id="more-account-email">{{ current_user.email }}</div>
+        </div>
+        <svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M9 18l6-6-6-6"/></svg>
+      </div>
+      <div class="mb-card-sub mb-mt-2">Name, email and password</div>
+    </button>
+    <a class="mb-card mb-card-tappable" style="border:none;display:block;text-decoration:none;color:var(--mb-enamel-red-ink);" href="{{ url_for('auth.logout') }}">
+      <div class="mb-card-row">
+        <span class="mb-card-title" style="color:inherit;">Sign Out</span>
+      </div>
+    </a>
+    <div class="mb-card">
+      <div class="mb-card-sub" id="more-about-line">Maharaja Bikes ERP — Mobile</div>
+    </div>
+  </details>
 </template>
 
 <!-- ═══════════════════════════════════════════════════════════════════

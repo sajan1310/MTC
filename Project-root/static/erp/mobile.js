@@ -11784,10 +11784,71 @@ MApp.Density = {
 };
 
 // ================================================================
+// MORE-TAB SECTIONS — which ones are open.
+//
+// Twelve sections and about forty destinations. As a flat scroll that
+// meant hunting, so each section is a <details> and the tab opens as an
+// index. The disclosure itself is the browser's; this only remembers.
+//
+// Remembering matters more than it sounds: the More tab is re-cloned
+// from its template on every visit, so without this every section would
+// snap shut the moment you came back from the screen you just opened.
+// ================================================================
+MApp.MoreGroups = {
+  KEY: 'maharaja-erp-mobile-more-groups',
+
+  // Only sections the user has opened are stored. An absent key means
+  // "never touched", which is what lets the markup's own `open`
+  // attribute decide the default -- Account is open because signing out
+  // should not be behind a disclosure.
+  read() {
+    try {
+      const raw = localStorage.getItem(this.KEY);
+      const parsed = raw ? JSON.parse(raw) : null;
+      return parsed && typeof parsed === 'object' ? parsed : {};
+    } catch (e) {
+      return {}; // storage inaccessible, or someone else's data in the key
+    }
+  },
+
+  write(state) {
+    try { localStorage.setItem(this.KEY, JSON.stringify(state)); } catch (e) { /* storage inaccessible */ }
+  },
+
+  // Called from MApp.More.mount(), after the template has been cloned in.
+  mount() {
+    const state = this.read();
+    document.querySelectorAll('.mapp-group[data-group]').forEach(el => {
+      const key = el.dataset.group;
+      if (Object.prototype.hasOwnProperty.call(state, key)) el.open = !!state[key];
+      el.addEventListener('toggle', () => this._remember(key, el.open));
+    });
+  },
+
+  _remember(key, open) {
+    const state = this.read();
+    state[key] = !!open;
+    this.write(state);
+  },
+
+  // Every section at once, for when the index itself is what you want --
+  // or when you want the old flat scroll back.
+  setAll(open) {
+    const state = this.read();
+    document.querySelectorAll('.mapp-group[data-group]').forEach(el => {
+      el.open = open;
+      state[el.dataset.group] = open;
+    });
+    this.write(state);
+  }
+};
+
+// ================================================================
 // MORE — links out to Returns/Items lookup/desktop UI + About row
 // ================================================================
 MApp.More = {
   mount() {
+    MApp.MoreGroups.mount();
     MApp.Theme.render();
     this._wireDesktopLink();
     this.loadAbout();
