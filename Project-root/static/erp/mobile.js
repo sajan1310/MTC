@@ -5204,13 +5204,94 @@ MApp.Bill = {
           <label>Unit Price</label>
           <input type="number" inputmode="decimal" min="0" step="0.01" value="${line.price || ''}" oninput="MApp.Bill.updateLine(${i}, 'price', this.value)">
         </div>
-        <div class="mb-field" style="margin-bottom:0;">
+        <div class="mb-field" style="margin-bottom:var(--mb-sp-2);">
           <label>GST %</label>
           <input type="number" inputmode="decimal" min="0" step="0.01" value="${line.gst != null ? line.gst : 18}" oninput="MApp.Bill.updateLine(${i}, 'gst', this.value)">
         </div>
+        ${this._poBadgeHtml(line, i)}
         ${this.lines.length > 1 ? `<button type="button" class="mb-btn-text mb-mt-2" style="padding:0;min-height:auto;color:var(--mb-enamel-red-ink);" onclick="MApp.Bill.removeLine(${i})">Remove</button>` : ''}
       </div>
     `).join('');
+  },
+
+  // Which PO this line draws down, and a tap to unlink it. Desktop shows
+  // the same information as a badge per row; this is that, sized for a
+  // phone. `manual` means the operator chose Direct and a later
+  // suggestion must not silently overwrite that choice.
+  _poBadgeHtml(line, i) {
+    const allocs = line.allocs || [];
+    const label = line.poManual || !allocs.length
+      ? 'Direct — not against a PO'
+      : allocs.map(a => (a.poNumber === 'DIRECT' ? 'Direct' : `PO-${a.poNumber}`) +
+          (allocs.length > 1 ? ` (${MApp.Util.formatQty(a.qty)})` : '')).join(' + ');
+    const linked = !line.poManual && allocs.length;
+    return `
+      <div class="mb-mt-2" style="display:flex; align-items:center; gap:var(--mb-sp-2); flex-wrap:wrap;">
+        <span class="mb-chip ${linked ? 'mb-chip-inprogress' : ''}">${MApp.Util.escapeHtml(label)}</span>
+        ${linked ? `<button type="button" class="mb-btn-text" style="padding:0;min-height:auto;" onclick="MApp.Bill.unlinkPo(${i})">Unlink</button>` : ''}
+      </div>`;
+  },
+
+  unlinkPo(i) {
+    if (!this.lines[i]) return;
+    this.lines[i].poManual = true;
+    this.lines[i].allocs = [];
+    this._renderLines();
+  },
+
+  _renderLines() {
+    const el = document.getElementById('bill-form-lines');
+    if (el) el.innerHTML = this._linesHtml();
+  },
+
+  // Asks the server which open PO lines each bill line most likely belongs
+  // to, and records the answer on the lines.
+  //
+  // Without this, mobile sent no per-item `po` and no top-level
+  // `poNumbers`, so bill_service.py defaulted every line to "DIRECT" --
+  // a bill entered on the phone drew down no PO's pending quantity at
+  // all. The auto-match is a convenience; the LINK is data, and it was
+  // missing entirely.
+  //
+  // Advisory, exactly like desktop's: the server itself fails open and
+  // returns an empty list rather than blocking bill entry, and so does
+  // this.
+  async matchPos() {
+    const vendor = this.selection.vendor;
+    const lines = this.lines.filter(l => l.name && l.qty > 0);
+    if (!vendor || !lines.length) return;
+
+    // rowIndex refers to the position in THIS payload, so it has to be
+    // mapped back to the real line afterwards.
+    const payload = lines.map((l, idx) => ({
+      rowIndex: idx, name: l.name, size: l.size || '',
+      unit: l.unit || 'Pcs', qty: l.qty, price: l.price || 0
+    }));
+    const billDate = document.getElementById('bill-form-date')?.value || MApp.Util.todayInputValue();
+
+    let results = [];
+    try {
+      const res = await MApp.Api.call('suggestPoAllocations', vendor, payload, billDate);
+      results = (res && res.success && res.data) ? res.data : [];
+    } catch (err) {
+      return; // offline or failing: leave the lines as they are
+    }
+
+    const byRow = {};
+    results.forEach(r => { byRow[r.rowIndex] = r; });
+    lines.forEach((line, idx) => {
+      // Never overwrite a deliberate Unlink, even if a suggestion for
+      // that line arrives afterwards -- the same rule desktop applies
+      // with its `autoMatched === 'manual'` check.
+      if (line.poManual) return;
+      const result = byRow[idx];
+      const allocs = (result && result.allocations || []).map(a => ({ poNumber: a.poNumber, qty: a.qty }));
+      if (result && result.unmatchedQty > 0 && allocs.length) {
+        allocs.push({ poNumber: 'DIRECT', qty: result.unmatchedQty });
+      }
+      line.allocs = allocs;
+    });
+    this._renderLines();
   },
 
   addLine() {
@@ -5266,16 +5347,33 @@ MApp.Bill = {
       return;
     }
 
+    // Settle the PO match before serialising. Desktop debounces this as
+    // the operator types and flushes it at submit; on a phone, where the
+    // form is short and the LAN is not, running it once here is the same
+    // guarantee for one round trip instead of one per keystroke.
+    await this.matchPos();
+
     const formData = {
       billNumber,
       billDate: document.getElementById('bill-form-date')?.value || MApp.Util.todayInputValue(),
       vendor: this.selection.vendor,
       contact: (document.getElementById('bill-form-contact')?.value || '').trim(),
       remarks: (document.getElementById('bill-form-remarks')?.value || '').trim(),
-      items: JSON.stringify(validLines.map(l => ({
-        name: l.name, size: l.size || '', narration: l.narration || '', unit: l.unit || 'Pcs',
-        qty: l.qty, price: l.price || 0, gst: l.gst != null ? l.gst : 18
-      })))
+      // A line allocated across several POs stays ONE line on screen but
+      // saveBill links one PO per item, so it is expanded into one item
+      // per allocation here, at save time -- the same place desktop
+      // expands it. A line with no allocation sends DIRECT explicitly
+      // rather than relying on the server's default, so the payload says
+      // what it means.
+      items: JSON.stringify(validLines.flatMap(l => {
+        const base = {
+          name: l.name, size: l.size || '', narration: l.narration || '', unit: l.unit || 'Pcs',
+          price: l.price || 0, gst: l.gst != null ? l.gst : 18
+        };
+        const allocs = l.poManual ? [] : (l.allocs || []);
+        if (allocs.length > 1) return allocs.map(a => ({ ...base, qty: a.qty, po: a.poNumber }));
+        return [{ ...base, qty: l.qty, po: allocs.length ? allocs[0].poNumber : 'DIRECT' }];
+      }))
     };
     if (this.editingBillNumber) {
       formData.existingBillNumber = this.editingBillNumber;

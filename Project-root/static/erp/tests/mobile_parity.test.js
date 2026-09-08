@@ -164,7 +164,6 @@ const BACKLOG = {
   saveUnit: 'P6 master-data registers',
   saveWarehousePoolOpening: 'P5 warehouse pool read + ledger, P6 adjust',
   setStockGroupItems: 'P6 master-data registers',
-  suggestPoAllocations: 'P4 per-line PO allocation in the bill form',
   triggerBackup: 'P5 read-only screens',
   updateCustomRole: 'P7 roles (read-only + handoff)',
   updateDeadStock: 'P6 stock thresholds',
@@ -173,7 +172,7 @@ const BACKLOG = {
 };
 
 // Phase 1 opened at 79. Lower this line as ports land; never raise it.
-const BACKLOG_BASELINE = 67;
+const BACKLOG_BASELINE = 66;
 
 describe('MApp / desktop feature parity', () => {
   test('the registry is being read at all', () => {

@@ -178,3 +178,117 @@ describe('MApp.Bill stock-correction conflict guard', () => {
     expect(saved).toBeNull();
   });
 });
+
+/**
+ * PO allocation on a phone-entered bill (Phase 4).
+ *
+ * Mobile sent no per-item `po` and no top-level `poNumbers`, so
+ * bill_service.py defaulted every line to "DIRECT": a bill entered on the
+ * phone drew down no PO's pending quantity at all. Desktop's auto-match is
+ * a convenience layer, but the LINK it produces is data, and it was
+ * missing entirely.
+ */
+describe('MApp.Bill PO allocation', () => {
+  let saved;
+
+  beforeEach(() => {
+    jest.resetModules();
+    global.fetch = jest.fn();
+    document.body.innerHTML = `
+      <div id="mapp-sheet-backdrop"></div>
+      <div class="mb-sheet" id="sheet-bill-form"></div>
+      <div class="mb-sheet" id="sheet-bill-stock-conflict"><div id="bill-stock-conflict-list"></div></div>
+      <input id="bill-form-number" value="B-2001">
+      <input id="bill-form-date" value="2026-08-01">
+      <input id="bill-form-contact" value="">
+      <input id="bill-form-remarks" value="">
+      <div id="bill-form-lines"></div>
+      <button id="bill-form-save-btn"></button>`;
+    loadAsGlobal('api.js', 'Api');
+    loadAsGlobal('mobile.js', 'MApp');
+
+    MApp.Sheet._stack = [];
+    MApp.Bill.selection = { vendor: 'Acme Cycles' };
+    MApp.Bill.editingBillNumber = null;
+    MApp.Bill.lines = [
+      { name: 'Rim 26', size: '26 inch', qty: 10, price: 100, unit: 'Pcs', gst: 18 },
+    ];
+    saved = null;
+    MApp.Util.mutateSimple = jest.fn(async (m, args) => { saved = args[0]; return { success: false }; });
+    MApp.Bill.closeForm = jest.fn();
+    MApp.Bill.openLedgerSheet = jest.fn();
+  });
+
+  const items = () => JSON.parse(saved.items);
+  const api = impl => { MApp.Api.call = jest.fn(impl); };
+
+  test('a matched line carries its PO number', async () => {
+    api(async method => method === 'suggestPoAllocations'
+      ? { success: true, data: [{ rowIndex: 0, allocations: [{ poNumber: '1042', qty: 10 }], unmatchedQty: 0 }] }
+      : { success: true, data: [] });
+
+    await MApp.Bill.saveBill();
+
+    expect(items()).toHaveLength(1);
+    expect(items()[0].po).toBe('1042');
+    expect(items()[0].qty).toBe(10);
+  });
+
+  test('an unmatched line says DIRECT explicitly rather than relying on a server default', async () => {
+    api(async () => ({ success: true, data: [] }));
+
+    await MApp.Bill.saveBill();
+
+    expect(items()[0].po).toBe('DIRECT');
+  });
+
+  test('a line split across POs is expanded into one item per allocation', async () => {
+    // It stays ONE line on screen; saveBill links one PO per item, so the
+    // expansion happens at save time exactly as desktop does it.
+    api(async method => method === 'suggestPoAllocations'
+      ? { success: true, data: [{ rowIndex: 0, allocations: [{ poNumber: '1042', qty: 6 }, { poNumber: '1043', qty: 3 }], unmatchedQty: 1 }] }
+      : { success: true, data: [] });
+
+    await MApp.Bill.saveBill();
+
+    expect(items()).toHaveLength(3);
+    expect(items().map(i => [i.po, i.qty])).toEqual([['1042', 6], ['1043', 3], ['DIRECT', 1]]);
+    // The split must not invent or lose quantity.
+    expect(items().reduce((n, i) => n + i.qty, 0)).toBe(10);
+  });
+
+  test('Unlink is not overwritten by a later suggestion', async () => {
+    // Desktop applies the same rule via its `autoMatched === "manual"`
+    // check: a deliberate choice must survive an in-flight suggestion.
+    api(async method => method === 'suggestPoAllocations'
+      ? { success: true, data: [{ rowIndex: 0, allocations: [{ poNumber: '1042', qty: 10 }], unmatchedQty: 0 }] }
+      : { success: true, data: [] });
+
+    MApp.Bill.unlinkPo(0);
+    await MApp.Bill.saveBill();
+
+    expect(items()[0].po).toBe('DIRECT');
+  });
+
+  test('the match is advisory -- a failure still saves the bill', async () => {
+    api(async method => {
+      if (method === 'suggestPoAllocations') throw new Error('offline');
+      return { success: true, data: [] };
+    });
+
+    await MApp.Bill.saveBill();
+
+    expect(saved).not.toBeNull();
+    expect(items()[0].po).toBe('DIRECT');
+  });
+
+  test('no vendor means no suggestion request at all', async () => {
+    api(async () => ({ success: true, data: [] }));
+    MApp.Bill.selection = { vendor: '' };
+
+    await MApp.Bill.saveBill();
+
+    // saveBill bails on a missing vendor before anything is sent.
+    expect(MApp.Api.call).not.toHaveBeenCalled();
+  });
+});
