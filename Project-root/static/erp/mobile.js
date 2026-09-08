@@ -1949,12 +1949,16 @@ MApp.Home = {
 // ================================================================
 // STOCK — search-first item list. "Searches as you type" is a pure
 // client-side filter over the already-loaded list (no per-keystroke API
-// call). Tapping a card expands recent movements, merged client-side
-// from Bill/Return/Wastage/Issue/Production/Stock-adjustment history —
-// there is no dedicated "item ledger" server endpoint (confirmed: the
-// desktop Item Ledger tab derives it the same way from already-loaded
-// data), and adding one isn't in scope (getMobileDashboard was the only
-// new server function this app needed, and it already exists).
+// call). Tapping a card expands recent movements.
+//
+// Those movements used to be merged client-side from six datasets
+// (Bill/Return/Wastage/Issue/Production/Stock-adjustment), on the stated
+// grounds that "there is no dedicated item ledger server endpoint
+// (confirmed: the desktop Item Ledger tab derives it the same way)".
+// That was true when written and is not any more: getItemLedgerData
+// exists, desktop moved onto it, and its docstring records exactly why
+// deriving this in the browser is wrong. It now backs this panel too --
+// see _loadMovements for what the merge got wrong.
 // ================================================================
 MApp.Stock = {
   // Narration and unit were not searchable before; on a 1,600-row stock
@@ -1973,11 +1977,11 @@ MApp.Stock = {
   all: [],
   filtered: [],
   expandedKey: null,
-  ledgerSources: null, // lazy-loaded on first expand; cached after that
+  _ledgerCache: null, // per item name, for the session -- see _loadMovements
 
   mount() {
     this.expandedKey = null;
-    this.ledgerSources = null;
+    this._ledgerCache = null;
     const searchInput = document.getElementById('stock-search');
     if (searchInput) searchInput.value = '';
     this.load();
@@ -2156,28 +2160,71 @@ MApp.Stock = {
     const adjustBtn = `<button type="button" class="mb-btn-text" style="padding:8px 0;" onclick="MApp.Stock.openAdjustSheet(${idx})">Adjust stock</button>`;
 
     try {
-      await this._ensureLedgerSources();
-      const movements = this._computeMovements(item.name, item.size);
+      const movements = await this._loadMovements(item.name, item.size);
 
       if (movements.length === 0) {
         panel.innerHTML = adjustBtn + '<div class="mb-text-sm mb-text-steel" style="padding:var(--mb-sp-2) 0;">No recorded movements for this item yet.</div>';
         return;
       }
 
-      panel.innerHTML = adjustBtn + movements.slice(0, 6).map(m => `
+      panel.innerHTML = adjustBtn + movements.slice(0, 8).map(m => {
+        const delta = (m.incomingQty || 0) - (m.outgoingQty || 0);
+        // A row the Stock formula does not count -- a "Ledger only" bill,
+        // or a PO, which is an intent to buy rather than a receipt. Shown
+        // for context, muted, and never given a signed quantity that
+        // would read as a movement.
+        const counts = m.countsTowardStock !== false;
+        const qtyHtml = counts
+          ? `<span style="font-weight:700;color:${delta >= 0 ? 'var(--mb-enamel-green-ink)' : 'var(--mb-enamel-red-ink)'};">${delta >= 0 ? '+' : ''}${MApp.Util.formatQty(delta)}</span>`
+          : '<span class="mb-text-steel">not counted</span>';
+        // enteredQty differs from the base quantity whenever the line was
+        // entered in a non-base unit -- a line entered in Dozen moves 12.
+        // Showing both is the point: the old client-side version showed
+        // only the as-entered figure, so it read 1.
+        const entered = m.enteredQty != null && Math.abs(m.enteredQty - Math.abs(delta)) > 0.0001
+          ? ` <span class="mb-text-steel">(${MApp.Util.formatQty(m.enteredQty)} ${MApp.Util.escapeHtml(m.unit || '')})</span>`
+          : '';
+        return `
         <div class="mb-flex-row" style="justify-content:space-between;padding:6px 0;border-bottom:1px solid var(--mb-steel-faint);">
           <div>
-            <div class="mb-text-sm" style="font-weight:600;color:var(--mb-ink);">${MApp.Util.escapeHtml(m.label)}</div>
-            <div class="mb-text-sm mb-text-steel">${MApp.Util.formatDateDisplay(m.dateRaw)}</div>
+            <div class="mb-text-sm" style="font-weight:600;color:var(--mb-ink);">${MApp.Util.escapeHtml(m.type)}${m.ref ? ' ' + MApp.Util.escapeHtml(m.ref) : ''}</div>
+            <div class="mb-text-sm mb-text-steel">${MApp.Util.formatDateDisplay(m.dateRaw)}${m.party ? ' · ' + MApp.Util.escapeHtml(MApp.Util.formatNameCase(m.party)) : ''}</div>
           </div>
-          <div class="mb-text-sm" style="font-weight:700;color:${m.qtyDelta > 0 ? 'var(--mb-enamel-green)' : 'var(--mb-enamel-red)'};white-space:nowrap;">
-            ${m.qtyDelta > 0 ? '+' : ''}${m.qtyDelta}
+          <div class="mb-text-sm" style="text-align:right;white-space:nowrap;">
+            ${qtyHtml}${entered}
+            ${m.balance != null ? `<div class="mb-text-sm mb-text-steel">bal ${MApp.Util.formatQty(m.balance)}</div>` : ''}
           </div>
-        </div>
-      `).join('');
+        </div>`;
+      }).join('');
     } catch (err) {
       panel.innerHTML = adjustBtn + `<div class="mb-text-sm" style="color:var(--mb-enamel-red-ink);">Couldn't load movement history: ${MApp.Util.escapeHtml(err.message || '')}</div>`;
     }
+  },
+
+  // getItemLedgerData returns every movement for one Items Master NAME,
+  // across all its size variants, so the size filter happens here.
+  //
+  // This replaces a client-side merge of six separate datasets that was
+  // wrong in two ways the server endpoint exists to fix: quantities were
+  // as-entered rather than base units (a line entered in Dozen showed 1
+  // while moving 12), and every bill line was counted -- including ones
+  // the operator had explicitly excluded from Stock through the
+  // stock-adjustment conflict flow, which the server marks
+  // countsTowardStock:false. It also cost six round trips per expand,
+  // on a factory LAN, to compute an answer the server already had.
+  //
+  // Cached per item name for the session: expanding, collapsing and
+  // re-expanding a card is a normal fidget and should not refetch.
+  async _loadMovements(name, size) {
+    this._ledgerCache = this._ledgerCache || {};
+    const key = String(name || '').trim().toLowerCase();
+    if (!this._ledgerCache[key]) {
+      const res = await MApp.Api.call('getItemLedgerData', name);
+      if (!res || !res.success) throw new Error((res && res.message) || 'Could not load the item ledger.');
+      this._ledgerCache[key] = (res.data && res.data.entries) || [];
+    }
+    const wanted = String(size || '').trim().toLowerCase();
+    return this._ledgerCache[key].filter(e => String(e.size || '').trim().toLowerCase() === wanted);
   },
 
   // ── MANUAL STOCK ADJUSTMENT — mirrors desktop's App.Stock.handleAdjustSubmit
@@ -2269,85 +2316,6 @@ MApp.Stock = {
       MApp.Toast.error(err.message || 'Could not adjust stock. Please try again.');
       MApp.Util.setSheetBusy('stock-adjust-body', 'stock-adjust-save-btn', false, null, 'Save Correction');
     }
-  },
-
-  async _ensureLedgerSources() {
-    if (this.ledgerSources) return this.ledgerSources;
-
-    const [billsRes, returnsRes, wastageRes, issueRes, productionRes, adjustRes] = await Promise.all([
-      MApp.Api.call('getBillData'),
-      MApp.Api.call('getReturnData'),
-      MApp.Api.call('getWastageData'),
-      MApp.Api.call('getIssueData'),
-      MApp.Api.call('getProductionData'),
-      MApp.Api.call('getStockAdjustmentHistory')
-    ]);
-
-    this.ledgerSources = {
-      bills: (billsRes && billsRes.success) ? billsRes.data || [] : [],
-      returns: (returnsRes && returnsRes.success) ? returnsRes.data || [] : [],
-      wastage: (wastageRes && wastageRes.success) ? wastageRes.data || [] : [],
-      issues: (issueRes && issueRes.success) ? issueRes.data || [] : [],
-      production: (productionRes && productionRes.success) ? productionRes.data || [] : [],
-      adjustments: (adjustRes && adjustRes.success) ? adjustRes.data || [] : []
-    };
-    return this.ledgerSources;
-  },
-
-  _computeMovements(name, size) {
-    const matches = (n, s) => String(n || '').trim().toLowerCase() === String(name || '').trim().toLowerCase() &&
-      String(s || '').trim().toLowerCase() === String(size || '').trim().toLowerCase();
-    const src = this.ledgerSources;
-    const out = [];
-
-    src.bills.forEach(bill => {
-      (bill.items || []).forEach(it => {
-        if (!matches(it.name, it.size)) return;
-        out.push({ dateRaw: bill.billDateRaw || bill.billDate, label: `Bill ${bill.billNumber} — ${bill.vendor}`, qtyDelta: it.qty });
-      });
-    });
-
-    src.returns.forEach(ret => {
-      (ret.items || []).forEach(it => {
-        if (!matches(it.name, it.size)) return;
-        out.push({ dateRaw: ret.returnDateRaw, label: `Return ${ret.returnNumber} — ${ret.vendor}`, qtyDelta: -it.qty });
-      });
-    });
-
-    src.wastage.forEach(w => {
-      (w.items || []).forEach(it => {
-        if (!matches(it.name, it.size)) return;
-        out.push({ dateRaw: w.dateRaw, label: `Wastage — ${it.reason || 'unspecified'}`, qtyDelta: -it.qty });
-      });
-    });
-
-    src.issues.forEach(iss => {
-      (iss.items || []).forEach(it => {
-        if (!matches(it.name, it.size)) return;
-        out.push({ dateRaw: iss.dateRaw, label: `Issued to ${iss.issuedTo}`, qtyDelta: -it.qty });
-      });
-    });
-
-    src.production.forEach(lot => {
-      if (lot.status !== 'Completed') return;
-      (lot.componentsConsumed || []).forEach(c => {
-        if (String(c.sourceType || '').toUpperCase() === 'POOL') return;
-        if (!matches(c.itemName, c.size)) return;
-        out.push({ dateRaw: lot.dateRaw, label: `Production lot ${lot.lotNumber}`, qtyDelta: -(Number(c.qty) || 0) });
-      });
-    });
-
-    src.adjustments.forEach(adj => {
-      if (!matches(adj.itemName, adj.size)) return;
-      out.push({
-        dateRaw: adj.date,
-        label: `Manual adjustment${adj.reason ? ' — ' + adj.reason : ''}`,
-        qtyDelta: Math.round(((adj.newValue || 0) - (adj.oldValue || 0)) * 100) / 100
-      });
-    });
-
-    out.sort((a, b) => new Date(b.dateRaw || 0) - new Date(a.dateRaw || 0));
-    return out;
   }
 };
 

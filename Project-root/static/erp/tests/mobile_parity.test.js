@@ -140,7 +140,6 @@ const BACKLOG = {
   getContractorServiceChargesData: 'P5 contractor ledger (descriptor `related`)',
   getDashboardData: 'P5 read-only screens',
   getDispatchPlans: 'P7 dispatch plan checklist',
-  getItemLedgerData: 'P5 item ledger + process mappings',
   getNextProductId: 'P6 master-data registers',
   getProcessWipData: 'P5 read-only screens',
   getProcessesForItem: 'P5 item ledger + process mappings',
@@ -172,7 +171,7 @@ const BACKLOG = {
 };
 
 // Phase 1 opened at 79. Lower this line as ports land; never raise it.
-const BACKLOG_BASELINE = 66;
+const BACKLOG_BASELINE = 65;
 
 describe('MApp / desktop feature parity', () => {
   test('the registry is being read at all', () => {
