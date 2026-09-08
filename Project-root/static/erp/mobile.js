@@ -2601,6 +2601,7 @@ MApp.Production = {
             </div>
             <div class="mb-mt-2" style="display:flex; gap:var(--mb-sp-4);">
               <button type="button" class="mb-btn-text" style="padding:0;min-height:auto;" data-lot-action="edit" data-lot-index="${i}">Edit</button>
+              <button type="button" class="mb-btn-text" style="padding:0;min-height:auto;" data-lot-action="sheet" data-lot-index="${i}">Sheet</button>
               <button type="button" class="mb-btn-text" style="padding:0;min-height:auto;color:var(--mb-enamel-red-ink);" data-lot-action="delete" data-lot-index="${i}">Delete</button>
             </div>
           </div>`;
@@ -2616,6 +2617,7 @@ MApp.Production = {
           if (!lot) return;
           if (btn.dataset.lotAction === 'status') this.changeStatus(lot);
           else if (btn.dataset.lotAction === 'edit') this.openEditSheet(lot);
+          else if (btn.dataset.lotAction === 'sheet') MApp.ProductionSheet.open(lot);
           else this.deleteLot(lot);
         });
       });
@@ -9530,6 +9532,276 @@ MApp.ClientOrders = {
       MApp.Toast.success(res.message || 'PI / Estimate deleted.');
       this.open();
     }
+  }
+};
+
+// ================================================================
+// PRODUCTION SHEET — a lot's customized component list.
+//
+// What actually goes out with a lot is not always what its recipe says:
+// a substitution asked for by the customer, a size swapped at the
+// machine. The Production Sheet records that separately from the lot's
+// real consumption, which it never touches. Making one was desktop-only,
+// so the change was made at the machine and written down at a desk later
+// if at all.
+//
+// Desktop renders this as a Common table plus a per-colour matrix with
+// one column per colour. That is a rendering, not the data: underneath
+// it is a flat list of components each tagged with its own colour, which
+// is exactly what save_production_sheet stores and reads back. This
+// screen groups that same list by colour down the page instead of across
+// it -- nothing is lost, and a wide editable grid is the wrong shape for
+// a phone held in one hand.
+//
+// Not ported: printing the sheet. That is desktop's own layout work and
+// is tracked separately; the data is the part that could not be entered
+// anywhere else.
+// ================================================================
+MApp.ProductionSheet = {
+  lot: null,
+  rows: [],
+  remarks: '',
+
+  // The lot's own recorded consumption is the fallback, not a BOM:
+  // production lots are tied to a Process recipe, not a Product recipe,
+  // so there is nothing else to fall back to. Same rule as desktop's
+  // _populateProductionSheetData.
+  _rowsFor(lot) {
+    const custom = lot.customComponents || [];
+    const source = custom.length > 0 ? custom : (lot.componentsConsumed || []);
+    return source.map(c => ({
+      itemName: c.itemName || '',
+      size: c.size || '',
+      narration: c.narration || '',
+      color: this._colorKey(c),
+      requiredQty: c.requiredQty !== undefined ? MApp.Util.toNumber(c.requiredQty) : MApp.Util.toNumber(c.qty)
+    }));
+  },
+
+  // A recorded-consumption row carries colorGroup ('COMMON' for the
+  // shared ones); a saved sheet row carries color and no colorGroup at
+  // all. Reading both is what lets a sheet be re-opened into the same
+  // grouping it was saved from -- desktop's _resolveSheetColorKey.
+  _colorKey(c) {
+    const group = String(c.colorGroup || '').trim();
+    if (group && group.toUpperCase() !== 'COMMON') return group;
+    return String(c.color || '').trim();
+  },
+
+  open(lot) {
+    if (!lot) return;
+    this.lot = lot;
+    this.rows = this._rowsFor(lot);
+    this.remarks = lot.sheetRemarks || '';
+
+    const titleEl = document.getElementById('production-sheet-title');
+    if (titleEl) titleEl.textContent = `Sheet — ${lot.lotNumber}`;
+    const subEl = document.getElementById('production-sheet-sub');
+    if (subEl) {
+      subEl.textContent = `${lot.productName || lot.outputItemName || lot.processId || ''} · ${MApp.Util.formatQty(lot.qty)} unit(s)`;
+    }
+    const remarksEl = document.getElementById('production-sheet-remarks');
+    if (remarksEl) remarksEl.value = this.remarks;
+
+    this.render();
+    MApp.Sheet.open('sheet-production-sheet');
+  },
+
+  close() { MApp.Sheet.close('sheet-production-sheet'); },
+
+  render() {
+    const body = document.getElementById('production-sheet-body');
+    if (!body) return;
+
+    const custom = (this.lot.customComponents || []).length > 0;
+    const banner = custom
+      ? ''
+      : '<div class="mb-field-hint mb-mb-4">Starting from what this lot actually consumed. Nothing is customized until you save.</div>';
+
+    if (this.rows.length === 0) {
+      body.innerHTML = banner;
+      const empty = document.createElement('div');
+      body.appendChild(empty);
+      MApp.Util.renderEmpty(empty, {
+        title: 'No components',
+        body: 'This lot recorded no consumption. Add the rows this sheet should show.'
+      });
+      return;
+    }
+
+    // Grouped by colour, blank first: the shared components come before
+    // the ones that only apply to one colour, which is the order they are
+    // read in on the floor.
+    const groups = new Map();
+    this.rows.forEach((r, i) => {
+      const key = r.color || '';
+      if (!groups.has(key)) groups.set(key, []);
+      groups.get(key).push({ row: r, i });
+    });
+    const keys = [...groups.keys()].sort((a, b) => {
+      if (a === '') return -1;
+      if (b === '') return 1;
+      return a.localeCompare(b);
+    });
+
+    body.innerHTML = banner + keys.map(key => `
+      <div class="mapp-section-label">${key ? MApp.Util.escapeHtml(key) : 'Common — all colours'}</div>
+      ${groups.get(key).map(({ row, i }) => `
+        <div class="mb-card" style="padding:var(--mb-sp-3);">
+          <div class="mb-card-title">${MApp.Util.escapeHtml(row.itemName)}</div>
+          ${row.size || row.narration ? `<div class="mb-card-sub">${MApp.Util.escapeHtml([row.size, row.narration].filter(Boolean).join(' · '))}</div>` : ''}
+          <div class="mb-field mb-mt-2" style="margin-bottom:0;">
+            <label for="prod-sheet-qty-${i}">Required quantity</label>
+            <input type="number" id="prod-sheet-qty-${i}" inputmode="decimal" min="0" step="any"
+                   value="${row.requiredQty === '' ? '' : row.requiredQty}" data-sheet-qty="${i}">
+          </div>
+          <button type="button" class="mb-btn-text mb-mt-2" style="padding:0;min-height:auto;color:var(--mb-enamel-red-ink);" data-sheet-remove="${i}">Remove</button>
+        </div>`).join('')}
+    `).join('');
+
+    body.querySelectorAll('[data-sheet-qty]').forEach(input => {
+      input.addEventListener('input', () => {
+        const row = this.rows[Number(input.dataset.sheetQty)];
+        if (row) row.requiredQty = MApp.Util.toNumber(input.value);
+      });
+    });
+    body.querySelectorAll('[data-sheet-remove]').forEach(btn => {
+      btn.addEventListener('click', () => this.removeRow(Number(btn.dataset.sheetRemove)));
+    });
+  },
+
+  // Reads the live inputs before any action that re-renders, so a
+  // quantity typed but not yet blurred is not thrown away by adding a
+  // row or removing another one.
+  _readQtys() {
+    const body = document.getElementById('production-sheet-body');
+    if (!body) return;
+    body.querySelectorAll('[data-sheet-qty]').forEach(input => {
+      const row = this.rows[Number(input.dataset.sheetQty)];
+      if (row) row.requiredQty = MApp.Util.toNumber(input.value);
+    });
+  },
+
+  removeRow(i) {
+    this._readQtys();
+    this.rows.splice(i, 1);
+    this.render();
+  },
+
+  async addRow() {
+    this._readQtys();
+    const items = await this._items();
+    if (!items.length) {
+      MApp.Toast.error('Could not load the item list. Try again in a moment.');
+      return;
+    }
+    const picked = await MApp.Picker.open({
+      title: 'Add an item',
+      items: items.map(it => ({
+        value: it.name + '||' + (it.size || ''), label: it.name, sublabel: it.size ? `Size: ${it.size}` : ''
+      }))
+    });
+    if (!picked) return;
+    const match = items.find(it => (it.name + '||' + (it.size || '')) === picked.value);
+
+    // A new row lands in Common. Tagging it to a colour is the one thing
+    // this screen cannot infer, and guessing a colour would put a
+    // quantity against a colour nobody chose.
+    this.rows.push({
+      itemName: match ? match.name : picked.label,
+      size: match ? (match.size || '') : '',
+      narration: '',
+      color: '',
+      requiredQty: ''
+    });
+    this.render();
+  },
+
+  async _items() {
+    if (this._itemCache) return this._itemCache;
+    try {
+      const res = await MApp.Api.call('getItemsData');
+      this._itemCache = (res && res.success) ? (res.data || []) : [];
+    } catch (err) {
+      this._itemCache = [];
+    }
+    return this._itemCache;
+  },
+
+  // Back to what the lot actually consumed. The customization is only
+  // discarded once this is saved, so this is a local reset, not a write.
+  reset() {
+    if (!window.confirm('Discard this sheet’s changes and go back to what the lot consumed? Nothing is saved until you tap Save.')) return;
+    this.rows = (this.lot.componentsConsumed || []).map(c => ({
+      itemName: c.itemName || '',
+      size: c.size || '',
+      narration: c.narration || '',
+      color: this._colorKey(c),
+      requiredQty: MApp.Util.toNumber(c.qty)
+    }));
+    this.render();
+  },
+
+  async save() {
+    const lot = this.lot;
+    if (!lot) return;
+    this._readQtys();
+
+    const remarksEl = document.getElementById('production-sheet-remarks');
+    const remarks = remarksEl ? remarksEl.value.trim() : '';
+
+    // The server drops any row with no item name and any quantity outside
+    // 0..10,000,000; filtering here means the saved sheet matches what is
+    // on screen rather than quietly losing rows on the way.
+    const components = this.rows
+      .filter(r => r.itemName && MApp.Util.toNumber(r.requiredQty) > 0)
+      .map(r => ({
+        itemName: r.itemName,
+        size: r.size || '',
+        narration: r.narration || '',
+        color: r.color || '',
+        requiredQty: MApp.Util.toNumber(r.requiredQty)
+      }));
+
+    // An empty sheet is a real instruction -- it clears the customization
+    // and the lot falls back to its recorded consumption -- but it is not
+    // what someone who mistyped a quantity meant, so it is confirmed.
+    if (components.length === 0 &&
+        !window.confirm('Save an empty sheet? This clears the customization and the lot goes back to showing what it consumed.')) return;
+
+    const btn = document.getElementById('production-sheet-save-btn');
+    if (btn) { btn.disabled = true; btn.textContent = 'Saving…'; }
+
+    // expected_product_id / expected_qty are the server's concurrency
+    // guard: it refuses if the lot shifted since this list was drawn,
+    // which on a phone showing a list loaded some time ago is a real
+    // possibility. Sent exactly as desktop sends them.
+    let res;
+    try {
+      res = await Api.mutateWithId(
+        'saveProductionSheet', Api.newMutationId(),
+        lot.rowIdx, lot.productId, lot.qty, JSON.stringify(components), remarks
+      );
+    } catch (err) {
+      MApp.Toast.error(err.message || 'Could not reach the server. Please try again.');
+      if (btn) { btn.disabled = false; btn.textContent = 'Save sheet'; }
+      return;
+    }
+    if (btn) { btn.disabled = false; btn.textContent = 'Save sheet'; }
+
+    if (!res || !res.success) {
+      MApp.Toast.error((res && res.message) || 'Could not save this sheet.');
+      return;
+    }
+
+    // Patch the lot in place from what the server echoed back, so
+    // re-opening the sheet shows what was stored rather than what was
+    // typed -- the server normalises narration against Items Master.
+    lot.customComponents = (res.data && res.data.customComponents) || components;
+    lot.sheetRemarks = (res.data && res.data.sheetRemarks) || remarks;
+
+    MApp.Toast.success(res.message || 'Production sheet saved.');
+    this.close();
   }
 };
 

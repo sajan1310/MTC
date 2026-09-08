@@ -224,6 +224,37 @@
 </div>
 
 <!-- ═══════════════════════════════════════════════════════════════════
+     SHEET — PRODUCTION SHEET (Production tab, per lot). Desktop renders
+     this as a Common table plus a per-colour matrix; the data underneath
+     is a flat list of components each tagged with its own colour, so
+     this groups the same list by colour DOWN the page instead of across
+     it. Nothing is lost and there is no wide grid to fight on a phone.
+     ═══════════════════════════════════════════════════════════════════ -->
+<div class="mb-sheet" id="sheet-production-sheet" role="dialog" aria-modal="true" aria-labelledby="production-sheet-title">
+  <div class="mb-sheet-header">
+    <h2 id="production-sheet-title">Production sheet</h2>
+    <button type="button" class="mapp-topbar-btn" aria-label="Close" onclick="MApp.ProductionSheet.close()">
+      <svg viewBox="0 0 24 24" width="22" height="22" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><path d="M6 6l12 12M18 6L6 18"/></svg>
+    </button>
+  </div>
+  <div class="mb-sheet-body">
+    <div class="mb-card-sub mb-mb-4" id="production-sheet-sub"></div>
+    <div id="production-sheet-body"></div>
+    <div style="display:flex; gap:var(--mb-sp-3); flex-wrap:wrap;">
+      <button type="button" class="mb-btn mb-btn-secondary" style="flex:1 1 auto;" onclick="MApp.ProductionSheet.addRow()">+ Add Item</button>
+      <button type="button" class="mb-btn mb-btn-secondary" style="flex:1 1 auto;" onclick="MApp.ProductionSheet.reset()">Reset to recorded</button>
+    </div>
+    <div class="mb-field mb-mt-4">
+      <label for="production-sheet-remarks">Sheet remarks</label>
+      <textarea id="production-sheet-remarks" rows="2" placeholder="e.g. customer asked for the black grips"></textarea>
+    </div>
+  </div>
+  <div class="mb-sheet-footer">
+    <button type="button" class="mb-btn mb-btn-primary" id="production-sheet-save-btn" onclick="MApp.ProductionSheet.save()">Save sheet</button>
+  </div>
+</div>
+
+<!-- ═══════════════════════════════════════════════════════════════════
      FULL DASHBOARD — Home shows three tiles from getMobileDashboard,
      which is the right default on a phone. This is the drill-down into
      getDashboardData, so mobile is not permanently capped at what that

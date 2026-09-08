@@ -85,6 +85,14 @@ const DESKTOP_ONLY = {
   fixItemIdentityDriftReference: 'Items → Sync Review',
   getBomProcessComponentsDrift: 'Products & Processes',
   getItemIdentityDriftReport: 'Items → Sync Review',
+  // Deliberately NOT ported. It is a preview of the ID a new recipe will
+  // get, and it is not one: get_next_product_id calls nextval() on
+  // erp.product_id_seq, and so does save_bom. Opening desktop's Add BOM
+  // modal therefore burns a sequence value and the recipe saves under the
+  // NEXT one -- the number shown is never the number assigned. Mobile's
+  // add-recipe form shows no ID at all, which is the accurate thing to
+  // show, and reproducing the preview would ship a number that lies.
+  getNextProductId: 'Products & Processes',
   importItemsFromStock: 'Items → Sync Review',
   importProcessTypesFromProcessNames: 'Products & Processes',
   importStockData: 'Stock',
@@ -111,21 +119,23 @@ const BACKLOG = {
   deleteReturnsBulk: 'P2 multi-select in the shared list renderer',
   deleteWarehousePoolOpening: 'P6 warehouse pool openings',
   excludeWarehousePoolColors: 'P6 warehouse pool colour include/exclude',
-  getAllProcessColorGroups: 'P6 master-data registers',
+  // Mis-tagged as a master-data register until now. It is not one: it
+  // returns each process's colours with the `removable` subset that
+  // excludeWarehousePoolColors will actually accept, and exists to tell
+  // the pool breakdown which rows may be deleted. It ships with those.
+  getAllProcessColorGroups: 'P6 warehouse pool colour include/exclude',
   getDispatchPlans: 'P7 dispatch plan checklist',
-  getNextProductId: 'P6 master-data registers',
   getWarehousePoolOpeningData: 'P6 warehouse pool openings',
   includeWarehousePoolColor: 'P6 warehouse pool colour include/exclude',
   reorderBOM: 'P7 move-up / move-down ordering',
   reorderProcesses: 'P7 move-up / move-down ordering',
   saveDispatchPlanLine: 'P7 dispatch plan checklist',
-  saveProductionSheet: 'P6 production status + sheet',
   saveWarehousePoolOpening: 'P6 warehouse pool openings',
   updateCustomRole: 'P7 roles (read-only + handoff)',
 };
 
 // Phase 1 opened at 79. Lower this line as ports land; never raise it.
-const BACKLOG_BASELINE = 19;
+const BACKLOG_BASELINE = 17;
 
 describe('MApp / desktop feature parity', () => {
   test('the registry is being read at all', () => {
