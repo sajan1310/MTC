@@ -268,6 +268,8 @@ describe('every wired list sends the payload its RPC actually expects', () => {
     const declared = [...MOBILE_JS.matchAll(/^  SELECT: \{/gm)].length;
     const armed = [...MOBILE_JS.matchAll(/MApp\.Select\.enable\(/g)].length;
     expect(declared).toBe(9); // Directory builds its config per type, so it is not a SELECT literal
-    expect(armed).toBe(10);
+    // 9 SELECT literals + Directory (per-type config) + the contractor
+    // rate and charge lists, whose configs are built inline per render.
+    expect(armed).toBe(12);
   });
 });

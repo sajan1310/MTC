@@ -111,8 +111,6 @@ const BACKLOG = {
   deleteColor: 'P6 master-data registers',
   deleteColorsBulk: 'P6 master-data registers',
   deleteContractorPaymentsBulk: 'P5 contractor ledger (descriptor `related`)',
-  deleteContractorRatesBulk: 'P5 contractor ledger (descriptor `related`)',
-  deleteContractorServiceChargesBulk: 'P5 contractor ledger (descriptor `related`)',
   deleteCustomRole: 'P7 roles (read-only + handoff)',
   deleteDispatchPlanLine: 'P7 dispatch plan checklist',
   deleteModel: 'P6 master-data registers',
@@ -159,7 +157,7 @@ const BACKLOG = {
 };
 
 // Phase 1 opened at 79. Lower this line as ports land; never raise it.
-const BACKLOG_BASELINE = 53;
+const BACKLOG_BASELINE = 51;
 
 describe('MApp / desktop feature parity', () => {
   test('the registry is being read at all', () => {

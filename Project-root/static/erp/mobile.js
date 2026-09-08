@@ -8747,6 +8747,7 @@ MApp.ContractorDetail = {
           <span class="mb-text-sm mb-text-steel">Payable ${money(ledger.totalPayable)}</span>
           <span class="mb-text-sm mb-text-steel">Paid ${money(ledger.totalPaid)}</span>
         </div>
+        <button type="button" class="mb-btn mb-btn-secondary mb-mt-2" onclick="MApp.ContractorDetail.print()">Print statement</button>
       </div>` : failed('the account ledger');
 
     const ledgerRows = !ledger ? '' : ((ledger.entries || []).length === 0
@@ -8799,14 +8800,42 @@ MApp.ContractorDetail = {
       <div class="mapp-section-label mb-mt-4">Ledger</div>
       ${ledgerRows}
       <div class="mapp-section-label mb-mt-4">Rate Card</div>
-      ${rateRows}
+      <div id="contractor-rate-list">${rateRows}</div>
       <button type="button" class="mb-btn mb-btn-secondary mb-mt-2" onclick="MApp.Directory.openRateSheet(MApp.ContractorDetail.name)">+ Add Rate</button>
       <div class="mapp-section-label mb-mt-4">Extra Charges</div>
-      ${chargeRows}
+      <div id="contractor-charge-list">${chargeRows}</div>
       <button type="button" class="mb-btn mb-btn-secondary mb-mt-2" onclick="MApp.Directory.openExtraChargeSheet(MApp.ContractorDetail.name)">+ Add Charge</button>
       <button type="button" class="mb-btn mb-btn-secondary mb-mt-4 mb-mb-4" onclick="MApp.Directory.openPaymentSheet(MApp.ContractorDetail.name)">+ Record Payment</button>`;
 
     this._bind(body);
+
+    // Long-press multi-select, per list. Each gets its OWN container:
+    // MApp.Select refuses to arm unless the rendered row count matches the
+    // data it was handed, and three lists sharing one container could
+    // never satisfy that. Only lists whose rows are all one kind of record
+    // get this -- the ledger mixes derived Payables with real Payment
+    // rows, and a selection spanning both would offer to delete something
+    // that is not a record at all.
+    if (rates && rates.length) {
+      MApp.Select.enable(document.getElementById('contractor-rate-list'), rates, {
+        key: 'contractor-rates', noun: 'rate', plural: 'rates',
+        method: 'deleteContractorRatesBulk',
+        payload: rows => [rows.map(r => ({
+          contractorName: r.contractorName, processType: r.processType, size: r.size || ''
+        }))],
+        onDone: () => MApp.ContractorDetail.open(MApp.ContractorDetail.name)
+      });
+    }
+    if (charges && charges.length) {
+      MApp.Select.enable(document.getElementById('contractor-charge-list'), charges, {
+        key: 'contractor-charges', noun: 'charge', plural: 'charges',
+        method: 'deleteContractorServiceChargesBulk',
+        payload: rows => [rows.map(c => ({
+          contractorName: c.contractorName, serviceType: c.serviceType
+        }))],
+        onDone: () => MApp.ContractorDetail.open(MApp.ContractorDetail.name)
+      });
+    }
   },
 
   _bind(body) {
@@ -8841,6 +8870,57 @@ MApp.ContractorDetail = {
     if (!MApp.Util.confirmDelete(label)) return;
     const res = await MApp.Util.mutateSimple(method, args, successMsg);
     if (res.success) this.open(this.name);
+  },
+
+  // Print, filling the same print.html container desktop fills -- one of
+  // eight templates MApp.Print could reach and never populated. A
+  // contractor asking for their account is a conversation that happens at
+  // the gate, not at a desk.
+  print() {
+    if (!this.data || !this.data.ledger) {
+      MApp.Toast.error('The ledger has not loaded, so there is nothing to print.');
+      return;
+    }
+    const ledger = this.data.ledger;
+    const contractor = (MApp.Directory.items || []).find(
+      c => String(c.name || '').trim().toLowerCase() === String(this.name || '').trim().toLowerCase()
+    ) || {};
+
+    const setText = (id, value) => {
+      const el = document.getElementById(id);
+      if (el) el.textContent = value == null ? '' : String(value);
+    };
+    setText('print-contractor-name', MApp.Util.formatNameCase(this.name));
+    setText('print-contractor-gstpan', contractor.gstPan || '-');
+    setText('print-contractor-contact', contractor.contact || '-');
+    setText('print-contractor-address', contractor.address || '-');
+    setText('print-contractor-remarks', contractor.remarks || 'No remarks');
+    setText('print-contractor-report-date', new Date().toLocaleDateString('en-GB'));
+    setText('print-contractor-total-payable', MApp.Util.formatCurrency(ledger.totalPayable));
+    setText('print-contractor-total-paid', MApp.Util.formatCurrency(ledger.totalPaid));
+    setText('print-contractor-balance-due', MApp.Util.formatCurrency(ledger.balanceDue));
+
+    const bodyEl = document.getElementById('print-contractor-ledger-body');
+    if (bodyEl) {
+      const cell = 'padding:6px;border:1px solid #999;color:#000;';
+      const num = cell + 'text-align:right;font-weight:700;';
+      bodyEl.innerHTML = (ledger.entries || []).length
+        ? ledger.entries.map(e => `<tr>
+            <td style="${cell}">${MApp.Util.escapeHtml(e.date)}</td>
+            <td style="${cell}">${MApp.Util.escapeHtml(e.type)}</td>
+            <td style="${cell}">${MApp.Util.escapeHtml(e.ref)}</td>
+            <td style="${cell}">${MApp.Util.escapeHtml(e.description)}</td>
+            <td style="${num}">${e.type === 'Payable' ? MApp.Util.formatCurrency(e.amount) : '-'}</td>
+            <td style="${num}">${e.type === 'Payment' ? MApp.Util.formatCurrency(e.rawAmount) : '-'}</td>
+            <td style="${num}">${MApp.Util.formatCurrency(e.balance)}</td>
+          </tr>`).join('')
+        : '<tr><td colspan="7" style="padding:10px;text-align:center;color:#999;">No transactions yet for this contractor.</td></tr>';
+    }
+
+    MApp.Print.trigger(
+      'print-contractor-ledger-container',
+      `Contractor_Ledger_${String(this.name || '').replace(/[^a-zA-Z0-9_-]/g, '_')}`
+    );
   }
 };
 

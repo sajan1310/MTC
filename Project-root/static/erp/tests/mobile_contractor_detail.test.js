@@ -213,3 +213,87 @@ describe('MApp.ContractorDetail', () => {
     expect(src).toContain("['account', 'Account']");
   });
 });
+
+describe('MApp.ContractorDetail print and multi-select', () => {
+  beforeEach(() => {
+    jest.resetModules();
+    global.fetch = jest.fn();
+    document.body.innerHTML = `
+      <div id="mapp-sheet-backdrop"></div>
+      <div class="mb-sheet" id="sheet-contractor-detail">
+        <h2 id="contractor-detail-title"></h2>
+        <div id="contractor-detail-body"></div>
+      </div>
+      <div class="print-container" id="print-contractor-ledger-container">
+        <span id="print-contractor-name"></span><span id="print-contractor-gstpan"></span>
+        <span id="print-contractor-contact"></span><span id="print-contractor-address"></span>
+        <span id="print-contractor-remarks"></span><span id="print-contractor-report-date"></span>
+        <span id="print-contractor-total-payable"></span><span id="print-contractor-total-paid"></span>
+        <span id="print-contractor-balance-due"></span>
+        <table><tbody id="print-contractor-ledger-body"></tbody></table>
+      </div>`;
+    loadAsGlobal('api.js', 'Api');
+    loadAsGlobal('mobile.js', 'MApp');
+    MApp.Sheet._stack = [];
+    window.print = jest.fn();
+    MApp.Api.call = jest.fn(async method => ({
+      success: true,
+      data: {
+        getContractorAccountLedger: LEDGER,
+        getContractorRatesData: RATES,
+        getContractorServiceChargesData: CHARGES,
+      }[method],
+    }));
+  });
+
+  test('fills the same print template desktop fills', async () => {
+    MApp.Directory.items = [{ name: 'Rakesh', contact: '99999', address: 'Ludhiana', gstPan: 'ABC', remarks: '' }];
+    await MApp.ContractorDetail.open('Rakesh');
+
+    MApp.ContractorDetail.print();
+
+    expect(document.getElementById('print-contractor-name').textContent).toBe('Rakesh');
+    expect(document.getElementById('print-contractor-contact').textContent).toBe('99999');
+    expect(document.getElementById('print-contractor-balance-due').textContent).toBe('₹3000.00');
+    expect(document.getElementById('print-contractor-ledger-body').innerHTML).toContain('LOT-1042');
+    expect(window.print).toHaveBeenCalled();
+  });
+
+  test('refuses to print a statement whose ledger did not load', async () => {
+    // Printing a blank or partial account statement and handing it to a
+    // contractor is worse than not printing one.
+    MApp.Api.call = jest.fn(async method => {
+      if (method === 'getContractorAccountLedger') throw new Error('offline');
+      return { success: true, data: [] };
+    });
+    await MApp.ContractorDetail.open('Rakesh');
+
+    MApp.ContractorDetail.print();
+
+    expect(window.print).not.toHaveBeenCalled();
+  });
+
+  test('rate and charge lists get their own containers, so multi-select can arm', async () => {
+    // MApp.Select refuses to arm unless the rendered row count matches
+    // the data; three lists sharing one container could never satisfy it.
+    await MApp.ContractorDetail.open('Rakesh');
+
+    expect(document.getElementById('contractor-rate-list')).not.toBeNull();
+    expect(document.getElementById('contractor-charge-list')).not.toBeNull();
+    expect(document.querySelectorAll('#contractor-rate-list .mb-card')).toHaveLength(RATES.length);
+    expect(document.querySelectorAll('#contractor-charge-list .mb-card')).toHaveLength(CHARGES.length);
+  });
+
+  test('the ledger is NOT multi-selectable', async () => {
+    // It mixes derived Payables with real Payment rows; a selection
+    // spanning both would offer to delete something that is not a record.
+    const src = fs.readFileSync(path.join(__dirname, '..', 'mobile.js'), 'utf8');
+    const start = src.indexOf('MApp.ContractorDetail = {');
+    const next = src.slice(start + 1).search(/\nMApp\.[A-Z][A-Za-z]* = \{/);
+    const mod = src.slice(start, start + 1 + next);
+
+    expect(mod).not.toContain('deleteContractorPaymentsBulk');
+    expect(mod).toContain("key: 'contractor-rates'");
+    expect(mod).toContain("key: 'contractor-charges'");
+  });
+});
