@@ -59,6 +59,22 @@
      and every dark-ground use has to say so. */
   --mb-safety-on-ink:  #ff6a13;
 
+  /* CHROME — the surfaces that are dark in BOTH themes: the top bar,
+     sheet headers, the selection bar, toasts, the Home quick actions,
+     the stepper buttons and the retry button.
+
+     This exists because seven rules were using --mb-ink as a background,
+     and --mb-ink is a TEXT role: it flips to near-white in dark. Four of
+     the seven were saved by an override in the dark block; the other
+     three were not, and rendered white-on-white -- the quick actions
+     measured 1.15:1 for their label and 1.73:1 for their icon. That is
+     the same defect the FAB had in Phase 0, which is what --mb-on-safety
+     was introduced to fix. A fill is not a text colour, and a role that
+     changes with the theme cannot be paired with one that does not. */
+  --mb-chrome:         #14181c;
+  --mb-chrome-pressed: #242b31;
+  --mb-on-chrome:      #fff; /* 17.8:1 light, 19.1:1 dark */
+
   --mb-enamel-red:     #c81e3a;
   --mb-enamel-red-bg:  #fbe2e6;
   --mb-enamel-blue:    #1d5fa8;
@@ -173,7 +189,9 @@
     --mb-steel:          #93a7b3;
     --mb-steel-light:    #46555f;
     --mb-steel-faint:    #2b353c;
-    --mb-workshop:       #12171b;
+    --mb-chrome:         #0c1014;
+  --mb-chrome-pressed: #1b2229;
+  --mb-workshop:       #12171b;
     --mb-surface:        #1b2126;
 
     /* Text-on-light becomes text-on-dark: the darkened orange would
@@ -203,14 +221,6 @@
     --mb-shadow-fab:    0 8px 24px rgb(255 106 19 / 30%);
   }
 
-  /* The top bar and sheet headers are --mb-ink in light, which is now the
-     near-white text colour -- they need to stay the darkest surface, not
-     become the lightest. */
-  :root:not([data-theme="light"]) .mapp-topbar,
-  :root:not([data-theme="light"]) .mb-sheet-header,
-  :root:not([data-theme="light"]) .mb-select-bar,
-  :root:not([data-theme="light"]) .mb-toast { background: #0c1014; }
-
   /* Framing colour behind the phone frame on a tablet. */
   @media (min-width: 640px) {
     :root:not([data-theme="light"]) body { background: #05080a; }
@@ -226,6 +236,8 @@
   --mb-steel:          #93a7b3;
   --mb-steel-light:    #46555f;
   --mb-steel-faint:    #2b353c;
+  --mb-chrome:         #0c1014;
+  --mb-chrome-pressed: #1b2229;
   --mb-workshop:       #12171b;
   --mb-surface:        #1b2126;
 
@@ -248,11 +260,6 @@
   --mb-shadow-raised: 0 6px 20px rgb(0 0 0 / 55%);
   --mb-shadow-fab:    0 8px 24px rgb(255 106 19 / 30%);
 }
-
-:root[data-theme="dark"] .mapp-topbar,
-:root[data-theme="dark"] .mb-sheet-header,
-:root[data-theme="dark"] .mb-select-bar,
-:root[data-theme="dark"] .mb-toast { background: #0c1014; }
 
 @media (min-width: 640px) {
   :root[data-theme="dark"] body { background: #05080a; }
@@ -402,8 +409,8 @@ textarea:focus-visible,
   align-items: center;
   gap: var(--mb-sp-3);
   padding: env(safe-area-inset-top) var(--mb-sp-4) 0;
-  background: var(--mb-ink);
-  color: #fff;
+  background: var(--mb-chrome);
+  color: var(--mb-on-chrome);
   z-index: 30;
   transition: box-shadow var(--mb-motion-base);
 }
@@ -428,7 +435,7 @@ textarea:focus-visible,
 .mapp-topbar-btn {
   background: transparent;
   border: none;
-  color: #fff;
+  color: var(--mb-on-chrome);
   min-width: var(--mb-tap-min);
   min-height: var(--mb-tap-min);
   display: flex;
@@ -710,8 +717,8 @@ textarea:focus-visible,
   padding: var(--mb-sp-3) var(--mb-sp-2);
   border: none;
   border-radius: var(--mb-radius-md);
-  background: var(--mb-ink);
-  color: #fff;
+  background: var(--mb-chrome);
+  color: var(--mb-on-chrome);
   font-size: 0.75rem;
   font-weight: 700;
   text-transform: uppercase;
@@ -719,8 +726,11 @@ textarea:focus-visible,
   cursor: pointer;
   transition: transform var(--mb-motion-fast), background var(--mb-motion-fast);
 }
-.mb-quick-action svg { width: 22px; height: 22px; color: var(--mb-safety-ink); }
-.mb-quick-action:active { background: var(--mb-ink-soft); transform: scale(0.96); }
+/* --mb-safety-on-ink, not --mb-safety-ink: the -ink role is safety as text
+   on a LIGHT ground and measured 2.74:1 here, under the 3:1 a graphical
+   object needs. The brand orange itself gives 6.22:1 on this fill. */
+.mb-quick-action svg { width: 22px; height: 22px; color: var(--mb-safety-on-ink); }
+.mb-quick-action:active { background: var(--mb-chrome-pressed); transform: scale(0.96); }
 
 @media (prefers-reduced-motion: reduce) {
   .mb-quick-action { transition: none; }
@@ -1111,7 +1121,7 @@ textarea:focus-visible,
   align-items: center;
   gap: var(--mb-sp-3);
   padding: var(--mb-sp-3) var(--mb-sp-4);
-  background: var(--mb-ink);
+  background: var(--mb-chrome);
   box-shadow: 0 -4px 16px rgb(20 24 28 / 25%);
 }
 .mb-select-bar.open { display: flex; }
@@ -1121,7 +1131,7 @@ body.mb-sheet-open .mb-select-bar { bottom: env(safe-area-inset-bottom); }
 
 .mb-select-count {
   flex: 1;
-  color: #fff;
+  color: var(--mb-on-chrome);
   font-weight: 700;
   font-size: 0.875rem;
 }
@@ -1337,8 +1347,8 @@ body.mb-selecting {
   align-items: center;
   gap: var(--mb-sp-3);
   padding: env(safe-area-inset-top) var(--mb-sp-2) 0 var(--mb-sp-4);
-  background: var(--mb-ink);
-  color: #fff;
+  background: var(--mb-chrome);
+  color: var(--mb-on-chrome);
   cursor: grab;
   touch-action: none;
 }
@@ -1359,7 +1369,7 @@ body.mb-selecting {
 .mb-sheet-header h2 {
   flex: 1;
   font-size: 1.125rem;
-  color: #fff;
+  color: var(--mb-on-chrome);
 }
 
 .mb-sheet-body {
@@ -1457,8 +1467,8 @@ body.mb-selecting {
   height: 44px;
   border-radius: var(--mb-radius-sm);
   border: none;
-  background: var(--mb-ink);
-  color: #fff;
+  background: var(--mb-chrome);
+  color: var(--mb-on-chrome);
   font-size: 1.25rem;
   font-weight: 700;
   cursor: pointer;
@@ -1532,8 +1542,8 @@ body.mb-selecting {
   justify-content: center;
   border-radius: var(--mb-radius-md);
   border: none;
-  background: var(--mb-ink);
-  color: #fff;
+  background: var(--mb-chrome);
+  color: var(--mb-on-chrome);
   font-weight: 700;
   cursor: pointer;
 }
@@ -1552,8 +1562,8 @@ body.mb-selecting {
 }
 
 .mb-toast {
-  background: var(--mb-ink);
-  color: #fff;
+  background: var(--mb-chrome);
+  color: var(--mb-on-chrome);
   border-radius: var(--mb-radius-md);
   padding: var(--mb-sp-3) var(--mb-sp-4);
   font-size: 0.875rem;

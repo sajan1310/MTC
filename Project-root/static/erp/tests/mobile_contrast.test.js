@@ -70,7 +70,11 @@ function channel(c) {
 
 /** WCAG 2.1 relative luminance. */
 function luminance(hex) {
-  const h = hex.replace('#', '');
+  const raw = hex.replace('#', '');
+  // Shorthand expands first: parsing #fff two characters at a time gives
+  // 255, 15 and NaN, and a NaN ratio quietly fails every comparison it
+  // is put through.
+  const h = raw.length === 3 ? raw.split('').map(c => c + c).join('') : raw;
   const [r, g, b] = [0, 2, 4].map(i => parseInt(h.substr(i, 2), 16));
   return 0.2126 * channel(r) + 0.7152 * channel(g) + 0.0722 * channel(b);
 }
@@ -253,5 +257,63 @@ describe('the type scale follows the OS text-size setting', () => {
       '--mb-sp-4: 16px'].forEach(decl => {
       expect(flat).toContain(decl);
     });
+  });
+});
+
+/**
+ * The chrome surfaces -- everything that is dark in BOTH themes.
+ *
+ * Seven rules were using --mb-ink as a background. --mb-ink is a TEXT
+ * role and flips to near-white in dark, while the #fff labels and the
+ * safety icon paired with it do not. Four were saved by an override in
+ * the dark block. The other three were not:
+ *
+ *   .mb-quick-action   label 1.15:1, icon 1.73:1  (Home's three buttons)
+ *   .mb-stepper-btn    label 1.15:1
+ *   .mb-state-retry    label 1.15:1
+ *
+ * which is white on white. Same defect the FAB had in Phase 0, and the
+ * same fix: a fill role of its own, so a colour that moves with the
+ * theme is never paired with one that does not.
+ */
+describe('chrome surfaces are dark in both themes', () => {
+  const pairs = [
+    ['label', 'mb-on-chrome', 'mb-chrome', 4.5],
+    ['pressed label', 'mb-on-chrome', 'mb-chrome-pressed', 4.5],
+    // A graphical object, not text: 3:1 under WCAG 1.4.11.
+    ['quick-action icon', 'mb-safety-on-ink', 'mb-chrome', 3.0],
+  ];
+
+  test.each(pairs)('%s clears its threshold in light', (_label, fg, bg, min) => {
+    expect(ratio(token(fg), token(bg))).toBeGreaterThanOrEqual(min);
+  });
+
+  test.each(pairs)('%s clears its threshold in dark', (_label, fg, bg, min) => {
+    expect(ratio(darkToken(fg), darkToken(bg))).toBeGreaterThanOrEqual(min);
+  });
+
+  test('the chrome fill really is darker in dark, not lighter', () => {
+    // The bug was a fill that inverted. This is the assertion that would
+    // have caught it.
+    expect(luminance(darkToken('mb-chrome')))
+      .toBeLessThan(luminance(token('mb-chrome')));
+  });
+
+  test('no rule uses a text token as a background', () => {
+    // --mb-ink and --mb-ink-soft are text roles. Using either as a fill
+    // is the whole defect, and it is invisible in light mode -- which is
+    // why it shipped.
+    const offenders = CSS.split(/\r?\n/)
+      .map((line, i) => ({ line: line.trim(), n: i + 1 }))
+      .filter(({ line }) => /background:\s*var\(--mb-ink(-soft)?\)/.test(line));
+
+    expect(offenders.map(o => `${o.n}: ${o.line}`)).toEqual([]);
+  });
+
+  test('the quick-action icon does not use the light-ground text role', () => {
+    // --mb-safety-ink is safety as text on a LIGHT ground; on chrome it
+    // measured 2.74:1, under the 3:1 a graphical object needs.
+    const at = CSS.indexOf('.mb-quick-action svg');
+    expect(CSS.slice(at, at + 160)).toContain('var(--mb-safety-on-ink)');
   });
 });
