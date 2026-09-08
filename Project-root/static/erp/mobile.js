@@ -7284,6 +7284,7 @@ MApp.Process = {
         <div class="mb-mt-2" style="display:flex; gap:var(--mb-sp-4);">
           <button type="button" class="mb-btn-text" style="padding:0;min-height:auto;" data-process-action="edit" data-process-index="${i}">Edit</button>
           <button type="button" class="mb-btn-text" style="padding:0;min-height:auto;" data-process-action="wip" data-process-index="${i}">Availability</button>
+          <button type="button" class="mb-btn-text" style="padding:0;min-height:auto;" data-process-action="colors" data-process-index="${i}">Colours</button>
         </div>
         <div class="mb-card-sub mb-mt-2" id="process-wip-${i}" hidden></div>
       </div>`).join('') + MApp.Paging.moreHtml(page);
@@ -7294,6 +7295,7 @@ MApp.Process = {
         const process = page.rows[Number(btn.dataset.processIndex)];
         if (!process) return;
         if (btn.dataset.processAction === 'wip') this.showWip(process, Number(btn.dataset.processIndex));
+        else if (btn.dataset.processAction === 'colors') MApp.ProcessColors.open(process);
         else this.openForm(process);
       });
     });
@@ -10948,6 +10950,175 @@ MApp.PoolOpenings = {
     if (res.success) {
       MApp.Toast.success(res.message || 'Opening stock entry deleted.');
       this.open();
+    }
+  }
+};
+
+// ================================================================
+// PROCESS COLOUR COMBINATIONS — which colours a process's pool tracks.
+//
+// The pool derives a process's colour list from its recipe, its linked
+// processes, and whatever colours have actually been seen in Production
+// and Warehouse Pool. That derivation is usually right and sometimes
+// picks up a combination nobody wanted, or misses one that is about to
+// be run for the first time. Both fixes were desktop-only.
+//
+// Which rows may be removed is the server's call, not this screen's:
+// getAllProcessColorGroups returns `removable`, the subset
+// excludeWarehousePoolColors will actually accept -- not on the recipe,
+// and carrying no real (non-manual) production or consumption history.
+// Everything else is shown as protected rather than offered and then
+// refused.
+//
+// That flag is also what keeps this screen away from the pool's
+// negatives. An attribution bucket -- consumed but never produced --
+// has real consumption history by definition, so its colour is never
+// removable and this screen cannot be used to make one disappear.
+// ================================================================
+MApp.ProcessColors = {
+  process: null,
+  colors: [],
+  removable: [],
+  masterColors: [],
+
+  isRemovable(color) {
+    const c = String(color || '').trim().toLowerCase();
+    return this.removable.some(r => String(r || '').trim().toLowerCase() === c);
+  },
+
+  async open(process) {
+    if (!process) return;
+    this.process = process;
+    this.colors = [];
+    this.removable = [];
+
+    const titleEl = document.getElementById('process-colors-title');
+    if (titleEl) titleEl.textContent = `Colours — ${process.processName}`;
+
+    const body = document.getElementById('process-colors-body');
+    MApp.Util.renderSkeleton(body, 4);
+    MApp.Sheet.open('sheet-process-colors');
+
+    await this.load();
+
+    // Only needed by the Add button, and only after the list is up.
+    if (!this.masterColors.length) {
+      try {
+        const res = await MApp.Api.call('getColors');
+        this.masterColors = (res && res.success) ? (res.data || []) : [];
+      } catch (err) {
+        this.masterColors = [];
+      }
+    }
+  },
+
+  async load() {
+    const body = document.getElementById('process-colors-body');
+    const process = this.process;
+    try {
+      // One call returns every process's list; this screen reads its own
+      // out of it rather than asking for a per-process endpoint that
+      // does not carry `removable`.
+      const res = await MApp.Api.call('getAllProcessColorGroups');
+      if (!res || !res.success) {
+        MApp.Util.renderError(body, res && res.message, () => this.load());
+        return;
+      }
+      if (this.process !== process) return; // a different process was opened
+      const entry = (res.data || {})[process.processId] || { colors: [], removable: [] };
+      this.colors = entry.colors || [];
+      this.removable = entry.removable || [];
+      this.render();
+    } catch (err) {
+      MApp.Util.renderError(body, err && err.message, () => this.load());
+    }
+  },
+
+  close() { MApp.Sheet.close('sheet-process-colors'); },
+
+  render() {
+    const body = document.getElementById('process-colors-body');
+    if (!body) return;
+
+    if (this.colors.length === 0) {
+      MApp.Util.renderEmpty(body, {
+        title: 'No colour combinations',
+        body: 'This process does not track stock per colour. Adding one starts it doing so.'
+      });
+      return;
+    }
+
+    body.innerHTML = this.colors.map((c, i) => {
+      const removable = this.isRemovable(c);
+      return `
+      <div class="mb-card">
+        <div class="mb-card-row">
+          <div class="mb-card-title">${MApp.Util.escapeHtml(c)}</div>
+          ${removable
+    ? `<button type="button" class="mb-btn-text" style="padding:0;min-height:auto;color:var(--mb-enamel-red-ink);" data-color-remove="${i}">Remove</button>`
+    : '<span class="mb-chip">Protected</span>'}
+        </div>
+        ${removable
+    ? ''
+    // Named, because a greyed-out control that does not say why is
+    // indistinguishable from a broken one.
+    : '<div class="mb-card-sub mb-mt-2">On this process’s recipe, or it has real production or consumption history. Removing it would not stick — the pool rebuilds it from that same history.</div>'}
+      </div>`;
+    }).join('');
+
+    body.querySelectorAll('[data-color-remove]').forEach(btn => {
+      btn.addEventListener('click', () => this.remove(this.colors[Number(btn.dataset.colorRemove)]));
+    });
+  },
+
+  async remove(color) {
+    if (!color || !this.process) return;
+
+    // Excluding a colour also DELETES its opening-stock and correction
+    // rows, so the pool does not rebuild the bucket on the next
+    // recalculation. That is real entered data going away, and it is the
+    // part of this action nobody would guess from the word "Remove".
+    if (!window.confirm(
+      `Remove “${color}” from ${this.process.processName}?`
+      + ' Any opening balance or correction recorded against this colour is deleted with it,'
+      + ' and the pool is recalculated.')) return;
+
+    const res = await MApp.Util.mutateSimple(
+      'excludeWarehousePoolColors', [this.process.processId, [color]], null
+    );
+    // The server reports what it removed and what it refused, naming each
+    // refusal's reason. A canned message would drop exactly the half that
+    // says why nothing happened.
+    if (res.success) {
+      MApp.Toast.success(res.message || 'Combination removed.');
+      this.load();
+    }
+  },
+
+  async add() {
+    if (!this.process) return;
+    if (!this.masterColors.length) {
+      MApp.Toast.error('Colour list is still loading. Try again in a moment.');
+      return;
+    }
+    // Already-known colours are left in the picker on purpose: re-adding
+    // one is how a previous exclusion is undone, and the server says so
+    // plainly if it was already included rather than excluded.
+    const picked = await MApp.Picker.open({
+      title: 'Add a colour combination',
+      items: this.masterColors.map(c => ({
+        value: c.name, label: c.name,
+        sublabel: this.colors.some(x => x.toLowerCase() === String(c.name).toLowerCase()) ? 'Already tracked' : (c.remarks || '')
+      }))
+    });
+    if (!picked) return;
+
+    const res = await MApp.Util.mutateSimple(
+      'includeWarehousePoolColor', [this.process.processId, picked.value], null
+    );
+    if (res.success) {
+      MApp.Toast.success(res.message || 'Combination added.');
+      this.load();
     }
   }
 };

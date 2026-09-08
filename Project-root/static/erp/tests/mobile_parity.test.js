@@ -116,14 +116,11 @@ const BACKLOG = {
   deleteCustomRole: 'P7 roles (read-only + handoff)',
   deleteDispatchPlanLine: 'P7 dispatch plan checklist',
   deleteReturnsBulk: 'P2 multi-select in the shared list renderer',
-  excludeWarehousePoolColors: 'P6 warehouse pool colour include/exclude',
   // Mis-tagged as a master-data register until now. It is not one: it
   // returns each process's colours with the `removable` subset that
   // excludeWarehousePoolColors will actually accept, and exists to tell
   // the pool breakdown which rows may be deleted. It ships with those.
-  getAllProcessColorGroups: 'P6 warehouse pool colour include/exclude',
   getDispatchPlans: 'P7 dispatch plan checklist',
-  includeWarehousePoolColor: 'P6 warehouse pool colour include/exclude',
   reorderBOM: 'P7 move-up / move-down ordering',
   reorderProcesses: 'P7 move-up / move-down ordering',
   saveDispatchPlanLine: 'P7 dispatch plan checklist',
@@ -131,7 +128,7 @@ const BACKLOG = {
 };
 
 // Phase 1 opened at 79. Lower this line as ports land; never raise it.
-const BACKLOG_BASELINE = 13;
+const BACKLOG_BASELINE = 10;
 
 describe('MApp / desktop feature parity', () => {
   test('the registry is being read at all', () => {
