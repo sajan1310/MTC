@@ -8074,7 +8074,8 @@ MApp.GlobalSearch = {
     { label: 'Users & Roles', keywords: 'admin accounts permissions', run: () => MApp.Admin.open() },
     { label: 'Sync Issues', keywords: 'offline outbox pending failed queue', run: () => MApp.SyncIssues.open() },
     { label: 'Account', keywords: 'profile name email password change my', run: () => MApp.Account.open() },
-    { label: 'Warehouse Pool', keywords: 'pool buckets negative available wip intermediate', run: () => MApp.Pool.open() }
+    { label: 'Warehouse Pool', keywords: 'pool buckets negative available wip intermediate', run: () => MApp.Pool.open() },
+    { label: 'System Status', keywords: 'backup health activity log notifications audit', run: () => MApp.Status.open() }
   ],
 
   DEST_SPEC: {
@@ -8275,6 +8276,159 @@ MApp.GlobalSearch = {
       input.dispatchEvent(new Event('input', { bubbles: true }));
     };
     setTimeout(prefill, 120);
+  }
+};
+
+// ================================================================
+// SYSTEM STATUS — backup health, recent ledger notifications, and the
+// activity log. All three RPCs existed and none was reachable from a
+// phone, so "is the backup healthy?" could only be answered at a desk.
+//
+// The backup section follows the server's own rule about defaults:
+// snapshot_verified starts False on purpose, because before any run has
+// happened "is there a verified backup?" must answer NO rather than
+// render blank and look fine. Nothing here paints an unknown state as
+// reassuring.
+// ================================================================
+MApp.Status = {
+  _polling: null,
+
+  isAdmin() {
+    const role = (window.MOBILE_CURRENT_USER || {}).role || '';
+    return role === 'admin' || role === 'super_admin';
+  },
+
+  async open() {
+    const body = document.getElementById('status-body');
+    MApp.Util.renderSkeleton(body, 4);
+    MApp.Sheet.open('sheet-status');
+    await this.refresh();
+  },
+
+  close() {
+    clearTimeout(this._polling);
+    this._polling = null;
+    MApp.Sheet.close('sheet-status');
+  },
+
+  async refresh() {
+    // The activity log is admin-only server-side (rpc.py enforces
+    // roles={"admin"}); asking as a non-admin would just be a denied call,
+    // so don't make it. This is UX, not the gate.
+    const [backup, notifications, activity] = await Promise.all([
+      MApp.Api.call('getBackupStatus').catch(() => null),
+      MApp.Api.call('getRecentNotificationLogs').catch(() => null),
+      this.isAdmin() ? MApp.Api.call('getActivityLog', {}, 1, 20).catch(() => null) : Promise.resolve(null)
+    ]);
+    this.render({
+      backup: (backup && backup.success) ? (backup.data || {}) : null,
+      notifications: (notifications && notifications.success) ? (notifications.data || []) : null,
+      activity: (activity && activity.success) ? (activity.data || {}) : null
+    });
+  },
+
+  render(data) {
+    const body = document.getElementById('status-body');
+    if (!body) return;
+    const b = data.backup;
+
+    let backupHtml;
+    if (!b) {
+      backupHtml = `<div class="mb-card"><div class="mb-card-sub">Couldn't reach the backup service.</div></div>`;
+    } else {
+      // Verified is the only reassuring state. NEVER, a failure, and an
+      // unreachable check all read as not-verified rather than as blank.
+      const verified = b.snapshot_verified === true;
+      const failures = Number(b.consecutive_failures || 0);
+      const running = b.run_state === 'running';
+      backupHtml = `
+        <div class="mb-card">
+          <div class="mb-card-row">
+            <span class="mb-card-title">Database backup</span>
+            <span class="mb-chip ${verified ? 'mb-chip-completed' : 'mb-chip-cancelled'}">${verified ? 'Verified' : 'Not verified'}</span>
+          </div>
+          <div class="mb-card-sub mb-mt-2">
+            ${b.last_verified_at
+    ? 'Last verified ' + MApp.Util.escapeHtml(String(b.last_verified_at))
+    : 'No backup has been verified yet.'}
+          </div>
+          ${failures > 0 ? `<div class="mb-card-sub" style="color:var(--mb-enamel-red-ink);">${failures} consecutive failure${failures === 1 ? '' : 's'}.</div>` : ''}
+          ${b.mirror_status ? `<div class="mb-card-sub">Mirror: ${MApp.Util.escapeHtml(String(b.mirror_status))}${b.mirror_message ? ' — ' + MApp.Util.escapeHtml(String(b.mirror_message)) : ''}</div>` : ''}
+          ${b.message ? `<div class="mb-card-sub">${MApp.Util.escapeHtml(String(b.message))}</div>` : ''}
+          ${running ? `<div class="mb-card-sub" style="color:var(--mb-enamel-blue-ink);">Running${b.run_phase_label ? ' — ' + MApp.Util.escapeHtml(String(b.run_phase_label)) : ''}${b.run_percent != null ? ' (' + b.run_percent + '%)' : ''}</div>` : ''}
+          ${this.isAdmin() ? `<button type="button" class="mb-btn mb-btn-secondary mb-mt-2" id="status-backup-btn" ${running ? 'disabled' : ''} onclick="MApp.Status.runBackup()">${running ? 'Backup running…' : 'Run a backup now'}</button>` : ''}
+        </div>`;
+    }
+
+    const notifHtml = data.notifications === null
+      ? `<div class="mb-card"><div class="mb-card-sub">Couldn't load recent notifications.</div></div>`
+      : (data.notifications.length === 0
+        ? `<div class="mb-text-sm mb-text-steel" style="padding:var(--mb-sp-2) 0;">Nothing recent.</div>`
+        : data.notifications.slice(0, 20).map(n => `
+          <div class="mb-card">
+            <div class="mb-card-row">
+              <span class="mb-card-title">${MApp.Util.escapeHtml(n.action || '')}</span>
+              <span class="mb-card-sub">${MApp.Util.formatDateDisplay(n.timestamp)}</span>
+            </div>
+            ${n.details ? `<div class="mb-card-sub">${MApp.Util.escapeHtml(String(n.details))}</div>` : ''}
+          </div>`).join(''));
+
+    let activityHtml = '';
+    if (this.isAdmin()) {
+      const entries = data.activity && data.activity.entries;
+      activityHtml = `
+        <div class="mapp-section-label mb-mt-4">Activity log</div>
+        ${data.activity === null
+    ? `<div class="mb-card"><div class="mb-card-sub">Couldn't load the activity log.</div></div>`
+    : (!entries || entries.length === 0
+      ? `<div class="mb-text-sm mb-text-steel" style="padding:var(--mb-sp-2) 0;">No activity recorded.</div>`
+      : entries.slice(0, 20).map(e => `
+            <div class="mb-card">
+              <div class="mb-card-row">
+                <div>
+                  <div class="mb-card-title">${MApp.Util.escapeHtml(e.action || '')}</div>
+                  <div class="mb-card-sub">${MApp.Util.escapeHtml(e.userEmail || '')}${e.entityType ? ' · ' + MApp.Util.escapeHtml(e.entityType) : ''}</div>
+                </div>
+                <span class="mb-chip ${e.status === 'success' ? 'mb-chip-completed' : 'mb-chip-cancelled'}">${MApp.Util.escapeHtml(e.status || '')}</span>
+              </div>
+              <div class="mb-card-sub mb-mt-2">${MApp.Util.formatDateDisplay(e.timestamp)}${e.detail ? ' · ' + MApp.Util.escapeHtml(String(e.detail)) : ''}</div>
+            </div>`).join(''))}`;
+    }
+
+    body.innerHTML = `
+      <div class="mapp-section-label">Backup</div>
+      ${backupHtml}
+      <div class="mapp-section-label mb-mt-4">Recent notifications</div>
+      ${notifHtml}
+      ${activityHtml}`;
+  },
+
+  // triggerBackup returns before the work is done, so the outcome is
+  // polled -- and the run state is read from a shared record rather than
+  // one worker's memory, which is why polling works across gunicorn
+  // workers at all. Stops when the sheet closes.
+  async runBackup() {
+    const btn = document.getElementById('status-backup-btn');
+    if (btn) { btn.disabled = true; btn.textContent = 'Starting…'; }
+    const res = await MApp.Util.mutateSimple('triggerBackup', [], 'Backup started.');
+    if (!res.success) {
+      if (btn) { btn.disabled = false; btn.textContent = 'Run a backup now'; }
+      return;
+    }
+    this._poll(0);
+  },
+
+  _poll(attempt) {
+    clearTimeout(this._polling);
+    // ~2 minutes at 4s, then stop rather than poll a factory LAN forever.
+    if (attempt > 30) return;
+    this._polling = setTimeout(async () => {
+      // _stack holds {id, onDismiss} entries, not bare ids.
+      if (!MApp.Sheet._stack.some(entry => entry.id === 'sheet-status')) return;
+      await this.refresh();
+      const running = document.getElementById('status-backup-btn');
+      if (running && running.disabled) this._poll(attempt + 1);
+    }, 4000);
   }
 };
 

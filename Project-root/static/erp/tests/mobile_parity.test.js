@@ -103,7 +103,7 @@ const DESKTOP_ONLY = {
 // The backlog, each tagged with the program phase that closes it. This
 // list may only shrink. Deleting an entry is how a port is "done".
 const BACKLOG = {
-  adjustWarehousePoolManually: 'P5 warehouse pool read + ledger, P6 adjust',
+  adjustWarehousePoolManually: 'P6 warehouse pool adjust',
   bulkDeactivateUsers: 'P7 roles (read-only + handoff)',
   createCustomRole: 'P7 roles (read-only + handoff)',
   deleteClientOrder: 'P6 client orders',
@@ -123,11 +123,9 @@ const BACKLOG = {
   deleteStockGroup: 'P6 master-data registers',
   deleteUnit: 'P6 master-data registers',
   deleteUnitsBulk: 'P6 master-data registers',
-  deleteWarehousePoolOpening: 'P5 warehouse pool read + ledger, P6 adjust',
-  excludeWarehousePoolColors: 'P5 warehouse pool read + ledger, P6 adjust',
-  getActivityLog: 'P5 read-only screens',
+  deleteWarehousePoolOpening: 'P6 warehouse pool openings',
+  excludeWarehousePoolColors: 'P6 warehouse pool colour include/exclude',
   getAllProcessColorGroups: 'P6 master-data registers',
-  getBackupStatus: 'P5 read-only screens',
   getClientOrdersData: 'P6 client orders',
   getColors: 'P6 master-data registers',
   getContractorLedgerData: 'P5 contractor ledger (descriptor `related`)',
@@ -137,11 +135,10 @@ const BACKLOG = {
   getNextProductId: 'P6 master-data registers',
   getProcessWipData: 'P5 read-only screens',
   getProcessesForItem: 'P5 item ledger + process mappings',
-  getRecentNotificationLogs: 'P5 read-only screens',
   getStockGroupsData: 'P6 master-data registers',
   getUnitsData: 'P6 master-data registers',
-  getWarehousePoolOpeningData: 'P5 warehouse pool read + ledger, P6 adjust',
-  includeWarehousePoolColor: 'P5 warehouse pool read + ledger, P6 adjust',
+  getWarehousePoolOpeningData: 'P6 warehouse pool openings',
+  includeWarehousePoolColor: 'P6 warehouse pool colour include/exclude',
   reorderBOM: 'P7 move-up / move-down ordering',
   reorderProcesses: 'P7 move-up / move-down ordering',
   saveClientOrder: 'P6 client orders',
@@ -153,9 +150,8 @@ const BACKLOG = {
   saveProductionSheet: 'P6 production status + sheet',
   saveStockGroup: 'P6 master-data registers',
   saveUnit: 'P6 master-data registers',
-  saveWarehousePoolOpening: 'P5 warehouse pool read + ledger, P6 adjust',
+  saveWarehousePoolOpening: 'P6 warehouse pool openings',
   setStockGroupItems: 'P6 master-data registers',
-  triggerBackup: 'P5 read-only screens',
   updateCustomRole: 'P7 roles (read-only + handoff)',
   updateDeadStock: 'P6 stock thresholds',
   updateProductionStatus: 'P6 production status + sheet',
@@ -163,7 +159,7 @@ const BACKLOG = {
 };
 
 // Phase 1 opened at 79. Lower this line as ports land; never raise it.
-const BACKLOG_BASELINE = 57;
+const BACKLOG_BASELINE = 53;
 
 describe('MApp / desktop feature parity', () => {
   test('the registry is being read at all', () => {

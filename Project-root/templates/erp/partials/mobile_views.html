@@ -48,6 +48,21 @@
 </div>
 
 <!-- ═══════════════════════════════════════════════════════════════════
+     SYSTEM STATUS — backup health, recent ledger notifications, and (for
+     admins) the activity log. All three RPCs existed and none was
+     reachable from the phone.
+     ═══════════════════════════════════════════════════════════════════ -->
+<div class="mb-sheet" id="sheet-status" role="dialog" aria-modal="true" aria-labelledby="status-title">
+  <div class="mb-sheet-header">
+    <h2 id="status-title">System status</h2>
+    <button type="button" class="mapp-topbar-btn" aria-label="Close" onclick="MApp.Status.close()">
+      <svg viewBox="0 0 24 24" width="22" height="22" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><path d="M6 6l12 12M18 6L6 18"/></svg>
+    </button>
+  </div>
+  <div class="mb-sheet-body" id="status-body"></div>
+</div>
+
+<!-- ═══════════════════════════════════════════════════════════════════
      WAREHOUSE POOL — read-only. Buckets, and one bucket's ledger.
      Deliberately no adjust/zero/delete here: a negative bucket is a
      SIGNAL to triage, not a number to correct, and the screen is built to
@@ -273,6 +288,14 @@
     <div class="mb-skel mb-skel-card"></div>
   </div>
   <button type="button" class="mb-btn mb-btn-secondary mb-mb-4" onclick="MApp.Returns.openNewReturnSheet()">Log Return</button>
+
+  <button type="button" class="mb-card mb-card-tappable" style="border:none;" onclick="MApp.Status.open()">
+    <div class="mb-card-row">
+      <span class="mb-card-title">System Status</span>
+      <svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M9 18l6-6-6-6"/></svg>
+    </div>
+    <div class="mb-card-sub">Backup health, recent notifications, activity</div>
+  </button>
 
   <div class="mapp-section-label mb-mt-4">Warehouse</div>
   <button type="button" class="mb-card mb-card-tappable" style="border:none;" onclick="MApp.Pool.open()">
