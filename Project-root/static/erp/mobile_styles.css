@@ -151,8 +151,23 @@
    orange is 6.22:1 in either theme, which is the whole reason that fix
    was made this way rather than by darkening the brand.
    ──────────────────────────────────────────────────────────────────────── */
+/* Two selectors carry the dark palette, and they carry it twice on
+   purpose. CSS has no way to share one declaration block between a media
+   context and a plain one, and the alternative -- moving the tokens onto
+   an attribute and having the media query only set that attribute -- can
+   only be done from JavaScript, which would mean the OS-dark case
+   flashing light until a script ran. So:
+
+     @media (prefers-color-scheme: dark) :root:not([data-theme="light"])
+         the OS setting, unless the user has explicitly chosen light
+     :root[data-theme="dark"]
+         the user's explicit choice, whatever the OS says
+
+   The duplication is checked, not trusted: mobile_theme.test.js fails if
+   the two blocks ever declare different values for the same token. */
 @media (prefers-color-scheme: dark) {
-  :root {
+  :root:not([data-theme="light"]) {
+    color-scheme: dark;
     --mb-ink:            #eaf0f3;
     --mb-ink-soft:       #b6c4cc;
     --mb-steel:          #93a7b3;
@@ -191,16 +206,61 @@
   /* The top bar and sheet headers are --mb-ink in light, which is now the
      near-white text colour -- they need to stay the darkest surface, not
      become the lightest. */
-  .mapp-topbar,
-  .mb-sheet-header,
-  .mb-select-bar,
-  .mb-toast { background: #0c1014; }
+  :root:not([data-theme="light"]) .mapp-topbar,
+  :root:not([data-theme="light"]) .mb-sheet-header,
+  :root:not([data-theme="light"]) .mb-select-bar,
+  :root:not([data-theme="light"]) .mb-toast { background: #0c1014; }
 
   /* Framing colour behind the phone frame on a tablet. */
   @media (min-width: 640px) {
-    body { background: #05080a; }
+    :root:not([data-theme="light"]) body { background: #05080a; }
   }
 }
+
+/* The same palette, chosen explicitly. Kept byte-identical to the block
+   above -- see the note there. */
+:root[data-theme="dark"] {
+  color-scheme: dark;
+  --mb-ink:            #eaf0f3;
+  --mb-ink-soft:       #b6c4cc;
+  --mb-steel:          #93a7b3;
+  --mb-steel-light:    #46555f;
+  --mb-steel-faint:    #2b353c;
+  --mb-workshop:       #12171b;
+  --mb-surface:        #1b2126;
+
+  --mb-safety-ink:     #ffa165;
+
+  --mb-enamel-red-bg:  #3a1620;
+  --mb-enamel-blue-bg: #16283a;
+  --mb-enamel-green-bg:#102b21;
+  --mb-enamel-amber-bg:#33260f;
+  --mb-enamel-slate-bg:#242d34;
+  --mb-safety-faint:   #33200f;
+
+  --mb-enamel-red-ink:   #ff8194;
+  --mb-enamel-blue-ink:  #8dbdec;
+  --mb-enamel-green-ink: #6fd3a5;
+  --mb-enamel-amber-ink: #e9b45c;
+  --mb-enamel-slate-ink: #9fb2bd;
+
+  --mb-shadow-card:   0 1px 3px rgb(0 0 0 / 45%), 0 1px 2px rgb(0 0 0 / 35%);
+  --mb-shadow-raised: 0 6px 20px rgb(0 0 0 / 55%);
+  --mb-shadow-fab:    0 8px 24px rgb(255 106 19 / 30%);
+}
+
+:root[data-theme="dark"] .mapp-topbar,
+:root[data-theme="dark"] .mb-sheet-header,
+:root[data-theme="dark"] .mb-select-bar,
+:root[data-theme="dark"] .mb-toast { background: #0c1014; }
+
+@media (min-width: 640px) {
+  :root[data-theme="dark"] body { background: #05080a; }
+}
+
+/* Chosen light. Only needs to say so to the browser -- every token below
+   :root is already the light palette. */
+:root[data-theme="light"] { color-scheme: light; }
 
 /* ── Landscape on a phone ────────────────────────────────────────────────
    The 56px top bar plus the 64px tab bar take ~40% of a 320px-tall

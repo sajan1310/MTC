@@ -686,6 +686,20 @@
 <template id="tpl-more">
   <h1 class="mapp-screen-title">More</h1>
 
+  <!-- System is the default and stays first. The two overrides exist
+       because a phone walks from a dark shed into full glare faster than
+       any OS schedule accounts for. -->
+  <div class="mapp-section-label">Appearance</div>
+  <div class="mb-segmented" role="tablist" aria-label="Theme">
+    <button type="button" role="tab" data-theme-mode="system" aria-selected="true"
+            onclick="MApp.Theme.set('system')">System</button>
+    <button type="button" role="tab" data-theme-mode="light" aria-selected="false"
+            onclick="MApp.Theme.set('light')">Light</button>
+    <button type="button" role="tab" data-theme-mode="dark" aria-selected="false"
+            onclick="MApp.Theme.set('dark')">Dark</button>
+  </div>
+  <div class="mb-field-hint mb-mb-4" id="theme-hint" aria-live="polite"></div>
+
   <div class="mapp-section-label">Sync</div>
   <button type="button" class="mb-card mb-card-tappable" style="border:none;" onclick="MApp.SyncIssues.open()">
     <div class="mb-card-row">

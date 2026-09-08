@@ -11603,10 +11603,102 @@ MApp.Account = {
 };
 
 // ================================================================
+// THEME — System / Light / Dark.
+//
+// The app followed prefers-color-scheme and nothing else, which is the
+// right default and the wrong only option. A phone on a factory floor
+// goes from a dark shed to full glare in the time it takes to walk
+// there, and the OS setting is usually on a schedule that has nothing to
+// do with where its owner is standing.
+//
+// The choice is applied by stamping data-theme on <html>; the palette
+// lives in the stylesheet under both that attribute and the media query
+// (see the note above the dark block). Stored per device, not per user:
+// it describes the screen in someone's hand, not their account.
+// ================================================================
+MApp.Theme = {
+  KEY: 'maharaja-erp-mobile-theme',
+  MODES: ['system', 'light', 'dark'],
+  LABELS: { system: 'System', light: 'Light', dark: 'Dark' },
+
+  // The two OS chrome colours, matching the topbar in each palette.
+  BAR: { light: '#14181c', dark: '#0c1014' },
+
+  read() {
+    let stored = null;
+    try { stored = localStorage.getItem(this.KEY); } catch (e) { /* storage inaccessible */ }
+    return this.MODES.indexOf(stored) > -1 ? stored : 'system';
+  },
+
+  // Called at boot before anything renders, and again on every change.
+  // 'system' removes the attribute rather than writing a value, so the
+  // media query is back in charge and a phone that changes theme at dusk
+  // still follows along without the app being reopened.
+  apply(mode) {
+    const value = this.MODES.indexOf(mode) > -1 ? mode : 'system';
+    const root = document.documentElement;
+    if (value === 'system') root.removeAttribute('data-theme');
+    else root.setAttribute('data-theme', value);
+    this._syncBarColour(value);
+    return value;
+  },
+
+  set(mode) {
+    const value = this.apply(mode);
+    try { localStorage.setItem(this.KEY, value); } catch (e) { /* storage inaccessible */ }
+    this._paintPicker();
+    return value;
+  },
+
+  init() {
+    this.apply(this.read());
+  },
+
+  // The <meta name="theme-color"> pair in the template is keyed on
+  // prefers-color-scheme, so an explicit choice that disagrees with the
+  // OS would leave the status bar painted for the other palette. A single
+  // unconditional meta wins over both, and is removed again when the
+  // choice goes back to System.
+  _syncBarColour(mode) {
+    const id = 'mapp-theme-color-override';
+    const existing = document.getElementById(id);
+    if (mode === 'system') {
+      if (existing) existing.remove();
+      return;
+    }
+    const meta = existing || document.createElement('meta');
+    meta.id = id;
+    meta.setAttribute('name', 'theme-color');
+    meta.setAttribute('content', this.BAR[mode]);
+    if (!existing) document.head.appendChild(meta);
+  },
+
+  // Rendered into the More tab on every mount, so it always opens showing
+  // what is actually in force.
+  render() {
+    this._paintPicker();
+  },
+
+  _paintPicker() {
+    const current = this.read();
+    document.querySelectorAll('[data-theme-mode]').forEach(btn => {
+      btn.setAttribute('aria-selected', String(btn.dataset.themeMode === current));
+    });
+    const hint = document.getElementById('theme-hint');
+    if (hint) {
+      hint.textContent = current === 'system'
+        ? 'Following the phone’s own light/dark setting.'
+        : `Always ${this.LABELS[current].toLowerCase()}, whatever the phone is set to.`;
+    }
+  }
+};
+
+// ================================================================
 // MORE — links out to Returns/Items lookup/desktop UI + About row
 // ================================================================
 MApp.More = {
   mount() {
+    MApp.Theme.render();
     this._wireDesktopLink();
     this.loadAbout();
     MApp.Returns.mount();
@@ -11656,6 +11748,10 @@ MApp.More = {
 // BOOT
 // ================================================================
 document.addEventListener('DOMContentLoaded', () => {
+  // Idempotent with the inline snippet in mobile.html's <head>, which is
+  // what actually prevents the flash. This one also fixes up the
+  // theme-color meta, which needs a <head> that exists.
+  MApp.Theme.init();
   MApp.PullToRefresh.init();
   MApp.Shell.init();
 

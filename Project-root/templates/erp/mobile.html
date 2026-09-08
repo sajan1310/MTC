@@ -31,6 +31,24 @@
   <link rel="stylesheet" href="{{ url_for('static', filename='erp/vendor/google-fonts.css') }}">
 
   <link rel="stylesheet" href="{{ url_for('static', filename='erp/mobile_styles.css') }}">
+
+  <!-- Theme choice, stamped BEFORE first paint. MApp.Theme owns this
+       setting, but mobile.js loads at the end of <body> and even its
+       DOMContentLoaded handler runs after the shell has been painted --
+       so an explicit Dark choice would show a white flash on every launch
+       if it waited for that. This is the only place in the app where a
+       constant is duplicated on purpose; mobile_theme.test.js fails if
+       this key and MApp.Theme.KEY ever stop matching. -->
+  <script>
+    (function () {
+      try {
+        var mode = localStorage.getItem('maharaja-erp-mobile-theme');
+        if (mode === 'dark' || mode === 'light') {
+          document.documentElement.setAttribute('data-theme', mode);
+        }
+      } catch (e) { /* storage inaccessible -- fall through to the OS setting */ }
+    }());
+  </script>
 </head>
 
 <body>
