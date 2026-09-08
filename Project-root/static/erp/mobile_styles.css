@@ -827,6 +827,58 @@ textarea:focus-visible,
 .mb-chip-lowstock   { background: var(--mb-enamel-red); }
 
 /* ── Tappable filter chips (status-bar style pickers, e.g. PO Ledger) ── */
+/* ── Home charts ─────────────────────────────────────────────────────
+   Inline SVG and plain divs, no charting library: this app self-hosts
+   every asset because it runs on factory LANs with no reliable internet,
+   and the service worker only caches same-origin /static/erp/ URLs. */
+.mapp-chart-body { min-height: 44px; }
+
+.mapp-spark {
+  display: block;
+  width: 100%;
+  height: 44px;
+  /* preserveAspectRatio="none" stretches the path, so the stroke would
+     stretch with it -- vector-effect on the path keeps it even. */
+  overflow: visible;
+}
+
+.mapp-bar-row {
+  display: grid;
+  grid-template-columns: minmax(0, 6.5rem) 1fr auto;
+  align-items: center;
+  gap: var(--mb-sp-3);
+  padding: 3px 0;
+}
+
+.mapp-bar-label {
+  font-size: 0.8125rem;
+  color: var(--mb-steel);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.mapp-bar-track {
+  height: 10px;
+  border-radius: var(--mb-radius-pill);
+  background: var(--mb-steel-faint);
+  overflow: hidden;
+}
+
+.mapp-bar-fill {
+  height: 100%;
+  border-radius: var(--mb-radius-pill);
+  background: var(--mb-safety);
+}
+
+.mapp-bar-value {
+  font-family: var(--mb-font-display);
+  font-size: 0.875rem;
+  font-weight: 600;
+  color: var(--mb-ink);
+  white-space: nowrap;
+}
+
 /* ── Collapsible section (More tab) ──────────────────────────────────
    Native <details>/<summary>: the keyboard handling, the aria-expanded
    semantics and the open/closed state are the platform's, not a

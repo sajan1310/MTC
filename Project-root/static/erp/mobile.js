@@ -1847,6 +1847,204 @@ MApp.State = {
 };
 
 // ================================================================
+// HOME LAYOUT — which figures and charts Home shows.
+//
+// Home shipped with three fixed tiles. They are the right three for most
+// people and the wrong three for anyone whose job is contractor
+// payables, or purchase orders, or watching a queue drain. The numbers
+// all existed; the choice did not.
+//
+// The blocks below declare which endpoint feeds them, and that is the
+// whole reason this file is careful. getMobileDashboard is three numbers
+// and is offline-cached; getDashboardData is the full set and is not
+// cheap -- Home has always used the small one deliberately. So the cost
+// follows the choice: pick only default tiles and Home makes exactly the
+// request it always did. Pick anything else and it additionally asks for
+// the full payload, renders the cheap tiles first, and fills the rest in
+// when they land.
+// ================================================================
+MApp.HomeLayout = {
+  KEY: 'maharaja-erp-mobile-home-blocks',
+
+  // source: 'mobile' -- in getMobileDashboard, cached, free
+  //         'full'   -- needs getDashboardData
+  BLOCKS: [
+    // ── Figures ────────────────────────────────────────────────────────
+    { key: 'pendingProduction', group: 'Production', label: 'Pending production',
+      source: 'mobile', kind: 'tile', accent: 'mb-accent-blue',
+      value: d => d.pendingProductionCount || 0, tab: 'production' },
+    { key: 'inProgressProduction', group: 'Production', label: 'In progress',
+      source: 'full', kind: 'tile', accent: 'mb-accent-blue',
+      value: d => (d.kpis || {}).inProgressProductionCount || 0, tab: 'production' },
+    { key: 'queuedProduction', group: 'Production', label: 'Queued',
+      source: 'full', kind: 'tile',
+      value: d => (d.kpis || {}).queuedProductionCount || 0, tab: 'production' },
+    { key: 'oldestPending', group: 'Production', label: 'Oldest pending lot',
+      source: 'full', kind: 'tile', accent: 'mb-accent-red',
+      value: d => (d.kpis || {}).oldestPendingProductionDays || 0, unit: 'days',
+      tab: 'production' },
+
+    { key: 'todaysDispatches', group: 'Dispatch', label: 'Today’s dispatches',
+      source: 'mobile', kind: 'tile', accent: 'mb-accent-safety',
+      value: d => d.todaysDispatchCount || 0, tab: 'dispatch' },
+    { key: 'readyToDispatch', group: 'Dispatch', label: 'Ready to dispatch',
+      source: 'full', kind: 'tile', accent: 'mb-accent-safety',
+      value: d => (d.kpis || {}).readyToDispatchUnits || 0, unit: 'units',
+      tab: 'dispatch' },
+
+    { key: 'lowStock', group: 'Stock', label: 'Low-stock alerts',
+      source: 'mobile', kind: 'tile', wide: true,
+      value: d => d.lowStockCount || 0, alertWhenPositive: true, tab: 'stock' },
+    { key: 'lowStockDeficit', group: 'Stock', label: 'Total shortfall',
+      source: 'full', kind: 'tile',
+      value: d => (d.kpis || {}).lowStockTotalDeficit || 0, unit: 'units', tab: 'stock' },
+
+    { key: 'openPos', group: 'Money', label: 'Open POs',
+      source: 'full', kind: 'tile',
+      value: d => (d.kpis || {}).openPoCount || 0,
+      sub: d => MApp.Util.formatCurrency((d.kpis || {}).openPoValue || 0) },
+    { key: 'billsThisMonth', group: 'Money', label: 'Bills this month',
+      source: 'full', kind: 'tile',
+      value: d => (d.kpis || {}).billsThisMonthCount || 0,
+      sub: d => MApp.Util.formatCurrency((d.kpis || {}).billsThisMonthValue || 0) },
+    { key: 'contractorPayables', group: 'Money', label: 'Contractor payables',
+      source: 'full', kind: 'tile', accent: 'mb-accent-red', wide: true,
+      value: d => MApp.Util.formatCurrency((d.kpis || {}).contractorPayablesDue || 0),
+      sub: d => `${(d.kpis || {}).contractorPayablesCount || 0} contractor(s)` },
+
+    // ── Charts ─────────────────────────────────────────────────────────
+    // Drawn as inline SVG from data the server already returns. No
+    // charting library: this app self-hosts everything because it runs on
+    // factory LANs with no reliable internet, and the service worker only
+    // caches same-origin /static/erp/ URLs.
+    { key: 'dispatchTrend', group: 'Charts', label: 'Dispatch, last 30 days',
+      source: 'full', kind: 'chart', chart: 'sparkline',
+      series: d => d.dispatchTrend || [] },
+    { key: 'productionMix', group: 'Charts', label: 'Lots by status',
+      source: 'full', kind: 'chart', chart: 'bars',
+      series: d => (d.productionStatusBreakdown || [])
+        .map(r => ({ label: r.status, value: r.count })) },
+    { key: 'lowStockWorst', group: 'Charts', label: 'Biggest stock shortfalls',
+      source: 'full', kind: 'chart', chart: 'bars',
+      series: d => (d.lowStockItems || [])
+        .map(r => ({ label: `${r.name}${r.size ? ' · ' + r.size : ''}`, value: r.deficit })) },
+    { key: 'payablesByContractor', group: 'Charts', label: 'Payables by contractor',
+      source: 'full', kind: 'chart', chart: 'bars', money: true,
+      series: d => (d.contractorPayables || [])
+        .map(r => ({ label: MApp.Util.formatNameCase(r.contractorName), value: r.balanceDue })) }
+  ],
+
+  // The three Home has always shown. Anyone who never opens the picker
+  // keeps exactly the screen -- and exactly the one request -- they had.
+  DEFAULTS: ['pendingProduction', 'todaysDispatches', 'lowStock'],
+
+  block(key) {
+    return this.BLOCKS.find(b => b.key === key) || null;
+  },
+
+  read() {
+    let stored = null;
+    try { stored = JSON.parse(localStorage.getItem(this.KEY) || 'null'); } catch (e) { stored = null; }
+    // Absent or malformed means never chosen, which is what gets the
+    // defaults. A valid EMPTY array is a choice -- somebody who wants
+    // only the activity list -- and is honoured, not quietly refilled.
+    if (!Array.isArray(stored)) return this.DEFAULTS.slice();
+    // Filtered through the catalogue: a key from an older build that no
+    // longer exists must not leave a hole in the render.
+    return stored.filter(k => this.block(k));
+  },
+
+  write(keys) {
+    try { localStorage.setItem(this.KEY, JSON.stringify(keys)); } catch (e) { /* storage inaccessible */ }
+  },
+
+  selected() {
+    // Rendered in catalogue order rather than pick order, so the grid
+    // keeps a stable shape and related figures stay together.
+    const chosen = new Set(this.read());
+    return this.BLOCKS.filter(b => chosen.has(b.key));
+  },
+
+  // True when anything chosen needs the expensive payload. This is the
+  // question Home asks before deciding to make a second request.
+  needsFullData() {
+    return this.selected().some(b => b.source === 'full');
+  },
+
+  // ── The picker ───────────────────────────────────────────────────────
+  open() {
+    this._draft = new Set(this.read());
+    this.render();
+    MApp.Sheet.open('sheet-home-layout');
+  },
+
+  close() { MApp.Sheet.close('sheet-home-layout'); },
+
+  toggle(key) {
+    if (!this.block(key)) return;
+    if (this._draft.has(key)) this._draft.delete(key);
+    else this._draft.add(key);
+    this.render();
+  },
+
+  reset() {
+    this._draft = new Set(this.DEFAULTS);
+    this.render();
+  },
+
+  render() {
+    const body = document.getElementById('home-layout-body');
+    if (!body) return;
+
+    const groups = [];
+    this.BLOCKS.forEach(b => {
+      let g = groups.find(x => x.name === b.group);
+      if (!g) { g = { name: b.group, blocks: [] }; groups.push(g); }
+      g.blocks.push(b);
+    });
+
+    body.innerHTML = groups.map(g => `
+      <div class="mapp-section-label">${MApp.Util.escapeHtml(g.name)}</div>
+      ${g.blocks.map(b => {
+    const on = this._draft.has(b.key);
+    return `
+        <button type="button" class="mb-card mb-card-tappable" data-block-toggle="${MApp.Util.escapeHtml(b.key)}">
+          <div class="mb-card-row">
+            <div>
+              <div class="mb-card-title">${MApp.Util.escapeHtml(b.label)}</div>
+              ${b.source === 'full'
+    ? '<div class="mb-card-sub">Needs the full dashboard — a slower load</div>'
+    : '<div class="mb-card-sub">Always loaded, works offline</div>'}
+            </div>
+            <span class="mb-chip${on ? ' mb-chip-completed' : ''}">${on ? 'Shown' : 'Hidden'}</span>
+          </div>
+        </button>`;
+  }).join('')}
+    `).join('');
+
+    body.querySelectorAll('[data-block-toggle]').forEach(btn => {
+      btn.addEventListener('click', () => this.toggle(btn.dataset.blockToggle));
+    });
+
+    const note = document.getElementById('home-layout-note');
+    if (note) {
+      const heavy = [...this._draft].filter(k => (this.block(k) || {}).source === 'full').length;
+      note.textContent = heavy
+        ? `${heavy} of these need the full dashboard, so Home will take a moment longer and those tiles will not be there offline.`
+        : 'All of these come from the small payload Home already caches, so it stays instant and works offline.';
+    }
+  },
+
+  save() {
+    // An empty Home is a real choice -- somebody who only wants the
+    // activity list -- so it is allowed rather than silently refilled.
+    this.write([...this._draft]);
+    this.close();
+    MApp.Home.mount();
+  }
+};
+
+// ================================================================
 // HOME
 // ================================================================
 MApp.Home = {
@@ -1865,39 +2063,47 @@ MApp.Home = {
       }
       MApp.State.lastDashboard = res.data || {};
       this.render(res.data || {}, res._offlineCachedAt);
+
+      // Only when the operator has chosen a figure the small payload does
+      // not carry. Home has always used getMobileDashboard on purpose --
+      // three numbers, cached, instant -- and anyone who leaves the
+      // default tiles alone still makes exactly that one request.
+      if (MApp.HomeLayout.needsFullData()) await this._loadFullData();
     } catch (err) {
       MApp.Util.renderError(statsEl, err && err.message, () => this.mount());
       if (activityEl) activityEl.innerHTML = '';
     }
   },
 
+  // Fills in the blocks that were rendered as placeholders. Failing here
+  // is not failing the screen: the cheap tiles and the activity list are
+  // already up, and offline this request simply will not arrive.
+  async _loadFullData() {
+    try {
+      const res = await MApp.Api.call('getDashboardData');
+      if (!res || !res.success) { this._markFullBlocksUnavailable(); return; }
+      this._full = res.data || {};
+      this.renderBlocks({ ...MApp.State.lastDashboard, ...this._full });
+    } catch (err) {
+      this._markFullBlocksUnavailable();
+    }
+  },
+
+  _markFullBlocksUnavailable() {
+    document.querySelectorAll('[data-block-pending]').forEach(el => {
+      const val = el.querySelector('.mb-stat-tile-value');
+      if (val) val.textContent = '—';
+      const chart = el.querySelector('.mapp-chart-body');
+      if (chart) chart.innerHTML = '<div class="mb-text-sm mb-text-steel">Not available offline.</div>';
+    });
+  },
+
   render(data, offlineCachedAt) {
     const statsEl = document.getElementById('home-stats');
     if (statsEl) {
-      const lowStock = data.lowStockCount || 0;
       const banner = offlineCachedAt ? MApp.Util.offlineBannerHtml(offlineCachedAt) : '';
-      statsEl.innerHTML = banner + `
-        <button type="button" class="mb-stat-tile mb-accent-blue" onclick="MApp.Home.goTo('production')">
-          <div class="mb-stat-tile-top">
-            <span class="mb-stat-tile-label">Pending production</span>
-            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="9"/><path d="M10 8.5v7l6-3.5-6-3.5z"/></svg>
-          </div>
-          <div class="mb-stat-tile-value">${data.pendingProductionCount || 0}</div>
-        </button>
-        <button type="button" class="mb-stat-tile mb-accent-safety" onclick="MApp.Home.goTo('dispatch')">
-          <div class="mb-stat-tile-top">
-            <span class="mb-stat-tile-label">Today's dispatches</span>
-            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="1" y="7" width="14" height="10" rx="1"/><path d="M15 10h4l3 3v4h-7z"/><circle cx="6" cy="19" r="1.6"/><circle cx="17.5" cy="19" r="1.6"/></svg>
-          </div>
-          <div class="mb-stat-tile-value">${data.todaysDispatchCount || 0}</div>
-        </button>
-        <button type="button" class="mb-stat-tile${lowStock > 0 ? ' mb-accent-red' : ''}" style="grid-column:1 / -1;" onclick="MApp.Home.goTo('stock')">
-          <div class="mb-stat-tile-top">
-            <span class="mb-stat-tile-label">Low-stock alerts</span>
-            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 9v4M12 17h.01"/><path d="M10.3 3.9L1.8 18a2 2 0 0 0 1.7 3h17a2 2 0 0 0 1.7-3L13.7 3.9a2 2 0 0 0-3.4 0z"/></svg>
-          </div>
-          <div class="mb-stat-tile-value${lowStock > 0 ? ' mb-alert' : ''}">${lowStock}</div>
-        </button>`;
+      statsEl.innerHTML = banner + '<div class="mb-stat-grid" id="home-blocks"></div>';
+      this.renderBlocks(data);
     }
 
     const activityEl = document.getElementById('home-activity');
@@ -1930,6 +2136,120 @@ MApp.Home = {
         }).join('');
       }
     }
+  },
+
+  // ── The chosen blocks ──────────────────────────────────────────────
+  // Re-run twice on a customised Home: once with the small payload, once
+  // more when the full one lands. A block whose source has not arrived
+  // yet draws its frame and a dash rather than a zero -- "we do not know
+  // yet" and "there are none" are different answers, and on a dashboard
+  // the difference is the whole point.
+  renderBlocks(data) {
+    const host = document.getElementById('home-blocks');
+    if (!host) return;
+
+    const blocks = MApp.HomeLayout.selected();
+    if (blocks.length === 0) {
+      host.innerHTML = `
+        <div class="mb-card" style="grid-column:1 / -1;">
+          <div class="mb-card-sub">No figures chosen.
+            <button type="button" class="mb-btn-text" style="padding:0;min-height:auto;" onclick="MApp.HomeLayout.open()">Pick some</button>.
+          </div>
+        </div>`;
+      return;
+    }
+
+    const ready = key => key !== 'full' || !!this._full;
+
+    host.innerHTML = blocks.map(b => {
+      const pending = !ready(b.source);
+      const attrs = pending ? ' data-block-pending="1"' : '';
+      return b.kind === 'chart'
+        ? this._chartHtml(b, data, pending, attrs)
+        : this._tileHtml(b, data, pending, attrs);
+    }).join('');
+
+    host.querySelectorAll('[data-block-tab]').forEach(el => {
+      el.addEventListener('click', () => this.goTo(el.dataset.blockTab));
+    });
+  },
+
+  _tileHtml(b, data, pending, attrs) {
+    const value = pending ? '—' : b.value(data);
+    const sub = !pending && b.sub ? b.sub(data) : '';
+    const alert = b.alertWhenPositive && !pending && Number(value) > 0;
+    const accent = alert ? ' mb-accent-red' : (b.accent ? ' ' + b.accent : '');
+    const tag = b.tab ? 'button' : 'div';
+    const tabAttr = b.tab ? ` type="button" data-block-tab="${MApp.Util.escapeHtml(b.tab)}"` : '';
+    return `
+      <${tag} class="mb-stat-tile${accent}"${b.wide ? ' style="grid-column:1 / -1;"' : ''}${tabAttr}${attrs}>
+        <div class="mb-stat-tile-top">
+          <span class="mb-stat-tile-label">${MApp.Util.escapeHtml(b.label)}</span>
+        </div>
+        <div class="mb-stat-tile-value${alert ? ' mb-alert' : ''}">${MApp.Util.escapeHtml(String(value))}</div>
+        ${sub ? `<div class="mb-card-sub">${MApp.Util.escapeHtml(sub)}</div>` : ''}
+        ${!pending && b.unit ? `<div class="mb-card-sub">${MApp.Util.escapeHtml(b.unit)}</div>` : ''}
+      </${tag}>`;
+  },
+
+  _chartHtml(b, data, pending, attrs) {
+    const body = pending
+      ? '<div class="mb-skel mb-skel-line" style="width:100%;height:48px;"></div>'
+      : (b.chart === 'sparkline'
+        ? this._sparkline(b.series(data))
+        : this._bars(b.series(data), b.money));
+    return `
+      <div class="mb-card mapp-chart" style="grid-column:1 / -1;"${attrs}>
+        <div class="mb-stat-tile-label">${MApp.Util.escapeHtml(b.label)}</div>
+        <div class="mapp-chart-body mb-mt-2">${body}</div>
+      </div>`;
+  },
+
+  // Inline SVG, no library: this app self-hosts everything because it
+  // runs on factory LANs with no reliable internet, and the service
+  // worker only caches same-origin /static/erp/ URLs.
+  //
+  // aria-hidden with a text summary beside it, rather than a chart that
+  // announces 30 unlabelled numbers: the shape is for eyes, the total
+  // and the peak are what a screen reader can actually use.
+  _sparkline(series) {
+    const points = (series || []).map(p => Number(p.qty) || 0);
+    if (points.length < 2) return '<div class="mb-text-sm mb-text-steel">Not enough days yet.</div>';
+
+    const max = Math.max(...points, 1);
+    const w = 100, h = 32;
+    const step = w / (points.length - 1);
+    const path = points
+      .map((v, i) => `${i === 0 ? 'M' : 'L'}${(i * step).toFixed(2)},${(h - (v / max) * h).toFixed(2)}`)
+      .join(' ');
+    const total = points.reduce((a, v) => a + v, 0);
+    const peak = Math.max(...points);
+
+    return `
+      <svg viewBox="0 0 ${w} ${h}" preserveAspectRatio="none" class="mapp-spark" aria-hidden="true">
+        <path d="${path}" fill="none" stroke="var(--mb-safety)" stroke-width="1.5"
+              vector-effect="non-scaling-stroke" stroke-linejoin="round" stroke-linecap="round"/>
+      </svg>
+      <div class="mb-card-sub mb-mt-2">${MApp.Util.formatQty(total)} units over ${points.length} days · peak ${MApp.Util.formatQty(peak)}</div>`;
+  },
+
+  // A labelled bar per row, widths relative to the largest. Rows arrive
+  // already truncated by the server, so this draws what it is given.
+  _bars(series, money) {
+    const rows = (series || []).filter(r => Number(r.value) > 0);
+    if (rows.length === 0) return '<div class="mb-text-sm mb-text-steel">Nothing to show.</div>';
+    const max = Math.max(...rows.map(r => Number(r.value)));
+    return rows.map(r => {
+      const v = Number(r.value);
+      const pct = Math.max(2, Math.round((v / max) * 100));
+      const shown = money ? MApp.Util.formatCurrency(v) : MApp.Util.formatQty(v);
+      return `
+      <div class="mapp-bar-row">
+        <div class="mapp-bar-label">${MApp.Util.escapeHtml(r.label)}</div>
+        <div class="mapp-bar-track"><div class="mapp-bar-fill" style="width:${pct}%;"></div></div>
+        <div class="mapp-bar-value">${MApp.Util.escapeHtml(shown)}</div>
+      </div>`;
+    }).join('');
   },
 
   renderGreeting() {
