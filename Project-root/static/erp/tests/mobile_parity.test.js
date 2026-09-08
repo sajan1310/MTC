@@ -116,10 +116,6 @@ const BACKLOG = {
   deleteCustomRole: 'P7 roles (read-only + handoff)',
   deleteDispatchPlanLine: 'P7 dispatch plan checklist',
   deleteReturnsBulk: 'P2 multi-select in the shared list renderer',
-  // Mis-tagged as a master-data register until now. It is not one: it
-  // returns each process's colours with the `removable` subset that
-  // excludeWarehousePoolColors will actually accept, and exists to tell
-  // the pool breakdown which rows may be deleted. It ships with those.
   getDispatchPlans: 'P7 dispatch plan checklist',
   reorderBOM: 'P7 move-up / move-down ordering',
   reorderProcesses: 'P7 move-up / move-down ordering',
