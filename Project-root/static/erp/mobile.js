@@ -8260,8 +8260,17 @@ MApp.Select = {
     const args = config.payload(rows);
     this.exit();
 
-    const res = await MApp.Util.mutateSimple(config.method, args, `${n} ${noun} deleted.`);
-    if (res && res.success && typeof config.onDone === 'function') config.onDone();
+    // The server's own message wins over the count we were about to
+    // announce. Several of these endpoints delete PART of a selection on
+    // purpose -- deleteItemsBulk skips items still in use, and
+    // deleteClientOrdersBulk skips any PI with a dispatch or a queued
+    // production lot against it -- and each says so, naming what it left
+    // behind. "5 items deleted" over the top of that is not merely
+    // uninformative, it is wrong.
+    const res = await MApp.Util.mutateSimple(config.method, args, null);
+    if (!res || !res.success) return;
+    MApp.Toast.success(res.message || `${n} ${noun} deleted.`);
+    if (typeof config.onDone === 'function') config.onDone();
   }
 };
 
@@ -8314,7 +8323,8 @@ MApp.GlobalSearch = {
     { label: 'Models', keywords: 'model master kalpi ranger', run: () => MApp.Master.open('model') },
     { label: 'Process Types', keywords: 'process type master stage', run: () => MApp.Master.open('processType') },
     { label: 'Units', keywords: 'unit master conversion dozen kg factor', run: () => MApp.Master.open('unit') },
-    { label: 'Stock Groups', keywords: 'group set collection low stock report stickers bolts', run: () => MApp.StockGroups.open() }
+    { label: 'Stock Groups', keywords: 'group set collection low stock report stickers bolts', run: () => MApp.StockGroups.open() },
+    { label: 'PI / Estimates', keywords: 'client order proforma invoice quote estimate confirm', run: () => MApp.ClientOrders.open() }
   ],
 
   DEST_SPEC: {
@@ -9139,6 +9149,387 @@ MApp.StockGroups = {
     MApp.Toast.success(res.message || 'Group items saved.');
     this.closeItems();
     this.open();
+  }
+};
+
+// ================================================================
+// CLIENT ORDERS — PI / Estimates (More tab).
+//
+// A PI is where a client's order enters the system, and marking one
+// "Order Confirmed" is what queues the Production lots against it. That
+// whole entry point was desktop-only: an order taken on the phone had to
+// wait for somebody to reach a laptop before any of it could be made.
+//
+// Header plus lines, edit-by-replace, exactly like BOM. Product IDs come
+// from getBOMProductionData because the server validates every line
+// against BOM and rejects anything not defined there -- so the picker
+// offers only what will be accepted, rather than letting the operator
+// type something the save will bounce.
+// ================================================================
+MApp.ClientOrders = {
+  STATUSES: ['Estimate', 'Order Confirmed', 'Cancelled'],
+
+  // deleteClientOrdersBulk deletes what it can and names what it skipped
+  // (anything with a dispatch record or a queued production lot), so a
+  // selection that includes an untouchable PI still clears the rest.
+  SELECT: {
+    key: 'clientOrder', noun: 'PI / Estimate', plural: 'PI / Estimates',
+    method: 'deleteClientOrdersBulk',
+    payload: rows => [rows.map(r => r.orderNumber)],
+    onDone: () => MApp.ClientOrders.open()
+  },
+
+  // Product name and ID make an order findable by what was ordered, not
+  // only by its number or the client who placed it.
+  SEARCH: {
+    fields: [
+      { key: 'orderNumber', weight: 10, label: 'PI' },
+      { key: 'clientName', weight: 8, label: 'Client' },
+      { key: '_products', weight: 5, label: 'Products' },
+      { key: 'status', weight: 2, label: 'Status' },
+      { key: 'orderRemarks', weight: 2, label: 'Remarks' }
+    ]
+  },
+
+  orders: [],
+  entries: [],
+  filtered: [],
+  searchTerm: '',
+  statusFilter: 'all',
+  clients: [],
+  products: [],
+  editing: null,
+  lines: [],
+  selection: null,
+
+  async open() {
+    const listEl = document.getElementById('client-orders-list');
+    const input = document.getElementById('client-orders-search');
+    if (input) input.value = '';
+    this.searchTerm = '';
+    MApp.SearchBox.attach('client-orders-search', term => this.onSearch(term));
+
+    MApp.Util.renderSkeleton(listEl, 5);
+    MApp.Sheet.open('sheet-client-orders');
+
+    try {
+      const res = await MApp.Api.call('getClientOrdersData');
+      if (!res || !res.success) {
+        MApp.Util.renderError(listEl, res && res.message, () => this.open());
+        return;
+      }
+      this.orders = (res.data || []).map(o => ({
+        ...o,
+        _products: (o.lines || []).map(l => `${l.productId} ${l.productName}`).join(' ')
+      }));
+      this.entries = MApp.Search.index(this.orders, this.SEARCH);
+      MApp.Paging.reset('clientOrder');
+      this._applyFilters();
+      this.render();
+    } catch (err) {
+      MApp.Util.renderError(listEl, err && err.message, () => this.open());
+    }
+  },
+
+  close() { MApp.Sheet.close('sheet-client-orders'); },
+
+  onSearch(term) {
+    this.searchTerm = term || '';
+    MApp.Paging.reset('clientOrder');
+    this._applyFilters();
+    this.render();
+  },
+
+  filterBy(status) {
+    this.statusFilter = status || 'all';
+    MApp.Paging.reset('clientOrder');
+    const bar = document.getElementById('client-orders-filters');
+    if (bar) {
+      bar.querySelectorAll('[data-order-filter]').forEach(b => {
+        const on = b.dataset.orderFilter === this.statusFilter;
+        b.classList.toggle('active', on);
+        b.setAttribute('aria-pressed', on ? 'true' : 'false');
+      });
+    }
+    this._applyFilters();
+    this.render();
+  },
+
+  _applyFilters() {
+    const hits = MApp.Search.run(this.entries, this.searchTerm);
+    this.filtered = this.statusFilter === 'all'
+      ? hits
+      : hits.filter(o => o.status === this.statusFilter);
+  },
+
+  _statusChipClass(status) {
+    if (status === 'Order Confirmed') return 'mb-chip-completed';
+    if (status === 'Cancelled') return 'mb-chip-cancelled';
+    return 'mb-chip-pending';
+  },
+
+  render() {
+    const listEl = document.getElementById('client-orders-list');
+    if (!listEl) return;
+
+    const page = MApp.Paging.take('clientOrder', this.filtered, () => this.render());
+    MApp.SearchBox.setCount('client-orders-search', page.shown, page.total, page.meta);
+
+    if (this.filtered.length === 0) {
+      MApp.Util.renderEmpty(listEl, {
+        title: 'No PI / Estimates',
+        body: this.searchTerm.trim() || this.statusFilter !== 'all'
+          ? 'Nothing matches this search and filter.'
+          : 'Tap New to record the first one.'
+      });
+      return;
+    }
+
+    listEl.innerHTML = page.rows.map((o, i) => {
+      const lines = o.lines || [];
+      const totalQty = lines.reduce((sum, l) => sum + (Number(l.qty) || 0), 0);
+      // A line the server could not map to a single final-stage process
+      // is marked Manual: the PI is confirmed but nothing was queued for
+      // it, and somebody has to log that lot by hand. That is the one
+      // thing on this card worth interrupting for.
+      const manual = lines.filter(l => l.needsManualProduction).length;
+      return `
+      <div class="mb-card">
+        <div class="mb-card-row">
+          <div>
+            <div class="mb-card-title">${MApp.Util.escapeHtml(o.orderNumber)}</div>
+            <div class="mb-card-sub">${MApp.Util.escapeHtml(MApp.Util.formatNameCase(o.clientName))}</div>
+            <div class="mb-card-sub">${MApp.Util.escapeHtml(o.orderDate || '')}</div>
+          </div>
+          <div style="text-align:right;">
+            <span class="mb-chip ${this._statusChipClass(o.status)}">${MApp.Util.escapeHtml(o.status)}</span>
+            <div class="mb-card-sub mb-mt-2">${lines.length} line(s) · ${MApp.Util.formatQty(totalQty)}</div>
+          </div>
+        </div>
+        ${manual ? `<div class="mb-mt-2 mb-text-sm" style="color:var(--mb-enamel-amber-ink);">${manual} line(s) need a Production lot logged by hand.</div>` : ''}
+        ${o.orderRemarks ? `<div class="mb-card-sub mb-mt-2">${MApp.Util.escapeHtml(o.orderRemarks)}</div>` : ''}
+        <div class="mb-mt-2" style="display:flex; gap:var(--mb-sp-4); flex-wrap:wrap;">
+          <button type="button" class="mb-btn-text" style="padding:0;min-height:auto;" data-order-action="edit" data-order-index="${i}">Open</button>
+          <button type="button" class="mb-btn-text" style="padding:0;min-height:auto;color:var(--mb-enamel-red-ink);" data-order-action="delete" data-order-index="${i}">Delete</button>
+        </div>
+      </div>`;
+    }).join('') + MApp.Paging.moreHtml(page);
+
+    listEl.querySelectorAll('[data-order-action]').forEach(btn => {
+      btn.addEventListener('click', () => {
+        const o = page.rows[Number(btn.dataset.orderIndex)];
+        if (!o) return;
+        if (btn.dataset.orderAction === 'edit') this.openForm(o);
+        else this.remove(o);
+      });
+    });
+
+    MApp.Select.enable(listEl, page.rows, this.SELECT);
+  },
+
+  // ── Form ─────────────────────────────────────────────────────────────
+  async openForm(order) {
+    this.editing = order || null;
+    this.selection = {
+      clientName: order ? order.clientName : '',
+      status: order ? order.status : 'Estimate'
+    };
+    this.lines = order && (order.lines || []).length
+      ? order.lines.map(l => ({
+        productId: l.productId,
+        productName: l.productName,
+        qty: l.qty,
+        lineRemarks: l.lineRemarks || ''
+      }))
+      : [{ productId: '', productName: '', qty: '', lineRemarks: '' }];
+
+    const titleEl = document.getElementById('client-order-form-title');
+    if (titleEl) titleEl.textContent = order ? order.orderNumber : 'New PI / Estimate';
+
+    const dateEl = document.getElementById('client-order-date');
+    if (dateEl) dateEl.value = (order && order.dateRaw) || MApp.Util.todayInputValue();
+    const remarksEl = document.getElementById('client-order-remarks');
+    if (remarksEl) remarksEl.value = (order && order.orderRemarks) || '';
+
+    this._paintClient();
+    this._paintStatus();
+    this._renderLines();
+    MApp.Sheet.open('sheet-client-order-form');
+
+    // Both pickers are best-effort and independent: a failed client list
+    // must not also cost the operator the product list.
+    const [clientsRes, productsRes] = await Promise.all([
+      MApp.Api.call('getClientsData').catch(() => null),
+      MApp.Api.call('getBOMProductionData').catch(() => null)
+    ]);
+    this.clients = clientsRes && clientsRes.success ? (clientsRes.data || []) : [];
+    this.products = productsRes && productsRes.success ? (productsRes.data || []) : [];
+  },
+
+  closeForm() { MApp.Sheet.close('sheet-client-order-form'); },
+
+  _paintClient() {
+    const el = document.getElementById('client-order-client-field');
+    if (!el) return;
+    const name = this.selection.clientName;
+    el.textContent = name ? MApp.Util.formatNameCase(name) : 'Choose a client…';
+    el.classList.toggle('mb-placeholder', !name);
+  },
+
+  _paintStatus() {
+    const el = document.getElementById('client-order-status-field');
+    if (el) el.textContent = this.selection.status;
+    // Confirming is the consequential one and it is not obvious from the
+    // word alone that saving here creates Production lots.
+    const hint = document.getElementById('client-order-status-hint');
+    if (hint) {
+      hint.textContent = this.selection.status === 'Order Confirmed'
+        ? 'Saving queues a Pending Production lot for each line whose product maps to one final-stage process. Lines that do not map are flagged for you to log by hand.'
+        : 'Nothing is queued into Production until this is Order Confirmed.';
+    }
+  },
+
+  async pickClient() {
+    if (!this.clients.length) {
+      MApp.Toast.error('Client list is still loading. Try again in a moment.');
+      return;
+    }
+    const picked = await MApp.Picker.open({
+      title: 'Choose a client',
+      items: this.clients.map(c => ({ value: c.name, label: MApp.Util.formatNameCase(c.name), sublabel: c.contact || '' })),
+      selectedValue: this.selection.clientName
+    });
+    if (!picked) return;
+    this.selection.clientName = picked.value;
+    this._paintClient();
+  },
+
+  async pickStatus() {
+    const picked = await MApp.Picker.open({
+      title: 'Status',
+      items: this.STATUSES.map(s => ({ value: s, label: s })),
+      selectedValue: this.selection.status
+    });
+    if (!picked) return;
+    this.selection.status = picked.value;
+    this._paintStatus();
+  },
+
+  _linesHtml() {
+    return this.lines.map((line, i) => `
+      <div class="mb-card" style="padding:var(--mb-sp-3);">
+        <div class="mb-field" style="margin-bottom:var(--mb-sp-2);">
+          <label>Product</label>
+          <button type="button" class="mb-picker-field${line.productId ? '' : ' mb-placeholder'}" onclick="MApp.ClientOrders.pickLineProduct(${i})">${line.productId ? MApp.Util.escapeHtml(line.productName || line.productId) + ` (${MApp.Util.escapeHtml(line.productId)})` : 'Choose a product…'}</button>
+        </div>
+        <div class="mb-field" style="margin-bottom:var(--mb-sp-2);">
+          <label>Quantity</label>
+          <input type="number" inputmode="decimal" min="0" step="any" value="${line.qty || ''}" oninput="MApp.ClientOrders.updateLine(${i}, 'qty', this.value)">
+        </div>
+        <div class="mb-field" style="margin-bottom:0;">
+          <label>Line remarks</label>
+          <input type="text" value="${MApp.Util.escapeHtml(line.lineRemarks || '')}" oninput="MApp.ClientOrders.updateLine(${i}, 'lineRemarks', this.value)">
+        </div>
+        ${this.lines.length > 1 ? `<button type="button" class="mb-btn-text mb-mt-2" style="padding:0;min-height:auto;color:var(--mb-enamel-red-ink);" onclick="MApp.ClientOrders.removeLine(${i})">Remove</button>` : ''}
+      </div>`).join('');
+  },
+
+  _renderLines() {
+    const el = document.getElementById('client-order-lines');
+    if (el) el.innerHTML = this._linesHtml();
+  },
+
+  addLine() {
+    this.lines.push({ productId: '', productName: '', qty: '', lineRemarks: '' });
+    this._renderLines();
+  },
+
+  removeLine(i) {
+    this.lines.splice(i, 1);
+    if (this.lines.length === 0) this.lines.push({ productId: '', productName: '', qty: '', lineRemarks: '' });
+    this._renderLines();
+  },
+
+  updateLine(i, key, value) {
+    if (!this.lines[i]) return;
+    this.lines[i][key] = key === 'qty' ? MApp.Util.toNumber(value) : value;
+  },
+
+  async pickLineProduct(i) {
+    if (!this.lines[i]) return;
+    if (!this.products.length) {
+      MApp.Toast.error('Product list is still loading. Try again in a moment.');
+      return;
+    }
+    const picked = await MApp.Picker.open({
+      title: 'Choose a product',
+      items: this.products.map(p => ({ value: p.productId, label: p.productName, sublabel: p.productId })),
+      selectedValue: this.lines[i].productId
+    });
+    if (!picked || !this.lines[i]) return;
+    const match = this.products.find(p => p.productId === picked.value);
+    this.lines[i].productId = picked.value;
+    this.lines[i].productName = match ? match.productName : picked.label;
+    this._renderLines();
+  },
+
+  async save() {
+    const client = this.selection.clientName;
+    if (!client) { MApp.Toast.error('Choose a client.'); return; }
+
+    const lines = this.lines
+      .filter(l => l.productId && MApp.Util.toNumber(l.qty) > 0)
+      .map(l => ({
+        productId: l.productId,
+        productName: l.productName,
+        qty: MApp.Util.toNumber(l.qty),
+        lineRemarks: String(l.lineRemarks || '').trim()
+        // productionPushed is deliberately not sent: save_client_order
+        // recomputes it per product from the rows already in the table
+        // (a COUNT, not a flag), so a second line for a product that was
+        // pushed once is not wrongly marked pushed. A value from here
+        // would be ignored, and sending one would read as if it mattered.
+      }));
+
+    if (lines.length === 0) {
+      MApp.Toast.error('Add at least one product line with a quantity.');
+      return;
+    }
+
+    const payload = {
+      orderNumber: this.editing ? this.editing.orderNumber : '',
+      clientName: client,
+      status: this.selection.status,
+      orderDate: document.getElementById('client-order-date')?.value || '',
+      orderRemarks: document.getElementById('client-order-remarks')?.value || '',
+      lines
+    };
+
+    const btn = document.getElementById('client-order-save-btn');
+    if (btn) { btn.disabled = true; btn.textContent = 'Saving…'; }
+    const res = await MApp.Util.mutateSimple('saveClientOrder', [payload], null);
+    if (btn) { btn.disabled = false; btn.textContent = 'Save'; }
+    if (!res.success) return;
+
+    // The server's message is the only place that says how many lines
+    // were queued into Production and how many need logging by hand.
+    // Replacing it with "Saved." would drop the half of the outcome the
+    // operator has to act on.
+    MApp.Toast.success(res.message || 'PI / Estimate saved.');
+    this.closeForm();
+    this.open();
+  },
+
+  async remove(order) {
+    // The server refuses this outright when the PI has dispatch records
+    // or a queued Production lot, and says which. Nothing is pre-judged
+    // here; the refusal is reported as it comes back.
+    if (!window.confirm(`Delete PI / Estimate ${order.orderNumber} for ${MApp.Util.formatNameCase(order.clientName)}? Its ${(order.lines || []).length} line(s) go with it.`)) return;
+    const res = await MApp.Util.mutateSimple('deleteClientOrder', [order.orderNumber], null);
+    if (res.success) {
+      MApp.Toast.success(res.message || 'PI / Estimate deleted.');
+      this.open();
+    }
   }
 };
 

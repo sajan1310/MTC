@@ -158,6 +158,72 @@
 </div>
 
 <!-- ═══════════════════════════════════════════════════════════════════
+     SHEETS — CLIENT ORDERS (PI / Estimates, More tab). The list, and
+     the header+lines form. Marking one "Order Confirmed" is what queues
+     Production against it, so the status field carries a live hint
+     saying exactly that rather than leaving it to be discovered.
+     ═══════════════════════════════════════════════════════════════════ -->
+<div class="mb-sheet" id="sheet-client-orders" role="dialog" aria-modal="true" aria-labelledby="client-orders-title">
+  <div class="mb-sheet-header">
+    <h2 id="client-orders-title">PI / Estimates</h2>
+    <button type="button" class="mapp-topbar-btn" aria-label="Close" onclick="MApp.ClientOrders.close()">
+      <svg viewBox="0 0 24 24" width="22" height="22" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><path d="M6 6l12 12M18 6L6 18"/></svg>
+    </button>
+  </div>
+  <div class="mb-sheet-body">
+    <div class="mb-search">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="11" cy="11" r="7"/><path d="M20 20l-3.5-3.5"/></svg>
+      <input type="search" id="client-orders-search" placeholder="PI number, client or product…" aria-label="Search PI / Estimates" autocomplete="off">
+    </div>
+    <div class="mb-filter-chip-row" id="client-orders-filters">
+      <button type="button" class="mb-filter-chip active" data-order-filter="all" aria-pressed="true" onclick="MApp.ClientOrders.filterBy('all')">All</button>
+      <button type="button" class="mb-filter-chip" data-order-filter="Estimate" aria-pressed="false" onclick="MApp.ClientOrders.filterBy('Estimate')">Estimate</button>
+      <button type="button" class="mb-filter-chip" data-order-filter="Order Confirmed" aria-pressed="false" onclick="MApp.ClientOrders.filterBy('Order Confirmed')">Confirmed</button>
+      <button type="button" class="mb-filter-chip" data-order-filter="Cancelled" aria-pressed="false" onclick="MApp.ClientOrders.filterBy('Cancelled')">Cancelled</button>
+    </div>
+    <div id="client-orders-list"></div>
+  </div>
+  <div class="mb-sheet-footer">
+    <button type="button" class="mb-btn mb-btn-primary" onclick="MApp.ClientOrders.openForm(null)">New PI / Estimate</button>
+  </div>
+</div>
+
+<div class="mb-sheet" id="sheet-client-order-form" role="dialog" aria-modal="true" aria-labelledby="client-order-form-title">
+  <div class="mb-sheet-header">
+    <h2 id="client-order-form-title">New PI / Estimate</h2>
+    <button type="button" class="mapp-topbar-btn" aria-label="Close" onclick="MApp.ClientOrders.closeForm()">
+      <svg viewBox="0 0 24 24" width="22" height="22" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><path d="M6 6l12 12M18 6L6 18"/></svg>
+    </button>
+  </div>
+  <div class="mb-sheet-body">
+    <div class="mb-field">
+      <label for="client-order-client-field">Client</label>
+      <button type="button" class="mb-picker-field mb-placeholder" id="client-order-client-field" onclick="MApp.ClientOrders.pickClient()">Choose a client…</button>
+    </div>
+    <div class="mb-field">
+      <label for="client-order-date">Date</label>
+      <input type="date" id="client-order-date">
+    </div>
+    <div class="mb-field">
+      <label for="client-order-status-field">Status</label>
+      <button type="button" class="mb-picker-field" id="client-order-status-field" onclick="MApp.ClientOrders.pickStatus()">Estimate</button>
+      <div class="mb-field-hint" id="client-order-status-hint">Nothing is queued into Production until this is Order Confirmed.</div>
+    </div>
+    <div class="mb-field">
+      <label for="client-order-remarks">Remarks</label>
+      <textarea id="client-order-remarks" rows="2"></textarea>
+    </div>
+
+    <div class="mapp-section-label mb-mt-4">Products</div>
+    <div id="client-order-lines"></div>
+    <button type="button" class="mb-btn mb-btn-secondary mb-mt-2 mb-mb-4" onclick="MApp.ClientOrders.addLine()">+ Add Product</button>
+  </div>
+  <div class="mb-sheet-footer">
+    <button type="button" class="mb-btn mb-btn-primary" id="client-order-save-btn" onclick="MApp.ClientOrders.save()">Save</button>
+  </div>
+</div>
+
+<!-- ═══════════════════════════════════════════════════════════════════
      FULL DASHBOARD — Home shows three tiles from getMobileDashboard,
      which is the right default on a phone. This is the drill-down into
      getDashboardData, so mobile is not permanently capped at what that
@@ -509,6 +575,13 @@
       <svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M9 18l6-6-6-6"/></svg>
     </div>
     <div class="mb-card-sub">Recorded bills &amp; print, per bill</div>
+  </button>
+  <button type="button" class="mb-card mb-card-tappable" style="border:none;" onclick="MApp.ClientOrders.open()">
+    <div class="mb-card-row">
+      <span class="mb-card-title">PI / Estimates</span>
+      <svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M9 18l6-6-6-6"/></svg>
+    </div>
+    <div class="mb-card-sub">Client orders — confirming one queues Production</div>
   </button>
 
   <div class="mapp-section-label mb-mt-4">Lookup</div>
