@@ -907,3 +907,110 @@ describe('dashboard auto-refresh teardown', () => {
     expect(jest.getTimerCount()).toBe(1);
   });
 });
+
+/**
+ * The two Chart.js charts. Neither had a test, because `Chart` is
+ * undefined under jsdom and both renderers return early — which is also
+ * exactly why a change to either could not be caught by anything.
+ * Stubbing the constructor and reading back the config it was handed is
+ * enough to pin the two decisions that matter: which shape each chart is,
+ * and that both stay in step with the mobile shell drawing the same data.
+ */
+describe('dashboard Chart.js charts', () => {
+  let built;
+
+  beforeEach(() => {
+    mountPartial();
+    built = [];
+    // Records what it was constructed with, and satisfies the update path
+    // (`if (this.charts.status)`) on a second render.
+    global.Chart = function (canvas, config) {
+      built.push({ canvas, config });
+      this.data = config.data;
+      this.options = config.options;
+      this.update = jest.fn();
+    };
+    loadDashboardAsGlobal();
+    App.Dashboard.charts = {};
+    // jsdom has no layout, so a canvas has no context; nothing here needs
+    // one, but the renderers do read the element.
+    App.Dashboard.chartLibLoaded = true;
+  });
+
+  afterEach(() => { delete global.Chart; });
+
+  const BREAKDOWN = [
+    { status: 'Pending', count: 5 },
+    { status: 'Completed', count: 9 },
+  ];
+  const TREND = Array.from({ length: 30 }, (_, i) => ({ date: `2026-08-${i + 1}`, qty: i }));
+
+  test('lots by status is a pie', () => {
+    // Parts of a whole -- a GROUP BY over every lot -- so the claim a pie
+    // makes is one this data can honestly make.
+    App.Dashboard.renderProductionStatusChart(BREAKDOWN);
+
+    expect(built).toHaveLength(1);
+    expect(built[0].config.type).toBe('pie');
+  });
+
+  test('it is not a doughnut', () => {
+    // The hole bought nothing: no centre total was ever drawn in it, and
+    // it costs the reader the angle-from-centre comparison that is the
+    // one thing a pie is good for.
+    App.Dashboard.renderProductionStatusChart(BREAKDOWN);
+
+    expect(built[0].config.type).not.toBe('doughnut');
+  });
+
+  test('every slice carries its status and count', () => {
+    App.Dashboard.renderProductionStatusChart(BREAKDOWN);
+
+    const { data } = built[0].config;
+    expect(data.labels).toEqual(['Pending', 'Completed']);
+    expect(data.datasets[0].data).toEqual([5, 9]);
+  });
+
+  test('slices are separated by a surface-coloured ring', () => {
+    // Adjacent wedges stay distinguishable without relying on their
+    // fills contrasting with each other.
+    App.Dashboard.renderProductionStatusChart(BREAKDOWN);
+
+    expect(built[0].config.data.datasets[0].borderWidth).toBeGreaterThan(0);
+  });
+
+  test('the 30-day trend stays a line', () => {
+    // Thirty consecutive days are a sequence, not parts of a whole.
+    // Slicing them would throw away the only thing a trend is for.
+    App.Dashboard.renderDispatchTrendChart(TREND);
+
+    expect(built[0].config.type).toBe('line');
+  });
+
+  test('a refresh updates the chart in place rather than rebuilding it', () => {
+    // A full rebuild on every 5-minute auto-refresh re-runs the entry
+    // animation and throws away any legend items the user toggled off.
+    App.Dashboard.renderProductionStatusChart(BREAKDOWN);
+    App.Dashboard.renderProductionStatusChart([{ status: 'Pending', count: 6 }]);
+
+    expect(built).toHaveLength(1);
+    expect(App.Dashboard.charts.status.update).toHaveBeenCalled();
+    expect(App.Dashboard.charts.status.data.datasets[0].data).toEqual([6]);
+  });
+
+  test('both shells draw the same breakdown the same way', () => {
+    // Desktop and mobile are two independent implementations of one
+    // product, so "we changed the chart" is a change that has to land
+    // twice or it is a difference nobody decided on.
+    const mobile = fs.readFileSync(path.join(__dirname, '..', 'mobile.js'), 'utf8');
+
+    // Mobile's block declares chart: 'pie' for the status breakdown...
+    const at = mobile.indexOf("key: 'productionMix'");
+    expect(at).toBeGreaterThan(-1);
+    expect(mobile.slice(at, at + 400)).toContain("chart: 'pie'");
+
+    // ...and keeps the trend a line, as this one does.
+    const trendAt = mobile.indexOf("key: 'dispatchTrend'");
+    expect(mobile.slice(trendAt, trendAt + 400)).toContain("chart: 'sparkline'");
+  });
+});

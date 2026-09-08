@@ -234,7 +234,10 @@
 // custom: name with the brackets inside it, and the lot saved a component
 // naming an item that does not exist. Load-bearing for the same reason: a
 // tablet on the old file keeps inventing those components.
-const CACHE_NAME = 'erp-shell-v52';
+// v53: the Production Lot Status chart is a pie rather than a doughnut.
+// Cosmetic, and dashboard.js is precached, so a tablet on the old file
+// simply keeps drawing the hole until the next load. Not load-bearing.
+const CACHE_NAME = 'erp-shell-v53';
 
 const PRECACHE_URLS = [
   '/erp/offline.html',

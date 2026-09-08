@@ -1161,8 +1161,14 @@ App.Dashboard = {
       return;
     }
 
+    // A pie, not a doughnut. The hole in the middle bought nothing --
+    // there is no centre total drawn in it -- and it costs the reader the
+    // one comparison this chart is for: a full wedge shows its share as an
+    // angle from the centre, which is the thing the eye is actually good
+    // at judging. Matches the mobile shell, which draws the same
+    // breakdown.
     this.charts.status = new Chart(canvas, {
-      type: 'doughnut',
+      type: 'pie',
       data: {
         labels,
         datasets: [{
