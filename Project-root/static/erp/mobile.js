@@ -1412,6 +1412,11 @@ MApp.Sheet = {
     if (backdrop) backdrop.classList.add('open');
     sheet.classList.add('open');
     document.body.style.overflow = 'hidden';
+    // A sheet covers the tab bar, so anything that positions itself above
+    // the tab bar (the multi-select action bar) must drop to the bottom
+    // edge while one is open, or it floats with a strip of sheet showing
+    // underneath it.
+    document.body.classList.add('mb-sheet-open');
     this._stack.push({ id: sheetId, onDismiss: opts && opts.onDismiss });
 
     // Sheets are this app's entire secondary navigation (Log Lot, New
@@ -1439,6 +1444,7 @@ MApp.Sheet = {
       const backdrop = document.getElementById('mapp-sheet-backdrop');
       if (backdrop) backdrop.classList.remove('open');
       document.body.style.overflow = '';
+      document.body.classList.remove('mb-sheet-open');
     }
 
     // Closing by any route other than Back (the X button, a successful
@@ -8242,7 +8248,13 @@ MApp.Select = {
 
     // Names the count and the noun. "Are you sure?" on a destructive
     // multi-record action tells the operator nothing they need.
-    if (!window.confirm(`Delete ${n} ${noun}? This can't be undone.`)) return;
+    //
+    // `note` replaces the default tail where "this can't be undone" is the
+    // wrong thing to say -- deleting a master-data entry does not touch
+    // the records already using it, and saying otherwise would stop
+    // someone doing a tidy-up that is in fact safe.
+    const tail = s.config.note || "This can't be undone.";
+    if (!window.confirm(`Delete ${n} ${noun}? ${tail}`)) return;
 
     const config = s.config;
     const args = config.payload(rows);
@@ -8522,7 +8534,8 @@ MApp.Master = {
   TYPES: {
     color: {
       title: 'Colours', singular: 'Colour',
-      read: 'getColors', save: 'saveColor', remove: 'deleteColor',
+      read: 'getColors', save: 'saveColor', remove: 'deleteColor', removeBulk: 'deleteColorsBulk',
+      note: 'Components already tagged with one keep the text, but it will no longer appear in suggestions.',
       identity: 'name', originalKey: 'originalName',
       fields: [
         { key: 'name', label: 'Colour Name', type: 'text', required: true },
@@ -8531,7 +8544,8 @@ MApp.Master = {
     },
     model: {
       title: 'Models', singular: 'Model',
-      read: 'getModels', save: 'saveModel', remove: 'deleteModel',
+      read: 'getModels', save: 'saveModel', remove: 'deleteModel', removeBulk: 'deleteModelsBulk',
+      note: 'Records already naming one keep the text, but it will no longer appear in suggestions.',
       identity: 'name', originalKey: 'originalName',
       fields: [
         { key: 'name', label: 'Model Name', type: 'text', required: true },
@@ -8540,7 +8554,8 @@ MApp.Master = {
     },
     processType: {
       title: 'Process Types', singular: 'Process Type',
-      read: 'getProcessTypes', save: 'saveProcessType', remove: 'deleteProcessType',
+      read: 'getProcessTypes', save: 'saveProcessType', remove: 'deleteProcessType', removeBulk: 'deleteProcessTypesBulk',
+      note: 'Processes already using one keep the text, but it will no longer appear in suggestions.',
       identity: 'name', originalKey: 'originalName',
       fields: [
         { key: 'name', label: 'Process Type', type: 'text', required: true },
@@ -8549,7 +8564,8 @@ MApp.Master = {
     },
     unit: {
       title: 'Units', singular: 'Unit',
-      read: 'getUnitsData', save: 'saveUnit', remove: 'deleteUnit',
+      read: 'getUnitsData', save: 'saveUnit', remove: 'deleteUnit', removeBulk: 'deleteUnitsBulk',
+      note: 'Items already using one keep the text, but it will no longer appear in suggestions.',
       identity: 'unitName', originalKey: 'originalUnitName',
       // factorToBase is how many base units one of these is. Getting it
       // wrong silently rescales every quantity entered in this unit, so
@@ -8573,6 +8589,26 @@ MApp.Master = {
   editing: null,
 
   cfg() { return this.TYPES[this.type] || {}; },
+
+  // Built per render rather than declared as a constant, because which
+  // endpoint a bulk delete calls depends on the register that is open.
+  // The key is the same for all four on purpose: MApp.Select exits any
+  // selection whose key matches when the list re-renders, so switching
+  // from Colours to Units cannot leave a colour selection live behind a
+  // list of units.
+  selectSpec() {
+    const cfg = this.cfg();
+    const singular = (cfg.singular || 'entry').toLowerCase();
+    return {
+      key: 'master',
+      noun: singular,
+      plural: singular + 's',
+      note: cfg.note,
+      method: cfg.removeBulk,
+      payload: rows => [rows.map(r => r[cfg.identity])],
+      onDone: () => this.open(this.type)
+    };
+  },
 
   searchSpec() {
     return { fields: this.cfg().fields.map(f => ({ key: f.key, weight: 5, label: f.label })) };
@@ -8659,6 +8695,8 @@ MApp.Master = {
         else this.remove(row);
       });
     });
+
+    MApp.Select.enable(listEl, page.rows, this.selectSpec());
   },
 
   formSpec() {
@@ -8697,9 +8735,12 @@ MApp.Master = {
   async remove(row) {
     const cfg = this.cfg();
     const name = row[cfg.identity];
-    // The server refuses a delete that is still referenced and says so;
-    // this only asks, it does not pre-judge.
-    if (!MApp.Util.confirmDelete(`${cfg.singular.toLowerCase()} “${name}”`)) return;
+    // Not a referential check: the server soft-deletes the row without
+    // asking who points at it, so records already carrying this name keep
+    // it as text and only the pickers stop offering it. Say that, rather
+    // than the generic "this can't be undone", which is both untrue of a
+    // soft delete and scarier than the thing deserves.
+    if (!window.confirm(`Delete ${cfg.singular.toLowerCase()} “${name}”? ${cfg.note}`)) return;
     const res = await MApp.Util.mutateSimple(cfg.remove, [name], `${cfg.singular} deleted.`);
     if (res.success) this.open(this.type);
   }

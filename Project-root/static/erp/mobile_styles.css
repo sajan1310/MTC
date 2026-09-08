@@ -906,7 +906,13 @@ textarea:focus-visible,
   left: 0;
   right: 0;
   bottom: calc(var(--mb-tabbar-h) + env(safe-area-inset-bottom));
-  z-index: 90;
+  /* Above .mb-sheet (101), below .mb-picker-screen (110) and .mb-toast.
+     Multi-select is offered on four lists that live inside sheets -- the
+     PO and Bill ledgers, Issue records, and the master-data registers --
+     and at 90 this bar rendered BEHIND the very sheet whose rows it was
+     acting on: the rows highlighted, and the only way out of selection
+     mode was invisible. */
+  z-index: 102;
   display: none;
   align-items: center;
   gap: var(--mb-sp-3);
@@ -915,6 +921,8 @@ textarea:focus-visible,
   box-shadow: 0 -4px 16px rgb(20 24 28 / 25%);
 }
 .mb-select-bar.open { display: flex; }
+/* No tab bar to clear while a sheet is up -- the sheet covers it. */
+body.mb-sheet-open .mb-select-bar { bottom: env(safe-area-inset-bottom); }
 .mb-select-bar .mb-btn { min-height: var(--mb-tap-min); width: auto; flex: 0 0 auto; }
 
 .mb-select-count {
