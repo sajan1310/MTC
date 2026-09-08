@@ -258,3 +258,70 @@ describe('MApp.Issue edit', () => {
     expect(document.getElementById('issue-form-reference').value).toBe('<script>x</script>');
   });
 });
+
+describe('MApp.Wastage edit', () => {
+  beforeEach(() => {
+    jest.resetModules();
+    global.fetch = jest.fn();
+    document.body.innerHTML = `
+      <div id="mapp-sheet-backdrop"></div>
+      <div class="mb-sheet" id="sheet-wastage-form">
+        <h2>Log Wastage</h2>
+        <div id="wastage-form-body"></div>
+        <button id="wastage-form-save-btn">Log Wastage</button>
+      </div>`;
+    loadAsGlobal('api.js', 'Api');
+    loadAsGlobal('mobile.js', 'MApp');
+    MApp.Sheet._stack = [];
+    MApp.Api.call = jest.fn(async () => ({ success: true, data: [] }));
+  });
+
+  const RECORD = {
+    wastageId: 'WST-3',
+    dateRaw: '2026-08-20T00:00:00',
+    vendor: 'Acme Cycles',
+    remarks: 'rusted in transit',
+    items: [{ name: 'Spoke', size: '', unit: 'Pcs', qty: 40, reason: 'Rust' }],
+  };
+
+  test('opening with a record fills the form and relabels the sheet', async () => {
+    await MApp.Wastage.openForm(RECORD);
+
+    expect(document.querySelector('#sheet-wastage-form h2').textContent).toBe('Edit Wastage');
+    expect(document.getElementById('wastage-form-vendor').value).toBe('Acme Cycles');
+    expect(document.getElementById('wastage-form-remarks').value).toBe('rusted in transit');
+    expect(document.getElementById('wastage-form-date').value).toBe('2026-08-20');
+    expect(MApp.Wastage.lines[0].name).toBe('Spoke');
+    expect(MApp.Wastage.lines[0].reason).toBe('Rust');
+  });
+
+  test('saving an edit sends existingWastageId', async () => {
+    let sent = null;
+    MApp.Util.mutateSimple = jest.fn(async (m, args) => { sent = args[0]; return { success: false }; });
+    await MApp.Wastage.openForm(RECORD);
+
+    await MApp.Wastage.save();
+
+    expect(sent.existingWastageId).toBe('WST-3');
+    expect(sent.vendor).toBe('Acme Cycles');
+  });
+
+  test('opening without a record is still a create', async () => {
+    let sent = null;
+    MApp.Util.mutateSimple = jest.fn(async (m, args) => { sent = args[0]; return { success: false }; });
+    await MApp.Wastage.openForm();
+    expect(document.querySelector('#sheet-wastage-form h2').textContent).toBe('Log Wastage');
+
+    MApp.Wastage.lines = [{ name: 'Rim', size: '', unit: 'Pcs', qty: 2, reason: '' }];
+    await MApp.Wastage.save();
+
+    expect(sent.existingWastageId).toBeUndefined();
+  });
+
+  test('a vendor name with quotes cannot break out of the form markup', async () => {
+    await MApp.Wastage.openForm({ ...RECORD, vendor: 'O\'Brien "Sons" <b>' });
+
+    expect(document.querySelector('#wastage-form-body b')).toBeNull();
+    expect(document.getElementById('wastage-form-vendor').value).toBe('O\'Brien "Sons" <b>');
+  });
+});

@@ -5753,22 +5753,45 @@ MApp.Wastage = {
             <div class="mb-card-sub">${MApp.Util.escapeHtml(r.date || '')}</div>
           </div>
         </div>
-        <div class="mb-mt-2"><button type="button" class="mb-btn-text" style="padding:0;min-height:auto;color:var(--mb-enamel-red-ink);" data-wastage-index="${i}">Delete</button></div>
+        <div class="mb-mt-2" style="display:flex; gap:var(--mb-sp-4);">
+          <button type="button" class="mb-btn-text" style="padding:0;min-height:auto;" data-wastage-action="edit" data-wastage-index="${i}">Edit</button>
+          <button type="button" class="mb-btn-text" style="padding:0;min-height:auto;color:var(--mb-enamel-red-ink);" data-wastage-action="delete" data-wastage-index="${i}">Delete</button>
+        </div>
       </div>`;
     }).join('') + MApp.Paging.moreHtml(page);
 
     listEl.querySelectorAll('[data-wastage-index]').forEach(btn => {
       btn.addEventListener('click', () => {
-        const record = this.filtered[Number(btn.dataset.wastageIndex)];
-        if (record) this.deleteWastage(record);
+        // page.rows, not this.filtered -- the indices were emitted while
+        // mapping the paged array.
+        const record = page.rows[Number(btn.dataset.wastageIndex)];
+        if (!record) return;
+        if (btn.dataset.wastageAction === 'edit') this.openForm(record);
+        else this.deleteWastage(record);
       });
     });
 
     MApp.Select.enable(listEl, page.rows, this.SELECT);
   },
 
-  async openForm() {
-    this.lines = [{ name: '', size: '', unit: 'Pcs', qty: '', reason: '' }];
+  // Same shape as MApp.Issue: saveWastage has accepted existingWastageId
+  // since it was written (it folds the source's separate edit RPC into
+  // one optional field), so the server could edit a wastage record while
+  // the screen could only delete and retype it.
+  async openForm(record) {
+    this.editingWastageId = record ? record.wastageId : null;
+    this._editingRecord = record || null;
+    this.lines = record && (record.items || []).length
+      ? record.items.map(it => ({
+        name: it.name || '', size: it.size || '', unit: it.unit || 'Pcs',
+        qty: it.qty, reason: it.reason || ''
+      }))
+      : [{ name: '', size: '', unit: 'Pcs', qty: '', reason: '' }];
+
+    const titleEl = document.querySelector('#sheet-wastage-form h2');
+    if (titleEl) titleEl.textContent = record ? 'Edit Wastage' : 'Log Wastage';
+    const label = document.getElementById('wastage-form-save-btn');
+    if (label) label.textContent = record ? 'Save Changes' : 'Log Wastage';
 
     document.getElementById('wastage-form-body').innerHTML = `
       <div class="mb-skel mb-skel-card" style="height:56px;"></div>
@@ -5798,14 +5821,18 @@ MApp.Wastage = {
   },
 
   _formHtml() {
+    // One template serves create and edit; values are blank on create.
+    const r = this._editingRecord || {};
+    const v = x => MApp.Util.escapeHtml(x == null ? '' : String(x));
+    const date = r.dateRaw ? String(r.dateRaw).slice(0, 10) : MApp.Util.todayInputValue();
     return `
       <div class="mb-field">
         <label for="wastage-form-date">Date</label>
-        <input type="date" id="wastage-form-date" value="${MApp.Util.todayInputValue()}">
+        <input type="date" id="wastage-form-date" value="${v(date)}">
       </div>
       <div class="mb-field">
         <label for="wastage-form-vendor">Vendor (optional)</label>
-        <input type="text" id="wastage-form-vendor">
+        <input type="text" id="wastage-form-vendor" value="${v(r.vendor)}">
       </div>
 
       <div class="mapp-section-label">Items</div>
@@ -5814,7 +5841,7 @@ MApp.Wastage = {
 
       <div class="mb-field">
         <label for="wastage-form-remarks">Remarks (optional)</label>
-        <textarea id="wastage-form-remarks" rows="3"></textarea>
+        <textarea id="wastage-form-remarks" rows="3">${v(r.remarks)}</textarea>
       </div>
     `;
   },
@@ -5894,17 +5921,21 @@ MApp.Wastage = {
       remarks: (document.getElementById('wastage-form-remarks')?.value || '').trim(),
       items: JSON.stringify(validLines.map(l => ({ name: l.name, size: l.size || '', unit: l.unit || 'Pcs', qty: l.qty, reason: l.reason || '' })))
     };
+    if (this.editingWastageId) formData.existingWastageId = this.editingWastageId;
 
+    const isEdit = !!this.editingWastageId;
     const saveBtn = document.getElementById('wastage-form-save-btn');
     if (saveBtn) { saveBtn.disabled = true; saveBtn.textContent = 'Saving…'; }
 
-    const res = await MApp.Util.mutateSimple('saveWastage', [formData], 'Wastage logged.');
+    const res = await MApp.Util.mutateSimple(
+      'saveWastage', [formData], isEdit ? 'Wastage updated.' : 'Wastage logged.'
+    );
     if (res.success) {
       this.closeForm();
       this.open();
       return;
     }
-    if (saveBtn) { saveBtn.disabled = false; saveBtn.textContent = 'Log Wastage'; }
+    if (saveBtn) { saveBtn.disabled = false; saveBtn.textContent = isEdit ? 'Save Changes' : 'Log Wastage'; }
   },
 
   async deleteWastage(record) {
