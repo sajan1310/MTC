@@ -2111,7 +2111,10 @@ MApp.Stock = {
               <div class="mb-card-sub">${MApp.Util.escapeHtml(item.unit)}</div>
             </div>
           </div>
-          ${item.isLowStock ? '<div class="mb-mt-2"><span class="mb-chip mb-chip-lowstock">Low stock</span></div>' : ''}
+          ${item.isLowStock || item.deadStock ? `<div class="mb-mt-2" style="display:flex;gap:6px;flex-wrap:wrap;">
+            ${item.isLowStock ? '<span class="mb-chip mb-chip-lowstock">Low stock</span>' : ''}
+            ${item.deadStock ? '<span class="mb-chip">Dead stock</span>' : ''}
+          </div>` : ''}
         </button>
         <div id="stock-expand-${idx}" class="${isOpen ? '' : 'mb-hidden'}" style="margin:-8px 0 12px;padding:0 var(--mb-sp-2);"></div>
       `;
@@ -2246,11 +2249,86 @@ MApp.Stock = {
     const reason = document.getElementById('stock-adjust-reason');
     if (reason) reason.value = '';
 
+    const thresholdEl = document.getElementById('stock-threshold-value');
+    if (thresholdEl) thresholdEl.value = item.threshold != null ? item.threshold : '';
+    this._deadStock = !!item.deadStock;
+    this._paintDeadToggle();
+
     MApp.Sheet.open('sheet-stock-adjust');
   },
 
   closeAdjustSheet() {
     MApp.Sheet.close('sheet-stock-adjust');
+  },
+
+  // ── Low-stock settings ──────────────────────────────────────────────
+  // Home leads with a "Low-stock alerts" tile and Stock has a low-stock
+  // filter, and until now nothing on the phone could change the threshold
+  // that raises either. The app was sounding an alarm it gave no way to
+  // tune, which is the shape of thing that teaches people to ignore it.
+  //
+  // Saved separately from the stock correction above. That correction is
+  // an audited event about what is physically on the shelf; these two are
+  // settings about how the item is WATCHED. One Save meaning both would
+  // make an audit entry out of changing a threshold.
+  toggleDeadStock() {
+    this._deadStock = !this._deadStock;
+    this._paintDeadToggle();
+  },
+
+  _paintDeadToggle() {
+    const btn = document.getElementById('stock-dead-toggle');
+    if (!btn) return;
+    btn.textContent = this._deadStock ? 'Yes' : 'No';
+    btn.setAttribute('aria-pressed', this._deadStock ? 'true' : 'false');
+    btn.classList.toggle('mb-placeholder', !this._deadStock);
+  },
+
+  async saveSettings() {
+    const item = this._adjustItem;
+    if (!item) return;
+    // Deliberately not MApp.Util.toNumber here: it answers 0 for "abc" and
+    // for an empty field, and 0 is a threshold the server will happily
+    // store -- it just switches the item's low-stock alert off for good.
+    const raw = String(document.getElementById('stock-threshold-value')?.value ?? '').trim();
+    const threshold = parseFloat(raw);
+    if (raw === '' || !isFinite(threshold) || threshold < 0) {
+      MApp.Toast.error('Enter a threshold of zero or more.');
+      return;
+    }
+
+    const btn = document.getElementById('stock-settings-save-btn');
+    if (btn) { btn.disabled = true; btn.textContent = 'Saving…'; }
+
+    // Two independent mutations. The threshold is sent only when it
+    // actually changed, so re-saving to flip the dead-stock flag does not
+    // write an identical threshold back.
+    // NaN when the item had no threshold at all, which compares unequal to
+    // every number -- so setting an unset threshold to 0 still sends.
+    const current = item.threshold == null || item.threshold === ''
+      ? NaN
+      : parseFloat(item.threshold);
+
+    let ok = true;
+    if (threshold !== current) {
+      const res = await MApp.Util.mutateSimple(
+        'updateThreshold', [item.name, item.size || '', threshold], null
+      );
+      ok = ok && res.success;
+    }
+    if (ok && this._deadStock !== !!item.deadStock) {
+      const res = await MApp.Util.mutateSimple(
+        'updateDeadStock', [item.name, item.size || '', this._deadStock], null
+      );
+      ok = ok && res.success;
+    }
+
+    if (btn) { btn.disabled = false; btn.textContent = 'Save low-stock settings'; }
+    if (ok) {
+      MApp.Toast.success('Low-stock settings saved.');
+      this.closeAdjustSheet();
+      this.load();
+    }
   },
 
   // Note: source's own _apiCall handled both reads and writes with one

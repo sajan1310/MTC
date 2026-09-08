@@ -608,6 +608,25 @@
       <label for="stock-adjust-reason">Reason for adjustment</label>
       <textarea id="stock-adjust-reason" rows="2" placeholder="e.g. Physical recount found 49 units"></textarea>
     </div>
+
+    <!-- Separate settings, saved separately. The correction above is an
+         audited event about what is on the shelf; these two are settings
+         about how this item is watched, and bundling them would make one
+         Save mean two unrelated things. -->
+    <div class="mapp-section-label mb-mt-4">Low-stock settings</div>
+    <div class="mb-field">
+      <label for="stock-threshold-value">Low-stock threshold</label>
+      <input type="number" id="stock-threshold-value" inputmode="decimal" step="any" min="0">
+      <div class="mb-field-hint">Home's Low-stock alert counts an item once it falls below this.</div>
+    </div>
+    <div class="mb-field">
+      <label for="stock-dead-toggle">Dead stock</label>
+      <button type="button" class="mb-picker-field" id="stock-dead-toggle"
+              aria-pressed="false" onclick="MApp.Stock.toggleDeadStock()">No</button>
+      <div class="mb-field-hint">Marks an item as no longer moving.</div>
+    </div>
+    <button type="button" class="mb-btn mb-btn-secondary" id="stock-settings-save-btn"
+            onclick="MApp.Stock.saveSettings()">Save low-stock settings</button>
   </div>
   <div class="mb-sheet-footer">
     <button type="button" class="mb-btn mb-btn-primary" id="stock-adjust-save-btn" onclick="MApp.Stock.submitAdjust()">Save Correction</button>
