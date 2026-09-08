@@ -2699,6 +2699,7 @@ MApp.Production = {
       <div class="mb-field">
         <label>Assigned to</label>
         <button type="button" class="mb-picker-field${lot.assignedTo ? '' : ' mb-placeholder'}" id="lot-assignedto-field" onclick="MApp.Production.pickAssignedTo()">${MApp.Util.escapeHtml(MApp.Util.formatNameCase(lot.assignedTo) || 'Choose or add a name...')}</button>
+        <div class="mb-field-hint" id="lot-rate-hint" hidden></div>
       </div>
 
       <div class="mb-field">
@@ -2796,6 +2797,7 @@ MApp.Production = {
       <div class="mb-field">
         <label>Assigned to</label>
         <button type="button" class="mb-picker-field mb-placeholder" id="lot-assignedto-field" onclick="MApp.Production.pickAssignedTo()">Choose or add a name...</button>
+        <div class="mb-field-hint" id="lot-rate-hint" hidden></div>
       </div>
 
       <div class="mb-field">
@@ -3058,7 +3060,39 @@ MApp.Production = {
     // same reasoning as desktop's refreshExtraChargeOptions reset.
     this.selectedExtraChargeType = '';
     this._updateFieldLabel('lot-extracharge-field', 'None');
+    this._showContractorRate();
   },
+
+  // Shows what this contractor is paid for this process type and size,
+  // once both are known. The rate is on their rate card and was
+  // previously only visible at a desk -- so the person logging the lot
+  // could not see what it would cost, and a missing rate card entry only
+  // surfaced later as a zero payable.
+  async _showContractorRate() {
+    const hint = document.getElementById('lot-rate-hint');
+    if (!hint) return;
+    const contractor = this.selectedAssignedTo;
+    const processType = this.selection.type;
+    const size = this.selection.size;
+    if (!contractor || !processType) { hint.textContent = ''; hint.hidden = true; return; }
+
+    // The pick may have changed again while this was in flight.
+    const token = ++this._rateSeq;
+    try {
+      const res = await MApp.Api.call('getContractorRateForProcessType', contractor, processType, size || '');
+      if (token !== this._rateSeq) return;
+      const rate = res && res.success ? MApp.Util.toNumber(res.data && res.data.ratePerUnit != null ? res.data.ratePerUnit : res.data) : 0;
+      hint.hidden = false;
+      hint.textContent = rate > 0
+        ? `Rate on file: ${MApp.Util.formatCurrency(rate)} per unit.`
+        : 'No rate on file for this contractor and process type — the payable will be zero.';
+      hint.style.color = rate > 0 ? 'var(--mb-steel)' : 'var(--mb-enamel-amber-ink)';
+    } catch (err) {
+      if (token === this._rateSeq) { hint.textContent = ''; hint.hidden = true; }
+    }
+  },
+
+  _rateSeq: 0,
 
   // Extra Charge (Layer 2) options are scoped to whichever contractor is
   // currently Assigned To -- every contractor can offer a different set,
@@ -6127,14 +6161,21 @@ MApp.Items = {
           </div>` : `<div class="mb-card-sub">${MApp.Util.escapeHtml(it.baseUnit)}</div>`}
         </div>
         ${it.isLowStock ? '<div class="mb-mt-2"><span class="mb-chip mb-chip-lowstock">Low stock</span></div>' : ''}
-        <div class="mb-mt-2"><button type="button" class="mb-btn-text" style="padding:0;min-height:auto;" data-edit-item="${i}">Edit</button></div>
+        <div class="mb-mt-2" style="display:flex; gap:var(--mb-sp-4);">
+          <button type="button" class="mb-btn-text" style="padding:0;min-height:auto;" data-item-action="edit" data-edit-item="${i}">Edit</button>
+          <button type="button" class="mb-btn-text" style="padding:0;min-height:auto;" data-item-action="processes" data-edit-item="${i}">Used in</button>
+        </div>
       </div>
     `).join('') + MApp.Paging.moreHtml(page);
 
     listEl.querySelectorAll('[data-edit-item]').forEach(btn => {
       btn.addEventListener('click', () => {
-        const item = this.filtered[Number(btn.dataset.editItem)];
-        if (item) this.openForm(item);
+        // page.rows, not this.filtered -- the indices were emitted while
+        // mapping the paged array.
+        const item = page.rows[Number(btn.dataset.editItem)];
+        if (!item) return;
+        if (btn.dataset.itemAction === 'processes') MApp.ItemProcesses.open(item);
+        else this.openForm(item);
       });
     });
 
@@ -6420,6 +6461,16 @@ MApp.Directory = {
       this.items = this._normalize(type, res.data || []);
       this.filtered = this.items;
       this.render();
+
+      // Contractors only, and after the list is already on screen: the
+      // overview is a nicety and must never delay the thing it sits above.
+      if (type === 'contractor') {
+        const html = await MApp.ContractorDetail.overviewHtml();
+        const listEl = document.getElementById('directory-list');
+        if (html && listEl && this.type === 'contractor') {
+          listEl.insertAdjacentHTML('afterbegin', html);
+        }
+      }
     } catch (err) {
       MApp.Util.renderError(listEl, err && err.message, () => this.open(type));
     }
@@ -7096,17 +7147,61 @@ MApp.Process = {
           </div>
         </div>
         ${!p.active ? '<div class="mb-mt-2"><span class="mb-chip mb-chip-cancelled">Inactive</span></div>' : ''}
-        <div class="mb-mt-2"><button type="button" class="mb-btn-text" style="padding:0;min-height:auto;" data-process-index="${i}">Edit</button></div>
+        <div class="mb-mt-2" style="display:flex; gap:var(--mb-sp-4);">
+          <button type="button" class="mb-btn-text" style="padding:0;min-height:auto;" data-process-action="edit" data-process-index="${i}">Edit</button>
+          <button type="button" class="mb-btn-text" style="padding:0;min-height:auto;" data-process-action="wip" data-process-index="${i}">Availability</button>
+        </div>
+        <div class="mb-card-sub mb-mt-2" id="process-wip-${i}" hidden></div>
       </div>`).join('') + MApp.Paging.moreHtml(page);
 
     listEl.querySelectorAll('[data-process-index]').forEach(btn => {
       btn.addEventListener('click', () => {
-        const process = this.filtered[Number(btn.dataset.processIndex)];
-        if (process) this.openForm(process);
+        // page.rows, not this.filtered -- indices come from the paged map.
+        const process = page.rows[Number(btn.dataset.processIndex)];
+        if (!process) return;
+        if (btn.dataset.processAction === 'wip') this.showWip(process, Number(btn.dataset.processIndex));
+        else this.openForm(process);
       });
     });
 
     MApp.Select.enable(listEl, page.rows, this.SELECT);
+  },
+
+  // What is actually available in the pool for this process's inputs.
+  // Answers "can I run this now?" at the racks, which previously meant
+  // opening the pool on a desktop and reading it against the recipe by
+  // hand. Toggles inline rather than opening a sheet -- it is a glance,
+  // not a screen.
+  async showWip(process, idx) {
+    const el = document.getElementById('process-wip-' + idx);
+    if (!el) return;
+    if (!el.hidden) { el.hidden = true; return; }
+
+    el.hidden = false;
+    el.textContent = 'Checking availability…';
+    try {
+      const res = await MApp.Api.call('getProcessWipData', process.processId);
+      if (!res || !res.success) {
+        el.textContent = (res && res.message) || "Couldn't load availability.";
+        return;
+      }
+      const rows = res.data || [];
+      if (!rows.length) {
+        el.textContent = 'No pool-sourced inputs on this process.';
+        return;
+      }
+      // A null availableQty is "no pool bucket for this input", which is
+      // not the same as zero and must not read as it.
+      el.innerHTML = rows.map(r => {
+        const known = r.availableQty != null;
+        const short = known && r.availableQty <= 0;
+        return `<div style="color:${short ? 'var(--mb-enamel-red-ink)' : 'inherit'};">
+          ${MApp.Util.escapeHtml(r.outputItemName)}: ${known ? MApp.Util.formatQty(r.availableQty) + ' available' : 'no pool bucket'}
+        </div>`;
+      }).join('');
+    } catch (err) {
+      el.textContent = "Couldn't load availability.";
+    }
   },
 
   async openForm(process) {
@@ -8075,7 +8170,8 @@ MApp.GlobalSearch = {
     { label: 'Sync Issues', keywords: 'offline outbox pending failed queue', run: () => MApp.SyncIssues.open() },
     { label: 'Account', keywords: 'profile name email password change my', run: () => MApp.Account.open() },
     { label: 'Warehouse Pool', keywords: 'pool buckets negative available wip intermediate', run: () => MApp.Pool.open() },
-    { label: 'System Status', keywords: 'backup health activity log notifications audit', run: () => MApp.Status.open() }
+    { label: 'System Status', keywords: 'backup health activity log notifications audit', run: () => MApp.Status.open() },
+    { label: 'Full dashboard', keywords: 'kpi totals payables ready low stock overview', run: () => MApp.Dashboard.open() }
   ],
 
   DEST_SPEC: {
@@ -8276,6 +8372,231 @@ MApp.GlobalSearch = {
       input.dispatchEvent(new Event('input', { bubbles: true }));
     };
     setTimeout(prefill, 120);
+  }
+};
+
+// ================================================================
+// FULL DASHBOARD — the drill-down behind Home's three tiles.
+//
+// Home deliberately uses getMobileDashboard: three numbers is the right
+// default on a phone, and computing the full set on every tab visit
+// would not be. But defaulting to less is different from being capped at
+// less, and the reduced endpoint was the only dashboard mobile could ever
+// show. This is the rest of it, on request.
+// ================================================================
+MApp.Dashboard = {
+  async open() {
+    const body = document.getElementById('dashboard-body');
+    MApp.Util.renderSkeleton(body, 5);
+    MApp.Sheet.open('sheet-dashboard');
+    try {
+      const res = await MApp.Api.call('getDashboardData');
+      if (!res || !res.success) {
+        MApp.Util.renderError(body, res && res.message, () => this.open());
+        return;
+      }
+      this.render(res.data || {});
+    } catch (err) {
+      MApp.Util.renderError(body, err && err.message, () => this.open());
+    }
+  },
+
+  close() { MApp.Sheet.close('sheet-dashboard'); },
+
+  render(data) {
+    const body = document.getElementById('dashboard-body');
+    if (!body) return;
+    const k = data.kpis || {};
+    const money = v => MApp.Util.formatCurrency(v || 0);
+    const qty = v => MApp.Util.formatQty(v || 0);
+
+    const tile = (label, value, sub) => `
+      <div class="mb-stat-tile" style="cursor:default;">
+        <div class="mb-stat-tile-top"><span class="mb-stat-tile-label">${MApp.Util.escapeHtml(label)}</span></div>
+        <div class="mb-stat-tile-value">${MApp.Util.escapeHtml(String(value))}</div>
+        ${sub ? `<div class="mb-card-sub">${MApp.Util.escapeHtml(sub)}</div>` : ''}
+      </div>`;
+
+    const list = (rows, render, emptyText) => rows && rows.length
+      ? rows.map(render).join('')
+      : `<div class="mb-text-sm mb-text-steel" style="padding:var(--mb-sp-2) 0;">${emptyText}</div>`;
+
+    body.innerHTML = `
+      <div class="mb-stat-grid">
+        ${tile('Open POs', k.openPoCount || 0, money(k.openPoValue))}
+        ${tile('Bills this month', k.billsThisMonthCount || 0, money(k.billsThisMonthValue))}
+        ${tile('Low stock', k.lowStockCount || 0, `${qty(k.lowStockTotalDeficit)} short`)}
+        ${tile('In progress', k.inProgressProductionCount || 0, `${k.queuedProductionCount || 0} queued`)}
+        ${tile('Ready to dispatch', qty(k.readyToDispatchUnits), `${k.readyToDispatchProductCount || 0} product(s)`)}
+        ${tile('Contractor payables', money(k.contractorPayablesDue), `${k.contractorPayablesCount || 0} contractor(s)`)}
+      </div>
+
+      ${k.oldestPendingProductionDays ? `
+        <div class="mb-offline-banner" style="background:var(--mb-enamel-amber-bg);color:var(--mb-enamel-amber-ink);margin:var(--mb-sp-3) 0;">
+          <span>Oldest pending lot has been waiting ${k.oldestPendingProductionDays} day(s).</span>
+        </div>` : ''}
+
+      <div class="mapp-section-label mb-mt-4">Low stock</div>
+      ${list(data.lowStockItems, i => `
+        <div class="mb-card">
+          <div class="mb-card-row">
+            <div>
+              <div class="mb-card-title">${MApp.Util.escapeHtml(i.name)}</div>
+              <div class="mb-card-sub">${MApp.Util.escapeHtml(i.size || 'General')}</div>
+            </div>
+            <div style="text-align:right;">
+              <div class="mb-card-number mb-alert">${qty(i.currentStock)}</div>
+              <div class="mb-card-sub">need ${qty(i.threshold)}</div>
+            </div>
+          </div>
+        </div>`, 'Nothing below its threshold.')}
+      ${data.lowStockTotalCount > (data.lowStockItems || []).length
+    ? `<div class="mb-card-sub">+${data.lowStockTotalCount - data.lowStockItems.length} more — open Stock to see them all.</div>` : ''}
+
+      <div class="mapp-section-label mb-mt-4">Ready to dispatch</div>
+      ${list(data.readyToDispatchItems, r => `
+        <div class="mb-card">
+          <div class="mb-card-row">
+            <span class="mb-card-title">${MApp.Util.escapeHtml(r.productName)}</span>
+            <span class="mb-card-number">${qty(r.readyQty)}</span>
+          </div>
+        </div>`, 'Nothing ready.')}
+
+      <div class="mapp-section-label mb-mt-4">Contractor payables</div>
+      ${list(data.contractorPayables, c => `
+        <div class="mb-card">
+          <div class="mb-card-row">
+            <span class="mb-card-title">${MApp.Util.escapeHtml(MApp.Util.formatNameCase(c.contractorName))}</span>
+            <span class="mb-card-number">${money(c.balanceDue)}</span>
+          </div>
+        </div>`, 'Nothing outstanding.')}`;
+  }
+};
+
+// ================================================================
+// USED IN PROCESSES — which recipes consume one item, and how much.
+//
+// The read half answers a question asked constantly on the floor and
+// previously only answerable at a desk: "what actually uses this part?"
+// The write half toggles membership and edits the per-unit quantity.
+//
+// A removal is not blocked when the process already has lots, because
+// past lots keep their own snapshotted Components Consumed and only
+// FUTURE lots change -- the server's own reasoning. It is worth saying
+// out loud though, so the operator knows the process is live.
+// ================================================================
+MApp.ItemProcesses = {
+  item: null,
+  rows: [],
+
+  async open(item) {
+    this.item = item;
+    this.rows = [];
+    const titleEl = document.getElementById('item-processes-title');
+    if (titleEl) titleEl.textContent = item.name + (item.size ? ` (${item.size})` : '');
+    const body = document.getElementById('item-processes-body');
+    MApp.Util.renderSkeleton(body, 4);
+    MApp.Sheet.open('sheet-item-processes');
+
+    try {
+      const res = await MApp.Api.call('getProcessesForItem', item.name, item.size || '');
+      if (!res || !res.success) {
+        MApp.Util.renderError(body, res && res.message, () => this.open(item));
+        return;
+      }
+      // A copy per row: `inRecipe` and `qtyPerUnit` are edited in place
+      // and the original response stays the baseline for what changed.
+      this.rows = (res.data || []).map(p => ({ ...p, _inRecipe: p.inRecipe, _qty: p.qtyPerUnit }));
+      this.render();
+    } catch (err) {
+      MApp.Util.renderError(body, err && err.message, () => this.open(item));
+    }
+  },
+
+  close() { MApp.Sheet.close('sheet-item-processes'); },
+
+  render() {
+    const body = document.getElementById('item-processes-body');
+    if (!body) return;
+    if (this.rows.length === 0) {
+      MApp.Util.renderEmpty(body, {
+        title: 'No processes defined',
+        body: 'There are no processes to map this item to yet.'
+      });
+      return;
+    }
+
+    body.innerHTML = this.rows.map((p, i) => `
+      <div class="mb-card">
+        <div class="mb-card-row">
+          <div>
+            <div class="mb-card-title">${MApp.Util.escapeHtml(p.processName)}</div>
+            <div class="mb-card-sub">${MApp.Util.escapeHtml(p.processType || 'General')}${p.active ? '' : ' · inactive'}</div>
+          </div>
+          <button type="button" class="mb-chip ${p._inRecipe ? 'mb-chip-completed' : ''}"
+                  style="border:none;cursor:pointer;min-height:var(--mb-tap-min);"
+                  aria-pressed="${p._inRecipe ? 'true' : 'false'}"
+                  data-toggle-recipe="${i}">${p._inRecipe ? 'In recipe' : 'Not used'}</button>
+        </div>
+        ${p._inRecipe ? `
+          <div class="mb-field mb-mt-2" style="margin-bottom:0;">
+            <label for="item-proc-qty-${i}">Quantity per unit${p.unit ? ` (${MApp.Util.escapeHtml(p.unit)})` : ''}</label>
+            <input type="number" id="item-proc-qty-${i}" inputmode="decimal" min="0" step="any"
+                   value="${p._qty == null ? '' : p._qty}" data-qty-index="${i}">
+          </div>` : ''}
+        ${(p.colorVariants || []).length ? `<div class="mb-card-sub mb-mt-2">${p.colorVariants.length} colour variant(s) — edit those on desktop.</div>` : ''}
+      </div>`).join('');
+
+    body.querySelectorAll('[data-toggle-recipe]').forEach(btn => {
+      btn.addEventListener('click', () => {
+        const row = this.rows[Number(btn.dataset.toggleRecipe)];
+        if (!row) return;
+        this._readQtys();
+        row._inRecipe = !row._inRecipe;
+        // A newly-added mapping needs a quantity; default rather than
+        // send an empty one the server would reject.
+        if (row._inRecipe && (row._qty == null || row._qty === '')) row._qty = 1;
+        this.render();
+      });
+    });
+  },
+
+  _readQtys() {
+    this.rows.forEach((row, i) => {
+      const el = document.getElementById('item-proc-qty-' + i);
+      if (el) row._qty = el.value;
+    });
+  },
+
+  async save() {
+    this._readQtys();
+    const mappings = this.rows.map(p => ({
+      processId: p.processId,
+      inRecipe: !!p._inRecipe,
+      qtyPerUnit: p._inRecipe ? MApp.Util.toNumber(p._qty) : 0
+    }));
+
+    const bad = this.rows.find(p => p._inRecipe && MApp.Util.toNumber(p._qty) <= 0);
+    if (bad) {
+      MApp.Toast.error(`Enter a quantity greater than zero for ${bad.processName}.`);
+      return;
+    }
+
+    // Removing an item from a live process only affects future lots, but
+    // say so rather than let it be discovered later.
+    const removed = this.rows.filter(p => p.inRecipe && !p._inRecipe);
+    if (removed.length && !window.confirm(
+      `Remove this item from ${removed.length} process${removed.length === 1 ? '' : 'es'}? `
+      + 'Lots already logged keep the components they were built with; only future lots change.'
+    )) return;
+
+    const btn = document.getElementById('item-processes-save-btn');
+    if (btn) { btn.disabled = true; btn.textContent = 'Saving…'; }
+    const res = await MApp.Util.mutateSimple(
+      'saveItemProcessMappings', [this.item.name, this.item.size || '', mappings], 'Processes updated.'
+    );
+    if (btn) { btn.disabled = false; btn.textContent = 'Save Changes'; }
+    if (res.success) this.close();
   }
 };
 
@@ -8692,6 +9013,30 @@ MApp.ContractorDetail = {
   name: null,
   data: null,
 
+  // Every contractor's balance in one call, for the "who owes what"
+  // question that otherwise means opening each contractor in turn.
+  // Rendered as a banner above the contractor Directory list.
+  async overviewHtml() {
+    try {
+      const res = await MApp.Api.call('getContractorLedgerData');
+      if (!res || !res.success) return '';
+      const owed = (res.data || []).filter(c => c.balanceDue > 0.0001)
+        .sort((a, b) => b.balanceDue - a.balanceDue);
+      if (!owed.length) return '';
+      const total = owed.reduce((n, c) => n + c.balanceDue, 0);
+      const top = owed.slice(0, 3)
+        .map(c => `${MApp.Util.escapeHtml(MApp.Util.formatNameCase(c.contractorName))} ${MApp.Util.formatCurrency(c.balanceDue)}`)
+        .join(' · ');
+      return `
+        <div class="mb-offline-banner" style="background:var(--mb-enamel-blue-bg);color:var(--mb-enamel-blue-ink);margin-bottom:var(--mb-sp-3);display:block;">
+          <div><strong>${MApp.Util.formatCurrency(total)} owed across ${owed.length} contractor${owed.length === 1 ? '' : 's'}.</strong></div>
+          <div class="mb-text-sm">${top}${owed.length > 3 ? ' …' : ''}</div>
+        </div>`;
+    } catch (err) {
+      return ''; // an overview is a nicety; never let it break the list
+    }
+  },
+
   async open(contractorName) {
     this.name = contractorName;
     this.data = null;
@@ -8750,6 +9095,27 @@ MApp.ContractorDetail = {
         <button type="button" class="mb-btn mb-btn-secondary mb-mt-2" onclick="MApp.ContractorDetail.print()">Print statement</button>
       </div>` : failed('the account ledger');
 
+    // Payments get their own section as well as their place in the
+    // chronological ledger. The ledger is a STATEMENT -- it mixes derived
+    // Payables with real Payment rows, so a selection across it would
+    // offer to delete something that is not a record. Listing the
+    // payments separately gives them a container of one row kind, which
+    // is what MApp.Select's interlock requires and what makes a bulk
+    // delete here honest.
+    const payments = ledger ? (ledger.entries || []).filter(e => e.type === 'Payment') : [];
+    const paymentRows = !ledger ? '' : (payments.length === 0
+      ? empty('No payments recorded yet.')
+      : payments.map(p => `
+        <div class="mb-card">
+          <div class="mb-card-row">
+            <div>
+              <div class="mb-card-title">${money(p.rawAmount)}</div>
+              <div class="mb-card-sub">${MApp.Util.formatDateDisplay(p.dateRaw)}${p.ref && p.ref !== '-' ? ' · ' + MApp.Util.escapeHtml(p.ref) : ''}</div>
+            </div>
+          </div>
+          ${p.description && p.description !== '-' ? `<div class="mb-card-sub">${MApp.Util.escapeHtml(p.description)}</div>` : ''}
+        </div>`).join(''));
+
     const ledgerRows = !ledger ? '' : ((ledger.entries || []).length === 0
       ? empty('No ledger entries yet.')
       : ledger.entries.slice(0, 30).map(e => `
@@ -8799,6 +9165,8 @@ MApp.ContractorDetail = {
       ${summary}
       <div class="mapp-section-label mb-mt-4">Ledger</div>
       ${ledgerRows}
+      <div class="mapp-section-label mb-mt-4">Payments</div>
+      <div id="contractor-payment-list">${paymentRows}</div>
       <div class="mapp-section-label mb-mt-4">Rate Card</div>
       <div id="contractor-rate-list">${rateRows}</div>
       <button type="button" class="mb-btn mb-btn-secondary mb-mt-2" onclick="MApp.Directory.openRateSheet(MApp.ContractorDetail.name)">+ Add Rate</button>
@@ -8816,6 +9184,14 @@ MApp.ContractorDetail = {
     // get this -- the ledger mixes derived Payables with real Payment
     // rows, and a selection spanning both would offer to delete something
     // that is not a record at all.
+    if (payments.length) {
+      MApp.Select.enable(document.getElementById('contractor-payment-list'), payments, {
+        key: 'contractor-payments', noun: 'payment', plural: 'payments',
+        method: 'deleteContractorPaymentsBulk',
+        payload: rows => [rows.map(p => p.rowIdx)],
+        onDone: () => MApp.ContractorDetail.open(MApp.ContractorDetail.name)
+      });
+    }
     if (rates && rates.length) {
       MApp.Select.enable(document.getElementById('contractor-rate-list'), rates, {
         key: 'contractor-rates', noun: 'rate', plural: 'rates',

@@ -284,16 +284,31 @@ describe('MApp.ContractorDetail print and multi-select', () => {
     expect(document.querySelectorAll('#contractor-charge-list .mb-card')).toHaveLength(CHARGES.length);
   });
 
-  test('the ledger is NOT multi-selectable', async () => {
-    // It mixes derived Payables with real Payment rows; a selection
-    // spanning both would offer to delete something that is not a record.
+  test('the chronological ledger is not selectable; the payments list is', async () => {
+    // The ledger is a STATEMENT: it mixes derived Payables with real
+    // Payment rows, so a selection across it would offer to delete
+    // something that is not a record. Payments therefore also get their
+    // own section -- one row kind, which is what the interlock needs and
+    // what makes a bulk delete here honest.
+    await MApp.ContractorDetail.open('Rakesh');
+
+    expect(document.getElementById('contractor-payment-list')).not.toBeNull();
+    // One payment in LEDGER; the Payable is not in this list.
+    expect(document.querySelectorAll('#contractor-payment-list .mb-card')).toHaveLength(1);
+    expect(document.getElementById('contractor-payment-list').textContent).not.toContain('LOT-1042');
+  });
+
+  test('each selectable list names the RPC its rows actually belong to', () => {
     const src = fs.readFileSync(path.join(__dirname, '..', 'mobile.js'), 'utf8');
     const start = src.indexOf('MApp.ContractorDetail = {');
     const next = src.slice(start + 1).search(/\nMApp\.[A-Z][A-Za-z]* = \{/);
     const mod = src.slice(start, start + 1 + next);
 
-    expect(mod).not.toContain('deleteContractorPaymentsBulk');
     expect(mod).toContain("key: 'contractor-rates'");
     expect(mod).toContain("key: 'contractor-charges'");
+    expect(mod).toContain("key: 'contractor-payments'");
+    expect(mod).toContain("method: 'deleteContractorPaymentsBulk'");
+    // Payment ids, not the whole row.
+    expect(mod).toContain('rows.map(p => p.rowIdx)');
   });
 });

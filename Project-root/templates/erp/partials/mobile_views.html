@@ -48,6 +48,43 @@
 </div>
 
 <!-- ═══════════════════════════════════════════════════════════════════
+     FULL DASHBOARD — Home shows three tiles from getMobileDashboard,
+     which is the right default on a phone. This is the drill-down into
+     getDashboardData, so mobile is not permanently capped at what that
+     reduced endpoint returns.
+     ═══════════════════════════════════════════════════════════════════ -->
+<div class="mb-sheet" id="sheet-dashboard" role="dialog" aria-modal="true" aria-labelledby="dashboard-title">
+  <div class="mb-sheet-header">
+    <h2 id="dashboard-title">Full dashboard</h2>
+    <button type="button" class="mapp-topbar-btn" aria-label="Close" onclick="MApp.Dashboard.close()">
+      <svg viewBox="0 0 24 24" width="22" height="22" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><path d="M6 6l12 12M18 6L6 18"/></svg>
+    </button>
+  </div>
+  <div class="mb-sheet-body" id="dashboard-body"></div>
+</div>
+
+<!-- ═══════════════════════════════════════════════════════════════════
+     USED IN PROCESSES — which recipes consume one item, and how much.
+     Read plus the membership toggle; the server warns rather than blocks
+     when a process already has lots, because past lots keep their own
+     snapshotted components and only FUTURE lots change.
+     ═══════════════════════════════════════════════════════════════════ -->
+<div class="mb-sheet" id="sheet-item-processes" role="dialog" aria-modal="true"
+     aria-labelledby="item-processes-title">
+  <div class="mb-sheet-header">
+    <h2 id="item-processes-title">Used in processes</h2>
+    <button type="button" class="mapp-topbar-btn" aria-label="Close" onclick="MApp.ItemProcesses.close()">
+      <svg viewBox="0 0 24 24" width="22" height="22" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><path d="M6 6l12 12M18 6L6 18"/></svg>
+    </button>
+  </div>
+  <div class="mb-sheet-body" id="item-processes-body"></div>
+  <div class="mb-sheet-footer">
+    <button type="button" class="mb-btn mb-btn-primary" id="item-processes-save-btn"
+            onclick="MApp.ItemProcesses.save()">Save Changes</button>
+  </div>
+</div>
+
+<!-- ═══════════════════════════════════════════════════════════════════
      SYSTEM STATUS — backup health, recent ledger notifications, and (for
      admins) the activity log. All three RPCs existed and none was
      reachable from the phone.
@@ -198,6 +235,8 @@
     <div class="mb-skel mb-skel-tile"></div>
     <div class="mb-skel mb-skel-tile"></div>
   </div>
+
+  <button type="button" class="mb-btn mb-btn-secondary mb-mt-2" onclick="MApp.Dashboard.open()">See the full dashboard</button>
 
   <div class="mapp-section-label">Recent activity</div>
   <div id="home-activity">

@@ -110,7 +110,6 @@ const BACKLOG = {
   deleteClientOrdersBulk: 'P6 client orders',
   deleteColor: 'P6 master-data registers',
   deleteColorsBulk: 'P6 master-data registers',
-  deleteContractorPaymentsBulk: 'P5 contractor ledger (descriptor `related`)',
   deleteCustomRole: 'P7 roles (read-only + handoff)',
   deleteDispatchPlanLine: 'P7 dispatch plan checklist',
   deleteModel: 'P6 master-data registers',
@@ -126,13 +125,8 @@ const BACKLOG = {
   getAllProcessColorGroups: 'P6 master-data registers',
   getClientOrdersData: 'P6 client orders',
   getColors: 'P6 master-data registers',
-  getContractorLedgerData: 'P5 contractor ledger (descriptor `related`)',
-  getContractorRateForProcessType: 'P5 contractor ledger (descriptor `related`)',
-  getDashboardData: 'P5 read-only screens',
   getDispatchPlans: 'P7 dispatch plan checklist',
   getNextProductId: 'P6 master-data registers',
-  getProcessWipData: 'P5 read-only screens',
-  getProcessesForItem: 'P5 item ledger + process mappings',
   getStockGroupsData: 'P6 master-data registers',
   getUnitsData: 'P6 master-data registers',
   getWarehousePoolOpeningData: 'P6 warehouse pool openings',
@@ -142,7 +136,6 @@ const BACKLOG = {
   saveClientOrder: 'P6 client orders',
   saveColor: 'P6 master-data registers',
   saveDispatchPlanLine: 'P7 dispatch plan checklist',
-  saveItemProcessMappings: 'P5 item ledger + process mappings',
   saveModel: 'P6 master-data registers',
   saveProcessType: 'P6 master-data registers',
   saveProductionSheet: 'P6 production status + sheet',
@@ -157,7 +150,7 @@ const BACKLOG = {
 };
 
 // Phase 1 opened at 79. Lower this line as ports land; never raise it.
-const BACKLOG_BASELINE = 51;
+const BACKLOG_BASELINE = 44;
 
 describe('MApp / desktop feature parity', () => {
   test('the registry is being read at all', () => {
