@@ -2512,7 +2512,9 @@ MApp.Production = {
                 <div class="mb-card-sub">${MApp.Util.escapeHtml(MApp.Util.formatNameCase(l.assignedTo) || '—')}</div>
               </div>
             </div>
-            <div class="mb-mt-2"><span class="mb-chip ${MApp.Util.statusChipClass(l.status)}">${MApp.Util.escapeHtml(l.status || 'Pending')}</span></div>
+            <div class="mb-mt-2">
+              <button type="button" class="mb-chip ${MApp.Util.statusChipClass(l.status)}" style="border:none;cursor:pointer;min-height:var(--mb-tap-min);" data-lot-action="status" data-lot-index="${i}">${MApp.Util.escapeHtml(l.status || 'Pending')} ▾</button>
+            </div>
             <div class="mb-mt-2" style="display:flex; gap:var(--mb-sp-4);">
               <button type="button" class="mb-btn-text" style="padding:0;min-height:auto;" data-lot-action="edit" data-lot-index="${i}">Edit</button>
               <button type="button" class="mb-btn-text" style="padding:0;min-height:auto;color:var(--mb-enamel-red-ink);" data-lot-action="delete" data-lot-index="${i}">Delete</button>
@@ -2528,7 +2530,8 @@ MApp.Production = {
           // wrong lot is not a bug worth leaving to that coincidence.
           const lot = shown[Number(btn.dataset.lotIndex)];
           if (!lot) return;
-          if (btn.dataset.lotAction === 'edit') this.openEditSheet(lot);
+          if (btn.dataset.lotAction === 'status') this.changeStatus(lot);
+          else if (btn.dataset.lotAction === 'edit') this.openEditSheet(lot);
           else this.deleteLot(lot);
         });
       });
@@ -2538,6 +2541,51 @@ MApp.Production = {
 
     const clearBtn = listEl.querySelector('[data-clear-filter]');
     if (clearBtn) clearBtn.addEventListener('click', () => { this._pendingOnly = false; this.render(); });
+  },
+
+  STATUS_OPTIONS: ['Pending', 'In Progress', 'Completed', 'Cancelled'],
+
+  // Marking a lot done at the machine. Previously this meant opening the
+  // full edit sheet -- process cascade, colour checklist and all -- to
+  // change one field, which is why it is the single most obvious phone
+  // action in the product and was the one it could not do.
+  //
+  // Two things this does NOT do with the server's answer:
+  //
+  //   It does not send a canned success message. Completing a lot can
+  //   drive a Warehouse Pool bucket negative, and the server says so in
+  //   its own message ("Warehouse Pool stock will now show negative for
+  //   this item"). MApp.Util.mutateSimple replaces that with whatever
+  //   string the caller passed, which would swallow exactly the signal
+  //   this app treats as important, so the toast is raised here instead.
+  //
+  //   It does not skip expected_qty. That is a concurrency guard: the
+  //   server refuses the update if the record has been modified or
+  //   shifted since this list was drawn, which on a phone showing a list
+  //   loaded some time ago is a real possibility rather than a formality.
+  async changeStatus(lot) {
+    const picked = await MApp.Picker.open({
+      title: `Lot ${lot.lotNumber}`,
+      items: this.STATUS_OPTIONS.map(s => ({ value: s, label: s })),
+      selectedValue: lot.status || 'Pending',
+      searchable: false
+    });
+    if (!picked || picked.value === lot.status) return;
+
+    try {
+      const res = await Api.mutateWithId(
+        'updateProductionStatus', Api.newMutationId(), lot.rowIdx, lot.qty, picked.value
+      );
+      if (!res || !res.success) {
+        MApp.Toast.error((res && res.message) || 'Could not update the status.');
+        return;
+      }
+      // The server's own message, warning and all.
+      MApp.Toast.success(res.message || `Status set to ${picked.value}.`);
+      this.load();
+    } catch (err) {
+      MApp.Toast.error(err.message || 'Could not reach the server. Please try again.');
+    }
   },
 
   // ── Size/Model/Process Type helpers (mirror desktop's App.Utils, kept
@@ -8171,7 +8219,11 @@ MApp.GlobalSearch = {
     { label: 'Account', keywords: 'profile name email password change my', run: () => MApp.Account.open() },
     { label: 'Warehouse Pool', keywords: 'pool buckets negative available wip intermediate', run: () => MApp.Pool.open() },
     { label: 'System Status', keywords: 'backup health activity log notifications audit', run: () => MApp.Status.open() },
-    { label: 'Full dashboard', keywords: 'kpi totals payables ready low stock overview', run: () => MApp.Dashboard.open() }
+    { label: 'Full dashboard', keywords: 'kpi totals payables ready low stock overview', run: () => MApp.Dashboard.open() },
+    { label: 'Colours', keywords: 'colour color master paint shade', run: () => MApp.Master.open('color') },
+    { label: 'Models', keywords: 'model master kalpi ranger', run: () => MApp.Master.open('model') },
+    { label: 'Process Types', keywords: 'process type master stage', run: () => MApp.Master.open('processType') },
+    { label: 'Units', keywords: 'unit master conversion dozen kg factor', run: () => MApp.Master.open('unit') }
   ],
 
   DEST_SPEC: {
@@ -8372,6 +8424,206 @@ MApp.GlobalSearch = {
       input.dispatchEvent(new Event('input', { bubbles: true }));
     };
     setTimeout(prefill, 120);
+  }
+};
+
+// ================================================================
+// MASTER DATA — colours, models, process types, units.
+//
+// These feed every picker in the app, so a value that was missing had no
+// route in on a phone: the Log Lot cascade simply could not be completed
+// until someone opened a laptop. Twenty-one RPC methods were unreachable
+// here, and four of them are the ones that unblock a shift.
+//
+// One screen serves all four because three of them share an identical
+// {name, remarks} contract and units differ only by two extra fields --
+// the same reasoning MApp.Directory already uses for vendors, clients and
+// contractors. The spec IS the difference between them.
+// ================================================================
+MApp.Master = {
+  TYPES: {
+    color: {
+      title: 'Colours', singular: 'Colour',
+      read: 'getColors', save: 'saveColor', remove: 'deleteColor',
+      identity: 'name', originalKey: 'originalName',
+      fields: [
+        { key: 'name', label: 'Colour Name', type: 'text', required: true },
+        { key: 'remarks', label: 'Remarks', type: 'multiline' }
+      ]
+    },
+    model: {
+      title: 'Models', singular: 'Model',
+      read: 'getModels', save: 'saveModel', remove: 'deleteModel',
+      identity: 'name', originalKey: 'originalName',
+      fields: [
+        { key: 'name', label: 'Model Name', type: 'text', required: true },
+        { key: 'remarks', label: 'Remarks', type: 'multiline' }
+      ]
+    },
+    processType: {
+      title: 'Process Types', singular: 'Process Type',
+      read: 'getProcessTypes', save: 'saveProcessType', remove: 'deleteProcessType',
+      identity: 'name', originalKey: 'originalName',
+      fields: [
+        { key: 'name', label: 'Process Type', type: 'text', required: true },
+        { key: 'remarks', label: 'Remarks', type: 'multiline' }
+      ]
+    },
+    unit: {
+      title: 'Units', singular: 'Unit',
+      read: 'getUnitsData', save: 'saveUnit', remove: 'deleteUnit',
+      identity: 'unitName', originalKey: 'originalUnitName',
+      // factorToBase is how many base units one of these is. Getting it
+      // wrong silently rescales every quantity entered in this unit, so
+      // it is required and must be positive.
+      fields: [
+        { key: 'unitName', label: 'Unit Name', type: 'text', required: true },
+        { key: 'family', label: 'Family', type: 'text', required: true,
+          hint: 'Units convert only within a family, e.g. Count, Weight.' },
+        { key: 'factorToBase', label: 'Factor to base unit', type: 'decimal', required: true, min: 0,
+          hint: 'How many base units one of these equals. A Dozen is 12.' },
+        { key: 'remarks', label: 'Remarks', type: 'multiline' }
+      ]
+    }
+  },
+
+  type: null,
+  rows: [],
+  entries: [],
+  filtered: [],
+  searchTerm: '',
+  editing: null,
+
+  cfg() { return this.TYPES[this.type] || {}; },
+
+  searchSpec() {
+    return { fields: this.cfg().fields.map(f => ({ key: f.key, weight: 5, label: f.label })) };
+  },
+
+  async open(type) {
+    if (!this.TYPES[type]) return;
+    this.type = type;
+    this.searchTerm = '';
+    const cfg = this.cfg();
+    const titleEl = document.getElementById('master-title');
+    if (titleEl) titleEl.textContent = cfg.title;
+    const input = document.getElementById('master-search');
+    if (input) { input.value = ''; input.placeholder = `Search ${cfg.title.toLowerCase()}…`; }
+    MApp.SearchBox.attach('master-search', term => this.onSearch(term));
+
+    const listEl = document.getElementById('master-list');
+    MApp.Util.renderSkeleton(listEl, 5);
+    MApp.Sheet.open('sheet-master');
+
+    try {
+      const res = await MApp.Api.call(cfg.read);
+      if (!res || !res.success) {
+        MApp.Util.renderError(listEl, res && res.message, () => this.open(type));
+        return;
+      }
+      if (this.type !== type) return; // a different register was opened meanwhile
+      this.rows = res.data || [];
+      this.entries = MApp.Search.index(this.rows, this.searchSpec());
+      MApp.Paging.reset('master');
+      this.filtered = this.rows;
+      this.render();
+    } catch (err) {
+      MApp.Util.renderError(listEl, err && err.message, () => this.open(type));
+    }
+  },
+
+  close() { MApp.Sheet.close('sheet-master'); },
+
+  onSearch(term) {
+    this.searchTerm = term || '';
+    MApp.Paging.reset('master');
+    this.filtered = MApp.Search.run(this.entries, this.searchTerm);
+    this.render();
+  },
+
+  render() {
+    const listEl = document.getElementById('master-list');
+    if (!listEl) return;
+    const cfg = this.cfg();
+
+    const page = MApp.Paging.take('master', this.filtered, () => this.render());
+    MApp.SearchBox.setCount('master-search', page.shown, page.total, page.meta);
+
+    if (this.filtered.length === 0) {
+      MApp.Util.renderEmpty(listEl, {
+        title: `No ${cfg.title.toLowerCase()} found`,
+        body: this.searchTerm.trim() ? `Nothing matches “${this.searchTerm.trim()}”.` : 'Tap Add to create the first one.'
+      });
+      return;
+    }
+
+    listEl.innerHTML = page.rows.map((r, i) => `
+      <div class="mb-card">
+        <div class="mb-card-row">
+          <div>
+            <div class="mb-card-title">${MApp.Util.escapeHtml(r[cfg.identity])}</div>
+            ${this.type === 'unit'
+    ? `<div class="mb-card-sub">${MApp.Util.escapeHtml(r.family || '')} · 1 = ${MApp.Util.formatQty(r.factorToBase)} base</div>`
+    : (r.remarks ? `<div class="mb-card-sub">${MApp.Util.escapeHtml(r.remarks)}</div>` : '')}
+          </div>
+        </div>
+        <div class="mb-mt-2" style="display:flex; gap:var(--mb-sp-4);">
+          <button type="button" class="mb-btn-text" style="padding:0;min-height:auto;" data-master-action="edit" data-master-index="${i}">Edit</button>
+          <button type="button" class="mb-btn-text" style="padding:0;min-height:auto;color:var(--mb-enamel-red-ink);" data-master-action="delete" data-master-index="${i}">Delete</button>
+        </div>
+      </div>`).join('') + MApp.Paging.moreHtml(page);
+
+    listEl.querySelectorAll('[data-master-action]').forEach(btn => {
+      btn.addEventListener('click', () => {
+        const row = page.rows[Number(btn.dataset.masterIndex)];
+        if (!row) return;
+        if (btn.dataset.masterAction === 'edit') this.openForm(row);
+        else this.remove(row);
+      });
+    });
+  },
+
+  formSpec() {
+    return { id: 'master-form', fields: this.cfg().fields };
+  },
+
+  openForm(record) {
+    const cfg = this.cfg();
+    this.editing = record || null;
+    const titleEl = document.getElementById('master-form-title');
+    if (titleEl) titleEl.textContent = (record ? 'Edit ' : 'Add ') + cfg.singular;
+    MApp.Form.render('master-form-body', this.formSpec(), record || {});
+    MApp.Sheet.open('sheet-master-form');
+  },
+
+  closeForm() { MApp.Sheet.close('sheet-master-form'); },
+
+  async save() {
+    const cfg = this.cfg();
+    const spec = this.formSpec();
+    const values = MApp.Form.read(spec);
+    if (!MApp.Form.validate(spec, values)) return;
+
+    const formData = { ...values };
+    // An edit is identified by the name it had BEFORE this form, not the
+    // one now typed -- renaming is a normal edit here.
+    if (this.editing) formData[cfg.originalKey] = this.editing[cfg.identity];
+
+    const btn = document.getElementById('master-form-save-btn');
+    if (btn) { btn.disabled = true; btn.textContent = 'Saving…'; }
+    const res = await MApp.Util.mutateSimple(cfg.save, [formData], `${cfg.singular} saved.`);
+    if (btn) { btn.disabled = false; btn.textContent = 'Save'; }
+    if (res.success) { this.closeForm(); this.open(this.type); }
+  },
+
+  async remove(row) {
+    const cfg = this.cfg();
+    const name = row[cfg.identity];
+    // The server refuses a delete that is still referenced and says so;
+    // this only asks, it does not pre-judge.
+    if (!MApp.Util.confirmDelete(`${cfg.singular.toLowerCase()} “${name}”`)) return;
+    const res = await MApp.Util.mutateSimple(cfg.remove, [name], `${cfg.singular} deleted.`);
+    if (res.success) this.open(this.type);
   }
 };
 
