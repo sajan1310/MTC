@@ -5456,22 +5456,46 @@ MApp.Issue = {
           </div>
         </div>
         ${r.reference ? `<div class="mb-card-sub mb-mt-2">Ref: ${MApp.Util.escapeHtml(r.reference)}</div>` : ''}
-        <div class="mb-mt-2"><button type="button" class="mb-btn-text" style="padding:0;min-height:auto;color:var(--mb-enamel-red-ink);" data-issue-index="${i}">Delete</button></div>
+        <div class="mb-mt-2" style="display:flex; gap:var(--mb-sp-4);">
+          <button type="button" class="mb-btn-text" style="padding:0;min-height:auto;" data-issue-action="edit" data-issue-index="${i}">Edit</button>
+          <button type="button" class="mb-btn-text" style="padding:0;min-height:auto;color:var(--mb-enamel-red-ink);" data-issue-action="delete" data-issue-index="${i}">Delete</button>
+        </div>
       </div>`;
     }).join('') + MApp.Paging.moreHtml(page);
 
     listEl.querySelectorAll('[data-issue-index]').forEach(btn => {
       btn.addEventListener('click', () => {
-        const record = this.filtered[Number(btn.dataset.issueIndex)];
-        if (record) this.deleteIssue(record);
+        // page.rows, not this.filtered: the indices were emitted while
+        // mapping the paged array. The two share a prefix today, which is
+        // not a property worth resting Edit and Delete on.
+        const record = page.rows[Number(btn.dataset.issueIndex)];
+        if (!record) return;
+        if (btn.dataset.issueAction === 'edit') this.openForm(record);
+        else this.deleteIssue(record);
       });
     });
 
     MApp.Select.enable(listEl, page.rows, this.SELECT);
   },
 
-  async openForm() {
-    this.lines = [{ name: '', size: '', unit: 'Pcs', qty: '', rate: '' }];
+  // `record` opens the form in edit mode. saveIssueStock has accepted
+  // existingIssueId since it was written -- the server could edit and the
+  // screen could not, so correcting a mistyped issue meant deleting the
+  // record and retyping it.
+  async openForm(record) {
+    this.editingIssueId = record ? record.issueId : null;
+    this.lines = record && (record.items || []).length
+      ? record.items.map(it => ({
+        name: it.name || '', size: it.size || '', unit: it.unit || 'Pcs',
+        qty: it.qty, rate: it.rate || ''
+      }))
+      : [{ name: '', size: '', unit: 'Pcs', qty: '', rate: '' }];
+    this._editingRecord = record || null;
+
+    const titleEl = document.querySelector('#sheet-issue-form h2');
+    if (titleEl) titleEl.textContent = record ? 'Edit Issue' : 'Log Issue';
+    const saveLabel = document.getElementById('issue-form-save-btn');
+    if (saveLabel) saveLabel.textContent = record ? 'Save Changes' : 'Log Issue';
 
     document.getElementById('issue-form-body').innerHTML = `
       <div class="mb-skel mb-skel-card" style="height:56px;"></div>
@@ -5501,18 +5525,23 @@ MApp.Issue = {
   },
 
   _formHtml() {
+    // Values come from _editingRecord in edit mode and are blank on
+    // create, so one template serves both.
+    const r = this._editingRecord || {};
+    const v = s => MApp.Util.escapeHtml(s == null ? '' : String(s));
+    const date = r.dateRaw ? String(r.dateRaw).slice(0, 10) : MApp.Util.todayInputValue();
     return `
       <div class="mb-field">
         <label for="issue-form-date">Date</label>
-        <input type="date" id="issue-form-date" value="${MApp.Util.todayInputValue()}">
+        <input type="date" id="issue-form-date" value="${v(date)}">
       </div>
       <div class="mb-field">
         <label for="issue-form-issuedto">Issued To</label>
-        <input type="text" id="issue-form-issuedto" placeholder="Contractor or person name">
+        <input type="text" id="issue-form-issuedto" placeholder="Contractor or person name" value="${v(r.issuedTo)}">
       </div>
       <div class="mb-field">
         <label for="issue-form-reference">Reference (optional)</label>
-        <input type="text" id="issue-form-reference" placeholder="e.g. Production Lot #">
+        <input type="text" id="issue-form-reference" placeholder="e.g. Production Lot #" value="${v(r.reference)}">
       </div>
 
       <div class="mapp-section-label">Items</div>
@@ -5521,7 +5550,7 @@ MApp.Issue = {
 
       <div class="mb-field">
         <label for="issue-form-remarks">Remarks (optional)</label>
-        <textarea id="issue-form-remarks" rows="3"></textarea>
+        <textarea id="issue-form-remarks" rows="3">${v(r.remarks)}</textarea>
       </div>
     `;
   },
@@ -5602,17 +5631,23 @@ MApp.Issue = {
       remarks: (document.getElementById('issue-form-remarks')?.value || '').trim(),
       items: JSON.stringify(validLines.map(l => ({ name: l.name, size: l.size || '', unit: l.unit || 'Pcs', qty: l.qty, rate: l.rate || 0 })))
     };
+    // The issueId itself never changes on edit -- it has no override
+    // field, same as on create (see issue_service.py).
+    if (this.editingIssueId) formData.existingIssueId = this.editingIssueId;
 
+    const isEdit = !!this.editingIssueId;
     const saveBtn = document.getElementById('issue-form-save-btn');
     if (saveBtn) { saveBtn.disabled = true; saveBtn.textContent = 'Saving…'; }
 
-    const res = await MApp.Util.mutateSimple('saveIssueStock', [formData], 'Stock issue logged.');
+    const res = await MApp.Util.mutateSimple(
+      'saveIssueStock', [formData], isEdit ? 'Issue updated.' : 'Stock issue logged.'
+    );
     if (res.success) {
       this.closeForm();
       this.open();
       return;
     }
-    if (saveBtn) { saveBtn.disabled = false; saveBtn.textContent = 'Log Issue'; }
+    if (saveBtn) { saveBtn.disabled = false; saveBtn.textContent = isEdit ? 'Save Changes' : 'Log Issue'; }
   },
 
   // deleteIssueBulk takes a plain array (not a form_data object), sent as
@@ -7935,7 +7970,8 @@ MApp.GlobalSearch = {
     { label: 'Processes', keywords: 'stages output recipe components', run: () => MApp.Process.open() },
     { label: 'Product Recipes', keywords: 'bom bill of materials components', run: () => MApp.BOM.open() },
     { label: 'Users & Roles', keywords: 'admin accounts permissions', run: () => MApp.Admin.open() },
-    { label: 'Sync Issues', keywords: 'offline outbox pending failed queue', run: () => MApp.SyncIssues.open() }
+    { label: 'Sync Issues', keywords: 'offline outbox pending failed queue', run: () => MApp.SyncIssues.open() },
+    { label: 'Account', keywords: 'profile name email password change my', run: () => MApp.Account.open() }
   ],
 
   DEST_SPEC: {
@@ -8136,6 +8172,91 @@ MApp.GlobalSearch = {
       input.dispatchEvent(new Event('input', { bubbles: true }));
     };
     setTimeout(prefill, 120);
+  }
+};
+
+// ================================================================
+// ACCOUNT — your own name, email and password.
+//
+// Both RPCs existed on the server and neither was reachable from the
+// phone: changing your own password on a mobile-first app was simply
+// impossible. Two independent forms with their own save buttons, for the
+// reason desktop's core.js gives for the same split -- a typo in the
+// password fields must not block saving a corrected email.
+// ================================================================
+MApp.Account = {
+  PROFILE_SPEC: {
+    id: 'account-profile',
+    fields: [
+      { key: 'name', label: 'Name', type: 'text', required: true },
+      { key: 'email', label: 'Email', type: 'email', required: true }
+    ]
+  },
+
+  // `current` is deliberately NOT required. An account created by Google
+  // sign-in has no password_hash at all (see profile_service.py), and
+  // making them prove a password they never set would lock them out of
+  // ever setting one. The server decides; the hint says so.
+  PASSWORD_SPEC: {
+    id: 'account-password',
+    fields: [
+      { key: 'current', label: 'Current Password', type: 'password',
+        hint: 'Leave blank if you sign in with Google and have never set one.' },
+      { key: 'next', label: 'New Password', type: 'password', required: true },
+      { key: 'confirm', label: 'Confirm New Password', type: 'password', required: true,
+        validate: (v, all) => (v !== all.next ? 'The two passwords do not match.' : null) }
+    ]
+  },
+
+  open() {
+    const me = window.MOBILE_CURRENT_USER || {};
+    MApp.Form.render('account-profile-body', this.PROFILE_SPEC, {
+      name: document.getElementById('more-account-name')?.textContent?.trim() || me.name || '',
+      email: me.email || ''
+    });
+    MApp.Form.render('account-password-body', this.PASSWORD_SPEC, {});
+    MApp.Sheet.open('sheet-account');
+  },
+
+  close() {
+    MApp.Sheet.close('sheet-account');
+  },
+
+  async saveProfile() {
+    const values = MApp.Form.read(this.PROFILE_SPEC);
+    if (!MApp.Form.validate(this.PROFILE_SPEC, values)) return;
+
+    const btn = document.getElementById('account-profile-save-btn');
+    if (btn) { btn.disabled = true; btn.textContent = 'Saving…'; }
+    const res = await MApp.Util.mutateSimple('updateMyProfile', [values.name, values.email], 'Profile updated.');
+    if (btn) { btn.disabled = false; btn.textContent = 'Save Profile'; }
+    if (!res.success) return;
+
+    // The More tab's card is rendered from Jinja at page load and never
+    // re-fetched, so patch it rather than leaving the old name on screen
+    // until the next reload -- the same reasoning core.js gives.
+    const nameEl = document.getElementById('more-account-name');
+    if (nameEl) nameEl.textContent = values.name;
+    const emailEl = document.getElementById('more-account-email');
+    if (emailEl) emailEl.textContent = values.email;
+    if (window.MOBILE_CURRENT_USER) window.MOBILE_CURRENT_USER.email = values.email;
+  },
+
+  async savePassword() {
+    const values = MApp.Form.read(this.PASSWORD_SPEC);
+    if (!MApp.Form.validate(this.PASSWORD_SPEC, values)) return;
+
+    const btn = document.getElementById('account-password-save-btn');
+    if (btn) { btn.disabled = true; btn.textContent = 'Changing…'; }
+    const res = await MApp.Util.mutateSimple(
+      'changeMyPassword', [values.current, values.next, values.confirm], 'Password changed.'
+    );
+    if (btn) { btn.disabled = false; btn.textContent = 'Change Password'; }
+    if (!res.success) return;
+
+    // Never leave a typed password sitting in the DOM after it has been
+    // accepted -- the sheet stays open for the profile form above it.
+    MApp.Form.render('account-password-body', this.PASSWORD_SPEC, {});
   }
 };
 

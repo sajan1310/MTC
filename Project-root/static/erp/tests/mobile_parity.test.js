@@ -105,7 +105,6 @@ const DESKTOP_ONLY = {
 const BACKLOG = {
   adjustWarehousePoolManually: 'P5 warehouse pool read + ledger, P6 adjust',
   bulkDeactivateUsers: 'P7 roles (read-only + handoff)',
-  changeMyPassword: 'P4 account + password',
   createCustomRole: 'P7 roles (read-only + handoff)',
   deleteClientOrder: 'P6 client orders',
   deleteClientOrdersBulk: 'P6 client orders',
@@ -169,13 +168,12 @@ const BACKLOG = {
   triggerBackup: 'P5 read-only screens',
   updateCustomRole: 'P7 roles (read-only + handoff)',
   updateDeadStock: 'P6 stock thresholds',
-  updateMyProfile: 'P4 account + password',
   updateProductionStatus: 'P6 production status + sheet',
   updateThreshold: 'P6 stock thresholds',
 };
 
 // Phase 1 opened at 79. Lower this line as ports land; never raise it.
-const BACKLOG_BASELINE = 69;
+const BACKLOG_BASELINE = 67;
 
 describe('MApp / desktop feature parity', () => {
   test('the registry is being read at all', () => {

@@ -48,6 +48,33 @@
 </div>
 
 <!-- ═══════════════════════════════════════════════════════════════════
+     ACCOUNT — name/email and password. Two independent forms with their
+     own save buttons, matching desktop's own reasoning in core.js: a
+     typo in the password fields must not block saving a corrected email.
+     Changing your own password was previously impossible on a
+     mobile-first app; both RPCs existed and neither was reachable.
+     ═══════════════════════════════════════════════════════════════════ -->
+<div class="mb-sheet" id="sheet-account" role="dialog" aria-modal="true" aria-labelledby="account-title">
+  <div class="mb-sheet-header">
+    <h2 id="account-title">Account</h2>
+    <button type="button" class="mapp-topbar-btn" aria-label="Close" onclick="MApp.Account.close()">
+      <svg viewBox="0 0 24 24" width="22" height="22" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><path d="M6 6l12 12M18 6L6 18"/></svg>
+    </button>
+  </div>
+  <div class="mb-sheet-body">
+    <div class="mapp-section-label">Profile</div>
+    <div id="account-profile-body"></div>
+    <button type="button" class="mb-btn mb-btn-primary mb-mb-4" id="account-profile-save-btn"
+            onclick="MApp.Account.saveProfile()">Save Profile</button>
+
+    <div class="mapp-section-label mb-mt-4">Password</div>
+    <div id="account-password-body"></div>
+    <button type="button" class="mb-btn mb-btn-secondary" id="account-password-save-btn"
+            onclick="MApp.Account.savePassword()">Change Password</button>
+  </div>
+</div>
+
+<!-- ═══════════════════════════════════════════════════════════════════
      GLOBAL SEARCH — one box over every indexed dataset plus every
      destination in the app. Opened from the top app bar on any tab.
      Doubles as the More tab's missing filter: its fourteen destinations
@@ -291,11 +318,17 @@
   </a>
 
   <div class="mapp-section-label mb-mt-4">Account</div>
-  <div class="mb-card">
-    <div class="mb-card-title" id="more-account-name">{{ current_user.name }}</div>
-    <div class="mb-card-sub" id="more-account-email">{{ current_user.email }}</div>
-  </div>
-  <a class="mb-card mb-card-tappable" style="border:none;display:block;text-decoration:none;color:var(--mb-enamel-red);" href="{{ url_for('auth.logout') }}">
+  <button type="button" class="mb-card mb-card-tappable" style="border:none;width:100%;text-align:left;" onclick="MApp.Account.open()">
+    <div class="mb-card-row">
+      <div>
+        <div class="mb-card-title" id="more-account-name">{{ current_user.name }}</div>
+        <div class="mb-card-sub" id="more-account-email">{{ current_user.email }}</div>
+      </div>
+      <svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M9 18l6-6-6-6"/></svg>
+    </div>
+    <div class="mb-card-sub mb-mt-2">Name, email and password</div>
+  </button>
+  <a class="mb-card mb-card-tappable" style="border:none;display:block;text-decoration:none;color:var(--mb-enamel-red-ink);" href="{{ url_for('auth.logout') }}">
     <div class="mb-card-row">
       <span class="mb-card-title" style="color:inherit;">Sign Out</span>
     </div>

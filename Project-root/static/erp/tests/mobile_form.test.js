@@ -216,26 +216,48 @@ describe('MApp.Form', () => {
   });
 });
 
+// Slicing mobile.js between two method names is brittle: a method name
+// like `openForm(record) {` occurs in several modules and as a call site,
+// so the bounds invert and the slice comes back empty -- a guard that
+// silently stops guarding. Cut the named MODULE out instead, which has
+// exactly one unambiguous start and ends at the next top-level module.
+function moduleSource(name) {
+  const start = MOBILE_JS.indexOf(`MApp.${name} = {`);
+  if (start === -1) throw new Error(`MApp.${name} not found`);
+  const next = MOBILE_JS.slice(start + 1).search(/\nMApp\.[A-Z][A-Za-z]* = \{/);
+  const src = next === -1 ? MOBILE_JS.slice(start) : MOBILE_JS.slice(start, start + 1 + next);
+  if (!src.trim()) throw new Error(`MApp.${name} sliced empty`);
+  return src;
+}
+
+// One method out of a module, ending at the next method's closing brace.
+// Scoped to the module first so a method name shared across modules
+// cannot resolve to the wrong one.
+function methodSource(moduleName, method) {
+  const src = moduleSource(moduleName);
+  const start = src.search(new RegExp(`\\n  (async )?${method}\\(`));
+  if (start === -1) throw new Error(`${moduleName}.${method} not found`);
+  const rest = src.slice(start + 1);
+  const end = rest.search(/\n  \},?\r?\n/);
+  const out = end === -1 ? rest : rest.slice(0, end);
+  if (!out.trim()) throw new Error(`${moduleName}.${method} sliced empty`);
+  return out;
+}
+
 describe('the Directory form uses it', () => {
   test('saveEntity validates through MApp.Form, not a toast', () => {
     // The migration guard: reverting to MApp.Toast.error for a missing
     // name puts the message back at the bottom of the screen on a 4.2
     // second timer.
-    const save = MOBILE_JS.slice(
-      MOBILE_JS.indexOf('async saveEntity()'),
-      MOBILE_JS.indexOf('async deleteEntity()')
-    );
+    // Scoped to saveEntity, not the whole module: the contractor
+    // quick-add sub-flows in Directory still use toasts and are separate,
+    // un-migrated forms.
+    const save = methodSource('Directory', 'saveEntity');
     expect(save).toContain('MApp.Form.validate');
     expect(save).not.toMatch(/MApp\.Toast\.error\([`'"]Enter a/);
   });
 
   test('the contact field is declared as a phone number', () => {
-    // Anchored on the DEFINITIONS: 'openForm(record)' also appears as a
-    // call site earlier in the file, which inverted the slice.
-    const spec = MOBILE_JS.slice(
-      MOBILE_JS.indexOf('formSpec() {'),
-      MOBILE_JS.indexOf('openForm(record) {')
-    );
-    expect(spec).toContain("contact: 'tel'");
+    expect(moduleSource('Directory')).toContain("contact: 'tel'");
   });
 });
