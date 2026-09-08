@@ -281,16 +281,91 @@ describe('rendering the charts', () => {
     expect(blocks().textContent).toContain('Not enough days yet');
   });
 
-  test('bars are drawn relative to the largest value', async () => {
+  test('a pie draws one wedge per slice', async () => {
     MApp.HomeLayout.write(['productionMix']);
     await MApp.Home.mount();
 
-    const fills = [...document.querySelectorAll('#home-blocks .mapp-bar-fill')];
-    expect(fills.length).toBe(2);
-    expect(fills[1].getAttribute('style')).toContain('width:100%'); // Completed, 9
+    // Pending 5 + Completed 9, and the breakdown is a GROUP BY over every
+    // lot, so there is no remainder and no Other slice.
+    expect(document.querySelectorAll('#home-blocks .mapp-pie path').length).toBe(2);
+    expect(document.querySelectorAll('#home-blocks .mapp-pie-row').length).toBe(2);
   });
 
-  test('zero and negative rows are left out of a bar chart', async () => {
+  test('each slice is labelled with its value and its share', async () => {
+    MApp.HomeLayout.write(['productionMix']);
+    await MApp.Home.mount();
+
+    const text = blocks().textContent;
+    expect(text).toContain('Completed');
+    expect(text).toContain('64%'); // 9 of 14
+    expect(text).toContain('Total 14');
+  });
+
+  test('a truncated list gets an explicit Other slice', async () => {
+    // lowStockItems is a top-N; lowStockTotalDeficit is the real total.
+    // Drawing the top five as if they were everything would inflate
+    // every percentage on the chart.
+    MApp.HomeLayout.write(['lowStockWorst']);
+    await MApp.Home.mount();
+
+    const text = blocks().textContent;
+    expect(text).toContain('Rim 26');
+    expect(text).toContain('Other');
+    expect(text).toContain('Total 30'); // 15 shown, 30 declared
+    expect(text).toContain('50%');
+  });
+
+  test('a complete list gets no Other slice', async () => {
+    // contractorPayablesDue equals the one row, so there is no remainder
+    // to name and inventing one would be noise.
+    MApp.HomeLayout.write(['payablesByContractor']);
+    await MApp.Home.mount();
+
+    expect(blocks().textContent).not.toContain('Other');
+  });
+
+  test('a single slice draws a circle, not a degenerate arc', async () => {
+    // An arc between two identical points draws nothing at all, so 100%
+    // of one thing would render an empty pie.
+    MApp.Api.call = jest.fn(async () => ({
+      success: true,
+      data: { ...FULL, productionStatusBreakdown: [{ status: 'Pending', count: 7 }] },
+    }));
+    MApp.HomeLayout.write(['productionMix']);
+    await MApp.Home.mount();
+
+    expect(document.querySelector('#home-blocks .mapp-pie circle')).not.toBeNull();
+    expect(document.querySelector('#home-blocks .mapp-pie path')).toBeNull();
+    expect(blocks().textContent).toContain('100%');
+  });
+
+  test('slices past the sixth are folded into Other', async () => {
+    // Thinner than a fingertip and unreadable in a legend.
+    MApp.Api.call = jest.fn(async () => ({
+      success: true,
+      data: {
+        ...FULL,
+        productionStatusBreakdown: Array.from({ length: 9 },
+          (_, i) => ({ status: 'S' + i, count: 10 - i })),
+      },
+    }));
+    MApp.HomeLayout.write(['productionMix']);
+    await MApp.Home.mount();
+
+    expect(document.querySelectorAll('#home-blocks .mapp-pie-row').length).toBe(7); // 6 + Other
+    expect(blocks().textContent).toContain('Other');
+  });
+
+  test('slices are ordered largest first', async () => {
+    MApp.HomeLayout.write(['productionMix']);
+    await MApp.Home.mount();
+
+    const labels = [...document.querySelectorAll('#home-blocks .mapp-pie-label')]
+      .map(el => el.textContent);
+    expect(labels).toEqual(['Completed', 'Pending']);
+  });
+
+  test('zero and negative rows are left out', async () => {
     MApp.Api.call = jest.fn(async () => ({
       success: true,
       data: { ...FULL, productionStatusBreakdown: [{ status: 'Pending', count: 0 }, { status: 'Done', count: 3 }] },
@@ -298,22 +373,39 @@ describe('rendering the charts', () => {
     MApp.HomeLayout.write(['productionMix']);
     await MApp.Home.mount();
 
-    expect(document.querySelectorAll('#home-blocks .mapp-bar-row').length).toBe(1);
+    expect(document.querySelectorAll('#home-blocks .mapp-pie-row').length).toBe(1);
   });
 
   test('an empty series reads as empty rather than a broken chart', async () => {
-    MApp.Api.call = jest.fn(async () => ({ success: true, data: { ...FULL, contractorPayables: [] } }));
+    MApp.Api.call = jest.fn(async () => ({
+      success: true,
+      data: { ...FULL, contractorPayables: [], kpis: { ...FULL.kpis, contractorPayablesDue: 0 } },
+    }));
     MApp.HomeLayout.write(['payablesByContractor']);
     await MApp.Home.mount();
 
     expect(blocks().textContent).toContain('Nothing to show');
   });
 
-  test('a money chart formats its values as money', async () => {
-    MApp.HomeLayout.write(['payablesByContractor']);
+  test('the wedges are hidden from a screen reader; the legend is not', async () => {
+    // A pie read aloud as a list of unlabelled wedges tells nobody
+    // anything. Every number is in the rows beside it.
+    MApp.HomeLayout.write(['productionMix']);
     await MApp.Home.mount();
 
-    expect(blocks().textContent).toContain('₹3000.00');
+    expect(document.querySelector('#home-blocks .mapp-pie').getAttribute('aria-hidden')).toBe('true');
+    expect(document.querySelectorAll('#home-blocks .mapp-pie-value').length).toBe(2);
+  });
+
+  test('the 30-day trend stays a line, because a pie of dates says nothing', async () => {
+    // Parts of a whole is what a pie claims. Thirty consecutive days are
+    // a sequence, and slicing them would throw away the only thing the
+    // series is for.
+    MApp.HomeLayout.write(['dispatchTrend']);
+    await MApp.Home.mount();
+
+    expect(document.querySelector('#home-blocks .mapp-spark')).not.toBeNull();
+    expect(document.querySelector('#home-blocks .mapp-pie')).toBeNull();
   });
 });
 

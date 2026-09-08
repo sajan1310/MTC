@@ -1920,16 +1920,24 @@ MApp.HomeLayout = {
     { key: 'dispatchTrend', group: 'Charts', label: 'Dispatch, last 30 days',
       source: 'full', kind: 'chart', chart: 'sparkline',
       series: d => d.dispatchTrend || [] },
+    // A pie is a claim that the slices add up to something -- so each of
+    // these three is parts of a whole, and each says what its whole is.
+    // The two whose rows the server truncates pass a `total` as well, and
+    // the remainder becomes an explicit Other slice: a pie of the top
+    // five drawn as if it were everything is a lie about proportion.
     { key: 'productionMix', group: 'Charts', label: 'Lots by status',
-      source: 'full', kind: 'chart', chart: 'bars',
+      source: 'full', kind: 'chart', chart: 'pie',
+      // A GROUP BY over every lot: already the whole, nothing withheld.
       series: d => (d.productionStatusBreakdown || [])
         .map(r => ({ label: r.status, value: r.count })) },
-    { key: 'lowStockWorst', group: 'Charts', label: 'Biggest stock shortfalls',
-      source: 'full', kind: 'chart', chart: 'bars',
+    { key: 'lowStockWorst', group: 'Charts', label: 'Where the shortfall is',
+      source: 'full', kind: 'chart', chart: 'pie',
+      total: d => (d.kpis || {}).lowStockTotalDeficit || 0,
       series: d => (d.lowStockItems || [])
         .map(r => ({ label: `${r.name}${r.size ? ' · ' + r.size : ''}`, value: r.deficit })) },
     { key: 'payablesByContractor', group: 'Charts', label: 'Payables by contractor',
-      source: 'full', kind: 'chart', chart: 'bars', money: true,
+      source: 'full', kind: 'chart', chart: 'pie', money: true,
+      total: d => (d.kpis || {}).contractorPayablesDue || 0,
       series: d => (d.contractorPayables || [])
         .map(r => ({ label: MApp.Util.formatNameCase(r.contractorName), value: r.balanceDue })) }
   ],
@@ -2197,7 +2205,9 @@ MApp.Home = {
       ? '<div class="mb-skel mb-skel-line" style="width:100%;height:48px;"></div>'
       : (b.chart === 'sparkline'
         ? this._sparkline(b.series(data))
-        : this._bars(b.series(data), b.money));
+        // `total` is how a block declares that its rows are a top-N and
+        // names the real whole they came out of.
+        : this._pie(b.series(data), { money: b.money, total: b.total ? b.total(data) : 0 }));
     return `
       <div class="mb-card mapp-chart" style="grid-column:1 / -1;"${attrs}>
         <div class="mb-stat-tile-label">${MApp.Util.escapeHtml(b.label)}</div>
@@ -2233,23 +2243,95 @@ MApp.Home = {
       <div class="mb-card-sub mb-mt-2">${MApp.Util.formatQty(total)} units over ${points.length} days · peak ${MApp.Util.formatQty(peak)}</div>`;
   },
 
-  // A labelled bar per row, widths relative to the largest. Rows arrive
-  // already truncated by the server, so this draws what it is given.
-  _bars(series, money) {
-    const rows = (series || []).filter(r => Number(r.value) > 0);
+  // Slice colours come from the enamel palette, which keeps the same
+  // paint codes in both themes (see mobile_contrast.test.js) -- so a
+  // slice does not change meaning when the theme does. Six, then Other:
+  // past that the wedges are thinner than a fingertip and the legend is
+  // doing all the work anyway.
+  PIE_COLOURS: [
+    'var(--mb-enamel-blue)', 'var(--mb-enamel-green)', 'var(--mb-enamel-amber)',
+    'var(--mb-enamel-red)', 'var(--mb-enamel-slate)', 'var(--mb-safety)'
+  ],
+  PIE_MAX_SLICES: 6,
+
+  /**
+   * A pie is a claim that the slices add up to something, so this needs
+   * to be told what the whole IS. Two of the three callers hand it rows
+   * the server has already truncated to a top-N; `total` is that set's
+   * real sum, and the difference becomes an explicit Other slice. A pie
+   * of the top five drawn as if it were everything is not a simplified
+   * chart, it is a wrong one -- every percentage on it would be inflated.
+   */
+  _pie(series, opts) {
+    const o = opts || {};
+    const fmt = v => (o.money ? MApp.Util.formatCurrency(v) : MApp.Util.formatQty(v));
+
+    let rows = (series || [])
+      .map(r => ({ label: String(r.label || ''), value: Number(r.value) || 0 }))
+      .filter(r => r.value > 0)
+      .sort((a, b) => b.value - a.value);
+
     if (rows.length === 0) return '<div class="mb-text-sm mb-text-steel">Nothing to show.</div>';
-    const max = Math.max(...rows.map(r => Number(r.value)));
-    return rows.map(r => {
-      const v = Number(r.value);
-      const pct = Math.max(2, Math.round((v / max) * 100));
-      const shown = money ? MApp.Util.formatCurrency(v) : MApp.Util.formatQty(v);
+
+    // Anything past the sixth slice, plus whatever the server held back,
+    // is one Other wedge rather than a fringe of unreadable slivers.
+    let other = 0;
+    if (rows.length > this.PIE_MAX_SLICES) {
+      other += rows.slice(this.PIE_MAX_SLICES).reduce((a, r) => a + r.value, 0);
+      rows = rows.slice(0, this.PIE_MAX_SLICES);
+    }
+    const shown = rows.reduce((a, r) => a + r.value, 0);
+    const declared = Number(o.total) || 0;
+    if (declared > shown + other + 0.0001) other += declared - shown - other;
+    if (other > 0.0001) rows.push({ label: 'Other', value: other, isOther: true });
+
+    const total = rows.reduce((a, r) => a + r.value, 0);
+    if (total <= 0) return '<div class="mb-text-sm mb-text-steel">Nothing to show.</div>';
+
+    const R = 50, C = 52; // radius, centre -- 2px of margin for the stroke
+    const point = frac => {
+      // Start at twelve o'clock and go clockwise, which is how a pie is
+      // read. -PI/2 rotates the zero angle up from three o'clock.
+      const a = frac * Math.PI * 2 - Math.PI / 2;
+      return [(C + R * Math.cos(a)).toFixed(3), (C + R * Math.sin(a)).toFixed(3)];
+    };
+
+    let acc = 0;
+    const wedges = rows.map((r, i) => {
+      const frac = r.value / total;
+      const fill = r.isOther ? 'var(--mb-steel-light)' : this.PIE_COLOURS[i % this.PIE_COLOURS.length];
+      // A single slice covering the whole circle has identical start and
+      // end points, and an arc between two identical points draws
+      // nothing at all. It is a circle, so draw a circle.
+      if (frac >= 0.9999) {
+        return `<circle cx="${C}" cy="${C}" r="${R}" fill="${fill}"/>`;
+      }
+      const [x1, y1] = point(acc);
+      acc += frac;
+      const [x2, y2] = point(acc);
+      const large = frac > 0.5 ? 1 : 0;
+      return `<path d="M${C},${C} L${x1},${y1} A${R},${R} 0 ${large},1 ${x2},${y2} Z" fill="${fill}"/>`;
+    }).join('');
+
+    // The SVG is decoration; the legend carries the numbers. A pie read
+    // aloud as a list of unlabelled wedges tells nobody anything.
+    const legend = rows.map((r, i) => {
+      const pct = Math.round((r.value / total) * 100);
+      const swatch = r.isOther ? 'var(--mb-steel-light)' : this.PIE_COLOURS[i % this.PIE_COLOURS.length];
       return `
-      <div class="mapp-bar-row">
-        <div class="mapp-bar-label">${MApp.Util.escapeHtml(r.label)}</div>
-        <div class="mapp-bar-track"><div class="mapp-bar-fill" style="width:${pct}%;"></div></div>
-        <div class="mapp-bar-value">${MApp.Util.escapeHtml(shown)}</div>
+      <div class="mapp-pie-row">
+        <span class="mapp-pie-swatch" style="background:${swatch};" aria-hidden="true"></span>
+        <span class="mapp-pie-label">${MApp.Util.escapeHtml(r.label)}</span>
+        <span class="mapp-pie-value">${MApp.Util.escapeHtml(fmt(r.value))} · ${pct}%</span>
       </div>`;
     }).join('');
+
+    return `
+      <div class="mapp-pie-wrap">
+        <svg viewBox="0 0 104 104" class="mapp-pie" aria-hidden="true">${wedges}</svg>
+        <div class="mapp-pie-legend">${legend}</div>
+      </div>
+      <div class="mb-card-sub mb-mt-2">Total ${MApp.Util.escapeHtml(fmt(total))}</div>`;
   },
 
   renderGreeting() {

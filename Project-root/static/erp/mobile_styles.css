@@ -842,15 +842,43 @@ textarea:focus-visible,
   overflow: visible;
 }
 
-.mapp-bar-row {
-  display: grid;
-  grid-template-columns: minmax(0, 6.5rem) 1fr auto;
+/* The pie and its legend sit side by side once there is room, and stack
+   below ~26rem. The legend is not decoration: the wedges are aria-hidden
+   and every number a reader needs is in the rows beside them. */
+.mapp-pie-wrap {
+  display: flex;
+  flex-wrap: wrap;
   align-items: center;
-  gap: var(--mb-sp-3);
+  gap: var(--mb-sp-4);
+}
+
+.mapp-pie {
+  flex: 0 0 auto;
+  width: 104px;
+  height: 104px;
+}
+
+.mapp-pie-legend {
+  flex: 1 1 11rem;
+  min-width: 0;
+}
+
+.mapp-pie-row {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr) auto;
+  align-items: center;
+  gap: var(--mb-sp-2);
   padding: 3px 0;
 }
 
-.mapp-bar-label {
+.mapp-pie-swatch {
+  width: 10px;
+  height: 10px;
+  border-radius: 3px;
+  flex-shrink: 0;
+}
+
+.mapp-pie-label {
   font-size: 0.8125rem;
   color: var(--mb-steel);
   overflow: hidden;
@@ -858,23 +886,9 @@ textarea:focus-visible,
   white-space: nowrap;
 }
 
-.mapp-bar-track {
-  height: 10px;
-  border-radius: var(--mb-radius-pill);
-  background: var(--mb-steel-faint);
-  overflow: hidden;
-}
-
-.mapp-bar-fill {
-  height: 100%;
-  border-radius: var(--mb-radius-pill);
-  background: var(--mb-safety);
-}
-
-.mapp-bar-value {
-  font-family: var(--mb-font-display);
-  font-size: 0.875rem;
-  font-weight: 600;
+.mapp-pie-value {
+  font-size: 0.8125rem;
+  font-weight: 700;
   color: var(--mb-ink);
   white-space: nowrap;
 }
