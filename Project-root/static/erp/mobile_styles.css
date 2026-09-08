@@ -1031,6 +1031,26 @@ body.mb-selecting {
   margin-top: var(--mb-sp-1);
 }
 
+/* Validation shown AT the field, not as a toast at the bottom of the
+   screen that is gone in 4.2 seconds. */
+.mb-field-error {
+  font-size: 0.8125rem;
+  font-weight: 600;
+  color: var(--mb-enamel-red-ink);
+  margin-top: var(--mb-sp-1);
+}
+
+/* Colour is not the only cue: the border thickens too, for anyone who
+   cannot distinguish it, and in glare where hue is the first thing to go. */
+.mb-field-invalid input,
+.mb-field-invalid textarea,
+.mb-field-invalid select {
+  border-color: var(--mb-enamel-red);
+  border-width: 2px;
+}
+
+.mb-field-req { color: var(--mb-enamel-red-ink); }
+
 /* A field styled to look like a select but opens a full-screen picker
    (see .mb-picker-screen) — used for item/process pickers per the "no
    Select2" rule. */

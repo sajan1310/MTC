@@ -520,6 +520,163 @@ MApp.Util = {
 };
 
 // ================================================================
+// FORM — renders fields from a spec, and validates them where the
+// operator can see it.
+//
+// Validation was 23 calls to MApp.Toast.error(): a message at the bottom
+// of the screen, unattached to the field that caused it, gone in 4.2
+// seconds, with no way to bring it back. On a long form the offending
+// field is often scrolled out of view, and nothing scrolled to it. There
+// was no aria-invalid anywhere in the app, so a screen-reader user had
+// nothing to navigate by at all.
+//
+// A field spec is:
+//   { key, label, type, required, hint, placeholder, validate }
+// type drives the keyboard as well as the markup -- 'tel' is the reason
+// entering a vendor's phone number stops raising a full QWERTY.
+//
+// Usage:
+//   MApp.Form.render('entity-form-body', spec, record);
+//   const values = MApp.Form.read(spec);          // trimmed
+//   if (!MApp.Form.validate(spec, values)) return; // paints + focuses
+// ================================================================
+MApp.Form = {
+  // [input type, inputmode, autocomplete] per field type. The mobile
+  // keyboard is chosen here rather than at 20-odd call sites.
+  TYPES: {
+    text: ['text', null, null],
+    tel: ['tel', 'tel', 'tel'],
+    email: ['email', 'email', 'email'],
+    decimal: ['number', 'decimal', null],
+    integer: ['number', 'numeric', null],
+    date: ['date', null, null],
+    password: ['password', null, 'new-password'],
+    multiline: [null, null, null]
+  },
+
+  _id(spec, field) {
+    return `${spec.id}-${field.key}`;
+  },
+
+  render(bodyId, spec, record) {
+    const body = document.getElementById(bodyId);
+    if (!body) return;
+    const values = record || {};
+    body.innerHTML = spec.fields.map(f => this._fieldHtml(spec, f, values[f.key])).join('');
+  },
+
+  _fieldHtml(spec, field, value) {
+    const id = this._id(spec, field);
+    const [type, inputmode, autocomplete] = this.TYPES[field.type] || this.TYPES.text;
+    const val = MApp.Util.escapeHtml(value == null ? '' : String(value));
+    const label = MApp.Util.escapeHtml(field.label || field.key);
+    // aria-describedby points at BOTH the hint and the error slot; the
+    // error element is empty until validate() fills it, and an empty
+    // referenced node contributes nothing to the announcement.
+    const described = [field.hint ? `${id}-hint` : null, `${id}-error`].filter(Boolean).join(' ');
+    const attrs = [
+      `id="${id}"`,
+      `aria-describedby="${described}"`,
+      field.required ? 'aria-required="true"' : '',
+      field.placeholder ? `placeholder="${MApp.Util.escapeHtml(field.placeholder)}"` : '',
+      inputmode ? `inputmode="${inputmode}"` : '',
+      autocomplete ? `autocomplete="${autocomplete}"` : 'autocomplete="off"',
+      field.type === 'decimal' || field.type === 'integer' ? 'step="any"' : ''
+    ].filter(Boolean).join(' ');
+
+    const control = field.type === 'multiline'
+      ? `<textarea ${attrs} rows="${field.rows || 2}">${val}</textarea>`
+      : `<input type="${type}" ${attrs} value="${val}">`;
+
+    return `
+      <div class="mb-field" data-field="${MApp.Util.escapeHtml(field.key)}">
+        <label for="${id}">${label}${field.required ? ' <span class="mb-field-req" aria-hidden="true">*</span>' : ''}</label>
+        ${control}
+        ${field.hint ? `<div class="mb-field-hint" id="${id}-hint">${MApp.Util.escapeHtml(field.hint)}</div>` : ''}
+        <div class="mb-field-error" id="${id}-error" hidden></div>
+      </div>`;
+  },
+
+  read(spec) {
+    const out = {};
+    spec.fields.forEach(f => {
+      const el = document.getElementById(this._id(spec, f));
+      if (!el) return;
+      const raw = el.value == null ? '' : String(el.value);
+      out[f.key] = f.type === 'decimal' || f.type === 'integer' ? raw.trim() : raw.trim();
+    });
+    return out;
+  },
+
+  // Returns true when the form is valid. When it is not, every offending
+  // field is marked and the FIRST one is scrolled to and focused -- the
+  // half of this that a toast could never do.
+  validate(spec, values) {
+    this.clearErrors(spec);
+    const vals = values || this.read(spec);
+    const failed = [];
+
+    spec.fields.forEach(field => {
+      const value = vals[field.key];
+      let message = null;
+
+      if (field.required && !value) {
+        message = `${field.label || field.key} is required.`;
+      } else if (value && (field.type === 'decimal' || field.type === 'integer')) {
+        const n = Number(value);
+        if (!isFinite(n)) message = `${field.label} must be a number.`;
+        else if (field.type === 'integer' && !Number.isInteger(n)) message = `${field.label} must be a whole number.`;
+        else if (field.min != null && n < field.min) message = `${field.label} must be at least ${field.min}.`;
+      } else if (value && field.type === 'email' && !/^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(value)) {
+        message = 'Enter a valid email address.';
+      }
+
+      if (!message && field.validate) message = field.validate(value, vals) || null;
+      if (message) failed.push({ field, message });
+    });
+
+    failed.forEach(({ field, message }) => this.setError(spec, field.key, message));
+
+    if (failed.length) {
+      const first = document.getElementById(this._id(spec, failed[0].field));
+      if (first) {
+        // scrollIntoView before focus: focusing alone scrolls the field to
+        // whichever edge it entered from, which on a phone often leaves it
+        // under the sheet header.
+        if (first.scrollIntoView) first.scrollIntoView({ block: 'center', behavior: 'smooth' });
+        first.focus({ preventScroll: true });
+      }
+      return false;
+    }
+    return true;
+  },
+
+  setError(spec, key, message) {
+    const field = spec.fields.find(f => f.key === key);
+    if (!field) return;
+    const id = this._id(spec, field);
+    const input = document.getElementById(id);
+    const error = document.getElementById(`${id}-error`);
+    if (input) input.setAttribute('aria-invalid', 'true');
+    if (error) { error.textContent = message; error.hidden = false; }
+    const wrap = input && input.closest('.mb-field');
+    if (wrap) wrap.classList.add('mb-field-invalid');
+  },
+
+  clearErrors(spec) {
+    spec.fields.forEach(f => {
+      const id = this._id(spec, f);
+      const input = document.getElementById(id);
+      const error = document.getElementById(`${id}-error`);
+      if (input) input.removeAttribute('aria-invalid');
+      if (error) { error.textContent = ''; error.hidden = true; }
+      const wrap = input && input.closest('.mb-field');
+      if (wrap) wrap.classList.remove('mb-field-invalid');
+    });
+  }
+};
+
+// ================================================================
 // UPDATE — offers a reload when a new version is ready, instead of
 // swapping the app out from under whoever is using it.
 //
@@ -6235,6 +6392,26 @@ MApp.Directory = {
   },
 
   // ── Add/Edit (Phase 1) ──────────────────────────────────────────────
+  // The MApp.Form spec for whichever directory type is showing. `type`
+  // per field is what finally gives the contact field a phone keypad:
+  // it was type="text" on a card advertised as tap-to-call, while 24
+  // numeric fields elsewhere in the app already carried inputmode.
+  formSpec() {
+    const cfg = this.CONFIGS[this.type] || { fields: [] };
+    const singular = (cfg.title || 'Entry').replace(/s$/, '');
+    const TYPE_BY_KEY = { contact: 'tel', email: 'email' };
+    return {
+      id: 'entity-form',
+      fields: [
+        { key: 'name', label: `${singular} Name`, type: 'text', required: true }
+      ].concat((cfg.fields || []).map(f => ({
+        key: f.key,
+        label: f.label,
+        type: f.multiline ? 'multiline' : (TYPE_BY_KEY[f.key] || 'text')
+      })))
+    };
+  },
+
   openForm(record) {
     const cfg = this.CONFIGS[this.type];
     if (!cfg) return;
@@ -6244,23 +6421,7 @@ MApp.Directory = {
     const titleEl = document.getElementById('entity-form-title');
     if (titleEl) titleEl.textContent = record ? `Edit ${singular}` : `Add ${singular}`;
 
-    const body = document.getElementById('entity-form-body');
-    if (body) {
-      body.innerHTML = `
-        <div class="mb-field">
-          <label for="entity-form-name">${singular} Name</label>
-          <input type="text" id="entity-form-name" value="${MApp.Util.escapeHtml(record ? record.name : '')}">
-        </div>
-        ${cfg.fields.map(f => `
-          <div class="mb-field">
-            <label for="entity-form-${f.key}">${f.label}</label>
-            ${f.multiline
-              ? `<textarea id="entity-form-${f.key}" rows="2">${MApp.Util.escapeHtml(record ? (record[f.key] || '') : '')}</textarea>`
-              : `<input type="text" id="entity-form-${f.key}" value="${MApp.Util.escapeHtml(record ? (record[f.key] || '') : '')}">`}
-          </div>
-        `).join('')}
-      `;
-    }
+    MApp.Form.render('entity-form-body', this.formSpec(), record || {});
 
     const deleteBtn = document.getElementById('entity-form-delete-btn');
     if (deleteBtn) deleteBtn.classList.toggle('mb-hidden', !record);
@@ -6278,16 +6439,15 @@ MApp.Directory = {
     const cfg = this.CONFIGS[this.type];
     if (!cfg) return;
     const singular = cfg.title.replace(/s$/, '');
-    const name = (document.getElementById('entity-form-name')?.value || '').trim();
-    if (!name) {
-      MApp.Toast.error(`Enter a ${singular.toLowerCase()} name.`);
-      return;
-    }
+    const spec = this.formSpec();
+    const values = MApp.Form.read(spec);
+    // Marks the field, keeps the message there, and scrolls to it -- the
+    // toast this replaced said "Enter a vendor name." at the bottom of the
+    // screen and was gone before a gloved operator had finished reading it.
+    if (!MApp.Form.validate(spec, values)) return;
 
-    const formData = { [cfg.nameFormKey]: name };
-    cfg.fields.forEach(f => {
-      formData[f.key] = (document.getElementById(`entity-form-${f.key}`)?.value || '').trim();
-    });
+    const formData = { [cfg.nameFormKey]: values.name };
+    cfg.fields.forEach(f => { formData[f.key] = values[f.key] || ''; });
     if (this.editingRecord) formData[cfg.identityKey] = this.editingRecord.name;
 
     const saveBtn = document.getElementById('entity-form-save-btn');
