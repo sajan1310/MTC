@@ -129,7 +129,7 @@ describe('MApp.Paging', () => {
 
 describe('every list is paged, and reports its own numbers', () => {
   const KEYS = ['production', 'dispatch', 'po', 'bill', 'issue', 'wastage',
-    'items', 'directory', 'admin', 'process', 'bom'];
+    'items', 'directory', 'admin', 'process', 'bom', 'pool'];
 
   test('no hard cap survives anywhere', () => {
     // `.slice(0, 50)` / `.slice(0, 100)` / `.slice(0, 200)` on a render is

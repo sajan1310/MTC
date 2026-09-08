@@ -8073,7 +8073,8 @@ MApp.GlobalSearch = {
     { label: 'Product Recipes', keywords: 'bom bill of materials components', run: () => MApp.BOM.open() },
     { label: 'Users & Roles', keywords: 'admin accounts permissions', run: () => MApp.Admin.open() },
     { label: 'Sync Issues', keywords: 'offline outbox pending failed queue', run: () => MApp.SyncIssues.open() },
-    { label: 'Account', keywords: 'profile name email password change my', run: () => MApp.Account.open() }
+    { label: 'Account', keywords: 'profile name email password change my', run: () => MApp.Account.open() },
+    { label: 'Warehouse Pool', keywords: 'pool buckets negative available wip intermediate', run: () => MApp.Pool.open() }
   ],
 
   DEST_SPEC: {
@@ -8275,6 +8276,248 @@ MApp.GlobalSearch = {
     };
     setTimeout(prefill, 120);
   }
+};
+
+// ================================================================
+// WAREHOUSE POOL — read-only, and deliberately so.
+//
+// A negative bucket here is a SIGNAL, not a number to be corrected. This
+// screen therefore offers no adjust, no zero and no delete: the mobile
+// job is to let someone on the floor SEE a negative and know which kind
+// it is, not to let them tidy it away where the evidence lives.
+//
+// Two kinds, and telling them apart is the whole point:
+//
+//   Attribution -- nothing was ever produced in this colour, yet real
+//     consumption is recorded against it. The units are almost always
+//     sitting in a sibling bucket under a fuller composite name, so the
+//     stock exists and is merely misfiled. Desktop reports 189 of 241
+//     negative units in this pool are this shape.
+//   Needs a count -- produced and consumed both moved, and it still went
+//     negative. That is the one that may mean a physical recount is owed.
+//
+// Once both are just a red negative they are indistinguishable, and the
+// genuine "a count is owed" signal gets lost among the misfiled ones.
+// Same classification desktop uses (stock.js#isUnattributed), including
+// naming the sibling buckets whose colour contains this one.
+// ================================================================
+MApp.Pool = {
+  // Mirrors warehouse_service.color_segments (COLOR_COMBO_DELIMITER
+  // = " / "): the axis values of a composite bucket colour.
+  // "Purple-Wine / Black" -> ["Purple-Wine", "Black"].
+  colorSegments(color) {
+    return String(color || '').split(' / ').map(s => s.trim()).filter(Boolean);
+  },
+
+  SEARCH: {
+    fields: [
+      { key: 'outputItemName', weight: 10, label: 'Item' },
+      { key: 'color', weight: 6, label: 'Colour' },
+      { key: 'productTag', weight: 5, label: 'Product' },
+      { key: 'processId', weight: 3, label: 'Process' }
+    ]
+  },
+
+  rows: [],
+  entries: [],
+  filtered: [],
+  searchTerm: '',
+  filter: 'all',
+
+  // producedQty === 0 with real consumption and a colour: the debit side
+  // opened this bucket on its own, naming a colour no credit ever used.
+  isAttribution(r) {
+    return r.producedQty === 0 && r.consumedQty > 0 && !!r.color;
+  },
+
+  needsCount(r) {
+    return r.availableQty < 0 && !this.isAttribution(r);
+  },
+
+  // The buckets for the same item that DID produce, and whose composite
+  // colour contains this bucket's colour as one of its segments. Naming
+  // them is what lets someone act on an attribution negative without
+  // deleting or zeroing anything.
+  siblings(r) {
+    if (!this.isAttribution(r)) return [];
+    const item = String(r.outputItemName || '').trim().toLowerCase();
+    const color = String(r.color || '').trim().toLowerCase();
+    return this.rows
+      .filter(x => String(x.outputItemName || '').trim().toLowerCase() === item
+        && x.producedQty > 0
+        && this.colorSegments(x.color).some(s => s.toLowerCase() === color))
+      .map(x => x.color);
+  },
+
+  async open() {
+    this.searchTerm = '';
+    this.filter = 'all';
+    const listEl = document.getElementById('pool-list');
+    MApp.Util.renderSkeleton(listEl, 5);
+    MApp.SearchBox.attach('pool-search', term => this.onSearch(term));
+    MApp.Sheet.open('sheet-pool');
+
+    try {
+      const res = await MApp.Api.call('getWarehousePoolData');
+      if (!res || !res.success) {
+        MApp.Util.renderError(listEl, res && res.message, () => this.open());
+        return;
+      }
+      this.rows = res.data || [];
+      this.entries = MApp.Search.index(this.rows, this.SEARCH);
+      MApp.Paging.reset('pool');
+      this._applyFilters();
+      this.render();
+    } catch (err) {
+      MApp.Util.renderError(listEl, err && err.message, () => this.open());
+    }
+  },
+
+  close() { MApp.Sheet.close('sheet-pool'); },
+
+  onSearch(term) {
+    this.searchTerm = term || '';
+    MApp.Paging.reset('pool');
+    this._applyFilters();
+    this.render();
+  },
+
+  filterBy(kind) {
+    this.filter = kind;
+    document.querySelectorAll('#pool-filter-bar .mb-filter-chip').forEach(chip => {
+      chip.classList.toggle('active', chip.dataset.poolFilter === kind);
+    });
+    MApp.Paging.reset('pool');
+    this._applyFilters();
+    this.render();
+  },
+
+  _applyFilters() {
+    const matched = MApp.Search.run(this.entries, this.searchTerm);
+    this.filtered = matched.filter(r => {
+      if (this.filter === 'negative') return r.availableQty < 0;
+      if (this.filter === 'attribution') return this.isAttribution(r);
+      if (this.filter === 'recount') return this.needsCount(r);
+      return true;
+    });
+  },
+
+  render() {
+    const listEl = document.getElementById('pool-list');
+    if (!listEl) return;
+
+    const negatives = this.rows.filter(r => r.availableQty < 0);
+    const attribution = negatives.filter(r => this.isAttribution(r)).length;
+    const banner = negatives.length ? `
+      <div class="mb-offline-banner" style="background:var(--mb-enamel-amber-bg);color:var(--mb-enamel-amber-ink);margin-bottom:var(--mb-sp-3);display:block;">
+        <div><strong>${negatives.length} negative bucket${negatives.length === 1 ? '' : 's'}.</strong></div>
+        <div class="mb-text-sm">${attribution} look like attribution — the units are probably in a sibling bucket. ${negatives.length - attribution} may need a physical count.</div>
+      </div>` : '';
+
+    const page = MApp.Paging.take('pool', this.filtered, () => this.render());
+    MApp.SearchBox.setCount('pool-search', page.shown, page.total, page.meta);
+
+    if (this.filtered.length === 0) {
+      listEl.innerHTML = banner;
+      const empty = document.createElement('div');
+      listEl.appendChild(empty);
+      MApp.Util.renderEmpty(empty, {
+        title: 'Nothing here',
+        body: this.searchTerm.trim() ? `Nothing matches “${this.searchTerm.trim()}”.` : 'No buckets in this view.'
+      });
+      return;
+    }
+
+    listEl.innerHTML = banner + page.rows.map((r, i) => {
+      const negative = r.availableQty < 0;
+      const attributionCase = this.isAttribution(r);
+      const sibs = this.siblings(r);
+
+      // Named, not just coloured: "negative" alone is the state that
+      // makes the two kinds indistinguishable.
+      const flag = !negative ? '' : attributionCase
+        ? `<div class="mb-card-sub" style="color:var(--mb-enamel-amber-ink);margin-top:var(--mb-sp-2);">
+             Never produced in this colour, yet ${MApp.Util.formatQty(r.consumedQty)} consumed.
+             ${sibs.length
+    ? 'Likely belongs to: ' + MApp.Util.escapeHtml(sibs.join(', ')) + '. An attribution issue, not a shortage.'
+    : 'No sibling bucket carries this colour — check the consuming recipe.'}
+           </div>`
+        : `<div class="mb-card-sub" style="color:var(--mb-enamel-red-ink);margin-top:var(--mb-sp-2);">
+             Produced and consumed both moved and it still went negative — this one may need a physical count.
+           </div>`;
+
+      return `
+        <div class="mb-card">
+          <div class="mb-card-row">
+            <div>
+              <div class="mb-card-title">${MApp.Util.escapeHtml(r.outputItemName)}</div>
+              <div class="mb-card-sub">${r.color ? MApp.Util.escapeHtml(r.color) : 'No colour'}${r.productTag ? ' · ' + MApp.Util.escapeHtml(r.productTag) : ''}</div>
+            </div>
+            <div style="text-align:right;">
+              <div class="mb-card-number${negative ? ' mb-alert' : ''}">${MApp.Util.formatQty(r.availableQty)}</div>
+              <div class="mb-card-sub">${MApp.Util.formatQty(r.producedQty)} in · ${MApp.Util.formatQty(r.consumedQty)} out</div>
+            </div>
+          </div>
+          ${flag}
+          <div class="mb-mt-2">
+            <button type="button" class="mb-btn-text" style="padding:0;min-height:auto;" data-pool-ledger="${i}">View ledger</button>
+          </div>
+        </div>`;
+    }).join('') + MApp.Paging.moreHtml(page);
+
+    listEl.querySelectorAll('[data-pool-ledger]').forEach(btn => {
+      btn.addEventListener('click', () => {
+        const row = page.rows[Number(btn.dataset.poolLedger)];
+        if (row) this.openLedger(row);
+      });
+    });
+  },
+
+  // getWarehousePoolLedger replays the pool's own arithmetic server-side.
+  // Its docstring records that the client used to assemble this and had
+  // drifted from the backend in five ways, so this must never be derived
+  // here. Note the three SEPARATE arguments: Api.call is variadic, and
+  // passing them as one array yields HTTP 200, success true, and a
+  // silently empty ledger.
+  async openLedger(row) {
+    const body = document.getElementById('pool-ledger-body');
+    const titleEl = document.getElementById('pool-ledger-title');
+    if (titleEl) titleEl.textContent = row.outputItemName + (row.color ? ' · ' + row.color : '');
+    MApp.Util.renderSkeleton(body, 4);
+    MApp.Sheet.open('sheet-pool-ledger');
+
+    try {
+      const res = await MApp.Api.call('getWarehousePoolLedger', row.outputItemName, row.productTag || '', row.color || '');
+      if (!res || !res.success) {
+        MApp.Util.renderError(body, res && res.message, () => this.openLedger(row));
+        return;
+      }
+      const entries = res.data || [];
+      if (!entries.length) {
+        MApp.Util.renderEmpty(body, { title: 'No movements', body: 'Nothing has moved in or out of this bucket.' });
+        return;
+      }
+      body.innerHTML = entries.map(e => `
+        <div class="mb-card">
+          <div class="mb-card-row">
+            <div>
+              <div class="mb-card-title">${MApp.Util.escapeHtml(e.type)}${e.ref ? ' · ' + MApp.Util.escapeHtml(e.ref) : ''}</div>
+              <div class="mb-card-sub">${MApp.Util.formatDateDisplay(e.dateRaw)}${e.remarks ? ' · ' + MApp.Util.escapeHtml(e.remarks) : ''}</div>
+            </div>
+            <div style="text-align:right;white-space:nowrap;">
+              <div style="font-weight:700;color:${e.inQty ? 'var(--mb-enamel-green-ink)' : 'var(--mb-enamel-red-ink)'};">
+                ${e.inQty ? '+' + MApp.Util.formatQty(e.inQty) : '-' + MApp.Util.formatQty(e.outQty)}
+              </div>
+              <div class="mb-card-sub">bal ${MApp.Util.formatQty(e.balance)}</div>
+            </div>
+          </div>
+        </div>`).join('');
+    } catch (err) {
+      MApp.Util.renderError(body, err && err.message, () => this.openLedger(row));
+    }
+  },
+
+  closeLedger() { MApp.Sheet.close('sheet-pool-ledger'); }
 };
 
 // ================================================================

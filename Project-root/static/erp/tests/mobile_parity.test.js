@@ -140,8 +140,6 @@ const BACKLOG = {
   getRecentNotificationLogs: 'P5 read-only screens',
   getStockGroupsData: 'P6 master-data registers',
   getUnitsData: 'P6 master-data registers',
-  getWarehousePoolData: 'P5 warehouse pool read + ledger, P6 adjust',
-  getWarehousePoolLedger: 'P5 warehouse pool read + ledger, P6 adjust',
   getWarehousePoolOpeningData: 'P5 warehouse pool read + ledger, P6 adjust',
   includeWarehousePoolColor: 'P5 warehouse pool read + ledger, P6 adjust',
   reorderBOM: 'P7 move-up / move-down ordering',
@@ -165,7 +163,7 @@ const BACKLOG = {
 };
 
 // Phase 1 opened at 79. Lower this line as ports land; never raise it.
-const BACKLOG_BASELINE = 59;
+const BACKLOG_BASELINE = 57;
 
 describe('MApp / desktop feature parity', () => {
   test('the registry is being read at all', () => {
