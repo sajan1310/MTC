@@ -8326,7 +8326,8 @@ MApp.GlobalSearch = {
     { label: 'Process Types', keywords: 'process type master stage', run: () => MApp.Master.open('processType') },
     { label: 'Units', keywords: 'unit master conversion dozen kg factor', run: () => MApp.Master.open('unit') },
     { label: 'Stock Groups', keywords: 'group set collection low stock report stickers bolts', run: () => MApp.StockGroups.open() },
-    { label: 'PI / Estimates', keywords: 'client order proforma invoice quote estimate confirm', run: () => MApp.ClientOrders.open() }
+    { label: 'PI / Estimates', keywords: 'client order proforma invoice quote estimate confirm', run: () => MApp.ClientOrders.open() },
+    { label: 'Opening balances', keywords: 'pool opening stock credit rack correction warehouse', run: () => MApp.PoolOpenings.open() }
   ],
 
   DEST_SPEC: {
@@ -10366,6 +10367,7 @@ MApp.Pool = {
           ${flag}
           <div class="mb-mt-2">
             <button type="button" class="mb-btn-text" style="padding:0;min-height:auto;" data-pool-ledger="${i}">View ledger</button>
+            <button type="button" class="mb-btn-text" style="padding:0;min-height:auto;" data-pool-adjust="${i}">Correct count</button>
           </div>
         </div>`;
     }).join('') + MApp.Paging.moreHtml(page);
@@ -10374,6 +10376,13 @@ MApp.Pool = {
       btn.addEventListener('click', () => {
         const row = page.rows[Number(btn.dataset.poolLedger)];
         if (row) this.openLedger(row);
+      });
+    });
+
+    listEl.querySelectorAll('[data-pool-adjust]').forEach(btn => {
+      btn.addEventListener('click', () => {
+        const row = page.rows[Number(btn.dataset.poolAdjust)];
+        if (row) this.openAdjust(row);
       });
     });
   },
@@ -10422,7 +10431,525 @@ MApp.Pool = {
     }
   },
 
-  closeLedger() { MApp.Sheet.close('sheet-pool-ledger'); }
+  closeLedger() { MApp.Sheet.close('sheet-pool-ledger'); },
+
+  // ── Manual correction ────────────────────────────────────────────────
+  // adjustWarehousePoolManually does not set the bucket directly: it
+  // appends a compensating opening row for (new - old) and recalculates,
+  // then records the before/after in the adjustment log. So a correction
+  // is an auditable event, not an overwrite -- which is the only reason
+  // it is safe to offer on a phone at all.
+  //
+  // What is NOT safe, and is refused below, is using it to make a
+  // negative bucket stop being negative when the negative is an
+  // attribution case. warehouse_service._assert_produced_stays_nonnegative
+  // says it plainly in its own docstring: a negative available qty "is the
+  // legitimate over-consumption signal ... and it must stay visible so the
+  // shortfall gets counted and entered". The server guards only the
+  // arithmetic that cannot be true (produced going negative) and leaves
+  // this to the caller. On an attribution bucket the units are not
+  // missing -- they were credited to a sibling colour -- so zeroing it
+  // destroys the trail the next stage's checklist reads and fixes
+  // nothing.
+  openAdjust(row) {
+    if (!row) return;
+    this._adjustRow = row;
+
+    const set = (id, val) => {
+      const el = document.getElementById(id);
+      if (el) el.value = val;
+    };
+    set('pool-adjust-bucket', row.outputItemName + (row.color ? ' · ' + row.color : '')
+      + (row.productTag ? ' · ' + row.productTag : ''));
+    set('pool-adjust-old', MApp.Util.formatQty(row.availableQty));
+    set('pool-adjust-new', row.availableQty);
+    set('pool-adjust-reason', '');
+
+    const note = document.getElementById('pool-adjust-note');
+    if (note) {
+      if (this.isAttribution(row)) {
+        const sibs = this.siblings(row);
+        note.innerHTML = `<strong>This is an attribution negative, not a shortage.</strong>
+          Nothing was ever produced in this colour, yet ${MApp.Util.formatQty(row.consumedQty)} was consumed —
+          ${sibs.length
+    ? 'the units were credited to ' + MApp.Util.escapeHtml(sibs.join(', ')) + '.'
+    : 'and no sibling bucket carries this colour, so the consuming recipe is what to check.'}
+          Correcting this to zero would hide it without moving a single part. Fix the recipe or the lot's colour pairing instead.`;
+        note.hidden = false;
+      } else if (row.availableQty < 0) {
+        note.innerHTML = `<strong>Count this one first.</strong> Both sides moved and it still went negative,
+          so the number to enter is what is physically on the shelf — not zero.`;
+        note.hidden = false;
+      } else {
+        note.hidden = true;
+        note.innerHTML = '';
+      }
+    }
+
+    MApp.Sheet.open('sheet-pool-adjust');
+  },
+
+  closeAdjust() { MApp.Sheet.close('sheet-pool-adjust'); },
+
+  async submitAdjust() {
+    const row = this._adjustRow;
+    if (!row) return;
+
+    const raw = String(document.getElementById('pool-adjust-new')?.value ?? '').trim();
+    const newQty = parseFloat(raw);
+    if (raw === '' || !isFinite(newQty)) {
+      MApp.Toast.error('Enter the corrected quantity.');
+      return;
+    }
+    const reason = String(document.getElementById('pool-adjust-reason')?.value || '').trim();
+    if (!reason) {
+      MApp.Toast.error('A reason is required — the server records it against this correction.');
+      return;
+    }
+    if (newQty === row.availableQty) {
+      MApp.Toast.error('That is the value it already has.');
+      return;
+    }
+
+    // The one refusal. Narrow on purpose: only an attribution negative,
+    // and only a correction that lifts it out of negative. Anything else
+    // -- including a correction that leaves it negative, and any
+    // correction to a bucket that needs a physical count -- goes through.
+    if (this.isAttribution(row) && row.availableQty < 0 && newQty >= 0) {
+      const sibs = this.siblings(row);
+      MApp.Toast.error(sibs.length
+        ? `Not this way. These units are in ${sibs.join(', ')} — correct the pairing, not this bucket.`
+        : 'Not this way. Nothing was produced in this colour, so there is nothing here to count. Check the consuming recipe.');
+      return;
+    }
+
+    const delta = newQty - row.availableQty;
+    const label = row.outputItemName + (row.color ? ' · ' + row.color : '');
+    if (!window.confirm(
+      `Correct ${label} from ${MApp.Util.formatQty(row.availableQty)} to ${MApp.Util.formatQty(newQty)}`
+      + ` (${delta > 0 ? '+' : ''}${MApp.Util.formatQty(delta)})?`
+      + ' This is logged against your name in the adjustment history.')) return;
+
+    const btn = document.getElementById('pool-adjust-save-btn');
+    if (btn) { btn.disabled = true; btn.textContent = 'Saving…'; }
+
+    let res;
+    try {
+      res = await Api.mutateWithId(
+        'adjustWarehousePoolManually', Api.newMutationId(),
+        row.outputItemName, row.processId, row.productTag || '', row.color || '',
+        newQty, reason
+      );
+    } catch (err) {
+      MApp.Toast.error(err.message || 'Could not reach the server. Please try again.');
+      if (btn) { btn.disabled = false; btn.textContent = 'Save correction'; }
+      return;
+    }
+    if (btn) { btn.disabled = false; btn.textContent = 'Save correction'; }
+
+    if (!res || !res.success) {
+      // A no-op edit comes back success:false WITH the current value
+      // attached, deliberately (the server bypasses build_response to do
+      // it), so the screen can reconcile instead of arguing with a stale
+      // number.
+      if (res && res.data && res.data.oldAvailableQty !== undefined) {
+        row.availableQty = res.data.oldAvailableQty;
+        const el = document.getElementById('pool-adjust-old');
+        if (el) el.value = MApp.Util.formatQty(row.availableQty);
+      }
+      MApp.Toast.error((res && res.message) || 'Could not save this correction.');
+      return;
+    }
+
+    MApp.Toast.success(res.message || 'Warehouse Pool stock adjusted.');
+    this.closeAdjust();
+    this.open();
+  },
+
+  // ── Adjustment history ───────────────────────────────────────────────
+  // Every correction, who made it and why. A pool number that changed
+  // without a lot behind it is exactly the thing somebody later needs to
+  // account for, and the record existed with no way to read it here.
+  async openHistory() {
+    const body = document.getElementById('pool-history-body');
+    MApp.Util.renderSkeleton(body, 5);
+    MApp.Sheet.open('sheet-pool-history');
+
+    try {
+      const res = await MApp.Api.call('getWarehousePoolAdjustmentHistory');
+      if (!res || !res.success) {
+        MApp.Util.renderError(body, res && res.message, () => this.openHistory());
+        return;
+      }
+      const rows = res.data || [];
+      if (!rows.length) {
+        MApp.Util.renderEmpty(body, {
+          title: 'No corrections',
+          body: 'No pool bucket has been corrected by hand.'
+        });
+        return;
+      }
+      body.innerHTML = rows.map(a => {
+        const delta = a.newValue - a.oldValue;
+        return `
+        <div class="mb-card">
+          <div class="mb-card-row">
+            <div>
+              <div class="mb-card-title">${MApp.Util.escapeHtml(a.outputItemName)}</div>
+              <div class="mb-card-sub">${a.color ? MApp.Util.escapeHtml(a.color) : 'No colour'}${a.productTag ? ' · ' + MApp.Util.escapeHtml(a.productTag) : ''}</div>
+            </div>
+            <div style="text-align:right;white-space:nowrap;">
+              <div style="font-weight:700;color:${delta >= 0 ? 'var(--mb-enamel-green-ink)' : 'var(--mb-enamel-red-ink)'};">
+                ${MApp.Util.formatQty(a.oldValue)} → ${MApp.Util.formatQty(a.newValue)}
+              </div>
+              <div class="mb-card-sub">${MApp.Util.formatDateDisplay(a.date)}</div>
+            </div>
+          </div>
+          <div class="mb-card-sub mb-mt-2">${MApp.Util.escapeHtml(a.reason)}</div>
+          <div class="mb-card-sub">${MApp.Util.escapeHtml(a.user || 'unknown')}</div>
+        </div>`;
+      }).join('');
+    } catch (err) {
+      MApp.Util.renderError(body, err && err.message, () => this.openHistory());
+    }
+  },
+
+  closeHistory() { MApp.Sheet.close('sheet-pool-history'); }
+};
+
+// ================================================================
+// WAREHOUSE POOL OPENING BALANCES.
+//
+// The only way to credit a pool bucket without completing a lot: what
+// was already on the rack before this system started counting, and the
+// dated corrections adjustWarehousePoolManually writes as (new - old)
+// deltas -- both land in the same table, which is why the correction
+// entries show up in this list too and are labelled as such.
+//
+// A negative opening entry is legitimate and is how a downward
+// correction is expressed. The server's only floor is that a bucket's
+// PRODUCED quantity may not go below zero, since produced is the sum of
+// credits and a negative one is not a shortage, it is arithmetically
+// impossible. A negative AVAILABLE is left alone on purpose -- it is the
+// over-consumption signal and has to stay visible.
+// ================================================================
+MApp.PoolOpenings = {
+  SEARCH: {
+    fields: [
+      { key: 'outputItemName', weight: 10, label: 'Item' },
+      { key: 'color', weight: 6, label: 'Colour' },
+      { key: 'processName', weight: 4, label: 'Process' },
+      { key: 'productTag', weight: 4, label: 'Product' },
+      { key: 'remarks', weight: 2, label: 'Remarks' }
+    ]
+  },
+
+  rows: [],
+  entries: [],
+  filtered: [],
+  searchTerm: '',
+  processes: [],
+  products: [],
+  colors: [],
+  selection: null,
+
+  async open() {
+    const listEl = document.getElementById('pool-openings-list');
+    const input = document.getElementById('pool-openings-search');
+    if (input) input.value = '';
+    this.searchTerm = '';
+    MApp.SearchBox.attach('pool-openings-search', term => this.onSearch(term));
+
+    MApp.Util.renderSkeleton(listEl, 4);
+    MApp.Sheet.open('sheet-pool-openings');
+
+    try {
+      const res = await MApp.Api.call('getWarehousePoolOpeningData');
+      if (!res || !res.success) {
+        MApp.Util.renderError(listEl, res && res.message, () => this.open());
+        return;
+      }
+      this.rows = res.data || [];
+      this.entries = MApp.Search.index(this.rows, this.SEARCH);
+      MApp.Paging.reset('poolOpening');
+      this.filtered = this.rows;
+      this.render();
+    } catch (err) {
+      MApp.Util.renderError(listEl, err && err.message, () => this.open());
+    }
+  },
+
+  close() { MApp.Sheet.close('sheet-pool-openings'); },
+
+  onSearch(term) {
+    this.searchTerm = term || '';
+    MApp.Paging.reset('poolOpening');
+    this.filtered = MApp.Search.run(this.entries, this.searchTerm);
+    this.render();
+  },
+
+  render() {
+    const listEl = document.getElementById('pool-openings-list');
+    if (!listEl) return;
+
+    const page = MApp.Paging.take('poolOpening', this.filtered, () => this.render());
+    MApp.SearchBox.setCount('pool-openings-search', page.shown, page.total, page.meta);
+
+    if (this.filtered.length === 0) {
+      MApp.Util.renderEmpty(listEl, {
+        title: 'No opening balances',
+        body: this.searchTerm.trim()
+          ? `Nothing matches “${this.searchTerm.trim()}”.`
+          : 'Nothing has been credited to a bucket outside a completed lot.'
+      });
+      return;
+    }
+
+    listEl.innerHTML = page.rows.map((r, i) => {
+      // A correction writes into this same table with a "Correction: "
+      // remark. Saying which is which matters: one is what was on the
+      // rack to begin with, the other is somebody's later judgement.
+      const isCorrection = /^Correction: /.test(r.remarks || '');
+      return `
+      <div class="mb-card">
+        <div class="mb-card-row">
+          <div>
+            <div class="mb-card-title">${MApp.Util.escapeHtml(r.outputItemName)}</div>
+            <div class="mb-card-sub">${r.color ? MApp.Util.escapeHtml(r.color) : 'No colour'}${r.productTag ? ' · ' + MApp.Util.escapeHtml(r.productTag) : ''}</div>
+            <div class="mb-card-sub">${MApp.Util.escapeHtml(r.processName || r.processId || '')} · ${MApp.Util.escapeHtml(r.date || '')}</div>
+          </div>
+          <div style="text-align:right;">
+            <div class="mb-card-number" style="color:${r.qty < 0 ? 'var(--mb-enamel-red-ink)' : 'var(--mb-enamel-green-ink)'};">${r.qty > 0 ? '+' : ''}${MApp.Util.formatQty(r.qty)}</div>
+          </div>
+        </div>
+        ${isCorrection ? '<div class="mb-mt-2"><span class="mb-chip">Correction</span></div>' : ''}
+        ${r.remarks ? `<div class="mb-card-sub mb-mt-2">${MApp.Util.escapeHtml(r.remarks)}</div>` : ''}
+        <div class="mb-mt-2">
+          <button type="button" class="mb-btn-text" style="padding:0;min-height:auto;color:var(--mb-enamel-red-ink);" data-opening-delete="${i}">Delete</button>
+        </div>
+      </div>`;
+    }).join('') + MApp.Paging.moreHtml(page);
+
+    listEl.querySelectorAll('[data-opening-delete]').forEach(btn => {
+      btn.addEventListener('click', () => {
+        const r = page.rows[Number(btn.dataset.openingDelete)];
+        if (r) this.remove(r);
+      });
+    });
+  },
+
+  // ── The form ─────────────────────────────────────────────────────────
+  async openForm() {
+    this.selection = { processId: '', process: null, color: '', productTag: '' };
+    ['pool-opening-qty', 'pool-opening-remarks', 'pool-opening-output'].forEach(id => {
+      const el = document.getElementById(id);
+      if (el) el.value = '';
+    });
+    const dateEl = document.getElementById('pool-opening-date');
+    if (dateEl) dateEl.value = MApp.Util.todayInputValue();
+
+    this._paintProcess();
+    this._paintColor();
+    this._paintTag();
+    MApp.Sheet.open('sheet-pool-opening-form');
+
+    const [procRes, bomRes] = await Promise.all([
+      MApp.Api.call('getProcessData').catch(() => null),
+      MApp.Api.call('getBOMProductionData').catch(() => null)
+    ]);
+    this.processes = procRes && procRes.success ? (procRes.data || []).filter(p => p.active) : [];
+    this.products = bomRes && bomRes.success ? (bomRes.data || []) : [];
+  },
+
+  closeForm() { MApp.Sheet.close('sheet-pool-opening-form'); },
+
+  _paintProcess() {
+    const el = document.getElementById('pool-opening-process-field');
+    if (!el) return;
+    const p = this.selection.process;
+    el.textContent = p ? `${p.processName} (Seq ${p.sequence})` : 'Choose a process…';
+    el.classList.toggle('mb-placeholder', !p);
+
+    // The per-entry Output Item Name override, and the Product Tag, only
+    // mean anything for a final-stage process's own finished output. The
+    // server silently blanks both for a WIP process, so offering them
+    // there would be offering an edit that quietly does nothing.
+    const finalStage = !!(p && p.isFinalStage);
+    const outputEl = document.getElementById('pool-opening-output');
+    if (outputEl) {
+      outputEl.value = p ? (p.outputItemName || '') : '';
+      outputEl.readOnly = !finalStage;
+    }
+    const outputHint = document.getElementById('pool-opening-output-hint');
+    if (outputHint) {
+      outputHint.textContent = finalStage
+        ? 'Override only if this batch is tagged differently from the process default.'
+        : 'Set by the process. A per-entry name is only kept for a final-stage process.';
+    }
+    const tagField = document.getElementById('pool-opening-tag-field');
+    if (tagField) tagField.closest('.mb-field').hidden = !finalStage;
+  },
+
+  _paintColor() {
+    const el = document.getElementById('pool-opening-color-field');
+    if (!el) return;
+    const has = this.colors.length > 0;
+    el.textContent = this.selection.color || (has ? 'Choose a colour…' : 'No colour');
+    el.classList.toggle('mb-placeholder', !this.selection.color);
+    const wrap = el.closest('.mb-field');
+    if (wrap) wrap.hidden = !has;
+    const hint = document.getElementById('pool-opening-color-hint');
+    if (hint) {
+      // Required, and worth saying why: an opening balance logged without
+      // a colour on a colour-tracking process lands in an untagged bucket
+      // that a colour-aware lot never looks at, so the stock is entered
+      // and still invisible.
+      hint.textContent = has
+        ? 'Required. This process tracks stock per colour, and an untagged balance is one no lot will ever draw from.'
+        : '';
+    }
+  },
+
+  _paintTag() {
+    const el = document.getElementById('pool-opening-tag-field');
+    if (!el) return;
+    el.textContent = this.selection.productTag || 'Untagged — stays in the pool';
+    el.classList.toggle('mb-placeholder', !this.selection.productTag);
+  },
+
+  async pickProcess() {
+    if (!this.processes.length) {
+      MApp.Toast.error('Process list is still loading. Try again in a moment.');
+      return;
+    }
+    const picked = await MApp.Picker.open({
+      title: 'Choose a process',
+      items: this.processes.map(p => ({
+        value: p.processId, label: p.processName, sublabel: `Seq ${p.sequence}${p.isFinalStage ? ' · final stage' : ''}`
+      })),
+      selectedValue: this.selection.processId
+    });
+    if (!picked) return;
+
+    this.selection.processId = picked.value;
+    this.selection.process = this.processes.find(p => p.processId === picked.value) || null;
+    // A colour chosen for the previous process means nothing here.
+    this.selection.color = '';
+    this.selection.productTag = '';
+    this.colors = [];
+    this._paintProcess();
+    this._paintTag();
+    this._paintColor();
+
+    // Same source the server checks against, so "the picker offered
+    // choices" and "a colour is required" can never disagree.
+    const token = this.selection.processId;
+    let colors = [];
+    try {
+      const res = await MApp.Api.call('getProcessColorGroups', token);
+      colors = (res && res.success) ? (res.data || []) : [];
+    } catch (err) {
+      colors = [];
+    }
+    // A slower response for a process that is no longer chosen must not
+    // paint its colours against the current one.
+    if (this.selection.processId !== token) return;
+    this.colors = colors;
+    this._paintColor();
+  },
+
+  async pickColor() {
+    if (!this.colors.length) return;
+    const picked = await MApp.Picker.open({
+      title: 'Choose a colour',
+      items: this.colors.map(c => ({ value: c, label: c })),
+      selectedValue: this.selection.color
+    });
+    if (!picked) return;
+    this.selection.color = picked.value;
+    this._paintColor();
+  },
+
+  async pickTag() {
+    const items = [{ value: '', label: 'Untagged — stays in the pool' }].concat(
+      this.products.map(p => ({ value: p.productId, label: p.productName, sublabel: p.productId }))
+    );
+    const picked = await MApp.Picker.open({
+      title: 'Product tag', items, selectedValue: this.selection.productTag
+    });
+    if (!picked) return;
+    this.selection.productTag = picked.value;
+    this._paintTag();
+  },
+
+  async save() {
+    if (!this.selection.processId) {
+      MApp.Toast.error('Choose a process.');
+      return;
+    }
+    if (this.colors.length > 0 && !this.selection.color) {
+      MApp.Toast.error('This process tracks stock per colour — choose one, or the balance lands where no lot will look.');
+      return;
+    }
+
+    const raw = String(document.getElementById('pool-opening-qty')?.value ?? '').trim();
+    const qty = parseFloat(raw);
+    if (raw === '' || !isFinite(qty)) {
+      MApp.Toast.error('Enter the opening quantity.');
+      return;
+    }
+    if (qty === 0) {
+      MApp.Toast.error('An opening quantity of zero records nothing.');
+      return;
+    }
+
+    // A negative entry is how a downward correction is written, and it is
+    // allowed -- but it is not what someone recording what was on the
+    // rack meant to type, so it is confirmed rather than assumed.
+    if (qty < 0 && !window.confirm(
+      `Record ${MApp.Util.formatQty(qty)} — a negative opening balance? That takes stock OUT of this bucket.`
+      + ' Use it only to correct an earlier entry.')) return;
+
+    const payload = {
+      processId: this.selection.processId,
+      outputItemName: document.getElementById('pool-opening-output')?.value || '',
+      productTag: this.selection.productTag || '',
+      color: this.selection.color || '',
+      qty,
+      date: document.getElementById('pool-opening-date')?.value || '',
+      remarks: document.getElementById('pool-opening-remarks')?.value || ''
+    };
+
+    const btn = document.getElementById('pool-opening-save-btn');
+    if (btn) { btn.disabled = true; btn.textContent = 'Saving…'; }
+    const res = await MApp.Util.mutateSimple('saveWarehousePoolOpening', [payload], null);
+    if (btn) { btn.disabled = false; btn.textContent = 'Record opening stock'; }
+    if (!res.success) return;
+
+    MApp.Toast.success(res.message || 'Opening stock recorded.');
+    this.closeForm();
+    this.open();
+  },
+
+  async remove(row) {
+    // Deleting an opening entry removes a credit from the bucket and
+    // recalculates, so it can drive an available balance negative. Say
+    // what it is worth rather than asking a bare "are you sure".
+    if (!window.confirm(
+      `Delete this ${MApp.Util.formatQty(row.qty)} entry for ${row.outputItemName}${row.color ? ' · ' + row.color : ''}?`
+      + ' The bucket is recalculated without it.')) return;
+
+    // Both expected values or neither: the server only applies its
+    // concurrency check when both arrive, and skipping it would let a
+    // stale list delete an entry that is no longer the one on screen.
+    const res = await MApp.Util.mutateSimple(
+      'deleteWarehousePoolOpening', [row.rowIdx, row.outputItemName, row.qty], null
+    );
+    if (res.success) {
+      MApp.Toast.success(res.message || 'Opening stock entry deleted.');
+      this.open();
+    }
+  }
 };
 
 // ================================================================

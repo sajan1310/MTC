@@ -249,20 +249,46 @@ describe('MApp.Pool screen', () => {
   });
 });
 
-describe('the pool screen stays read-only', () => {
-  test('offers no adjust, zero or delete', () => {
-    // A negative bucket is evidence. The mobile job is to let someone on
-    // the floor SEE it and know which kind it is -- not to let them tidy
-    // it away where the evidence lives. adjustWarehousePoolManually and
-    // the include/exclude writes stay off this surface.
+describe('a negative bucket cannot be tidied away', () => {
+  // This screen was read-only until the pool writes were ported, on the
+  // reasoning that a negative bucket is evidence and the floor's job is
+  // to SEE it. That reasoning has not changed -- but "no writes at all"
+  // was a blunt way to hold it, and it also meant a genuine recount
+  // could not be entered where the count happens. What is enforced now
+  // is the thing that actually mattered: the correction exists, and it
+  // refuses the one move that erases the evidence.
+  const poolSource = () => {
     const start = MOBILE_JS.indexOf('MApp.Pool = {');
     const next = MOBILE_JS.slice(start + 1).search(/\nMApp\.[A-Z][A-Za-z]* = \{/);
     const src = MOBILE_JS.slice(start, start + 1 + next);
+    if (!src.trim()) throw new Error('MApp.Pool source slice came back empty');
+    return src;
+  };
 
-    expect(src).not.toContain('adjustWarehousePoolManually');
-    expect(src).not.toContain('excludeWarehousePoolColors');
-    expect(src).not.toContain('includeWarehousePoolColor');
-    expect(src).not.toContain('deleteWarehousePoolOpening');
+  test('the attribution refusal is still in the correction path', () => {
+    // Zeroing an attribution negative hides it without moving a part:
+    // the units were credited to a sibling colour, and the bare bucket
+    // is what the next stage's checklist reads.
+    const src = poolSource();
+
+    expect(src).toContain('this.isAttribution(row) && row.availableQty < 0 && newQty >= 0');
+    expect(src).toContain('adjustWarehousePoolManually');
+  });
+
+  test('the refusal sits BEFORE the request, not after it', () => {
+    const src = poolSource();
+    const guard = src.indexOf('this.isAttribution(row) && row.availableQty < 0 && newQty >= 0');
+    const send = src.indexOf("'adjustWarehousePoolManually'");
+
+    expect(guard).toBeGreaterThan(-1);
+    expect(send).toBeGreaterThan(guard);
+  });
+
+  test('every correction carries a reason and a confirmation', () => {
+    const src = poolSource();
+
+    expect(src).toContain('A reason is required');
+    expect(src).toContain('window.confirm(');
   });
 
   test('never derives the ledger client-side', () => {

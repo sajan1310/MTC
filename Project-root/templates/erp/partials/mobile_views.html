@@ -332,6 +332,10 @@
     </div>
     <div id="pool-list"></div>
   </div>
+  <div class="mb-sheet-footer">
+    <button type="button" class="mb-btn mb-btn-secondary" onclick="MApp.PoolOpenings.open()">Opening balances</button>
+    <button type="button" class="mb-btn mb-btn-secondary" onclick="MApp.Pool.openHistory()">Correction history</button>
+  </div>
 </div>
 
 <div class="mb-sheet" id="sheet-pool-ledger" role="dialog" aria-modal="true" aria-labelledby="pool-ledger-title">
@@ -342,6 +346,132 @@
     </button>
   </div>
   <div class="mb-sheet-body" id="pool-ledger-body"></div>
+</div>
+
+<!-- ═══════════════════════════════════════════════════════════════════
+     SHEET — POOL CORRECTION. A correction is not an overwrite: the
+     server appends a compensating opening row for (new - old),
+     recalculates, and logs the before/after against the user. The note
+     above the field names which KIND of negative this bucket is, because
+     the two need opposite actions and look identical as a number.
+     ═══════════════════════════════════════════════════════════════════ -->
+<div class="mb-sheet" id="sheet-pool-adjust" role="dialog" aria-modal="true" aria-labelledby="pool-adjust-heading">
+  <div class="mb-sheet-header">
+    <h2 id="pool-adjust-heading">Correct pool count</h2>
+    <button type="button" class="mapp-topbar-btn" aria-label="Close" onclick="MApp.Pool.closeAdjust()">
+      <svg viewBox="0 0 24 24" width="22" height="22" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><path d="M6 6l12 12M18 6L6 18"/></svg>
+    </button>
+  </div>
+  <div class="mb-sheet-body">
+    <div class="mb-offline-banner" id="pool-adjust-note" style="background:var(--mb-enamel-amber-bg);color:var(--mb-enamel-amber-ink);margin-bottom:var(--mb-sp-4);display:block;" hidden></div>
+    <div class="mb-field">
+      <label for="pool-adjust-bucket">Bucket</label>
+      <input type="text" id="pool-adjust-bucket" readonly>
+    </div>
+    <div class="mb-field">
+      <label for="pool-adjust-old">Available now</label>
+      <input type="text" id="pool-adjust-old" readonly>
+    </div>
+    <div class="mb-field">
+      <label for="pool-adjust-new">Corrected available quantity</label>
+      <input type="number" id="pool-adjust-new" inputmode="decimal" step="any">
+      <div class="mb-field-hint">What is physically there. The difference is recorded as a dated correction entry.</div>
+    </div>
+    <div class="mb-field">
+      <label for="pool-adjust-reason">Reason</label>
+      <textarea id="pool-adjust-reason" rows="2" placeholder="e.g. physical recount 08/09, found 46"></textarea>
+      <div class="mb-field-hint">Required. Stored with the correction and shown in its history.</div>
+    </div>
+  </div>
+  <div class="mb-sheet-footer">
+    <button type="button" class="mb-btn mb-btn-primary" id="pool-adjust-save-btn" onclick="MApp.Pool.submitAdjust()">Save correction</button>
+  </div>
+</div>
+
+<!-- ═══════════════════════════════════════════════════════════════════
+     SHEET — POOL CORRECTION HISTORY. Every manual correction has been
+     logged since the endpoint was written and neither shell ever read
+     the log back, so a pool number that moved without a lot behind it
+     had no account anywhere. This is that account.
+     ═══════════════════════════════════════════════════════════════════ -->
+<div class="mb-sheet" id="sheet-pool-history" role="dialog" aria-modal="true" aria-labelledby="pool-history-heading">
+  <div class="mb-sheet-header">
+    <h2 id="pool-history-heading">Correction history</h2>
+    <button type="button" class="mapp-topbar-btn" aria-label="Close" onclick="MApp.Pool.closeHistory()">
+      <svg viewBox="0 0 24 24" width="22" height="22" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><path d="M6 6l12 12M18 6L6 18"/></svg>
+    </button>
+  </div>
+  <div class="mb-sheet-body" id="pool-history-body"></div>
+</div>
+
+<!-- ═══════════════════════════════════════════════════════════════════
+     SHEETS — POOL OPENING BALANCES. The only way to credit a bucket
+     without completing a lot. Corrections written by "Correct count"
+     land in the same table, so this list labels them rather than letting
+     a judgement call read as an original count.
+     ═══════════════════════════════════════════════════════════════════ -->
+<div class="mb-sheet" id="sheet-pool-openings" role="dialog" aria-modal="true" aria-labelledby="pool-openings-heading">
+  <div class="mb-sheet-header">
+    <h2 id="pool-openings-heading">Opening balances</h2>
+    <button type="button" class="mapp-topbar-btn" aria-label="Close" onclick="MApp.PoolOpenings.close()">
+      <svg viewBox="0 0 24 24" width="22" height="22" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><path d="M6 6l12 12M18 6L6 18"/></svg>
+    </button>
+  </div>
+  <div class="mb-sheet-body">
+    <div class="mb-search">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="11" cy="11" r="7"/><path d="M20 20l-3.5-3.5"/></svg>
+      <input type="search" id="pool-openings-search" placeholder="Item, colour or process…" aria-label="Search opening balances" autocomplete="off">
+    </div>
+    <div id="pool-openings-list"></div>
+  </div>
+  <div class="mb-sheet-footer">
+    <button type="button" class="mb-btn mb-btn-primary" onclick="MApp.PoolOpenings.openForm()">Record opening stock</button>
+  </div>
+</div>
+
+<div class="mb-sheet" id="sheet-pool-opening-form" role="dialog" aria-modal="true" aria-labelledby="pool-opening-form-heading">
+  <div class="mb-sheet-header">
+    <h2 id="pool-opening-form-heading">Record opening stock</h2>
+    <button type="button" class="mapp-topbar-btn" aria-label="Close" onclick="MApp.PoolOpenings.closeForm()">
+      <svg viewBox="0 0 24 24" width="22" height="22" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><path d="M6 6l12 12M18 6L6 18"/></svg>
+    </button>
+  </div>
+  <div class="mb-sheet-body">
+    <div class="mb-field">
+      <label for="pool-opening-process-field">Process</label>
+      <button type="button" class="mb-picker-field mb-placeholder" id="pool-opening-process-field" onclick="MApp.PoolOpenings.pickProcess()">Choose a process…</button>
+    </div>
+    <div class="mb-field">
+      <label for="pool-opening-output">Output item name</label>
+      <input type="text" id="pool-opening-output" readonly>
+      <div class="mb-field-hint" id="pool-opening-output-hint">Set by the process.</div>
+    </div>
+    <div class="mb-field" hidden>
+      <label for="pool-opening-color-field">Colour</label>
+      <button type="button" class="mb-picker-field mb-placeholder" id="pool-opening-color-field" onclick="MApp.PoolOpenings.pickColor()">No colour</button>
+      <div class="mb-field-hint" id="pool-opening-color-hint"></div>
+    </div>
+    <div class="mb-field" hidden>
+      <label for="pool-opening-tag-field">Product tag</label>
+      <button type="button" class="mb-picker-field mb-placeholder" id="pool-opening-tag-field" onclick="MApp.PoolOpenings.pickTag()">Untagged — stays in the pool</button>
+    </div>
+    <div class="mb-field">
+      <label for="pool-opening-qty">Opening quantity</label>
+      <input type="number" id="pool-opening-qty" inputmode="decimal" step="any">
+      <div class="mb-field-hint">Negative only to correct an earlier entry — it takes stock out of the bucket.</div>
+    </div>
+    <div class="mb-field">
+      <label for="pool-opening-date">Date</label>
+      <input type="date" id="pool-opening-date">
+    </div>
+    <div class="mb-field">
+      <label for="pool-opening-remarks">Remarks</label>
+      <textarea id="pool-opening-remarks" rows="2" placeholder="e.g. counted on the rack, 08/09"></textarea>
+    </div>
+  </div>
+  <div class="mb-sheet-footer">
+    <button type="button" class="mb-btn mb-btn-primary" id="pool-opening-save-btn" onclick="MApp.PoolOpenings.save()">Record opening stock</button>
+  </div>
 </div>
 
 <!-- ═══════════════════════════════════════════════════════════════════
@@ -573,7 +703,7 @@
       <span class="mb-card-title">Warehouse Pool</span>
       <svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M9 18l6-6-6-6"/></svg>
     </div>
-    <div class="mb-card-sub">Bucket balances and their ledgers — read-only</div>
+    <div class="mb-card-sub">Bucket balances, their ledgers, and corrections</div>
   </button>
 
   <div class="mapp-section-label mb-mt-4">Logs</div>

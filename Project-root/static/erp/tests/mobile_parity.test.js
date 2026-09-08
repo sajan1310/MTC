@@ -111,13 +111,11 @@ const DESKTOP_ONLY = {
 // The backlog, each tagged with the program phase that closes it. This
 // list may only shrink. Deleting an entry is how a port is "done".
 const BACKLOG = {
-  adjustWarehousePoolManually: 'P6 warehouse pool adjust',
   bulkDeactivateUsers: 'P7 roles (read-only + handoff)',
   createCustomRole: 'P7 roles (read-only + handoff)',
   deleteCustomRole: 'P7 roles (read-only + handoff)',
   deleteDispatchPlanLine: 'P7 dispatch plan checklist',
   deleteReturnsBulk: 'P2 multi-select in the shared list renderer',
-  deleteWarehousePoolOpening: 'P6 warehouse pool openings',
   excludeWarehousePoolColors: 'P6 warehouse pool colour include/exclude',
   // Mis-tagged as a master-data register until now. It is not one: it
   // returns each process's colours with the `removable` subset that
@@ -125,17 +123,15 @@ const BACKLOG = {
   // the pool breakdown which rows may be deleted. It ships with those.
   getAllProcessColorGroups: 'P6 warehouse pool colour include/exclude',
   getDispatchPlans: 'P7 dispatch plan checklist',
-  getWarehousePoolOpeningData: 'P6 warehouse pool openings',
   includeWarehousePoolColor: 'P6 warehouse pool colour include/exclude',
   reorderBOM: 'P7 move-up / move-down ordering',
   reorderProcesses: 'P7 move-up / move-down ordering',
   saveDispatchPlanLine: 'P7 dispatch plan checklist',
-  saveWarehousePoolOpening: 'P6 warehouse pool openings',
   updateCustomRole: 'P7 roles (read-only + handoff)',
 };
 
 // Phase 1 opened at 79. Lower this line as ports land; never raise it.
-const BACKLOG_BASELINE = 17;
+const BACKLOG_BASELINE = 13;
 
 describe('MApp / desktop feature parity', () => {
   test('the registry is being read at all', () => {
