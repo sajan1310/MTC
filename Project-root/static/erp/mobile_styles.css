@@ -639,6 +639,56 @@ textarea:focus-visible,
   line-height: 1;
 }
 
+/* ── List density (MApp.Density) ──────────────────────────────────────
+   One card per row at a comfortable size is the right default and, on a
+   1,600-row stock list, a lot of scrolling. Two alternatives, both
+   applied by stamping data-density on <html> so every list follows at
+   once and no render code knows about it:
+
+     compact  same content, tighter. Roughly a third more rows per screen.
+     grid     multi-column, auto-fill. Two-up on most phones, more on a
+              tablet, and back to one column below ~22rem of usable width
+              rather than crushing the cards -- which is the whole reason
+              this is auto-fill and not a fixed column count.
+
+   Nothing here changes what a card CONTAINS. A density control that also
+   hid fields would be a different feature wearing this one's name, and
+   the field you cannot see is always the one you needed.
+   ──────────────────────────────────────────────────────────────────── */
+:root[data-density="compact"] .mb-card {
+  padding: var(--mb-sp-3);
+  margin-bottom: var(--mb-sp-2);
+}
+
+:root[data-density="compact"] .mb-card-title { font-size: 0.9375rem; }
+:root[data-density="compact"] .mb-card-number { font-size: 1.375rem; }
+
+/* Opt-in, on the containers that hold a uniform run of .mb-card and
+   nothing else. A new list joins by adding the class -- deliberately not
+   an [id$="-list"] match, which would also catch the picker's option
+   list and the two reconciliation screens, neither of which is a card
+   list at all. */
+:root[data-density="grid"] .mb-list {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(11rem, 1fr));
+  gap: var(--mb-sp-3);
+  align-items: start;
+}
+
+:root[data-density="grid"] .mb-list > .mb-card { margin-bottom: 0; }
+
+/* Things that live inside a list but are not one of its records: the
+   negative-bucket banner, "Show 50 more", an empty/error state, and the
+   panel a Stock card expands into. Each spans the full row so it stays
+   where it was written rather than becoming a sibling tile. */
+:root[data-density="grid"] .mb-list > .mb-offline-banner,
+:root[data-density="grid"] .mb-list > .mb-load-more,
+:root[data-density="grid"] .mb-list > .mb-state,
+:root[data-density="grid"] .mb-list > .mb-skel,
+:root[data-density="grid"] .mb-list > [id^="stock-expand-"] {
+  grid-column: 1 / -1;
+}
+
 /* ── Home header + quick actions ────────────────────────────────────── */
 .mapp-home-header { margin-bottom: var(--mb-sp-5); }
 .mapp-home-header .mapp-screen-title { margin-bottom: 2px; }

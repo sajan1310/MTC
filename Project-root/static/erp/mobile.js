@@ -11694,6 +11694,96 @@ MApp.Theme = {
 };
 
 // ================================================================
+// LIST DENSITY — Comfortable / Compact / Grid.
+//
+// One card per row at a comfortable size is the right default and, on a
+// stock list of a thousand-odd item/size rows, a lot of scrolling. The
+// two alternatives are not different screens, only different amounts of
+// the same screen at once: nothing here changes what a card contains. A
+// density control that also hid fields would be a different feature
+// wearing this one's name, and the field you cannot see is always the
+// one you needed.
+//
+// Stamped on <html> like the theme, for the same reason: every list
+// follows at once and no render function has to know this exists.
+// ================================================================
+MApp.Density = {
+  KEY: 'maharaja-erp-mobile-density',
+  MODES: ['comfortable', 'compact', 'grid'],
+  LABELS: {
+    comfortable: 'Comfortable',
+    compact: 'Compact',
+    grid: 'Grid'
+  },
+  BLURB: {
+    comfortable: 'One card per row, full size.',
+    compact: 'Same cards, tighter — about a third more rows per screen.',
+    grid: 'Side by side where the screen is wide enough for it.'
+  },
+
+  read() {
+    let stored = null;
+    try { stored = localStorage.getItem(this.KEY); } catch (e) { /* storage inaccessible */ }
+    return this.MODES.indexOf(stored) > -1 ? stored : 'comfortable';
+  },
+
+  // Comfortable removes the attribute rather than writing a value, so the
+  // default costs no selector matching and the stylesheet reads as
+  // "cards, plus two overrides" rather than three equal branches.
+  apply(mode) {
+    const value = this.MODES.indexOf(mode) > -1 ? mode : 'comfortable';
+    const root = document.documentElement;
+    if (value === 'comfortable') root.removeAttribute('data-density');
+    else root.setAttribute('data-density', value);
+    return value;
+  },
+
+  set(mode) {
+    const value = this.apply(mode);
+    try { localStorage.setItem(this.KEY, value); } catch (e) { /* storage inaccessible */ }
+    this.paintButton();
+    return value;
+  },
+
+  init() {
+    this.apply(this.read());
+    this.paintButton();
+  },
+
+  // In the top bar rather than buried in More: this is a per-list reading
+  // preference, and the moment someone wants it is while they are looking
+  // at the list that is too long.
+  async choose() {
+    const current = this.read();
+    const picked = await MApp.Picker.open({
+      title: 'List layout',
+      items: this.MODES.map(m => ({
+        value: m, label: this.LABELS[m], sublabel: this.BLURB[m]
+      })),
+      selectedValue: current
+    });
+    if (!picked) return;
+    this.set(picked.value);
+    MApp.Haptics.light();
+  },
+
+  paintButton() {
+    const btn = document.getElementById('mapp-density-btn');
+    if (!btn) return;
+    const mode = this.read();
+    btn.setAttribute('aria-label', `List layout: ${this.LABELS[mode]}`);
+    // Three glyphs, one per mode, so the control shows the state it is in
+    // instead of a generic icon that means "settings are somewhere".
+    const icons = {
+      comfortable: '<rect x="3" y="4" width="18" height="6" rx="1.5"/><rect x="3" y="14" width="18" height="6" rx="1.5"/>',
+      compact: '<rect x="3" y="4" width="18" height="3.4" rx="1"/><rect x="3" y="10.3" width="18" height="3.4" rx="1"/><rect x="3" y="16.6" width="18" height="3.4" rx="1"/>',
+      grid: '<rect x="3" y="4" width="7.5" height="7.5" rx="1.5"/><rect x="13.5" y="4" width="7.5" height="7.5" rx="1.5"/><rect x="3" y="12.5" width="7.5" height="7.5" rx="1.5"/><rect x="13.5" y="12.5" width="7.5" height="7.5" rx="1.5"/>'
+    };
+    btn.innerHTML = `<svg viewBox="0 0 24 24" width="22" height="22" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true">${icons[mode]}</svg>`;
+  }
+};
+
+// ================================================================
 // MORE — links out to Returns/Items lookup/desktop UI + About row
 // ================================================================
 MApp.More = {
@@ -11752,6 +11842,7 @@ document.addEventListener('DOMContentLoaded', () => {
   // what actually prevents the flash. This one also fixes up the
   // theme-color meta, which needs a <head> that exists.
   MApp.Theme.init();
+  MApp.Density.init();
   MApp.PullToRefresh.init();
   MApp.Shell.init();
 

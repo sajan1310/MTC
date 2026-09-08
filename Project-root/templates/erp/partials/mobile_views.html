@@ -64,7 +64,7 @@
       <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="11" cy="11" r="7"/><path d="M20 20l-3.5-3.5"/></svg>
       <input type="search" id="master-search" placeholder="Search…" aria-label="Search master data" autocomplete="off">
     </div>
-    <div id="master-list"></div>
+    <div class="mb-list" id="master-list"></div>
   </div>
   <div class="mb-sheet-footer">
     <button type="button" class="mb-btn mb-btn-primary" onclick="MApp.Master.openForm(null)">Add</button>
@@ -102,7 +102,7 @@
       <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="11" cy="11" r="7"/><path d="M20 20l-3.5-3.5"/></svg>
       <input type="search" id="stock-groups-search" placeholder="Search groups…" aria-label="Search stock groups" autocomplete="off">
     </div>
-    <div id="stock-groups-list"></div>
+    <div class="mb-list" id="stock-groups-list"></div>
   </div>
   <div class="mb-sheet-footer">
     <button type="button" class="mb-btn mb-btn-primary" onclick="MApp.StockGroups.openForm(null)">Add</button>
@@ -181,7 +181,7 @@
       <button type="button" class="mb-filter-chip" data-order-filter="Order Confirmed" aria-pressed="false" onclick="MApp.ClientOrders.filterBy('Order Confirmed')">Confirmed</button>
       <button type="button" class="mb-filter-chip" data-order-filter="Cancelled" aria-pressed="false" onclick="MApp.ClientOrders.filterBy('Cancelled')">Cancelled</button>
     </div>
-    <div id="client-orders-list"></div>
+    <div class="mb-list" id="client-orders-list"></div>
   </div>
   <div class="mb-sheet-footer">
     <button type="button" class="mb-btn mb-btn-primary" onclick="MApp.ClientOrders.openForm(null)">New PI / Estimate</button>
@@ -396,7 +396,7 @@
       <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="11" cy="11" r="7"/><path d="M20 20l-3.5-3.5"/></svg>
       <input type="search" id="pool-openings-search" placeholder="Item, colour or process…" aria-label="Search opening balances" autocomplete="off">
     </div>
-    <div id="pool-openings-list"></div>
+    <div class="mb-list" id="pool-openings-list"></div>
   </div>
   <div class="mb-sheet-footer">
     <button type="button" class="mb-btn mb-btn-primary" onclick="MApp.PoolOpenings.openForm()">Record opening stock</button>
@@ -605,7 +605,7 @@
       <input type="search" id="stock-search" placeholder="Search items..." aria-label="Search stock" autocomplete="off">
     </div>
 
-    <div id="stock-list">
+    <div class="mb-list" id="stock-list">
       <div class="mb-skel mb-skel-card"></div>
       <div class="mb-skel mb-skel-card"></div>
       <div class="mb-skel mb-skel-card"></div>
@@ -627,7 +627,7 @@
       <button type="button" class="mb-filter-chip" data-pool-filter="attribution" onclick="MApp.Pool.filterBy('attribution')">Attribution</button>
       <button type="button" class="mb-filter-chip" data-pool-filter="recount" onclick="MApp.Pool.filterBy('recount')">Needs a count</button>
     </div>
-    <div id="pool-list"></div>
+    <div class="mb-list" id="pool-list"></div>
     <!-- The sheet footer these two lived in went with the sheet. They sit
          after the list rather than before it: both are occasional, and
          neither should push the buckets down the screen. -->
@@ -649,7 +649,7 @@
     <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="11" cy="11" r="7"/><path d="M20 20l-3.5-3.5"/></svg>
     <input type="search" id="production-search" placeholder="Lot, process, contractor, colour…" aria-label="Search production lots" autocomplete="off">
   </div>
-  <div id="production-list">
+  <div class="mb-list" id="production-list">
     <div class="mb-skel mb-skel-card"></div>
     <div class="mb-skel mb-skel-card"></div>
     <div class="mb-skel mb-skel-card"></div>
@@ -669,7 +669,7 @@
     <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="11" cy="11" r="7"/><path d="M20 20l-3.5-3.5"/></svg>
     <input type="search" id="dispatch-search" placeholder="Challan, client, product…" aria-label="Search dispatches" autocomplete="off">
   </div>
-  <div id="dispatch-list">
+  <div class="mb-list" id="dispatch-list">
     <div class="mb-skel mb-skel-card"></div>
     <div class="mb-skel mb-skel-card"></div>
     <div class="mb-skel mb-skel-card"></div>
@@ -710,7 +710,7 @@
   </button>
 
   <div class="mapp-section-label mb-mt-4">Returns</div>
-  <div id="more-returns-list">
+  <div class="mb-list" id="more-returns-list">
     <div class="mb-skel mb-skel-card"></div>
   </div>
   <button type="button" class="mb-btn mb-btn-secondary mb-mb-4" onclick="MApp.Returns.openNewReturnSheet()">Log Return</button>
@@ -1021,7 +1021,7 @@
       <button type="button" class="mb-filter-chip" data-status="Partially Received" onclick="MApp.PO.filterByStatus('Partially Received')">Partial</button>
       <button type="button" class="mb-filter-chip" data-status="Completed" onclick="MApp.PO.filterByStatus('Completed')">Completed</button>
     </div>
-    <div id="po-ledger-list"></div>
+    <div class="mb-list" id="po-ledger-list"></div>
   </div>
   <button type="button" class="mb-fab" onclick="MApp.PO.openNewSheet()">
     <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><path d="M12 5v14M5 12h14"/></svg>
@@ -1064,7 +1064,7 @@
       <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="11" cy="11" r="7"/><path d="M21 21l-4.3-4.3"/></svg>
       <input type="search" id="bill-ledger-search" placeholder="Search bill number or vendor..." aria-label="Search bills" autocomplete="off">
     </div>
-    <div id="bill-ledger-list"></div>
+    <div class="mb-list" id="bill-ledger-list"></div>
   </div>
   <button type="button" class="mb-fab" onclick="MApp.Bill.openForm(null)">
     <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><path d="M12 5v14M5 12h14"/></svg>
@@ -1145,7 +1145,7 @@
       <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="11" cy="11" r="7"/><path d="M21 21l-4.3-4.3"/></svg>
       <input type="search" id="directory-search" placeholder="Search..." aria-label="Search directory" autocomplete="off">
     </div>
-    <div id="directory-list"></div>
+    <div class="mb-list" id="directory-list"></div>
   </div>
   <button type="button" class="mb-fab" id="directory-fab" onclick="MApp.Directory.openForm(null)">
     <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><path d="M12 5v14M5 12h14"/></svg>
@@ -1298,7 +1298,7 @@
       <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="11" cy="11" r="7"/><path d="M21 21l-4.3-4.3"/></svg>
       <input type="search" id="items-lookup-search" placeholder="Search item master..." aria-label="Search item master" autocomplete="off">
     </div>
-    <div id="items-lookup-list"></div>
+    <div class="mb-list" id="items-lookup-list"></div>
   </div>
   <button type="button" class="mb-fab" onclick="MApp.Items.openForm(null)">
     <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><path d="M12 5v14M5 12h14"/></svg>
@@ -1344,7 +1344,7 @@
       <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="11" cy="11" r="7"/><path d="M21 21l-4.3-4.3"/></svg>
       <input type="search" id="issue-log-search" placeholder="Search issued to or item..." aria-label="Search issue log" autocomplete="off">
     </div>
-    <div id="issue-log-list"></div>
+    <div class="mb-list" id="issue-log-list"></div>
   </div>
   <button type="button" class="mb-fab" onclick="MApp.Issue.openForm()">
     <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><path d="M12 5v14M5 12h14"/></svg>
@@ -1381,7 +1381,7 @@
       <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="11" cy="11" r="7"/><path d="M21 21l-4.3-4.3"/></svg>
       <input type="search" id="wastage-log-search" placeholder="Search vendor or item..." aria-label="Search wastage log" autocomplete="off">
     </div>
-    <div id="wastage-log-list"></div>
+    <div class="mb-list" id="wastage-log-list"></div>
   </div>
   <button type="button" class="mb-fab" onclick="MApp.Wastage.openForm()">
     <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><path d="M12 5v14M5 12h14"/></svg>
@@ -1423,7 +1423,7 @@
       <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="11" cy="11" r="7"/><path d="M21 21l-4.3-4.3"/></svg>
       <input type="search" id="process-list-search" placeholder="Search process or output item..." aria-label="Search processes" autocomplete="off">
     </div>
-    <div id="process-list-list"></div>
+    <div class="mb-list" id="process-list-list"></div>
   </div>
   <button type="button" class="mb-fab" onclick="MApp.Process.openForm(null)">
     <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><path d="M12 5v14M5 12h14"/></svg>
@@ -1490,7 +1490,7 @@
       <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="11" cy="11" r="7"/><path d="M21 21l-4.3-4.3"/></svg>
       <input type="search" id="bom-list-search" placeholder="Search product..." aria-label="Search bill of materials" autocomplete="off">
     </div>
-    <div id="bom-list-list"></div>
+    <div class="mb-list" id="bom-list-list"></div>
   </div>
   <button type="button" class="mb-fab" onclick="MApp.BOM.openForm(null)">
     <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><path d="M12 5v14M5 12h14"/></svg>
@@ -1535,7 +1535,7 @@
       <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="11" cy="11" r="7"/><path d="M21 21l-4.3-4.3"/></svg>
       <input type="search" id="admin-users-search" placeholder="Search name or email..." aria-label="Search users" autocomplete="off">
     </div>
-    <div id="admin-users-list"></div>
+    <div class="mb-list" id="admin-users-list"></div>
   </div>
   <button type="button" class="mb-fab" onclick="MApp.Admin.openCreateForm()">
     <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><path d="M12 5v14M5 12h14"/></svg>
