@@ -8313,7 +8313,8 @@ MApp.GlobalSearch = {
     { label: 'Colours', keywords: 'colour color master paint shade', run: () => MApp.Master.open('color') },
     { label: 'Models', keywords: 'model master kalpi ranger', run: () => MApp.Master.open('model') },
     { label: 'Process Types', keywords: 'process type master stage', run: () => MApp.Master.open('processType') },
-    { label: 'Units', keywords: 'unit master conversion dozen kg factor', run: () => MApp.Master.open('unit') }
+    { label: 'Units', keywords: 'unit master conversion dozen kg factor', run: () => MApp.Master.open('unit') },
+    { label: 'Stock Groups', keywords: 'group set collection low stock report stickers bolts', run: () => MApp.StockGroups.open() }
   ],
 
   DEST_SPEC: {
@@ -8743,6 +8744,401 @@ MApp.Master = {
     if (!window.confirm(`Delete ${cfg.singular.toLowerCase()} “${name}”? ${cfg.note}`)) return;
     const res = await MApp.Util.mutateSimple(cfg.remove, [name], `${cfg.singular} deleted.`);
     if (res.success) this.open(this.type);
+  }
+};
+
+// ================================================================
+// STOCK GROUPS (More tab) — named collections of item/size rows.
+//
+// The point of a group is that somebody already did the picking: the
+// Low Stock Report filters and prints group-wise instead of making the
+// operator re-select the same forty rows every time. Building one was
+// desktop-only, which meant the person who knows which parts belong
+// together -- the one standing at the rack -- could not record it.
+//
+// Two sheets, because they are two different jobs: the register (name
+// and remarks) and the membership checklist, which is a long list of
+// every item/size row in stock.
+// ================================================================
+MApp.StockGroups = {
+  SEARCH: {
+    fields: [
+      { key: 'name', weight: 10, label: 'Group' },
+      { key: 'remarks', weight: 3, label: 'Remarks' }
+    ]
+  },
+
+  groups: [],
+  entries: [],
+  filtered: [],
+  searchTerm: '',
+  editing: null,
+
+  async open() {
+    const listEl = document.getElementById('stock-groups-list');
+    const input = document.getElementById('stock-groups-search');
+    if (input) input.value = '';
+    this.searchTerm = '';
+    MApp.SearchBox.attach('stock-groups-search', term => this.onSearch(term));
+
+    MApp.Util.renderSkeleton(listEl, 4);
+    MApp.Sheet.open('sheet-stock-groups');
+
+    try {
+      const res = await MApp.Api.call('getStockGroupsData');
+      if (!res || !res.success) {
+        MApp.Util.renderError(listEl, res && res.message, () => this.open());
+        return;
+      }
+      this.groups = res.data || [];
+      this.entries = MApp.Search.index(this.groups, this.SEARCH);
+      MApp.Paging.reset('stockGroups');
+      this.filtered = this.groups;
+      this.render();
+    } catch (err) {
+      MApp.Util.renderError(listEl, err && err.message, () => this.open());
+    }
+  },
+
+  close() { MApp.Sheet.close('sheet-stock-groups'); },
+
+  onSearch(term) {
+    this.searchTerm = term || '';
+    MApp.Paging.reset('stockGroups');
+    this.filtered = MApp.Search.run(this.entries, this.searchTerm);
+    this.render();
+  },
+
+  render() {
+    const listEl = document.getElementById('stock-groups-list');
+    if (!listEl) return;
+
+    const page = MApp.Paging.take('stockGroups', this.filtered, () => this.render());
+    MApp.SearchBox.setCount('stock-groups-search', page.shown, page.total, page.meta);
+
+    if (this.filtered.length === 0) {
+      MApp.Util.renderEmpty(listEl, {
+        title: 'No stock groups',
+        body: this.searchTerm.trim()
+          ? `Nothing matches “${this.searchTerm.trim()}”.`
+          : 'Tap Add to make one, then choose which item/size rows belong to it.'
+      });
+      return;
+    }
+
+    listEl.innerHTML = page.rows.map((g, i) => {
+      const count = (g.items || []).length;
+      return `
+      <div class="mb-card">
+        <div class="mb-card-row">
+          <div>
+            <div class="mb-card-title">${MApp.Util.escapeHtml(g.name)}</div>
+            ${g.remarks ? `<div class="mb-card-sub">${MApp.Util.escapeHtml(g.remarks)}</div>` : ''}
+          </div>
+          <div style="text-align:right;">
+            <div class="mb-card-number">${count}</div>
+            <div class="mb-card-sub">${count === 1 ? 'row' : 'rows'}</div>
+          </div>
+        </div>
+        <div class="mb-mt-2" style="display:flex; gap:var(--mb-sp-4); flex-wrap:wrap;">
+          <button type="button" class="mb-btn-text" style="padding:0;min-height:auto;" data-group-action="items" data-group-index="${i}">Manage items</button>
+          <button type="button" class="mb-btn-text" style="padding:0;min-height:auto;" data-group-action="edit" data-group-index="${i}">Rename</button>
+          <button type="button" class="mb-btn-text" style="padding:0;min-height:auto;color:var(--mb-enamel-red-ink);" data-group-action="delete" data-group-index="${i}">Delete</button>
+        </div>
+      </div>`;
+    }).join('') + MApp.Paging.moreHtml(page);
+
+    listEl.querySelectorAll('[data-group-action]').forEach(btn => {
+      btn.addEventListener('click', () => {
+        const g = page.rows[Number(btn.dataset.groupIndex)];
+        if (!g) return;
+        const action = btn.dataset.groupAction;
+        if (action === 'items') this.openItems(g);
+        else if (action === 'edit') this.openForm(g);
+        else this.remove(g);
+      });
+    });
+  },
+
+  formSpec() {
+    return {
+      id: 'stock-group-form',
+      fields: [
+        { key: 'name', label: 'Group Name', type: 'text', required: true },
+        { key: 'remarks', label: 'Remarks', type: 'multiline' }
+      ]
+    };
+  },
+
+  openForm(group) {
+    this.editing = group || null;
+    const titleEl = document.getElementById('stock-group-form-title');
+    if (titleEl) titleEl.textContent = group ? `Rename “${group.name}”` : 'Add Stock Group';
+    MApp.Form.render('stock-group-form-body', this.formSpec(), group || {});
+    MApp.Sheet.open('sheet-stock-group-form');
+  },
+
+  closeForm() { MApp.Sheet.close('sheet-stock-group-form'); },
+
+  async save() {
+    const spec = this.formSpec();
+    const values = MApp.Form.read(spec);
+    if (!MApp.Form.validate(spec, values)) return;
+
+    // The server keys an edit off a numeric id and skips its duplicate-
+    // name check only when the name is unchanged, so the id has to be the
+    // real one rather than the typed name.
+    const editing = this.editing;
+    const payload = {
+      id: editing ? editing.id : null,
+      name: values.name,
+      remarks: values.remarks || ''
+    };
+
+    const btn = document.getElementById('stock-group-form-save-btn');
+    if (btn) { btn.disabled = true; btn.textContent = 'Saving…'; }
+    const res = await MApp.Util.mutateSimple('saveStockGroup', [payload], null);
+    if (btn) { btn.disabled = false; btn.textContent = 'Save'; }
+    if (!res.success) return;
+
+    MApp.Toast.success(res.message || 'Stock group saved.');
+    this.closeForm();
+    await this.open();
+
+    // A group with nothing in it does nothing, so a brand-new one goes
+    // straight into its own checklist rather than leaving the operator to
+    // find the Manage items button on their own.
+    if (!editing) {
+      const id = res.data && res.data.id;
+      const created = this.groups.find(g => g.id === id);
+      if (created) this.openItems(created);
+    }
+  },
+
+  async remove(group) {
+    // Soft delete, and the membership rows are deliberately left behind
+    // server-side, so this is recoverable in the database. It is still a
+    // named thing somebody built by hand, so say what goes.
+    const n = (group.items || []).length;
+    if (!window.confirm(`Delete stock group “${group.name}”? Its ${n} item/size row(s) stop being grouped; the items themselves are untouched.`)) return;
+    const res = await MApp.Util.mutateSimple('deleteStockGroup', [group.id], null);
+    if (res.success) {
+      MApp.Toast.success(res.message || 'Stock group deleted.');
+      this.open();
+    }
+  },
+
+  // ── Membership checklist ────────────────────────────────────────────
+  // Keyed on MApp.Stock._key(name, size), the same normalisation the
+  // Stock tab uses, so a group built here and one built on desktop agree
+  // about what "the same row" means.
+  itemsGroup: null,
+  selectedKeys: null,
+  itemsSearch: '',
+  itemsFilter: 'all',
+  stockRows: [],
+
+  async openItems(group) {
+    this.itemsGroup = group;
+    this.itemsSearch = '';
+    this.itemsFilter = 'all';
+    this.selectedKeys = new Set((group.items || []).map(it => MApp.Stock._key(it.name, it.size)));
+
+    const titleEl = document.getElementById('stock-group-items-title');
+    if (titleEl) titleEl.textContent = `Items — ${group.name}`;
+    const input = document.getElementById('stock-group-items-search');
+    if (input) input.value = '';
+    MApp.SearchBox.attach('stock-group-items-search', term => {
+      this.itemsSearch = term || '';
+      this.renderItems();
+    });
+    this._paintFilterChips();
+
+    const body = document.getElementById('stock-group-items-body');
+    MApp.Util.renderSkeleton(body, 5);
+    MApp.Sheet.open('sheet-stock-group-items');
+
+    try {
+      const res = await MApp.Api.callCached('getStockData');
+      if (!res || !res.success) {
+        MApp.Util.renderError(body, res && res.message, () => this.openItems(group));
+        return;
+      }
+      this.stockRows = res.data || [];
+      this.renderItems();
+    } catch (err) {
+      MApp.Util.renderError(body, err && err.message, () => this.openItems(group));
+    }
+  },
+
+  closeItems() { MApp.Sheet.close('sheet-stock-group-items'); },
+
+  setItemsFilter(mode) {
+    this.itemsFilter = mode || 'all';
+    this._paintFilterChips();
+    this.renderItems();
+  },
+
+  _paintFilterChips() {
+    const bar = document.getElementById('stock-group-items-filters');
+    if (!bar) return;
+    bar.querySelectorAll('[data-items-filter]').forEach(b => {
+      const on = b.dataset.itemsFilter === this.itemsFilter;
+      b.classList.toggle('active', on);
+      b.setAttribute('aria-pressed', on ? 'true' : 'false');
+    });
+  },
+
+  // The rows the current search and filter leave on screen. Select all
+  // and Select none act on exactly this set: a "select all" that quietly
+  // reached past the filter would be the one destructive control here,
+  // because the save replaces the group's whole membership.
+  visibleRows() {
+    const term = String(this.itemsSearch || '').trim().toLowerCase();
+    return (this.stockRows || []).filter(r => {
+      if (term) {
+        const hay = `${r.name || ''} ${r.size || ''}`.toLowerCase();
+        if (!hay.includes(term)) return false;
+      }
+      const on = this.selectedKeys.has(MApp.Stock._key(r.name, r.size));
+      if (this.itemsFilter === 'selected' && !on) return false;
+      if (this.itemsFilter === 'unselected' && on) return false;
+      return true;
+    });
+  },
+
+  selectAllVisible(on) {
+    this.visibleRows().forEach(r => {
+      const key = MApp.Stock._key(r.name, r.size);
+      if (on) this.selectedKeys.add(key);
+      else this.selectedKeys.delete(key);
+    });
+    this.renderItems();
+  },
+
+  toggleRow(name, size) {
+    const key = MApp.Stock._key(name, size);
+    if (this.selectedKeys.has(key)) this.selectedKeys.delete(key);
+    else this.selectedKeys.add(key);
+    this.renderItems();
+  },
+
+  toggleItem(name, on) {
+    this.visibleRows()
+      .filter(r => String(r.name) === String(name))
+      .forEach(r => {
+        const key = MApp.Stock._key(r.name, r.size);
+        if (on) this.selectedKeys.add(key);
+        else this.selectedKeys.delete(key);
+      });
+    this.renderItems();
+  },
+
+  renderItems() {
+    const body = document.getElementById('stock-group-items-body');
+    if (!body) return;
+
+    const countEl = document.getElementById('stock-group-items-count');
+    if (countEl) {
+      const n = this.selectedKeys.size;
+      countEl.textContent = n === 1 ? '1 row selected' : `${n} rows selected`;
+    }
+
+    const visible = this.visibleRows();
+    if (visible.length === 0) {
+      MApp.Util.renderEmpty(body, {
+        title: 'Nothing to show',
+        body: 'No stock row matches this search and filter.'
+      });
+      return;
+    }
+
+    // One card per item name, its sizes as chips inside it. Stock is one
+    // row per item/size and a flat list of a thousand of those is
+    // unreadable on a phone -- the sizes of one item belong together, and
+    // the header toggles all of them at once.
+    const byName = new Map();
+    visible.forEach(r => {
+      if (!byName.has(r.name)) byName.set(r.name, []);
+      byName.get(r.name).push(r);
+    });
+    const names = [...byName.keys()].sort((a, b) => String(a).localeCompare(String(b)));
+
+    body.innerHTML = names.map(name => {
+      const rows = byName.get(name).slice()
+        .sort((a, b) => String(a.size || '').localeCompare(String(b.size || '')));
+      const on = rows.filter(r => this.selectedKeys.has(MApp.Stock._key(r.name, r.size))).length;
+      const all = on === rows.length;
+      return `
+      <div class="mb-card">
+        <div class="mb-card-row">
+          <div class="mb-card-title">${MApp.Util.escapeHtml(name)}</div>
+          <button type="button" class="mb-btn-text" style="padding:0;min-height:auto;"
+                  data-item-toggle="${MApp.Util.escapeHtml(name)}" data-item-on="${all ? '0' : '1'}">
+            ${on}/${rows.length} · ${all ? 'Clear all' : 'Select all'}
+          </button>
+        </div>
+        <div class="mb-color-chip-list mb-mt-2">
+          ${rows.map(r => {
+    const checked = this.selectedKeys.has(MApp.Stock._key(r.name, r.size));
+    return `
+            <div class="mb-color-chip${checked ? ' checked' : ''}">
+              <button type="button" class="mb-color-chip-toggle" aria-pressed="${checked ? 'true' : 'false'}"
+                      data-size-item="${MApp.Util.escapeHtml(r.name)}" data-size-toggle="${MApp.Util.escapeHtml(r.size || '')}">
+                <span>${MApp.Util.escapeHtml(r.size || 'GENERAL')}</span>
+                <span class="mb-text-sm${r.isLowStock ? ' mb-alert' : ' mb-text-steel'}">${MApp.Util.formatQty(r.currentStock)}</span>
+              </button>
+            </div>`;
+  }).join('')}
+        </div>
+      </div>`;
+    }).join('');
+
+    body.querySelectorAll('[data-item-toggle]').forEach(btn => {
+      btn.addEventListener('click', () => this.toggleItem(btn.dataset.itemToggle, btn.dataset.itemOn === '1'));
+    });
+    body.querySelectorAll('[data-size-toggle]').forEach(btn => {
+      btn.addEventListener('click', () => this.toggleRow(btn.dataset.sizeItem, btn.dataset.sizeToggle));
+    });
+  },
+
+  async saveItems() {
+    const group = this.itemsGroup;
+    if (!group) return;
+
+    // Sent as the whole desired set rather than a diff: setStockGroupItems
+    // deletes the group's rows and re-inserts these. That also makes an
+    // empty selection a real instruction -- empty the group -- rather
+    // than a mistake to swallow, so it is confirmed, not blocked.
+    const keys = [...this.selectedKeys];
+    if (keys.length === 0 &&
+        !window.confirm(`Save “${group.name}” with no items? The group stays, but nothing is in it.`)) return;
+
+    // The key is lower-cased for comparison and the server stores what it
+    // is given, so send the stock row's own casing back, not the key's.
+    // A key with no matching row is one the group already held for an
+    // item that has since left Stock; it is carried through unchanged
+    // rather than silently dropped by this screen.
+    const byKey = {};
+    (this.stockRows || []).forEach(r => { byKey[MApp.Stock._key(r.name, r.size)] = r; });
+    const payload = keys.map(key => {
+      const row = byKey[key];
+      if (row) return { name: row.name, size: row.size || '' };
+      const at = key.lastIndexOf('||');
+      return { name: key.slice(0, at), size: key.slice(at + 2) };
+    });
+
+    const btn = document.getElementById('stock-group-items-save-btn');
+    if (btn) { btn.disabled = true; btn.textContent = 'Saving…'; }
+    const res = await MApp.Util.mutateSimple(
+      'setStockGroupItems', [{ groupId: group.id, items: payload }], null
+    );
+    if (btn) { btn.disabled = false; btn.textContent = 'Save items'; }
+    if (!res.success) return;
+
+    MApp.Toast.success(res.message || 'Group items saved.');
+    this.closeItems();
+    this.open();
   }
 };
 

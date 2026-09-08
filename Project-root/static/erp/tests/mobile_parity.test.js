@@ -111,14 +111,12 @@ const BACKLOG = {
   deleteCustomRole: 'P7 roles (read-only + handoff)',
   deleteDispatchPlanLine: 'P7 dispatch plan checklist',
   deleteReturnsBulk: 'P2 multi-select in the shared list renderer',
-  deleteStockGroup: 'P6 master-data registers',
   deleteWarehousePoolOpening: 'P6 warehouse pool openings',
   excludeWarehousePoolColors: 'P6 warehouse pool colour include/exclude',
   getAllProcessColorGroups: 'P6 master-data registers',
   getClientOrdersData: 'P6 client orders',
   getDispatchPlans: 'P7 dispatch plan checklist',
   getNextProductId: 'P6 master-data registers',
-  getStockGroupsData: 'P6 master-data registers',
   getWarehousePoolOpeningData: 'P6 warehouse pool openings',
   includeWarehousePoolColor: 'P6 warehouse pool colour include/exclude',
   reorderBOM: 'P7 move-up / move-down ordering',
@@ -126,14 +124,12 @@ const BACKLOG = {
   saveClientOrder: 'P6 client orders',
   saveDispatchPlanLine: 'P7 dispatch plan checklist',
   saveProductionSheet: 'P6 production status + sheet',
-  saveStockGroup: 'P6 master-data registers',
   saveWarehousePoolOpening: 'P6 warehouse pool openings',
-  setStockGroupItems: 'P6 master-data registers',
   updateCustomRole: 'P7 roles (read-only + handoff)',
 };
 
 // Phase 1 opened at 79. Lower this line as ports land; never raise it.
-const BACKLOG_BASELINE = 27;
+const BACKLOG_BASELINE = 23;
 
 describe('MApp / desktop feature parity', () => {
   test('the registry is being read at all', () => {

@@ -85,6 +85,79 @@
 </div>
 
 <!-- ═══════════════════════════════════════════════════════════════════
+     SHEETS — STOCK GROUPS (More tab). Three of them: the register, its
+     name/remarks form, and the membership checklist. The checklist is
+     its own sheet because it is a different job on a different scale --
+     a group's members are picked out of every item/size row in Stock.
+     ═══════════════════════════════════════════════════════════════════ -->
+<div class="mb-sheet" id="sheet-stock-groups" role="dialog" aria-modal="true" aria-labelledby="stock-groups-title">
+  <div class="mb-sheet-header">
+    <h2 id="stock-groups-title">Stock Groups</h2>
+    <button type="button" class="mapp-topbar-btn" aria-label="Close" onclick="MApp.StockGroups.close()">
+      <svg viewBox="0 0 24 24" width="22" height="22" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><path d="M6 6l12 12M18 6L6 18"/></svg>
+    </button>
+  </div>
+  <div class="mb-sheet-body">
+    <div class="mb-search">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="11" cy="11" r="7"/><path d="M20 20l-3.5-3.5"/></svg>
+      <input type="search" id="stock-groups-search" placeholder="Search groups…" aria-label="Search stock groups" autocomplete="off">
+    </div>
+    <div id="stock-groups-list"></div>
+  </div>
+  <div class="mb-sheet-footer">
+    <button type="button" class="mb-btn mb-btn-primary" onclick="MApp.StockGroups.openForm(null)">Add</button>
+  </div>
+</div>
+
+<div class="mb-sheet" id="sheet-stock-group-form" role="dialog" aria-modal="true" aria-labelledby="stock-group-form-title">
+  <div class="mb-sheet-header">
+    <h2 id="stock-group-form-title">Add Stock Group</h2>
+    <button type="button" class="mapp-topbar-btn" aria-label="Close" onclick="MApp.StockGroups.closeForm()">
+      <svg viewBox="0 0 24 24" width="22" height="22" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><path d="M6 6l12 12M18 6L6 18"/></svg>
+    </button>
+  </div>
+  <div class="mb-sheet-body" id="stock-group-form-body"></div>
+  <div class="mb-sheet-footer">
+    <button type="button" class="mb-btn mb-btn-primary" id="stock-group-form-save-btn" onclick="MApp.StockGroups.save()">Save</button>
+  </div>
+</div>
+
+<div class="mb-sheet" id="sheet-stock-group-items" role="dialog" aria-modal="true" aria-labelledby="stock-group-items-title">
+  <div class="mb-sheet-header">
+    <h2 id="stock-group-items-title">Items</h2>
+    <button type="button" class="mapp-topbar-btn" aria-label="Close" onclick="MApp.StockGroups.closeItems()">
+      <svg viewBox="0 0 24 24" width="22" height="22" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><path d="M6 6l12 12M18 6L6 18"/></svg>
+    </button>
+  </div>
+  <div class="mb-sheet-body">
+    <div class="mb-search">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="11" cy="11" r="7"/><path d="M20 20l-3.5-3.5"/></svg>
+      <input type="search" id="stock-group-items-search" placeholder="Search items…" aria-label="Search stock rows" autocomplete="off">
+    </div>
+    <div class="mb-filter-chip-row" id="stock-group-items-filters">
+      <button type="button" class="mb-filter-chip active" data-items-filter="all" aria-pressed="true" onclick="MApp.StockGroups.setItemsFilter('all')">All</button>
+      <button type="button" class="mb-filter-chip" data-items-filter="selected" aria-pressed="false" onclick="MApp.StockGroups.setItemsFilter('selected')">In group</button>
+      <button type="button" class="mb-filter-chip" data-items-filter="unselected" aria-pressed="false" onclick="MApp.StockGroups.setItemsFilter('unselected')">Not in group</button>
+    </div>
+    <!-- Select all / none act on what the search and filter leave on
+         screen, never on the whole of Stock: the save replaces the
+         group's entire membership, so a control that quietly reached
+         past the filter would be the destructive one here. -->
+    <div class="mb-flex-row" style="justify-content:space-between; gap:var(--mb-sp-3); margin-bottom:var(--mb-sp-3);">
+      <span class="mb-text-sm mb-text-steel" id="stock-group-items-count" aria-live="polite">0 rows selected</span>
+      <span style="display:flex; gap:var(--mb-sp-4);">
+        <button type="button" class="mb-btn-text" style="padding:0;min-height:auto;" onclick="MApp.StockGroups.selectAllVisible(true)">Select shown</button>
+        <button type="button" class="mb-btn-text" style="padding:0;min-height:auto;" onclick="MApp.StockGroups.selectAllVisible(false)">Clear shown</button>
+      </span>
+    </div>
+    <div id="stock-group-items-body"></div>
+  </div>
+  <div class="mb-sheet-footer">
+    <button type="button" class="mb-btn mb-btn-primary" id="stock-group-items-save-btn" onclick="MApp.StockGroups.saveItems()">Save items</button>
+  </div>
+</div>
+
+<!-- ═══════════════════════════════════════════════════════════════════
      FULL DASHBOARD — Home shows three tiles from getMobileDashboard,
      which is the right default on a phone. This is the drill-down into
      getDashboardData, so mobile is not permanently capped at what that
@@ -390,6 +463,11 @@
     <div class="mb-card-row"><span class="mb-card-title">Units</span>
       <svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M9 18l6-6-6-6"/></svg></div>
     <div class="mb-card-sub">Conversion factors</div>
+  </button>
+  <button type="button" class="mb-card mb-card-tappable" style="border:none;" onclick="MApp.StockGroups.open()">
+    <div class="mb-card-row"><span class="mb-card-title">Stock Groups</span>
+      <svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M9 18l6-6-6-6"/></svg></div>
+    <div class="mb-card-sub">Named sets of item/size rows, for the Low Stock Report</div>
   </button>
 
   <div class="mapp-section-label mb-mt-4">Warehouse</div>
