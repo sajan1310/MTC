@@ -43,6 +43,28 @@
     --bg-color: #f8fafc;
     --bg-light: #fff;
 
+    /* Categorical slots for the WIP doughnut. Both modes are SELECTED,
+       not flipped -- the dark column is the same six hues re-stepped for
+       the dark surface. Validated with the dataviz palette validator
+       against each surface on the ADJACENT pairlist, which is the right
+       model for a doughnut: its slices touch only their neighbours, the
+       way a stacked bar's segments do.
+         light  worst adjacent CVD dE 9.1, normal-vision 19.6
+         dark   worst adjacent CVD dE 8.4, normal-vision 19.3, all >= 3:1
+       Light trips the contrast warning on three slots, which obliges
+       visible labels rather than colour alone -- every slice is named
+       and valued in the legend beside it, so that relief is in place.
+       Do not extend past six: on the all-pairs list orange and green
+       collapse to dE 3.2 for protanopia. A seventh type folds into
+       Other, which is deliberately grey and outside the set. */
+    --viz-cat-1: #2a78d6;
+    --viz-cat-2: #eb6834;
+    --viz-cat-3: #1baf7a;
+    --viz-cat-4: #eda100;
+    --viz-cat-5: #e87ba4;
+    --viz-cat-6: #008300;
+    --viz-cat-other: #94a3b8;
+
     /* success/info darkened from #28a745/#17a2b8: both failed WCAG 1.4.3 AA
        (4.5:1) with white text at 3.13:1 / 3.04:1 -- see ACCESSIBILITY_REPORT.md
        A11Y-002. warning/danger are unchanged: warning is only ever paired
@@ -104,6 +126,15 @@
 
     --bg-color: #0d1117;
     --bg-light: #161b27;
+
+    /* Dark steps of the same six hues -- see the light block. */
+    --viz-cat-1: #3987e5;
+    --viz-cat-2: #d95926;
+    --viz-cat-3: #199e70;
+    --viz-cat-4: #c98500;
+    --viz-cat-5: #d55181;
+    --viz-cat-6: #008300;
+    --viz-cat-other: #64748b;
     --bg-muted: #1e2736;
 
     --text-primary: #e2e8f0;
@@ -1938,37 +1969,131 @@
     margin-bottom: 16px;
   }
 
-  /* ── Stage load chart: Process Type bands of stacked columns ───────────
-     One column per process, stacked In Progress over Pending, grouped into
-     labelled bands by Process Type.
+  /* ── Stage load: a doughnut of Process Type share ──────────────────────
+     Replaced the stacked column chart, which replaced two treemaps. The
+     section asks which part of the shop is carrying the load -- a share
+     question -- and twenty columns against a y-axis made the reader do
+     arithmetic to answer it. An angle from the centre is what the eye
+     judges well.
 
-     Replaced two treemaps, which showed each status's share of its own panel
-     but could not be read against each other -- each filled its own box
-     whatever its total. A single shared axis restores that comparison, and
-     the Process Type band adds a reading neither the treemaps nor the plain
-     column chart before them had: which part of the shop is carrying the
-     load.
+     Nothing was lost with the columns: every process they could drill into
+     is also a card in the grid below, and those cards state In Progress and
+     Pending per stage in words. The hole carries the total, which is the
+     number a pie of the same data would have had nowhere to put. */
+  .dash-donut-wrap {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: 24px;
+  }
 
-     Geometry lives in these two custom properties because the gridline
-     layer, the y-axis gutter and the columns must agree on it exactly. */
-  .dash-band-chart {
-    --dash-band-plot-h: 150px;
+  .dash-donut-figure {
+    position: relative;
+    flex: 0 0 auto;
+    width: 168px;
+    height: 168px;
+  }
 
-    /* Headroom above the plot, INSIDE the scrolling element: it scrolls
-       horizontally, and overflow-x: auto makes overflow-y compute to auto
-       too, so anything drawn above the content box is clipped rather than
-       overflowing. */
-    --dash-band-head-h: 20px;
-    --dash-band-label-h: 42px;
+  .dash-donut {
+    width: 100%;
+    height: 100%;
+    display: block;
+  }
 
-    margin-bottom: 18px;
+  /* HTML rather than SVG <text>: this is the section's hero number and it
+     wears the page's text tokens and scales with the reader's font size. */
+  .dash-donut-centre {
+    position: absolute;
+    inset: 0;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    gap: 2px;
+    pointer-events: none;
+  }
+
+  .dash-donut-centre-value {
+    font-family: Outfit, sans-serif;
+    font-size: 26px;
+    font-weight: 700;
+    line-height: 1;
+    color: var(--text-primary);
+  }
+
+  .dash-donut-centre-label {
+    font-size: 10.5px;
+    color: var(--text-muted);
+  }
+
+  .dash-donut-legend {
+    flex: 1 1 15rem;
+    min-width: 0;
+    margin: 0;
+    padding: 0;
+    list-style: none;
+  }
+
+  /* The swatch is identity, the name and the numbers are the reading. Three
+     of the six light slots sit under 3:1 against the card, which obliges
+     visible labels rather than colour alone -- these rows are that relief,
+     so they are not optional decoration. */
+  .dash-donut-row {
+    display: grid;
+    grid-template-columns: auto minmax(0, 1fr) auto auto;
+    align-items: baseline;
+    gap: 4px 8px;
+    padding: 5px 0;
+    border-bottom: 1px solid var(--border-color);
+  }
+
+  .dash-donut-row:last-child {
+    border-bottom: 0;
+  }
+
+  .dash-donut-swatch {
+    width: 10px;
+    height: 10px;
+    border-radius: 3px;
+    align-self: center;
+  }
+
+  .dash-donut-name {
+    font-size: 12px;
+    font-weight: 700;
+    color: var(--text-primary);
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+
+  .dash-donut-total {
+    font-family: Outfit, sans-serif;
+    font-size: 12px;
+    font-weight: 700;
+    color: var(--text-primary);
+  }
+
+  .dash-donut-share {
+    font-size: 11px;
+    color: var(--text-muted);
+    min-width: 2.5em;
+    text-align: right;
+  }
+
+  /* Spans the full row under the name: the second dimension the columns
+     used to stack, kept as words rather than a second ring. */
+  .dash-donut-split {
+    grid-column: 2 / -1;
+    font-size: 11px;
+    color: var(--text-secondary);
   }
 
   .dash-band-legend {
     display: flex;
     flex-wrap: wrap;
-    gap: 4px 18px;
-    margin-bottom: 10px;
+    gap: 16px;
+    margin-bottom: 14px;
     font-size: 11.5px;
     color: var(--text-secondary);
   }
@@ -1985,215 +2110,24 @@
   }
 
   .dash-band-swatch {
-    width: 11px;
-    height: 11px;
-    border-radius: 2px;
-    background: var(--dash-wip-fill);
+    width: 10px;
+    height: 10px;
+    border-radius: 3px;
+    background: var(--secondary-color);
   }
 
-  .dash-band-swatch[data-series="queued"],
-  .dash-band-seg[data-series="queued"] {
-    background: var(--dash-queued-fill);
-  }
-
-  /* align-items: start, not the default stretch: the two cells are
-     deliberately different heights (the plot area carries the band labels,
-     the y-axis gutter does not) and must share a TOP edge for the ticks and
-     the gridlines to line up. */
-  .dash-band-plot {
-    display: grid;
-    grid-template-columns: auto minmax(0, 1fr);
-    align-items: start;
-    gap: 0 10px;
-  }
-
-  /* Ticks are positioned from the baseline rather than spaced by flexbox, so
-     they line up with the gridlines to the pixel. */
-  .dash-band-yaxis {
-    position: relative;
-    width: 34px;
-    height: var(--dash-band-plot-h);
-    margin-top: var(--dash-band-head-h);
-  }
-
-  .dash-band-tick {
-    position: absolute;
-    right: 0;
-    transform: translateY(50%);
-    font-size: 10px;
-    line-height: 1;
-    color: var(--text-muted);
-    white-space: nowrap;
-  }
-
-  .dash-band-area {
-    position: relative;
-    overflow-x: auto;
-    padding-top: var(--dash-band-head-h);
-  }
-
-  /* Sized from --dash-band-plot-h directly rather than by insetting the
-     label row off the area's total height: the area is as tall as its
-     tallest band, so anything the labels cost beyond their own height would
-     drop the whole grid below the columns. */
-  .dash-band-gridlines {
-    position: absolute;
-    top: var(--dash-band-head-h);
-    right: 0;
-    left: 0;
-    height: var(--dash-band-plot-h);
-    pointer-events: none;
-  }
-
-  .dash-band-gridline {
-    position: absolute;
-    left: 0;
-    right: 0;
-    height: 1px;
-    background: var(--border-color);
-  }
-
-  .dash-band-bands {
-    display: flex;
-    align-items: flex-start;
-    gap: 14px;
-    min-width: min-content;
-  }
-
-  /* flex-grow is set inline to the band's COLUMN COUNT, so every column in
-     the chart ends up the same width -- a 15-process band beside a
-     2-process one must not draw its columns five times thinner. */
-  /* flex-basis 0 is what makes flex-grow mean "share of the WIDTH". With
-     the default `auto` basis a band starts at its content width and only
-     the LEFTOVER is shared by grow, so a 4-column band came out with wider
-     columns than a 12-column one and the two stopped being comparable.
-     min-content keeps a band from being crushed below its own columns --
-     that is what makes the chart scroll on a narrow screen instead. */
-  .dash-band {
-    display: flex;
-    flex-direction: column;
-    flex-basis: 0;
-    flex-shrink: 0;
-    min-width: min-content;
-  }
-
-  .dash-band-cols {
-    display: flex;
-    align-items: flex-end;
-    justify-content: center;
-    gap: 3px;
-    height: var(--dash-band-plot-h);
-  }
-
-  .dash-band-col {
-    display: flex;
-    flex: 1 1 22px;
-    flex-direction: column;
-    justify-content: flex-end;
-    gap: 0;
-    align-items: stretch;
-    min-width: 14px;
-    max-width: 38px;
-    height: 100%;
-    padding: 0;
-    background: none;
-    border: 0;
-    border-radius: 0;
-    cursor: pointer;
-  }
-
-  .dash-band-col:hover .dash-band-seg {
-    filter: brightness(1.12);
-  }
-
-  .dash-band-col:focus-visible {
-    outline: 2px solid var(--secondary-color);
-    outline-offset: 2px;
-  }
-
-  /* column-reverse so the segments stack up from the baseline in DOM order
-     (running first, queued above it). The 2px gap is the surface doing the
-     separating -- no stroke around the segments. */
-  .dash-band-col-stack {
-    display: flex;
-    flex-direction: column-reverse;
-    gap: 2px;
-    width: 100%;
-    height: 100%;
-    justify-content: flex-start;
-  }
-
-  .dash-band-seg {
-    display: block;
-    width: 100%;
-    background: var(--dash-wip-fill);
-  }
-
-  /* Rounded at the data end, square at the baseline. :last-child is the
-     topmost segment because the stack is column-reverse. */
-  .dash-band-col-stack .dash-band-seg:last-child {
-    border-radius: 3px 3px 0 0;
-  }
-
-  /* min-width: 0 keeps the LABEL out of the band's min-content width. A
-     band's width should come from its columns; without this a one-column
-     band was as wide as the words "Frame Painting", which stole width from
-     the busy bands and left their columns visibly thinner. The label
-     ellipsises instead -- the full type name is also on every column's
-     tooltip. */
-  /* Deliberately IN flow. The band's min-width is min-content, so a label
-     here floors its band at the label's own width -- "Mudguard Paint" is
-     ~87px, which makes a one-column band wider than its column needs.
-     Pulling the label out of flow fixes that and makes every column exactly
-     one width (measured: 33.7px across bands of 3, 4, 8 and 12) -- but it
-     also truncates the label on the narrow bands, and the band label is the
-     entire reason this chart is banded at all.
-     Column WIDTH carries no meaning here; height does. So the floor stays
-     and the slack becomes whitespace: .dash-band-cols centres its columns
-     and .dash-band-col caps its width, rather than one column growing fat. */
-  .dash-band-label {
-    display: flex;
-    margin-top: 4px;
-    flex-direction: column;
-    align-items: center;
-    gap: 1px;
-    height: var(--dash-band-label-h);
-    padding: 7px 4px 0;
-    border-top: 2px solid var(--border-color);
-    overflow: hidden;
-    text-align: center;
-  }
-
-  /* One line, ellipsised. Deliberately NOT a two-line clamp: the global
-     `button, .btn` rule sets white-space: nowrap and that is inherited past
-     -webkit-line-clamp, which silently degrades it to a hard mid-character
-     cut with no ellipsis. These labels are not inside a button, but the
-     single line is deterministic either way and the full name is short
-     enough that it rarely truncates. */
-  .dash-band-name {
-    max-width: 100%;
-    overflow: hidden;
-    font-size: 10.5px;
-    font-weight: 700;
-    line-height: 1.2;
-    color: var(--text-secondary);
-    text-overflow: ellipsis;
-    white-space: nowrap;
-  }
-
-  .dash-band-total {
-    font-family: Outfit, sans-serif;
-    font-size: 10px;
-    color: var(--text-muted);
+  .dash-band-swatch[data-series="queued"] {
+    background: var(--text-muted);
   }
 
   @media (max-width: 600px) {
-    .dash-band-chart {
-      --dash-band-plot-h: 118px;
+    .dash-donut-figure {
+      width: 136px;
+      height: 136px;
     }
 
-    .dash-band-bands {
-      gap: 10px;
+    .dash-donut-centre-value {
+      font-size: 22px;
     }
   }
 

@@ -237,7 +237,12 @@
 // v53: the Production Lot Status chart is a pie rather than a doughnut.
 // Cosmetic, and dashboard.js is precached, so a tablet on the old file
 // simply keeps drawing the hole until the next load. Not load-bearing.
-const CACHE_NAME = 'erp-shell-v53';
+// v54: the Process WIP Pipeline is a doughnut of Process Type share
+// rather than stacked columns per process. dashboard.js and styles.css are
+// both precached and the markup half arrives fresh, so a tablet on the old
+// pair renders the old chart until the next load -- cosmetic, and it heals
+// itself. Not load-bearing.
+const CACHE_NAME = 'erp-shell-v54';
 
 const PRECACHE_URLS = [
   '/erp/offline.html',

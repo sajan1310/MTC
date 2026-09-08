@@ -778,21 +778,6 @@ App.Dashboard = {
       `${n}d<span class="visually-hidden"> ${escapeHtml(config.ageSrText(n))}</span></span>`;
   },
 
-  // Plot geometry. The gridline layer, the y-axis gutter and the columns all
-  // have to agree on these, so they are one set of numbers rather than three.
-  STAGE_PLOT_H: 150,
-  STAGE_HEAD_H: 20,
-
-  // Axis maximum, rounded UP to a 1 / 2 / 2.5 / 5 x 10^n step. Gridlines
-  // landing on 500 and 1,000 read as a scale; gridlines landing on 437 and
-  // 874 read as an accident.
-  _niceMax(value) {
-    if (!(value > 0)) return 0;
-    const magnitude = Math.pow(10, Math.floor(Math.log10(value)));
-    const step = [1, 2, 2.5, 5, 10].find(x => value / magnitude <= x + 1e-9) || 10;
-    return step * magnitude;
-  },
-
   // Merge the two status payloads into one row per process, then group those
   // rows into bands by Process Type.
   //
@@ -841,27 +826,62 @@ App.Dashboard = {
     return Array.from(bands.values()).sort((a, b) => b.total - a.total);
   },
 
+  // Where the open work sits, by Process Type. A doughnut rather than the
+  // stacked columns this replaced: the question the section asks is which
+  // part of the shop is loaded, and that is a share question -- an angle
+  // from the centre is what the eye judges well, where twenty columns
+  // against a y-axis made the reader do arithmetic.
+  //
+  // Nothing is lost by dropping the per-process columns. Every process the
+  // chart could drill into is also a card in the grid below (both carry
+  // data-action="dash-pipeline-stage"), and those cards state In Progress
+  // and Pending per stage in words.
+  //
+  // The hole is the point of a doughnut and it carries the total, which is
+  // the number a pie of the same data would have had nowhere to put.
+  DONUT_MAX_SLICES: 6,
+
   renderStageChart(pipeline, upcoming) {
     const el = document.getElementById('dashboardStageChart');
     if (!el) return;
 
+    // Already sorted busiest-first, and already folds an untyped process
+    // under "Other" rather than dropping stock out of the totals.
     const bands = this._stageBands(pipeline, upcoming);
-    if (bands.length === 0) {
-      el.innerHTML = '<div class="text-muted small">No open production lots at any stage.</div>';
-      return;
-    }
-
-    const columnTotal = c => c.wip + c.queued;
-    const axisMax = this._niceMax(Math.max(...bands.flatMap(b => b.columns.map(columnTotal))));
-    if (!(axisMax > 0)) {
-      el.innerHTML = '<div class="text-muted small">No open production lots at any stage.</div>';
-      return;
-    }
+    const empty = '<div class="text-muted small">No open production lots at any stage.</div>';
+    if (bands.length === 0) { el.innerHTML = empty; return; }
 
     const totals = bands.reduce((acc, b) => {
       b.columns.forEach(c => { acc.wip += c.wip; acc.queued += c.queued; });
       return acc;
     }, { wip: 0, queued: 0 });
+
+    // Past six the wedges are thinner than the labels beside them, and the
+    // palette runs out of hues that stay apart under colour-blindness.
+    let slices = bands.map(b => ({
+      name: b.name,
+      total: b.total,
+      wip: b.columns.reduce((n, c) => n + c.wip, 0),
+      queued: b.columns.reduce((n, c) => n + c.queued, 0),
+    }));
+    if (slices.length > this.DONUT_MAX_SLICES) {
+      const rest = slices.slice(this.DONUT_MAX_SLICES);
+      slices = slices.slice(0, this.DONUT_MAX_SLICES);
+      slices.push({
+        name: 'Other',
+        isOther: true,
+        total: rest.reduce((n, r) => n + r.total, 0),
+        wip: rest.reduce((n, r) => n + r.wip, 0),
+        queued: rest.reduce((n, r) => n + r.queued, 0),
+      });
+    }
+    slices = slices.filter(s => s.total > 0);
+
+    const grandTotal = slices.reduce((n, s) => n + s.total, 0);
+    if (!(grandTotal > 0)) { el.innerHTML = empty; return; }
+
+    const colourOf = s => (s.isOther ? 'var(--viz-cat-other)' : `var(--viz-cat-${s._slot})`);
+    slices.forEach((s, i) => { s._slot = (i % this.DONUT_MAX_SLICES) + 1; });
 
     // A legend, always, for two series -- identity is never colour alone.
     const legend = `
@@ -876,66 +896,72 @@ App.Dashboard = {
         </span>
       </div>`;
 
-    const ticks = [axisMax, axisMax / 2, 0];
-    const yAxis = `
-      <div class="dash-band-yaxis" aria-hidden="true">
-        ${ticks.map((t, i) => `<span class="dash-band-tick" style="bottom:${100 - i * 50}%">${formatQty(t)}</span>`).join('')}
-      </div>`;
-    const gridlines = `
-      <div class="dash-band-gridlines" aria-hidden="true">
-        ${ticks.map((_t, i) => `<span class="dash-band-gridline" style="bottom:${100 - i * 50}%"></span>`).join('')}
-      </div>`;
-
-    // Bands are flex-sized by their column count, so every column across the
-    // whole chart comes out the same width -- a 15-process band next to a
-    // 2-process one must not make its columns five times thinner.
-    const bandsHtml = bands.map(band => {
-      const columns = band.columns.map(col => {
-        const total = columnTotal(col);
-        const segments = [
-          { key: 'wip', qty: col.wip },
-          { key: 'queued', qty: col.queued },
-        ].filter(seg => seg.qty > 0).map(seg => {
-          // Floor the height so a token 1-unit segment stays visible without
-          // reading as a real quantity.
-          const pct = Math.max((seg.qty / axisMax) * 100, 1.2);
-          return `<span class="dash-band-seg" data-series="${seg.key}" style="height:${pct.toFixed(2)}%"></span>`;
-        }).join('');
-
-        const description =
-          `${col.processName} (${band.name}): ${formatQty(col.wip)} in progress, ` +
-          `${formatQty(col.queued)} pending, ${col.lots} lot${col.lots === 1 ? '' : 's'}`;
-
-        return `
-          <button type="button" class="dash-band-col" data-action="dash-pipeline-stage"
-                  data-processid="${encodeURIComponent(col.processId)}"
-                  title="${escapeHtml(description)}">
-            <span class="dash-band-col-stack">${segments}</span>
-            <span class="visually-hidden">${escapeHtml(description)}</span>
-          </button>`;
-      }).join('');
-
-      return `
-        <div class="dash-band" style="flex-grow:${band.columns.length}">
-          <div class="dash-band-cols">${columns}</div>
-          <div class="dash-band-label">
-            <span class="dash-band-name">${escapeHtml(band.name)}</span>
-            <span class="dash-band-total">${formatQty(band.total)}</span>
-          </div>
-        </div>`;
-    }).join('');
-
     el.innerHTML = `
-      <div class="dash-band-chart">
+      <div class="dash-donut-chart">
         ${legend}
-        <div class="dash-band-plot">
-          ${yAxis}
-          <div class="dash-band-area">
-            ${gridlines}
-            <div class="dash-band-bands">${bandsHtml}</div>
+        <div class="dash-donut-wrap">
+          <div class="dash-donut-figure">
+            ${this._donutSvg(slices, grandTotal, colourOf)}
+            <div class="dash-donut-centre" aria-hidden="true">
+              <span class="dash-donut-centre-value">${formatQty(grandTotal)}</span>
+              <span class="dash-donut-centre-label">units open</span>
+            </div>
           </div>
+          <ul class="dash-donut-legend">
+            ${slices.map(s => {
+    const pct = Math.round((s.total / grandTotal) * 100);
+    return `
+            <li class="dash-donut-row">
+              <span class="dash-donut-swatch" style="background:${colourOf(s)}" aria-hidden="true"></span>
+              <span class="dash-donut-name">${escapeHtml(s.name)}</span>
+              <span class="dash-donut-total">${formatQty(s.total)}</span>
+              <span class="dash-donut-share">${pct}%</span>
+              <span class="dash-donut-split">${formatQty(s.wip)} in progress · ${formatQty(s.queued)} pending</span>
+            </li>`;
+  }).join('')}
+          </ul>
         </div>
       </div>`;
+  },
+
+  // Inline SVG. The dashboard's other two charts are Chart.js, but this one
+  // renders before the library is awaited and always has -- keeping it
+  // dependency-free is what lets the section paint with the rest of the
+  // page instead of waiting on a script.
+  _donutSvg(slices, total, colourOf) {
+    const R = 50, C = 60, THICK = 20;
+    const inner = R - THICK;
+    const at = (r, frac) => {
+      // Twelve o'clock, clockwise: how a share is read.
+      const a = frac * Math.PI * 2 - Math.PI / 2;
+      return [(C + r * Math.cos(a)).toFixed(3), (C + r * Math.sin(a)).toFixed(3)];
+    };
+
+    let acc = 0;
+    const arcs = slices.map(s => {
+      const frac = s.total / total;
+      const fill = colourOf(s);
+      // One slice covering the whole ring has identical start and end
+      // points, and an arc between two identical points draws nothing.
+      // It is a ring, so draw two circles.
+      if (frac >= 0.9999) {
+        return `<circle cx="${C}" cy="${C}" r="${(R + inner) / 2}" fill="none"
+                        stroke="${fill}" stroke-width="${THICK}"/>`;
+      }
+      const [ox1, oy1] = at(R, acc);
+      const [ix1, iy1] = at(inner, acc);
+      acc += frac;
+      const [ox2, oy2] = at(R, acc);
+      const [ix2, iy2] = at(inner, acc);
+      const large = frac > 0.5 ? 1 : 0;
+      return `<path d="M${ox1},${oy1} A${R},${R} 0 ${large},1 ${ox2},${oy2} `
+        + `L${ix2},${iy2} A${inner},${inner} 0 ${large},0 ${ix1},${iy1} Z" fill="${fill}"/>`;
+    }).join('');
+
+    // aria-hidden with the legend carrying every name, value and share:
+    // a ring read aloud as a list of unlabelled wedges tells nobody
+    // anything, and the legend is already the accessible version.
+    return `<svg viewBox="0 0 120 120" class="dash-donut" aria-hidden="true">${arcs}</svg>`;
   },
 
   renderPipeline(pipeline) {

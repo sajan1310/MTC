@@ -22,11 +22,12 @@
  *      card renders its per-stage breakdown only when that says something
  *      the stage total does not, and its name is never truncated.
  *
- *      The chart is three levels: a BAND per Process Type, a COLUMN per
- *      process, and a STACK of In Progress over Pending. Process Type is
- *      the only one of the three with a low enough cardinality to label an
- *      axis (six values across 262 processes), which is why the band
- *      carries the label and the process name lives in the tooltip.
+ *      The chart is a doughnut of Process Type share -- six values across
+ *      262 processes, which is the one level of this data with a low
+ *      enough cardinality to read as slices. It replaced a stacked column
+ *      chart: the section asks which part of the shop is loaded, that is
+ *      a share question, and twenty columns against a y-axis made the
+ *      reader do arithmetic to answer it. The hole carries the total.
  *
  *      What this went through to get here is worth knowing, because each
  *      step fixed the last one's defect: a wall of content-sized cards
@@ -316,7 +317,7 @@ describe('dashboard WIP pipeline', () => {
     expect(peakCard.querySelector('.dash-wip-name').textContent).toBe('Biggest');
   });
 
-  test('cards carry no inline bar -- that comparison belongs to the column chart', () => {
+  test('cards carry no inline bar -- that comparison belongs to the doughnut', () => {
     // A per-row bar could only scale against its OWN list's maximum, so a
     // stage's running and queued totals were drawn against two different
     // maxima and could not be read against each other at all.
@@ -474,7 +475,7 @@ describe('dashboard Upcoming Lots', () => {
   });
 });
 
-describe('dashboard stage load chart', () => {
+describe('dashboard stage load doughnut', () => {
   beforeEach(() => {
     mountPartial();
     loadDashboardAsGlobal();
@@ -489,145 +490,178 @@ describe('dashboard stage load chart', () => {
   // Not $$: that is a core.js global and this suite loads only api.js
   // and dashboard.js.
   const all = sel => Array.from(document.querySelectorAll(sel));
-  const bandNames = () => all('.dash-band-name').map(n => n.textContent);
+  const sliceNames = () => all('.dash-donut-name').map(n => n.textContent);
+  const wedges = () => all('.dash-donut path, .dash-donut circle');
 
-  test('columns are grouped into one band per process type', () => {
+  test('one slice per process type, not per process', () => {
+    // The question is which part of the shop is loaded. Twenty processes
+    // would be twenty wedges thinner than their own labels.
     App.Dashboard.renderStageChart([
       stage({ processId: 'A', processType: 'Packing', totalQty: 40 }),
       stage({ processId: 'B', processType: 'Rim Fitting', totalQty: 30 }),
       stage({ processId: 'C', processType: 'Packing', totalQty: 20 }),
     ], []);
 
-    expect(el().querySelectorAll('.dash-band')).toHaveLength(2);
-    expect(el().querySelectorAll('.dash-band-col')).toHaveLength(3);
-    expect(bandNames()).toContain('Packing');
-    expect(bandNames()).toContain('Rim Fitting');
+    expect(wedges()).toHaveLength(2);
+    expect(sliceNames()).toEqual(['Packing', 'Rim Fitting']);
   });
 
-  test('the busiest band comes first', () => {
-    // The chart's question is which part of the shop is loaded, so the
-    // answer belongs where the eye starts, not in process order.
+  test('the busiest slice comes first', () => {
+    // Sorted, so adjacency is deterministic -- which is what lets the
+    // palette be validated on the adjacent pairlist at all.
     App.Dashboard.renderStageChart([
       stage({ processId: 'A', processType: 'Small Type', sequence: 1, totalQty: 10 }),
       stage({ processId: 'B', processType: 'Big Type', sequence: 2, totalQty: 900 }),
       stage({ processId: 'C', processType: 'Mid Type', sequence: 3, totalQty: 200 }),
     ], []);
-    expect(bandNames()).toEqual(['Big Type', 'Mid Type', 'Small Type']);
+
+    expect(sliceNames()).toEqual(['Big Type', 'Mid Type', 'Small Type']);
   });
 
-  test('a band grows by its column count, so columns stay one width', () => {
-    // Without this a 15-process band beside a 2-process one would draw its
-    // columns five times thinner and the areas would stop being comparable.
+  test('the hole carries the total, which is why it is a doughnut', () => {
     App.Dashboard.renderStageChart([
-      stage({ processId: 'A', processType: 'Wide', totalQty: 10 }),
-      stage({ processId: 'B', processType: 'Wide', totalQty: 10 }),
-      stage({ processId: 'C', processType: 'Wide', totalQty: 10 }),
-      stage({ processId: 'D', processType: 'Narrow', totalQty: 10 }),
+      stage({ processId: 'A', processType: 'Packing', totalQty: 40 }),
+      stage({ processId: 'B', processType: 'Rim Fitting', totalQty: 60 }),
     ], []);
-    const grows = all('.dash-band').map(b => b.style.flexGrow);
-    expect(grows).toEqual(['3', '1']);
+
+    expect(document.querySelector('.dash-donut-centre-value').textContent).toBe('100');
+    expect(document.querySelector('.dash-donut-centre-label').textContent).toBe('units open');
   });
 
-  test('one process in both statuses is one column with two segments', () => {
-    App.Dashboard.renderStageChart(
-      [stage({ processId: 'A', totalQty: 100, totalLotCount: 2 })],
-      [stage({ processId: 'A', totalQty: 300, totalLotCount: 3 })]
-    );
-    expect(el().querySelectorAll('.dash-band-col')).toHaveLength(1);
-    expect(all('.dash-band-seg').map(s => s.dataset.series)).toEqual(['wip', 'queued']);
-    // Lot counts from both statuses add up on the one column.
-    expect(el().querySelector('.dash-band-col').getAttribute('title')).toContain('5 lots');
-  });
-
-  test('both series share one axis, so segment heights are comparable', () => {
-    // 100 running + 300 queued = 400, and _niceMax rounds that to 500.
-    App.Dashboard.renderStageChart(
-      [stage({ processId: 'A', totalQty: 100 })],
-      [stage({ processId: 'A', totalQty: 300 })]
-    );
-    expect(all('.dash-band-seg').map(s => s.style.height)).toEqual(['20.00%', '60.00%']);
-  });
-
-  test('the axis maximum is a round number, not the raw peak', () => {
-    App.Dashboard.renderStageChart([stage({ processId: 'A', totalQty: 437 })], []);
-    expect(all('.dash-band-tick').map(t => t.textContent)).toEqual(['500', '250', '0']);
-  });
-
-  test('a status with nothing in it renders no segment', () => {
-    // An empty segment would still take the 2px surface gap and draw a
-    // hairline of colour along the baseline.
-    App.Dashboard.renderStageChart([stage({ processId: 'A', totalQty: 100 })], []);
-    expect(all('.dash-band-seg').map(s => s.dataset.series)).toEqual(['wip']);
-  });
-
-  test('a process with no type still appears, under Other', () => {
-    // Dropping it would silently lose stock from the chart's totals.
+  test('each slice states its own total and share', () => {
     App.Dashboard.renderStageChart([
-      stage({ processId: 'A', processType: '', totalQty: 55 }),
+      stage({ processId: 'A', processType: 'Packing', totalQty: 75 }),
+      stage({ processId: 'B', processType: 'Rim Fitting', totalQty: 25 }),
     ], []);
-    expect(bandNames()).toEqual(['Other']);
-    expect(el().querySelectorAll('.dash-band-col')).toHaveLength(1);
+
+    const shares = all('.dash-donut-share').map(n => n.textContent);
+    expect(all('.dash-donut-total').map(n => n.textContent)).toEqual(['75', '25']);
+    expect(shares).toEqual(['75%', '25%']);
+  });
+
+  test('a slice keeps its In Progress / Pending split, in words', () => {
+    // The columns stacked this. A second ring would encode it again in the
+    // same hole; the words carry it without a second colour scale.
+    App.Dashboard.renderStageChart(
+      [stage({ processId: 'A', processType: 'Packing', totalQty: 30 })],
+      [stage({ processId: 'A', processType: 'Packing', totalQty: 70 })],
+    );
+
+    expect(document.querySelector('.dash-donut-split').textContent)
+      .toBe('30 in progress · 70 pending');
   });
 
   test('the legend carries both series and their totals', () => {
     App.Dashboard.renderStageChart(
-      [stage({ processId: 'A', totalQty: 120 }), stage({ processId: 'B', totalQty: 80 })],
-      [stage({ processId: 'A', totalQty: 45 })]
+      [stage({ processId: 'A', totalQty: 100 })],
+      [stage({ processId: 'B', processId: 'B', totalQty: 40 })],
     );
-    const legend = el().querySelector('.dash-band-legend').textContent.replace(/\s+/g, ' ');
-    expect(legend).toContain('In Progress 200');
-    expect(legend).toContain('Pending 45');
+
+    const legend = document.querySelector('.dash-band-legend').textContent;
+    expect(legend).toContain('In Progress');
+    expect(legend).toContain('100');
+    expect(legend).toContain('Pending');
+    expect(legend).toContain('40');
   });
 
-  test('each band label states its own total', () => {
+  test('a process with no type still appears, under Other', () => {
+    // Dropping it would silently lose stock from the total in the hole.
+    App.Dashboard.renderStageChart([
+      stage({ processId: 'A', processType: '', totalQty: 25 }),
+      stage({ processId: 'B', processType: 'Packing', totalQty: 75 }),
+    ], []);
+
+    expect(sliceNames()).toContain('Other');
+    expect(document.querySelector('.dash-donut-centre-value').textContent).toBe('100');
+  });
+
+  test('past six types the tail folds into Other rather than a seventh hue', () => {
+    // The palette has six slots that stay apart under colour-blindness. A
+    // seventh would be a generated hue, and on the all-pairs list orange
+    // and green already collapse to dE 3.2 for protanopia.
+    const many = Array.from({ length: 9 }, (_, i) =>
+      stage({ processId: 'P' + i, processType: 'Type ' + i, totalQty: 100 - i }));
+    App.Dashboard.renderStageChart(many, []);
+
+    expect(wedges()).toHaveLength(7); // six named + Other
+    expect(sliceNames()[6]).toBe('Other');
+  });
+
+  test('Other sums the tail rather than dropping it', () => {
+    const many = Array.from({ length: 8 }, (_, i) =>
+      stage({ processId: 'P' + i, processType: 'Type ' + i, totalQty: 10 }));
+    App.Dashboard.renderStageChart(many, []);
+
+    // Eight types of 10: six named, two folded.
+    expect(all('.dash-donut-total').map(n => n.textContent).pop()).toBe('20');
+    expect(document.querySelector('.dash-donut-centre-value').textContent).toBe('80');
+  });
+
+  test('one type covering everything draws a ring, not a degenerate arc', () => {
+    // An arc between two identical points draws nothing at all, so 100% of
+    // one thing would otherwise render an empty figure.
+    App.Dashboard.renderStageChart(
+      [stage({ processId: 'A', processType: 'Packing', totalQty: 100 })], []);
+
+    expect(document.querySelectorAll('.dash-donut circle')).toHaveLength(1);
+    expect(document.querySelectorAll('.dash-donut path')).toHaveLength(0);
+    expect(document.querySelector('.dash-donut-share').textContent).toBe('100%');
+  });
+
+  test('the wedges are hidden from a screen reader; the legend is not', () => {
+    // A ring read aloud as a list of unlabelled arcs tells nobody
+    // anything. Every name, value and share is in the rows beside it.
+    App.Dashboard.renderStageChart([stage({ processId: 'A', totalQty: 10 })], []);
+
+    expect(document.querySelector('.dash-donut').getAttribute('aria-hidden')).toBe('true');
+    expect(document.querySelectorAll('.dash-donut-name').length).toBeGreaterThan(0);
+  });
+
+  test('every slice is named in text, so colour is never the only carrier', () => {
+    // Three of the six light slots sit under 3:1 against the card. That
+    // warning is relieved by visible labels, not dismissed -- so these
+    // rows are load-bearing, not decoration.
     App.Dashboard.renderStageChart([
       stage({ processId: 'A', processType: 'Packing', totalQty: 40 }),
-      stage({ processId: 'B', processType: 'Packing', totalQty: 60 }),
+      stage({ processId: 'B', processType: 'Rim Fitting', totalQty: 30 }),
     ], []);
-    expect(el().querySelector('.dash-band-total').textContent).toBe('100');
+
+    expect(all('.dash-donut-swatch')).toHaveLength(sliceNames().length);
+    expect(sliceNames()).toEqual(['Packing', 'Rim Fitting']);
   });
 
-  test('every column names itself in text, not only in bar height', () => {
-    // The process name cannot be labelled under a ~35px column, so this is
-    // the only place it is available to a screen reader or on hover.
-    App.Dashboard.renderStageChart(
-      [stage({ processId: 'A', processName: 'Packing Orbit 16 inch', processType: 'Packing', totalQty: 120, totalLotCount: 2 })],
-      []
-    );
-    const col = el().querySelector('.dash-band-col');
-    expect(col.querySelector('.visually-hidden').textContent)
-      .toBe('Packing Orbit 16 inch (Packing): 120 in progress, 0 pending, 2 lots');
-    expect(col.getAttribute('title')).toContain('Packing Orbit 16 inch');
-  });
+  test('escapes process types rather than trusting them as markup', () => {
+    App.Dashboard.renderStageChart([
+      stage({ processId: 'A', processType: '<img src=x onerror=alert(1)>', totalQty: 10 }),
+    ], []);
 
-  test('columns are real buttons carrying the stage drill-down', () => {
-    App.Dashboard.renderStageChart([stage({ processId: 'P/1' })], []);
-    const col = el().querySelector('.dash-band-col');
-    expect(col.tagName).toBe('BUTTON');
-    expect(col.dataset.action).toBe('dash-pipeline-stage');
-    expect(decodeURIComponent(col.dataset.processid)).toBe('P/1');
-  });
-
-  test('escapes process names and types rather than trusting them as markup', () => {
-    App.Dashboard.renderStageChart([stage({
-      processName: '<img src=x onerror=alert(1)>',
-      processType: '<script>alert(2)</script>',
-    })], []);
     expect(el().querySelector('img')).toBeNull();
-    expect(el().querySelector('script')).toBeNull();
-    expect(el().querySelector('.dash-band-name').textContent).toBe('<script>alert(2)</script>');
+    expect(sliceNames()[0]).toBe('<img src=x onerror=alert(1)>');
   });
 
-  test('no open work anywhere says so instead of drawing an empty axis', () => {
+  test('no open work anywhere says so instead of drawing an empty ring', () => {
     App.Dashboard.renderStageChart([], []);
-    expect(el().textContent).toMatch(/no open production lots/i);
-    expect(el().querySelectorAll('.dash-band-col')).toHaveLength(0);
+
+    expect(el().textContent).toContain('No open production lots');
+    expect(document.querySelector('.dash-donut')).toBeNull();
   });
 
-  test('stages that are all zero do not divide by a zero axis', () => {
+  test('stages that are all zero do not divide by a zero total', () => {
     App.Dashboard.renderStageChart([stage({ processId: 'A', totalQty: 0 })], []);
-    expect(el().querySelectorAll('.dash-band-col')).toHaveLength(0);
-    expect(el().textContent).toMatch(/no open production lots/i);
+
+    expect(el().textContent).toContain('No open production lots');
+  });
+
+  test('the per-process drill-down the columns carried still exists below', () => {
+    // The columns were buttons into a stage. Dropping them is only safe
+    // because every one of those stages is also a card in the grid under
+    // the chart, carrying the same action.
+    App.Dashboard.renderStageChart([stage({ processId: 'A', totalQty: 10 })], []);
+    App.Dashboard.renderPipeline([stage({ processId: 'A', totalQty: 10 })]);
+
+    const card = document.querySelector('.dash-wip-card');
+    expect(card).not.toBeNull();
+    expect(card.getAttribute('data-action')).toBe('dash-pipeline-stage');
   });
 });
 

@@ -185,24 +185,30 @@
        block on the page and it used to sit below three rows of tiles and
        two rows of buttons, off the first screen entirely.
 
-       One stacked column chart, then two detail lists, all inside one
-       section.
+       One doughnut of Process Type share, then two detail lists, all
+       inside one section.
 
-       The chart carries BOTH statuses because that comparison is the whole
-       point of the split below it: "In Progress" used to mean Pending OR
-       In Progress, so every stage total mixed material actually being
-       worked with lots nobody had started. A stacked column per stage --
-       running on the baseline, queued hatched above it -- says how much
-       work is attached to a stage AND how much of it has actually started,
-       in one mark, on one shared scale. Two separate charts could not do
-       that: each would scale to its own maximum, so a 40-unit queue and a
-       400-unit queue would draw the same height.
+       This was a stacked column chart, one column per process. The note
+       here used to argue against a pie on the grounds that it "destroys
+       the sequence that makes this a pipeline" -- true of a pie over
+       PROCESSES, which is what that argued about. These slices are
+       process TYPES, six of them, and a type spans many sequence
+       positions, so there is no left-to-right flow to destroy. What the
+       section actually asks is which part of the shop is carrying the
+       load, and that is a share question: an angle from the centre
+       answers it, where twenty columns against a y-axis made the reader
+       do arithmetic.
 
-       Columns run left to right in process sequence, so the chart reads in
-       the direction material actually flows. That is also why it is
-       columns and not a pie: a pie answers "what share of WIP is at
-       painting", which is rarely the question, and it destroys the
-       sequence that makes this a pipeline at all.
+       Both statuses still matter -- "In Progress" once meant Pending OR
+       In Progress, so every stage total mixed material being worked with
+       lots nobody had started. The totals stay in the legend above, and
+       every slice states its own split in words. They are not a second
+       ring: that would encode a second scale in the same figure for a
+       comparison the cards below already make per stage.
+
+       Per-process detail is not lost with the columns. Every process a
+       column could drill into is a card in the grid below, carrying the
+       same data-action.
 
        Below the chart each status is a GRID OF CARDS, not the full-width
        rows this used to be. A row gave every stage the whole width of the
