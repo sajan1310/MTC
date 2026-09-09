@@ -111,14 +111,10 @@ const DESKTOP_ONLY = {
 // The backlog, each tagged with the program phase that closes it. This
 // list may only shrink. Deleting an entry is how a port is "done".
 const BACKLOG = {
-  bulkDeactivateUsers: 'P7 roles (read-only + handoff)',
-  createCustomRole: 'P7 roles (read-only + handoff)',
-  deleteCustomRole: 'P7 roles (read-only + handoff)',
-  updateCustomRole: 'P7 roles (read-only + handoff)',
 };
 
 // Phase 1 opened at 79. Lower this line as ports land; never raise it.
-const BACKLOG_BASELINE = 4;
+const BACKLOG_BASELINE = 0;
 
 describe('MApp / desktop feature parity', () => {
   test('the registry is being read at all', () => {

@@ -7609,17 +7609,234 @@ MApp.Directory = {
   }
 };
 
+
+// ================================================================
+// CUSTOM ROLES (Admin) — who can see and change which tab.
+//
+// The plan filed this as "read-only + handoff", on the assumption that a
+// permissions editor is a desktop job. Reading the contract says
+// otherwise: a role is a name plus eleven tabs each set to one of three
+// levels. That is a list of eleven rows with a three-way choice, which
+// is a shape a phone is good at -- and it is the same segmented control
+// already used for the theme.
+//
+// The levels and the tab list are the server's, mirrored here rather
+// than invented: _validate_permissions rejects an unknown tab or level
+// outright, so a picker offering anything else would be offering a save
+// that bounces.
+// ================================================================
+MApp.Roles = {
+  TABS: [
+    ['vendorMaster', 'Vendors'],
+    ['itemMaster', 'Items Master'],
+    ['poLedger', 'Purchase Orders'],
+    ['billLedger', 'Bill Ledger'],
+    ['returnLedger', 'Returns'],
+    ['stockTab', 'Stock'],
+    ['productsTab', 'Products & Processes'],
+    ['contractorsTab', 'Contractors'],
+    ['productionTab', 'Production'],
+    ['clientsTab', 'Clients'],
+    ['dispatchTab', 'Dispatch']
+  ],
+  LEVELS: [
+    ['none', 'No access'],
+    ['viewer', 'View'],
+    ['commenter', 'Comment'],
+    ['editor', 'Edit']
+  ],
+
+  roles: [],
+  editing: null,
+  draft: null,
+
+  async open() {
+    const listEl = document.getElementById('roles-list');
+    MApp.Util.renderSkeleton(listEl, 3);
+    MApp.Sheet.open('sheet-roles');
+    await this.load();
+  },
+
+  close() { MApp.Sheet.close('sheet-roles'); },
+
+  async load() {
+    const listEl = document.getElementById('roles-list');
+    if (!listEl) return;
+    try {
+      const res = await MApp.Api.call('getCustomRoles');
+      if (!res || !res.success) {
+        MApp.Util.renderError(listEl, res && res.message, () => this.load());
+        return;
+      }
+      this.roles = res.data || [];
+      this.render();
+    } catch (err) {
+      MApp.Util.renderError(listEl, err && err.message, () => this.load());
+    }
+  },
+
+  render() {
+    const listEl = document.getElementById('roles-list');
+    if (!listEl) return;
+
+    if (this.roles.length === 0) {
+      MApp.Util.renderEmpty(listEl, {
+        title: 'No custom roles',
+        body: 'Admin and Super Admin are built in. Tap Add to define a role between them.'
+      });
+      return;
+    }
+
+    listEl.innerHTML = this.roles.map((r, i) => {
+      const granted = Object.values(r.permissions || {}).filter(v => v && v !== 'none').length;
+      return `
+      <div class="mb-card">
+        <div class="mb-card-row">
+          <div>
+            <div class="mb-card-title">${MApp.Util.escapeHtml(r.roleName)}</div>
+            <div class="mb-card-sub">${granted} of ${this.TABS.length} tabs</div>
+          </div>
+          <div style="text-align:right;">
+            <div class="mb-card-number">${r.userCount}</div>
+            <div class="mb-card-sub">${r.userCount === 1 ? 'user' : 'users'}</div>
+          </div>
+        </div>
+        <div class="mb-mt-2" style="display:flex; gap:var(--mb-sp-4);">
+          <button type="button" class="mb-btn-text" style="padding:0;min-height:auto;" data-role-action="edit" data-role-index="${i}">Edit</button>
+          <button type="button" class="mb-btn-text" style="padding:0;min-height:auto;color:var(--mb-enamel-red-ink);" data-role-action="delete" data-role-index="${i}">Delete</button>
+        </div>
+      </div>`;
+    }).join('');
+
+    listEl.querySelectorAll('[data-role-action]').forEach(btn => {
+      btn.addEventListener('click', () => {
+        const role = this.roles[Number(btn.dataset.roleIndex)];
+        if (!role) return;
+        if (btn.dataset.roleAction === 'edit') this.openForm(role);
+        else this.remove(role);
+      });
+    });
+  },
+
+  openForm(role) {
+    this.editing = role || null;
+    // A tab absent from permissions means no access. Kept as an explicit
+    // 'none' in the draft so every row has a selected state, then
+    // stripped again on save -- the server rejects 'none' as a level.
+    this.draft = {};
+    this.TABS.forEach(([key]) => {
+      const level = (role && role.permissions && role.permissions[key]) || 'none';
+      this.draft[key] = level;
+    });
+
+    const titleEl = document.getElementById('role-form-title');
+    if (titleEl) titleEl.textContent = role ? `Edit ${role.roleName}` : 'New role';
+    const nameEl = document.getElementById('role-form-name');
+    if (nameEl) {
+      nameEl.value = role ? role.roleName : '';
+      // The key is derived from the name server-side and is what users
+      // are stored against, so renaming an existing role is not offered
+      // here rather than silently doing nothing.
+      nameEl.disabled = !!role;
+    }
+
+    this.renderPermissions();
+    MApp.Sheet.open('sheet-role-form');
+  },
+
+  closeForm() { MApp.Sheet.close('sheet-role-form'); },
+
+  renderPermissions() {
+    const body = document.getElementById('role-form-permissions');
+    if (!body) return;
+    body.innerHTML = this.TABS.map(([key, label]) => `
+      <div class="mb-field">
+        <label>${MApp.Util.escapeHtml(label)}</label>
+        <div class="mb-segmented" role="tablist" aria-label="${MApp.Util.escapeHtml(label)} access">
+          ${this.LEVELS.map(([level, text]) => `
+            <button type="button" role="tab" data-role-tab="${key}" data-role-level="${level}"
+                    aria-selected="${this.draft[key] === level ? 'true' : 'false'}">${text}</button>`).join('')}
+        </div>
+      </div>`).join('');
+
+    body.querySelectorAll('[data-role-tab]').forEach(btn => {
+      btn.addEventListener('click', () => {
+        this.draft[btn.dataset.roleTab] = btn.dataset.roleLevel;
+        this.renderPermissions();
+      });
+    });
+  },
+
+  async save() {
+    const name = String(document.getElementById('role-form-name')?.value || '').trim();
+    if (!this.editing && !name) {
+      MApp.Toast.error('Give the role a name.');
+      return;
+    }
+
+    // 'none' is this screen's word for "not granted", not the server's --
+    // _validate_permissions rejects it as a level. An absent key is how
+    // no-access is actually expressed.
+    const permissions = {};
+    Object.entries(this.draft).forEach(([key, level]) => {
+      if (level && level !== 'none') permissions[key] = level;
+    });
+
+    const btn = document.getElementById('role-form-save-btn');
+    if (btn) { btn.disabled = true; btn.textContent = 'Saving…'; }
+    const res = this.editing
+      ? await MApp.Util.mutateSimple('updateCustomRole', [this.editing.roleKey, this.editing.roleName, permissions], null)
+      : await MApp.Util.mutateSimple('createCustomRole', [name, permissions], null);
+    if (btn) { btn.disabled = false; btn.textContent = 'Save'; }
+    if (!res.success) return;
+
+    MApp.Toast.success(res.message || 'Role saved.');
+    this.closeForm();
+    this.load();
+  },
+
+  async remove(role) {
+    // The server refuses while the role is still assigned and says how
+    // many hold it. Nothing is pre-judged here, but a role with users on
+    // it is worth warning about before the round trip.
+    const warning = role.userCount > 0
+      ? ` ${role.userCount} user(s) still hold it, so this will be refused until they are reassigned.`
+      : '';
+    if (!window.confirm(`Delete the role “${role.roleName}”?${warning}`)) return;
+
+    const res = await MApp.Util.mutateSimple('deleteCustomRole', [role.roleKey], null);
+    if (res.success) {
+      MApp.Toast.success(res.message || 'Role deleted.');
+      this.load();
+    }
+  }
+};
 // ================================================================
 // ADMIN — USERS & ROLES (Phase 4, minimal v1). Entry point is Jinja-
 // gated (mobile_views.html's More tab, {% if current_user.is_admin %}),
 // but every RPC here is independently enforced server-side regardless
 // (roles=frozenset({"admin"}) in app/erp/rpc.py) -- that Jinja gate is
-// UX only, same as desktop's own. Deliberately does NOT build the
-// custom-role permissions-matrix editor (createCustomRole/updateCustomRole's
-// tab x level grid) -- that stays a desktop-only screen per the hybrid-
-// strategy plan; this sheet only ASSIGNS existing roles, never creates one.
+// UX only, same as desktop's own. This sheet ASSIGNS a role; defining
+// one is MApp.Roles above it. That editor was filed as desktop-only on
+// the assumption a permissions matrix needs a desktop -- reading the
+// contract said otherwise: a role is a name plus eleven tabs at one of
+// three levels, which is eleven rows with a three-way choice.
 // ================================================================
 MApp.Admin = {
+  // bulkDeactivateUsers SKIPS rather than refuses two kinds of account --
+  // the caller's own, and any other super_admin -- so a select-all that
+  // catches either still deactivates the rest and says what it left. The
+  // server message carries that, which is why none is supplied here.
+  SELECT: {
+    key: 'adminUsers', noun: 'user', plural: 'users',
+    method: 'bulkDeactivateUsers',
+    verb: 'Deactivate',
+    pastTense: 'deactivated',
+    note: 'They can be reactivated afterwards; nothing they recorded is removed.',
+    payload: rows => [rows.map(u => u.id)],
+    onDone: () => MApp.Admin.open()
+  },
+
   // Role is searchable so an admin can list everyone with a given role by
   // typing it, which previously needed a scroll through the whole list.
   SEARCH: {
@@ -7750,6 +7967,10 @@ MApp.Admin = {
         else this.reactivate(user);
       });
     });
+
+    // Deactivating is reversible and the server skips what it must not
+    // touch, so this is the one bulk action here that is safe to offer.
+    MApp.Select.enable(listEl, page.rows, this.SELECT);
   },
 
   // Only a super_admin can hand out the Admin role itself (server-enforced
@@ -9042,7 +9263,11 @@ MApp.Select = {
     // the records already using it, and saying otherwise would stop
     // someone doing a tidy-up that is in fact safe.
     const tail = s.config.note || "This can't be undone.";
-    if (!window.confirm(`Delete ${n} ${noun}? ${tail}`)) return;
+    //  for the one action here that is not a delete: deactivating
+    // a user is reversible, and asking "Delete 3 users?" would describe
+    // something worse than what the button does.
+    const verb = s.config.verb || 'Delete';
+    if (!window.confirm(`${verb} ${n} ${noun}? ${tail}`)) return;
 
     const config = s.config;
     const args = config.payload(rows);
@@ -9057,7 +9282,7 @@ MApp.Select = {
     // uninformative, it is wrong.
     const res = await MApp.Util.mutateSimple(config.method, args, null);
     if (!res || !res.success) return;
-    MApp.Toast.success(res.message || `${n} ${noun} deleted.`);
+    MApp.Toast.success(res.message || `${n} ${noun} ${(s.config.pastTense || 'deleted')}.`);
     if (typeof config.onDone === 'function') config.onDone();
   }
 };
@@ -9114,7 +9339,8 @@ MApp.GlobalSearch = {
     { label: 'Stock Groups', keywords: 'group set collection low stock report stickers bolts', run: () => MApp.StockGroups.open() },
     { label: 'PI / Estimates', keywords: 'client order proforma invoice quote estimate confirm', run: () => MApp.ClientOrders.open() },
     { label: 'Opening balances', keywords: 'pool opening stock credit rack correction warehouse', run: () => MApp.PoolOpenings.open() },
-    { label: 'Dispatch plan', keywords: 'plan planned loading bay tomorrow schedule challan client', run: () => MApp.DispatchPlan.open() }
+    { label: 'Dispatch plan', keywords: 'plan planned loading bay tomorrow schedule challan client', run: () => MApp.DispatchPlan.open() },
+    { label: 'Custom Roles', keywords: 'permissions access admin role tab viewer editor', run: () => MApp.Roles.open() }
   ],
 
   DEST_SPEC: {

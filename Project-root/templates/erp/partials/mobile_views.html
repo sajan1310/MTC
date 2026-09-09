@@ -1034,6 +1034,13 @@
       </div>
       <div class="mb-card-sub">Accounts, roles, activate/deactivate</div>
     </button>
+    <button type="button" class="mb-card mb-card-tappable" style="border:none;" onclick="MApp.Roles.open()">
+      <div class="mb-card-row">
+        <span class="mb-card-title">Custom Roles</span>
+        <svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M9 18l6-6-6-6"/></svg>
+      </div>
+      <div class="mb-card-sub">What each role can see and change, per tab</div>
+    </button>
   </details>
   {% endif %}
 
@@ -1707,15 +1714,64 @@
 </div>
 
 <!-- ═══════════════════════════════════════════════════════════════════
+     SHEETS — CUSTOM ROLES (Admin). Filed as desktop-only on the
+     assumption a permissions matrix needs a desktop; the contract says
+     otherwise. A role is a name plus eleven tabs at one of three levels,
+     which is eleven rows with a three-way choice -- the same segmented
+     control the theme uses. Every RPC behind this is admin-enforced
+     server-side; the Jinja gate below is UX only.
+     ═══════════════════════════════════════════════════════════════════ -->
+<div class="mb-sheet" id="sheet-roles" role="dialog" aria-modal="true" aria-labelledby="roles-heading">
+  <div class="mb-sheet-header">
+    <h2 id="roles-heading">Custom roles</h2>
+    <button type="button" class="mapp-topbar-btn" aria-label="Close" onclick="MApp.Roles.close()">
+      <svg viewBox="0 0 24 24" width="22" height="22" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><path d="M6 6l12 12M18 6L6 18"/></svg>
+    </button>
+  </div>
+  <div class="mb-sheet-body">
+    <div class="mb-field-hint mb-mb-4">Admin and Super Admin are built in and cannot be edited. These sit between them.</div>
+    <div id="roles-list"></div>
+  </div>
+  <div class="mb-sheet-footer">
+    <button type="button" class="mb-btn mb-btn-primary" onclick="MApp.Roles.openForm(null)">Add role</button>
+  </div>
+</div>
+
+<div class="mb-sheet" id="sheet-role-form" role="dialog" aria-modal="true" aria-labelledby="role-form-title">
+  <div class="mb-sheet-header">
+    <h2 id="role-form-title">New role</h2>
+    <button type="button" class="mapp-topbar-btn" aria-label="Close" onclick="MApp.Roles.closeForm()">
+      <svg viewBox="0 0 24 24" width="22" height="22" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><path d="M6 6l12 12M18 6L6 18"/></svg>
+    </button>
+  </div>
+  <div class="mb-sheet-body">
+    <div class="mb-field">
+      <label for="role-form-name">Role name</label>
+      <input type="text" id="role-form-name" autocomplete="off">
+      <!-- The key users are stored against is derived from the name
+           server-side, so renaming an existing role would not move
+           anyone onto it. Disabled on an edit rather than silently
+           ignored. -->
+      <div class="mb-field-hint">Cannot be changed once the role exists.</div>
+    </div>
+    <div class="mapp-section-label mb-mt-4">Access per tab</div>
+    <div id="role-form-permissions"></div>
+  </div>
+  <div class="mb-sheet-footer">
+    <button type="button" class="mb-btn mb-btn-primary" id="role-form-save-btn" onclick="MApp.Roles.save()">Save</button>
+  </div>
+</div>
+
+<!-- ═══════════════════════════════════════════════════════════════════
      SHEET — ADMIN: USERS & ROLES (Phase 4 mobile-parity, minimal v1)
      Jinja-gated entry point (More tab) means only an admin/super_admin
      ever sees the "Users & Roles" card at all -- but every RPC this sheet
      calls is independently enforced server-side (roles=frozenset({"admin"})
      in app/erp/rpc.py) regardless of that, same as desktop's own gate.
-     Deliberately NOT built here: the custom-role permissions-matrix editor
-     (createCustomRole/updateCustomRole's tab x level grid) -- that stays a
-     desktop-only screen per the hybrid-strategy plan; this sheet only
-     ASSIGNS existing roles (built-in or custom), never creates one.
+     This sheet ASSIGNS a role. Defining one is sheet-roles above --
+     filed as desktop-only on the assumption a permissions matrix needs a
+     desktop, which reading the contract disproved: a role is a name plus
+     eleven tabs at one of three levels.
      ═══════════════════════════════════════════════════════════════════ -->
 <div class="mb-sheet" id="sheet-admin-users" role="dialog" aria-modal="true">
   <div class="mb-sheet-header">
