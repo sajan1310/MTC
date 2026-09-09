@@ -825,12 +825,35 @@ def _run_scheduled_backup_safely() -> None:
                 )
 
 
-def _scheduler_loop(stop_event: threading.Event) -> None:
+def _scheduler_loop(app, stop_event: threading.Event) -> None:
+    """Run the nightly job inside an app context, the way _backup_worker does.
+
+    Flask contexts are thread-local, so this daemon thread has none of its
+    own. That is not a cosmetic gap. The GAS sheet mirror asks
+    has_app_context() to decide whether it is embedded in a running app or
+    started from a shell; answered False, it booted create_app("testing")
+    inside the live worker, whose failing connection then cleared the
+    process-global db_pool and left that worker serving with no database
+    (2026-09-09). Pushing the context makes the mirror the no-op it was
+    written to be, and matches _backup_worker, which pushes one so
+    _resolve_config() prefers the config the app is actually running on.
+
+    Per run rather than for the life of the thread, so `g` does not
+    accumulate across nights.
+    """
+
+    def _run_once() -> None:
+        if app is None:
+            _run_scheduled_backup_safely()
+            return
+        with app.app_context():
+            _run_scheduled_backup_safely()
+
     time.sleep(10)
-    _run_scheduled_backup_safely()
+    _run_once()
 
     while not stop_event.wait(_SCHEDULER_CHECK_INTERVAL):
-        _run_scheduled_backup_safely()
+        _run_once()
 
 
 def start_backup_scheduler(app) -> None:
@@ -846,7 +869,7 @@ def start_backup_scheduler(app) -> None:
     stop_event = threading.Event()
     thread = threading.Thread(
         target=_scheduler_loop,
-        args=(stop_event,),
+        args=(app, stop_event),
         daemon=True,
         name="nightly-backup-scheduler",
     )

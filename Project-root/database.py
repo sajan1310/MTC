@@ -19,6 +19,17 @@ def init_app(app):
     """
     global db_pool
 
+    # What was here before this call? Normally None -- init_app runs once per
+    # worker. But db_pool is a MODULE-LEVEL global, shared by everything in
+    # the process, so a second create_app() in the same interpreter aims at
+    # the same variable the live workers are reading. The nightly backup did
+    # exactly that: its GAS sheet mirror booted create_app("testing") from a
+    # thread with no app context, and the TESTING branch below then set this
+    # global to None -- silently, without raising -- leaving a live worker
+    # serving requests with no pool at all. Keeping the previous value lets
+    # that branch put back what it found instead of destroying it.
+    previous_pool = db_pool
+
     # Production-optimized pool sizing
     # min_conn: Keep warm connections ready (default: 2 for dev, 4 for prod)
     # max_conn: Handle burst traffic (default: 20)
@@ -83,11 +94,24 @@ def init_app(app):
 
     except psycopg2.OperationalError as e:
         if app.config.get("TESTING"):
-            # In tests, allow app to start without an available DB; tests may mock DB
+            # In tests, allow app to start without an available DB; tests may mock DB.
+            #
+            # Restore rather than clear. This is the one failure path that does
+            # not re-raise, so it is the only way a process can carry on with a
+            # dead global -- and when `previous_pool` is not None the pool being
+            # thrown away belongs to a REAL app that is still serving traffic.
+            # Say so loudly: a throwaway TESTING app reaching this line inside a
+            # production process is a bug in the caller, not a test detail.
+            if previous_pool is not None:
+                app.logger.error(
+                    "A TESTING app failed to connect and would have discarded a "
+                    "live connection pool; keeping the existing pool. Something "
+                    "called create_app('testing') inside a running process."
+                )
             app.logger.warning(
                 f"[TESTING] Database not reachable; proceeding without DB pool: {e}"
             )
-            db_pool = None
+            db_pool = previous_pool
             return
         app.logger.critical(f"FATAL: Could not connect to database: {e}")
         app.logger.critical("   Please verify DATABASE_URL and database availability")
