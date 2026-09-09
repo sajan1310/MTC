@@ -4815,6 +4815,16 @@ MApp.Dispatch = {
 // a multi-item array; the mobile client just always sends a length-1 one).
 // ================================================================
 MApp.Returns = {
+  // deleteReturnsBulk keys on the return NUMBER, and getReturnData is
+  // one row per header (not flattened per line like Dispatch), so a card
+  // is a whole return and the numbers need no de-duplicating.
+  SELECT: {
+    key: 'returns', noun: 'return', plural: 'returns',
+    method: 'deleteReturnsBulk',
+    payload: rows => [rows.map(r => r.returnNumber)],
+    onDone: () => MApp.Returns.load()
+  },
+
   returns: [],
   vendors: [],
   items: [],
@@ -4894,6 +4904,8 @@ MApp.Returns = {
         else this.deleteReturn(record);
       });
     });
+
+    MApp.Select.enable(listEl, this.returns, this.SELECT);
   },
 
   async openNewReturnSheet() {
@@ -7836,6 +7848,54 @@ MApp.Admin = {
   }
 };
 
+
+// ================================================================
+// REORDER — move one row up or down in a sequence.
+//
+// reorderProcesses and reorderBOM both take the WHOLE ordered list and
+// renumber sequence = position in it. That is the trap this module
+// exists to close: sending the visible page, or a search's matches,
+// renumbers those rows and silently leaves every other row's sequence
+// pointing at the old arrangement. Process sequence decides what the
+// Log Lot cascade offers next, so a wrong one is not cosmetic.
+//
+// So a move always recomputes against the full list, and is not offered
+// at all while a search is narrowing it -- with three of forty rows on
+// screen, "up" has no answer the operator would predict.
+// ================================================================
+MApp.Reorder = {
+  // The list with `index` moved by `delta`, or null when that would fall
+  // off either end. Returns a new array; the caller keeps the old one
+  // until the server agrees.
+  moved(list, index, delta) {
+    const to = index + delta;
+    if (!Array.isArray(list) || index < 0 || index >= list.length) return null;
+    if (to < 0 || to >= list.length) return null;
+    const next = list.slice();
+    const [row] = next.splice(index, 1);
+    next.splice(to, 0, row);
+    return next;
+  },
+
+  // Up/down controls for one card. Rendered only when the list is whole:
+  // `disabled` at the ends rather than hidden, so the row does not change
+  // width as it travels.
+  controlsHtml(action, index, total) {
+    const btn = (delta, label, path) => `
+      <button type="button" class="mb-btn-text mapp-reorder-btn"
+              data-${action}="${index}" data-reorder-delta="${delta}"
+              aria-label="${label}"
+              ${(delta < 0 && index === 0) || (delta > 0 && index === total - 1) ? 'disabled' : ''}>
+        <svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor"
+             stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">${path}</svg>
+      </button>`;
+    return `
+      <span class="mapp-reorder">
+        ${btn(-1, 'Move up', '<path d="M18 15l-6-6-6 6"/>')}
+        ${btn(1, 'Move down', '<path d="M6 9l6 6 6-6"/>')}
+      </span>`;
+  }
+};
 // ================================================================
 // PROCESSES (Phase 5, More tab) — header fields + Common Components only.
 // Color Sub-Groups/Primary Axis/Dispatch Differentiator/Linked Processes
@@ -7928,6 +7988,11 @@ MApp.Process = {
 
     const page = MApp.Paging.take('process', this.filtered, () => this.render());
     MApp.SearchBox.setCount('process-list-search', page.shown, page.total, page.meta);
+    // Only when the list is whole. reorderProcesses renumbers by position
+    // in the array it is sent, so a move computed from a search's matches
+    // would renumber those and leave every other process pointing at the
+    // old order -- and process sequence is what the Log Lot cascade reads.
+    const reorderable = !this.searchTerm.trim();
     listEl.innerHTML = page.rows.map((p, i) => `
       <div class="mb-card">
         <div class="mb-card-row">
@@ -7938,6 +8003,7 @@ MApp.Process = {
           <div style="text-align:right;">
             <div class="mb-card-sub">Stage ${MApp.Util.escapeHtml(String(p.sequence))}</div>
             <div class="mb-card-sub">${MApp.Util.escapeHtml(p.lotPrefix || '')}</div>
+            ${reorderable ? MApp.Reorder.controlsHtml('process-move', this.processes.indexOf(p), this.processes.length) : ''}
           </div>
         </div>
         ${!p.active ? '<div class="mb-mt-2"><span class="mb-chip mb-chip-cancelled">Inactive</span></div>' : ''}
@@ -7960,7 +8026,33 @@ MApp.Process = {
       });
     });
 
+    listEl.querySelectorAll('[data-process-move]').forEach(btn => {
+      btn.addEventListener('click', e => {
+        // Stops the card's own long-press selection claiming the tap.
+        e.stopPropagation();
+        this.move(Number(btn.dataset.processMove), Number(btn.dataset.reorderDelta));
+      });
+    });
+
     MApp.Select.enable(listEl, page.rows, this.SELECT);
+  },
+
+  // Sends the WHOLE order, because that is what the server renumbers
+  // from. The local list is only rebuilt once the server has agreed: a
+  // failed reorder that left the screen rearranged would show an
+  // ordering the lot numbers do not follow.
+  async move(index, delta) {
+    const next = MApp.Reorder.moved(this.processes, index, delta);
+    if (!next) return;
+
+    const res = await MApp.Util.mutateSimple(
+      'reorderProcesses', [next.map(p => p.processId)], null
+    );
+    if (!res.success) return;
+
+    MApp.Toast.success(res.message || 'Process order updated.');
+    MApp.Haptics.light();
+    this.load();
   },
 
   // What is actually available in the pool for this process's inputs.
@@ -8388,6 +8480,10 @@ MApp.BOM = {
 
     const page = MApp.Paging.take('bom', this.filtered, () => this.render());
     MApp.SearchBox.setCount('bom-list-search', page.shown, page.total, page.meta);
+    // reorderBOM renumbers by position in the array it is sent, so a move
+    // computed from a search's matches would renumber those and leave
+    // every other recipe pointing at the old order.
+    const reorderable = !this.searchTerm.trim();
     listEl.innerHTML = page.rows.map((p, i) => `
       <div class="mb-card">
         <div class="mb-card-row">
@@ -8398,6 +8494,7 @@ MApp.BOM = {
           <div style="text-align:right;">
             <div class="mb-card-number">${MApp.Util.formatCurrency((p.totalCost || 0) + (p.totalAdditionalCost || 0))}</div>
             <div class="mb-card-sub">Total cost</div>
+            ${reorderable ? MApp.Reorder.controlsHtml('bom-move', this.products.indexOf(p), this.products.length) : ''}
           </div>
         </div>
         <div class="mb-mt-2"><button type="button" class="mb-btn-text" style="padding:0;min-height:auto;" data-bom-index="${i}">Edit</button></div>
@@ -8410,7 +8507,34 @@ MApp.BOM = {
       });
     });
 
+    listEl.querySelectorAll('[data-bom-move]').forEach(btn => {
+      btn.addEventListener('click', ev => {
+        // Stops the card's own long-press selection claiming the tap.
+        ev.stopPropagation();
+        this.move(Number(btn.dataset.bomMove), Number(btn.dataset.reorderDelta));
+      });
+    });
+
     MApp.Select.enable(listEl, page.rows, this.SELECT);
+  },
+
+  // The whole order, and the unlock token every BOM write carries.
+  // The local list is only rebuilt once the server has agreed.
+  async move(index, delta) {
+    const next = MApp.Reorder.moved(this.products, index, delta);
+    if (!next) return;
+
+    const res = await MApp.Util.mutateSimple(
+      'reorderBOM', [next.map(x => x.productId), this.token], null
+    );
+    if (!res.success) {
+      if (this._isAccessError(res)) this._resetToken();
+      return;
+    }
+
+    MApp.Toast.success(res.message || 'Recipe order updated.');
+    MApp.Haptics.light();
+    this._loadList();
   },
 
   async openForm(product) {

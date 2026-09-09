@@ -936,6 +936,32 @@ textarea:focus-visible,
    next section's rule. */
 .mapp-group[open] { padding-bottom: var(--mb-sp-2); }
 
+/* ── Reorder controls ────────────────────────────────────────────────
+   Two small arrows in a card corner rather than two more entries in its
+   action row, which on the Processes card already carries three. They
+   are disabled at the ends rather than hidden, so a row does not change
+   width as it travels up the list. */
+.mapp-reorder {
+  display: inline-flex;
+  gap: 2px;
+  margin-top: var(--mb-sp-1);
+}
+
+.mapp-reorder-btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: var(--mb-tap-min);
+  height: var(--mb-tap-min);
+  padding: 0;
+  color: var(--mb-steel);
+}
+
+.mapp-reorder-btn:disabled {
+  color: var(--mb-steel-light);
+  cursor: not-allowed;
+}
+
 /* ── Segmented view switch ───────────────────────────────────────────
    Two views of the same question -- "how much of this do we have" --
    answered by two different records. Deliberately NOT the filter-chip

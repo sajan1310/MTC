@@ -115,16 +115,13 @@ const BACKLOG = {
   createCustomRole: 'P7 roles (read-only + handoff)',
   deleteCustomRole: 'P7 roles (read-only + handoff)',
   deleteDispatchPlanLine: 'P7 dispatch plan checklist',
-  deleteReturnsBulk: 'P2 multi-select in the shared list renderer',
   getDispatchPlans: 'P7 dispatch plan checklist',
-  reorderBOM: 'P7 move-up / move-down ordering',
-  reorderProcesses: 'P7 move-up / move-down ordering',
   saveDispatchPlanLine: 'P7 dispatch plan checklist',
   updateCustomRole: 'P7 roles (read-only + handoff)',
 };
 
 // Phase 1 opened at 79. Lower this line as ports land; never raise it.
-const BACKLOG_BASELINE = 10;
+const BACKLOG_BASELINE = 7;
 
 describe('MApp / desktop feature parity', () => {
   test('the registry is being read at all', () => {
