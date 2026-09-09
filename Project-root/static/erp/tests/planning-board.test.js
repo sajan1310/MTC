@@ -61,10 +61,51 @@ function makeSortableStub() {
 // events below) and useEffect callbacks (where Sortable.create/destroy
 // happen) to a microtask/rAF-scheduled flush, not the current call stack --
 // a handler dispatched synchronously right after would still close over
-// pre-update state, or find no Sortable instance registered yet. Awaiting
-// a real timer tick lets that scheduled flush actually run first.
-function flush() {
-  return new Promise(resolve => setTimeout(resolve, 100));
+// pre-update state, or find no Sortable instance registered yet.
+//
+// This used to be `setTimeout(resolve, 100)`, and that lost a race under
+// load. Preact's effect flush is `afterNextFrame`, which races
+// requestAnimationFrame against a 100ms fallback timer and then queues the
+// callbacks on a FURTHER setTimeout(0). Idle, rAF fires at ~17ms and
+// everything has run long before 100ms. Oversubscribed -- a full run on
+// more workers than cores -- rAF gets starved past 100ms, Preact's
+// fallback timer wins instead, and its final setTimeout(0) lands one
+// macrotask AFTER this helper's own 100ms timer. The test then read a
+// Sortable instance that did not exist yet: `instances.find(...)` returned
+// undefined and the next line threw on `.options`.
+//
+// So wait on the scheduler, not on the clock. Preact always schedules
+// before we do (its render is deferred to a microtask, which we let run
+// first), so a chain registered behind it drains behind it -- whichever
+// branch of its rAF/timeout race wins. Three rounds covers an update that
+// re-renders and schedules again.
+function afterNextFrame() {
+  return new Promise(resolve => {
+    let settled = false;
+    // The trailing setTimeout mirrors Preact's own: the frame callback is
+    // where it *queues* the effects, not where it runs them.
+    const finish = () => {
+      if (settled) return;
+      settled = true;
+      setTimeout(resolve, 0);
+    };
+    // Outlasts Preact's 100ms fallback, so if rAF is starved for both of
+    // us its timer still fires first and this stays behind it.
+    const bail = setTimeout(finish, 120);
+    requestAnimationFrame(() => {
+      clearTimeout(bail);
+      finish();
+    });
+  });
+}
+
+async function flush(rounds = 3) {
+  for (let i = 0; i < rounds; i++) {
+    // Let Preact's deferred render run and schedule its effect flush
+    // before we queue behind it -- on the first round it has not yet.
+    await Promise.resolve();
+    await afterNextFrame();
+  }
 }
 
 function baseConfig(overrides) {
@@ -436,6 +477,10 @@ describe('App.PlanningBoard', () => {
 
     const cardListEl = document.querySelector('.pb-card-lines');
     const sortableInstance = instances.find(i => i.el === cardListEl);
+    // Asserted, not assumed: when the effect flush had not run this line
+    // was undefined and the failure surfaced as a TypeError on .options
+    // twenty lines later, which says nothing about what went wrong.
+    expect(sortableInstance).toBeTruthy();
 
     const a = document.createElement('div');
     a.setAttribute('data-pool-item-id', 'P1');

@@ -86,5 +86,13 @@ describe('accessibility: dashboard KPI cards', () => {
       },
     });
     expect(results).toHaveNoViolations();
-  });
+    // A full axe sweep -- every rule but the two excluded above -- over the
+    // whole dashboard partial. Unlike the table-header test above it has no
+    // `runOnly` narrowing it, so it is integration-weight work on a
+    // unit-test budget: idle it lands around a second, but on a loaded box
+    // (a full run oversubscribed past the core count) it crosses jest's 5s
+    // default and fails as a timeout, which reads as a flaky accessibility
+    // regression rather than a slow scan. Nothing here is racing; it just
+    // needs a budget that matches the job.
+  }, 30000);
 });
