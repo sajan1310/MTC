@@ -242,7 +242,11 @@
 // both precached and the markup half arrives fresh, so a tablet on the old
 // pair renders the old chart until the next load -- cosmetic, and it heals
 // itself. Not load-bearing.
-const CACHE_NAME = 'erp-shell-v54';
+// v55: the Production Sheet print template appends Narration in brackets
+// after the Item Name, e.g. "SPOKE NIPPLE(Chrome Nipple)". production.js
+// is precached, so without the bump an installed tablet keeps the old copy
+// that omits narration from print. Cosmetic for the print output.
+const CACHE_NAME = 'erp-shell-v55';
 
 const PRECACHE_URLS = [
   '/erp/offline.html',

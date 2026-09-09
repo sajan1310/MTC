@@ -1438,8 +1438,10 @@ App.Production = {
 
     let rowsHtml = '';
     components.forEach(comp => {
+      const narr = (comp.narration || '').trim();
+      const displayName = narr ? `${comp.itemName || ''}(${narr})` : (comp.itemName || '');
       rowsHtml += `<tr>
-    <td style="padding:6px;border:1px solid #ddd;text-align:left;">${escapeHtml(comp.itemName || '')}</td>
+    <td style="padding:6px;border:1px solid #ddd;text-align:left;">${escapeHtml(displayName)}</td>
     <td style="padding:6px;border:1px solid #ddd;">${escapeHtml(comp.size || '-')}</td>
     <td style="padding:6px;border:1px solid #ddd;">${escapeHtml(comp.sourceType === 'POOL' ? 'Pool' : 'Item')}</td>
     <td style="padding:6px;border:1px solid #ddd;text-align:right;font-weight:700;">${escapeHtml(this.formatQty(comp.qty))}</td>
@@ -7816,13 +7818,16 @@ App.Production = {
     const matrixSection = document.getElementById('print-prod-matrix-section');
     const subGroupSection = document.getElementById('print-prod-subgroup-section');
 
-    // Size and Narration are read from the dialog but not carried into the
-    // printed tables -- see buildCommonTable. The fit loop used to have a
-    // last-resort tier that dropped Size when it was "GENERAL"/blank on
-    // every row; now that neither column is ever printed, that tier had
-    // nothing left to drop and the whole droppability test went with it.
+    // Narration is appended inline to the item name as "ItemName(Narration)"
+    // rather than occupying its own column -- keeps the layout compact while
+    // still surfacing the narration on the printed sheet.
+    const nameWithNarration = (row) => {
+      const name = get(row, '.prod-sheet-item-name');
+      const narr = escapeHtml(row.querySelector('.prod-sheet-narration')?.value.trim() || '');
+      return narr ? `${name}(${narr})` : name;
+    };
     const commonData = commonRows.map(row => ({
-      name: get(row, '.prod-sheet-item-name'),
+      name: nameWithNarration(row),
       qty: row.querySelector('.prod-sheet-qty')?.value || '',
       unit: this._sheetRowUnitFromDom(row)
     }));
@@ -7840,7 +7845,7 @@ App.Production = {
       return tagEl?.textContent.trim() || '';
     };
     const toMatrixRow = columns => row => ({
-      name: get(row, '.prod-sheet-item-name'),
+      name: nameWithNarration(row),
       unit: this._sheetRowUnitFromDom(row),
       colorQty: columns.map(c => qtyFor(row, c)),
       colorTag: columns.map(c => tagFor(row, c))
@@ -8033,9 +8038,10 @@ App.Production = {
     // width back, which is what actually decides whether a lot fits one page.
     const buildCommonTable = (rows, tier) => {
       if (rows.length === 0) return '';
-      // Item Name is deliberately generous: with Size and Narration no
-      // longer printed the name is the only identifying column left, and
-      // Required Qty needs no more than a short "270 Pcs".
+      // Item Name is deliberately generous: Size is not printed and the
+      // narration rides INSIDE this column as "Name(Narration)", so it
+      // carries both identifiers. Required Qty needs no more than a short
+      // "270 Pcs".
       let head = headCell('Item Name', tier, { align: 'left', width: '72%' });
       head += headCell('Required Qty', tier, { align: 'right', width: '28%' });
 
@@ -8055,9 +8061,10 @@ App.Production = {
     // renders both the color matrix and the sub-group table.
     const buildMatrixTable = (rows, tier, columns) => {
       if (rows.length === 0 || columns.length === 0) return '';
-      // 38%, not the 26% Item Name used to get: with Size and Narration gone
-      // the name is the only identifying column left, so it takes the larger
-      // share of what they freed and the rest goes to the colour columns.
+      // 38%, not the 26% Item Name used to get: Size freed its column and
+      // the narration rides inside this one as "Name(Narration)", so the
+      // name needs the larger share of what Size freed and the rest goes to
+      // the colour columns.
       let head = headCell('Item Name', tier, { align: 'left', width: '38%' });
       columns.forEach(c => { head += headCell(escapeHtml(c), tier, { align: 'right' }); });
 

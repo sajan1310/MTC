@@ -307,8 +307,13 @@ describe('App.Production.printProductionSheet', () => {
   // deliberately NOT printed. Both are still read from the DOM by
   // _buildProductionSheetForExport's row mappers, so nothing stops a future
   // change re-adding the cells; these assertions are what makes that loud.
-  describe('Size and Narration are omitted from the printed sheet', () => {
-    test('Common Components prints Item Name and Required Qty only', () => {
+  // Size is still dropped; Narration came back, but as part of the Item
+  // Name rather than as a column of its own -- "Frame(Handle with care)".
+  // The printed sheet is a fit problem before it is anything else, and a
+  // fourth column costs more width than the narration is worth; appended
+  // inline it rides along in the one column that was already generous.
+  describe('Size is omitted; Narration rides inside the Item Name', () => {
+    test('Common Components still prints two columns, narration inside the name', () => {
       App.State.globalItems = [{ name: 'Frame', size: 'L', baseUnit: 'Set' }];
       App.State.currentProductionSheet = { colors: [], lotColor: '' };
       addCommonRow('Frame', 'GENERAL', 'Handle with care', '5');
@@ -320,14 +325,14 @@ describe('App.Production.printProductionSheet', () => {
       const heads = [...table.querySelectorAll('thead th')].map(th => th.textContent.trim());
       expect(heads).toEqual(['Item Name', 'Required Qty']);
 
+      // Two cells, not three: the narration widened no layout.
       const cells = table.querySelectorAll('tbody tr td');
       expect(cells.length).toBe(2);
-      expect(table.textContent).toContain('Frame');
+      expect(table.textContent).toContain('Frame(Handle with care)');
       expect(table.textContent).not.toContain('GENERAL');
-      expect(table.textContent).not.toContain('Handle with care');
     });
 
-    test('Per-Color matrix prints Item Name plus one column per colour', () => {
+    test('Per-Color matrix keeps one column per colour, narration inside the name', () => {
       App.State.currentProductionSheet = { colors: ['Red', 'Blue'], lotColor: '' };
       addMatrixRow('Frame', 'GENERAL', 'Handle with care', { Red: '5', Blue: '4' });
 
@@ -338,25 +343,48 @@ describe('App.Production.printProductionSheet', () => {
       const heads = [...table.querySelectorAll('thead th')].map(th => th.textContent.trim());
       expect(heads).toEqual(['Item Name', 'Red', 'Blue']);
 
-      // One name cell + one cell per colour, and no leftover Size/Narration.
+      // One name cell + one cell per colour, and still no Size column.
       expect(table.querySelectorAll('tbody tr td').length).toBe(3);
+      expect(table.textContent).toContain('Frame(Handle with care)');
       expect(table.textContent).not.toContain('GENERAL');
-      expect(table.textContent).not.toContain('Handle with care');
     });
 
     test('a non-generic Size is dropped too, not just "GENERAL"', () => {
       // The old fit loop only ever dropped Size when every row was
-      // generic. Hiding is now unconditional, so a real size like "20 inch"
-      // must not survive either.
+      // generic. Hiding is unconditional, so a real size like "20 inch"
+      // must not survive either -- narration is the exception, not Size.
       App.State.currentProductionSheet = { colors: [], lotColor: '' };
       addCommonRow('Rim', '20 inch', 'Front only', '2');
 
       App.Production.printProductionSheet();
 
       const text = document.getElementById('print-production-sheet-common-tables').textContent;
-      expect(text).toContain('Rim');
+      expect(text).toContain('Rim(Front only)');
       expect(text).not.toContain('20 inch');
-      expect(text).not.toContain('Front only');
+    });
+
+    test('a row with no narration prints the bare name, with no empty parens', () => {
+      App.State.currentProductionSheet = { colors: [], lotColor: '' };
+      addCommonRow('Rim', '20 inch', '', '2');
+
+      App.Production.printProductionSheet();
+
+      const text = document.getElementById('print-production-sheet-common-tables').textContent;
+      expect(text).toContain('Rim');
+      expect(text).not.toContain('()');
+    });
+
+    test('a narration carrying markup is escaped, not rendered', () => {
+      // Both halves are escaped before they are joined, so the join adds
+      // only the literal parentheses.
+      App.State.currentProductionSheet = { colors: [], lotColor: '' };
+      addCommonRow('Rim', '', '<img src=x onerror=alert(1)>', '2');
+
+      App.Production.printProductionSheet();
+
+      const host = document.getElementById('print-production-sheet-common-tables');
+      expect(host.querySelector('img')).toBeNull();
+      expect(host.textContent).toContain('<img src=x onerror=alert(1)>');
     });
   });
   // ── Item name occupies one line ───────────────────────────────────────
