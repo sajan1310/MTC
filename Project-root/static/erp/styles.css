@@ -1980,18 +1980,41 @@
      is also a card in the grid below, and those cards state In Progress and
      Pending per stage in words. The hole carries the total, which is the
      number a pie of the same data would have had nowhere to put. */
-  .dash-donut-wrap {
-    display: flex;
-    flex-wrap: wrap;
-    align-items: center;
-    gap: 24px;
+  /* Small multiples: one card per Process Type. auto-fit rather than a
+     fixed count -- five types on a wide screen, one on a narrow one, and
+     no card ever narrower than its own legend rows. */
+  .dash-donut-grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(210px, 1fr));
+    gap: 16px;
+  }
+
+  .dash-donut-card {
+    min-width: 0;
+    padding: 12px;
+    border: 1px solid var(--border-color);
+    border-radius: var(--border-radius-lg);
+  }
+
+  .dash-donut-head {
+    margin-bottom: 8px;
+  }
+
+  .dash-donut-type {
+    font-size: 12px;
+    font-weight: 700;
+    color: var(--text-primary);
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+    display: block;
   }
 
   .dash-donut-figure {
     position: relative;
-    flex: 0 0 auto;
-    width: 168px;
-    height: 168px;
+    width: 132px;
+    height: 132px;
+    margin: 0 auto 10px;
   }
 
   .dash-donut {
@@ -2027,8 +2050,6 @@
   }
 
   .dash-donut-legend {
-    flex: 1 1 15rem;
-    min-width: 0;
     margin: 0;
     padding: 0;
     list-style: none;
@@ -2039,12 +2060,36 @@
      visible labels rather than colour alone -- these rows are that relief,
      so they are not optional decoration. */
   .dash-donut-row {
+    border-bottom: 1px solid var(--border-color);
+  }
+
+  /* The row IS the drill-down the columns used to carry, so it is a real
+     button rather than a div with a handler. */
+  .dash-donut-link,
+  .dash-donut-row.is-other {
     display: grid;
     grid-template-columns: auto minmax(0, 1fr) auto auto;
     align-items: baseline;
-    gap: 4px 8px;
-    padding: 5px 0;
-    border-bottom: 1px solid var(--border-color);
+    gap: 8px;
+    width: 100%;
+    padding: 5px 2px;
+    border: 0;
+    background: none;
+    text-align: left;
+    white-space: normal;
+  }
+
+  .dash-donut-link {
+    cursor: pointer;
+  }
+
+  .dash-donut-link:hover {
+    background: var(--bg-muted, rgb(0 0 0 / 4%));
+  }
+
+  .dash-donut-link:focus-visible {
+    outline: 2px solid var(--secondary-color);
+    outline-offset: -2px;
   }
 
   .dash-donut-row:last-child {
@@ -2081,13 +2126,6 @@
     text-align: right;
   }
 
-  /* Spans the full row under the name: the second dimension the columns
-     used to stack, kept as words rather than a second ring. */
-  .dash-donut-split {
-    grid-column: 2 / -1;
-    font-size: 11px;
-    color: var(--text-secondary);
-  }
 
   .dash-band-legend {
     display: flex;

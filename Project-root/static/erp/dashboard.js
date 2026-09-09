@@ -826,19 +826,17 @@ App.Dashboard = {
     return Array.from(bands.values()).sort((a, b) => b.total - a.total);
   },
 
-  // Where the open work sits, by Process Type. A doughnut rather than the
-  // stacked columns this replaced: the question the section asks is which
-  // part of the shop is loaded, and that is a share question -- an angle
-  // from the centre is what the eye judges well, where twenty columns
-  // against a y-axis made the reader do arithmetic.
+  // One doughnut per Process Type, its own processes as the slices. Small
+  // multiples rather than a single ring, because the two questions this
+  // section is asked are different sizes: which part of the shop is loaded
+  // (compare the totals in the holes) and what inside it is loaded (read
+  // one card's slices). A single doughnut of types answered the first and
+  // threw the second away; the stacked columns it replaced answered the
+  // second and made the first arithmetic.
   //
-  // Nothing is lost by dropping the per-process columns. Every process the
-  // chart could drill into is also a card in the grid below (both carry
-  // data-action="dash-pipeline-stage"), and those cards state In Progress
-  // and Pending per stage in words.
-  //
-  // The hole is the point of a doughnut and it carries the total, which is
-  // the number a pie of the same data would have had nowhere to put.
+  // Slices are processes and stay clickable, so the stage drill-down the
+  // columns carried survives the change rather than moving to the cards
+  // below.
   DONUT_MAX_SLICES: 6,
 
   renderStageChart(pipeline, upcoming) {
@@ -856,34 +854,14 @@ App.Dashboard = {
       return acc;
     }, { wip: 0, queued: 0 });
 
-    // Past six the wedges are thinner than the labels beside them, and the
-    // palette runs out of hues that stay apart under colour-blindness.
-    let slices = bands.map(b => ({
-      name: b.name,
-      total: b.total,
-      wip: b.columns.reduce((n, c) => n + c.wip, 0),
-      queued: b.columns.reduce((n, c) => n + c.queued, 0),
-    }));
-    if (slices.length > this.DONUT_MAX_SLICES) {
-      const rest = slices.slice(this.DONUT_MAX_SLICES);
-      slices = slices.slice(0, this.DONUT_MAX_SLICES);
-      slices.push({
-        name: 'Other',
-        isOther: true,
-        total: rest.reduce((n, r) => n + r.total, 0),
-        wip: rest.reduce((n, r) => n + r.wip, 0),
-        queued: rest.reduce((n, r) => n + r.queued, 0),
-      });
-    }
-    slices = slices.filter(s => s.total > 0);
-
-    const grandTotal = slices.reduce((n, s) => n + s.total, 0);
-    if (!(grandTotal > 0)) { el.innerHTML = empty; return; }
-
-    const colourOf = s => (s.isOther ? 'var(--viz-cat-other)' : `var(--viz-cat-${s._slot})`);
-    slices.forEach((s, i) => { s._slot = (i % this.DONUT_MAX_SLICES) + 1; });
+    const cards = bands
+      .map(band => this._stageDonutCard(band))
+      .filter(Boolean)
+      .join('');
+    if (!cards) { el.innerHTML = empty; return; }
 
     // A legend, always, for two series -- identity is never colour alone.
+    // These are the whole section's totals; each card states its own.
     const legend = `
       <div class="dash-band-legend">
         <span class="dash-band-legend-item">
@@ -896,31 +874,83 @@ App.Dashboard = {
         </span>
       </div>`;
 
-    el.innerHTML = `
-      <div class="dash-donut-chart">
-        ${legend}
-        <div class="dash-donut-wrap">
-          <div class="dash-donut-figure">
-            ${this._donutSvg(slices, grandTotal, colourOf)}
-            <div class="dash-donut-centre" aria-hidden="true">
-              <span class="dash-donut-centre-value">${formatQty(grandTotal)}</span>
-              <span class="dash-donut-centre-label">units open</span>
-            </div>
-          </div>
-          <ul class="dash-donut-legend">
-            ${slices.map(s => {
-    const pct = Math.round((s.total / grandTotal) * 100);
+    el.innerHTML = `${legend}<div class="dash-donut-grid">${cards}</div>`;
+  },
+
+  // One card: the type's name and total, a ring of its processes, and a
+  // row per process. Returns '' for a band with nothing open in it, so an
+  // empty type never draws an empty ring.
+  _stageDonutCard(band) {
+    let slices = band.columns
+      .map(c => ({
+        processId: c.processId,
+        name: c.processName,
+        total: c.wip + c.queued,
+        wip: c.wip,
+        queued: c.queued,
+      }))
+      .filter(s => s.total > 0)
+      .sort((a, b) => b.total - a.total);
+
+    if (slices.length === 0) return '';
+
+    // Past six the wedges are thinner than the rows beside them, and the
+    // palette runs out of hues that stay apart under colour-blindness.
+    if (slices.length > this.DONUT_MAX_SLICES) {
+      const rest = slices.slice(this.DONUT_MAX_SLICES);
+      slices = slices.slice(0, this.DONUT_MAX_SLICES);
+      slices.push({
+        name: `${rest.length} more`,
+        isOther: true,
+        total: rest.reduce((n, r) => n + r.total, 0),
+        wip: rest.reduce((n, r) => n + r.wip, 0),
+        queued: rest.reduce((n, r) => n + r.queued, 0),
+      });
+    }
+
+    const total = slices.reduce((n, s) => n + s.total, 0);
+    if (!(total > 0)) return '';
+
+    // Restarted per card on purpose. Each card is its own chart with its
+    // own legend, and its processes are not the neighbouring card's, so
+    // there is no cross-card identity for a shared order to preserve.
+    slices.forEach((s, i) => { s._slot = (i % this.DONUT_MAX_SLICES) + 1; });
+    const colourOf = s => (s.isOther ? 'var(--viz-cat-other)' : `var(--viz-cat-${s._slot})`);
+
+    const rows = slices.map(s => {
+      const pct = Math.round((s.total / total) * 100);
+      const label = `${s.name}: ${formatQty(s.total)} open, `
+        + `${formatQty(s.wip)} in progress, ${formatQty(s.queued)} pending`;
+      const inner = `
+        <span class="dash-donut-swatch" style="background:${colourOf(s)}" aria-hidden="true"></span>
+        <span class="dash-donut-name">${escapeHtml(s.name)}</span>
+        <span class="dash-donut-total">${formatQty(s.total)}</span>
+        <span class="dash-donut-share">${pct}%</span>`;
+
+      // The folded tail is not one process, so it is not a drill target.
+      return s.isOther
+        ? `<li class="dash-donut-row is-other" title="${escapeHtml(label)}">${inner}</li>`
+        : `<li class="dash-donut-row"><button type="button" class="dash-donut-link"
+             data-action="dash-pipeline-stage"
+             data-processid="${encodeURIComponent(s.processId)}"
+             title="${escapeHtml(label)}">${inner}
+             <span class="visually-hidden">${escapeHtml(label)}</span>
+           </button></li>`;
+    }).join('');
+
     return `
-            <li class="dash-donut-row">
-              <span class="dash-donut-swatch" style="background:${colourOf(s)}" aria-hidden="true"></span>
-              <span class="dash-donut-name">${escapeHtml(s.name)}</span>
-              <span class="dash-donut-total">${formatQty(s.total)}</span>
-              <span class="dash-donut-share">${pct}%</span>
-              <span class="dash-donut-split">${formatQty(s.wip)} in progress · ${formatQty(s.queued)} pending</span>
-            </li>`;
-  }).join('')}
-          </ul>
+      <div class="dash-donut-card">
+        <div class="dash-donut-head">
+          <span class="dash-donut-type">${escapeHtml(band.name)}</span>
         </div>
+        <div class="dash-donut-figure">
+          ${this._donutSvg(slices, total, colourOf)}
+          <div class="dash-donut-centre" aria-hidden="true">
+            <span class="dash-donut-centre-value">${formatQty(total)}</span>
+            <span class="dash-donut-centre-label">open</span>
+          </div>
+        </div>
+        <ul class="dash-donut-legend">${rows}</ul>
       </div>`;
   },
 
@@ -943,7 +973,7 @@ App.Dashboard = {
       const fill = colourOf(s);
       // One slice covering the whole ring has identical start and end
       // points, and an arc between two identical points draws nothing.
-      // It is a ring, so draw two circles.
+      // It is a ring, so draw a ring.
       if (frac >= 0.9999) {
         return `<circle cx="${C}" cy="${C}" r="${(R + inner) / 2}" fill="none"
                         stroke="${fill}" stroke-width="${THICK}"/>`;
@@ -958,9 +988,9 @@ App.Dashboard = {
         + `L${ix2},${iy2} A${inner},${inner} 0 ${large},0 ${ix1},${iy1} Z" fill="${fill}"/>`;
     }).join('');
 
-    // aria-hidden with the legend carrying every name, value and share:
-    // a ring read aloud as a list of unlabelled wedges tells nobody
-    // anything, and the legend is already the accessible version.
+    // aria-hidden with the rows carrying every name, value and share: a
+    // ring read aloud as a list of unlabelled arcs tells nobody anything,
+    // and the legend is already the accessible version.
     return `<svg viewBox="0 0 120 120" class="dash-donut" aria-hidden="true">${arcs}</svg>`;
   },
 

@@ -22,12 +22,13 @@
  *      card renders its per-stage breakdown only when that says something
  *      the stage total does not, and its name is never truncated.
  *
- *      The chart is a doughnut of Process Type share -- six values across
- *      262 processes, which is the one level of this data with a low
- *      enough cardinality to read as slices. It replaced a stacked column
- *      chart: the section asks which part of the shop is loaded, that is
- *      a share question, and twenty columns against a y-axis made the
- *      reader do arithmetic to answer it. The hole carries the total.
+ *      The chart is small multiples: one doughnut per Process Type, its
+ *      own processes as the slices, its own total in the hole. Two
+ *      questions of different sizes -- which part of the shop is loaded
+ *      (compare the holes) and what inside it is loaded (read one card)
+ *      -- and the stacked columns it replaced answered the second while
+ *      making the first arithmetic. Slices stay clickable, so the stage
+ *      drill-down the columns carried survives the change.
  *
  *      What this went through to get here is worth knowing, because each
  *      step fixed the last one's defect: a wall of content-sized cards
@@ -475,7 +476,7 @@ describe('dashboard Upcoming Lots', () => {
   });
 });
 
-describe('dashboard stage load doughnut', () => {
+describe('dashboard stage load doughnuts', () => {
   beforeEach(() => {
     mountPartial();
     loadDashboardAsGlobal();
@@ -490,71 +491,99 @@ describe('dashboard stage load doughnut', () => {
   // Not $$: that is a core.js global and this suite loads only api.js
   // and dashboard.js.
   const all = sel => Array.from(document.querySelectorAll(sel));
-  const sliceNames = () => all('.dash-donut-name').map(n => n.textContent);
-  const wedges = () => all('.dash-donut path, .dash-donut circle');
+  const cards = () => all('.dash-donut-card');
+  const typeNames = () => all('.dash-donut-type').map(n => n.textContent);
+  const cardOf = name => cards().find(c => c.querySelector('.dash-donut-type').textContent === name);
+  const namesIn = card => Array.from(card.querySelectorAll('.dash-donut-name')).map(n => n.textContent);
+  const totalIn = card => card.querySelector('.dash-donut-centre-value').textContent;
 
-  test('one slice per process type, not per process', () => {
-    // The question is which part of the shop is loaded. Twenty processes
-    // would be twenty wedges thinner than their own labels.
+  test('one doughnut per process type, not one for the whole shop', () => {
+    // Small multiples: comparing the holes answers which part of the shop
+    // is loaded, and reading one card answers what inside it is loaded. A
+    // single ring answered the first and threw the second away.
     App.Dashboard.renderStageChart([
       stage({ processId: 'A', processType: 'Packing', totalQty: 40 }),
       stage({ processId: 'B', processType: 'Rim Fitting', totalQty: 30 }),
       stage({ processId: 'C', processType: 'Packing', totalQty: 20 }),
     ], []);
 
-    expect(wedges()).toHaveLength(2);
-    expect(sliceNames()).toEqual(['Packing', 'Rim Fitting']);
+    expect(cards()).toHaveLength(2);
+    expect(typeNames()).toEqual(['Packing', 'Rim Fitting']);
   });
 
-  test('the busiest slice comes first', () => {
-    // Sorted, so adjacency is deterministic -- which is what lets the
-    // palette be validated on the adjacent pairlist at all.
+  test('a card\'s slices are its own processes', () => {
+    App.Dashboard.renderStageChart([
+      stage({ processId: 'A', processName: 'Box', processType: 'Packing', totalQty: 40 }),
+      stage({ processId: 'C', processName: 'Wrap', processType: 'Packing', totalQty: 20 }),
+      stage({ processId: 'B', processName: 'True', processType: 'Rim Fitting', totalQty: 30 }),
+    ], []);
+
+    expect(namesIn(cardOf('Packing'))).toEqual(['Box', 'Wrap']);
+    expect(namesIn(cardOf('Rim Fitting'))).toEqual(['True']);
+  });
+
+  test('the busiest type comes first', () => {
     App.Dashboard.renderStageChart([
       stage({ processId: 'A', processType: 'Small Type', sequence: 1, totalQty: 10 }),
       stage({ processId: 'B', processType: 'Big Type', sequence: 2, totalQty: 900 }),
       stage({ processId: 'C', processType: 'Mid Type', sequence: 3, totalQty: 200 }),
     ], []);
 
-    expect(sliceNames()).toEqual(['Big Type', 'Mid Type', 'Small Type']);
+    expect(typeNames()).toEqual(['Big Type', 'Mid Type', 'Small Type']);
   });
 
-  test('the hole carries the total, which is why it is a doughnut', () => {
+  test('the busiest process comes first inside its card', () => {
+    // Sorted, so adjacency is deterministic -- which is what lets the
+    // palette be validated on the adjacent pairlist at all.
+    App.Dashboard.renderStageChart([
+      stage({ processId: 'A', processName: 'Small', processType: 'Packing', totalQty: 10 }),
+      stage({ processId: 'B', processName: 'Big', processType: 'Packing', totalQty: 90 }),
+    ], []);
+
+    expect(namesIn(cardOf('Packing'))).toEqual(['Big', 'Small']);
+  });
+
+  test('each hole carries that type\'s total, which is why it is a doughnut', () => {
     App.Dashboard.renderStageChart([
       stage({ processId: 'A', processType: 'Packing', totalQty: 40 }),
-      stage({ processId: 'B', processType: 'Rim Fitting', totalQty: 60 }),
+      stage({ processId: 'C', processType: 'Packing', totalQty: 20 }),
+      stage({ processId: 'B', processType: 'Rim Fitting', totalQty: 30 }),
     ], []);
 
-    expect(document.querySelector('.dash-donut-centre-value').textContent).toBe('100');
-    expect(document.querySelector('.dash-donut-centre-label').textContent).toBe('units open');
+    expect(totalIn(cardOf('Packing'))).toBe('60');
+    expect(totalIn(cardOf('Rim Fitting'))).toBe('30');
   });
 
-  test('each slice states its own total and share', () => {
+  test('each slice states its own total and share of its card', () => {
     App.Dashboard.renderStageChart([
-      stage({ processId: 'A', processType: 'Packing', totalQty: 75 }),
-      stage({ processId: 'B', processType: 'Rim Fitting', totalQty: 25 }),
+      stage({ processId: 'A', processName: 'Box', processType: 'Packing', totalQty: 75 }),
+      stage({ processId: 'C', processName: 'Wrap', processType: 'Packing', totalQty: 25 }),
     ], []);
 
-    const shares = all('.dash-donut-share').map(n => n.textContent);
-    expect(all('.dash-donut-total').map(n => n.textContent)).toEqual(['75', '25']);
-    expect(shares).toEqual(['75%', '25%']);
+    const card = cardOf('Packing');
+    expect(Array.from(card.querySelectorAll('.dash-donut-total')).map(n => n.textContent))
+      .toEqual(['75', '25']);
+    expect(Array.from(card.querySelectorAll('.dash-donut-share')).map(n => n.textContent))
+      .toEqual(['75%', '25%']);
   });
 
-  test('a slice keeps its In Progress / Pending split, in words', () => {
-    // The columns stacked this. A second ring would encode it again in the
-    // same hole; the words carry it without a second colour scale.
+  test('a slice keeps its In Progress / Pending split, in its title', () => {
+    // The columns stacked this. Here it rides in the row's title and its
+    // screen-reader text rather than a second ring, which would encode a
+    // second scale in the same figure.
     App.Dashboard.renderStageChart(
-      [stage({ processId: 'A', processType: 'Packing', totalQty: 30 })],
-      [stage({ processId: 'A', processType: 'Packing', totalQty: 70 })],
+      [stage({ processId: 'A', processName: 'Box', processType: 'Packing', totalQty: 30 })],
+      [stage({ processId: 'A', processName: 'Box', processType: 'Packing', totalQty: 70 })],
     );
 
-    expect(document.querySelector('.dash-donut-split').textContent)
-      .toBe('30 in progress · 70 pending');
+    expect(cardOf('Packing').querySelector('.dash-donut-link').getAttribute('title'))
+      .toBe('Box: 100 open, 30 in progress, 70 pending');
   });
 
-  test('the legend carries both series and their totals', () => {
+  test('the legend carries both series and their totals across every card', () => {
     App.Dashboard.renderStageChart(
       [stage({ processId: 'A', totalQty: 100 })],
-      [stage({ processId: 'B', processId: 'B', totalQty: 40 })],
+      [stage({ processId: 'B', processName: 'Other proc', totalQty: 40 })],
     );
 
     const legend = document.querySelector('.dash-band-legend').textContent;
@@ -564,57 +593,81 @@ describe('dashboard stage load doughnut', () => {
     expect(legend).toContain('40');
   });
 
-  test('a process with no type still appears, under Other', () => {
-    // Dropping it would silently lose stock from the total in the hole.
+  test('a process with no type still gets a card, under Other', () => {
+    // Dropping it would silently lose stock from the section.
     App.Dashboard.renderStageChart([
       stage({ processId: 'A', processType: '', totalQty: 25 }),
       stage({ processId: 'B', processType: 'Packing', totalQty: 75 }),
     ], []);
 
-    expect(sliceNames()).toContain('Other');
-    expect(document.querySelector('.dash-donut-centre-value').textContent).toBe('100');
+    expect(typeNames()).toContain('Other');
+    expect(totalIn(cardOf('Other'))).toBe('25');
   });
 
-  test('past six types the tail folds into Other rather than a seventh hue', () => {
+  test('past six processes a card folds its tail rather than adding a hue', () => {
     // The palette has six slots that stay apart under colour-blindness. A
     // seventh would be a generated hue, and on the all-pairs list orange
     // and green already collapse to dE 3.2 for protanopia.
     const many = Array.from({ length: 9 }, (_, i) =>
-      stage({ processId: 'P' + i, processType: 'Type ' + i, totalQty: 100 - i }));
+      stage({ processId: 'P' + i, processName: 'Proc ' + i, processType: 'Packing', totalQty: 100 - i }));
     App.Dashboard.renderStageChart(many, []);
 
-    expect(wedges()).toHaveLength(7); // six named + Other
-    expect(sliceNames()[6]).toBe('Other');
+    const card = cardOf('Packing');
+    expect(card.querySelectorAll('.dash-donut path, .dash-donut circle')).toHaveLength(7);
+    expect(namesIn(card)[6]).toBe('3 more');
   });
 
-  test('Other sums the tail rather than dropping it', () => {
+  test('the folded tail sums rather than dropping, so the hole still totals', () => {
     const many = Array.from({ length: 8 }, (_, i) =>
-      stage({ processId: 'P' + i, processType: 'Type ' + i, totalQty: 10 }));
+      stage({ processId: 'P' + i, processName: 'Proc ' + i, processType: 'Packing', totalQty: 10 }));
     App.Dashboard.renderStageChart(many, []);
 
-    // Eight types of 10: six named, two folded.
-    expect(all('.dash-donut-total').map(n => n.textContent).pop()).toBe('20');
-    expect(document.querySelector('.dash-donut-centre-value').textContent).toBe('80');
+    const card = cardOf('Packing');
+    expect(Array.from(card.querySelectorAll('.dash-donut-total')).pop().textContent).toBe('20');
+    expect(totalIn(card)).toBe('80');
   });
 
-  test('one type covering everything draws a ring, not a degenerate arc', () => {
+  test('one process covering its type draws a ring, not a degenerate arc', () => {
     // An arc between two identical points draws nothing at all, so 100% of
     // one thing would otherwise render an empty figure.
     App.Dashboard.renderStageChart(
       [stage({ processId: 'A', processType: 'Packing', totalQty: 100 })], []);
 
-    expect(document.querySelectorAll('.dash-donut circle')).toHaveLength(1);
-    expect(document.querySelectorAll('.dash-donut path')).toHaveLength(0);
-    expect(document.querySelector('.dash-donut-share').textContent).toBe('100%');
+    const card = cardOf('Packing');
+    expect(card.querySelectorAll('.dash-donut circle')).toHaveLength(1);
+    expect(card.querySelectorAll('.dash-donut path')).toHaveLength(0);
+    expect(card.querySelector('.dash-donut-share').textContent).toBe('100%');
   });
 
-  test('the wedges are hidden from a screen reader; the legend is not', () => {
+  test('slices are real buttons carrying the stage drill-down', () => {
+    // The columns this replaced were buttons into a stage. Keeping the
+    // action on the slice is what makes the change lossless, rather than
+    // relegating it to the cards below.
+    App.Dashboard.renderStageChart(
+      [stage({ processId: 'P 1/2', processType: 'Packing', totalQty: 10 })], []);
+
+    const btn = cardOf('Packing').querySelector('.dash-donut-link');
+    expect(btn.tagName).toBe('BUTTON');
+    expect(btn.getAttribute('data-action')).toBe('dash-pipeline-stage');
+    expect(decodeURIComponent(btn.getAttribute('data-processid'))).toBe('P 1/2');
+  });
+
+  test('the folded tail is not a drill target, because it is not one process', () => {
+    const many = Array.from({ length: 8 }, (_, i) =>
+      stage({ processId: 'P' + i, processName: 'Proc ' + i, processType: 'Packing', totalQty: 10 }));
+    App.Dashboard.renderStageChart(many, []);
+
+    const rows = Array.from(cardOf('Packing').querySelectorAll('.dash-donut-row'));
+    expect(rows.pop().querySelector('.dash-donut-link')).toBeNull();
+  });
+
+  test('the wedges are hidden from a screen reader; the rows are not', () => {
     // A ring read aloud as a list of unlabelled arcs tells nobody
     // anything. Every name, value and share is in the rows beside it.
     App.Dashboard.renderStageChart([stage({ processId: 'A', totalQty: 10 })], []);
 
     expect(document.querySelector('.dash-donut').getAttribute('aria-hidden')).toBe('true');
-    expect(document.querySelectorAll('.dash-donut-name').length).toBeGreaterThan(0);
+    expect(all('.dash-donut-name').length).toBeGreaterThan(0);
   });
 
   test('every slice is named in text, so colour is never the only carrier', () => {
@@ -622,24 +675,31 @@ describe('dashboard stage load doughnut', () => {
     // warning is relieved by visible labels, not dismissed -- so these
     // rows are load-bearing, not decoration.
     App.Dashboard.renderStageChart([
-      stage({ processId: 'A', processType: 'Packing', totalQty: 40 }),
-      stage({ processId: 'B', processType: 'Rim Fitting', totalQty: 30 }),
+      stage({ processId: 'A', processName: 'Box', processType: 'Packing', totalQty: 40 }),
+      stage({ processId: 'C', processName: 'Wrap', processType: 'Packing', totalQty: 30 }),
     ], []);
 
-    expect(all('.dash-donut-swatch')).toHaveLength(sliceNames().length);
-    expect(sliceNames()).toEqual(['Packing', 'Rim Fitting']);
+    const card = cardOf('Packing');
+    expect(card.querySelectorAll('.dash-donut-swatch')).toHaveLength(2);
+    expect(namesIn(card)).toEqual(['Box', 'Wrap']);
   });
 
-  test('escapes process types rather than trusting them as markup', () => {
+  test('escapes process names and types rather than trusting them as markup', () => {
     App.Dashboard.renderStageChart([
-      stage({ processId: 'A', processType: '<img src=x onerror=alert(1)>', totalQty: 10 }),
+      stage({
+        processId: 'A',
+        processName: '<img src=x onerror=alert(1)>',
+        processType: '<b>bold</b>',
+        totalQty: 10,
+      }),
     ], []);
 
     expect(el().querySelector('img')).toBeNull();
-    expect(sliceNames()[0]).toBe('<img src=x onerror=alert(1)>');
+    expect(el().querySelector('b')).toBeNull();
+    expect(typeNames()[0]).toBe('<b>bold</b>');
   });
 
-  test('no open work anywhere says so instead of drawing an empty ring', () => {
+  test('no open work anywhere says so instead of drawing empty rings', () => {
     App.Dashboard.renderStageChart([], []);
 
     expect(el().textContent).toContain('No open production lots');
@@ -650,18 +710,7 @@ describe('dashboard stage load doughnut', () => {
     App.Dashboard.renderStageChart([stage({ processId: 'A', totalQty: 0 })], []);
 
     expect(el().textContent).toContain('No open production lots');
-  });
-
-  test('the per-process drill-down the columns carried still exists below', () => {
-    // The columns were buttons into a stage. Dropping them is only safe
-    // because every one of those stages is also a card in the grid under
-    // the chart, carrying the same action.
-    App.Dashboard.renderStageChart([stage({ processId: 'A', totalQty: 10 })], []);
-    App.Dashboard.renderPipeline([stage({ processId: 'A', totalQty: 10 })]);
-
-    const card = document.querySelector('.dash-wip-card');
-    expect(card).not.toBeNull();
-    expect(card.getAttribute('data-action')).toBe('dash-pipeline-stage');
+    expect(cards()).toHaveLength(0);
   });
 });
 
