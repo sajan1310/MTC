@@ -1245,9 +1245,7 @@ def test_sub_group_buckets_are_kept_but_marked_not_units(erp_client):
 
     pool = _rpc(erp_client, "getWarehousePoolData").get_json()["data"]
     own = {
-        b["color"]: b
-        for b in pool
-        if b["outputItemName"] == payload["outputItemName"]
+        b["color"]: b for b in pool if b["outputItemName"] == payload["outputItemName"]
     }
 
     assert set(own) == {primary, kit, small}
@@ -1271,9 +1269,7 @@ def test_sub_group_flag_holds_when_the_values_divide_the_lot(erp_client):
 
     pool = _rpc(erp_client, "getWarehousePoolData").get_json()["data"]
     own = {
-        b["color"]: b
-        for b in pool
-        if b["outputItemName"] == payload["outputItemName"]
+        b["color"]: b for b in pool if b["outputItemName"] == payload["outputItemName"]
     }
     assert own[kit]["producedQty"] == 6  # its own movement, intact
     assert own[kit]["countsTowardTotal"] is False
@@ -1309,8 +1305,7 @@ def test_a_color_used_as_primary_elsewhere_stays_units(erp_client):
     kit = next(
         b
         for b in pool
-        if b["outputItemName"] == payload["outputItemName"]
-        and b["color"] == kit_color
+        if b["outputItemName"] == payload["outputItemName"] and b["color"] == kit_color
     )
     assert kit["producedQty"] == 15
     assert kit["countsTowardTotal"] is True
@@ -1329,9 +1324,7 @@ def test_opening_stock_bucket_counts_as_units(erp_client):
     )
 
     pool = _rpc(erp_client, "getWarehousePoolData").get_json()["data"]
-    bucket = next(
-        b for b in pool if b["outputItemName"] == payload["outputItemName"]
-    )
+    bucket = next(b for b in pool if b["outputItemName"] == payload["outputItemName"])
     assert bucket["producedQty"] == 7
     assert bucket["countsTowardTotal"] is True
 
@@ -1498,4 +1491,3 @@ def test_manual_correction_downward_still_cannot_drive_produced_negative(erp_cli
     assert body["success"] is False
     assert "produced stock" in body["message"]
     assert _pool_by_color(erp_client, frame_name)["Black"]["availableQty"] == 10
-

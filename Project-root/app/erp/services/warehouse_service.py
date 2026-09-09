@@ -119,9 +119,7 @@ def _bucket_counts_as_units(bucket: dict) -> bool:
     override = bucket.get("countsOverride")
     if override is not None:
         return bool(override)  # the operator has answered; stop inferring
-    return not (
-        bucket.get("sawSubGroupCredit") and not bucket.get("sawCountingCredit")
-    )
+    return not (bucket.get("sawSubGroupCredit") and not bucket.get("sawCountingCredit"))
 
 
 def _validate_number(value, min_value: float, max_value: float) -> float:
@@ -1775,9 +1773,7 @@ def adjust_warehouse_pool_manually(
         # what was opened and made; it cannot go below zero whatever the
         # count says.
         if residual < 0:
-            _assert_produced_stays_nonnegative(
-                cur, item_name, tag, color_val, residual
-            )
+            _assert_produced_stays_nonnegative(cur, item_name, tag, color_val, residual)
         delta += residual
         cur.execute(
             "UPDATE erp.warehouse_pool_opening SET qty = %s WHERE id = %s",
