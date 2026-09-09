@@ -1054,8 +1054,18 @@
         <span class="mb-card-title">Open desktop UI</span>
         <svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M9 18l6-6-6-6"/></svg>
       </div>
-      <div class="mb-card-sub">Bills, BOM, vendor ledgers, settings</div>
+      <!-- Was "Bills, BOM, vendor ledgers, settings" -- written when those
+           were the gaps. They are all on the phone now; the subtitle
+           outlived the backlog it described. -->
+      <div class="mb-card-sub">The full ERP in a browser</div>
     </a>
+    <button type="button" class="mb-card mb-card-tappable" style="border:none;width:100%;text-align:left;" onclick="MApp.Handoff.open()">
+      <div class="mb-card-row">
+        <span class="mb-card-title">Only on desktop</span>
+        <svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M9 18l6-6-6-6"/></svg>
+      </div>
+      <div class="mb-card-sub">The few things this phone hands off, and where to find them</div>
+    </button>
   </details>
 
   <!-- Account is the one section that opens by default: signing out is
@@ -1819,5 +1829,35 @@
   </div>
   <div class="mb-sheet-body">
     <div id="sync-issues-list"></div>
+  </div>
+</div>
+
+<!-- ═══════════════════════════════════════════════════════════════════
+     SHEET — ONLY ON DESKTOP (Phase 7). The other half of the parity
+     commitment. mobile_parity.test.js's DESKTOP_ONLY map records the
+     capabilities that stay on desktop on purpose -- bulk imports,
+     multi-hundred-row reconciliation, data hygiene -- each naming the
+     MApp screen that must hand off to it. This is that screen. Until it
+     existed the map named screens that were never built, and the only
+     thing a phone user met was silence.
+     Rendered from MApp.Handoff.CAPABILITIES, which the parity test reads
+     back: a method declared desktop-only with no entry here fails the
+     build, so the map and this screen cannot drift apart.
+     ═══════════════════════════════════════════════════════════════════ -->
+<div class="mb-sheet" id="sheet-desktop-only" role="dialog" aria-modal="true" aria-labelledby="desktop-only-heading">
+  <div class="mb-sheet-header">
+    <h2 id="desktop-only-heading">Only on desktop</h2>
+    <button type="button" class="mapp-topbar-btn" aria-label="Close" onclick="MApp.Handoff.close()">
+      <svg viewBox="0 0 24 24" width="22" height="22" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><path d="M6 6l12 12M18 6L6 18"/></svg>
+    </button>
+  </div>
+  <div class="mb-sheet-body">
+    <div class="mb-field-hint mb-mb-4">
+      Everything else in the ERP is on this phone. These few stay on a
+      desktop because they need a screen this size to be done safely —
+      hundreds of rows at once, or a decision per row. Each opens the
+      desktop UI in a new tab, on the right screen.
+    </div>
+    <div id="desktop-only-list"></div>
   </div>
 </div>

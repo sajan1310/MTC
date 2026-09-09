@@ -67,7 +67,38 @@ function reachableFrom(src, method) {
 }
 
 const REGISTERED = registeredMethods();
-const MOBILE_SRC = read('mobile.js');
+
+// MApp.Handoff.CAPABILITIES names every desktop-only method, so that the
+// handoff screen and DESKTOP_ONLY cannot drift apart (see the last test).
+// It has to come OUT of the reachability scan first: that scan means "the
+// method name appears as a quoted string in this bundle", and naming a
+// capability on a screen that explains where to go for it is the opposite
+// of implementing it. Left in, all eighteen entries would read as ported
+// and the ratchet would declare every one of them stale.
+const RAW_MOBILE_SRC = read('mobile.js');
+const CATALOGUE_START = 'parity:handoff-catalogue:start';
+const CATALOGUE_END = 'parity:handoff-catalogue:end';
+
+function sliceCatalogue(src) {
+  const from = src.indexOf(CATALOGUE_START);
+  const to = src.indexOf(CATALOGUE_END);
+  return from === -1 || to === -1 || to < from ? null : src.slice(from, to);
+}
+
+const HANDOFF_CATALOGUE = sliceCatalogue(RAW_MOBILE_SRC);
+const MOBILE_SRC = HANDOFF_CATALOGUE
+  ? RAW_MOBILE_SRC.replace(HANDOFF_CATALOGUE, '')
+  : RAW_MOBILE_SRC;
+
+/** Every method named in a `methods: [...]` list inside the catalogue. */
+function handoffMethods() {
+  if (!HANDOFF_CATALOGUE) return [];
+  const names = new Set();
+  for (const list of HANDOFF_CATALOGUE.matchAll(/methods:\s*\[([^\]]*)\]/g)) {
+    for (const m of list[1].matchAll(/'([A-Za-z_]+)'/g)) names.add(m[1]);
+  }
+  return [...names];
+}
 const DESKTOP_SRC = fs
   .readdirSync(STATIC_DIR)
   .filter(f => f.endsWith('.js') && !NOT_A_DESKTOP_SURFACE.includes(f))
@@ -163,10 +194,53 @@ describe('MApp / desktop feature parity', () => {
 
   test('every desktop-only capability names the MApp screen that hands off to it', () => {
     // The commitment behind "all features accessible": a capability that
-    // stays on desktop must still be findable from the phone. These are
-    // the screens Phase 7 has to build -- named here so the list cannot be
-    // quietly forgotten.
+    // stays on desktop must still be findable from the phone.
     const missing = Object.entries(DESKTOP_ONLY).filter(([, screen]) => !screen || !screen.trim());
     expect(missing).toEqual([]);
+  });
+
+  // ── The handoff actually exists ────────────────────────────────────
+  // The check above only ever proved the LABEL was non-empty. It could
+  // not tell a built screen from a string, and for most of this program
+  // it was naming screens nobody had built: a phone user who went looking
+  // for one of these capabilities met silence, which is the exact
+  // degradation DESKTOP_ONLY was written to prevent. MApp.Handoff is that
+  // screen, and these tests are what stop it drifting from the map.
+  describe('the handoff screen', () => {
+    test('is present, with its catalogue markers intact', () => {
+      expect(HANDOFF_CATALOGUE).not.toBeNull();
+      expect(RAW_MOBILE_SRC).toContain('MApp.Handoff');
+      expect(handoffMethods().length).toBeGreaterThan(0);
+    });
+
+    test('accounts for every desktop-only method', () => {
+      const unexplained = Object.keys(DESKTOP_ONLY).filter(
+        m => !handoffMethods().includes(m)
+      );
+
+      expect(unexplained).toEqual([]);
+    });
+
+    test('explains nothing that is not desktop-only', () => {
+      // The other direction: an entry left behind after a capability was
+      // ported would send someone to desktop for something the phone now
+      // does. Stale in exactly the way the ratchet exists to catch.
+      const orphaned = handoffMethods().filter(m => !(m in DESKTOP_ONLY));
+
+      expect(orphaned).toEqual([]);
+    });
+
+    test('is reachable from the More tab', () => {
+      // A screen nothing opens is not a handoff. The entry point lives in
+      // the More tab's Desktop group.
+      const views = fs.readFileSync(
+        path.join(__dirname, '..', '..', '..', 'templates', 'erp', 'partials', 'mobile_views.html'),
+        'utf8'
+      );
+
+      expect(views).toContain('MApp.Handoff.open()');
+      expect(views).toContain('id="sheet-desktop-only"');
+      expect(views).toContain('id="desktop-only-list"');
+    });
   });
 });
