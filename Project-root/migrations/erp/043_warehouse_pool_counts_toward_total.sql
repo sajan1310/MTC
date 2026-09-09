@@ -1,0 +1,42 @@
+-- Which Warehouse Pool buckets are real units, and which are annotations.
+--
+-- erp.warehouse_pool holds one bucket per Output Item / Product Tag /
+-- Color combination, and every consumer that wants a PROCESS-level figure
+-- sums them: stock.js's pool row (Total Produced/Consumed/Available across
+-- a process's leaf rows) and
+-- dispatch_service._compute_ready_to_dispatch_map (one deliberately
+-- color-blind availability figure per final-stage output, which the
+-- over-dispatch guard also reads).
+--
+-- That sum is only meaningful if every bucket counts UNITS. Some don't. A
+-- production lot's colorBreakdown carries non-counting sub-group entries
+-- (countsTowardTotal false -- a packing set like 'Kit Bag 24"' or "Small
+-- Kit 24"") that are recorded PER COLOR on units the primary axis has
+-- already counted. They are an annotation on the lot, not output of their
+-- own: the Production form leaves them out of its running total, and
+-- production_service._is_primary_axis_row leaves them out of the qty the
+-- lot stores.
+--
+-- Where such an entry lands in its own bucket (_build_warehouse_pool_buckets
+-- Pass 1's bare-color fallback, taken when no cross-axis pairing can be
+-- inferred), summing every bucket therefore invents stock. A live Packing
+-- process showed 80 produced / 40 available where 30 and 20 were real --
+-- the two sub-group buckets contributed the other 20 -- and Dispatch
+-- offered, and its guard allowed, that inflated figure.
+--
+-- The flag records the distinction at the point it is known, which is
+-- bucket-build time; nothing downstream can recover it from a bucket's
+-- color string alone. The buckets themselves stay: they carry their own
+-- produced/consumed history, they are what the per-combination modal
+-- lists, and they are how a sub-group's own movement stays visible. They
+-- are simply not units, so they are not summed as units.
+--
+-- DEFAULT TRUE is the safe direction: erp.warehouse_pool is a materialized
+-- cache that _recalculate_warehouse_pool rewrites wholesale from history
+-- on every mutating call, so existing rows carry the default only until
+-- the next recalculation, and a bucket with no non-counting credit at all
+-- (opening stock, a manual correction, an ordinary primary-axis lot) is
+-- exactly what TRUE means.
+
+ALTER TABLE erp.warehouse_pool
+    ADD COLUMN IF NOT EXISTS counts_toward_total BOOLEAN NOT NULL DEFAULT TRUE;

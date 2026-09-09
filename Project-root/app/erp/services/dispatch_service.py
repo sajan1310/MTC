@@ -195,7 +195,8 @@ def _compute_ready_to_dispatch_map(cur) -> dict:
     }
 
     cur.execute(
-        "SELECT output_item_name, process_id, product_tag, color, produced_qty, consumed_qty FROM erp.warehouse_pool"
+        "SELECT output_item_name, process_id, product_tag, color, produced_qty, consumed_qty "
+        "FROM erp.warehouse_pool WHERE counts_toward_total"
     )
     pool_rows = cur.fetchall()
     if not pool_rows:
@@ -204,6 +205,16 @@ def _compute_ready_to_dispatch_map(cur) -> dict:
     product_name_by_id = _get_bom_product_name_map(cur)
     differentiator_defs = _build_differentiator_defs(cur, all_processes)
 
+    # Availability here is a single, deliberately color-blind figure per
+    # output (a Dispatch line stores only the bare Product Tag / Output Item
+    # Name), so every bucket it sums has to be UNITS. A non-counting
+    # sub-group bucket -- 'Kit Bag 24"' recorded per color on units the
+    # primary axis already counted -- is not, and summing it offered stock
+    # that was never made: a live Packing process read 40 available where 20
+    # were real. Filtered in SQL above rather than here, so the
+    # over-dispatch guard in save_dispatch (which reads this same map via
+    # _ready_available_qty_for) cannot diverge from what Dispatch displays.
+    # See migration 043.
     result: dict = {}
     for r in pool_rows:
         process_id = str(r["process_id"] or "").strip()

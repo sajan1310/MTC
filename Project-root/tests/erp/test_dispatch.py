@@ -1303,3 +1303,177 @@ def test_process_round_trips_dispatch_differentiator(erp_client):
         ]
         == ""
     )
+
+
+def _uc(base: str) -> str:
+    """A colour name unique to this run.
+
+    save_production auto-registers every isCustom colour into the GLOBAL
+    Color Master, and that master widens the valid colours of every
+    colour-enabled process. A literal "Purple" here therefore stops being
+    an unknown colour for tests that run later in the shared database --
+    which is how this file broke
+    test_production.py::test_save_production_color_breakdown_rejects_unknown_color.
+    """
+    return f"{base}-{uuid.uuid4().hex[:8]}"
+
+
+def _sub_group_lot(client, process_id, primary_qty, kit_qty, small_qty):
+    """A Packing-shaped lot: `primary_qty` real units, plus two sub-group
+    values recorded per color on those same units (see
+    test_warehouse.py::_sub_group_breakdown for the shape).
+    """
+    _complete_production_lot(
+        client,
+        process_id,
+        "",
+        primary_qty,
+        colorBreakdown=[
+            {
+                "color": _uc("Blue-White"),
+                "qty": primary_qty,
+                "countsTowardTotal": True,
+                "axisKey": "own:frame",
+                "isCustom": True,
+            },
+            {
+                "color": _uc('Kit Bag 24"'),
+                "qty": kit_qty,
+                "countsTowardTotal": False,
+                "axisKey": "other",
+                "isCustom": True,
+            },
+            {
+                "color": _uc('Small Kit 24"'),
+                "qty": small_qty,
+                "countsTowardTotal": False,
+                "axisKey": "other",
+                "isCustom": True,
+            },
+        ],
+    )
+
+
+def test_ready_to_dispatch_excludes_sub_group_buckets(erp_client):
+    """Ready to Dispatch counts UNITS, not the sub-groups recorded against
+    them.
+
+    _compute_ready_to_dispatch_map sums every bucket of one final-stage
+    output into a single, deliberately color-blind availability figure, so
+    any bucket that isn't units inflates what Dispatch offers. A packing
+    lot of 10 carrying a 'Kit Bag 24"' / 'Small Kit 24"' pair offered 30.
+    """
+    payload, process_id = _save_process(erp_client, isFinalStage=True)
+    _sub_group_lot(erp_client, process_id, 10, 10, 10)
+
+    listed = _rpc(erp_client, "getReadyToDispatchData").get_json()["data"]
+    rows = [r for r in listed if r["productId"] == payload["outputItemName"]]
+    assert len(rows) == 1
+    assert rows[0]["producedQty"] == 10
+    assert rows[0]["readyQty"] == 10
+
+
+def test_ready_to_dispatch_matches_the_live_packing_case(erp_client):
+    """The reported case, to its actual numbers.
+
+    Four real colors (Green 0, Pink 10, Purple 10, SeaGreen 10) produce 30;
+    10 are dispatched, leaving 20 available. Two sub-group buckets are
+    recorded against those same units. Summing every bucket read 80
+    produced / 40 available where 30 and 20 are real.
+    """
+    payload, process_id = _save_process(erp_client, isFinalStage=True)
+    kit, small = _uc('Kit Bag 24"'), _uc('Small Kit 24"')
+    for color, qty in [
+        (_uc("Green"), 0),
+        (_uc("Pink"), 10),
+        (_uc("Purple"), 10),
+        (_uc("SeaGreen"), 10),
+    ]:
+        _complete_production_lot(
+            erp_client,
+            process_id,
+            "",
+            qty,
+            colorBreakdown=[
+                {
+                    "color": color,
+                    "qty": qty,
+                    "countsTowardTotal": True,
+                    "axisKey": "own:frame",
+                    "isCustom": True,
+                },
+                {
+                    "color": kit,
+                    "qty": qty,
+                    "countsTowardTotal": False,
+                    "axisKey": "other",
+                    "isCustom": True,
+                },
+                {
+                    "color": small,
+                    "qty": qty,
+                    "countsTowardTotal": False,
+                    "axisKey": "other",
+                    "isCustom": True,
+                },
+            ],
+        )
+
+    resp = _save_dispatch(
+        erp_client,
+        [
+            {
+                "productId": payload["outputItemName"],
+                "productName": payload["outputItemName"],
+                "qty": 10,
+            }
+        ],
+    )
+    assert resp.get_json()["success"] is True, resp.get_json()["message"]
+
+    listed = _rpc(erp_client, "getReadyToDispatchData").get_json()["data"]
+    row = next(r for r in listed if r["productId"] == payload["outputItemName"])
+    assert row["producedQty"] == 30
+    assert row["dispatchedQty"] == 10
+    assert row["readyQty"] == 20
+
+    # And the pool agrees: the sub-group buckets are present but not units.
+    pool = _rpc(erp_client, "getWarehousePoolData").get_json()["data"]
+    own = [b for b in pool if b["outputItemName"] == payload["outputItemName"]]
+    counted = [b for b in own if b["countsTowardTotal"]]
+    assert sum(b["producedQty"] for b in counted) == 30
+    assert {b["color"] for b in own if not b["countsTowardTotal"]} == {kit, small}
+
+
+def test_over_dispatch_guard_reads_units_not_sub_groups(erp_client):
+    """The guard reads the same availability figure, so the inflated total
+    did not merely mislead the operator -- it let a dispatch of more units
+    than exist through validation.
+    """
+    payload, process_id = _save_process(erp_client, isFinalStage=True)
+    _sub_group_lot(erp_client, process_id, 10, 10, 10)
+
+    # Pre-fix availability was 30, so this passed and shipped 20 of 10.
+    resp = _save_dispatch(
+        erp_client,
+        [
+            {
+                "productId": payload["outputItemName"],
+                "productName": payload["outputItemName"],
+                "qty": 20,
+            }
+        ],
+    )
+    assert resp.get_json()["success"] is False
+
+    ok = _save_dispatch(
+        erp_client,
+        [
+            {
+                "productId": payload["outputItemName"],
+                "productName": payload["outputItemName"],
+                "qty": 10,
+            }
+        ],
+    )
+    assert ok.get_json()["success"] is True, ok.get_json()["message"]

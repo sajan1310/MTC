@@ -76,6 +76,54 @@ _COLOR_GROUP_COMMON = config_maps.COMPONENT_COLOR_GROUP_COMMON
 _UNORDERED_AXIS_POSITION = float("inf")
 
 
+def _get_bucket_count_overrides(cur) -> dict:
+    """{(itemLower, tagLower, colorLower): bool} -- the operator's explicit
+    "this bucket is / is not stock" answers (migration 044).
+
+    Keyed exactly as _build_warehouse_pool_buckets' own get_bucket() keys a
+    bucket, so a lookup is a plain dict hit and the two cannot drift apart.
+    """
+    cur.execute(
+        "SELECT output_item_name, product_tag, color, counts_toward_total "
+        "FROM erp.warehouse_pool_bucket_flags"
+    )
+    return {
+        (
+            str(r["output_item_name"] or "").strip().lower(),
+            str(r["product_tag"] or "").strip().lower(),
+            str(r["color"] or "").strip().lower(),
+        ): bool(r["counts_toward_total"])
+        for r in cur.fetchall()
+    }
+
+
+def _bucket_counts_as_units(bucket: dict) -> bool:
+    """Is this pool bucket real output, or an annotation on someone else's?
+
+    An operator's explicit answer wins outright (see migration 044): a
+    bucket entered by hand -- Opening Stock, an inline Available Qty
+    correction -- has no lot behind it and so no evidence to read, which is
+    the case the override exists for. It overrides in BOTH directions, so a
+    wrong inference is correctable rather than something to work around.
+
+    Failing that, the lots decide: False only for a bucket whose every
+    production credit was a non-counting sub-group entry (countsTowardTotal
+    false -- 'Kit Bag 24"' recorded per color on units the primary axis
+    already counted). One counting credit anywhere makes it units, and a
+    bucket reached only by a debit (Pass 2/3) is units too: real
+    consumption of a real item is not an annotation.
+
+    Stored on the row as counts_toward_total (migration 043) because
+    nothing downstream can recover it from a bucket's color string alone.
+    """
+    override = bucket.get("countsOverride")
+    if override is not None:
+        return bool(override)  # the operator has answered; stop inferring
+    return not (
+        bucket.get("sawSubGroupCredit") and not bucket.get("sawCountingCredit")
+    )
+
+
 def _validate_number(value, min_value: float, max_value: float) -> float:
     try:
         n = float(value)
@@ -370,6 +418,13 @@ _DISPATCH_DRAIN_NOTE = (
 )
 _DISPATCH_SHORTFALL_NOTE = "Dispatched beyond everything this product had available"
 
+# How many times adjust_warehouse_pool_manually will widen a correction and
+# recalculate to make a hand-entered figure actually hold. The residual
+# strictly shrinks each round (see the comment there), so two settles every
+# case seen; three is headroom, and the cap exists so an unforeseen shape
+# reports the discrepancy instead of spinning.
+_CORRECTION_SETTLE_ROUNDS = 3
+
 
 def _build_warehouse_pool_buckets(
     cur, include_opening: bool = True, events: list | None = None
@@ -395,6 +450,7 @@ def _build_warehouse_pool_buckets(
     argument nothing is recorded and this function behaves exactly as before.
     """
     buckets: dict = {}
+    count_overrides = _get_bucket_count_overrides(cur)
 
     def record(
         bucket: dict, date, entry_type: str, ref: str, remarks: str, qty: float
@@ -438,6 +494,19 @@ def _build_warehouse_pool_buckets(
                 "color": str(color or "").strip(),
                 "producedQty": 0.0,
                 "consumedQty": 0.0,
+                # Evidence for counts_toward_total (migration 043), kept as
+                # two independent facts rather than one running boolean: a
+                # bucket is NOT units only when every production credit it
+                # ever saw was a non-counting sub-group entry. One counting
+                # credit anywhere -- an ordinary lot, an opening balance, a
+                # manual correction -- makes it units, whatever else also
+                # landed there. Both false (a bucket reached only by a Pass
+                # 2/3 debit) reads as units too: real consumption of a real
+                # item is not an annotation.
+                "sawCountingCredit": False,
+                "sawSubGroupCredit": False,
+                # None = no explicit answer, fall back to the credits above.
+                "countsOverride": count_overrides.get(key),
             }
             buckets[key] = bucket
         return bucket
@@ -572,13 +641,17 @@ def _build_warehouse_pool_buckets(
                 # correction/reversal lot that credits this bucket back
                 # down, mirroring the flat (non-color) path below which
                 # never filtered by sign either.
-                def credit_color(color, qty):
+                def credit_color(color, qty, counts=True):
                     color = str(color or "").strip()
                     if not color:
                         return
                     bucket = get_bucket(
                         output_item_name, process_id, product_tag, color
                     )
+                    if counts:
+                        bucket["sawCountingCredit"] = True
+                    else:
+                        bucket["sawSubGroupCredit"] = True
                     bucket["producedQty"] += float(qty or 0)
                     record(
                         bucket,
@@ -775,9 +848,25 @@ def _build_warehouse_pool_buckets(
                             combined = True
 
                 if not combined:
+                    # No inferable cross-axis pairing, so each entry is
+                    # credited under its own bare color rather than a
+                    # composite nobody can justify -- see _lot_split_axis_keys
+                    # on why that is the conservative direction.
+                    #
+                    # The non-counting entries still get their bucket (it
+                    # carries their own movement, and the per-combination
+                    # modal lists it), but they are marked as not units:
+                    # a sub-group is recorded PER COLOR on units the primary
+                    # axis already counted, so adding it to a process total
+                    # or to Ready-to-Dispatch availability counts the same
+                    # goods twice. See migration 043.
                     for entry in color_breakdown:
                         entry = entry or {}
-                        credit_color(entry.get("color"), entry.get("qty"))
+                        credit_color(
+                            entry.get("color"),
+                            entry.get("qty"),
+                            counts=entry.get("countsTowardTotal") is not False,
+                        )
             else:
                 qty = float(row["qty"] or 0)
                 bucket = get_bucket(output_item_name, process_id, product_tag, "")
@@ -1090,10 +1179,22 @@ def _build_warehouse_pool_buckets(
         # qty.
         for key, dispatched_qty in dispatch_qty_by_key.items():
             remaining = dispatched_qty
+            # Units only. The drain is color-blind by necessity (Dispatch
+            # carries no color), so left unfiltered it happily debits a
+            # sub-group bucket -- and once those buckets stopped being
+            # summed as availability, a debit landing there would vanish
+            # from the figure the over-dispatch guard reads, leaving stock
+            # that could be dispatched again and again without the
+            # available qty ever moving. The live Packing case had 30 of
+            # its 40 dispatched units sitting on 'Kit Bag 24"' / 'Small Kit
+            # 24"' for exactly this reason. Credit and debit have to agree
+            # on which buckets are goods.
             matching = [
                 b
                 for b in buckets.values()
-                if b["productTag"] and b["productTag"].lower() == key
+                if b["productTag"]
+                and b["productTag"].lower() == key
+                and _bucket_counts_as_units(b)
             ]
             if not matching:
                 matching = [
@@ -1103,6 +1204,7 @@ def _build_warehouse_pool_buckets(
                     and b["outputItemName"].lower() == key
                     and b["processId"]
                     and b["processId"].lower() in final_stage_ids
+                    and _bucket_counts_as_units(b)
                 ]
             if not matching:
                 continue
@@ -1159,8 +1261,8 @@ def _recalculate_warehouse_pool(cur) -> None:
         cur.execute(
             """
             INSERT INTO erp.warehouse_pool
-                (output_item_name, process_id, product_tag, produced_qty, consumed_qty, available_qty, color)
-            VALUES (%s, %s, %s, %s, %s, %s, %s)
+                (output_item_name, process_id, product_tag, produced_qty, consumed_qty, available_qty, color, counts_toward_total)
+            VALUES (%s, %s, %s, %s, %s, %s, %s, %s)
             """,
             (
                 bucket["outputItemName"],
@@ -1170,6 +1272,7 @@ def _recalculate_warehouse_pool(cur) -> None:
                 bucket["consumedQty"],
                 bucket["producedQty"] - bucket["consumedQty"],
                 bucket["color"],
+                _bucket_counts_as_units(bucket),
             ),
         )
 
@@ -1616,6 +1719,7 @@ def adjust_warehouse_pool_manually(
         INSERT INTO erp.warehouse_pool_opening
             (output_item_name, process_id, process_master_id, product_tag, color, qty, opening_date, remarks, created_by)
         VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s)
+        RETURNING id
         """,
         (
             item_name,
@@ -1629,21 +1733,98 @@ def adjust_warehouse_pool_manually(
             user_id,
         ),
     )
+    opening_row_id = cur.fetchone()["id"]
 
     _recalculate_warehouse_pool(cur)
+    settled_qty = _get_warehouse_pool_bucket_available_qty(
+        cur, item_name, tag, color_val
+    )
+
+    # A hand-entered figure supersedes the calculation. Solve for the delta
+    # that makes it so, rather than assuming (new - old) is that delta.
+    #
+    # It usually is, but not always: a correction is a delta on produced_qty
+    # seeded in Pass 0, and every pass that allocates by availability runs
+    # after it -- above all the colour-agnostic (COMMON) settlement, which
+    # greedily drains whichever coloured buckets have stock. A bucket
+    # carrying an unattributed COMMON shortfall therefore pays part of that
+    # shortfall out of the correction the moment it is credited, and settles
+    # BELOW what was entered. Enter 10 against a bucket owing 5 and the
+    # naive delta lands it on 5, which is indistinguishable from the entry
+    # being overwritten.
+    #
+    # So: recalculate, measure the residual, widen the SAME opening row by
+    # it, and recalculate again. This converges because a bucket's drained
+    # quantity is monotone in its produced quantity and rises by at most the
+    # rise in produced -- the residual strictly shrinks, and the drain's
+    # total demand is fixed. Two rounds settle every real case; the cap is
+    # there so a shape nobody has thought of degrades to reporting the truth
+    # instead of spinning.
+    #
+    # One row, widened -- not a second correction row -- so the audit trail
+    # keeps one entry per correction and that entry's qty is the real delta
+    # the count implied.
+    expected_delta = delta
+    for _ in range(_CORRECTION_SETTLE_ROUNDS):
+        residual = new_qty - settled_qty
+        if abs(residual) <= 0.0001:
+            break
+        # Widening downward is guarded exactly as the first delta was: the
+        # pool already reflects the row at its current value, so the
+        # increment is what the check needs. Produced stock is the sum of
+        # what was opened and made; it cannot go below zero whatever the
+        # count says.
+        if residual < 0:
+            _assert_produced_stays_nonnegative(
+                cur, item_name, tag, color_val, residual
+            )
+        delta += residual
+        cur.execute(
+            "UPDATE erp.warehouse_pool_opening SET qty = %s WHERE id = %s",
+            (delta, opening_row_id),
+        )
+        _recalculate_warehouse_pool(cur)
+        settled_qty = _get_warehouse_pool_bucket_available_qty(
+            cur, item_name, tag, color_val
+        )
 
     cur.execute(
         """
         INSERT INTO erp.warehouse_pool_adjustments (output_item_name, product_tag, color, old_value, new_value, reason, created_by)
         VALUES (%s, %s, %s, %s, %s, %s, %s)
         """,
-        (item_name, tag, color_val, old_qty, new_qty, reason_text, user_id),
+        (item_name, tag, color_val, old_qty, settled_qty, reason_text, user_id),
     )
+
+    unrecorded = delta - expected_delta
+    if abs(settled_qty - new_qty) > 0.0001:
+        # Did not converge. The entered figure still stands as far as it can
+        # be made to, and the discrepancy is reported rather than hidden.
+        message = (
+            f"Stock corrected as far as the pool allows: {settled_qty:g}, not the "
+            f"{new_qty:g} entered. Colour-agnostic consumption keeps drawing this "
+            f"bucket down, which needs looking at against the lots behind it."
+        )
+    elif abs(unrecorded) > 0.0001:
+        message = (
+            f"Stock set to {new_qty:g}. It took {delta:g} to get there, not "
+            f"{expected_delta:g}: {abs(unrecorded):g} had already been drawn as "
+            f"colour-agnostic consumption against stock this pool never recorded. "
+            f"The count stands; that gap is worth auditing."
+        )
+    else:
+        message = "Warehouse Pool stock adjusted successfully."
 
     return build_response(
         True,
-        {"oldAvailableQty": old_qty, "newAvailableQty": new_qty},
-        "Warehouse Pool stock adjusted successfully.",
+        {
+            "oldAvailableQty": old_qty,
+            "newAvailableQty": settled_qty,
+            "requestedQty": new_qty,
+            "appliedDelta": delta,
+            "expectedDelta": expected_delta,
+        },
+        message,
     )
 
 
@@ -1685,6 +1866,77 @@ def get_warehouse_pool_adjustment_history():
 # ─────────────────────────────────────────────────────────────────────────
 
 
+@rpc_method("setWarehousePoolBucketCountsTowardTotal", mutation=True)
+def set_warehouse_pool_bucket_counts_toward_total(
+    conn, cur, output_item_name, process_id, product_tag, color, counts_toward_total
+):
+    """Declare whether one Warehouse Pool bucket is stock or an annotation.
+
+    The process-level totals and Ready-to-Dispatch availability sum only
+    the buckets that are stock (migration 043). Where a production lot
+    credited the bucket, that verdict is read off the lot's colorBreakdown
+    and needs no help. Where one never did -- a bucket opened by Opening
+    Stock or an inline Available Qty correction -- there is nothing to read
+    and no safe way to guess (see migration 044 on why the colour-name
+    heuristic was measured and rejected), so the operator says.
+
+    Stored in its own table, not on erp.warehouse_pool: that table is a
+    cache _recalculate_warehouse_pool rewrites in full on every mutating
+    call, so a flag written there would last until the next save. Setting
+    one recalculates immediately, so the totals move while the operator is
+    still looking at the row they changed.
+
+    `counts_toward_total` is required and boolean -- there is no "clear it
+    and go back to guessing" through this path, because a bucket the
+    operator has looked at is a bucket with an answer.
+    """
+    item_name = str(output_item_name or "").strip()
+    if not item_name:
+        raise ValueError("Output Item Name is required.")
+
+    if isinstance(counts_toward_total, str):
+        flag_text = counts_toward_total.strip().lower()
+        if flag_text not in ("true", "false"):
+            raise ValueError("Counts-toward-total must be true or false.")
+        counts = flag_text == "true"
+    elif isinstance(counts_toward_total, bool):
+        counts = counts_toward_total
+    else:
+        raise ValueError("Counts-toward-total must be true or false.")
+
+    proc_id = str(process_id or "").strip()
+    tag = str(product_tag or "").strip()
+    color_val = str(color or "").strip()
+    if not color_val:
+        # The blank-colour bucket is the process's whole output when it has
+        # no colour breakdown at all. Excluding it would zero the process
+        # rather than describe it, which is never what this control means.
+        raise ValueError(
+            "A colour-less bucket is the process's own output and always counts."
+        )
+
+    cur.execute(
+        """
+        INSERT INTO erp.warehouse_pool_bucket_flags
+            (output_item_name, process_id, product_tag, color, counts_toward_total, updated_by)
+        VALUES (%s, %s, %s, %s, %s, %s)
+        ON CONFLICT (lower(output_item_name), lower(product_tag), lower(color))
+        DO UPDATE SET counts_toward_total = EXCLUDED.counts_toward_total,
+                      process_id = EXCLUDED.process_id,
+                      updated_by = EXCLUDED.updated_by,
+                      updated_at = NOW()
+        """,
+        (item_name, proc_id, tag, color_val, counts, get_current_user_id()),
+    )
+
+    _recalculate_warehouse_pool(cur)
+    return build_response(
+        True,
+        {"countsTowardTotal": counts},
+        f'"{color_val}" is now counted as {"stock" if counts else "a sub-group"}.',
+    )
+
+
 @rpc_method("getWarehousePoolData")
 def get_warehouse_pool_data():
     with database.get_conn(cursor_factory=psycopg2.extras.RealDictCursor) as (
@@ -1693,7 +1945,8 @@ def get_warehouse_pool_data():
     ):
         cur.execute(
             """
-            SELECT id, output_item_name, process_id, product_tag, produced_qty, consumed_qty, available_qty, color
+            SELECT id, output_item_name, process_id, product_tag, produced_qty, consumed_qty, available_qty, color,
+                   counts_toward_total
             FROM erp.warehouse_pool
             """
         )
@@ -1707,6 +1960,10 @@ def get_warehouse_pool_data():
             "productTag": row["product_tag"] or "",
             "producedQty": float(row["produced_qty"]),
             "consumedQty": float(row["consumed_qty"]),
+            # False for a non-counting sub-group bucket -- still listed as
+            # its own combination, but excluded from any PROCESS-level sum
+            # (see migration 043 and stock.js's pool row totals).
+            "countsTowardTotal": bool(row["counts_toward_total"]),
             "availableQty": float(row["available_qty"]),
             "color": row["color"] or "",
         }

@@ -11896,6 +11896,23 @@ MApp.Pool = {
       return;
     }
 
+    // The entered figure always holds -- the server widens the correction
+    // until it does. What can differ is how much widening that took: a
+    // bucket carrying an unattributed colour-agnostic (COMMON) shortfall
+    // has part of any correction drained straight back out, so the pool
+    // needs more than the difference on screen to land on the count. That
+    // surplus is consumption recorded against stock the pool never had, and
+    // it is exactly the thing an audit later has to account for -- too
+    // important to fade after 2.6 seconds, so it gets the toast that waits.
+    const applied = res.data && res.data.appliedDelta;
+    const expected = res.data && res.data.expectedDelta;
+    if (typeof applied === 'number' && typeof expected === 'number' && applied !== expected) {
+      MApp.Toast.action(res.message, 'Got it', () => {});
+      this.closeAdjust();
+      this.load();
+      return;
+    }
+
     MApp.Toast.success(res.message || 'Warehouse Pool stock adjusted.');
     this.closeAdjust();
     // load(), not open(): the pane is already on screen behind the sheet

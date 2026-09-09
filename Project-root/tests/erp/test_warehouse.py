@@ -345,7 +345,18 @@ def test_adjust_warehouse_pool_manually_computes_delta(erp_client):
     )
     body = resp.get_json()
     assert body["success"] is True
-    assert body["data"] == {"oldAvailableQty": 20, "newAvailableQty": 15}
+    # newAvailableQty is now read back from the recalculated pool rather
+    # than echoed from the request, and appliedDelta/expectedDelta say
+    # whether the correction had to be widened to make the entered figure
+    # hold -- see test_manual_correction_supersedes_the_calculation.
+    # Nothing re-allocates here, so it did not.
+    assert body["data"] == {
+        "oldAvailableQty": 20,
+        "newAvailableQty": 15,
+        "requestedQty": 15,
+        "appliedDelta": -5,
+        "expectedDelta": -5,
+    }
 
     pool = _rpc(erp_client, "getWarehousePoolData").get_json()["data"]
     match = next(b for b in pool if b["outputItemName"] == payload["outputItemName"])
@@ -1140,3 +1151,351 @@ def test_process_delete_blocked_by_warehouse_pool_opening_reference(erp_client):
     body = resp.get_json()
     assert body["success"] is False
     assert "Warehouse Pool" in body["message"]
+
+
+def _uc(base: str) -> str:
+    """A colour name unique to this run.
+
+    save_production auto-registers every isCustom colour into the GLOBAL
+    Color Master (production_service, "+ Add Custom Sub-Group"), and
+    _compute_color_groups_with_overrides_for_process widens any
+    colour-enabled process's valid colours to that whole master. A literal
+    "Purple" here therefore stops being an unknown colour for every later
+    test in the shared database -- which is exactly how this file broke
+    test_production.py::test_save_production_color_breakdown_rejects_unknown_color,
+    a file that runs after this one and asserts precisely that rejection.
+    """
+    return f"{base}-{uuid.uuid4().hex[:8]}"
+
+
+def _sub_group_breakdown(primary_qty=10, kit_qty=10, small_qty=10):
+    """A lot shaped like the live "Packing Zara IBC" runs: one primary
+    color carrying the lot, plus a sub-group axis whose values ('Kit Bag
+    24"' / 'Small Kit 24"') are recorded PER COLOR on those same units --
+    a packing set every unit got, not output of its own.
+
+    Both sub-group entries share one axisKey, so Pass 1 sees a single axis
+    contributing two values, cannot infer which pairs with the primary,
+    and takes the bare-color fallback that gives every entry its own
+    bucket. That is where a non-counting entry used to become units.
+
+    isCustom marks them as operator-added one-offs so save_production
+    accepts the breakdown on a process with no configured color groups --
+    countsTowardTotal reaches warehouse_service identically either way.
+    """
+    return [
+        {
+            "color": _uc("Blue-White"),
+            "qty": primary_qty,
+            "countsTowardTotal": True,
+            "axisKey": "own:frame",
+            "isCustom": True,
+        },
+        {
+            "color": _uc('Kit Bag 24"'),
+            "qty": kit_qty,
+            "countsTowardTotal": False,
+            "axisKey": "other",
+            "isCustom": True,
+        },
+        {
+            "color": _uc('Small Kit 24"'),
+            "qty": small_qty,
+            "countsTowardTotal": False,
+            "axisKey": "other",
+            "isCustom": True,
+        },
+    ]
+
+
+def _save_sub_group_lot(client, process_id, breakdown):
+    resp = _rpc(
+        client,
+        "saveProduction",
+        [
+            {
+                "processId": process_id,
+                "assignedTo": "Worker A",
+                "status": "Completed",
+                "colorBreakdown": breakdown,
+                "componentsConsumed": [
+                    {"itemName": "RawMat", "qty": 1, "sourceType": "ITEM"}
+                ],
+            }
+        ],
+        mutation=True,
+    )
+    body = resp.get_json()
+    assert body["success"] is True, body["message"]
+    return body
+
+
+def test_sub_group_buckets_are_kept_but_marked_not_units(erp_client):
+    """A sub-group keeps its own bucket -- it carries its own movement and
+    the per-combination modal lists it -- but is flagged as not units, so
+    nothing sums it as though it were.
+
+    The lot made 10. Its two sub-group entries restate those same 10, so
+    counting all three buckets claims 30.
+    """
+    payload, process_id = _save_process(erp_client)
+    breakdown = _sub_group_breakdown(10, 10, 10)
+    primary, kit, small = (c["color"] for c in breakdown)
+    _save_sub_group_lot(erp_client, process_id, breakdown)
+
+    pool = _rpc(erp_client, "getWarehousePoolData").get_json()["data"]
+    own = {
+        b["color"]: b
+        for b in pool
+        if b["outputItemName"] == payload["outputItemName"]
+    }
+
+    assert set(own) == {primary, kit, small}
+    assert own[primary]["countsTowardTotal"] is True
+    assert own[kit]["countsTowardTotal"] is False
+    assert own[small]["countsTowardTotal"] is False
+
+    counted = [b for b in own.values() if b["countsTowardTotal"]]
+    assert sum(b["producedQty"] for b in counted) == 10
+
+
+def test_sub_group_flag_holds_when_the_values_divide_the_lot(erp_client):
+    """The flag follows countsTowardTotal, not the arithmetic. Whether the
+    sub-group values each carry the whole lot (co-consumption) or divide it
+    (6 + 4 of 10), neither is output, and neither may be summed as units.
+    """
+    payload, process_id = _save_process(erp_client)
+    breakdown = _sub_group_breakdown(10, 6, 4)
+    primary, kit, small = (c["color"] for c in breakdown)
+    _save_sub_group_lot(erp_client, process_id, breakdown)
+
+    pool = _rpc(erp_client, "getWarehousePoolData").get_json()["data"]
+    own = {
+        b["color"]: b
+        for b in pool
+        if b["outputItemName"] == payload["outputItemName"]
+    }
+    assert own[kit]["producedQty"] == 6  # its own movement, intact
+    assert own[kit]["countsTowardTotal"] is False
+    assert own[small]["countsTowardTotal"] is False
+    assert own[primary]["countsTowardTotal"] is True
+
+
+def test_a_color_used_as_primary_elsewhere_stays_units(erp_client):
+    """One counting credit anywhere makes the bucket units, whatever else
+    landed there. A color can be a sub-group on one lot and the primary
+    axis on another; marking the shared bucket as not-units because of the
+    first would erase real output recorded by the second.
+    """
+    payload, process_id = _save_process(erp_client)
+    breakdown = _sub_group_breakdown(10, 10, 10)
+    kit_color = breakdown[1]["color"]
+    _save_sub_group_lot(erp_client, process_id, breakdown)
+    _save_sub_group_lot(
+        erp_client,
+        process_id,
+        [
+            {
+                "color": kit_color,
+                "qty": 5,
+                "countsTowardTotal": True,
+                "axisKey": "own:frame",
+                "isCustom": True,
+            }
+        ],
+    )
+
+    pool = _rpc(erp_client, "getWarehousePoolData").get_json()["data"]
+    kit = next(
+        b
+        for b in pool
+        if b["outputItemName"] == payload["outputItemName"]
+        and b["color"] == kit_color
+    )
+    assert kit["producedQty"] == 15
+    assert kit["countsTowardTotal"] is True
+
+
+def test_opening_stock_bucket_counts_as_units(erp_client):
+    """A bucket with no production credit at all -- an opening balance --
+    is units. Only a bucket whose every credit was a sub-group entry is not.
+    """
+    payload, process_id = _save_process(erp_client)
+    _rpc(
+        erp_client,
+        "saveWarehousePoolOpening",
+        [{"processId": process_id, "qty": 7, "color": _uc("Blue-White")}],
+        mutation=True,
+    )
+
+    pool = _rpc(erp_client, "getWarehousePoolData").get_json()["data"]
+    bucket = next(
+        b for b in pool if b["outputItemName"] == payload["outputItemName"]
+    )
+    assert bucket["producedQty"] == 7
+    assert bucket["countsTowardTotal"] is True
+
+
+def _pool_by_color(client, item_name):
+    data = _rpc(client, "getWarehousePoolData").get_json()["data"]
+    return {(b["color"] or ""): b for b in data if b["outputItemName"] == item_name}
+
+
+def _common_shortfall_fixture(client):
+    """An item whose colour-agnostic consumption exceeds everything it was
+    ever credited: 10 Black opened, 15 drawn COMMON. The drain takes the 10
+    and dumps the remaining 5 on the blank bucket as the shortfall.
+    """
+    frame_payload, frame_id = _save_process(client)
+    frame_name = frame_payload["outputItemName"]
+    _rpc(
+        client,
+        "saveWarehousePoolOpening",
+        [{"processId": frame_id, "qty": 10, "color": "Black"}],
+        mutation=True,
+    )
+
+    _, down_id = _save_process(
+        client,
+        components=[
+            {
+                "itemName": frame_name,
+                "qtyPerUnit": 1,
+                "sourceType": "POOL",
+                "colorGroup": "COMMON",
+            }
+        ],
+    )
+    body = _rpc(
+        client,
+        "saveProduction",
+        [
+            {
+                "processId": down_id,
+                "assignedTo": "Worker A",
+                "status": "Completed",
+                "qty": 15,
+                "componentsConsumed": [
+                    {"itemName": frame_name, "qty": 15, "sourceType": "POOL"}
+                ],
+            }
+        ],
+        mutation=True,
+    ).get_json()
+    assert body["success"] is True, body["message"]
+    return frame_name, frame_id
+
+
+def test_manual_correction_supersedes_the_calculation(erp_client):
+    """A hand-entered figure wins. It is entered for a reason, and it is
+    how corrupted history gets repaired as entries are audited.
+
+    Getting there is not just (new - old): a correction is a delta on
+    produced_qty seeded in Pass 0, and the colour-agnostic (COMMON)
+    settlement runs after it, so a bucket carrying an unattributed
+    shortfall pays part of that shortfall out of the correction the moment
+    it is credited. The naive delta lands 10 on 5 -- indistinguishable from
+    the entry being overwritten. The correction is widened until the
+    entered figure actually holds.
+    """
+    frame_name, frame_id = _common_shortfall_fixture(erp_client)
+
+    before = _pool_by_color(erp_client, frame_name)
+    assert before["Black"]["availableQty"] == 0
+    assert before[""]["availableQty"] == -5  # the shortfall, still visible
+
+    body = _rpc(
+        erp_client,
+        "adjustWarehousePoolManually",
+        [frame_name, frame_id, "", "Black", 10, "physical recount"],
+        mutation=True,
+    ).get_json()
+
+    assert body["success"] is True
+    assert body["data"]["newAvailableQty"] == 10  # what was entered, full stop
+    assert body["data"]["requestedQty"] == 10
+    # (new - old) was 10; it took 15, because 5 had already been drawn
+    # against stock the pool never recorded.
+    assert body["data"]["expectedDelta"] == 10
+    assert body["data"]["appliedDelta"] == 15
+    assert "worth auditing" in body["message"]
+
+    after = _pool_by_color(erp_client, frame_name)
+    assert after["Black"]["availableQty"] == 10
+    assert after["Black"]["producedQty"] == 25  # 10 opened + 15 of correction
+    assert after[""]["availableQty"] == 0  # the shortfall is paid off
+
+    # One opening row per correction, carrying the delta the count actually
+    # implied -- the widening updates that row rather than adding a second.
+    openings = _rpc(erp_client, "getWarehousePoolOpeningData").get_json()["data"]
+    corrections = [
+        o
+        for o in openings
+        if o["outputItemName"] == frame_name and o["remarks"].startswith("Correction: ")
+    ]
+    assert len(corrections) == 1
+    assert corrections[0]["qty"] == 15
+
+    # The audit log keeps the figure that actually holds.
+    history = _rpc(erp_client, "getWarehousePoolAdjustmentHistory").get_json()["data"]
+    entry = next(h for h in history if h["outputItemName"] == frame_name)
+    assert entry["oldValue"] == 0
+    assert entry["newValue"] == 10
+
+
+def test_manual_correction_with_nothing_to_settle_lands_on_the_entered_figure(
+    erp_client,
+):
+    """The ordinary case is unchanged: no outstanding colour-agnostic
+    shortfall means nothing re-allocates, so the entered number sticks and
+    the message stays the plain one.
+    """
+    frame_payload, frame_id = _save_process(erp_client)
+    frame_name = frame_payload["outputItemName"]
+    _rpc(
+        erp_client,
+        "saveWarehousePoolOpening",
+        [{"processId": frame_id, "qty": 10, "color": "Black"}],
+        mutation=True,
+    )
+
+    body = _rpc(
+        erp_client,
+        "adjustWarehousePoolManually",
+        [frame_name, frame_id, "", "Black", 25, "physical recount"],
+        mutation=True,
+    ).get_json()
+
+    assert body["success"] is True
+    assert body["data"]["newAvailableQty"] == 25
+    assert body["data"]["appliedDelta"] == body["data"]["expectedDelta"] == 15
+    assert body["message"] == "Warehouse Pool stock adjusted successfully."
+    assert _pool_by_color(erp_client, frame_name)["Black"]["availableQty"] == 25
+
+
+def test_manual_correction_downward_still_cannot_drive_produced_negative(erp_client):
+    """The one thing a hand-entered figure does not supersede: produced
+    stock is the sum of what was opened and made, so it cannot go below
+    zero however the count reads. The widening loop is guarded the same
+    way the first delta is.
+    """
+    frame_payload, frame_id = _save_process(erp_client)
+    frame_name = frame_payload["outputItemName"]
+    _rpc(
+        erp_client,
+        "saveWarehousePoolOpening",
+        [{"processId": frame_id, "qty": 10, "color": "Black"}],
+        mutation=True,
+    )
+
+    body = _rpc(
+        erp_client,
+        "adjustWarehousePoolManually",
+        [frame_name, frame_id, "", "Black", -5, "physical recount"],
+        mutation=True,
+    ).get_json()
+
+    assert body["success"] is False
+    assert "produced stock" in body["message"]
+    assert _pool_by_color(erp_client, frame_name)["Black"]["availableQty"] == 10
+
