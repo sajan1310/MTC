@@ -44,11 +44,17 @@ describe('MApp.ContractorDetail', () => {
       <div class="mb-sheet" id="sheet-contractor-detail">
         <h2 id="contractor-detail-title"></h2>
         <div id="contractor-detail-body"></div>
+      </div>
+      <div class="mb-sheet" id="mapp-picker-sheet">
+        <h2 id="mapp-picker-title"></h2>
+        <div id="mapp-picker-search-wrap"><input id="mapp-picker-search"></div>
+        <div id="mapp-picker-list"></div>
       </div>`;
     loadAsGlobal('api.js', 'Api');
     loadAsGlobal('mobile.js', 'MApp');
     MApp.Sheet._stack = [];
     window.confirm = jest.fn(() => true);
+    Element.prototype.scrollIntoView = jest.fn();
     MApp.Api.call = jest.fn(async method => ({
       success: true,
       data: {
@@ -231,11 +237,17 @@ describe('MApp.ContractorDetail print and multi-select', () => {
         <span id="print-contractor-total-payable"></span><span id="print-contractor-total-paid"></span>
         <span id="print-contractor-balance-due"></span>
         <table><tbody id="print-contractor-ledger-body"></tbody></table>
+      </div>
+      <div class="mb-sheet" id="mapp-picker-sheet">
+        <h2 id="mapp-picker-title"></h2>
+        <div id="mapp-picker-search-wrap"><input id="mapp-picker-search"></div>
+        <div id="mapp-picker-list"></div>
       </div>`;
     loadAsGlobal('api.js', 'Api');
     loadAsGlobal('mobile.js', 'MApp');
     MApp.Sheet._stack = [];
     window.print = jest.fn();
+    Element.prototype.scrollIntoView = jest.fn();
     MApp.Api.call = jest.fn(async method => ({
       success: true,
       data: {
@@ -256,6 +268,37 @@ describe('MApp.ContractorDetail print and multi-select', () => {
     expect(document.getElementById('print-contractor-contact').textContent).toBe('99999');
     expect(document.getElementById('print-contractor-balance-due').textContent).toBe('₹3000.00');
     expect(document.getElementById('print-contractor-ledger-body').innerHTML).toContain('LOT-1042');
+  });
+
+  test('offers Print, Download and Share over the one populated statement', async () => {
+    // The statement no longer prints on the spot: window.print() cannot
+    // hand back a file, so the same document is now also downloadable and
+    // -- where the phone supports it -- shareable. All three read the
+    // container these assertions just checked was filled.
+    MApp.Directory.items = [{ name: 'Rakesh', contact: '99999', address: '', gstPan: '', remarks: '' }];
+    await MApp.ContractorDetail.open('Rakesh');
+
+    MApp.ContractorDetail.print();
+    await Promise.resolve();
+
+    const labels = [...document.querySelectorAll('#mapp-picker-list .mb-picker-option')]
+      .map(b => b.textContent.trim());
+    expect(labels.some(l => l.startsWith('Print'))).toBe(true);
+    expect(labels.some(l => l.startsWith('Download PDF'))).toBe(true);
+    // Share is offered only where canShare({files}) is true; jsdom is not.
+    expect(labels.some(l => l.startsWith('Share'))).toBe(false);
+  });
+
+  test('choosing Print is what actually prints', async () => {
+    MApp.Directory.items = [{ name: 'Rakesh', contact: '', address: '', gstPan: '', remarks: '' }];
+    await MApp.ContractorDetail.open('Rakesh');
+
+    const done = MApp.ContractorDetail.print();
+    await Promise.resolve();
+    [...document.querySelectorAll('#mapp-picker-list .mb-picker-option')]
+      .find(b => b.textContent.trim().startsWith('Print')).click();
+    await done;
+
     expect(window.print).toHaveBeenCalled();
   });
 

@@ -1831,6 +1831,177 @@ MApp.Print = {
     window.addEventListener('afterprint', cleanup);
     window.print();
     setTimeout(cleanup, 1000);
+  },
+
+  // ── PDF: download and share ──────────────────────────────────────────
+  // window.print() cannot hand back a file, so a phone could print a
+  // challan and had no way to keep one or send one. Desktop has had
+  // Download PDF since the server renderer landed; POST /erp/render-pdf is
+  // a generic endpoint that takes the same print-container markup this
+  // shell already builds, so the whole gap was a caller.
+  //
+  // Share is new to the product rather than ported, and it is the one of
+  // the three that only makes sense here: a challan into WhatsApp is what
+  // the office asks the floor for, and the alternative today is a photo of
+  // a screen.
+
+  _csrfToken() {
+    return document.querySelector('meta[name="csrf-token"]')?.getAttribute('content') || '';
+  },
+
+  // Set false the first time the server proves it cannot render, so the
+  // rest of the session stops asking and falls straight to the message.
+  serverPdfAvailable: null,
+  lastPdfError: null,
+
+  // A Download button downloads. It does NOT quietly become a print
+  // dialog -- the same reasoning desktop records: the user asked for a
+  // file, a print dialog is a different task with a different outcome,
+  // and appearing without warning is not a fallback. Say what happened
+  // and name the alternative.
+  PDF_ERRORS: {
+    offline: 'No connection to the server, so nothing was downloaded. Use Print to save this through the print dialog instead.',
+    'no-renderer': 'The server has no PDF renderer installed. Print still works meanwhile.',
+    'no-endpoint': 'This server does not have the PDF endpoint — it is probably an older build and needs restarting. Print still works meanwhile.',
+    rejected: 'The server refused the request, which usually means the session expired. Reload and try again.',
+    failed: 'The server could not render this document. Nothing was downloaded.'
+  },
+
+  reportPdfUnavailable() {
+    MApp.Toast.error(this.PDF_ERRORS[this.lastPdfError] || this.PDF_ERRORS.failed);
+  },
+
+  // Same status taxonomy as desktop's App.Print._postForBlob: which of
+  // these five happened decides what the operator is told, and "could not
+  // reach the renderer" covers four situations that need different
+  // answers.
+  async _postForBlob(body) {
+    if (this.serverPdfAvailable === false) return null;
+
+    let res;
+    try {
+      res = await fetch('/erp/render-pdf', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', 'X-CSRFToken': this._csrfToken() },
+        credentials: 'same-origin',
+        body: JSON.stringify(body)
+      });
+    } catch (err) {
+      // Never completed: offline, or the server is unreachable. The
+      // common case on this LAN, and the reason Print stays the fallback.
+      this.lastPdfError = 'offline';
+      this.serverPdfAvailable = false;
+      return null;
+    }
+
+    if (res.status === 503) { this.lastPdfError = 'no-renderer'; this.serverPdfAvailable = false; return null; }
+    if (res.status === 404) { this.lastPdfError = 'no-endpoint'; this.serverPdfAvailable = false; return null; }
+    if (res.status === 401 || res.status === 403 || res.status === 400) { this.lastPdfError = 'rejected'; return null; }
+    if (!res.ok) { this.lastPdfError = 'failed'; return null; }
+
+    this.lastPdfError = null;
+    this.serverPdfAvailable = true;
+    return await res.blob();
+  },
+
+  // Renders whatever is currently inside a print container. The container
+  // is populated by the same _populatePrintData the Print button uses, so
+  // the downloaded file and the printed page are one document.
+  async _pdfFor(containerId, filename, landscape) {
+    const el = document.getElementById(containerId);
+    if (!el) return null;
+    this.injectLogo();
+    return this._postForBlob({
+      html: el.innerHTML,
+      landscape: !!landscape,
+      // Desktop measures a fit density off the table's column count. The
+      // documents reachable from here are the narrow ones -- challan, PO,
+      // bill, statement -- so they take the server default rather than
+      // porting the whole fit-tier machinery for a case it never hits.
+      density: '',
+      filename
+    });
+  },
+
+  _pdfName(filename) {
+    return filename.toLowerCase().endsWith('.pdf') ? filename : `${filename}.pdf`;
+  },
+
+  async download(containerId, filename, opts) {
+    const name = this._pdfName(filename);
+    const blob = await this._pdfFor(containerId, name, opts && opts.landscape);
+    if (!blob) { this.reportPdfUnavailable(); return false; }
+
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = name;
+    document.body.appendChild(a);
+    a.click();
+    a.remove();
+    // Revoked on a later turn: revoking synchronously cancels the
+    // download in some browsers before they have read the blob.
+    setTimeout(() => URL.revokeObjectURL(url), 10000);
+    return true;
+  },
+
+  // Feature-detected with a real File, because canShare({files}) is the
+  // only reliable test -- navigator.share exists on browsers that cannot
+  // take files at all, and desktop Chrome is one of them. A button that
+  // opens nothing is worse than a button that is not there.
+  canShareFiles() {
+    try {
+      if (!navigator.share || !navigator.canShare) return false;
+      const probe = new File([new Blob([''], { type: 'application/pdf' })], 'p.pdf', { type: 'application/pdf' });
+      return navigator.canShare({ files: [probe] });
+    } catch (e) {
+      return false;
+    }
+  },
+
+  async share(containerId, filename, opts) {
+    const name = this._pdfName(filename);
+    const blob = await this._pdfFor(containerId, name, opts && opts.landscape);
+    if (!blob) { this.reportPdfUnavailable(); return false; }
+
+    try {
+      await navigator.share({
+        files: [new File([blob], name, { type: 'application/pdf' })],
+        title: name
+      });
+      return true;
+    } catch (err) {
+      // Dismissing the share sheet is not a failure and must not be
+      // reported as one -- it is the most common outcome of opening it.
+      if (err && err.name === 'AbortError') return false;
+      MApp.Toast.error('Could not share this document. It can still be downloaded.');
+      return false;
+    }
+  },
+
+  // One button per card rather than three. Three icons on a list row is
+  // most of the row, and two of the three are occasional; the picker is
+  // already this app's way of choosing one of a few things.
+  //
+  // `populate` fills the print container for the record in question --
+  // the same call the Print path makes -- so all three actions describe
+  // one document.
+  async chooseAction({ containerId, filename, title, populate, landscape }) {
+    const items = [
+      { value: 'print', label: 'Print', sublabel: 'Opens the print dialog' },
+      { value: 'download', label: 'Download PDF', sublabel: 'Saves a file' }
+    ];
+    if (this.canShareFiles()) {
+      items.push({ value: 'share', label: 'Share', sublabel: 'Send it from this phone' });
+    }
+
+    const picked = await MApp.Picker.open({ title: title || 'Document', items });
+    if (!picked) return;
+
+    if (typeof populate === 'function') populate();
+    if (picked.value === 'print') { this.trigger(containerId, filename); return; }
+    if (picked.value === 'download') { await this.download(containerId, filename, { landscape }); return; }
+    await this.share(containerId, filename, { landscape });
   }
 };
 
@@ -4244,7 +4415,7 @@ MApp.Dispatch = {
             </div>
           </div>
           <div class="mb-card-sub mb-mt-2">${MApp.Util.escapeHtml(d.productName)}</div>
-          <button type="button" class="mb-btn mb-btn-secondary mb-mt-2" style="min-height:40px;" data-print-idx="${idx}">Print Challan</button>
+          <button type="button" class="mb-btn mb-btn-secondary mb-mt-2" style="min-height:40px;" data-print-idx="${idx}">Challan…</button>
           <div class="mb-mt-2" style="display:flex; gap:var(--mb-sp-4);">
             <button type="button" class="mb-btn-text" style="padding:0;min-height:auto;" data-dispatch-action="edit" data-dispatch-number="${MApp.Util.escapeHtml(d.dispatchNumber)}">Edit</button>
             <button type="button" class="mb-btn-text" style="padding:0;min-height:auto;color:var(--mb-enamel-red-ink);" data-dispatch-action="delete" data-dispatch-number="${MApp.Util.escapeHtml(d.dispatchNumber)}">Delete</button>
@@ -4260,7 +4431,7 @@ MApp.Dispatch = {
       // `shown`, not `list` -- the indices were emitted while mapping the
       // sliced array, and printing the wrong challan is not a mistake to
       // leave resting on the two arrays sharing a prefix.
-      btn.addEventListener('click', () => this.print(parseInt(btn.dataset.printIdx, 10), shown));
+      btn.addEventListener('click', () => this.documentActions(parseInt(btn.dataset.printIdx, 10), shown));
     });
 
     // A dispatch with multiple lines renders as several cards sharing the
@@ -4279,8 +4450,10 @@ MApp.Dispatch = {
     MApp.Select.enable(listEl, shown, this.SELECT);
   },
 
-  print(idx, listRef) {
-    const d = (listRef || this.dispatches)[idx];
+  // Fills #print-dispatch-container for one challan. Split out of the old
+  // print(idx) so Download and Share populate the identical document
+  // rather than each building their own.
+  _populatePrintData(d) {
     if (!d) return;
 
     const client = (this.clients || []).find(c => c.name === d.clientName);
@@ -4311,7 +4484,19 @@ MApp.Dispatch = {
         </tr>`;
     }
 
-    MApp.Print.trigger('print-dispatch-container', `Challan ${d.dispatchNumber}`);
+  },
+
+  // Print, Download and Share over one populated container, so all three
+  // describe the same challan.
+  documentActions(idx, listRef) {
+    const d = (listRef || this.dispatches)[idx];
+    if (!d) return;
+    MApp.Print.chooseAction({
+      containerId: 'print-dispatch-container',
+      filename: `Challan_${d.dispatchNumber}`,
+      title: `Challan ${d.dispatchNumber}`,
+      populate: () => this._populatePrintData(d)
+    });
   },
 
   // ── New Dispatch sheet ──────────────────────────────────────────────
@@ -5127,7 +5312,7 @@ MApp.PO = {
           </div>
           <div style="display:flex;align-items:center;gap:6px;">
             <span class="mb-chip ${MApp.Util.statusChipClass(po.status)}">${MApp.Util.escapeHtml(po.status || '')}</span>
-            <button type="button" class="mapp-topbar-btn" aria-label="Print PO ${MApp.Util.escapeHtml(po.poNumber)}" onclick="MApp.PO.print(${idx})">
+            <button type="button" class="mapp-topbar-btn" aria-label="Document actions for PO ${MApp.Util.escapeHtml(po.poNumber)}" onclick="MApp.PO.documentActions(${idx})">
               <svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M6 9V2h12v7"/><path d="M6 18H4a2 2 0 0 1-2-2v-5a2 2 0 0 1 2-2h16a2 2 0 0 1 2 2v5a2 2 0 0 1-2 2h-2"/><path d="M6 14h12v8H6z"/></svg>
             </button>
           </div>
@@ -5153,12 +5338,21 @@ MApp.PO = {
     MApp.Select.enable(listEl, page.rows, this.SELECT);
   },
 
-  print(index) {
+  _printTitle(po) {
+    return `PO_${po.poNumber}_${String(po.vendor || '').replace(/[^a-zA-Z0-9 \-]/g, '').trim().replace(/\s+/g, '_')}`;
+  },
+
+  // Print, Download and Share over one populated container, so all three
+  // describe the same document.
+  documentActions(index) {
     const po = this.pos[index];
     if (!po) return;
-    this._populatePrintData(po);
-    const title = `PO_${po.poNumber}_${String(po.vendor || '').replace(/[^a-zA-Z0-9 \-]/g, '').trim().replace(/\s+/g, '_')}`;
-    MApp.Print.trigger('print-po-container', title);
+    MApp.Print.chooseAction({
+      containerId: 'print-po-container',
+      filename: this._printTitle(po),
+      title: `PO ${po.poNumber}`,
+      populate: () => this._populatePrintData(po)
+    });
   },
 
   // Mirrors desktop po.js's populatePrintData() -- same #print-po-container
@@ -5610,7 +5804,7 @@ MApp.Bill = {
             <div class="mb-card-title">${MApp.Util.escapeHtml(bill.billNumber)}</div>
             <div class="mb-card-sub">${MApp.Util.escapeHtml(bill.vendor || '')} · ${MApp.Util.escapeHtml(bill.billDate || '')}</div>
           </div>
-          <button type="button" class="mapp-topbar-btn" aria-label="Print bill ${MApp.Util.escapeHtml(bill.billNumber)}" onclick="MApp.Bill.print(${idx})">
+          <button type="button" class="mapp-topbar-btn" aria-label="Document actions for bill ${MApp.Util.escapeHtml(bill.billNumber)}" onclick="MApp.Bill.documentActions(${idx})">
             <svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M6 9V2h12v7"/><path d="M6 18H4a2 2 0 0 1-2-2v-5a2 2 0 0 1 2-2h16a2 2 0 0 1 2 2v5a2 2 0 0 1-2 2h-2"/><path d="M6 14h12v8H6z"/></svg>
           </button>
         </div>
@@ -5635,12 +5829,19 @@ MApp.Bill = {
     MApp.Select.enable(listEl, page.rows, this.SELECT);
   },
 
-  print(index) {
+  _printTitle(bill) {
+    return `Bill_${bill.billNumber}_${String(bill.vendor || '').replace(/[^a-zA-Z0-9 \-]/g, '').trim().replace(/\s+/g, '_')}`;
+  },
+
+  documentActions(index) {
     const bill = this.bills[index];
     if (!bill) return;
-    this._populatePrintData(bill);
-    const title = `Bill_${bill.billNumber}_${String(bill.vendor || '').replace(/[^a-zA-Z0-9 \-]/g, '').trim().replace(/\s+/g, '_')}`;
-    MApp.Print.trigger('print-bill-container', title);
+    MApp.Print.chooseAction({
+      containerId: 'print-bill-container',
+      filename: this._printTitle(bill),
+      title: `Bill ${bill.billNumber}`,
+      populate: () => this._populatePrintData(bill)
+    });
   },
 
   // Mirrors desktop bill.js's populatePrintData() -- same #print-bill
@@ -10852,9 +11053,15 @@ MApp.Pool = {
             </div>
           </div>
           ${flag}
+          ${r.countsTowardTotal === false
+    ? `<div class="mb-card-sub mb-mt-2">Sub-group — recorded per colour on units already counted, so it is left out of this process's totals and out of Ready to Dispatch.</div>`
+    : ''}
           <div class="mb-mt-2">
             <button type="button" class="mb-btn-text" style="padding:0;min-height:auto;" data-pool-ledger="${i}">View ledger</button>
             <button type="button" class="mb-btn-text" style="padding:0;min-height:auto;" data-pool-adjust="${i}">Correct count</button>
+            ${r.color
+    ? `<button type="button" class="mb-btn-text" style="padding:0;min-height:auto;" data-pool-counts="${i}">${r.countsTowardTotal === false ? 'Count as stock' : 'Not stock'}</button>`
+    : ''}
           </div>
         </div>`;
     }).join('') + MApp.Paging.moreHtml(page);
@@ -10872,6 +11079,39 @@ MApp.Pool = {
         if (row) this.openAdjust(row);
       });
     });
+
+    listEl.querySelectorAll('[data-pool-counts]').forEach(btn => {
+      btn.addEventListener('click', () => {
+        const row = page.rows[Number(btn.dataset.poolCounts)];
+        if (row) this.setBucketCounts(row);
+      });
+    });
+  },
+
+  // Declare a bucket stock or a sub-group. Where a production lot credited
+  // it the server reads the answer off the lot; this is for the buckets no
+  // lot ever touched (opening stock, a correction), where nothing can infer
+  // it -- see migration 044.
+  //
+  // Confirmed rather than instant, unlike desktop: the same tap target
+  // sits beside "Correct count", and this one silently moves a process
+  // total and what Dispatch will offer.
+  async setBucketCounts(row) {
+    const excluded = row.countsTowardTotal === false;
+    const label = row.outputItemName + (row.color ? ' · ' + row.color : '');
+    if (!window.confirm(excluded
+      ? `Count “${label}” as stock again? Its quantity goes back into this process's totals and into Ready to Dispatch.`
+      : `Mark “${label}” a sub-group? It stays listed with its own history, but its quantity leaves this process's totals and Ready to Dispatch.`)) return;
+
+    const res = await MApp.Util.mutateSimple(
+      'setWarehousePoolBucketCountsTowardTotal',
+      [row.outputItemName, row.processId, row.productTag || '', row.color || '', excluded],
+      null
+    );
+    if (res.success) {
+      MApp.Toast.success(res.message || 'Bucket updated.');
+      this.load();
+    }
   },
 
   // getWarehousePoolLedger replays the pool's own arithmetic server-side.
@@ -11711,7 +11951,7 @@ MApp.ContractorDetail = {
           <span class="mb-text-sm mb-text-steel">Payable ${money(ledger.totalPayable)}</span>
           <span class="mb-text-sm mb-text-steel">Paid ${money(ledger.totalPaid)}</span>
         </div>
-        <button type="button" class="mb-btn mb-btn-secondary mb-mt-2" onclick="MApp.ContractorDetail.print()">Print statement</button>
+        <button type="button" class="mb-btn mb-btn-secondary mb-mt-2" onclick="MApp.ContractorDetail.print()">Statement…</button>
       </div>` : failed('the account ledger');
 
     // Payments get their own section as well as their place in the
@@ -11912,10 +12152,13 @@ MApp.ContractorDetail = {
         : '<tr><td colspan="7" style="padding:10px;text-align:center;color:#999;">No transactions yet for this contractor.</td></tr>';
     }
 
-    MApp.Print.trigger(
-      'print-contractor-ledger-container',
-      `Contractor_Ledger_${String(this.name || '').replace(/[^a-zA-Z0-9_-]/g, '_')}`
-    );
+    return MApp.Print.chooseAction({
+      containerId: 'print-contractor-ledger-container',
+      filename: `Contractor_Ledger_${String(this.name || '').replace(/[^a-zA-Z0-9_-]/g, '_')}`,
+      title: `Statement — ${MApp.Util.formatNameCase(this.name || '')}`
+      // No populate: the container is filled by the lines above, which
+      // run every time this is opened.
+    });
   }
 };
 
