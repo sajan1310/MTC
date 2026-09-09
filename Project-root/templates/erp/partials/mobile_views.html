@@ -157,6 +157,79 @@
   </div>
 </div>
 
+
+<!-- ═══════════════════════════════════════════════════════════════════
+     SHEETS — DISPATCH PLAN. Desktop plans this on a drag-and-drop board;
+     that board is the wrong object on a phone and always would be. What
+     survives the translation is what the loading bay needs from it:
+     today's list, grouped by client, and whether each line has gone.
+     saveDispatchPlanLine upserts ONE line rather than resubmitting a
+     whole plan, which is what makes a checklist a faithful client for it.
+     ═══════════════════════════════════════════════════════════════════ -->
+<div class="mb-sheet" id="sheet-dispatch-plan" role="dialog" aria-modal="true" aria-labelledby="dispatch-plan-heading">
+  <div class="mb-sheet-header">
+    <h2 id="dispatch-plan-heading">Dispatch plan</h2>
+    <button type="button" class="mapp-topbar-btn" aria-label="Close" onclick="MApp.DispatchPlan.close()">
+      <svg viewBox="0 0 24 24" width="22" height="22" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><path d="M6 6l12 12M18 6L6 18"/></svg>
+    </button>
+  </div>
+  <div class="mb-sheet-body">
+    <div class="mb-field">
+      <label for="dispatch-plan-date">Plan date</label>
+      <input type="date" id="dispatch-plan-date" onchange="MApp.DispatchPlan.onDateChange(this.value)">
+    </div>
+    <div class="mb-field-hint mb-mb-4" id="dispatch-plan-summary" aria-live="polite"></div>
+    <div id="dispatch-plan-list"></div>
+  </div>
+  <div class="mb-sheet-footer">
+    <button type="button" class="mb-btn mb-btn-primary" onclick="MApp.DispatchPlan.openForm(null)">Add to plan</button>
+  </div>
+</div>
+
+<div class="mb-sheet" id="sheet-dispatch-plan-form" role="dialog" aria-modal="true" aria-labelledby="dispatch-plan-form-title">
+  <div class="mb-sheet-header">
+    <h2 id="dispatch-plan-form-title">Add to plan</h2>
+    <button type="button" class="mapp-topbar-btn" aria-label="Close" onclick="MApp.DispatchPlan.closeForm()">
+      <svg viewBox="0 0 24 24" width="22" height="22" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><path d="M6 6l12 12M18 6L6 18"/></svg>
+    </button>
+  </div>
+  <div class="mb-sheet-body">
+    <div class="mb-field">
+      <label for="plan-line-date">Plan date</label>
+      <input type="date" id="plan-line-date">
+    </div>
+    <div class="mb-field">
+      <label for="plan-line-client-field">Client</label>
+      <button type="button" class="mb-picker-field mb-placeholder" id="plan-line-client-field" onclick="MApp.DispatchPlan.pickClient()">Choose a client…</button>
+    </div>
+    <div class="mb-field">
+      <label for="plan-line-product-field">Product</label>
+      <button type="button" class="mb-picker-field mb-placeholder" id="plan-line-product-field" onclick="MApp.DispatchPlan.pickProduct()">Choose a product…</button>
+    </div>
+    <div class="mb-field">
+      <label for="plan-line-qty">Quantity</label>
+      <input type="number" id="plan-line-qty" inputmode="decimal" min="0" step="any">
+    </div>
+    <!-- Rate, remarks and transport are record-keeping only (migration
+         029) -- they carry no validation beyond sane bounds and never
+         reach a bill. -->
+    <div class="mb-field">
+      <label for="plan-line-rate">Rate (optional)</label>
+      <input type="number" id="plan-line-rate" inputmode="decimal" min="0" step="any">
+    </div>
+    <div class="mb-field">
+      <label for="plan-line-transport">Transport (optional)</label>
+      <input type="text" id="plan-line-transport">
+    </div>
+    <div class="mb-field">
+      <label for="plan-line-remarks">Remarks (optional)</label>
+      <textarea id="plan-line-remarks" rows="2"></textarea>
+    </div>
+  </div>
+  <div class="mb-sheet-footer">
+    <button type="button" class="mb-btn mb-btn-primary" id="dispatch-plan-save-btn" onclick="MApp.DispatchPlan.save()">Save</button>
+  </div>
+</div>
 <!-- ═══════════════════════════════════════════════════════════════════
      SHEETS — CLIENT ORDERS (PI / Estimates, More tab). The list, and
      the header+lines form. Marking one "Order Confirmed" is what queues
@@ -869,7 +942,14 @@
       </div>
       <div class="mb-card-sub">Recorded bills &amp; print, per bill</div>
     </button>
-    <button type="button" class="mb-card mb-card-tappable" style="border:none;" onclick="MApp.ClientOrders.open()">
+    <button type="button" class="mb-card mb-card-tappable" style="border:none;" onclick="MApp.DispatchPlan.open()">
+    <div class="mb-card-row">
+      <span class="mb-card-title">Dispatch plan</span>
+      <svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M9 18l6-6-6-6"/></svg>
+    </div>
+    <div class="mb-card-sub">What is meant to go out, by day and client</div>
+  </button>
+  <button type="button" class="mb-card mb-card-tappable" style="border:none;" onclick="MApp.ClientOrders.open()">
       <div class="mb-card-row">
         <span class="mb-card-title">PI / Estimates</span>
         <svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M9 18l6-6-6-6"/></svg>

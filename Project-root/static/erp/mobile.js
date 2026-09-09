@@ -9113,7 +9113,8 @@ MApp.GlobalSearch = {
     { label: 'Units', keywords: 'unit master conversion dozen kg factor', run: () => MApp.Master.open('unit') },
     { label: 'Stock Groups', keywords: 'group set collection low stock report stickers bolts', run: () => MApp.StockGroups.open() },
     { label: 'PI / Estimates', keywords: 'client order proforma invoice quote estimate confirm', run: () => MApp.ClientOrders.open() },
-    { label: 'Opening balances', keywords: 'pool opening stock credit rack correction warehouse', run: () => MApp.PoolOpenings.open() }
+    { label: 'Opening balances', keywords: 'pool opening stock credit rack correction warehouse', run: () => MApp.PoolOpenings.open() },
+    { label: 'Dispatch plan', keywords: 'plan planned loading bay tomorrow schedule challan client', run: () => MApp.DispatchPlan.open() }
   ],
 
   DEST_SPEC: {
@@ -9941,6 +9942,263 @@ MApp.StockGroups = {
   }
 };
 
+
+// ================================================================
+// DISPATCH PLAN — what is meant to go out, and on what day.
+//
+// Desktop plans this on a drag-and-drop board: pool items on the left,
+// client cards on the right, lines dragged between them. That board is
+// the wrong object on a phone and always would be. What survives the
+// translation is the thing the floor actually needs from it -- today's
+// list, by client, and whether each line has gone yet.
+//
+// So this is a checklist over the same lines. saveDispatchPlanLine
+// upserts ONE line rather than resubmitting a whole plan (see migration
+// 027), which is what makes a checklist a faithful client for it: every
+// edit here is exactly one line, the same unit the board's drags are.
+// ================================================================
+MApp.DispatchPlan = {
+  lines: [],
+  planDate: '',
+  clients: [],
+  products: [],
+  editing: null,
+  selection: null,
+
+  async open(dateIso) {
+    this.planDate = dateIso || MApp.Util.todayInputValue();
+    const dateEl = document.getElementById('dispatch-plan-date');
+    if (dateEl) dateEl.value = this.planDate;
+
+    const listEl = document.getElementById('dispatch-plan-list');
+    MApp.Util.renderSkeleton(listEl, 4);
+    MApp.Sheet.open('sheet-dispatch-plan');
+    await this.load();
+  },
+
+  close() { MApp.Sheet.close('sheet-dispatch-plan'); },
+
+  onDateChange(value) {
+    this.planDate = value || MApp.Util.todayInputValue();
+    this.load();
+  },
+
+  async load() {
+    const listEl = document.getElementById('dispatch-plan-list');
+    if (!listEl) return;
+    MApp.Util.renderSkeleton(listEl, 4);
+    try {
+      const res = await MApp.Api.call('getDispatchPlans');
+      if (!res || !res.success) {
+        MApp.Util.renderError(listEl, res && res.message, () => this.load());
+        return;
+      }
+      this.lines = res.data || [];
+      this.render();
+    } catch (err) {
+      MApp.Util.renderError(listEl, err && err.message, () => this.load());
+    }
+  },
+
+  forDate() {
+    return this.lines
+      .filter(l => String(l.planDate || '').slice(0, 10) === this.planDate)
+      .sort((a, b) => (a.sortOrder || 0) - (b.sortOrder || 0));
+  },
+
+  render() {
+    const listEl = document.getElementById('dispatch-plan-list');
+    if (!listEl) return;
+
+    const rows = this.forDate();
+    const done = rows.filter(l => l.fulfilled).length;
+
+    const summary = document.getElementById('dispatch-plan-summary');
+    if (summary) {
+      summary.textContent = rows.length === 0
+        ? 'Nothing planned for this day.'
+        : `${done} of ${rows.length} dispatched`;
+    }
+
+    if (rows.length === 0) {
+      MApp.Util.renderEmpty(listEl, {
+        title: 'Nothing planned',
+        body: 'Tap Add to put a line on this day’s plan.'
+      });
+      return;
+    }
+
+    // Grouped by client, because that is how the loading bay works
+    // through it -- one vehicle, one client, everything for them at once.
+    const byClient = new Map();
+    rows.forEach(l => {
+      const key = l.clientName || 'Unassigned';
+      if (!byClient.has(key)) byClient.set(key, []);
+      byClient.get(key).push(l);
+    });
+
+    listEl.innerHTML = [...byClient.entries()].map(([client, lines]) => `
+      <div class="mapp-section-label">${MApp.Util.escapeHtml(MApp.Util.formatNameCase(client))}</div>
+      ${lines.map(l => `
+        <div class="mb-card">
+          <div class="mb-card-row">
+            <div>
+              <div class="mb-card-title">${MApp.Util.escapeHtml(l.productName || l.productId)}</div>
+              <div class="mb-card-sub">${MApp.Util.escapeHtml(l.productId)}${l.transport ? ' · ' + MApp.Util.escapeHtml(l.transport) : ''}</div>
+            </div>
+            <div style="text-align:right;">
+              <div class="mb-card-number">${MApp.Util.formatQty(l.qty)}</div>
+            </div>
+          </div>
+          ${l.remarks ? `<div class="mb-card-sub mb-mt-2">${MApp.Util.escapeHtml(l.remarks)}</div>` : ''}
+          ${l.fulfilled
+    // A dispatched line is a record, not a plan any more. The server
+    // refuses to edit or remove one, so offering either would be
+    // offering a save that bounces.
+    ? `<div class="mb-mt-2"><span class="mb-chip mb-chip-completed">Dispatched${l.fulfilledDispatchNumber ? ' · ' + MApp.Util.escapeHtml(l.fulfilledDispatchNumber) : ''}</span></div>`
+    : `<div class="mb-mt-2" style="display:flex; gap:var(--mb-sp-4);">
+             <button type="button" class="mb-btn-text" style="padding:0;min-height:auto;" data-plan-action="edit" data-plan-line="${l.lineId}">Edit</button>
+             <button type="button" class="mb-btn-text" style="padding:0;min-height:auto;color:var(--mb-enamel-red-ink);" data-plan-action="remove" data-plan-line="${l.lineId}">Remove</button>
+           </div>`}
+        </div>`).join('')}
+    `).join('');
+
+    listEl.querySelectorAll('[data-plan-action]').forEach(btn => {
+      btn.addEventListener('click', () => {
+        const line = rows.find(l => String(l.lineId) === btn.dataset.planLine);
+        if (!line) return;
+        if (btn.dataset.planAction === 'edit') this.openForm(line);
+        else this.remove(line);
+      });
+    });
+  },
+
+  // ── The form ─────────────────────────────────────────────────────────
+  async openForm(line) {
+    this.editing = line || null;
+    this.selection = {
+      clientName: line ? line.clientName : '',
+      productId: line ? line.productId : '',
+      productName: line ? (line.productName || '') : ''
+    };
+
+    const titleEl = document.getElementById('dispatch-plan-form-title');
+    if (titleEl) titleEl.textContent = line ? 'Edit plan line' : 'Add to plan';
+    const set = (id, v) => { const el = document.getElementById(id); if (el) el.value = v; };
+    set('plan-line-date', line ? String(line.planDate || '').slice(0, 10) : this.planDate);
+    set('plan-line-qty', line ? line.qty : '');
+    set('plan-line-rate', line && line.rate ? line.rate : '');
+    set('plan-line-remarks', line ? (line.remarks || '') : '');
+    set('plan-line-transport', line ? (line.transport || '') : '');
+
+    this._paintClient();
+    this._paintProduct();
+    MApp.Sheet.open('sheet-dispatch-plan-form');
+
+    const [clientsRes, productsRes] = await Promise.all([
+      MApp.Api.call('getClientsData').catch(() => null),
+      MApp.Api.call('getBOMProductionData').catch(() => null)
+    ]);
+    this.clients = clientsRes && clientsRes.success ? (clientsRes.data || []) : [];
+    this.products = productsRes && productsRes.success ? (productsRes.data || []) : [];
+  },
+
+  closeForm() { MApp.Sheet.close('sheet-dispatch-plan-form'); },
+
+  _paintClient() {
+    const el = document.getElementById('plan-line-client-field');
+    if (!el) return;
+    const name = this.selection.clientName;
+    el.textContent = name ? MApp.Util.formatNameCase(name) : 'Choose a client…';
+    el.classList.toggle('mb-placeholder', !name);
+  },
+
+  _paintProduct() {
+    const el = document.getElementById('plan-line-product-field');
+    if (!el) return;
+    const id = this.selection.productId;
+    el.textContent = id ? `${this.selection.productName || id} (${id})` : 'Choose a product…';
+    el.classList.toggle('mb-placeholder', !id);
+  },
+
+  async pickClient() {
+    if (!this.clients.length) { MApp.Toast.error('Client list is still loading. Try again in a moment.'); return; }
+    const picked = await MApp.Picker.open({
+      title: 'Choose a client',
+      items: this.clients.map(c => ({ value: c.name, label: MApp.Util.formatNameCase(c.name), sublabel: c.contact || '' })),
+      selectedValue: this.selection.clientName
+    });
+    if (!picked) return;
+    this.selection.clientName = picked.value;
+    this._paintClient();
+  },
+
+  async pickProduct() {
+    if (!this.products.length) { MApp.Toast.error('Product list is still loading. Try again in a moment.'); return; }
+    const picked = await MApp.Picker.open({
+      title: 'Choose a product',
+      items: this.products.map(p => ({ value: p.productId, label: p.productName, sublabel: p.productId })),
+      selectedValue: this.selection.productId
+    });
+    if (!picked) return;
+    const match = this.products.find(p => p.productId === picked.value);
+    this.selection.productId = picked.value;
+    this.selection.productName = match ? match.productName : picked.label;
+    this._paintProduct();
+  },
+
+  async save() {
+    if (!this.selection.clientName) { MApp.Toast.error('Choose a client.'); return; }
+    if (!this.selection.productId) { MApp.Toast.error('Choose a product.'); return; }
+
+    const qty = MApp.Util.toNumber(document.getElementById('plan-line-qty')?.value);
+    if (!(qty > 0)) { MApp.Toast.error('Enter a quantity greater than zero.'); return; }
+
+    // A new line goes to the end of its day rather than the front. The
+    // board's order is somebody's loading sequence, and inserting into
+    // the middle of it from here would rearrange a plan nobody asked to
+    // rearrange.
+    const sortOrder = this.editing
+      ? (this.editing.sortOrder || 0)
+      : this.forDate().reduce((n, l) => Math.max(n, l.sortOrder || 0), 0) + 1;
+
+    const payload = {
+      lineId: this.editing ? this.editing.lineId : '',
+      planDate: document.getElementById('plan-line-date')?.value || this.planDate,
+      clientName: this.selection.clientName,
+      productId: this.selection.productId,
+      qty,
+      sortOrder,
+      rate: MApp.Util.toNumber(document.getElementById('plan-line-rate')?.value),
+      remarks: document.getElementById('plan-line-remarks')?.value || '',
+      transport: document.getElementById('plan-line-transport')?.value || ''
+    };
+
+    const btn = document.getElementById('dispatch-plan-save-btn');
+    if (btn) { btn.disabled = true; btn.textContent = 'Saving…'; }
+    const res = await MApp.Util.mutateSimple('saveDispatchPlanLine', [payload], null);
+    if (btn) { btn.disabled = false; btn.textContent = 'Save'; }
+    if (!res.success) return;
+
+    MApp.Toast.success(res.message || 'Plan updated.');
+    this.closeForm();
+    // The saved line may have moved to another day, so follow it rather
+    // than leaving the operator looking at a list it is no longer in.
+    this.planDate = payload.planDate;
+    const dateEl = document.getElementById('dispatch-plan-date');
+    if (dateEl) dateEl.value = this.planDate;
+    this.load();
+  },
+
+  async remove(line) {
+    if (!window.confirm(`Remove ${line.productName || line.productId} for ${MApp.Util.formatNameCase(line.clientName)} from this plan? The dispatch itself is not affected.`)) return;
+    const res = await MApp.Util.mutateSimple('deleteDispatchPlanLine', [line.lineId], null);
+    if (res.success) {
+      MApp.Toast.success(res.message || 'Removed from plan.');
+      this.load();
+    }
+  }
+};
 // ================================================================
 // CLIENT ORDERS — PI / Estimates (More tab).
 //

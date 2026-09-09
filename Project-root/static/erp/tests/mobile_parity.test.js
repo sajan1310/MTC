@@ -114,14 +114,11 @@ const BACKLOG = {
   bulkDeactivateUsers: 'P7 roles (read-only + handoff)',
   createCustomRole: 'P7 roles (read-only + handoff)',
   deleteCustomRole: 'P7 roles (read-only + handoff)',
-  deleteDispatchPlanLine: 'P7 dispatch plan checklist',
-  getDispatchPlans: 'P7 dispatch plan checklist',
-  saveDispatchPlanLine: 'P7 dispatch plan checklist',
   updateCustomRole: 'P7 roles (read-only + handoff)',
 };
 
 // Phase 1 opened at 79. Lower this line as ports land; never raise it.
-const BACKLOG_BASELINE = 7;
+const BACKLOG_BASELINE = 4;
 
 describe('MApp / desktop feature parity', () => {
   test('the registry is being read at all', () => {
