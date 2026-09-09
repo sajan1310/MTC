@@ -84,6 +84,14 @@ TABLES = [
     "erp.warehouse_pool_opening",
     "erp.warehouse_pool",
     "erp.warehouse_pool_adjustments",
+    # The operator's "this bucket is not stock" answers (migration 044).
+    # Unlike erp.warehouse_pool above -- a cache _recalculate_warehouse_pool
+    # rebuilds from history -- these cannot be recomputed from anything: they
+    # exist precisely for the buckets no production lot ever credited, where
+    # nothing in the data implies the answer. Losing them silently puts every
+    # sub-group's quantity back into its process total and into Ready to
+    # Dispatch, which is the bug they were added to fix.
+    "erp.warehouse_pool_bucket_flags",
     "erp.po_headers",
     "erp.po_lines",
     "erp.bill_headers",

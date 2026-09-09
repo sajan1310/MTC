@@ -252,7 +252,14 @@
 // and styles.css are both precached and the markup half arrives fresh, so a
 // tablet on the old pair renders the old chart until the next load.
 // Cosmetic, and it heals itself. Not load-bearing.
-const CACHE_NAME = 'erp-shell-v56';
+// v57: a hand-entered Warehouse Pool correction now holds -- the server
+// widens it until the typed figure is what the bucket has, instead of
+// letting the colour-agnostic settlement drain part of it straight back
+// out. stock.js patches the Produced column from the delta the server
+// actually applied, which can exceed the difference on screen; the old
+// copy patches it from the on-screen difference and gets it wrong until
+// the next load. LOAD-BEARING: it misreports stock on screen.
+const CACHE_NAME = 'erp-shell-v57';
 
 const PRECACHE_URLS = [
   '/erp/offline.html',

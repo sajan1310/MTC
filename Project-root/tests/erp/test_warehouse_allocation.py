@@ -16,7 +16,7 @@ lot carrying no splits still behaves exactly as it did before.
 
 from __future__ import annotations
 
-from .test_warehouse import _rpc, _save_process
+from .test_warehouse import _rpc
 from .test_warehouse_composite import (
     _axis_key,
     _credited_buckets,
@@ -154,7 +154,12 @@ def test_allocation_shares_one_bucket_with_an_inferred_lot(erp_client):
                 "axisKey": primary,
                 "splits": [_cell(6, split_axis, "Red")],
             },
-            {"color": "Red", "qty": 6, "countsTowardTotal": False, "axisKey": split_axis},
+            {
+                "color": "Red",
+                "qty": 6,
+                "countsTowardTotal": False,
+                "axisKey": split_axis,
+            },
         ],
     )
     # Inferred: 4 Black against a single-value Red axis -- unambiguous, so
@@ -170,7 +175,12 @@ def test_allocation_shares_one_bucket_with_an_inferred_lot(erp_client):
                 "countsTowardTotal": True,
                 "axisKey": primary,
             },
-            {"color": "Red", "qty": 4, "countsTowardTotal": False, "axisKey": split_axis},
+            {
+                "color": "Red",
+                "qty": 4,
+                "countsTowardTotal": False,
+                "axisKey": split_axis,
+            },
         ],
     )
 

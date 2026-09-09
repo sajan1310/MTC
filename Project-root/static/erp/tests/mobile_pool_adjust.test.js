@@ -351,6 +351,69 @@ describe('what comes back', () => {
     expect(MApp.Pool.load).toHaveBeenCalled();
     expect(MApp.Pool.open).not.toHaveBeenCalled();
   });
+
+  // The entered figure always holds -- the server widens the correction
+  // until it does. What can differ is how much widening that took, and
+  // that surplus is consumption recorded against stock the pool never had.
+  describe('when the correction had to be widened to hold', () => {
+    const widened = () => {
+      Api.mutateWithId = jest.fn(async () => ({
+        success: true,
+        data: {
+          oldAvailableQty: 0, newAvailableQty: 18, requestedQty: 18,
+          expectedDelta: 18, appliedDelta: 23,
+        },
+        message: 'Stock set to 18. It took 23 to get there, not 18: 5 had already been drawn as colour-agnostic consumption…',
+      }));
+    };
+
+    test('says so in a toast that waits, not one that fades', async () => {
+      widened();
+      const spy = jest.spyOn(MApp.Toast, 'action');
+      MApp.Pool.load = jest.fn();
+      MApp.Pool.openAdjust(row(3));
+      fill(18, 'recount');
+
+      await MApp.Pool.submitAdjust();
+
+      expect(spy).toHaveBeenCalled();
+      expect(spy.mock.calls[0][0]).toContain('colour-agnostic');
+    });
+
+    test('still closes and reloads -- the count did take', async () => {
+      widened();
+      MApp.Pool.load = jest.fn();
+      MApp.Pool.closeAdjust = jest.fn();
+      MApp.Pool.openAdjust(row(3));
+      fill(18, 'recount');
+
+      await MApp.Pool.submitAdjust();
+
+      expect(MApp.Pool.closeAdjust).toHaveBeenCalled();
+      expect(MApp.Pool.load).toHaveBeenCalled();
+    });
+
+    test('a correction that needed no widening reports plainly', async () => {
+      Api.mutateWithId = jest.fn(async () => ({
+        success: true,
+        data: {
+          oldAvailableQty: 0, newAvailableQty: 18, requestedQty: 18,
+          expectedDelta: 18, appliedDelta: 18,
+        },
+        message: 'Warehouse Pool stock adjusted successfully.',
+      }));
+      const spy = jest.spyOn(MApp.Toast, 'action');
+      MApp.Pool.load = jest.fn();
+      MApp.Pool.closeAdjust = jest.fn();
+      MApp.Pool.openAdjust(row(3));
+      fill(18, 'recount');
+
+      await MApp.Pool.submitAdjust();
+
+      expect(spy).not.toHaveBeenCalled();
+      expect(MApp.Pool.closeAdjust).toHaveBeenCalled();
+    });
+  });
 });
 
 describe('correction history', () => {

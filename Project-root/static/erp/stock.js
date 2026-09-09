@@ -1223,7 +1223,16 @@ App.Stock = {
       const tierCells = tierValues.map(v => `<td class="align-middle fw-semibold text-secondary bg-light">${escapeHtml(v)}</td>`).join('');
       const processCell = `<td class="align-middle fw-bold">${escapeHtml(p.processName)}${outputBadge}${statusBadge}</td>`;
 
+      // Sub-group buckets are listed as their own combination but are not
+      // units -- 'Kit Bag 24"' is recorded per color on units the primary
+      // axis has already counted, so adding it here counts the same goods
+      // twice (a live Packing process read 80/40/40 where 30/10/20 was
+      // real). countsTowardTotal is decided server-side at bucket-build
+      // time, the only place the lot's colorBreakdown is still in view --
+      // see migration 043. Absent (an older payload) means units, matching
+      // the column default.
       const totals = entry.leafRows.reduce((acc, r) => {
+        if (r.countsTowardTotal === false) return acc;
         acc.produced += r.producedQty || 0;
         acc.consumed += r.consumedQty || 0;
         acc.available += r.availableQty || 0;
@@ -1452,6 +1461,36 @@ App.Stock = {
     this._runWarehousePoolCombinationDelete([color]);
   },
 
+  // Declare a bucket stock or a sub-group. Args arrive URI-encoded from
+  // the row markup (a colour can carry quotes -- 'Kit Bag 24"'), and are
+  // decoded here rather than in the template so the same escaping rules as
+  // every other row action apply.
+  //
+  // No confirm step: it is a display/accounting classification, instantly
+  // visible in the totals and reversible by clicking again -- unlike
+  // removeWarehousePoolCombination, which destroys manual entries. The
+  // server recalculates the pool as part of the same call, so the reload
+  // below repaints real numbers rather than optimistic ones.
+  async toggleWarehousePoolBucketCounts(encName, encProcessId, encTag, encColor, currentlyExcluded) {
+    const processId = App.State.warehousePoolModalProcessId;
+    try {
+      const res = await Api.mutate(
+        'setWarehousePoolBucketCountsTowardTotal',
+        decodeURIComponent(encName),
+        decodeURIComponent(encProcessId),
+        decodeURIComponent(encTag),
+        decodeURIComponent(encColor),
+        !!currentlyExcluded,
+      );
+      App.Utils.showToast(res?.message || 'Bucket updated.', !res?.success);
+      await this.loadWarehousePoolData();
+      const process = (App.State.globalProcesses || []).find(p => p.processId === processId);
+      if (process) this.renderWarehousePoolProcessModalBody(process);
+    } catch (err) {
+      App.Utils.showToast(err.message || 'Failed to update bucket.', true);
+    }
+  },
+
   renderWarehousePoolLeafCells(process, r, showItemName) {
     const encName = encodeURIComponent(r.outputItemName || '');
     const encTag = encodeURIComponent(r.productTag || '');
@@ -1522,6 +1561,35 @@ App.Stock = {
           onchange="App.Stock.onPoolComboCheckChange()">`
       : '<input type="checkbox" class="form-check-input" disabled>';
 
+    // Declare a bucket stock or sub-group. Only offered on a bucket that
+    // HAS a colour: the colour-less bucket is the process's entire output,
+    // and excluding it would zero the process rather than describe it (the
+    // server refuses that too). Where a production lot credited the bucket
+    // the server already knows the answer from the lot -- this is for the
+    // buckets no lot ever touched (Opening Stock, an inline Available Qty
+    // correction), which is the only case nothing can infer. See migration
+    // 044.
+    const countsBtn = r.color
+      ? `<button type="button" class="btn btn-sm ${r.countsTowardTotal === false ? 'btn-outline-secondary' : 'btn-outline-success'}"
+                title="${r.countsTowardTotal === false
+                  ? 'Not counted as stock. Click to count it again.'
+                  : 'Counted as stock. Click to mark it a sub-group (recorded per colour, not its own units).'}"
+                onclick="App.Stock.toggleWarehousePoolBucketCounts('${encName}', '${encProcessId}', '${encTag}', '${encColor}', ${r.countsTowardTotal === false})">
+          <i class="bi ${r.countsTowardTotal === false ? 'bi-dash-circle' : 'bi-check-circle'}"></i>
+        </button>`
+      : '';
+
+    // A sub-group bucket is listed like any other combination but is NOT
+    // units -- it was recorded per colour on units the primary axis already
+    // counted -- so the process row's totals leave it out. Said on the row
+    // itself, because six listed combinations summing to less than their
+    // visible total is otherwise unexplainable from this dialog. The flag
+    // is decided server-side at bucket-build time (migration 043); absent
+    // means units, matching the column default.
+    const subGroupMarker = r.countsTowardTotal === false
+      ? ` <i class="bi bi-dash-circle text-muted" title="Sub-group: recorded per colour on units already counted under the primary axis, so it is not added to this process's totals or to Ready to Dispatch."></i>`
+      : '';
+
     // When the process has buckets with multiple distinct output item
     // names (per-lot overrides that survived backend normalization),
     // show the item name so the operator can identify each bucket.
@@ -1535,13 +1603,14 @@ App.Stock = {
     <td>${r.productTag ? `<span class="badge bg-dark">${escapeHtml(r.productTag)}</span>` : '<span class="text-muted">—</span>'}</td>
     <td class="text-center" data-pool-field="produced">${App.Production.formatQty(r.producedQty)}</td>
     <td class="text-center">${App.Production.formatQty(r.consumedQty)}</td>
-    <td>${r.color ? `<span class="badge bg-info text-dark">${escapeHtml(r.color)}</span>` : '<span class="text-muted">—</span>'}</td>
+    <td>${r.color ? `<span class="badge bg-info text-dark">${escapeHtml(r.color)}</span>${subGroupMarker}` : '<span class="text-muted">—</span>'}</td>
     <td class="text-center fw-bold">${availableCell}${negativeWarning}${unattributedWarning}</td>
     <td class="text-center d-flex gap-1 justify-content-center">
       <button type="button" class="btn btn-outline-info btn-sm" title="View Ledger"
               onclick="App.Stock.openPoolLedgerModal('${encName}', '${encTag}', '${encColor}')">
         <i class="bi bi-journal-text"></i>
       </button>
+      ${countsBtn}
       ${deleteBtn}
     </td>`;
   },
@@ -1621,20 +1690,42 @@ App.Stock = {
           }
           return;
         }
-        // Patch this one bucket locally instead of re-fetching --
-        // recalculateWarehousePool only ever touches the single bucket
-        // we just adjusted (it adds the delta to producedQty;
-        // consumedQty is untouched), so the server's returned newQty is
-        // authoritative for this bucket alone.
+        // Patch this one bucket locally instead of re-fetching, but from
+        // what the SERVER reports, not from (newQty - oldQty).
+        //
+        // This used to assume "recalculateWarehousePool only ever touches
+        // producedQty on the bucket we adjusted", which is no longer true:
+        // the recalculation rebuilds the whole pool, and the colour-agnostic
+        // (COMMON) settlement runs after the correction is credited, so a
+        // bucket carrying an unattributed shortfall has part of the
+        // correction drained back out. The server widens the correction
+        // until the typed figure holds -- so availableQty is the typed
+        // number, but producedQty moved by appliedDelta, which can be more
+        // than the difference on screen. Patching produced by the on-screen
+        // difference left the Produced column wrong until the next load.
+        const settledQty = typeof res.data?.newAvailableQty === 'number'
+          ? res.data.newAvailableQty
+          : newQty;
+        const appliedDelta = typeof res.data?.appliedDelta === 'number'
+          ? res.data.appliedDelta
+          : (newQty - oldQty);
+        // Says how much of the correction covered consumption the pool had
+        // no record of. The count stands either way; the gap is the thing
+        // worth auditing.
+        if (appliedDelta !== (newQty - oldQty)) App.Utils.showToast(res.message);
+
         if (!App.State.globalWarehousePool) App.State.globalWarehousePool = [];
         let bucket = App.State.globalWarehousePool.find(b =>
           App.Utils.sameText(b.outputItemName, outputItemName) && b.processId === processId &&
           App.Utils.sameText(b.productTag || '', productTag || '') && App.Utils.sameText(b.color || '', color || ''));
         if (bucket) {
-          bucket.producedQty = (bucket.producedQty || 0) + (newQty - oldQty);
-          bucket.availableQty = newQty;
+          bucket.producedQty = (bucket.producedQty || 0) + appliedDelta;
+          // available is produced - consumed by definition, so whatever the
+          // settlement drew shows up here as consumption.
+          bucket.consumedQty = bucket.producedQty - settledQty;
+          bucket.availableQty = settledQty;
         } else {
-          bucket = { outputItemName, processId, productTag, color, producedQty: newQty, consumedQty: 0, availableQty: newQty };
+          bucket = { outputItemName, processId, productTag, color, producedQty: appliedDelta, consumedQty: appliedDelta - settledQty, availableQty: settledQty };
           App.State.globalWarehousePool.push(bucket);
         }
 

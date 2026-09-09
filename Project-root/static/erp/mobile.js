@@ -11896,6 +11896,23 @@ MApp.Pool = {
       return;
     }
 
+    // The entered figure always holds -- the server widens the correction
+    // until it does. What can differ is how much widening that took: a
+    // bucket carrying an unattributed colour-agnostic (COMMON) shortfall
+    // has part of any correction drained straight back out, so the pool
+    // needs more than the difference on screen to land on the count. That
+    // surplus is consumption recorded against stock the pool never had, and
+    // it is exactly the thing an audit later has to account for -- too
+    // important to fade after 2.6 seconds, so it gets the toast that waits.
+    const applied = res.data && res.data.appliedDelta;
+    const expected = res.data && res.data.expectedDelta;
+    if (typeof applied === 'number' && typeof expected === 'number' && applied !== expected) {
+      MApp.Toast.action(res.message, 'Got it', () => {});
+      this.closeAdjust();
+      this.load();
+      return;
+    }
+
     MApp.Toast.success(res.message || 'Warehouse Pool stock adjusted.');
     this.closeAdjust();
     // load(), not open(): the pane is already on screen behind the sheet
@@ -13093,6 +13110,177 @@ MApp.MoreGroups = {
       state[el.dataset.group] = open;
     });
     this.write(state);
+  }
+};
+
+// ================================================================
+// ONLY ON DESKTOP — the handoff screen.
+//
+// mobile_parity.test.js holds two maps. BACKLOG is empty: every method
+// that was going to be ported has been. DESKTOP_ONLY is the other half of
+// the same commitment -- capabilities kept on desktop deliberately,
+// because a bulk import or a several-hundred-row reconciliation is worse
+// on a phone, not better. That map has always required each entry to name
+// "the MApp screen that must exist for it", and the test checked the
+// label was non-empty. It never checked the screen was built, and it was
+// not: a phone user who went looking for one of these met nothing at all.
+// Silence is the degradation the map was written to prevent.
+//
+// This is that screen. CAPABILITIES is read straight back by the parity
+// test, so a method declared desktop-only with no entry here fails the
+// build -- the map and the handoff cannot drift apart.
+//
+// Each entry links to /erp with the desktop tab's own hash (core.js's
+// Navigation.tabFromHash resolves it on load), so the handoff lands on
+// the screen rather than on the dashboard.
+// ================================================================
+MApp.Handoff = {
+  // parity:handoff-catalogue:start
+  //
+  // These markers are load-bearing for mobile_parity.test.js, which does
+  // two opposite things with this block. It reads the method names here to
+  // prove every desktop-only capability has a handoff. And it CUTS the
+  // block out of mobile.js before its reachability scan -- that scan means
+  // "the method name appears as a quoted string", so naming them here
+  // would otherwise read as "MApp calls these now" and trip the ratchet
+  // into declaring all eighteen entries stale. Naming a capability is not
+  // implementing it. Keep both markers exactly as they are.
+  CAPABILITIES: [
+    {
+      title: 'Items identity review',
+      body: 'Items whose name or size drifted apart from the copy held elsewhere, reconciled one decision at a time.',
+      where: 'Items Master → Sync Review',
+      tab: 'itemMaster',
+      why: 'A row-by-row judgement over a long list. On a phone you would lose your place.',
+      methods: ['getItemIdentityDriftReport', 'fixItemIdentityDriftReference']
+    },
+    {
+      title: 'Merge duplicate items',
+      body: 'Fold two records for the same physical item into one, keeping the ledger history of both.',
+      where: 'Items Master → Sync Review',
+      tab: 'itemMaster',
+      why: 'Irreversible, and it rewrites history on every document the item appears in.',
+      methods: ['mergeItemEdit', 'mergeSelectedItems']
+    },
+    {
+      title: 'Orphaned items cleanup',
+      body: 'Items nothing references any more: keep them deliberately, or let the scheduled cleanup remove them.',
+      where: 'Items Master → Sync Review',
+      tab: 'itemMaster',
+      why: 'A bulk decision over rows that need comparing side by side.',
+      methods: ['keepOrphanItem', 'keepOrphanItemsBulk', 'runScheduledItemCleanup']
+    },
+    {
+      title: 'Import items from Stock',
+      body: 'Create Items Master records for everything the Stock sheet names but the master does not.',
+      where: 'Items Master',
+      tab: 'itemMaster',
+      why: 'A bulk import — hundreds of rows in one action, reviewed before it commits.',
+      methods: ['importItemsFromStock']
+    },
+    {
+      title: 'Import stock data',
+      body: 'Load opening stock in bulk from a prepared sheet.',
+      where: 'Stock',
+      tab: 'stockTab',
+      why: 'A bulk import, with a review of what it would change before it commits.',
+      methods: ['importStockData']
+    },
+    {
+      title: 'Extract colours from Items Master',
+      body: 'Read colour names out of existing item names and seed the Colour Master from them.',
+      where: 'Stock → Colour Master',
+      tab: 'stockTab',
+      why: 'A one-off data-hygiene sweep across the whole master.',
+      methods: ['extractColorsFromItemMaster']
+    },
+    {
+      title: 'Recipe component drift',
+      body: 'Where a process recipe and the BOM that uses it have fallen out of step.',
+      where: 'Products & Processes',
+      tab: 'productsTab',
+      why: 'A comparison of two lists, which needs both on screen at once.',
+      methods: ['getBomProcessComponentsDrift']
+    },
+    {
+      title: 'Refresh components from Items Master',
+      body: 'Pull renamed or re-sized items through into every process recipe and production lot that names them.',
+      where: 'Products & Processes, and Production',
+      tab: 'productsTab',
+      why: 'A sweep across every recipe and lot at once.',
+      methods: [
+        'refreshProcessComponentsFromItemsMaster',
+        'refreshProductionComponentsFromItemsMaster'
+      ]
+    },
+    {
+      title: 'Import process types',
+      body: 'Derive the Process Type list from the process names already recorded.',
+      where: 'Products & Processes',
+      tab: 'productsTab',
+      why: 'A one-off setup sweep, run once and then not again.',
+      methods: ['importProcessTypesFromProcessNames']
+    },
+    {
+      title: 'Sync vendors from PO history',
+      body: 'Create vendor records for every name that appears on a purchase order but not in the master.',
+      where: 'Vendors',
+      tab: 'vendorMaster',
+      why: 'A bulk backfill over the whole PO history.',
+      methods: ['syncVendorsFromPOHistory']
+    },
+    {
+      title: 'Company logo',
+      body: 'The logo that heads every printed document — upload a new one, or remove it.',
+      where: 'Top bar, beside the company name',
+      tab: '',
+      why: 'Needs a file picker and a look at the result on a full-size print preview.',
+      methods: ['saveLogo', 'clearLogo']
+    },
+    {
+      // Not a handoff: there is nothing on desktop worth going to. Listed
+      // because the difference is visible -- desktop shows a "next ID"
+      // and this app shows none -- and an unexplained difference reads as
+      // a missing feature.
+      title: 'Next recipe ID preview',
+      body: 'Desktop shows the ID a new recipe will get. It is wrong: opening that form consumes a sequence value, so the recipe saves under the next one and the number shown is never the number assigned. This app shows no ID rather than one that lies — the real ID appears once the recipe is saved.',
+      where: '',
+      tab: '',
+      why: '',
+      methods: ['getNextProductId']
+    }
+  ],
+  // parity:handoff-catalogue:end
+
+  open() {
+    this.render();
+    MApp.Sheet.open('sheet-desktop-only');
+  },
+
+  close() { MApp.Sheet.close('sheet-desktop-only'); },
+
+  render() {
+    const el = document.getElementById('desktop-only-list');
+    if (!el) return;
+    const esc = MApp.Util.escapeHtml;
+
+    el.innerHTML = this.CAPABILITIES.map(c => {
+      // target="_top" for the same reason more-desktop-link uses it: an
+      // installed PWA runs in its own window, and the desktop UI is not a
+      // thing to render inside the app shell.
+      const action = c.tab === '' && !c.where
+        ? ''
+        : `<a class="mb-btn-text" style="padding:0;min-height:auto;display:inline-block;margin-top:var(--mb-sp-2);"
+              href="/erp${c.tab ? '#' + c.tab : ''}" target="_top">Open on desktop →</a>`;
+      return `
+      <div class="mb-card">
+        <div class="mb-card-title">${esc(c.title)}</div>
+        <div class="mb-card-sub mb-mt-2">${esc(c.body)}</div>
+        ${c.where ? `<div class="mb-card-sub mb-mt-2"><strong>${esc(c.where)}</strong></div>` : ''}
+        ${c.why ? `<div class="mb-field-hint">${esc(c.why)}</div>` : ''}
+        ${action}
+      </div>`;
+    }).join('');
   }
 };
 

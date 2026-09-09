@@ -22,6 +22,15 @@
 const fs = require('fs');
 const path = require('path');
 
+// Every test here parses and runs the real jQuery and Select2 bundles, then
+// drives Select2's own search/render cycle. That is integration-weight work
+// on jest's 5s default: idle it is comfortable, but on a loaded box (a full
+// run oversubscribed past the core count) it crosses the budget and fails as
+// a timeout, which reads as a broken picker rather than a slow one. Nothing
+// here is racing -- the waits below are for Select2's own rendering, and
+// they are bounded.
+jest.setTimeout(30000);
+
 const VENDOR = path.join(__dirname, '..', 'vendor');
 const PARTIAL = path.join(__dirname, '..', '..', '..', 'templates', 'erp', 'partials', 'production.html');
 const HTML_ESCAPE_MAP = { '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' };
