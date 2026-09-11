@@ -269,14 +269,30 @@ App.Dispatch = {
     App.State.globalDispatchBills = Array.from(byNumber.values());
   },
 
+  // Dispatch had no date filter of any kind, which made "what went out
+  // last week" a question the screen could not answer.
+  filterByDateRange() {
+    App.Utils.readDateRange('dispatch', 'dispatchDateFrom', 'dispatchDateTo');
+    this.filterDispatch(App.State.dispatchSearchTerm || '');
+  },
+
+  clearDateRange() {
+    App.Utils.clearDateRange('dispatch', 'dispatchDateFrom', 'dispatchDateTo');
+    this.filterDispatch(App.State.dispatchSearchTerm || '');
+  },
+
   filterDispatch(searchTerm) {
     const term = String(searchTerm || '').toLowerCase().trim();
-    App.State.filteredDispatchBills = term
+    App.State.dispatchSearchTerm = searchTerm || '';
+    const range = App.Utils.dateRange('dispatch');
+    const base = term
       ? App.State.globalDispatchBills.filter(b => App.Utils.matchesKeywords(
           `${b.dispatchNumber} ${b.orderNumber} ${b.clientName} ${(b.items || []).map(i => `${i.productId} ${i.productName}`).join(' ')}`,
           term
         ))
       : App.State.globalDispatchBills;
+    App.State.filteredDispatchBills = base.filter(
+      b => App.Utils.inDateRange(b.dateRaw, b.dispatchDate, range.from, range.to));
     this.sortFilteredDispatch();
     App.State.dispatchCurrentPage = 1;
     this.renderDispatchTable();

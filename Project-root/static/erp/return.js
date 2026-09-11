@@ -87,6 +87,16 @@ App.Return = {
     this.applyFilters();
   },
 
+  filterByDateRange() {
+    App.Utils.readDateRange('return', 'returnDateFrom', 'returnDateTo');
+    this.applyFilters();
+  },
+
+  clearDateRange() {
+    App.Utils.clearDateRange('return', 'returnDateFrom', 'returnDateTo');
+    this.applyFilters();
+  },
+
   filterByDate(dateValue) {
     App.State.returnDateFilter = String(dateValue || '');
     this.applyFilters();
@@ -98,6 +108,7 @@ App.Return = {
 
     App.State.filteredReturns = App.State.globalReturns.filter(ret => {
       if (dateFilter && dateToInputValue(ret.returnDateRaw, ret.returnDate) !== dateFilter) return false;
+      if (!App.Utils.inDateRange(ret.returnDateRaw, ret.returnDate, App.Utils.dateRange('return').from, App.Utils.dateRange('return').to)) return false;
 
       if (term) {
         const itemsText = (ret.items || []).map(it => `${it.name || ''} ${it.size || ''} ${it.narration || ''}`).join(' ');
@@ -641,6 +652,16 @@ App.Wastage = {
     this.applyFilters();
   },
 
+  filterByDateRange() {
+    App.Utils.readDateRange('wastage', 'wastageDateFrom', 'wastageDateTo');
+    this.applyFilters();
+  },
+
+  clearDateRange() {
+    App.Utils.clearDateRange('wastage', 'wastageDateFrom', 'wastageDateTo');
+    this.applyFilters();
+  },
+
   filterByDate(dateValue) {
     App.State.wastageDateFilter = String(dateValue || '');
     this.applyFilters();
@@ -652,6 +673,7 @@ App.Wastage = {
 
     App.State.filteredWastage = App.State.globalWastage.filter(w => {
       if (dateFilter && dateToInputValue(w.dateRaw, w.date) !== dateFilter) return false;
+      if (!App.Utils.inDateRange(w.dateRaw, w.date, App.Utils.dateRange('wastage').from, App.Utils.dateRange('wastage').to)) return false;
       if (term) {
         const itemsText = (w.items || []).map(it =>
           `${it.name || ''} ${it.size || ''} ${it.reason || ''}`

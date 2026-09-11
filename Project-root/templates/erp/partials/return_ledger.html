@@ -32,6 +32,23 @@
           Show returns logged on this date
         </small>
       </div>
+
+      <!-- Specific dates. Separate from the single-date filter beside it:
+           that one answers "show me the 4th", this one "this month". Both
+           ends inclusive, either may be left blank. -->
+      <div style="min-width: 300px;">
+        <label class="form-label small fw-bold mb-1">Specific dates</label>
+        <div class="d-flex gap-1 align-items-center">
+          <input type="date" id="returnDateFrom" class="form-control"
+                 aria-label="Returns from date" onchange="App.Return.filterByDateRange()">
+          <span class="text-muted small">to</span>
+          <input type="date" id="returnDateTo" class="form-control"
+                 aria-label="Returns to date" onchange="App.Return.filterByDateRange()">
+          <button type="button" class="btn btn-outline-secondary btn-sm"
+                  title="Clear dates" onclick="App.Return.clearDateRange()">&times;</button>
+        </div>
+        <small class="text-muted" style="display: block; margin-top: 4px;">Show everything between these dates</small>
+      </div>
     </div>
 
     <div class="d-flex gap-2 flex-wrap justify-content-end">
@@ -146,6 +163,14 @@
                class="form-control form-control-sm"
                style="min-width: 150px;"
                onchange="App.Wastage.filterByDate(this.value)">
+        <input type="date" id="wastageDateFrom" class="form-control form-control-sm"
+               style="min-width: 140px;" title="Wastage: from"
+               aria-label="Wastage from date" onchange="App.Wastage.filterByDateRange()">
+        <input type="date" id="wastageDateTo" class="form-control form-control-sm"
+               style="min-width: 140px;" title="Wastage: to"
+               aria-label="Wastage to date" onchange="App.Wastage.filterByDateRange()">
+        <button type="button" class="btn btn-sm btn-outline-secondary" title="Clear dates"
+                onclick="App.Wastage.clearDateRange()">&times;</button>
         <button class="btn btn-sm btn-success fw-bold d-none" id="btnPrintSelectedWastage" type="button" onclick="App.Wastage.printSelected()" style="white-space: nowrap;">
           <i class="bi bi-printer"></i> Print Selected
         </button>

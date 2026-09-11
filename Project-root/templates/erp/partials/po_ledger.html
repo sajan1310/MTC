@@ -50,6 +50,23 @@
         </small>
       </div>
 
+      <!-- Specific dates. Separate from the single-date filter beside it:
+           that one answers "show me the 4th", this one "this month". Both
+           ends inclusive, either may be left blank. -->
+      <div style="min-width: 300px;">
+        <label class="form-label small fw-bold mb-1">Specific dates</label>
+        <div class="d-flex gap-1 align-items-center">
+          <input type="date" id="poDateFrom" class="form-control"
+                 aria-label="Purchase Orders from date" onchange="App.PO.filterByDateRange()">
+          <span class="text-muted small">to</span>
+          <input type="date" id="poDateTo" class="form-control"
+                 aria-label="Purchase Orders to date" onchange="App.PO.filterByDateRange()">
+          <button type="button" class="btn btn-outline-secondary btn-sm"
+                  title="Clear dates" onclick="App.PO.clearDateRange()">&times;</button>
+        </div>
+        <small class="text-muted" style="display: block; margin-top: 4px;">Show everything between these dates</small>
+      </div>
+
       <div style="min-width: 190px;">
         <select id="poSortBy" class="form-select" aria-label="Sort Purchase Orders" onchange="App.PO.sortBy(this.value)">
           <option value="poNumberDesc">PO# (Newest first)</option>

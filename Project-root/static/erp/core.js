@@ -197,6 +197,13 @@ const App = {
     filteredPendingPOs: [],
     rowSeq: 0,
 
+    // Every list's "specific dates" window, keyed by module -- see
+    // App.Utils.dateRange. The exact-date filters some ledgers already had
+    // answer "show me the 4th"; these answer "this week", "since the
+    // audit", which is the question actually asked of a ledger. The two are
+    // separate controls and both apply.
+    dateRanges: {},
+
     // Bill Ledger's own pagination/filter/selection state (Script_Bill.html).
     filteredBills: [],
     billCurrentPage: 1,
@@ -262,6 +269,9 @@ const App = {
     globalDispatch: [],
     globalDispatchBills: [],
     filteredDispatchBills: [],
+    // Remembered so the date window can re-run the same search rather than
+    // silently clearing the search box's effect when a date is picked.
+    dispatchSearchTerm: '',
     globalReadyToDispatch: [],
     filteredReadyToDispatch: [],
     dispatchCurrentPage: 1,
@@ -351,6 +361,13 @@ const App = {
     currentContractorServiceCharges: { contractorName: '', charges: [] },
     currentAccountLedgerContractor: '',
     currentAccountLedgerData: null,
+    // The ledger was the one table with no paging: a contractor with two
+    // years of lots rendered every row at once. The date window is applied
+    // before the slice, so the page numbers describe the window.
+    ledgerCurrentPage: 1,
+    ledgerRowsPerPage: 25,
+    ledgerDateFrom: '',
+    ledgerDateTo: '',
 
     // Production Lot's own list/report state (Script_Production.html's
     // App.Production) -- globalProduction was already forward-declared
@@ -1660,6 +1677,64 @@ const App = {
       return true;
     },
 
+    // Every list's date window, keyed by module.
+    //
+    // One store rather than two State keys per module: eight lists want a
+    // window, and sixteen near-identical keys is sixteen chances for one to
+    // be reset in a place the others are not. Reading a key that was never
+    // set gives an empty window, which means "show everything" -- so a
+    // module that has not opted in behaves exactly as it did.
+    dateRange(key) {
+      const all = App.State.dateRanges || (App.State.dateRanges = {});
+      return all[key] || (all[key] = { from: '', to: '' });
+    },
+
+    // Pulls the two inputs into the store and reports the window. Called by
+    // each module's own filterByDateRange, which then re-runs its filters --
+    // the store does not know how to re-render anything, deliberately.
+    readDateRange(key, fromId, toId) {
+      const range = this.dateRange(key);
+      range.from = document.getElementById(fromId)?.value || '';
+      range.to = document.getElementById(toId)?.value || '';
+      return range;
+    },
+
+    clearDateRange(key, fromId, toId) {
+      const fromEl = document.getElementById(fromId);
+      const toEl = document.getElementById(toId);
+      if (fromEl) fromEl.value = '';
+      if (toEl) toEl.value = '';
+      return this.readDateRange(key, fromId, toId);
+    },
+
+    // Is this record's date inside the [from, to] window?
+    //
+    // One predicate for every module's date-range filter. The modules that
+    // had any date filter at all had an EXACT-match one ("show me the 4th"),
+    // which answers a question nobody asks of a ledger -- the real question
+    // is "this week", "last month", "since the audit".
+    //
+    // Both ends are inclusive and either may be blank, so a half-open range
+    // ("everything since the 1st") is expressed by leaving the other end
+    // empty rather than by picking an arbitrary far date.
+    //
+    // Compared as YYYY-MM-DD strings, which sort lexicographically in date
+    // order -- no Date objects, so no timezone can shift a record across a
+    // boundary. dateToInputValue is the same conversion the single-date
+    // filters already use, so a record that matched one matches this.
+    //
+    // An undated record is OUT whenever a window is set: it cannot be shown
+    // to fall inside one, and quietly including it would inflate every
+    // filtered total. With no window set, everything passes untouched.
+    inDateRange(rawIso, display, from, to) {
+      if (!from && !to) return true;
+      const value = dateToInputValue(rawIso, display);
+      if (!value) return false;
+      if (from && value < from) return false;
+      if (to && value > to) return false;
+      return true;
+    },
+
     // Clamps a requested page number to a valid range for the given item count.
     clampPage(page, totalItems, rowsPerPage) {
       const totalPages = Math.max(1, Math.ceil(totalItems / rowsPerPage));
@@ -2361,6 +2436,9 @@ function bindGlobalEvents() {
         break;
       case 'bill-page':
         App.Bill.changePage(toNumber(btn.dataset.page, 1));
+        break;
+      case 'contractor-ledger-page':
+        App.Contractor.changeLedgerPage(toNumber(btn.dataset.page, 1));
         break;
       case 'return-print':
         App.Return.print(toNumber(btn.dataset.index));

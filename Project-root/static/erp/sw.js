@@ -259,7 +259,14 @@
 // actually applied, which can exceed the difference on screen; the old
 // copy patches it from the on-screen difference and gets it wrong until
 // the next load. LOAD-BEARING: it misreports stock on screen.
-const CACHE_NAME = 'erp-shell-v57';
+// v58: the contractor ledger is paginated and gains a specific-dates
+// window, and every other dated list gains one beside its existing
+// exact-date filter. core.js, contractor.js, bill.js, po.js, issue.js,
+// return.js, dispatch.js and production.js all changed and all are
+// precached, so an installed client would render the new markup -- which
+// comes from the server -- against old scripts with no filterByDateRange
+// on them: two date inputs that do nothing. LOAD-BEARING.
+const CACHE_NAME = 'erp-shell-v58';
 
 const PRECACHE_URLS = [
   '/erp/offline.html',

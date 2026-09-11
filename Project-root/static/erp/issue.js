@@ -59,6 +59,16 @@ App.Issue = {
     this.applyFilters();
   },
 
+  filterByDateRange() {
+    App.Utils.readDateRange('issue', 'issueDateFrom', 'issueDateTo');
+    this.applyFilters();
+  },
+
+  clearDateRange() {
+    App.Utils.clearDateRange('issue', 'issueDateFrom', 'issueDateTo');
+    this.applyFilters();
+  },
+
   filterByDate(dateValue) {
     App.State.issueDateFilter = String(dateValue || '');
     this.applyFilters();
@@ -70,6 +80,7 @@ App.Issue = {
 
     App.State.filteredIssues = App.State.globalIssues.filter(iss => {
       if (dateFilter && dateToInputValue(iss.dateRaw, iss.date) !== dateFilter) return false;
+      if (!App.Utils.inDateRange(iss.dateRaw, iss.date, App.Utils.dateRange('issue').from, App.Utils.dateRange('issue').to)) return false;
       if (term) {
         const itemsText = (iss.items || []).map(it => `${it.name || ''} ${it.size || ''}`).join(' ');
         const haystack = `${iss.issueId || ''} ${iss.issuedTo || ''} ${iss.reference || ''} ${itemsText} ${iss.remarks || ''}`;

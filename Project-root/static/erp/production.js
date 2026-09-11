@@ -513,6 +513,18 @@ App.Production = {
       </tr>`).join('');
   },
 
+  // Production had no date filter either -- "which lots did we run in
+  // March" meant scrolling.
+  filterByDateRange() {
+    App.Utils.readDateRange('production', 'productionDateFrom', 'productionDateTo');
+    this.filterData(App.State.productionSearchTerm || '');
+  },
+
+  clearDateRange() {
+    App.Utils.clearDateRange('production', 'productionDateFrom', 'productionDateTo');
+    this.filterData(App.State.productionSearchTerm || '');
+  },
+
   filterData(searchTerm) {
     App.State.productionSearchTerm = searchTerm || '';
     const term = String(searchTerm || '').toLowerCase().trim();
@@ -522,7 +534,12 @@ App.Production = {
         return App.Utils.matchesKeywords(haystack, term);
       })
       : App.State.globalProduction;
-    App.State.filteredProduction = this.applyColumnFilters(base);
+    // Applied after the column filters rather than inside them:
+    // applyColumnFilters returns early when no column filter is set, and
+    // the window has to hold regardless of that.
+    const range = App.Utils.dateRange('production');
+    App.State.filteredProduction = this.applyColumnFilters(base)
+      .filter(p => App.Utils.inDateRange(p.dateRaw, p.date, range.from, range.to));
     this.sortFiltered();
     App.State.productionCurrentPage = 1;
     this.renderTable();

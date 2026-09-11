@@ -249,6 +249,16 @@ App.PO = {
     this.applyFilters();
   },
 
+  filterByDateRange() {
+    App.Utils.readDateRange('po', 'poDateFrom', 'poDateTo');
+    this.applyFilters();
+  },
+
+  clearDateRange() {
+    App.Utils.clearDateRange('po', 'poDateFrom', 'poDateTo');
+    this.applyFilters();
+  },
+
   filterByDate(dateValue) {
     App.State.poDateFilter = String(dateValue || '');
     this.applyFilters();
@@ -270,10 +280,12 @@ App.PO = {
   applyFilters() {
     const term = App.State.poSearchTerm.toLowerCase().trim();
     const dateFilter = App.State.poDateFilter;
+    const range = App.Utils.dateRange('po');
     const statusFilter = App.State.poStatusFilter || 'all';
 
     App.State.filteredPOs = App.State.globalPOs.filter(po => {
       if (dateFilter && normalizeDateForInput(po) !== dateFilter) return false;
+      if (!App.Utils.inDateRange(po.poDateRaw, po.poDate, range.from, range.to)) return false;
       if (statusFilter !== 'all' && po.status !== statusFilter) return false;
 
       if (term) {

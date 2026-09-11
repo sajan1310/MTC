@@ -113,12 +113,26 @@ App.Bill = {
     this.applyFilters();
   },
 
+  // The specific-dates window, separate from the exact-date filter above:
+  // one answers "show me the 4th", the other "this month". Both apply.
+  filterByDateRange() {
+    App.Utils.readDateRange('bill', 'billDateFrom', 'billDateTo');
+    this.applyFilters();
+  },
+
+  clearDateRange() {
+    App.Utils.clearDateRange('bill', 'billDateFrom', 'billDateTo');
+    this.applyFilters();
+  },
+
   applyFilters() {
     const term = App.State.billSearchTerm.toLowerCase().trim();
     const dateFilter = App.State.billDateFilter;
+    const range = App.Utils.dateRange('bill');
 
     App.State.filteredBills = App.State.globalBills.filter(bill => {
       if (dateFilter && dateToInputValue(bill.billDateRaw, bill.billDate) !== dateFilter) return false;
+      if (!App.Utils.inDateRange(bill.billDateRaw, bill.billDate, range.from, range.to)) return false;
 
       if (term) {
         const poSearch = (bill.poNumbers?.length ? bill.poNumbers : [bill.poNumber || '']).join(' ');

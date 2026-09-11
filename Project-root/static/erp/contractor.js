@@ -642,6 +642,16 @@ App.Contractor = {
     if (tbody) App.Utils.tableLoading(tbody, 8, 'Loading ledger...');
 
     App.State.currentAccountLedgerContractor = contractorName;
+    // A window set while looking at one contractor must not silently carry
+    // to the next: same table, different account, and the filter is not
+    // visible until you scroll back up to it.
+    App.State.ledgerDateFrom = '';
+    App.State.ledgerDateTo = '';
+    const fromEl = document.getElementById('ledgerDateFrom');
+    const toEl = document.getElementById('ledgerDateTo');
+    if (fromEl) fromEl.value = '';
+    if (toEl) toEl.value = '';
+
     document.getElementById('paymentFormDate').value = todayIso();
     document.getElementById('paymentFormAmount').value = '';
     document.getElementById('paymentFormModeReference').value = '';
@@ -667,11 +677,119 @@ App.Contractor = {
       if (!tbody) return;
       if (!entries.length) {
         tbody.innerHTML = '<tr><td colspan="9" class="text-center text-muted p-4">No transactions yet for this contractor.</td></tr>';
+        App.Utils.renderPagination('contractorLedgerPagination', 0, 1,
+          App.State.ledgerRowsPerPage, 'contractor-ledger-page', 'Entries');
         this.updatePaymentsBulkButton();
         return;
       }
 
-      tbody.innerHTML = entries.map(e => {
+      App.State.ledgerCurrentPage = 1;
+      this.renderLedgerTable();
+    } catch (err) {
+      App.Utils.tableError(tbody, err && err.message);
+      App.Utils.showToast(err.message || 'Failed to load account ledger', true);
+    }
+  },
+
+  filterLedgerByDate() {
+    App.State.ledgerDateFrom = document.getElementById('ledgerDateFrom')?.value || '';
+    App.State.ledgerDateTo = document.getElementById('ledgerDateTo')?.value || '';
+    App.State.ledgerCurrentPage = 1;
+    this.renderLedgerTable();
+  },
+
+  clearLedgerDateFilter() {
+    const from = document.getElementById('ledgerDateFrom');
+    const to = document.getElementById('ledgerDateTo');
+    if (from) from.value = '';
+    if (to) to.value = '';
+    this.filterLedgerByDate();
+  },
+
+  changeLedgerPage(page) {
+    App.State.ledgerCurrentPage = App.Utils.clampPage(
+      page, this._ledgerEntriesInRange().length, App.State.ledgerRowsPerPage);
+    this.renderLedgerTable();
+  },
+
+  // The entries inside the date window, plus the balance carried INTO it.
+  //
+  // The balance column is a running total the server computes across the
+  // whole account, which is exactly why a filtered ledger cannot just drop
+  // rows: the first visible row's balance already contains everything
+  // before it, so without saying so the column reads as though the account
+  // started mid-window. The carried-in figure is the balance of the last
+  // entry BEFORE the window -- which is what an opening balance is -- so
+  // the column reconciles from the top of the page to the bottom.
+  _ledgerEntriesInRange() {
+    const all = (App.State.currentAccountLedgerData || {}).entries || [];
+    const { ledgerDateFrom: from, ledgerDateTo: to } = App.State;
+    if (!from && !to) return all;
+    return all.filter(e => App.Utils.inDateRange(e.dateRaw, e.date, from, to));
+  },
+
+  _ledgerOpeningBalance() {
+    const { ledgerDateFrom: from } = App.State;
+    if (!from) return null; // nothing is being excluded from the start
+    const all = (App.State.currentAccountLedgerData || {}).entries || [];
+    let carried = 0;
+    let sawAny = false;
+    // Entries arrive in chronological order (the running balance depends on
+    // it), so the last one before the window is the balance carried in.
+    all.forEach(e => {
+      const value = dateToInputValue(e.dateRaw, e.date);
+      if (value && value < from) { carried = e.balance; sawAny = true; }
+    });
+    return sawAny ? carried : 0;
+  },
+
+  renderLedgerTable() {
+    const tbody = document.getElementById('contractorLedgerBody');
+    if (!tbody) return;
+    const contractorName = App.State.currentAccountLedgerContractor;
+    const inRange = this._ledgerEntriesInRange();
+    const { ledgerDateFrom: from, ledgerDateTo: to } = App.State;
+
+    const note = document.getElementById('ledgerRangeNote');
+    if (note) {
+      note.textContent = (from || to)
+        ? `${inRange.length} of ${((App.State.currentAccountLedgerData || {}).entries || []).length} entries in range`
+        : '';
+    }
+
+    if (!inRange.length) {
+      tbody.innerHTML = `<tr><td colspan="9" class="text-center text-muted p-4">${
+        from || to ? 'No transactions in the selected dates.' : 'No transactions yet for this contractor.'
+      }</td></tr>`;
+      App.Utils.renderPagination('contractorLedgerPagination', 0, 1,
+        App.State.ledgerRowsPerPage, 'contractor-ledger-page', 'Entries');
+      this.updatePaymentsBulkButton();
+      return;
+    }
+
+    const cur = App.State.ledgerCurrentPage;
+    const rpp = App.State.ledgerRowsPerPage;
+    const start = (cur - 1) * rpp;
+    const pageItems = inRange.slice(start, start + rpp);
+
+    // Shown on the first page only: it is an opening balance for the
+    // window, not a row repeated on every page.
+    const opening = this._ledgerOpeningBalance();
+    const openingRow = (opening !== null && cur === 1)
+      ? `<tr class="table-light">
+      <td class="text-center"></td>
+      <td>${escapeHtml(from)}</td>
+      <td><span class="badge bg-secondary">Opening</span></td>
+      <td></td>
+      <td><small class="text-muted">Balance carried into the selected dates</small></td>
+      <td class="text-end">-</td>
+      <td class="text-end">-</td>
+      <td class="text-end fw-bold">${formatCurrency(opening)}</td>
+      <td class="text-center"></td>
+    </tr>`
+      : '';
+
+    tbody.innerHTML = openingRow + pageItems.map(e => {
         const badgeClass = e.type === 'Payable' ? 'bg-warning text-dark' : 'bg-success';
         // Only a Payment row is a real, individually-deletable record --
         // a Payable row is computed live from Production/Dispatch, so
@@ -693,12 +811,11 @@ App.Contractor = {
       <td class="text-end fw-bold">${formatCurrency(e.balance)}</td>
       <td class="text-center">${deleteBtn}</td>
     </tr>`;
-      }).join('');
-      this.updatePaymentsBulkButton();
-    } catch (err) {
-      App.Utils.tableError(tbody, err && err.message);
-      App.Utils.showToast(err.message || 'Failed to load account ledger', true);
-    }
+    }).join('');
+
+    App.Utils.renderPagination('contractorLedgerPagination', inRange.length, cur, rpp,
+      'contractor-ledger-page', 'Entries');
+    this.updatePaymentsBulkButton();
   },
 
   toggleSelectAllPayments(masterChk) {

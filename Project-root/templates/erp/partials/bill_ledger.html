@@ -31,6 +31,27 @@
         </small>
       </div>
 
+      <!-- Specific dates. Separate from the single-date filter beside it:
+           that one answers "show me the 4th", this one "this month". Both
+           ends inclusive, either may be left blank. -->
+      <div style="min-width: 300px;">
+        <label class="form-label small fw-bold mb-1">Specific dates</label>
+        <div class="d-flex gap-1 align-items-center">
+          <input type="date" id="billDateFrom" class="form-control"
+                 aria-label="Bills from date"
+                 onchange="App.Bill.filterByDateRange()">
+          <span class="text-muted small">to</span>
+          <input type="date" id="billDateTo" class="form-control"
+                 aria-label="Bills to date"
+                 onchange="App.Bill.filterByDateRange()">
+          <button type="button" class="btn btn-outline-secondary btn-sm"
+                  title="Clear dates" onclick="App.Bill.clearDateRange()">&times;</button>
+        </div>
+        <small class="text-muted" style="display: block; margin-top: 4px;">
+          Show everything between these dates
+        </small>
+      </div>
+
       <div style="min-width: 190px;">
         <select id="billSortBy" class="form-select" aria-label="Sort Bills" onchange="App.Bill.sortBy(this.value)">
           <option value="dateDesc">Date (Newest first)</option>
