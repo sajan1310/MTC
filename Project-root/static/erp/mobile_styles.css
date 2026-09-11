@@ -275,7 +275,10 @@
    read a long item name, or because it is lying on a bench -- lost most of
    its list to chrome. Trim the two bars and the content padding; the tap
    targets inside them are untouched. */
-@media (orientation: landscape) and (max-height: 480px) {
+/* 560px, not 480px: a current large phone is ~430px tall sideways but the
+   taller ones (and a small tablet held landscape) sat just above the old
+   ceiling and got no relief at all. */
+@media (orientation: landscape) and (max-height: 560px) {
   :root {
     --mb-topbar-h: 44px;
     --mb-tabbar-h: 52px;
@@ -286,6 +289,26 @@
   .mapp-tab svg { width: 20px; height: 20px; }
   .mapp-content { padding-top: var(--mb-sp-2); }
   .mapp-screen-title { margin-bottom: var(--mb-sp-2); }
+}
+
+/* ── Wide viewports: hold a measure ───────────────────────────────────────
+   The rule above trimmed the chrome so a sideways phone kept its rows. It
+   never addressed the WIDTH, which is the half that actually makes landscape
+   feel unbuilt: every screen is one column, so at 900px a card title runs
+   the full width of the glass and the eye loses the line returning to the
+   next one. Grids already fill that width (auto-fit, above); text should
+   not.
+
+   Centred with auto side padding rather than a max-width on the container,
+   because .mapp-content is the scroll box -- constraining it would inset the
+   scrollbar and clip the sheets that position against it. Sheet bodies get
+   the same treatment, since a sheet is full-screen and has the same problem.
+   `max()` keeps the normal phone padding as the floor. */
+@media (min-width: 46rem) {
+  .mapp-content,
+  .mb-sheet-body {
+    padding-inline: max(var(--mb-sp-4), calc((100% - 58rem) / 2));
+  }
 }
 
 /* ── Reset & base ────────────────────────────────────────────────────── */
@@ -702,7 +725,12 @@ textarea:focus-visible,
 
 .mb-quick-actions {
   display: grid;
-  grid-template-columns: repeat(3, 1fr);
+  /* Width-driven, not a fixed count. `repeat(3, 1fr)` meant the row could
+     never hold a fourth action however much room there was -- and a phone
+     turned sideways has plenty. auto-fit gives three across a 360px
+     portrait phone and more when the width is actually there, with no
+     breakpoint to maintain. */
+  grid-template-columns: repeat(auto-fit, minmax(5rem, 1fr));
   gap: var(--mb-sp-3);
   margin-bottom: var(--mb-sp-5);
 }
@@ -737,20 +765,44 @@ textarea:focus-visible,
   .mb-quick-action:active { transform: none; }
 }
 
+/* Module shortcuts (Home's "Go to" row). Same tap target and the same
+   pressed behaviour as a quick action -- they sit in the same grid -- but
+   deliberately quieter: a quick action CREATES a record and a shortcut only
+   navigates, so the dark chrome fill is reserved for the former. Shorter,
+   too: no icon to make room for, and the labels are words rather than
+   verbs. */
+.mapp-shortcut {
+  min-height: 56px;
+  background: var(--mb-surface);
+  color: var(--mb-ink);
+  border: 1px solid var(--mb-steel-faint);
+  text-transform: none;
+  letter-spacing: 0;
+  font-size: 0.8125rem;
+}
+
+.mapp-shortcut:active { background: var(--mb-surface-sunk); }
+
 /* ── Stat tiles (Home) ───────────────────────────────────────────────── */
 .mb-stat-grid {
   display: grid;
-  grid-template-columns: 1fr 1fr;
+  /* Was a hard `1fr 1fr` with a single 640px breakpoint bumping it to 3.
+     That describes two phone widths and nothing else: sideways, where the
+     viewport is 700-900px, the figures stayed in three fat columns with the
+     rest of the width empty. auto-fit fills whatever room exists -- two
+     across a portrait phone, four or five across a landscape one. */
+  grid-template-columns: repeat(auto-fit, minmax(9.5rem, 1fr));
   gap: var(--mb-sp-3);
   margin-bottom: var(--mb-sp-5);
 }
 
-/* Extra horizontal room in the 480px phone frame (see the min-width:640px
-   block above) — 3 tiles read more like a dashboard than 2 tiles + an odd
-   3rd one stretched full-width. Must come after the base rule above:
-   same specificity, so source order is what decides the tie. */
+/* The column COUNT is auto-fit's job now (see the base rule above). What is
+   still a judgement call is the full-width tile: `grid-column: 1 / -1` is
+   right on a narrow phone, where a wide figure wants the whole row, and
+   wrong the moment there are four or five tracks to span. Charts keep it at
+   every width on purpose -- a pie squeezed into a fifth of a row is not a
+   chart -- which is why this targets .mb-stat-tile and not .mapp-chart. */
 @media (min-width: 640px) {
-  .mb-stat-grid { grid-template-columns: repeat(3, 1fr); }
   .mb-stat-grid > .mb-stat-tile[style*="grid-column"] { grid-column: auto !important; }
 }
 

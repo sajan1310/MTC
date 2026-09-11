@@ -2115,6 +2115,15 @@ MApp.HomeLayout = {
 
   // The three Home has always shown. Anyone who never opens the picker
   // keeps exactly the screen -- and exactly the one request -- they had.
+  // Deliberately all-cheap: every default comes from getMobileDashboard,
+  // so Home stays instant and still renders offline.
+  //
+  // A chart was tried here and taken out again. Any chart is source:'full',
+  // which would put getDashboardData on the critical path of every Home
+  // visit and leave the tiles blank offline -- a poor trade in an app whose
+  // whole offline design exists because it runs on factory LANs. The charts
+  // now live on the full dashboard, which already pays for that payload;
+  // Home still offers them through Choose figures for anyone who wants one.
   DEFAULTS: ['pendingProduction', 'todaysDispatches', 'lowStock'],
 
   block(key) {
@@ -2229,6 +2238,10 @@ MApp.HomeLayout = {
 MApp.Home = {
   async mount() {
     this.renderGreeting();
+    // Before the await: the shortcuts are read from localStorage and owe
+    // the network nothing, so they should be tappable while the figures are
+    // still loading -- and they are the fastest route out of Home.
+    MApp.Shortcuts.render();
 
     const statsEl = document.getElementById('home-stats');
     const activityEl = document.getElementById('home-activity');
@@ -3220,6 +3233,12 @@ MApp.Production = {
               <div>
                 <div class="mb-card-title">${MApp.Util.escapeHtml(l.lotNumber)}</div>
                 <div class="mb-card-sub">${MApp.Util.escapeHtml(processName)}</div>
+                <!-- The date was searchable (see the 'date' search key
+                     above) but never shown, so a lot could be found by a
+                     date the card then refused to display. On a floor
+                     where "which lot did we run Tuesday" is an ordinary
+                     question, that is the first thing being looked for. -->
+                <div class="mb-card-sub">${MApp.Util.escapeHtml(MApp.Util.formatDateDisplay(l.dateRaw) || '—')}</div>
               </div>
               <div style="text-align:right;">
                 <div class="mb-card-number">${l.qty}</div>
@@ -11104,6 +11123,57 @@ MApp.Dashboard = {
 
   close() { MApp.Sheet.close('sheet-dashboard'); },
 
+  // The dashboard's quick actions. A dashboard is for deciding what to do
+  // next, and this one had no way to then do it -- read the figures, close
+  // the sheet, find the tab, open the form.
+  //
+  // Closes first rather than stacking the form on top, so each of these
+  // opens under exactly the preconditions Home's own quick actions already
+  // open under: no sheet beneath, nothing for the form's own close() to
+  // pop by surprise. The cost is returning to Home rather than to the
+  // dashboard, which is one tap and the figures would be stale anyway --
+  // logging a lot is precisely what changes them.
+  ACTIONS: {
+    production: () => MApp.Production.openLogLotSheet(),
+    dispatch: () => MApp.Dispatch.openNewDispatchSheet(),
+    bill: () => MApp.Bill.openForm(null),
+    return: () => MApp.Returns.openNewReturnSheet()
+  },
+
+  act(kind) {
+    const run = this.ACTIONS[kind];
+    if (!run) return;
+    this.close();
+    run();
+  },
+
+  // Every chart the app can draw, on the one screen that already has the
+  // data for them.
+  //
+  // They existed only as opt-in Home blocks, off by default, with nothing
+  // saying so -- so the full dashboard, the screen actually named
+  // "dashboard", showed no chart at all. Home cannot simply default them on
+  // instead: every chart is source:'full', which would put getDashboardData
+  // on the critical path of every Home visit and blank the tiles offline.
+  // Here that payload is already being fetched, so the charts cost nothing
+  // extra.
+  //
+  // Reuses the existing renderers rather than reimplementing them: the
+  // catalogue on HomeLayout carries each chart's series, its truncation
+  // `total` and its money flag, and MApp.Home owns the drawing. A second
+  // copy of either would drift. The grid wrapper is what _chartHtml's
+  // `grid-column: 1 / -1` needs in order to mean anything.
+  _chartsHtml(data) {
+    const blocks = ((MApp.HomeLayout && MApp.HomeLayout.BLOCKS) || [])
+      .filter(b => b.kind === 'chart');
+    if (!blocks.length || typeof MApp.Home._chartHtml !== 'function') return '';
+    return `
+      <div class="mapp-section-label mb-mt-4">Charts</div>
+      <div class="mb-stat-grid">
+        ${blocks.map(b => MApp.Home._chartHtml(b, data, false, '')).join('')}
+      </div>`;
+  },
+
   render(data) {
     const body = document.getElementById('dashboard-body');
     if (!body) return;
@@ -11131,6 +11201,8 @@ MApp.Dashboard = {
         ${tile('Ready to dispatch', qty(k.readyToDispatchUnits), `${k.readyToDispatchProductCount || 0} product(s)`)}
         ${tile('Contractor payables', money(k.contractorPayablesDue), `${k.contractorPayablesCount || 0} contractor(s)`)}
       </div>
+
+      ${this._chartsHtml(data)}
 
       ${k.oldestPendingProductionDays ? `
         <div class="mb-offline-banner" style="background:var(--mb-enamel-amber-bg);color:var(--mb-enamel-amber-ink);margin:var(--mb-sp-3) 0;">
@@ -13110,6 +13182,102 @@ MApp.MoreGroups = {
       state[el.dataset.group] = open;
     });
     this.write(state);
+  }
+};
+
+// ================================================================
+// SHORTCUTS — the modules you actually use, one tap from Home.
+//
+// Five tabs hold Home, Stock, Production and Dispatch. Everything else --
+// twenty destinations, including the bill and PO ledgers, the whole
+// directory and both master screens -- lives behind More, which means
+// More, then open the right disclosure group, then find the row. Three
+// taps and a scan, every time, for a screen someone may open forty times a
+// day. The tab bar cannot grow: five is already the limit at which targets
+// stay thumb-sized on a 360px phone.
+//
+// So the app learns instead. Every launch is counted here, and Home shows
+// the few that are actually used, most-used first. Nothing to configure,
+// and it reflects THIS operator: a storeman converges on Bill Ledger and
+// Items lookup, a supervisor on Processes and Product Recipes, and neither
+// has to tell the app so.
+//
+// Counting lives in go() rather than in each module's own open(), so a
+// destination is recorded when it is chosen -- not when some other screen
+// happens to open the same sheet on its way somewhere else.
+// ================================================================
+MApp.Shortcuts = {
+  KEY: 'maharaja-erp-mobile-module-use',
+  MAX: 6,
+
+  // Catalogue order is the tie-break, so a fresh install shows a sensible
+  // row rather than an arbitrary one: the four most commonly wanted first.
+  DESTINATIONS: [
+    { key: 'billLedger', label: 'Bills', open: () => MApp.Bill.openLedgerSheet() },
+    { key: 'poLedger', label: 'POs', open: () => MApp.PO.openLedgerSheet() },
+    { key: 'itemsLookup', label: 'Items', open: () => MApp.Items.openLookupSheet() },
+    { key: 'pool', label: 'Pool', open: () => MApp.Pool.open() },
+    { key: 'vendors', label: 'Vendors', open: () => MApp.Directory.open('vendor') },
+    { key: 'clients', label: 'Clients', open: () => MApp.Directory.open('client') },
+    { key: 'contractors', label: 'Contractors', open: () => MApp.Directory.open('contractor') },
+    { key: 'dispatchPlan', label: 'Dispatch plan', open: () => MApp.DispatchPlan.open() },
+    { key: 'clientOrders', label: 'PI / Estimates', open: () => MApp.ClientOrders.open() },
+    { key: 'issued', label: 'Issued Stock', open: () => MApp.Issue.open() },
+    { key: 'wastage', label: 'Wastage', open: () => MApp.Wastage.open() },
+    { key: 'processes', label: 'Processes', open: () => MApp.Process.open() },
+    { key: 'recipes', label: 'Recipes', open: () => MApp.BOM.open() },
+    { key: 'stockGroups', label: 'Stock Groups', open: () => MApp.StockGroups.open() },
+    { key: 'colors', label: 'Colours', open: () => MApp.Master.open('color') },
+    { key: 'models', label: 'Models', open: () => MApp.Master.open('model') },
+    { key: 'processTypes', label: 'Process Types', open: () => MApp.Master.open('processType') },
+    { key: 'units', label: 'Units', open: () => MApp.Master.open('unit') },
+    { key: 'syncIssues', label: 'Sync Issues', open: () => MApp.SyncIssues.open() },
+    { key: 'status', label: 'System Status', open: () => MApp.Status.open() }
+  ],
+
+  destination(key) {
+    return this.DESTINATIONS.find(d => d.key === key) || null;
+  },
+
+  counts() {
+    try {
+      const raw = JSON.parse(localStorage.getItem(this.KEY) || 'null');
+      return raw && typeof raw === 'object' && !Array.isArray(raw) ? raw : {};
+    } catch (e) {
+      return {}; // storage inaccessible, or someone else's data in the key
+    }
+  },
+
+  // Most-used first, catalogue order breaking ties. Unused destinations
+  // still appear (count 0) so a fresh install has a full row rather than an
+  // empty promise -- and the order starts moving from the first launch.
+  top(limit) {
+    const counts = this.counts();
+    const ranked = this.DESTINATIONS.map((d, i) => ({ d, i, n: counts[d.key] || 0 }));
+    ranked.sort((a, b) => (b.n - a.n) || (a.i - b.i));
+    return ranked.slice(0, limit == null ? this.MAX : limit).map(r => r.d);
+  },
+
+  go(key) {
+    const dest = this.destination(key);
+    if (!dest) return;
+    const counts = this.counts();
+    counts[key] = (counts[key] || 0) + 1;
+    try { localStorage.setItem(this.KEY, JSON.stringify(counts)); } catch (e) { /* storage inaccessible */ }
+    // Re-rank while the operator is still on Home to see it happen; the row
+    // is gone from view by the time the sheet is up either way.
+    this.render();
+    dest.open();
+  },
+
+  render() {
+    const el = document.getElementById('home-shortcuts');
+    if (!el) return;
+    el.innerHTML = this.top().map(d => `
+      <button type="button" class="mb-quick-action mapp-shortcut"
+              onclick="MApp.Shortcuts.go('${d.key}')">
+        <span>${MApp.Util.escapeHtml(d.label)}</span>
+      </button>`).join('');
   }
 };
 
