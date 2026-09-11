@@ -878,9 +878,7 @@ def create_app(config_name: str | None = None) -> Flask:
         app.config.update(
             SESSION_COOKIE_SECURE=serve_over_https,
             SESSION_COOKIE_HTTPONLY=True,
-            SESSION_COOKIE_SAMESITE=app.config.get(
-                "SESSION_COOKIE_SAMESITE", "Lax"
-            ),
+            SESSION_COOKIE_SAMESITE=app.config.get("SESSION_COOKIE_SAMESITE", "Lax"),
         )
     else:
         app.config.update(SESSION_COOKIE_HTTPONLY=True, SESSION_COOKIE_SAMESITE="Lax")
@@ -959,9 +957,7 @@ def create_app(config_name: str | None = None) -> Flask:
             force_https=serve_over_https,
             session_cookie_secure=serve_over_https,
             session_cookie_http_only=True,
-            session_cookie_samesite=app.config.get(
-                "SESSION_COOKIE_SAMESITE", "Lax"
-            ),
+            session_cookie_samesite=app.config.get("SESSION_COOKIE_SAMESITE", "Lax"),
             strict_transport_security=serve_over_https,
         )
 
