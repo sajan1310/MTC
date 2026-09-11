@@ -277,12 +277,19 @@
 // and pressing Print produced a document that did not match the screen --
 // undetectably, since every row in it was real. contractor.js is
 // precached. LOAD-BEARING: it misstates what a printed ledger covers.
-const CACHE_NAME = 'erp-shell-v60';
+// v61: the Production Sheet and the stock/pool pivot move into a new
+// shared print-templates.js that BOTH shells load, so a document printed
+// from a phone is the same document as one printed from a desk -- MApp
+// was rendering a plain generic table where desktop rendered the designed
+// sheet. stock.js and production.js now delegate, and the new file joins
+// the precache list.
+const CACHE_NAME = 'erp-shell-v61';
 
 const PRECACHE_URLS = [
   '/erp/offline.html',
   '/static/erp/styles.css',
   '/static/erp/api.js',
+  '/static/erp/print-templates.js',
   '/static/erp/core.js',
   '/static/erp/print.js',
   '/static/erp/dashboard.js',

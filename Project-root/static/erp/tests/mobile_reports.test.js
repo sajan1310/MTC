@@ -44,9 +44,27 @@ function mount() {
       <tbody id="print-report-body"></tbody></table>
       <div id="print-report-footer"></div>
     </div>
+    <div id="print-low-stock-container">
+      <div id="print-low-stock-subtitle"></div>
+      <div id="print-low-stock-report-type"></div>
+      <div id="print-low-stock-date"></div>
+      <table><thead><tr id="print-low-stock-header-row"></tr></thead>
+      <tbody id="print-low-stock-body"></tbody></table>
+    </div>
     <div id="mapp-sheet-backdrop"></div>
     <div class="mb-toast-stack" id="mapp-toast-stack"></div>`;
-  loadAsGlobal('api.js', 'Api');
+  // api.js and print-templates.js in ONE eval, because that is what the
+  // browser gives them: separate <script> tags share the global lexical
+  // scope, so print-templates.js can use api.js's `const escapeHtml`.
+  // Loading them separately here would not, and the failure is a
+  // ReferenceError only at print time.
+  // eslint-disable-next-line no-eval
+  eval([
+    fs.readFileSync(path.join(__dirname, '..', 'api.js'), 'utf8')
+      .replace(/^const Api = /m, 'global.Api = '),
+    fs.readFileSync(path.join(__dirname, '..', 'print-templates.js'), 'utf8')
+      .replace(/^const PrintTemplates = /m, 'global.PrintTemplates = '),
+  ].join('\n'));
   loadAsGlobal('mobile.js', 'MApp');
   MApp.Sheet._stack = [];
 }
@@ -186,50 +204,59 @@ describe('the report document', () => {
 describe('which modules can print', () => {
   beforeEach(mount);
 
-  test('stock prints what is on screen, filter and all', () => {
-    // A report that silently ignored the low-stock filter would be a
-    // different document from the one being looked at.
+  test('stock prints the SAME pivot desktop prints, not a flat list', () => {
+    // A warehouse carries one item in a dozen sizes; a row per combination
+    // is a report nobody reads. This rendered exactly that until the
+    // builder became shared.
     let opts = null;
-    MApp.Print.report = jest.fn(o => { opts = o; });
-    MApp.Stock.filtered = [{ name: 'Bolt', size: '6mm', unit: 'Pcs', currentStock: 2, threshold: 10 }];
+    MApp.Print.chooseAction = jest.fn(o => { opts = o; o.populate(); });
+    MApp.Stock.filtered = [{ name: 'Bolt', size: '6mm', unit: 'Pcs', currentStock: 2, threshold: 10, isLowStock: true }];
     MApp.Stock._lowStockOnly = true;
     MApp.Stock.searchTerm = '';
 
     MApp.Stock.printReport();
 
-    expect(opts.title).toBe('Low Stock Report');
-    expect(opts.rows).toHaveLength(1);
+    expect(opts.containerId).toBe('print-low-stock-container');
+    expect(document.getElementById('print-low-stock-body').innerHTML).toContain('Bolt');
+    expect(document.getElementById('print-low-stock-header-row').innerHTML).toContain('6mm');
+    expect(document.getElementById('print-low-stock-report-type').innerText).toContain('Low Stock');
   });
 
-  test('the stock tab\'s one button follows the pane in front of you', () => {
-    MApp.Pool.printReport = jest.fn();
-    MApp.Stock.printReport = jest.fn();
-
-    MApp.Stock.view = 'pool';
-    MApp.Stock.printCurrentView();
-    expect(MApp.Pool.printReport).toHaveBeenCalled();
-
-    MApp.Stock.view = 'stock';
-    MApp.Stock.printCurrentView();
-    expect(MApp.Stock.printReport).toHaveBeenCalled();
-  });
-
-  test('the pool report keeps sub-group buckets, and totals only units', () => {
-    // They are still stock movement somebody may need to see; they are
-    // simply not units, and a report that dropped them would not
-    // reconcile against the screen that lists them.
+  test('and prints what is on screen, filter and all', () => {
+    // A report that silently ignored the low-stock filter would be a
+    // different document from the one being looked at.
     let opts = null;
-    MApp.Print.report = jest.fn(o => { opts = o; });
+    MApp.Print.chooseAction = jest.fn(o => { opts = o; o.populate(); });
+    MApp.Stock.filtered = [];
+    MApp.Stock._lowStockOnly = true;
+    MApp.Stock.searchTerm = '';
+
+    MApp.Stock.printReport();
+
+    expect(document.getElementById('print-low-stock-body').innerHTML)
+      .toContain('Nothing is below its threshold');
+  });
+
+  test('the pool prints through that same pivot, as desktop does', () => {
+    // Desktop's bulkPrintWarehousePool renders the pool through the stock
+    // pivot. One document, one layout, whichever shell printed it.
+    let opts = null;
+    MApp.Print.chooseAction = jest.fn(o => { opts = o; o.populate(); });
     MApp.Pool.filtered = [
-      { outputItemName: 'Rim', color: 'Black', producedQty: 10, consumedQty: 0, availableQty: 10, countsTowardTotal: true },
-      { outputItemName: 'Rim', color: 'Kit Bag', producedQty: 4, consumedQty: 0, availableQty: 4, countsTowardTotal: false },
+      { outputItemName: 'Rim 20 inch', color: 'Black', availableQty: 10, countsTowardTotal: true },
+      { outputItemName: 'Rim 20 inch', color: 'Kit Bag', availableQty: 4, countsTowardTotal: false },
     ];
     MApp.Pool.searchTerm = '';
 
     MApp.Pool.printReport();
 
-    expect(opts.rows).toHaveLength(2);
-    expect(opts.footer).toContain('10');
+    expect(opts.containerId).toBe('print-low-stock-container');
+    const body = document.getElementById('print-low-stock-body').innerHTML;
+    // Every bucket is named in full, so what is and is not units stays
+    // legible without a separate column.
+    expect(body).toContain('Warehouse Pool');
+    expect(body).toContain('Black');
+    expect(body).toContain('Kit Bag');
   });
 
   test('issued stock prints one row per line, not per record', () => {
@@ -260,20 +287,46 @@ describe('which modules can print', () => {
     expect(opts.rows).toHaveLength(1);
   });
 
-  test('the production sheet prints portrait, grouped by colour', () => {
+  test("the production sheet is desktop's document, not a generic table", () => {
+    // It goes to the floor with the lot. One printed from a phone must not
+    // be a different document from one printed from a desk.
     let opts = null;
-    MApp.Print.report = jest.fn(o => { opts = o; });
-    MApp.ProductionSheet.lot = { lotNumber: 'LOT-1', processName: 'Painting', dateRaw: '2026-09-01' };
+    MApp.Print.chooseAction = jest.fn(o => { opts = o; });
+    MApp.ProductionSheet.lot = {
+      lotNumber: 'LOT-1', processName: 'Painting', date: '01/09/2026',
+      productId: 'PRD-1', productName: 'Kalpi 26', qty: 40,
+    };
     MApp.ProductionSheet.rows = [
-      { itemName: 'Paint', size: '', narration: '', color: 'Red', requiredQty: 2 },
-      { itemName: 'Primer', size: '', narration: '', color: '', requiredQty: 1 },
+      { itemName: 'Paint', size: '', narration: '', color: 'Red', requiredQty: 2, sourceType: 'ITEM' },
     ];
+    MApp.ProductionSheet.remarks = 'handle with care';
 
     MApp.ProductionSheet.printSheet();
 
+    const html = document.getElementById('print-report-container').innerHTML;
+    expect(html).toContain('Material Requirement Sheet');
+    expect(html).toContain('Kalpi 26');
+    expect(html).toContain('Paint');
+    expect(html).toContain('handle with care');
     expect(opts.landscape).toBe(false);
-    expect(opts.title).toContain('LOT-1');
-    expect(opts.rows[0].colorLabel).toBe('Common'); // sorts before Red
+  });
+
+  test("it prints the sheet's edited rows, not the lot's stored ones", () => {
+    // This screen exists to correct that list; printing the uncorrected
+    // one would hand the floor the numbers just finished being changed.
+    MApp.Print.chooseAction = jest.fn();
+    MApp.ProductionSheet.lot = {
+      lotNumber: 'LOT-1', qty: 1,
+      componentsConsumed: [{ itemName: 'STALE ITEM', qty: 99 }],
+    };
+    MApp.ProductionSheet.rows = [{ itemName: 'Corrected', size: '', narration: '', requiredQty: 5 }];
+    MApp.ProductionSheet.remarks = '';
+
+    MApp.ProductionSheet.printSheet();
+
+    const html = document.getElementById('print-report-container').innerHTML;
+    expect(html).toContain('Corrected');
+    expect(html).not.toContain('STALE ITEM');
   });
 
   test('every new print control is wired in the markup', () => {

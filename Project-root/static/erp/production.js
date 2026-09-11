@@ -1449,83 +1449,17 @@ App.Production = {
   // Builds a fully self-contained "Production Material Requirement Sheet"
   // page (mirrors #print-production-sheet-container's markup/styling)
   // for bulk printing.
+  // Delegates to PrintTemplates, which MApp loads too. The sheet is what
+  // goes to the floor with a lot, and one printed from a phone must not be
+  // a different document from one printed from a desk. The three
+  // shell-specific pieces are passed in; the shared file knows nothing
+  // about App.
   buildProductionSheetPrintPageHtml(p) {
-    const BRAND = '#198754';
-    const components = p.componentsConsumed || [];
-
-    let rowsHtml = '';
-    components.forEach(comp => {
-      const narr = (comp.narration || '').trim();
-      const displayName = narr ? `${comp.itemName || ''}(${narr})` : (comp.itemName || '');
-      rowsHtml += `<tr>
-    <td style="padding:6px;border:1px solid #ddd;text-align:left;">${escapeHtml(displayName)}</td>
-    <td style="padding:6px;border:1px solid #ddd;">${escapeHtml(comp.size || '-')}</td>
-    <td style="padding:6px;border:1px solid #ddd;">${escapeHtml(comp.sourceType === 'POOL' ? 'Pool' : 'Item')}</td>
-    <td style="padding:6px;border:1px solid #ddd;text-align:right;font-weight:700;">${escapeHtml(this.formatQty(comp.qty))}</td>
-  </tr>`;
+    return PrintTemplates.productionSheetPage(p, {
+      formatQty: v => this.formatQty(v),
+      brandHeaderHtml: colour => App.Print.brandHeaderHtml(colour),
+      requirementSheetTitle: processId => this._requirementSheetTitle(processId)
     });
-    const rows = rowsHtml || '<tr><td colspan="4" style="padding:10px;text-align:center;color:#999;">No components recorded for this lot.</td></tr>';
-
-    const remarksHtml = p.sheetRemarks ? `
-  <div style="margin-top:10px;padding-top:8px;border-top:1px solid #ccc;">
-    <span style="font-size:10px;color:#666;text-transform:uppercase;letter-spacing:0.5px;">Remarks</span>
-    <div style="font-size:12px;color:#1a1a1a;margin-top:2px;white-space:pre-wrap;">${escapeHtml(p.sheetRemarks)}</div>
-  </div>` : '';
-
-    return `
-<div style="background:#fff;color:#1a1a1a;font-family:'Segoe UI',Arial,sans-serif;font-size:12px;line-height:1.5;padding:14px 20px 12px 20px;margin:0;box-sizing:border-box;width:100%;border-top:5px solid ${BRAND};border-bottom:3px solid ${BRAND};-webkit-print-color-adjust:exact;print-color-adjust:exact;">
-  <div style="text-align:center;padding:4px 0 8px 0;">
-    ${App.Print.brandHeaderHtml(BRAND)}
-    <div style="font-size:10px;color:#555;margin-top:3px;letter-spacing:0.3px;">
-      6-B, SHIV SHAKTI ESTATE, VERKA CHOWK, DEHLON ROAD, BHAGWANPURA, 141114 LUDHIANA
-    </div>
-    <div style="font-size:11px;color:${BRAND};font-weight:700;margin-top:4px;letter-spacing:1px;text-transform:uppercase;">
-      ${escapeHtml(this._requirementSheetTitle(p.processId))}
-    </div>
-  </div>
-  <div style="height:2px;background:${BRAND};margin:0 0 12px 0;-webkit-print-color-adjust:exact;print-color-adjust:exact;"></div>
-
-  <div style="display:flex;justify-content:space-between;flex-wrap:wrap;gap:12px;margin-bottom:14px;padding-bottom:10px;border-bottom:1px solid #ccc;">
-    <div>
-      <span style="font-size:10px;color:#666;text-transform:uppercase;letter-spacing:0.5px;">Date</span>
-      <div style="font-size:13px;font-weight:700;color:#1a1a1a;">${escapeHtml(p.date || '')}</div>
-    </div>
-    <div>
-      <span style="font-size:10px;color:#666;text-transform:uppercase;letter-spacing:0.5px;">Product ID</span>
-      <div style="font-size:13px;font-weight:700;color:#1a1a1a;">${escapeHtml(p.productId || '')}</div>
-    </div>
-    <div>
-      <span style="font-size:10px;color:#666;text-transform:uppercase;letter-spacing:0.5px;">Product Name</span>
-      <div style="font-size:13px;font-weight:700;color:#1a1a1a;">${escapeHtml(p.productName || '')}</div>
-    </div>
-    ${(p.colorBreakdown && p.colorBreakdown.length > 0) ? `
-    <div>
-      <span style="font-size:10px;color:#666;text-transform:uppercase;letter-spacing:0.5px;">Colors</span>
-      <div style="font-size:13px;font-weight:700;color:#1a1a1a;">${escapeHtml(p.colorBreakdown.map(c => `${c.color}${c.size ? ` (${c.size})` : ''}: ${this.formatQty(c.qty)}`).join(', '))}</div>
-    </div>` : (p.color ? `
-    <div>
-      <span style="font-size:10px;color:#666;text-transform:uppercase;letter-spacing:0.5px;">Color</span>
-      <div style="font-size:13px;font-weight:700;color:#1a1a1a;">${escapeHtml(p.color)}</div>
-    </div>` : '')}
-    <div>
-      <span style="font-size:10px;color:#666;text-transform:uppercase;letter-spacing:0.5px;">Lot Qty</span>
-      <div style="font-size:13px;font-weight:700;color:#1a1a1a;">${this.formatQty(p.qty)}</div>
-    </div>
-  </div>
-
-  <table style="width:100%;border-collapse:collapse;margin-bottom:14px;font-size:12px;">
-    <thead style="background-color:${BRAND};color:#fff;text-align:center;font-weight:700;-webkit-print-color-adjust:exact;print-color-adjust:exact;">
-      <tr>
-        <th style="padding:6px;border:1px solid #bbb;text-align:left;width:45%;">Item / Pool Name</th>
-        <th style="padding:6px;border:1px solid #bbb;width:20%;">Size</th>
-        <th style="padding:6px;border:1px solid #bbb;width:20%;">Source</th>
-        <th style="padding:6px;border:1px solid #bbb;text-align:right;width:15%;">Qty</th>
-      </tr>
-    </thead>
-    <tbody style="color:#1a1a1a;text-align:center;">${rows}</tbody>
-  </table>
-  ${remarksHtml}
-</div>`;
   },
 
   // Takes the record's POSITION in globalProduction, like every other row

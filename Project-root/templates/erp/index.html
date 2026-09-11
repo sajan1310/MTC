@@ -571,6 +571,9 @@
 
   <!-- App scripts -- order matters, api.js/core.js define shared globals every later file extends -->
   <script src="{{ url_for('static', filename='erp/api.js') }}"></script>
+  <!-- The documents both shells print. After api.js (it uses escapeHtml)
+       and before the modules that call it. -->
+  <script src="{{ url_for('static', filename='erp/print-templates.js') }}"></script>
   <script src="{{ url_for('static', filename='erp/core.js') }}"></script>
   <script src="{{ url_for('static', filename='erp/print.js') }}"></script>
   <script src="{{ url_for('static', filename='erp/dashboard.js') }}?v=6"></script>

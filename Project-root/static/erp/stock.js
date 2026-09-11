@@ -3034,76 +3034,27 @@ App.Stock = {
   // renders inside the app's own themeable modal -- reusing the print
   // markup there put dark inline text on a dark theme background with no
   // inline fallback background, making the Item Name column unreadable.
+  // Both now delegate to PrintTemplates, which MApp loads too -- the pivot
+  // is a document, and a document printed from a phone must not be a
+  // different document from the one printed from a desk. The size lookup
+  // is passed in because it is desktop's own helper; the shared file knows
+  // nothing about App.
   _computeStockPivot(items, poolItems) {
-    const sizeSet = new Set();
-    const byName = new Map();
-    items.forEach(item => {
-      const sizeLabel = item.size || 'GENERAL';
-      sizeSet.add(sizeLabel);
-      if (!byName.has(item.name)) byName.set(item.name, new Map());
-      byName.get(item.name).set(sizeLabel, {
-        currentStock: item.currentStock,
-        isLowStock: item.isLowStock
-      });
+    return PrintTemplates.computeStockPivot(items, poolItems, {
+      sizeFromOutputItemName: n => App.Utils.getSizeFromOutputItemName(n)
     });
+  },
 
-    (poolItems || []).forEach(r => {
-      if (!r.outputItemName) return;
-      const sizeLabel = App.Utils.getSizeFromOutputItemName(r.outputItemName) || 'GENERAL';
-      let name = `${r.outputItemName} (Warehouse Pool)`;
-      if (r.productTag) name += ` (Tag: ${r.productTag})`;
-      if (r.color) name += ` [${r.color}]`;
-      sizeSet.add(sizeLabel);
-      if (!byName.has(name)) byName.set(name, new Map());
-      const sizeMap = byName.get(name);
-      const existing = sizeMap.get(sizeLabel);
-      sizeMap.set(sizeLabel, {
-        currentStock: (existing ? existing.currentStock : 0) + (r.availableQty || 0),
-        isLowStock: false
-      });
+  _buildStockPivotPrintMarkup(items, poolItems, emptyMessage) {
+    return PrintTemplates.stockPivotMarkup(items, poolItems, emptyMessage, {
+      sizeFromOutputItemName: n => App.Utils.getSizeFromOutputItemName(n)
     });
-
-    return {
-      sizes: [...sizeSet].sort((a, b) => a.localeCompare(b)),
-      names: [...byName.keys()].sort((a, b) => a.localeCompare(b)),
-      byName
-    };
   },
 
   // Print/PDF markup: hardcoded dark-on-white inline styles, matching
   // every other print template in print.html (self-contained on purpose --
   // window.print() must not inherit the app's own theme CSS, which would put
   // dark-mode text on this deliberately-white page).
-  _buildStockPivotPrintMarkup(items, poolItems, emptyMessage) {
-    const { sizes, names, byName } = this._computeStockPivot(items, poolItems);
-
-    const headerHtml = `
-      <th style="padding:6px;border:1px solid #000;text-align:left;">Item Name</th>
-      ${sizes.map(s => `<th style="padding:6px;border:1px solid #000;text-align:center;">${escapeHtml(s)}</th>`).join('')}
-    `;
-
-    let bodyHtml;
-    if (!names.length) {
-      bodyHtml = `<tr><td colspan="${sizes.length + 1}" style="text-align:center;color:#777;padding:24px;">${escapeHtml(emptyMessage)}</td></tr>`;
-    } else {
-      bodyHtml = names.map(name => {
-        const sizeMap = byName.get(name);
-        const cells = sizes.map(size => {
-          const entry = sizeMap.get(size);
-          if (!entry) return `<td style="padding:6px;border:1px solid #999;text-align:center;color:#1a1a1a;">-</td>`;
-          return `<td style="padding:6px;border:1px solid #999;text-align:center;color:#1a1a1a;${entry.isLowStock ? 'background:#e0e0e0;font-weight:800;' : ''}">${entry.currentStock}</td>`;
-        }).join('');
-        return `
-      <tr>
-        <td style="padding:6px;border:1px solid #999;text-align:left;"><strong style="color:#1a1a1a;">${escapeHtml(name)}</strong></td>
-        ${cells}
-      </tr>
-    `;
-      }).join('');
-    }
-
-    return { headerHtml, bodyHtml };
-  },
 
   // Live-preview markup: no inline colors at all -- plain <th>/<td> that
   // inherit the app's own (already dark-mode-aware) .table styling, same

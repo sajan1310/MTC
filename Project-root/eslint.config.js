@@ -54,6 +54,9 @@ module.exports = [
         App: 'writable',
         MApp: 'writable',
         OfflineCache: 'writable',
+        // print-templates.js -- the documents both shells print, so it is
+        // loaded by index.html and mobile.html alike.
+        PrintTemplates: 'writable',
         PO_STATUS: 'readonly',
         CACHE_NAME: 'writable',
         PRECACHE_URLS: 'writable',
