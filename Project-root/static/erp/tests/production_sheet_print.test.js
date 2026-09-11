@@ -33,6 +33,15 @@ const vm = require('vm');
 const HTML_ESCAPE_MAP = { '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' };
 
 function loadProductionAsGlobal() {
+  // The sheet renders through print-templates.js now -- the shared file
+  // MApp loads too, so one lot is one document whichever shell printed it.
+  // Loaded first, as index.html loads it before the modules that call it.
+  const shared = fs
+    .readFileSync(path.join(__dirname, '..', 'print-templates.js'), 'utf8')
+    .replace(/^const PrintTemplates = /m, 'global.PrintTemplates = ');
+  // eslint-disable-next-line no-eval
+  eval(shared);
+
   const code = fs.readFileSync(path.join(__dirname, '..', 'production.js'), 'utf8');
   // eslint-disable-next-line no-eval
   eval(code);

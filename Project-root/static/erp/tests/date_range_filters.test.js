@@ -279,3 +279,71 @@ describe('every module that got one is wired end to end', () => {
     });
   });
 });
+
+describe('the filter toolbars stay one row', () => {
+  // The date inputs were dropped into flex toolbars as bare
+  // .form-control elements. Bootstrap gives that class width:100%, so in
+  // a flex row each one claims a full line: the Issued Stock toolbar went
+  // from a row to a four-high stack with the action button stranded
+  // beside it. Every test passed throughout, because none of them look at
+  // layout.
+  const FILES = ['production.html', 'dispatch.html', 'return_ledger.html'];
+
+  // The invariant that actually matters: a date input INSIDE an
+  // input-group must be fixed-width. Bootstrap's .form-control is
+  // width:100%, and a 100%-wide member of a flex group claims the whole
+  // line -- which is how the Issued Stock toolbar became a four-high
+  // stack. A filter that sits in its own column (Returns, Bills, POs) is
+  // meant to fill that column and is left alone.
+  const groupedDateInputs = html =>
+    [...html.matchAll(/<div\b[^>]*?class="[^"]*input-group[^"]*"[^>]*?>[\s\S]*?<\/div>/g)]
+      .flatMap(g => [...g[0].matchAll(/<input\b[^>]*?type="date"[^>]*?>/g)].map(m => m[0]));
+
+  test('every date input inside an input-group is fixed-width', () => {
+    let checked = 0;
+    FILES.forEach(file => {
+      groupedDateInputs(HTML(file)).forEach(tag => {
+        expect(tag).toMatch(/width:\s*\d+px/);
+        checked += 1;
+      });
+    });
+    // Guards the assertion against a regex that quietly matches nothing.
+    expect(checked).toBeGreaterThan(5);
+  });
+
+  test('each range is wrapped in an input-group so it reads as one control', () => {
+    // Three unlabelled date boxes in a row say nothing about which is
+    // which. The group carries the From/To words.
+    FILES.forEach(file => {
+      const html = HTML(file);
+      if (!html.includes('DateFrom')) return;
+      expect(html).toContain('input-group');
+      expect(html).toMatch(/>From</);
+      expect(html).toMatch(/>To</);
+    });
+  });
+
+  test('the clear button sits inside its group, beside the To input', () => {
+    // Loose in the row it wraps onto a line of its own, which is what the
+    // stacked toolbar looked like.
+    FILES.forEach(file => {
+      const html = HTML(file);
+      if (!html.includes('clearDateRange')) return;
+      const to = html.indexOf('DateTo');
+      const clear = html.indexOf('clearDateRange', to);
+      expect(clear).toBeGreaterThan(to);
+      // No element closes between them: same input-group.
+      expect(html.slice(to, clear)).not.toContain('</div>');
+    });
+  });
+
+  test('every clear button is reachable by name', () => {
+    FILES.forEach(file => {
+      const html = HTML(file);
+      [...html.matchAll(/<button\b[^>]*?clearDateRange[^>]*?>/gs)].forEach(m => {
+        expect(m[0]).toMatch(/aria-label=/);
+      });
+    });
+  });
+});
+

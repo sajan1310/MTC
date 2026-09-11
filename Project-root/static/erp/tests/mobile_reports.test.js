@@ -44,6 +44,16 @@ function mount() {
       <tbody id="print-report-body"></tbody></table>
       <div id="print-report-footer"></div>
     </div>
+    <div id="print-production-sheet-container">
+      <div id="print-prod-title"></div><div id="print-prod-date"></div>
+      <div id="print-prod-id"></div><div id="print-prod-name"></div>
+      <div id="print-prod-qty"></div>
+      <div id="print-prod-color-wrapper"><span id="print-prod-color"></span></div>
+      <div id="print-prod-common-section"><div id="print-production-sheet-common-tables"></div></div>
+      <div id="print-prod-matrix-section"><div id="print-production-sheet-matrix-tables"></div></div>
+      <div id="print-prod-subgroup-section"><div id="print-production-sheet-subgroup-tables"></div></div>
+      <div id="print-prod-remarks-section"><div id="print-prod-remarks"></div></div>
+    </div>
     <div id="print-low-stock-container">
       <div id="print-low-stock-subtitle"></div>
       <div id="print-low-stock-report-type"></div>
@@ -289,26 +299,34 @@ describe('which modules can print', () => {
 
   test("the production sheet is desktop's document, not a generic table", () => {
     // It goes to the floor with the lot. One printed from a phone must not
-    // be a different document from one printed from a desk.
+    // be a different document from one printed from a desk -- and it was,
+    // twice over: mobile first rendered a plain table, then the simpler
+    // builder desktop had already abandoned.
     let opts = null;
     MApp.Print.chooseAction = jest.fn(o => { opts = o; });
     MApp.ProductionSheet.lot = {
-      lotNumber: 'LOT-1', processName: 'Painting', date: '01/09/2026',
+      lotNumber: 'LOT-1', processName: 'Painting', dateRaw: '2026-09-01',
       productId: 'PRD-1', productName: 'Kalpi 26', qty: 40,
     };
     MApp.ProductionSheet.rows = [
-      { itemName: 'Paint', size: '', narration: '', color: 'Red', requiredQty: 2, sourceType: 'ITEM' },
+      { itemName: 'Primer', size: '', narration: '', color: '', requiredQty: 5 },
+      { itemName: 'Paint', size: '', narration: 'Gloss', color: 'Red', requiredQty: 2 },
     ];
     MApp.ProductionSheet.remarks = 'handle with care';
 
     MApp.ProductionSheet.printSheet();
 
-    const html = document.getElementById('print-report-container').innerHTML;
-    expect(html).toContain('Material Requirement Sheet');
-    expect(html).toContain('Kalpi 26');
-    expect(html).toContain('Paint');
-    expect(html).toContain('handle with care');
-    expect(opts.landscape).toBe(false);
+    // Desktop's container, filled by desktop's renderer.
+    expect(opts.containerId).toBe('print-production-sheet-container');
+    expect(document.getElementById('print-prod-title').innerText).toContain('Requirement Sheet');
+    expect(document.getElementById('print-prod-name').innerText).toBe('Kalpi 26');
+
+    const common = document.getElementById('print-production-sheet-common-tables').innerHTML;
+    expect(common).toContain('Primer');
+
+    const matrix = document.getElementById('print-production-sheet-matrix-tables').innerHTML;
+    expect(matrix).toContain('Paint(Gloss)');
+    expect(matrix).toContain('Red');
   });
 
   test("it prints the sheet's edited rows, not the lot's stored ones", () => {
@@ -319,12 +337,12 @@ describe('which modules can print', () => {
       lotNumber: 'LOT-1', qty: 1,
       componentsConsumed: [{ itemName: 'STALE ITEM', qty: 99 }],
     };
-    MApp.ProductionSheet.rows = [{ itemName: 'Corrected', size: '', narration: '', requiredQty: 5 }];
+    MApp.ProductionSheet.rows = [{ itemName: 'Corrected', size: '', narration: '', color: '', requiredQty: 5 }];
     MApp.ProductionSheet.remarks = '';
 
     MApp.ProductionSheet.printSheet();
 
-    const html = document.getElementById('print-report-container').innerHTML;
+    const html = document.getElementById('print-production-sheet-container').innerHTML;
     expect(html).toContain('Corrected');
     expect(html).not.toContain('STALE ITEM');
   });

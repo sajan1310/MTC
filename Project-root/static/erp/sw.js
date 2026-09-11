@@ -283,7 +283,20 @@
 // was rendering a plain generic table where desktop rendered the designed
 // sheet. stock.js and production.js now delegate, and the new file joins
 // the precache list.
-const CACHE_NAME = 'erp-shell-v61';
+// v62: the date-range inputs are grouped and fixed-width. Dropped into
+// the flex toolbars as bare .form-control elements they were width:100%
+// each, so every one claimed a line and the Issued Stock toolbar rendered
+// as a four-high stack with its action button stranded beside it. Markup
+// only, but the partials are server-rendered while the scripts are
+// precached, so the pair moves together.
+// v63: the Production Sheet's real renderer moves into the shared
+// print-templates.js, so the phone prints the same document a desk does --
+// the per-colour matrix, the clustering and the one-page fit, not a
+// simplified table. The second, abandoned builder is deleted so it cannot
+// be reached for again. production.js keeps only the step that gathers
+// what the sheet dialog is showing. LOAD-BEARING: it decides what the
+// floor receives on paper.
+const CACHE_NAME = 'erp-shell-v63';
 
 const PRECACHE_URLS = [
   '/erp/offline.html',

@@ -45,7 +45,8 @@
           <input type="date" id="returnDateTo" class="form-control"
                  aria-label="Returns to date" onchange="App.Return.filterByDateRange()">
           <button type="button" class="btn btn-outline-secondary btn-sm"
-                  title="Clear dates" onclick="App.Return.clearDateRange()">&times;</button>
+                  title="Clear dates" aria-label="Clear Returns dates"
+                  onclick="App.Return.clearDateRange()">&times;</button>
         </div>
         <small class="text-muted" style="display: block; margin-top: 4px;">Show everything between these dates</small>
       </div>
@@ -158,19 +159,28 @@
                style="min-width: 220px;"
                autocomplete="off"
                oninput="App.Utils.debouncedFilter(this, () => App.Wastage.filterData(this.value))">
-        <input type="date"
-               id="wastageDateFilter"
-               class="form-control form-control-sm"
-               style="min-width: 150px;"
-               onchange="App.Wastage.filterByDate(this.value)">
-        <input type="date" id="wastageDateFrom" class="form-control form-control-sm"
-               style="min-width: 140px;" title="Wastage: from"
-               aria-label="Wastage from date" onchange="App.Wastage.filterByDateRange()">
-        <input type="date" id="wastageDateTo" class="form-control form-control-sm"
-               style="min-width: 140px;" title="Wastage: to"
-               aria-label="Wastage to date" onchange="App.Wastage.filterByDateRange()">
-        <button type="button" class="btn btn-sm btn-outline-secondary" title="Clear dates"
-                onclick="App.Wastage.clearDateRange()">&times;</button>
+        <!-- Grouped and labelled, and fixed-width rather than left to
+             Bootstrap's width:100% -- bare inputs in a flex row each claim
+             a full line and turn the toolbar into a stack. "On" is the
+             exact-date filter, From/To the range; both apply. -->
+        <div class="input-group input-group-sm flex-nowrap" style="flex: 0 0 auto; width: auto;">
+          <span class="input-group-text">On</span>
+          <input type="date" id="wastageDateFilter" class="form-control form-control-sm"
+                 style="flex: 0 0 auto; width: 140px;" aria-label="Filter wastage by exact date"
+                 onchange="App.Wastage.filterByDate(this.value)">
+        </div>
+        <div class="input-group input-group-sm flex-nowrap" style="flex: 0 0 auto; width: auto;">
+          <span class="input-group-text">From</span>
+          <input type="date" id="wastageDateFrom" class="form-control form-control-sm"
+                 style="flex: 0 0 auto; width: 140px;"
+                 aria-label="Wastage from date" onchange="App.Wastage.filterByDateRange()">
+          <span class="input-group-text">To</span>
+          <input type="date" id="wastageDateTo" class="form-control form-control-sm"
+                 style="flex: 0 0 auto; width: 140px;"
+                 aria-label="Wastage to date" onchange="App.Wastage.filterByDateRange()">
+          <button type="button" class="btn btn-outline-secondary" title="Clear dates"
+                  aria-label="Clear wastage dates" onclick="App.Wastage.clearDateRange()">&times;</button>
+        </div>
         <button class="btn btn-sm btn-success fw-bold d-none" id="btnPrintSelectedWastage" type="button" onclick="App.Wastage.printSelected()" style="white-space: nowrap;">
           <i class="bi bi-printer"></i> Print Selected
         </button>
