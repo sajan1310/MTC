@@ -283,31 +283,43 @@ describe('which modules can print', () => {
   });
 });
 
-describe('the dashboard quick actions', () => {
+describe('the quick actions', () => {
   beforeEach(mount);
 
-  test('all five are wired to a real opener', () => {
-    ['po', 'bill', 'production', 'stock', 'issue'].forEach(key => {
-      expect(typeof MApp.Dashboard.ACTIONS[key]).toBe('function');
-      const call = MApp.Dashboard.ACTIONS[key].toString().match(/MApp\.(\w+)\.(\w+)/);
-      expect(call).not.toBeNull();
-      expect(typeof MApp[call[1]][call[2]]).toBe('function');
+  // They were the dashboard sheet's, dispatched through MApp.Dashboard.act.
+  // The dashboard is Home now and the sheet is gone, so Home's own row
+  // calls the modules directly -- one set of quick actions, not two.
+  const ACTIONS = [
+    ['MApp.PO.openNewSheet()', 'PO', 'openNewSheet'],
+    ['MApp.Bill.openForm(null)', 'Bill', 'openForm'],
+    ['MApp.Production.openLogLotSheet()', 'Production', 'openLogLotSheet'],
+    ['MApp.Dispatch.openNewDispatchSheet()', 'Dispatch', 'openNewDispatchSheet'],
+    ['MApp.Issue.openForm()', 'Issue', 'openForm'],
+  ];
+
+  test('Home offers all five', () => {
+    const home = VIEWS_HTML.slice(
+      VIEWS_HTML.indexOf('<template id="tpl-home">'),
+      VIEWS_HTML.indexOf('</template>', VIEWS_HTML.indexOf('<template id="tpl-home">'))
+    );
+    ACTIONS.forEach(([call]) => expect(home).toContain(call));
+  });
+
+  test('each names a module and method that exist', () => {
+    ACTIONS.forEach(([, mod, method]) => {
+      expect(MApp[mod]).toBeDefined();
+      expect(typeof MApp[mod][method]).toBe('function');
     });
   });
 
-  test('the markup offers exactly those five', () => {
-    ['po', 'bill', 'production', 'stock', 'issue'].forEach(key => {
-      expect(VIEWS_HTML).toContain(`MApp.Dashboard.act('${key}')`);
-    });
+  test('the retired dashboard sheet is gone, markup and all', () => {
+    // Dead markup for a sheet nothing opens is markup that drifts.
+    expect(VIEWS_HTML).not.toContain('sheet-dashboard');
+    expect(VIEWS_HTML).not.toContain('MApp.Dashboard.act');
   });
 
-  test('acting closes the dashboard first', () => {
-    MApp.Dashboard.close = jest.fn();
-    MApp.Dashboard.ACTIONS.po = jest.fn();
-
-    MApp.Dashboard.act('po');
-
-    expect(MApp.Dashboard.close).toHaveBeenCalled();
-    expect(MApp.Dashboard.ACTIONS.po).toHaveBeenCalled();
+  test('the dashboard renders into Home, not a sheet body', () => {
+    expect(MApp.Dashboard.CONTAINER_ID).toBe('home-dashboard');
+    expect(MApp.Dashboard.open).toBeUndefined();
   });
 });

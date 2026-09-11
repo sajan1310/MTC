@@ -139,47 +139,52 @@ describe('MApp.Dashboard', () => {
     contractorPayables: [{ contractorName: 'rakesh', balanceDue: 3000 }],
   };
 
+  // The dashboard is Home now, not a sheet behind a button: it renders
+  // into Home's own container and Home does the fetching, so these drive
+  // render() directly rather than an open() that no longer exists.
   beforeEach(() => {
-    mount('<div class="mb-sheet" id="sheet-dashboard"><div id="dashboard-body"></div></div>');
+    mount('<div id="home-dashboard"></div>');
     MApp.Api.call = jest.fn(async () => ({ success: true, data: DATA }));
   });
 
-  const body = () => document.getElementById('dashboard-body').textContent;
+  const body = () => document.getElementById('home-dashboard').textContent;
 
-  test('shows the KPIs the reduced mobile endpoint never returned', async () => {
-    await MApp.Dashboard.open();
+  test('shows the KPIs the reduced mobile endpoint never returned', () => {
+    MApp.Dashboard.render(DATA);
 
-    expect(MApp.Api.call).toHaveBeenCalledWith('getDashboardData');
     expect(body()).toContain('Open POs');
     expect(body()).toContain('₹12000.00');
     expect(body()).toContain('Contractor payables');
     expect(body()).toContain('₹3000.00');
   });
 
-  test('flags a long-waiting pending lot', async () => {
-    await MApp.Dashboard.open();
+  test('flags a long-waiting pending lot', () => {
+    MApp.Dashboard.render(DATA);
     expect(body()).toContain('12 day(s)');
   });
 
-  test('says how many low-stock rows were held back', async () => {
-    await MApp.Dashboard.open();
+  test('says how many low-stock rows were held back', () => {
+    MApp.Dashboard.render(DATA);
     expect(body()).toContain('+1 more');
   });
 
-  test('empty sections read as empty rather than broken', async () => {
-    MApp.Api.call = jest.fn(async () => ({ success: true, data: { kpis: {} } }));
-    await MApp.Dashboard.open();
+  test('empty sections read as empty rather than broken', () => {
+    MApp.Dashboard.render({ kpis: {} });
 
     expect(body()).toContain('Nothing below its threshold.');
     expect(body()).toContain('Nothing ready.');
     expect(body()).toContain('Nothing outstanding.');
   });
 
-  test('a failure offers a retry', async () => {
+  test('offline, it says so in place of the dashboard and offers a retry', async () => {
+    // It is the bulk of Home now, so leaving its skeletons pulsing would
+    // read as "still loading" forever.
+    document.body.innerHTML += '<div id="home-stats"></div><div id="home-activity"></div>';
     MApp.Api.call = jest.fn(async () => { throw new Error('offline'); });
-    await MApp.Dashboard.open();
 
-    expect(document.querySelector('#dashboard-body .mb-state-retry')).not.toBeNull();
+    await MApp.Home._loadFullData();
+
+    expect(document.querySelector('#home-dashboard .mb-state-retry')).not.toBeNull();
   });
 });
 
