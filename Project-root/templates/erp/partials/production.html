@@ -40,18 +40,21 @@
           <option value="qtyAsc">Qty (Low&ndash;High)</option>
           <option value="statusAsc">Status (A&ndash;Z)</option>
         </select>
-        <!-- Specific dates. This list had no date filter at all, so
-             "what happened last week" meant scrolling. Both ends
-             inclusive; either may be left blank. -->
-        <input type="date" id="productionDateFrom" class="form-control" style="max-width: 160px;"
-               title="Production lots: from" aria-label="Production lots from date"
-               onchange="App.Production.filterByDateRange()">
-        <span class="text-muted small">to</span>
-        <input type="date" id="productionDateTo" class="form-control" style="max-width: 160px;"
-               title="Production lots: to" aria-label="Production lots to date"
-               onchange="App.Production.filterByDateRange()">
-        <button type="button" class="btn btn-outline-secondary" title="Clear dates"
-                onclick="App.Production.clearDateRange()">&times;</button>
+        <!-- Grouped and fixed-width: Bootstrap's .form-control is
+             width:100%, so bare inputs in a flex row each claim a full
+             line and the toolbar becomes a stack. -->
+        <div class="input-group flex-nowrap" style="flex: 0 0 auto; width: auto;">
+          <span class="input-group-text">From</span>
+          <input type="date" id="productionDateFrom" class="form-control"
+                 style="flex: 0 0 auto; width: 148px;"
+                 aria-label="Production lots from date" onchange="App.Production.filterByDateRange()">
+          <span class="input-group-text">To</span>
+          <input type="date" id="productionDateTo" class="form-control"
+                 style="flex: 0 0 auto; width: 148px;"
+                 aria-label="Production lots to date" onchange="App.Production.filterByDateRange()">
+          <button type="button" class="btn btn-outline-secondary" title="Clear dates"
+                  aria-label="Clear Production lots dates" onclick="App.Production.clearDateRange()">&times;</button>
+        </div>
       </div>
       <div class="d-flex gap-2 flex-wrap justify-content-end">
         <button class="btn btn-outline-dark fw-bold shadow-sm d-none" id="btnBulkPrintProduction" type="button"
@@ -146,20 +149,38 @@
        directly. -->
   <div id="issuedStockSubTab" class="production-sub-tab" style="display:none;">
     <div class="d-flex justify-content-between flex-wrap gap-2 mb-3">
-      <div class="d-flex flex-wrap gap-2 align-items-center" style="max-width: 900px;">
-        <input type="text" id="searchIssue" class="form-control" style="min-width:220px;"
+      <!-- One row. Bootstrap's .form-control is width:100%, so bare inputs
+           in a flex row each claim a full line and the toolbar becomes a
+           stack -- which is what three date boxes turned it into. The
+           search flexes, the dates are fixed-width and grouped, and the
+           whole thing only wraps once the viewport genuinely cannot hold
+           it.
+
+           The dates are labelled because three unlabelled boxes in a row
+           say nothing: "On" is the single-date filter, "From"/"To" the
+           range, and they are separate controls that both apply. -->
+      <div class="d-flex flex-wrap gap-2 align-items-center flex-grow-1">
+        <input type="text" id="searchIssue" class="form-control"
+          style="flex: 1 1 240px; min-width: 200px;"
           placeholder="Search by Issue #, Issued To, Reference, or item…" aria-label="Search issued stock" autocomplete="off"
           oninput="App.Utils.debouncedFilter(this, () => App.Issue.filterData(this.value))">
-        <input type="date" id="issueDateFilter" class="form-control" style="min-width:150px;"
-          aria-label="Filter by date" onchange="App.Issue.filterByDate(this.value)">
-        <input type="date" id="issueDateFrom" class="form-control form-control-sm"
-               style="min-width: 140px;" title="Issued stock: from"
-               aria-label="Issued stock from date" onchange="App.Issue.filterByDateRange()">
-        <input type="date" id="issueDateTo" class="form-control form-control-sm"
-               style="min-width: 140px;" title="Issued stock: to"
-               aria-label="Issued stock to date" onchange="App.Issue.filterByDateRange()">
-        <button type="button" class="btn btn-sm btn-outline-secondary" title="Clear dates"
-                onclick="App.Issue.clearDateRange()">&times;</button>
+
+        <div class="input-group flex-nowrap" style="flex: 0 0 auto; width: auto;">
+          <span class="input-group-text">On</span>
+          <input type="date" id="issueDateFilter" class="form-control" style="flex: 0 0 auto; width: 148px;"
+            aria-label="Filter by exact date" onchange="App.Issue.filterByDate(this.value)">
+        </div>
+
+        <div class="input-group flex-nowrap" style="flex: 0 0 auto; width: auto;">
+          <span class="input-group-text">From</span>
+          <input type="date" id="issueDateFrom" class="form-control" style="flex: 0 0 auto; width: 148px;"
+                 aria-label="Issued stock from date" onchange="App.Issue.filterByDateRange()">
+          <span class="input-group-text">To</span>
+          <input type="date" id="issueDateTo" class="form-control" style="flex: 0 0 auto; width: 148px;"
+                 aria-label="Issued stock to date" onchange="App.Issue.filterByDateRange()">
+          <button type="button" class="btn btn-outline-secondary" title="Clear dates"
+                  aria-label="Clear dates" onclick="App.Issue.clearDateRange()">&times;</button>
+        </div>
       </div>
       <div class="d-flex gap-2 flex-wrap justify-content-end">
         <button class="btn btn-outline-dark fw-bold shadow-sm d-none" id="btnBulkPrintIssue" type="button"
