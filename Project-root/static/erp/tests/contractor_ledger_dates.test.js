@@ -253,3 +253,52 @@ describe('the shared range predicate', () => {
     expect(App.Utils.inDateRange('2026-02-01', '', '2026-01-01', '2026-01-31')).toBe(false);
   });
 });
+
+describe('where things sit on the ledger tab', () => {
+  const HTML = fs.readFileSync(
+    path.join(__dirname, '..', '..', '..', 'templates', 'erp', 'partials', 'contractors.html'),
+    'utf8'
+  );
+
+  // Order asserted by position in the markup, because the complaint was
+  // about order: recording a payment sat after the table, so the operator
+  // scrolled past every lot on the account to reach it -- past MORE of
+  // them the longer the contractor had been working. The one action on
+  // this screen got harder to reach the more it was used.
+  const at = needle => {
+    const i = HTML.indexOf(needle);
+    expect(i).toBeGreaterThan(-1);
+    return i;
+  };
+
+  test('the date window comes before the totals', () => {
+    expect(at('id="ledgerDateFrom"')).toBeLessThan(at('id="ledgerTotalPayable"'));
+  });
+
+  test('recording a payment sits under the totals it changes', () => {
+    expect(at('id="ledgerBalanceDue"')).toBeLessThan(at('Record a Payment'));
+  });
+
+  test('...and above the table, not below it', () => {
+    expect(at('id="paymentFormAmount"')).toBeLessThan(at('id="contractorLedgerBody"'));
+    expect(at('App.Contractor.recordPayment()')).toBeLessThan(at('id="contractorLedgerBody"'));
+  });
+
+  test('pagination is last, and outside the scrolling table', () => {
+    // Inside .table-responsive it would scroll horizontally with the table
+    // and sit below its own scrollbar.
+    expect(at('id="contractorLedgerBody"')).toBeLessThan(at('id="contractorLedgerPagination"'));
+    const afterTable = HTML.slice(at('id="contractorLedgerBody"'));
+    const closeWrapper = afterTable.indexOf('</table>');
+    const pagination = afterTable.indexOf('id="contractorLedgerPagination"');
+    expect(closeWrapper).toBeLessThan(pagination);
+  });
+
+  test('the note still describes where payments are recorded', () => {
+    // It said "recorded below" when the form was below. It is not any more.
+    const note = HTML.slice(at('Payable rows are computed live'), at('Payable rows are computed live') + 260);
+    expect(note).toContain('above');
+    expect(note).not.toContain('recorded below');
+  });
+});
+
