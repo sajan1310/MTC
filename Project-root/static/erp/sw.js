@@ -266,7 +266,12 @@
 // precached, so an installed client would render the new markup -- which
 // comes from the server -- against old scripts with no filterByDateRange
 // on them: two date inputs that do nothing. LOAD-BEARING.
-const CACHE_NAME = 'erp-shell-v58';
+// v59: the contractor ledger's Record a Payment form moves above the
+// table, directly under the totals it changes -- below it, the operator
+// scrolled past every lot on the account to reach it. Markup-only, but the
+// ledger tab's partial is server-rendered while contractor.js is precached,
+// so the pair has to move together.
+const CACHE_NAME = 'erp-shell-v59';
 
 const PRECACHE_URLS = [
   '/erp/offline.html',

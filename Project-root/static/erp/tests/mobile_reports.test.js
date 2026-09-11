@@ -297,6 +297,17 @@ describe('the quick actions', () => {
     ['MApp.Issue.openForm()', 'Issue', 'openForm'],
   ];
 
+  test('the row is labelled, like the Go-to row beside it', () => {
+    // It sat unlabelled above a labelled "Go to" row, so the one section
+    // with a name implied the other had none.
+    const home = VIEWS_HTML.slice(
+      VIEWS_HTML.indexOf('<template id="tpl-home">'),
+      VIEWS_HTML.indexOf('</template>', VIEWS_HTML.indexOf('<template id="tpl-home">'))
+    );
+    expect(home).toContain('>Quick actions<');
+    expect(home.indexOf('>Quick actions<')).toBeLessThan(home.indexOf('>Go to<'));
+  });
+
   test('Home offers all five', () => {
     const home = VIEWS_HTML.slice(
       VIEWS_HTML.indexOf('<template id="tpl-home">'),

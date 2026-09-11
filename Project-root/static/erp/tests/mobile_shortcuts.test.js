@@ -176,3 +176,35 @@ describe('when storage is unavailable', () => {
     expect(() => MApp.Shortcuts.render()).not.toThrow();
   });
 });
+
+// These read the REAL Home template rather than the fixture above.
+//
+// The fixture is what let a regression through: an edit to the quick-action
+// row took the "Go to" heading and its comment with it, and every test here
+// went on passing because they mount their own markup. A container the app
+// never renders into is a container the app cannot use.
+describe('the row as Home actually ships it', () => {
+  const HOME = (() => {
+    const at = VIEWS_HTML.indexOf('<template id="tpl-home">');
+    return VIEWS_HTML.slice(at, VIEWS_HTML.indexOf('</template>', at));
+  })();
+
+  test('Home really has the container this module renders into', () => {
+    expect(HOME).toContain('id="home-shortcuts"');
+  });
+
+  test('and it is labelled', () => {
+    expect(HOME).toContain('>Go to<');
+  });
+
+  test('the label sits immediately before the row, not after it', () => {
+    expect(HOME.indexOf('>Go to<')).toBeLessThan(HOME.indexOf('id="home-shortcuts"'));
+  });
+
+  test('the quick actions above it are labelled too', () => {
+    // One section named and the next not reads as an oversight.
+    expect(HOME).toContain('>Quick actions<');
+    expect(HOME.indexOf('>Quick actions<')).toBeLessThan(HOME.indexOf('>Go to<'));
+  });
+});
+
