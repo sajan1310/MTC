@@ -987,6 +987,85 @@ textarea:focus-visible,
   height: 104px;
 }
 
+/* ── Production lot card footer ──────────────────────────────────────────
+   Status and date on one side, actions on the other.
+   
+   The card used to stack lot number, process, date, status and three text
+   links all down the left edge, with the quantity marooned on the right --
+   a tall left column and an empty right one. Status and date belong
+   together (what state is this lot in, and since when) and the actions
+   belong opposite them, which balances the card and puts the destructive
+   one furthest from the thumb's resting position.
+
+   wrap, because a long status word plus a date can exceed a 320px card;
+   the actions drop to their own line rather than squeezing the chip. */
+.mapp-lot-footer {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--mb-sp-3);
+  flex-wrap: wrap;
+}
+
+.mapp-lot-meta {
+  display: flex;
+  align-items: center;
+  gap: var(--mb-sp-3);
+  min-width: 0;
+}
+
+.mapp-lot-date {
+  font-size: 0.8125rem;
+  color: var(--mb-steel);
+  white-space: nowrap;
+}
+
+.mapp-lot-actions {
+  display: flex;
+  align-items: center;
+  gap: var(--mb-sp-2);
+  margin-left: auto;
+}
+
+/* Icon buttons rather than three words in a row. The words were plain text
+   links with padding:0 -- a target far under the 44px minimum, sitting
+   close enough together that Delete was a slip away from Edit. These are
+   square, spaced, and Delete is the only one that carries colour. */
+.mapp-lot-action {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: var(--mb-tap-min);
+  height: var(--mb-tap-min);
+  padding: 0;
+  border: 1px solid var(--mb-steel-faint);
+  border-radius: var(--mb-radius-sm);
+  background: var(--mb-surface);
+  color: var(--mb-steel);
+  cursor: pointer;
+  transition: background var(--mb-motion-fast), color var(--mb-motion-fast), border-color var(--mb-motion-fast);
+}
+
+.mapp-lot-action svg { width: 18px; height: 18px; }
+
+.mapp-lot-action:active {
+  background: var(--mb-surface-sunk);
+  color: var(--mb-ink);
+}
+
+/* The one that cannot be undone says so before it is pressed, not after. */
+.mapp-lot-action-danger { color: var(--mb-enamel-red-ink); }
+
+.mapp-lot-action-danger:active {
+  background: var(--mb-enamel-red-bg);
+  color: var(--mb-enamel-red-ink);
+  border-color: var(--mb-enamel-red-ink);
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .mapp-lot-action { transition: none; }
+}
+
 /* A screen title with an action beside it. The top bar is shared by every
    tab, so a per-screen action cannot live there -- it would appear on Home
    and Dispatch too, where it means nothing. */

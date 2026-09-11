@@ -16,7 +16,7 @@
 // open. This does NOT import mobile.js itself -- that file is full of
 // DOM/UI code that assumes a live page and would throw immediately in
 // a worker.
-const CACHE_NAME = 'erp-mobile-shell-v50';
+const CACHE_NAME = 'erp-mobile-shell-v52';
 
 // The shell's own scripts and stylesheet carry ?v=<n>, matching what
 // pages.py renders into mobile.html (it reads this same CACHE_NAME, so
@@ -54,6 +54,7 @@ const PRECACHE_URLS = [
   '/erp/mobile/offline.html',
   `/static/erp/api.js?v=${ASSET_V}`,
   `/static/erp/offline-cache.js?v=${ASSET_V}`,
+  `/static/erp/print-templates.js?v=${ASSET_V}`,
   `/static/erp/mobile.js?v=${ASSET_V}`,
   `/static/erp/mobile_styles.css?v=${ASSET_V}`,
   '/static/erp/icons/icon-192.png',

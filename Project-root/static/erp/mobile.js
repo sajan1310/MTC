@@ -1797,6 +1797,17 @@ MApp.Print = {
     });
   },
 
+  // The masthead for a document built in JS rather than cloned from a
+  // static template. Mirrors desktop's App.Print.brandHeaderHtml exactly,
+  // because PrintTemplates renders the same document from either shell and
+  // the two mastheads have to be the same masthead.
+  brandHeaderHtml(BRAND) {
+    if (this.companyLogo) {
+      return `<img src="${MApp.Util.escapeHtml(this.companyLogo)}" style="max-height:60px;max-width:220px;object-fit:contain;display:block;margin:0 auto;-webkit-print-color-adjust:exact;print-color-adjust:exact;">`;
+    }
+    return `<div style="font-size:32px;font-weight:800;color:${BRAND};letter-spacing:2px;text-transform:uppercase;font-family:'Segoe UI',Arial,sans-serif;-webkit-print-color-adjust:exact;print-color-adjust:exact;">Maharaja Bikes</div>`;
+  },
+
   // callCached, not call: printing is a shop-floor action and the factory
   // LAN is not reliable, so the logo has to survive an outage the same way
   // Home/Stock/Production/Dispatch data does. Best-effort throughout --
@@ -2021,6 +2032,45 @@ MApp.Print = {
     if (picked.value === 'print') { this.trigger(containerId, filename); return; }
     if (picked.value === 'download') { await this.download(containerId, filename, { landscape }); return; }
     await this.share(containerId, filename, { landscape });
+  },
+
+  // The stock / Warehouse Pool pivot, into desktop's own template.
+  //
+  // #print-low-stock-container is in the shared partials/print.html that
+  // mobile.html already includes, and PrintTemplates builds its rows -- so
+  // this is desktop's document, filled from the phone, rather than a
+  // mobile-shaped imitation of it.
+  //
+  // Landscape: the pivot grows a column per size, so a warehouse with a
+  // dozen of them needs the long edge of the page more than it needs
+  // smaller type.
+  pivot(items, poolItems, { reportType, subtitle, emptyMessage, filename }) {
+    const { headerHtml, bodyHtml } = PrintTemplates.stockPivotMarkup(
+      items, poolItems, emptyMessage,
+      // MApp.Production owns it, not MApp.Util -- same helper desktop's
+      // App.Utils exposes, just a different home in this shell.
+      { sizeFromOutputItemName: n => MApp.Production.getSizeFromOutputItemName(n) }
+    );
+
+    const set = (id, html, asText) => {
+      const el = document.getElementById(id);
+      if (!el) return;
+      if (asText) el.innerText = html; else el.innerHTML = html;
+    };
+
+    return this.chooseAction({
+      containerId: 'print-low-stock-container',
+      filename: filename || 'Report',
+      title: reportType || 'Report',
+      landscape: true,
+      populate: () => {
+        set('print-low-stock-header-row', headerHtml);
+        set('print-low-stock-body', bodyHtml);
+        set('print-low-stock-subtitle', subtitle || '', true);
+        set('print-low-stock-report-type', reportType || '', true);
+        set('print-low-stock-date', new Date().toLocaleDateString('en-GB'), true);
+      }
+    });
   },
 
   // ── Reports ──────────────────────────────────────────────────────────
@@ -3114,21 +3164,22 @@ MApp.Stock = {
   // the low-stock filter included -- because a report that silently ignores
   // the filter you set is a different document from the one you are looking
   // at.
+  // The SAME pivot desktop prints -- items down the page, sizes across it
+  // -- not a flat list. A warehouse carries one item in a dozen sizes, and
+  // a row per combination is a report nobody reads. This rendered exactly
+  // that until the builder became shared.
+  //
+  // Prints what is ON SCREEN, filters included: a report that silently
+  // ignored the low-stock filter you set is a different document from the
+  // one you are looking at.
   printReport() {
     const rows = this.filtered || [];
     const low = !!this._lowStockOnly;
-    MApp.Print.report({
-      title: low ? 'Low Stock Report' : 'Stock List',
-      subtitle: `${rows.length} item(s)${this.searchTerm ? ` matching "${this.searchTerm}"` : ''} \u00b7 ${MApp.Util.formatDateDisplay(new Date().toISOString())}`,
-      filename: low ? 'Low_Stock_Report' : 'Stock_List',
-      columns: [
-        { label: 'Item', get: r => r.name },
-        { label: 'Size', get: r => r.size || 'General' },
-        { label: 'Unit', get: r => r.unit || '' },
-        { label: 'In stock', align: 'right', get: r => MApp.Util.formatQty(r.currentStock) },
-        { label: 'Threshold', align: 'right', get: r => (r.threshold == null || r.threshold === '' ? '' : MApp.Util.formatQty(r.threshold)) }
-      ],
-      rows
+    MApp.Print.pivot(rows, [], {
+      reportType: low ? 'Inventory Alert (Low Stock)' : 'Stock Report',
+      subtitle: low ? 'Items at or below their threshold' : 'Inventory Status Report',
+      emptyMessage: low ? 'Nothing is below its threshold.' : 'No stock records found.',
+      filename: low ? 'Low_Stock_Report' : 'Stock_List'
     });
   },
 
@@ -3459,25 +3510,34 @@ MApp.Production = {
               <div>
                 <div class="mb-card-title">${MApp.Util.escapeHtml(l.lotNumber)}</div>
                 <div class="mb-card-sub">${MApp.Util.escapeHtml(processName)}</div>
-                <!-- The date was searchable (see the 'date' search key
-                     above) but never shown, so a lot could be found by a
-                     date the card then refused to display. On a floor
-                     where "which lot did we run Tuesday" is an ordinary
-                     question, that is the first thing being looked for. -->
-                <div class="mb-card-sub">${MApp.Util.escapeHtml(MApp.Util.formatDateDisplay(l.dateRaw) || '—')}</div>
               </div>
               <div style="text-align:right;">
                 <div class="mb-card-number">${l.qty}</div>
                 <div class="mb-card-sub">${MApp.Util.escapeHtml(MApp.Util.formatNameCase(l.assignedTo) || '—')}</div>
               </div>
             </div>
-            <div class="mb-mt-2">
-              <button type="button" class="mb-chip ${MApp.Util.statusChipClass(l.status)}" style="border:none;cursor:pointer;min-height:var(--mb-tap-min);" data-lot-action="status" data-lot-index="${i}">${MApp.Util.escapeHtml(l.status || 'Pending')} ▾</button>
-            </div>
-            <div class="mb-mt-2" style="display:flex; gap:var(--mb-sp-4);">
-              <button type="button" class="mb-btn-text" style="padding:0;min-height:auto;" data-lot-action="edit" data-lot-index="${i}">Edit</button>
-              <button type="button" class="mb-btn-text" style="padding:0;min-height:auto;" data-lot-action="sheet" data-lot-index="${i}">Sheet</button>
-              <button type="button" class="mb-btn-text" style="padding:0;min-height:auto;color:var(--mb-enamel-red-ink);" data-lot-action="delete" data-lot-index="${i}">Delete</button>
+            <!-- Status and date together on the left, actions on the right.
+                 The date was stacked under the process name, which left
+                 everything hugging the left edge with the quantity marooned
+                 opposite it; it belongs beside the status because the two
+                 are read as one thought -- what state is this lot in, and
+                 since when. -->
+            <div class="mapp-lot-footer mb-mt-2">
+              <div class="mapp-lot-meta">
+                <button type="button" class="mb-chip ${MApp.Util.statusChipClass(l.status)}" style="border:none;cursor:pointer;" data-lot-action="status" data-lot-index="${i}">${MApp.Util.escapeHtml(l.status || 'Pending')} ▾</button>
+                <span class="mapp-lot-date">${MApp.Util.escapeHtml(MApp.Util.formatDateDisplay(l.dateRaw) || '—')}</span>
+              </div>
+              <div class="mapp-lot-actions">
+                <button type="button" class="mapp-lot-action" title="Edit lot" aria-label="Edit lot" data-lot-action="edit" data-lot-index="${i}">
+                  <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 20h9"/><path d="M16.5 3.5a2.1 2.1 0 0 1 3 3L7 19l-4 1 1-4z"/></svg>
+                </button>
+                <button type="button" class="mapp-lot-action" title="Production sheet" aria-label="Production sheet" data-lot-action="sheet" data-lot-index="${i}">
+                  <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M6 2h9l3 3v17H6z"/><path d="M9 9h6M9 13h6M9 17h4"/></svg>
+                </button>
+                <button type="button" class="mapp-lot-action mapp-lot-action-danger" title="Delete lot" aria-label="Delete lot" data-lot-action="delete" data-lot-index="${i}">
+                  <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M4 7h16"/><path d="M10 11v6M14 11v6"/><path d="M6 7l1 13h10l1-13"/><path d="M9 7V4h6v3"/></svg>
+                </button>
+              </div>
             </div>
           </div>`;
       }).join('') + MApp.Paging.moreHtml(page);
@@ -11177,31 +11237,42 @@ MApp.ProductionSheet = {
   // One row per component, grouped by colour down the page the same way
   // the screen groups them -- the printed sheet and the screen it came
   // from have to be the same document.
+  // The SAME document desktop prints, from the shared builder -- a sheet
+  // printed from a phone must not be a different document from one printed
+  // from a desk, and it used to be: this rendered a plain generic table
+  // while desktop rendered the designed Material Requirement Sheet.
+  //
+  // The sheet's own edited rows are what goes on it, not the lot's stored
+  // componentsConsumed: this screen exists to correct that list, and
+  // printing the uncorrected one would hand the floor the numbers the
+  // operator had just finished changing.
   printSheet() {
     const lot = this.lot || {};
-    const rows = (this.rows || []).map(r => ({
-      ...r,
-      colorLabel: r.color || 'Common'
-    })).sort((a, b) => a.colorLabel.localeCompare(b.colorLabel));
+    const html = PrintTemplates.productionSheetPage({
+      ...lot,
+      componentsConsumed: (this.rows || []).map(r => ({
+        itemName: r.itemName,
+        size: r.size,
+        narration: r.narration,
+        sourceType: r.sourceType,
+        qty: r.requiredQty,
+        color: r.color
+      })),
+      sheetRemarks: this.remarks || ''
+    }, {
+      formatQty: v => MApp.Util.formatQty(v),
+      brandHeaderHtml: colour => MApp.Print.brandHeaderHtml(colour),
+      requirementSheetTitle: () => `${lot.processName || lot.processId || ''} Material Requirement Sheet`.trim()
+    });
 
-    MApp.Print.report({
-      title: `Production Sheet \u2014 ${lot.lotNumber || ''}`,
-      subtitle: [
-        lot.processName || lot.processId || '',
-        lot.assignedTo ? `Assigned to ${MApp.Util.formatNameCase(lot.assignedTo)}` : '',
-        MApp.Util.formatDateDisplay(lot.dateRaw)
-      ].filter(Boolean).join(' \u00b7 '),
+    const host = document.getElementById('print-report-container');
+    if (host) host.innerHTML = html;
+
+    return MApp.Print.chooseAction({
+      containerId: 'print-report-container',
       filename: `Production_Sheet_${lot.lotNumber || 'lot'}`,
-      landscape: false,
-      columns: [
-        { label: 'Colour', get: r => r.colorLabel },
-        { label: 'Item', get: r => r.itemName },
-        { label: 'Size', get: r => r.size || '' },
-        { label: 'Narration', get: r => r.narration || '' },
-        { label: 'Required', align: 'right', get: r => MApp.Util.formatQty(r.requiredQty) }
-      ],
-      rows,
-      footer: this.remarks ? `Remarks: ${this.remarks}` : ''
+      title: `Production Sheet ${lot.lotNumber || ''}`.trim(),
+      landscape: false
     });
   },
 
@@ -12128,25 +12199,19 @@ MApp.Pool = {
   // still stock movement somebody may need to see, it simply is not units,
   // and a report that dropped those rows would not reconcile against the
   // screen that lists them.
+  // Desktop's bulkPrintWarehousePool renders the pool through the SAME
+  // pivot the stock report uses, so this does too -- one document, one
+  // layout, whichever shell printed it.
+  //
+  // Sub-group buckets go in as pool rows like any other: they are real
+  // movement somebody may need to see, and the pivot names each bucket in
+  // full (item, tag, colour) so what is and is not units stays legible.
   printReport() {
-    const rows = this.filtered || [];
-    const units = rows.filter(r => r.countsTowardTotal !== false);
-    const total = units.reduce((a, r) => a + (Number(r.availableQty) || 0), 0);
-    MApp.Print.report({
-      title: 'Warehouse Pool',
-      subtitle: `${rows.length} bucket(s)${this.searchTerm ? ` matching "${this.searchTerm}"` : ''}`,
-      filename: 'Warehouse_Pool',
-      columns: [
-        { label: 'Output item', get: r => r.outputItemName },
-        { label: 'Tag', get: r => r.productTag || '' },
-        { label: 'Colour', get: r => r.color || '' },
-        { label: 'Produced', align: 'right', get: r => MApp.Util.formatQty(r.producedQty) },
-        { label: 'Consumed', align: 'right', get: r => MApp.Util.formatQty(r.consumedQty) },
-        { label: 'Available', align: 'right', get: r => MApp.Util.formatQty(r.availableQty) },
-        { label: 'Counts', align: 'center', get: r => (r.countsTowardTotal === false ? 'Sub-group' : 'Units') }
-      ],
-      rows,
-      footer: `Total available (units only): ${MApp.Util.formatQty(total)}`
+    MApp.Print.pivot([], this.filtered || [], {
+      reportType: 'Warehouse Pool',
+      subtitle: 'Work in progress between process stages',
+      emptyMessage: 'No pool buckets found.',
+      filename: 'Warehouse_Pool'
     });
   },
 

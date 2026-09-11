@@ -183,6 +183,11 @@
        MApp.Api.callCached references OfflineCache directly. -->
   <script src="{{ url_for('static', filename='erp/offline-cache.js') }}?v={{ asset_v }}"></script>
 
+  <!-- The documents both shells print (production sheet, stock/pool pivot).
+       Shared with desktop so a sheet printed from a phone is the same
+       document as one printed from a desk. -->
+  <script src="{{ url_for('static', filename='erp/print-templates.js') }}?v={{ asset_v }}"></script>
+
   <!-- Mobile app logic -->
   <script src="{{ url_for('static', filename='erp/mobile.js') }}?v={{ asset_v }}"></script>
 </body>
