@@ -863,11 +863,22 @@ def create_app(config_name: str | None = None) -> Flask:
     # Note the intended fix for a LAN deployment is still a certificate --
     # an internal CA or self-signed cert restores Secure cookies and HSTS.
     # This only stops plain http failing in a way nobody can diagnose.
+    # SameSite comes from config, not a literal. ProductionConfig asks for
+    # "Lax" (config.py) and this block used to overrule it with "Strict",
+    # which silently breaks Google sign-in: the browser withholds the session
+    # cookie on a cross-site top-level navigation, and Google's redirect back
+    # to /auth/google/callback is exactly that. The callback then finds no
+    # oauth_state and fails closed -- the "Invalid OAuth state" dead end
+    # _oauth_retry describes, reported there as a network timeout because
+    # that is what it looks like from the inside.
+    #
+    # Nothing rests on Strict here: CSRFProtect is registered app-wide above,
+    # so state-changing requests carry a token regardless of SameSite.
     if not app.debug:
         app.config.update(
             SESSION_COOKIE_SECURE=serve_over_https,
             SESSION_COOKIE_HTTPONLY=True,
-            SESSION_COOKIE_SAMESITE="Strict",
+            SESSION_COOKIE_SAMESITE=app.config.get("SESSION_COOKIE_SAMESITE", "Lax"),
         )
     else:
         app.config.update(SESSION_COOKIE_HTTPONLY=True, SESSION_COOKIE_SAMESITE="Lax")
@@ -946,7 +957,7 @@ def create_app(config_name: str | None = None) -> Flask:
             force_https=serve_over_https,
             session_cookie_secure=serve_over_https,
             session_cookie_http_only=True,
-            session_cookie_samesite="Strict" if not app.debug else "Lax",
+            session_cookie_samesite=app.config.get("SESSION_COOKIE_SAMESITE", "Lax"),
             strict_transport_security=serve_over_https,
         )
 

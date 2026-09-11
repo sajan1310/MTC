@@ -275,7 +275,10 @@
    read a long item name, or because it is lying on a bench -- lost most of
    its list to chrome. Trim the two bars and the content padding; the tap
    targets inside them are untouched. */
-@media (orientation: landscape) and (max-height: 480px) {
+/* 560px, not 480px: a current large phone is ~430px tall sideways but the
+   taller ones (and a small tablet held landscape) sat just above the old
+   ceiling and got no relief at all. */
+@media (orientation: landscape) and (max-height: 560px) {
   :root {
     --mb-topbar-h: 44px;
     --mb-tabbar-h: 52px;
@@ -286,6 +289,26 @@
   .mapp-tab svg { width: 20px; height: 20px; }
   .mapp-content { padding-top: var(--mb-sp-2); }
   .mapp-screen-title { margin-bottom: var(--mb-sp-2); }
+}
+
+/* ── Wide viewports: hold a measure ───────────────────────────────────────
+   The rule above trimmed the chrome so a sideways phone kept its rows. It
+   never addressed the WIDTH, which is the half that actually makes landscape
+   feel unbuilt: every screen is one column, so at 900px a card title runs
+   the full width of the glass and the eye loses the line returning to the
+   next one. Grids already fill that width (auto-fit, above); text should
+   not.
+
+   Centred with auto side padding rather than a max-width on the container,
+   because .mapp-content is the scroll box -- constraining it would inset the
+   scrollbar and clip the sheets that position against it. Sheet bodies get
+   the same treatment, since a sheet is full-screen and has the same problem.
+   `max()` keeps the normal phone padding as the floor. */
+@media (min-width: 46rem) {
+  .mapp-content,
+  .mb-sheet-body {
+    padding-inline: max(var(--mb-sp-4), calc((100% - 58rem) / 2));
+  }
 }
 
 /* ── Reset & base ────────────────────────────────────────────────────── */
@@ -509,6 +532,83 @@ textarea:focus-visible,
   z-index: 40;
 }
 
+/* ── Side drawer ─────────────────────────────────────────────────────────
+   Every module, one tap from any screen. Slides from the left so the
+   gesture matches the hamburger that opens it, and sits above the tab bar
+   (z-index 40) and below a sheet (101): a sheet opened FROM the drawer
+   must cover it, or the operator is looking at two navigation surfaces at
+   once. */
+.mapp-drawer-backdrop {
+  position: fixed;
+  inset: 0;
+  background: rgb(0 0 0 / 45%);
+  z-index: 60;
+}
+
+.mapp-drawer {
+  position: fixed;
+  top: 0;
+  left: 0;
+  bottom: 0;
+  width: min(20rem, 86vw);
+  display: flex;
+  flex-direction: column;
+  background: var(--mb-surface);
+  box-shadow: var(--mb-shadow-sheet, 0 0 24px rgb(0 0 0 / 30%));
+  z-index: 61;
+  transform: translateX(-100%);
+  transition: transform var(--mb-motion-base);
+  overscroll-behavior: contain;
+}
+
+.mapp-drawer.open { transform: translateX(0); }
+
+@media (prefers-reduced-motion: reduce) {
+  .mapp-drawer { transition: none; }
+}
+
+.mapp-drawer-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--mb-sp-3);
+  padding: max(var(--mb-sp-4), env(safe-area-inset-top)) var(--mb-sp-3) var(--mb-sp-3) var(--mb-sp-4);
+  border-bottom: 1px solid var(--mb-steel-faint);
+}
+
+.mapp-drawer-title {
+  font-size: 1.0625rem;
+  font-weight: 700;
+  color: var(--mb-ink);
+}
+
+.mapp-drawer-body {
+  flex: 1 1 auto;
+  overflow-y: auto;
+  -webkit-overflow-scrolling: touch;
+  padding: var(--mb-sp-3) var(--mb-sp-3) calc(var(--mb-sp-6) + env(safe-area-inset-bottom));
+}
+
+/* Full-width rows rather than cards: a drawer is a list of destinations,
+   and the tap target is the row. min-height keeps it thumb-sized even
+   though the label is a single line. */
+.mapp-drawer-item {
+  display: block;
+  width: 100%;
+  min-height: var(--mb-tap-min);
+  padding: var(--mb-sp-3) var(--mb-sp-3) var(--mb-sp-3) var(--mb-sp-5);
+  border: none;
+  background: none;
+  color: var(--mb-ink);
+  font: inherit;
+  font-size: 0.9375rem;
+  text-align: left;
+  border-radius: var(--mb-radius-sm);
+  cursor: pointer;
+}
+
+.mapp-drawer-item:active { background: var(--mb-surface-sunk); }
+
 /* Sliding indicator under the active tab — width/position set inline by
    MApp.Shell.showTab() since it depends on tab count/index, not just CSS. */
 .mapp-tab-indicator {
@@ -702,7 +802,12 @@ textarea:focus-visible,
 
 .mb-quick-actions {
   display: grid;
-  grid-template-columns: repeat(3, 1fr);
+  /* Width-driven, not a fixed count. `repeat(3, 1fr)` meant the row could
+     never hold a fourth action however much room there was -- and a phone
+     turned sideways has plenty. auto-fit gives three across a 360px
+     portrait phone and more when the width is actually there, with no
+     breakpoint to maintain. */
+  grid-template-columns: repeat(auto-fit, minmax(5rem, 1fr));
   gap: var(--mb-sp-3);
   margin-bottom: var(--mb-sp-5);
 }
@@ -737,20 +842,44 @@ textarea:focus-visible,
   .mb-quick-action:active { transform: none; }
 }
 
+/* Module shortcuts (Home's "Go to" row). Same tap target and the same
+   pressed behaviour as a quick action -- they sit in the same grid -- but
+   deliberately quieter: a quick action CREATES a record and a shortcut only
+   navigates, so the dark chrome fill is reserved for the former. Shorter,
+   too: no icon to make room for, and the labels are words rather than
+   verbs. */
+.mapp-shortcut {
+  min-height: 56px;
+  background: var(--mb-surface);
+  color: var(--mb-ink);
+  border: 1px solid var(--mb-steel-faint);
+  text-transform: none;
+  letter-spacing: 0;
+  font-size: 0.8125rem;
+}
+
+.mapp-shortcut:active { background: var(--mb-surface-sunk); }
+
 /* ── Stat tiles (Home) ───────────────────────────────────────────────── */
 .mb-stat-grid {
   display: grid;
-  grid-template-columns: 1fr 1fr;
+  /* Was a hard `1fr 1fr` with a single 640px breakpoint bumping it to 3.
+     That describes two phone widths and nothing else: sideways, where the
+     viewport is 700-900px, the figures stayed in three fat columns with the
+     rest of the width empty. auto-fit fills whatever room exists -- two
+     across a portrait phone, four or five across a landscape one. */
+  grid-template-columns: repeat(auto-fit, minmax(9.5rem, 1fr));
   gap: var(--mb-sp-3);
   margin-bottom: var(--mb-sp-5);
 }
 
-/* Extra horizontal room in the 480px phone frame (see the min-width:640px
-   block above) — 3 tiles read more like a dashboard than 2 tiles + an odd
-   3rd one stretched full-width. Must come after the base rule above:
-   same specificity, so source order is what decides the tie. */
+/* The column COUNT is auto-fit's job now (see the base rule above). What is
+   still a judgement call is the full-width tile: `grid-column: 1 / -1` is
+   right on a narrow phone, where a wide figure wants the whole row, and
+   wrong the moment there are four or five tracks to span. Charts keep it at
+   every width on purpose -- a pie squeezed into a fifth of a row is not a
+   chart -- which is why this targets .mb-stat-tile and not .mapp-chart. */
 @media (min-width: 640px) {
-  .mb-stat-grid { grid-template-columns: repeat(3, 1fr); }
   .mb-stat-grid > .mb-stat-tile[style*="grid-column"] { grid-column: auto !important; }
 }
 
@@ -856,6 +985,49 @@ textarea:focus-visible,
   flex: 0 0 auto;
   width: 104px;
   height: 104px;
+}
+
+/* A screen title with an action beside it. The top bar is shared by every
+   tab, so a per-screen action cannot live there -- it would appear on Home
+   and Dispatch too, where it means nothing. */
+.mapp-title-row {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: var(--mb-sp-3);
+}
+
+.mapp-title-row .mapp-screen-title { margin-bottom: var(--mb-sp-2); }
+
+/* ── Small-multiple donuts (Process WIP pipeline) ────────────────────────
+   One ring per Process Type. auto-fit rather than a fixed count for the
+   same reason the stat grid uses it: two across a portrait phone, four
+   across a landscape one, no breakpoint to maintain. */
+.mapp-donut-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(10rem, 1fr));
+  gap: var(--mb-sp-4);
+}
+
+.mapp-donut-card {
+  min-width: 0;
+}
+
+.mapp-donut {
+  display: block;
+  width: 100%;
+  max-width: 132px;
+  height: auto;
+  margin: var(--mb-sp-2) auto;
+}
+
+/* The band total sits in the hole. Its SIZE is an SVG attribute, not a
+   CSS px value: inside a viewBox that is user units, which scale with the
+   drawing, and the stylesheet's no-absolute-px rule exists to keep OS text
+   scaling working on real text. Only colour and weight belong here. */
+.mapp-donut-total {
+  font-weight: 700;
+  fill: var(--mb-ink);
 }
 
 .mapp-pie-legend {

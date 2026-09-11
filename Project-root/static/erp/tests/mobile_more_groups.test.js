@@ -81,13 +81,22 @@ describe('the sections', () => {
   });
 
   test('no destination was lost in the regrouping', () => {
+    // These rows now launch through MApp.Shortcuts.go(), which counts the
+    // use so Home's "Go to" row can rank by it -- the destination is the
+    // same, the call site is one level of indirection deeper. Asserted by
+    // key here; that each key resolves to a real module and method is
+    // mobile_shortcuts.test.js's job.
     const html = document.getElementById('mapp-content').innerHTML;
-    ['MApp.SyncIssues.open()', 'MApp.Status.open()', 'MApp.Master.open(\'color\')',
-      'MApp.StockGroups.open()', 'MApp.Pool.open()', 'MApp.Issue.open()',
-      'MApp.Wastage.open()', 'MApp.PO.openLedgerSheet()', 'MApp.Bill.openLedgerSheet()',
-      'MApp.ClientOrders.open()', 'MApp.Items.openLookupSheet()',
-      'MApp.Directory.open(\'vendor\')', 'MApp.Process.open()', 'MApp.BOM.open()',
-      'MApp.Account.open()', 'MApp.Returns.openNewReturnSheet()']
+    ['syncIssues', 'status', 'colors', 'stockGroups', 'pool', 'issued',
+      'wastage', 'poLedger', 'billLedger', 'clientOrders', 'itemsLookup',
+      'vendors', 'processes', 'recipes']
+      .forEach(key => expect(html).toContain(`MApp.Shortcuts.go('${key}')`));
+
+    // Still called directly: Account is not a module you "go to" often
+    // enough to rank, and New Return is an action rather than a
+    // destination -- ranking it alongside ledgers would be a category
+    // error.
+    ['MApp.Account.open()', 'MApp.Returns.openNewReturnSheet()']
       .forEach(call => expect(html).toContain(call));
   });
 

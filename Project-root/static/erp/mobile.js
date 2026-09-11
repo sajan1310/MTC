@@ -1318,6 +1318,34 @@ MApp.Shell = {
     this.showTab(tab);
   },
 
+  // Which tab reads as selected, and where the indicator sits.
+  //
+  // Split out of showTab because the bar is rebuilt whenever the operator
+  // changes which tabs they want (MApp.TabBar.render), and the new buttons
+  // have to be painted without navigating anywhere.
+  //
+  // The indicator is positioned against the tabs ACTUALLY SHOWN, not
+  // against the full screen list: a hidden Stock tab must not leave a gap
+  // the indicator slides into. A screen reached while its tab is hidden --
+  // by hash, or from the drawer -- simply has no indicator to show, which
+  // is honest.
+  paintTabs(tab) {
+    const shown = MApp.TabBar.visible();
+    shown.forEach(t => {
+      const btn = document.getElementById('mapp-tab-' + t);
+      if (!btn) return;
+      const active = t === tab;
+      btn.classList.toggle('active', active);
+      if (btn.hasAttribute('role')) btn.setAttribute('aria-selected', String(active));
+    });
+
+    const indicator = document.getElementById('mapp-tab-indicator');
+    if (!indicator) return;
+    const idx = shown.indexOf(tab);
+    indicator.style.visibility = idx === -1 ? 'hidden' : '';
+    if (idx > -1) indicator.style.transform = `translateX(${idx * 100}%)`;
+  },
+
   showTab(tab, opts) {
     if (this.TABS.indexOf(tab) === -1) return;
     const changed = tab !== this.current;
@@ -1328,16 +1356,7 @@ MApp.Shell = {
     const titleEl = document.getElementById('mapp-topbar-title');
     if (titleEl) titleEl.textContent = this.TITLES[tab];
 
-    const idx = this.TABS.indexOf(tab);
-    this.TABS.forEach(t => {
-      const btn = document.getElementById('mapp-tab-' + t);
-      if (!btn) return;
-      const active = t === tab;
-      btn.classList.toggle('active', active);
-      btn.setAttribute('aria-selected', String(active));
-    });
-    const indicator = document.getElementById('mapp-tab-indicator');
-    if (indicator) indicator.style.transform = `translateX(${idx * 100}%)`;
+    this.paintTabs(tab);
 
     const topbar = document.querySelector('.mapp-topbar');
     if (topbar) topbar.classList.remove('mapp-elevated');
@@ -2002,6 +2021,50 @@ MApp.Print = {
     if (picked.value === 'print') { this.trigger(containerId, filename); return; }
     if (picked.value === 'download') { await this.download(containerId, filename, { landscape }); return; }
     await this.share(containerId, filename, { landscape });
+  },
+
+  // ── Reports ──────────────────────────────────────────────────────────
+  // Stock, the low-stock report, the Warehouse Pool, returns, issued stock
+  // and wastage are the same document -- a title, what it was taken from,
+  // and a table -- so they share one template rather than six near-copies
+  // that drift. Desktop prints all of these; mobile could print none of
+  // them, which is the gap this closes.
+  //
+  // Landscape by default: these tables are wider than they are tall, and a
+  // six-column report squeezed onto portrait A4 is a report nobody reads.
+  report({ title, subtitle, columns, rows, filename, footer, landscape }) {
+    const esc = MApp.Util.escapeHtml;
+    const cols = columns || [];
+
+    const populate = () => {
+      const set = (id, html) => {
+        const el = document.getElementById(id);
+        if (el) el.innerHTML = html;
+      };
+      set('print-report-title', esc(title || 'Report'));
+      set('print-report-subtitle', esc(subtitle || ''));
+      set('print-report-head', `<tr>${cols.map(c => `
+        <th style="border:1px solid #bbb;padding:4px 6px;background:#eef3fb;text-align:${c.align || 'left'};">
+          ${esc(c.label)}
+        </th>`).join('')}</tr>`);
+
+      set('print-report-body', (rows || []).length
+        ? rows.map(r => `<tr>${cols.map(c => `
+            <td style="border:1px solid #ddd;padding:3px 6px;text-align:${c.align || 'left'};">
+              ${esc(String(c.get(r) ?? ''))}
+            </td>`).join('')}</tr>`).join('')
+        : `<tr><td colspan="${cols.length || 1}" style="border:1px solid #ddd;padding:8px;text-align:center;color:#666;">Nothing to report.</td></tr>`);
+
+      set('print-report-footer', footer ? esc(footer) : '');
+    };
+
+    return this.chooseAction({
+      containerId: 'print-report-container',
+      filename: filename || 'Report',
+      title: title || 'Report',
+      landscape: landscape !== false,
+      populate
+    });
   }
 };
 
@@ -2091,6 +2154,19 @@ MApp.HomeLayout = {
     { key: 'dispatchTrend', group: 'Charts', label: 'Dispatch, last 30 days',
       source: 'full', kind: 'chart', chart: 'sparkline',
       series: d => d.dispatchTrend || [] },
+    // The desktop dashboard's Process WIP Pipeline, drawn here rather than
+    // ported: desktop reaches for Chart.js from a CDN, and this app has no
+    // charting library on purpose -- it runs on factory LANs with no
+    // reliable internet and the worker only caches same-origin URLs. Same
+    // question, same numbers, inline SVG.
+    //
+    // Small multiples, one ring per Process Type, because the two
+    // questions asked of this section are different sizes: which part of
+    // the shop is loaded, and which process inside it. A single ring
+    // answers the first and buries the second.
+    { key: 'wipPipeline', group: 'Charts', label: 'Process WIP pipeline',
+      source: 'full', kind: 'chart', chart: 'donuts',
+      series: d => MApp.Home._stageBands(d.pipeline, d.upcoming) },
     // A pie is a claim that the slices add up to something -- so each of
     // these three is parts of a whole, and each says what its whole is.
     // The two whose rows the server truncates pass a `total` as well, and
@@ -2115,6 +2191,15 @@ MApp.HomeLayout = {
 
   // The three Home has always shown. Anyone who never opens the picker
   // keeps exactly the screen -- and exactly the one request -- they had.
+  // Deliberately all-cheap: every default comes from getMobileDashboard,
+  // so Home stays instant and still renders offline.
+  //
+  // A chart was tried here and taken out again. Any chart is source:'full',
+  // which would put getDashboardData on the critical path of every Home
+  // visit and leave the tiles blank offline -- a poor trade in an app whose
+  // whole offline design exists because it runs on factory LANs. The charts
+  // now live on the full dashboard, which already pays for that payload;
+  // Home still offers them through Choose figures for anyone who wants one.
   DEFAULTS: ['pendingProduction', 'todaysDispatches', 'lowStock'],
 
   block(key) {
@@ -2229,6 +2314,10 @@ MApp.HomeLayout = {
 MApp.Home = {
   async mount() {
     this.renderGreeting();
+    // Before the await: the shortcuts are read from localStorage and owe
+    // the network nothing, so they should be tappable while the figures are
+    // still loading -- and they are the fastest route out of Home.
+    MApp.Shortcuts.render();
 
     const statsEl = document.getElementById('home-stats');
     const activityEl = document.getElementById('home-activity');
@@ -2376,9 +2465,11 @@ MApp.Home = {
       ? '<div class="mb-skel mb-skel-line" style="width:100%;height:48px;"></div>'
       : (b.chart === 'sparkline'
         ? this._sparkline(b.series(data))
-        // `total` is how a block declares that its rows are a top-N and
-        // names the real whole they came out of.
-        : this._pie(b.series(data), { money: b.money, total: b.total ? b.total(data) : 0 }));
+        : b.chart === 'donuts'
+          ? this._donuts(b.series(data))
+          // `total` is how a block declares that its rows are a top-N and
+          // names the real whole they came out of.
+          : this._pie(b.series(data), { money: b.money, total: b.total ? b.total(data) : 0 }));
     return `
       <div class="mb-card mapp-chart" style="grid-column:1 / -1;"${attrs}>
         <div class="mb-stat-tile-label">${MApp.Util.escapeHtml(b.label)}</div>
@@ -2433,6 +2524,109 @@ MApp.Home = {
    * of the top five drawn as if it were everything is not a simplified
    * chart, it is a wrong one -- every percentage on it would be inflated.
    */
+  // Process WIP, folded into one band per Process Type.
+  //
+  // Mirrors desktop's App.Dashboard._stageBands deliberately, including the
+  // two judgements that are easy to get wrong: a process whose type was
+  // never set still appears, under "Other", because dropping it would
+  // silently lose stock from the totals; and the busiest band comes first,
+  // because the question this answers is which part of the shop is loaded
+  // and the answer belongs where the eye starts.
+  _stageBands(pipeline, upcoming) {
+    const byProcess = new Map();
+    const merge = (stages, key) => (stages || []).forEach(stage => {
+      const id = stage.processId;
+      const row = byProcess.get(id) || {
+        processId: id,
+        processName: stage.processName || id,
+        processType: String(stage.processType || '').trim(),
+        sequence: MApp.Util.toNumber(stage.sequence),
+        wip: 0,
+        queued: 0
+      };
+      row.processType = row.processType || String(stage.processType || '').trim();
+      row[key] = MApp.Util.toNumber(stage.totalQty);
+      byProcess.set(id, row);
+    });
+    merge(pipeline, 'wip');
+    merge(upcoming, 'queued');
+
+    const bands = new Map();
+    [...byProcess.values()]
+      .filter(r => r.wip + r.queued > 0)
+      .sort((a, b) => a.sequence - b.sequence)
+      .forEach(row => {
+        const name = row.processType || 'Other';
+        if (!bands.has(name)) bands.set(name, { name, total: 0, slices: [] });
+        const band = bands.get(name);
+        band.slices.push({ label: row.processName, value: row.wip + row.queued });
+        band.total += row.wip + row.queued;
+      });
+
+    return [...bands.values()].sort((a, b) => b.total - a.total);
+  },
+
+  // One ring per band, its processes as the slices.
+  //
+  // A ring rather than a pie because each carries a number in the middle:
+  // the band's own total is the thing being compared BETWEEN cards, and a
+  // solid pie has nowhere to put it.
+  _donuts(bands) {
+    const rows = (bands || []).filter(b => b && b.total > 0);
+    if (!rows.length) {
+      return '<div class="mb-text-sm mb-text-steel">No open production lots at any stage.</div>';
+    }
+
+    const R = 42, HOLE = 26, C = 46;
+    const point = (frac, radius) => {
+      const a = frac * Math.PI * 2 - Math.PI / 2;
+      return [(C + radius * Math.cos(a)).toFixed(3), (C + radius * Math.sin(a)).toFixed(3)];
+    };
+
+    return `<div class="mapp-donut-grid">${rows.map(band => {
+      let acc = 0;
+      const arcs = band.slices.map((s, i) => {
+        const frac = s.value / band.total;
+        const fill = this.PIE_COLOURS[i % this.PIE_COLOURS.length];
+        // One process filling the band: start and end coincide and an arc
+        // between identical points draws nothing, so draw the ring itself.
+        if (frac >= 0.9999) {
+          return `<path d="M${C},${C - R} A${R},${R} 0 1,1 ${C - 0.01},${C - R} Z
+                           M${C},${C - HOLE} A${HOLE},${HOLE} 0 1,0 ${C + 0.01},${C - HOLE} Z"
+                        fill="${fill}" fill-rule="evenodd"/>`;
+        }
+        const [ox1, oy1] = point(acc, R);
+        const [ih1, iv1] = point(acc, HOLE);
+        acc += frac;
+        const [ox2, oy2] = point(acc, R);
+        const [ih2, iv2] = point(acc, HOLE);
+        const large = frac > 0.5 ? 1 : 0;
+        return `<path d="M${ox1},${oy1} A${R},${R} 0 ${large},1 ${ox2},${oy2} L${ih2},${iv2} A${HOLE},${HOLE} 0 ${large},0 ${ih1},${iv1} Z" fill="${fill}"/>`;
+      }).join('');
+
+      // The existing pie legend classes, not new ones: these rows are the
+      // same object and should not drift apart visually.
+      const legend = band.slices.map((s, i) => `
+        <div class="mapp-pie-row">
+          <span class="mapp-pie-swatch" style="background:${this.PIE_COLOURS[i % this.PIE_COLOURS.length]};"></span>
+          <span class="mapp-pie-label">${MApp.Util.escapeHtml(s.label)}</span>
+          <span class="mapp-pie-value">${MApp.Util.formatQty(s.value)}</span>
+        </div>`).join('');
+
+      return `
+        <div class="mapp-donut-card">
+          <div class="mb-stat-tile-label">${MApp.Util.escapeHtml(band.name)}</div>
+          <svg viewBox="0 0 ${C * 2} ${C * 2}" class="mapp-donut" role="img"
+               aria-label="${MApp.Util.escapeHtml(band.name)}: ${MApp.Util.formatQty(band.total)} in progress or pending">
+            ${arcs}
+            <text x="${C}" y="${C}" text-anchor="middle" dominant-baseline="central"
+                  class="mapp-donut-total" font-size="18">${MApp.Util.formatQty(band.total)}</text>
+          </svg>
+          <div class="mapp-pie-legend">${legend}</div>
+        </div>`;
+    }).join('')}</div>`;
+  },
+
   _pie(series, opts) {
     const o = opts || {};
     const fmt = v => (o.money ? MApp.Util.formatCurrency(v) : MApp.Util.formatQty(v));
@@ -2893,6 +3087,37 @@ MApp.Stock = {
     MApp.Sheet.open('sheet-stock-adjust');
   },
 
+  // The tab shows Stock or the Warehouse Pool; one button prints whichever
+  // is in front of you. A single control that quietly printed the other
+  // pane would be worse than two.
+  printCurrentView() {
+    if (this.view === 'pool') { MApp.Pool.printReport(); return; }
+    this.printReport();
+  },
+
+  // Desktop prints the stock list and the low-stock report; the phone
+  // could print neither. Prints what is ON SCREEN -- the current search and
+  // the low-stock filter included -- because a report that silently ignores
+  // the filter you set is a different document from the one you are looking
+  // at.
+  printReport() {
+    const rows = this.filtered || [];
+    const low = !!this._lowStockOnly;
+    MApp.Print.report({
+      title: low ? 'Low Stock Report' : 'Stock List',
+      subtitle: `${rows.length} item(s)${this.searchTerm ? ` matching "${this.searchTerm}"` : ''} \u00b7 ${MApp.Util.formatDateDisplay(new Date().toISOString())}`,
+      filename: low ? 'Low_Stock_Report' : 'Stock_List',
+      columns: [
+        { label: 'Item', get: r => r.name },
+        { label: 'Size', get: r => r.size || 'General' },
+        { label: 'Unit', get: r => r.unit || '' },
+        { label: 'In stock', align: 'right', get: r => MApp.Util.formatQty(r.currentStock) },
+        { label: 'Threshold', align: 'right', get: r => (r.threshold == null || r.threshold === '' ? '' : MApp.Util.formatQty(r.threshold)) }
+      ],
+      rows
+    });
+  },
+
   closeAdjustSheet() {
     MApp.Sheet.close('sheet-stock-adjust');
   },
@@ -3220,6 +3445,12 @@ MApp.Production = {
               <div>
                 <div class="mb-card-title">${MApp.Util.escapeHtml(l.lotNumber)}</div>
                 <div class="mb-card-sub">${MApp.Util.escapeHtml(processName)}</div>
+                <!-- The date was searchable (see the 'date' search key
+                     above) but never shown, so a lot could be found by a
+                     date the card then refused to display. On a floor
+                     where "which lot did we run Tuesday" is an ordinary
+                     question, that is the first thing being looked for. -->
+                <div class="mb-card-sub">${MApp.Util.escapeHtml(MApp.Util.formatDateDisplay(l.dateRaw) || '—')}</div>
               </div>
               <div style="text-align:right;">
                 <div class="mb-card-number">${l.qty}</div>
@@ -6318,6 +6549,30 @@ MApp.Issue = {
     }
   },
 
+  // Desktop prints this log; the phone could not. One row per LINE, not
+  // per record: a record can carry several items and a report that hides
+  // them behind a count cannot be reconciled against the shelf.
+  printReport() {
+    const rows = [];
+    (this.filtered || []).forEach(rec => {
+      (rec.items || []).forEach(it => rows.push({ rec, it }));
+    });
+    MApp.Print.report({
+      title: 'Issued Stock',
+      subtitle: `${rows.length} line(s)${this.searchTerm ? ` matching "${this.searchTerm}"` : ''}`,
+      filename: 'Issued_Stock',
+      columns: [
+        { label: 'Date', get: r => MApp.Util.formatDateDisplay(r.rec.dateRaw) },
+        { label: 'Issued to', get: r => MApp.Util.formatNameCase(r.rec.issuedTo || '') },
+        { label: 'Item', get: r => (r.it && r.it.name) || '' },
+        { label: 'Size', get: r => (r.it && r.it.size) || '' },
+        { label: 'Qty', align: 'right', get: r => MApp.Util.formatQty(r.it && r.it.qty) },
+        { label: 'Remarks', get: r => r.rec.remarks || '' }
+      ],
+      rows
+    });
+  },
+
   close() {
     MApp.Sheet.close('sheet-issue-log');
   },
@@ -6614,6 +6869,30 @@ MApp.Wastage = {
     } catch (err) {
       MApp.Util.renderError(listEl, err && err.message, () => this.open());
     }
+  },
+
+  // Desktop prints this log; the phone could not. One row per LINE, not
+  // per record: a record can carry several items and a report that hides
+  // them behind a count cannot be reconciled against the shelf.
+  printReport() {
+    const rows = [];
+    (this.filtered || []).forEach(rec => {
+      (rec.items || []).forEach(it => rows.push({ rec, it }));
+    });
+    MApp.Print.report({
+      title: 'Wastage Log',
+      subtitle: `${rows.length} line(s)${this.searchTerm ? ` matching "${this.searchTerm}"` : ''}`,
+      filename: 'Wastage_Log',
+      columns: [
+        { label: 'Date', get: r => MApp.Util.formatDateDisplay(r.rec.dateRaw) },
+        { label: 'Vendor', get: r => MApp.Util.formatNameCase(r.rec.vendor || '') },
+        { label: 'Item', get: r => (r.it && r.it.name) || '' },
+        { label: 'Size', get: r => (r.it && r.it.size) || '' },
+        { label: 'Qty', align: 'right', get: r => MApp.Util.formatQty(r.it && r.it.qty) },
+        { label: 'Remarks', get: r => r.rec.remarks || '' }
+      ],
+      rows
+    });
   },
 
   close() {
@@ -10824,9 +11103,10 @@ MApp.ClientOrders = {
 // it -- nothing is lost, and a wide editable grid is the wrong shape for
 // a phone held in one hand.
 //
-// Not ported: printing the sheet. That is desktop's own layout work and
-// is tracked separately; the data is the part that could not be entered
-// anywhere else.
+// Printing it WAS the one thing left out, on the grounds that desktop's
+// layout was its own work. It is back: the sheet is what goes out to the
+// floor with the lot, and a sheet you can fill in on a phone but only
+// print from a desk is half a feature.
 // ================================================================
 MApp.ProductionSheet = {
   lot: null,
@@ -10876,6 +11156,37 @@ MApp.ProductionSheet = {
 
     this.render();
     MApp.Sheet.open('sheet-production-sheet');
+  },
+
+  // One row per component, grouped by colour down the page the same way
+  // the screen groups them -- the printed sheet and the screen it came
+  // from have to be the same document.
+  printSheet() {
+    const lot = this.lot || {};
+    const rows = (this.rows || []).map(r => ({
+      ...r,
+      colorLabel: r.color || 'Common'
+    })).sort((a, b) => a.colorLabel.localeCompare(b.colorLabel));
+
+    MApp.Print.report({
+      title: `Production Sheet \u2014 ${lot.lotNumber || ''}`,
+      subtitle: [
+        lot.processName || lot.processId || '',
+        lot.assignedTo ? `Assigned to ${MApp.Util.formatNameCase(lot.assignedTo)}` : '',
+        MApp.Util.formatDateDisplay(lot.dateRaw)
+      ].filter(Boolean).join(' \u00b7 '),
+      filename: `Production_Sheet_${lot.lotNumber || 'lot'}`,
+      landscape: false,
+      columns: [
+        { label: 'Colour', get: r => r.colorLabel },
+        { label: 'Item', get: r => r.itemName },
+        { label: 'Size', get: r => r.size || '' },
+        { label: 'Narration', get: r => r.narration || '' },
+        { label: 'Required', align: 'right', get: r => MApp.Util.formatQty(r.requiredQty) }
+      ],
+      rows,
+      footer: this.remarks ? `Remarks: ${this.remarks}` : ''
+    });
   },
 
   close() { MApp.Sheet.close('sheet-production-sheet'); },
@@ -11104,6 +11415,61 @@ MApp.Dashboard = {
 
   close() { MApp.Sheet.close('sheet-dashboard'); },
 
+  // The dashboard's quick actions. A dashboard is for deciding what to do
+  // next, and this one had no way to then do it -- read the figures, close
+  // the sheet, find the tab, open the form.
+  //
+  // Closes first rather than stacking the form on top, so each of these
+  // opens under exactly the preconditions Home's own quick actions already
+  // open under: no sheet beneath, nothing for the form's own close() to
+  // pop by surprise. The cost is returning to Home rather than to the
+  // dashboard, which is one tap and the figures would be stale anyway --
+  // logging a lot is precisely what changes them.
+  // The five jobs somebody starts straight off the dashboard. `stock` is
+  // the odd one out -- a screen rather than a form -- and belongs here
+  // anyway: "check stock" is what the low-stock figure above it provokes.
+  ACTIONS: {
+    po: () => MApp.PO.openNewSheet(),
+    bill: () => MApp.Bill.openForm(null),
+    production: () => MApp.Production.openLogLotSheet(),
+    stock: () => MApp.Shell.showTab('stock'),
+    issue: () => MApp.Issue.openForm()
+  },
+
+  act(kind) {
+    const run = this.ACTIONS[kind];
+    if (!run) return;
+    this.close();
+    run();
+  },
+
+  // Every chart the app can draw, on the one screen that already has the
+  // data for them.
+  //
+  // They existed only as opt-in Home blocks, off by default, with nothing
+  // saying so -- so the full dashboard, the screen actually named
+  // "dashboard", showed no chart at all. Home cannot simply default them on
+  // instead: every chart is source:'full', which would put getDashboardData
+  // on the critical path of every Home visit and blank the tiles offline.
+  // Here that payload is already being fetched, so the charts cost nothing
+  // extra.
+  //
+  // Reuses the existing renderers rather than reimplementing them: the
+  // catalogue on HomeLayout carries each chart's series, its truncation
+  // `total` and its money flag, and MApp.Home owns the drawing. A second
+  // copy of either would drift. The grid wrapper is what _chartHtml's
+  // `grid-column: 1 / -1` needs in order to mean anything.
+  _chartsHtml(data) {
+    const blocks = ((MApp.HomeLayout && MApp.HomeLayout.BLOCKS) || [])
+      .filter(b => b.kind === 'chart');
+    if (!blocks.length || typeof MApp.Home._chartHtml !== 'function') return '';
+    return `
+      <div class="mapp-section-label mb-mt-4">Charts</div>
+      <div class="mb-stat-grid">
+        ${blocks.map(b => MApp.Home._chartHtml(b, data, false, '')).join('')}
+      </div>`;
+  },
+
   render(data) {
     const body = document.getElementById('dashboard-body');
     if (!body) return;
@@ -11131,6 +11497,8 @@ MApp.Dashboard = {
         ${tile('Ready to dispatch', qty(k.readyToDispatchUnits), `${k.readyToDispatchProductCount || 0} product(s)`)}
         ${tile('Contractor payables', money(k.contractorPayablesDue), `${k.contractorPayablesCount || 0} contractor(s)`)}
       </div>
+
+      ${this._chartsHtml(data)}
 
       ${k.oldestPendingProductionDays ? `
         <div class="mb-offline-banner" style="background:var(--mb-enamel-amber-bg);color:var(--mb-enamel-amber-ink);margin:var(--mb-sp-3) 0;">
@@ -11767,6 +12135,33 @@ MApp.Pool = {
   },
 
   closeLedger() { MApp.Sheet.close('sheet-pool-ledger'); },
+
+  // Desktop has bulkPrintWarehousePool; the phone had nothing. Counts
+  // toward total is a column rather than a filter: a sub-group bucket is
+  // still stock movement somebody may need to see, it simply is not units,
+  // and a report that dropped those rows would not reconcile against the
+  // screen that lists them.
+  printReport() {
+    const rows = this.filtered || [];
+    const units = rows.filter(r => r.countsTowardTotal !== false);
+    const total = units.reduce((a, r) => a + (Number(r.availableQty) || 0), 0);
+    MApp.Print.report({
+      title: 'Warehouse Pool',
+      subtitle: `${rows.length} bucket(s)${this.searchTerm ? ` matching "${this.searchTerm}"` : ''}`,
+      filename: 'Warehouse_Pool',
+      columns: [
+        { label: 'Output item', get: r => r.outputItemName },
+        { label: 'Tag', get: r => r.productTag || '' },
+        { label: 'Colour', get: r => r.color || '' },
+        { label: 'Produced', align: 'right', get: r => MApp.Util.formatQty(r.producedQty) },
+        { label: 'Consumed', align: 'right', get: r => MApp.Util.formatQty(r.consumedQty) },
+        { label: 'Available', align: 'right', get: r => MApp.Util.formatQty(r.availableQty) },
+        { label: 'Counts', align: 'center', get: r => (r.countsTowardTotal === false ? 'Sub-group' : 'Units') }
+      ],
+      rows,
+      footer: `Total available (units only): ${MApp.Util.formatQty(total)}`
+    });
+  },
 
   // ── Manual correction ────────────────────────────────────────────────
   // adjustWarehousePoolManually does not set the bucket directly: it
@@ -13114,6 +13509,457 @@ MApp.MoreGroups = {
 };
 
 // ================================================================
+// SHORTCUTS — the modules you actually use, one tap from Home.
+//
+// Five tabs hold Home, Stock, Production and Dispatch. Everything else --
+// twenty destinations, including the bill and PO ledgers, the whole
+// directory and both master screens -- lives behind More, which means
+// More, then open the right disclosure group, then find the row. Three
+// taps and a scan, every time, for a screen someone may open forty times a
+// day. The tab bar cannot grow: five is already the limit at which targets
+// stay thumb-sized on a 360px phone.
+//
+// So the app learns instead. Every launch is counted here, and Home shows
+// the few that are actually used, most-used first. Nothing to configure,
+// and it reflects THIS operator: a storeman converges on Bill Ledger and
+// Items lookup, a supervisor on Processes and Product Recipes, and neither
+// has to tell the app so.
+//
+// Counting lives in go() rather than in each module's own open(), so a
+// destination is recorded when it is chosen -- not when some other screen
+// happens to open the same sheet on its way somewhere else.
+// ================================================================
+MApp.Shortcuts = {
+  KEY: 'maharaja-erp-mobile-module-use',
+  MAX: 6,
+
+  // Catalogue order is the tie-break, so a fresh install shows a sensible
+  // row rather than an arbitrary one: the four most commonly wanted first.
+  DESTINATIONS: [
+    { key: 'billLedger', label: 'Bills', open: () => MApp.Bill.openLedgerSheet() },
+    { key: 'poLedger', label: 'POs', open: () => MApp.PO.openLedgerSheet() },
+    { key: 'itemsLookup', label: 'Items', open: () => MApp.Items.openLookupSheet() },
+    { key: 'pool', label: 'Pool', open: () => MApp.Pool.open() },
+    { key: 'vendors', label: 'Vendors', open: () => MApp.Directory.open('vendor') },
+    { key: 'clients', label: 'Clients', open: () => MApp.Directory.open('client') },
+    { key: 'contractors', label: 'Contractors', open: () => MApp.Directory.open('contractor') },
+    { key: 'dispatchPlan', label: 'Dispatch plan', open: () => MApp.DispatchPlan.open() },
+    { key: 'clientOrders', label: 'PI / Estimates', open: () => MApp.ClientOrders.open() },
+    { key: 'issued', label: 'Issued Stock', open: () => MApp.Issue.open() },
+    { key: 'wastage', label: 'Wastage', open: () => MApp.Wastage.open() },
+    { key: 'processes', label: 'Processes', open: () => MApp.Process.open() },
+    { key: 'recipes', label: 'Recipes', open: () => MApp.BOM.open() },
+    { key: 'stockGroups', label: 'Stock Groups', open: () => MApp.StockGroups.open() },
+    { key: 'colors', label: 'Colours', open: () => MApp.Master.open('color') },
+    { key: 'models', label: 'Models', open: () => MApp.Master.open('model') },
+    { key: 'processTypes', label: 'Process Types', open: () => MApp.Master.open('processType') },
+    { key: 'units', label: 'Units', open: () => MApp.Master.open('unit') },
+    { key: 'syncIssues', label: 'Sync Issues', open: () => MApp.SyncIssues.open() },
+    { key: 'status', label: 'System Status', open: () => MApp.Status.open() }
+  ],
+
+  destination(key) {
+    return this.DESTINATIONS.find(d => d.key === key) || null;
+  },
+
+  counts() {
+    try {
+      const raw = JSON.parse(localStorage.getItem(this.KEY) || 'null');
+      return raw && typeof raw === 'object' && !Array.isArray(raw) ? raw : {};
+    } catch (e) {
+      return {}; // storage inaccessible, or someone else's data in the key
+    }
+  },
+
+  // Most-used first, catalogue order breaking ties. Unused destinations
+  // still appear (count 0) so a fresh install has a full row rather than an
+  // empty promise -- and the order starts moving from the first launch.
+  top(limit) {
+    const counts = this.counts();
+    const ranked = this.DESTINATIONS.map((d, i) => ({ d, i, n: counts[d.key] || 0 }));
+    ranked.sort((a, b) => (b.n - a.n) || (a.i - b.i));
+    return ranked.slice(0, limit == null ? this.MAX : limit).map(r => r.d);
+  },
+
+  go(key) {
+    const dest = this.destination(key);
+    if (!dest) return;
+    const counts = this.counts();
+    counts[key] = (counts[key] || 0) + 1;
+    try { localStorage.setItem(this.KEY, JSON.stringify(counts)); } catch (e) { /* storage inaccessible */ }
+    // Re-rank while the operator is still on Home to see it happen; the row
+    // is gone from view by the time the sheet is up either way.
+    this.render();
+    dest.open();
+  },
+
+  render() {
+    const el = document.getElementById('home-shortcuts');
+    if (!el) return;
+    el.innerHTML = this.top().map(d => `
+      <button type="button" class="mb-quick-action mapp-shortcut"
+              onclick="MApp.Shortcuts.go('${d.key}')">
+        <span>${MApp.Util.escapeHtml(d.label)}</span>
+      </button>`).join('');
+  }
+};
+
+// ================================================================
+// SIDE DRAWER — every module, grouped by the job it belongs to.
+//
+// The tab bar holds five screens and cannot hold more: five is the limit
+// at which targets stay thumb-sized at 360px. Everything else lived behind
+// More, then a disclosure, then a row. The drawer is the other half of the
+// answer to that -- one tap from any screen, everything in it, grouped by
+// the job rather than by which module happens to own the record.
+//
+// Groups are <details>, the same disclosure the More tab uses, so the
+// keyboard handling and the aria-expanded semantics are the platform's and
+// the sections still work if this script never runs. Which ones are open
+// is remembered, because a drawer that forgets is a drawer you re-open
+// three times.
+//
+// Every entry resolves through MApp.Shortcuts, so the drawer and the
+// learned "Go to" row cannot list different things, and opening a module
+// from here counts towards that ranking like any other launch.
+// ================================================================
+MApp.Drawer = {
+  KEY: 'maharaja-erp-mobile-drawer-groups',
+
+  // Screens (a tab) and modules (a sheet) sit side by side deliberately:
+  // which one a destination happens to be is an implementation detail of
+  // this app, not something an operator looking for "Wastage" should have
+  // to know.
+  GROUPS: [
+    { key: 'production', label: 'Production', open: true, items: [
+      { tab: 'production', label: 'Production lots' },
+      { dest: 'issued' }, { dest: 'wastage' },
+      { dest: 'processes' }, { dest: 'recipes' }
+    ] },
+    { key: 'stock', label: 'Stock', open: true, items: [
+      { tab: 'stock', label: 'Stock' },
+      { dest: 'pool' }, { dest: 'itemsLookup' }, { dest: 'stockGroups' }
+    ] },
+    { key: 'purchase', label: 'Purchase', items: [
+      { dest: 'poLedger' }, { dest: 'billLedger' },
+      // The returns LIST lives inline on the More tab rather than in a
+      // sheet of its own, so this navigates there and opens that section
+      // instead of pretending a sheet exists.
+      { group: 'returns', label: 'Return Goods' }
+    ] },
+    { key: 'sales', label: 'Sales & Dispatch', items: [
+      { tab: 'dispatch', label: 'Dispatch' },
+      { dest: 'dispatchPlan' }, { dest: 'clientOrders' }
+    ] },
+    { key: 'directory', label: 'Directory', items: [
+      { dest: 'vendors' }, { dest: 'clients' }, { dest: 'contractors' }
+    ] },
+    { key: 'masters', label: 'Masters', items: [
+      { dest: 'colors' }, { dest: 'models' },
+      { dest: 'processTypes' }, { dest: 'units' }
+    ] },
+    { key: 'system', label: 'System', items: [
+      { dest: 'syncIssues' }, { dest: 'status' },
+      { tab: 'more', label: 'More & settings' }
+    ] }
+  ],
+
+  _open: false,
+
+  readGroups() {
+    try {
+      const raw = JSON.parse(localStorage.getItem(this.KEY) || 'null');
+      return raw && typeof raw === 'object' && !Array.isArray(raw) ? raw : {};
+    } catch (e) {
+      return {};
+    }
+  },
+
+  rememberGroup(key, open) {
+    const state = this.readGroups();
+    state[key] = !!open;
+    try { localStorage.setItem(this.KEY, JSON.stringify(state)); } catch (e) { /* storage inaccessible */ }
+  },
+
+  // The label comes from the Shortcuts catalogue unless an item overrides
+  // it, so renaming a module is done in one place.
+  _label(item) {
+    if (item.label) return item.label;
+    const dest = item.dest && MApp.Shortcuts.destination(item.dest);
+    return dest ? dest.label : '';
+  },
+
+  render() {
+    const body = document.getElementById('mapp-drawer-body');
+    if (!body) return;
+    const stored = this.readGroups();
+    const esc = MApp.Util.escapeHtml;
+
+    body.innerHTML = this.GROUPS.map(g => {
+      const isOpen = Object.prototype.hasOwnProperty.call(stored, g.key)
+        ? stored[g.key]
+        : !!g.open;
+      const rows = g.items.map(item => {
+        const label = this._label(item);
+        if (!label) return '';
+        const action = item.tab
+          ? `MApp.Drawer.goTab('${item.tab}')`
+          : item.group
+            ? `MApp.Drawer.goGroup('${item.group}')`
+            : `MApp.Drawer.goModule('${item.dest}')`;
+        return `
+          <button type="button" class="mapp-drawer-item" onclick="${action}">
+            ${esc(label)}
+          </button>`;
+      }).join('');
+
+      return `
+        <details class="mapp-group" data-drawer-group="${g.key}"${isOpen ? ' open' : ''}>
+          <summary class="mapp-group-summary">
+            <span class="mapp-section-label">${esc(g.label)}</span>
+            <svg class="mapp-group-chevron" viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M6 9l6 6 6-6"/></svg>
+          </summary>
+          ${rows}
+        </details>`;
+    }).join('');
+
+    body.querySelectorAll('.mapp-group[data-drawer-group]').forEach(el => {
+      el.addEventListener('toggle', () => this.rememberGroup(el.dataset.drawerGroup, el.open));
+    });
+  },
+
+  toggle() { this._open ? this.close() : this.open(); },
+
+  open() {
+    const drawer = document.getElementById('mapp-drawer');
+    const backdrop = document.getElementById('mapp-drawer-backdrop');
+    if (!drawer) return;
+    this.render();
+    drawer.hidden = false;
+    if (backdrop) backdrop.hidden = false;
+    // Next frame, so the transition has a from-state to animate out of.
+    requestAnimationFrame(() => drawer.classList.add('open'));
+    this._open = true;
+    const btn = document.getElementById('mapp-menu-btn');
+    if (btn) btn.setAttribute('aria-expanded', 'true');
+    this._onKey = e => { if (e.key === 'Escape') this.close(); };
+    document.addEventListener('keydown', this._onKey);
+  },
+
+  close() {
+    const drawer = document.getElementById('mapp-drawer');
+    const backdrop = document.getElementById('mapp-drawer-backdrop');
+    this._open = false;
+    if (drawer) {
+      drawer.classList.remove('open');
+      drawer.hidden = true;
+    }
+    if (backdrop) backdrop.hidden = true;
+    const btn = document.getElementById('mapp-menu-btn');
+    if (btn) btn.setAttribute('aria-expanded', 'false');
+    if (this._onKey) {
+      document.removeEventListener('keydown', this._onKey);
+      this._onKey = null;
+    }
+  },
+
+  goTab(tab) {
+    this.close();
+    MApp.Shell.showTab(tab);
+  },
+
+  // Counts the launch as well as opening it -- see MApp.Shortcuts.
+  goModule(key) {
+    this.close();
+    MApp.Shortcuts.go(key);
+  },
+
+  // For a destination whose screen is a section of the More tab rather
+  // than a sheet of its own.
+  goGroup(groupKey) {
+    this.close();
+    MApp.Shell.showTab('more');
+    MApp.More.openGroup(groupKey);
+  }
+};
+
+// ================================================================
+// BOTTOM TABS — which five, decided by the person using them.
+//
+// The bar held a fixed Home/Stock/Production/Dispatch/More. That is the
+// right default and the wrong fixed answer: a storeman lives in Bills and
+// Items and visits Production never, a supervisor the reverse. Five slots
+// under the thumb are the most valuable real estate in the app, and until
+// now nobody could spend them.
+//
+// Home is pinned. It is where the hash resolves by default, what the app
+// opens on, and the screen every other one is reached from -- a tab bar
+// without it is a shell you can get lost in. Everything else is a choice,
+// including More, because the drawer now reaches every module and settings
+// with it.
+// ================================================================
+MApp.TabBar = {
+  KEY: 'maharaja-erp-mobile-tabs',
+  FIXED: 'home',
+  MIN: 2,
+  MAX: 5,
+  DEFAULTS: ['home', 'stock', 'production', 'dispatch', 'more'],
+
+  // A screen is a tab template; a module is a sheet. Both can hold a slot.
+  SCREENS: [
+    { key: 'home', label: 'Home' },
+    { key: 'stock', label: 'Stock' },
+    { key: 'production', label: 'Production' },
+    { key: 'dispatch', label: 'Dispatch' },
+    { key: 'more', label: 'More' }
+  ],
+
+  choices() {
+    return this.SCREENS.map(s => ({ key: s.key, label: s.label, kind: 'screen' }))
+      .concat(MApp.Shortcuts.DESTINATIONS.map(d => ({
+        key: d.key, label: d.label, kind: 'module'
+      })));
+  },
+
+  choice(key) {
+    return this.choices().find(c => c.key === key) || null;
+  },
+
+  read() {
+    let stored = null;
+    try { stored = JSON.parse(localStorage.getItem(this.KEY) || 'null'); } catch (e) { stored = null; }
+    if (!Array.isArray(stored)) return this.DEFAULTS.slice();
+    // Filtered through the catalogue so a key from an older build cannot
+    // leave a dead slot, and re-pinned so Home cannot be lost by editing
+    // storage by hand.
+    const keys = stored.filter(k => this.choice(k));
+    const withHome = keys.indexOf(this.FIXED) === -1
+      ? [this.FIXED].concat(keys)
+      : keys;
+    return withHome.slice(0, this.MAX);
+  },
+
+  write(keys) {
+    try { localStorage.setItem(this.KEY, JSON.stringify(keys)); } catch (e) { /* storage inaccessible */ }
+  },
+
+  visible() { return this.read(); },
+
+  render() {
+    const bar = document.querySelector('.mapp-tabbar');
+    if (!bar) return;
+    const keys = this.visible();
+    const esc = MApp.Util.escapeHtml;
+
+    const indicator = '<div class="mapp-tab-indicator" id="mapp-tab-indicator" aria-hidden="true"></div>';
+    bar.innerHTML = indicator + keys.map(key => {
+      const c = this.choice(key);
+      if (!c) return '';
+      const onclick = c.kind === 'screen'
+        ? `MApp.Shell.showTab('${key}')`
+        : `MApp.Shortcuts.go('${key}')`;
+      // A module tab is not a screen, so it is never the selected one --
+      // role=tab with aria-selected would be a lie about a button that
+      // opens a sheet over whatever is showing.
+      const role = c.kind === 'screen' ? ' role="tab" aria-selected="false"' : '';
+      return `
+        <button type="button" class="mapp-tab" id="mapp-tab-${key}"${role} onclick="${onclick}">
+          ${this._icon(key)}
+          <span>${esc(c.label)}</span>
+        </button>`;
+    }).join('');
+
+    // The indicator spans one slot, so its width has to follow the count.
+    const el = document.getElementById('mapp-tab-indicator');
+    if (el) el.style.width = `${100 / Math.max(keys.length, 1)}%`;
+    if (MApp.Shell.current) MApp.Shell.paintTabs(MApp.Shell.current);
+  },
+
+  ICONS: {
+    home: '<path d="M3 11l9-8 9 8"/><path d="M5 10v10a1 1 0 0 0 1 1h4v-6h4v6h4a1 1 0 0 0 1-1V10"/>',
+    stock: '<path d="M21 8l-9-5-9 5 9 5 9-5z"/><path d="M3 8v8l9 5 9-5V8"/><path d="M12 13v8"/>',
+    production: '<circle cx="12" cy="12" r="9"/><path d="M10 8.5v7l6-3.5-6-3.5z"/>',
+    dispatch: '<rect x="1" y="7" width="14" height="10" rx="1"/><path d="M15 10h4l3 3v4h-7z"/><circle cx="6" cy="19" r="1.6"/><circle cx="17.5" cy="19" r="1.6"/>',
+    more: '<circle cx="5" cy="12" r="1.6"/><circle cx="12" cy="12" r="1.6"/><circle cx="19" cy="12" r="1.6"/>'
+  },
+
+  _icon(key) {
+    // Modules have no icon of their own; a neutral one keeps the tab the
+    // same height and shape as its neighbours rather than reflowing the bar.
+    const path = this.ICONS[key] || '<rect x="4" y="4" width="16" height="16" rx="2"/>';
+    return `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">${path}</svg>`;
+  },
+
+  // ── Customise sheet ─────────────────────────────────────────────────
+  open() {
+    this.draft = this.visible().slice();
+    this.renderChoices();
+    MApp.Sheet.open('sheet-tabbar');
+  },
+
+  close() { MApp.Sheet.close('sheet-tabbar'); },
+
+  renderChoices() {
+    const body = document.getElementById('tabbar-choices');
+    if (!body) return;
+    const esc = MApp.Util.escapeHtml;
+    const chosen = new Set(this.draft);
+
+    body.innerHTML = this.choices().map(c => {
+      const on = chosen.has(c.key);
+      const pinned = c.key === this.FIXED;
+      return `
+        <label class="mb-card mb-card-row" style="cursor:${pinned ? 'default' : 'pointer'};">
+          <span>
+            <span class="mb-card-title">${esc(c.label)}</span>
+            <span class="mb-card-sub">${c.kind === 'screen' ? 'Screen' : 'Module'}${pinned ? ' · always shown' : ''}</span>
+          </span>
+          <input type="checkbox" ${on ? 'checked' : ''} ${pinned ? 'disabled' : ''}
+                 data-tab-choice="${c.key}" onchange="MApp.TabBar.toggle('${c.key}')">
+        </label>`;
+    }).join('');
+
+    const note = document.getElementById('tabbar-note');
+    if (note) {
+      note.textContent = `${this.draft.length} of ${this.MAX} slots used.`;
+    }
+  },
+
+  toggle(key) {
+    if (key === this.FIXED) return;
+    const at = this.draft.indexOf(key);
+    if (at > -1) {
+      if (this.draft.length <= this.MIN) {
+        MApp.Toast.error(`Keep at least ${this.MIN} tabs.`);
+        this.renderChoices();
+        return;
+      }
+      this.draft.splice(at, 1);
+    } else {
+      if (this.draft.length >= this.MAX) {
+        MApp.Toast.error(`Five tabs is the most that fit. Remove one first.`);
+        this.renderChoices();
+        return;
+      }
+      this.draft.push(key);
+    }
+    this.renderChoices();
+  },
+
+  save() {
+    this.write(this.draft.slice());
+    this.render();
+    this.close();
+    MApp.Toast.success('Tabs updated.');
+  },
+
+  reset() {
+    this.draft = this.DEFAULTS.slice();
+    this.renderChoices();
+  }
+};
+
+// ================================================================
 // ONLY ON DESKTOP — the handoff screen.
 //
 // mobile_parity.test.js holds two maps. BACKLOG is empty: every method
@@ -13297,6 +14143,26 @@ MApp.More = {
     MApp.SyncIssues.updateSummary();
   },
 
+  // Open one More-tab section and bring it into view.
+  //
+  // For destinations whose screen is a section of this tab rather than a
+  // sheet of its own -- Returns is the one -- so the drawer can send
+  // somebody to the returns list without that list first having to become
+  // a sheet. Deferred a frame because the caller has usually just asked
+  // Shell to swap the template in, and the section does not exist until
+  // that has happened.
+  openGroup(key) {
+    requestAnimationFrame(() => {
+      const el = document.querySelector(`.mapp-group[data-group="${key}"]`);
+      if (!el) return;
+      el.open = true;
+      MApp.MoreGroups._remember(key, true);
+      if (typeof el.scrollIntoView === 'function') {
+        el.scrollIntoView({ block: 'start', behavior: 'smooth' });
+      }
+    });
+  },
+
   // Adaptation from source: Mobile_Index.html's own doGet() served both
   // shells from the SAME path, differentiated only by a `ui=mobile` query
   // param -- so source strips that param and reuses window.location.pathname
@@ -13346,6 +14212,10 @@ document.addEventListener('DOMContentLoaded', () => {
   MApp.Theme.init();
   MApp.Density.init();
   MApp.PullToRefresh.init();
+  // Before Shell.init: it paints the active tab, and the buttons it paints
+  // have to exist. The static bar in mobile.html is the no-JS fallback and
+  // the default set; this replaces it with whatever was chosen.
+  MApp.TabBar.render();
   MApp.Shell.init();
 
   // Fire-and-forget: the logo is only needed by the time something is
