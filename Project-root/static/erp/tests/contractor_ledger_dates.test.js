@@ -302,3 +302,87 @@ describe('where things sit on the ledger tab', () => {
   });
 });
 
+describe('printing follows the screen', () => {
+  // The printed ledger used the whole account regardless of the window, so
+  // filtering to a month and pressing Print handed somebody a document
+  // that did not match what they were looking at -- and nothing in it said
+  // so, because every row in it was real.
+  beforeEach(() => {
+    mount();
+    document.body.innerHTML += `
+      <div id="print-contractor-name"></div>
+      <div id="print-contractor-gstpan"></div>
+      <div id="print-contractor-contact"></div>
+      <div id="print-contractor-address"></div>
+      <div id="print-contractor-remarks"></div>
+      <div id="print-contractor-report-date"></div>
+      <div id="print-contractor-period"></div>
+      <div id="print-contractor-total-payable"></div>
+      <div id="print-contractor-total-paid"></div>
+      <div id="print-contractor-balance-due"></div>
+      <table><tbody id="print-contractor-ledger-body"></tbody></table>`;
+    App.State.globalContractors = [{ contractorName: 'ravi' }];
+    App.State.currentAccountLedgerData = {
+      contractorName: 'ravi', entries: ENTRIES,
+      totalPayable: 1500, totalPaid: 700, balanceDue: 800,
+    };
+    global.App.Print = { trigger: jest.fn() };
+  });
+
+  const printed = () => document.getElementById('print-contractor-ledger-body').textContent;
+
+  test('with no window, it prints the whole account', () => {
+    App.Contractor.printLedger();
+
+    expect(printed()).toContain('LOT-1');
+    expect(printed()).toContain('PAY-2');
+    expect(App.Print.trigger).toHaveBeenCalled();
+  });
+
+  test('with a window, it prints only those rows', () => {
+    setRange('2026-02-01', '');
+    App.Contractor.printLedger();
+
+    expect(printed()).toContain('LOT-2');
+    expect(printed()).not.toContain('LOT-1');
+  });
+
+  test('and carries the opening balance in, as the screen does', () => {
+    setRange('2026-02-01', '');
+    App.Contractor.printLedger();
+
+    expect(printed()).toContain('Opening');
+    expect(printed()).toContain('600');
+  });
+
+  test('the document says which dates it covers', () => {
+    // A ledger that does not state its period cannot be checked against
+    // anything.
+    setRange('2026-02-01', '2026-02-28');
+    App.Contractor.printLedger();
+
+    const period = document.getElementById('print-contractor-period').innerText;
+    expect(period).toContain('2026-02-01');
+    expect(period).toContain('2026-02-28');
+  });
+
+  test('an open-ended window still names its ends', () => {
+    setRange('2026-02-01', '');
+    App.Contractor.printLedger();
+    expect(document.getElementById('print-contractor-period').innerText).toContain('today');
+  });
+
+  test('no window means no period line at all', () => {
+    App.Contractor.printLedger();
+    expect(document.getElementById('print-contractor-period').innerText).toBe('');
+  });
+
+  test('a window matching nothing prints that, not the whole account', () => {
+    setRange('2027-01-01', '2027-12-31');
+    App.Contractor.printLedger();
+
+    expect(printed()).toContain('No transactions in the selected dates');
+    expect(printed()).not.toContain('LOT-1');
+  });
+});
+

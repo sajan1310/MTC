@@ -878,10 +878,43 @@ App.Contractor = {
     document.getElementById('print-contractor-total-paid').innerText = formatCurrency(ledgerData.totalPaid);
     document.getElementById('print-contractor-balance-due').innerText = formatCurrency(ledgerData.balanceDue);
 
+    // The printed ledger is the ledger ON SCREEN. Printing the whole
+    // account from a screen filtered to a date window hands somebody a
+    // document that does not match what they were looking at when they
+    // pressed the button -- and they have no way to tell, because every
+    // row in it is real.
+    //
+    // The opening balance comes with it for the same reason it is on
+    // screen: the balance column is cumulative across the whole account,
+    // so without the carried-in figure the first printed row reads as
+    // though the account began mid-window.
+    const inRange = this._ledgerEntriesInRange();
+    const opening = this._ledgerOpeningBalance();
+    const { ledgerDateFrom: from, ledgerDateTo: to } = App.State;
+
+    const period = document.getElementById('print-contractor-period');
+    if (period) {
+      period.innerText = (from || to)
+        ? `Period: ${from || 'start'} to ${to || 'today'}`
+        : '';
+    }
+
+    const openingRow = opening !== null
+      ? `<tr>
+      <td style="padding:6px;border:1px solid #999;color:#000;">${escapeHtml(from)}</td>
+      <td style="padding:6px;border:1px solid #999;color:#000;">Opening</td>
+      <td style="padding:6px;border:1px solid #999;color:#000;"></td>
+      <td style="padding:6px;border:1px solid #999;color:#000;">Balance carried into the selected dates</td>
+      <td style="padding:6px;border:1px solid #999;text-align:right;color:#000;">-</td>
+      <td style="padding:6px;border:1px solid #999;text-align:right;color:#000;">-</td>
+      <td style="padding:6px;border:1px solid #999;text-align:right;font-weight:700;color:#000;">${formatCurrency(opening)}</td>
+    </tr>`
+      : '';
+
     const ledgerBody = document.getElementById('print-contractor-ledger-body');
     if (ledgerBody) {
-      ledgerBody.innerHTML = ledgerData.entries.length
-        ? ledgerData.entries.map(e => `<tr>
+      ledgerBody.innerHTML = inRange.length
+        ? openingRow + inRange.map(e => `<tr>
       <td style="padding:6px;border:1px solid #999;color:#000;">${escapeHtml(e.date)}</td>
       <td style="padding:6px;border:1px solid #999;color:#000;">${escapeHtml(e.type)}</td>
       <td style="padding:6px;border:1px solid #999;color:#000;">${escapeHtml(e.ref)}</td>
@@ -890,7 +923,9 @@ App.Contractor = {
       <td style="padding:6px;border:1px solid #999;text-align:right;font-weight:700;color:#000;">${e.type === 'Payment' ? formatCurrency(e.rawAmount) : '-'}</td>
       <td style="padding:6px;border:1px solid #999;text-align:right;font-weight:700;color:#000;">${formatCurrency(e.balance)}</td>
     </tr>`).join('')
-        : '<tr><td colspan="7" style="padding:10px;text-align:center;color:#999;">No transactions yet for this contractor.</td></tr>';
+        : `<tr><td colspan="7" style="padding:10px;text-align:center;color:#999;">${
+          from || to ? 'No transactions in the selected dates.' : 'No transactions yet for this contractor.'
+        }</td></tr>`;
     }
 
     App.Print.trigger('print-contractor-ledger-container', `Contractor_Ledger_${contractorName.replace(/[^a-zA-Z0-9_-]/g, '_')}`);

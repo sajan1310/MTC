@@ -271,7 +271,13 @@
 // scrolled past every lot on the account to reach it. Markup-only, but the
 // ledger tab's partial is server-rendered while contractor.js is precached,
 // so the pair has to move together.
-const CACHE_NAME = 'erp-shell-v59';
+// v60: the printed contractor ledger honours the date window the screen is
+// filtered to, carries the opening balance in with it, and states its
+// period. It printed the whole account regardless, so filtering to a month
+// and pressing Print produced a document that did not match the screen --
+// undetectably, since every row in it was real. contractor.js is
+// precached. LOAD-BEARING: it misstates what a printed ledger covers.
+const CACHE_NAME = 'erp-shell-v60';
 
 const PRECACHE_URLS = [
   '/erp/offline.html',
