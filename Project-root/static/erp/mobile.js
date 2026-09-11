@@ -2332,11 +2332,16 @@ MApp.Home = {
       MApp.State.lastDashboard = res.data || {};
       this.render(res.data || {}, res._offlineCachedAt);
 
-      // Only when the operator has chosen a figure the small payload does
-      // not carry. Home has always used getMobileDashboard on purpose --
-      // three numbers, cached, instant -- and anyone who leaves the
-      // default tiles alone still makes exactly that one request.
-      if (MApp.HomeLayout.needsFullData()) await this._loadFullData();
+      // Always now: the whole dashboard lives on this screen, so the full
+      // payload is always wanted. The order is what keeps that affordable
+      // -- the cached three-number payload has already painted the chosen
+      // figures and the activity list above, so this fills in beneath a
+      // screen that is already useful rather than holding it blank.
+      //
+      // Offline it simply never arrives, and _markFullBlocksUnavailable
+      // says so in place of the dashboard rather than leaving skeletons
+      // pulsing at somebody forever.
+      await this._loadFullData();
     } catch (err) {
       MApp.Util.renderError(statsEl, err && err.message, () => this.mount());
       if (activityEl) activityEl.innerHTML = '';
@@ -2351,7 +2356,9 @@ MApp.Home = {
       const res = await MApp.Api.call('getDashboardData');
       if (!res || !res.success) { this._markFullBlocksUnavailable(); return; }
       this._full = res.data || {};
-      this.renderBlocks({ ...MApp.State.lastDashboard, ...this._full });
+      const merged = { ...MApp.State.lastDashboard, ...this._full };
+      this.renderBlocks(merged);
+      MApp.Dashboard.render(merged);
     } catch (err) {
       this._markFullBlocksUnavailable();
     }
@@ -2364,6 +2371,13 @@ MApp.Home = {
       const chart = el.querySelector('.mapp-chart-body');
       if (chart) chart.innerHTML = '<div class="mb-text-sm mb-text-steel">Not available offline.</div>';
     });
+    // The dashboard is the bulk of this screen now, so leaving its
+    // skeletons pulsing would read as "still loading" indefinitely. It says
+    // what happened and offers the retry instead.
+    const dash = document.getElementById(MApp.Dashboard.CONTAINER_ID);
+    if (dash) {
+      MApp.Util.renderError(dash, 'The dashboard needs a connection.', () => this._loadFullData());
+    }
   },
 
   render(data, offlineCachedAt) {
@@ -9610,7 +9624,9 @@ MApp.GlobalSearch = {
     { label: 'Account', keywords: 'profile name email password change my', run: () => MApp.Account.open() },
     { label: 'Warehouse Pool', keywords: 'pool buckets negative available wip intermediate stock tab', run: () => MApp.Pool.open() },
     { label: 'System Status', keywords: 'backup health activity log notifications audit', run: () => MApp.Status.open() },
-    { label: 'Full dashboard', keywords: 'kpi totals payables ready low stock overview', run: () => MApp.Dashboard.open() },
+    // The dashboard is Home now, so searching for it goes to Home rather
+    // than opening a sheet that no longer exists.
+    { label: 'Dashboard', keywords: 'kpi totals payables ready low stock overview home', run: () => MApp.Shell.showTab('home') },
     { label: 'Colours', keywords: 'colour color master paint shade', run: () => MApp.Master.open('color') },
     { label: 'Models', keywords: 'model master kalpi ranger', run: () => MApp.Master.open('model') },
     { label: 'Process Types', keywords: 'process type master stage', run: () => MApp.Master.open('processType') },
@@ -11397,23 +11413,16 @@ MApp.ProductionSheet = {
 // show. This is the rest of it, on request.
 // ================================================================
 MApp.Dashboard = {
-  async open() {
-    const body = document.getElementById('dashboard-body');
-    MApp.Util.renderSkeleton(body, 5);
-    MApp.Sheet.open('sheet-dashboard');
-    try {
-      const res = await MApp.Api.call('getDashboardData');
-      if (!res || !res.success) {
-        MApp.Util.renderError(body, res && res.message, () => this.open());
-        return;
-      }
-      this.render(res.data || {});
-    } catch (err) {
-      MApp.Util.renderError(body, err && err.message, () => this.open());
-    }
-  },
-
-  close() { MApp.Sheet.close('sheet-dashboard'); },
+  // Where the dashboard draws itself. Home owns the container now; it used
+  // to be a sheet's body behind a "Full dashboard" button, which put the
+  // figures somebody opens the app to read one tap further away than the
+  // app's own front page.
+  //
+  // Home does the fetching -- it already loads getDashboardData for any
+  // chosen figure the small payload cannot supply -- so this module is
+  // rendering only. That is why there is no open()/close() any more: there
+  // is nothing to open.
+  CONTAINER_ID: 'home-dashboard',
 
   // The dashboard's quick actions. A dashboard is for deciding what to do
   // next, and this one had no way to then do it -- read the figures, close
@@ -11422,37 +11431,15 @@ MApp.Dashboard = {
   // Closes first rather than stacking the form on top, so each of these
   // opens under exactly the preconditions Home's own quick actions already
   // open under: no sheet beneath, nothing for the form's own close() to
-  // pop by surprise. The cost is returning to Home rather than to the
-  // dashboard, which is one tap and the figures would be stale anyway --
-  // logging a lot is precisely what changes them.
-  // The five jobs somebody starts straight off the dashboard. `stock` is
-  // the odd one out -- a screen rather than a form -- and belongs here
-  // anyway: "check stock" is what the low-stock figure above it provokes.
-  ACTIONS: {
-    po: () => MApp.PO.openNewSheet(),
-    bill: () => MApp.Bill.openForm(null),
-    production: () => MApp.Production.openLogLotSheet(),
-    stock: () => MApp.Shell.showTab('stock'),
-    issue: () => MApp.Issue.openForm()
-  },
-
-  act(kind) {
-    const run = this.ACTIONS[kind];
-    if (!run) return;
-    this.close();
-    run();
-  },
-
   // Every chart the app can draw, on the one screen that already has the
   // data for them.
   //
   // They existed only as opt-in Home blocks, off by default, with nothing
-  // saying so -- so the full dashboard, the screen actually named
-  // "dashboard", showed no chart at all. Home cannot simply default them on
-  // instead: every chart is source:'full', which would put getDashboardData
-  // on the critical path of every Home visit and blank the tiles offline.
-  // Here that payload is already being fetched, so the charts cost nothing
-  // extra.
+  // saying so -- so the screen actually named "dashboard" showed no chart
+  // at all. Every chart is source:'full', and the whole dashboard is on
+  // Home now, so that payload is being fetched regardless and the charts
+  // cost nothing beyond it. The chosen figures above still come from the
+  // small cached payload, so they are up before this arrives.
   //
   // Reuses the existing renderers rather than reimplementing them: the
   // catalogue on HomeLayout carries each chart's series, its truncation
@@ -11471,7 +11458,7 @@ MApp.Dashboard = {
   },
 
   render(data) {
-    const body = document.getElementById('dashboard-body');
+    const body = document.getElementById(this.CONTAINER_ID);
     if (!body) return;
     const k = data.kpis || {};
     const money = v => MApp.Util.formatCurrency(v || 0);

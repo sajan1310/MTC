@@ -27,6 +27,7 @@ from __future__ import annotations
 import logging
 import os
 import shutil
+from datetime import timedelta
 from logging.handlers import RotatingFileHandler
 
 from flask import (
@@ -882,6 +883,33 @@ def create_app(config_name: str | None = None) -> Flask:
         )
     else:
         app.config.update(SESSION_COOKIE_HTTPONLY=True, SESSION_COOKIE_SAMESITE="Lax")
+
+    # The remember cookie needs every one of the decisions above, and had
+    # none of them -- it was left entirely on Flask-Login's defaults.
+    #
+    # REMEMBER_COOKIE_SECURE is the one that matters here, for exactly the
+    # reason spelled out for the session cookie: this deployment serves plain
+    # http over a LAN and a tailnet, and a Secure cookie on http is accepted
+    # and then never sent back. That would break staying-signed-in in the
+    # same undiagnosable way, and it is the half of the pair that keeps a
+    # phone signed in after the session itself has lapsed.
+    #
+    # SameSite matches the session cookie rather than being pinned Strict,
+    # so the cookie survives Google's cross-site redirect back to the
+    # callback -- the same trap documented above.
+    #
+    # The duration is how long a phone stays signed in without being opened;
+    # Flask-Login's own default is a year, which is stated here rather than
+    # inherited silently so it is a decision someone can find and change.
+    app.config.setdefault(
+        "REMEMBER_COOKIE_DURATION",
+        timedelta(days=int(os.getenv("REMEMBER_COOKIE_DAYS", "365"))),
+    )
+    app.config.update(
+        REMEMBER_COOKIE_SECURE=serve_over_https,
+        REMEMBER_COOKIE_HTTPONLY=True,
+        REMEMBER_COOKIE_SAMESITE=app.config.get("SESSION_COOKIE_SAMESITE", "Lax"),
+    )
 
     # CORS: restrict to development origins when in debug
     if app.debug:

@@ -1006,7 +1006,10 @@ def auth_google_callback():
             )
             return "User creation failed", 500
         if user_obj:
-            login_user(user_obj)
+            # Same remember semantics as the real callback above, so the
+            # test path cannot quietly diverge from what it stands in for.
+            login_user(user_obj, remember=True)
+            session.permanent = True
             current_app.logger.info(
                 f"[OAuth] (Test) User {user_obj.email} logged in successfully (new={is_new})"
             )
@@ -1076,7 +1079,23 @@ def auth_google_callback():
                 )
                 return "User creation failed", 500
             if user_obj:
-                login_user(user_obj)
+                # remember=True, like the password form's ticked box.
+                #
+                # Without it Google sign-in produced a plain browser-session
+                # cookie: no remember token, and session.permanent never set.
+                # On a desktop that survives until the browser quits; on a
+                # phone it does not survive the installed PWA being evicted
+                # from memory, which is why the app asked for a sign-in
+                # again most times it was opened.
+                #
+                # Password sign-in leaves this to the operator because the
+                # form has a box to tick. The OAuth flow has no such moment
+                # -- the whole interaction happens on Google's pages -- so
+                # choosing for them is the only option, and staying signed
+                # in is what someone picking "continue with Google" on a
+                # shop-floor phone means by it.
+                login_user(user_obj, remember=True)
+                session.permanent = True
                 current_app.logger.info(
                     f"[OAuth] User {user_obj.email} logged in successfully (new={is_new})"
                 )

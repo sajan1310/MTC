@@ -122,11 +122,23 @@ describe('the catalogue', () => {
 describe('what Home actually requests', () => {
   beforeEach(mount);
 
-  test('the default Home makes exactly the one cached call it always did', async () => {
+  test('Home asks for both payloads, cheap one first', async () => {
+    // This used to assert the default Home made ONLY the cached call. That
+    // was the right trade while the dashboard sat behind a button; the
+    // whole dashboard is on this screen now, so the full payload is always
+    // wanted. The cheap one still goes first and still paints the chosen
+    // figures and the activity list, so the screen is useful before it is
+    // complete -- that ordering is the part worth protecting.
     await MApp.Home.mount();
 
     expect(MApp.Api.callCached).toHaveBeenCalledWith('getMobileDashboard');
-    expect(MApp.Api.call).not.toHaveBeenCalledWith('getDashboardData');
+    expect(MApp.Api.call).toHaveBeenCalledWith('getDashboardData');
+  });
+
+  test('and asks for the expensive one only once', async () => {
+    await MApp.Home.mount();
+
+    expect(MApp.Api.call.mock.calls.filter(c => c[0] === 'getDashboardData').length).toBe(1);
   });
 
   test('choosing a figure from the full set asks for it, once', async () => {
