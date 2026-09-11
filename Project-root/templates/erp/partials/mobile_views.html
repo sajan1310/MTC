@@ -634,6 +634,7 @@
   <!-- The five jobs started straight off this screen. They were the
        dashboard's; the dashboard is this screen now, and keeping two
        different sets of quick actions would be one set too many. -->
+  <div class="mapp-section-label">Quick actions</div>
   <div class="mb-quick-actions">
     <button type="button" class="mb-quick-action" onclick="MApp.PO.openNewSheet()">
       <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M6 2h9l3 3v17H6z"/><path d="M9 9h6M9 13h6M9 17h4"/></svg>
@@ -656,6 +657,11 @@
       <span>Issue Stock</span>
     </button>
   </div>
+
+  <!-- The modules that live behind the menu, one tap from here, ordered by
+       how often this operator actually opens them (MApp.Shortcuts).
+       Rendered by JS because the order is learned, not authored. -->
+  <div class="mapp-section-label">Go to</div>
   <div class="mb-quick-actions" id="home-shortcuts"></div>
 
   <div id="home-stats" class="mb-stat-grid">
